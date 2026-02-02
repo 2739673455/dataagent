@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepAgents API 测试控制台</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 900px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+            background-color: #f5f7fa;
+            color: #333;
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 0.5rem;
+        }
+        .container {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        .control-panel {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        input[type="text"] {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        button:disabled {
+            background-color: #bdc3c7;
+            cursor: not-allowed;
+        }
+        #status {
+            margin-bottom: 10px;
+            font-size: 0.9em;
+            color: #7f8c8d;
+        }
+        .status-connected { color: #27ae60; font-weight: bold; }
+        .status-disconnected { color: #c0392b; font-weight: bold; }
+        
+        #log {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 1rem;
+            height: 500px;
+            overflow-y: auto;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .log-entry {
+            margin-bottom: 8px;
+            border-bottom: 1px solid #34495e;
+            padding-bottom: 8px;
+            animation: fadeIn 0.3s ease;
+        }
+        .log-time { color: #95a5a6; font-size: 0.8em; margin-right: 10px; }
+        .log-type { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; margin-right: 8px; }
+        .type-tool_start { background: #e67e22; color: white; }
+        .type-assistant_call { background: #9b59b6; color: white; }
+        .type-monitor_event { background: #3498db; color: white; }
+        .type-pong { background: #27ae60; color: white; }
+        .log-message { font-weight: bold; }
+        .log-data { 
+            color: #bdc3c7; 
+            font-size: 0.9em; 
+            margin-top: 4px; 
+            white-space: pre-wrap;
+            padding-left: 20px;
+        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>DeepAgents 后端接口测试</h1>
+        
+        <div id="status">WebSocket 状态: <span id="wsStatus" class="status-disconnected">未连接</span></div>
+
+        <div class="control-panel">
+            <input type="text" id="taskInput" value="列出当前目录下的文件" placeholder="输入任务指令...">
+            <button id="sendBtn" onclick="sendTask()">发送任务</button>
+            <button onclick="clearLog()" style="background-color: #95a5a6;">清空日志</button>
+        </div>
+
+        <div id="log"></div>
+    </div>
+
+    <script>
+        const API_URL = "http://localhost:8000";
+        const WS_URL = "ws://localhost:8000/ws";
+        const logDiv = document.getElementById("log");
+        const wsStatus = document.getElementById("wsStatus");
+        const sendBtn = document.getElementById("sendBtn");
+        let ws;
+
+        function connectWebSocket() {
+            ws = new WebSocket(WS_URL);
+
+            ws.onopen = () => {
+                wsStatus.textContent = "已连接";
+                wsStatus.className = "status-connected";
+                addLog("System", "WebSocket 连接建立成功", null, "pong");
+            };
+
+            ws.onclose = () => {
+                wsStatus.textContent = "已断开 - 3秒后重连...";
+                wsStatus.className = "status-disconnected";
+                setTimeout(connectWebSocket, 3000);
+            };
+
+            ws.onerror = (err) => {
+                console.error("WS Error:", err);
+                wsStatus.textContent = "连接错误";
+                wsStatus.className = "status-disconnected";
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    // 处理 monitor_event 结构
+                    if (data.type === 'monitor_event') {
+                        addLog(data.event, data.message, data.data, data.event);
+                    } else {
+                        addLog(data.type, data.message, data.data, data.type);
+                    }
+                } catch (e) {
+                    addLog("Raw", event.data);
+                }
+            };
+        }
+
+        function addLog(type, message, data = null, styleClass = "") {
+            const entry = document.createElement("div");
+            entry.className = "log-entry";
+            
+            const time = new Date().toLocaleTimeString();
+            let html = `<span class="log-time">[${time}]</span>`;
+            html += `<span class="log-type type-${styleClass}">${type}</span>`;
+            html += `<span class="log-message">${message}</span>`;
+            
+            if (data && Object.keys(data).length > 0) {
+                html += `<div class="log-data">${JSON.stringify(data, null, 2)}</div>`;
+            }
+
+            entry.innerHTML = html;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function clearLog() {
+            logDiv.innerHTML = "";
+        }
+
+        async function sendTask() {
+            const query = document.getElementById("taskInput").value;
+            if (!query.trim()) return;
+
+            sendBtn.disabled = true;
+            sendBtn.textContent = "发送中...";
+
+            try {
+                addLog("System", `正在发送任务: ${query}...`, null, "pong");
+                const res = await fetch(`${API_URL}/api/task`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ query })
+                });
+                
+                if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+                
+                const json = await res.json();
+                addLog("System", `任务已启动 (Thread ID: ${json.thread_id})`, json, "pong");
+            } catch (e) {
+                addLog("Error", `发送任务失败: ${e.message}`, null, "monitor_event");
+            } finally {
+                sendBtn.disabled = false;
+                sendBtn.textContent = "发送任务";
+            }
+        }
+
+        // 初始化连接
+        connectWebSocket();
+    </script>
+</body>
+</html>
