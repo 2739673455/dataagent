@@ -1,0 +1,22 @@
+db: # 认证数据库
+  host: 127.0.0.1
+  port: 3306
+  user: root
+  password: ${oc.env:AUTH_DB_PASSWORD}
+  database: auth
+
+log: # 日志
+  to_console: true # 是否输出到控制台
+  to_console_level: INFO # 日志级别(DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  to_file: true # 是否输出到文件
+  to_file_level: INFO # 日志级别(DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  log_dir: auth # 日志目录
+  max_file_size: 10MB # 单个日志文件最大大小
+
+auth: # 认证配置
+  secret_key: ${oc.env:AUTH_SECRET_KEY} # 私钥
+  algorithm: HS256 # 加密算法
+  access_token_expire_minutes: 60 # 访问令牌过期时间（分钟）
+  refresh_token_expire_days: 7 # 刷新令牌过期时间（天）
+
+cors_origins: [] # 允许跨域请求的源

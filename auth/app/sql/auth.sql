@@ -70,14 +70,7 @@ CREATE TABLE `refresh_token` (
 
 -- 初始化数据
 
-INSERT INTO
-    `scope` (`name`, `description`)
-VALUES (
-        'add_more_model_config',
-        '添加更多模型配置'
-    );
-
-INSERT INTO `group` (`name`) VALUES ('normal'), ('vip1');
+INSERT INTO `group` (`name`) VALUES ('normal');
 
 INSERT INTO
     `user` (
@@ -89,15 +82,6 @@ VALUES (
         'atguigu@123.com',
         'atguigu',
         '$argon2id$v=19$m=65536,t=3,p=4$fMuhnWBkGYj3r25EZnf6OA$4MRww1o4TWdfmmrYIu6H90+uQ6pMD+V6wd4B1UYnMp0'
-    );
-
-INSERT INTO
-    `group_scope_rel` (group_id, scope_id)
-SELECT g.id, s.id
-FROM `group` g
-    JOIN `scope` s ON (
-        g.name = 'vip1'
-        AND s.name = 'add_more_model_config'
     );
 
 INSERT INTO
