@@ -1,0 +1,17 @@
+services:
+    mysql:
+        image: mysql:8.0
+        container_name: mysql-server
+        restart: unless-stopped
+        ports:
+            - "3306:3306"
+        environment:
+            MYSQL_ROOT_PASSWORD: 123321
+        volumes:
+            - ./volumes/mysql/data:/var/lib/mysql
+            - ./volumes/mysql/conf:/etc/mysql/conf.d
+            - ./volumes/mysql/logs:/var/log/mysql
+        command:
+            --default-authentication-plugin=mysql_native_password
+            --character-set-server=utf8mb4
+            --collation-server=utf8mb4_unicode_ci

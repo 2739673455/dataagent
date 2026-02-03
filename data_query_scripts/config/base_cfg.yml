@@ -1,0 +1,44 @@
+meta_db: # 元数据服务
+  base_url: http://127.0.0.1:12321/api/v1/metadata
+  get_table: /get_table
+  get_column: /get_column
+  retrieve_knowledge: /retrieve_knowledge
+  retrieve_column: /retrieve_column
+  retrieve_cell: /retrieve_cell
+
+llm: # 为不同任务指定模型，为 null 则使用主代理使用的模型
+  extend_model: default # 数据扩展模型
+  filter_model: default # 数据过滤模型
+  nl2sql_models: # NL2SQL模型
+    - deepseek
+    - minimax
+    - mino
+  vote_model: default # 投票模型
+  models: # 预定义模型
+    default:
+      base_url: https://openrouter.ai/api/v1
+      api_key: ${oc.env:OPENROUTER_API_KEY}
+      model: openai/gpt-4o-mini
+
+    deepseek:
+      base_url: https://api.siliconflow.cn/v1
+      api_key: ${oc.env:SILICONFLOW_API_KEY}
+      model: deepseek-ai/DeepSeek-V3.2
+      params:
+        temperature: 0.2
+
+    minimax:
+      base_url: https://openrouter.ai/api/v1
+      api_key: ${oc.env:OPENROUTER_API_KEY}
+      model: minimax/minimax-m2.1
+
+    mino:
+      base_url: https://openrouter.ai/api/v1
+      api_key: ${oc.env:OPENROUTER_API_KEY}
+      model: xiaomi/mimo-v2-flash:free
+
+# use_db_code: mysql_sales # 指定使用那个数据库
+use_db_code: pg_archeology_scan # 指定使用那个数据库
+# use_db_code: pg_cold_chain_pharma_compliance # 指定使用那个数据库
+max_tb_num: 20 # 最多召回的表数量
+max_col_per_tb: 100 # 每张表最多召回的字段数量

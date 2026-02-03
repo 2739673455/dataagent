@@ -5,6 +5,11 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "asyncmy>=0.2.11",
+    "cos-python-sdk-v5>=1.9.41",
     "fastapi[standard]>=0.128.0",
+    "omegaconf>=2.3.0",
     "openai>=2.16.0",
+    "sqlacodegen>=3.2.0",
+    "sqlalchemy>=2.0.46",
 ]

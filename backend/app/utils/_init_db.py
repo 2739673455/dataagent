@@ -30,7 +30,6 @@ class DBInit:
 
     async def init_db(self, db_sql_orm: list[tuple], max_workers: int = 5):
         """初始化数据库并导入数据"""
-
         logger.info(f"开始初始化数据库 {[db_name for db_name, _, _ in db_sql_orm]}")
         with Progress(
             TextColumn("[progress.description]{task.description}"),
@@ -67,8 +66,6 @@ class DBInit:
 
 
 class MyInit(DBInit):
-    ERROR_PATTERNS = []
-
     async def create_db(self, db_name: str):
         conn = await asyncmy.connect(**self.conn_conf, autocommit=True)
         try:
