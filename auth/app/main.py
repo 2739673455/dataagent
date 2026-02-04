@@ -5,7 +5,11 @@ from app.handlers import register_exception_handlers
 from app.middlewares import trace
 from app.routers import api
 from app.services import database
-from app.utils.log import setup_logger
+from app.utils.log import (
+    setup_logger,
+    # start_background_logging,
+    # stop_background_logging,
+)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -13,7 +17,9 @@ from fastapi.middleware.cors import CORSMiddleware
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logger()
+    # start_background_logging()
     yield
+    # stop_background_logging()
     await database.close_all()
 
 
