@@ -26,36 +26,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 BEIJING_TZ = timezone(timedelta(hours=8))  # 北京时间时区（UTC+8）
 
 
-def _generate_refresh_token(user_id: int, scopes: list[str]) -> dict:
+def _generate_refresh_token(user_id: int) -> tuple:
     """生成刷新令牌"""
     jti = str(uuid.uuid4())  # JWT ID
     expire = datetime.now(BEIJING_TZ) + timedelta(
         days=CFG.auth.refresh_token_expire_days
     )  # 刷新令牌过期时间
-    payload = {
-        "sub": str(user_id),
-        "scope": " ".join(scopes),
-        "exp": expire.timestamp(),
-        "jti": jti,
-    }
+    payload = {"sub": str(user_id), "exp": expire.timestamp(), "jti": jti}
     token = jwt.encode(payload, CFG.auth.secret_key, CFG.auth.algorithm)
-    return {
-        "jti": jti,
-        "expire": expire,
-        "token": token,
-    }
+    return jti, expire, token
 
 
-def _generate_access_token(jti: str, user_id: int, scopes: list[str]) -> str:
+def _generate_access_token(user_id: int, scopes: list[str]) -> str:
     """生成访问令牌"""
     expire = datetime.now(BEIJING_TZ) + timedelta(
         minutes=CFG.auth.access_token_expire_minutes
     )  # 访问令牌过期时间
     payload = {
         "sub": str(user_id),
-        "scope": " ".join(scopes),
         "exp": expire.timestamp(),
-        "jti": jti,
+        "scope": " ".join(scopes),
     }
     token = jwt.encode(payload, CFG.auth.secret_key, CFG.auth.algorithm)
     return token
@@ -66,8 +56,7 @@ async def create_token(
 ) -> dict:
     """创建刷新令牌和访问令牌"""
     # 生成刷新令牌
-    _rt = _generate_refresh_token(user_id, scopes)
-    jti, expire, r_token = _rt["jti"], _rt["expire"], _rt["token"]
+    jti, expire, r_token = _generate_refresh_token(user_id)
 
     # 存储刷新令牌
     try:
@@ -79,7 +68,7 @@ async def create_token(
         raise
 
     # 生成访问令牌
-    a_token = _generate_access_token(jti, user_id, scopes)
+    a_token = _generate_access_token(user_id, scopes)
 
     return {
         "access_token": a_token,
@@ -178,7 +167,6 @@ def _decode_refresh_token(
     """解析刷新令牌"""
     try:
         payload = jwt.decode(refresh_token, CFG.auth.secret_key, [CFG.auth.algorithm])
-        payload["scope"] = payload["scope"].split()
         payload = RefreshTokenPayload(**payload)
         return payload
     except jwt.ExpiredSignatureError:

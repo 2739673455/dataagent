@@ -3,14 +3,12 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 
 class AccessTokenPayload(BaseModel):
     sub: int
-    scope: list[str]
     exp: float
-    jti: str
+    scope: list[str]
 
 
 class RefreshTokenPayload(BaseModel):
     sub: int
-    scope: list[str]
     exp: float
     jti: str
 
