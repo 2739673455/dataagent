@@ -41,7 +41,7 @@ async def middleware(request: Request, call_next: Callable) -> Response:
     error = None
     try:
         status_ctx.set("start")  # 设置 status 到 ContextVar
-        logger.debug("Request incoming")
+        logger.info("Request incoming")
         status_ctx.set("processing")  # 设置 status 到 ContextVar
         response = await call_next(request)  # 执行请求
     except Exception as e:
@@ -53,10 +53,10 @@ async def middleware(request: Request, call_next: Callable) -> Response:
         )  # 设置 response_time_ms 到 ContextVar
         if error:
             status_ctx.set("fail")  # 设置 status 到 ContextVar
-            logger.debug(f"Request failed - {error}")
+            logger.info(f"Request failed - {error}")
         else:
             status_ctx.set("finish")  # 设置 status 到 ContextVar
-            logger.debug("Request completed")
+            logger.info("Request completed")
 
     # 添加请求ID和追踪ID到响应头
     response.headers["X-Request-ID"] = request_id

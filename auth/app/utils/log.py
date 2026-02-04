@@ -177,8 +177,8 @@ def _setup_logger(cfg: LogCfg, logger_name: str, processors: list):
     logger = logging.getLogger(logger_name)
     # 清空历史 handler，避免重复输出
     logger.handlers.clear()
-    # 统一从 DEBUG 接收，再由 handler 自己控制级别
-    logger.setLevel(logging.DEBUG)
+    # 日志级别统一设置为 INFO，再由 handler 自己控制级别
+    logger.setLevel(logging.INFO)
     # 禁止向 root 传播，避免被根 logger 再次输出
     logger.propagate = False
 

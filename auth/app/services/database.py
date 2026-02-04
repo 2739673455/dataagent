@@ -9,13 +9,13 @@ ENGINES = {}
 SESSION_MAKERS = {}
 
 
-def get_engine(name: str):
+def _get_engine(name: str):
     """获取或创建数据库引擎"""
     if name not in ENGINES:
         # 从配置中获取指定数据库的配置
-        cfg = getattr(CFG.db, name)
+        db_cfg = CFG.db
         # 构建数据库连接URL
-        db_url = f"mysql+asyncmy://{cfg.user}:{cfg.password}@{cfg.host}:{cfg.port}/{cfg.database}"
+        db_url = f"mysql+asyncmy://{db_cfg.user}:{db_cfg.password}@{db_cfg.host}:{db_cfg.port}/{db_cfg.database}"
         # 创建异步数据库引擎
         ENGINES[name] = create_async_engine(
             db_url,
@@ -29,10 +29,10 @@ def get_engine(name: str):
     return ENGINES[name]
 
 
-def get_session_maker(name: str):
+def _get_session_maker(name: str):
     """获取或创建会话工厂"""
     if name not in SESSION_MAKERS:
-        engine = get_engine(name)
+        engine = _get_engine(name)
         # 创建异步会话工厂
         SESSION_MAKERS[name] = async_sessionmaker(
             engine,
@@ -46,7 +46,7 @@ def get_db(name: str):
     """获取数据库会话依赖函数"""
 
     async def _get_db() -> AsyncGenerator[AsyncSession, None]:
-        session_maker = get_session_maker(name)
+        session_maker = _get_session_maker(name)
         # 创建数据库会话上下文管理器
         async with session_maker() as db_session:
             try:
