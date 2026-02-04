@@ -90,5 +90,5 @@ SELECT g.id, u.id
 FROM `group` g
     JOIN `user` u ON (
         g.name = 'normal'
-        AND u.email = 'atguigu@atguigu.com'
+        AND u.email = 'atguigu@123.com'
     );
