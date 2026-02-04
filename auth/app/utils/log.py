@@ -132,6 +132,72 @@ def _parse_size(value: Any) -> int:
     raise ValueError(f"Invalid size value: {value}")
 
 
+def _json_renderer(logger, method_name, event_dict):
+    """将 structlog 的 event 字段转为 message，并输出 JSON"""
+    # structlog 默认使用 event 作为主消息字段
+    if "event" in event_dict:
+        event_dict["message"] = event_dict.pop("event")
+    # 输出为 JSON 字符串
+    return structlog.processors.JSONRenderer(ensure_ascii=False)(
+        logger, method_name, event_dict
+    )
+
+
+def _build_logger(logger_name: str) -> logging.Logger:
+    """获取并初始化 stdlib logger"""
+    # 获取 stdlib logger 实例
+    logger = logging.getLogger(logger_name)
+    # 清空历史 handler，避免重复输出
+    logger.handlers.clear()
+    # 日志级别统一设置为 INFO，再由 handler 自己控制级别
+    logger.setLevel(logging.INFO)
+    # 禁止向 root 传播，避免被根 logger 再次输出
+    logger.propagate = False
+    return logger
+
+
+def _make_console_handler(cfg: LogCfg, processors: list) -> logging.Handler:
+    """创建控制台日志处理器"""
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(cfg.to_console_level)
+    handler.setFormatter(
+        structlog.stdlib.ProcessorFormatter(
+            processor=structlog.dev.ConsoleRenderer(colors=True),
+            foreign_pre_chain=processors,
+        )
+    )
+    return handler
+
+
+def _make_file_handler(cfg: LogCfg, processors: list) -> logging.Handler:
+    """创建文件日志处理器（JSONL）"""
+    handler = DateSizeRotatingFileHandler(
+        log_dir=LOG_DIR / cfg.log_dir,
+        max_bytes=_parse_size(cfg.max_file_size),
+        encoding="utf-8",
+    )
+    handler.setLevel(cfg.to_file_level)
+    handler.setFormatter(
+        structlog.stdlib.ProcessorFormatter(
+            processor=_json_renderer,
+            foreign_pre_chain=processors,
+        )
+    )
+    return handler
+
+
+def _setup_logger(cfg: LogCfg, logger_name: str, processors: list):
+    """配置并挂载 structlog 的输出处理器"""
+
+    logger = _build_logger(logger_name)
+
+    if cfg.to_console:
+        logger.addHandler(_make_console_handler(cfg, processors))
+
+    if cfg.to_file:
+        logger.addHandler(_make_file_handler(cfg, processors))
+
+
 def _add_context_fields(logger, method_name, event_dict):
     """添加上下文字段"""
     event_dict.update(
@@ -160,68 +226,11 @@ def _drop_empty_fields(logger, method_name, event_dict):
     return event_dict
 
 
-def _json_renderer(logger, method_name, event_dict):
-    """将 structlog 的 event 字段转为 message，并输出 JSON"""
-    # structlog 默认使用 event 作为主消息字段
-    if "event" in event_dict:
-        event_dict["message"] = event_dict.pop("event")
-    # 输出为 JSON 字符串
-    return structlog.processors.JSONRenderer(ensure_ascii=False)(
-        logger, method_name, event_dict
-    )
-
-
-def _setup_logger(cfg: LogCfg, logger_name: str, processors: list):
-    """配置并挂载 structlog 的输出处理器"""
-    # 获取并初始化 stdlib logger
-    logger = logging.getLogger(logger_name)
-    # 清空历史 handler，避免重复输出
-    logger.handlers.clear()
-    # 日志级别统一设置为 INFO，再由 handler 自己控制级别
-    logger.setLevel(logging.INFO)
-    # 禁止向 root 传播，避免被根 logger 再次输出
-    logger.propagate = False
-
-    # 控制台输出
-    if cfg.to_console:
-        # 控制台日志处理器
-        console_handler = logging.StreamHandler(sys.stdout)
-        # 设置控制台日志级别
-        console_handler.setLevel(cfg.to_console_level)
-        # 设置控制台日志打印格式
-        console_handler.setFormatter(
-            structlog.stdlib.ProcessorFormatter(
-                processor=structlog.dev.ConsoleRenderer(colors=True),
-                foreign_pre_chain=processors,
-            )
-        )
-        logger.addHandler(console_handler)
-
-    # 文件输出（JSONL）
-    if cfg.to_file:
-        # 文件日志处理器
-        file_handler = DateSizeRotatingFileHandler(
-            log_dir=LOG_DIR / cfg.log_dir,
-            max_bytes=_parse_size(cfg.max_file_size),
-            encoding="utf-8",
-        )
-        # 设置文件日志级别
-        file_handler.setLevel(cfg.to_file_level)
-        # 设计文件日志输出格式
-        file_handler.setFormatter(
-            structlog.stdlib.ProcessorFormatter(
-                processor=_json_renderer,
-                foreign_pre_chain=processors,
-            )
-        )
-        logger.addHandler(file_handler)
-
-
 def setup_logger():
     """初始化日志配置"""
+
     global LOGGER_CONFIGURED
-    # 避免重复初始化
-    if LOGGER_CONFIGURED:
+    if LOGGER_CONFIGURED:  # 避免重复初始化
         return
 
     # 处理器链：时间、等级、logger 名称、上下文、异常信息等
@@ -249,8 +258,3 @@ def setup_logger():
 
 
 logger = structlog.get_logger("auth")
-
-if __name__ == "__main__":
-    # 简单测试：初始化日志并输出示例
-    setup_logger()
-    logger.info("Logger initialized")
