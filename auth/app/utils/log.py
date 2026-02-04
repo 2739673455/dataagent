@@ -19,7 +19,7 @@ LOGGER_CONFIGURED = False  # 日志是否已初始化
 LOG_DIR = Path(__file__).parent.parent / "logs"  # 日志文件目录
 
 
-def _format_json(record):
+def _build_log_json(record):
     """格式化为 JSON"""
     log_json = {
         "time": record["time"].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
@@ -39,36 +39,43 @@ def _format_json(record):
     record["extra"]["json"] = json.dumps(log_json, ensure_ascii=False)
 
 
+def _setup_console_logger(cfg: LogCfg):
+    """配置控制台日志输出"""
+    logger.add(
+        sink=sys.stdout,
+        level=cfg.to_console_level,
+        format=(
+            "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+            "<level>{level:^8}</level> | "
+            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+            "<level>{message}</level>"
+        ),
+        colorize=True,
+        catch=False,
+        enqueue=True,
+    )
+
+
+def _setup_file_logger(cfg: LogCfg):
+    """配置文件日志输出（JSON 格式）"""
+    (LOG_DIR / cfg.log_dir).mkdir(parents=True, exist_ok=True)
+    logger.add(
+        sink=str(LOG_DIR / cfg.log_dir / "{time:YYYY-MM-DD}.jsonl"),
+        level=cfg.to_file_level,
+        format="{extra[json]}",
+        rotation=cfg.max_file_size,
+        encoding="utf-8",
+        catch=False,
+        enqueue=True,
+    )
+
+
 def _setup_logger(cfg: LogCfg):
     """配置日志输出"""
-    # 控制台输出
     if cfg.to_console:
-        logger.add(
-            sink=sys.stdout,
-            level=cfg.to_console_level,
-            format=(
-                "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-                "<level>{level:^8}</level> | "
-                "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-                "<level>{message}</level>"
-            ),
-            colorize=True,
-            catch=False,
-            enqueue=True,
-        )
-
-    # 文件输出（JSON 格式）
+        _setup_console_logger(cfg)
     if cfg.to_file:
-        (LOG_DIR / cfg.log_dir).mkdir(parents=True, exist_ok=True)
-        logger.add(
-            sink=str(LOG_DIR / cfg.log_dir / "{time:YYYY-MM-DD}.jsonl"),
-            level=cfg.to_file_level,
-            format="{extra[json]}",
-            rotation=cfg.max_file_size,
-            encoding="utf-8",
-            catch=False,
-            enqueue=True,
-        )
+        _setup_file_logger(cfg)
 
 
 def setup_logger():
@@ -76,6 +83,6 @@ def setup_logger():
     global LOGGER_CONFIGURED
     if not LOGGER_CONFIGURED:
         logger.remove()  # 移除默认的日志输出
-        logger.configure(patcher=_format_json)
+        logger.configure(patcher=_build_log_json)
         _setup_logger(CFG.log)
         LOGGER_CONFIGURED = True
