@@ -1,12 +1,9 @@
+from importlib.resources import files
 from pathlib import Path
 
 import dotenv
 from omegaconf import OmegaConf
 from pydantic import BaseModel
-
-CONFIG_DIR = Path(__file__).parent / "configs"
-
-dotenv.load_dotenv(CONFIG_DIR / ".env")
 
 
 # 数据库
@@ -28,6 +25,7 @@ class LogCfg(BaseModel):
     max_file_size: str
 
 
+# 认证配置
 class AuthCfg(BaseModel):
     secret_key: str
     algorithm: str
@@ -42,6 +40,9 @@ class Cfg(BaseModel):
     cors_origins: list[str]
 
 
-base_cfg = OmegaConf.load(CONFIG_DIR / "config.yml")  # 加载
+_CONFIG_DIR = Path((str(files("app.configs"))))  # 配置文件目录
+dotenv.load_dotenv(_CONFIG_DIR / ".env")  # 加载 .env
+base_cfg = OmegaConf.load(_CONFIG_DIR / "config.yml")  # 加载 config.yml
+
 OmegaConf.resolve(base_cfg)  # 解析插值
 CFG = Cfg.model_validate(base_cfg)  # 转换为配置类

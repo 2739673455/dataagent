@@ -12,4 +12,5 @@ dependencies = [
     "rich>=14.3.2",
     "sqlacodegen>=3.2.0",
     "sqlalchemy>=2.0.46",
+    "structlog>=24.4.0",
 ]
