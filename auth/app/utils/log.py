@@ -1,7 +1,6 @@
 import logging
 import sys
 from datetime import datetime
-from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -18,8 +17,90 @@ from app.utils.context import (
     user_id_ctx,
 )
 
-_LOGGER_CONFIGURED = False
-LOG_DIR = Path(str(files("app"))).parent / "logs"  # 日志目录
+LOGGER_CONFIGURED = False  # 日志是否已初始化
+LOG_DIR = Path(__file__).parent.parent / "logs"  # 日志目录
+
+
+class DateSizeRotatingFileHandler(logging.Handler):
+    """同时按日期与文件大小滚动的日志处理器"""
+
+    terminator = "\n"
+
+    def __init__(self, log_dir: Path, max_bytes: int, encoding: str = "utf-8"):
+        super().__init__()
+        self.log_dir = log_dir  # 日志输出目录
+        self.max_bytes = max_bytes  # 单个文件最大大小（字节）
+        self.encoding = encoding  # 输出编码
+        self.current_date = None  # 当前日期（同日内按大小滚动）
+        self.sequence = 0  # 同日日志序号
+        self.stream = None  # 当前文件流
+        self._open()
+
+    def _get_date_str(self) -> str:
+        """获取当前日期字符串"""
+        return datetime.now().strftime("%Y-%m-%d")
+
+    def _get_log_path(self) -> Path:
+        """获取当前日志路径"""
+        # 文件名：YYYY-MM-DD-sequence.jsonl
+        return self.log_dir / f"{self.current_date}-{self.sequence}.jsonl"
+
+    def _open(self) -> None:
+        """打开流"""
+        # 确保目录存在
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        if self.current_date is None:
+            self.current_date = self._get_date_str()
+        # 打开当前日志文件
+        path = self._get_log_path()
+        self.stream = open(path, "a", encoding=self.encoding)
+
+    def _should_rollover(self, record: logging.LogRecord) -> bool:
+        """判断是否需要滚动日志"""
+        # 日期变更直接滚动
+        if self.current_date != self._get_date_str():
+            return True
+        # 未设置大小限制则不滚动
+        if self.max_bytes <= 0:
+            return False
+        # 流未打开时强制滚动
+        if self.stream is None:
+            return True
+        # 写入后超限则滚动
+        msg = self.format(record)
+        msg_bytes = (msg + self.terminator).encode(self.encoding)
+        self.stream.flush()
+        return self.stream.tell() + len(msg_bytes) > self.max_bytes
+
+    def _do_rollover(self) -> None:
+        """执行日志滚动"""
+        if self.stream:
+            self.stream.close()  # 关闭旧文件
+        if self.current_date != self._get_date_str():  # 如果日期发生变化
+            self.sequence = 0  # 重置序号
+            self.current_date = self._get_date_str()  # 更新日期
+        else:  # 如果日期没变
+            self.sequence += 1  # 序号递增
+        self._open()  # 打开新文件
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """输出日志并处理滚动"""
+        try:
+            if self._should_rollover(record):
+                self._do_rollover()
+            msg = self.format(record)
+            assert self.stream is not None, "stream is None"
+            self.stream.write(msg + self.terminator)
+            self.stream.flush()
+        except Exception:
+            self.handleError(record)
+
+    def close(self) -> None:
+        """关闭流并清理"""
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+        super().close()
 
 
 def _parse_size(value: Any) -> int:
@@ -33,7 +114,15 @@ def _parse_size(value: Any) -> int:
     if raw.isdigit():
         return int(raw)
     # 识别带单位的字符串
-    units = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3}
+    units = {
+        "GB": 1024**3,
+        "MB": 1024**2,
+        "KB": 1024,
+        "G": 1024**3,
+        "M": 1024**2,
+        "K": 1024,
+        "B": 1,
+    }
     for unit, multiplier in units.items():
         if raw.endswith(unit):
             number = raw[: -len(unit)]
@@ -61,7 +150,7 @@ def _add_context_fields(logger, method_name, event_dict):
 
 
 def _drop_empty_fields(logger, method_name, event_dict):
-    """删除空的字段"""
+    """删除空值字段"""
     for key in list(event_dict.keys()):
         if key == "event":
             continue
@@ -72,99 +161,34 @@ def _drop_empty_fields(logger, method_name, event_dict):
 
 
 def _json_renderer(logger, method_name, event_dict):
+    """将 structlog 的 event 字段转为 message，并输出 JSON"""
+    # structlog 默认使用 event 作为主消息字段
     if "event" in event_dict:
         event_dict["message"] = event_dict.pop("event")
+    # 输出为 JSON 字符串
     return structlog.processors.JSONRenderer(ensure_ascii=False)(
         logger, method_name, event_dict
     )
 
 
-class DateSizeRotatingFileHandler(logging.Handler):
-    terminator = "\n"
-
-    def __init__(self, log_dir: Path, max_bytes: int, encoding: str = "utf-8"):
-        super().__init__()
-        self.log_dir = log_dir
-        self.max_bytes = max_bytes
-        self.encoding = encoding
-        self.current_date = None
-        self.sequence = 0
-        self.stream = None
-        self._open()
-
-    def _get_date_str(self) -> str:
-        return datetime.now().strftime("%Y-%m-%d")
-
-    def _get_log_path(self) -> Path:
-        base = self.log_dir / f"{self.current_date}.jsonl"
-        if self.sequence == 0:
-            return base
-        return self.log_dir / f"{self.current_date}.jsonl.{self.sequence}"
-
-    def _open(self) -> None:
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-        if self.current_date is None:
-            self.current_date = self._get_date_str()
-        path = self._get_log_path()
-        self.stream = open(path, "a", encoding=self.encoding)
-
-    def _should_rollover(self, record: logging.LogRecord) -> bool:
-        if self.current_date != self._get_date_str():
-            return True
-        if self.max_bytes <= 0:
-            return False
-        if self.stream is None:
-            return True
-        msg = self.format(record)
-        msg_bytes = (msg + self.terminator).encode(self.encoding)
-        self.stream.flush()
-        return self.stream.tell() + len(msg_bytes) > self.max_bytes
-
-    def _do_rollover(self) -> None:
-        if self.stream:
-            self.stream.close()
-        if self.current_date != self._get_date_str():
-            self.sequence = 0
-            self.current_date = self._get_date_str()
-        else:
-            self.sequence += 1
-        self._open()
-
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            if self._should_rollover(record):
-                self._do_rollover()
-            msg = self.format(record)
-            assert self.stream is not None, "stream is None"
-            self.stream.write(msg + self.terminator)
-            self.stream.flush()
-        except Exception:
-            self.handleError(record)
-
-    def close(self) -> None:
-        if self.stream:
-            self.stream.close()
-            self.stream = None
-        super().close()
-
-
-app_logger = structlog.get_logger("app")
-auth_logger = structlog.get_logger("auth")
-
-
-def _get_log_cfg(log_cfg: Any, name: str) -> LogCfg:
-    return getattr(log_cfg, name, log_cfg)
-
-
 def _setup_logger(cfg: LogCfg, logger_name: str, processors: list):
+    """配置并挂载 structlog 的输出处理器"""
+    # 获取并初始化 stdlib logger
     logger = logging.getLogger(logger_name)
+    # 清空历史 handler，避免重复输出
     logger.handlers.clear()
+    # 统一从 DEBUG 接收，再由 handler 自己控制级别
     logger.setLevel(logging.DEBUG)
+    # 禁止向 root 传播，避免被根 logger 再次输出
     logger.propagate = False
 
+    # 控制台输出
     if cfg.to_console:
+        # 控制台日志处理器
         console_handler = logging.StreamHandler(sys.stdout)
+        # 设置控制台日志级别
         console_handler.setLevel(cfg.to_console_level)
+        # 设置控制台日志打印格式
         console_handler.setFormatter(
             structlog.stdlib.ProcessorFormatter(
                 processor=structlog.dev.ConsoleRenderer(colors=True),
@@ -173,14 +197,17 @@ def _setup_logger(cfg: LogCfg, logger_name: str, processors: list):
         )
         logger.addHandler(console_handler)
 
+    # 文件输出（JSONL）
     if cfg.to_file:
-        log_dir = LOG_DIR / cfg.log_dir
+        # 文件日志处理器
         file_handler = DateSizeRotatingFileHandler(
-            log_dir=log_dir,
+            log_dir=LOG_DIR / cfg.log_dir,
             max_bytes=_parse_size(cfg.max_file_size),
             encoding="utf-8",
         )
+        # 设置文件日志级别
         file_handler.setLevel(cfg.to_file_level)
+        # 设计文件日志输出格式
         file_handler.setFormatter(
             structlog.stdlib.ProcessorFormatter(
                 processor=_json_renderer,
@@ -192,10 +219,12 @@ def _setup_logger(cfg: LogCfg, logger_name: str, processors: list):
 
 def setup_logger():
     """初始化日志配置"""
-    global _LOGGER_CONFIGURED
-    if _LOGGER_CONFIGURED:
+    global LOGGER_CONFIGURED
+    # 避免重复初始化
+    if LOGGER_CONFIGURED:
         return
 
+    # 处理器链：时间、等级、logger 名称、上下文、异常信息等
     processors = [
         structlog.processors.TimeStamper(fmt="iso", utc=False),
         structlog.stdlib.add_log_level,
@@ -206,6 +235,7 @@ def setup_logger():
         structlog.processors.format_exc_info,
     ]
 
+    # structlog 与 stdlib logging 的桥接配置
     structlog.configure(
         processors=processors
         + [structlog.stdlib.ProcessorFormatter.wrap_for_formatter],
@@ -213,11 +243,14 @@ def setup_logger():
         cache_logger_on_first_use=True,
     )
 
-    log_cfg = CFG.log
-    _setup_logger(_get_log_cfg(log_cfg, "app"), "app", processors)
-    _setup_logger(_get_log_cfg(log_cfg, "auth"), "auth", processors)
-    _LOGGER_CONFIGURED = True
+    # 应用配置
+    _setup_logger(CFG.log, "auth", processors)
+    LOGGER_CONFIGURED = True
 
+
+logger = structlog.get_logger("auth")
 
 if __name__ == "__main__":
+    # 简单测试：初始化日志并输出示例
     setup_logger()
+    logger.info("Logger initialized")
