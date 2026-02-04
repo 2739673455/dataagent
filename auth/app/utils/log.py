@@ -35,6 +35,10 @@ def _build_log_json(record):
         "message": record["message"],
     }
 
+    # 将 extra 中的信息添加到输出
+    extra = {k: v for k, v in record.get("extra", {}).items() if k != "json"}
+    log_json.update(extra)
+
     log_json = {k: v for k, v in log_json.items() if v}  # 滤空
     record["extra"]["json"] = json.dumps(log_json, ensure_ascii=False)
 
@@ -51,7 +55,7 @@ def _setup_console_logger(cfg: LogCfg):
             "<level>{message}</level>"
         ),
         colorize=True,
-        catch=False,
+        catch=True,
         enqueue=True,
     )
 
@@ -65,7 +69,7 @@ def _setup_file_logger(cfg: LogCfg):
         format="{extra[json]}",
         rotation=cfg.max_file_size,
         encoding="utf-8",
-        catch=False,
+        catch=True,
         enqueue=True,
     )
 
