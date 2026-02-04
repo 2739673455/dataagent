@@ -59,11 +59,12 @@ CREATE TABLE `group_user_rel` (
 ) COMMENT '组-用户关系';
 
 CREATE TABLE `refresh_token` (
-    `jti` VARCHAR(255) PRIMARY KEY COMMENT 'JWT唯一标识',
+    `jti` VARCHAR(255) NOT NULL COMMENT 'JWT唯一标识',
     `user_id` BIGINT NOT NULL COMMENT '用户ID',
     `create_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `expires_at` DATETIME NOT NULL COMMENT '过期时间',
     `yn` TINYINT NOT NULL DEFAULT 1 COMMENT '是否启用',
+    PRIMARY KEY (`jti`),
     FOREIGN KEY (`user_id`) REFERENCES `user` (`id`) ON DELETE CASCADE,
     INDEX idx_refresh_token_user_id (user_id)
 ) COMMENT '刷新令牌';

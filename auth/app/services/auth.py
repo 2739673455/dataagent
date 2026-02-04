@@ -1,3 +1,5 @@
+"""用户认证"""
+
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
@@ -12,7 +14,7 @@ from app.exceptions.auth import (
     InvalidAccessTokenError,
     InvalidRefreshTokenError,
 )
-from app.schemas.user import AccessTokenPayload, RefreshTokenPayload
+from app.schemas.auth import AccessTokenPayload, RefreshTokenPayload
 from app.services.database import get_auth_db
 from app.utils.context import user_id_ctx
 from fastapi import Cookie, Depends, Header
@@ -193,7 +195,7 @@ async def authenticate_refresh_token(
     # 设置 user_id 到 ContextVar
     user_id_ctx.set(str(payload.sub))
 
-    # 验证刷新令牌是否在数据库中且未被撤销
+    # 验证刷新令牌是否在数据库中且未撤销
     stmt = select(RefreshToken.yn, RefreshToken.expires_at).where(
         RefreshToken.jti == payload.jti, RefreshToken.user_id == payload.sub
     )
