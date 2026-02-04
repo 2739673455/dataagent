@@ -30,14 +30,14 @@ def _format_json(record):
         "method": method_ctx.get(),
         "path": path_ctx.get(),
         "user_id": user_id_ctx.get(),
-        "status": status_ctx.get("status"),
+        "status": status_ctx.get(),
         "response_time_ms": response_time_ms_ctx.get(),
         "message": record["message"],
     }
 
     log_json = {k: v for k, v in log_json.items() if v}  # 滤空
-
     return json.dumps(log_json, ensure_ascii=False)
+    # record["extra"]["json"] = json.dumps(log_json, ensure_ascii=False)
 
 
 def _setup_logger(cfg: LogCfg):
@@ -64,7 +64,7 @@ def _setup_logger(cfg: LogCfg):
         logger.add(
             sink=str(LOG_DIR / cfg.log_dir / "{time:YYYY-MM-DD}.jsonl"),
             level=cfg.to_file_level,
-            format=_format_json,
+            format="{extra[json]}",
             rotation=cfg.max_file_size,
             encoding="utf-8",
             catch=False,
@@ -77,5 +77,6 @@ def setup_logger():
     global LOGGER_CONFIGURED
     if not LOGGER_CONFIGURED:
         logger.remove()  # 移除默认的日志输出
+        logger.patch(lambda record: record["extra"].update(json=_format_json))
         _setup_logger(CFG.log)
         LOGGER_CONFIGURED = True
