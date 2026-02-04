@@ -36,8 +36,7 @@ def _format_json(record):
     }
 
     log_json = {k: v for k, v in log_json.items() if v}  # 滤空
-    return json.dumps(log_json, ensure_ascii=False)
-    # record["extra"]["json"] = json.dumps(log_json, ensure_ascii=False)
+    record["extra"]["json"] = json.dumps(log_json, ensure_ascii=False)
 
 
 def _setup_logger(cfg: LogCfg):
@@ -77,6 +76,6 @@ def setup_logger():
     global LOGGER_CONFIGURED
     if not LOGGER_CONFIGURED:
         logger.remove()  # 移除默认的日志输出
-        logger.patch(lambda record: record["extra"].update(json=_format_json))
+        logger.configure(patcher=_format_json)
         _setup_logger(CFG.log)
         LOGGER_CONFIGURED = True
