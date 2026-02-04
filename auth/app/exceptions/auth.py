@@ -1,29 +1,28 @@
 """认证异常"""
 
-
-class AuthenticationError(Exception): ...
-
-
-class InvalidAccessTokenError(AuthenticationError):
-    def __init__(self, message: str = "无效访问令牌"):
-        super().__init__(message)
+from app.exceptions.base import AuthError, PermissionDeniedError
 
 
-class ExpiredAccessTokenError(AuthenticationError):
-    def __init__(self, message: str = "访问令牌过期"):
-        super().__init__(message)
+class InvalidAccessTokenError(AuthError):
+    code = 1201
+    message = "无效访问令牌"
 
 
-class InvalidRefreshTokenError(AuthenticationError):
-    def __init__(self, message: str = "无效刷新令牌"):
-        super().__init__(message)
+class ExpiredAccessTokenError(AuthError):
+    code = 1202
+    message = "访问令牌过期"
 
 
-class ExpiredRefreshTokenError(AuthenticationError):
-    def __init__(self, message: str = "刷新令牌过期"):
-        super().__init__(message)
+class InvalidRefreshTokenError(AuthError):
+    code = 1203
+    message = "无效刷新令牌"
 
 
-class InsufficientPermissionsError(AuthenticationError):
-    def __init__(self, message: str = "权限不足"):
-        super().__init__(message)
+class ExpiredRefreshTokenError(AuthError):
+    code = 1204
+    message = "刷新令牌过期"
+
+
+class InsufficientPermissionsError(PermissionDeniedError):
+    code = 1301
+    message = "权限不足"

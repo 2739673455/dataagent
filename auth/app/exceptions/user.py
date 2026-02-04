@@ -1,39 +1,46 @@
 """用户异常"""
 
-
-class UserError(Exception): ...
-
-
-class EmailAlreadyExistsError(UserError):
-    def __init__(self, message: str = "邮箱已被注册"):
-        super().__init__(message)
+from app.exceptions.base import AppError, BadRequestError, ConflictError
 
 
-class UserNotFoundError(UserError):
-    def __init__(self, message: str = "用户不存在"):
-        super().__init__(message)
+class UserError(AppError):
+    code = 2000
+    message = "用户服务异常"
 
 
-class UserDisabledError(UserError):
-    def __init__(self, message: str = "用户已被禁用"):
-        super().__init__(message)
+class EmailAlreadyExistsError(ConflictError):
+    code = 2001
+    message = "邮箱已被注册"
 
 
-class InvalidCredentialsError(UserError):
-    def __init__(self, message: str = "密码错误"):
-        super().__init__(message)
+class UserNotFoundError(AppError):
+    code = 2002
+    message = "用户不存在"
+    status_code = 401
 
 
-class UserNameSameError(UserError):
-    def __init__(self, message: str = "用户名与原用户名相同"):
-        super().__init__(message)
+class UserDisabledError(AppError):
+    code = 2003
+    message = "用户已被禁用"
+    status_code = 403
 
 
-class UserEmailSameError(UserError):
-    def __init__(self, message: str = "邮箱与原邮箱相同"):
-        super().__init__(message)
+class InvalidCredentialsError(AppError):
+    code = 2004
+    message = "密码错误"
+    status_code = 401
 
 
-class UserPasswordSameError(UserError):
-    def __init__(self, message: str = "密码与原密码相同"):
-        super().__init__(message)
+class UserNameSameError(BadRequestError):
+    code = 2005
+    message = "用户名与原用户名相同"
+
+
+class UserEmailSameError(BadRequestError):
+    code = 2006
+    message = "邮箱与原邮箱相同"
+
+
+class UserPasswordSameError(BadRequestError):
+    code = 2007
+    message = "密码与原密码相同"

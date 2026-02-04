@@ -1,6 +1,5 @@
 from contextlib import asynccontextmanager
 
-import uvicorn
 from app.config import CFG
 from app.handlers import register_exception_handlers
 from app.middlewares import trace
@@ -43,4 +42,6 @@ async def health():
 app.include_router(api.router)
 
 if __name__ == "__main__":
+    import uvicorn
+
     uvicorn.run("app.main:app", host="0.0.0.0", port=6666)

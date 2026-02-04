@@ -1,5 +1,16 @@
 from typing import Annotated
 
+from app.schemas.auth import (
+    AccessTokenPayload,
+    LoginRequest,
+    LoginResponse,
+    RefreshTokenPayload,
+    RegisterRequest,
+    UpdateEmailRequest,
+    UpdatePasswordRequest,
+    UpdateUsernameRequest,
+    UserResponse,
+)
 from app.services.auth import (
     authenticate_access_token,
     authenticate_refresh_token,
@@ -23,18 +34,6 @@ from app.utils.context import user_id_ctx
 from app.utils.log import logger
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from auth.app.schemas.auth import (
-    AccessTokenPayload,
-    LoginRequest,
-    LoginResponse,
-    RefreshTokenPayload,
-    RegisterRequest,
-    UpdateEmailRequest,
-    UpdatePasswordRequest,
-    UpdateUsernameRequest,
-    UserResponse,
-)
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
