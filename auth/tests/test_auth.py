@@ -177,13 +177,16 @@ class TestAuthAPIBasic:
         tokens = register_response.json()
         access_token = tokens["access_token"]
 
+        # 清除自动保存的 refresh_token cookie
+        async_test_client.cookies.clear()
+
         # 使用 access_token 修改邮箱（应该失败，因为需要 refresh_token）
         response = await async_test_client.post(
             "/api/me/email",
             json={"email": "newemail@example.com"},
             headers={"Authorization": f"Bearer {access_token}"},
         )
-        assert response.status_code == 401
+        assert response.status_code == 422
 
     @pytest.mark.asyncio
     async def test_update_password(self, async_test_client):
@@ -194,7 +197,6 @@ class TestAuthAPIBasic:
             "/api/register", json=user_data
         )
         tokens = register_response.json()
-        access_token = tokens["access_token"]
         refresh_token = tokens["refresh_token"]
 
         # 修改密码（需要用 refresh_token，通过 cookie 传递）
@@ -284,12 +286,15 @@ class TestAuthAPIBasic:
         tokens = register_response.json()
         access_token = tokens["access_token"]
 
+        # 清除自动保存的 refresh_token cookie
+        async_test_client.cookies.clear()
+
         # 使用 access_token 刷新（应该失败，因为需要 refresh_token）
         response = await async_test_client.post(
             "/api/refresh",
             headers={"Authorization": f"Bearer {access_token}"},
         )
-        assert response.status_code == 401
+        assert response.status_code == 422
 
     @pytest.mark.asyncio
     async def test_logout(self, async_test_client):
