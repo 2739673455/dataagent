@@ -44,7 +44,7 @@ class InternalServerError(AppError):
 class ValidationError(AppError):
     code = 1100
     message = "参数校验失败"
-    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 class AuthError(AppError):
