@@ -88,7 +88,7 @@ class MyInit(DBInit):
             await conn.commit()
         except Exception as e:
             await conn.rollback()
-            logger.error(f"{sql_file_path.stem} 执行sql失败: {e}")
+            logger.exception(f"{sql_file_path.stem} 执行sql失败: {e}")
         finally:
             conn.close()
 

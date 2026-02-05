@@ -1,43 +1,80 @@
 import asyncio
-
-# 添加项目根目录到Python路径
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import logging
 from typing import AsyncGenerator, Generator
 
 import asyncmy
 import pytest
 import pytest_asyncio
+from app.config import CFG
+from app.main import app
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+TEST_DB_NAME = f"test_{CFG.db.database}"  # 测试数据库
 
-from app.config import CFG
-from app.main import app
-
-# 测试数据库配置
-TEST_DB_NAME = "auth_test"
-
-
-# 保存原始数据库名称
-ORIGINAL_DB_NAME = CFG.db.database
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logger = logging.getLogger(__name__)
 
 
-@pytest.fixture(scope="session", autouse=True)
-def set_test_database():
-    """设置测试数据库名称"""
-    # 修改配置使用测试数据库
-    CFG.db.database = TEST_DB_NAME
-    yield
-    # 恢复原始配置
-    CFG.db.database = ORIGINAL_DB_NAME
+async def create_test_database(conn_conf: dict, db_name: str):
+    """创建测试数据库"""
+    conn = await asyncmy.connect(**conn_conf)
+    try:
+        await conn.begin()
+        async with conn.cursor() as cur:
+            try:
+                await cur.execute(f"DROP DATABASE IF EXISTS {db_name}")
+            except Exception:
+                pass
+            await cur.execute(f"CREATE DATABASE {db_name} CHARACTER SET utf8mb4")
+        await conn.commit()
+    except Exception as e:
+        await conn.rollback()
+        logger.exception(f"Error creating database: {e}")
+        raise
+    finally:
+        conn.close()
 
 
-# 测试数据库配置
-TEST_DB_NAME = "auth_test"
+async def insert_data_into_test_db(conn_conf: dict, db_name: str, sql_file_path: Path):
+    """向测试数据库插入测试数据"""
+    conn = await asyncmy.connect(**conn_conf, db=db_name)
+    try:
+        with open(sql_file_path, "r", encoding="utf-8") as f:
+            sql = f.read()
+        await conn.begin()
+        async with conn.cursor() as cur:
+            await cur.execute(sql)
+        await conn.commit()
+    except Exception as e:
+        await conn.rollback()
+        logger.exception(f"{sql_file_path.stem} 执行sql失败: {e}")
+    finally:
+        conn.close()
+
+
+async def clear_test_database(conn_conf: dict, db_name: str):
+    """清理测试数据库"""
+    conn = await asyncmy.connect(**conn_conf)
+    try:
+        await conn.begin()
+        async with conn.cursor() as cur:
+            await cur.execute(f"DROP DATABASE IF EXISTS {db_name}")
+        await conn.commit()
+    finally:
+        conn.close()
 
 
 @pytest.fixture(scope="session")
@@ -57,84 +94,20 @@ async def setup_test_database():
         "port": CFG.db.port,
         "user": CFG.db.user,
         "password": CFG.db.password,
-        "autocommit": False,
     }
 
     # 创建测试数据库
-    conn = await asyncmy.connect(**conn_conf)
-    try:
-        await conn.begin()
-        async with conn.cursor() as cur:
-            try:
-                await cur.execute(f"DROP DATABASE IF EXISTS `{TEST_DB_NAME}`")
-            except Exception:
-                pass  # 数据库可能不存在，忽略错误
-            await cur.execute(f"CREATE DATABASE `{TEST_DB_NAME}` CHARACTER SET utf8mb4")
-        await conn.commit()
-    except Exception as e:
-        await conn.rollback()
-        print(f"Error creating database: {e}")
-        raise
-    finally:
-        conn.close()
+    await create_test_database(conn_conf, TEST_DB_NAME)
 
     # 初始化表结构
-    sql_file = Path(__file__).parent.parent / "app" / "sql" / "auth.sql"
-    if sql_file.exists():
-        conn = await asyncmy.connect(**conn_conf, db=TEST_DB_NAME)
-        try:
-            with open(sql_file, "r", encoding="utf-8") as f:
-                sql_content = f.read()
-
-            # 执行SQL语句
-            statements = []
-            current_statement = []
-            for line in sql_content.split("\n"):
-                stripped = line.strip()
-                if not stripped or stripped.startswith("--"):
-                    continue
-                current_statement.append(line)
-                if stripped.endswith(";"):
-                    statements.append("\n".join(current_statement))
-                    current_statement = []
-            if current_statement:
-                statements.append("\n".join(current_statement))
-
-            # 执行每条SQL语句
-            for statement in statements:
-                statement = statement.strip()
-                if statement:
-                    await conn.begin()
-                    try:
-                        async with conn.cursor() as cur:
-                            await cur.execute(statement)
-                        await conn.commit()
-                    except Exception as e:
-                        await conn.rollback()
-                        # 忽略DROP TABLE错误（表可能不存在）
-                        if (
-                            "DROP TABLE" not in statement
-                            and "DROP DATABASE" not in statement
-                        ):
-                            print(f"Error executing: {statement[:80]}... Error: {e}")
-                            raise e
-        except Exception as e:
-            print(f"Error in database setup: {e}")
-            raise
-        finally:
-            conn.close()
+    sql_file_path = Path(__file__).parent.parent / "app" / "sql" / "auth.sql"
+    if sql_file_path.exists():
+        await insert_data_into_test_db(conn_conf, TEST_DB_NAME, sql_file_path)
 
     yield
 
     # 清理测试数据库
-    conn = await asyncmy.connect(**conn_conf)
-    try:
-        await conn.begin()
-        async with conn.cursor() as cur:
-            await cur.execute(f"DROP DATABASE IF EXISTS `{TEST_DB_NAME}`")
-        await conn.commit()
-    finally:
-        conn.close()
+    await clear_test_database(conn_conf, TEST_DB_NAME)
 
 
 @pytest.fixture
