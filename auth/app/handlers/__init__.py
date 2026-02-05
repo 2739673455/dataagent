@@ -24,7 +24,14 @@ def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
 def validation_error_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
-    err = ValidationError(detail=exc.errors())
+    errors = []
+    for error in exc.errors():
+        errors.append({
+            "type": error["type"],
+            "loc": error["loc"],
+            "msg": error["msg"]
+        })
+    err = ValidationError(detail=errors)
     logger.warning("ValidationError", error=str(exc))
     return _response(err)
 
