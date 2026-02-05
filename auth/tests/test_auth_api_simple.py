@@ -134,3 +134,231 @@ class TestAuthAPIBasic:
             "/api/me/username", json={"username": "newname"}
         )
         assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_update_email(self, async_test_client):
+        """测试修改邮箱"""
+        # 先注册
+        user_data = gen_test_user()
+        register_response = await async_test_client.post(
+            "/api/register", json=user_data
+        )
+        tokens = register_response.json()
+        refresh_token = tokens["refresh_token"]
+
+        # 修改邮箱（需要用 refresh_token，通过 cookie 传递）
+        new_email = fake.email()
+        response = await async_test_client.post(
+            "/api/me/email",
+            json={"email": new_email},
+            cookies={"refresh_token": refresh_token},
+        )
+        assert response.status_code == 202
+        data = response.json()
+        assert "access_token" in data
+        assert "refresh_token" in data
+
+    @pytest.mark.asyncio
+    async def test_update_email_without_token(self, async_test_client):
+        """测试未携带令牌修改邮箱"""
+        response = await async_test_client.post(
+            "/api/me/email", json={"email": "newemail@example.com"}
+        )
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_update_email_with_access_token(self, async_test_client):
+        """测试使用 access_token 修改邮箱（应该失败）"""
+        # 先注册
+        user_data = gen_test_user()
+        register_response = await async_test_client.post(
+            "/api/register", json=user_data
+        )
+        tokens = register_response.json()
+        access_token = tokens["access_token"]
+
+        # 使用 access_token 修改邮箱（应该失败，因为 refresh_token 必须从 cookie 获取）
+        response = await async_test_client.post(
+            "/api/me/email",
+            json={"email": "newemail@example.com"},
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_update_password(self, async_test_client):
+        """测试修改密码"""
+        # 先注册
+        user_data = gen_test_user()
+        register_response = await async_test_client.post(
+            "/api/register", json=user_data
+        )
+        tokens = register_response.json()
+        access_token = tokens["access_token"]
+        refresh_token = tokens["refresh_token"]
+
+        # 修改密码（需要用 refresh_token，通过 cookie 传递）
+        new_password = fake.password()
+        response = await async_test_client.post(
+            "/api/me/password",
+            json={"password": new_password},
+            cookies={"refresh_token": refresh_token},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "access_token" in data
+        assert "refresh_token" in data
+
+        # 验证可以用新密码登录
+        login_response = await async_test_client.post(
+            "/api/login",
+            json={"email": user_data["email"], "password": new_password},
+        )
+        assert login_response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_update_password_without_token(self, async_test_client):
+        """测试未携带令牌修改密码"""
+        response = await async_test_client.post(
+            "/api/me/password", json={"password": "newpassword"}
+        )
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_update_password_short(self, async_test_client):
+        """测试修改密码过短"""
+        # 先注册
+        user_data = gen_test_user()
+        register_response = await async_test_client.post(
+            "/api/register", json=user_data
+        )
+        tokens = register_response.json()
+        refresh_token = tokens["refresh_token"]
+
+        # 修改密码为过短密码
+        response = await async_test_client.post(
+            "/api/me/password",
+            json={"password": "123"},
+            cookies={"refresh_token": refresh_token},
+        )
+        assert response.status_code in (400, 422)
+
+    @pytest.mark.asyncio
+    async def test_refresh_token(self, async_test_client):
+        """测试刷新令牌"""
+        # 先注册
+        user_data = gen_test_user()
+        register_response = await async_test_client.post(
+            "/api/register", json=user_data
+        )
+        tokens = register_response.json()
+        old_access_token = tokens["access_token"]
+        refresh_token = tokens["refresh_token"]
+
+        # 刷新令牌（通过 cookie 传递）
+        response = await async_test_client.post(
+            "/api/refresh",
+            cookies={"refresh_token": refresh_token},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "access_token" in data
+        assert "refresh_token" in data
+        # 新的 access_token 应该与旧的不同
+        assert data["access_token"] != old_access_token
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_without_token(self, async_test_client):
+        """测试未携带令牌刷新"""
+        response = await async_test_client.post("/api/refresh")
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_with_access_token(self, async_test_client):
+        """测试使用 access_token 刷新（应该失败）"""
+        # 先注册
+        user_data = gen_test_user()
+        register_response = await async_test_client.post(
+            "/api/register", json=user_data
+        )
+        tokens = register_response.json()
+        access_token = tokens["access_token"]
+
+        # 使用 access_token 刷新（应该失败，因为 refresh_token 必须从 cookie 获取）
+        response = await async_test_client.post(
+            "/api/refresh",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_logout(self, async_test_client):
+        """测试登出"""
+        # 先注册
+        user_data = gen_test_user()
+        register_response = await async_test_client.post(
+            "/api/register", json=user_data
+        )
+        tokens = register_response.json()
+        refresh_token = tokens["refresh_token"]
+
+        # 登出（通过 cookie 传递）
+        response = await async_test_client.post(
+            "/api/logout",
+            cookies={"refresh_token": refresh_token},
+        )
+        assert response.status_code == 200
+
+        # 登出后无法使用 refresh_token 刷新
+        response = await async_test_client.post(
+            "/api/refresh",
+            cookies={"refresh_token": refresh_token},
+        )
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_logout_without_token(self, async_test_client):
+        """测试未携带令牌登出"""
+        response = await async_test_client.post("/api/logout")
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_register_duplicate_email(self, async_test_client):
+        """测试注册重复邮箱"""
+        user_data = gen_test_user()
+        # 第一次注册
+        await async_test_client.post("/api/register", json=user_data)
+        # 第二次注册相同邮箱
+        response = await async_test_client.post("/api/register", json=user_data)
+        assert response.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_login_wrong_password(self, async_test_client):
+        """测试登录密码错误"""
+        # 先注册
+        user_data = gen_test_user()
+        await async_test_client.post("/api/register", json=user_data)
+        # 使用错误密码登录
+        login_data = {"email": user_data["email"], "password": "wrongpassword"}
+        response = await async_test_client.post("/api/login", json=login_data)
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_update_username_same(self, async_test_client):
+        """测试修改为相同用户名"""
+        # 先注册
+        user_data = gen_test_user()
+        register_response = await async_test_client.post(
+            "/api/register", json=user_data
+        )
+        tokens = register_response.json()
+        access_token = tokens["access_token"]
+
+        # 修改为相同用户名
+        headers = {"Authorization": f"Bearer {access_token}"}
+        response = await async_test_client.post(
+            "/api/me/username",
+            json={"username": user_data["username"]},
+            headers=headers,
+        )
+        assert response.status_code == 400
