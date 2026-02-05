@@ -12,12 +12,14 @@ def gen_test_user() -> dict:
 class TestAuthAPIBasic:
     """基础认证API测试类"""
 
+    # ==================== 健康检查 ====================
     def test_health_check(self, sync_test_client):
         """测试健康检查接口"""
         response = sync_test_client.get("/health")
         assert response.status_code == 200
         assert response.json() == {"status": "healthy"}
 
+    # ==================== 注册相关 ====================
     @pytest.mark.asyncio
     async def test_register_success(self, async_test_client):
         """测试注册成功"""
@@ -54,6 +56,17 @@ class TestAuthAPIBasic:
         assert response.status_code in (400, 422)
 
     @pytest.mark.asyncio
+    async def test_register_duplicate_email(self, async_test_client):
+        """测试注册重复邮箱"""
+        user_data = gen_test_user()
+        # 第一次注册
+        await async_test_client.post("/api/register", json=user_data)
+        # 第二次注册相同邮箱
+        response = await async_test_client.post("/api/register", json=user_data)
+        assert response.status_code == 409
+
+    # ==================== 登录相关 ====================
+    @pytest.mark.asyncio
     async def test_login_success(self, async_test_client):
         """测试登录成功"""
         # 先注册
@@ -75,6 +88,18 @@ class TestAuthAPIBasic:
         response = await async_test_client.post("/api/login", json=user_data)
         assert response.status_code == 401
 
+    @pytest.mark.asyncio
+    async def test_login_wrong_password(self, async_test_client):
+        """测试登录密码错误"""
+        # 先注册
+        user_data = gen_test_user()
+        await async_test_client.post("/api/register", json=user_data)
+        # 使用错误密码登录
+        login_data = {"email": user_data["email"], "password": "wrongpassword"}
+        response = await async_test_client.post("/api/login", json=login_data)
+        assert response.status_code == 401
+
+    # ==================== 获取用户信息 ====================
     @pytest.mark.asyncio
     async def test_get_me_without_token(self, async_test_client):
         """测试未携带令牌获取用户信息"""
@@ -108,6 +133,7 @@ class TestAuthAPIBasic:
         assert data["username"] == user_data["username"]
         assert "groups" in data
 
+    # ==================== 修改用户名 ====================
     @pytest.mark.asyncio
     async def test_update_username(self, async_test_client):
         """测试修改用户名"""
@@ -135,6 +161,27 @@ class TestAuthAPIBasic:
         )
         assert response.status_code == 401
 
+    @pytest.mark.asyncio
+    async def test_update_username_same(self, async_test_client):
+        """测试修改为相同用户名"""
+        # 先注册
+        user_data = gen_test_user()
+        register_response = await async_test_client.post(
+            "/api/register", json=user_data
+        )
+        tokens = register_response.json()
+        access_token = tokens["access_token"]
+
+        # 修改为相同用户名
+        headers = {"Authorization": f"Bearer {access_token}"}
+        response = await async_test_client.post(
+            "/api/me/username",
+            json={"username": user_data["username"]},
+            headers=headers,
+        )
+        assert response.status_code == 400
+
+    # ==================== 修改邮箱 ====================
     @pytest.mark.asyncio
     async def test_update_email(self, async_test_client):
         """测试修改邮箱"""
@@ -188,6 +235,7 @@ class TestAuthAPIBasic:
         )
         assert response.status_code == 422
 
+    # ==================== 修改密码 ====================
     @pytest.mark.asyncio
     async def test_update_password(self, async_test_client):
         """测试修改密码"""
@@ -244,6 +292,7 @@ class TestAuthAPIBasic:
         )
         assert response.status_code in (400, 422)
 
+    # ==================== 刷新令牌 ====================
     @pytest.mark.asyncio
     async def test_refresh_token(self, async_test_client):
         """测试刷新令牌"""
@@ -295,6 +344,7 @@ class TestAuthAPIBasic:
         )
         assert response.status_code == 422
 
+    # ==================== 登出 ====================
     @pytest.mark.asyncio
     async def test_logout(self, async_test_client):
         """测试登出"""
@@ -324,44 +374,3 @@ class TestAuthAPIBasic:
         """测试未携带令牌登出"""
         response = await async_test_client.post("/api/logout")
         assert response.status_code == 422
-
-    @pytest.mark.asyncio
-    async def test_register_duplicate_email(self, async_test_client):
-        """测试注册重复邮箱"""
-        user_data = gen_test_user()
-        # 第一次注册
-        await async_test_client.post("/api/register", json=user_data)
-        # 第二次注册相同邮箱
-        response = await async_test_client.post("/api/register", json=user_data)
-        assert response.status_code == 409
-
-    @pytest.mark.asyncio
-    async def test_login_wrong_password(self, async_test_client):
-        """测试登录密码错误"""
-        # 先注册
-        user_data = gen_test_user()
-        await async_test_client.post("/api/register", json=user_data)
-        # 使用错误密码登录
-        login_data = {"email": user_data["email"], "password": "wrongpassword"}
-        response = await async_test_client.post("/api/login", json=login_data)
-        assert response.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_update_username_same(self, async_test_client):
-        """测试修改为相同用户名"""
-        # 先注册
-        user_data = gen_test_user()
-        register_response = await async_test_client.post(
-            "/api/register", json=user_data
-        )
-        tokens = register_response.json()
-        access_token = tokens["access_token"]
-
-        # 修改为相同用户名
-        headers = {"Authorization": f"Bearer {access_token}"}
-        response = await async_test_client.post(
-            "/api/me/username",
-            json={"username": user_data["username"]},
-            headers=headers,
-        )
-        assert response.status_code == 400
