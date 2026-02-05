@@ -148,10 +148,10 @@ class TestAuthAPIBasic:
 
         # 修改邮箱（需要用 refresh_token，通过 cookie 传递）
         new_email = fake.email()
+        async_test_client.cookies.set("refresh_token", refresh_token)
         response = await async_test_client.post(
             "/api/me/email",
             json={"email": new_email},
-            cookies={"refresh_token": refresh_token},
         )
         assert response.status_code == 202
         data = response.json()
@@ -201,10 +201,9 @@ class TestAuthAPIBasic:
 
         # 修改密码（需要用 refresh_token，通过 cookie 传递）
         new_password = fake.password()
+        async_test_client.cookies.set("refresh_token", refresh_token)
         response = await async_test_client.post(
-            "/api/me/password",
-            json={"password": new_password},
-            cookies={"refresh_token": refresh_token},
+            "/api/me/password", json={"password": new_password}
         )
         assert response.status_code == 200
         data = response.json()
@@ -238,10 +237,10 @@ class TestAuthAPIBasic:
         refresh_token = tokens["refresh_token"]
 
         # 修改密码为过短密码
+        async_test_client.cookies.set("refresh_token", refresh_token)
         response = await async_test_client.post(
             "/api/me/password",
             json={"password": "123"},
-            cookies={"refresh_token": refresh_token},
         )
         assert response.status_code in (400, 422)
 
@@ -258,9 +257,9 @@ class TestAuthAPIBasic:
         refresh_token = tokens["refresh_token"]
 
         # 刷新令牌（通过 cookie 传递）
+        async_test_client.cookies.set("refresh_token", refresh_token)
         response = await async_test_client.post(
             "/api/refresh",
-            cookies={"refresh_token": refresh_token},
         )
         assert response.status_code == 200
         data = response.json()
@@ -308,16 +307,15 @@ class TestAuthAPIBasic:
         refresh_token = tokens["refresh_token"]
 
         # 登出（通过 cookie 传递）
+        async_test_client.cookies.set("refresh_token", refresh_token)
         response = await async_test_client.post(
             "/api/logout",
-            cookies={"refresh_token": refresh_token},
         )
         assert response.status_code == 200
 
         # 登出后无法使用 refresh_token 刷新
         response = await async_test_client.post(
             "/api/refresh",
-            cookies={"refresh_token": refresh_token},
         )
         assert response.status_code == 401
 
