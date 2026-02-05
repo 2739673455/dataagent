@@ -12,9 +12,9 @@ import pytest
 import pytest_asyncio
 from app.config import CFG
 from app.main import app
+from app.services import database
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 TEST_DB_NAME = f"test_{CFG.db.database}"  # 测试数据库
 
@@ -109,35 +109,24 @@ async def setup_test_database():
     await clear_test_database(conn_conf, TEST_DB_NAME)
 
 
-@pytest.fixture
-def test_db_url() -> str:
-    """获取测试数据库URL"""
-    return f"mysql+asyncmy://{CFG.db.user}:{CFG.db.password}@{CFG.db.host}:{CFG.db.port}/{TEST_DB_NAME}"
+@pytest_asyncio.fixture
+async def override_get_db() -> AsyncGenerator[None, None]:
+    """覆盖数据库依赖以使用测试数据库"""
+    # 清除全局引擎缓存
+    await database.close_all()
+    # 为测试数据库创建依赖
+    database.get_auth_db = database.get_db(
+        "test_auth",
+        f"mysql+asyncmy://{CFG.db.user}:{CFG.db.password}@{CFG.db.host}:{CFG.db.port}/{TEST_DB_NAME}",
+    )
+
+    yield
+
+    await database.close_all()
 
 
 @pytest_asyncio.fixture
-async def test_db_session(test_db_url: str) -> AsyncGenerator[AsyncSession, None]:
-    """创建测试数据库会话"""
-    engine = create_async_engine(
-        test_db_url,
-        echo=False,
-        pool_size=5,
-        max_overflow=10,
-    )
-    session_maker = async_sessionmaker(
-        engine,
-        class_=AsyncSession,
-        expire_on_commit=False,
-    )
-
-    async with session_maker() as session:
-        yield session
-
-    await engine.dispose()
-
-
-@pytest_asyncio.fixture
-async def async_test_client() -> AsyncGenerator[AsyncClient, None]:
+async def async_test_client(override_get_db) -> AsyncGenerator[AsyncClient, None]:
     """创建异步测试客户端"""
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"

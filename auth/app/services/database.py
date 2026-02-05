@@ -3,19 +3,13 @@ from typing import AsyncGenerator
 from app.config import CFG
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-# 存储数据库引擎的字典，键为数据库名称
-ENGINES = {}
-# 存储会话工厂的字典，键为数据库名称
-SESSION_MAKERS = {}
+ENGINES = {}  # 存储数据库引擎的字典，键为数据库名称
+SESSION_MAKERS = {}  # 存储会话工厂的字典，键为数据库名称
 
 
-def _get_engine(name: str):
+def _get_engine(name: str, db_url: str):
     """获取或创建数据库引擎"""
     if name not in ENGINES:
-        # 从配置中获取指定数据库的配置
-        db_cfg = CFG.db
-        # 构建数据库连接URL
-        db_url = f"mysql+asyncmy://{db_cfg.user}:{db_cfg.password}@{db_cfg.host}:{db_cfg.port}/{db_cfg.database}"
         # 创建异步数据库引擎
         ENGINES[name] = create_async_engine(
             db_url,
@@ -29,10 +23,10 @@ def _get_engine(name: str):
     return ENGINES[name]
 
 
-def _get_session_maker(name: str):
+def _get_session_maker(name: str, db_url: str):
     """获取或创建会话工厂"""
     if name not in SESSION_MAKERS:
-        engine = _get_engine(name)
+        engine = _get_engine(name, db_url)
         # 创建异步会话工厂
         SESSION_MAKERS[name] = async_sessionmaker(
             engine,
@@ -42,11 +36,11 @@ def _get_session_maker(name: str):
     return SESSION_MAKERS[name]
 
 
-def get_db(name: str):
+def get_db(name: str, db_url: str):
     """获取数据库会话依赖函数"""
 
     async def _get_db() -> AsyncGenerator[AsyncSession, None]:
-        session_maker = _get_session_maker(name)
+        session_maker = _get_session_maker(name, db_url)
         # 创建数据库会话上下文管理器
         async with session_maker() as db_session:
             try:
@@ -63,7 +57,12 @@ async def close_all():
     """关闭所有数据库引擎"""
     for engine in ENGINES.values():
         await engine.dispose()
+    ENGINES.clear()
+    SESSION_MAKERS.clear()
 
 
 # 创建认证数据库的依赖函数
-get_auth_db = get_db("auth")
+get_auth_db = get_db(
+    "auth",
+    f"mysql+asyncmy://{CFG.db.user}:{CFG.db.password}@{CFG.db.host}:{CFG.db.port}/{CFG.db.database}",
+)
