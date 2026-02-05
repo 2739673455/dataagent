@@ -109,7 +109,7 @@ class TestAuthAPIBasic:
         assert "groups" in data
 
     @pytest.mark.asyncio
-    async def test_update_username(self, async_test_client, test_user_data5):
+    async def test_update_username(self, async_test_client):
         """测试修改用户名"""
         # 先注册
         user_data = gen_test_user()
