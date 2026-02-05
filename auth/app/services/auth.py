@@ -32,7 +32,12 @@ def _generate_refresh_token(user_id: int) -> tuple:
     expire = datetime.now(BEIJING_TZ) + timedelta(
         days=CFG.auth.refresh_token_expire_days
     )  # 刷新令牌过期时间
-    payload = {"sub": str(user_id), "exp": expire.timestamp(), "jti": jti}
+    payload = {
+        "sub": str(user_id),
+        "exp": expire.timestamp(),
+        "jti": jti,
+        "typ": "refresh",
+    }
     token = jwt.encode(payload, CFG.auth.secret_key, CFG.auth.algorithm)
     return jti, expire, token
 
@@ -46,6 +51,7 @@ def _generate_access_token(user_id: int, scopes: list[str]) -> str:
         "sub": str(user_id),
         "exp": expire.timestamp(),
         "scope": " ".join(scopes),
+        "typ": "access",
     }
     token = jwt.encode(payload, CFG.auth.secret_key, CFG.auth.algorithm)
     return token
@@ -136,6 +142,8 @@ def _decode_access_token(
         payload = jwt.decode(access_token, CFG.auth.secret_key, [CFG.auth.algorithm])
         payload["scope"] = payload["scope"].split()
         payload = AccessTokenPayload(**payload)
+        if payload.typ != "access":
+            raise InvalidAccessTokenError  # token 类型不正确
         return payload
     except jwt.ExpiredSignatureError:
         raise ExpiredAccessTokenError  # 访问令牌过期
@@ -168,6 +176,8 @@ def _decode_refresh_token(
     try:
         payload = jwt.decode(refresh_token, CFG.auth.secret_key, [CFG.auth.algorithm])
         payload = RefreshTokenPayload(**payload)
+        if payload.typ != "refresh":
+            raise InvalidRefreshTokenError  # token 类型不正确
         return payload
     except jwt.ExpiredSignatureError:
         raise ExpiredRefreshTokenError  # 刷新令牌过期

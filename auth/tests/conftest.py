@@ -95,6 +95,8 @@ async def setup_test_database():
         "password": CFG.db.password,
     }
 
+    # 先清理测试数据库
+    await clear_test_database(conn_conf, TEST_DB_NAME)
     # 创建测试数据库
     await create_test_database(conn_conf, TEST_DB_NAME)
 

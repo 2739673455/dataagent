@@ -5,12 +5,14 @@ class AccessTokenPayload(BaseModel):
     sub: int
     exp: float
     scope: list[str]
+    typ: str
 
 
 class RefreshTokenPayload(BaseModel):
     sub: int
     exp: float
     jti: str
+    typ: str
 
 
 class RegisterRequest(BaseModel):

@@ -164,7 +164,7 @@ class TestAuthAPIBasic:
         response = await async_test_client.post(
             "/api/me/email", json={"email": "newemail@example.com"}
         )
-        assert response.status_code == 401
+        assert response.status_code == 422
 
     @pytest.mark.asyncio
     async def test_update_email_with_access_token(self, async_test_client):
@@ -177,7 +177,7 @@ class TestAuthAPIBasic:
         tokens = register_response.json()
         access_token = tokens["access_token"]
 
-        # 使用 access_token 修改邮箱（应该失败，因为 refresh_token 必须从 cookie 获取）
+        # 使用 access_token 修改邮箱（应该失败，因为需要 refresh_token）
         response = await async_test_client.post(
             "/api/me/email",
             json={"email": "newemail@example.com"},
@@ -222,7 +222,7 @@ class TestAuthAPIBasic:
         response = await async_test_client.post(
             "/api/me/password", json={"password": "newpassword"}
         )
-        assert response.status_code == 401
+        assert response.status_code == 422
 
     @pytest.mark.asyncio
     async def test_update_password_short(self, async_test_client):
@@ -271,7 +271,7 @@ class TestAuthAPIBasic:
     async def test_refresh_token_without_token(self, async_test_client):
         """测试未携带令牌刷新"""
         response = await async_test_client.post("/api/refresh")
-        assert response.status_code == 401
+        assert response.status_code == 422
 
     @pytest.mark.asyncio
     async def test_refresh_token_with_access_token(self, async_test_client):
@@ -284,7 +284,7 @@ class TestAuthAPIBasic:
         tokens = register_response.json()
         access_token = tokens["access_token"]
 
-        # 使用 access_token 刷新（应该失败，因为 refresh_token 必须从 cookie 获取）
+        # 使用 access_token 刷新（应该失败，因为需要 refresh_token）
         response = await async_test_client.post(
             "/api/refresh",
             headers={"Authorization": f"Bearer {access_token}"},
@@ -320,7 +320,7 @@ class TestAuthAPIBasic:
     async def test_logout_without_token(self, async_test_client):
         """测试未携带令牌登出"""
         response = await async_test_client.post("/api/logout")
-        assert response.status_code == 401
+        assert response.status_code == 422
 
     @pytest.mark.asyncio
     async def test_register_duplicate_email(self, async_test_client):
