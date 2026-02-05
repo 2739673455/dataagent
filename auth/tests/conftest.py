@@ -14,7 +14,6 @@ from app.config import CFG
 from app.main import app
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 TEST_DB_NAME = f"test_{CFG.db.database}"  # 测试数据库
@@ -138,47 +137,7 @@ async def test_db_session(test_db_url: str) -> AsyncGenerator[AsyncSession, None
 
 
 @pytest_asyncio.fixture
-async def clean_db(test_db_url: str):
-    """在每个测试后清理数据库数据"""
-    engine = create_async_engine(test_db_url, echo=False)
-    session_maker = async_sessionmaker(
-        engine, class_=AsyncSession, expire_on_commit=False
-    )
-
-    async with session_maker() as session:
-        yield session
-        # 清理数据
-        try:
-            await session.execute(text("DELETE FROM refresh_token"))
-        except:
-            pass
-        try:
-            await session.execute(text("DELETE FROM group_user_rel"))
-        except:
-            pass
-        try:
-            await session.execute(text("DELETE FROM group_scope_rel"))
-        except:
-            pass
-        try:
-            await session.execute(text("DELETE FROM user WHERE email != ''"))
-        except:
-            pass
-        try:
-            await session.execute(text("DELETE FROM `group` WHERE id > 1"))
-        except:
-            pass
-        try:
-            await session.execute(text("DELETE FROM scope WHERE id > 0"))
-        except:
-            pass
-        await session.commit()
-
-    await engine.dispose()
-
-
-@pytest_asyncio.fixture
-async def test_client() -> AsyncGenerator[AsyncClient, None]:
+async def async_test_client() -> AsyncGenerator[AsyncClient, None]:
     """创建异步测试客户端"""
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -188,68 +147,5 @@ async def test_client() -> AsyncGenerator[AsyncClient, None]:
 
 @pytest.fixture
 def sync_test_client() -> TestClient:
-    """创建同步测试客户端（仅用于健康检查等简单测试）"""
+    """创建同步测试客户端"""
     return TestClient(app)
-
-
-@pytest_asyncio.fixture
-async def async_client() -> AsyncGenerator[AsyncClient, None]:
-    """创建异步测试客户端"""
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
-        yield ac
-
-
-# 移除自动清理，因为会导致事件循环问题
-# 每个测试使用不同的邮箱来避免冲突
-
-
-@pytest.fixture
-def test_user_data() -> dict:
-    """测试用户数据"""
-    return {
-        "email": "test@example.com",
-        "username": "testuser",
-        "password": "testpass123",
-    }
-
-
-@pytest.fixture
-def test_user_data2() -> dict:
-    """第二个测试用户数据"""
-    return {
-        "email": "test2@example.com",
-        "username": "testuser2",
-        "password": "testpass456",
-    }
-
-
-@pytest.fixture
-def test_user_data3() -> dict:
-    """第三个测试用户数据"""
-    return {
-        "email": "test3@example.com",
-        "username": "testuser3",
-        "password": "testpass789",
-    }
-
-
-@pytest.fixture
-def test_user_data4() -> dict:
-    """第四个测试用户数据"""
-    return {
-        "email": "test4@example.com",
-        "username": "testuser4",
-        "password": "testpass000",
-    }
-
-
-@pytest.fixture
-def test_user_data5() -> dict:
-    """第五个测试用户数据"""
-    return {
-        "email": "test5@example.com",
-        "username": "testuser5",
-        "password": "testpass111",
-    }
