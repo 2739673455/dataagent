@@ -164,7 +164,7 @@ class TestAuthAPIBasic:
         response = await async_test_client.post(
             "/api/me/email", json={"email": "newemail@example.com"}
         )
-        assert response.status_code == 422
+        assert response.status_code == 401
 
     @pytest.mark.asyncio
     async def test_update_email_with_access_token(self, async_test_client):
@@ -183,7 +183,7 @@ class TestAuthAPIBasic:
             json={"email": "newemail@example.com"},
             headers={"Authorization": f"Bearer {access_token}"},
         )
-        assert response.status_code == 422
+        assert response.status_code == 401
 
     @pytest.mark.asyncio
     async def test_update_password(self, async_test_client):
@@ -222,7 +222,7 @@ class TestAuthAPIBasic:
         response = await async_test_client.post(
             "/api/me/password", json={"password": "newpassword"}
         )
-        assert response.status_code == 422
+        assert response.status_code == 401
 
     @pytest.mark.asyncio
     async def test_update_password_short(self, async_test_client):
@@ -271,7 +271,7 @@ class TestAuthAPIBasic:
     async def test_refresh_token_without_token(self, async_test_client):
         """测试未携带令牌刷新"""
         response = await async_test_client.post("/api/refresh")
-        assert response.status_code == 422
+        assert response.status_code == 401
 
     @pytest.mark.asyncio
     async def test_refresh_token_with_access_token(self, async_test_client):
@@ -320,7 +320,7 @@ class TestAuthAPIBasic:
     async def test_logout_without_token(self, async_test_client):
         """测试未携带令牌登出"""
         response = await async_test_client.post("/api/logout")
-        assert response.status_code == 422
+        assert response.status_code == 401
 
     @pytest.mark.asyncio
     async def test_register_duplicate_email(self, async_test_client):
