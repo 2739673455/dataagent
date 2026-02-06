@@ -1,4 +1,4 @@
 {
-    "python.defaultInterpreterPath": "~/agents/auth/.venv/bin/python",
+    "python.defaultInterpreterPath": "~/agents/e-commerce/.venv/bin/python",
     "python.terminal.activateEnvironment": false
 }
