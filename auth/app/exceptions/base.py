@@ -23,17 +23,6 @@ class AppError(Exception):
         if status_code is not None:
             self.status_code = status_code
 
-    def to_dict(self, trace_id: str | None = None) -> dict:
-        payload: dict[str, Any] = {
-            "code": self.code,
-            "message": str(self),
-        }
-        if self.detail is not None:
-            payload["detail"] = self.detail
-        if trace_id:
-            payload["trace_id"] = trace_id
-        return payload
-
 
 class InternalServerError(AppError):
     code = 1000
