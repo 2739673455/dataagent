@@ -5,9 +5,7 @@ from app.handlers import register_exception_handlers
 from app.middlewares import trace
 from app.routers import api
 from app.services import database
-from app.utils.log import (
-    setup_logger,
-)
+from app.utils.log import setup_logger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
