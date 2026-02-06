@@ -128,7 +128,7 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
-dev = [
+test = [
     { name = "faker" },
     { name = "httpx" },
     { name = "pytest" },
@@ -151,7 +151,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [
+test = [
     { name = "faker", specifier = ">=40.1.2" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "pytest", specifier = ">=8.0.0" },

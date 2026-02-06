@@ -1,4 +1,4 @@
-# 安装所有依赖
+# 安装依赖
 ```bash
 uv sync
 ```
@@ -10,7 +10,7 @@ uv run -m app.main
 
 # 安装测试依赖
 ```bash
-uv sync --group dev
+uv sync --group test
 ```
 
 # 运行测试
