@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 def _build_response(
     status_code: int, code: int, exc_type: str, message: str, detail: str | None = None
 ) -> JSONResponse:
+    """构造统一的错误响应 JSON"""
     payload = {"code": code, "exc_type": exc_type, "message": message}
     if detail:
         payload["detail"] = detail
@@ -19,6 +20,7 @@ def _build_response(
 
 
 def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+    """处理 AppError 及其子类异常"""
     status_code = exc.status_code
     code = exc.code
     exc_type = type(exc).__name__
@@ -38,6 +40,7 @@ def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
 def validation_error_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
+    """处理 Pydantic 参数校验错误"""
     status_code = 422
     code = 422
     exc_type = "ValidationError"
@@ -57,6 +60,7 @@ def validation_error_handler(
 
 
 def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    """处理 FastAPI 原生 HTTPException 异常"""
     status_code = exc.status_code
     code = exc.status_code
     exc_type = type(exc).__name__
@@ -74,6 +78,7 @@ def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse
 
 
 def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """处理所有未捕获的异常"""
     status_code = 500
     code = 500
     exc_type = type(exc).__name__
@@ -90,6 +95,7 @@ def unhandled_exception_handler(request: Request, exc: Exception) -> JSONRespons
 
 
 def register_exception_handlers(app) -> None:
+    """向 FastAPI 应用注册全局异常处理器"""
     app.add_exception_handler(AppError, app_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.add_exception_handler(HTTPException, http_exception_handler)
