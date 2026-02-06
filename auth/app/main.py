@@ -7,20 +7,17 @@ from app.routers import api
 from app.services import database
 from app.utils.log import (
     setup_logger,
-    # start_background_logging,
-    # stop_background_logging,
 )
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 
+# 生命周期管理
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    setup_logger()
-    # start_background_logging()
+    setup_logger()  # 初始化日志
     yield
-    # stop_background_logging()
-    await database.close_all()
+    await database.close_all()  # 关闭数据库引擎
 
 
 app = FastAPI(lifespan=lifespan)
