@@ -19,58 +19,73 @@ def _build_response(
 
 
 def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
-    logger.warning(
-        exc.message, code=exc.code, exc_type=type(exc).__name__, detail=exc.detail
-    )
+    status_code = exc.status_code
+    code = exc.code
+    exc_type = type(exc).__name__
+    message = exc.message
+    detail = exc.detail
+
+    logger.warning(message, code=code, exc_type=exc_type, detail=detail)
     return _build_response(
-        status_code=exc.status_code,
-        code=exc.code,
-        exc_type=type(exc).__name__,
-        message=exc.message,
-        detail=exc.detail,
+        status_code=status_code,
+        code=code,
+        exc_type=exc_type,
+        message=message,
+        detail=detail,
     )
 
 
 def validation_error_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
-    errors = [
-        {"type": e["type"], "loc": e["loc"], "msg": e["msg"]} for e in exc.errors()
-    ]
-    logger.warning(
-        "参数校验失败", code=422, exc_type="ValidationError", detail=str(errors)
+    status_code = 422
+    code = 422
+    exc_type = "ValidationError"
+    message = "参数校验失败"
+    detail = str(
+        [{"type": e["type"], "loc": e["loc"], "msg": e["msg"]} for e in exc.errors()]
     )
+
+    logger.warning(message, code=code, exc_type=exc_type, detail=detail)
     return _build_response(
-        status_code=422,
-        code=422,
-        exc_type="ValidationError",
-        message="参数校验失败",
-        detail=str(errors),
+        status_code=status_code,
+        code=code,
+        exc_type=exc_type,
+        message=message,
+        detail=detail,
     )
 
 
 def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    status_code = exc.status_code
+    code = exc.status_code
+    exc_type = type(exc).__name__
     message = exc.detail if isinstance(exc.detail, str) else "请求错误"
     detail = exc.detail if not isinstance(exc.detail, str) else None
-    logger.warning(
-        message, code=exc.status_code, exc_type=type(exc).__name__, detail=detail
-    )
+
+    logger.warning(message, code=code, exc_type=exc_type, detail=detail)
     return _build_response(
-        status_code=exc.status_code,
-        code=exc.status_code,
-        exc_type=type(exc).__name__,
+        status_code=status_code,
+        code=code,
+        exc_type=exc_type,
         message=message,
         detail=detail,
     )
 
 
 def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.exception(str(exc), code=500, exc_type=type(exc).__name__)
+    status_code = 500
+    code = 500
+    exc_type = type(exc).__name__
+    message = "内部服务器错误"
+    detail = str(exc)
+
+    logger.exception(message, code=code, exc_type=exc_type, detail=detail)
     return _build_response(
-        status_code=500,
-        code=500,
+        status_code=status_code,
+        code=code,
         exc_type="InternalServerError",
-        message="内部服务器错误",
+        message=message,
     )
 
 
