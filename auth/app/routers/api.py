@@ -1,8 +1,5 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, status
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.schemas.auth import (
     AccessTokenPayload,
     LoginRequest,
@@ -35,6 +32,8 @@ from app.services.user import (
 from app.utils.context import user_id_ctx
 from app.utils.database import get_auth_db
 from app.utils.log import logger
+from fastapi import APIRouter, Depends, Response, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
@@ -173,3 +172,12 @@ async def api_logout(
     logger.info("User logout")
     # 撤销旧的刷新令牌
     await revoke_refresh_token(db_session, payload.jti, payload.sub)
+
+
+@router.post("/authorization")
+async def api_authorization(
+    payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
+):
+    """验证访问令牌"""
+    logger.info("Authorization")
+    return payload

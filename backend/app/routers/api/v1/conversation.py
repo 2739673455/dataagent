@@ -1,8 +1,5 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.schemas.conversation import (
     ConversationListResponse,
     ConversationResponse,
@@ -10,16 +7,16 @@ from app.schemas.conversation import (
     DeleteConversationRequest,
     UpdateConversationRequest,
 )
-from app.schemas.user import AccessTokenPayload
-from app.services.auth import authenticate_access_token
 from app.services.conversation import (
     create_conversation,
     delete_conversations,
     get_conversations,
     update_conversation_data,
 )
-from app.services.database import get_app_db
-from app.utils.log import app_logger
+from app.utils.database import get_app_db
+from app.utils.log import logger
+from fastapi import APIRouter, Depends, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/conversation", tags=["对话管理"])
 
@@ -31,7 +28,7 @@ async def api_get_conversations(
 ) -> ConversationListResponse:
     """获取对话列表"""
     conversations = await get_conversations(db_session, payload.sub)
-    app_logger.info(f"User get conversations: {[i.id for i in conversations]}")
+    logger.info(f"User get conversations: {[i.id for i in conversations]}")
     return ConversationListResponse(
         conversations=[
             ConversationResponse(
@@ -57,7 +54,7 @@ async def api_create_conversation(
     conversation = await create_conversation(
         db_session, payload.sub, request.model_config_id
     )
-    app_logger.info(f"User create conversation: {conversation.id}")
+    logger.info(f"User create conversation: {conversation.id}")
     return ConversationResponse(
         conversation_id=conversation.id,
         title=None,
@@ -73,7 +70,7 @@ async def api_update_conversation(
     payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
 ):
     """修改对话信息"""
-    app_logger.info(
+    logger.info(
         f"User update conversation: conversation={request.conversation_id}, model_config_id={request.model_config_id}"
     )
     conversation_data = {}
@@ -93,5 +90,5 @@ async def api_delete_conversations(
     payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
 ):
     """删除对话"""
-    app_logger.info(f"User delete conversations: {request.ids}")
+    logger.info(f"User delete conversations: {request.ids}")
     await delete_conversations(db_session, request.ids)

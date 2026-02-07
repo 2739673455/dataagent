@@ -1,10 +1,6 @@
 from pydantic import BaseModel, Field
 
 
-class CanCreateModelConfigRequest(BaseModel):
-    config_count: int = Field(..., description="模型配置数量")
-
-
 class CreateModelConfigRequest(BaseModel):
     name: str | None = Field(None, description="配置名称")
     base_url: str = Field(..., description="OpenAI 兼容 API URL")
@@ -24,11 +20,6 @@ class UpdateModelConfigRequest(BaseModel):
 
 class DeleteModelConfigRequest(BaseModel):
     ids: list[int] = Field(..., description="配置ID列表")
-
-
-class CanCreateModelConfigResponse(BaseModel):
-    can_create: bool
-    limit: int
 
 
 class ModelConfigResponse(BaseModel):

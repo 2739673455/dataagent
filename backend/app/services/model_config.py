@@ -1,7 +1,6 @@
 from collections.abc import Sequence
 
 from app.entities.chat import ModelConfig
-from app.exceptions.model_config import ModelConfigNotFoundError
 from faker import Faker
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession

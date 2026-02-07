@@ -11,15 +11,14 @@ from app.schemas.chat import (
     SendMessageRequest,
     WebSocketChatRequest,
 )
-from app.schemas.user import AccessTokenPayload
 from app.services.chat import (
     generate_title,
     get_messages,
     image_url_to_get_presigned_url,
     stream_response,
 )
-from app.services.database import get_app_db
 from app.utils.cos import generate_cos_key, get_upload_presigned_url
+from app.utils.database import get_app_db
 from app.utils.log import logger
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse

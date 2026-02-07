@@ -5,7 +5,7 @@ from app.config import CFG
 from app.handlers import register_exception_handlers
 from app.middlewares import auth, trace
 from app.routers import api
-from app.services import database
+from app.utils import database
 from app.utils.log import setup_logger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
