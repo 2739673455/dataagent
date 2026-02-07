@@ -1,17 +1,10 @@
 SET GLOBAL time_zone = '+08:00';
-
 SET SESSION time_zone = '+08:00';
-
 DROP TABLE IF EXISTS `refresh_token`;
-
 DROP TABLE IF EXISTS `group_user_rel`;
-
 DROP TABLE IF EXISTS `group_scope_rel`;
-
 DROP TABLE IF EXISTS `user`;
-
 DROP TABLE IF EXISTS `group`;
-
 DROP TABLE IF EXISTS `scope`;
 
 CREATE TABLE `scope` (
@@ -70,5 +63,4 @@ CREATE TABLE `refresh_token` (
 ) COMMENT '刷新令牌';
 
 -- 初始化数据
-
 INSERT INTO `group` (`name`) VALUES ('normal');
