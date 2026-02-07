@@ -24,18 +24,21 @@ class LogCfg(BaseModel):
     max_file_size: str
 
 
-# 认证配置
-class AuthCfg(BaseModel):
-    secret_key: str
-    algorithm: str
-    access_token_expire_minutes: int
-    refresh_token_expire_days: int
+# 腾讯云 COS
+class COSCfg(BaseModel):
+    bucket: str
+    secret_id: str  # 腾讯云COS SECRET-ID
+    secret_key: str  # 腾讯云COS SECRET-KEY
+    region: str  # 存储桶所在地域
+    token: str | None = None  # 临时密钥Token，如不使用则置为None
+    scheme: str  # 访问协议，http或https
 
 
 class Cfg(BaseModel):
     db: DBCfg
     log: LogCfg
-    auth: AuthCfg
+    cos: COSCfg
+    encryption_key: str
     cors_origins: list[str]
 
 
