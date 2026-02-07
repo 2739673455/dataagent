@@ -2,32 +2,19 @@ import asyncio
 import json
 from collections.abc import Sequence
 
-from openai import (
-    APIError as OpenAIError,
-)
-from openai import (
-    AuthenticationError as OpenAIAuthenticationError,
-)
-from openai import (
-    BadRequestError as OpenAIBadRequestError,
-)
-from openai import (
-    InternalServerError as OpenAIInternalError,
-)
-from openai import (
-    NotFoundError as OpenAINotFoundError,
-)
-from openai import (
-    RateLimitError as OpenAIRateLimitError,
-)
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.entities.chat import Message
 from app.schemas.chat import MessageItem
 from app.utils.call_model import call_model, stream_model
 from app.utils.cos import extract_cos_key, get_get_presigned_url
 from app.utils.log import app_logger
+from openai import APIError as OpenAIError
+from openai import AuthenticationError as OpenAIAuthenticationError
+from openai import BadRequestError as OpenAIBadRequestError
+from openai import InternalServerError as OpenAIInternalError
+from openai import NotFoundError as OpenAINotFoundError
+from openai import RateLimitError as OpenAIRateLimitError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def get_messages(
@@ -182,7 +169,7 @@ async def generate_title(
         [
             {
                 "role": "system",
-                "content": "你需要为下面的用户提问生成一句简短的概括性标题，字数尽量在20字以内，不要带有句号",
+                "content": "你需要为下面的用户消息生成20以内的简短标题，仅输出标题内容",
             },
             {"role": "user", "content": content},
         ],
