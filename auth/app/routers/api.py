@@ -1,5 +1,8 @@
 from typing import Annotated
 
+from fastapi import APIRouter, Depends, Response, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.schemas.auth import (
     AccessTokenPayload,
     LoginRequest,
@@ -18,7 +21,6 @@ from app.services.auth import (
     revoke_all_refresh_tokens,
     revoke_refresh_token,
 )
-from app.services.database import get_auth_db
 from app.services.user import (
     add_user_in_db,
     get_default_group,
@@ -31,9 +33,8 @@ from app.services.user import (
     verify_password,
 )
 from app.utils.context import user_id_ctx
+from app.utils.database import get_auth_db
 from app.utils.log import logger
-from fastapi import APIRouter, Depends, Response, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api", tags=["auth"])
 

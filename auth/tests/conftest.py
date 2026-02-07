@@ -10,11 +10,12 @@ from typing import AsyncGenerator, Generator
 import asyncmy
 import pytest
 import pytest_asyncio
-from app.config import CFG
-from app.main import app
-from app.services import database
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+
+from app.config import CFG
+from app.main import app
+from app.utils import database
 
 TEST_DB_NAME = f"test_{CFG.db.database}"  # 测试数据库
 
