@@ -6,13 +6,7 @@ from app.entities.chat import Message
 from app.schemas.chat import MessageItem
 from app.utils.call_model import call_model, stream_model
 from app.utils.cos import extract_cos_key, get_get_presigned_url
-from app.utils.log import app_logger
-from openai import APIError as OpenAIError
-from openai import AuthenticationError as OpenAIAuthenticationError
-from openai import BadRequestError as OpenAIBadRequestError
-from openai import InternalServerError as OpenAIInternalError
-from openai import NotFoundError as OpenAINotFoundError
-from openai import RateLimitError as OpenAIRateLimitError
+from app.utils.log import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -100,7 +94,7 @@ async def stream_response(
 ):
     """流式返回AI回复"""
     try:
-        app_logger.info(f"Received messages ({len(messages)})")
+        logger.info(f"Received messages ({len(messages)})")
         # 转换图片url为cos_url
         await image_url_to_cos_url(messages)
         # 用户消息存入数据库
@@ -118,7 +112,7 @@ async def stream_response(
             json.dumps({"type": "user_message_id", "user_message_id": user_message_id})
             + "\n"
         )
-        app_logger.info(f"User message id: {user_message_id}")
+        logger.info(f"User message id: {user_message_id}")
 
         # 流式调用模型
         chunks: list[str] = []
@@ -141,20 +135,10 @@ async def stream_response(
 
         # 发送完成信号，返回AI消息id
         yield (json.dumps({"type": "complete", "ai_message_id": ai_message.id}) + "\n")
-        app_logger.info(f"AI message id: {ai_message.id}")
+        logger.info(f"AI message id: {ai_message.id}")
 
-    except (
-        OpenAINotFoundError,
-        OpenAIBadRequestError,
-        OpenAIAuthenticationError,
-        OpenAIRateLimitError,
-        OpenAIInternalError,
-        OpenAIError,
-    ) as e:
-        app_logger.error(f"OpenAI API error: {e}")
-        yield json.dumps({"type": "error", "detail": str(e)}, ensure_ascii=False) + "\n"
     except Exception as e:
-        app_logger.error(f"Unexpected error in stream_response: {e}")
+        logger.error(f"Error in stream_response: {e}")
         yield json.dumps({"type": "error", "detail": str(e)}, ensure_ascii=False) + "\n"
 
 

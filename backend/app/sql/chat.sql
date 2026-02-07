@@ -1,11 +1,7 @@
 SET GLOBAL time_zone = '+08:00';
-
 SET SESSION time_zone = '+08:00';
-
 DROP TABLE IF EXISTS `message`;
-
 DROP TABLE IF EXISTS `conversation`;
-
 DROP TABLE IF EXISTS `model_config`;
 
 CREATE TABLE `model_config` (
@@ -38,7 +34,7 @@ CREATE TABLE `message` (
     `id` BIGINT AUTO_INCREMENT COMMENT '消息ID',
     `user_id` BIGINT NOT NULL COMMENT '用户ID',
     `conversation_id` BIGINT NOT NULL COMMENT '对话ID',
-    `role` VARCHAR(20) NOT NULL COMMENT '角色 (user/assistant)',
+    `role` VARCHAR(20) NOT NULL COMMENT '角色 (user/assistant/tool)',
     `content` TEXT NOT NULL COMMENT '消息内容 (JSON 字符串)',
     `timestamp` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '发送时间',
     PRIMARY KEY (`id`),
