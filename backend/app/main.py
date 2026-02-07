@@ -3,9 +3,9 @@ from contextlib import asynccontextmanager
 import uvicorn
 from app.config import CFG
 from app.handlers import register_exception_handlers
-from app.middleware import log_middleware
-from app.routers.api import api
-from app.services.database import db_manager
+from app.middlewares import auth, trace
+from app.routers import api
+from app.services import database
 from app.utils.log import setup_logger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,14 +15,15 @@ from fastapi.middleware.cors import CORSMiddleware
 async def lifespan(app: FastAPI):
     setup_logger()
     yield
-    await db_manager.close_all()
+    await database.close_all()
 
 
 app = FastAPI(lifespan=lifespan)
 
+# 认证中间件
+app.middleware("http")(auth.middleware)
 # 日志中间件
-app.middleware("http")(log_middleware)
-
+app.middleware("http")(trace.middleware)
 # CORS 中间件
 app.add_middleware(
     CORSMiddleware,
