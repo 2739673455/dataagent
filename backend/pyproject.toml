@@ -9,7 +9,6 @@ dependencies = [
     "cos-python-sdk-v5>=1.9.41",
     "cryptography>=46.0.4",
     "deepagents>=0.3.11",
-    "faker>=40.4.0",
     "fastapi[standard]>=0.128.0",
     "loguru>=0.7.3",
     "omegaconf>=2.3.0",

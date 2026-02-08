@@ -2,20 +2,20 @@ from pydantic import BaseModel, Field
 
 
 class CreateModelConfigRequest(BaseModel):
-    name: str | None = Field(None, description="配置名称")
+    name: str | None = Field(default=None, description="配置名称")
     base_url: str = Field(..., description="OpenAI 兼容 API URL")
-    model_name: str | None = Field(None, description="模型名称")
-    api_key: str | None = Field(None, description="API 密钥")
-    params: dict | None = Field(None, description="配置参数")
+    model_name: str | None = Field(default=None, description="模型名称")
+    api_key: str | None = Field(default=None, description="API 密钥")
+    params: dict | None = Field(default=None, description="配置参数")
 
 
 class UpdateModelConfigRequest(BaseModel):
     config_id: int = Field(..., description="配置ID")
-    name: str = Field(..., description="配置名称")
+    name: str | None = Field(default=None, description="配置名称")
     base_url: str = Field(..., description="OpenAI 兼容 API URL")
-    model_name: str | None = Field(None, description="模型名称")
-    api_key: str | None = Field(None, description="API 密钥")
-    params: dict | None = Field(None, description="配置参数")
+    model_name: str | None = Field(default=None, description="模型名称")
+    api_key: str | None = Field(default=None, description="API 密钥")
+    params: dict | None = Field(default=None, description="配置参数")
 
 
 class DeleteModelConfigRequest(BaseModel):

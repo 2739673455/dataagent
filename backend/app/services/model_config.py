@@ -1,12 +1,10 @@
+import random
 from collections.abc import Sequence
 
 from app.entities.chat import ModelConfig
 from app.utils.crypto import decrypt, encrypt
-from faker import Faker
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-faker = Faker()
 
 
 async def get_model_configs(
@@ -32,7 +30,7 @@ async def create_model_config(
 ) -> ModelConfig:
     """创建模型配置"""
     model_config = ModelConfig(
-        name=name or model_name or faker.word(),
+        name=name or model_name or f"Model Config {random.randint(0, 1000)}",
         base_url=base_url,
         model_name=model_name,
         api_key=encrypt(api_key),
@@ -52,7 +50,7 @@ async def create_model_config(
 async def update_model_config(
     db_session: AsyncSession,
     id: int,
-    name: str,
+    name: str | None,
     base_url: str,
     model_name: str | None,
     api_key: str | None,
@@ -64,7 +62,7 @@ async def update_model_config(
     model_config = result.scalar_one_or_none()
     if not model_config:
         raise ModelConfigNotFoundError  # 模型配置不存在
-    model_config.name = name
+    model_config.name = name or model_name or f"Model Config {random.randint(0, 1000)}"
     model_config.base_url = base_url
     model_config.model_name = model_name
     model_config.api_key = encrypt(api_key)

@@ -53,13 +53,13 @@ async def api_create_model_config(
 ) -> ModelConfigResponse:
     """创建模型配置"""
     model_config = await create_model_config(
-        db_session,
-        request.state.payload.sub,
-        body.name,
-        body.base_url,
-        body.model_name,
-        body.api_key,
-        body.params,
+        db_session=db_session,
+        user_id=request.state.payload.sub,
+        name=body.name,
+        base_url=body.base_url,
+        model_name=body.model_name,
+        api_key=body.api_key,
+        params=body.params,
     )
     logger.info(f"User create model config: {model_config.id}")
     return ModelConfigResponse(
@@ -76,17 +76,17 @@ async def api_create_model_config(
 async def api_update_model_config(
     body: UpdateModelConfigRequest,
     db_session: Annotated[AsyncSession, Depends(get_app_db)],
-):
+) -> ModelConfigResponse:
     """修改模型配置"""
     logger.info(f"User update model config: {body.config_id}")
     await update_model_config(
-        db_session,
-        body.config_id,
-        body.name,
-        body.base_url,
-        body.model_name,
-        body.api_key,
-        body.params,
+        db_session=db_session,
+        id=body.config_id,
+        name=body.name,
+        base_url=body.base_url,
+        model_name=body.model_name,
+        api_key=body.api_key,
+        params=body.params,
     )
 
 
