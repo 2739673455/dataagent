@@ -16,7 +16,7 @@ from app.services.model_config import (
 from app.utils.crypto import decrypt, encrypt
 from app.utils.database import get_app_db
 from app.utils.log import logger
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/model_config", tags=["模型配置管理"])
@@ -24,11 +24,10 @@ router = APIRouter(prefix="/model_config", tags=["模型配置管理"])
 
 @router.get("", response_model=ModelConfigListResponse)
 async def api_get_model_configs(
-    db_session: Annotated[AsyncSession, Depends(get_app_db)],
-    payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
+    request: Request, db_session: Annotated[AsyncSession, Depends(get_app_db)]
 ) -> ModelConfigListResponse:
     """获取模型配置列表"""
-    model_configs = await get_model_configs(db_session, payload.sub)
+    model_configs = await get_model_configs(db_session, request.state.payload.sub)
     logger.info(f"User get model configs: {[i.id for i in model_configs]}")
     return ModelConfigListResponse(
         configs=[
@@ -78,7 +77,6 @@ async def api_create_model_config(
 async def api_update_model_config(
     request: UpdateModelConfigRequest,
     db_session: Annotated[AsyncSession, Depends(get_app_db)],
-    payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
 ):
     """修改模型配置"""
     logger.info(f"User update model config: {request.config_id}")
@@ -97,7 +95,6 @@ async def api_update_model_config(
 async def api_delete_model_configs(
     request: DeleteModelConfigRequest,
     db_session: Annotated[AsyncSession, Depends(get_app_db)],
-    payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
 ):
     """批量删除模型配置"""
     logger.info(f"User delete model configs: {request.ids}")
