@@ -21,6 +21,6 @@ cos: # 腾讯云COS配置
   token: null # 临时密钥Token，如不使用则置为null
   scheme: https # 访问协议，http或https
 
-authentication_url: http://127.0.0.1:7777 # 认证服务URL
+verify_access_token_url: http://127.0.0.1:7777 # 验证访问令牌URL
 encryption_key: ${oc.env:ENCRYPTION_KEY} # 模型访问API-Key加密密钥，16、24或32字节长
 cors_origins: [] # 允许跨域请求的源
