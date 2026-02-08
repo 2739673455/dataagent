@@ -174,10 +174,10 @@ async def api_logout(
     await revoke_refresh_token(db_session, payload.jti, payload.sub)
 
 
-@router.post("/authorization")
-async def api_authorization(
+@router.post("/verify_access_token")
+async def api_verify_access_token(
     payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
 ):
     """验证访问令牌"""
-    logger.info("Authorization")
+    logger.info("Verify access token")
     return payload

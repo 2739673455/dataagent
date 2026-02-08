@@ -38,6 +38,7 @@ class Cfg(BaseModel):
     db: DBCfg
     log: LogCfg
     cos: COSCfg
+    authentication_url: str
     encryption_key: str
     cors_origins: list[str]
 

@@ -346,7 +346,7 @@ class TestAuthAPIBasic:
 
     # ==================== 验证令牌 ====================
     @pytest.mark.asyncio
-    async def test_authorization_success(self, async_test_client):
+    async def test_verify_access_token_success(self, async_test_client):
         """测试验证有效访问令牌"""
         # 先注册
         user_data = gen_test_user()
@@ -358,7 +358,9 @@ class TestAuthAPIBasic:
 
         # 验证令牌
         headers = {"Authorization": f"Bearer {access_token}"}
-        response = await async_test_client.post("/api/authorization", headers=headers)
+        response = await async_test_client.post(
+            "/api/verify_access_token", headers=headers
+        )
         assert response.status_code == 200
         data = response.json()
         assert "sub" in data
@@ -366,16 +368,18 @@ class TestAuthAPIBasic:
         assert "exp" in data
 
     @pytest.mark.asyncio
-    async def test_authorization_without_token(self, async_test_client):
+    async def test_verify_access_token_without_token(self, async_test_client):
         """测试未携带令牌验证"""
-        response = await async_test_client.post("/api/authorization")
+        response = await async_test_client.post("/api/verify_access_token")
         assert response.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_authorization_invalid_token(self, async_test_client):
+    async def test_verify_access_token_invalid_token(self, async_test_client):
         """测试使用无效令牌验证"""
         headers = {"Authorization": "Bearer invalid_token"}
-        response = await async_test_client.post("/api/authorization", headers=headers)
+        response = await async_test_client.post(
+            "/api/verify_access_token", headers=headers
+        )
         assert response.status_code == 401
 
     # ==================== 登出 ====================
