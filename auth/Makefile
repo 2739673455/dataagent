@@ -27,5 +27,6 @@ clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name ".venv" -exec rm -rf {} + 2>/dev/null || true
+	find . -type d -name "logs" -exec rm -rf {} + 2>/dev/null || true
 	find . -name "*.pyc" -delete 2>/dev/null || true
 	find . -name ".coverage" -delete 2>/dev/null || true
