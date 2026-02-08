@@ -35,7 +35,8 @@ class COSCfg(BaseModel):
 
 
 class TavilyCfg(BaseModel):
-    mcp_url: str
+    api_key: str  # Tavily API Key
+    mcp_url: str  # MCP 服务器 URL
 
 
 # 工具配置
