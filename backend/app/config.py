@@ -34,10 +34,20 @@ class COSCfg(BaseModel):
     scheme: str  # 访问协议，http或https
 
 
+class TavilyCfg(BaseModel):
+    api_key: str
+
+
+# 工具配置
+class ToolCfg(BaseModel):
+    tavily: TavilyCfg
+
+
 class Cfg(BaseModel):
     db: DBCfg
     log: LogCfg
     cos: COSCfg
+    tool: ToolCfg
     verify_access_token_url: str
     encryption_key: str
     cors_origins: list[str]
