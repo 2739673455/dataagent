@@ -104,19 +104,21 @@ async def api_update_username(
     body: UpdateUsernameRequest,
     db_session: Annotated[AsyncSession, Depends(get_auth_db)],
     payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
-):
+) -> None:
     """修改用户名"""
     logger.info("User update username")
     await update_username(db_session, payload.sub, body.username)
 
 
-@router.post("/me/email", status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/me/email", status_code=status.HTTP_202_ACCEPTED, response_model=LoginResponse
+)
 async def api_update_email(
     body: UpdateEmailRequest,
     db_session: Annotated[AsyncSession, Depends(get_auth_db)],
     payload: Annotated[RefreshTokenPayload, Depends(authenticate_refresh_token)],
     response: Response,
-):
+) -> LoginResponse:
     """修改邮箱"""
     logger.info("User update email")
     # 修改邮箱
@@ -169,17 +171,17 @@ async def api_refresh(
 async def api_logout(
     db_session: Annotated[AsyncSession, Depends(get_auth_db)],
     payload: Annotated[RefreshTokenPayload, Depends(authenticate_refresh_token)],
-):
+) -> None:
     """用户登出"""
     logger.info("User logout")
     # 撤销旧的刷新令牌
     await revoke_refresh_token(db_session, payload.jti, payload.sub)
 
 
-@router.post("/verify_access_token")
+@router.post("/verify_access_token", response_model=AccessTokenPayload)
 async def api_verify_access_token(
     payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
-):
+) -> AccessTokenPayload:
     """验证访问令牌"""
     logger.info("Verify access token")
     return payload

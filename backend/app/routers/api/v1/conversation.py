@@ -15,19 +15,18 @@ from app.services.conversation import (
 )
 from app.utils.database import get_app_db
 from app.utils.log import logger
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/conversation", tags=["对话管理"])
 
 
-@router.get("", response_model=ConversationListResponse)
+@router.get("")
 async def api_get_conversations(
-    db_session: Annotated[AsyncSession, Depends(get_app_db)],
-    payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
+    request: Request, db_session: Annotated[AsyncSession, Depends(get_app_db)]
 ) -> ConversationListResponse:
     """获取对话列表"""
-    conversations = await get_conversations(db_session, payload.sub)
+    conversations = await get_conversations(db_session, request.state.payload.sub)
     logger.info(f"User get conversations: {[i.id for i in conversations]}")
     return ConversationListResponse(
         conversations=[
@@ -42,53 +41,43 @@ async def api_get_conversations(
     )
 
 
-@router.post(
-    "/create", status_code=status.HTTP_201_CREATED, response_model=ConversationResponse
-)
+@router.post("/create", status_code=status.HTTP_201_CREATED)
 async def api_create_conversation(
-    request: CreateConversationRequest,
+    request: Request,
+    body: CreateConversationRequest,
     db_session: Annotated[AsyncSession, Depends(get_app_db)],
-    payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
 ) -> ConversationResponse:
     """创建新对话"""
     conversation = await create_conversation(
-        db_session, payload.sub, request.model_config_id
+        db_session, request.state.payload.sub, body.model_config_id
     )
     logger.info(f"User create conversation: {conversation.id}")
     return ConversationResponse(
         conversation_id=conversation.id,
-        title=None,
+        title=conversation.title,
         update_at=conversation.update_at,
         model_config_id=conversation.model_config_id,
     )
 
 
-@router.post("/update")
+@router.post("/update", status_code=status.HTTP_202_ACCEPTED)
 async def api_update_conversation(
-    request: UpdateConversationRequest,
+    body: UpdateConversationRequest,
     db_session: Annotated[AsyncSession, Depends(get_app_db)],
-    payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
-):
+) -> None:
     """修改对话信息"""
     logger.info(
-        f"User update conversation: conversation={request.conversation_id}, model_config_id={request.model_config_id}"
+        f"User update conversation: conversation={body.conversation_id}, model_config_id={body.model_config_id}"
     )
-    conversation_data = {}
-    if request.title is not None:
-        conversation_data["title"] = request.title
-    if request.model_config_id is not None:
-        conversation_data["model_config_id"] = request.model_config_id
-    await update_conversation_data(
-        db_session, request.conversation_id, conversation_data
-    )
+    conversation_data = {"title": body.title, "model_config_id": body.model_config_id}
+    await update_conversation_data(db_session, body.conversation_id, conversation_data)
 
 
-@router.post("/delete", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/delete")
 async def api_delete_conversations(
-    request: DeleteConversationRequest,
+    body: DeleteConversationRequest,
     db_session: Annotated[AsyncSession, Depends(get_app_db)],
-    payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
-):
+) -> None:
     """删除对话"""
-    logger.info(f"User delete conversations: {request.ids}")
-    await delete_conversations(db_session, request.ids)
+    logger.info(f"User delete conversations: {body.ids}")
+    await delete_conversations(db_session, body.ids)

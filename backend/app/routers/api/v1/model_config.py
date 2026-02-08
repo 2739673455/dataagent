@@ -100,7 +100,7 @@ async def api_update_model_config(
 async def api_delete_model_configs(
     body: DeleteModelConfigRequest,
     db_session: Annotated[AsyncSession, Depends(get_app_db)],
-):
+) -> None:
     """批量删除模型配置"""
     logger.info(f"User delete model configs: {body.ids}")
     await delete_model_configs(db_session, body.ids)

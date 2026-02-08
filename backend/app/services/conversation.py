@@ -1,10 +1,10 @@
+import random
 from collections.abc import Sequence
-
-from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.entities.chat import Conversation, Message
 from app.exceptions.conversation import ConversationNotFoundError
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def get_conversations(
@@ -21,7 +21,11 @@ async def create_conversation(
 ) -> Conversation:
     """创建对话"""
     try:
-        conversation = Conversation(user_id=user_id, model_config_id=model_config_id)
+        conversation = Conversation(
+            user_id=user_id,
+            title=f"Chat {random.randint(0, 1000)}",
+            model_config_id=model_config_id,
+        )
         db_session.add(conversation)
         await db_session.commit()
         await db_session.refresh(conversation)
@@ -41,12 +45,13 @@ async def update_conversation_data(
         conversation = result.scalar_one_or_none()
         if not conversation:
             raise ConversationNotFoundError  # 对话不存在
-        conversation.title = conversation_data.get("title", conversation.title)
-        conversation.model_config_id = conversation_data.get(
-            "model_config_id", conversation.model_config_id
-        )
+
+        if conversation_data["title"] is not None:
+            conversation.title = conversation_data["title"]
+        if conversation_data["model_config_id"] is not None:
+            conversation.model_config_id = conversation_data["model_config_id"]
+
         await db_session.commit()
-        await db_session.refresh(conversation)
     except Exception:
         await db_session.rollback()
         raise
