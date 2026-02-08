@@ -253,7 +253,7 @@ class TestAuthAPIBasic:
         response = await async_test_client.post(
             "/api/me/password", json={"password": new_password}
         )
-        assert response.status_code == 200
+        assert response.status_code == 202
         data = response.json()
         assert "access_token" in data
         assert "refresh_token" in data

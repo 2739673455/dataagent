@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 router = APIRouter(prefix="/model_config", tags=["模型配置管理"])
 
 
-@router.get("", response_model=ModelConfigListResponse)
+@router.get("")
 async def api_get_model_configs(
     request: Request, db_session: Annotated[AsyncSession, Depends(get_app_db)]
 ) -> ModelConfigListResponse:
@@ -43,9 +43,7 @@ async def api_get_model_configs(
     )
 
 
-@router.post(
-    "/create", status_code=status.HTTP_201_CREATED, response_model=ModelConfigResponse
-)
+@router.post("/create", status_code=status.HTTP_201_CREATED)
 async def api_create_model_config(
     request: Request,
     body: CreateModelConfigRequest,
@@ -79,7 +77,7 @@ async def api_update_model_config(
 ) -> ModelConfigResponse:
     """修改模型配置"""
     logger.info(f"User update model config: {body.config_id}")
-    await update_model_config(
+    model_config = await update_model_config(
         db_session=db_session,
         id=body.config_id,
         name=body.name,
@@ -88,9 +86,17 @@ async def api_update_model_config(
         api_key=body.api_key,
         params=body.params,
     )
+    return ModelConfigResponse(
+        config_id=model_config.id,
+        name=model_config.name,
+        base_url=model_config.base_url,
+        model_name=None,
+        api_key=None,
+        params=None,
+    )
 
 
-@router.post("/delete", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/delete")
 async def api_delete_model_configs(
     body: DeleteModelConfigRequest,
     db_session: Annotated[AsyncSession, Depends(get_app_db)],

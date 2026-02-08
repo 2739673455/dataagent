@@ -129,7 +129,9 @@ async def api_update_email(
     return LoginResponse(**tokens)
 
 
-@router.post("/me/password", response_model=LoginResponse)
+@router.post(
+    "/me/password", status_code=status.HTTP_202_ACCEPTED, response_model=LoginResponse
+)
 async def api_update_password(
     body: UpdatePasswordRequest,
     db_session: Annotated[AsyncSession, Depends(get_auth_db)],
