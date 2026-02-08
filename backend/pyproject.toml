@@ -10,6 +10,7 @@ dependencies = [
     "cryptography>=46.0.4",
     "deepagents>=0.3.11",
     "fastapi[standard]>=0.128.0",
+    "langchain-mcp-adapters>=0.2.1",
     "langchain-openai>=1.1.7",
     "loguru>=0.7.3",
     "omegaconf>=2.3.0",
