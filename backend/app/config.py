@@ -34,21 +34,17 @@ class COSCfg(BaseModel):
     scheme: str  # 访问协议，http或https
 
 
-class TavilyCfg(BaseModel):
-    api_key: str  # Tavily API Key
-    mcp_url: str  # MCP 服务器 URL
-
-
-# 工具配置
-class ToolCfg(BaseModel):
-    tavily: TavilyCfg
+# MCP 工具配置
+class MCPCfg(BaseModel):
+    transport: str
+    url: str
 
 
 class Cfg(BaseModel):
     db: DBCfg
     log: LogCfg
     cos: COSCfg
-    tool: ToolCfg
+    mcp: dict[str, MCPCfg]
     verify_access_token_url: str
     encryption_key: str
     cors_origins: list[str]

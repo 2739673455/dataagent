@@ -1,6 +1,6 @@
-import asyncio
 import os
 
+from app.core.mcp import mcp_client
 from deepagents import create_deep_agent
 from langchain.chat_models import init_chat_model
 from langchain.messages import AIMessage
@@ -15,7 +15,8 @@ model = init_chat_model(
     **params,
 )
 
-agent = create_deep_agent(model=model)
+
+agent = create_deep_agent(model=model, tools=mcp_client.get_tools())
 
 
 async def main():
