@@ -40,18 +40,18 @@ router = APIRouter(prefix="/api", tags=["auth"])
 
 @router.post("/register", response_model=LoginResponse)
 async def api_register(
-    request: RegisterRequest,
+    body: RegisterRequest,
     db_session: Annotated[AsyncSession, Depends(get_auth_db)],
     response: Response,
 ) -> LoginResponse:
     """注册新用户"""
     # 验证邮箱是否已存在
-    await verify_email_exists(db_session, request.email)
+    await verify_email_exists(db_session, body.email)
     # 获取默认组
     groups = await get_default_group(db_session)
     # 将用户加入数据库，同时关联默认组
     user = await add_user_in_db(
-        db_session, request.email, request.username, request.password, groups
+        db_session, body.email, body.username, body.password, groups
     )
     # 登录
     user, tokens = await login_by_user_id(db_session, user.id, response)
@@ -63,15 +63,15 @@ async def api_register(
 
 @router.post("/login", response_model=LoginResponse)
 async def api_login(
-    request: LoginRequest,
+    body: LoginRequest,
     db_session: Annotated[AsyncSession, Depends(get_auth_db)],
     response: Response,
 ) -> LoginResponse:
     """用户登录"""
     # 通过邮箱获取用户信息，包含权限信息
-    user, _, scopes = await get_user(db_session, email=request.email, options="scope")
+    user, _, scopes = await get_user(db_session, email=body.email, options="scope")
     # 验证密码
-    verify_password(user, request.password)
+    verify_password(user, body.password)
     # 创建访问令牌和刷新令牌
     tokens = await create_token(db_session, user.id, scopes)
     # 在 Cookie 中设置 refresh_token
@@ -101,18 +101,18 @@ async def api_me(
 
 @router.post("/me/username", status_code=status.HTTP_202_ACCEPTED)
 async def api_update_username(
-    request: UpdateUsernameRequest,
+    body: UpdateUsernameRequest,
     db_session: Annotated[AsyncSession, Depends(get_auth_db)],
     payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
 ):
     """修改用户名"""
     logger.info("User update username")
-    await update_username(db_session, payload.sub, request.username)
+    await update_username(db_session, payload.sub, body.username)
 
 
 @router.post("/me/email", status_code=status.HTTP_202_ACCEPTED)
 async def api_update_email(
-    request: UpdateEmailRequest,
+    body: UpdateEmailRequest,
     db_session: Annotated[AsyncSession, Depends(get_auth_db)],
     payload: Annotated[RefreshTokenPayload, Depends(authenticate_refresh_token)],
     response: Response,
@@ -120,7 +120,7 @@ async def api_update_email(
     """修改邮箱"""
     logger.info("User update email")
     # 修改邮箱
-    await update_email(db_session, payload.sub, request.email)
+    await update_email(db_session, payload.sub, body.email)
     # 撤销用户所有刷新令牌
     await revoke_all_refresh_tokens(db_session, payload.sub)
     logger.info(f"User {payload.sub} email updated, all refresh tokens revoked")
@@ -131,7 +131,7 @@ async def api_update_email(
 
 @router.post("/me/password", response_model=LoginResponse)
 async def api_update_password(
-    request: UpdatePasswordRequest,
+    body: UpdatePasswordRequest,
     db_session: Annotated[AsyncSession, Depends(get_auth_db)],
     payload: Annotated[RefreshTokenPayload, Depends(authenticate_refresh_token)],
     response: Response,
@@ -139,7 +139,7 @@ async def api_update_password(
     """修改密码"""
     logger.info("User update password")
     # 修改密码
-    await update_password(db_session, payload.sub, request.password)
+    await update_password(db_session, payload.sub, body.password)
     # 撤销用户所有刷新令牌
     await revoke_all_refresh_tokens(db_session, payload.sub)
     logger.info(f"User {payload.sub} password updated, all refresh tokens revoked")
