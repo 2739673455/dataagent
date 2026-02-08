@@ -27,7 +27,7 @@ async def get_messages(
     return messages
 
 
-async def image_url_to_get_presigned_url(messages: Sequence[Message | MessageItem]):
+async def url_to_get_presigned_url(messages: Sequence[Message | MessageItem]):
     """处理消息中的 cos_url 或 旧的预签名url 为 新的为预签名下载url"""
     tasks = []
     c_dicts = []  # 存储对应的 c_dict，用于后续更新
@@ -46,7 +46,7 @@ async def image_url_to_get_presigned_url(messages: Sequence[Message | MessageIte
             c_dict["image_url"] = presinged_url
 
 
-async def image_url_to_cos_url(messages: Sequence[MessageItem]):
+async def url_to_cos_url(messages: Sequence[MessageItem]):
     """处理消息中的图片url 为 cos_url"""
     for message in messages:
         if isinstance(message.content, list):
@@ -96,7 +96,7 @@ async def stream_response(
     try:
         logger.info(f"Received messages ({len(messages)})")
         # 转换图片url为cos_url
-        await image_url_to_cos_url(messages)
+        await url_to_cos_url(messages)
         # 用户消息存入数据库
         user_message_id = messages[-1].message_id
         if not user_message_id:  # 如果没有消息id才存入数据库
@@ -105,7 +105,7 @@ async def stream_response(
             )
             user_message_id = user_message.id
         # 转换cos_url为预签名下载url
-        await image_url_to_get_presigned_url(messages)
+        await url_to_get_presigned_url(messages)
 
         # 返回用户消息id
         yield (

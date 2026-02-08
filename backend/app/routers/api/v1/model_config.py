@@ -27,7 +27,9 @@ async def api_get_model_configs(
 ) -> ModelConfigListResponse:
     """获取模型配置列表"""
     model_configs = await get_model_configs(db_session, request.state.payload.sub)
-    logger.info(f"User get model configs: {[i.id for i in model_configs]}")
+    logger.info(
+        f"User get model configs: model_config_ids={[i.id for i in model_configs]}"
+    )
     return ModelConfigListResponse(
         configs=[
             ModelConfigResponse(
@@ -59,7 +61,7 @@ async def api_create_model_config(
         api_key=body.api_key,
         params=body.params,
     )
-    logger.info(f"User create model config: {model_config.id}")
+    logger.info(f"User create model config: model_config_id={model_config.id}")
     return ModelConfigResponse(
         config_id=model_config.id,
         name=model_config.name,
@@ -76,7 +78,7 @@ async def api_update_model_config(
     db_session: Annotated[AsyncSession, Depends(get_app_db)],
 ) -> ModelConfigResponse:
     """修改模型配置"""
-    logger.info(f"User update model config: {body.config_id}")
+    logger.info(f"User update model config: model_config_id={body.config_id}")
     model_config = await update_model_config(
         db_session=db_session,
         id=body.config_id,
@@ -102,5 +104,5 @@ async def api_delete_model_configs(
     db_session: Annotated[AsyncSession, Depends(get_app_db)],
 ) -> None:
     """批量删除模型配置"""
-    logger.info(f"User delete model configs: {body.ids}")
+    logger.info(f"User delete model configs: model_config_ids={body.ids}")
     await delete_model_configs(db_session, body.ids)

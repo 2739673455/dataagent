@@ -68,8 +68,6 @@ def extract_cos_key(url: str) -> str:
         return parsed.path.lstrip("/")
 
 
-def generate_cos_key(
-    user_id: int, conversation_id: int, file_type: str, suffix: str
-) -> str:
+def generate_cos_key(user_id: int, conversation_id: int, suffix: str) -> str:
     """生成 cos_key"""
-    return f"{user_id}/{conversation_id}/{file_type}/{uuid.uuid4()}.{suffix}"
+    return f"{user_id}/{conversation_id}/{uuid.uuid4()}.{suffix}"

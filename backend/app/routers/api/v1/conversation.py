@@ -27,7 +27,9 @@ async def api_get_conversations(
 ) -> ConversationListResponse:
     """获取对话列表"""
     conversations = await get_conversations(db_session, request.state.payload.sub)
-    logger.info(f"User get conversations: {[i.id for i in conversations]}")
+    logger.info(
+        f"User get conversations: conversation_ids={[i.id for i in conversations]}"
+    )
     return ConversationListResponse(
         conversations=[
             ConversationResponse(
@@ -51,7 +53,7 @@ async def api_create_conversation(
     conversation = await create_conversation(
         db_session, request.state.payload.sub, body.model_config_id
     )
-    logger.info(f"User create conversation: {conversation.id}")
+    logger.info(f"User create conversation: conversation_id={conversation.id}")
     return ConversationResponse(
         conversation_id=conversation.id,
         title=conversation.title,
@@ -67,7 +69,7 @@ async def api_update_conversation(
 ) -> None:
     """修改对话信息"""
     logger.info(
-        f"User update conversation: conversation={body.conversation_id}, model_config_id={body.model_config_id}"
+        f"User update conversation: conversation_id={body.conversation_id}, model_config_id={body.model_config_id}"
     )
     conversation_data = {"title": body.title, "model_config_id": body.model_config_id}
     await update_conversation_data(db_session, body.conversation_id, conversation_data)
@@ -79,5 +81,5 @@ async def api_delete_conversations(
     db_session: Annotated[AsyncSession, Depends(get_app_db)],
 ) -> None:
     """删除对话"""
-    logger.info(f"User delete conversations: {body.ids}")
+    logger.info(f"User delete conversations: conversation_ids={body.ids}")
     await delete_conversations(db_session, body.ids)

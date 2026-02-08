@@ -125,7 +125,7 @@ async def api_update_email(
     await update_email(db_session, payload.sub, body.email)
     # 撤销用户所有刷新令牌
     await revoke_all_refresh_tokens(db_session, payload.sub)
-    logger.info(f"User {payload.sub} email updated, all refresh tokens revoked")
+    logger.info("User email updated, all refresh tokens revoked")
     # 登录
     user, tokens = await login_by_user_id(db_session, payload.sub, response)
     return LoginResponse(**tokens)
@@ -146,7 +146,7 @@ async def api_update_password(
     await update_password(db_session, payload.sub, body.password)
     # 撤销用户所有刷新令牌
     await revoke_all_refresh_tokens(db_session, payload.sub)
-    logger.info(f"User {payload.sub} password updated, all refresh tokens revoked")
+    logger.info("User password updated, all refresh tokens revoked")
     # 登录
     user, tokens = await login_by_user_id(db_session, payload.sub, response)
     return LoginResponse(**tokens)

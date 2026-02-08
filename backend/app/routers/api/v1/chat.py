@@ -14,13 +14,13 @@ from app.schemas.chat import (
 from app.services.chat import (
     generate_title,
     get_messages,
-    image_url_to_get_presigned_url,
     stream_response,
+    url_to_get_presigned_url,
 )
 from app.utils.cos import generate_cos_key, get_upload_presigned_url
 from app.utils.database import get_app_db
 from app.utils.log import logger
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,13 +31,12 @@ router = APIRouter(prefix="/chat", tags=["聊天"])
 async def api_get_messages(
     conversation_id: int,
     db_session: Annotated[AsyncSession, Depends(get_app_db)],
-    payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
 ) -> MessageListResponse:
     """获取消息记录"""
     logger.info(f"User get messages: {conversation_id=}")
     messages = await get_messages(db_session, conversation_id)
     # 转换cos_url为预签名下载url
-    await image_url_to_get_presigned_url(messages)
+    await url_to_get_presigned_url(messages)
     return MessageListResponse(
         messages=[
             MessageItem(
@@ -53,16 +52,16 @@ async def api_get_messages(
 
 @router.post("/get_upload_presigned_url", response_model=GetUploadPresignedUrlResponse)
 async def api_get_upload_presigned_url(
-    request: GetUploadPresignedUrlRequest,
-    payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
+    request: Request,
+    body: GetUploadPresignedUrlRequest,
 ) -> GetUploadPresignedUrlResponse:
     """获取带预签名的上传url"""
     logger.info(
-        f"User get upload presigned url: conversation_id={request.conversation_id}"
+        f"User get upload presigned url: conversation_id={body.conversation_id}"
     )
     cos_keys = [
-        generate_cos_key(payload.sub, request.conversation_id, suffix)
-        for suffix in request.suffixes
+        generate_cos_key(request.state.payload.sub, body.conversation_id, suffix)
+        for suffix in body.suffixes
     ]  # 生成cos_key
     upload_presigned_urls = await asyncio.gather(
         *[get_upload_presigned_url(key) for key in cos_keys]
@@ -72,40 +71,41 @@ async def api_get_upload_presigned_url(
 
 @router.post("/generate_title", response_model=ConversationTitleResponse)
 async def api_generate_conversation_title(
-    request: SendMessageRequest,
-    payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
+    body: SendMessageRequest,
 ) -> ConversationTitleResponse:
     """生成对话标题"""
-    logger.info(f"User generate conversation title: {request.conversation_id}")
+    logger.info(
+        f"User generate conversation title: conversation_id={body.conversation_id}"
+    )
     # 转换预签名上传url为预签名下载url
-    await image_url_to_get_presigned_url(request.messages)
+    await url_to_get_presigned_url(body.messages)
     # 生成标题
     title = await generate_title(
-        request.messages[0].content,
-        request.base_url,
-        request.model_name,
-        request.api_key,
+        body.messages[0].content,
+        body.base_url,
+        body.model_name,
+        body.api_key,
     )
     return ConversationTitleResponse(title=title)
 
 
 @router.post("/send")
 async def api_send_message(
-    request: SendMessageRequest,
+    request: Request,
+    body: SendMessageRequest,
     db_session: Annotated[AsyncSession, Depends(get_app_db)],
-    payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
 ):
     """发送消息,获取AI流式回复"""
-    logger.info(f"User send message: conversation_id={request.conversation_id}")
+    logger.info(f"User send message: conversation_id={body.conversation_id}")
     return StreamingResponse(
         stream_response(
-            conversation_id=request.conversation_id,
-            user_id=payload.sub,
-            messages=request.messages,
-            base_url=request.base_url,
-            model_name=request.model_name,
-            api_key=request.api_key,
-            params=request.params,
+            conversation_id=body.conversation_id,
+            user_id=request.state.payload.sub,
+            messages=body.messages,
+            base_url=body.base_url,
+            model_name=body.model_name,
+            api_key=body.api_key,
+            params=body.params,
             db_session=db_session,
         ),
         media_type="text/plain",
@@ -114,10 +114,10 @@ async def api_send_message(
 
 @router.websocket("/ws/chat")
 async def api_websocket_chat(
+    request: Request,
     websocket: WebSocket,
     conversation_id: int,
     db_session: Annotated[AsyncSession, Depends(get_app_db)],
-    payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
 ):
     """WebSocket 聊天接口"""
     await websocket.accept()
@@ -126,7 +126,7 @@ async def api_websocket_chat(
             try:
                 data = await websocket.receive_json()
                 logger.info(f"User websocket chat: {conversation_id=}")
-                request = WebSocketChatRequest(**data)
+                body = WebSocketChatRequest(**data)
             except json.JSONDecodeError:
                 await websocket.send_json(
                     {"type": "error", "content": "Invalid JSON format"}
@@ -138,15 +138,15 @@ async def api_websocket_chat(
                 )
                 continue
 
-            if request.type == "chat":
+            if body.type == "chat":
                 async for i in stream_response(
                     conversation_id,
-                    payload.sub,
-                    request.messages,
-                    request.base_url,
-                    request.model_name,
-                    request.api_key,
-                    request.params,
+                    request.state.payload.sub,
+                    body.messages,
+                    body.base_url,
+                    body.model_name,
+                    body.api_key,
+                    body.params,
                     db_session,
                 ):
                     await websocket.send_json(json.loads(i))
