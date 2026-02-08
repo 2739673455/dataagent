@@ -61,7 +61,7 @@ async def api_get_upload_presigned_url(
         f"User get upload presigned url: conversation_id={request.conversation_id}"
     )
     cos_keys = [
-        generate_image_cos_key(payload.sub, request.conversation_id, suffix)
+        generate_cos_key(payload.sub, request.conversation_id, suffix)
         for suffix in request.suffixes
     ]  # 生成cos_key
     upload_presigned_urls = await asyncio.gather(

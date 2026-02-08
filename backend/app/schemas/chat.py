@@ -11,8 +11,8 @@ class MessageItem(BaseModel):
 
 
 class GetUploadPresignedUrlRequest(BaseModel):
-    conversation_id: int
-    suffixes: list[str]
+    conversation_id: int = Field(..., description="对话ID")
+    suffixes: list[str] = Field(..., description="文件后缀列表")
 
 
 class SendMessageRequest(BaseModel):

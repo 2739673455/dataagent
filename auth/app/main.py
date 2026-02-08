@@ -1,14 +1,13 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-
 from app.config import CFG
 from app.handlers import register_exception_handlers
 from app.middlewares import trace
 from app.routers import api
 from app.utils import database
 from app.utils.log import setup_logger
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 
 # 生命周期管理
@@ -21,9 +20,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# 添加日志中间件
+# 日志中间件
 app.middleware("http")(trace.middleware)
-# 添加 CORS 中间件
+# CORS 中间件
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CFG.cors_origins,  # 允许的源列表
