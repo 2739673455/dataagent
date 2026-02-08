@@ -22,7 +22,7 @@ class ModelConfig(Base):
     create_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('CURRENT_TIMESTAMP'), comment='创建时间')
     update_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'), comment='更新时间')
     model_name: Mapped[Optional[str]] = mapped_column(String(100), comment='模型名称')
-    encrypted_api_key: Mapped[Optional[str]] = mapped_column(Text, comment='加密后的 API-Key')
+    api_key: Mapped[Optional[str]] = mapped_column(Text, comment='加密后的 API-Key')
     params: Mapped[Optional[dict]] = mapped_column(JSON, comment='模型调用参数')
 
     conversation: Mapped[list['Conversation']] = relationship('Conversation', back_populates='model_config')

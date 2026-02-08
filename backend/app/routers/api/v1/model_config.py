@@ -13,7 +13,6 @@ from app.services.model_config import (
     get_model_configs,
     update_model_config,
 )
-from app.utils.crypto import decrypt, encrypt
 from app.utils.database import get_app_db
 from app.utils.log import logger
 from fastapi import APIRouter, Depends, Request, status
@@ -36,7 +35,7 @@ async def api_get_model_configs(
                 name=i.name,
                 base_url=i.base_url,
                 model_name=i.model_name,
-                api_key=decrypt(i.encrypted_api_key),
+                api_key=i.api_key,
                 params=i.params,
             )
             for i in model_configs
@@ -59,7 +58,7 @@ async def api_create_model_config(
         body.name,
         body.base_url,
         body.model_name,
-        encrypt(body.api_key),
+        body.api_key,
         body.params,
     )
     logger.info(f"User create model config: {model_config.id}")
@@ -86,7 +85,7 @@ async def api_update_model_config(
         body.name,
         body.base_url,
         body.model_name,
-        encrypt(body.api_key),
+        body.api_key,
         body.params,
     )
 

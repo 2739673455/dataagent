@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 
 from app.entities.chat import ModelConfig
+from app.utils.crypto import decrypt, encrypt
 from faker import Faker
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +15,10 @@ async def get_model_configs(
     """获取模型配置列表"""
     stmt = select(ModelConfig).where(ModelConfig.user_id == user_id)
     result = await db_session.execute(stmt)
-    return result.scalars().all()
+    model_configs = result.scalars().all()
+    for i in model_configs:
+        i.api_key = decrypt(i.api_key)
+    return model_configs
 
 
 async def create_model_config(
@@ -23,7 +27,7 @@ async def create_model_config(
     name: str | None,
     base_url: str,
     model_name: str | None,
-    encrypted_api_key: str | None,
+    api_key: str | None,
     params: dict | None,
 ) -> ModelConfig:
     """创建模型配置"""
@@ -31,7 +35,7 @@ async def create_model_config(
         name=name or model_name or faker.word(),
         base_url=base_url,
         model_name=model_name,
-        encrypted_api_key=encrypted_api_key,
+        api_key=encrypt(api_key),
         params=params,
         user_id=user_id,
     )
@@ -51,7 +55,7 @@ async def update_model_config(
     name: str,
     base_url: str,
     model_name: str | None,
-    encrypted_api_key: str | None,
+    api_key: str | None,
     params: dict | None,
 ) -> None:
     """修改模型配置"""
@@ -63,7 +67,7 @@ async def update_model_config(
     model_config.name = name
     model_config.base_url = base_url
     model_config.model_name = model_name
-    model_config.encrypted_api_key = encrypted_api_key
+    model_config.api_key = encrypt(api_key)
     model_config.params = params
     try:
         await db_session.commit()

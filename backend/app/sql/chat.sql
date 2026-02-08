@@ -10,7 +10,7 @@ CREATE TABLE `model_config` (
     `name` VARCHAR(100) NOT NULL COMMENT '配置名称',
     `base_url` VARCHAR(500) NOT NULL COMMENT 'URL',
     `model_name` VARCHAR(100) COMMENT '模型名称',
-    `encrypted_api_key` TEXT COMMENT '加密后的 API-Key',
+    `api_key` TEXT COMMENT '加密后的 API-Key',
     `params` JSON DEFAULT NULL COMMENT '模型调用参数',
     `create_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
