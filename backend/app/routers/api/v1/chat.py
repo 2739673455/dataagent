@@ -29,8 +29,7 @@ router = APIRouter(prefix="/chat", tags=["聊天"])
 
 @router.get("/{conversation_id}", response_model=MessageListResponse)
 async def api_get_messages(
-    conversation_id: int,
-    db_session: Annotated[AsyncSession, Depends(get_app_db)],
+    conversation_id: int, db_session: Annotated[AsyncSession, Depends(get_app_db)]
 ) -> MessageListResponse:
     """获取消息记录"""
     logger.info(f"User get messages: {conversation_id=}")
@@ -52,8 +51,7 @@ async def api_get_messages(
 
 @router.post("/get_upload_presigned_url", response_model=GetUploadPresignedUrlResponse)
 async def api_get_upload_presigned_url(
-    request: Request,
-    body: GetUploadPresignedUrlRequest,
+    request: Request, body: GetUploadPresignedUrlRequest
 ) -> GetUploadPresignedUrlResponse:
     """获取带预签名的上传url"""
     logger.info(

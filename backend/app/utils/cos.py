@@ -56,16 +56,15 @@ def extract_cos_key(url: str) -> str:
 
     支持两种格式：
     - 数据库中存储的 cos_url:
-        cos://user_id/conversation_id/images/abc.jpg
+        cos://user_id/conversation_id/abc.jpg
     - 前端返回的预签名 url:
-        https://cos.xxx.com/user_id/conversation_id/images/abc.jpg?signature=xxx
+        https://cos.xxx.com/user_id/conversation_id/abc.jpg?signature=xxx
     """
 
     if url.startswith("cos://"):
         return url[6:]
     else:
-        parsed = urlparse(url)
-        return parsed.path.lstrip("/")
+        return urlparse(url).path.lstrip("/")
 
 
 def generate_cos_key(user_id: int, conversation_id: int, suffix: str) -> str:

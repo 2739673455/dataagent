@@ -47,7 +47,7 @@ async def url_to_get_presigned_url(messages: Sequence[Message | MessageItem]):
 
 
 async def url_to_cos_url(messages: Sequence[MessageItem]):
-    """处理消息中的图片url 为 cos_url"""
+    """处理消息中的 url 为 cos_url"""
     for message in messages:
         if isinstance(message.content, list):
             for c_dict in message.content:
@@ -95,7 +95,7 @@ async def stream_response(
     """流式返回AI回复"""
     try:
         logger.info(f"Received messages ({len(messages)})")
-        # 转换图片url为cos_url
+        # 转换url为cos_url
         await url_to_cos_url(messages)
         # 用户消息存入数据库
         user_message_id = messages[-1].message_id
