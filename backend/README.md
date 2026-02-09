@@ -1,3 +1,12 @@
+# 文档处理
+1. 用户在前端上传文档
+2. 前端读取文件并计算文件哈希
+3. 前端向后端发送文件哈希
+4. 后端检查文件是否已存在
+5. 后端返回文件的预签名上传url
+6. 前端上传文件
+
+
 # 参考
 [智能洞察分析](https://www.gooddata.com/blog/agentic-analytics-complete-guide-to-ai-driven-data-intelligence/)  
 [电商运营分析](https://datagrid.com/blog/automate-multi-channel-attribution-analysis)  

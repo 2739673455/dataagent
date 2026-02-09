@@ -69,7 +69,7 @@ async def api_update_conversation(
 ) -> None:
     """修改对话信息"""
     logger.info(
-        f"User update conversation: conversation_id={body.conversation_id}, model_config_id={body.model_config_id}"
+        f"User update conversation: conversation_id={body.conversation_id}, model_config_id={body.model_config_id}, title={body.title}"
     )
     conversation_data = {"title": body.title, "model_config_id": body.model_config_id}
     await update_conversation_data(db_session, body.conversation_id, conversation_data)

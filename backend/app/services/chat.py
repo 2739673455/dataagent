@@ -28,7 +28,7 @@ async def get_messages(
 
 
 async def url_to_get_presigned_url(messages: Sequence[Message | MessageItem]):
-    """处理消息中的 cos_url 或 旧的预签名url 为 新的为预签名下载url"""
+    """处理消息 content 中的 url 预签名下载url"""
     tasks = []
     c_dicts = []  # 存储对应的 c_dict，用于后续更新
     for message in messages:
@@ -47,14 +47,13 @@ async def url_to_get_presigned_url(messages: Sequence[Message | MessageItem]):
 
 
 async def url_to_cos_url(messages: Sequence[MessageItem]):
-    """处理消息中的 url 为 cos_url"""
-    for message in messages:
-        if isinstance(message.content, list):
-            for c_dict in message.content:
-                if "image_url" in c_dict:
-                    # 提取cos_key
-                    cos_key = extract_cos_key(c_dict["image_url"])
-                    c_dict["image_url"] = "cos://" + cos_key
+    """处理消息 content 中的 url 为 cos_url"""
+    for message in messages:  # 遍历消息列表
+        if isinstance(message.content, list):  # 如果 content 是 list 类型
+            for c_dict in message.content:  # 遍历 content 中各类型内容
+                if "image_url" in c_dict:  # 如果是 image 类型的内容
+                    cos_key = extract_cos_key(c_dict["image_url"])  # 提取 cos_key
+                    c_dict["image_url"] = "cos://" + cos_key  #  拼接为 cos_url
 
 
 async def _save_message_in_db(
