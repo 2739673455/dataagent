@@ -6,7 +6,6 @@ from app.schemas.chat import (
     ConversationTitleResponse,
     GetUploadPresignedUrlRequest,
     GetUploadPresignedUrlResponse,
-    MessageItem,
     MessageListResponse,
     SendMessageRequest,
     WebSocketChatRequest,
@@ -34,18 +33,8 @@ async def api_get_messages(
     """获取消息记录"""
     logger.info(f"User get messages: {conversation_id=}")
     messages = await get_messages(db_session, conversation_id)
-    await url_to_get_presigned_url(messages)  # 转换cos_url为预签名下载url
-    return MessageListResponse(
-        messages=[
-            MessageItem(
-                message_id=message.id,
-                role=message.role,
-                content=message.content,
-                timestamp=message.timestamp,
-            )
-            for message in messages
-        ]
-    )
+    await url_to_get_presigned_url(messages)  # 转换 cos_url 为 预签名下载url
+    return MessageListResponse(messages=messages)
 
 
 @router.post("/get_upload_presigned_url", response_model=GetUploadPresignedUrlResponse)

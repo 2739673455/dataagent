@@ -3,7 +3,7 @@ import json
 from collections.abc import Sequence
 
 from app.entities.chat import Message
-from app.schemas.chat import MessageItem
+from app.schemas.chat import Attachment, ImageContent, MessageItem, TextContent
 from app.utils.call_model import call_model, stream_model
 from app.utils.cos import extract_cos_key, get_get_presigned_url
 from app.utils.log import logger
@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 async def get_messages(
     db_session: AsyncSession, conversation_id: int
-) -> Sequence[Message]:
+) -> list[MessageItem]:
     """获取消息列表"""
     stmt = (
         select(Message)
@@ -23,12 +23,24 @@ async def get_messages(
     result = await db_session.execute(stmt)
     messages = []
     for message in result.scalars().all():
-        # 将 content json字符串转换为str或list[dict]
-        content = json.loads(message.content)
-        # 将 attachments json字符串转换为list[dict]
+        # 将 content json字符串转换为 str 或 list[TextContent | ImageContent]
+        raw_content = json.loads(message.content)
+        if isinstance(raw_content, list):
+            content = []
+            for item in raw_content:
+                if item.get("type") == "image_url":
+                    content.append(ImageContent(**item))
+                else:
+                    content.append(TextContent(**item))
+        else:
+            content = raw_content
+
+        # 将 attachments json字符串转换为 list[Attachment]
         attachments = None
         if message.attachments:
-            attachments = json.loads(message.attachments)
+            raw_attachments = json.loads(message.attachments)
+            attachments = [Attachment(**att) for att in raw_attachments]
+
         messages.append(
             MessageItem(
                 message_id=message.id,
