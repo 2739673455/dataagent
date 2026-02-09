@@ -65,5 +65,6 @@ class Message(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False, comment='消息内容 (JSON 字符串)')
     timestamp: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('CURRENT_TIMESTAMP'), comment='发送时间')
     yn: Mapped[int] = mapped_column(TINYINT, nullable=False, server_default=text("'1'"), comment='是否启用')
+    attachments: Mapped[Optional[str]] = mapped_column(Text, comment='附件列表')
 
     conversation: Mapped['Conversation'] = relationship('Conversation', back_populates='message')

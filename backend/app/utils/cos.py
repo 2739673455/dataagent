@@ -1,4 +1,3 @@
-import uuid
 from urllib.parse import urlparse
 
 from app.config import CFG
@@ -36,6 +35,11 @@ if not (client.bucket_exists(CFG.cos.bucket)):  # 如果存储桶不存在
     )
 
 
+def generate_cos_key(user_id: int, conversation_id: int, file_hash: str) -> str:
+    """生成 cos_key"""
+    return f"{user_id}/{conversation_id}/{file_hash}"
+
+
 async def get_upload_presigned_url(key: str) -> str:
     """获取带预签名的上传 url"""
     return client.get_presigned_url(
@@ -65,8 +69,3 @@ def extract_cos_key(url: str) -> str:
         return url[6:]
     else:
         return urlparse(url).path.lstrip("/")
-
-
-def generate_cos_key(user_id: int, conversation_id: int, suffix: str) -> str:
-    """生成 cos_key"""
-    return f"{user_id}/{conversation_id}/{uuid.uuid4()}.{suffix}"

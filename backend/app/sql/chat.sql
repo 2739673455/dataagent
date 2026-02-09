@@ -37,6 +37,7 @@ CREATE TABLE `message` (
     `conversation_id` BIGINT NOT NULL COMMENT '对话ID',
     `role` VARCHAR(20) NOT NULL COMMENT '角色 (user/assistant/tool)',
     `content` TEXT NOT NULL COMMENT '消息内容 (JSON 字符串)',
+    `attachments` TEXT NULL COMMENT '附件列表',
     `timestamp` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '发送时间',
     `yn` TINYINT NOT NULL DEFAULT 1 COMMENT '是否启用',
     PRIMARY KEY (`id`),

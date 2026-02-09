@@ -13,22 +13,22 @@ class ImageContent(BaseModel):
     image_url: str = Field(..., description="图片链接")
 
 
-class Attachments(BaseModel):
+class Attachment(BaseModel):
     name: str = Field(..., description="附件名称")
     url: str = Field(..., description="附件链接")
 
 
 class MessageItem(BaseModel):
     message_id: int | None = Field(default=None, description="消息ID")
-    role: str = Field(..., description="发送者 (user/assistant)")
+    role: str = Field(..., description="发送者 (user/assistant/tool)")
     content: str | list[TextContent | ImageContent] = Field(..., description="消息内容")
-    attachments: list[Attachments] | None = Field(default=None, description="附件列表")
+    attachments: list[Attachment] | None = Field(default=None, description="附件列表")
     timestamp: datetime | None = Field(default=None, description="发送时间")
 
 
 class GetUploadPresignedUrlRequest(BaseModel):
     conversation_id: int = Field(..., description="对话ID")
-    suffixes: list[str] = Field(..., description="文件后缀列表")
+    file_hashes: list[str] = Field(..., description="文件哈希列表 (带文件后缀)")
 
 
 class SendMessageRequest(BaseModel):

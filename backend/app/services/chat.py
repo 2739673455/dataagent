@@ -21,9 +21,13 @@ async def get_messages(
         .order_by(Message.timestamp.asc())
     )
     result = await db_session.execute(stmt)
-    messages = result.scalars().all()
-    for message in messages:  # 将json字符串转换为str或list[dict]
+    messages = []
+    for message in result.scalars().all():
+        # 将 content json字符串转换为str或list[dict]
         message.content = json.loads(message.content)
+        # 将 attachments json字符串转换为list[dict]
+        if message.attachments:
+            message.attachments = json.loads(message.attachments)
     return messages
 
 
@@ -34,7 +38,7 @@ async def url_to_get_presigned_url(messages: Sequence[Message | MessageItem]):
     for message in messages:
         if message.role == "user" and isinstance(message.content, list):
             for c_dict in message.content:
-                if "image_url" in c_dict:
+                if hasattr(c_dict, "image_url"):
                     # 提取cos_key
                     cos_key = extract_cos_key(c_dict["image_url"])
                     # 获取预签名下载url

@@ -34,8 +34,7 @@ async def api_get_messages(
     """获取消息记录"""
     logger.info(f"User get messages: {conversation_id=}")
     messages = await get_messages(db_session, conversation_id)
-    # 转换cos_url为预签名下载url
-    await url_to_get_presigned_url(messages)
+    await url_to_get_presigned_url(messages)  # 转换cos_url为预签名下载url
     return MessageListResponse(
         messages=[
             MessageItem(
@@ -55,11 +54,11 @@ async def api_get_upload_presigned_url(
 ) -> GetUploadPresignedUrlResponse:
     """获取带预签名的上传url"""
     logger.info(
-        f"User get upload presigned url: conversation_id={body.conversation_id}"
+        f"User get upload presigned url: conversation_id={body.conversation_id}, file_hashes={body.file_hashes}"
     )
     cos_keys = [
-        generate_cos_key(request.state.payload.sub, body.conversation_id, suffix)
-        for suffix in body.suffixes
+        generate_cos_key(request.state.payload.sub, body.conversation_id, i)
+        for i in body.file_hashes
     ]  # 生成cos_key
     upload_presigned_urls = await asyncio.gather(
         *[get_upload_presigned_url(key) for key in cos_keys]
@@ -79,10 +78,7 @@ async def api_generate_conversation_title(
     await url_to_get_presigned_url(body.messages)
     # 生成标题
     title = await generate_title(
-        body.messages[0].content,
-        body.base_url,
-        body.model_name,
-        body.api_key,
+        body.messages[0].content, body.base_url, body.model_name, body.api_key
     )
     return ConversationTitleResponse(title=title)
 
