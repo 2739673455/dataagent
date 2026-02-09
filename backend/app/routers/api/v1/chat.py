@@ -48,10 +48,13 @@ async def api_get_upload_presigned_url(
     cos_keys = [
         generate_cos_key(request.state.payload.sub, body.conversation_id, i)
         for i in body.file_hashes
-    ]  # 生成cos_key
+    ]  # 生成 cos_key
+
+    # TODO 检查重复文件
+
     upload_presigned_urls = await asyncio.gather(
         *[get_upload_presigned_url(key) for key in cos_keys]
-    )  # 获取预签名上传url
+    )  # 获取 预签名上传url
     return GetUploadPresignedUrlResponse(urls=upload_presigned_urls)
 
 
@@ -63,7 +66,7 @@ async def api_generate_conversation_title(
     logger.info(
         f"User generate conversation title: conversation_id={body.conversation_id}"
     )
-    # 转换预签名上传url为预签名下载url
+    # 转换 预签名上传url 为 预签名下载url
     await url_to_get_presigned_url(body.messages)
     # 生成标题
     title = await generate_title(
