@@ -24,10 +24,20 @@ async def get_messages(
     messages = []
     for message in result.scalars().all():
         # 将 content json字符串转换为str或list[dict]
-        message.content = json.loads(message.content)
+        content = json.loads(message.content)
         # 将 attachments json字符串转换为list[dict]
+        attachments = None
         if message.attachments:
-            message.attachments = json.loads(message.attachments)
+            attachments = json.loads(message.attachments)
+        messages.append(
+            MessageItem(
+                message_id=message.id,
+                role=message.role,
+                content=content,
+                attachments=attachments,
+                timestamp=message.timestamp,
+            )
+        )
     return messages
 
 
