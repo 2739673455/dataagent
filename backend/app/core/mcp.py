@@ -1,3 +1,5 @@
+"""加载 MCP 工具"""
+
 from app.config import CFG
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.sessions import (

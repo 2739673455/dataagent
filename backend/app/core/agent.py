@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 from app.core.mcp import mcp_client
@@ -16,12 +17,12 @@ model = init_chat_model(
 )
 
 
-agent = create_deep_agent(model=model, tools=mcp_client.get_tools())
-
-
 async def main():
+    tools = await mcp_client.get_tools()
+    agent = create_deep_agent(model=model, tools=tools)
+
     async for chunk in agent.astream(
-        input={"messages": [{"role": "user", "content": "看下你当前在哪一个目录"}]}
+        input={"messages": [{"role": "user", "content": "现在流行的ai编程工具有哪些?"}]}
     ):
         for k, v in chunk.items():
             if v is None:
@@ -42,4 +43,4 @@ async def main():
                 print(k, "\n", v, end="\n\n")
 
 
-# asyncio.run(main())
+asyncio.run(main())
