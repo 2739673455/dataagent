@@ -53,33 +53,37 @@ async def get_messages(
     return messages
 
 
-async def url_to_get_presigned_url(messages: Sequence[Message | MessageItem]):
-    """处理消息 content 中的 url 预签名下载url"""
+async def url_to_get_presigned_url(messages: Sequence[MessageItem]):
+    """
+    转换消息 content 中的 url -> 预签名下载url
+    转换消息 attachments 中的 url -> 预签名下载url
+    """
     tasks = []
-    c_dicts = []  # 存储对应的 c_dict，用于后续更新
+    image_contents = []  # 存储对应的 ImageContent 对象，用于后续更新
     for message in messages:
         if message.role == "user" and isinstance(message.content, list):
-            for c_dict in message.content:
-                if hasattr(c_dict, "image_url"):
-                    # 提取cos_key
-                    cos_key = extract_cos_key(c_dict["image_url"])
-                    # 获取预签名下载url
-                    tasks.append(get_get_presigned_url(cos_key))
-                    c_dicts.append(c_dict)
+            for content in message.content:
+                if isinstance(content, ImageContent):
+                    cos_key = extract_cos_key(content.image_url)  # 提取cos_key
+                    tasks.append(get_get_presigned_url(cos_key))  # 获取预签名下载url
+                    image_contents.append(content)
     if tasks:
         results = await asyncio.gather(*tasks)
-        for c_dict, presinged_url in zip(c_dicts, results):
-            c_dict["image_url"] = presinged_url
+        for content, presigned_url in zip(image_contents, results):
+            content.image_url = presigned_url
 
 
 async def url_to_cos_url(messages: Sequence[MessageItem]):
-    """处理消息 content 中的 url 为 cos_url"""
+    """
+    转换消息 content 中的 url -> cos_url
+    转换消息 attachments 中的 url -> cos_url
+    """
     for message in messages:  # 遍历消息列表
         if isinstance(message.content, list):  # 如果 content 是 list 类型
-            for c_dict in message.content:  # 遍历 content 中各类型内容
-                if "image_url" in c_dict:  # 如果是 image 类型的内容
-                    cos_key = extract_cos_key(c_dict["image_url"])  # 提取 cos_key
-                    c_dict["image_url"] = "cos://" + cos_key  #  拼接为 cos_url
+            for content in message.content:  # 遍历 content 中各类型内容
+                if isinstance(content, ImageContent):  # 如果是 ImageContent 类型
+                    cos_key = extract_cos_key(content.image_url)  # 提取 cos_key
+                    content.image_url = "cos://" + cos_key  # 拼接为 cos_url
 
 
 async def _save_message_in_db(
@@ -120,7 +124,7 @@ async def stream_response(
     """流式返回AI回复"""
     try:
         logger.info(f"Received messages ({len(messages)})")
-        # 转换url为cos_url
+        # 转换 url 为 cos_url
         await url_to_cos_url(messages)
         # 用户消息存入数据库
         user_message_id = messages[-1].message_id
