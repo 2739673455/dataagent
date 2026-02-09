@@ -3,7 +3,7 @@ from collections.abc import Sequence
 
 from app.entities.chat import Conversation, Message
 from app.exceptions.conversation import ConversationNotFoundError
-from sqlalchemy import delete, select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -58,20 +58,20 @@ async def update_conversation_data(
 
 
 async def delete_conversations(db_session: AsyncSession, ids: list[int]) -> None:
-    """批量删除对话"""
+    """批量逻辑删除对话"""
     try:
         stmt = select(Conversation).where(Conversation.id.in_(ids))
         result = await db_session.execute(stmt)
         conversations = result.scalars().all()
         if not conversations:
             raise ConversationNotFoundError  # 对话不存在
-        # 删除关联的消息
-        await db_session.execute(
-            delete(Message).where(Message.conversation_id.in_(ids))
-        )
-        # 删除对话
+        # 逻辑删除对话
         for conversation in conversations:
-            await db_session.delete(conversation)
+            conversation.yn = 0
+        # 逻辑删除关联的消息
+        await db_session.execute(
+            update(Message).where(Message.conversation_id.in_(ids)).values(yn=0)
+        )
         await db_session.commit()
     except Exception:
         await db_session.rollback()

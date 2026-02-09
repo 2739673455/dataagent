@@ -25,6 +25,7 @@ CREATE TABLE `conversation` (
     `title` VARCHAR(200) NOT NULL COMMENT '对话标题',
     `create_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `yn` TINYINT NOT NULL DEFAULT 1 COMMENT '是否启用',
     PRIMARY KEY (`id`),
     FOREIGN KEY (`model_config_id`) REFERENCES `model_config` (`id`),
     INDEX idx_conversation_user_id (user_id)
@@ -37,6 +38,7 @@ CREATE TABLE `message` (
     `role` VARCHAR(20) NOT NULL COMMENT '角色 (user/assistant/tool)',
     `content` TEXT NOT NULL COMMENT '消息内容 (JSON 字符串)',
     `timestamp` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '发送时间',
+    `yn` TINYINT NOT NULL DEFAULT 1 COMMENT '是否启用',
     PRIMARY KEY (`id`),
     FOREIGN KEY (`conversation_id`) REFERENCES `conversation` (`id`) ON DELETE CASCADE,
     INDEX idx_message_conversation_id (`conversation_id`)
