@@ -60,17 +60,34 @@ async def url_to_get_presigned_url(messages: Sequence[MessageItem]):
     """
     tasks = []
     image_contents = []  # 存储对应的 ImageContent 对象，用于后续更新
+    attachment_list = []  # 存储对应的 Attachment 对象，用于后续更新
     for message in messages:
-        if message.role == "user" and isinstance(message.content, list):
-            for content in message.content:
-                if isinstance(content, ImageContent):
-                    cos_key = extract_cos_key(content.image_url)  # 提取cos_key
-                    tasks.append(get_get_presigned_url(cos_key))  # 获取预签名下载url
-                    image_contents.append(content)
+        if message.role == "user":
+            # 处理 content 中的 ImageContent
+            if isinstance(message.content, list):
+                for content in message.content:
+                    if isinstance(content, ImageContent):
+                        cos_key = extract_cos_key(content.image_url)
+                        tasks.append(get_get_presigned_url(cos_key))
+                        image_contents.append(content)
+            # 处理 attachments 中的 Attachment
+            if message.attachments:
+                for attachment in message.attachments:
+                    cos_key = extract_cos_key(attachment.url)
+                    tasks.append(get_get_presigned_url(cos_key))
+                    attachment_list.append(attachment)
     if tasks:
         results = await asyncio.gather(*tasks)
-        for content, presigned_url in zip(image_contents, results):
+        idx = 0
+        for content, presigned_url in zip(
+            image_contents, results[idx : idx + len(image_contents)]
+        ):
             content.image_url = presigned_url
+        idx += len(image_contents)
+        for attachment, presigned_url in zip(
+            attachment_list, results[idx : idx + len(attachment_list)]
+        ):
+            attachment.url = presigned_url
 
 
 async def url_to_cos_url(messages: Sequence[MessageItem]):
@@ -79,11 +96,17 @@ async def url_to_cos_url(messages: Sequence[MessageItem]):
     转换消息 attachments 中的 url -> cos_url
     """
     for message in messages:  # 遍历消息列表
+        # 处理 content 中的 ImageContent
         if isinstance(message.content, list):  # 如果 content 是 list 类型
             for content in message.content:  # 遍历 content 中各类型内容
                 if isinstance(content, ImageContent):  # 如果是 ImageContent 类型
                     cos_key = extract_cos_key(content.image_url)  # 提取 cos_key
                     content.image_url = "cos://" + cos_key  # 拼接为 cos_url
+        # 处理 attachments 中的 Attachment
+        if message.attachments:  # 如果有附件
+            for attachment in message.attachments:  # 遍历附件
+                cos_key = extract_cos_key(attachment.url)  # 提取 cos_key
+                attachment.url = "cos://" + cos_key  # 拼接为 cos_url
 
 
 async def _save_message_in_db(
