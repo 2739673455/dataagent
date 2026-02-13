@@ -16,6 +16,7 @@ from app.services.auth import create_token
 from fastapi import Response
 from pwdlib._hash import PasswordHash
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -109,6 +110,12 @@ async def add_user_in_db(
         await db_session.commit()
         await db_session.refresh(user)
         return user
+    except IntegrityError as e:
+        await db_session.rollback()
+        # 检查是否是邮箱唯一约束冲突
+        if "user.email" in str(e) or "Duplicate entry" in str(e):
+            raise EmailAlreadyExistsError from e
+        raise
     except Exception:
         await db_session.rollback()
         raise
