@@ -115,7 +115,7 @@ async def revoke_all_refresh_tokens(db_session: AsyncSession, user_id: int) -> N
         )
         await db_session.execute(stmt)
         await db_session.commit()
-    except:
+    except Exception:
         await db_session.rollback()
         raise
 
