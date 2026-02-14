@@ -27,5 +27,5 @@ mcp: # MCP 工具
     url: https://mcp.tavily.com/mcp/?tavilyApiKey=${oc.env:TAVILY_API_KEY}
 
 verify_access_token_url: http://127.0.0.1:7777 # 验证访问令牌URL
-encryption_key: ${oc.env:ENCRYPTION_KEY} # 模型访问API-Key加密密钥，16、24或32字节长
+encryption_key: ${oc.env:ENCRYPTION_KEY} # 模型访问 API-Key 加密密钥
 cors_origins: [] # 允许跨域请求的源

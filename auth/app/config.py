@@ -39,7 +39,7 @@ class Cfg(BaseModel):
     cors_origins: list[str]
 
 
-CONFIG_DIR = Path(__file__).parent / "configs"  # 配置文件目录
+CONFIG_DIR = Path(__file__).parent.parent / "configs"  # 配置文件目录
 dotenv.load_dotenv(CONFIG_DIR / ".env")  # 加载 .env
 base_cfg = OmegaConf.load(CONFIG_DIR / "config.yml")  # 加载 config.yml
 
