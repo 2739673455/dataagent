@@ -53,7 +53,6 @@ async def middleware(request: Request, call_next: Callable) -> Response:
         )  # 设置 response_time_ms 到 ContextVar
         if error:
             status_ctx.set("fail")  # 设置 status 到 ContextVar
-            logger.info(f"Request failed - {error}")
         else:
             status_ctx.set("finish")  # 设置 status 到 ContextVar
             logger.info("Request completed")

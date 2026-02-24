@@ -17,11 +17,12 @@ from app.services.chat import (
     url_to_get_presigned_url,
 )
 from app.utils.cos import generate_cos_key, get_upload_presigned_url
-from app.utils.database import get_app_db
 from app.utils.log import logger
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.app.utils.db import get_app_db
 
 router = APIRouter(prefix="/chat", tags=["聊天"])
 

@@ -2,20 +2,21 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from app.config import CFG
-from app.handlers import register_exception_handlers
+from app.exceptions import handlers
 from app.middlewares import auth, trace
 from app.routers import api
-from app.utils import database
 from app.utils.log import setup_logger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from backend.app.utils import db
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logger()
     yield
-    await database.close_all()
+    await db.close_all()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -34,7 +35,7 @@ app.add_middleware(
 )
 
 # 注册异常处理
-register_exception_handlers(app)
+handlers.register_exception_handlers(app)
 
 
 @app.get("/health")

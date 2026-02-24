@@ -13,10 +13,11 @@ from app.services.conversation import (
     get_conversations,
     update_conversation_data,
 )
-from app.utils.database import get_app_db
 from app.utils.log import logger
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.app.utils.db import get_app_db
 
 router = APIRouter(prefix="/conversation", tags=["对话管理"])
 

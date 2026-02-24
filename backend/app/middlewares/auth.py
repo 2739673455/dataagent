@@ -11,7 +11,7 @@ async def middleware(request: Request, call_next: Callable) -> Response:
     try:
         # 请求远程服务验证访问令牌
         resp = await apost(
-            CFG.verify_access_token_url,
+            CFG.auth_service_url,
             headers={"Authorization": request.headers.get("Authorization")},
         )
         if resp.status_code == 200:

@@ -13,10 +13,11 @@ from app.services.model_config import (
     get_model_configs,
     update_model_config,
 )
-from app.utils.database import get_app_db
 from app.utils.log import logger
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.app.utils.db import get_app_db
 
 router = APIRouter(prefix="/model_config", tags=["模型配置管理"])
 

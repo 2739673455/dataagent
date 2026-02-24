@@ -6,12 +6,17 @@ from pydantic import BaseModel
 
 
 # 数据库
-class DBCfg(BaseModel):
+class MySQLCfg(BaseModel):
     host: str
     port: int
     user: str
     password: str
     database: str
+
+
+class DBCfg(BaseModel):
+    driver: str
+    configs: dict[str, MySQLCfg]
 
 
 # 日志
@@ -45,7 +50,7 @@ class Cfg(BaseModel):
     log: LogCfg
     cos: COSCfg
     mcp: dict[str, MCPCfg]
-    verify_access_token_url: str
+    auth_service_url: str
     encryption_key: str
     cors_origins: list[str]
 

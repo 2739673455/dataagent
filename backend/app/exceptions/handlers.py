@@ -1,9 +1,10 @@
-from app.exceptions.base import AppError
-from app.utils.context import trace_id_ctx
-from app.utils.log import logger
 from fastapi import HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+
+from app.exceptions.base import AppError
+from app.utils.context import trace_id_ctx
+from app.utils.log import logger
 
 
 def _build_response(

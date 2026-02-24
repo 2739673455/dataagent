@@ -1,9 +1,12 @@
 db: # 数据库
-  host: 127.0.0.1
-  port: 3306
-  user: root
-  password: ${oc.env:APP_DB_PASSWORD}
-  database: app
+  driver: mysql # 数据库驱动
+  configs:
+    mysql:
+      host: 127.0.0.1
+      port: 3306
+      user: root
+      password: ${oc.env:APP_DB_PASSWORD}
+      database: auth
 
 log: # 日志
   to_console: true # 是否输出到控制台
@@ -26,6 +29,10 @@ mcp: # MCP 工具
     transport: streamable_http
     url: https://mcp.tavily.com/mcp/?tavilyApiKey=${oc.env:TAVILY_API_KEY}
 
-verify_access_token_url: http://127.0.0.1:7777 # 验证访问令牌URL
+auth_service:
+  base_url: http://127.0.0.1:7777 # 认证服务url
+  verify_access_token: /verify_access_token # 验证访问令牌
+
 encryption_key: ${oc.env:ENCRYPTION_KEY} # 模型访问 API-Key 加密密钥
+
 cors_origins: [] # 允许跨域请求的源
