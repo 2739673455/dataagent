@@ -6,15 +6,24 @@ import sys
 from pathlib import Path
 
 import asyncmy
+from app.config import CFG, MySQLCfg
 from rich.console import Console
 from rich.progress import BarColumn, Progress, TextColumn
 from sqlacodegen.generators import DeclarativeGenerator
 from sqlalchemy import MetaData, create_engine
 
+# 日志
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logger = logging.getLogger(__name__)
+
 
 class DBInit:
-    def __init__(self, conn_conf: dict):
-        self.conn_conf = conn_conf
+    def __init__(self, config):
+        self.db_url = ""
 
     async def create_db(self, db_name: str):
         """创建数据库"""
@@ -24,9 +33,24 @@ class DBInit:
         """执行 SQL 文件"""
         raise NotImplementedError
 
-    async def gen_tb_model(self, db_name: str, output_path: Path):
-        """生成表模型"""
+    async def get_db_url(self, db_name: str):
+        """获取数据库连接 url"""
         raise NotImplementedError
+
+    async def gen_tb_model(self, output_path: Path):
+        """生成 SQLAlchemy 表模型"""
+        # 创建 SQLAlchemy 数据库引擎
+        engine = create_engine(self.db_url)
+        # 创建元数据对象并反射数据库结构
+        metadata = MetaData()
+        metadata.reflect(engine)
+        # 使用 DeclarativeGenerator 生成模型代码
+        generator = DeclarativeGenerator(metadata, engine, [])
+        code = generator.generate()
+        # 将生成的代码写入文件
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(code)
 
     async def init_db(self, db_sql_orm: list[tuple], max_workers: int = 5):
         """初始化数据库并导入数据"""
@@ -48,7 +72,8 @@ class DBInit:
                     try:
                         await self.create_db(db_name)
                         await self.exec_sql_file(db_name, sql_file_path)
-                        await self.gen_tb_model(db_name, output_path)
+                        await self.get_db_url(db_name)
+                        await self.gen_tb_model(output_path)
                     finally:
                         progress.update(
                             task_id, advance=1, description=f"{db_name[:8]:<8}"
@@ -66,6 +91,17 @@ class DBInit:
 
 
 class MyInit(DBInit):
+    """MySQL 数据库初始化"""
+
+    def __init__(self, config: MySQLCfg):
+        self.config = config
+        self.conn_conf = {
+            "host": config.host,
+            "port": config.port,
+            "user": config.user,
+            "password": config.password,
+        }
+
     async def create_db(self, db_name: str):
         conn = await asyncmy.connect(**self.conn_conf, autocommit=True)
         try:
@@ -78,55 +114,44 @@ class MyInit(DBInit):
             conn.close()
 
     async def exec_sql_file(self, db_name: str, sql_file_path: Path):
+        with open(sql_file_path, "r", encoding="utf-8") as f:
+            sql = f.read()
         conn = await asyncmy.connect(**self.conn_conf, db=db_name)
         try:
-            with open(sql_file_path, "r", encoding="utf-8") as f:
-                sql = f.read()
             await conn.begin()
             async with conn.cursor() as cur:
                 await cur.execute(sql)
-            await conn.commit()
         except Exception as e:
-            await conn.rollback()
             logger.exception(f"{sql_file_path.stem} 执行sql失败: {e}")
         finally:
             conn.close()
 
-    async def gen_tb_model(self, db_name: str, output_path: Path):
-        # 创建 SQLAlchemy 数据库引擎
-        db_url = f"mysql+pymysql://{self.conn_conf['user']}:{self.conn_conf['password']}@{self.conn_conf['host']}:{self.conn_conf['port']}/{db_name}"
-        engine = create_engine(db_url)
-        # 创建元数据对象并反射数据库结构
-        metadata = MetaData()
-        metadata.reflect(engine)
-        # 使用 DeclarativeGenerator 生成模型代码
-        generator = DeclarativeGenerator(metadata, engine, [])
-        code = generator.generate()
-        # 将生成的代码写入文件
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(code)
+    async def get_db_url(self, db_name: str):
+        self.db_url = f"mysql+pymysql://{self.config.user}:{self.config.password}@{self.config.host}:{self.config.port}/{db_name}"
 
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
-logger = logging.getLogger(__name__)
+if __name__ == "__main__":
+    DB_DRIVER = CFG.db.driver
+    DB_CONFIG = CFG.db.configs[DB_DRIVER]
 
-# 数据库连接配置
-my_init = MyInit(
-    {
-        "host": "127.0.0.1",
-        "port": 3306,
-        "user": "root",
-        "password": "123321",
-    },
-)
-sql_dir = Path(__file__).parent.parent / "sql"  # 数据库文件目录
-sql_files = list(sql_dir.glob("*.sql"))  # 获取所有SQL文件
-orm_dir = Path(__file__).parent.parent / "entities"  # 表模型输出目录
-db_sql_orm = [(f.stem, f, orm_dir / f"{f.stem}.py") for f in sql_files]
-asyncio.run(my_init.init_db(db_sql_orm))
+    if isinstance(DB_CONFIG, MySQLCfg):
+        # 配置数据库连接
+        db_init = MyInit(DB_CONFIG)
+    else:
+        logger.error(f"不支持的数据库驱动: {DB_DRIVER}")
+        sys.exit(1)
+
+    # SQL 文件目录
+    sql_dir = Path(__file__).parent.parent / "sql" / DB_DRIVER
+    # 获取所有 SQL 文件
+    sql_files = list(sql_dir.glob("*.sql"))
+    # 表模型输出目录
+    orm_dir = Path(__file__).parent / "entities"
+    # db_name, sql_file_path, output_path
+    db_sql_orm = []
+    for f in sql_files:
+        db_name = f.stem
+        sql_file_path = f
+        output_path = orm_dir / f"{f.stem}.py"
+        db_sql_orm.append((db_name, sql_file_path, output_path))
+    asyncio.run(db_init.init_db(db_sql_orm))

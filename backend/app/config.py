@@ -45,12 +45,18 @@ class MCPCfg(BaseModel):
     url: str
 
 
+# 认证服务
+class AuthServiceCfg(BaseModel):
+    base_url: str
+    verify_access_token: str
+
+
 class Cfg(BaseModel):
     db: DBCfg
     log: LogCfg
     cos: COSCfg
     mcp: dict[str, MCPCfg]
-    auth_service_url: str
+    auth_service: AuthServiceCfg
     encryption_key: str
     cors_origins: list[str]
 

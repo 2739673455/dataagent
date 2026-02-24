@@ -31,7 +31,7 @@ mcp: # MCP 工具
 
 auth_service:
   base_url: http://127.0.0.1:7777 # 认证服务url
-  verify_access_token: /verify_access_token # 验证访问令牌
+  verify_access_token: /api/verify_access_token # 验证访问令牌
 
 encryption_key: ${oc.env:ENCRYPTION_KEY} # 模型访问 API-Key 加密密钥
 
