@@ -11,6 +11,10 @@ from rich.progress import BarColumn, Progress, TextColumn
 from sqlacodegen.generators import DeclarativeGenerator
 from sqlalchemy import MetaData, create_engine
 
+# 路径常量
+CURRENT_DIR = Path(__file__).parent  # 当前文件所在目录
+UP1_DIR = CURRENT_DIR.parent  # 上一级目录
+
 
 class DBInit:
     def __init__(self, cfg):
@@ -171,11 +175,11 @@ class MyInit(DBInit):
 def prepare():
     """获取(数据库名,SQL脚本文件路径,表模型输出路径)元组"""
     # SQL 文件目录
-    sql_dir = Path(__file__).parent.parent / "sql"
+    sql_dir = UP1_DIR / "sql"
     # 获取所有 SQL 文件
     sql_files = list(sql_dir.glob("*.sql"))
     # 表模型输出目录
-    orm_dir = Path(__file__).parent / "entities"
+    orm_dir = CURRENT_DIR / "entities"
     # db_name, sql_file_path, output_path
     db_sql_orm = []
     for f in sql_files:
