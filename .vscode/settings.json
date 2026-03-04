@@ -1,4 +1,4 @@
 {
-    "python.defaultInterpreterPath": "/home/kodey/agents/backend/.venv/bin/python",
+    "python.defaultInterpreterPath": "/home/kodey/agents/dbmock/.venv/bin/python",
     "python.terminal.activateEnvironment": false
 }
