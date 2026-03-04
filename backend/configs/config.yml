@@ -29,10 +29,8 @@ mcp: # MCP 工具
     transport: streamable_http
     url: https://mcp.tavily.com/mcp/?tavilyApiKey=${oc.env:TAVILY_API_KEY}
 
-auth_service:
+auth_service: # 认证服务
   base_url: http://127.0.0.1:7777 # 认证服务url
-  verify_access_token: /api/verify_access_token # 验证访问令牌
-
-encryption_key: ${oc.env:ENCRYPTION_KEY} # 模型访问 API-Key 加密密钥
+  introspection: /api/introspection # 校验访问令牌
 
 cors_origins: [] # 允许跨域请求的源

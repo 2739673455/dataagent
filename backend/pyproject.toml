@@ -18,5 +18,4 @@ dependencies = [
     "pymysql>=1.1.2",
     "sqlacodegen>=3.2.0",
     "sqlalchemy>=2.0.46",
-    "tavily-python>=0.7.21",
 ]
