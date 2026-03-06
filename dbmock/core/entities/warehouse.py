@@ -33,8 +33,6 @@ class DwdDimBrandInfoDf(Base):
     first_letter: Mapped[Optional[str]] = mapped_column(CHAR(1), comment='首字母')
     sort_order: Mapped[Optional[int]] = mapped_column(Integer, server_default=text("'0'"), comment='排序')
     status: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='状态:1有效 0失效')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'))
 
 
 class DwdDimCategoryInfoDf(Base):
@@ -59,8 +57,6 @@ class DwdDimCategoryInfoDf(Base):
     sort_order: Mapped[Optional[int]] = mapped_column(Integer, server_default=text("'0'"), comment='排序')
     category_path: Mapped[Optional[str]] = mapped_column(String(512), comment='类目路径')
     status: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='状态:0禁用 1启用')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'))
 
 
 class DwdDimCouponInfoDf(Base):
@@ -88,11 +84,6 @@ class DwdDimCouponInfoDf(Base):
     use_start_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='可用开始时间')
     use_end_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='可用结束时间')
     total_issue_cnt: Mapped[Optional[int]] = mapped_column(BigInteger, comment='总发行量')
-    received_cnt: Mapped[Optional[int]] = mapped_column(BigInteger, comment='已领取数量')
-    used_cnt: Mapped[Optional[int]] = mapped_column(BigInteger, comment='已使用数量')
-    status: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='状态:1有效 0失效')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'))
 
 
 class DwdDimGeoRegionDf(Base):
@@ -119,8 +110,6 @@ class DwdDimGeoRegionDf(Base):
     district_name: Mapped[Optional[str]] = mapped_column(String(128), comment='区县名称')
     zip_code: Mapped[Optional[str]] = mapped_column(String(16), comment='邮编')
     status: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='状态:1有效 0失效')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'))
 
 
 class DwdDimLogisticsCompanyDf(Base):
@@ -140,8 +129,6 @@ class DwdDimLogisticsCompanyDf(Base):
     service_phone: Mapped[Optional[str]] = mapped_column(String(32), comment='客服电话')
     is_trace_supported: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='是否支持轨迹查询')
     status: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='状态:1有效 0失效')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'))
 
 
 class DwdDimPaymentTypeDf(Base):
@@ -161,8 +148,6 @@ class DwdDimPaymentTypeDf(Base):
     is_installment: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'0'"), comment='是否分期支付')
     fee_rate: Mapped[Optional[decimal.Decimal]] = mapped_column(DECIMAL(8, 6), comment='支付手续费率')
     status: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='状态:1有效 0失效')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'))
 
 
 class DwdDimPromotionInfoDf(Base):
@@ -190,9 +175,6 @@ class DwdDimPromotionInfoDf(Base):
     max_discount_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(DECIMAL(16, 2), comment='封顶减免')
     sponsor_type: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='发起方:1平台 2店铺 3品牌')
     sponsor_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), comment='发起方ID')
-    status: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='状态:1有效 0失效')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'))
 
 
 class DwdDimShopInfoDf(Base):
@@ -223,8 +205,6 @@ class DwdDimShopInfoDf(Base):
     is_global: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'0'"), comment='是否跨境:0否 1是')
     is_deleted: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'0'"), comment='逻辑删除:0否 1是')
     shop_status: Mapped[Optional[str]] = mapped_column(String(16), server_default=text("'营业'"), comment='状态:关店/营业')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'))
 
 
 class DwdDimSkuInfoDf(Base):
@@ -233,18 +213,20 @@ class DwdDimSkuInfoDf(Base):
         Index('idx_brand_id', 'brand_id'),
         Index('idx_category_id', 'category_id'),
         Index('idx_shop_id', 'shop_id'),
+        Index('idx_sku_current', 'sku_id', 'is_current'),
         Index('idx_spu_id', 'spu_id'),
-        Index('uk_sku_etl', 'sku_id', 'etl_date', unique=True),
-        {'comment': 'SKU维度明细快照'}
+        Index('uk_sku_start', 'sku_id', 'start_date', unique=True),
+        {'comment': 'SKU维度拉链表'}
     )
 
     id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
     sku_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='SKU ID')
+    start_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='生效开始日期')
+    end_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='生效结束日期')
     sku_name: Mapped[str] = mapped_column(String(256), nullable=False, comment='SKU名称')
     spu_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='SPU ID')
     shop_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='店铺ID')
     category_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='三级类目ID')
-    etl_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='分区日期')
     brand_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), comment='品牌ID')
     bar_code: Mapped[Optional[str]] = mapped_column(String(64), comment='条码')
     sku_specs_json: Mapped[Optional[dict]] = mapped_column(JSON, comment='SKU规格JSON')
@@ -256,9 +238,7 @@ class DwdDimSkuInfoDf(Base):
     is_hot_sale: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'0'"), comment='是否热销')
     is_new: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'0'"), comment='是否新品')
     is_deleted: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'0'"), comment='逻辑删除')
-    shelf_status: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='上架状态:1上架 2下架')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'))
+    is_current: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='是否当前版本:0否 1是')
 
 
 class DwdDimSpuInfoDf(Base):
@@ -267,16 +247,18 @@ class DwdDimSpuInfoDf(Base):
         Index('idx_brand_id', 'brand_id'),
         Index('idx_category_id', 'category_id'),
         Index('idx_shop_id', 'shop_id'),
-        Index('uk_spu_etl', 'spu_id', 'etl_date', unique=True),
-        {'comment': 'SPU维度明细快照'}
+        Index('idx_spu_current', 'spu_id', 'is_current'),
+        Index('uk_spu_start', 'spu_id', 'start_date', unique=True),
+        {'comment': 'SPU维度拉链表'}
     )
 
     id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
     spu_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='SPU ID')
+    start_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='生效开始日期')
+    end_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='生效结束日期')
     spu_name: Mapped[str] = mapped_column(String(256), nullable=False, comment='SPU名称')
     category_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='三级类目ID')
     shop_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='店铺ID')
-    etl_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='分区日期')
     spu_sub_title: Mapped[Optional[str]] = mapped_column(String(512), comment='副标题')
     brand_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), comment='品牌ID')
     brand_name: Mapped[Optional[str]] = mapped_column(String(128), comment='品牌名称')
@@ -286,26 +268,24 @@ class DwdDimSpuInfoDf(Base):
     presale_end_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='预售结束时间')
     weight: Mapped[Optional[decimal.Decimal]] = mapped_column(DECIMAL(12, 3), server_default=text("'0.000'"), comment='重量kg')
     volume: Mapped[Optional[decimal.Decimal]] = mapped_column(DECIMAL(12, 3), server_default=text("'0.000'"), comment='体积m3')
-    shelf_status: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='上下架状态:1上架 2下架')
     on_shelf_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='上架时间')
-    off_shelf_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='下架时间')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'))
+    is_current: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='是否当前版本:0否 1是')
 
 
 class DwdDimUserInfoDf(Base):
     __tablename__ = 'dwd_dim_user_info_df'
     __table_args__ = (
-        Index('idx_last_order_time', 'last_order_time'),
         Index('idx_province_city', 'province_code', 'city_code'),
         Index('idx_register_time', 'register_time'),
-        Index('uk_user_etl', 'user_id', 'etl_date', unique=True),
-        {'comment': '用户维度明细快照'}
+        Index('idx_user_current', 'user_id', 'is_current'),
+        Index('uk_user_start', 'user_id', 'start_date', unique=True),
+        {'comment': '用户维度拉链表'}
     )
 
     id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True, comment='自增主键')
     user_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='用户业务ID')
-    etl_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='分区日期(yyyy-mm-dd)')
+    start_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='生效开始日期')
+    end_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='生效结束日期')
     user_name: Mapped[Optional[str]] = mapped_column(String(64), comment='用户名')
     nick_name: Mapped[Optional[str]] = mapped_column(String(64), comment='昵称')
     gender: Mapped[Optional[str]] = mapped_column(String(8), server_default=text("'未知'"), comment='性别:未知/男/女')
@@ -326,10 +306,7 @@ class DwdDimUserInfoDf(Base):
     education_level: Mapped[Optional[str]] = mapped_column(String(32), comment='学历等级')
     marital_status: Mapped[Optional[str]] = mapped_column(String(16), comment='婚姻状态')
     user_status: Mapped[Optional[str]] = mapped_column(String(16), server_default=text("'正常'"), comment='状态:正常/禁用/注销')
-    first_order_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='首单时间')
-    last_order_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='最近下单时间')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'), comment='入仓时间')
-    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'), comment='更新时间')
+    is_current: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='是否当前版本:0否 1是')
 
 
 class DwdFactInteractionCartAddDi(Base):
@@ -360,7 +337,6 @@ class DwdFactInteractionCartAddDi(Base):
     client_type: Mapped[Optional[str]] = mapped_column(String(32), comment='客户端类型:iOS/Android/H5/PC/小程序')
     channel_code: Mapped[Optional[str]] = mapped_column(String(32), comment='渠道编码')
     sku_price: Mapped[Optional[decimal.Decimal]] = mapped_column(DECIMAL(16, 2), comment='加购时单价')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
 
 
 class DwdFactInteractionFavorAddDi(Base):
@@ -386,7 +362,6 @@ class DwdFactInteractionFavorAddDi(Base):
     spu_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), comment='SPU ID')
     client_type: Mapped[Optional[str]] = mapped_column(String(32), comment='客户端类型')
     channel_code: Mapped[Optional[str]] = mapped_column(String(32), comment='渠道编码')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
 
 
 class DwdFactInventoryChangeDi(Base):
@@ -424,7 +399,6 @@ class DwdFactInventoryChangeDi(Base):
     operator_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), comment='操作人ID')
     operator_type: Mapped[Optional[str]] = mapped_column(String(32), comment='操作人类型:系统/用户/商家/仓管')
     remark: Mapped[Optional[str]] = mapped_column(String(512), comment='备注')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
 
 
 class DwdFactServiceCommentDetailDi(Base):
@@ -462,7 +436,6 @@ class DwdFactServiceCommentDetailDi(Base):
     description_score: Mapped[Optional[int]] = mapped_column(TINYINT, comment='描述评分')
     sensitive_tag: Mapped[Optional[str]] = mapped_column(String(128), comment='敏感标签')
     sentiment: Mapped[Optional[str]] = mapped_column(String(16), comment='情感分析结果:正向/中性/负向')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
 
 
 class DwdFactTradeDeliveryDetailDi(Base):
@@ -471,6 +444,7 @@ class DwdFactTradeDeliveryDetailDi(Base):
         Index('idx_delivery_no', 'delivery_no'),
         Index('idx_delivery_time', 'delivery_time'),
         Index('idx_etl_date', 'etl_date'),
+        Index('idx_order_detail_id', 'order_detail_id'),
         Index('idx_order_id', 'order_id'),
         Index('idx_tracking_no', 'tracking_no'),
         Index('uk_delivery_detail', 'delivery_detail_id', unique=True),
@@ -481,11 +455,11 @@ class DwdFactTradeDeliveryDetailDi(Base):
     delivery_detail_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='发货明细ID(业务主键)')
     delivery_no: Mapped[str] = mapped_column(String(64), nullable=False, comment='发货单号')
     order_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='订单ID')
+    order_detail_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='订单明细ID')
     user_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='用户ID')
     shop_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='店铺ID')
     delivery_status: Mapped[str] = mapped_column(String(32), nullable=False, comment='发货状态:待发货/已发货/运输中/已签收/拒收')
     etl_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='分区日期(按发货日期)')
-    order_detail_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), comment='订单明细ID')
     warehouse_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), comment='仓库ID')
     logistics_company_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), comment='物流公司ID')
     tracking_no: Mapped[Optional[str]] = mapped_column(String(128), comment='运单号')
@@ -502,8 +476,6 @@ class DwdFactTradeDeliveryDetailDi(Base):
     outbound_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='出库时间')
     delivery_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='发货时间')
     sign_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='签收时间')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'))
 
 
 class DwdFactTradeOrderDetailActivityDi(Base):
@@ -527,7 +499,6 @@ class DwdFactTradeOrderDetailActivityDi(Base):
     promotion_type: Mapped[Optional[str]] = mapped_column(String(32), comment='活动类型')
     promotion_level: Mapped[Optional[int]] = mapped_column(TINYINT, comment='活动层级优先级')
     rule_snapshot: Mapped[Optional[str]] = mapped_column(String(1024), comment='规则快照')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
 
 
 class DwdFactTradeOrderDetailCouponDi(Base):
@@ -554,7 +525,6 @@ class DwdFactTradeOrderDetailCouponDi(Base):
     coupon_batch_no: Mapped[Optional[str]] = mapped_column(String(64), comment='券批次号')
     coupon_receive_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='领券时间')
     coupon_use_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='用券时间')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
 
 
 class DwdFactTradeOrderDetailDi(Base):
@@ -599,10 +569,9 @@ class DwdFactTradeOrderDetailDi(Base):
     is_pre_sale: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'0'"), comment='是否预售')
     is_gift: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'0'"), comment='是否赠品')
     is_risk_order: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'0'"), comment='是否风控单')
+    is_order_finish: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'0'"), comment='订单是否完结:0否 1是')
     sku_origin_price: Mapped[Optional[decimal.Decimal]] = mapped_column(DECIMAL(16, 2), comment='SKU原价')
     sku_sale_price: Mapped[Optional[decimal.Decimal]] = mapped_column(DECIMAL(16, 2), comment='SKU成交单价')
-    platform_discount_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(DECIMAL(16, 2), server_default=text("'0.00'"), comment='平台优惠金额')
-    shop_discount_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(DECIMAL(16, 2), server_default=text("'0.00'"), comment='店铺优惠金额')
     activity_discount_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(DECIMAL(16, 2), server_default=text("'0.00'"), comment='活动优惠金额')
     coupon_discount_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(DECIMAL(16, 2), server_default=text("'0.00'"), comment='优惠券优惠金额')
     points_discount_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(DECIMAL(16, 2), server_default=text("'0.00'"), comment='积分抵扣金额')
@@ -610,11 +579,11 @@ class DwdFactTradeOrderDetailDi(Base):
     tax_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(DECIMAL(16, 2), server_default=text("'0.00'"), comment='税费')
     paid_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(DECIMAL(16, 2), server_default=text("'0.00'"), comment='实付金额')
     cost_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(DECIMAL(16, 2), server_default=text("'0.00'"), comment='成本金额')
-    order_confirm_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='确认时间')
     order_pay_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='支付时间')
+    order_delivery_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='发货时间')
+    order_receive_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='收货时间')
     order_cancel_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='取消时间')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'))
+    cancel_stage: Mapped[Optional[str]] = mapped_column(String(32), comment='取消阶段:未支付取消/支付后取消/拒收')
 
 
 class DwdFactTradePayDetailDi(Base):
@@ -637,7 +606,7 @@ class DwdFactTradePayDetailDi(Base):
     user_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='用户ID')
     shop_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='店铺ID')
     payment_type_code: Mapped[str] = mapped_column(String(32), nullable=False, comment='支付方式编码')
-    pay_status: Mapped[str] = mapped_column(String(32), nullable=False, comment='支付状态:成功/失败/关闭/退款')
+    pay_status: Mapped[str] = mapped_column(String(32), nullable=False, comment='支付状态:成功/失败/关闭')
     total_pay_amount: Mapped[decimal.Decimal] = mapped_column(DECIMAL(16, 2), nullable=False, comment='支付总金额')
     etl_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='分区日期(按支付日期)')
     third_party_pay_no: Mapped[Optional[str]] = mapped_column(String(128), comment='第三方支付流水号')
@@ -654,8 +623,6 @@ class DwdFactTradePayDetailDi(Base):
     installment_fee_amount: Mapped[Optional[decimal.Decimal]] = mapped_column(DECIMAL(16, 2), server_default=text("'0.00'"), comment='分期手续费')
     pay_success_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='支付成功时间')
     pay_fail_reason: Mapped[Optional[str]] = mapped_column(String(512), comment='支付失败原因')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'))
 
 
 class DwdFactTradeRefundDetailDi(Base):
@@ -696,8 +663,6 @@ class DwdFactTradeRefundDetailDi(Base):
     receive_return_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='商家收货时间')
     refund_success_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='退款成功时间')
     close_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='退款关闭时间')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'))
 
 
 class DwdFactTradeRefundPayDetailDi(Base):
@@ -728,7 +693,6 @@ class DwdFactTradeRefundPayDetailDi(Base):
     refund_apply_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='退款申请时间')
     refund_pay_time: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, comment='退款到账时间')
     refund_fail_reason: Mapped[Optional[str]] = mapped_column(String(512), comment='退款失败原因')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
 
 
 class DwdFactTrafficPageViewDi(Base):
@@ -766,7 +730,6 @@ class DwdFactTrafficPageViewDi(Base):
     city_code: Mapped[Optional[str]] = mapped_column(String(20), comment='访问市编码')
     stay_duration_sec: Mapped[Optional[int]] = mapped_column(Integer, comment='停留秒数')
     is_bounce: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'0'"), comment='是否跳出')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
 
 
 class DwdFactTrafficSearchDi(Base):
@@ -799,4 +762,3 @@ class DwdFactTrafficSearchDi(Base):
     is_search_success: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='是否成功返回结果')
     channel_code: Mapped[Optional[str]] = mapped_column(String(32), comment='渠道编码')
     client_type: Mapped[Optional[str]] = mapped_column(String(32), comment='客户端类型')
-    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))

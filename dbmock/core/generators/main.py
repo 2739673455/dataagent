@@ -9,24 +9,22 @@ from .batches import (
     batch2_product_dims,
     batch3_marketing,
     batch4_trade_core,
-    batch5_fulfillment,
-    batch6_behavior,
+    batch5_behavior,
 )
-from .settings import DBConfig, GenerateConfig, RunContext
+from .settings import DEFAULT_BATCH_SIZE, DBConfig, GenerateConfig, RunContext
 
 GENERATORS = [
     ("static_dims", batch1_static_dims.run),
     ("product_dims", batch2_product_dims.run),
     ("marketing", batch3_marketing.run),
     ("trade_core", batch4_trade_core.run),
-    ("fulfillment", batch5_fulfillment.run),
-    ("behavior", batch6_behavior.run),
+    ("behavior", batch5_behavior.run),
 ]
 
 
 def main() -> None:
     db_cfg = DBConfig()
-    gen_cfg = GenerateConfig()
+    gen_cfg = GenerateConfig(batch_size=DEFAULT_BATCH_SIZE)
     ctx = RunContext(db=db_cfg, gen=gen_cfg)
 
     logger.info("Start generators: {}", [name for name, _ in GENERATORS])

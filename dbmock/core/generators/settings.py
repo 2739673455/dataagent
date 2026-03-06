@@ -9,6 +9,8 @@ from pathlib import Path
 
 from sqlalchemy import Engine, create_engine
 
+DEFAULT_BATCH_SIZE = 5000
+
 
 def _today_iso() -> str:
     return date.today().isoformat()
@@ -41,10 +43,10 @@ class DBConfig:
 
 @dataclass(slots=True)
 class GenerateConfig:
+    batch_size: int
     seed: int = 42
     start_date: str = field(default_factory=_three_years_ago_iso)
     end_date: str = field(default_factory=_today_iso)
-    batch_size: int = 2000
     seed_dir: Path = field(
         default_factory=lambda: Path(__file__).resolve().parent / "seeds"
     )
