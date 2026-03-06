@@ -1,0 +1,74 @@
+[
+  {
+    "logistics_company_id": 1,
+    "logistics_company_code": "SF",
+    "logistics_company_name": "顺丰速运",
+    "logistics_type": "快递",
+    "service_phone": "95338",
+    "is_trace_supported": 1,
+    "status": 1
+  },
+  {
+    "logistics_company_id": 2,
+    "logistics_company_code": "JD",
+    "logistics_company_name": "京东物流",
+    "logistics_type": "快递",
+    "service_phone": "950616",
+    "is_trace_supported": 1,
+    "status": 1
+  },
+  {
+    "logistics_company_id": 3,
+    "logistics_company_code": "ZTO",
+    "logistics_company_name": "中通快递",
+    "logistics_type": "快递",
+    "service_phone": "95311",
+    "is_trace_supported": 1,
+    "status": 1
+  },
+  {
+    "logistics_company_id": 4,
+    "logistics_company_code": "YTO",
+    "logistics_company_name": "圆通速递",
+    "logistics_type": "快递",
+    "service_phone": "95554",
+    "is_trace_supported": 1,
+    "status": 1
+  },
+  {
+    "logistics_company_id": 5,
+    "logistics_company_code": "YUNDA",
+    "logistics_company_name": "韵达速递",
+    "logistics_type": "快递",
+    "service_phone": "95546",
+    "is_trace_supported": 1,
+    "status": 1
+  },
+  {
+    "logistics_company_id": 6,
+    "logistics_company_code": "EMS",
+    "logistics_company_name": "中国邮政速递物流",
+    "logistics_type": "快递",
+    "service_phone": "11183",
+    "is_trace_supported": 1,
+    "status": 1
+  },
+  {
+    "logistics_company_id": 7,
+    "logistics_company_code": "STO",
+    "logistics_company_name": "申通快递",
+    "logistics_type": "快递",
+    "service_phone": "95543",
+    "is_trace_supported": 1,
+    "status": 1
+  },
+  {
+    "logistics_company_id": 8,
+    "logistics_company_code": "DB",
+    "logistics_company_name": "德邦快递",
+    "logistics_type": "快递",
+    "service_phone": "95353",
+    "is_trace_supported": 1,
+    "status": 1
+  }
+]

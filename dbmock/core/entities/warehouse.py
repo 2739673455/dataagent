@@ -2,12 +2,39 @@ from typing import Optional
 import datetime
 import decimal
 
-from sqlalchemy import BigInteger, DECIMAL, Date, DateTime, Index, Integer, JSON, String, text
+from sqlalchemy import BigInteger, CHAR, DECIMAL, Date, DateTime, Index, Integer, JSON, String, text
 from sqlalchemy.dialects.mysql import BIGINT, TINYINT
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 class Base(DeclarativeBase):
     pass
+
+
+class DwdDimBrandInfoDf(Base):
+    __tablename__ = 'dwd_dim_brand_info_df'
+    __table_args__ = (
+        Index('idx_brand_name', 'brand_name'),
+        Index('idx_country', 'country_code'),
+        Index('idx_first_letter', 'first_letter'),
+        Index('uk_brand_etl', 'brand_id', 'etl_date', unique=True),
+        {'comment': '品牌维度明细快照'}
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
+    brand_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='品牌ID')
+    brand_name: Mapped[str] = mapped_column(String(128), nullable=False, comment='品牌名称')
+    etl_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='分区日期')
+    brand_name_en: Mapped[Optional[str]] = mapped_column(String(128), comment='品牌英文名')
+    brand_alias: Mapped[Optional[str]] = mapped_column(String(128), comment='品牌别名')
+    brand_logo_url: Mapped[Optional[str]] = mapped_column(String(512), comment='品牌Logo地址')
+    brand_story: Mapped[Optional[str]] = mapped_column(String(1024), comment='品牌故事')
+    country_code: Mapped[Optional[str]] = mapped_column(String(8), comment='国家编码')
+    country_name: Mapped[Optional[str]] = mapped_column(String(64), comment='国家名称')
+    first_letter: Mapped[Optional[str]] = mapped_column(CHAR(1), comment='首字母')
+    sort_order: Mapped[Optional[int]] = mapped_column(Integer, server_default=text("'0'"), comment='排序')
+    status: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='状态:1有效 0失效')
+    created_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
+    updated_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'))
 
 
 class DwdDimCategoryInfoDf(Base):

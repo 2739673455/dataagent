@@ -10,4 +10,3 @@ T = TypeVar("T")
 
 def pick(rng: Random, values: Sequence[T]) -> T:
     return values[rng.randrange(0, len(values))]
-

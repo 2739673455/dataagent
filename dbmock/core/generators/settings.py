@@ -5,6 +5,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 
 from sqlalchemy import Engine, create_engine
 
@@ -44,6 +45,9 @@ class GenerateConfig:
     start_date: str = field(default_factory=_three_years_ago_iso)
     end_date: str = field(default_factory=_today_iso)
     batch_size: int = 2000
+    seed_dir: Path = field(
+        default_factory=lambda: Path(__file__).resolve().parent / "seeds"
+    )
 
 
 @dataclass(slots=True)
@@ -52,9 +56,7 @@ class RunContext:
     gen: GenerateConfig
     engine: Engine = field(init=False)
     rng: random.Random = field(init=False)
-    etl_date: date = field(init=False)
 
     def __post_init__(self) -> None:
         self.engine = create_engine(self.db.db_url, pool_pre_ping=True)
         self.rng = random.Random(self.gen.seed)
-        self.etl_date = date.fromisoformat(self.gen.end_date)

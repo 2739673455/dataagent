@@ -10,4 +10,3 @@ from ..settings import RunContext
 def run(ctx: RunContext) -> None:
     logger.info("Run batch2_product_dims")
     # TODO: generate SPU/SKU
-

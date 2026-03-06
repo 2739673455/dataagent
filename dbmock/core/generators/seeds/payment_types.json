@@ -1,0 +1,62 @@
+[
+  {
+    "payment_type_code": "ALIPAY",
+    "payment_type_name": "支付宝",
+    "channel_code": "ALIPAY",
+    "channel_name": "支付宝",
+    "is_online": 1,
+    "is_installment": 0,
+    "fee_rate": "0.006000",
+    "status": 1
+  },
+  {
+    "payment_type_code": "WECHAT",
+    "payment_type_name": "微信支付",
+    "channel_code": "WECHAT",
+    "channel_name": "微信支付",
+    "is_online": 1,
+    "is_installment": 0,
+    "fee_rate": "0.006000",
+    "status": 1
+  },
+  {
+    "payment_type_code": "UNIONPAY",
+    "payment_type_name": "银联支付",
+    "channel_code": "UNIONPAY",
+    "channel_name": "银联",
+    "is_online": 1,
+    "is_installment": 0,
+    "fee_rate": "0.005000",
+    "status": 1
+  },
+  {
+    "payment_type_code": "HUABEI",
+    "payment_type_name": "花呗",
+    "channel_code": "ALIPAY",
+    "channel_name": "支付宝",
+    "is_online": 1,
+    "is_installment": 1,
+    "fee_rate": "0.008000",
+    "status": 1
+  },
+  {
+    "payment_type_code": "JD_PAY",
+    "payment_type_name": "京东支付",
+    "channel_code": "JD",
+    "channel_name": "京东",
+    "is_online": 1,
+    "is_installment": 0,
+    "fee_rate": "0.005000",
+    "status": 1
+  },
+  {
+    "payment_type_code": "COD",
+    "payment_type_name": "货到付款",
+    "channel_code": "COD",
+    "channel_name": "线下",
+    "is_online": 0,
+    "is_installment": 0,
+    "fee_rate": null,
+    "status": 1
+  }
+]
