@@ -101,6 +101,91 @@ CREATE TABLE `dwd_dim_category_info_df` (
     KEY `idx_root_id` (`root_category_id`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '类目维度明细快照';
 
+DROP TABLE IF EXISTS `dwd_dim_brand_info_df`;
+CREATE TABLE `dwd_dim_brand_info_df` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `brand_id` BIGINT UNSIGNED NOT NULL COMMENT '品牌ID',
+    `brand_name` VARCHAR(128) NOT NULL COMMENT '品牌名称',
+    `brand_name_en` VARCHAR(128) DEFAULT NULL COMMENT '品牌英文名',
+    `brand_alias` VARCHAR(128) DEFAULT NULL COMMENT '品牌别名',
+    `brand_logo_url` VARCHAR(512) DEFAULT NULL COMMENT '品牌Logo地址',
+    `brand_story` VARCHAR(1024) DEFAULT NULL COMMENT '品牌故事',
+    `country_code` VARCHAR(8) DEFAULT NULL COMMENT '国家编码',
+    `country_name` VARCHAR(64) DEFAULT NULL COMMENT '国家名称',
+    `first_letter` CHAR(1) DEFAULT NULL COMMENT '首字母',
+    `sort_order` INT DEFAULT 0 COMMENT '排序',
+    `status` TINYINT DEFAULT 1 COMMENT '状态:1有效 0失效',
+    `etl_date` DATE NOT NULL COMMENT '分区日期',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_brand_etl` (`brand_id`, `etl_date`),
+    KEY `idx_brand_name` (`brand_name`),
+    KEY `idx_country` (`country_code`),
+    KEY `idx_first_letter` (`first_letter`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '品牌维度明细快照';
+
+DROP TABLE IF EXISTS `dwd_dim_payment_type_df`;
+CREATE TABLE `dwd_dim_payment_type_df` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `payment_type_code` VARCHAR(32) NOT NULL COMMENT '支付方式编码',
+    `payment_type_name` VARCHAR(64) NOT NULL COMMENT '支付方式名称',
+    `channel_code` VARCHAR(32) DEFAULT NULL COMMENT '支付渠道编码',
+    `channel_name` VARCHAR(64) DEFAULT NULL COMMENT '支付渠道名称',
+    `is_online` TINYINT DEFAULT 1 COMMENT '是否线上支付',
+    `is_installment` TINYINT DEFAULT 0 COMMENT '是否分期支付',
+    `fee_rate` DECIMAL(8, 6) DEFAULT NULL COMMENT '支付手续费率',
+    `status` TINYINT DEFAULT 1 COMMENT '状态:1有效 0失效',
+    `etl_date` DATE NOT NULL COMMENT '分区日期',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_payment_type_etl` (`payment_type_code`, `etl_date`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '支付方式维度明细快照';
+
+DROP TABLE IF EXISTS `dwd_dim_logistics_company_df`;
+CREATE TABLE `dwd_dim_logistics_company_df` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `logistics_company_id` BIGINT UNSIGNED NOT NULL COMMENT '物流公司ID',
+    `logistics_company_code` VARCHAR(32) NOT NULL COMMENT '物流公司编码',
+    `logistics_company_name` VARCHAR(128) NOT NULL COMMENT '物流公司名称',
+    `logistics_type` VARCHAR(32) DEFAULT NULL COMMENT '物流类型:快递/同城/冷链/国际',
+    `service_phone` VARCHAR(32) DEFAULT NULL COMMENT '客服电话',
+    `is_trace_supported` TINYINT DEFAULT 1 COMMENT '是否支持轨迹查询',
+    `status` TINYINT DEFAULT 1 COMMENT '状态:1有效 0失效',
+    `etl_date` DATE NOT NULL COMMENT '分区日期',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_logistics_etl` (`logistics_company_id`, `etl_date`),
+    KEY `idx_company_code` (`logistics_company_code`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '物流公司维度明细快照';
+
+DROP TABLE IF EXISTS `dwd_dim_geo_region_df`;
+CREATE TABLE `dwd_dim_geo_region_df` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `region_code` VARCHAR(20) NOT NULL COMMENT '区域编码',
+    `region_name` VARCHAR(128) NOT NULL COMMENT '区域名称',
+    `region_level` TINYINT NOT NULL COMMENT '级别:1省 2市 3区县 4街道',
+    `parent_region_code` VARCHAR(20) DEFAULT NULL COMMENT '父级区域编码',
+    `parent_region_name` VARCHAR(128) DEFAULT NULL COMMENT '父级区域名称',
+    `province_code` VARCHAR(20) DEFAULT NULL COMMENT '省编码',
+    `province_name` VARCHAR(128) DEFAULT NULL COMMENT '省名称',
+    `city_code` VARCHAR(20) DEFAULT NULL COMMENT '市编码',
+    `city_name` VARCHAR(128) DEFAULT NULL COMMENT '市名称',
+    `district_code` VARCHAR(20) DEFAULT NULL COMMENT '区县编码',
+    `district_name` VARCHAR(128) DEFAULT NULL COMMENT '区县名称',
+    `zip_code` VARCHAR(16) DEFAULT NULL COMMENT '邮编',
+    `status` TINYINT DEFAULT 1 COMMENT '状态:1有效 0失效',
+    `etl_date` DATE NOT NULL COMMENT '分区日期',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_region_etl` (`region_code`, `etl_date`),
+    KEY `idx_parent_region` (`parent_region_code`),
+    KEY `idx_province_city` (`province_code`, `city_code`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '行政区域维度明细快照';
+
 DROP TABLE IF EXISTS `dwd_dim_spu_info_df`;
 CREATE TABLE `dwd_dim_spu_info_df` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -216,67 +301,6 @@ CREATE TABLE `dwd_dim_coupon_info_df` (
     KEY `idx_coupon_type` (`coupon_type`),
     KEY `idx_use_time` (`use_start_time`, `use_end_time`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '优惠券维度明细快照';
-
-DROP TABLE IF EXISTS `dwd_dim_payment_type_df`;
-CREATE TABLE `dwd_dim_payment_type_df` (
-    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    `payment_type_code` VARCHAR(32) NOT NULL COMMENT '支付方式编码',
-    `payment_type_name` VARCHAR(64) NOT NULL COMMENT '支付方式名称',
-    `channel_code` VARCHAR(32) DEFAULT NULL COMMENT '支付渠道编码',
-    `channel_name` VARCHAR(64) DEFAULT NULL COMMENT '支付渠道名称',
-    `is_online` TINYINT DEFAULT 1 COMMENT '是否线上支付',
-    `is_installment` TINYINT DEFAULT 0 COMMENT '是否分期支付',
-    `fee_rate` DECIMAL(8, 6) DEFAULT NULL COMMENT '支付手续费率',
-    `status` TINYINT DEFAULT 1 COMMENT '状态:1有效 0失效',
-    `etl_date` DATE NOT NULL COMMENT '分区日期',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_payment_type_etl` (`payment_type_code`, `etl_date`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '支付方式维度明细快照';
-
-DROP TABLE IF EXISTS `dwd_dim_logistics_company_df`;
-CREATE TABLE `dwd_dim_logistics_company_df` (
-    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    `logistics_company_id` BIGINT UNSIGNED NOT NULL COMMENT '物流公司ID',
-    `logistics_company_code` VARCHAR(32) NOT NULL COMMENT '物流公司编码',
-    `logistics_company_name` VARCHAR(128) NOT NULL COMMENT '物流公司名称',
-    `logistics_type` VARCHAR(32) DEFAULT NULL COMMENT '物流类型:快递/同城/冷链/国际',
-    `service_phone` VARCHAR(32) DEFAULT NULL COMMENT '客服电话',
-    `is_trace_supported` TINYINT DEFAULT 1 COMMENT '是否支持轨迹查询',
-    `status` TINYINT DEFAULT 1 COMMENT '状态:1有效 0失效',
-    `etl_date` DATE NOT NULL COMMENT '分区日期',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_logistics_etl` (`logistics_company_id`, `etl_date`),
-    KEY `idx_company_code` (`logistics_company_code`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '物流公司维度明细快照';
-
-DROP TABLE IF EXISTS `dwd_dim_geo_region_df`;
-CREATE TABLE `dwd_dim_geo_region_df` (
-    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    `region_code` VARCHAR(20) NOT NULL COMMENT '区域编码',
-    `region_name` VARCHAR(128) NOT NULL COMMENT '区域名称',
-    `region_level` TINYINT NOT NULL COMMENT '级别:1省 2市 3区县 4街道',
-    `parent_region_code` VARCHAR(20) DEFAULT NULL COMMENT '父级区域编码',
-    `parent_region_name` VARCHAR(128) DEFAULT NULL COMMENT '父级区域名称',
-    `province_code` VARCHAR(20) DEFAULT NULL COMMENT '省编码',
-    `province_name` VARCHAR(128) DEFAULT NULL COMMENT '省名称',
-    `city_code` VARCHAR(20) DEFAULT NULL COMMENT '市编码',
-    `city_name` VARCHAR(128) DEFAULT NULL COMMENT '市名称',
-    `district_code` VARCHAR(20) DEFAULT NULL COMMENT '区县编码',
-    `district_name` VARCHAR(128) DEFAULT NULL COMMENT '区县名称',
-    `zip_code` VARCHAR(16) DEFAULT NULL COMMENT '邮编',
-    `status` TINYINT DEFAULT 1 COMMENT '状态:1有效 0失效',
-    `etl_date` DATE NOT NULL COMMENT '分区日期',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
-    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_region_etl` (`region_code`, `etl_date`),
-    KEY `idx_parent_region` (`parent_region_code`),
-    KEY `idx_province_city` (`province_code`, `city_code`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '行政区域维度明细快照';
 
 /* =========================
    事实表（Detail Level）
