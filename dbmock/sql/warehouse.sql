@@ -52,6 +52,8 @@ DROP TABLE IF EXISTS `dwd_dim_shop_info_df`;
 CREATE TABLE `dwd_dim_shop_info_df` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     `shop_id` BIGINT UNSIGNED NOT NULL COMMENT '店铺ID',
+    `start_date` DATE NOT NULL COMMENT '生效开始日期',
+    `end_date` DATE NOT NULL COMMENT '生效结束日期',
     `shop_name` VARCHAR(128) NOT NULL COMMENT '店铺名称',
     `shop_type` VARCHAR(16) DEFAULT '普通店' COMMENT '店铺类型:自营/旗舰店/专卖店/普通店',
     `seller_id` BIGINT UNSIGNED DEFAULT NULL COMMENT '商家ID',
@@ -68,17 +70,20 @@ CREATE TABLE `dwd_dim_shop_info_df` (
     `is_global` TINYINT DEFAULT 0 COMMENT '是否跨境:0否 1是',
     `is_deleted` TINYINT DEFAULT 0 COMMENT '逻辑删除:0否 1是',
     `shop_status` VARCHAR(16) DEFAULT '营业' COMMENT '状态:关店/营业',
-    `etl_date` DATE NOT NULL COMMENT '分区日期',
+    `is_current` TINYINT DEFAULT 1 COMMENT '是否当前版本:0否 1是',
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_shop_etl` (`shop_id`, `etl_date`),
+    UNIQUE KEY `uk_shop_start` (`shop_id`, `start_date`),
     KEY `idx_seller_id` (`seller_id`),
-    KEY `idx_shop_type` (`shop_type`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '店铺维度明细快照';
+    KEY `idx_shop_type` (`shop_type`),
+    KEY `idx_shop_current` (`shop_id`, `is_current`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '店铺维度拉链表';
 
 DROP TABLE IF EXISTS `dwd_dim_category_info_df`;
 CREATE TABLE `dwd_dim_category_info_df` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     `category_id` BIGINT UNSIGNED NOT NULL COMMENT '类目ID',
+    `start_date` DATE NOT NULL COMMENT '生效开始日期',
+    `end_date` DATE NOT NULL COMMENT '生效结束日期',
     `category_name` VARCHAR(128) NOT NULL COMMENT '类目名称',
     `category_level` VARCHAR(16) NOT NULL COMMENT '层级:一级/二级/三级',
     `parent_category_id` BIGINT UNSIGNED DEFAULT NULL COMMENT '父类目ID',
@@ -89,17 +94,20 @@ CREATE TABLE `dwd_dim_category_info_df` (
     `sort_order` INT DEFAULT 0 COMMENT '排序',
     `category_path` VARCHAR(512) DEFAULT NULL COMMENT '类目路径',
     `status` TINYINT DEFAULT 1 COMMENT '状态:0禁用 1启用',
-    `etl_date` DATE NOT NULL COMMENT '分区日期',
+    `is_current` TINYINT DEFAULT 1 COMMENT '是否当前版本:0否 1是',
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_category_etl` (`category_id`, `etl_date`),
+    UNIQUE KEY `uk_category_start` (`category_id`, `start_date`),
     KEY `idx_parent_id` (`parent_category_id`),
-    KEY `idx_root_id` (`root_category_id`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '类目维度明细快照';
+    KEY `idx_root_id` (`root_category_id`),
+    KEY `idx_category_current` (`category_id`, `is_current`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '类目维度拉链表';
 
 DROP TABLE IF EXISTS `dwd_dim_brand_info_df`;
 CREATE TABLE `dwd_dim_brand_info_df` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     `brand_id` BIGINT UNSIGNED NOT NULL COMMENT '品牌ID',
+    `start_date` DATE NOT NULL COMMENT '生效开始日期',
+    `end_date` DATE NOT NULL COMMENT '生效结束日期',
     `brand_name` VARCHAR(128) NOT NULL COMMENT '品牌名称',
     `brand_name_en` VARCHAR(128) DEFAULT NULL COMMENT '品牌英文名',
     `brand_alias` VARCHAR(128) DEFAULT NULL COMMENT '品牌别名',
@@ -110,18 +118,21 @@ CREATE TABLE `dwd_dim_brand_info_df` (
     `first_letter` CHAR(1) DEFAULT NULL COMMENT '首字母',
     `sort_order` INT DEFAULT 0 COMMENT '排序',
     `status` TINYINT DEFAULT 1 COMMENT '状态:1有效 0失效',
-    `etl_date` DATE NOT NULL COMMENT '分区日期',
+    `is_current` TINYINT DEFAULT 1 COMMENT '是否当前版本:0否 1是',
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_brand_etl` (`brand_id`, `etl_date`),
+    UNIQUE KEY `uk_brand_start` (`brand_id`, `start_date`),
     KEY `idx_brand_name` (`brand_name`),
     KEY `idx_country` (`country_code`),
-    KEY `idx_first_letter` (`first_letter`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '品牌维度明细快照';
+    KEY `idx_first_letter` (`first_letter`),
+    KEY `idx_brand_current` (`brand_id`, `is_current`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '品牌维度拉链表';
 
 DROP TABLE IF EXISTS `dwd_dim_payment_type_df`;
 CREATE TABLE `dwd_dim_payment_type_df` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     `payment_type_code` VARCHAR(32) NOT NULL COMMENT '支付方式编码',
+    `start_date` DATE NOT NULL COMMENT '生效开始日期',
+    `end_date` DATE NOT NULL COMMENT '生效结束日期',
     `payment_type_name` VARCHAR(64) NOT NULL COMMENT '支付方式名称',
     `channel_code` VARCHAR(32) DEFAULT NULL COMMENT '支付渠道编码',
     `channel_name` VARCHAR(64) DEFAULT NULL COMMENT '支付渠道名称',
@@ -129,31 +140,37 @@ CREATE TABLE `dwd_dim_payment_type_df` (
     `is_installment` TINYINT DEFAULT 0 COMMENT '是否分期支付',
     `fee_rate` DECIMAL(8, 6) DEFAULT NULL COMMENT '支付手续费率',
     `status` TINYINT DEFAULT 1 COMMENT '状态:1有效 0失效',
-    `etl_date` DATE NOT NULL COMMENT '分区日期',
+    `is_current` TINYINT DEFAULT 1 COMMENT '是否当前版本:0否 1是',
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_payment_type_etl` (`payment_type_code`, `etl_date`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '支付方式维度明细快照';
+    UNIQUE KEY `uk_payment_type_start` (`payment_type_code`, `start_date`),
+    KEY `idx_payment_type_current` (`payment_type_code`, `is_current`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '支付方式维度拉链表';
 
 DROP TABLE IF EXISTS `dwd_dim_logistics_company_df`;
 CREATE TABLE `dwd_dim_logistics_company_df` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     `logistics_company_id` BIGINT UNSIGNED NOT NULL COMMENT '物流公司ID',
+    `start_date` DATE NOT NULL COMMENT '生效开始日期',
+    `end_date` DATE NOT NULL COMMENT '生效结束日期',
     `logistics_company_code` VARCHAR(32) NOT NULL COMMENT '物流公司编码',
     `logistics_company_name` VARCHAR(128) NOT NULL COMMENT '物流公司名称',
     `logistics_type` VARCHAR(32) DEFAULT NULL COMMENT '物流类型:快递/同城/冷链/国际',
     `service_phone` VARCHAR(32) DEFAULT NULL COMMENT '客服电话',
     `is_trace_supported` TINYINT DEFAULT 1 COMMENT '是否支持轨迹查询',
     `status` TINYINT DEFAULT 1 COMMENT '状态:1有效 0失效',
-    `etl_date` DATE NOT NULL COMMENT '分区日期',
+    `is_current` TINYINT DEFAULT 1 COMMENT '是否当前版本:0否 1是',
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_logistics_etl` (`logistics_company_id`, `etl_date`),
-    KEY `idx_company_code` (`logistics_company_code`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '物流公司维度明细快照';
+    UNIQUE KEY `uk_logistics_start` (`logistics_company_id`, `start_date`),
+    KEY `idx_company_code` (`logistics_company_code`),
+    KEY `idx_logistics_current` (`logistics_company_id`, `is_current`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '物流公司维度拉链表';
 
 DROP TABLE IF EXISTS `dwd_dim_geo_region_df`;
 CREATE TABLE `dwd_dim_geo_region_df` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     `region_code` VARCHAR(20) NOT NULL COMMENT '区域编码',
+    `start_date` DATE NOT NULL COMMENT '生效开始日期',
+    `end_date` DATE NOT NULL COMMENT '生效结束日期',
     `region_name` VARCHAR(128) NOT NULL COMMENT '区域名称',
     `region_level` TINYINT NOT NULL COMMENT '级别:1省 2市 3区县 4街道',
     `parent_region_code` VARCHAR(20) DEFAULT NULL COMMENT '父级区域编码',
@@ -166,12 +183,13 @@ CREATE TABLE `dwd_dim_geo_region_df` (
     `district_name` VARCHAR(128) DEFAULT NULL COMMENT '区县名称',
     `zip_code` VARCHAR(16) DEFAULT NULL COMMENT '邮编',
     `status` TINYINT DEFAULT 1 COMMENT '状态:1有效 0失效',
-    `etl_date` DATE NOT NULL COMMENT '分区日期',
+    `is_current` TINYINT DEFAULT 1 COMMENT '是否当前版本:0否 1是',
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_region_etl` (`region_code`, `etl_date`),
+    UNIQUE KEY `uk_region_start` (`region_code`, `start_date`),
     KEY `idx_parent_region` (`parent_region_code`),
-    KEY `idx_province_city` (`province_code`, `city_code`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '行政区域维度明细快照';
+    KEY `idx_province_city` (`province_code`, `city_code`),
+    KEY `idx_region_current` (`region_code`, `is_current`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '行政区域维度拉链表';
 
 DROP TABLE IF EXISTS `dwd_dim_spu_info_df`;
 CREATE TABLE `dwd_dim_spu_info_df` (
@@ -390,7 +408,6 @@ CREATE TABLE `dwd_fact_trade_pay_detail_di` (
     `pay_order_no` VARCHAR(64) NOT NULL COMMENT '支付单号',
     `third_party_pay_no` VARCHAR(128) DEFAULT NULL COMMENT '第三方支付流水号',
     `order_id` BIGINT UNSIGNED NOT NULL COMMENT '订单ID',
-    `order_detail_id` BIGINT UNSIGNED DEFAULT NULL COMMENT '订单明细ID',
     `user_id` BIGINT UNSIGNED NOT NULL COMMENT '用户ID',
     `shop_id` BIGINT UNSIGNED NOT NULL COMMENT '店铺ID',
     `seller_id` BIGINT UNSIGNED DEFAULT NULL COMMENT '商家ID',

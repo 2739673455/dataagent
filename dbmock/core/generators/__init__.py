@@ -1,2 +1,1 @@
-"""Batch-based data generator package."""
-
+"""按批次生成数据的生成器包。"""

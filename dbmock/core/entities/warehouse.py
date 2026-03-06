@@ -13,17 +13,19 @@ class Base(DeclarativeBase):
 class DwdDimBrandInfoDf(Base):
     __tablename__ = 'dwd_dim_brand_info_df'
     __table_args__ = (
+        Index('idx_brand_current', 'brand_id', 'is_current'),
         Index('idx_brand_name', 'brand_name'),
         Index('idx_country', 'country_code'),
         Index('idx_first_letter', 'first_letter'),
-        Index('uk_brand_etl', 'brand_id', 'etl_date', unique=True),
-        {'comment': '品牌维度明细快照'}
+        Index('uk_brand_start', 'brand_id', 'start_date', unique=True),
+        {'comment': '品牌维度拉链表'}
     )
 
     id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
     brand_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='品牌ID')
+    start_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='生效开始日期')
+    end_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='生效结束日期')
     brand_name: Mapped[str] = mapped_column(String(128), nullable=False, comment='品牌名称')
-    etl_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='分区日期')
     brand_name_en: Mapped[Optional[str]] = mapped_column(String(128), comment='品牌英文名')
     brand_alias: Mapped[Optional[str]] = mapped_column(String(128), comment='品牌别名')
     brand_logo_url: Mapped[Optional[str]] = mapped_column(String(512), comment='品牌Logo地址')
@@ -33,22 +35,25 @@ class DwdDimBrandInfoDf(Base):
     first_letter: Mapped[Optional[str]] = mapped_column(CHAR(1), comment='首字母')
     sort_order: Mapped[Optional[int]] = mapped_column(Integer, server_default=text("'0'"), comment='排序')
     status: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='状态:1有效 0失效')
+    is_current: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='是否当前版本:0否 1是')
 
 
 class DwdDimCategoryInfoDf(Base):
     __tablename__ = 'dwd_dim_category_info_df'
     __table_args__ = (
+        Index('idx_category_current', 'category_id', 'is_current'),
         Index('idx_parent_id', 'parent_category_id'),
         Index('idx_root_id', 'root_category_id'),
-        Index('uk_category_etl', 'category_id', 'etl_date', unique=True),
-        {'comment': '类目维度明细快照'}
+        Index('uk_category_start', 'category_id', 'start_date', unique=True),
+        {'comment': '类目维度拉链表'}
     )
 
     id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
     category_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='类目ID')
+    start_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='生效开始日期')
+    end_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='生效结束日期')
     category_name: Mapped[str] = mapped_column(String(128), nullable=False, comment='类目名称')
     category_level: Mapped[str] = mapped_column(String(16), nullable=False, comment='层级:一级/二级/三级')
-    etl_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='分区日期')
     parent_category_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), comment='父类目ID')
     parent_category_name: Mapped[Optional[str]] = mapped_column(String(128), comment='父类目名称')
     root_category_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), comment='一级类目ID')
@@ -57,6 +62,7 @@ class DwdDimCategoryInfoDf(Base):
     sort_order: Mapped[Optional[int]] = mapped_column(Integer, server_default=text("'0'"), comment='排序')
     category_path: Mapped[Optional[str]] = mapped_column(String(512), comment='类目路径')
     status: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='状态:0禁用 1启用')
+    is_current: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='是否当前版本:0否 1是')
 
 
 class DwdDimCouponInfoDf(Base):
@@ -91,15 +97,17 @@ class DwdDimGeoRegionDf(Base):
     __table_args__ = (
         Index('idx_parent_region', 'parent_region_code'),
         Index('idx_province_city', 'province_code', 'city_code'),
-        Index('uk_region_etl', 'region_code', 'etl_date', unique=True),
-        {'comment': '行政区域维度明细快照'}
+        Index('idx_region_current', 'region_code', 'is_current'),
+        Index('uk_region_start', 'region_code', 'start_date', unique=True),
+        {'comment': '行政区域维度拉链表'}
     )
 
     id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
     region_code: Mapped[str] = mapped_column(String(20), nullable=False, comment='区域编码')
+    start_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='生效开始日期')
+    end_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='生效结束日期')
     region_name: Mapped[str] = mapped_column(String(128), nullable=False, comment='区域名称')
     region_level: Mapped[int] = mapped_column(TINYINT, nullable=False, comment='级别:1省 2市 3区县 4街道')
-    etl_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='分区日期')
     parent_region_code: Mapped[Optional[str]] = mapped_column(String(20), comment='父级区域编码')
     parent_region_name: Mapped[Optional[str]] = mapped_column(String(128), comment='父级区域名称')
     province_code: Mapped[Optional[str]] = mapped_column(String(20), comment='省编码')
@@ -110,44 +118,51 @@ class DwdDimGeoRegionDf(Base):
     district_name: Mapped[Optional[str]] = mapped_column(String(128), comment='区县名称')
     zip_code: Mapped[Optional[str]] = mapped_column(String(16), comment='邮编')
     status: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='状态:1有效 0失效')
+    is_current: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='是否当前版本:0否 1是')
 
 
 class DwdDimLogisticsCompanyDf(Base):
     __tablename__ = 'dwd_dim_logistics_company_df'
     __table_args__ = (
         Index('idx_company_code', 'logistics_company_code'),
-        Index('uk_logistics_etl', 'logistics_company_id', 'etl_date', unique=True),
-        {'comment': '物流公司维度明细快照'}
+        Index('idx_logistics_current', 'logistics_company_id', 'is_current'),
+        Index('uk_logistics_start', 'logistics_company_id', 'start_date', unique=True),
+        {'comment': '物流公司维度拉链表'}
     )
 
     id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
     logistics_company_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='物流公司ID')
+    start_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='生效开始日期')
+    end_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='生效结束日期')
     logistics_company_code: Mapped[str] = mapped_column(String(32), nullable=False, comment='物流公司编码')
     logistics_company_name: Mapped[str] = mapped_column(String(128), nullable=False, comment='物流公司名称')
-    etl_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='分区日期')
     logistics_type: Mapped[Optional[str]] = mapped_column(String(32), comment='物流类型:快递/同城/冷链/国际')
     service_phone: Mapped[Optional[str]] = mapped_column(String(32), comment='客服电话')
     is_trace_supported: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='是否支持轨迹查询')
     status: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='状态:1有效 0失效')
+    is_current: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='是否当前版本:0否 1是')
 
 
 class DwdDimPaymentTypeDf(Base):
     __tablename__ = 'dwd_dim_payment_type_df'
     __table_args__ = (
-        Index('uk_payment_type_etl', 'payment_type_code', 'etl_date', unique=True),
-        {'comment': '支付方式维度明细快照'}
+        Index('idx_payment_type_current', 'payment_type_code', 'is_current'),
+        Index('uk_payment_type_start', 'payment_type_code', 'start_date', unique=True),
+        {'comment': '支付方式维度拉链表'}
     )
 
     id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
     payment_type_code: Mapped[str] = mapped_column(String(32), nullable=False, comment='支付方式编码')
+    start_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='生效开始日期')
+    end_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='生效结束日期')
     payment_type_name: Mapped[str] = mapped_column(String(64), nullable=False, comment='支付方式名称')
-    etl_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='分区日期')
     channel_code: Mapped[Optional[str]] = mapped_column(String(32), comment='支付渠道编码')
     channel_name: Mapped[Optional[str]] = mapped_column(String(64), comment='支付渠道名称')
     is_online: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='是否线上支付')
     is_installment: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'0'"), comment='是否分期支付')
     fee_rate: Mapped[Optional[decimal.Decimal]] = mapped_column(DECIMAL(8, 6), comment='支付手续费率')
     status: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='状态:1有效 0失效')
+    is_current: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='是否当前版本:0否 1是')
 
 
 class DwdDimPromotionInfoDf(Base):
@@ -181,15 +196,17 @@ class DwdDimShopInfoDf(Base):
     __tablename__ = 'dwd_dim_shop_info_df'
     __table_args__ = (
         Index('idx_seller_id', 'seller_id'),
+        Index('idx_shop_current', 'shop_id', 'is_current'),
         Index('idx_shop_type', 'shop_type'),
-        Index('uk_shop_etl', 'shop_id', 'etl_date', unique=True),
-        {'comment': '店铺维度明细快照'}
+        Index('uk_shop_start', 'shop_id', 'start_date', unique=True),
+        {'comment': '店铺维度拉链表'}
     )
 
     id: Mapped[int] = mapped_column(BIGINT(unsigned=True), primary_key=True)
     shop_id: Mapped[int] = mapped_column(BIGINT(unsigned=True), nullable=False, comment='店铺ID')
+    start_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='生效开始日期')
+    end_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='生效结束日期')
     shop_name: Mapped[str] = mapped_column(String(128), nullable=False, comment='店铺名称')
-    etl_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='分区日期')
     shop_type: Mapped[Optional[str]] = mapped_column(String(16), server_default=text("'普通店'"), comment='店铺类型:自营/旗舰店/专卖店/普通店')
     seller_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), comment='商家ID')
     seller_name: Mapped[Optional[str]] = mapped_column(String(128), comment='商家名称')
@@ -205,6 +222,7 @@ class DwdDimShopInfoDf(Base):
     is_global: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'0'"), comment='是否跨境:0否 1是')
     is_deleted: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'0'"), comment='逻辑删除:0否 1是')
     shop_status: Mapped[Optional[str]] = mapped_column(String(16), server_default=text("'营业'"), comment='状态:关店/营业')
+    is_current: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='是否当前版本:0否 1是')
 
 
 class DwdDimSkuInfoDf(Base):
@@ -610,7 +628,6 @@ class DwdFactTradePayDetailDi(Base):
     total_pay_amount: Mapped[decimal.Decimal] = mapped_column(DECIMAL(16, 2), nullable=False, comment='支付总金额')
     etl_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, comment='分区日期(按支付日期)')
     third_party_pay_no: Mapped[Optional[str]] = mapped_column(String(128), comment='第三方支付流水号')
-    order_detail_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), comment='订单明细ID')
     seller_id: Mapped[Optional[int]] = mapped_column(BIGINT(unsigned=True), comment='商家ID')
     payment_channel_code: Mapped[Optional[str]] = mapped_column(String(32), comment='支付渠道编码')
     pay_scene: Mapped[Optional[str]] = mapped_column(String(32), comment='支付场景:收银台/自动扣款/合并支付')

@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import MetaData, func, select
+from sqlalchemy import MetaData, select
 
 from ..catalogs import (
     CAMPAIGN_SERIES,
@@ -34,15 +34,9 @@ def _has_rows(conn, table) -> bool:
     return conn.execute(stmt).first() is not None
 
 
-def _latest_etl_date(conn, table) -> date | None:
-    """返回快照维表的最新分区日期。"""
-    stmt = select(func.max(table.c.etl_date))
-    return conn.execute(stmt).scalar_one()
-
-
-def _load_snapshot_rows(conn, table, etl_date: date) -> list[dict[str, Any]]:
-    """加载指定快照日期的维度数据。"""
-    stmt = select(table).where(table.c.etl_date == etl_date)
+def _load_current_rows(conn, table) -> list[dict[str, Any]]:
+    """加载当前有效的维度数据。"""
+    stmt = select(table).where(table.c.is_current == 1)
     return [dict(row) for row in conn.execute(stmt).mappings()]
 
 
@@ -476,18 +470,20 @@ def run(ctx: RunContext) -> None:
             )
             return
 
-        shop_etl_date = _latest_etl_date(conn, shop_table)
-        brand_etl_date = _latest_etl_date(conn, brand_table)
-        category_etl_date = _latest_etl_date(conn, category_table)
-        if shop_etl_date is None or brand_etl_date is None or category_etl_date is None:
-            raise ValueError("批次3依赖的店铺、品牌、类目维表不存在可用快照")
-
-        shop_rows = _load_snapshot_rows(conn, shop_table, shop_etl_date)
-        brand_rows = _load_snapshot_rows(conn, brand_table, brand_etl_date)
-        category_rows = _load_snapshot_rows(conn, category_table, category_etl_date)
+        logger.info("batch3 loading source rows")
+        shop_rows = _load_current_rows(conn, shop_table)
+        brand_rows = _load_current_rows(conn, brand_table)
+        category_rows = _load_current_rows(conn, category_table)
         leaf_categories = [
             row for row in category_rows if row["category_level"] == "三级"
         ]
+        logger.info(
+            "batch3 loaded source rows: shop_rows={} brand_rows={} category_rows={} leaf_categories={}",
+            len(shop_rows),
+            len(brand_rows),
+            len(category_rows),
+            len(leaf_categories),
+        )
         if not shop_rows or not brand_rows or not leaf_categories:
             raise ValueError("批次3缺少生成营销维度所需的基础维表数据")
 

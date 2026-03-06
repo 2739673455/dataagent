@@ -1,4 +1,4 @@
-"""Database load helpers."""
+"""数据库写入工具。"""
 
 from collections.abc import Sequence
 from typing import Any

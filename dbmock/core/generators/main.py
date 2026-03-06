@@ -1,4 +1,4 @@
-"""Main orchestrator for batch-based data generation."""
+"""按批次生成数据的主调度入口。"""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def main() -> None:
     gen_cfg = GenerateConfig(batch_size=DEFAULT_BATCH_SIZE)
     ctx = RunContext(db=db_cfg, gen=gen_cfg)
 
-    logger.info("Start generators: {}", [name for name, _ in GENERATORS])
+    logger.info("Starting generators: {}", [name for name, _ in GENERATORS])
     for name, runner in GENERATORS:
         logger.info("Running generator: {}", name)
         runner(ctx)

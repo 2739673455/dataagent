@@ -1,2 +1,1 @@
-"""dbmock core package."""
-
+"""dbmock 核心包。"""

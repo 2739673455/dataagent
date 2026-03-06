@@ -10,8 +10,8 @@ from sqlalchemy import MetaData, select
 
 from ..catalogs import (
     COMMENT_RATE,
-    DELIVERY_TYPE_OPTIONS,
     DAY_HOUR_OPTIONS,
+    DELIVERY_TYPE_OPTIONS,
     FREIGHT_OPTIONS,
     GIFT_RATE,
     INITIAL_STOCK_BASE,
@@ -30,8 +30,8 @@ from ..catalogs import (
     REFUND_REASON_OPTIONS,
     REFUSED_RATE,
     RISK_ORDER_RATE,
-    SIGNED_REFUND_RATE,
     SENSITIVE_TAG_OPTIONS,
+    SIGNED_REFUND_RATE,
     UNPAID_RATE,
     WAREHOUSE_ID_FALLBACK,
     WAREHOUSE_IDS,
@@ -41,6 +41,21 @@ from ..utils.loaders import bulk_insert
 
 MONEY_ZERO = Decimal("0.00")
 MONEY_QUANT = Decimal("0.01")
+DEFAULT_FREE_SHIPPING_THRESHOLD = Decimal("159")
+FREE_SHIPPING_THRESHOLD_BY_ROOT = {
+    "手机通讯": Decimal("0"),
+    "数码电子": Decimal("199"),
+    "家用电器": Decimal("299"),
+    "电脑办公": Decimal("199"),
+    "服饰内衣": Decimal("129"),
+    "鞋靴箱包": Decimal("149"),
+    "美妆个护": Decimal("99"),
+    "食品饮料": Decimal("69"),
+    "母婴玩具": Decimal("119"),
+    "家居家装": Decimal("159"),
+    "运动户外": Decimal("149"),
+    "汽车用品": Decimal("169"),
+}
 
 
 def _masked_receiver_name(user_id: int) -> str:
@@ -211,7 +226,6 @@ def append_fulfillment_rows(
                 "pay_order_no": f"PO{order_id}",
                 "third_party_pay_no": f"TP{order_id}{user_id}",
                 "order_id": order_id,
-                "order_detail_id": None,
                 "user_id": user_id,
                 "shop_id": shop_id,
                 "seller_id": seller_id,
@@ -449,6 +463,39 @@ def _money(value: Decimal | int | float) -> Decimal:
     return value.quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
 
 
+def _resolve_freight_total(ctx: RunContext, detail_rows: list[dict[str, Any]]) -> Decimal:
+    """按类目、店铺和订单金额生成更真实的订单级运费。"""
+    order_amount = _money(sum(row["_detail_amount"] for row in detail_rows))
+    root_name = (
+        detail_rows[0]["_shop_row"].get("industry_type")
+        or detail_rows[0]["_spu_row"].get("_root_name")
+        or ""
+    )
+    threshold = FREE_SHIPPING_THRESHOLD_BY_ROOT.get(
+        root_name,
+        DEFAULT_FREE_SHIPPING_THRESHOLD,
+    )
+    base_value = FREIGHT_OPTIONS[ctx.rng.randrange(len(FREIGHT_OPTIONS))]
+    base_freight = _money(Decimal(str(base_value if base_value > 0 else 6)))
+
+    if any(row["_shop_row"].get("is_global") == 1 for row in detail_rows):
+        return _money(base_freight + Decimal("12"))
+
+    if all(row["_shop_row"].get("is_self_operated") == 1 for row in detail_rows):
+        threshold = max(threshold - Decimal("30"), MONEY_ZERO)
+
+    if order_amount >= threshold:
+        if threshold == MONEY_ZERO or ctx.rng.random() < 0.92:
+            return MONEY_ZERO
+        return _money(min(base_freight, Decimal("6")))
+
+    near_threshold = _money(threshold * Decimal("0.7"))
+    if order_amount >= near_threshold and ctx.rng.random() < 0.20:
+        return MONEY_ZERO
+
+    return base_freight
+
+
 def _load_all_rows(conn, table) -> list[dict[str, Any]]:
     """加载整张表数据。"""
     return [dict(row) for row in conn.execute(select(table)).mappings()]
@@ -570,31 +617,6 @@ def _flush_buffer(
     buffer.clear()
     inserted_total += inserted
     return inserted, inserted_total
-
-
-def _build_shop_snapshot_index(
-    rows: list[dict[str, Any]],
-) -> dict[int, list[dict[str, Any]]]:
-    """按店铺聚合快照版本，并按 etl_date 排序。"""
-    index: dict[int, list[dict[str, Any]]] = defaultdict(list)
-    for row in rows:
-        index[row["shop_id"]].append(row)
-    for shop_id in index:
-        index[shop_id].sort(key=lambda item: item["etl_date"])
-    return index
-
-
-def _find_shop_snapshot(
-    snapshot_rows: list[dict[str, Any]],
-    current_date: date,
-) -> dict[str, Any] | None:
-    """查找指定日期可见的最近一版店铺快照。"""
-    matched = None
-    for row in snapshot_rows:
-        if row["etl_date"] > current_date:
-            break
-        matched = row
-    return matched
 
 
 def _sample_same_shop_sku(
@@ -884,16 +906,14 @@ def run(ctx: RunContext) -> None:
         if not payment_type_rows or not logistics_rows:
             raise ValueError("批次4缺少支付方式或物流公司维度数据")
 
-        shop_index = _build_shop_snapshot_index(shop_rows)
+        shop_index = _build_version_index(shop_rows, "shop_id")
         spu_index = _build_version_index(spu_rows, "spu_id")
         promotion_by_date = _build_snapshot_index(promotion_rows)
         coupon_by_date = _build_snapshot_index(coupon_rows)
-        payment_types = list(
-            _latest_snapshot_rows(payment_type_rows, "payment_type_code").values()
-        )
-        logistics_companies = list(
-            _latest_snapshot_rows(logistics_rows, "logistics_company_id").values()
-        )
+        payment_types = [row for row in payment_type_rows if row.get("is_current") == 1]
+        logistics_companies = [
+            row for row in logistics_rows if row.get("is_current") == 1
+        ]
         user_pool = ActiveVersionPool(user_rows, "user_id")
         sku_pool = ActiveVersionPool(sku_rows, "sku_id")
 
@@ -1025,7 +1045,7 @@ def run(ctx: RunContext) -> None:
                     spu_row = _find_version(spu_index[sku_row["spu_id"]], current_date)
                     if spu_row is None:
                         continue
-                    shop_row = _find_shop_snapshot(
+                    shop_row = _find_version(
                         shop_index.get(sku_row["shop_id"], []),
                         current_date,
                     )
@@ -1051,11 +1071,7 @@ def run(ctx: RunContext) -> None:
                     continue
 
                 order_amount = _money(sum(row["_detail_amount"] for row in detail_rows))
-                freight_total = _money(
-                    Decimal(FREIGHT_OPTIONS[ctx.rng.randrange(len(FREIGHT_OPTIONS))])
-                )
-                if order_amount >= Decimal("99"):
-                    freight_total = MONEY_ZERO
+                freight_total = _resolve_freight_total(ctx, detail_rows)
                 tax_total = MONEY_ZERO
                 if any(row["_shop_row"].get("is_global") == 1 for row in detail_rows):
                     tax_total = _money(order_amount * Decimal("0.05"))
@@ -1262,9 +1278,7 @@ def run(ctx: RunContext) -> None:
                     if row.get("order_detail_id") is not None
                     and row.get("warehouse_id") is not None
                 }
-                detail_by_id = {
-                    row["order_detail_id"]: row for row in order_fact_rows
-                }
+                detail_by_id = {row["order_detail_id"]: row for row in order_fact_rows}
                 for detail_row in order_fact_rows:
                     warehouse_id = warehouse_by_detail.get(
                         detail_row["order_detail_id"],

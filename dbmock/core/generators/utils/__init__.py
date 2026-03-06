@@ -1,2 +1,1 @@
-"""Utility helpers for generators."""
-
+"""生成器工具包。"""

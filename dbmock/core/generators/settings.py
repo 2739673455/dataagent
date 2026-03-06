@@ -1,4 +1,4 @@
-"""Global settings for data generation."""
+"""数据生成全局配置。"""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def _three_years_ago_iso() -> str:
     try:
         return today.replace(year=today.year - 3).isoformat()
     except ValueError:
-        # Handle leap day: 2024-02-29 -> 2021-02-28
+        # 处理闰日回退，例如 2024-02-29 回退到 2021-02-28
         return today.replace(year=today.year - 3, day=28).isoformat()
 
 

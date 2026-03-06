@@ -8,7 +8,7 @@ from typing import Any
 
 from faker import Faker
 from loguru import logger
-from sqlalchemy import Date, DateTime, MetaData, Numeric, String, func, select
+from sqlalchemy import Date, DateTime, MetaData, Numeric, String, select
 
 from ..settings import RunContext
 from ..utils.loaders import bulk_insert
@@ -177,7 +177,7 @@ def _normalize_row(table, row: dict[str, Any]) -> dict[str, Any]:
     """将 JSON 原始值转换为与表结构一致的 Python 类型。"""
     normalized: dict[str, Any] = {}
     for col in table.columns:
-        if col.name in {"id", "etl_date"}:
+        if col.name in {"id", "etl_date", "start_date", "end_date", "is_current"}:
             continue
         if col.name not in row:
             continue
@@ -215,24 +215,64 @@ def _comparable_rows(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any
     return sorted(comparable, key=lambda row: row[key])
 
 
-def _latest_etl_date(conn, table) -> date | None:
-    """返回目标维度表已存储数据中的最新版本日期。"""
-    stmt = select(func.max(table.c.etl_date))
-    return conn.execute(stmt).scalar_one()
-
-
-def _load_version_rows(conn, table, etl_date: date) -> list[dict[str, Any]]:
-    """加载目标维度表在指定版本日期下的全部业务字段。"""
-    stmt = select(table).where(table.c.etl_date == etl_date)
+def _load_current_dim_rows(conn, table) -> list[dict[str, Any]]:
+    """加载目标维度表中的当前版本业务字段。"""
+    stmt = select(table).where(table.c.is_current == 1)
     rows = []
     for row in conn.execute(stmt).mappings():
         payload = {
             col.name: row[col.name]
             for col in table.columns
-            if col.name not in {"id", "etl_date"}
+            if col.name not in {"id", "start_date", "end_date", "is_current"}
         }
         rows.append(payload)
     return rows
+
+
+def _existing_dim_keys(conn, table, key_field: str) -> set[tuple[Any, date]]:
+    """查询维表中已存在的业务键与开始日期组合。"""
+    stmt = select(getattr(table.c, key_field), table.c.start_date)
+    return {
+        (getattr(row, key_field), row.start_date)
+        for row in conn.execute(stmt)
+    }
+
+
+def _close_current_dim_rows(
+    conn,
+    table,
+    key_field: str,
+    keys: set[Any],
+    new_start_date: date,
+) -> None:
+    """关闭指定业务键的当前版本。"""
+    if not keys:
+        return
+    conn.execute(
+        table.update()
+        .where(getattr(table.c, key_field).in_(keys))
+        .where(table.c.is_current == 1)
+        .values(
+            end_date=new_start_date - timedelta(days=1),
+            is_current=0,
+        )
+    )
+
+
+def _build_seed_dim_rows(
+    rows: list[dict[str, Any]],
+    start_date: date,
+) -> list[dict[str, Any]]:
+    """为低频维表补齐拉链字段。"""
+    return [
+        row
+        | {
+            "start_date": start_date,
+            "end_date": USER_END_OF_TIME,
+            "is_current": 1,
+        }
+        for row in rows
+    ]
 
 
 def _validate_categories(rows: list[dict[str, Any]]) -> set[str]:
@@ -540,6 +580,7 @@ def run(ctx: RunContext) -> None:
     tables = {name: metadata.tables[name] for name in table_names}
 
     seed_rows: dict[str, list[dict[str, Any]]] = {}
+    logger.info("batch1 loading seed rows")
     for table_name, file_name in TABLE_TO_SEED_FILE.items():
         seed_path = ctx.gen.seed_dir / file_name
         if not seed_path.exists():
@@ -549,7 +590,10 @@ def run(ctx: RunContext) -> None:
             _normalize_row(tables[table_name], row) for row in rows
         ]
         logger.info(
-            "Loaded {} rows from {}", len(seed_rows[table_name]), seed_path.name
+            "batch1 loaded seed rows: table={} rows={} file={}",
+            table_name,
+            len(seed_rows[table_name]),
+            seed_path.name,
         )
 
     _validate_seed_bundle(seed_rows, tables)
@@ -582,8 +626,7 @@ def run(ctx: RunContext) -> None:
             batch_size=ctx.gen.batch_size,
         )
         logger.info(
-            "{} -> generated_rows={}, inserted_rows={}",
-            USER_TABLE_NAME,
+            "batch1 user rows generated={} inserted={}",
             len(user_rows),
             user_inserted,
         )
@@ -592,19 +635,38 @@ def run(ctx: RunContext) -> None:
             if table_name == USER_TABLE_NAME:
                 continue
             table = tables[table_name]
-            latest_etl_date = _latest_etl_date(conn, table)
-            if latest_etl_date is None:
-                snapshot_rows = [
-                    row | {"etl_date": start_date} for row in seed_rows[table_name]
-                ]
+            key_field = UNIQUE_KEYS[table_name]
+            current_rows = _load_current_dim_rows(conn, table)
+            current_by_key = {row[key_field]: row for row in current_rows}
+            seed_by_key = {row[key_field]: row for row in seed_rows[table_name]}
+
+            new_keys = set(seed_by_key) - set(current_by_key)
+            removed_keys = set(current_by_key) - set(seed_by_key)
+            changed_keys = {
+                key
+                for key in set(seed_by_key) & set(current_by_key)
+                if {
+                    field: _serialize_value(value)
+                    for field, value in seed_by_key[key].items()
+                }
+                != {
+                    field: _serialize_value(value)
+                    for field, value in current_by_key[key].items()
+                }
+            }
+            insert_keys = new_keys | changed_keys
+            close_keys = removed_keys | changed_keys
+
+            if not current_rows:
+                insert_rows = _build_seed_dim_rows(seed_rows[table_name], start_date)
                 inserted = bulk_insert(
                     conn,
                     table,
-                    snapshot_rows,
+                    insert_rows,
                     batch_size=ctx.gen.batch_size,
                 )
                 logger.info(
-                    "{} -> seed_rows={}, inserted_rows={}, initial_version={}",
+                    "batch1 seed scd table={} seed_rows={} inserted_rows={} initial_version={}",
                     table_name,
                     len(seed_rows[table_name]),
                     inserted,
@@ -612,37 +674,40 @@ def run(ctx: RunContext) -> None:
                 )
                 continue
 
-            latest_rows = _load_version_rows(conn, table, latest_etl_date)
-            if _comparable_rows(
-                latest_rows, UNIQUE_KEYS[table_name]
-            ) == _comparable_rows(seed_rows[table_name], UNIQUE_KEYS[table_name]):
+            if not insert_keys and not close_keys:
                 logger.info(
-                    "{} -> seed_rows={}, latest_version={}, unchanged, skipped",
+                    "batch1 seed scd table={} seed_rows={} unchanged_skipped=true",
                     table_name,
                     len(seed_rows[table_name]),
-                    latest_etl_date,
                 )
                 continue
 
-            if latest_etl_date >= end_date:
+            if any(row["start_date"] >= end_date for row in conn.execute(
+                select(table).where(table.c.is_current == 1)
+            ).mappings()):
                 raise ValueError(
-                    f"{table_name} 检测到种子变更，但数据库中的最新版本日期 {latest_etl_date} 已不早于本次生成结束日期 {end_date}"
+                    f"{table_name} 检测到种子变更，但数据库中的当前版本开始日期已不早于本次生成结束日期 {end_date}"
                 )
 
-            snapshot_rows = [
-                row | {"etl_date": end_date} for row in seed_rows[table_name]
+            _close_current_dim_rows(conn, table, key_field, close_keys, end_date)
+            existing_keys = _existing_dim_keys(conn, table, key_field)
+            insert_rows = [
+                seed_by_key[key]
+                | {
+                    "start_date": end_date,
+                    "end_date": USER_END_OF_TIME,
+                    "is_current": 1,
+                }
+                for key in insert_keys
+                if (key, end_date) not in existing_keys
             ]
-            inserted = bulk_insert(
-                conn,
-                table,
-                snapshot_rows,
-                batch_size=ctx.gen.batch_size,
-            )
+            inserted = bulk_insert(conn, table, insert_rows, batch_size=ctx.gen.batch_size)
             logger.info(
-                "{} -> seed_rows={}, latest_version={}, inserted_rows={}, new_version={}",
+                "batch1 seed scd table={} seed_rows={} changed_rows={} removed_rows={} inserted_rows={} new_version={}",
                 table_name,
                 len(seed_rows[table_name]),
-                latest_etl_date,
+                len(changed_keys) + len(new_keys),
+                len(removed_keys),
                 inserted,
                 end_date,
             )

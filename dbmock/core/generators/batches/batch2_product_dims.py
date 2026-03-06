@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import MetaData, func, select
+from sqlalchemy import MetaData, select
 
 from ..catalogs import (
     BLOCKED_CATEGORY_KEYWORDS,
@@ -43,21 +43,15 @@ def _validate_catalogs(level1_categories: set[str], brand_names: set[str]) -> No
             )
 
 
-def _latest_etl_date(conn, table) -> date | None:
-    """返回快照维表的最新分区日期。"""
-    stmt = select(func.max(table.c.etl_date))
-    return conn.execute(stmt).scalar_one()
-
-
 def _has_rows(conn, table) -> bool:
     """判断目标表是否已经存在数据。"""
     stmt = select(table.c.id).limit(1)
     return conn.execute(stmt).first() is not None
 
 
-def _load_snapshot_rows(conn, table, etl_date: date) -> list[dict[str, Any]]:
-    """加载指定快照日期的维度数据。"""
-    stmt = select(table).where(table.c.etl_date == etl_date)
+def _load_current_rows(conn, table) -> list[dict[str, Any]]:
+    """加载当前有效的维度数据。"""
+    stmt = select(table).where(table.c.is_current == 1)
     return [dict(row) for row in conn.execute(stmt).mappings()]
 
 
@@ -459,15 +453,16 @@ def run(ctx: RunContext) -> None:
             logger.info("SPU/SKU tables already contain data, skip batch2 generation")
             return
 
-        category_etl_date = _latest_etl_date(conn, category_table)
-        brand_etl_date = _latest_etl_date(conn, brand_table)
-        shop_etl_date = _latest_etl_date(conn, shop_table)
-        if category_etl_date is None or brand_etl_date is None or shop_etl_date is None:
-            raise ValueError("批次2依赖的店铺、类目、品牌维表不存在可用快照")
-
-        category_rows = _load_snapshot_rows(conn, category_table, category_etl_date)
-        brand_rows = _load_snapshot_rows(conn, brand_table, brand_etl_date)
-        shop_rows = _load_snapshot_rows(conn, shop_table, shop_etl_date)
+        logger.info("batch2 loading source rows")
+        category_rows = _load_current_rows(conn, category_table)
+        brand_rows = _load_current_rows(conn, brand_table)
+        shop_rows = _load_current_rows(conn, shop_table)
+        logger.info(
+            "batch2 loaded source rows: category_rows={} brand_rows={} shop_rows={}",
+            len(category_rows),
+            len(brand_rows),
+            len(shop_rows),
+        )
 
         level1_categories = {
             row["category_name"]

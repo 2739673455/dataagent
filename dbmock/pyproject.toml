@@ -1,7 +1,7 @@
 [project]
 name = "dbmock"
 version = "0.1.0"
-description = "Add your description here"
+description = "用于生成电商数仓模拟数据的工具"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
