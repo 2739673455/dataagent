@@ -10,12 +10,13 @@ from sqlalchemy import MetaData, select
 
 from ..catalogs import (
     APP_VERSIONS,
+    APP_CLIENT_TYPES,
     CART_EVENTS_PER_USER,
     CART_SOURCES,
     CHANNEL_CODES,
-    CLIENT_TYPES,
+    CHANNEL_CLIENT_OPTIONS,
+    CLIENT_OS_OPTIONS,
     FAVOR_EVENTS_PER_USER,
-    OS_TYPES,
     PAGE_DEFINITIONS,
     PAGE_VIEW_EVENTS_PER_USER,
     SEARCH_EVENTS_PER_USER,
@@ -68,9 +69,23 @@ def _masked_ip(user_id: int) -> str:
 
 def _pick_client(ctx: RunContext, user_id: int, seq: int) -> tuple[str, str]:
     """选择客户端和渠道。"""
-    client_type = CLIENT_TYPES[(user_id + seq) % len(CLIENT_TYPES)]
     channel_code = CHANNEL_CODES[(user_id * 3 + seq) % len(CHANNEL_CODES)]
+    client_candidates = CHANNEL_CLIENT_OPTIONS[channel_code]
+    client_type = client_candidates[(user_id + seq) % len(client_candidates)]
     return client_type, channel_code
+
+
+def _pick_os_type(client_type: str, seq: int) -> str:
+    """根据客户端类型选择兼容的操作系统。"""
+    os_candidates = CLIENT_OS_OPTIONS[client_type]
+    return os_candidates[seq % len(os_candidates)]
+
+
+def _pick_app_version(client_type: str, seq: int) -> str | None:
+    """仅为 APP 客户端填充版本号。"""
+    if client_type not in APP_CLIENT_TYPES:
+        return None
+    return APP_VERSIONS[seq % len(APP_VERSIONS)]
 
 
 def _random_event_time_for_date(
@@ -194,9 +209,20 @@ def run(ctx: RunContext) -> None:
     search_table = metadata.tables["dwd_fact_traffic_search_di"]
 
     with ctx.engine.begin() as conn:
-        if _has_rows(conn, cart_table):
+        table_has_rows = {
+            "cart": _has_rows(conn, cart_table),
+            "favor": _has_rows(conn, favor_table),
+            "page_view": _has_rows(conn, page_view_table),
+            "search": _has_rows(conn, search_table),
+        }
+        if all(table_has_rows.values()):
             logger.info("Behavior tables already contain data, skip batch5 generation")
             return
+        if any(table_has_rows.values()):
+            raise ValueError(
+                "批次5行为事实表存在部分已生成状态，请先清理后重跑: "
+                f"{table_has_rows}"
+            )
 
         logger.info("batch5 loading source rows")
         user_rows = _load_all_rows(conn, user_table)
@@ -250,8 +276,6 @@ def run(ctx: RunContext) -> None:
         cart_source_count = len(CART_SOURCES)
         favor_type_mod = 4
         page_definition_count = len(PAGE_DEFINITIONS)
-        app_version_count = len(APP_VERSIONS)
-        os_type_count = len(OS_TYPES)
         search_source_count = len(SEARCH_SOURCES)
         category_name_pool = [
             row["category_name"] for row in category_rows if row.get("category_name")
@@ -479,8 +503,8 @@ def run(ctx: RunContext) -> None:
                         "business_type": business_type,
                         "channel_code": channel_code,
                         "client_type": client_type,
-                        "app_version": APP_VERSIONS[page_idx % app_version_count],
-                        "os_type": OS_TYPES[page_idx % os_type_count],
+                        "app_version": _pick_app_version(client_type, page_idx),
+                        "os_type": _pick_os_type(client_type, page_idx),
                         "ip": _masked_ip(user_id),
                         "province_code": user_row.get("province_code"),
                         "city_code": user_row.get("city_code"),

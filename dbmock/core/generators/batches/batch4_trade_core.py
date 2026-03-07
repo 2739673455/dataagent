@@ -58,20 +58,30 @@ FREE_SHIPPING_THRESHOLD_BY_ROOT = {
 }
 
 
-def _masked_receiver_name(user_id: int) -> str:
-    """生成脱敏收件人姓名。"""
-    surnames = ["张", "李", "王", "赵", "刘", "陈", "杨", "黄"]
-    return f"{surnames[user_id % len(surnames)]}**"
+def _masked_receiver_name(user_row: dict[str, Any]) -> str:
+    """基于用户维度生成脱敏收件人姓名。"""
+    raw_name = (
+        user_row.get("nick_name")
+        or user_row.get("user_name")
+        or f"用户{user_row.get('user_id', '')}"
+    )
+    if len(raw_name) <= 1:
+        return f"{raw_name}**"
+    return f"{raw_name[:1]}**"
 
 
-def _masked_receiver_phone(user_id: int) -> str:
-    """生成脱敏收件手机号。"""
+def _masked_receiver_phone(user_row: dict[str, Any]) -> str:
+    """基于用户维度生成脱敏收件手机号。"""
+    phone = user_row.get("phone")
+    if phone:
+        return str(phone)
+    user_id = int(user_row.get("user_id", 0))
     tail = 1000 + user_id % 9000
     return f"138****{tail:04d}"
 
 
 def _masked_receiver_address(detail_row: dict[str, Any]) -> str:
-    """生成脱敏收货地址。"""
+    """基于用户维度生成脱敏收货地址。"""
     province = detail_row.get("province_code") or "000000"
     city = detail_row.get("city_code") or "000000"
     district = detail_row.get("district_code") or "000000"
@@ -179,6 +189,7 @@ def _append_inventory_change(
 def append_fulfillment_rows(
     order_id: int,
     detail_rows: list[dict[str, Any]],
+    user_row: dict[str, Any],
     payment_types: list[dict[str, Any]],
     logistics_companies: list[dict[str, Any]],
     seq_state: dict[str, int],
@@ -284,8 +295,8 @@ def append_fulfillment_rows(
                     "delivery_type": DELIVERY_TYPE_OPTIONS[
                         (order_id + detail_idx) % len(DELIVERY_TYPE_OPTIONS)
                     ],
-                    "receiver_name": _masked_receiver_name(detail_row["user_id"]),
-                    "receiver_phone": _masked_receiver_phone(detail_row["user_id"]),
+                    "receiver_name": _masked_receiver_name(user_row),
+                    "receiver_phone": _masked_receiver_phone(user_row),
                     "receiver_province_code": detail_row.get("province_code"),
                     "receiver_city_code": detail_row.get("city_code"),
                     "receiver_district_code": detail_row.get("district_code"),
@@ -463,7 +474,9 @@ def _money(value: Decimal | int | float) -> Decimal:
     return value.quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
 
 
-def _resolve_freight_total(ctx: RunContext, detail_rows: list[dict[str, Any]]) -> Decimal:
+def _resolve_freight_total(
+    ctx: RunContext, detail_rows: list[dict[str, Any]]
+) -> Decimal:
     """按类目、店铺和订单金额生成更真实的订单级运费。"""
     order_amount = _money(sum(row["_detail_amount"] for row in detail_rows))
     root_name = (
@@ -1263,6 +1276,7 @@ def run(ctx: RunContext) -> None:
                 append_fulfillment_rows(
                     order_id=order_id,
                     detail_rows=order_fact_rows,
+                    user_row=user_row,
                     payment_types=payment_types,
                     logistics_companies=logistics_companies,
                     seq_state=fulfillment_seq_state,

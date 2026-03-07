@@ -33,7 +33,6 @@ class DwdDimBrandInfoDf(Base):
     country_code: Mapped[Optional[str]] = mapped_column(String(8), comment='国家编码')
     country_name: Mapped[Optional[str]] = mapped_column(String(64), comment='国家名称')
     first_letter: Mapped[Optional[str]] = mapped_column(CHAR(1), comment='首字母')
-    sort_order: Mapped[Optional[int]] = mapped_column(Integer, server_default=text("'0'"), comment='排序')
     status: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='状态:1有效 0失效')
     is_current: Mapped[Optional[int]] = mapped_column(TINYINT, server_default=text("'1'"), comment='是否当前版本:0否 1是')
 

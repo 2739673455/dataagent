@@ -116,7 +116,6 @@ CREATE TABLE `dwd_dim_brand_info_df` (
     `country_code` VARCHAR(8) DEFAULT NULL COMMENT '国家编码',
     `country_name` VARCHAR(64) DEFAULT NULL COMMENT '国家名称',
     `first_letter` CHAR(1) DEFAULT NULL COMMENT '首字母',
-    `sort_order` INT DEFAULT 0 COMMENT '排序',
     `status` TINYINT DEFAULT 1 COMMENT '状态:1有效 0失效',
     `is_current` TINYINT DEFAULT 1 COMMENT '是否当前版本:0否 1是',
     PRIMARY KEY (`id`),

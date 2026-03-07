@@ -9,7 +9,13 @@ from pathlib import Path
 
 from sqlalchemy import Engine, create_engine
 
-DEFAULT_BATCH_SIZE = 5000
+DB_HOST = "127.0.0.1"
+DB_PORT = 3306
+DB_USER = "root"
+DB_PASSWORD = "123321"
+DB_NAME = "warehouse"
+BATCH_SIZE = 10000
+SEED = 42
 
 
 def _today_iso() -> str:
@@ -27,11 +33,11 @@ def _three_years_ago_iso() -> str:
 
 @dataclass(slots=True)
 class DBConfig:
-    host: str = "127.0.0.1"
-    port: int = 3306
-    user: str = "root"
-    password: str = "123321"
-    database: str = "warehouse"
+    host: str = DB_HOST
+    port: int = DB_PORT
+    user: str = DB_USER
+    password: str = DB_PASSWORD
+    database: str = DB_NAME
 
     @property
     def db_url(self) -> str:
@@ -43,8 +49,8 @@ class DBConfig:
 
 @dataclass(slots=True)
 class GenerateConfig:
-    batch_size: int
-    seed: int = 42
+    batch_size: int = BATCH_SIZE
+    seed: int = SEED
     start_date: str = field(default_factory=_three_years_ago_iso)
     end_date: str = field(default_factory=_today_iso)
     seed_dir: Path = field(

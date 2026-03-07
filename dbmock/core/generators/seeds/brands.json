@@ -9,7 +9,6 @@
     "country_code": "US",
     "country_name": "美国",
     "first_letter": "A",
-    "sort_order": 1,
     "status": 1
   },
   {
@@ -22,7 +21,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "H",
-    "sort_order": 2,
     "status": 1
   },
   {
@@ -35,7 +33,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "X",
-    "sort_order": 3,
     "status": 1
   },
   {
@@ -48,7 +45,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "H",
-    "sort_order": 4,
     "status": 1
   },
   {
@@ -61,7 +57,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "O",
-    "sort_order": 5,
     "status": 1
   },
   {
@@ -74,7 +69,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "V",
-    "sort_order": 6,
     "status": 1
   },
   {
@@ -87,7 +81,6 @@
     "country_code": "KR",
     "country_name": "韩国",
     "first_letter": "S",
-    "sort_order": 7,
     "status": 1
   },
   {
@@ -100,7 +93,6 @@
     "country_code": "JP",
     "country_name": "日本",
     "first_letter": "S",
-    "sort_order": 8,
     "status": 1
   },
   {
@@ -113,7 +105,6 @@
     "country_code": "JP",
     "country_name": "日本",
     "first_letter": "C",
-    "sort_order": 9,
     "status": 1
   },
   {
@@ -126,7 +117,6 @@
     "country_code": "JP",
     "country_name": "日本",
     "first_letter": "N",
-    "sort_order": 10,
     "status": 1
   },
   {
@@ -139,7 +129,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "D",
-    "sort_order": 11,
     "status": 1
   },
   {
@@ -152,7 +141,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "H",
-    "sort_order": 12,
     "status": 1
   },
   {
@@ -165,7 +153,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "L",
-    "sort_order": 13,
     "status": 1
   },
   {
@@ -178,7 +165,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "T",
-    "sort_order": 14,
     "status": 1
   },
   {
@@ -191,7 +177,6 @@
     "country_code": "US",
     "country_name": "美国",
     "first_letter": "D",
-    "sort_order": 15,
     "status": 1
   },
   {
@@ -204,7 +189,6 @@
     "country_code": "US",
     "country_name": "美国",
     "first_letter": "H",
-    "sort_order": 16,
     "status": 1
   },
   {
@@ -217,7 +201,6 @@
     "country_code": "TW",
     "country_name": "中国台湾",
     "first_letter": "A",
-    "sort_order": 17,
     "status": 1
   },
   {
@@ -230,7 +213,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "M",
-    "sort_order": 18,
     "status": 1
   },
   {
@@ -243,7 +225,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "M",
-    "sort_order": 19,
     "status": 1
   },
   {
@@ -256,7 +237,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "H",
-    "sort_order": 20,
     "status": 1
   },
   {
@@ -269,7 +249,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "G",
-    "sort_order": 21,
     "status": 1
   },
   {
@@ -282,7 +261,6 @@
     "country_code": "DE",
     "country_name": "德国",
     "first_letter": "S",
-    "sort_order": 22,
     "status": 1
   },
   {
@@ -295,7 +273,6 @@
     "country_code": "GB",
     "country_name": "英国",
     "first_letter": "D",
-    "sort_order": 23,
     "status": 1
   },
   {
@@ -308,7 +285,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "E",
-    "sort_order": 24,
     "status": 1
   },
   {
@@ -321,7 +297,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "D",
-    "sort_order": 25,
     "status": 1
   },
   {
@@ -334,7 +309,6 @@
     "country_code": "US",
     "country_name": "美国",
     "first_letter": "N",
-    "sort_order": 26,
     "status": 1
   },
   {
@@ -347,7 +321,6 @@
     "country_code": "DE",
     "country_name": "德国",
     "first_letter": "A",
-    "sort_order": 27,
     "status": 1
   },
   {
@@ -360,7 +333,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "A",
-    "sort_order": 28,
     "status": 1
   },
   {
@@ -373,7 +345,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "L",
-    "sort_order": 29,
     "status": 1
   },
   {
@@ -386,7 +357,6 @@
     "country_code": "US",
     "country_name": "美国",
     "first_letter": "S",
-    "sort_order": 30,
     "status": 1
   },
   {
@@ -399,7 +369,6 @@
     "country_code": "JP",
     "country_name": "日本",
     "first_letter": "U",
-    "sort_order": 31,
     "status": 1
   },
   {
@@ -412,7 +381,6 @@
     "country_code": "ES",
     "country_name": "西班牙",
     "first_letter": "Z",
-    "sort_order": 32,
     "status": 1
   },
   {
@@ -425,7 +393,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "B",
-    "sort_order": 33,
     "status": 1
   },
   {
@@ -438,7 +405,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "H",
-    "sort_order": 34,
     "status": 1
   },
   {
@@ -451,7 +417,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "P",
-    "sort_order": 35,
     "status": 1
   },
   {
@@ -464,7 +429,6 @@
     "country_code": "FR",
     "country_name": "法国",
     "first_letter": "L",
-    "sort_order": 36,
     "status": 1
   },
   {
@@ -477,7 +441,6 @@
     "country_code": "US",
     "country_name": "美国",
     "first_letter": "E",
-    "sort_order": 37,
     "status": 1
   },
   {
@@ -490,7 +453,6 @@
     "country_code": "FR",
     "country_name": "法国",
     "first_letter": "L",
-    "sort_order": 38,
     "status": 1
   },
   {
@@ -503,7 +465,6 @@
     "country_code": "FR",
     "country_name": "法国",
     "first_letter": "C",
-    "sort_order": 39,
     "status": 1
   },
   {
@@ -516,7 +477,6 @@
     "country_code": "JP",
     "country_name": "日本",
     "first_letter": "S",
-    "sort_order": 40,
     "status": 1
   },
   {
@@ -529,7 +489,6 @@
     "country_code": "JP",
     "country_name": "日本",
     "first_letter": "S",
-    "sort_order": 41,
     "status": 1
   },
   {
@@ -542,7 +501,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "T",
-    "sort_order": 42,
     "status": 1
   },
   {
@@ -555,7 +513,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "B",
-    "sort_order": 43,
     "status": 1
   },
   {
@@ -568,7 +525,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "B",
-    "sort_order": 44,
     "status": 1
   },
   {
@@ -581,7 +537,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "N",
-    "sort_order": 45,
     "status": 1
   },
   {
@@ -594,7 +549,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "G",
-    "sort_order": 46,
     "status": 1
   },
   {
@@ -607,7 +561,6 @@
     "country_code": "US",
     "country_name": "美国",
     "first_letter": "S",
-    "sort_order": 47,
     "status": 1
   },
   {
@@ -620,7 +573,6 @@
     "country_code": "CH",
     "country_name": "瑞士",
     "first_letter": "N",
-    "sort_order": 48,
     "status": 1
   },
   {
@@ -633,7 +585,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "Y",
-    "sort_order": 49,
     "status": 1
   },
   {
@@ -646,7 +597,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "M",
-    "sort_order": 50,
     "status": 1
   },
   {
@@ -659,7 +609,6 @@
     "country_code": "US",
     "country_name": "美国",
     "first_letter": "W",
-    "sort_order": 51,
     "status": 1
   },
   {
@@ -672,7 +621,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "F",
-    "sort_order": 52,
     "status": 1
   },
   {
@@ -685,7 +633,6 @@
     "country_code": "NZ",
     "country_name": "新西兰",
     "first_letter": "A",
-    "sort_order": 53,
     "status": 1
   },
   {
@@ -698,7 +645,6 @@
     "country_code": "DK",
     "country_name": "丹麦",
     "first_letter": "L",
-    "sort_order": 54,
     "status": 1
   },
   {
@@ -711,7 +657,6 @@
     "country_code": "US",
     "country_name": "美国",
     "first_letter": "F",
-    "sort_order": 55,
     "status": 1
   },
   {
@@ -724,7 +669,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "G",
-    "sort_order": 56,
     "status": 1
   },
   {
@@ -737,7 +681,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "O",
-    "sort_order": 57,
     "status": 1
   },
   {
@@ -750,7 +693,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "P",
-    "sort_order": 58,
     "status": 1
   },
   {
@@ -763,7 +705,6 @@
     "country_code": "SE",
     "country_name": "瑞典",
     "first_letter": "I",
-    "sort_order": 59,
     "status": 1
   },
   {
@@ -776,7 +717,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "J",
-    "sort_order": 60,
     "status": 1
   },
   {
@@ -789,7 +729,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "S",
-    "sort_order": 61,
     "status": 1
   },
   {
@@ -802,7 +741,6 @@
     "country_code": "JP",
     "country_name": "日本",
     "first_letter": "T",
-    "sort_order": 62,
     "status": 1
   },
   {
@@ -815,7 +753,6 @@
     "country_code": "CN",
     "country_name": "中国",
     "first_letter": "X",
-    "sort_order": 63,
     "status": 1
   },
   {
@@ -828,7 +765,6 @@
     "country_code": "US",
     "country_name": "美国",
     "first_letter": "N",
-    "sort_order": 64,
     "status": 1
   }
 ]

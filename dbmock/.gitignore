@@ -9,4 +9,3 @@ wheels/
 # Virtual environments
 .venv
 logs
-.pytest_cache
