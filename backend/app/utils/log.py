@@ -7,8 +7,13 @@ from app.config import CFG, LogCfg
 from app.utils import context
 from loguru import logger
 
+# 路径常量
+CURRENT_DIR = Path(__file__).parent  # utils
+UP1_DIR = CURRENT_DIR.parent  # app
+UP2_DIR = UP1_DIR.parent  # 项目根目录
+
 LOGGER_CONFIGURED = False  # 日志是否已初始化
-LOG_DIR = Path(__file__).parent.parent.parent / "logs"  # 日志文件目录
+LOG_DIR = UP2_DIR / "logs"  # 日志文件目录
 
 
 def _build_log_json(record):

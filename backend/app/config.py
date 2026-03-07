@@ -4,6 +4,10 @@ import dotenv
 from omegaconf import OmegaConf
 from pydantic import BaseModel
 
+# 路径常量
+CURRENT_DIR = Path(__file__).parent  # app
+UP1_DIR = CURRENT_DIR.parent  # 项目根目录
+
 
 # 数据库
 class MySQLCfg(BaseModel):
@@ -29,20 +33,23 @@ class LogCfg(BaseModel):
     max_file_size: str
 
 
-# 腾讯云 COS
-class COSCfg(BaseModel):
-    bucket: str
-    secret_id: str  # 腾讯云COS SECRET-ID
-    secret_key: str  # 腾讯云COS SECRET-KEY
-    region: str  # 存储桶所在地域
-    token: str | None = None  # 临时密钥Token，如不使用则置为None
-    scheme: str  # 访问协议，http或https
-
-
 # MCP 工具配置
 class MCPCfg(BaseModel):
     transport: str
     url: str
+
+
+# 模型配置
+class ModelCfg(BaseModel):
+    model: str
+    base_url: str
+    api_key: str
+    params: dict
+
+
+class LMConfigCfg(BaseModel):
+    active: str
+    models: dict[str, ModelCfg]
 
 
 # 认证服务
@@ -54,13 +61,13 @@ class AuthServiceCfg(BaseModel):
 class Cfg(BaseModel):
     db: DBCfg
     log: LogCfg
-    cos: COSCfg
     mcp: dict[str, MCPCfg]
+    lm_config: LMConfigCfg
     auth_service: AuthServiceCfg
     cors_origins: list[str]
 
 
-CONFIG_DIR = Path(__file__).parent.parent / "configs"  # 配置文件目录
+CONFIG_DIR = UP1_DIR / "configs"  # 配置文件目录
 dotenv.load_dotenv(CONFIG_DIR / ".env")  # 加载 .env
 base_cfg = OmegaConf.load(CONFIG_DIR / "config.yml")  # 加载 config.yml
 

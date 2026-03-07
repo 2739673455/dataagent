@@ -37,7 +37,6 @@ async def api_get_conversations(
                 conversation_id=i.id,
                 title=i.title,
                 update_at=i.update_at,
-                model_config_id=i.model_config_id,
             )
             for i in conversations
         ]
@@ -59,7 +58,6 @@ async def api_create_conversation(
         conversation_id=conversation.id,
         title=conversation.title,
         update_at=conversation.update_at,
-        model_config_id=conversation.model_config_id,
     )
 
 

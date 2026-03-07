@@ -16,13 +16,14 @@ log: # 日志
   log_dir: app # 日志目录
   max_file_size: 10MB # 单个日志文件最大大小
 
-cos: # 腾讯云COS配置
-  bucket: chat-${oc.env:COS_APP_ID} # 存储桶名称，格式：bucketName-appid
-  secret_id: ${oc.env:COS_SECRET_ID} # 腾讯云COS SECRET-ID
-  secret_key: ${oc.env:COS_SECRET_KEY} # 腾讯云COS SECRET-KEY
-  region: ap-beijing # 存储桶所在地域
-  token: null # 临时密钥Token，如不使用则置为null
-  scheme: https # 访问协议，http或https
+lm_config:
+  active: gpt-4o-mini
+  models:
+    gpt-4o-mini:
+      model: openai/gpt-4o-mini
+      base_url: https://openrouter.ai/api/v1
+      api_key: ${oc.env:OPENROUTER_API_KEY}
+      params: {}
 
 mcp: # MCP 工具
   tavily:

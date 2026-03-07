@@ -13,6 +13,10 @@ from sqlalchemy import MetaData, create_engine
 
 from . import config
 
+# 路径常量
+CURRENT_DIR = Path(__file__).parent  # app
+UP1_DIR = CURRENT_DIR.parent  # 项目根目录
+
 
 class DBInit:
     def __init__(self, cfg):
@@ -181,11 +185,11 @@ def prepare():
         sys.exit(1)
 
     # SQL 文件目录
-    sql_dir = Path(__file__).parent.parent / "sql" / DB_DRIVER
+    sql_dir = UP1_DIR / "sql" / DB_DRIVER
     # 获取所有 SQL 文件
     sql_files = list(sql_dir.glob("*.sql"))
     # 表模型输出目录
-    orm_dir = Path(__file__).parent / "entities"
+    orm_dir = CURRENT_DIR / "entities"
     # db_name, sql_file_path, output_path
     db_sql_orm = []
     for f in sql_files:

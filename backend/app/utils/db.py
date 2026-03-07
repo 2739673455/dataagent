@@ -72,9 +72,9 @@ async def close_all():
     SESSION_MAKERS.clear()
 
 
-# 创建认证数据库的依赖函数
-get_auth_db = get_db(
-    "auth",
+# 创建数据库的依赖函数
+get_app_db = get_db(
+    "app",
     _get_db_url(CFG.db.configs[CFG.db.driver], CFG.db.driver),
     CFG.db.driver,
 )

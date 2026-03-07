@@ -6,8 +6,6 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "asyncmy>=0.2.11",
-    "cos-python-sdk-v5>=1.9.41",
-    "cryptography>=46.0.4",
     "deepagents>=0.3.11",
     "fastapi[standard]>=0.128.0",
     "langchain-mcp-adapters>=0.2.1",
