@@ -1,19 +1,19 @@
 [project]
-name = "backend"
-version = "0.1.0"
+dependencies = [
+  "asyncmy>=0.2.11",
+  "deepagents>=0.4.7",
+  "fastapi[standard]>=0.135.1",
+  "langchain-mcp-adapters>=0.2.1",
+  "langchain-openai>=1.1.7",
+  "loguru>=0.7.3",
+  "omegaconf>=2.3.0",
+  "openai>=2.16.0",
+  "pymysql>=1.1.2",
+  "sqlacodegen>=3.2.0",
+  "sqlalchemy>=2.0.46",
+]
 description = "Add your description here"
+name = "backend"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = [
-    "asyncmy>=0.2.11",
-    "deepagents>=0.3.11",
-    "fastapi[standard]>=0.128.0",
-    "langchain-mcp-adapters>=0.2.1",
-    "langchain-openai>=1.1.7",
-    "loguru>=0.7.3",
-    "omegaconf>=2.3.0",
-    "openai>=2.16.0",
-    "pymysql>=1.1.2",
-    "sqlacodegen>=3.2.0",
-    "sqlalchemy>=2.0.46",
-]
+version = "0.1.0"

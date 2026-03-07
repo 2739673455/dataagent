@@ -1,5 +1,6 @@
 # 文档处理
-1. 前端上传文档
+
+1. 在前端上传文档
 2. 前端读取文件并计算文件哈希
 3. 前端向后端发送文件哈希
 4. 后端检查文件是否已存在
@@ -7,10 +8,12 @@
 6. 前端上传文件
 
 # 参考
+
 [智能洞察分析](https://www.gooddata.com/blog/agentic-analytics-complete-guide-to-ai-driven-data-intelligence/)  
 [电商运营分析](https://datagrid.com/blog/automate-multi-channel-attribution-analysis)  
 
 # 案例
+
 ## 商品转化率降低原因分析
 发现销售额突然下降，询问：为什么转化率下降了？
 1. 分析90天内转化率，确定下降的开始时间

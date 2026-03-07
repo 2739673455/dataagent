@@ -26,10 +26,15 @@ async def build_agent():
 async def main():
     agent = await build_agent()
 
-    async for chunk in agent.astream(
-        input={"messages": [{"role": "user", "content": "现在流行的ai编程工具有哪些?"}]}
-    ):
-        print(chunk, end="\n\n")
+    while True:
+        user_message = input("User: ")
+        if not user_message:
+            continue
+
+        resp = await agent.ainvoke(
+            input={"messages": [{"role": "user", "content": user_message}]}
+        )
+        print("\n", resp, "\n")
 
 
 asyncio.run(main())
