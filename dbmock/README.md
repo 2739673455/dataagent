@@ -1,5 +1,18 @@
 # 数据生成
 
+## 使用方式
+
+```bash
+# 1. 安装依赖
+uv sync
+
+# 2. 初始化数据库（创建表结构）
+uv run core/init_db.py
+
+# 3. 生成数据
+uv run -m core.generators.main
+```
+
 ## 数据规模与生成顺序
 
 按批次生成，考虑外键依赖关系：
@@ -111,16 +124,3 @@
 - **支付方式/物流公司**: 基于主流电商平台常见能力与行业公开名单整理
 - **地理区域**: 基于中国省/市/区真实行政区划名称整理
 - **种子维护**: 直接编辑 `core/generators/seeds/*.json`
-
-## 使用方式
-
-```bash
-# 1. 安装依赖
-uv sync
-
-# 2. 初始化数据库（创建表结构）
-uv run core/init_db.py
-
-# 3. 生成数据
-uv run -m core.generators.main
-```
