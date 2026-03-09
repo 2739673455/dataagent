@@ -1,11 +1,21 @@
 import asyncio
+from pathlib import Path
 
 from app.config import CFG
 from app.core.mcp import mcp_client
 from deepagents import create_deep_agent
-from deepagents.backends import LocalShellBackend
+from deepagents.backends import CompositeBackend, LocalShellBackend
 from langchain.chat_models import init_chat_model
 from langchain.messages import AIMessage, ToolMessage
+
+# 路径常量
+CURRENT_DIR = Path(__file__).parent  # core
+UP1_DIR = CURRENT_DIR.parent  # app
+UP2_DIR = UP1_DIR.parent  # 项目根目录
+
+DEEPAGENTS_ROOT = UP2_DIR / ".deepagents"  # deepagents 文件后端目录
+SKILLS_DIR = DEEPAGENTS_ROOT / "skills"  # 技能目录
+WORKSPACES_DIR = DEEPAGENTS_ROOT / "workspaces"  # 工作区目录
 
 
 def process_messages(message: dict):
@@ -39,7 +49,7 @@ def process_messages(message: dict):
         print(message, "\n")
 
 
-async def build_agent():
+async def build_agent(user_id: int, conversation_id: str):
     # 模型
     model_cfg = CFG.lm_config.models[CFG.lm_config.active]
     model = init_chat_model(
@@ -56,15 +66,24 @@ async def build_agent():
     # 所有工具
     tools = [*mcp_tools]
 
-    # 文件系统后端
-    backend = LocalShellBackend(
-        root_dir="/home/kodey/agents/backend/.deepagents",
-        virtual_mode=True,  # True: 将 root_dir 视为虚拟文件系统根目录
-        inherit_env=True,  # 继承环境变量
+    # 文件后端
+    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+    # 为每个用户/会话创建独立工作目录
+    workspace_dir = WORKSPACES_DIR / f"user_{user_id}" / conversation_id
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+
+    workspace_backend = LocalShellBackend(
+        root_dir=workspace_dir, virtual_mode=True, inherit_env=True
+    )
+    skills_backend = LocalShellBackend(
+        root_dir=SKILLS_DIR, virtual_mode=True, inherit_env=True
+    )
+    backend = CompositeBackend(
+        default=workspace_backend, routes={"/skills/": skills_backend}
     )
 
-    # 技能目录(文件系统后端根路径下的 skills 目录)
-    skills = ["/skills"]
+    # 技能目录挂载到共享路径 /skills
+    skills = ["/skills/"]
 
     # 创建 Agent
     agent = create_deep_agent(model=model, tools=tools, backend=backend, skills=skills)
@@ -73,7 +92,7 @@ async def build_agent():
 
 
 async def main():
-    agent = await build_agent()
+    agent = await build_agent(1, "1")
 
     while True:
         user_message = input("User: ")

@@ -12,15 +12,15 @@ logging:
 db_meta:
   host: localhost
   port: 3306
-  user: atguigu
-  password: Atguigu.123
+  user: root
+  password: 123321
   database: meta
 
 db_dw:
   host: localhost
   port: 3306
-  user: atguigu
-  password: Atguigu.123
+  user: root
+  password: 123321
   database: dw
 
 qdrant:
@@ -33,12 +33,10 @@ embedding:
   port: 8081
   model: BAAI/bge-large-zh-v1.5
 
-
 es:
   host: localhost
   port: 9200
   index_name: data_agent
-
 
 llm:
   model_name: gpt-5.2-codex
