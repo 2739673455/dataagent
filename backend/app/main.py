@@ -46,4 +46,4 @@ async def health():
 app.include_router(api.router)
 
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="0.0.0.0", port=12321)
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8100)

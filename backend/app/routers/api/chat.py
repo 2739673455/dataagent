@@ -16,7 +16,6 @@ from app.services.chat import (
     stream_response,
     url_to_get_presigned_url,
 )
-from app.utils.cos import generate_cos_key, get_upload_presigned_url
 from app.utils.log import logger
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
@@ -36,44 +35,6 @@ async def api_get_messages(
     messages = await get_messages(db_session, conversation_id)
     await url_to_get_presigned_url(messages)  # 转换 cos_url 为 预签名下载url
     return MessageListResponse(messages=messages)
-
-
-@router.post("/get_upload_presigned_url", response_model=GetUploadPresignedUrlResponse)
-async def api_get_upload_presigned_url(
-    request: Request, body: GetUploadPresignedUrlRequest
-) -> GetUploadPresignedUrlResponse:
-    """获取带预签名的上传url"""
-    logger.info(
-        f"User get upload presigned url: conversation_id={body.conversation_id}, file_hashes={body.file_hashes}"
-    )
-    cos_keys = [
-        generate_cos_key(request.state.payload.sub, body.conversation_id, i)
-        for i in body.file_hashes
-    ]  # 生成 cos_key
-
-    # TODO 检查重复文件
-
-    upload_presigned_urls = await asyncio.gather(
-        *[get_upload_presigned_url(key) for key in cos_keys]
-    )  # 获取 预签名上传url
-    return GetUploadPresignedUrlResponse(urls=upload_presigned_urls)
-
-
-@router.post("/generate_title", response_model=ConversationTitleResponse)
-async def api_generate_conversation_title(
-    body: SendMessageRequest,
-) -> ConversationTitleResponse:
-    """生成对话标题"""
-    logger.info(
-        f"User generate conversation title: conversation_id={body.conversation_id}"
-    )
-    # 转换 预签名上传url 为 预签名下载url
-    await url_to_get_presigned_url(body.messages)
-    # 生成标题
-    title = await generate_title(
-        body.messages[0].content, body.base_url, body.model_name, body.api_key
-    )
-    return ConversationTitleResponse(title=title)
 
 
 @router.post("/send")

@@ -10,7 +10,7 @@ install:
 	uv sync
 
 init_db:
-	uv run -m app._init_db
+	uv run -m app.init_db
 
 run:
 	uv run -m app.main

@@ -1,6 +1,5 @@
 """批次2：生成 SPU 和 SKU 维度拉链数据。"""
 
-import json
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -547,7 +546,7 @@ def run(ctx: RunContext) -> None:
                         "category_id": spu_row["category_id"],
                         "brand_id": spu_row["brand_id"],
                         "bar_code": _build_bar_code(spu_row["spu_id"], variant_idx + 1),
-                        "sku_specs_json": json.dumps(specs, ensure_ascii=False),
+                        "sku_specs_json": specs,
                         "unit": UNIT_BY_ROOT.get(root_name, "件"),
                         "origin_price": origin_price,
                         "sale_price": sale_price,

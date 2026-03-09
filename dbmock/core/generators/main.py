@@ -53,11 +53,14 @@ def main() -> None:
     )
     with ThreadPoolExecutor(max_workers=len(PARALLEL_GENERATORS)) as executor:
         futures = [
-            executor.submit(_run_generator, name, runner, _build_context(db_cfg, gen_cfg))
+            executor.submit(
+                _run_generator, name, runner, _build_context(db_cfg, gen_cfg)
+            )
             for name, runner in PARALLEL_GENERATORS
         ]
         for future in futures:
             future.result()
+
     logger.info("All generators finished.")
 
 

@@ -4,8 +4,6 @@ from collections.abc import Sequence
 
 from app.entities.chat import Message
 from app.schemas.chat import Attachment, ImageContent, MessageItem, TextContent
-from app.utils.call_model import call_model, stream_model
-from app.utils.cos import extract_cos_key, get_get_presigned_url
 from app.utils.log import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
