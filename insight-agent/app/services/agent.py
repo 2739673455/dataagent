@@ -11,7 +11,7 @@ _agent_locks: dict[tuple[int, int], Lock] = {}
 _cache_lock = Lock()
 
 
-def _message_item_to_agent_message(message: chat_schema.MessageItem) -> dict[str, Any]:
+def _message_item_to_dict(message: chat_schema.MessageItem) -> dict[str, Any]:
     content_parts: list[dict[str, Any]] = []
     tool_calls: list[dict[str, Any]] = []
 
@@ -82,7 +82,7 @@ async def astream(
     agent_lock = _agent_locks[key]
 
     # 转换消息格式
-    user_message = _message_item_to_agent_message(message)
+    user_message = _message_item_to_dict(message)
 
     # TODO 添加消息上下文(只输入每轮用户消息和最终模型回复，不输入工具调用和工具结果)
 
