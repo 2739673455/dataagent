@@ -5,11 +5,10 @@ from app.config import CFG
 from app.exceptions import handlers
 from app.middlewares import auth, trace
 from app.routers import api
+from app.utils import db
 from app.utils.log import setup_logger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-from backend.app.utils import db
 
 
 @asynccontextmanager

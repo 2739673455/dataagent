@@ -35,6 +35,22 @@ class MetaKnowledgeService:
         self.value_es_repository = value_es_repository
         self.metric_qdrant_repository = metric_qdrant_repository
 
+    def _serialize_examples(self, examples: list) -> list:
+        """将示例值中的日期时间和 Decimal 对象转换为可 JSON 序列化的类型"""
+        from datetime import date, datetime
+        from decimal import Decimal
+        serialized = []
+        for value in examples:
+            if isinstance(value, datetime):
+                serialized.append(value.isoformat())
+            elif isinstance(value, date):
+                serialized.append(value.isoformat())
+            elif isinstance(value, Decimal):
+                serialized.append(float(value))
+            else:
+                serialized.append(value)
+        return serialized
+
     async def _save_tables_to_meta_db(self, meta_config: MetaConfig)-> list[ColumnInfo]:
         table_infos: list[TableInfo] = []
         column_infos: list[ColumnInfo] = []
@@ -54,6 +70,8 @@ class MetaKnowledgeService:
             for column in table.columns:
                 # 查询该字段的部分取值作为示例
                 column_values: list = await self.dw_mysql_repository.get_column_values(table.name, column.name, 10)
+                # 将日期时间对象转换为字符串
+                column_values = self._serialize_examples(column_values)
                 # 构造ColumnInfo实例
                 column_info = ColumnInfo(
                     id=f"{table.name}.{column.name}",

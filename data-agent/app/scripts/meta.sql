@@ -5,7 +5,7 @@ USE meta;
 DROP TABLE IF EXISTS table_info;
 CREATE TABLE table_info
 (
-    id          VARCHAR(64) PRIMARY KEY COMMENT '表编号',
+    id          VARCHAR(128) PRIMARY KEY COMMENT '表编号',
     name        VARCHAR(128) COMMENT '表名称',
     role        VARCHAR(32) COMMENT '表类型(fact/dim)',
     description TEXT COMMENT '表描述'
@@ -16,7 +16,7 @@ CREATE TABLE table_info
 DROP TABLE IF EXISTS column_info;
 CREATE TABLE column_info
 (
-    id          VARCHAR(64) PRIMARY KEY COMMENT '列编号',
+    id          VARCHAR(128) PRIMARY KEY COMMENT '列编号',
     name        VARCHAR(128) COMMENT '列名称',
     type        VARCHAR(64) COMMENT '数据类型',
     role        VARCHAR(32) COMMENT '列类型(primary_key,foreign_key,measure,dimension)',
@@ -29,7 +29,7 @@ CREATE TABLE column_info
 DROP TABLE IF EXISTS metric_info;
 CREATE TABLE metric_info
 (
-    id               VARCHAR(64) PRIMARY KEY COMMENT '指标编码',
+    id               VARCHAR(128) PRIMARY KEY COMMENT '指标编码',
     name             VARCHAR(128) COMMENT '指标名称',
     description      TEXT COMMENT '指标描述',
     relevant_columns JSON COMMENT '关联的列',
@@ -40,7 +40,7 @@ CREATE TABLE metric_info
 DROP TABLE IF EXISTS column_metric;
 CREATE TABLE column_metric
 (
-    column_id VARCHAR(64) COMMENT '列编号',
-    metric_id VARCHAR(64) COMMENT '指标编号',
+    column_id VARCHAR(128) COMMENT '列编号',
+    metric_id VARCHAR(128) COMMENT '指标编号',
     PRIMARY KEY (column_id, metric_id)
 );

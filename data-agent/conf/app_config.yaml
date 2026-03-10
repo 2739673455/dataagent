@@ -21,7 +21,7 @@ db_dw:
   port: 3306
   user: root
   password: 123321
-  database: dw
+  database: warehouse
 
 qdrant:
   host: localhost
@@ -39,6 +39,6 @@ es:
   index_name: data_agent
 
 llm:
-  model_name: gpt-5.2-codex
-  api_key: <api-key>
-  base_url: https://api.openai-proxy.org/v1
+  model_name: minimax/minimax-m2.5
+  api_key: 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
+  base_url: https://openrouter.ai/api/v1

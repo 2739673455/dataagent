@@ -3,8 +3,9 @@ from pathlib import Path
 
 from app.config import CFG
 from app.core.mcp import mcp_client
+from app.core.tools.db_query import create_db_query_tool
 from deepagents import create_deep_agent
-from deepagents.backends import CompositeBackend, LocalShellBackend
+from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
 from langchain.chat_models import init_chat_model
 from langchain.messages import AIMessage, ToolMessage
 
@@ -60,12 +61,6 @@ async def build_agent(user_id: int, conversation_id: str):
         **model_cfg.params,
     )
 
-    # MCP 工具
-    mcp_tools = await mcp_client.get_tools()
-
-    # 所有工具
-    tools = [*mcp_tools]
-
     # 文件后端
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
     # 为每个用户/会话创建独立工作目录
@@ -75,15 +70,19 @@ async def build_agent(user_id: int, conversation_id: str):
     workspace_backend = LocalShellBackend(
         root_dir=workspace_dir, virtual_mode=True, inherit_env=True
     )
-    skills_backend = LocalShellBackend(
-        root_dir=SKILLS_DIR, virtual_mode=True, inherit_env=True
-    )
+    skills_backend = FilesystemBackend(root_dir=SKILLS_DIR, virtual_mode=True)
     backend = CompositeBackend(
         default=workspace_backend, routes={"/skills/": skills_backend}
     )
 
-    # 技能目录挂载到共享路径 /skills
+    # 挂载技能目录
     skills = ["/skills/"]
+
+    # MCP 工具
+    mcp_tools = await mcp_client.get_tools()
+
+    # 所有工具
+    tools = [create_db_query_tool(workspace_dir), *mcp_tools]
 
     # 创建 Agent
     agent = create_deep_agent(model=model, tools=tools, backend=backend, skills=skills)
