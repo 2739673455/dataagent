@@ -16,9 +16,9 @@ CREATE TABLE `conversation` (
 CREATE TABLE `message` (
     `id` BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '消息ID',
     `conversation_id` BIGINT NOT NULL COMMENT '对话ID',
-    `role` VARCHAR(20) NOT NULL COMMENT '角色 (user/assistant/tool)',
-    `content` TEXT NOT NULL COMMENT '消息内容 (JSON 字符串)',
-    `attachments` TEXT NULL COMMENT '附件列表',
+    `role` VARCHAR(20) NOT NULL COMMENT '角色 (user/assistant/tool/system)',
+    `parts` TEXT NOT NULL COMMENT '消息片段列表 (JSON 字符串)',
+    `attachments` TEXT NULL COMMENT '附件列表 (JSON 字符串)',
     `create_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `yn` TINYINT NOT NULL DEFAULT 1 COMMENT '是否启用',
     FOREIGN KEY (`conversation_id`) REFERENCES `conversation` (`id`) ON DELETE CASCADE,
