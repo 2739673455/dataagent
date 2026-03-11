@@ -1,1 +1,1 @@
-from . import conversation, message
+from . import conversation_repo, message_repo

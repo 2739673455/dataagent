@@ -2,7 +2,7 @@ import json
 from typing import Any, cast
 
 from app.entities.chat import Message
-from app.schemas import chat as chat_schema
+from app.schemas import chat_schema
 from langchain.messages import AIMessage, ToolMessage
 
 

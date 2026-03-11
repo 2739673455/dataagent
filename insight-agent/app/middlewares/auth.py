@@ -1,10 +1,10 @@
 from typing import Callable
 
 from app.config import CFG
-from app.exceptions import auth as auth_error
+from app.exceptions import auth_error
 from app.exceptions.base import AppError
 from app.exceptions.handlers import app_error_handler
-from app.schemas import auth as auth_schema
+from app.schemas import auth_schema
 from app.utils import context
 from app.utils.http_client import get_http_client
 from fastapi import Request, Response

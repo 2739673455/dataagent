@@ -11,6 +11,57 @@ import {
 import { setAccessToken } from "@/lib/token";
 import { useAuthStore } from "@/stores/authStore";
 
+type CallbackAuthResult = {
+  username: string;
+  email: string;
+  groups: string[];
+  scopes: string[];
+};
+
+let inflightCode: string | null = null;
+let inflightTask: Promise<CallbackAuthResult> | null = null;
+const handledCodes: string[] = [];
+
+function markCodeHandled(code: string) {
+  handledCodes.push(code);
+  if (handledCodes.length > 20) {
+    handledCodes.shift();
+  }
+}
+
+function isCodeHandled(code: string) {
+  return handledCodes.includes(code);
+}
+
+function getOrCreateAuthTask(code: string): Promise<CallbackAuthResult> {
+  if (inflightTask && inflightCode === code) {
+    return inflightTask;
+  }
+
+  inflightCode = code;
+  inflightTask = (async () => {
+    const tokenResponse = await authApi.exchangeToken(code);
+    const token = tokenResponse.data.access_token;
+    setAccessToken(token);
+
+    const introspection = await authApi.introspect(token);
+    if (!introspection.data.active) {
+      throw new Error("invalid token");
+    }
+
+    const user = await userApi.getMe();
+    return {
+      ...user.data,
+      scopes: introspection.data.scope ?? [],
+    };
+  })().finally(() => {
+    inflightCode = null;
+    inflightTask = null;
+  });
+
+  return inflightTask;
+}
+
 export default function AuthCallback() {
   const navigate = useNavigate();
   const login = useAuthStore((state) => state.login);
@@ -27,24 +78,31 @@ export default function AuthCallback() {
         navigate("/login", { replace: true });
         return;
       }
+      if (isCodeHandled(code)) {
+        const target = getStoredReturnUri() || "/chat";
+        const [targetPath] = target.split("?");
+        clearStoredReturnUri();
+        navigate(targetPath === "/login" ? "/chat" : target, { replace: true });
+        return;
+      }
 
       try {
-        const tokenResponse = await authApi.exchangeToken(code);
-        const token = tokenResponse.data.access_token;
-        setAccessToken(token);
-
-        const introspection = await authApi.introspect(token);
-        if (!introspection.data.active) {
-          throw new Error("invalid token");
-        }
-
-        const user = await userApi.getMe();
+        const user = await getOrCreateAuthTask(code);
         if (cancelled) return;
 
-        login(user.data, introspection.data.scope ?? []);
+        markCodeHandled(code);
+        login(
+          {
+            username: user.username,
+            email: user.email,
+            groups: user.groups,
+          },
+          user.scopes
+        );
         const target = getStoredReturnUri() || "/chat";
+        const [targetPath] = target.split("?");
         clearStoredReturnUri();
-        navigate(target, { replace: true });
+        navigate(targetPath === "/login" ? "/chat" : target, { replace: true });
       } catch {
         if (cancelled) return;
         clearAuth();

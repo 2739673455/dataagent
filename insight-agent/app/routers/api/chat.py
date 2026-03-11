@@ -1,15 +1,13 @@
 import json
 from typing import Annotated
 
-from app.exceptions import chat as chat_error
+from app import middlewares
+from app.exceptions import chat_error
 from app.exceptions.base import AppError
-from app.mappers import message as message_mapper
-from app.middlewares import auth as auth_middleware
-from app.repositories import conversation as conversation_repo
-from app.repositories import message as message_repo
-from app.schemas import chat as chat_schema
-from app.services import agent as agent_service
-from app.services import chat as chat_service
+from app.mappers import message_mapper
+from app.repositories import conversation_repo, message_repo
+from app.schemas import chat_schema
+from app.services import agent_service, chat_service
 from app.utils import context
 from app.utils.db import get_app_db
 from app.utils.log import logger
@@ -143,7 +141,7 @@ async def api_websocket_chat(
     """WebSocket 聊天接口"""
     # 检查访问令牌
     try:
-        payload = await auth_middleware.authenticate_authorization(
+        payload = await middlewares.auth.authenticate_authorization(
             _get_websocket_authorization(websocket)
         )
     except AppError:

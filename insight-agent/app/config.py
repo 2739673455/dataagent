@@ -71,6 +71,7 @@ class Cfg(BaseModel):
     auth_service: AuthServiceCfg
     data_agent: DataAgentCfg
     cors_origins: list[str]
+    port: int
 
 
 CONFIG_DIR = UP1_DIR / "configs"  # 配置文件目录

@@ -1,34 +1,36 @@
 function trimTrailingSlash(value: string) {
-  return value.replace(/\/+$/, "");
+	return value.replace(/\/+$/, "");
 }
 
 export function getAppApiBaseUrl() {
-  return trimTrailingSlash(
-    import.meta.env.VITE_APP_API_BASE_URL || window.location.origin
-  );
+	return trimTrailingSlash(
+		import.meta.env.VITE_APP_API_BASE_URL ||
+			`${window.location.origin}/app-api`,
+	);
 }
 
 export function getAuthApiBaseUrl() {
-  return trimTrailingSlash(
-    import.meta.env.VITE_AUTH_API_BASE_URL || "http://127.0.0.1:7777"
-  );
+	return trimTrailingSlash(
+		import.meta.env.VITE_AUTH_API_BASE_URL ||
+			`${window.location.origin}/auth-api`,
+	);
 }
 
 export function getAppWsBaseUrl() {
-  const configured = import.meta.env.VITE_APP_WS_BASE_URL;
-  if (configured) {
-    return trimTrailingSlash(configured);
-  }
+	const configured = import.meta.env.VITE_APP_WS_BASE_URL;
+	if (configured) {
+		return trimTrailingSlash(configured);
+	}
 
-  const url = new URL(getAppApiBaseUrl());
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  return trimTrailingSlash(url.toString());
+	const url = new URL(window.location.origin);
+	url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+	return trimTrailingSlash(`${url.toString()}/app-ws`);
 }
 
 export function getAuthClientId() {
-  return import.meta.env.VITE_AUTH_CLIENT_ID || "insight-agent";
+	return "insight-agent";
 }
 
 export function getAuthRedirectUri() {
-  return `${window.location.origin}/auth/callback`;
+	return `${window.location.origin}/auth/callback`;
 }

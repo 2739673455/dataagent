@@ -1,10 +1,9 @@
 from collections.abc import AsyncIterator
 
-from app.mappers import message as message_mapper
-from app.repositories import conversation as conversation_repo
-from app.repositories import message as message_repo
-from app.schemas import chat as chat_schema
-from app.services import agent as agent_service
+from app.mappers import message_mapper
+from app.repositories import conversation_repo, message_repo
+from app.schemas import chat_schema
+from app.services import agent_service
 from sqlalchemy.ext.asyncio import AsyncSession
 
 

@@ -39,3 +39,5 @@ data_agent: # 数据查询 Agent
   query: /api/query
 
 cors_origins: [] # 允许跨域请求的源
+
+port: 7300

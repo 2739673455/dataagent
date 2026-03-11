@@ -1,1 +1,1 @@
-from . import auth, chat
+from . import auth_schema, chat_schema

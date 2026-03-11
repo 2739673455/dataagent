@@ -22,7 +22,7 @@ export function clearStoredReturnUri() {
 }
 
 export function buildAuthorizeUrl() {
-  const url = new URL("/api/authorize", getAuthApiBaseUrl());
+  const url = new URL(`${getAuthApiBaseUrl()}/api/authorize`);
   url.searchParams.set("client_id", getAuthClientId());
   url.searchParams.set("redirect_uri", getAuthRedirectUri());
   return url.toString();

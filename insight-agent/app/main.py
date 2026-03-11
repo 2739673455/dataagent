@@ -1,10 +1,9 @@
 from contextlib import asynccontextmanager
 
 import uvicorn
+from app import middlewares, routers
 from app.config import CFG
-from app.exceptions import handlers
-from app.middlewares import auth, trace
-from app.routers import api
+from app.exceptions.handlers import register_exception_handlers
 from app.utils import db
 from app.utils.log import setup_logger
 from fastapi import FastAPI
@@ -21,9 +20,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # 认证中间件
-app.middleware("http")(auth.middleware)
+app.middleware("http")(middlewares.auth.middleware)
 # 日志中间件
-app.middleware("http")(trace.middleware)
+app.middleware("http")(middlewares.trace.middleware)
 # CORS 中间件
 app.add_middleware(
     CORSMiddleware,
@@ -34,7 +33,7 @@ app.add_middleware(
 )
 
 # 注册异常处理
-handlers.register_exception_handlers(app)
+register_exception_handlers(app)
 
 
 @app.get("/health")
@@ -42,7 +41,7 @@ async def health():
     return {"status": "healthy"}
 
 
-app.include_router(api.router)
+app.include_router(routers.api.router)
 
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8100)
+    uvicorn.run("app.main:app", host="0.0.0.0", port=CFG.port)
