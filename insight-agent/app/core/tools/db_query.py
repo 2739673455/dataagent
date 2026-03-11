@@ -6,15 +6,16 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import httpx
+from app.config import CFG
 from app.utils.http_client import get_http_client
 from langchain.tools import tool
 
-DB_QUERY_URL = "http://127.0.0.1:8000/api/query"
+DB_QUERY_URL = CFG.data_agent.base_url + CFG.data_agent.query
 PREVIEW_ROWS = 5
 
 
 async def _stream_db_query(query: str) -> AsyncIterator[dict[str, Any]]:
-    """流式调用 data-agent 查询接口并产出 SSE 消息。"""
+    """流式调用 data-agent 查询接口并产出 SSE 消息"""
     client = get_http_client()
     async with client.stream(
         "POST",
@@ -43,7 +44,7 @@ async def _stream_db_query(query: str) -> AsyncIterator[dict[str, Any]]:
 
 
 def _normalize_rows(result: Any) -> list[dict[str, Any]] | None:
-    """将查询结果规范化为表格行列表，非表格结果返回 None。"""
+    """将查询结果规范化为表格行列表，非表格结果返回 None"""
     if not isinstance(result, list):
         return None
     if not result:
@@ -54,7 +55,7 @@ def _normalize_rows(result: Any) -> list[dict[str, Any]] | None:
 
 
 def _write_csv_result(file_path: Path, rows: list[dict[str, Any]]) -> list[str]:
-    """将表格结果写入 CSV 文件并返回字段列表。"""
+    """将表格结果写入 CSV 文件并返回字段列表"""
     fieldnames: list[str] = []
     for row in rows:
         for key in row:
@@ -71,16 +72,13 @@ def _write_csv_result(file_path: Path, rows: list[dict[str, Any]]) -> list[str]:
 
 
 def _write_json_result(file_path: Path, result: Any) -> None:
-    """将非表格结果写入 JSON 文件。"""
+    """将非表格结果写入 JSON 文件"""
     with file_path.open("w", encoding="utf-8") as fp:
         json.dump(result, fp, ensure_ascii=False, indent=2, default=str)
 
 
-def create_db_query_tool(workspace_dir: str | Path):
-    """创建绑定到指定会话工作区的数据库查询工具。"""
-    workspace_dir = Path(workspace_dir)
-    output_dir = workspace_dir / "db_query_results"
-    output_dir.mkdir(parents=True, exist_ok=True)
+def create_db_query_tool(workspace_dir: Path):
+    """创建绑定到指定会话工作区的数据库查询工具"""
 
     @tool
     async def db_query(
@@ -89,7 +87,7 @@ def create_db_query_tool(workspace_dir: str | Path):
             "用户的自然语言数据查询需求，例如查看销量、库存、退货率等业务问题。",
         ],
     ) -> dict[str, Any]:
-        """查询数据库业务数据，将最终结果写入当前会话工作区，并返回文件路径、字段和前几行数据。"""
+        """查询数据库业务数据，将最终结果写入当前会话工作区，并返回文件路径、字段和前几行数据"""
         result: Any = None
 
         try:
@@ -132,12 +130,12 @@ def create_db_query_tool(workspace_dir: str | Path):
 
         try:
             if tabular_rows is not None:
-                file_path = output_dir / f"db_query_{timestamp}.csv"
+                file_path = workspace_dir / f"数据库查询结果_{timestamp}.csv"
                 fields = _write_csv_result(file_path, tabular_rows)
                 preview_rows = tabular_rows[:PREVIEW_ROWS]
                 pandas_read_hint = f"pd.read_csv('{file_path.as_posix()}')"
             else:
-                file_path = output_dir / f"db_query_{timestamp}.json"
+                file_path = workspace_dir / f"数据库查询结果_{timestamp}.json"
                 _write_json_result(file_path, result)
                 fields = []
                 preview_rows = (

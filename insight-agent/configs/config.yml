@@ -34,4 +34,8 @@ auth_service: # 认证服务
   base_url: http://127.0.0.1:7777 # 认证服务url
   introspection: /api/introspection # 校验访问令牌
 
+data_agent: # 数据查询 Agent
+  base_url: http://127.0.0.1:8000 # 数据查询 Agent url
+  query: /api/query
+
 cors_origins: [] # 允许跨域请求的源

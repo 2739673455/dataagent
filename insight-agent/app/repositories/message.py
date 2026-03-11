@@ -1,10 +1,6 @@
 """消息数据访问"""
 
-import json
-from typing import Any
-
 from app.entities.chat import Message
-from app.schemas.chat import Attachment, MessageItem
 from sqlalchemy import select
 from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,8 +10,8 @@ async def create(
     db_session: AsyncSession,
     conversation_id: int,
     role: str,
-    parts: list[dict],
-    attachments: list[dict[str, Any]] | None = None,
+    parts: str,
+    attachments: str | None = None,
 ) -> Message:
     """创建新消息
 
@@ -32,45 +28,13 @@ async def create(
     message = Message(
         conversation_id=conversation_id,
         role=role,
-        parts=json.dumps(parts, ensure_ascii=False),
-        attachments=(
-            json.dumps(attachments, ensure_ascii=False)
-            if attachments is not None
-            else None
-        ),
+        parts=parts,
+        attachments=attachments,
     )
     db_session.add(message)
     await db_session.commit()
     await db_session.refresh(message)
     return message
-
-
-async def create_by_message_item(
-    db_session: AsyncSession,
-    conversation_id: int,
-    message: MessageItem,
-) -> Message:
-    """根据 MessageItem 创建消息"""
-    parts = [part.model_dump() for part in message.parts]
-
-    attachments = (
-        [
-            attachment.model_dump()
-            if isinstance(attachment, Attachment)
-            else attachment
-            for attachment in message.attachments
-        ]
-        if message.attachments is not None
-        else None
-    )
-
-    return await create(
-        db_session=db_session,
-        conversation_id=conversation_id,
-        role=message.role,
-        parts=parts,
-        attachments=attachments,
-    )
 
 
 async def update_yn_by_ids(

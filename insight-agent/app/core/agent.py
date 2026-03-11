@@ -2,7 +2,7 @@ from pathlib import Path
 
 from app.config import CFG
 from app.core.mcp import mcp_client
-from app.core.tools.db_query import create_db_query_tool
+from app.core.tools import create_db_query_tool
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
 from langchain.chat_models import init_chat_model

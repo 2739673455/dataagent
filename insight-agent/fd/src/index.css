@@ -1,0 +1,58 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 32 33% 97%;
+    --foreground: 210 26% 13%;
+    --card: 0 0% 100%;
+    --card-foreground: 210 26% 13%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 210 26% 13%;
+    --primary: 205 82% 24%;
+    --primary-foreground: 42 90% 97%;
+    --secondary: 42 42% 92%;
+    --secondary-foreground: 210 26% 13%;
+    --muted: 38 25% 93%;
+    --muted-foreground: 210 14% 38%;
+    --accent: 22 88% 58%;
+    --accent-foreground: 42 90% 97%;
+    --destructive: 0 72% 52%;
+    --destructive-foreground: 42 90% 97%;
+    --border: 30 20% 86%;
+    --input: 30 20% 86%;
+    --ring: 205 82% 24%;
+    --radius: 1rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    @apply min-h-screen;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    background-image:
+      radial-gradient(circle at top left, rgba(251, 146, 60, 0.18), transparent 26%),
+      radial-gradient(circle at right, rgba(14, 116, 144, 0.15), transparent 28%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 247, 237, 0.9));
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply border border-white/60 bg-white/75 backdrop-blur-xl;
+  }
+
+  .chat-grid {
+    grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  }
+}

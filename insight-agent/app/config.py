@@ -58,12 +58,18 @@ class AuthServiceCfg(BaseModel):
     introspection: str
 
 
+class DataAgentCfg(BaseModel):
+    base_url: str
+    query: str
+
+
 class Cfg(BaseModel):
     db: DBCfg
     log: LogCfg
     mcp: dict[str, MCPCfg]
     lm_config: LMConfigCfg
     auth_service: AuthServiceCfg
+    data_agent: DataAgentCfg
     cors_origins: list[str]
 
 

@@ -2,7 +2,10 @@ from typing import Callable
 
 from app.config import CFG
 from app.exceptions import auth as auth_error
+from app.exceptions.base import AppError
+from app.exceptions.handlers import app_error_handler
 from app.schemas import auth as auth_schema
+from app.utils import context
 from app.utils.http_client import get_http_client
 from fastapi import Request, Response
 
@@ -45,7 +48,12 @@ async def middleware(request: Request, call_next: Callable) -> Response:
     if request.url.path in AUTH_EXCLUDE_PATHS:
         return await call_next(request)
 
-    request.state.payload = await authenticate_authorization(
-        request.headers.get("Authorization")
-    )
+    try:
+        request.state.payload = await authenticate_authorization(
+            request.headers.get("Authorization")
+        )
+        context.user_id_ctx.set(str(request.state.payload.sub))
+    except AppError as exc:
+        return app_error_handler(request, exc)
+
     return await call_next(request)

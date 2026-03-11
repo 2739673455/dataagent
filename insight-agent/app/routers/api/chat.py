@@ -3,18 +3,21 @@ from typing import Annotated
 
 from app.exceptions import chat as chat_error
 from app.exceptions.base import AppError
+from app.mappers import message as message_mapper
 from app.middlewares import auth as auth_middleware
 from app.repositories import conversation as conversation_repo
 from app.repositories import message as message_repo
 from app.schemas import chat as chat_schema
 from app.services import agent as agent_service
+from app.services import chat as chat_service
+from app.utils import context
 from app.utils.db import get_app_db
 from app.utils.log import logger
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect, status
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-router = APIRouter(prefix="/chat")
+router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 @router.get("/ls")
@@ -93,8 +96,21 @@ async def api_get_messages(
     messages = await message_repo.ls(db_session, conversation_id)
     logger.info(f"Get messages: {conversation_id=}")
     return chat_schema.MessageListResponse(
-        messages=[chat_schema.MessageItem.from_entity(message) for message in messages]
+        messages=[message_mapper.entity_to_schema(message) for message in messages]
     )
+
+
+def _get_websocket_authorization(websocket: WebSocket) -> str | None:
+    """获取 WebSocket 连接可用的访问令牌"""
+    authorization = websocket.headers.get("Authorization")
+    if authorization:
+        return authorization
+
+    access_token = websocket.query_params.get("access_token")
+    if access_token:
+        return f"Bearer {access_token}"
+
+    return None
 
 
 async def _receive_chat_request(
@@ -125,16 +141,31 @@ async def api_websocket_chat(
     db_session: Annotated[AsyncSession, Depends(get_app_db)],
 ):
     """WebSocket 聊天接口"""
-    # 认证
+    # 检查访问令牌
     try:
         payload = await auth_middleware.authenticate_authorization(
-            websocket.headers.get("Authorization")
+            _get_websocket_authorization(websocket)
         )
     except AppError:
-        await websocket.close(code=1008)
+        await websocket.close(code=4401)
         return
 
+    context.user_id_ctx.set(str(payload.sub))
     await websocket.accept()
+
+    # 检查对话是否存在且属于当前用户
+    conversation = await conversation_repo.get_by_id(db_session, conversation_id)
+    if conversation is None or conversation.user_id != payload.sub:
+        await websocket.send_json(
+            chat_schema.WebSocketErrorResponse(
+                content=chat_error.ConversationNotFound.message
+            ).model_dump(mode="json")
+        )
+        await websocket.close(code=4404)
+        return
+
+    # 加载历史消息
+    messages = await chat_service.load_langchain_messages(db_session, conversation_id)
 
     try:
         while True:
@@ -143,14 +174,18 @@ async def api_websocket_chat(
             if body is None:
                 continue
 
-            # 处理请求
-            async for event in agent_service.astream(
+            async for event in chat_service.stream_chat(
+                db_session,
                 payload.sub,
                 conversation_id,
+                messages,
                 body.message,
             ):
-                # 发送响应
                 await websocket.send_json(event.model_dump(mode="json"))
 
-    except WebSocketDisconnect:  # 客户端断开连接
+    # 客户端断开连接
+    except WebSocketDisconnect:
         pass
+
+    finally:
+        await agent_service.cleanup_agent(payload.sub, conversation_id)
