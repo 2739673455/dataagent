@@ -9,19 +9,23 @@ import appClient from "./appClient";
 
 export const chatApi = {
 	listConversations() {
-		return appClient.get<ConversationListResponse>("chat/ls");
+		return appClient.get<ConversationListResponse>("api/chat/ls");
 	},
 
 	createConversation() {
-		return appClient.post<ConversationResponse>("chat/create");
+		return appClient.post<ConversationResponse>("api/chat/create");
 	},
 
 	getMessages(conversationId: number) {
-		return appClient.get<MessageListResponse>(`chat/ls/${conversationId}`);
+		return appClient.get<MessageListResponse>(`api/chat/ls/${conversationId}`);
+	},
+
+	deleteConversations(conversationIds: number[]) {
+		return appClient.post("api/chat/delete", { conversation_ids: conversationIds });
 	},
 
 	buildChatSocket(conversationId: number, accessToken: string) {
-		const url = new URL(`${getAppWsBaseUrl()}/chat/ws/chat`);
+		const url = new URL(`${getAppWsBaseUrl()}/api/chat/ws/chat`);
 		url.searchParams.set("conversation_id", String(conversationId));
 		url.searchParams.set("access_token", accessToken);
 		return new WebSocket(url.toString());

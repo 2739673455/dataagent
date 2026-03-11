@@ -16,6 +16,12 @@ export function getAuthApiBaseUrl() {
 	);
 }
 
+export function getAuthAppBaseUrl() {
+	return trimTrailingSlash(
+		import.meta.env.VITE_AUTH_APP_BASE_URL || "http://127.0.0.1:7100",
+	);
+}
+
 export function getAppWsBaseUrl() {
 	const configured = import.meta.env.VITE_APP_WS_BASE_URL;
 	if (configured) {
@@ -24,7 +30,7 @@ export function getAppWsBaseUrl() {
 
 	const url = new URL(window.location.origin);
 	url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-	return trimTrailingSlash(`${url.toString()}/app-ws`);
+	return trimTrailingSlash(`${url.origin}/app-ws`);
 }
 
 export function getAuthClientId() {

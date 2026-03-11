@@ -149,7 +149,9 @@ async def api_websocket_chat(
         return
 
     context.user_id_ctx.set(str(payload.sub))
+
     await websocket.accept()
+    logger.info(f"WebSocket connected: {conversation_id=}")
 
     # 检查对话是否存在且属于当前用户
     conversation = await conversation_repo.get_by_id(db_session, conversation_id)
@@ -164,6 +166,7 @@ async def api_websocket_chat(
 
     # 加载历史消息
     messages = await chat_service.load_langchain_messages(db_session, conversation_id)
+    logger.info(f"Load history messages: message_count={len(messages)}")
 
     try:
         while True:
@@ -171,6 +174,7 @@ async def api_websocket_chat(
             body = await _receive_chat_request(websocket)
             if body is None:
                 continue
+            logger.info(f"Receive chat request: {conversation_id=}")
 
             async for event in chat_service.stream_chat(
                 db_session,
@@ -180,10 +184,11 @@ async def api_websocket_chat(
                 body.message,
             ):
                 await websocket.send_json(event.model_dump(mode="json"))
+                logger.info(f"Send chat response: {conversation_id=}")
 
     # 客户端断开连接
     except WebSocketDisconnect:
-        pass
+        logger.info(f"WebSocket disconnected: {conversation_id=}")
 
     finally:
         await agent_service.cleanup_agent(payload.sub, conversation_id)

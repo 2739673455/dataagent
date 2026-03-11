@@ -41,9 +41,9 @@
   body {
     @apply bg-background text-foreground antialiased;
     background-image:
-      radial-gradient(circle at top left, rgba(251, 146, 60, 0.18), transparent 26%),
-      radial-gradient(circle at right, rgba(14, 116, 144, 0.15), transparent 28%),
-      linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 247, 237, 0.9));
+      radial-gradient(circle at top left, rgba(251, 146, 60, 0.14), transparent 24%),
+      radial-gradient(circle at right, rgba(14, 116, 144, 0.14), transparent 28%),
+      linear-gradient(180deg, rgba(251, 249, 244, 0.95), rgba(239, 244, 242, 0.92));
   }
 }
 
@@ -53,6 +53,51 @@
   }
 
   .chat-grid {
-    grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+    grid-template-columns: 280px minmax(0, 1fr);
+    padding: 12px;
+    gap: 12px;
+  }
+
+  .bg-noise {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.15' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.16'/%3E%3C/svg%3E");
+    opacity: 0.18;
+    mix-blend-mode: soft-light;
+  }
+
+  .animate-float {
+    animation: float-soft 6s ease-in-out infinite;
+  }
+}
+
+@keyframes float-soft {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+[data-sonner-toast] {
+  width: max-content !important;
+  min-width: unset !important;
+  max-width: 90vw !important;
+  left: 50% !important;
+  translate: -50% 0;
+  display: flex !important;
+  justify-content: center;
+}
+
+[data-sonner-toast] [data-content] {
+  white-space: nowrap;
+  flex: 1;
+}
+
+@media (max-width: 640px) {
+  [data-sonner-toast] [data-content] {
+    white-space: normal;
+    text-align: center;
   }
 }
