@@ -6,31 +6,16 @@ from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-async def create(
-    db_session: AsyncSession,
-    conversation_id: int,
-    role: str,
-    parts: str,
-    attachments: str | None = None,
-) -> Message:
+async def create(db_session: AsyncSession, message: Message) -> Message:
     """创建新消息
 
     Args:
         db_session: 数据库会话
-        conversation_id: 对话 ID
-        role: 角色
-        parts: 消息片段
-        attachments: 附件列表
+        message: 要创建的消息对象
 
     Returns:
         创建成功的消息对象
     """
-    message = Message(
-        conversation_id=conversation_id,
-        role=role,
-        parts=parts,
-        attachments=attachments,
-    )
     db_session.add(message)
     await db_session.commit()
     await db_session.refresh(message)

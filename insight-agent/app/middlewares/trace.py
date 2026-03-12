@@ -3,8 +3,8 @@ import uuid
 from typing import Callable
 
 from app.utils import context
-from app.utils.log import logger
 from fastapi import Request, Response
+from loguru import logger
 
 
 def _get_client_ip(request: Request) -> str:

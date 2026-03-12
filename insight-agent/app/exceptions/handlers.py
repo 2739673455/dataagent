@@ -1,9 +1,9 @@
 from app.exceptions.base import AppError
 from app.utils import context
-from app.utils.log import logger
 from fastapi import HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from loguru import logger
 
 
 def _build_response(

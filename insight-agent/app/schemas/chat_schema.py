@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Annotated, Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -62,6 +63,10 @@ MessagePart = Annotated[
 
 
 class Attachment(BaseModel):
+    id: str = Field(
+        default_factory=lambda: uuid4().hex,
+        description="附件ID",
+    )
     name: str = Field(..., description="附件名称")
     url: str = Field(..., description="附件链接")
 

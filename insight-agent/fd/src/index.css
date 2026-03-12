@@ -54,8 +54,8 @@
 
   .chat-grid {
     grid-template-columns: 280px minmax(0, 1fr);
-    padding: 12px;
-    gap: 12px;
+    padding: 0;
+    gap: 0;
   }
 
   .bg-noise {
