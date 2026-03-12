@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { chatApi } from "@/api/chat";
+import { createLocalTimestamp } from "@/lib/message";
 import { redirectToAuthorize } from "@/lib/redirect";
 import { getAccessToken } from "@/lib/token";
 import { useAuthStore } from "@/stores/authStore";
@@ -244,7 +245,7 @@ export default function ChatPage() {
 		const userMessage: MessageSchema = {
 			role: "user",
 			parts: [{ type: "text", text: value }],
-			timestamp: new Date().toISOString(),
+			timestamp: createLocalTimestamp(),
 		};
 
 		let conversationId = activeConversationId;
@@ -276,7 +277,7 @@ export default function ChatPage() {
 
 	return (
 		<div
-			className="min-h-screen h-[100dvh] overflow-hidden bg-[#f7f7f7]"
+			className="min-h-screen h-[100dvh] overflow-hidden bg-[#fefdfa]"
 			style={{ fontFeatureSettings: '"cv11", "ss01"' }}
 		>
 			<div className="grid h-full min-h-0 chat-grid">
@@ -293,22 +294,24 @@ export default function ChatPage() {
 					}}
 				/>
 
-				<div className="flex h-full min-h-0 flex-col">
+				<div className="flex h-full min-h-0 flex-col bg-[#fefdfa]">
 					<ChatMessages
 						conversationSelected={Boolean(routeConversationId)}
 						isLoading={isLoadingMessages}
 						messages={currentMessages}
 						viewportRef={messageViewportRef}
 					/>
-					<div className="sticky bottom-0 z-10 w-full shrink-0 bg-white px-8 pb-4 pt-0">
-						<ChatComposer
-							isStreaming={isStreaming}
-							disabled={
-								connectionState !== "open" && Boolean(routeConversationId)
-							}
-							onStop={handleStop}
-							onSubmit={handleSend}
-						/>
+					<div className="sticky bottom-0 z-10 w-full shrink-0 bg-[#fefdfa] pb-6 pt-0">
+						<div className="mx-auto w-[70%] min-w-[320px] max-w-[1120px]">
+							<ChatComposer
+								isStreaming={isStreaming}
+								disabled={
+									connectionState !== "open" && Boolean(routeConversationId)
+								}
+								onStop={handleStop}
+								onSubmit={handleSend}
+							/>
+						</div>
 					</div>
 				</div>
 			</div>

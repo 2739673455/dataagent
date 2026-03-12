@@ -1,7 +1,6 @@
 import { LogOut, MessageSquareMore, Plus, Trash2, User2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { getAuthAppBaseUrl } from "@/lib/env";
 import { cn } from "@/lib/utils";
@@ -31,7 +30,7 @@ export function ChatSidebar({
 	);
 
 	return (
-		<Card className="flex h-full flex-col overflow-hidden rounded-none border-y-0 border-l-0 border-r border-white/65 bg-[#eef1f7] shadow-none backdrop-blur-none">
+		<div className="flex h-full flex-col overflow-hidden rounded-none border-r border-[#e6dfd4] bg-[#fefdfa] shadow-none">
 			<div className="px-4 pb-4 pt-5">
 				<Button
 					variant="default"
@@ -55,7 +54,7 @@ export function ChatSidebar({
 									"group relative flex items-center gap-2 rounded-full pr-2 transition-colors duration-200",
 									isActive
 										? "bg-[#d8e0ea] text-slate-800"
-										: "bg-transparent text-slate-500 hover:bg-[#e4e9f1] hover:text-slate-800",
+										: "bg-transparent text-slate-700 hover:bg-[#e4e9f1] hover:text-slate-900",
 								)}
 							>
 								<Link
@@ -67,7 +66,7 @@ export function ChatSidebar({
 											"h-4 w-4 shrink-0 transition-colors",
 											isActive
 												? "text-slate-700"
-												: "text-slate-400 group-hover:text-slate-700",
+												: "text-slate-600 group-hover:text-slate-800",
 										)}
 									/>
 									<span
@@ -75,7 +74,7 @@ export function ChatSidebar({
 											"line-clamp-1 min-w-0 text-sm font-medium transition-colors",
 											isActive
 												? "text-slate-800"
-												: "text-slate-500 group-hover:text-slate-800",
+												: "text-slate-700 group-hover:text-slate-900",
 										)}
 									>
 										{conversation.title}
@@ -135,6 +134,6 @@ export function ChatSidebar({
 					<LogOut className="h-4 w-4" />
 				</Button>
 			</div>
-		</Card>
+		</div>
 	);
 }

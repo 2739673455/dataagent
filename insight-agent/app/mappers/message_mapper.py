@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from typing import Any, cast
 
 from app.entities.chat import Message
@@ -93,12 +94,15 @@ def schema_to_entity(
 def langchain_message_to_schema(
     message: AIMessage | ToolMessage,
 ) -> chat_schema.MessageSchema | None:
-    """将 LangChain 消息转换为 MessageSchema"""
+    """将 LangChain 消息转换为 MessageSchema，同时添加时间戳"""
+    timestamp = datetime.now()
+
     # 处理 AIMessage
     if isinstance(message, AIMessage):
         return chat_schema.MessageSchema(
             role="assistant",
             parts=_parts_from_ai_message(message),
+            timestamp=timestamp,
         )
 
     # 处理 ToolMessage
@@ -112,6 +116,7 @@ def langchain_message_to_schema(
                     content=str(message.content),
                 )
             ],
+            timestamp=timestamp,
         )
 
     else:

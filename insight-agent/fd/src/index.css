@@ -48,10 +48,6 @@
 }
 
 @layer utilities {
-  .glass-panel {
-    @apply border border-white/60 bg-white/75 backdrop-blur-xl;
-  }
-
   .chat-grid {
     grid-template-columns: 280px minmax(0, 1fr);
     padding: 0;

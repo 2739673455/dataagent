@@ -41,6 +41,7 @@ export function ChatComposer({
 			<div className="overflow-hidden rounded-[2rem] border border-slate-300 bg-white shadow-[0_-36px_72px_-6px_rgba(255,255,255,1)] transition-all focus-within:border-slate-300 focus-within:shadow-[0_-36px_72px_-6px_rgba(255,255,255,1)]">
 				<Textarea
 					ref={textareaRef}
+					rows={1}
 					placeholder=""
 					value={value}
 					onChange={(event) => {
@@ -54,9 +55,9 @@ export function ChatComposer({
 						}
 					}}
 					disabled={disabled}
-					className="min-h-[88px] max-h-[30vh] flex-1 resize-none overflow-y-auto rounded-none border-none bg-white px-5 pb-3 pt-5 text-[15px] text-slate-800 shadow-none placeholder:text-slate-500 focus-visible:ring-0"
+					className="min-h-[52px] max-h-[30vh] flex-1 resize-none overflow-y-auto rounded-none border-none bg-white px-5 pb-2 pt-4 text-[15px] text-slate-800 shadow-none placeholder:text-slate-500 focus-visible:ring-0"
 				/>
-				<div className="flex items-center justify-end bg-white px-3 pb-2 pt-1">
+				<div className="flex items-center justify-end bg-white px-3 pb-2 pt-0.5">
 					<Button
 						onClick={() => {
 							if (isStreaming) {
