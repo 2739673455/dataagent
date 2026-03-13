@@ -1,30 +1,40 @@
 import { create } from "zustand";
 import { chatApi } from "@/api/chat";
-import type { ConversationResponse, MessageSchema } from "@/types";
+import type { Attachment, ConversationResponse, MessageSchema } from "@/types";
 
 type MessageState = Record<number, MessageSchema[]>;
+type AttachmentState = Record<number, Attachment[]>;
 
 interface ChatState {
 	conversations: ConversationResponse[];
 	messagesByConversation: MessageState;
+	attachmentsByConversation: AttachmentState;
 	activeConversationId: number | null;
+	draftConversationId: number | null;
 	isLoadingConversations: boolean;
 	isLoadingMessages: boolean;
 	connectionState: "idle" | "connecting" | "open" | "closed";
 	setConnectionState: (state: ChatState["connectionState"]) => void;
 	setActiveConversationId: (conversationId: number | null) => void;
+	setDraftConversationId: (conversationId: number | null) => void;
 	loadConversations: () => Promise<ConversationResponse[]>;
 	createConversation: () => Promise<ConversationResponse>;
 	deleteConversation: (conversationId: number) => Promise<void>;
 	loadMessages: (conversationId: number) => Promise<MessageSchema[]>;
+	ensureConversation: (conversation: ConversationResponse) => void;
 	appendMessage: (conversationId: number, message: MessageSchema) => void;
 	replaceMessages: (conversationId: number, messages: MessageSchema[]) => void;
+	appendAttachments: (conversationId: number, attachments: Attachment[]) => void;
+	removeAttachment: (conversationId: number, attachmentName: string) => void;
+	clearAttachments: (conversationId: number) => void;
 }
 
 export const useChatStore = create<ChatState>()((set, get) => ({
 	conversations: [],
 	messagesByConversation: {},
+	attachmentsByConversation: {},
 	activeConversationId: null,
+	draftConversationId: null,
 	isLoadingConversations: false,
 	isLoadingMessages: false,
 	connectionState: "idle",
@@ -33,6 +43,8 @@ export const useChatStore = create<ChatState>()((set, get) => ({
 
 	setActiveConversationId: (activeConversationId) =>
 		set({ activeConversationId }),
+
+	setDraftConversationId: (draftConversationId) => set({ draftConversationId }),
 
 	loadConversations: async () => {
 		set({ isLoadingConversations: true });
@@ -56,6 +68,10 @@ export const useChatStore = create<ChatState>()((set, get) => ({
 				...state.messagesByConversation,
 				[conversation.conversation_id]: [],
 			},
+			attachmentsByConversation: {
+				...state.attachmentsByConversation,
+				[conversation.conversation_id]: [],
+			},
 		}));
 		return conversation;
 	},
@@ -64,7 +80,9 @@ export const useChatStore = create<ChatState>()((set, get) => ({
 		await chatApi.deleteConversations([conversationId]);
 		set((state) => {
 			const nextMessages = { ...state.messagesByConversation };
+			const nextAttachments = { ...state.attachmentsByConversation };
 			delete nextMessages[conversationId];
+			delete nextAttachments[conversationId];
 			return {
 				conversations: state.conversations.filter(
 					(conversation) => conversation.conversation_id !== conversationId,
@@ -73,7 +91,12 @@ export const useChatStore = create<ChatState>()((set, get) => ({
 					state.activeConversationId === conversationId
 						? null
 						: state.activeConversationId,
+				draftConversationId:
+					state.draftConversationId === conversationId
+						? null
+						: state.draftConversationId,
 				messagesByConversation: nextMessages,
+				attachmentsByConversation: nextAttachments,
 			};
 		});
 	},
@@ -95,6 +118,19 @@ export const useChatStore = create<ChatState>()((set, get) => ({
 		}
 	},
 
+	ensureConversation: (conversation) =>
+		set((state) => {
+			const exists = state.conversations.some(
+				(item) => item.conversation_id === conversation.conversation_id,
+			);
+			if (exists) {
+				return state;
+			}
+			return {
+				conversations: [conversation, ...state.conversations],
+			};
+		}),
+
 	appendMessage: (conversationId, message) =>
 		set((state) => ({
 			messagesByConversation: {
@@ -111,6 +147,41 @@ export const useChatStore = create<ChatState>()((set, get) => ({
 			messagesByConversation: {
 				...state.messagesByConversation,
 				[conversationId]: messages,
+			},
+		})),
+
+	appendAttachments: (conversationId, attachments) =>
+		set((state) => {
+			const nextByName = new Map(
+				(state.attachmentsByConversation[conversationId] ?? []).map(
+					(attachment) => [attachment.path, attachment],
+				),
+			);
+			for (const attachment of attachments) {
+				nextByName.set(attachment.path, attachment);
+			}
+			return {
+				attachmentsByConversation: {
+					...state.attachmentsByConversation,
+					[conversationId]: [...nextByName.values()],
+				},
+			};
+		}),
+
+	removeAttachment: (conversationId, attachmentName) =>
+		set((state) => ({
+			attachmentsByConversation: {
+				...state.attachmentsByConversation,
+				[conversationId]: (state.attachmentsByConversation[conversationId] ?? [])
+					.filter((attachment) => attachment.path !== attachmentName),
+			},
+		})),
+
+	clearAttachments: (conversationId) =>
+		set((state) => ({
+			attachmentsByConversation: {
+				...state.attachmentsByConversation,
+				[conversationId]: [],
 			},
 		})),
 }));

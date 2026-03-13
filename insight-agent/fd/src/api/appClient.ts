@@ -7,15 +7,17 @@ import { useAuthStore } from "@/stores/authStore";
 const appClient = axios.create({
 	baseURL: getAppApiBaseUrl(),
 	timeout: 15000,
-	headers: {
-		"Content-Type": "application/json",
-	},
 });
 
 appClient.interceptors.request.use((config) => {
 	const token = getAccessToken();
 	if (token) {
 		config.headers.Authorization = `Bearer ${token}`;
+	}
+	if (config.data instanceof FormData) {
+		delete config.headers["Content-Type"];
+	} else {
+		config.headers["Content-Type"] = "application/json";
 	}
 	return config;
 });

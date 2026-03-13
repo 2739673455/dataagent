@@ -22,12 +22,13 @@ interface PendingMessageState {
 	message: MessageSchema;
 }
 
+function isImageFile(name: string) {
+	return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
+}
+
 export default function ChatPage() {
 	const navigate = useNavigate();
 	const params = useParams();
-	const activeConversationId = useChatStore(
-		(state) => state.activeConversationId,
-	);
 	const conversations = useChatStore((state) => state.conversations);
 	const messagesByConversation = useChatStore(
 		(state) => state.messagesByConversation,
@@ -38,17 +39,19 @@ export default function ChatPage() {
 	const createConversation = useChatStore((state) => state.createConversation);
 	const deleteConversation = useChatStore((state) => state.deleteConversation);
 	const loadMessages = useChatStore((state) => state.loadMessages);
+	const ensureConversation = useChatStore((state) => state.ensureConversation);
 	const appendMessage = useChatStore((state) => state.appendMessage);
 	const setConnectionState = useChatStore((state) => state.setConnectionState);
-	const setActiveConversationId = useChatStore(
-		(state) => state.setActiveConversationId,
-	);
 	const logout = useAuthStore((state) => state.logout);
 	const user = useAuthStore((state) => state.user);
 	const socketRef = useRef<WebSocket | null>(null);
 	const pendingMessageRef = useRef<PendingMessageState | null>(null);
 	const isClosingSocketRef = useRef(false);
 	const messageViewportRef = useRef<HTMLDivElement | null>(null);
+	const attachmentsRef = useRef<Attachment[]>([]);
+	const [draftConversationId, setDraftConversationId] = useState<number | null>(
+		null,
+	);
 	const [attachments, setAttachments] = useState<Attachment[]>([]);
 	const [isUploadingAttachments, setIsUploadingAttachments] = useState(false);
 	const [isStreaming, setIsStreaming] = useState(false);
@@ -61,10 +64,14 @@ export default function ChatPage() {
 		return Number.isNaN(parsed) ? null : parsed;
 	})();
 
-	const currentMessages = activeConversationId
-		? (messagesByConversation[activeConversationId] ?? [])
+	const currentMessages = routeConversationId
+		? (messagesByConversation[routeConversationId] ?? [])
 		: [];
 	const currentMessageCount = currentMessages.length;
+
+	useEffect(() => {
+		attachmentsRef.current = attachments;
+	}, [attachments]);
 
 	const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
 		const viewport = messageViewportRef.current;
@@ -82,7 +89,6 @@ export default function ChatPage() {
 
 	useEffect(() => {
 		if (!routeConversationId) return;
-		setActiveConversationId(routeConversationId);
 		if (messagesByConversation[routeConversationId] === undefined) {
 			void loadMessages(routeConversationId);
 		}
@@ -90,8 +96,13 @@ export default function ChatPage() {
 		loadMessages,
 		messagesByConversation,
 		routeConversationId,
-		setActiveConversationId,
 	]);
+
+	useEffect(() => {
+		if (!routeConversationId) return;
+		setDraftConversationId(null);
+		setAttachments([]);
+	}, [routeConversationId]);
 
 	useEffect(() => {
 		if (!routeConversationId || isLoadingMessages) return;
@@ -113,7 +124,7 @@ export default function ChatPage() {
 		void socketVersion;
 
 		const token = getAccessToken();
-		if (!activeConversationId || !token) return;
+		if (!routeConversationId || !token) return;
 
 		let cancelled = false;
 
@@ -124,7 +135,7 @@ export default function ChatPage() {
 				if (cancelled) return;
 
 				const socket = chatApi.buildChatSocket(
-					activeConversationId,
+					routeConversationId,
 					response.data.websocket_token,
 				);
 				socketRef.current = socket;
@@ -133,7 +144,7 @@ export default function ChatPage() {
 					isClosingSocketRef.current = false;
 					setConnectionState("open");
 
-					if (pendingMessageRef.current?.conversationId === activeConversationId) {
+					if (pendingMessageRef.current?.conversationId === routeConversationId) {
 						socket.send(
 							chatApi.serializeChatRequest({
 								message: pendingMessageRef.current.message,
@@ -154,9 +165,10 @@ export default function ChatPage() {
 						return;
 					}
 
-					appendMessage(activeConversationId, payload.message);
+					appendMessage(routeConversationId, payload.message);
 					if (payload.message.finish_reason === "stop") {
 						setIsStreaming(false);
+						void loadConversations();
 					}
 				};
 
@@ -210,15 +222,22 @@ export default function ChatPage() {
 			socketRef.current = null;
 		};
 	}, [
-		activeConversationId,
 		appendMessage,
+		loadConversations,
+		routeConversationId,
 		setConnectionState,
 		socketVersion,
 	]);
 
 	const handleCreateConversation = () => {
 		pendingMessageRef.current = null;
-		setActiveConversationId(null);
+		for (const attachment of attachments) {
+			if (attachment.preview_url) {
+				URL.revokeObjectURL(attachment.preview_url);
+			}
+		}
+		setAttachments([]);
+		setDraftConversationId(null);
 		navigate("/chat");
 	};
 
@@ -241,16 +260,7 @@ export default function ChatPage() {
 		}
 	};
 
-	const ensureConversation = async () => {
-		if (activeConversationId) {
-			return activeConversationId;
-		}
-		const conversation = await createConversation();
-		navigate(`/chat/${conversation.conversation_id}`);
-		return conversation.conversation_id;
-	};
-
-	const handleAttachmentsSelected = async (files: FileList) => {
+	const handleAttachmentsSelected = async (files: File[]) => {
 		const token = getAccessToken();
 		if (!token) {
 			redirectToAuthorize(
@@ -261,13 +271,26 @@ export default function ChatPage() {
 
 		setIsUploadingAttachments(true);
 		try {
-			const conversationId = await ensureConversation();
-			const nextAttachments: Attachment[] = [];
-			for (const file of Array.from(files)) {
-				const response = await chatApi.uploadAttachment(conversationId, file);
-				nextAttachments.push(response.data.attachment);
+			let nextConversationId = routeConversationId ?? draftConversationId;
+			if (!nextConversationId) {
+				const response = await chatApi.createConversation(1);
+				nextConversationId = response.data.conversation_id;
+				setDraftConversationId(nextConversationId);
+				void loadConversations();
 			}
-			setAttachments((current) => [...current, ...nextAttachments]);
+			const nextAttachments: Attachment[] = [];
+			for (const file of files) {
+				const response = await chatApi.uploadAttachment(nextConversationId, file);
+				nextAttachments.push({
+					...response.data.attachment,
+					preview_url: isImageFile(file.name)
+						? URL.createObjectURL(file)
+						: undefined,
+				});
+			}
+			if (nextAttachments.length > 0) {
+				setAttachments((current) => [...current, ...nextAttachments]);
+			}
 		} catch {
 			toast.error("附件上传失败");
 		} finally {
@@ -275,10 +298,26 @@ export default function ChatPage() {
 		}
 	};
 
-	const handleRemoveAttachment = (attachmentId: string) => {
-		setAttachments((current) =>
-			current.filter((attachment) => attachment.id !== attachmentId),
-		);
+	const handleRemoveAttachment = async (attachmentName: string) => {
+		const targetConversationId = routeConversationId ?? draftConversationId;
+		if (!targetConversationId) {
+			return;
+		}
+
+		try {
+			await chatApi.deleteAttachment(targetConversationId, attachmentName);
+			setAttachments((current) => {
+				const target = current.find(
+					(attachment) => attachment.path === attachmentName,
+				);
+				if (target?.preview_url) {
+					URL.revokeObjectURL(target.preview_url);
+				}
+				return current.filter((attachment) => attachment.path !== attachmentName);
+			});
+		} catch {
+			toast.error("附件删除失败");
+		}
 	};
 
 	const handleSend = async (value: string) => {
@@ -297,7 +336,7 @@ export default function ChatPage() {
 			timestamp: createLocalTimestamp(),
 		};
 
-		let conversationId = activeConversationId;
+		let conversationId = routeConversationId ?? draftConversationId;
 		if (!conversationId) {
 			const conversation = await createConversation();
 			conversationId = conversation.conversation_id;
@@ -307,6 +346,34 @@ export default function ChatPage() {
 			};
 			setIsStreaming(true);
 			appendMessage(conversationId, userMessage);
+			for (const attachment of attachments) {
+				if (attachment.preview_url) {
+					URL.revokeObjectURL(attachment.preview_url);
+				}
+			}
+			setAttachments([]);
+			navigate(`/chat/${conversationId}`);
+			return;
+		}
+
+		if (!routeConversationId) {
+			setDraftConversationId(null);
+			ensureConversation({
+				conversation_id: conversationId,
+				title: "新对话",
+				update_at: new Date().toISOString(),
+			});
+			pendingMessageRef.current = {
+				conversationId,
+				message: userMessage,
+			};
+			setIsStreaming(true);
+			appendMessage(conversationId, userMessage);
+			for (const attachment of attachments) {
+				if (attachment.preview_url) {
+					URL.revokeObjectURL(attachment.preview_url);
+				}
+			}
 			setAttachments([]);
 			navigate(`/chat/${conversationId}`);
 			return;
@@ -320,9 +387,24 @@ export default function ChatPage() {
 
 		appendMessage(conversationId, userMessage);
 		setIsStreaming(true);
+		for (const attachment of attachments) {
+			if (attachment.preview_url) {
+				URL.revokeObjectURL(attachment.preview_url);
+			}
+		}
 		setAttachments([]);
 		socket.send(chatApi.serializeChatRequest({ message: userMessage }));
 	};
+
+	useEffect(() => {
+		return () => {
+			for (const attachment of attachmentsRef.current) {
+				if (attachment.preview_url) {
+					URL.revokeObjectURL(attachment.preview_url);
+				}
+			}
+		};
+	}, []);
 
 	return (
 		<div
@@ -345,6 +427,7 @@ export default function ChatPage() {
 
 				<div className="flex h-full min-h-0 flex-col bg-[#fefdfa]">
 					<ChatMessages
+						conversationId={routeConversationId}
 						conversationSelected={Boolean(routeConversationId)}
 						isLoading={isLoadingMessages}
 						messages={currentMessages}

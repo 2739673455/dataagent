@@ -1,6 +1,14 @@
-import { ChevronDown, Loader2, Wrench } from "lucide-react";
+import {
+	ChevronDown,
+	Download,
+	FileImage,
+	FileText,
+	Loader2,
+	Wrench,
+} from "lucide-react";
 import type { RefObject } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { chatApi } from "@/api/chat";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
@@ -17,6 +25,7 @@ type MessageDisplayItem = {
 	type: "message";
 	message: {
 		key: string;
+		conversationId?: number | null;
 		role: MessageSchema["role"];
 		attachments?: Attachment[] | null;
 		parts: Array<TextContent | ImageContent>;
@@ -57,7 +66,14 @@ function getMessagePartKey(part: MessagePart) {
 	}
 }
 
-function buildDisplayItems(messages: MessageSchema[]): DisplayItem[] {
+function isImageAttachment(name: string) {
+	return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
+}
+
+function buildDisplayItems(
+	conversationId: number | null,
+	messages: MessageSchema[],
+): DisplayItem[] {
 	const items: DisplayItem[] = [];
 	const toolRuns = new Map<string, ToolRunDisplayItem>();
 
@@ -108,6 +124,7 @@ function buildDisplayItems(messages: MessageSchema[]): DisplayItem[] {
 				type: "message",
 				message: {
 					key: getMessageKey(message),
+					conversationId,
 					role: message.role,
 					attachments: message.attachments,
 					parts: regularParts,
@@ -246,9 +263,11 @@ function MarkdownText({ text }: { text: string }) {
 
 function PartView({
 	part,
+	onPreview,
 	renderMarkdown = false,
 }: {
 	part: TextContent | ImageContent;
+	onPreview?: (src: string, alt: string) => void;
 	renderMarkdown?: boolean;
 }) {
 	if (part.type === "text") {
@@ -264,11 +283,17 @@ function PartView({
 	}
 
 	return (
-		<img
-			src={part.image_url}
-			alt="message asset"
-			className="mt-2 max-h-80 rounded-[1rem] border border-white/80 object-cover shadow-[0_12px_30px_-10px_rgba(15,23,42,0.18)]"
-		/>
+		<button
+			type="button"
+			onClick={() => onPreview?.(part.image_url, "message asset")}
+			className="mt-2 overflow-hidden rounded-[1rem]"
+		>
+			<img
+				src={part.image_url}
+				alt="message asset"
+				className="max-h-80 rounded-[1rem] border border-white/80 object-cover shadow-[0_12px_30px_-10px_rgba(15,23,42,0.18)]"
+			/>
+		</button>
 	);
 }
 
@@ -353,57 +378,209 @@ function ToolRunBar({ item }: { item: ToolRunDisplayItem }) {
 	);
 }
 
+function AttachmentPreview({
+	attachment,
+	conversationId,
+	onPreview,
+}: {
+	attachment: Attachment;
+	conversationId?: number | null;
+	onPreview?: (src: string, alt: string) => void;
+}) {
+	const [imageUrl, setImageUrl] = useState<string | null>(null);
+
+	useEffect(() => {
+		if (!conversationId || !isImageAttachment(attachment.path)) {
+			return;
+		}
+
+		let objectUrl: string | null = null;
+		let cancelled = false;
+
+		void chatApi
+			.fetchAttachmentFile(conversationId, attachment.path)
+			.then((response) => {
+				if (cancelled) return;
+				objectUrl = URL.createObjectURL(response.data);
+				setImageUrl(objectUrl);
+			})
+			.catch(() => {
+				if (cancelled) return;
+				setImageUrl(null);
+			});
+
+		return () => {
+			cancelled = true;
+			if (objectUrl) {
+				URL.revokeObjectURL(objectUrl);
+			}
+		};
+	}, [attachment.path, conversationId]);
+
+	return (
+		<div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-slate-200">
+			{imageUrl ? (
+				<button
+					type="button"
+					onClick={() => onPreview?.(imageUrl, attachment.raw_name)}
+					className="h-full w-full"
+				>
+					<img
+						src={imageUrl}
+						alt={attachment.raw_name}
+						className="h-full w-full object-cover"
+					/>
+				</button>
+			) : isImageAttachment(attachment.path) ? (
+				<FileImage className="h-4 w-4 text-slate-500" />
+			) : (
+				<FileText className="h-4 w-4 text-slate-600" />
+			)}
+		</div>
+	);
+}
+
+function AttachmentChip({
+	attachment,
+	conversationId,
+	isUser,
+	onPreview,
+}: {
+	attachment: Attachment;
+	conversationId?: number | null;
+	isUser: boolean;
+	onPreview?: (src: string, alt: string) => void;
+}) {
+	const [isDownloading, setIsDownloading] = useState(false);
+
+	const handleDownload = async () => {
+		if (!conversationId || isDownloading) return;
+
+		try {
+			setIsDownloading(true);
+			const response = await chatApi.fetchAttachmentFile(
+				conversationId,
+				attachment.path,
+			);
+			const objectUrl = URL.createObjectURL(response.data);
+			const link = document.createElement("a");
+			link.href = objectUrl;
+			link.download = attachment.raw_name;
+			document.body.appendChild(link);
+			link.click();
+			link.remove();
+			URL.revokeObjectURL(objectUrl);
+		} finally {
+			setIsDownloading(false);
+		}
+	};
+
+	return (
+		<div
+			className={cn(
+				"flex items-center gap-2 rounded-[1rem] px-2.5 py-2 text-xs",
+				isUser ? "bg-white/60 text-slate-700" : "bg-slate-100 text-slate-600",
+			)}
+		>
+			<AttachmentPreview
+				attachment={attachment}
+				conversationId={conversationId}
+				onPreview={onPreview}
+			/>
+			<span className="truncate">{attachment.raw_name}</span>
+			{conversationId ? (
+				<button
+					type="button"
+					onClick={handleDownload}
+					disabled={isDownloading}
+					className={cn(
+						"flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition",
+						isUser
+							? "hover:bg-slate-800/10"
+							: "hover:bg-slate-800/5",
+						isDownloading ? "cursor-wait opacity-60" : "",
+					)}
+					title="下载附件"
+				>
+					{isDownloading ? (
+						<Loader2 className="h-3.5 w-3.5 animate-spin" />
+					) : (
+						<Download className="h-3.5 w-3.5" />
+					)}
+				</button>
+			) : null}
+		</div>
+	);
+}
+
 function MessageBubble({
 	message,
 }: {
 	message: MessageDisplayItem["message"];
 }) {
 	const isUser = message.role === "user";
+	const [previewImage, setPreviewImage] = useState<{
+		src: string;
+		alt: string;
+	} | null>(null);
 
 	return (
-		<div
-			className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}
-		>
+		<>
 			<div
-				className={cn(
-					"relative max-w-[88%] rounded-[1.75rem] px-6 py-4 transition-all duration-300",
-					isUser
-						? "border border-[#cfd8e3] bg-[#dde3ec] text-slate-800"
-						: "border border-slate-200 bg-white text-slate-800",
-				)}
+				className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}
 			>
-				<div className="space-y-3">
-					{message.attachments?.length ? (
-						<div className="flex flex-wrap gap-2">
-							{message.attachments.map((attachment) => (
-								<div
-									key={attachment.id ?? attachment.url}
-									className={cn(
-										"rounded-full px-3 py-1 text-xs",
-										isUser
-											? "bg-white/60 text-slate-700"
-											: "bg-slate-100 text-slate-600",
-									)}
-								>
-									{attachment.name}
-								</div>
-							))}
-						</div>
-					) : null}
-					{message.parts.map((part) => (
-						<PartView
-							key={getMessagePartKey(part)}
-							part={part}
-							renderMarkdown={!isUser}
-						/>
-					))}
+				<div
+					className={cn(
+						"relative max-w-[88%] rounded-[1.75rem] px-6 py-4 transition-all duration-300",
+						isUser
+							? "border border-[#cfd8e3] bg-[#dde3ec] text-slate-800"
+							: "border border-slate-200 bg-white text-slate-800",
+					)}
+				>
+					<div className="space-y-3">
+						{message.attachments?.length ? (
+							<div className="flex flex-wrap gap-2">
+								{message.attachments.map((attachment) => (
+									<AttachmentChip
+										key={attachment.path}
+										attachment={attachment}
+										conversationId={message.conversationId}
+										isUser={isUser}
+										onPreview={(src, alt) => setPreviewImage({ src, alt })}
+									/>
+								))}
+							</div>
+						) : null}
+						{message.parts.map((part) => (
+							<PartView
+								key={getMessagePartKey(part)}
+								part={part}
+								onPreview={(src, alt) => setPreviewImage({ src, alt })}
+								renderMarkdown={!isUser}
+							/>
+						))}
+					</div>
 				</div>
 			</div>
-		</div>
+			{previewImage ? (
+				<button
+					type="button"
+					onClick={() => setPreviewImage(null)}
+					className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-6"
+				>
+					<img
+						src={previewImage.src}
+						alt={previewImage.alt}
+						className="max-h-[88vh] max-w-[88vw] rounded-[1.25rem] object-contain shadow-2xl"
+					/>
+				</button>
+			) : null}
+		</>
 	);
 }
 
 interface ChatMessagesProps {
+	conversationId: number | null;
 	conversationSelected: boolean;
 	isLoading: boolean;
 	messages: MessageSchema[];
@@ -411,12 +588,13 @@ interface ChatMessagesProps {
 }
 
 export function ChatMessages({
+	conversationId,
 	conversationSelected,
 	isLoading,
 	messages,
 	viewportRef,
 }: ChatMessagesProps) {
-	const displayItems = buildDisplayItems(messages);
+	const displayItems = buildDisplayItems(conversationId, messages);
 
 	return (
 		<div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-none border-0 bg-[#fefdfa] shadow-none">
@@ -432,7 +610,7 @@ export function ChatMessages({
 					</div>
 				) : isLoading ? (
 					<div className="flex h-full items-center justify-center">
-						<div className="flex h-16 w-16 items-center justify-center border border-white/80 bg-white/70 shadow-[inset_0_2px_12px_rgba(15,23,42,0.08),0_12px_32px_-16px_rgba(15,23,42,0.28)]">
+						<div className="flex h-16 w-16 items-center justify-center">
 							<Loader2 className="h-7 w-7 animate-spin text-primary" />
 						</div>
 					</div>

@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 
 # 路径常量
@@ -15,3 +16,9 @@ def get_workspace_dir(user_id: int, conversation_id: int) -> Path:
     workspace_dir = WORKSPACES_DIR / f"user_{user_id}" / str(conversation_id)
     workspace_dir.mkdir(parents=True, exist_ok=True)
     return workspace_dir
+
+
+def delete_workspace_dir(user_id: int, conversation_id: int) -> None:
+    """删除用户会话工作区目录，不存在时忽略"""
+    workspace_dir = WORKSPACES_DIR / f"user_{user_id}" / str(conversation_id)
+    shutil.rmtree(workspace_dir, ignore_errors=True)

@@ -27,9 +27,9 @@ export interface ConversationListResponse {
 }
 
 export interface Attachment {
-  id?: string;
-  name: string;
-  url: string;
+  raw_name: string;
+  path: string;
+  preview_url?: string;
 }
 
 export interface TextContent {

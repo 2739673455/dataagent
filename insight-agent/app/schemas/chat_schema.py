@@ -1,6 +1,5 @@
 from datetime import datetime
 from typing import Annotated, Literal
-from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -24,6 +23,10 @@ class UpdateConversationRequest(BaseModel):
 
 class DeleteConversationRequest(BaseModel):
     conversation_ids: list[int] = Field(..., description="对话ID列表")
+
+
+class CreateConversationRequest(BaseModel):
+    is_draft: Literal[0, 1] = Field(default=0, description="是否创建草稿对话")
 
 
 class WebSocketTokenResponse(BaseModel):
@@ -69,16 +72,8 @@ MessagePart = Annotated[
 
 
 class Attachment(BaseModel):
-    id: str = Field(
-        default_factory=lambda: uuid4().hex,
-        description="附件ID",
-    )
-    name: str = Field(..., description="附件名称")
-    url: str = Field(..., description="附件链接")
-
-
-class UploadAttachmentResponse(BaseModel):
-    attachment: Attachment = Field(..., description="上传后的附件信息")
+    raw_name: str = Field(..., description="原始附件名称")
+    path: str = Field(..., description="相对工作区路径")
 
 
 class MessageSchema(BaseModel):
@@ -106,3 +101,12 @@ class WebSocketMessageResponse(BaseModel):
 class WebSocketErrorResponse(BaseModel):
     type: Literal["error"] = "error"
     content: str = Field(..., description="错误信息")
+
+
+class UploadAttachmentResponse(BaseModel):
+    attachment: Attachment = Field(..., description="上传后的附件信息")
+
+
+class DeleteAttachmentRequest(BaseModel):
+    conversation_id: int = Field(..., description="对话ID")
+    path: str = Field(..., description="相对工作区路径")

@@ -1,6 +1,6 @@
 from app.config import CFG
 from app.core.mcp import mcp_client
-from app.core.tools import create_db_query_tool
+from app.core.tools import create_db_query_tool, create_return_file_tool
 from app.utils.agent_paths import SKILLS_DIR, get_workspace_dir
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
@@ -39,7 +39,11 @@ async def build_agent(user_id: int, conversation_id: int) -> CompiledStateGraph:
     mcp_tools = await mcp_client.get_tools()
 
     # 所有工具
-    tools = [create_db_query_tool(workspace_dir), *mcp_tools]
+    tools = [
+        create_db_query_tool(workspace_dir),
+        create_return_file_tool(workspace_dir),
+        *mcp_tools,
+    ]
 
     # 创建 Agent
     agent = create_deep_agent(model=model, tools=tools, backend=backend, skills=skills)

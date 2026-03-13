@@ -19,7 +19,11 @@ async def stream_chat(
     logger.info(f"{conversation_id=}: {user_message=}")
 
     # 添加用户消息
-    messages.append(message_mapper.schema_to_langchain_message(user_message))
+    messages.append(
+        message_mapper.schema_to_langchain_message(
+            user_message, user_id=user_id, conversation_id=conversation_id
+        )
+    )
 
     # 存储到数据库
     user_message_entity = message_mapper.schema_to_entity(user_message, conversation_id)
@@ -36,7 +40,11 @@ async def stream_chat(
 
         for response in responses:
             # 添加 Agent 响应
-            messages.append(message_mapper.schema_to_langchain_message(response))
+            messages.append(
+                message_mapper.schema_to_langchain_message(
+                    response, user_id=user_id, conversation_id=conversation_id
+                )
+            )
 
             # 存储到数据库
             message_entity = message_mapper.schema_to_entity(response, conversation_id)

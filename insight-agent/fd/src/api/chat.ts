@@ -14,8 +14,10 @@ export const chatApi = {
 		return appClient.get<ConversationListResponse>("api/chat/ls");
 	},
 
-	createConversation() {
-		return appClient.post<ConversationResponse>("api/chat/create");
+	createConversation(isDraft: 0 | 1 = 0) {
+		return appClient.post<ConversationResponse>("api/chat/create", {
+			is_draft: isDraft,
+		});
 	},
 
 	getMessages(conversationId: number) {
@@ -24,11 +26,29 @@ export const chatApi = {
 
 	uploadAttachment(conversationId: number, file: File) {
 		const formData = new FormData();
+		formData.append("conversation_id", String(conversationId));
 		formData.append("file", file);
 		return appClient.post<UploadAttachmentResponse>(
-			`api/chat/upload?conversation_id=${conversationId}`,
+			"api/chat/attachment/upload",
 			formData,
 		);
+	},
+
+	deleteAttachment(conversationId: number, path: string) {
+		return appClient.post("api/chat/attachment/delete", {
+			conversation_id: conversationId,
+			path,
+		});
+	},
+
+	fetchAttachmentFile(conversationId: number, path: string) {
+		return appClient.get<Blob>("api/chat/attachment/get", {
+			params: {
+				conversation_id: conversationId,
+				path,
+			},
+			responseType: "blob",
+		});
 	},
 
 	deleteConversations(conversationIds: number[]) {

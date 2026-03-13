@@ -1,4 +1,4 @@
-import { ArrowUp, Plus, Square, X } from "lucide-react";
+import { ArrowUp, FileText, Plus, Square, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,8 +10,8 @@ interface ChatComposerProps {
 	disabled?: boolean;
 	isUploading?: boolean;
 	isStreaming?: boolean;
-	onAttachmentsSelected: (files: FileList) => Promise<void> | void;
-	onRemoveAttachment: (attachmentId: string) => void;
+	onAttachmentsSelected: (files: File[]) => Promise<void> | void;
+	onRemoveAttachment: (attachmentName: string) => void;
 	onStop: () => void;
 	onSubmit: (value: string) => Promise<void> | void;
 }
@@ -27,6 +27,10 @@ export function ChatComposer({
 	onSubmit,
 }: ChatComposerProps) {
 	const [value, setValue] = useState("");
+	const [previewImage, setPreviewImage] = useState<{
+		src: string;
+		alt: string;
+	} | null>(null);
 	const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 	const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -46,6 +50,16 @@ export function ChatComposer({
 		await onSubmit(next);
 	};
 
+	const isImageAttachment = (attachment: Attachment) =>
+		Boolean(attachment.preview_url);
+	const openPreview = (attachment: Attachment) => {
+		if (!attachment.preview_url) return;
+		setPreviewImage({
+			src: attachment.preview_url,
+			alt: attachment.raw_name,
+		});
+	};
+
 	return (
 		<div className="relative">
 			<div className="overflow-hidden rounded-[2rem] border border-slate-300 bg-white shadow-[0_-36px_72px_-6px_rgba(255,255,255,1)] transition-all focus-within:border-slate-300 focus-within:shadow-[0_-36px_72px_-6px_rgba(255,255,255,1)]">
@@ -55,7 +69,7 @@ export function ChatComposer({
 					className="hidden"
 					onChange={(event) => {
 						if (event.target.files && event.target.files.length > 0) {
-							void onAttachmentsSelected(event.target.files);
+							void onAttachmentsSelected(Array.from(event.target.files));
 						}
 						event.target.value = "";
 					}}
@@ -64,18 +78,30 @@ export function ChatComposer({
 					<div className="flex flex-wrap gap-2 px-4 pt-4">
 						{attachments.map((attachment) => (
 							<div
-								key={attachment.id ?? attachment.url}
-								className="flex max-w-full items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-700"
+								key={attachment.path}
+								className="flex max-w-full items-center gap-3 rounded-[1.1rem] bg-slate-100 px-3 py-2 text-sm text-slate-700"
 							>
-								<Plus className="h-3.5 w-3.5 shrink-0" />
-								<span className="truncate">{attachment.name}</span>
+								<div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-200">
+									{isImageAttachment(attachment) ? (
+										<button
+											type="button"
+											onClick={() => openPreview(attachment)}
+											className="h-full w-full"
+										>
+											<img
+												src={attachment.preview_url}
+												alt={attachment.raw_name}
+												className="h-full w-full object-cover"
+											/>
+										</button>
+									) : (
+										<FileText className="h-[18px] w-[18px] text-slate-600" />
+									)}
+								</div>
+								<span className="truncate">{attachment.raw_name}</span>
 								<button
 									type="button"
-									onClick={() =>
-										attachment.id
-											? onRemoveAttachment(attachment.id)
-											: undefined
-									}
+									onClick={() => onRemoveAttachment(attachment.path)}
 									className="rounded-full p-0.5 text-slate-400 transition hover:bg-slate-200 hover:text-slate-600"
 								>
 									<X className="h-3.5 w-3.5" />
@@ -144,6 +170,19 @@ export function ChatComposer({
 					</Button>
 				</div>
 			</div>
+			{previewImage ? (
+				<button
+					type="button"
+					onClick={() => setPreviewImage(null)}
+					className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-6"
+				>
+					<img
+						src={previewImage.src}
+						alt={previewImage.alt}
+						className="max-h-[88vh] max-w-[88vw] rounded-[1.25rem] object-contain shadow-2xl"
+					/>
+				</button>
+			) : null}
 		</div>
 	);
 }
