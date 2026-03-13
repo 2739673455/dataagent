@@ -26,9 +26,7 @@ async def _get_agent(user_id: int, conversation_id: int) -> CompiledStateGraph:
         # 二次检查，避免等待会话锁期间被其他协程重复创建
         agent = _agent_cache.get(key)
         if agent is None:
-            agent = await build_agent(
-                user_id=user_id, conversation_id=str(conversation_id)
-            )
+            agent = await build_agent(user_id, conversation_id)
             _agent_cache[key] = agent
 
     return agent
@@ -47,7 +45,7 @@ async def astream(user_id: int, conversation_id: int, messages: list):
     """基于当前会话消息流式生成 Agent 响应"""
     # 获取 Agent 实例
     key = (user_id, conversation_id)
-    agent = await _get_agent(user_id=user_id, conversation_id=conversation_id)
+    agent = await _get_agent(user_id, conversation_id)
     agent_lock = _agent_locks[key]
 
     # 生成 Agent 响应

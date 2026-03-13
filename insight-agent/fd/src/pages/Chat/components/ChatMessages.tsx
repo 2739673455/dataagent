@@ -305,23 +305,26 @@ function ToolRunBar({ item }: { item: ToolRunDisplayItem }) {
 		<div className="flex w-full justify-start">
 			<div
 				className={cn(
-					"w-full max-w-[88%] overflow-hidden border",
+					"w-full max-w-[88%] overflow-hidden",
 					"rounded-[1.25rem]",
 					item.completed
-						? "border-emerald-300 bg-[linear-gradient(135deg,#ecfdf5,#d1fae5)]"
-						: "border-slate-300 bg-[linear-gradient(135deg,#f8fafc,#e2e8f0)]",
+						? "bg-emerald-600"
+						: "bg-slate-200",
 				)}
 			>
 				<button
 					type="button"
 					onClick={() => setIsOpen((value) => !value)}
-					className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-slate-700"
+					className={cn(
+						"flex w-full items-center gap-3 px-3.5 py-2 text-left text-sm",
+						item.completed ? "text-white" : "text-slate-700",
+					)}
 				>
 					<div
 						className={cn(
 							"flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
 							item.completed
-								? "bg-emerald-600 text-white"
+								? "bg-emerald-800 text-white"
 								: "bg-slate-700 text-white",
 						)}
 					>
@@ -332,10 +335,20 @@ function ToolRunBar({ item }: { item: ToolRunDisplayItem }) {
 						)}
 					</div>
 					<div className="min-w-0 flex-1">
-						<p className="truncate text-sm font-medium text-slate-800">
+						<p
+							className={cn(
+								"truncate text-sm font-medium",
+								item.completed ? "text-white" : "text-slate-800",
+							)}
+						>
 							{item.name}
 							{argsPreview ? (
-								<span className="ml-2 font-normal text-slate-500">
+								<span
+									className={cn(
+										"ml-2 font-normal",
+										item.completed ? "text-emerald-50/90" : "text-slate-500",
+									)}
+								>
 									{argsPreview}
 								</span>
 							) : null}
@@ -345,28 +358,59 @@ function ToolRunBar({ item }: { item: ToolRunDisplayItem }) {
 						className={cn(
 							"h-4 w-4 shrink-0 transition-transform",
 							isOpen ? "rotate-180" : "",
-							item.completed ? "text-emerald-700" : "text-slate-500",
+							item.completed ? "text-emerald-50/90" : "text-slate-500",
 						)}
 					/>
 				</button>
 				{isOpen ? (
-					<div className="space-y-4 border-t border-white/80 bg-white px-4 pb-4 pt-3">
+					<div
+						className={cn(
+							"space-y-3 px-3.5 pb-3.5 pt-2.5",
+							item.completed
+								? "bg-emerald-600"
+								: "bg-slate-200",
+						)}
+					>
 						{item.args !== undefined ? (
 							<div className="space-y-2">
-								<p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
+								<p
+									className={cn(
+										"text-xs font-medium uppercase tracking-[0.18em]",
+										item.completed ? "text-emerald-100/80" : "text-slate-500",
+									)}
+								>
 									参数
 								</p>
-								<pre className="overflow-x-auto whitespace-pre-wrap rounded-[1rem] bg-slate-50 px-4 py-3 text-xs text-slate-600">
+								<pre
+									className={cn(
+										"overflow-x-auto whitespace-pre-wrap rounded-[1rem] px-3 py-2.5 text-xs",
+										item.completed
+											? "bg-emerald-700/70 text-emerald-50"
+											: "bg-white/70 text-slate-600",
+									)}
+								>
 									{JSON.stringify(item.args, null, 2)}
 								</pre>
 							</div>
 						) : null}
 						{item.result !== undefined ? (
 							<div className="space-y-2">
-								<p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
+								<p
+									className={cn(
+										"text-xs font-medium uppercase tracking-[0.18em]",
+										item.completed ? "text-emerald-100/80" : "text-slate-500",
+									)}
+								>
 									结果
 								</p>
-								<pre className="overflow-x-auto whitespace-pre-wrap rounded-[1rem] bg-emerald-50 px-4 py-3 text-xs text-emerald-950">
+								<pre
+									className={cn(
+										"overflow-x-auto whitespace-pre-wrap rounded-[1rem] px-3 py-2.5 text-xs",
+										item.completed
+											? "bg-emerald-700/70 text-emerald-50"
+											: "bg-white/55 text-emerald-950",
+									)}
+								>
 									{item.result}
 								</pre>
 							</div>
@@ -531,10 +575,10 @@ function MessageBubble({
 			>
 				<div
 					className={cn(
-						"relative max-w-[88%] rounded-[1.75rem] px-6 py-4 transition-all duration-300",
+						"relative max-w-[88%] transition-all duration-300",
 						isUser
-							? "border border-[#cfd8e3] bg-[#dde3ec] text-slate-800"
-							: "border border-slate-200 bg-white text-slate-800",
+							? "rounded-[1.75rem] bg-[#dde3ec] px-4 py-3 text-slate-800"
+							: "rounded-[1.75rem] bg-transparent px-4 py-3 text-slate-800",
 					)}
 				>
 					<div className="space-y-3">

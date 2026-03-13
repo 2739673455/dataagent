@@ -62,7 +62,7 @@ export function ChatComposer({
 
 	return (
 		<div className="relative">
-			<div className="overflow-hidden rounded-[2rem] border border-slate-300 bg-white shadow-[0_-36px_72px_-6px_rgba(255,255,255,1)] transition-all focus-within:border-slate-300 focus-within:shadow-[0_-36px_72px_-6px_rgba(255,255,255,1)]">
+			<div className="overflow-hidden rounded-[2rem] border border-slate-300 bg-white shadow-[0_-18px_36px_-12px_rgba(255,255,255,0.92)] transition-all focus-within:border-slate-300 focus-within:shadow-[0_-18px_36px_-12px_rgba(255,255,255,0.92)]">
 				<input
 					ref={fileInputRef}
 					type="file"

@@ -19,14 +19,13 @@ async def build_agent(user_id: int, conversation_id: int) -> CompiledStateGraph:
         **model_cfg.params,
     )
 
-    # 文件后端
-    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
-    # 为每个用户/会话创建独立工作目录
+    # 文件后端，为每个用户/会话创建独立工作目录
     workspace_dir = get_workspace_dir(user_id, conversation_id)
-
     workspace_backend = LocalShellBackend(
         root_dir=workspace_dir, virtual_mode=True, inherit_env=True
     )
+
+    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
     skills_backend = FilesystemBackend(root_dir=SKILLS_DIR, virtual_mode=True)
     backend = CompositeBackend(
         default=workspace_backend, routes={"/skills/": skills_backend}

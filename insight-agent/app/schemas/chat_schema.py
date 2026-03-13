@@ -73,7 +73,7 @@ MessagePart = Annotated[
 
 class Attachment(BaseModel):
     raw_name: str = Field(..., description="原始附件名称")
-    path: str = Field(..., description="相对工作区路径")
+    path: str = Field(..., description="工作区相对路径")
 
 
 class MessageSchema(BaseModel):

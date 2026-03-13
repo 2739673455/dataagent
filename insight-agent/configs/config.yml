@@ -23,10 +23,10 @@ log: # 日志
   max_file_size: 10MB # 单个日志文件最大大小
 
 lm_config:
-  active: gpt-4o-mini
+  active: minimax-m2.5
   models:
-    gpt-4o-mini:
-      model: openai/gpt-4o-mini
+    minimax-m2.5:
+      model: minimax/minimax-m2.5
       base_url: https://openrouter.ai/api/v1
       api_key: ${oc.env:OPENROUTER_API_KEY}
       params: {}

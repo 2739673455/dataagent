@@ -35,4 +35,6 @@
 
 # 问题
 
-1. 消息加载后考虑放入 Agent 的 checkpoint?需考虑总结中间件的影响
+1. 技能中需要明确说明，使用 python 时用 uv 环境
+2. 消息加载后考虑放入 Agent 的 checkpoint?需考虑总结中间件的影响
+3. 前端展示？HTML？

@@ -273,17 +273,20 @@ def schema_to_langchain_message(
         if document_attachments:
             if message.role == "assistant":
                 # 模型消息，提示向用户返回过文件
-                attachment_lines = ["我之前已向用户返回以下文件："]
+                file_prompt = "我之前已向用户返回以下文件："
             else:
                 # 用户消息，提示用户上传过文件
-                attachment_lines = [
-                    "用户上传的以下文件已保存到当前工作区，可直接读取："
-                ]
+                file_prompt = "用户上传的以下文件已保存到当前工作区，可直接读取："
+            if content_parts:
+                file_prompt = f"\n\n{file_prompt}"
             # 拼接附件信息
-            attachment_lines.extend(
-                f"- 原始文件名：`{attachment.raw_name}`，工作区路径：`{attachment.path}`"
-                for attachment in document_attachments
-            )
+            attachment_lines = [
+                file_prompt,
+                *[
+                    f"- 原始文件名：`{attachment.raw_name}`，工作区相对路径：`{attachment.path}`"
+                    for attachment in document_attachments
+                ],
+            ]
             content_parts.append(
                 chat_schema.TextContent(text="\n".join(attachment_lines)).model_dump()
             )
@@ -292,21 +295,20 @@ def schema_to_langchain_message(
         for attachment in image_attachments:
             if message.role == "assistant":
                 # 模型消息，提示向用户返回过图片
+                image_prompt = f"我之前已向用户返回一张图片：\n- 原始文件名：`{attachment.raw_name}`，工作区路径：`{attachment.path}`"
+                if content_parts:
+                    image_prompt = f"\n\n{image_prompt}"
                 content_parts.append(
-                    chat_schema.TextContent(
-                        text=(
-                            "我之前已向用户返回一张图片："
-                            f"原始文件名：`{attachment.raw_name}`，"
-                            f"工作区路径：`{attachment.path}`"
-                        )
-                    ).model_dump()
+                    chat_schema.TextContent(text=image_prompt).model_dump()
                 )
                 continue
 
+            # 如果缺少 user_id 或 conversation_id，则报错
             if user_id is None or conversation_id is None:
                 raise ValueError(
                     "user_id and conversation_id are required for image attachments"
                 )
+
             try:
                 # 用户消息，将图片转换为 base64 内容
                 content_parts.append(
@@ -321,14 +323,11 @@ def schema_to_langchain_message(
                 logger.warning(
                     f"Attachment image is unavailable: conversation_id={conversation_id}, file={attachment.path}"
                 )
+                image_loss_prompt = f"用户之前上传了一张图片，但该文件当前已不存在：\n- 原始文件名：`{attachment.raw_name}`，工作区路径：`{attachment.path}`"
+                if content_parts:
+                    image_loss_prompt = f"\n\n{image_loss_prompt}"
                 content_parts.append(
-                    chat_schema.TextContent(
-                        text=(
-                            "用户之前上传了一张图片，但该文件当前已不存在："
-                            f"原始文件名：`{attachment.raw_name}`，"
-                            f"工作区路径：`{attachment.path}`"
-                        )
-                    ).model_dump()
+                    chat_schema.TextContent(text=image_loss_prompt).model_dump()
                 )
 
     payload: dict[str, Any] = {"role": message.role, "content": content_parts}
