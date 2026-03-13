@@ -4,7 +4,7 @@ import uvicorn
 from app import middlewares, routers
 from app.config import CFG
 from app.exceptions.handlers import register_exception_handlers
-from app.utils import db
+from app.utils import db, redis as redis_util
 from app.utils.log import setup_logger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 async def lifespan(app: FastAPI):
     setup_logger()
     yield
+    await redis_util.close()
     await db.close_all()
 
 

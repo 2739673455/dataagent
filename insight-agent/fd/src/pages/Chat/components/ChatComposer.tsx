@@ -1,24 +1,34 @@
-import { SendHorizonal, Square } from "lucide-react";
+import { ArrowUp, Plus, Square, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import type { Attachment } from "@/types";
 
 interface ChatComposerProps {
+	attachments?: Attachment[];
 	disabled?: boolean;
+	isUploading?: boolean;
 	isStreaming?: boolean;
+	onAttachmentsSelected: (files: FileList) => Promise<void> | void;
+	onRemoveAttachment: (attachmentId: string) => void;
 	onStop: () => void;
 	onSubmit: (value: string) => Promise<void> | void;
 }
 
 export function ChatComposer({
+	attachments = [],
 	disabled = false,
+	isUploading = false,
 	isStreaming = false,
+	onAttachmentsSelected,
+	onRemoveAttachment,
 	onStop,
 	onSubmit,
 }: ChatComposerProps) {
 	const [value, setValue] = useState("");
 	const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+	const fileInputRef = useRef<HTMLInputElement | null>(null);
 
 	const resizeTextarea = () => {
 		const textarea = textareaRef.current;
@@ -30,7 +40,7 @@ export function ChatComposer({
 
 	const handleSubmit = async () => {
 		const next = value.trim();
-		if (!next || disabled) return;
+		if ((!next && attachments.length === 0) || disabled || isUploading) return;
 		setValue("");
 		requestAnimationFrame(resizeTextarea);
 		await onSubmit(next);
@@ -39,6 +49,41 @@ export function ChatComposer({
 	return (
 		<div className="relative">
 			<div className="overflow-hidden rounded-[2rem] border border-slate-300 bg-white shadow-[0_-36px_72px_-6px_rgba(255,255,255,1)] transition-all focus-within:border-slate-300 focus-within:shadow-[0_-36px_72px_-6px_rgba(255,255,255,1)]">
+				<input
+					ref={fileInputRef}
+					type="file"
+					className="hidden"
+					onChange={(event) => {
+						if (event.target.files && event.target.files.length > 0) {
+							void onAttachmentsSelected(event.target.files);
+						}
+						event.target.value = "";
+					}}
+				/>
+				{attachments.length > 0 ? (
+					<div className="flex flex-wrap gap-2 px-4 pt-4">
+						{attachments.map((attachment) => (
+							<div
+								key={attachment.id ?? attachment.url}
+								className="flex max-w-full items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-700"
+							>
+								<Plus className="h-3.5 w-3.5 shrink-0" />
+								<span className="truncate">{attachment.name}</span>
+								<button
+									type="button"
+									onClick={() =>
+										attachment.id
+											? onRemoveAttachment(attachment.id)
+											: undefined
+									}
+									className="rounded-full p-0.5 text-slate-400 transition hover:bg-slate-200 hover:text-slate-600"
+								>
+									<X className="h-3.5 w-3.5" />
+								</button>
+							</div>
+						))}
+					</div>
+				) : null}
 				<Textarea
 					ref={textareaRef}
 					rows={1}
@@ -54,10 +99,19 @@ export function ChatComposer({
 							void handleSubmit();
 						}
 					}}
-					disabled={disabled}
+					disabled={disabled || isUploading}
 					className="min-h-[52px] max-h-[30vh] flex-1 resize-none overflow-y-auto rounded-none border-none bg-white px-5 pb-2 pt-4 text-[15px] text-slate-800 shadow-none placeholder:text-slate-500 focus-visible:ring-0"
 				/>
-				<div className="flex items-center justify-end bg-white px-3 pb-2 pt-0.5">
+				<div className="flex items-center justify-between bg-white px-3 pb-2 pt-0.5">
+					<Button
+						type="button"
+						variant="ghost"
+						disabled={disabled || isUploading || isStreaming}
+						onClick={() => fileInputRef.current?.click()}
+						className="h-9 w-9 rounded-full border-none bg-transparent p-0 text-slate-500 shadow-none transition-all hover:bg-slate-200/80 hover:text-slate-700 active:scale-95 disabled:text-slate-400"
+					>
+						<Plus className="h-5 w-5" />
+					</Button>
 					<Button
 						onClick={() => {
 							if (isStreaming) {
@@ -66,20 +120,26 @@ export function ChatComposer({
 							}
 							void handleSubmit();
 						}}
-						disabled={isStreaming ? false : disabled || !value.trim()}
+						disabled={
+							isStreaming
+								? false
+								: disabled ||
+									isUploading ||
+									(!value.trim() && attachments.length === 0)
+						}
 						variant="ghost"
 						className={cn(
-							"h-9 w-9 rounded-full border-none p-0 shadow-none transition-all active:scale-95",
+							"h-9 w-9 border-none p-0 shadow-none transition-all active:scale-95",
 							isStreaming
-								? "bg-red-500 text-white hover:bg-red-600"
-								: "bg-transparent text-slate-500 hover:bg-slate-200/80 hover:text-slate-700",
+								? "rounded-full bg-transparent text-red-500 hover:bg-red-100 hover:text-red-600"
+								: "rounded-full bg-transparent text-slate-500 hover:bg-slate-200/80 hover:text-slate-700",
 							disabled && !isStreaming ? "text-slate-400" : "",
 						)}
 					>
 						{isStreaming ? (
-							<Square className="h-3.5 w-3.5 fill-current" />
+							<Square className="h-4 w-4 fill-none stroke-current stroke-[2.75]" />
 						) : (
-							<SendHorizonal className="h-5 w-5" />
+							<ArrowUp className="h-5 w-5" />
 						)}
 					</Button>
 				</div>

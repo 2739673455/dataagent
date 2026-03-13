@@ -23,6 +23,14 @@ class DBCfg(BaseModel):
     configs: dict[str, MySQLCfg]
 
 
+# Redis 配置
+class RedisCfg(BaseModel):
+    host: str
+    port: int
+    password: str
+    db: int
+
+
 # 日志
 class LogCfg(BaseModel):
     to_console_level: str
@@ -65,6 +73,7 @@ class DataAgentCfg(BaseModel):
 
 class Cfg(BaseModel):
     db: DBCfg
+    redis: RedisCfg
     log: LogCfg
     mcp: dict[str, MCPCfg]
     lm_config: LMConfigCfg

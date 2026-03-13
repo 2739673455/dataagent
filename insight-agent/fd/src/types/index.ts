@@ -27,6 +27,7 @@ export interface ConversationListResponse {
 }
 
 export interface Attachment {
+  id?: string;
   name: string;
   url: string;
 }
@@ -62,17 +63,28 @@ export type MessagePart =
   | ToolResultPart;
 
 export type MessageRole = "user" | "assistant" | "tool" | "system";
+export type FinishReason = "stop" | "tool_calls";
 
 export interface MessageSchema {
   message_id?: number | null;
   role: MessageRole;
   parts: MessagePart[];
   attachments?: Attachment[] | null;
+  finish_reason?: FinishReason | null;
   timestamp?: string | null;
 }
 
 export interface MessageListResponse {
   messages: MessageSchema[];
+}
+
+export interface WebSocketTokenResponse {
+  websocket_token: string;
+  expires_in: number;
+}
+
+export interface UploadAttachmentResponse {
+  attachment: Attachment;
 }
 
 export interface WebSocketChatRequest {

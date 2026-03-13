@@ -26,6 +26,11 @@ class DeleteConversationRequest(BaseModel):
     conversation_ids: list[int] = Field(..., description="对话ID列表")
 
 
+class WebSocketTokenResponse(BaseModel):
+    websocket_token: str = Field(..., description="WebSocket 临时令牌")
+    expires_in: int = Field(..., description="过期时间（秒）")
+
+
 # 消息
 
 
@@ -54,6 +59,7 @@ class ToolResultPart(BaseModel):
 
 
 MessageRole = Literal["user", "assistant", "tool", "system"]
+FinishReason = Literal["stop", "tool_calls"]
 
 
 MessagePart = Annotated[
@@ -71,11 +77,16 @@ class Attachment(BaseModel):
     url: str = Field(..., description="附件链接")
 
 
+class UploadAttachmentResponse(BaseModel):
+    attachment: Attachment = Field(..., description="上传后的附件信息")
+
+
 class MessageSchema(BaseModel):
     message_id: int | None = Field(default=None, description="消息ID")
     role: MessageRole = Field(..., description="发送者")
     parts: list[MessagePart] = Field(..., description="消息片段")
     attachments: list[Attachment] | None = Field(default=None, description="附件列表")
+    finish_reason: FinishReason | None = Field(default=None, description="完成原因")
     timestamp: datetime | None = Field(default=None, description="发送时间")
 
 

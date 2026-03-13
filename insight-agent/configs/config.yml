@@ -8,6 +8,12 @@ db: # 数据库
       password: ${oc.env:APP_DB_PASSWORD}
       database: chat
 
+redis: # Redis
+  host: 127.0.0.1
+  port: 6379
+  password: ${oc.env:REDIS_PASSWORD}
+  db: 0
+
 log: # 日志
   to_console: true # 是否输出到控制台
   to_console_level: INFO # 日志级别(DEBUG, INFO, WARNING, ERROR, CRITICAL)

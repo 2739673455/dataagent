@@ -55,6 +55,7 @@ def entity_to_schema(message: Message) -> chat_schema.MessageSchema:
         role=cast(chat_schema.MessageRole, message.role),
         parts=parts,
         attachments=attachments,
+        finish_reason=cast(chat_schema.FinishReason | None, message.finish_reason),
         timestamp=message.create_at,
     )
 
@@ -81,6 +82,7 @@ def schema_to_entity(
         role=message.role,
         parts=parts,
         attachments=attachments,
+        finish_reason=message.finish_reason,
     )
 
     if message.message_id is not None:
@@ -102,6 +104,7 @@ def langchain_message_to_schema(
         return chat_schema.MessageSchema(
             role="assistant",
             parts=_parts_from_ai_message(message),
+            finish_reason=message.response_metadata.get("finish_reason"),
             timestamp=timestamp,
         )
 
@@ -116,6 +119,7 @@ def langchain_message_to_schema(
                     content=str(message.content),
                 )
             ],
+            finish_reason=None,
             timestamp=timestamp,
         )
 

@@ -8,6 +8,7 @@ import { getAccessToken } from "@/lib/token";
 import { useAuthStore } from "@/stores/authStore";
 import { useChatStore } from "@/stores/chatStore";
 import type {
+	Attachment,
 	MessageSchema,
 	WebSocketErrorResponse,
 	WebSocketMessageResponse,
@@ -47,8 +48,9 @@ export default function ChatPage() {
 	const socketRef = useRef<WebSocket | null>(null);
 	const pendingMessageRef = useRef<PendingMessageState | null>(null);
 	const isClosingSocketRef = useRef(false);
-	const streamIdleTimerRef = useRef<number | null>(null);
 	const messageViewportRef = useRef<HTMLDivElement | null>(null);
+	const [attachments, setAttachments] = useState<Attachment[]>([]);
+	const [isUploadingAttachments, setIsUploadingAttachments] = useState(false);
 	const [isStreaming, setIsStreaming] = useState(false);
 	const [socketVersion, setSocketVersion] = useState(0);
 
@@ -63,16 +65,6 @@ export default function ChatPage() {
 		? (messagesByConversation[activeConversationId] ?? [])
 		: [];
 	const currentMessageCount = currentMessages.length;
-
-	const scheduleStreamIdle = useCallback(() => {
-		if (streamIdleTimerRef.current !== null) {
-			window.clearTimeout(streamIdleTimerRef.current);
-		}
-		streamIdleTimerRef.current = window.setTimeout(() => {
-			setIsStreaming(false);
-			streamIdleTimerRef.current = null;
-		}, 900);
-	}, []);
 
 	const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
 		const viewport = messageViewportRef.current;
@@ -123,83 +115,103 @@ export default function ChatPage() {
 		const token = getAccessToken();
 		if (!activeConversationId || !token) return;
 
-		setConnectionState("connecting");
-		const socket = chatApi.buildChatSocket(activeConversationId, token);
-		socketRef.current = socket;
+		let cancelled = false;
 
-		socket.onopen = () => {
-			isClosingSocketRef.current = false;
-			setConnectionState("open");
+		const connectSocket = async () => {
+			try {
+				setConnectionState("connecting");
+				const response = await chatApi.createWebSocketToken();
+				if (cancelled) return;
 
-			if (pendingMessageRef.current?.conversationId === activeConversationId) {
-				socket.send(
-					chatApi.serializeChatRequest({
-						message: pendingMessageRef.current.message,
-					}),
+				const socket = chatApi.buildChatSocket(
+					activeConversationId,
+					response.data.websocket_token,
 				);
-				scheduleStreamIdle();
-				pendingMessageRef.current = null;
-			}
-		};
+				socketRef.current = socket;
 
-		socket.onmessage = (event) => {
-			const payload = JSON.parse(event.data) as
-				| WebSocketMessageResponse
-				| WebSocketErrorResponse;
+				socket.onopen = () => {
+					isClosingSocketRef.current = false;
+					setConnectionState("open");
 
-			if (payload.type === "error") {
+					if (pendingMessageRef.current?.conversationId === activeConversationId) {
+						socket.send(
+							chatApi.serializeChatRequest({
+								message: pendingMessageRef.current.message,
+							}),
+						);
+						pendingMessageRef.current = null;
+					}
+				};
+
+				socket.onmessage = (event) => {
+					const payload = JSON.parse(event.data) as
+						| WebSocketMessageResponse
+						| WebSocketErrorResponse;
+
+					if (payload.type === "error") {
+						setIsStreaming(false);
+						toast.error(payload.content);
+						return;
+					}
+
+					appendMessage(activeConversationId, payload.message);
+					if (payload.message.finish_reason === "stop") {
+						setIsStreaming(false);
+					}
+				};
+
+				socket.onclose = (event) => {
+					setConnectionState("closed");
+					socketRef.current = null;
+					const isIntentionalClose = isClosingSocketRef.current;
+					isClosingSocketRef.current = false;
+
+					if (event.code === 4401) {
+						redirectToAuthorize(
+							`${window.location.pathname}${window.location.search}`,
+						);
+						return;
+					}
+
+					if (event.code === 4404) {
+						setIsStreaming(false);
+						toast.error("对话不存在或无权限访问");
+					}
+
+					if (
+						!isIntentionalClose &&
+						event.code !== 1000 &&
+						event.code !== 1005
+					) {
+						setIsStreaming(false);
+						toast.error("聊天连接已断开");
+					}
+				};
+
+				socket.onerror = () => {
+					if (isClosingSocketRef.current) return;
+					setIsStreaming(false);
+					toast.error("聊天连接异常");
+				};
+			} catch {
+				if (cancelled) return;
+				setConnectionState("closed");
 				setIsStreaming(false);
-				toast.error(payload.content);
-				return;
-			}
-
-			scheduleStreamIdle();
-			appendMessage(activeConversationId, payload.message);
-		};
-
-		socket.onclose = (event) => {
-			setConnectionState("closed");
-			socketRef.current = null;
-			const isIntentionalClose = isClosingSocketRef.current;
-			isClosingSocketRef.current = false;
-
-			if (event.code === 4401) {
-				redirectToAuthorize(
-					`${window.location.pathname}${window.location.search}`,
-				);
-				return;
-			}
-
-			if (event.code === 4404) {
-				setIsStreaming(false);
-				toast.error("对话不存在或无权限访问");
-			}
-
-			if (!isIntentionalClose && event.code !== 1000 && event.code !== 1005) {
-				setIsStreaming(false);
-				toast.error("聊天连接已断开");
+				toast.error("聊天连接初始化失败");
 			}
 		};
 
-		socket.onerror = () => {
-			if (isClosingSocketRef.current) return;
-			setIsStreaming(false);
-			toast.error("聊天连接异常");
-		};
+		void connectSocket();
 
 		return () => {
-			if (streamIdleTimerRef.current !== null) {
-				window.clearTimeout(streamIdleTimerRef.current);
-				streamIdleTimerRef.current = null;
-			}
+			cancelled = true;
 			isClosingSocketRef.current = true;
-			socket.close();
+			socketRef.current?.close();
 			socketRef.current = null;
 		};
 	}, [
 		activeConversationId,
 		appendMessage,
-		scheduleStreamIdle,
 		setConnectionState,
 		socketVersion,
 	]);
@@ -220,10 +232,6 @@ export default function ChatPage() {
 
 	const handleStop = () => {
 		setIsStreaming(false);
-		if (streamIdleTimerRef.current !== null) {
-			window.clearTimeout(streamIdleTimerRef.current);
-			streamIdleTimerRef.current = null;
-		}
 		pendingMessageRef.current = null;
 		if (socketRef.current) {
 			isClosingSocketRef.current = true;
@@ -231,6 +239,46 @@ export default function ChatPage() {
 			socketRef.current = null;
 			setSocketVersion((value) => value + 1);
 		}
+	};
+
+	const ensureConversation = async () => {
+		if (activeConversationId) {
+			return activeConversationId;
+		}
+		const conversation = await createConversation();
+		navigate(`/chat/${conversation.conversation_id}`);
+		return conversation.conversation_id;
+	};
+
+	const handleAttachmentsSelected = async (files: FileList) => {
+		const token = getAccessToken();
+		if (!token) {
+			redirectToAuthorize(
+				`${window.location.pathname}${window.location.search}`,
+			);
+			return;
+		}
+
+		setIsUploadingAttachments(true);
+		try {
+			const conversationId = await ensureConversation();
+			const nextAttachments: Attachment[] = [];
+			for (const file of Array.from(files)) {
+				const response = await chatApi.uploadAttachment(conversationId, file);
+				nextAttachments.push(response.data.attachment);
+			}
+			setAttachments((current) => [...current, ...nextAttachments]);
+		} catch {
+			toast.error("附件上传失败");
+		} finally {
+			setIsUploadingAttachments(false);
+		}
+	};
+
+	const handleRemoveAttachment = (attachmentId: string) => {
+		setAttachments((current) =>
+			current.filter((attachment) => attachment.id !== attachmentId),
+		);
 	};
 
 	const handleSend = async (value: string) => {
@@ -244,7 +292,8 @@ export default function ChatPage() {
 
 		const userMessage: MessageSchema = {
 			role: "user",
-			parts: [{ type: "text", text: value }],
+			parts: value ? [{ type: "text", text: value }] : [],
+			attachments: attachments.length > 0 ? attachments : undefined,
 			timestamp: createLocalTimestamp(),
 		};
 
@@ -257,8 +306,8 @@ export default function ChatPage() {
 				message: userMessage,
 			};
 			setIsStreaming(true);
-			scheduleStreamIdle();
 			appendMessage(conversationId, userMessage);
+			setAttachments([]);
 			navigate(`/chat/${conversationId}`);
 			return;
 		}
@@ -271,7 +320,7 @@ export default function ChatPage() {
 
 		appendMessage(conversationId, userMessage);
 		setIsStreaming(true);
-		scheduleStreamIdle();
+		setAttachments([]);
 		socket.send(chatApi.serializeChatRequest({ message: userMessage }));
 	};
 
@@ -304,10 +353,14 @@ export default function ChatPage() {
 					<div className="sticky bottom-0 z-10 w-full shrink-0 bg-[#fefdfa] pb-6 pt-0">
 						<div className="mx-auto w-[70%] min-w-[320px] max-w-[1120px]">
 							<ChatComposer
+								attachments={attachments}
 								isStreaming={isStreaming}
+								isUploading={isUploadingAttachments}
 								disabled={
 									connectionState !== "open" && Boolean(routeConversationId)
 								}
+								onAttachmentsSelected={handleAttachmentsSelected}
+								onRemoveAttachment={handleRemoveAttachment}
 								onStop={handleStop}
 								onSubmit={handleSend}
 							/>

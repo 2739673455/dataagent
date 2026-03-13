@@ -1,8 +1,11 @@
 import { ChevronDown, Loader2, Wrench } from "lucide-react";
-import type { ReactNode, RefObject } from "react";
+import type { RefObject } from "react";
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 import type {
+	Attachment,
 	ImageContent,
 	MessagePart,
 	MessageSchema,
@@ -15,6 +18,7 @@ type MessageDisplayItem = {
 	message: {
 		key: string;
 		role: MessageSchema["role"];
+		attachments?: Attachment[] | null;
 		parts: Array<TextContent | ImageContent>;
 	};
 };
@@ -30,6 +34,7 @@ type ToolRunDisplayItem = {
 };
 
 type DisplayItem = MessageDisplayItem | ToolRunDisplayItem;
+const TOOL_ARGS_PREVIEW_MAX_LENGTH = 96;
 
 function getMessageKey(message: MessageSchema) {
 	if (message.message_id != null) {
@@ -97,13 +102,14 @@ function buildDisplayItems(messages: MessageSchema[]): DisplayItem[] {
 			});
 		}
 
-		if (regularParts.length > 0) {
+		if (regularParts.length > 0 || (message.attachments?.length ?? 0) > 0) {
 			items.push({
 				key: getMessageKey(message),
 				type: "message",
 				message: {
 					key: getMessageKey(message),
 					role: message.role,
+					attachments: message.attachments,
 					parts: regularParts,
 				},
 			});
@@ -113,186 +119,129 @@ function buildDisplayItems(messages: MessageSchema[]): DisplayItem[] {
 	return items;
 }
 
-function renderInlineMarkdown(text: string) {
-	const nodes: ReactNode[] = [];
-	const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g;
-	let lastIndex = 0;
-
-	for (const match of text.matchAll(pattern)) {
-		const matched = match[0];
-		const index = match.index ?? 0;
-		if (index > lastIndex) {
-			nodes.push(text.slice(lastIndex, index));
-		}
-
-		if (matched.startsWith("**") && matched.endsWith("**")) {
-			nodes.push(
-				<strong key={`${index}-bold`} className="font-semibold text-slate-900">
-					{matched.slice(2, -2)}
-				</strong>,
-			);
-		} else if (matched.startsWith("`") && matched.endsWith("`")) {
-			nodes.push(
-				<code
-					key={`${index}-code`}
-					className="rounded bg-slate-100 px-1.5 py-0.5 text-[0.95em] text-slate-800"
-				>
-					{matched.slice(1, -1)}
-				</code>,
-			);
-		} else {
-			const linkMatch = matched.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-			if (linkMatch) {
-				nodes.push(
-					<a
-						key={`${index}-link`}
-						href={linkMatch[2]}
-						target="_blank"
-						rel="noreferrer"
-						className="text-sky-700 underline underline-offset-2"
-					>
-						{linkMatch[1]}
-					</a>,
-				);
-			}
-		}
-
-		lastIndex = index + matched.length;
+function formatToolArgValue(value: unknown): string {
+	if (value === null) return "null";
+	if (value === undefined) return "undefined";
+	if (typeof value === "string") return value;
+	if (typeof value === "number" || typeof value === "boolean") {
+		return String(value);
 	}
-
-	if (lastIndex < text.length) {
-		nodes.push(text.slice(lastIndex));
+	if (Array.isArray(value)) {
+		return "[...]";
 	}
-
-	return nodes;
+	return "{...}";
 }
 
-function createStableKey(prefix: string, value: string) {
-	return `${prefix}-${value}`;
+function getToolArgsPreview(args?: Record<string, unknown>): string | null {
+	if (!args) return null;
+	const entries = Object.entries(args);
+	if (entries.length === 0) return null;
+
+	const preview = entries
+		.map(([key, value]) => `${key}=${formatToolArgValue(value)}`)
+		.join(", ");
+
+	if (preview.length <= TOOL_ARGS_PREVIEW_MAX_LENGTH) {
+		return preview;
+	}
+
+	return `${preview.slice(0, TOOL_ARGS_PREVIEW_MAX_LENGTH).trimEnd()}...`;
 }
 
 function MarkdownText({ text }: { text: string }) {
-	const lines = text.split("\n");
-	const blocks: ReactNode[] = [];
-	let listItems: string[] = [];
-	let orderedListItems: string[] = [];
-	let codeLines: string[] = [];
-	let inCodeBlock = false;
+	return (
+		<div className="text-[15px] tracking-wide opacity-95">
+			<ReactMarkdown
+				remarkPlugins={[remarkGfm]}
+				components={{
+					h1: ({ children }) => (
+						<h1 className="mt-1 text-xl font-semibold text-slate-900">
+							{children}
+						</h1>
+					),
+					h2: ({ children }) => (
+						<h2 className="mt-1 text-lg font-semibold text-slate-900">
+							{children}
+						</h2>
+					),
+					h3: ({ children }) => (
+						<h3 className="mt-1 text-base font-semibold text-slate-900">
+							{children}
+						</h3>
+					),
+					p: ({ children }) => (
+						<p className="whitespace-pre-wrap leading-relaxed">{children}</p>
+					),
+					ul: ({ children }) => (
+						<ul className="list-disc space-y-1 pl-5">{children}</ul>
+					),
+					ol: ({ children }) => (
+						<ol className="list-decimal space-y-1 pl-5">{children}</ol>
+					),
+					li: ({ children }) => <li>{children}</li>,
+					a: ({ href, children }) => (
+						<a
+							href={href}
+							target="_blank"
+							rel="noreferrer"
+							className="text-sky-700 underline underline-offset-2"
+						>
+							{children}
+						</a>
+					),
+					code: ({ className, children, ...props }) => {
+						const isBlock = Boolean(className);
+						if (isBlock) {
+							return (
+								<code className={className} {...props}>
+									{children}
+								</code>
+							);
+						}
 
-	const flushList = (key: string) => {
-		if (listItems.length > 0) {
-			blocks.push(
-				<ul key={`ul-${key}`} className="list-disc space-y-1 pl-5">
-					{listItems.map((item) => (
-						<li key={createStableKey(`ul-item-${key}`, item)}>
-							{renderInlineMarkdown(item)}
-						</li>
-					))}
-				</ul>,
-			);
-			listItems = [];
-		}
-		if (orderedListItems.length > 0) {
-			blocks.push(
-				<ol key={`ol-${key}`} className="list-decimal space-y-1 pl-5">
-					{orderedListItems.map((item) => (
-						<li key={createStableKey(`ol-item-${key}`, item)}>
-							{renderInlineMarkdown(item)}
-						</li>
-					))}
-				</ol>,
-			);
-			orderedListItems = [];
-		}
-	};
-
-	const flushCodeBlock = (key: string) => {
-		if (codeLines.length > 0) {
-			blocks.push(
-				<pre
-					key={`code-${key}`}
-					className="overflow-x-auto rounded-[1rem] bg-slate-100 px-4 py-3 text-sm text-slate-700"
-				>
-					<code>{codeLines.join("\n")}</code>
-				</pre>,
-			);
-			codeLines = [];
-		}
-	};
-
-	lines.forEach((line, index) => {
-		const trimmed = line.trim();
-
-		if (trimmed.startsWith("```")) {
-			if (inCodeBlock) {
-				flushCodeBlock(String(index));
-			} else {
-				flushList(String(index));
-			}
-			inCodeBlock = !inCodeBlock;
-			return;
-		}
-
-		if (inCodeBlock) {
-			codeLines.push(line);
-			return;
-		}
-
-		const unorderedMatch = line.match(/^\s*[-*]\s+(.*)$/);
-		if (unorderedMatch) {
-			flushCodeBlock(String(index));
-			listItems.push(unorderedMatch[1]);
-			return;
-		}
-
-		const orderedMatch = line.match(/^\s*\d+\.\s+(.*)$/);
-		if (orderedMatch) {
-			flushCodeBlock(String(index));
-			orderedListItems.push(orderedMatch[1]);
-			return;
-		}
-
-		flushList(String(index));
-		flushCodeBlock(String(index));
-
-		if (!trimmed) {
-			return;
-		}
-
-		const headingMatch = line.match(/^(#{1,3})\s+(.*)$/);
-		if (headingMatch) {
-			const level = headingMatch[1].length;
-			const className =
-				level === 1
-					? "text-xl font-semibold"
-					: level === 2
-						? "text-lg font-semibold"
-						: "text-base font-semibold";
-			blocks.push(
-				<div
-					key={createStableKey(`heading-${index}`, headingMatch[2])}
-					className={cn("mt-1", className)}
-				>
-					{renderInlineMarkdown(headingMatch[2])}
-				</div>,
-			);
-			return;
-		}
-
-		blocks.push(
-			<p
-				key={createStableKey(`p-${index}`, line)}
-				className="whitespace-pre-wrap leading-relaxed"
+						return (
+							<code
+								className="rounded bg-slate-100 px-1.5 py-0.5 text-[0.95em] text-slate-800"
+								{...props}
+							>
+								{children}
+							</code>
+						);
+					},
+					pre: ({ children }) => (
+						<pre className="overflow-x-auto rounded-[1rem] bg-slate-100 px-4 py-3 text-sm text-slate-700">
+							{children}
+						</pre>
+					),
+					table: ({ children }) => (
+						<div className="overflow-x-auto rounded-[1rem] border border-slate-200 bg-white">
+							<table className="min-w-full border-collapse text-left text-sm text-slate-700">
+								{children}
+							</table>
+						</div>
+					),
+					thead: ({ children }) => <thead className="bg-slate-50">{children}</thead>,
+					th: ({ children }) => (
+						<th className="border-b border-slate-200 px-4 py-2.5 font-semibold text-slate-900">
+							{children}
+						</th>
+					),
+					tbody: ({ children }) => <tbody>{children}</tbody>,
+					tr: ({ children }) => (
+						<tr className="border-t border-slate-200 align-top">{children}</tr>
+					),
+					td: ({ children }) => <td className="px-4 py-2.5">{children}</td>,
+					blockquote: ({ children }) => (
+						<blockquote className="border-l-4 border-slate-300 pl-4 italic text-slate-600">
+							{children}
+						</blockquote>
+					),
+				}}
 			>
-				{renderInlineMarkdown(line)}
-			</p>,
-		);
-	});
-
-	flushList("final");
-	flushCodeBlock("final");
-
-	return <div className="space-y-3">{blocks}</div>;
+				{text}
+			</ReactMarkdown>
+		</div>
+	);
 }
 
 function PartView({
@@ -304,13 +253,13 @@ function PartView({
 }) {
 	if (part.type === "text") {
 		return (
-			<div className="text-[15px] tracking-wide opacity-95">
-				{renderMarkdown ? (
-					<MarkdownText text={part.text} />
-				) : (
+			renderMarkdown ? (
+				<MarkdownText text={part.text} />
+			) : (
+				<div className="text-[15px] tracking-wide opacity-95">
 					<p className="whitespace-pre-wrap leading-relaxed">{part.text}</p>
-				)}
-			</div>
+				</div>
+			)
 		);
 	}
 
@@ -325,6 +274,7 @@ function PartView({
 
 function ToolRunBar({ item }: { item: ToolRunDisplayItem }) {
 	const [isOpen, setIsOpen] = useState(false);
+	const argsPreview = getToolArgsPreview(item.args);
 
 	return (
 		<div className="flex w-full justify-start">
@@ -359,14 +309,11 @@ function ToolRunBar({ item }: { item: ToolRunDisplayItem }) {
 					<div className="min-w-0 flex-1">
 						<p className="truncate text-sm font-medium text-slate-800">
 							{item.name}
-						</p>
-						<p
-							className={cn(
-								"text-[11px] font-medium tracking-[0.08em] uppercase",
-								item.completed ? "text-emerald-700" : "text-slate-500",
-							)}
-						>
-							{item.completed ? "工具调用完成" : "工具调用中"}
+							{argsPreview ? (
+								<span className="ml-2 font-normal text-slate-500">
+									{argsPreview}
+								</span>
+							) : null}
 						</p>
 					</div>
 					<ChevronDown
@@ -426,6 +373,23 @@ function MessageBubble({
 				)}
 			>
 				<div className="space-y-3">
+					{message.attachments?.length ? (
+						<div className="flex flex-wrap gap-2">
+							{message.attachments.map((attachment) => (
+								<div
+									key={attachment.id ?? attachment.url}
+									className={cn(
+										"rounded-full px-3 py-1 text-xs",
+										isUser
+											? "bg-white/60 text-slate-700"
+											: "bg-slate-100 text-slate-600",
+									)}
+								>
+									{attachment.name}
+								</div>
+							))}
+						</div>
+					) : null}
 					{message.parts.map((part) => (
 						<PartView
 							key={getMessagePartKey(part)}
