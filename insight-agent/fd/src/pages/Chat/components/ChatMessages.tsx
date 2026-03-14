@@ -8,9 +8,10 @@ import {
 } from "lucide-react";
 import type { RefObject } from "react";
 import { useEffect, useState } from "react";
-import { chatApi } from "@/api/chat";
+import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { chatApi } from "@/api/chat";
 import { cn } from "@/lib/utils";
 import type {
 	Attachment,
@@ -44,6 +45,31 @@ type ToolRunDisplayItem = {
 
 type DisplayItem = MessageDisplayItem | ToolRunDisplayItem;
 const TOOL_ARGS_PREVIEW_MAX_LENGTH = 96;
+
+function ImagePreview({
+	alt,
+	onClose,
+	src,
+}: {
+	alt: string;
+	onClose: () => void;
+	src: string;
+}) {
+	return createPortal(
+		<button
+			type="button"
+			onClick={onClose}
+			className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-6"
+		>
+			<img
+				src={src}
+				alt={alt}
+				className="max-h-[88vh] max-w-[88vw] rounded-[1.25rem] object-contain shadow-2xl"
+			/>
+		</button>,
+		document.body,
+	);
+}
 
 function getMessageKey(message: MessageSchema) {
 	if (message.message_id != null) {
@@ -237,7 +263,9 @@ function MarkdownText({ text }: { text: string }) {
 							</table>
 						</div>
 					),
-					thead: ({ children }) => <thead className="bg-slate-50">{children}</thead>,
+					thead: ({ children }) => (
+						<thead className="bg-slate-50">{children}</thead>
+					),
 					th: ({ children }) => (
 						<th className="border-b border-slate-200 px-4 py-2.5 font-semibold text-slate-900">
 							{children}
@@ -271,14 +299,12 @@ function PartView({
 	renderMarkdown?: boolean;
 }) {
 	if (part.type === "text") {
-		return (
-			renderMarkdown ? (
-				<MarkdownText text={part.text} />
-			) : (
-				<div className="text-[15px] tracking-wide opacity-95">
-					<p className="whitespace-pre-wrap leading-relaxed">{part.text}</p>
-				</div>
-			)
+		return renderMarkdown ? (
+			<MarkdownText text={part.text} />
+		) : (
+			<div className="text-[15px] tracking-wide opacity-95">
+				<p className="whitespace-pre-wrap leading-relaxed">{part.text}</p>
+			</div>
 		);
 	}
 
@@ -307,9 +333,7 @@ function ToolRunBar({ item }: { item: ToolRunDisplayItem }) {
 				className={cn(
 					"w-full max-w-[88%] overflow-hidden",
 					"rounded-[1.25rem]",
-					item.completed
-						? "bg-emerald-600"
-						: "bg-slate-200",
+					item.completed ? "bg-emerald-600" : "bg-slate-200",
 				)}
 			>
 				<button
@@ -366,9 +390,7 @@ function ToolRunBar({ item }: { item: ToolRunDisplayItem }) {
 					<div
 						className={cn(
 							"space-y-3 px-3.5 pb-3.5 pt-2.5",
-							item.completed
-								? "bg-emerald-600"
-								: "bg-slate-200",
+							item.completed ? "bg-emerald-600" : "bg-slate-200",
 						)}
 					>
 						{item.args !== undefined ? (
@@ -539,9 +561,7 @@ function AttachmentChip({
 					disabled={isDownloading}
 					className={cn(
 						"flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition",
-						isUser
-							? "hover:bg-slate-800/10"
-							: "hover:bg-slate-800/5",
+						isUser ? "hover:bg-slate-800/10" : "hover:bg-slate-800/5",
 						isDownloading ? "cursor-wait opacity-60" : "",
 					)}
 					title="下载附件"
@@ -607,17 +627,11 @@ function MessageBubble({
 				</div>
 			</div>
 			{previewImage ? (
-				<button
-					type="button"
-					onClick={() => setPreviewImage(null)}
-					className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-6"
-				>
-					<img
-						src={previewImage.src}
-						alt={previewImage.alt}
-						className="max-h-[88vh] max-w-[88vw] rounded-[1.25rem] object-contain shadow-2xl"
-					/>
-				</button>
+				<ImagePreview
+					src={previewImage.src}
+					alt={previewImage.alt}
+					onClose={() => setPreviewImage(null)}
+				/>
 			) : null}
 		</>
 	);

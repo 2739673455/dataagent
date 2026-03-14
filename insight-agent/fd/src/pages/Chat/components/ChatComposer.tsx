@@ -1,5 +1,6 @@
 import { ArrowUp, FileText, Plus, Square, X } from "lucide-react";
 import { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -14,6 +15,31 @@ interface ChatComposerProps {
 	onRemoveAttachment: (attachmentName: string) => void;
 	onStop: () => void;
 	onSubmit: (value: string) => Promise<void> | void;
+}
+
+function ImagePreview({
+	alt,
+	onClose,
+	src,
+}: {
+	alt: string;
+	onClose: () => void;
+	src: string;
+}) {
+	return createPortal(
+		<button
+			type="button"
+			onClick={onClose}
+			className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-6"
+		>
+			<img
+				src={src}
+				alt={alt}
+				className="max-h-[88vh] max-w-[88vw] rounded-[1.25rem] object-contain shadow-2xl"
+			/>
+		</button>,
+		document.body,
+	);
 }
 
 export function ChatComposer({
@@ -171,17 +197,11 @@ export function ChatComposer({
 				</div>
 			</div>
 			{previewImage ? (
-				<button
-					type="button"
-					onClick={() => setPreviewImage(null)}
-					className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-6"
-				>
-					<img
-						src={previewImage.src}
-						alt={previewImage.alt}
-						className="max-h-[88vh] max-w-[88vw] rounded-[1.25rem] object-contain shadow-2xl"
-					/>
-				</button>
+				<ImagePreview
+					src={previewImage.src}
+					alt={previewImage.alt}
+					onClose={() => setPreviewImage(null)}
+				/>
 			) : null}
 		</div>
 	);
