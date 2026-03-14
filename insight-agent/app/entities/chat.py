@@ -2,7 +2,7 @@ from typing import Optional
 import datetime
 
 from sqlalchemy import BigInteger, DateTime, ForeignKeyConstraint, Index, String, Text, text
-from sqlalchemy.dialects.mysql import TINYINT
+from sqlalchemy.dialects.mysql import MEDIUMTEXT, TINYINT
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 class Base(DeclarativeBase):
@@ -38,7 +38,7 @@ class Message(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, comment='消息ID')
     conversation_id: Mapped[int] = mapped_column(BigInteger, nullable=False, comment='对话ID')
     role: Mapped[str] = mapped_column(String(10), nullable=False, comment='角色 (user/assistant/tool/system)')
-    parts: Mapped[str] = mapped_column(Text, nullable=False, comment='消息片段列表 (JSON 字符串)')
+    parts: Mapped[str] = mapped_column(MEDIUMTEXT, nullable=False, comment='消息片段列表 (JSON 字符串)')
     create_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False, server_default=text('CURRENT_TIMESTAMP'), comment='创建时间')
     yn: Mapped[int] = mapped_column(TINYINT, nullable=False, server_default=text("'1'"), comment='是否启用')
     finish_reason: Mapped[Optional[str]] = mapped_column(String(128), comment='完成原因')

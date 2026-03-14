@@ -16,6 +16,7 @@ async def build_agent(user_id: int, conversation_id: int) -> CompiledStateGraph:
         model=model_cfg.model,
         base_url=model_cfg.base_url,
         api_key=model_cfg.api_key,
+        profile=model_cfg.profile,
         **model_cfg.params,
     )
 

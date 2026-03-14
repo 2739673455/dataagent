@@ -53,6 +53,7 @@ class ModelCfg(BaseModel):
     base_url: str
     api_key: str
     params: dict
+    profile: dict
 
 
 class LMConfigCfg(BaseModel):

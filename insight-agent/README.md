@@ -1,8 +1,3 @@
-# 参考
-
-[智能洞察分析](https://www.gooddata.com/blog/agentic-analytics-complete-guide-to-ai-driven-data-intelligence/)  
-[电商运营分析](https://datagrid.com/blog/automate-multi-channel-attribution-analysis)  
-
 # 案例
 
 ## 商品转化率降低原因分析
@@ -31,10 +26,3 @@
 
 ## 退款模式检测
 分析退货和客户反馈，以确定产品质量问题、描述不一致或其他导致退货成本高昂的因素的模式，主动解决问题
-
-
-# 问题
-
-1. 技能中需要明确说明，使用 python 时用 uv 环境
-2. 消息加载后考虑放入 Agent 的 checkpoint?需考虑总结中间件的影响
-3. 前端展示？HTML？
