@@ -37,9 +37,11 @@ type ToolRunDisplayItem = {
 	key: string;
 	type: "tool_run";
 	toolCallId: string;
+	conversationId?: number | null;
 	name: string;
 	args?: Record<string, unknown>;
 	result?: string;
+	attachments?: Attachment[] | null;
 	completed: boolean;
 };
 
@@ -105,18 +107,49 @@ function buildDisplayItems(
 
 	for (const message of messages) {
 		const regularParts: Array<TextContent | ImageContent> = [];
+		const toolParts: Array<Extract<MessagePart, { type: "tool_call" | "tool_result" }>> = [];
 
 		for (const part of message.parts) {
-			if (part.type === "text" || part.type === "image_url") {
+			if (part.type === "text") {
+				if (part.text.trim()) {
+					regularParts.push(part);
+				}
+				continue;
+			}
+
+			if (part.type === "image_url") {
 				regularParts.push(part);
 				continue;
 			}
 
+			toolParts.push(part);
+		}
+
+		const shouldRenderAsStandaloneMessage =
+			regularParts.length > 0 ||
+			((message.attachments?.length ?? 0) > 0 && message.role !== "tool");
+
+		if (shouldRenderAsStandaloneMessage) {
+			items.push({
+				key: getMessageKey(message),
+				type: "message",
+				message: {
+					key: getMessageKey(message),
+					conversationId,
+					role: message.role,
+					attachments: message.attachments,
+					parts: regularParts,
+				},
+			});
+		}
+
+		for (const part of toolParts) {
 			if (part.type === "tool_call") {
 				const item: ToolRunDisplayItem = {
 					key: `tool-run-${part.tool_call_id}`,
 					type: "tool_run",
 					toolCallId: part.tool_call_id,
+					conversationId,
 					name: part.name,
 					args: part.args,
 					completed: false,
@@ -130,6 +163,7 @@ function buildDisplayItems(
 			if (existing) {
 				existing.name = part.name || existing.name;
 				existing.result = part.content;
+				existing.attachments = message.attachments;
 				existing.completed = true;
 				continue;
 			}
@@ -138,23 +172,11 @@ function buildDisplayItems(
 				key: `tool-run-${part.tool_call_id}`,
 				type: "tool_run",
 				toolCallId: part.tool_call_id,
+				conversationId,
 				name: part.name,
 				result: part.content,
+				attachments: message.attachments,
 				completed: true,
-			});
-		}
-
-		if (regularParts.length > 0 || (message.attachments?.length ?? 0) > 0) {
-			items.push({
-				key: getMessageKey(message),
-				type: "message",
-				message: {
-					key: getMessageKey(message),
-					conversationId,
-					role: message.role,
-					attachments: message.attachments,
-					parts: regularParts,
-				},
 			});
 		}
 	}
@@ -326,123 +348,141 @@ function PartView({
 function ToolRunBar({ item }: { item: ToolRunDisplayItem }) {
 	const [isOpen, setIsOpen] = useState(false);
 	const argsPreview = getToolArgsPreview(item.args);
+	const hasAttachments = item.completed && (item.attachments?.length ?? 0) > 0;
 
 	return (
-		<div className="flex w-full justify-start">
-			<div
-				className={cn(
-					"w-full max-w-[88%] overflow-hidden",
-					"rounded-[1.25rem]",
-					item.completed ? "bg-emerald-600" : "bg-slate-200",
-				)}
-			>
-				<button
-					type="button"
-					onClick={() => setIsOpen((value) => !value)}
+		<div className={cn(hasAttachments ? "space-y-1.5" : "space-y-0")}>
+			<div className="flex w-full justify-start">
+				<div
 					className={cn(
-						"flex w-full items-center gap-3 px-3.5 py-2 text-left text-sm",
-						item.completed ? "text-white" : "text-slate-700",
+						"w-full max-w-[88%] overflow-hidden rounded-[1.25rem]",
+						item.completed ? "bg-emerald-600" : "bg-slate-200",
 					)}
 				>
-					<div
+					<button
+						type="button"
+						onClick={() => setIsOpen((value) => !value)}
 						className={cn(
-							"flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
-							item.completed
-								? "bg-emerald-800 text-white"
-								: "bg-slate-700 text-white",
+							"flex w-full items-center gap-3 px-3.5 py-2 text-left text-sm",
+							item.completed ? "text-white" : "text-slate-700",
 						)}
 					>
-						{item.completed ? (
-							<Wrench className="h-3.5 w-3.5" />
-						) : (
-							<Loader2 className="h-3.5 w-3.5 animate-spin" />
-						)}
-					</div>
-					<div className="min-w-0 flex-1">
-						<p
+						<div
 							className={cn(
-								"truncate text-sm font-medium",
-								item.completed ? "text-white" : "text-slate-800",
+								"flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
+								item.completed
+									? "bg-emerald-800 text-white"
+									: "bg-slate-700 text-white",
 							)}
 						>
-							{item.name}
-							{argsPreview ? (
-								<span
-									className={cn(
-										"ml-2 font-normal",
-										item.completed ? "text-emerald-50/90" : "text-slate-500",
-									)}
-								>
-									{argsPreview}
-								</span>
+							{item.completed ? (
+								<Wrench className="h-3.5 w-3.5" />
+							) : (
+								<Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-500" />
+							)}
+						</div>
+						<div className="min-w-0 flex-1">
+							<p
+								className={cn(
+									"truncate text-sm font-medium",
+									item.completed ? "text-white" : "text-slate-800",
+								)}
+							>
+								{item.name}
+								{argsPreview ? (
+									<span
+										className={cn(
+											"ml-2 font-normal",
+											item.completed ? "text-emerald-50/90" : "text-slate-500",
+										)}
+									>
+										{argsPreview}
+									</span>
+								) : null}
+							</p>
+						</div>
+						<ChevronDown
+							className={cn(
+								"h-4 w-4 shrink-0 transition-transform",
+								isOpen ? "rotate-180" : "",
+								item.completed ? "text-emerald-50/90" : "text-slate-500",
+							)}
+						/>
+					</button>
+					{isOpen ? (
+						<div
+							className={cn(
+								"space-y-3 px-3.5 pb-3.5 pt-2.5",
+								item.completed ? "bg-emerald-600" : "bg-slate-200",
+							)}
+						>
+							{item.args !== undefined ? (
+								<div className="space-y-2">
+									<p
+										className={cn(
+											"text-xs font-medium uppercase tracking-[0.18em]",
+											item.completed ? "text-emerald-100/80" : "text-slate-500",
+										)}
+									>
+										参数
+									</p>
+									<pre
+										className={cn(
+											"overflow-x-auto whitespace-pre-wrap rounded-[1rem] px-3 py-2.5 text-xs",
+											item.completed
+												? "bg-emerald-700/70 text-emerald-50"
+												: "bg-white/70 text-slate-600",
+										)}
+									>
+										{JSON.stringify(item.args, null, 2)}
+									</pre>
+								</div>
 							) : null}
-						</p>
-					</div>
-					<ChevronDown
-						className={cn(
-							"h-4 w-4 shrink-0 transition-transform",
-							isOpen ? "rotate-180" : "",
-							item.completed ? "text-emerald-50/90" : "text-slate-500",
-						)}
-					/>
-				</button>
-				{isOpen ? (
-					<div
-						className={cn(
-							"space-y-3 px-3.5 pb-3.5 pt-2.5",
-							item.completed ? "bg-emerald-600" : "bg-slate-200",
-						)}
-					>
-						{item.args !== undefined ? (
-							<div className="space-y-2">
-								<p
-									className={cn(
-										"text-xs font-medium uppercase tracking-[0.18em]",
-										item.completed ? "text-emerald-100/80" : "text-slate-500",
-									)}
-								>
-									参数
-								</p>
-								<pre
-									className={cn(
-										"overflow-x-auto whitespace-pre-wrap rounded-[1rem] px-3 py-2.5 text-xs",
-										item.completed
-											? "bg-emerald-700/70 text-emerald-50"
-											: "bg-white/70 text-slate-600",
-									)}
-								>
-									{JSON.stringify(item.args, null, 2)}
-								</pre>
-							</div>
-						) : null}
-						{item.result !== undefined ? (
-							<div className="space-y-2">
-								<p
-									className={cn(
-										"text-xs font-medium uppercase tracking-[0.18em]",
-										item.completed ? "text-emerald-100/80" : "text-slate-500",
-									)}
-								>
-									结果
-								</p>
-								<pre
-									className={cn(
-										"overflow-x-auto whitespace-pre-wrap rounded-[1rem] px-3 py-2.5 text-xs",
-										item.completed
-											? "bg-emerald-700/70 text-emerald-50"
-											: "bg-white/55 text-emerald-950",
-									)}
-								>
-									{item.result}
-								</pre>
-							</div>
-						) : null}
+							{item.result !== undefined ? (
+								<div className="space-y-2">
+									<p
+										className={cn(
+											"text-xs font-medium uppercase tracking-[0.18em]",
+											item.completed ? "text-emerald-100/80" : "text-slate-500",
+										)}
+									>
+										结果
+									</p>
+									<pre
+										className={cn(
+											"overflow-x-auto whitespace-pre-wrap rounded-[1rem] px-3 py-2.5 text-xs",
+											item.completed
+												? "bg-emerald-700/70 text-emerald-50"
+												: "bg-white/55 text-emerald-950",
+										)}
+									>
+										{item.result}
+									</pre>
+								</div>
+							) : null}
+						</div>
+					) : null}
+				</div>
+			</div>
+			{hasAttachments ? (
+				<div className="flex w-full justify-start">
+					<div className="max-w-[88%] rounded-[1.5rem] bg-transparent px-4 py-0.5 text-slate-800">
+							<div className="flex flex-wrap gap-2">
+							{(item.attachments ?? []).map((attachment) => (
+								<AttachmentChip
+									key={attachment.path}
+									attachment={attachment}
+									conversationId={item.conversationId}
+									isUser={false}
+								/>
+							))}
+						</div>
+						</div>
 					</div>
 				) : null}
 			</div>
-		</div>
-	);
-}
+		);
+	}
 
 function AttachmentPreview({
 	attachment,
@@ -567,7 +607,7 @@ function AttachmentChip({
 					title="下载附件"
 				>
 					{isDownloading ? (
-						<Loader2 className="h-3.5 w-3.5 animate-spin" />
+						<Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-500" />
 					) : (
 						<Download className="h-3.5 w-3.5" />
 					)}
@@ -669,11 +709,11 @@ export function ChatMessages({
 				) : isLoading ? (
 					<div className="flex h-full items-center justify-center">
 						<div className="flex h-16 w-16 items-center justify-center">
-							<Loader2 className="h-7 w-7 animate-spin text-primary" />
+							<Loader2 className="h-7 w-7 animate-spin text-indigo-600" />
 						</div>
 					</div>
 				) : (
-					<div className="mx-auto w-[60%] min-w-[320px] max-w-[960px] space-y-5">
+						<div className="mx-auto w-[60%] min-w-[320px] max-w-[960px] space-y-2">
 						{displayItems.map((item) =>
 							item.type === "message" ? (
 								<MessageBubble key={item.key} message={item.message} />

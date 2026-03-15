@@ -1,2 +1,2 @@
-from .db_query import create_db_query_tool
-from .return_file import create_return_file_tool
+from .db_query import db_query
+from .return_file import return_file

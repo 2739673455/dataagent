@@ -63,8 +63,6 @@ class ToolResultPart(BaseModel):
 
 MessageRole = Literal["user", "assistant", "tool", "system"]
 FinishReason = Literal["stop", "tool_calls"]
-
-
 MessagePart = Annotated[
     TextContent | ImageContent | ToolCallPart | ToolResultPart,
     Field(discriminator="type"),
@@ -78,6 +76,7 @@ class Attachment(BaseModel):
 
 class MessageSchema(BaseModel):
     message_id: int | None = Field(default=None, description="消息ID")
+    context_seq: int | None = Field(default=None, description="对话内上下文顺序号")
     role: MessageRole = Field(..., description="发送者")
     parts: list[MessagePart] = Field(..., description="消息片段")
     attachments: list[Attachment] | None = Field(default=None, description="附件列表")

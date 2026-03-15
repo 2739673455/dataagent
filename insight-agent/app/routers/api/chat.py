@@ -2,16 +2,22 @@ import json
 import mimetypes
 import re
 import secrets
+import shutil
 from typing import Annotated
 from uuid import uuid4
 
+from app.core.agent import get_workspace_dir
 from app.exceptions import chat_error
 from app.mappers import message_mapper
-from app.repositories import conversation_repo, message_repo, websocket_token_repo
+from app.repositories import (
+    context_compaction_repo,
+    conversation_repo,
+    message_repo,
+    websocket_token_repo,
+)
 from app.schemas import chat_schema
-from app.services import agent_service, chat_service
+from app.services import chat_service
 from app.utils import context
-from app.utils.agent_paths import delete_workspace_dir, get_workspace_dir
 from app.utils.db import get_app_db
 from fastapi import (
     APIRouter,
@@ -135,8 +141,12 @@ async def api_delete_conversations(
         await message_repo.update_yn_by_conversation_id(
             db_session, conversation_id, yn=0
         )
+        # 禁用对话下所有上下文压缩记录
+        await context_compaction_repo.update_yn_by_conversation_id(
+            db_session, conversation_id, yn=0
+        )
         # 删除对话对应工作区
-        delete_workspace_dir(user_id, conversation_id)
+        shutil.rmtree(get_workspace_dir(user_id, conversation_id), ignore_errors=True)
     logger.info(f"Delete conversations: conversation_ids={body.conversation_ids}")
 
 
@@ -212,18 +222,35 @@ async def api_websocket_chat(
         logger.info(f"WebSocket disconnected: {conversation_id=}")
         return
 
-    # 加载历史消息，并转换格式
+    # 从数据库加载历史消息
+    message_entities = await message_repo.ls(db_session, conversation_id)
+    # 获取最后一个消息的 context_seq；若没有历史消息，则首条消息从 0 开始
+    cur_context_seq = message_entities[-1].context_seq if message_entities else -1
+    # 将历史消息转换为 LangChain Message
     messages = [
         message_mapper.schema_to_langchain_message(
             message_mapper.entity_to_schema(i),
             user_id=user_id,
             conversation_id=conversation_id,
         )
-        for i in await message_repo.ls(db_session, conversation_id)
+        for i in message_entities
     ]
     logger.info(
         f"Load history messages: {conversation_id=}, message_count={len(messages)}"
     )
+
+    # 从数据库加载最新压缩上下文
+    context_compaction_entity = (
+        await context_compaction_repo.get_latest_by_conversation_id(
+            db_session, conversation_id
+        )
+    )
+    if context_compaction_entity:
+        # 将历史消息替换为压缩上下文
+        messages[: context_compaction_entity.end_seq] = [
+            {"role": "user", "content": context_compaction_entity.summary_message}
+        ]
+        logger.info(f"Load context_compaction: {conversation_id=}")
 
     try:
         while True:
@@ -240,17 +267,13 @@ async def api_websocket_chat(
                         ).model_dump(mode="json")
                     )
                     continue
-            except json.JSONDecodeError:
+                # 为用户消息添加 context_seq
+                cur_context_seq += 1
+                body.message.context_seq = cur_context_seq
+            except (json.JSONDecodeError, ValidationError) as e:
                 await websocket.send_json(
                     chat_schema.WebSocketErrorResponse(
-                        content="Invalid JSON format"
-                    ).model_dump(mode="json")
-                )
-                continue
-            except ValidationError as e:
-                await websocket.send_json(
-                    chat_schema.WebSocketErrorResponse(
-                        content=f"Invalid request format: {str(e)}"
+                        content=f"Invalid request: {str(e)}"
                     ).model_dump(mode="json")
                 )
                 continue
@@ -258,7 +281,6 @@ async def api_websocket_chat(
             # 将草稿对话修改为正式对话
             if conversation.is_draft == 1:
                 await conversation_repo.update(db_session, conversation, is_draft=0)
-                conversation.is_draft = 0
 
             # 调用 Agent
             async for message in chat_service.stream_chat(
@@ -267,7 +289,9 @@ async def api_websocket_chat(
                 conversation_id,
                 messages,
                 body.message,
+                has_applied_summary=context_compaction_entity is not None,
             ):
+                cur_context_seq += 1
                 event = chat_schema.WebSocketMessageResponse(message=message)
                 # 发送 WebSocket 响应
                 await websocket.send_json(event.model_dump(mode="json"))
@@ -275,10 +299,6 @@ async def api_websocket_chat(
     # 客户端断开连接
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected: {conversation_id=}")
-
-    finally:
-        # 清理 Agent
-        await agent_service.cleanup_agent(user_id, conversation_id)
 
 
 @router.post("/attachment/upload")
@@ -295,14 +315,13 @@ async def api_upload_attachment(
     if (conversation is None) or (conversation.user_id != user_id):
         raise chat_error.ConversationNotFound
 
-    # 获取工作区目录
-    target_dir = get_workspace_dir(user_id, conversation_id)
     # 获取原始文件名
     raw_name = file.filename or "upload"
     # 构造唯一文件名
     path = _build_attachment_unique_name(raw_name)
     # 构造文件路径
-    target_path = _build_attachment_path(target_dir, path)
+    workspace_dir = get_workspace_dir(user_id, conversation_id)
+    target_path = _build_attachment_path(workspace_dir, path)
     # 按块读取并落盘，避免一次性把整个文件读入内存
     with target_path.open("wb") as target_file:
         while chunk := await file.read(1024 * 1024):
@@ -328,8 +347,8 @@ async def api_delete_attachment(
         raise chat_error.ConversationNotFound
 
     # 获取工作区目录并删除附件
-    target_dir = get_workspace_dir(user_id, body.conversation_id)
-    target_path = _build_attachment_path(target_dir, body.path)
+    workspace_dir = get_workspace_dir(user_id, body.conversation_id)
+    target_path = _build_attachment_path(workspace_dir, body.path)
     if target_path.exists() and target_path.is_file():
         target_path.unlink()
 
@@ -352,8 +371,8 @@ async def api_get_attachment(
     if (conversation is None) or (conversation.user_id != user_id):
         raise chat_error.ConversationNotFound
 
-    target_dir = get_workspace_dir(user_id, conversation_id)
-    target_path = _build_attachment_path(target_dir, path)
+    workspace_dir = get_workspace_dir(user_id, conversation_id)
+    target_path = _build_attachment_path(workspace_dir, path)
     if not target_path.is_file():
         raise HTTPException(status_code=404, detail="Attachment not found")
 

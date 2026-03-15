@@ -76,13 +76,13 @@ async def ls(
         yn: 启用状态过滤，为 None 则不过滤
 
     Returns:
-        按创建时间正序排列的消息列表
+        按上下文顺序正序排列的消息列表
     """
     base_stmt = select(Message).where(Message.conversation_id == conversation_id)
 
     if yn is not None:
         base_stmt = base_stmt.where(Message.yn == yn)
 
-    stmt = base_stmt.order_by(Message.create_at.asc(), Message.id.asc())
+    stmt = base_stmt.order_by(Message.context_seq.asc(), Message.id.asc())
     result = await db_session.execute(stmt)
     return list(result.scalars().all())

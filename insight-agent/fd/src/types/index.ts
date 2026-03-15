@@ -67,6 +67,7 @@ export type FinishReason = "stop" | "tool_calls";
 
 export interface MessageSchema {
   message_id?: number | null;
+  context_seq?: number | null;
   role: MessageRole;
   parts: MessagePart[];
   attachments?: Attachment[] | null;

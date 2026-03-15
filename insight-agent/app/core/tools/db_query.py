@@ -9,6 +9,7 @@ import httpx
 from app.config import CFG
 from app.utils.http_client import get_http_client
 from langchain.tools import tool
+from langgraph.prebuilt.tool_node import ToolRuntime
 
 DB_QUERY_URL = CFG.data_agent.base_url + CFG.data_agent.query
 PREVIEW_ROWS = 5
@@ -77,85 +78,87 @@ def _write_json_result(file_path: Path, result: Any) -> None:
         json.dump(result, fp, ensure_ascii=False, indent=2, default=str)
 
 
-def create_db_query_tool(workspace_dir: Path):
-    """创建绑定到指定会话工作区的数据库查询工具"""
+@tool
+async def db_query(
+    query: Annotated[
+        str,
+        "用户的自然语言数据查询需求，例如查看销量、库存、退货率等业务问题。",
+    ],
+    runtime: ToolRuntime,
+) -> dict[str, Any]:
+    """查询数据库业务数据，将最终结果写入当前会话工作区，并返回文件路径、字段和前几行数据"""
+    # 获取工作区目录
+    workspace_dir = runtime.config.get("configurable", {}).get("workspace_dir")
+    if workspace_dir is None:
+        return {"status": "error", "message": "workspace_dir not found in config"}
+    workspace_dir = Path(workspace_dir)
 
-    @tool
-    async def db_query(
-        query: Annotated[
-            str,
-            "用户的自然语言数据查询需求，例如查看销量、库存、退货率等业务问题。",
-        ],
-    ) -> dict[str, Any]:
-        """查询数据库业务数据，将最终结果写入当前会话工作区，并返回文件路径、字段和前几行数据"""
-        result: Any = None
+    result: Any = None
 
-        try:
-            async for chunk in _stream_db_query(query):
-                chunk_type = chunk.get("type")
+    try:
+        async for chunk in _stream_db_query(query):
+            chunk_type = chunk.get("type")
 
-                if chunk_type == "result":
-                    result = chunk.get("data")
-                    continue
+            if chunk_type == "result":
+                result = chunk.get("data")
+                continue
 
-                if chunk_type == "error":
-                    return {
-                        "status": "error",
-                        "message": chunk.get("message", "unknown error"),
-                    }
-        except httpx.HTTPStatusError as exc:
-            return {
-                "status": "error",
-                "message": f"data query API returned HTTP {exc.response.status_code}",
-            }
-        except httpx.HTTPError as exc:
-            return {
-                "status": "error",
-                "message": f"data query API request failed: {exc}",
-            }
-        except Exception as exc:
-            return {
-                "status": "error",
-                "message": f"unexpected db_query error: {exc}",
-            }
-
-        if result is None:
-            return {
-                "status": "error",
-                "message": "data query API finished without result",
-            }
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        tabular_rows = _normalize_rows(result)
-
-        try:
-            if tabular_rows is not None:
-                file_path = workspace_dir / f"数据库查询结果_{timestamp}.csv"
-                fields = _write_csv_result(file_path, tabular_rows)
-                preview_rows = tabular_rows[:PREVIEW_ROWS]
-                pandas_read_hint = f"pd.read_csv('{file_path.as_posix()}')"
-            else:
-                file_path = workspace_dir / f"数据库查询结果_{timestamp}.json"
-                _write_json_result(file_path, result)
-                fields = []
-                preview_rows = (
-                    result[:PREVIEW_ROWS] if isinstance(result, list) else [result]
-                )
-                pandas_read_hint = f"pd.read_json('{file_path.as_posix()}')"
-        except Exception as exc:
-            return {
-                "status": "error",
-                "message": f"failed to write query result file: {exc}",
-            }
-
+            if chunk_type == "error":
+                return {
+                    "status": "error",
+                    "message": chunk.get("message", "unknown error"),
+                }
+    except httpx.HTTPStatusError as exc:
         return {
-            "status": "success",
-            "file_path": file_path.as_posix(),
-            "file_format": file_path.suffix.lstrip("."),
-            "pandas_read_hint": pandas_read_hint,
-            "fields": fields,
-            "preview_rows": preview_rows,
-            "row_count": len(tabular_rows) if tabular_rows is not None else None,
+            "status": "error",
+            "message": f"data query API returned HTTP {exc.response.status_code}",
+        }
+    except httpx.HTTPError as exc:
+        return {
+            "status": "error",
+            "message": f"data query API request failed: {exc}",
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "message": f"unexpected db_query error: {exc}",
         }
 
-    return db_query
+    if result is None:
+        return {
+            "status": "error",
+            "message": "data query API finished without result",
+        }
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    tabular_rows = _normalize_rows(result)
+
+    try:
+        if tabular_rows is not None:
+            file_path = workspace_dir / f"数据库查询结果_{timestamp}.csv"
+            fields = _write_csv_result(file_path, tabular_rows)
+            preview_rows = tabular_rows[:PREVIEW_ROWS]
+            pandas_read_hint = f"pd.read_csv('{file_path.as_posix()}')"
+        else:
+            file_path = workspace_dir / f"数据库查询结果_{timestamp}.json"
+            _write_json_result(file_path, result)
+            fields = []
+            preview_rows = (
+                result[:PREVIEW_ROWS] if isinstance(result, list) else [result]
+            )
+            pandas_read_hint = f"pd.read_json('{file_path.as_posix()}')"
+    except Exception as exc:
+        return {
+            "status": "error",
+            "message": f"failed to write query result file: {exc}",
+        }
+
+    return {
+        "status": "success",
+        "file_path": file_path.as_posix(),
+        "file_format": file_path.suffix.lstrip("."),
+        "pandas_read_hint": pandas_read_hint,
+        "fields": fields,
+        "preview_rows": preview_rows,
+        "row_count": len(tabular_rows) if tabular_rows is not None else None,
+    }
