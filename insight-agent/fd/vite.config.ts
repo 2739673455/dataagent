@@ -43,16 +43,10 @@ export default defineConfig(({ mode }) => {
 					changeOrigin: true,
 					rewrite: (path) => path.replace(/^\/auth-api/, ""),
 				},
-				"/app-api": {
-					target: appProxyTarget,
-					changeOrigin: true,
-					rewrite: (path) => path.replace(/^\/app-api/, ""),
-				},
-				"/app-ws": {
+				"/api": {
 					target: appProxyTarget,
 					ws: true,
 					changeOrigin: true,
-					rewrite: (path) => path.replace(/^\/app-ws/, ""),
 				},
 			},
 		},

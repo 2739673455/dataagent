@@ -16,8 +16,6 @@ SPA_ENTRY_FILE = STATIC_DIST_DIR / "index.html"
 # 这些前缀由后端接口、静态资源或文档页占用，不能回退到 SPA
 SPA_EXCLUDED_PREFIXES = (
     "/api",
-    "/app-api",
-    "/app-ws",
     "/auth-api",
     "/assets",
     "/health",

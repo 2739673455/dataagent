@@ -1,0 +1,1 @@
+import{u as a,r,R as i,a as o,j as t,L as c}from"./index-B5dKrk9I.js";function m(){const e=a();return r.useEffect(()=>{const s=e.state?.from||i.chat;o(s)},[e.state]),t.jsx("div",{className:"flex min-h-screen items-center justify-center",children:t.jsx(c,{className:"h-8 w-8 animate-spin text-indigo-600"})})}export{m as default};

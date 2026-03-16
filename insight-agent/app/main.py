@@ -4,7 +4,6 @@ import uvicorn
 from app import middlewares, routers
 from app.config import CFG
 from app.exceptions.handlers import register_exception_handlers
-from app.routers.api.chat import api_websocket_chat
 from app.utils import db
 from app.utils import redis as redis_util
 from app.utils.http_client import close_clients
@@ -49,14 +48,8 @@ app.include_router(routers.api.router)
 # 注册全局异常处理，统一返回应用约定的错误格式
 register_exception_handlers(app)
 
-# 前端静态部署接入：
-# /app-api 作为前端 HTTP 请求入口
-app.include_router(routers.api.router, prefix="/app-api")
-# /app-ws 作为前端 WebSocket 请求入口
-app.add_api_websocket_route("/app-ws/api/chat/ws/chat", api_websocket_chat)
-# 注册静态资源、SPA 回退页和 /auth-api 反向代理
+# 前端静态部署接入：静态资源、SPA 回退页和 /auth-api 反向代理
 routers.frontend.register_frontend(app)
-
 
 if __name__ == "__main__":
     uvicorn.run("app.main:app", host="0.0.0.0", port=CFG.port)

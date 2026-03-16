@@ -2,9 +2,7 @@ function trimTrailingSlash(value: string) {
 	return value.replace(/\/+$/, "");
 }
 
-export const APP_API_BASE_URL = "/app-api";
 export const AUTH_API_BASE_URL = "/auth-api";
-export const APP_WS_BASE_PATH = "/app-ws";
 export const AUTH_APP_BASE_URL = "http://127.0.0.1:7100";
 export const AUTH_CLIENT_ID = "insight-agent";
 
@@ -26,14 +24,14 @@ export const AUTH_API_ROUTES = {
 } as const;
 
 export const CHAT_API_ROUTES = {
-	listConversations: "api/chat/ls",
-	createConversation: "api/chat/create",
-	getMessages: (conversationId: number) => `api/chat/ls/${conversationId}`,
-	uploadAttachment: "api/chat/attachment/upload",
-	deleteAttachment: "api/chat/attachment/delete",
-	getAttachment: "api/chat/attachment/get",
-	deleteConversations: "api/chat/delete",
-	createWebSocketToken: "api/chat/ws-token",
+	listConversations: "/api/chat/ls",
+	createConversation: "/api/chat/create",
+	getMessages: (conversationId: number) => `/api/chat/ls/${conversationId}`,
+	uploadAttachment: "/api/chat/attachment/upload",
+	deleteAttachment: "/api/chat/attachment/delete",
+	getAttachment: "/api/chat/attachment/get",
+	deleteConversations: "/api/chat/delete",
+	createWebSocketToken: "/api/chat/ws-token",
 	chatWebSocket: "/api/chat/ws/chat",
 } as const;
 
@@ -44,7 +42,6 @@ export function getAuthRedirectUri() {
 export function getAppWsBaseUrl() {
 	const url = new URL(window.location.origin);
 	url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-	url.pathname = APP_WS_BASE_PATH;
 	return trimTrailingSlash(url.toString());
 }
 

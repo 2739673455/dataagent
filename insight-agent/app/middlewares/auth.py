@@ -14,7 +14,7 @@ AUTH_EXCLUDE_PATHS = ("/health", "/docs", "/openapi.json", "/redoc")
 # 不需要验证访问令牌的路径前缀
 AUTH_EXCLUDE_PREFIXES = ("/assets", "/auth-api")
 # 需要验证访问令牌的业务路径前缀
-AUTH_PROTECTED_PREFIXES = ("/api", "/app-api", "/app-ws")
+AUTH_PROTECTED_PREFIXES = ("/api",)
 
 
 def _matches_prefix(path: str, prefix: str) -> bool:
