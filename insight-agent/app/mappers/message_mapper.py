@@ -48,6 +48,10 @@ def schema_to_entity(
     message: chat_schema.MessageSchema, conversation_id: int
 ) -> Message:
     """将 MessageSchema 转换为消息实体"""
+    # 检查是否有上下文顺序号
+    if message.context_seq is None:
+        raise ValueError("Message context_seq is required")
+
     # 将消息片段对象转换为 json 字符串
     parts = json.dumps(
         [part.model_dump() for part in message.parts], ensure_ascii=False
@@ -65,7 +69,7 @@ def schema_to_entity(
 
     entity = Message(
         conversation_id=conversation_id,
-        context_seq=message.context_seq or 0,
+        context_seq=message.context_seq,
         role=message.role,
         parts=parts,
         attachments=attachments,

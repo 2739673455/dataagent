@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronLeft } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { chatApi } from "@/api/chat";
+import { ROUTES } from "@/config/constants";
 import { createLocalTimestamp } from "@/lib/message";
 import { redirectToAuthorize } from "@/lib/redirect";
 import { getAccessToken } from "@/lib/token";
@@ -24,6 +26,35 @@ interface PendingMessageState {
 
 function isImageFile(name: string) {
 	return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
+}
+
+function isHtmlFile(name: string) {
+	return /\.(html?)$/i.test(name);
+}
+
+function collectReturnedHtmlAttachments(
+	messages: MessageSchema[],
+): Attachment[] {
+	const unique = new Map<string, Attachment>();
+
+	for (const message of messages) {
+		if (message.role === "user" || !message.attachments?.length) continue;
+
+		for (const attachment of message.attachments) {
+			if (isHtmlFile(attachment.path) && !unique.has(attachment.path)) {
+				unique.set(attachment.path, attachment);
+			}
+		}
+	}
+
+	return Array.from(unique.values());
+}
+
+function getHtmlPreviewCacheKey(
+	conversationId: number,
+	attachmentPath: string,
+) {
+	return `${conversationId}:${attachmentPath}`;
 }
 
 export default function ChatPage() {
@@ -49,6 +80,7 @@ export default function ChatPage() {
 	const isClosingSocketRef = useRef(false);
 	const messageViewportRef = useRef<HTMLDivElement | null>(null);
 	const attachmentsRef = useRef<Attachment[]>([]);
+	const htmlPreviewUrlsRef = useRef<Record<string, string>>({});
 	const [draftConversationId, setDraftConversationId] = useState<number | null>(
 		null,
 	);
@@ -56,6 +88,11 @@ export default function ChatPage() {
 	const [isUploadingAttachments, setIsUploadingAttachments] = useState(false);
 	const [isStreaming, setIsStreaming] = useState(false);
 	const [socketVersion, setSocketVersion] = useState(0);
+	const [isHtmlSidebarOpen, setIsHtmlSidebarOpen] = useState(true);
+	const [activeHtmlPath, setActiveHtmlPath] = useState<string | null>(null);
+	const [htmlPreviewUrls, setHtmlPreviewUrls] = useState<
+		Record<string, string>
+	>({});
 
 	const routeConversationId = (() => {
 		const raw = params.conversationId;
@@ -68,10 +105,22 @@ export default function ChatPage() {
 		? (messagesByConversation[routeConversationId] ?? [])
 		: [];
 	const currentMessageCount = currentMessages.length;
+	const returnedHtmlAttachments = useMemo(
+		() => collectReturnedHtmlAttachments(currentMessages),
+		[currentMessages],
+	);
+	const activeHtmlAttachment =
+		returnedHtmlAttachments.find((item) => item.path === activeHtmlPath) ??
+		returnedHtmlAttachments[0] ??
+		null;
 
 	useEffect(() => {
 		attachmentsRef.current = attachments;
 	}, [attachments]);
+
+	useEffect(() => {
+		htmlPreviewUrlsRef.current = htmlPreviewUrls;
+	}, [htmlPreviewUrls]);
 
 	const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
 		const viewport = messageViewportRef.current;
@@ -92,17 +141,80 @@ export default function ChatPage() {
 		if (messagesByConversation[routeConversationId] === undefined) {
 			void loadMessages(routeConversationId);
 		}
-	}, [
-		loadMessages,
-		messagesByConversation,
-		routeConversationId,
-	]);
+	}, [loadMessages, messagesByConversation, routeConversationId]);
 
 	useEffect(() => {
 		if (!routeConversationId) return;
 		setDraftConversationId(null);
 		setAttachments([]);
 	}, [routeConversationId]);
+
+	useEffect(() => {
+		if (returnedHtmlAttachments.length === 0) {
+			setActiveHtmlPath(null);
+			return;
+		}
+
+		setIsHtmlSidebarOpen(true);
+		setActiveHtmlPath((current) => {
+			if (
+				current &&
+				returnedHtmlAttachments.some((item) => item.path === current)
+			) {
+				return current;
+			}
+			return returnedHtmlAttachments[0].path;
+		});
+	}, [returnedHtmlAttachments]);
+
+	useEffect(() => {
+		if (!routeConversationId || !isHtmlSidebarOpen || !activeHtmlAttachment) {
+			return;
+		}
+		const previewCacheKey = getHtmlPreviewCacheKey(
+			routeConversationId,
+			activeHtmlAttachment.path,
+		);
+		if (htmlPreviewUrls[previewCacheKey]) {
+			return;
+		}
+
+		let objectUrl: string | null = null;
+		let cancelled = false;
+
+		void chatApi
+			.fetchAttachmentFile(routeConversationId, activeHtmlAttachment.path)
+			.then((response) => {
+				if (cancelled) return;
+				objectUrl = URL.createObjectURL(
+					new Blob([response.data], { type: "text/html;charset=utf-8" }),
+				);
+				setHtmlPreviewUrls((current) => ({
+					...current,
+					[previewCacheKey]: objectUrl as string,
+				}));
+			})
+			.catch(() => {
+				if (cancelled) return;
+				toast.error(`HTML 预览加载失败：${activeHtmlAttachment.raw_name}`);
+			});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [
+		activeHtmlAttachment,
+		htmlPreviewUrls,
+		isHtmlSidebarOpen,
+		routeConversationId,
+	]);
+
+	const activeHtmlPreviewUrl =
+		routeConversationId && activeHtmlAttachment
+			? htmlPreviewUrls[
+					getHtmlPreviewCacheKey(routeConversationId, activeHtmlAttachment.path)
+				]
+			: undefined;
 
 	useEffect(() => {
 		if (!routeConversationId || isLoadingMessages) return;
@@ -144,7 +256,9 @@ export default function ChatPage() {
 					isClosingSocketRef.current = false;
 					setConnectionState("open");
 
-					if (pendingMessageRef.current?.conversationId === routeConversationId) {
+					if (
+						pendingMessageRef.current?.conversationId === routeConversationId
+					) {
 						socket.send(
 							chatApi.serializeChatRequest({
 								message: pendingMessageRef.current.message,
@@ -238,13 +352,13 @@ export default function ChatPage() {
 		}
 		setAttachments([]);
 		setDraftConversationId(null);
-		navigate("/chat");
+		navigate(ROUTES.chat);
 	};
 
 	const handleDeleteConversation = async (conversationId: number) => {
 		await deleteConversation(conversationId);
 		if (routeConversationId === conversationId) {
-			navigate("/chat");
+			navigate(ROUTES.chat);
 		}
 		toast.success("对话已删除");
 	};
@@ -280,7 +394,10 @@ export default function ChatPage() {
 			}
 			const nextAttachments: Attachment[] = [];
 			for (const file of files) {
-				const response = await chatApi.uploadAttachment(nextConversationId, file);
+				const response = await chatApi.uploadAttachment(
+					nextConversationId,
+					file,
+				);
 				nextAttachments.push({
 					...response.data.attachment,
 					preview_url: isImageFile(file.name)
@@ -313,7 +430,9 @@ export default function ChatPage() {
 				if (target?.preview_url) {
 					URL.revokeObjectURL(target.preview_url);
 				}
-				return current.filter((attachment) => attachment.path !== attachmentName);
+				return current.filter(
+					(attachment) => attachment.path !== attachmentName,
+				);
 			});
 		} catch {
 			toast.error("附件删除失败");
@@ -352,7 +471,7 @@ export default function ChatPage() {
 				}
 			}
 			setAttachments([]);
-			navigate(`/chat/${conversationId}`);
+			navigate(ROUTES.chatConversation(conversationId));
 			return;
 		}
 
@@ -375,7 +494,7 @@ export default function ChatPage() {
 				}
 			}
 			setAttachments([]);
-			navigate(`/chat/${conversationId}`);
+			navigate(ROUTES.chatConversation(conversationId));
 			return;
 		}
 
@@ -403,7 +522,15 @@ export default function ChatPage() {
 					URL.revokeObjectURL(attachment.preview_url);
 				}
 			}
+			for (const url of Object.values(htmlPreviewUrlsRef.current)) {
+				URL.revokeObjectURL(url);
+			}
 		};
+	}, []);
+
+	const handleOpenHtmlAttachment = useCallback((attachment: Attachment) => {
+		setActiveHtmlPath(attachment.path);
+		setIsHtmlSidebarOpen(true);
 	}, []);
 
 	return (
@@ -421,34 +548,104 @@ export default function ChatPage() {
 						void handleDeleteConversation(conversationId)
 					}
 					onLogout={() => {
-						void logout().then(() => redirectToAuthorize("/chat"));
+						void logout().then(() => redirectToAuthorize(ROUTES.chat));
 					}}
 				/>
 
-				<div className="flex h-full min-h-0 flex-col bg-[#fefdfa]">
-					<ChatMessages
-						conversationId={routeConversationId}
-						conversationSelected={Boolean(routeConversationId)}
-						isLoading={isLoadingMessages}
-						messages={currentMessages}
-						viewportRef={messageViewportRef}
-					/>
-					<div className="sticky bottom-0 z-10 w-full shrink-0 bg-[#fefdfa] pb-6 pt-0">
-						<div className="mx-auto w-[70%] min-w-[320px] max-w-[1120px]">
-							<ChatComposer
-								attachments={attachments}
-								isStreaming={isStreaming}
-								isUploading={isUploadingAttachments}
-								disabled={
-									connectionState !== "open" && Boolean(routeConversationId)
-								}
-								onAttachmentsSelected={handleAttachmentsSelected}
-								onRemoveAttachment={handleRemoveAttachment}
-								onStop={handleStop}
-								onSubmit={handleSend}
-							/>
+				<div className="flex h-full min-h-0 bg-[#fefdfa]">
+					<div className="flex min-w-0 flex-1 flex-col bg-[#fefdfa]">
+						<ChatMessages
+							conversationId={routeConversationId}
+							conversationSelected={Boolean(routeConversationId)}
+							isLoading={isLoadingMessages}
+							messages={currentMessages}
+							onOpenHtmlAttachment={handleOpenHtmlAttachment}
+							viewportRef={messageViewportRef}
+						/>
+						<div className="sticky bottom-0 z-10 w-full shrink-0 bg-[#fefdfa] pb-6 pt-0">
+							<div className="mx-auto w-[70%] min-w-[320px] max-w-[1120px]">
+								<ChatComposer
+									attachments={attachments}
+									isStreaming={isStreaming}
+									isUploading={isUploadingAttachments}
+									disabled={
+										connectionState !== "open" && Boolean(routeConversationId)
+									}
+									onAttachmentsSelected={handleAttachmentsSelected}
+									onRemoveAttachment={handleRemoveAttachment}
+									onStop={handleStop}
+									onSubmit={handleSend}
+								/>
+							</div>
 						</div>
 					</div>
+					{returnedHtmlAttachments.length > 0 ? (
+						<div
+							className={`border-l border-slate-200 bg-white/80 backdrop-blur transition-all duration-300 ${
+								isHtmlSidebarOpen ? "w-[min(42vw,560px)]" : "w-10"
+							}`}
+						>
+							<div className="flex h-full min-h-0">
+								<button
+									type="button"
+									onClick={() => setIsHtmlSidebarOpen((value) => !value)}
+									className="flex w-10 shrink-0 items-center justify-center border-r border-slate-200 bg-white/90 text-slate-500 transition hover:bg-slate-50 hover:text-slate-800"
+									title={
+										isHtmlSidebarOpen ? "收起 HTML 侧栏" : "展开 HTML 侧栏"
+									}
+								>
+									<ChevronLeft
+										className={`h-6 w-6 transition-transform duration-300 ${
+											isHtmlSidebarOpen ? "rotate-180" : "rotate-0"
+										}`}
+									/>
+								</button>
+								<div
+									className={`flex min-w-0 flex-1 min-h-0 flex-col overflow-hidden transition-opacity duration-200 ${
+										isHtmlSidebarOpen
+											? "delay-150 opacity-100"
+											: "pointer-events-none delay-0 opacity-0"
+									}`}
+								>
+									<div className="flex gap-2 overflow-x-auto border-b border-slate-200 px-3 py-2">
+										{returnedHtmlAttachments.map((attachment) => (
+											<button
+												key={attachment.path}
+												type="button"
+												onClick={() => setActiveHtmlPath(attachment.path)}
+												className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+													activeHtmlAttachment?.path === attachment.path
+														? "bg-slate-900 text-white"
+														: "bg-slate-100 text-slate-600 hover:bg-slate-200"
+												}`}
+											>
+												{attachment.raw_name}
+											</button>
+										))}
+									</div>
+									<div className="min-h-0 flex-1 bg-slate-50">
+										{activeHtmlAttachment ? (
+											activeHtmlPreviewUrl ? (
+												<iframe
+													title={activeHtmlAttachment.raw_name}
+													src={activeHtmlPreviewUrl}
+													className="h-full w-full border-0 bg-white"
+												/>
+											) : (
+												<div className="flex h-full items-center justify-center text-sm text-slate-500">
+													正在加载 HTML 预览...
+												</div>
+											)
+										) : (
+											<div className="flex h-full items-center justify-center text-sm text-slate-500">
+												暂无可预览的 HTML 文件
+											</div>
+										)}
+									</div>
+								</div>
+							</div>
+						</div>
+					) : null}
 				</div>
 			</div>
 		</div>

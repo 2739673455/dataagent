@@ -1,11 +1,11 @@
 import axios, { type AxiosError } from "axios";
-import { getAppApiBaseUrl } from "@/lib/env";
+import { APP_API_BASE_URL } from "@/config/constants";
 import { redirectToAuthorize } from "@/lib/redirect";
 import { clearAccessToken, getAccessToken } from "@/lib/token";
 import { useAuthStore } from "@/stores/authStore";
 
 const appClient = axios.create({
-	baseURL: getAppApiBaseUrl(),
+	baseURL: APP_API_BASE_URL,
 	timeout: 15000,
 });
 

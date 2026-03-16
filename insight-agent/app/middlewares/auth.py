@@ -9,8 +9,16 @@ from app.utils import context
 from app.utils.http_client import get_http_client
 from fastapi import Request, Response
 
-# 不需要验证访问令牌的路径
-AUTH_EXCLUDE_PATHS = {"/health", "/docs", "/openapi.json", "/redoc"}
+# 不需要验证访问令牌的精确路径
+AUTH_EXCLUDE_PATHS = ("/health", "/docs", "/openapi.json", "/redoc")
+# 不需要验证访问令牌的路径前缀
+AUTH_EXCLUDE_PREFIXES = ("/assets", "/auth-api")
+# 需要验证访问令牌的业务路径前缀
+AUTH_PROTECTED_PREFIXES = ("/api", "/app-api", "/app-ws")
+
+
+def _matches_prefix(path: str, prefix: str) -> bool:
+    return path == prefix or path.startswith(f"{prefix}/")
 
 
 async def authenticate_authorization(
@@ -45,7 +53,14 @@ async def authenticate_authorization(
 
 async def middleware(request: Request, call_next: Callable) -> Response:
     """验证访问令牌"""
-    if request.url.path in AUTH_EXCLUDE_PATHS:
+    path = request.url.path
+    if (
+        (path in AUTH_EXCLUDE_PATHS)
+        or (any(_matches_prefix(path, prefix) for prefix in AUTH_EXCLUDE_PREFIXES))
+        or (
+            not any(_matches_prefix(path, prefix) for prefix in AUTH_PROTECTED_PREFIXES)
+        )
+    ):
         return await call_next(request)
 
     try:

@@ -2,6 +2,7 @@ import { Loader2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { lazy, Suspense } from "react";
 import { createBrowserRouter } from "react-router-dom";
+import { ROUTES } from "@/config/constants";
 import { EntryRoute, ProtectedRoute } from "./guards";
 
 const AuthRedirect = lazy(() => import("@/pages/AuthRedirect"));
@@ -23,11 +24,11 @@ function SuspenseWrapper({ children }: { children: ReactNode }) {
 
 export const router = createBrowserRouter([
 	{
-		path: "/",
+		path: ROUTES.home,
 		element: <EntryRoute />,
 	},
 	{
-		path: "/login",
+		path: ROUTES.login,
 		element: (
 			<SuspenseWrapper>
 				<AuthRedirect />
@@ -35,7 +36,7 @@ export const router = createBrowserRouter([
 		),
 	},
 	{
-		path: "/auth/callback",
+		path: ROUTES.authCallback,
 		element: (
 			<SuspenseWrapper>
 				<AuthCallback />
@@ -43,7 +44,7 @@ export const router = createBrowserRouter([
 		),
 	},
 	{
-		path: "/chat",
+		path: ROUTES.chat,
 		element: (
 			<ProtectedRoute>
 				<SuspenseWrapper>
@@ -53,7 +54,7 @@ export const router = createBrowserRouter([
 		),
 	},
 	{
-		path: "/chat/:conversationId",
+		path: `${ROUTES.chat}/:conversationId`,
 		element: (
 			<ProtectedRoute>
 				<SuspenseWrapper>

@@ -8,7 +8,8 @@
 - 修改目录权限 `sudo chown -R 1000:0 docker/volumes/es_data` `sudo chmod -R u+rwX,g+rwX docker/volumes/es_data`
 - 执行 `docker compose up -d`
 
-## 在数据库中导入业务数据
+## 在数据库中建表并导入数据
+- 元数据表 `app/scripts/meta.sql`
 
 ## 修改配置信息
 编辑 `conf/app_config.yaml`，配置数据库信息

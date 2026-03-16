@@ -2,6 +2,7 @@ import { Loader2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect } from "react";
 import { Navigate, useLocation } from "react-router-dom";
+import { ROUTES } from "@/config/constants";
 import { useAuthStore } from "@/stores/authStore";
 
 interface ProtectedRouteProps {
@@ -31,7 +32,7 @@ export function EntryRoute() {
 		return <FullPageLoading />;
 	}
 
-	return <Navigate to={isAuthenticated ? "/chat" : "/login"} replace />;
+	return <Navigate to={isAuthenticated ? ROUTES.chat : ROUTES.login} replace />;
 }
 
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
@@ -52,7 +53,7 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
 
 	if (!isAuthenticated) {
 		const from = `${location.pathname}${location.search}`;
-		return <Navigate to="/login" state={{ from }} replace />;
+		return <Navigate to={ROUTES.login} state={{ from }} replace />;
 	}
 
 	return <>{children}</>;

@@ -5,7 +5,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 
-import httpx
 from app.config import CFG
 from app.utils.http_client import get_http_client
 from langchain.tools import tool
@@ -80,11 +79,11 @@ def _write_json_result(file_path: Path, result: Any) -> None:
 
 @tool
 async def db_query(
-    query: Annotated[
-        str,
-        "用户的自然语言数据查询需求，例如查看销量、库存、退货率等业务问题。",
-    ],
     runtime: ToolRuntime,
+    query: Annotated[
+        str, "用户的自然语言数据查询需求，例如查看销量、库存、退货率等业务问题"
+    ],
+    file_name: Annotated[str, "输出查询结果文件的文件名"],
 ) -> dict[str, Any]:
     """查询数据库业务数据，将最终结果写入当前会话工作区，并返回文件路径、字段和前几行数据"""
     # 获取工作区目录
@@ -108,22 +107,11 @@ async def db_query(
                     "status": "error",
                     "message": chunk.get("message", "unknown error"),
                 }
-    except httpx.HTTPStatusError as exc:
-        return {
-            "status": "error",
-            "message": f"data query API returned HTTP {exc.response.status_code}",
-        }
-    except httpx.HTTPError as exc:
-        return {
-            "status": "error",
-            "message": f"data query API request failed: {exc}",
-        }
     except Exception as exc:
         return {
             "status": "error",
-            "message": f"unexpected db_query error: {exc}",
+            "message": f"db_query failed: {exc}",
         }
-
     if result is None:
         return {
             "status": "error",
@@ -132,15 +120,16 @@ async def db_query(
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     tabular_rows = _normalize_rows(result)
+    file_name = file_name or f"数据库查询结果_{timestamp}"
 
     try:
         if tabular_rows is not None:
-            file_path = workspace_dir / f"数据库查询结果_{timestamp}.csv"
+            file_path = workspace_dir / f"{file_name}.csv"
             fields = _write_csv_result(file_path, tabular_rows)
             preview_rows = tabular_rows[:PREVIEW_ROWS]
             pandas_read_hint = f"pd.read_csv('{file_path.as_posix()}')"
         else:
-            file_path = workspace_dir / f"数据库查询结果_{timestamp}.json"
+            file_path = workspace_dir / f"{file_name}.json"
             _write_json_result(file_path, result)
             fields = []
             preview_rows = (

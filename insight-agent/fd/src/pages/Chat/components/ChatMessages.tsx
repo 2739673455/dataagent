@@ -1,6 +1,7 @@
 import {
 	ChevronDown,
 	Download,
+	Eye,
 	FileImage,
 	FileText,
 	Loader2,
@@ -96,6 +97,10 @@ function getMessagePartKey(part: MessagePart) {
 
 function isImageAttachment(name: string) {
 	return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
+}
+
+function isHtmlAttachment(name: string) {
+	return /\.(html?)$/i.test(name);
 }
 
 function buildDisplayItems(
@@ -345,7 +350,13 @@ function PartView({
 	);
 }
 
-function ToolRunBar({ item }: { item: ToolRunDisplayItem }) {
+function ToolRunBar({
+	item,
+	onOpenHtmlAttachment,
+}: {
+	item: ToolRunDisplayItem;
+	onOpenHtmlAttachment?: (attachment: Attachment) => void;
+}) {
 	const [isOpen, setIsOpen] = useState(false);
 	const argsPreview = getToolArgsPreview(item.args);
 	const hasAttachments = item.completed && (item.attachments?.length ?? 0) > 0;
@@ -474,6 +485,7 @@ function ToolRunBar({ item }: { item: ToolRunDisplayItem }) {
 									attachment={attachment}
 									conversationId={item.conversationId}
 									isUser={false}
+									onOpenHtmlAttachment={onOpenHtmlAttachment}
 								/>
 							))}
 						</div>
@@ -551,13 +563,16 @@ function AttachmentChip({
 	conversationId,
 	isUser,
 	onPreview,
+	onOpenHtmlAttachment,
 }: {
 	attachment: Attachment;
 	conversationId?: number | null;
 	isUser: boolean;
 	onPreview?: (src: string, alt: string) => void;
+	onOpenHtmlAttachment?: (attachment: Attachment) => void;
 }) {
 	const [isDownloading, setIsDownloading] = useState(false);
+	const isHtml = isHtmlAttachment(attachment.path);
 
 	const handleDownload = async () => {
 		if (!conversationId || isDownloading) return;
@@ -593,7 +608,22 @@ function AttachmentChip({
 				conversationId={conversationId}
 				onPreview={onPreview}
 			/>
-			<span className="truncate">{attachment.raw_name}</span>
+			<span className="truncate" title={attachment.raw_name}>
+				{attachment.raw_name}
+			</span>
+			{isHtml ? (
+				<button
+					type="button"
+					onClick={() => onOpenHtmlAttachment?.(attachment)}
+					className={cn(
+						"flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition",
+						isUser ? "hover:bg-slate-800/10" : "hover:bg-slate-800/5",
+					)}
+					title="预览 HTML"
+				>
+					<Eye className="h-3.5 w-3.5" />
+				</button>
+			) : null}
 			{conversationId ? (
 				<button
 					type="button"
@@ -619,8 +649,10 @@ function AttachmentChip({
 
 function MessageBubble({
 	message,
+	onOpenHtmlAttachment,
 }: {
 	message: MessageDisplayItem["message"];
+	onOpenHtmlAttachment?: (attachment: Attachment) => void;
 }) {
 	const isUser = message.role === "user";
 	const [previewImage, setPreviewImage] = useState<{
@@ -651,6 +683,7 @@ function MessageBubble({
 										conversationId={message.conversationId}
 										isUser={isUser}
 										onPreview={(src, alt) => setPreviewImage({ src, alt })}
+										onOpenHtmlAttachment={onOpenHtmlAttachment}
 									/>
 								))}
 							</div>
@@ -682,6 +715,7 @@ interface ChatMessagesProps {
 	conversationSelected: boolean;
 	isLoading: boolean;
 	messages: MessageSchema[];
+	onOpenHtmlAttachment?: (attachment: Attachment) => void;
 	viewportRef: RefObject<HTMLDivElement | null>;
 }
 
@@ -690,6 +724,7 @@ export function ChatMessages({
 	conversationSelected,
 	isLoading,
 	messages,
+	onOpenHtmlAttachment,
 	viewportRef,
 }: ChatMessagesProps) {
 	const displayItems = buildDisplayItems(conversationId, messages);
@@ -716,9 +751,17 @@ export function ChatMessages({
 						<div className="mx-auto w-[60%] min-w-[320px] max-w-[960px] space-y-2">
 						{displayItems.map((item) =>
 							item.type === "message" ? (
-								<MessageBubble key={item.key} message={item.message} />
+								<MessageBubble
+									key={item.key}
+									message={item.message}
+									onOpenHtmlAttachment={onOpenHtmlAttachment}
+								/>
 							) : (
-								<ToolRunBar key={item.key} item={item} />
+								<ToolRunBar
+									key={item.key}
+									item={item}
+									onOpenHtmlAttachment={onOpenHtmlAttachment}
+								/>
 							),
 						)}
 					</div>

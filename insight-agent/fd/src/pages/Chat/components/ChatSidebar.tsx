@@ -2,7 +2,7 @@ import { LogOut, MessageSquareMore, Plus, Trash2, User2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { getAuthAppBaseUrl } from "@/lib/env";
+import { getAuthAppBaseUrl, ROUTES } from "@/config/constants";
 import { cn } from "@/lib/utils";
 import type { ConversationResponse, UserResponse } from "@/types";
 
@@ -23,7 +23,7 @@ export function ChatSidebar({
 	onDelete,
 	onLogout,
 }: ChatSidebarProps) {
-	const profileUrl = new URL(`${getAuthAppBaseUrl()}/profile`);
+	const profileUrl = new URL(`${getAuthAppBaseUrl()}${ROUTES.profile}`);
 	profileUrl.searchParams.set(
 		"redirect_uri",
 		`${window.location.origin}${window.location.pathname}${window.location.search}`,
@@ -58,7 +58,7 @@ export function ChatSidebar({
 								)}
 							>
 								<Link
-									to={`/chat/${conversation.conversation_id}`}
+									to={ROUTES.chatConversation(conversation.conversation_id)}
 									className="relative flex min-w-0 flex-1 items-center gap-3 px-4 py-3"
 								>
 									<MessageSquareMore

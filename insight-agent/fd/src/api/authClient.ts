@@ -1,11 +1,11 @@
 import axios, { type AxiosError } from "axios";
-import { getAuthApiBaseUrl } from "@/lib/env";
+import { AUTH_API_BASE_URL, ROUTES } from "@/config/constants";
 import { redirectToAuthorize } from "@/lib/redirect";
 import { clearAccessToken, getAccessToken } from "@/lib/token";
 import { useAuthStore } from "@/stores/authStore";
 
 const authClient = axios.create({
-	baseURL: getAuthApiBaseUrl(),
+	baseURL: AUTH_API_BASE_URL,
 	timeout: 10000,
 	withCredentials: true,
 	headers: {
@@ -28,7 +28,7 @@ authClient.interceptors.response.use(
 			clearAccessToken();
 			useAuthStore.getState().clearAuth();
 			const path = `${window.location.pathname}${window.location.search}`;
-			if (window.location.pathname !== "/auth/callback") {
+			if (window.location.pathname !== ROUTES.authCallback) {
 				redirectToAuthorize(path);
 			}
 		}

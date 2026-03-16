@@ -23,7 +23,7 @@ A .docx file is a ZIP archive containing XML files.
 Legacy `.doc` files must be converted before editing:
 
 ```bash
-python scripts/office/soffice.py --headless --convert-to docx document.doc
+uv run python scripts/office/soffice.py --headless --convert-to docx document.doc
 ```
 
 ### Reading Content
@@ -33,13 +33,13 @@ python scripts/office/soffice.py --headless --convert-to docx document.doc
 pandoc --track-changes=all document.docx -o output.md
 
 # Raw XML access
-python scripts/office/unpack.py document.docx unpacked/
+uv run python scripts/office/unpack.py document.docx unpacked/
 ```
 
 ### Converting to Images
 
 ```bash
-python scripts/office/soffice.py --headless --convert-to pdf document.docx
+uv run python scripts/office/soffice.py --headless --convert-to pdf document.docx
 pdftoppm -jpeg -r 150 document.pdf page
 ```
 
@@ -48,7 +48,7 @@ pdftoppm -jpeg -r 150 document.pdf page
 To produce a clean document with all tracked changes accepted (requires LibreOffice):
 
 ```bash
-python scripts/accept_changes.py input.docx output.docx
+uv run python scripts/accept_changes.py input.docx output.docx
 ```
 
 ---
@@ -74,7 +74,7 @@ Packer.toBuffer(doc).then(buffer => fs.writeFileSync("doc.docx", buffer));
 ### Validation
 After creating the file, validate it. If validation fails, unpack, fix the XML, and repack.
 ```bash
-python scripts/office/validate.py doc.docx
+uv run python scripts/office/validate.py doc.docx
 ```
 
 ### Page Size
@@ -401,7 +401,7 @@ sections: [{
 
 ### Step 1: Unpack
 ```bash
-python scripts/office/unpack.py document.docx unpacked/
+uv run python scripts/office/unpack.py document.docx unpacked/
 ```
 Extracts XML, pretty-prints, merges adjacent runs, and converts smart quotes to XML entities (`&#x201C;` etc.) so they survive editing. Use `--merge-runs false` to skip run merging.
 
@@ -427,15 +427,15 @@ Edit files in `unpacked/word/`. See XML Reference below for patterns.
 
 **Adding comments:** Use `comment.py` to handle boilerplate across multiple XML files (text must be pre-escaped XML):
 ```bash
-python scripts/comment.py unpacked/ 0 "Comment text with &amp; and &#x2019;"
-python scripts/comment.py unpacked/ 1 "Reply text" --parent 0  # reply to comment 0
-python scripts/comment.py unpacked/ 0 "Text" --author "Custom Author"  # custom author name
+uv run python scripts/comment.py unpacked/ 0 "Comment text with &amp; and &#x2019;"
+uv run python scripts/comment.py unpacked/ 1 "Reply text" --parent 0  # reply to comment 0
+uv run python scripts/comment.py unpacked/ 0 "Text" --author "Custom Author"  # custom author name
 ```
 Then add markers to document.xml (see Comments in XML Reference).
 
 ### Step 3: Pack
 ```bash
-python scripts/office/pack.py unpacked/ output.docx --original document.docx
+uv run python scripts/office/pack.py unpacked/ output.docx --original document.docx
 ```
 Validates with auto-repair, condenses XML, and creates DOCX. Use `--validate false` to skip.
 

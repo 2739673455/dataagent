@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { authApi } from "@/api/auth";
 import { userApi } from "@/api/user";
+import { ROUTES } from "@/config/constants";
 import { clearStoredReturnUri, getStoredReturnUri } from "@/lib/redirect";
 import { setAccessToken } from "@/lib/token";
 import { useAuthStore } from "@/stores/authStore";
@@ -72,14 +73,16 @@ export default function AuthCallback() {
 			const code = params.get("code");
 			if (!code) {
 				toast.error("缺少授权码");
-				navigate("/login", { replace: true });
+				navigate(ROUTES.login, { replace: true });
 				return;
 			}
 			if (isCodeHandled(code)) {
-				const target = getStoredReturnUri() || "/chat";
+				const target = getStoredReturnUri() || ROUTES.chat;
 				const [targetPath] = target.split("?");
 				clearStoredReturnUri();
-				navigate(targetPath === "/login" ? "/chat" : target, { replace: true });
+				navigate(targetPath === ROUTES.login ? ROUTES.chat : target, {
+					replace: true,
+				});
 				return;
 			}
 
@@ -96,15 +99,17 @@ export default function AuthCallback() {
 					},
 					user.scopes,
 				);
-				const target = getStoredReturnUri() || "/chat";
+				const target = getStoredReturnUri() || ROUTES.chat;
 				const [targetPath] = target.split("?");
 				clearStoredReturnUri();
-				navigate(targetPath === "/login" ? "/chat" : target, { replace: true });
+				navigate(targetPath === ROUTES.login ? ROUTES.chat : target, {
+					replace: true,
+				});
 			} catch {
 				if (cancelled) return;
 				clearAuth();
 				toast.error("登录状态建立失败");
-				navigate("/login", { replace: true });
+				navigate(ROUTES.login, { replace: true });
 			}
 		};
 

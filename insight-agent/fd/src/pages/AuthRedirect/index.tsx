@@ -1,13 +1,15 @@
 import { Loader2 } from "lucide-react";
 import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
+import { ROUTES } from "@/config/constants";
 import { redirectToAuthorize } from "@/lib/redirect";
 
 export default function AuthRedirect() {
 	const location = useLocation();
 
 	useEffect(() => {
-		const from = (location.state as { from?: string } | null)?.from || "/chat";
+		const from =
+			(location.state as { from?: string } | null)?.from || ROUTES.chat;
 		redirectToAuthorize(from);
 	}, [location.state]);
 

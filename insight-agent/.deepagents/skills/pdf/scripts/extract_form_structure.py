@@ -9,7 +9,7 @@ This script analyzes the PDF to find:
 Output: A JSON file with the form structure that can be used to generate
 accurate field coordinates for filling.
 
-Usage: python extract_form_structure.py <input.pdf> <output.json>
+Usage: uv run python extract_form_structure.py <input.pdf> <output.json>
 """
 
 import json

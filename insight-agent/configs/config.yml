@@ -31,14 +31,21 @@ lm_config:
       api_key: ${oc.env:OPENROUTER_API_KEY}
       params: {}
       profile:
-        max_input_tokens: 1048576 # 模型上下文长度，用于计算对话压缩阈值
+        max_input_tokens: 1050000 # 模型上下文长度，用于计算对话压缩阈值
     minimax-m2.5:
       model: minimax/minimax-m2.5
       base_url: https://openrouter.ai/api/v1
       api_key: ${oc.env:OPENROUTER_API_KEY}
       params: {}
       profile:
-        max_input_tokens: 8192 # 模型上下文长度，用于计算对话压缩阈值
+        max_input_tokens: 196608 # 模型上下文长度，用于计算对话压缩阈值
+    qwen3.5-397b-a17b:
+      model: qwen/qwen3.5-397b-a17b
+      base_url: https://openrouter.ai/api/v1
+      api_key: ${oc.env:OPENROUTER_API_KEY}
+      params: {}
+      profile:
+        max_input_tokens: 262144 # 模型上下文长度，用于计算对话压缩阈值
 
 mcp: # MCP 工具
   tavily:
