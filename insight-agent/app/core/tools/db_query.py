@@ -110,7 +110,7 @@ async def db_query(
     except Exception as exc:
         return {
             "status": "error",
-            "message": f"db_query failed: {exc}",
+            "message": f"db_query failed: {type(exc).__name__}: {exc!r}",
         }
     if result is None:
         return {
@@ -139,7 +139,9 @@ async def db_query(
     except Exception as exc:
         return {
             "status": "error",
-            "message": f"failed to write query result file: {exc}",
+            "message": (
+                f"failed to write query result file: {type(exc).__name__}: {exc!r}"
+            ),
         }
 
     return {

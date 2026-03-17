@@ -23,7 +23,7 @@ log: # 日志
   max_file_size: 10MB # 单个日志文件最大大小
 
 lm_config:
-  active: minimax-m2.5
+  active: qwen3.5-397b-a17b
   models:
     gpt-5.4:
       model: openai/gpt-5.4

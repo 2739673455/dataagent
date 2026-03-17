@@ -63,6 +63,10 @@
   .animate-float {
     animation: float-soft 6s ease-in-out infinite;
   }
+
+  .animate-tool-dot-breathe {
+    animation: tool-dot-breathe 1.45s ease-in-out infinite;
+  }
 }
 
 @keyframes float-soft {
@@ -73,6 +77,17 @@
 
   50% {
     transform: translateY(-6px);
+  }
+}
+
+@keyframes tool-dot-breathe {
+  0%,
+  100% {
+    transform: scale(0.84);
+  }
+
+  50% {
+    transform: scale(1.08);
   }
 }
 

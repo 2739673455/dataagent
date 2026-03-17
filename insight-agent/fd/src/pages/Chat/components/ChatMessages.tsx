@@ -112,7 +112,9 @@ function buildDisplayItems(
 
 	for (const message of messages) {
 		const regularParts: Array<TextContent | ImageContent> = [];
-		const toolParts: Array<Extract<MessagePart, { type: "tool_call" | "tool_result" }>> = [];
+		const toolParts: Array<
+			Extract<MessagePart, { type: "tool_call" | "tool_result" }>
+		> = [];
 
 		for (const part of message.parts) {
 			if (part.type === "text") {
@@ -367,7 +369,7 @@ function ToolRunBar({
 				<div
 					className={cn(
 						"w-full max-w-[88%] overflow-hidden rounded-[1.25rem]",
-						item.completed ? "bg-emerald-600" : "bg-slate-200",
+						item.completed ? "bg-green-200" : "bg-slate-200",
 					)}
 				>
 					<button
@@ -375,38 +377,30 @@ function ToolRunBar({
 						onClick={() => setIsOpen((value) => !value)}
 						className={cn(
 							"flex w-full items-center gap-3 px-3.5 py-2 text-left text-sm",
-							item.completed ? "text-white" : "text-slate-700",
+							"text-slate-700",
 						)}
 					>
 						<div
 							className={cn(
-								"flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
+								"relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
 								item.completed
-									? "bg-emerald-800 text-white"
-									: "bg-slate-700 text-white",
+									? "bg-green-300 text-green-800"
+									: "bg-transparent text-white",
 							)}
 						>
 							{item.completed ? (
 								<Wrench className="h-3.5 w-3.5" />
 							) : (
-								<Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-500" />
+								<span className="h-5 w-5 rounded-full bg-indigo-300 animate-tool-dot-breathe" />
 							)}
 						</div>
 						<div className="min-w-0 flex-1">
 							<p
-								className={cn(
-									"truncate text-sm font-medium",
-									item.completed ? "text-white" : "text-slate-800",
-								)}
+								className={cn("truncate text-sm font-medium", "text-slate-800")}
 							>
 								{item.name}
 								{argsPreview ? (
-									<span
-										className={cn(
-											"ml-2 font-normal",
-											item.completed ? "text-emerald-50/90" : "text-slate-500",
-										)}
-									>
+									<span className={cn("ml-2 font-normal", "text-slate-500")}>
 										{argsPreview}
 									</span>
 								) : null}
@@ -416,7 +410,7 @@ function ToolRunBar({
 							className={cn(
 								"h-4 w-4 shrink-0 transition-transform",
 								isOpen ? "rotate-180" : "",
-								item.completed ? "text-emerald-50/90" : "text-slate-500",
+								"text-slate-500",
 							)}
 						/>
 					</button>
@@ -424,7 +418,7 @@ function ToolRunBar({
 						<div
 							className={cn(
 								"space-y-3 px-3.5 pb-3.5 pt-2.5",
-								item.completed ? "bg-emerald-600" : "bg-slate-200",
+								item.completed ? "bg-green-200" : "bg-slate-200",
 							)}
 						>
 							{item.args !== undefined ? (
@@ -432,7 +426,7 @@ function ToolRunBar({
 									<p
 										className={cn(
 											"text-xs font-medium uppercase tracking-[0.18em]",
-											item.completed ? "text-emerald-100/80" : "text-slate-500",
+											"text-slate-600",
 										)}
 									>
 										参数
@@ -441,8 +435,8 @@ function ToolRunBar({
 										className={cn(
 											"overflow-x-auto whitespace-pre-wrap rounded-[1rem] px-3 py-2.5 text-xs",
 											item.completed
-												? "bg-emerald-700/70 text-emerald-50"
-												: "bg-white/70 text-slate-600",
+												? "bg-green-100 text-green-950"
+												: "bg-white/80 text-slate-700",
 										)}
 									>
 										{JSON.stringify(item.args, null, 2)}
@@ -454,7 +448,7 @@ function ToolRunBar({
 									<p
 										className={cn(
 											"text-xs font-medium uppercase tracking-[0.18em]",
-											item.completed ? "text-emerald-100/80" : "text-slate-500",
+											"text-slate-600",
 										)}
 									>
 										结果
@@ -463,8 +457,8 @@ function ToolRunBar({
 										className={cn(
 											"overflow-x-auto whitespace-pre-wrap rounded-[1rem] px-3 py-2.5 text-xs",
 											item.completed
-												? "bg-emerald-700/70 text-emerald-50"
-												: "bg-white/55 text-emerald-950",
+												? "bg-green-100 text-green-950"
+												: "bg-white/80 text-slate-700",
 										)}
 									>
 										{item.result}
@@ -478,7 +472,7 @@ function ToolRunBar({
 			{hasAttachments ? (
 				<div className="flex w-full justify-start">
 					<div className="max-w-[88%] rounded-[1.5rem] bg-transparent px-4 py-0.5 text-slate-800">
-							<div className="flex flex-wrap gap-2">
+						<div className="flex flex-wrap gap-2">
 							{(item.attachments ?? []).map((attachment) => (
 								<AttachmentChip
 									key={attachment.path}
@@ -489,12 +483,12 @@ function ToolRunBar({
 								/>
 							))}
 						</div>
-						</div>
 					</div>
-				) : null}
-			</div>
-		);
-	}
+				</div>
+			) : null}
+		</div>
+	);
+}
 
 function AttachmentPreview({
 	attachment,
@@ -637,7 +631,7 @@ function AttachmentChip({
 					title="下载附件"
 				>
 					{isDownloading ? (
-						<Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-500" />
+						<Loader2 className="h-3.5 w-3.5 animate-spin text-slate-700" />
 					) : (
 						<Download className="h-3.5 w-3.5" />
 					)}
@@ -744,11 +738,11 @@ export function ChatMessages({
 				) : isLoading ? (
 					<div className="flex h-full items-center justify-center">
 						<div className="flex h-16 w-16 items-center justify-center">
-							<Loader2 className="h-7 w-7 animate-spin text-indigo-600" />
+							<Loader2 className="h-7 w-7 animate-spin text-slate-700" />
 						</div>
 					</div>
 				) : (
-						<div className="mx-auto w-[60%] min-w-[320px] max-w-[960px] space-y-2">
+					<div className="mx-auto w-[60%] min-w-[320px] max-w-[960px] space-y-2">
 						{displayItems.map((item) =>
 							item.type === "message" ? (
 								<MessageBubble

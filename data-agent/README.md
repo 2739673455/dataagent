@@ -10,6 +10,7 @@
 
 ## 在数据库中建表并导入数据
 - 元数据表 `app/scripts/meta.sql`
+- 业务数据: dbmock
 
 ## 修改配置信息
 编辑 `conf/app_config.yaml`，配置数据库信息

@@ -119,13 +119,23 @@ async def stream_chat(
 
         # 处理模型不支持图片输入的情况
         cur_context_seq += 1
-        text = "当前模型不支持图片输入。"
         response = chat_schema.MessageSchema(
             role="assistant",
-            parts=[chat_schema.TextContent(text=text)],
+            parts=[chat_schema.TextContent(text="当前模型不支持图片输入。")],
             finish_reason="stop",
             context_seq=cur_context_seq,
         )
         await _add_message(db_session, user_id, conversation_id, messages, response)
-        # 返回 Agent 响应
+        yield response
+    except Exception as e:
+        logger.exception(f"{conversation_id=}: agent stream failed: {e!r}")
+
+        cur_context_seq += 1
+        response = chat_schema.MessageSchema(
+            role="assistant",
+            parts=[chat_schema.TextContent(text="模型调用失败，请稍后重试。")],
+            finish_reason="stop",
+            context_seq=cur_context_seq,
+        )
+        await _add_message(db_session, user_id, conversation_id, messages, response)
         yield response
