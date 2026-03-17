@@ -1,1 +1,0 @@
-import{u as a,r,R as c,a as o,j as t,L as i}from"./index-BIDdfvg9.js";function m(){const e=a();return r.useEffect(()=>{const s=e.state?.from||c.chat;o(s)},[e.state]),t.jsx("div",{className:"flex min-h-screen items-center justify-center",children:t.jsx(i,{className:"h-8 w-8 animate-spin text-slate-700"})})}export{m as default};

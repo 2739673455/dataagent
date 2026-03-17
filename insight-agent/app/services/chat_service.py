@@ -127,6 +127,7 @@ async def stream_chat(
         )
         await _add_message(db_session, user_id, conversation_id, messages, response)
         yield response
+
     except Exception as e:
         logger.exception(f"{conversation_id=}: agent stream failed: {e!r}")
 

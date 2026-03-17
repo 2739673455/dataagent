@@ -369,7 +369,7 @@ function ToolRunBar({
 				<div
 					className={cn(
 						"w-full max-w-[88%] overflow-hidden rounded-[1.25rem]",
-						item.completed ? "bg-green-200" : "bg-slate-200",
+						item.completed ? "bg-indigo-200" : "bg-slate-200",
 					)}
 				>
 					<button
@@ -384,7 +384,7 @@ function ToolRunBar({
 							className={cn(
 								"relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
 								item.completed
-									? "bg-green-300 text-green-800"
+									? "bg-indigo-300 text-indigo-800"
 									: "bg-transparent text-white",
 							)}
 						>
@@ -418,7 +418,7 @@ function ToolRunBar({
 						<div
 							className={cn(
 								"space-y-3 px-3.5 pb-3.5 pt-2.5",
-								item.completed ? "bg-green-200" : "bg-slate-200",
+								item.completed ? "bg-indigo-200" : "bg-slate-200",
 							)}
 						>
 							{item.args !== undefined ? (
@@ -435,7 +435,7 @@ function ToolRunBar({
 										className={cn(
 											"overflow-x-auto whitespace-pre-wrap rounded-[1rem] px-3 py-2.5 text-xs",
 											item.completed
-												? "bg-green-100 text-green-950"
+												? "bg-indigo-100 text-indigo-950"
 												: "bg-white/80 text-slate-700",
 										)}
 									>
@@ -457,7 +457,7 @@ function ToolRunBar({
 										className={cn(
 											"overflow-x-auto whitespace-pre-wrap rounded-[1rem] px-3 py-2.5 text-xs",
 											item.completed
-												? "bg-green-100 text-green-950"
+												? "bg-indigo-100 text-indigo-950"
 												: "bg-white/80 text-slate-700",
 										)}
 									>
