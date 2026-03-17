@@ -202,7 +202,7 @@ insight-agent/                项目根目录，统一组织后端、前端、�
 - [pyproject.toml](./insight-agent/pyproject.toml)
 
 ### 2.3 配置文件与配置加载
-这个项目的配置主要分成两类：一类是适合放在仓库内、用于描述系统行为的普通配置；另一类是更敏感的环境配置，例如账号、密钥、地址和令牌。这两类配置分别落在 `configs/config.yml` 和 `configs/.env` 中，既方便管理，也能避免把敏感信息硬编码到代码里。
+这个项目的配置主要分成两类：一类是描述系统行为的普通配置；另一类是更敏感的环境配置，例如账号、密钥、地址和令牌。这两类配置分别落在 `configs/config.yml` 和 `configs/.env` 中，既方便管理，也能避免把敏感信息硬编码到代码里。
 
 配置加载入口统一放在 `app/config.py`。应用启动时先从环境变量中读取 `.env`，再结合 `config.yml` 组织成项目内部统一使用的配置对象。
 
@@ -522,190 +522,39 @@ Agent 的组装由 `_build_agent()` 完成，装配内容包括：
 附代码：
 - [agent.py](./insight-agent/app/core/agent.py)
 
-## 4. 接口设计
+## 4. 聊天相关核心数据与仓储
 
-### 4.1 后端功能接口
-- `GET /health`：健康检查
-- `GET /api/chat/ls`：获取会话列表
-- `POST /api/chat/create`：创建会话
-- `POST /api/chat/update`：修改会话标题
-- `POST /api/chat/delete`：删除会话
-- `GET /api/chat/ls/{conversation_id}`：获取历史消息
-- `POST /api/chat/attachment/upload`：上传附件
-- `POST /api/chat/attachment/delete`：删除附件
-- `GET /api/chat/attachment/get`：获取附件文件
-- `POST /api/chat/ws-token`：创建 WebSocket 临时令牌
-- `WS /api/chat/ws/chat`：流式聊天
+这一章先不直接讲接口，而是先说明聊天系统最底层的承接结构。因为无论是会话接口、附件接口，还是 WebSocket 聊天接口，最终都要落到统一的表结构、消息结构、Mapper 和 Repository 上。
 
-附代码：
-- [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
+### 4.1 先定义哪些核心表，为什么
+`sql/mysql/chat.sql` 里定义了消息系统真正依赖的核心表，`app/init_db.py` 负责把这些消息相关表初始化到数据库中。
 
-### 4.2 会话接口
-会话相关接口包括：
-- `GET /api/chat/ls`：按当前用户查询会话列表
-- `POST /api/chat/create`：创建会话，初始标题为“新对话”，可指定是否创建草稿会话
-- `POST /api/chat/update`：校验会话归属后更新标题
-- `POST /api/chat/delete`：逻辑删除会话，并一并清理消息、上下文压缩记录和工作区目录
+这里的核心表包括：
+- 会话表
+- 消息表
+- 上下文压缩表
+- WebSocket 临时令牌表
 
-这组接口里，需要单独说明的是草稿会话。
-草稿会话的处理流程如下：
-- 前端可以先调用 `POST /api/chat/create` 创建 `is_draft=1` 的草稿会话
-- 这类会话先出现在列表和工作区体系中，但还没有真正进入正式对话
-- WebSocket 首次收到用户消息后，会检查会话是否仍处于草稿状态
-- 如果仍是草稿，会先把 `is_draft` 更新为 `0`
-- 后续这条会话再按正式会话继续写入消息、更新标题和维护上下文
+这些表并不是脱离业务单独设计的，而是围绕实际接口能力来承接数据：
+- 会话接口依赖会话表维护标题、用户归属和草稿状态
+- 聊天接口依赖消息表持久化历史消息
+- 上下文压缩表负责保存摘要结果，供后续历史恢复使用
+- WebSocket 临时令牌表负责把 HTTP 认证结果传递到 WebSocket 建连链路中
 
-这种设计用于解决“附件先上传、消息稍后发送”的场景。前端可以先创建一个草稿会话，把附件上传到对应工作区，等用户真正发出第一条消息时，再把它转换成正式会话。
+### 4.2 Repository 模式在这个项目里的价值
+- 为什么不把 SQL 逻辑散落在 Service 和 Router 中
+- 会话、消息、摘要、令牌仓储分别负责什么
 
-附代码片段：
-来源：[chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
+先把这些表对应的 Repository 定义清楚，后续 Router 和 Service 才能把“创建会话”“删除会话”“持久化消息”“消费临时令牌”这些业务动作稳定编排起来。
 
-```python
-class ConversationResponse(BaseModel):
-    conversation_id: int
-    title: str
-    update_at: datetime
-
-
-class ConversationListResponse(BaseModel):
-    conversations: list[ConversationResponse]
-
-
-class CreateConversationRequest(BaseModel):
-    is_draft: Literal[0, 1] = Field(default=0, description="是否创建草稿对话")
-
-
-class UpdateConversationRequest(BaseModel):
-    conversation_id: int = Field(..., description="对话ID")
-    title: str = Field(..., description="对话标题")
-
-
-class DeleteConversationRequest(BaseModel):
-    conversation_ids: list[int] = Field(..., description="对话ID列表")
-```
-
-### 4.3 附件接口
-附件接口负责把文件写入会话工作区，并把工作区中的文件重新返回给前端。
-
-附件相关接口包括：
-- `POST /api/chat/attachment/upload`：上传附件到会话工作区
-- `POST /api/chat/attachment/delete`：删除工作区中的附件
-- `GET /api/chat/attachment/get`：获取工作区中的附件文件
-
-这组接口里，需要单独说明的是上传流程。
-附件上传流程如下：
-- 接收 `conversation_id` 和 `file`
-- 校验会话是否存在且属于当前用户
-- 用 `_build_attachment_unique_name()` 生成唯一文件名，避免重名覆盖
-- 用 `get_workspace_dir()` 获取会话工作区
-- 用 `_build_attachment_path()` 校验路径，防止路径逃逸
-- 按块写入文件
-- 返回上传后的附件元数据
-
-附代码片段：
-来源：[chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
-
-```python
-class Attachment(BaseModel):
-    raw_name: str = Field(..., description="原始附件名称")
-    path: str = Field(..., description="工作区相对路径")
-
-
-class UploadAttachmentResponse(BaseModel):
-    attachment: Attachment = Field(..., description="上传后的附件信息")
-
-
-class DeleteAttachmentRequest(BaseModel):
-    conversation_id: int = Field(..., description="对话ID")
-    path: str = Field(..., description="相对工作区路径")
-```
-
-### 4.4 历史消息接口
-接口为：
-- `GET /api/chat/ls/{conversation_id}`：获取某个会话下的历史消息
-
-这条接口的处理比较直接：
-- 根据 `conversation_id` 调用 `message_repo.ls()` 查询消息
-- 逐条调用 `message_mapper.entity_to_schema()` 转成前端可直接消费的 `MessageSchema`
-- 组装为 `MessageListResponse` 返回
-
-这里返回的是 Schema 层消息。前端历史消息展示、附件回显和后续继续聊天，都是以这一结构为基础。
-
-附代码：
-- [chat.py](./insight-agent/app/routers/api/chat.py)
-
-### 4.5 WebSocket Token 接口
-WebSocket Token 接口负责把已经完成 HTTP 认证的用户身份，转换成一个短时可消费的建连令牌。
-
-接口为：
-- `POST /api/chat/ws-token`
-
-调用流程如下：
-- 从 `request.state.payload.sub` 读取用户 ID
-- 生成随机 `websocket_token`
-- 调用 `websocket_token_repo.create()` 写入 Redis
-- 返回 `WebSocketTokenResponse`
-
-响应对象字段包括：
-- `websocket_token`
-- `expires_in`
-
-这一接口的作用是把 HTTP 认证结果传递到后续 WebSocket 链路中。
-
-附代码：
-- [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
-
-### 4.6 WebSocket 聊天接口
-WebSocket 聊天接口负责承载实时对话过程。
-
-接口为：
-- `WS /api/chat/ws/chat?conversation_id=...&websocket_token=...`
-
-建连流程如下：
-- 从查询参数中读取 `websocket_token`
-- 调用 `websocket_token_repo.consume()` 校验并消费令牌
-- 把用户 ID 写入上下文变量
-- 建立 WebSocket 连接
-- 校验会话是否存在且属于当前用户
-
-历史恢复流程如下：
-- 读取当前会话的历史消息
-- 逐条从 Entity 转成 Schema，再转成运行时消息
-- 读取最近一次上下文压缩结果
-- 如存在摘要，则用摘要替换历史消息前段
-
-消息收发流程如下：
-- 接收前端发送的 `WebSocketChatRequest`
-- 校验 `message.role` 必须为 `user`
-- 为用户消息补齐 `context_seq`
-- 如会话仍是草稿，则更新为正式会话
-- 调用 `chat_service.stream_chat()` 执行聊天
-- 把返回的每条消息包装成 `WebSocketMessageResponse`
-- 通过 `websocket.send_json()` 持续推送给前端
-
-异常处理方式包括：
-- 建连参数缺失或令牌无效时，直接关闭连接
-- 会话不存在或无权限访问时，发送 `WebSocketErrorResponse` 后关闭连接
-- 请求体格式不合法时，发送错误事件并继续等待下一条消息
-
-关键请求和响应对象包括：
-- `WebSocketChatRequest`
-- `WebSocketMessageResponse`
-- `WebSocketErrorResponse`
-
-附代码：
-- [chat.py](./insight-agent/app/routers/api/chat.py)
-
-## 5. 数据模型与消息转换
-
-### 5.1 项目中的三种消息格式
+### 4.3 项目中的三种消息格式
 - Agent 运行时使用的 LangChain/DeepAgents 消息
 - 前后端交互的 Schema 消息
 - 数据库存储的 Entity 消息
 
 LangChain/DeepAgents 消息是 Agent 真正消费和产出的运行时格式，Schema 和 Entity 都是在运行时消息基础上做适配
 
-#### 5.1.1 运行时消息
+#### 4.3.1 运行时消息
 运行时消息是 Agent 真正消费和产出的格式，主要有三种：
 - `HumanMessage`：用户输入消息
 - `AIMessage`：模型输出消息，可能包含 `tool_calls`
@@ -771,7 +620,7 @@ LangChain/DeepAgents 消息是 Agent 真正消费和产出的运行时格式，S
 - `name` 是工具名称
 - `content` 是工具执行结果，项目里统一按字符串处理
 
-#### 5.1.2 Schema 消息
+#### 4.3.2 Schema 消息
 Schema 消息负责前后端交互，是运行时消息在应用层的结构化表达。项目的核心结构是 `MessageSchema`：
 
 ```python
@@ -865,7 +714,7 @@ class MessageSchema(BaseModel):
     timestamp: datetime | None = Field(default=None, description="发送时间")
 ```
 
-#### 5.1.3 Entity 消息
+#### 4.3.3 Entity 消息
 Entity 消息负责数据库持久化，是运行时消息和 Schema 消息在存储层的落地形式。项目中对应的是 `app/entities/chat.py` 里的 `Message` 实体：
 
 ```python
@@ -924,8 +773,8 @@ CREATE TABLE `message` (
 ) COMMENT='消息';
 ```
 
-### 5.2 消息转换 Mapper
-#### 5.2.1 `langchain_message_to_schema` 与流式输出适配
+### 4.4 消息转换 Mapper
+#### 4.4.1 `langchain_message_to_schema` 与流式输出适配
 这一段负责把 Agent 运行时输出重新转回 `MessageSchema`，供前端展示和后续持久化。
 
 处理的消息类型主要包括：
@@ -987,7 +836,7 @@ def langchain_message_to_schema(
         )
 ```
 
-#### 5.2.2 `schema_to_entity`
+#### 4.4.2 `schema_to_entity`
 这一段负责把 `MessageSchema` 写入数据库实体。
 
 `schema_to_entity` 的处理重点是：
@@ -1025,7 +874,7 @@ def schema_to_entity(
     )
 ```
 
-#### 5.2.3 `entity_to_schema`
+#### 4.4.3 `entity_to_schema`
 这一段负责把数据库实体恢复成 `MessageSchema`。
 
 `entity_to_schema` 的处理重点是：
@@ -1065,7 +914,7 @@ def entity_to_schema(message: Message) -> chat_schema.MessageSchema:
     )
 ```
 
-#### 5.2.4 `schema_to_langchain_message`
+#### 4.4.4 `schema_to_langchain_message`
 这一段负责把 `MessageSchema` 转成 Agent 可直接消费的运行时消息。
 
 对 `user` 和 `assistant` 角色，核心处理是两步：
@@ -1125,21 +974,7 @@ def schema_to_langchain_message(
     return payload
 ```
 
-### 5.3 消息表定义与实体承接
-#### 5.3.1 先定义什么表，为什么
-- `sql/mysql/chat.sql` 里定义了消息系统真正依赖的核心表
-- `app/init_db.py` 负责把这些消息相关表初始化到数据库中
-- 会话表
-- 消息表
-- 上下文压缩表
-- WebSocket 临时令牌表
-- 这些表各自承载的业务职责
-
-### 5.4 Repository 模式在这个项目里的价值
-- 为什么不把 SQL 逻辑散落在 Service 和 Router 中
-- 会话、消息、摘要、令牌仓储分别负责什么
-
-### 5.5 数据模型与聊天链路的协同
+### 4.5 数据模型与聊天链路的协同
 - 消息写入时机
 - 会话更新时间刷新
 - 历史消息回放
@@ -1147,7 +982,179 @@ def schema_to_langchain_message(
 - Schema、数据库、工作区、工具返回之间如何互相配合
 - 为什么 Mapper 是整个项目最关键的“翻译层”
 
-## 6. 聊天执行链路：Router、Service 与 WebSocket 流式通信
+## 5. 基于 Repository 的接口能力
+
+这一章开始回到对外接口。但此时接口不再是孤立存在的，而是建立在前一章已经定义好的表结构、消息结构和 Repository 之上。
+
+### 5.1 后端功能接口
+- `GET /health`：健康检查
+- `GET /api/chat/ls`：获取会话列表
+- `POST /api/chat/create`：创建会话
+- `POST /api/chat/update`：修改会话标题
+- `POST /api/chat/delete`：删除会话
+- `GET /api/chat/ls/{conversation_id}`：获取历史消息
+- `POST /api/chat/attachment/upload`：上传附件
+- `POST /api/chat/attachment/delete`：删除附件
+- `GET /api/chat/attachment/get`：获取附件文件
+- `POST /api/chat/ws-token`：创建 WebSocket 临时令牌
+- `WS /api/chat/ws/chat`：流式聊天
+
+### 5.2 会话接口
+会话相关接口包括：
+- `GET /api/chat/ls`：按当前用户查询会话列表
+- `POST /api/chat/create`：创建会话，初始标题为“新对话”，可指定是否创建草稿会话
+- `POST /api/chat/update`：校验会话归属后更新标题
+- `POST /api/chat/delete`：逻辑删除会话，并一并清理消息、上下文压缩记录和工作区目录
+
+这组接口里，需要单独说明的是草稿会话。
+草稿会话的处理流程如下：
+- 前端可以先调用 `POST /api/chat/create` 创建 `is_draft=1` 的草稿会话
+- 这类会话先出现在列表和工作区体系中，但还没有真正进入正式对话
+- WebSocket 首次收到用户消息后，会检查会话是否仍处于草稿状态
+- 如果仍是草稿，会先把 `is_draft` 更新为 `0`
+- 后续这条会话再按正式会话继续写入消息、更新标题和维护上下文
+
+这种设计用于解决“附件先上传、消息稍后发送”的场景。前端可以先创建一个草稿会话，把附件上传到对应工作区，等用户真正发出第一条消息时，再把它转换成正式会话。
+
+这里也可以看到 Repository 的协同关系：删除会话时，并不是只改动一条会话记录，而是会同时调用消息仓储、上下文压缩仓储和工作区清理逻辑，完成一次会话级的级联清理。
+
+附代码片段：
+来源：[chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
+
+```python
+class ConversationResponse(BaseModel):
+    conversation_id: int
+    title: str
+    update_at: datetime
+
+
+class ConversationListResponse(BaseModel):
+    conversations: list[ConversationResponse]
+
+
+class CreateConversationRequest(BaseModel):
+    is_draft: Literal[0, 1] = Field(default=0, description="是否创建草稿对话")
+
+
+class UpdateConversationRequest(BaseModel):
+    conversation_id: int = Field(..., description="对话ID")
+    title: str = Field(..., description="对话标题")
+
+
+class DeleteConversationRequest(BaseModel):
+    conversation_ids: list[int] = Field(..., description="对话ID列表")
+```
+
+### 5.3 附件接口
+附件接口负责把文件写入会话工作区，并把工作区中的文件重新返回给前端。
+
+附件相关接口包括：
+- `POST /api/chat/attachment/upload`：上传附件到会话工作区
+- `POST /api/chat/attachment/delete`：删除工作区中的附件
+- `GET /api/chat/attachment/get`：获取工作区中的附件文件
+
+这组接口里，需要单独说明的是上传流程。
+附件上传流程如下：
+- 接收 `conversation_id` 和 `file`
+- 校验会话是否存在且属于当前用户
+- 用 `_build_attachment_unique_name()` 生成唯一文件名，避免重名覆盖
+- 用 `get_workspace_dir()` 获取会话工作区
+- 用 `_build_attachment_path()` 校验路径，防止路径逃逸
+- 按块写入文件
+- 返回上传后的附件元数据
+
+附代码片段：
+来源：[chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
+
+```python
+class Attachment(BaseModel):
+    raw_name: str = Field(..., description="原始附件名称")
+    path: str = Field(..., description="工作区相对路径")
+
+
+class UploadAttachmentResponse(BaseModel):
+    attachment: Attachment = Field(..., description="上传后的附件信息")
+
+
+class DeleteAttachmentRequest(BaseModel):
+    conversation_id: int = Field(..., description="对话ID")
+    path: str = Field(..., description="相对工作区路径")
+```
+
+### 5.4 WebSocket Token 接口
+WebSocket Token 接口负责把已经完成 HTTP 认证的用户身份，转换成一个短时可消费的建连令牌。
+
+接口如下：
+- `POST /api/chat/ws-token`
+
+这一接口的核心目标，是把已经在 HTTP 请求里完成校验的用户身份，安全地传递给后续 WebSocket 建连过程。因为浏览器发起 WebSocket 连接时，不适合继续沿用原本那套 HTTP 认证处理链，所以后端先发放一个短时有效、且只能消费一次的临时令牌，再由前端在建立 WebSocket 连接时携带这个令牌完成身份确认。
+
+WebSocket Token 生成流程如下：
+- 从 `request.state.payload.sub` 读取用户 ID
+- 设置临时令牌过期时间 `WS_TOKEN_EXPIRE_SECONDS = 30`
+- 用 `secrets.token_urlsafe(32)` 生成随机 `websocket_token`
+- 调用 `websocket_token_repo.create()` 把令牌、用户 ID 和过期时间写入 Redis
+- 返回 `WebSocketTokenResponse`
+
+响应对象字段包括：
+- `websocket_token`
+- `expires_in`
+
+这里的设计重点有两个：
+- 令牌有效期很短，只用于紧接着发起一次 WebSocket 建连
+- 令牌信息保存在 Redis 中，后续 WebSocket 接口可通过消费令牌取回对应用户身份
+
+附代码片段：
+来源：[chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
+
+```python
+class WebSocketTokenResponse(BaseModel):
+    websocket_token: str = Field(..., description="WebSocket 临时令牌")
+    expires_in: int = Field(..., description="过期时间（秒）")
+```
+
+### 5.5 WebSocket 聊天接口
+WebSocket 聊天接口负责承载实时对话过程。
+
+接口为：
+- `WS /api/chat/ws/chat?conversation_id=...&websocket_token=...`
+
+建连流程如下：
+- 从查询参数中读取 `websocket_token`
+- 调用 `websocket_token_repo.consume()` 校验并消费令牌
+- 把用户 ID 写入上下文变量
+- 建立 WebSocket 连接
+- 校验会话是否存在且属于当前用户
+
+历史恢复流程如下：
+- 读取当前会话的历史消息
+- 逐条从 Entity 转成 Schema，再转成运行时消息
+- 读取最近一次上下文压缩结果
+- 如存在摘要，则用摘要替换历史消息前段
+
+消息收发流程如下：
+- 接收前端发送的 `WebSocketChatRequest`
+- 校验 `message.role` 必须为 `user`
+- 为用户消息补齐 `context_seq`
+- 如会话仍是草稿，则更新为正式会话
+- 调用 `chat_service.stream_chat()` 执行聊天
+- 把返回的每条消息包装成 `WebSocketMessageResponse`
+- 通过 `websocket.send_json()` 持续推送给前端
+
+异常处理方式包括：
+- 建连参数缺失或令牌无效时，直接关闭连接
+- 会话不存在或无权限访问时，发送 `WebSocketErrorResponse` 后关闭连接
+- 请求体格式不合法时，发送错误事件并继续等待下一条消息
+
+关键请求和响应对象包括：
+- `WebSocketChatRequest`
+- `WebSocketMessageResponse`
+- `WebSocketErrorResponse`
+
+附代码：
+- [chat.py](./insight-agent/app/routers/api/chat.py)
+
+## 6. 聊天执行链路：Router、Service、上下文压缩与前端接入
 
 ### 6.1 为什么聊天接口要同时使用 HTTP 和 WebSocket
 - HTTP 负责资源管理与辅助操作
@@ -1171,6 +1178,7 @@ def schema_to_langchain_message(
 - 对话更新时间维护
 - Agent 调用
 - 流式结果处理
+- 上下文压缩与摘要落库
 - 模型异常兜底
 - 图片不支持场景兜底
 
@@ -1179,51 +1187,30 @@ def schema_to_langchain_message(
 - 用户 ID 如何影响工作区隔离和数据隔离
 - 为什么同一个用户上下文必须贯穿会话、消息与文件工作区
 
-## 7. 聊天上下文管理：历史消息、压缩摘要与恢复机制
-
-### 7.1 为什么长对话一定要做上下文治理
+### 6.6 为什么长对话一定要做上下文治理
 - 成本问题
 - 上下文长度限制
 - 归因分析场景天然容易长链路
 
-### 7.2 运行时上下文与数据库上下文的区别
+### 6.7 运行时上下文与数据库上下文的区别
 - 运行时消息数组如何变化
 - 持久化消息如何完整保留
 
-### 7.3 摘要压缩机制
+### 6.8 摘要压缩机制
 - `_summarization_event` 是什么
 - `cutoff_index` 和 `end_seq` 如何对应
 - 为什么要同时改运行时上下文和数据库记录
 
-### 7.4 历史恢复机制
+### 6.9 历史恢复机制
 - 新连接建立时如何加载消息
 - 如何把最新摘要重新应用到历史消息上
 
-### 7.5 上下文管理如何嵌入聊天链路
+### 6.10 上下文管理如何嵌入聊天链路
 - 为什么上下文压缩不是独立功能，而是聊天执行过程的一部分
 - 历史加载、摘要应用与消息发送是如何衔接的
 
-## 8. 前端接入：如何消费后端能力
-
-### 8.1 前端调用后端接口的基本流程
-- 获取会话列表与历史消息
-- 创建会话与上传附件
-- 获取 WebSocket Token
-- 通过 WebSocket 发起聊天
-- 接收流式消息与附件返回
-
-### 8.2 前端认证、跳转与路由守卫
-- 登录跳转与认证回调页面如何配合
-- 路由守卫如何控制未登录用户访问
-- 用户信息与 Token 如何进入前端状态管理
-
-### 8.3 后端如何托管前端资源
+### 6.11 后端如何托管前端资源
 - 静态构建文件放在 `app/static/dist`
 - 后端启动后直接提供静态页面
 - `app/routers/frontend.py` 如何把前端页面入口接到后端服务上
 - 前端页面与后端 API、认证代理如何一起工作
-
-### 8.4 联调时真正需要关注的点
-- HTTP 与 WebSocket 调用链路
-- 认证状态如何传给后端
-- 消息结构、附件结构与流式响应格式
