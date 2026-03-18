@@ -5,7 +5,7 @@
 用法:
   uv run python render_report.py --input analysis/report_payload.json --output outputs/report.html
 
-全新通用 schema:
+schema:
 {
   "meta": {
     "title": "分析报告",
@@ -136,7 +136,7 @@ def render_meta(meta: dict) -> str:
       <h1>{esc(meta.get("title", "分析报告"))}</h1>
       <p class="subtitle">{esc(meta.get("subtitle", ""))}</p>
       <p class="meta-line">生成时间：{esc(meta.get("generated_at", ""))}</p>
-      {'<div class="tag-row">' + tags + '</div>' if tags else ''}
+      {'<div class="tag-row">' + tags + "</div>" if tags else ""}
     </section>
     """
 
@@ -159,7 +159,7 @@ def render_list(block: dict) -> str:
     return wrap_block(
         block,
         "list-block",
-        f"<{tag} class=\"content-list\">{items}</{tag}>",
+        f'<{tag} class="content-list">{items}</{tag}>',
     )
 
 
@@ -215,7 +215,7 @@ def render_table(block: dict) -> str:
     <div class="table-scroll">
       <table>
         <thead><tr>{head}</tr></thead>
-        <tbody>{''.join(body_rows)}</tbody>
+        <tbody>{"".join(body_rows)}</tbody>
       </table>
     </div>
     """
@@ -284,7 +284,9 @@ def render_line_chart(block: dict) -> str:
 
     x_labels = []
     if series:
-        x_labels = [point.get("label", "") for point in as_list(series[0].get("points"))]
+        x_labels = [
+            point.get("label", "") for point in as_list(series[0].get("points"))
+        ]
 
     line_svgs = []
     legend = []
@@ -297,7 +299,11 @@ def render_line_chart(block: dict) -> str:
         for point_index, point in enumerate(points):
             value = to_float(point.get("value"))
             x = padding_left + step_x * point_index
-            y = padding_top + plot_height - ((value - min_value) / value_range) * plot_height
+            y = (
+                padding_top
+                + plot_height
+                - ((value - min_value) / value_range) * plot_height
+            )
             coords.append((x, y, point))
 
         if not coords:
@@ -349,13 +355,13 @@ def render_line_chart(block: dict) -> str:
 
     chart_html = f"""
     <div class="line-chart-wrap">
-      <svg viewBox="0 0 {width} {height}" class="line-chart-svg" role="img" aria-label="{esc(block.get('title', '趋势图'))}">
-        {''.join(y_ticks)}
-        {''.join(line_svgs)}
-        {''.join(x_tick_labels)}
+      <svg viewBox="0 0 {width} {height}" class="line-chart-svg" role="img" aria-label="{esc(block.get("title", "趋势图"))}">
+        {"".join(y_ticks)}
+        {"".join(line_svgs)}
+        {"".join(x_tick_labels)}
       </svg>
-      {'<div class="chart-legend">' + ''.join(legend) + '</div>' if legend else ''}
-      {'<div class="line-point-grid">' + ''.join(point_labels) + '</div>' if point_labels else ''}
+      {'<div class="chart-legend">' + "".join(legend) + "</div>" if legend else ""}
+      {'<div class="line-point-grid">' + "".join(point_labels) + "</div>" if point_labels else ""}
     </div>
     """
     return wrap_block(block, "chart-block line-chart-block", chart_html)
@@ -413,7 +419,7 @@ def render_columns(block: dict) -> str:
         columns.append(
             f"""
             <div class="column-card">
-              {'<div class="column-title">' + esc(column.get("title", "")) + '</div>' if column.get("title") else ''}
+              {'<div class="column-title">' + esc(column.get("title", "")) + "</div>" if column.get("title") else ""}
               {inner}
             </div>
             """
@@ -441,7 +447,7 @@ def render_section(block: dict) -> str:
 def wrap_block(block: dict, class_name: str, inner_html: str) -> str:
     return f"""
     <section class="panel {class_name}">
-      {'<div class="block-head"><h2>' + esc(block.get("title", "")) + '</h2><p>' + esc(block.get("summary", "")) + '</p></div>' if block.get("title") or block.get("summary") else ''}
+      {'<div class="block-head"><h2>' + esc(block.get("title", "")) + "</h2><p>" + esc(block.get("summary", "")) + "</p></div>" if block.get("title") or block.get("summary") else ""}
       {inner_html}
     </section>
     """
@@ -473,7 +479,8 @@ def render_report(payload: dict) -> str:
     block_items = as_list(payload.get("blocks"))
     blocks = "".join(render_block(block) for block in block_items)
     has_echarts = has_block_type(block_items, "echarts")
-    echarts_assets = """
+    echarts_assets = (
+        """
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
   <script>
     window.addEventListener("DOMContentLoaded", function () {
@@ -495,7 +502,10 @@ def render_report(payload: dict) -> str:
       });
     });
   </script>
-    """ if has_echarts else ""
+    """
+        if has_echarts
+        else ""
+    )
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>

@@ -1,26 +1,26 @@
-# Insight Agent 教学文档大纲
+# Insight Agent 文档
 
 ## 1. 项目介绍
 
 ### 1.1 功能介绍
 `insight-agent` 是一个面向归因分析场景的智能体应用。它主要服务于业务分析、经营诊断和问题定位这类需要“先提出问题，再逐步收集证据，最后形成分析结论”的工作。和普通问答式聊天应用不同，这个项目强调的不只是模型给出一句回答，而是让系统能够围绕一个真实分析任务持续推进，直到生成阶段性结论、分析材料和可交付结果。
 
-在很多真实业务场景里，用户面对的问题往往不是一句话就能回答清楚的。比如某个指标为什么下滑、某个业务区域为什么异常、某次活动为什么效果不达预期，这些问题通常都需要先拆解，再查数，再结合上下文做判断，最后把结果整理成可复用的输出。`insight-agent` 想做的事情，就是把这条原本依赖人工来回切换工具、查找信息、整理文档的链路，尽量收拢进一次连续的智能分析流程里。
+在很多真实业务场景里，用户面对的问题往往不是一句话就能回答清楚的。比如某个指标为什么下滑、某个业务区域为什么异常、某次活动为什么效果不达预期，这些问题通常都需要先拆解，再查数，再结合上下文做判断，最后把结果整理成可复用的输出。`insight-agent` 做的事情，就是把这条原本依赖人工来回切换工具、查找信息、整理文档的链路，尽量收拢进一次连续的智能分析流程里。
 
-对使用者来说，它的价值不只是“更快拿到一个答案”，而是把分析过程本身也沉淀下来。用户可以保留历史会话、继续追问前面的结论、复用已经上传的附件和已经生成的中间产物，从而把一次分析逐渐发展成一个可持续推进的工作过程，而不是一次性对话。
+对使用者来说，它的价值不只是“更快拿到一个答案”，而是把分析过程本身也沉淀下来。用户可以保留历史会话、继续追问前面的结论、复用已经上传的附件和已经生成的中间产物，从而把一次分析逐渐发展成一个可持续推进的工作过程。
 
 ![Insight Agent 页面效果与分析交付示例](./assets/1.1_1.png)
 
 ### 1.2 核心能力
-- 提供完整的会话管理能力，包括创建会话、获取历史消息、删除会话
-- 提供基于 WebSocket 的流式聊天能力，把模型回复、工具调用和工具结果实时返回给前端
-- 基于 `deepagents` 组织 Agent 运行时，统一挂载模型、自定义工具、MCP 工具和 Skill
-- 为每个用户会话分配独立工作区，用来承接上传附件、分析中间产物和最终报告文件
-- 通过 `db_query` 查询业务数据，并把结果沉淀为工作区内可继续分析的文件
-- 通过 `return_file` 把工作区中的分析结果文件作为附件返回给用户
-- 通过消息 Schema 与 Mapper 打通前端消息、数据库记录和 Agent 运行时消息三种格式
-- 支持上下文压缩与恢复，控制长对话成本，同时保持历史会话可继续追问
-- 通过认证中间件、临时 WebSocket Token 和用户上下文实现用户鉴权与会话隔离
+- 会话管理：提供完整的会话管理能力，包括创建会话、获取历史消息、删除会话
+- 流式聊天：提供基于 WebSocket 的流式聊天能力，把模型回复、工具调用和工具结果实时返回给前端
+- Agent 运行时：基于 `deepagents` 组织 Agent 运行时，统一挂载模型、自定义工具、MCP 工具和 Skill
+- 工作区机制：为每个用户会话分配独立工作区，用来承接上传附件、分析中间产物和最终报告文件
+- 数据查询：通过 `db_query` 查询业务数据，并把结果沉淀为工作区内可继续分析的文件
+- 文件返回：通过 `return_file` 把工作区中的分析结果文件作为附件返回给用户
+- 消息转换：通过消息 Schema 与 Mapper 打通前端消息、数据库记录和 Agent 运行时消息三种格式
+- 上下文管理：支持上下文压缩与恢复，控制长对话成本，同时保持历史会话可继续追问
+- 用户鉴权：通过认证中间件、临时 WebSocket Token 和用户上下文实现用户鉴权与会话隔离
 
 ### 1.3 技术栈与依赖
 - 后端：Python、FastAPI、SQLAlchemy、Redis、DeepAgents、LangChain 相关组件
@@ -186,9 +186,6 @@ insight-agent/                项目根目录，统一组织后端、前端、�
 ```
 
 ### 2.2 项目依赖
-依赖定义与安装方式：
-- Python 依赖定义在 `pyproject.toml`
-
 依赖如下：
 - Web 框架与接口能力：`fastapi[standard]`
 - 数据库与 ORM：`sqlalchemy`、`asyncmy`、`pymysql`
@@ -260,11 +257,11 @@ HTTP 客户端工具负责统一封装对外部 HTTP 服务的调用入口，方
 日志落文件时会先从上下文中读取请求相关信息，例如 `request_id`、`trace_id`、`user_id`、请求路径和响应耗时，再和本次日志消息一起组装成 JSON，最终按 `jsonl` 格式写入文件。方便后续排查问题、链路检索和日志分析。
 
 附代码：
-- [log.py](./insight-agent/app/utils/log.py)
 - [context.py](./insight-agent/app/utils/context.py)
+- [log.py](./insight-agent/app/utils/log.py)
 
 ### 2.5 异常体系与统一错误处理
-异常模块统一放在 `app/exceptions/` 下，用来集中管理错误定义和错误返回格式，避免业务代码里到处手写 `HTTPException`。
+异常模块统一放在 `app/exceptions/` 下，用来集中管理错误定义和错误返回格式，避免业务代码里到处写 `HTTPException`。
 
 #### 2.5.1 基础异常
 基础异常定义在 `base.py` 中，项目里的自定义异常都从 `AppError` 继承。基础字段包括：
@@ -273,7 +270,7 @@ HTTP 客户端工具负责统一封装对外部 HTTP 服务的调用入口，方
 - `status_code`：HTTP 状态码
 - `detail`：可选的补充信息
 
-在这个基础上，又定义了一组通用异常基类，例如：
+在这个基础上，又定义了一组通用异常基类，包括：
 - `ValidationError`：参数校验失败
 - `AuthError`：认证失败
 - `PermissionDeniedError`：权限不足
@@ -291,14 +288,14 @@ HTTP 客户端工具负责统一封装对外部 HTTP 服务的调用入口，方
 - `auth_error.py`：认证相关异常
 - `chat_error.py`：聊天相关异常
 
-已定义的业务异常包括：
+定义的业务异常包括：
 - `MissingAccessTokenError`：缺少访问令牌
 - `InvalidAccessTokenError`：访问令牌无效
 - `AuthServiceUnavailableError`：认证服务不可用
 - `AuthServiceResponseError`：认证服务响应异常
 - `ConversationNotFound`：对话不存在
 
-这种拆分方式对应的设计考虑包括：
+这种拆分方式有以下优点：
 - 错误定义和业务模块对应，查找更方便
 - 每个异常都有稳定的错误码和错误消息
 - 路由和服务里可以直接抛业务异常，不需要自己拼响应
@@ -351,7 +348,8 @@ HTTP 客户端工具负责统一封装对外部 HTTP 服务的调用入口，方
 - 从请求头里读取 `Authorization`
 - 调用认证服务的 introspection 接口
 - 校验访问令牌是否有效
-- 把解析出的用户信息写入 `request.state.payload`
+- 先通过 `auth_schema.py` 把认证服务返回结果转换成项目内部统一数据结构
+- 再把解析出的用户信息写入 `request.state.payload`
 - 同时把用户 ID 写入上下文变量，供后续日志和业务链路使用
 
 如果认证失败，不会继续进入业务逻辑，而是直接通过统一异常处理返回约定格式的错误响应。
@@ -371,13 +369,13 @@ Agent 运行时由模型、工作区、工具、MCP、Skill 和 `deepagents` 提
 - 工具：负责执行数据库查询、文件返回等具体动作
 - MCP：负责接入外部扩展能力
 - Skill：负责注入任务方法论、执行规范和交付要求
-- `TodoListMiddleware`：负责帮助 Agent 维护任务拆解和执行步骤
+- `TodoListMiddleware`：负责辅助 Agent 维护任务拆解和执行步骤
 - `SubAgentMiddleware`：负责在复杂任务下支持子代理拆分与协作
 - `SummarizationMiddleware`：负责在长对话场景下压缩上下文，降低上下文长度和推理成本
 
 
 ### 3.2 工作区机制
-工作区是这个项目里很关键的一层。每个会话都会分配一个独立的 workspace，用来保存用户上传的附件、分析过程中的中间文件，以及最终生成的报告或交付物。
+每个会话都会分配一个独立的工作区，用来保存用户上传的附件、中间的分析过程文件，以及最终生成的报告或交付物。
 
 工作区机制主要解决三个问题：
 - 会话级隔离：不同用户、不同会话的文件不会混在一起
@@ -395,14 +393,14 @@ Agent 运行时由模型、工作区、工具、MCP、Skill 和 `deepagents` 提
 #### 3.3.1 `db_query`
 `db_query` 是项目里最核心的业务工具之一，负责把自然语言查询需求发送给 Data Agent，并将最终结果写入对应会话工作区。
 
-这一工具的职责可以概括为：
+工具职责：
 - 接收自然语言查询需求
 - 调用外部 Data Agent 查询业务数据
 - 解析 SSE 流式返回结果
 - 将最终结果写入工作区文件
 - 返回文件路径、字段信息和预览数据
 
-这里有几个关键设计点：
+设计重点：
 - 数据库访问没有直接暴露给 Agent，而是通过 Data Agent 做隔离
 - 查询结果不会只停留在内存里，而是会沉淀成工作区文件，方便后续继续分析
 - 表格结果写成 CSV，非表格结果写成 JSON
@@ -414,13 +412,13 @@ Agent 运行时由模型、工作区、工具、MCP、Skill 和 `deepagents` 提
 #### 3.3.2 `return_file`
 `return_file` 负责把工作区中的文件返回给用户。这个工具本身不直接传输二进制内容，而是返回一个结构化结果，后续再由消息映射和前端展示逻辑把它转换成附件。
 
-这一工具的职责可以概括为：
+工具职责：
 - 接收工作区相对路径
 - 校验文件是否存在
 - 校验路径是否越出工作区范围
 - 返回标准化的文件信息结构
 
-这里的设计重点包括：
+设计重点：
 - 路径只允许是工作区下的相对路径
 - 需要显式处理路径逃逸问题
 - 返回值中同时包含工作区路径和面向用户展示的原始文件名
@@ -522,40 +520,36 @@ Agent 的组装由 `_build_agent()` 完成，装配内容包括：
 附代码：
 - [agent.py](./insight-agent/app/core/agent.py)
 
-## 4. 聊天相关核心数据与仓储
+## 4. 聊天相关数据模型与消息转换
 
-这一章先不直接讲接口，而是先说明聊天系统最底层的承接结构。因为无论是会话接口、附件接口，还是 WebSocket 聊天接口，最终都要落到统一的表结构、消息结构、Mapper 和 Repository 上。
+### 4.1 接口设计与表设计
+项目实现了几类核心接口：会话管理、历史消息获取、WebSocket 聊天、附件上传与下载，以及 WebSocket 临时令牌获取。这些接口能力背后都需要稳定的存储结构来承接。
 
-### 4.1 先定义哪些核心表，为什么
-`sql/mysql/chat.sql` 里定义了消息系统真正依赖的核心表，`app/init_db.py` 负责把这些消息相关表初始化到数据库中。
+在具体实现上，`sql/mysql/chat.sql` 定义了聊天系统依赖的核心表结构，`app/init_db.py` 负责初始化数据库表；而 WebSocket 临时令牌和会话文件则分别落在 Redis 与会话工作区中。也就是说，这里的“数据承接”不只包含 MySQL 表，还包含 Redis 和工作区文件系统。
 
-这里的核心表包括：
-- 会话表
-- 消息表
-- 上下文压缩表
-- WebSocket 临时令牌表
+可以把接口能力与底层存储的对应关系理解为：
 
-这些表并不是脱离业务单独设计的，而是围绕实际接口能力来承接数据：
-- 会话接口依赖会话表维护标题、用户归属和草稿状态
-- 聊天接口依赖消息表持久化历史消息
-- 上下文压缩表负责保存摘要结果，供后续历史恢复使用
-- WebSocket 临时令牌表负责把 HTTP 认证结果传递到 WebSocket 建连链路中
+| 接口/能力              | 对应存储                           | 说明                                                                    |
+| ---------------------- | ---------------------------------- | ----------------------------------------------------------------------- |
+| 会话管理               | `conversation`                     | 保存对话标题、用户归属、草稿状态和逻辑删除状态。                        |
+| 历史消息获取与聊天链路 | `message`                          | 保存用户消息、模型消息、工具消息，以及消息关联的附件元数据。            |
+| 上下文压缩与历史恢复   | `context_compaction`               | 保存对话摘要结果，便于后续恢复历史上下文并减少长对话成本。              |
+| WebSocket 临时建连     | Redis `ws_token:{token}`           | 保存短期有效的临时令牌，把 HTTP 鉴权结果安全传递到 WebSocket 建连过程。 |
+| 附件上传与文件返回     | 会话工作区 + `message.attachments` | 文件本体保存在会话工作区，附件元数据随消息一起持久化。                  |
 
-### 4.2 Repository 模式在这个项目里的价值
-- 为什么不把 SQL 逻辑散落在 Service 和 Router 中
-- 会话、消息、摘要、令牌仓储分别负责什么
+附代码：
+- [chat.sql](/home/kodey/agents/insight-agent/sql/mysql/chat.sql)
+- [init_db.py](/home/kodey/agents/insight-agent/app/init_db.py)
 
-先把这些表对应的 Repository 定义清楚，后续 Router 和 Service 才能把“创建会话”“删除会话”“持久化消息”“消费临时令牌”这些业务动作稳定编排起来。
-
-### 4.3 项目中的三种消息格式
+### 4.2 项目中的三种消息格式
 - Agent 运行时使用的 LangChain/DeepAgents 消息
 - 前后端交互的 Schema 消息
 - 数据库存储的 Entity 消息
 
 LangChain/DeepAgents 消息是 Agent 真正消费和产出的运行时格式，Schema 和 Entity 都是在运行时消息基础上做适配
 
-#### 4.3.1 运行时消息
-运行时消息是 Agent 真正消费和产出的格式，主要有三种：
+#### 4.2.1 运行时消息
+运行时消息主要有三种：
 - `HumanMessage`：用户输入消息
 - `AIMessage`：模型输出消息，可能包含 `tool_calls`
 - `ToolMessage`：工具调用结果消息
@@ -578,7 +572,7 @@ LangChain/DeepAgents 消息是 Agent 真正消费和产出的运行时格式，S
 - 文本片段：`{"type": "text", "text": "..."}`
 - 图片片段：`{"type": "image_url", "image_url": "..."}`
 
-如果用户消息带有文档附件，项目不会直接把附件本身放进运行时消息，而是先把附件信息转成一段文本提示，再追加到 `content` 里；如果带的是图片附件，则会读取工作区文件并转成 `data URL` 放进 `content`。
+如果用户消息带有文档附件，不会直接把附件本身放进运行时消息，而是先把附件信息转成一段文本提示，再追加到 `content` 里；如果带的是图片附件，则会读取工作区文件并转成 `data URL` 放进 `content`。
 
 `AIMessage` 对应的核心字段是 `content` 和 `tool_calls`：
 
@@ -620,8 +614,8 @@ LangChain/DeepAgents 消息是 Agent 真正消费和产出的运行时格式，S
 - `name` 是工具名称
 - `content` 是工具执行结果，项目里统一按字符串处理
 
-#### 4.3.2 Schema 消息
-Schema 消息负责前后端交互，是运行时消息在应用层的结构化表达。项目的核心结构是 `MessageSchema`：
+#### 4.2.2 Schema 消息
+Schema 消息负责前后端交互，是运行时消息在应用层的结构化表达。核心结构是 `MessageSchema`：
 
 ```python
 class MessageSchema(BaseModel):
@@ -636,14 +630,14 @@ class MessageSchema(BaseModel):
 
 其中几个关键字段的设计含义是：
 - `message_id`：消息主键，主要用于数据库回放后的消息标识
-- `context_seq`：消息在会话中的顺序号
+- `context_seq`：消息在该对话话中的顺序号
 - `role`：消息角色，对应用户、模型、工具等来源
 - `parts`：消息主体内容
 - `attachments`：附件列表
 - `finish_reason`：模型输出结束原因
 - `timestamp`：消息时间戳
 
-Schema 消息里最核心的设计是 `parts`。项目没有把一条消息简单设计成单个字符串，而是拆成统一的片段结构，支持四种：
+Schema 消息里最核心的设计是 `parts`。项目把一条消息拆成统一的片段结构，支持四种：
 
 ```python
 TextContent:
@@ -669,7 +663,6 @@ ToolResultPart:
 - 前端展示时可以统一按 `parts` 渲染文本、图片、工具调用和工具结果
 - 附件和消息主体分离，上传文件、返回文件、历史恢复都更清楚
 - 一条消息可以同时包含文本和工具调用，不需要靠额外字段拼接
-- 后续从 Schema 映射到运行时消息或数据库实体时结构更稳定
 
 附代码片段：
 来源：[chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
@@ -704,6 +697,14 @@ class Attachment(BaseModel):
     path: str = Field(..., description="工作区相对路径")
 
 
+MessageRole = Literal["user", "assistant", "tool", "system"]
+FinishReason = Literal["stop", "tool_calls"]
+MessagePart = Annotated[
+    TextContent | ImageContent | ToolCallPart | ToolResultPart,
+    Field(discriminator="type"),
+]
+
+
 class MessageSchema(BaseModel):
     message_id: int | None = Field(default=None, description="消息ID")
     context_seq: int | None = Field(default=None, description="对话内上下文顺序号")
@@ -714,7 +715,12 @@ class MessageSchema(BaseModel):
     timestamp: datetime | None = Field(default=None, description="发送时间")
 ```
 
-#### 4.3.3 Entity 消息
+这里有三个类型别名需要特别注意：
+- `MessageRole` 用字面量约束消息发送方，只允许 `user`、`assistant`、`tool`、`system`
+- `FinishReason` 用字面量约束消息结束原因，目前只允许 `stop` 和 `tool_calls`
+- `MessagePart` 用带判别字段的联合类型约束消息片段，要求每个片段都通过 `type` 字段区分具体结构
+
+#### 4.2.3 Entity 消息
 Entity 消息负责数据库持久化，是运行时消息和 Schema 消息在存储层的落地形式。项目中对应的是 `app/entities/chat.py` 里的 `Message` 实体：
 
 ```python
@@ -751,50 +757,43 @@ Entity 层保存的消息大致可以表示为：
 这一设计的核心考虑包括：
 - 表结构保持稳定，不需要为每一种消息片段单独拆表
 - `parts` 和 `attachments` 仍然保留结构化信息，后续可以完整恢复成 Schema
-- 历史消息回放、上下文恢复、附件回显都可以直接依赖这份持久化数据
 
-附代码片段：
-来源：[chat.sql](./insight-agent/sql/mysql/chat.sql)
+### 4.3 消息转换 Mapper
+在运行过程中，这三种消息格式会随着请求链路不断相互转换。  
+用户消息进入系统时，通常先以 Schema 形式承接前端请求；需要持久化时，会再转换成 Entity 写入数据库；真正送进 Agent 推理时，又要转换成 LangChain/DeepAgents 能消费的运行时消息。  
+反过来，Agent 在运行过程中产出的模型消息和工具消息，也需要先转回 Schema，才能继续完成前端展示和数据库持久化。
 
-```sql
-CREATE TABLE `message` (
-    `id` BIGINT NOT NULL COMMENT '消息ID',
-    `conversation_id` BIGINT NOT NULL COMMENT '对话ID',
-    `context_seq` BIGINT NOT NULL COMMENT '对话内上下文顺序号(从0起)',
-    `role` VARCHAR(10) NOT NULL COMMENT '角色 (user/assistant/tool/system)',
-    `parts` MEDIUMTEXT NOT NULL COMMENT '消息片段列表 (JSON 字符串)',
-    `create_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `yn` TINYINT NOT NULL DEFAULT 1 COMMENT '是否启用',
-    `finish_reason` VARCHAR(128) NULL COMMENT '完成原因',
-    `attachments` TEXT NULL COMMENT '附件列表 (JSON 字符串)',
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_message_conversation_id_context_seq` (`conversation_id`, `context_seq`),
-    KEY `idx_message_conversation_id` (`conversation_id`)
-) COMMENT='消息';
-```
+Mapper 层的职责，就是在这些阶段之间做稳定、可逆的格式转换，确保同一条消息在不同层里始终保持一致语义。
 
-### 4.4 消息转换 Mapper
-#### 4.4.1 `langchain_message_to_schema` 与流式输出适配
-这一段负责把 Agent 运行时输出重新转回 `MessageSchema`，供前端展示和后续持久化。
+#### 4.3.1 `langchain_message_to_schema`
+这一段负责把 Agent 运行时输出的消息转换成 `MessageSchema`，供前端展示和后续持久化。
 
 处理的消息类型主要包括：
 - `AIMessage`
 - `ToolMessage`
 
 `AIMessage` 的转换规则是：
+- 角色固定写成 `assistant`
 - `content` 转成 `TextContent`
 - `tool_calls` 转成一个或多个 `ToolCallPart`
 - `response_metadata.finish_reason` 写入 `finish_reason`
+- 当前实现要求 `content` 必须是字符串
+- 转换时会补上当前时间戳
 
 `ToolMessage` 的转换规则是：
+- 角色固定写成 `tool`
 - 工具结果统一转成 `ToolResultPart`
 - `tool_call_id` 和 `name` 原样保留，方便前端把工具调用和工具结果对应起来
+- `content` 会统一转成字符串写入 `ToolResultPart.content`
+- 转换时同样会补上当前时间戳
+- `finish_reason` 在工具消息中固定为 `None`
 
 其中需要单独说明的是文件返回类工具：
 - 项目里对应的是 `return_file`
 - 如果工具返回内容是成功的 JSON 结构
 - 会额外从结果中提取 `path` 和 `raw_name`
 - 再组装成 `attachments`
+- 如果不是 `return_file`，或者返回结果不是合法成功结构，则不会生成附件信息
 
 前端获得的因此不只是文本结果，还包括可以直接展示的附件信息。
 
@@ -805,9 +804,16 @@ CREATE TABLE `message` (
 def langchain_message_to_schema(
     message: AIMessage | ToolMessage,
 ) -> chat_schema.MessageSchema | None:
+    """将 LangChain 消息转换为 MessageSchema，同时添加时间戳"""
+    timestamp = datetime.now()
+
+    # 处理 AIMessage
     if isinstance(message, AIMessage):
+        # 转换 content 与 tool_calls 为消息片段对象
+        content = message.content
+        assert isinstance(content, str), "AI message content is not string"
         parts = [
-            chat_schema.TextContent(text=message.content),
+            chat_schema.TextContent(text=content),
             *[
                 chat_schema.ToolCallPart(
                     tool_call_id=tool_call.get("id") or "",
@@ -821,9 +827,29 @@ def langchain_message_to_schema(
             role="assistant",
             parts=parts,
             finish_reason=message.response_metadata.get("finish_reason"),
+            timestamp=timestamp,
         )
 
+    # 处理 ToolMessage
     elif isinstance(message, ToolMessage):
+        attachments: list[chat_schema.Attachment] | None = None
+
+        # 处理 return_file 的工具结果
+        if message.name == "return_file":
+            if isinstance(message.content, str):
+                try:
+                    payload = json.loads(message.content)
+                except json.JSONDecodeError:
+                    payload = None
+
+                if isinstance(payload, dict) and payload.get("status") == "success":
+                    path = payload.get("path")
+                    raw_name = payload.get("raw_name")
+                    if isinstance(path, str) and isinstance(raw_name, str):
+                        attachments = [
+                            chat_schema.Attachment(raw_name=raw_name, path=path)
+                        ]
+
         return chat_schema.MessageSchema(
             role="tool",
             parts=[
@@ -833,16 +859,66 @@ def langchain_message_to_schema(
                     content=str(message.content),
                 )
             ],
+            attachments=attachments,
+            finish_reason=None,
+            timestamp=timestamp,
         )
+
+    else:
+        return None
 ```
 
-#### 4.4.2 `schema_to_entity`
+#### 4.3.2 `agent_chunk_to_schemas`
+在实际运行过程中，从 Agent 流式拿到的并不是一条条已经拆好的消息，而是一个个 `chunk`。`chunk` 大致会是下面几种形态：
+
+```python
+{"model": {"messages": [AIMessage(...)]}}
+{"tools": {"messages": [ToolMessage(...)]}}
+{"SkillsMiddleware.before_agent": {...}}
+{"TodoListMiddleware.after_model": None}
+```
+
+`chunk` 本身是一个节点名到节点输出的映射，不同节点返回的内容结构并不完全一样。真正和前端展示、消息持久化直接相关的，主要是 `model.messages` 和 `tools.messages` 里的消息；而像 `SkillsMiddleware.before_agent`、`TodoListMiddleware.after_model` 这类中间件节点，更多是运行过程信息，不会直接转成前端消息。
+
+因此我们先调用 `agent_chunk_to_schemas`：它先检查 `chunk` 里是否存在 `model` 或 `tools` 节点，并进一步读取其中的 `messages` 列表；只有拿到运行时消息后，才会逐条调用 `langchain_message_to_schema` 把它们解析成 `MessageSchema`。
+
+它当前主要做了两件事：
+- 同时处理 `model` 和 `tools` 两类节点返回的消息
+- 把能够成功转换的消息统一收集成 `list[MessageSchema]`
+
+至于摘要压缩相关的 `_summarization_event`，则不属于普通消息转换范畴，因此不会在这里被解析成 `MessageSchema`。这一类特殊事件会在后面的聊天执行链路章节里单独展开说明。
+
+附代码片段：
+来源：[message_mapper.py](./insight-agent/app/mappers/message_mapper.py)
+
+```python
+def agent_chunk_to_schemas(chunk: dict) -> list[chat_schema.MessageSchema]:
+    """将 Agent 流式输出块转换为 MessageSchema 列表"""
+    schemas: list[chat_schema.MessageSchema] = []
+
+    # 处理 model 和 tools 两类节点的返回消息
+    for key in ("model", "tools"):
+        if (
+            (key in chunk)
+            and (messages := chunk[key].get("messages"))
+            and (isinstance(messages, list))
+        ):
+            for message in messages:
+                if schema := langchain_message_to_schema(message):
+                    schemas.append(schema)
+
+    return schemas
+```
+
+#### 4.3.3 `schema_to_entity`
 这一段负责把 `MessageSchema` 写入数据库实体。
 
 `schema_to_entity` 的处理重点是：
+- 先检查 `context_seq` 是否存在，没有顺序号就不能落库
 - 把 `parts` 从结构化对象序列化成 JSON 字符串
 - 把 `attachments` 从结构化对象序列化成 JSON 字符串
 - 补上 `conversation_id`、`context_seq` 等数据库落库所需字段
+- 如果 `message_id` 和 `timestamp` 已经存在，也会一并回填到实体对象中
 
 上述处理可以将前端和运行时使用的结构化消息稳定写入数据库。
 
@@ -853,9 +929,16 @@ def langchain_message_to_schema(
 def schema_to_entity(
     message: chat_schema.MessageSchema, conversation_id: int
 ) -> Message:
+    """将 MessageSchema 转换为消息实体"""
+    # 检查是否有上下文顺序号
+    if message.context_seq is None:
+        raise ValueError("Message context_seq is required")
+
+    # 将消息片段对象转换为 json 字符串
     parts = json.dumps(
         [part.model_dump() for part in message.parts], ensure_ascii=False
     )
+    # 将附件对象转换为 json 字符串
     attachments = (
         json.dumps(
             [attachment.model_dump() for attachment in message.attachments],
@@ -864,7 +947,8 @@ def schema_to_entity(
         if message.attachments is not None
         else None
     )
-    return Message(
+
+    entity = Message(
         conversation_id=conversation_id,
         context_seq=message.context_seq,
         role=message.role,
@@ -872,21 +956,31 @@ def schema_to_entity(
         attachments=attachments,
         finish_reason=message.finish_reason,
     )
+
+    if message.message_id is not None:
+        entity.id = message.message_id
+    if message.timestamp is not None:
+        entity.create_at = message.timestamp
+
+    return entity
 ```
 
-#### 4.4.3 `entity_to_schema`
+#### 4.3.4 `entity_to_schema`
 这一段负责把数据库实体恢复成 `MessageSchema`。
 
 `entity_to_schema` 的处理重点是：
 - 把数据库里的 `parts` JSON 字符串解析回 `TextContent`、`ImageContent`、`ToolCallPart`、`ToolResultPart`
 - 把 `attachments` JSON 字符串解析回 `Attachment`
 - 把数据库字段恢复成前端可以直接使用的 `MessageSchema`
+- 如果 `parts` 里出现了不支持的消息片段类型，会直接抛出异常，避免非法数据继续向上游传播
 
 附代码片段：
 来源：[message_mapper.py](./insight-agent/app/mappers/message_mapper.py)
 
 ```python
 def entity_to_schema(message: Message) -> chat_schema.MessageSchema:
+    """将消息实体转换为 MessageSchema"""
+    # 将 json 字符串转换为消息片段对象
     parts: list[chat_schema.MessagePart] = []
     for item in json.loads(message.parts):
         schema = {
@@ -895,8 +989,11 @@ def entity_to_schema(message: Message) -> chat_schema.MessageSchema:
             "tool_call": chat_schema.ToolCallPart,
             "tool_result": chat_schema.ToolResultPart,
         }.get(item["type"])
+        if schema is None:
+            raise ValueError(f"Unsupported message part type: {item['type']}")
         parts.append(schema(**item))
 
+    # 将 json 字符串转换为附件对象
     attachments = (
         [chat_schema.Attachment(**item) for item in json.loads(message.attachments)]
         if message.attachments
@@ -914,7 +1011,7 @@ def entity_to_schema(message: Message) -> chat_schema.MessageSchema:
     )
 ```
 
-#### 4.4.4 `schema_to_langchain_message`
+#### 4.3.5 `schema_to_langchain_message`
 这一段负责把 `MessageSchema` 转成 Agent 可直接消费的运行时消息。
 
 对 `user` 和 `assistant` 角色，核心处理是两步：
@@ -935,6 +1032,7 @@ def entity_to_schema(message: Message) -> chat_schema.MessageSchema:
 此外还包含以下特殊处理：
 - 文档附件不会直接放进运行时消息，而是转成一段文本提示，告诉 Agent 文件已经保存到工作区、可以直接读取
 - 图片附件会读取工作区文件，并转换成 `data URL` 放进 `content`
+- 如果消息里有图片附件，就必须同时提供 `user_id` 和 `conversation_id`，用于定位工作区文件
 - 如果图片文件已经丢失，不会中断流程，而是追加一段文本提示说明图片不可用
 
 附代码片段：
@@ -946,9 +1044,12 @@ def schema_to_langchain_message(
     user_id: int | None = None,
     conversation_id: int | None = None,
 ) -> dict[str, Any]:
+    """将 MessageSchema 转换为 LangChain 消息"""
+    # 工具消息
     if message.role == "tool":
         tool_result = next(
-            part for part in message.parts
+            part
+            for part in message.parts
             if isinstance(part, chat_schema.ToolResultPart)
         )
         return {
@@ -958,6 +1059,7 @@ def schema_to_langchain_message(
             "content": tool_result.content,
         }
 
+    # 用户或模型消息
     content_parts: list[dict[str, Any]] = []
     tool_calls: list[dict[str, Any]] = []
     for part in message.parts:
@@ -968,23 +1070,82 @@ def schema_to_langchain_message(
                 {"type": "tool_call", "id": part.tool_call_id, "name": part.name, "args": part.args}
             )
 
+    # 处理带附件的消息
+    if message.attachments and message.role == "user":
+        # 图片附件
+        image_attachments = []
+        # 文件附件
+        document_attachments = []
+
+        for attachment in message.attachments:
+            # 获取文件后缀
+            suffix = (
+                attachment.path.rsplit(".", 1)[-1].lower()
+                if "." in attachment.path
+                else ""
+            )
+            # 判断文件后缀是否为图片
+            if suffix in {"png", "jpg", "jpeg", "gif", "webp", "bmp"}:
+                image_attachments.append(attachment)
+            else:
+                document_attachments.append(attachment)
+
+        if document_attachments:
+            # 用户消息，提示用户上传过文件
+            file_prompt = "用户上传的以下文件已保存到当前工作区，可直接读取："
+            if content_parts:
+                file_prompt = f"\n\n{file_prompt}"
+            # 拼接附件信息
+            attachment_lines = [
+                file_prompt,
+                *[
+                    f"- 原始文件名：`{attachment.raw_name}`，工作区相对路径：`{attachment.path}`"
+                    for attachment in document_attachments
+                ],
+            ]
+            content_parts.append(
+                chat_schema.TextContent(text="\n".join(attachment_lines)).model_dump()
+            )
+
+        if image_attachments:
+            # 如果缺少 user_id 或 conversation_id，则报错
+            if user_id is None or conversation_id is None:
+                raise ValueError(
+                    "user_id and conversation_id are required for image attachments"
+                )
+
+            image_loss_list = []
+            for attachment in image_attachments:
+                try:
+                    # 将图片转换为 base64 内容
+                    content_parts.append(
+                        chat_schema.ImageContent(
+                            image_url=_build_image_data_url(
+                                user_id, conversation_id, attachment
+                            )
+                        ).model_dump()
+                    )
+                except OSError:
+                    # 如果图片文件不存在，在 prompt 中添加提示
+                    image_loss_list.append(
+                        f"- 原始文件名：`{attachment.raw_name}`，工作区路径：`{attachment.path}`"
+                    )
+            if image_loss_list:
+                image_loss_prompt = "用户之前上传了一张图片，但该文件当前已不存在："
+                if content_parts:
+                    image_loss_prompt = f"\n\n{image_loss_prompt}"
+                image_loss_prompt += "\n".join(image_loss_list)
+                content_parts.append(
+                    chat_schema.TextContent(text=image_loss_prompt).model_dump()
+                )
+
     payload: dict[str, Any] = {"role": message.role, "content": content_parts}
     if tool_calls:
         payload["tool_calls"] = tool_calls
     return payload
 ```
 
-### 4.5 数据模型与聊天链路的协同
-- 消息写入时机
-- 会话更新时间刷新
-- 历史消息回放
-- 上下文压缩记录如何参与后续对话恢复
-- Schema、数据库、工作区、工具返回之间如何互相配合
-- 为什么 Mapper 是整个项目最关键的“翻译层”
-
-## 5. 基于 Repository 的接口能力
-
-这一章开始回到对外接口。但此时接口不再是孤立存在的，而是建立在前一章已经定义好的表结构、消息结构和 Repository 之上。
+## 5. 接口功能实现
 
 ### 5.1 后端功能接口
 - `GET /health`：健康检查
@@ -999,14 +1160,86 @@ def schema_to_langchain_message(
 - `POST /api/chat/ws-token`：创建 WebSocket 临时令牌
 - `WS /api/chat/ws/chat`：流式聊天
 
-### 5.2 会话接口
-会话相关接口包括：
+### 5.2 会话与消息列表接口
+#### 5.2.1 接口介绍
+这一组接口负责承接聊天系统最基础的资源管理能力，包括会话本身的创建、更新、删除，以及历史消息列表的查询。
+
+相关接口包括：
 - `GET /api/chat/ls`：按当前用户查询会话列表
 - `POST /api/chat/create`：创建会话，初始标题为“新对话”，可指定是否创建草稿会话
 - `POST /api/chat/update`：校验会话归属后更新标题
 - `POST /api/chat/delete`：逻辑删除会话，并一并清理消息、上下文压缩记录和工作区目录
+- `GET /api/chat/ls/{conversation_id}`：查询某个会话下的历史消息列表
 
-这组接口里，需要单独说明的是草稿会话。
+#### 5.2.2 相关 Repository
+这一组接口背后主要依赖三个 Repository：
+- `conversation_repo`
+  负责会话的查询、创建、更新和逻辑删除，是会话接口最核心的数据访问层。
+  附代码：
+  - [conversation_repo.py](./insight-agent/app/repositories/conversation_repo.py)
+
+- `message_repo`
+  负责历史消息查询，以及删除会话时批量禁用该会话下的消息记录。
+  附代码：
+  - [message_repo.py](./insight-agent/app/repositories/message_repo.py)
+
+- `context_compaction_repo`
+  负责上下文压缩记录的写入、查询，以及删除会话时批量禁用压缩记录。
+  附代码：
+  - [context_compaction_repo.py](./insight-agent/app/repositories/context_compaction_repo.py)
+
+
+#### 5.2.3 `GET /api/chat/ls`
+`GET /api/chat/ls` 实现：
+- 从认证信息中拿到当前用户 ID
+- 调用 `conversation_repo.ls` 只查询当前用户自己的会话
+- 把查询结果转换成 `ConversationListResponse`
+
+附代码片段：
+- [chat.py](./insight-agent/app/routers/api/chat.py)
+
+```python
+@router.get("/ls")
+async def api_get_conversations(
+    request: Request, db_session: Annotated[AsyncSession, Depends(get_app_db)]
+) -> chat_schema.ConversationListResponse:
+    """获取所有对话"""
+    user_id = request.state.payload.sub
+    conversations = await conversation_repo.ls(db_session, user_id)
+    logger.info(f"Get conversations: conversation_ids={[i.id for i in conversations]}")
+    return chat_schema.ConversationListResponse(
+        conversations=[
+            chat_schema.ConversationResponse(
+                conversation_id=i.id,
+                title=i.title,
+                update_at=i.update_at,
+            )
+            for i in conversations
+        ]
+    )
+```
+
+- [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
+
+```python
+
+
+class ConversationResponse(BaseModel):
+    conversation_id: int
+    title: str
+    update_at: datetime
+
+
+class ConversationListResponse(BaseModel):
+    conversations: list[ConversationResponse]
+```
+
+#### 5.2.4 `POST /api/chat/create`
+`POST /api/chat/create` 实现：
+- 调用 `conversation_repo.create` 创建会话
+- 初始标题固定为“新对话”
+- 允许通过 `is_draft` 控制是否创建草稿会话
+
 草稿会话的处理流程如下：
 - 前端可以先调用 `POST /api/chat/create` 创建 `is_draft=1` 的草稿会话
 - 这类会话先出现在列表和工作区体系中，但还没有真正进入正式对话
@@ -1016,36 +1249,157 @@ def schema_to_langchain_message(
 
 这种设计用于解决“附件先上传、消息稍后发送”的场景。前端可以先创建一个草稿会话，把附件上传到对应工作区，等用户真正发出第一条消息时，再把它转换成正式会话。
 
-这里也可以看到 Repository 的协同关系：删除会话时，并不是只改动一条会话记录，而是会同时调用消息仓储、上下文压缩仓储和工作区清理逻辑，完成一次会话级的级联清理。
-
 附代码片段：
-来源：[chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
+- [chat.py](./insight-agent/app/routers/api/chat.py)
 
 ```python
-class ConversationResponse(BaseModel):
-    conversation_id: int
-    title: str
-    update_at: datetime
+@router.post("/create", status_code=status.HTTP_201_CREATED)
+async def api_create_conversation(
+    request: Request,
+    body: chat_schema.CreateConversationRequest,
+    db_session: Annotated[AsyncSession, Depends(get_app_db)],
+) -> chat_schema.ConversationResponse:
+    """创建新对话"""
+    user_id = request.state.payload.sub
+    conversation = await conversation_repo.create(
+        db_session, user_id, "新对话", is_draft=body.is_draft
+    )
+    logger.info(
+        f"Create conversation: conversation_id={conversation.id}, is_draft={conversation.is_draft}"
+    )
+    return chat_schema.ConversationResponse(
+        conversation_id=conversation.id,
+        title=conversation.title,
+        update_at=conversation.update_at,
+    )
+```
 
+- [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
 
-class ConversationListResponse(BaseModel):
-    conversations: list[ConversationResponse]
+```python
 
 
 class CreateConversationRequest(BaseModel):
     is_draft: Literal[0, 1] = Field(default=0, description="是否创建草稿对话")
+```
+
+#### 5.2.5 `POST /api/chat/update`
+`POST /api/chat/update` 实现：
+- 先校验会话是否存在且属于当前用户
+- 再调用 `conversation_repo.update` 更新标题
+
+附代码片段：
+- [chat.py](./insight-agent/app/routers/api/chat.py)
+
+```python
+@router.post("/update")
+async def api_update_conversation(
+    request: Request,
+    body: chat_schema.UpdateConversationRequest,
+    db_session: Annotated[AsyncSession, Depends(get_app_db)],
+) -> None:
+    """修改对话信息"""
+    user_id = request.state.payload.sub
+    # 检查对话是否存在且属于当前用户
+    conversation = await conversation_repo.get_by_id(db_session, body.conversation_id)
+    if (conversation is None) or (conversation.user_id != user_id):
+        raise chat_error.ConversationNotFound
+    await conversation_repo.update(db_session, conversation, title=body.title)
+    logger.info(f"Update conversation: conversation_id={body.conversation_id}")
+```
+
+- [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
+
+```python
 
 
 class UpdateConversationRequest(BaseModel):
     conversation_id: int = Field(..., description="对话ID")
     title: str = Field(..., description="对话标题")
+```
+
+#### 5.2.6 `POST /api/chat/delete`
+`POST /api/chat/delete` 实现：
+- 先校验会话归属
+- 调用 `conversation_repo.update` 把会话逻辑删除
+- 调用 `message_repo.update_yn_by_conversation_id` 禁用该会话下的消息
+- 调用 `context_compaction_repo.update_yn_by_conversation_id` 禁用该会话下的摘要记录
+- 删除该会话对应的工作区目录
+
+附代码片段：
+- [chat.py](./insight-agent/app/routers/api/chat.py)
+
+```python
+@router.post("/delete")
+async def api_delete_conversations(
+    request: Request,
+    body: chat_schema.DeleteConversationRequest,
+    db_session: Annotated[AsyncSession, Depends(get_app_db)],
+) -> None:
+    """删除对话(逻辑删除)"""
+    user_id = request.state.payload.sub
+    for conversation_id in body.conversation_ids:
+        # 检查对话是否存在且属于当前用户
+        conversation = await conversation_repo.get_by_id(db_session, conversation_id)
+        if (conversation is None) or (conversation.user_id != user_id):
+            continue
+        # 禁用对话
+        await conversation_repo.update(db_session, conversation, yn=0)
+        # 禁用对话下所有消息
+        await message_repo.update_yn_by_conversation_id(
+            db_session, conversation_id, yn=0
+        )
+        # 禁用对话下所有上下文压缩记录
+        await context_compaction_repo.update_yn_by_conversation_id(
+            db_session, conversation_id, yn=0
+        )
+        # 删除对话对应工作区
+        shutil.rmtree(get_workspace_dir(user_id, conversation_id), ignore_errors=True)
+    logger.info(f"Delete conversations: conversation_ids={body.conversation_ids}")
+```
+
+- [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
+
+```python
 
 
 class DeleteConversationRequest(BaseModel):
     conversation_ids: list[int] = Field(..., description="对话ID列表")
 ```
 
+#### 5.2.7 `GET /api/chat/ls/{conversation_id}`
+`GET /api/chat/ls/{conversation_id}` 实现：
+- 读取指定会话下的历史消息
+- 调用 `message_repo.ls` 返回消息实体列表
+- 再通过 `entity_to_schema` 把数据库消息恢复成前端可直接使用的 `MessageSchema`
+
+附代码片段：
+- [chat.py](./insight-agent/app/routers/api/chat.py)
+
+```python
+@router.get("/ls/{conversation_id}")
+async def api_get_messages(
+    conversation_id: int, db_session: Annotated[AsyncSession, Depends(get_app_db)]
+) -> chat_schema.MessageListResponse:
+    """获取某个对话所有消息"""
+    messages = await message_repo.ls(db_session, conversation_id)
+    logger.info(f"Get messages: {conversation_id=}, message_count={len(messages)}")
+    return chat_schema.MessageListResponse(
+        messages=[message_mapper.entity_to_schema(message) for message in messages]
+    )
+```
+
+- [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
+
+```python
+
+
+class MessageListResponse(BaseModel):
+    messages: list[MessageSchema]
+```
+
 ### 5.3 附件接口
+#### 5.3.1 接口介绍
 附件接口负责把文件写入会话工作区，并把工作区中的文件重新返回给前端。
 
 附件相关接口包括：
@@ -1053,8 +1407,13 @@ class DeleteConversationRequest(BaseModel):
 - `POST /api/chat/attachment/delete`：删除工作区中的附件
 - `GET /api/chat/attachment/get`：获取工作区中的附件文件
 
-这组接口里，需要单独说明的是上传流程。
-附件上传流程如下：
+#### 5.3.2 相关依赖
+这一组接口背后主要依赖两类基础能力：
+- `conversation_repo`：负责校验当前操作的会话是否存在且属于当前用户
+- 工作区相关函数：`get_workspace_dir()` 用来定位会话工作区，`_build_attachment_unique_name()` 和 `_build_attachment_path()` 用来保证文件名安全和路径安全
+
+#### 5.3.3 `POST /api/chat/attachment/upload`
+`POST /api/chat/attachment/upload` 实现：
 - 接收 `conversation_id` 和 `file`
 - 校验会话是否存在且属于当前用户
 - 用 `_build_attachment_unique_name()` 生成唯一文件名，避免重名覆盖
@@ -1064,16 +1423,86 @@ class DeleteConversationRequest(BaseModel):
 - 返回上传后的附件元数据
 
 附代码片段：
-来源：[chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
+- [chat.py](./insight-agent/app/routers/api/chat.py)
 
 ```python
-class Attachment(BaseModel):
-    raw_name: str = Field(..., description="原始附件名称")
-    path: str = Field(..., description="工作区相对路径")
+@router.post("/attachment/upload")
+async def api_upload_attachment(
+    request: Request,
+    db_session: Annotated[AsyncSession, Depends(get_app_db)],
+    conversation_id: int = Form(...),
+    file: UploadFile = File(...),
+) -> chat_schema.UploadAttachmentResponse:
+    """上传附件到当前会话工作区"""
+    user_id = request.state.payload.sub
+    # 检查对话是否存在且属于当前用户
+    conversation = await conversation_repo.get_by_id(db_session, conversation_id)
+    if (conversation is None) or (conversation.user_id != user_id):
+        raise chat_error.ConversationNotFound
 
+    # 获取原始文件名
+    raw_name = file.filename or "upload"
+    # 构造唯一文件名
+    path = _build_attachment_unique_name(raw_name)
+    # 构造文件路径
+    workspace_dir = get_workspace_dir(user_id, conversation_id)
+    target_path = _build_attachment_path(workspace_dir, path)
+    # 按块读取并落盘，避免一次性把整个文件读入内存
+    with target_path.open("wb") as target_file:
+        while chunk := await file.read(1024 * 1024):
+            target_file.write(chunk)
 
+    logger.info(f"Upload attachment: {conversation_id=}, file={path}")
+    return chat_schema.UploadAttachmentResponse(
+        attachment=chat_schema.Attachment(raw_name=raw_name, path=path)
+    )
+```
+
+- [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
+
+```python
 class UploadAttachmentResponse(BaseModel):
     attachment: Attachment = Field(..., description="上传后的附件信息")
+```
+
+#### 5.3.4 `POST /api/chat/attachment/delete`
+`POST /api/chat/attachment/delete` 实现：
+- 接收 `conversation_id` 和相对路径 `path`
+- 校验会话是否存在且属于当前用户
+- 重新定位工作区路径并检查路径是否安全
+- 如果目标文件存在，则执行删除
+
+附代码片段：
+- [chat.py](./insight-agent/app/routers/api/chat.py)
+
+```python
+@router.post("/attachment/delete")
+async def api_delete_attachment(
+    request: Request,
+    body: chat_schema.DeleteAttachmentRequest,
+    db_session: Annotated[AsyncSession, Depends(get_app_db)],
+) -> None:
+    """删除当前会话工作区中的附件"""
+    user_id = request.state.payload.sub
+    # 检查对话是否存在且属于当前用户
+    conversation = await conversation_repo.get_by_id(db_session, body.conversation_id)
+    if (conversation is None) or (conversation.user_id != user_id):
+        raise chat_error.ConversationNotFound
+
+    # 获取工作区目录并删除附件
+    workspace_dir = get_workspace_dir(user_id, body.conversation_id)
+    target_path = _build_attachment_path(workspace_dir, body.path)
+    if target_path.exists() and target_path.is_file():
+        target_path.unlink()
+
+    logger.info(
+        f"Delete attachment: conversation_id={body.conversation_id}, file={body.path}"
+    )
+```
+
+- [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
+
+```python
 
 
 class DeleteAttachmentRequest(BaseModel):
@@ -1081,7 +1510,49 @@ class DeleteAttachmentRequest(BaseModel):
     path: str = Field(..., description="相对工作区路径")
 ```
 
+#### 5.3.5 `GET /api/chat/attachment/get`
+`GET /api/chat/attachment/get` 实现：
+- 接收 `conversation_id` 和附件相对路径
+- 校验会话是否存在且属于当前用户
+- 重新定位文件路径并防止路径逃逸
+- 根据文件名推断 `media_type`
+- 用 `FileResponse` 把工作区中的附件返回给前端
+
+附代码片段：
+- [chat.py](./insight-agent/app/routers/api/chat.py)
+
+```python
+@router.get("/attachment/get")
+async def api_get_attachment(
+    request: Request,
+    conversation_id: int,
+    path: str,
+    db_session: Annotated[AsyncSession, Depends(get_app_db)],
+) -> FileResponse:
+    """获取当前会话工作区中的附件文件"""
+    user_id = request.state.payload.sub
+    # 检查对话是否存在且属于当前用户
+    conversation = await conversation_repo.get_by_id(db_session, conversation_id)
+    if (conversation is None) or (conversation.user_id != user_id):
+        raise chat_error.ConversationNotFound
+
+    workspace_dir = get_workspace_dir(user_id, conversation_id)
+    target_path = _build_attachment_path(workspace_dir, path)
+    if not target_path.is_file():
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    media_type, _ = mimetypes.guess_type(target_path.name)
+
+    logger.info(f"Get attachment: {conversation_id=}, file={path}")
+    return FileResponse(
+        path=target_path,
+        media_type=media_type or "application/octet-stream",
+        filename=target_path.name,
+    )
+```
+
 ### 5.4 WebSocket Token 接口
+#### 5.4.1 接口介绍
 WebSocket Token 接口负责把已经完成 HTTP 认证的用户身份，转换成一个短时可消费的建连令牌。
 
 接口如下：
@@ -1104,8 +1575,50 @@ WebSocket Token 生成流程如下：
 - 令牌有效期很短，只用于紧接着发起一次 WebSocket 建连
 - 令牌信息保存在 Redis 中，后续 WebSocket 接口可通过消费令牌取回对应用户身份
 
+#### 5.4.2 相关依赖
+这一接口背后主要依赖：
+- `websocket_token_repo`：负责创建和消费 WebSocket 临时令牌
+- Redis：负责保存短期有效且只能消费一次的令牌数据
+
+附代码：
+- [websocket_token_repo.py](./insight-agent/app/repositories/websocket_token_repo.py)
+
+#### 5.4.3 `POST /api/chat/ws-token`
+`POST /api/chat/ws-token` 实现：
+- 从 `request.state.payload.sub` 读取用户 ID
+- 设置临时令牌过期时间 `WS_TOKEN_EXPIRE_SECONDS = 30`
+- 用 `secrets.token_urlsafe(32)` 生成随机 `websocket_token`
+- 调用 `websocket_token_repo.create()` 把令牌、用户 ID 和过期时间写入 Redis
+- 返回 `WebSocketTokenResponse`
+
 附代码片段：
-来源：[chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
+- [chat.py](./insight-agent/app/routers/api/chat.py)
+
+```python
+@router.post("/ws-token")
+async def api_create_websocket_token(
+    request: Request,
+) -> chat_schema.WebSocketTokenResponse:
+    """创建 WebSocket 临时令牌"""
+    # 临时令牌过期时间
+    WS_TOKEN_EXPIRE_SECONDS = 30
+    # 获取用户ID
+    user_id = request.state.payload.sub
+    # 创建 WebSocket 临时令牌
+    websocket_token = secrets.token_urlsafe(32)
+    await websocket_token_repo.create(
+        token=websocket_token,
+        user_id=user_id,
+        expire_seconds=WS_TOKEN_EXPIRE_SECONDS,
+    )
+    logger.info("Create websocket token")
+    return chat_schema.WebSocketTokenResponse(
+        websocket_token=websocket_token,
+        expires_in=WS_TOKEN_EXPIRE_SECONDS,
+    )
+```
+
+- [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
 
 ```python
 class WebSocketTokenResponse(BaseModel):
@@ -1154,63 +1667,141 @@ WebSocket 聊天接口负责承载实时对话过程。
 附代码：
 - [chat.py](./insight-agent/app/routers/api/chat.py)
 
-## 6. 聊天执行链路：Router、Service、上下文压缩与前端接入
+## 6. 前端接入与应用入口
 
-### 6.1 为什么聊天接口要同时使用 HTTP 和 WebSocket
-- HTTP 负责资源管理与辅助操作
-- WebSocket 负责低延迟流式会话
+这一部分的目标是把已经构建好的前端资源稳定挂到后端服务上，并让前端页面、后端 API 和认证服务之间能够顺畅协同。
 
-### 6.2 WebSocket 建连前的准备
-- 用户如何先通过 HTTP 完成认证
-- 前端如何获取 WebSocket 临时 Token
-- WebSocket 如何继承前面已经确认过的身份
+在这个项目里，前端相关能力主要由 `app/routers/frontend.py` 承接，职责包括：
+- 定位前端构建产物目录
+- 挂载 `/assets` 静态资源目录
+- 提供 SPA 路由回退，把前端页面入口接到后端服务上
+- 提供 `/auth-api/{path:path}` 代理，把前端认证请求转发到独立认证服务
 
-### 6.3 WebSocket 聊天主流程
-- 校验临时 Token
-- 加载历史消息
-- 应用上下文压缩结果
-- 接收用户消息
-- 调用 `chat_service.stream_chat`
-- 流式推送模型与工具消息
+### 6.1 前端构建产物的目录约定
+前端构建完成后的文件放在 `app/static/dist` 下，其中：
+- `app/static/dist/index.html` 是前端页面入口
+- `app/static/dist/assets` 存放构建后的 JS、CSS 等静态资源
 
-### 6.4 `chat_service` 的职责拆解
-- 消息落库
-- 对话更新时间维护
-- Agent 调用
-- 流式结果处理
-- 上下文压缩与摘要落库
-- 模型异常兜底
-- 图片不支持场景兜底
+这意味着后端不需要再额外实现一套页面渲染逻辑，而是直接把已经构建好的前端文件作为静态资源对外提供。
 
-### 6.5 认证模块与聊天链路的协同
-- WebSocket 如何通过临时 Token 继承认证结果
-- 用户 ID 如何影响工作区隔离和数据隔离
-- 为什么同一个用户上下文必须贯穿会话、消息与文件工作区
+附代码片段：
+- [frontend.py](./insight-agent/app/routers/frontend.py)
 
-### 6.6 为什么长对话一定要做上下文治理
-- 成本问题
-- 上下文长度限制
-- 归因分析场景天然容易长链路
+```python
+router = APIRouter()
 
-### 6.7 运行时上下文与数据库上下文的区别
-- 运行时消息数组如何变化
-- 持久化消息如何完整保留
+# 前端构建产物目录
+APP_DIR = Path(__file__).resolve().parent.parent
+STATIC_DIST_DIR = APP_DIR / "static" / "dist"
+STATIC_ASSETS_DIR = STATIC_DIST_DIR / "assets"
+SPA_ENTRY_FILE = STATIC_DIST_DIR / "index.html"
+```
 
-### 6.8 摘要压缩机制
-- `_summarization_event` 是什么
-- `cutoff_index` 和 `end_seq` 如何对应
-- 为什么要同时改运行时上下文和数据库记录
+### 6.2 静态资源挂载
+后端启动时会调用 `register_frontend(app)`，把前端构建后的 `/assets` 目录挂载到服务上。这样浏览器访问页面时，前端引用到的脚本、样式和其他静态资源都可以直接通过后端统一访问。
 
-### 6.9 历史恢复机制
-- 新连接建立时如何加载消息
-- 如何把最新摘要重新应用到历史消息上
+附代码片段：
+- [frontend.py](./insight-agent/app/routers/frontend.py)
 
-### 6.10 上下文管理如何嵌入聊天链路
-- 为什么上下文压缩不是独立功能，而是聊天执行过程的一部分
-- 历史加载、摘要应用与消息发送是如何衔接的
+```python
+def register_frontend(app: FastAPI) -> None:
+    # 挂载构建后的静态资源，并注册前端相关路由
+    app.mount(
+        "/assets",
+        StaticFiles(directory=STATIC_ASSETS_DIR, check_dir=False),
+        name="assets",
+    )
+    app.include_router(router)
+```
 
-### 6.11 后端如何托管前端资源
-- 静态构建文件放在 `app/static/dist`
-- 后端启动后直接提供静态页面
-- `app/routers/frontend.py` 如何把前端页面入口接到后端服务上
-- 前端页面与后端 API、认证代理如何一起工作
+### 6.3 SPA 路由回退
+由于前端是单页应用，很多页面路径实际上都由前端路由接管，而不是后端真实存在对应接口。因此后端需要提供一个兜底路由：当请求没有命中 `/api`、`/assets`、`/health` 等后端专用路径时，统一返回 `index.html`，交给前端继续处理页面路由。
+
+这里还做了两个保护：
+- 如果路径命中了后端专用前缀，就不能错误回退到前端首页，而是直接返回 404
+- 如果前端构建产物不存在，也明确返回 404，避免返回无意义的空响应
+
+附代码片段：
+- [frontend.py](./insight-agent/app/routers/frontend.py)
+
+```python
+# 这些前缀由后端接口、静态资源或文档页占用，不能回退到 SPA
+SPA_EXCLUDED_PREFIXES = (
+    "/api",
+    "/auth-api",
+    "/assets",
+    "/health",
+    "/docs",
+    "/openapi.json",
+    "/redoc",
+)
+
+
+@router.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    # SPA 前端路由回退：未命中后端接口时统一返回 index.html
+    request_path = f"/{full_path}" if full_path else "/"
+    # 后端专用路径不能错误回退到前端首页，命中这些前缀时直接返回 404
+    if any(_matches_prefix(request_path, prefix) for prefix in SPA_EXCLUDED_PREFIXES):
+        raise HTTPException(status_code=404)
+    # 前端尚未构建或产物缺失时，明确返回 404，避免返回无意义的空响应
+    if not SPA_ENTRY_FILE.exists():
+        raise HTTPException(status_code=404, detail="Frontend build not found")
+    return FileResponse(SPA_ENTRY_FILE)
+```
+
+### 6.4 认证代理转发
+前端认证并不是直接在本服务里完成的，而是由独立认证服务负责。为了让前端可以继续通过统一入口访问认证能力，后端额外提供了 `/auth-api/{path:path}` 代理接口，把请求原样转发到认证服务。
+
+这样设计有两个直接好处：
+- 前端页面、后端 API 和认证服务可以统一挂在一个访问入口下
+- 前端不需要额外感知独立认证服务的真实地址
+
+附代码片段：
+- [frontend.py](./insight-agent/app/routers/frontend.py)
+
+```python
+@router.api_route(
+    "/auth-api/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+)
+async def proxy_auth_api(path: str, request: Request) -> Response:
+    # 将前端访问的 /auth-api 请求转发到独立认证服务
+    upstream_url = f"{CFG.auth_service.base_url.rstrip('/')}/{path.lstrip('/')}"
+    client = get_http_client()
+    body = await request.body()
+    try:
+        upstream_response = await client.request(
+            request.method,
+            upstream_url,
+            content=body or None,
+            params=request.query_params,
+            headers={
+                key: value
+                for key, value in request.headers.items()
+                if key.lower() not in {"host", "content-length"}
+            },
+            follow_redirects=False,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Auth service unavailable: {exc}",
+        ) from exc
+```
+
+### 6.5 项目入口 `main.py`
+`app/main.py` 是整个项目的应用入口。中间件、后端 API、异常处理、前端路由与静态资源挂载，最终都会在这里统一注册到 FastAPI 主应用中。
+
+从职责上看，`main.py` 主要做了几件事：
+- 定义应用生命周期，统一处理日志初始化和资源释放
+- 注册认证中间件、日志中间件和 CORS 中间件
+- 提供 `/health` 健康检查接口
+- 挂载后端 API 路由
+- 注册全局异常处理
+- 挂载前端静态资源、SPA 回退路由和认证代理
+
+附代码：
+- [main.py](./insight-agent/app/main.py)
+- [routers/__init__.py](./insight-agent/app/routers/__init__.py)
+- [routers/api/__init__.py](./insight-agent/app/routers/api/__init__.py)

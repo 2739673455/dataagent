@@ -40,7 +40,7 @@ async def create(token: str, user_id: int, expire_seconds: int) -> None:
 
 
 async def consume(token: str) -> WebSocketTokenData | None:
-    """原子消费 WebSocket 临时令牌
+    """消费 WebSocket 临时令牌
 
     Args:
         token: WebSocket 临时令牌

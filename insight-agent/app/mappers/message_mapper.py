@@ -196,7 +196,6 @@ def schema_to_langchain_message(
     conversation_id: int | None = None,
 ) -> dict[str, Any]:
     """将 MessageSchema 转换为 LangChain 消息"""
-
     # 工具消息
     if message.role == "tool":
         tool_result = next(
