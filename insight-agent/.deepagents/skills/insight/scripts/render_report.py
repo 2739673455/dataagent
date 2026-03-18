@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 将结构化 JSON 渲染成自包含 HTML 报告。
 

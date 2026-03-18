@@ -1,8 +1,5 @@
-"""Redis 工具"""
-
-from redis.asyncio import Redis
-
 from app.config import CFG
+from redis.asyncio import Redis
 
 _redis_client: Redis | None = None
 

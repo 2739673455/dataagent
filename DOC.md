@@ -325,7 +325,7 @@ HTTP 客户端工具负责统一封装对外部 HTTP 服务的调用入口，方
 
 ### 2.6 中间件
 
-#### 2.6.1 `trace` 与日志体系
+#### 2.6.1 trace 与日志体系
 `trace` 中间件负责给每个请求补齐统一的链路信息，并把这些信息写入 `ContextVar`，供后续日志输出和业务处理复用。
 
 这一中间件主要处理以下内容：
@@ -339,7 +339,7 @@ HTTP 客户端工具负责统一封装对外部 HTTP 服务的调用入口，方
 附代码：
 - [trace.py](./insight-agent/app/middlewares/trace.py)
 
-#### 2.6.2 `auth` 中间件设计
+#### 2.6.2 auth 中间件
 `auth` 中间件负责统一处理访问令牌校验。将认证放在中间件层，请求在进入具体业务路由之前先完成身份确认，这样后面的 Router、Service 和 Agent 调用都可以直接使用已经解析好的用户信息。
 
 该实现会先根据请求路径判断接口是否需要鉴权。`/health`、`/docs`、`/openapi.json`、`/redoc` 等精确路径会直接放行，`/assets`、`/auth-api` 等前缀路径也会放行；真正进入业务处理的 HTTP 接口主要通过 `/api` 前缀统一纳入鉴权范围。由此可以将需要保护的业务接口与不需要保护的静态资源、文档接口区分开来。
@@ -355,8 +355,8 @@ HTTP 客户端工具负责统一封装对外部 HTTP 服务的调用入口，方
 如果认证失败，不会继续进入业务逻辑，而是直接通过统一异常处理返回约定格式的错误响应。
 
 附代码：
-- [auth.py](./insight-agent/app/middlewares/auth.py)
 - [auth_schema.py](./insight-agent/app/schemas/auth_schema.py)
+- [auth.py](./insight-agent/app/middlewares/auth.py)
 
 ## 3. Agent 组装
 
@@ -372,7 +372,6 @@ Agent 运行时由模型、工作区、工具、MCP、Skill 和 `deepagents` 提
 - `TodoListMiddleware`：负责辅助 Agent 维护任务拆解和执行步骤
 - `SubAgentMiddleware`：负责在复杂任务下支持子代理拆分与协作
 - `SummarizationMiddleware`：负责在长对话场景下压缩上下文，降低上下文长度和推理成本
-
 
 ### 3.2 工作区机制
 每个会话都会分配一个独立的工作区，用来保存用户上传的附件、中间的分析过程文件，以及最终生成的报告或交付物。
@@ -428,7 +427,6 @@ Agent 运行时由模型、工作区、工具、MCP、Skill 和 `deepagents` 提
 - [return_file.py](./insight-agent/app/core/tools/return_file.py)
 
 ### 3.4 MCP 接入
-#### 3.4.1 `mcp.py` 的实现与 Agent 接入
 `mcp.py` 的作用是把配置文件中的多个 MCP 服务统一初始化成一个客户端。实现中会先根据配置里的 `transport` 字段，把不同服务映射到对应的连接类型，例如：
 - `sse`
 - `stdio`
@@ -547,7 +545,7 @@ Agent 的组装由 `_build_agent()` 完成，装配内容包括：
 - 前后端交互的 Schema 消息
 - 数据库存储的 Entity 消息
 
-LangChain/DeepAgents 消息是 Agent 真正消费和产出的运行时格式，Schema 和 Entity 都是在运行时消息基础上做适配
+LangChain/DeepAgents 消息是 Agent 真正消费和产出的运行时格式，Schema 和 Entity 都是在运行时消息基础上做适配。
 
 #### 4.2.1 运行时消息
 运行时消息主要有三种：
@@ -669,6 +667,8 @@ ToolResultPart:
 来源：[chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
 
 ```python
+...
+
 class TextContent(BaseModel):
     type: Literal["text"] = "text"
     text: str = Field(..., description="文本内容")
@@ -714,6 +714,8 @@ class MessageSchema(BaseModel):
     attachments: list[Attachment] | None = Field(default=None, description="附件列表")
     finish_reason: FinishReason | None = Field(default=None, description="完成原因")
     timestamp: datetime | None = Field(default=None, description="发送时间")
+
+...
 ```
 
 这里有三个类型别名需要特别注意：
@@ -802,6 +804,8 @@ Mapper 层的职责，就是在这些阶段之间做稳定、可逆的格式转�
 来源：[message_mapper.py](./insight-agent/app/mappers/message_mapper.py)
 
 ```python
+...
+
 def langchain_message_to_schema(
     message: AIMessage | ToolMessage,
 ) -> chat_schema.MessageSchema | None:
@@ -867,6 +871,8 @@ def langchain_message_to_schema(
 
     else:
         return None
+
+...
 ```
 
 #### 4.3.2 `agent_chunk_to_schemas`
@@ -893,6 +899,8 @@ def langchain_message_to_schema(
 来源：[message_mapper.py](./insight-agent/app/mappers/message_mapper.py)
 
 ```python
+...
+
 def agent_chunk_to_schemas(chunk: dict) -> list[chat_schema.MessageSchema]:
     """将 Agent 流式输出块转换为 MessageSchema 列表"""
     schemas: list[chat_schema.MessageSchema] = []
@@ -909,6 +917,8 @@ def agent_chunk_to_schemas(chunk: dict) -> list[chat_schema.MessageSchema]:
                     schemas.append(schema)
 
     return schemas
+
+...
 ```
 
 #### 4.3.3 `schema_to_entity`
@@ -927,6 +937,8 @@ def agent_chunk_to_schemas(chunk: dict) -> list[chat_schema.MessageSchema]:
 来源：[message_mapper.py](./insight-agent/app/mappers/message_mapper.py)
 
 ```python
+...
+
 def schema_to_entity(
     message: chat_schema.MessageSchema, conversation_id: int
 ) -> Message:
@@ -964,6 +976,8 @@ def schema_to_entity(
         entity.create_at = message.timestamp
 
     return entity
+
+...
 ```
 
 #### 4.3.4 `entity_to_schema`
@@ -979,6 +993,8 @@ def schema_to_entity(
 来源：[message_mapper.py](./insight-agent/app/mappers/message_mapper.py)
 
 ```python
+...
+
 def entity_to_schema(message: Message) -> chat_schema.MessageSchema:
     """将消息实体转换为 MessageSchema"""
     # 将 json 字符串转换为消息片段对象
@@ -1010,6 +1026,8 @@ def entity_to_schema(message: Message) -> chat_schema.MessageSchema:
         finish_reason=cast(chat_schema.FinishReason | None, message.finish_reason),
         timestamp=message.create_at,
     )
+
+...
 ```
 
 #### 4.3.5 `schema_to_langchain_message`
@@ -1040,6 +1058,8 @@ def entity_to_schema(message: Message) -> chat_schema.MessageSchema:
 来源：[message_mapper.py](./insight-agent/app/mappers/message_mapper.py)
 
 ```python
+...
+
 def schema_to_langchain_message(
     message: chat_schema.MessageSchema,
     user_id: int | None = None,
@@ -1144,6 +1164,8 @@ def schema_to_langchain_message(
     if tool_calls:
         payload["tool_calls"] = tool_calls
     return payload
+
+...
 ```
 
 ## 5. 接口功能实现
@@ -1152,7 +1174,7 @@ def schema_to_langchain_message(
 - `GET /health`：健康检查
 - `GET /api/chat/ls`：获取会话列表
 - `POST /api/chat/create`：创建会话
-- `POST /api/chat/update`：修改会话标题
+- `POST /api/chat/update`：修改会话
 - `POST /api/chat/delete`：删除会话
 - `GET /api/chat/ls/{conversation_id}`：获取历史消息
 - `POST /api/chat/attachment/upload`：上传附件
@@ -1160,6 +1182,17 @@ def schema_to_langchain_message(
 - `GET /api/chat/attachment/get`：获取附件文件
 - `POST /api/chat/ws-token`：创建 WebSocket 临时令牌
 - `WS /api/chat/ws/chat`：流式聊天
+
+附代码片段：
+- [chat.py](./insight-agent/app/routers/api/chat.py)
+
+```python
+...
+
+router = APIRouter(prefix="/chat", tags=["chat"])
+
+...
+```
 
 ### 5.2 会话与消息列表接口
 #### 5.2.1 接口介绍
@@ -1172,20 +1205,20 @@ def schema_to_langchain_message(
 - `POST /api/chat/delete`：逻辑删除会话，并一并清理消息、上下文压缩记录和工作区目录
 - `GET /api/chat/ls/{conversation_id}`：查询某个会话下的历史消息列表
 
-#### 5.2.2 相关 Repository
+#### 5.2.2 相关依赖
 这一组接口背后主要依赖三个 Repository：
 - `conversation_repo`
-  负责会话的查询、创建、更新和逻辑删除，是会话接口最核心的数据访问层。
+  - 负责会话的查询、创建、更新和逻辑删除，是会话接口最核心的数据访问层。
   附代码：
   - [conversation_repo.py](./insight-agent/app/repositories/conversation_repo.py)
 
 - `message_repo`
-  负责历史消息查询，以及删除会话时批量禁用该会话下的消息记录。
+  - 负责历史消息查询，以及删除会话时批量禁用该会话下的消息记录。
   附代码：
   - [message_repo.py](./insight-agent/app/repositories/message_repo.py)
 
 - `context_compaction_repo`
-  负责上下文压缩记录的写入、查询，以及删除会话时批量禁用压缩记录。
+  - 负责上下文压缩记录的写入、查询，以及删除会话时批量禁用压缩记录。
   附代码：
   - [context_compaction_repo.py](./insight-agent/app/repositories/context_compaction_repo.py)
 
@@ -1200,6 +1233,8 @@ def schema_to_langchain_message(
 - [chat.py](./insight-agent/app/routers/api/chat.py)
 
 ```python
+...
+
 @router.get("/ls")
 async def api_get_conversations(
     request: Request, db_session: Annotated[AsyncSession, Depends(get_app_db)]
@@ -1218,12 +1253,14 @@ async def api_get_conversations(
             for i in conversations
         ]
     )
+
+...
 ```
 
 - [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
 
 ```python
-
+...
 
 class ConversationResponse(BaseModel):
     conversation_id: int
@@ -1233,6 +1270,8 @@ class ConversationResponse(BaseModel):
 
 class ConversationListResponse(BaseModel):
     conversations: list[ConversationResponse]
+
+...
 ```
 
 #### 5.2.4 `POST /api/chat/create`
@@ -1254,6 +1293,8 @@ class ConversationListResponse(BaseModel):
 - [chat.py](./insight-agent/app/routers/api/chat.py)
 
 ```python
+...
+
 @router.post("/create", status_code=status.HTTP_201_CREATED)
 async def api_create_conversation(
     request: Request,
@@ -1273,15 +1314,19 @@ async def api_create_conversation(
         title=conversation.title,
         update_at=conversation.update_at,
     )
+
+...
 ```
 
 - [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
 
 ```python
-
+...
 
 class CreateConversationRequest(BaseModel):
     is_draft: Literal[0, 1] = Field(default=0, description="是否创建草稿对话")
+
+...
 ```
 
 #### 5.2.5 `POST /api/chat/update`
@@ -1293,6 +1338,8 @@ class CreateConversationRequest(BaseModel):
 - [chat.py](./insight-agent/app/routers/api/chat.py)
 
 ```python
+...
+
 @router.post("/update")
 async def api_update_conversation(
     request: Request,
@@ -1307,16 +1354,20 @@ async def api_update_conversation(
         raise chat_error.ConversationNotFound
     await conversation_repo.update(db_session, conversation, title=body.title)
     logger.info(f"Update conversation: conversation_id={body.conversation_id}")
+
+...
 ```
 
 - [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
 
 ```python
-
+...
 
 class UpdateConversationRequest(BaseModel):
     conversation_id: int = Field(..., description="对话ID")
     title: str = Field(..., description="对话标题")
+
+...
 ```
 
 #### 5.2.6 `POST /api/chat/delete`
@@ -1331,6 +1382,8 @@ class UpdateConversationRequest(BaseModel):
 - [chat.py](./insight-agent/app/routers/api/chat.py)
 
 ```python
+...
+
 @router.post("/delete")
 async def api_delete_conversations(
     request: Request,
@@ -1357,15 +1410,19 @@ async def api_delete_conversations(
         # 删除对话对应工作区
         shutil.rmtree(get_workspace_dir(user_id, conversation_id), ignore_errors=True)
     logger.info(f"Delete conversations: conversation_ids={body.conversation_ids}")
+
+...
 ```
 
 - [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
 
 ```python
-
+...
 
 class DeleteConversationRequest(BaseModel):
     conversation_ids: list[int] = Field(..., description="对话ID列表")
+
+...
 ```
 
 #### 5.2.7 `GET /api/chat/ls/{conversation_id}`
@@ -1378,6 +1435,8 @@ class DeleteConversationRequest(BaseModel):
 - [chat.py](./insight-agent/app/routers/api/chat.py)
 
 ```python
+...
+
 @router.get("/ls/{conversation_id}")
 async def api_get_messages(
     conversation_id: int, db_session: Annotated[AsyncSession, Depends(get_app_db)]
@@ -1388,15 +1447,19 @@ async def api_get_messages(
     return chat_schema.MessageListResponse(
         messages=[message_mapper.entity_to_schema(message) for message in messages]
     )
+
+...
 ```
 
 - [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
 
 ```python
-
+...
 
 class MessageListResponse(BaseModel):
     messages: list[MessageSchema]
+
+...
 ```
 
 ### 5.3 附件接口
@@ -1427,6 +1490,34 @@ class MessageListResponse(BaseModel):
 - [chat.py](./insight-agent/app/routers/api/chat.py)
 
 ```python
+...
+
+def _build_attachment_unique_name(filename: str) -> str:
+    """构造落盘文件名，尽量保留原文件名并附加唯一标识"""
+    # 只保留文件名本身，避免客户端传入路径片段
+    basename = filename.split("/")[-1].split("\\")[-1].strip()
+    # 将特殊字符替换为下划线，保留中英文、数字和常见文件名符号
+    normalized_name = re.sub(r"[^0-9A-Za-z._\-\u4e00-\u9fff]+", "_", basename)
+    # 去掉首尾无意义的点和下划线，并为空文件名提供兜底值
+    safe_name = normalized_name.strip("._") or "upload"
+    # 附加一个短随机后缀，避免同名文件互相覆盖
+    unique_suffix = uuid4().hex[:4]
+    # 没有扩展名时，直接在文件名末尾追加随机后缀
+    if "." not in safe_name:
+        return f"{safe_name}_{unique_suffix}"
+    # 有扩展名时，仅在主文件名后追加随机后缀，保留原始扩展名
+    stem, suffix = safe_name.rsplit(".", 1)
+    return f"{stem}_{unique_suffix}.{suffix}"
+
+
+def _build_attachment_path(target_dir, path: str):
+    """基于工作区目录构造附件路径，并阻止路径逃逸"""
+    target_path = (target_dir / path).resolve()
+    if target_dir.resolve() not in target_path.parents:
+        raise chat_error.ConversationNotFound
+    return target_path
+
+
 @router.post("/attachment/upload")
 async def api_upload_attachment(
     request: Request,
@@ -1457,13 +1548,19 @@ async def api_upload_attachment(
     return chat_schema.UploadAttachmentResponse(
         attachment=chat_schema.Attachment(raw_name=raw_name, path=path)
     )
+
+...
 ```
 
 - [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
 
 ```python
+...
+
 class UploadAttachmentResponse(BaseModel):
     attachment: Attachment = Field(..., description="上传后的附件信息")
+
+...
 ```
 
 #### 5.3.4 `POST /api/chat/attachment/delete`
@@ -1477,6 +1574,8 @@ class UploadAttachmentResponse(BaseModel):
 - [chat.py](./insight-agent/app/routers/api/chat.py)
 
 ```python
+...
+
 @router.post("/attachment/delete")
 async def api_delete_attachment(
     request: Request,
@@ -1499,16 +1598,20 @@ async def api_delete_attachment(
     logger.info(
         f"Delete attachment: conversation_id={body.conversation_id}, file={body.path}"
     )
+
+...
 ```
 
 - [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
 
 ```python
-
+...
 
 class DeleteAttachmentRequest(BaseModel):
     conversation_id: int = Field(..., description="对话ID")
     path: str = Field(..., description="相对工作区路径")
+
+...
 ```
 
 #### 5.3.5 `GET /api/chat/attachment/get`
@@ -1523,6 +1626,8 @@ class DeleteAttachmentRequest(BaseModel):
 - [chat.py](./insight-agent/app/routers/api/chat.py)
 
 ```python
+...
+
 @router.get("/attachment/get")
 async def api_get_attachment(
     request: Request,
@@ -1550,6 +1655,8 @@ async def api_get_attachment(
         media_type=media_type or "application/octet-stream",
         filename=target_path.name,
     )
+
+...
 ```
 
 ### 5.4 WebSocket Token 接口
@@ -1560,21 +1667,6 @@ WebSocket Token 接口负责把已经完成 HTTP 认证的用户身份，转换�
 - `POST /api/chat/ws-token`
 
 这一接口的核心目标，是把已经在 HTTP 请求里完成校验的用户身份，安全地传递给后续 WebSocket 建连过程。因为浏览器发起 WebSocket 连接时，不适合继续沿用原本那套 HTTP 认证处理链，所以后端先发放一个短时有效、且只能消费一次的临时令牌，再由前端在建立 WebSocket 连接时携带这个令牌完成身份确认。
-
-WebSocket Token 生成流程如下：
-- 从 `request.state.payload.sub` 读取用户 ID
-- 设置临时令牌过期时间 `WS_TOKEN_EXPIRE_SECONDS = 30`
-- 用 `secrets.token_urlsafe(32)` 生成随机 `websocket_token`
-- 调用 `websocket_token_repo.create()` 把令牌、用户 ID 和过期时间写入 Redis
-- 返回 `WebSocketTokenResponse`
-
-响应对象字段包括：
-- `websocket_token`
-- `expires_in`
-
-这里的设计重点有两个：
-- 令牌有效期很短，只用于紧接着发起一次 WebSocket 建连
-- 令牌信息保存在 Redis 中，后续 WebSocket 接口可通过消费令牌取回对应用户身份
 
 #### 5.4.2 相关依赖
 这一接口背后主要依赖：
@@ -1592,10 +1684,16 @@ WebSocket Token 生成流程如下：
 - 调用 `websocket_token_repo.create()` 把令牌、用户 ID 和过期时间写入 Redis
 - 返回 `WebSocketTokenResponse`
 
+响应对象字段包括：
+- `websocket_token`
+- `expires_in`
+
 附代码片段：
 - [chat.py](./insight-agent/app/routers/api/chat.py)
 
 ```python
+...
+
 @router.post("/ws-token")
 async def api_create_websocket_token(
     request: Request,
@@ -1617,14 +1715,20 @@ async def api_create_websocket_token(
         websocket_token=websocket_token,
         expires_in=WS_TOKEN_EXPIRE_SECONDS,
     )
+
+...
 ```
 
 - [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
 
 ```python
+...
+
 class WebSocketTokenResponse(BaseModel):
     websocket_token: str = Field(..., description="WebSocket 临时令牌")
     expires_in: int = Field(..., description="过期时间（秒）")
+
+...
 ```
 
 ### 5.5 WebSocket 聊天接口
@@ -1703,8 +1807,7 @@ WebSocket 路由的第一步是校验建连参数里的临时令牌。
 
 第二步是恢复最近一次上下文压缩结果：
 - 调用 `context_compaction_repo.get_latest_by_conversation_id(...)`
-- 如果存在最近一次摘要压缩记录
-- 就把历史消息前段替换成一条新的运行时消息：
+- 如果存在最近一次摘要压缩记录,就把历史消息前段替换成一条新的运行时消息：
 
 ```python
 {"role": "user", "content": context_compaction_entity.summary_message}
@@ -1783,12 +1886,9 @@ WebSocket 路由的第一步是校验建连参数里的临时令牌。
 #### 5.5.8 接口代码与 WebSocket Schema
 这条 WebSocket 聊天链路里，前后端真正直接交互的数据结构主要有三类：
 
-- `WebSocketChatRequest`
-  前端发送给后端的请求对象，核心字段是 `message`
-- `WebSocketMessageResponse`
-  后端把正常消息事件返回给前端时使用
-- `WebSocketErrorResponse`
-  后端把错误事件返回给前端时使用
+- `WebSocketChatRequest`:前端发送给后端的请求对象，核心字段是 `message`
+- `WebSocketMessageResponse`:后端把正常消息事件返回给前端时使用
+- `WebSocketErrorResponse`:后端把错误事件返回给前端时使用
 
 其中 `WebSocketChatRequest` 内部包的是一个完整的 `MessageSchema`。也就是说，前端并不是单独传一段裸文本，而是沿用整个消息协议，把用户消息以统一结构发给后端。这样做的好处是，后续如果用户消息里包含附件、图片或其他消息片段，协议层不用重新设计。
 
@@ -1802,6 +1902,8 @@ WebSocket 路由的第一步是校验建连参数里的临时令牌。
 - [chat.py](./insight-agent/app/routers/api/chat.py)
 
 ```python
+...
+
 @router.websocket("/ws/chat")
 async def api_websocket_chat(
     websocket: WebSocket,
@@ -1916,11 +2018,15 @@ async def api_websocket_chat(
     # 客户端断开连接
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected: {conversation_id=}")
+
+...
 ```
 
 - [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
 
 ```python
+...
+
 class WebSocketChatRequest(BaseModel):
     message: MessageSchema = Field(..., description="用户消息")
 
@@ -1933,6 +2039,8 @@ class WebSocketMessageResponse(BaseModel):
 class WebSocketErrorResponse(BaseModel):
     type: Literal["error"] = "error"
     content: str = Field(..., description="错误信息")
+
+...
 ```
 
 ### 5.6 `chat_service` 聊天服务
@@ -1960,16 +2068,11 @@ class WebSocketErrorResponse(BaseModel):
 - 一份是数据库里的持久化消息记录
 
 做完这一步之后，`stream_chat()` 会初始化几个和本轮聊天执行有关的状态变量：
-- `cur_context_seq`
-  当前已落库的最后一条消息顺序号，后续每产生一条新消息都会继续递增
-- `summary_message`
-  保存本轮压缩后得到的摘要文本
-- `last_saved_cutoff_index`
-  防止同一轮里相同压缩边界被重复写入 `context_compaction`
-- `seq_offset`
-  用于把运行时 `cutoff_index` 换算成数据库里的 `end_seq`
-- `applied_cutoff_index`
-  记录当前运行时上下文已经应用到哪一个压缩边界
+- `cur_context_seq`:当前已落库的最后一条消息顺序号，后续每产生一条新消息都会继续递增
+- `summary_message`:保存本轮压缩后得到的摘要文本
+- `last_saved_cutoff_index`:防止同一轮里相同压缩边界被重复写入 `context_compaction`
+- `seq_offset`:用于把运行时 `cutoff_index` 换算成数据库里的 `end_seq`
+- `applied_cutoff_index`:记录当前运行时上下文已经应用到哪一个压缩边界
 
 这些变量共同解决的是一个核心问题：运行时消息数组和数据库消息顺序不是简单的一一等长关系，尤其在引入摘要压缩之后，必须显式维护“运行时下标”和“数据库上下文顺序号”之间的对应关系。
 
@@ -2088,12 +2191,12 @@ class WebSocketErrorResponse(BaseModel):
 - `app/static/dist/index.html` 是前端页面入口
 - `app/static/dist/assets` 存放构建后的 JS、CSS 等静态资源
 
-这意味着后端不需要再额外实现一套页面渲染逻辑，而是直接把已经构建好的前端文件作为静态资源对外提供。
-
 附代码片段：
 - [frontend.py](./insight-agent/app/routers/frontend.py)
 
 ```python
+...
+
 router = APIRouter()
 
 # 前端构建产物目录
@@ -2101,6 +2204,8 @@ APP_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIST_DIR = APP_DIR / "static" / "dist"
 STATIC_ASSETS_DIR = STATIC_DIST_DIR / "assets"
 SPA_ENTRY_FILE = STATIC_DIST_DIR / "index.html"
+
+...
 ```
 
 ### 6.2 静态资源挂载
@@ -2110,6 +2215,8 @@ SPA_ENTRY_FILE = STATIC_DIST_DIR / "index.html"
 - [frontend.py](./insight-agent/app/routers/frontend.py)
 
 ```python
+...
+
 def register_frontend(app: FastAPI) -> None:
     # 挂载构建后的静态资源，并注册前端相关路由
     app.mount(
@@ -2118,6 +2225,8 @@ def register_frontend(app: FastAPI) -> None:
         name="assets",
     )
     app.include_router(router)
+
+...
 ```
 
 ### 6.3 SPA 路由回退
@@ -2131,6 +2240,8 @@ def register_frontend(app: FastAPI) -> None:
 - [frontend.py](./insight-agent/app/routers/frontend.py)
 
 ```python
+...
+
 # 这些前缀由后端接口、静态资源或文档页占用，不能回退到 SPA
 SPA_EXCLUDED_PREFIXES = (
     "/api",
@@ -2154,6 +2265,8 @@ async def serve_spa(full_path: str):
     if not SPA_ENTRY_FILE.exists():
         raise HTTPException(status_code=404, detail="Frontend build not found")
     return FileResponse(SPA_ENTRY_FILE)
+
+...
 ```
 
 ### 6.4 认证代理转发
@@ -2167,6 +2280,8 @@ async def serve_spa(full_path: str):
 - [frontend.py](./insight-agent/app/routers/frontend.py)
 
 ```python
+...
+
 @router.api_route(
     "/auth-api/{path:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -2194,6 +2309,8 @@ async def proxy_auth_api(path: str, request: Request) -> Response:
             status_code=502,
             detail=f"Auth service unavailable: {exc}",
         ) from exc
+
+...
 ```
 
 ### 6.5 项目入口 `main.py`
@@ -2208,6 +2325,6 @@ async def proxy_auth_api(path: str, request: Request) -> Response:
 - 挂载前端静态资源、SPA 回退路由和认证代理
 
 附代码：
-- [main.py](./insight-agent/app/main.py)
-- [routers/__init__.py](./insight-agent/app/routers/__init__.py)
 - [routers/api/__init__.py](./insight-agent/app/routers/api/__init__.py)
+- [routers/__init__.py](./insight-agent/app/routers/__init__.py)
+- [main.py](./insight-agent/app/main.py)

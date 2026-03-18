@@ -25,13 +25,6 @@ log: # 日志
 lm_config:
   active: qwen3.5-397b-a17b
   models:
-    gpt-5.4:
-      model: openai/gpt-5.4
-      base_url: https://openrouter.ai/api/v1
-      api_key: ${oc.env:OPENROUTER_API_KEY}
-      params: {}
-      profile:
-        max_input_tokens: 1050000 # 模型上下文长度，用于计算对话压缩阈值
     minimax-m2.5:
       model: minimax/minimax-m2.5
       base_url: https://openrouter.ai/api/v1
