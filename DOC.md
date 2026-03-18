@@ -342,7 +342,7 @@ HTTP 客户端工具负责统一封装对外部 HTTP 服务的调用入口，方
 #### 2.6.2 `auth` 中间件设计
 `auth` 中间件负责统一处理访问令牌校验。将认证放在中间件层，请求在进入具体业务路由之前先完成身份确认，这样后面的 Router、Service 和 Agent 调用都可以直接使用已经解析好的用户信息。
 
-该实现会先根据请求路径判断接口是否需要鉴权。`/health`、`/docs`、`/openapi.json`、`/redoc` 等精确路径会直接放行，`/assets`、`/auth-api` 等前缀路径也会放行；真正进入业务处理的接口主要通过 `/api` 前缀统一纳入鉴权范围。由此可以将需要保护的业务接口与不需要保护的静态资源、文档接口区分开来。
+该实现会先根据请求路径判断接口是否需要鉴权。`/health`、`/docs`、`/openapi.json`、`/redoc` 等精确路径会直接放行，`/assets`、`/auth-api` 等前缀路径也会放行；真正进入业务处理的 HTTP 接口主要通过 `/api` 前缀统一纳入鉴权范围。由此可以将需要保护的业务接口与不需要保护的静态资源、文档接口区分开来。
 
 执行鉴权时，中间件会：
 - 从请求头里读取 `Authorization`
@@ -486,6 +486,7 @@ create_deep_agent(
 
 附代码：
 - [insight/SKILL.md](./insight-agent/.deepagents/skills/insight/SKILL.md)
+- [render_report.py](./insight-agent/.deepagents/skills/insight/scripts/render_report.py)
 
 ### 3.6 Agent 的组装与加载
 `agent.py`负责统一定义 Agent 的目录结构、工作区后端、组件装配方式和实例获取方式。
@@ -538,8 +539,8 @@ Agent 的组装由 `_build_agent()` 完成，装配内容包括：
 | 附件上传与文件返回     | 会话工作区 + `message.attachments` | 文件本体保存在会话工作区，附件元数据随消息一起持久化。                  |
 
 附代码：
-- [chat.sql](/home/kodey/agents/insight-agent/sql/mysql/chat.sql)
-- [init_db.py](/home/kodey/agents/insight-agent/app/init_db.py)
+- [chat.sql](./insight-agent/sql/mysql/chat.sql)
+- [init_db.py](./insight-agent/app/init_db.py)
 
 ### 4.2 项目中的三种消息格式
 - Agent 运行时使用的 LangChain/DeepAgents 消息
@@ -1627,45 +1628,450 @@ class WebSocketTokenResponse(BaseModel):
 ```
 
 ### 5.5 WebSocket 聊天接口
-WebSocket 聊天接口负责承载实时对话过程。
+#### 5.5.1 接口介绍
+这个 WebSocket 聊天接口承载实时对话过程。
 
 接口为：
 - `WS /api/chat/ws/chat?conversation_id=...&websocket_token=...`
 
-建连流程如下：
+这个接口的职责包括：
+- 建立 WebSocket 长连接
+- 校验临时令牌并恢复用户身份
+- 检查当前会话是否存在且属于当前用户
+- 加载历史消息和最近一次上下文压缩结果
+- 接收前端发送的用户消息
+- 调用 `chat_service.stream_chat()` 执行一轮聊天
+- 把模型消息、工具消息和错误消息持续推送给前端
+
+和前面的普通 HTTP 接口相比，这里最大的区别在于它承接的是一条持续存在的会话链路。前端不再是“一次请求拿一次响应”，而是在连接建立后持续发送消息、持续接收返回结果。因此，WebSocket 路由除了要完成建连本身，还要负责把身份、历史上下文和当前会话状态都准备好，再把后续真正的聊天执行交给 Service 层。
+
+从代码分工上看，这一层主要负责三件事：
+- 处理 WebSocket 连接本身，包括令牌校验、连接建立和异常关闭
+- 处理进入聊天前的准备工作，包括会话校验、历史恢复和请求格式校验
+- 作为 Router 层调用 `chat_service.stream_chat()`，再把 Service 返回的消息包装成 WebSocket 事件发回前端
+
+#### 5.5.2 相关依赖
+这一层的主要依赖包括：
+- `websocket_token_repo`：负责消费前一步通过 HTTP 接口签发的临时 WebSocket Token，并恢复出当前用户身份。
+- `conversation_repo`：负责校验当前会话是否存在，以及是否属于当前用户。
+- `message_repo`：负责读取当前会话的历史消息记录。
+- `context_compaction_repo`：负责读取最近一次上下文压缩结果，用于恢复长对话时的运行时上下文。
+- `message_mapper`：负责把数据库里的历史消息恢复成 `MessageSchema`，再转换成 Agent 可直接消费的运行时消息。
+- `chat_service`：负责真正执行一轮聊天，Router 只负责把准备好的上下文和本轮用户消息交给它。
+- `chat_schema`：负责约束 WebSocket 请求体、消息事件和错误事件的数据格式。
+- `context`：负责把当前用户 ID 写入上下文变量，供日志和后续链路复用。
+
+可以看到，这个 WebSocket 路由本身并不承担复杂业务计算，它更多像一层编排入口：把身份恢复、会话检查、历史准备、请求校验和 Service 调用按顺序串起来。
+
+#### 5.5.3 `WS /api/chat/ws/chat` 建连与身份恢复
+WebSocket 路由的第一步是校验建连参数里的临时令牌。
+
+具体流程如下：
 - 从查询参数中读取 `websocket_token`
-- 调用 `websocket_token_repo.consume()` 校验并消费令牌
-- 把用户 ID 写入上下文变量
-- 建立 WebSocket 连接
-- 校验会话是否存在且属于当前用户
+- 如果参数缺失，直接 `close(code=4401)`
+- 调用 `websocket_token_repo.consume(websocket_token)` 校验并消费令牌
+- 如果令牌不存在、已过期或已被消费，同样直接 `close(code=4401)`
+- 令牌校验成功后，取出其中的 `user_id`
+- 把 `user_id` 写入上下文变量
+- 调用 `websocket.accept()` 正式建立连接
 
-历史恢复流程如下：
-- 读取当前会话的历史消息
-- 逐条从 Entity 转成 Schema，再转成运行时消息
-- 读取最近一次上下文压缩结果
-- 如存在摘要，则用摘要替换历史消息前段
+这里有两个要点：
 
-消息收发流程如下：
-- 接收前端发送的 `WebSocketChatRequest`
-- 校验 `message.role` 必须为 `user`
-- 为用户消息补齐 `context_seq`
-- 如会话仍是草稿，则更新为正式会话
-- 调用 `chat_service.stream_chat()` 执行聊天
-- 把返回的每条消息包装成 `WebSocketMessageResponse`
-- 通过 `websocket.send_json()` 持续推送给前端
+第一，WebSocket 建连不是直接复用 HTTP 那套中间件鉴权链路，而是依赖前面 `POST /api/chat/ws-token` 签发的临时令牌。这样可以把“HTTP 已经完成的认证结果”安全传递给后续 WebSocket 连接。
 
-异常处理方式包括：
-- 建连参数缺失或令牌无效时，直接关闭连接
-- 会话不存在或无权限访问时，发送 `WebSocketErrorResponse` 后关闭连接
-- 请求体格式不合法时，发送错误事件并继续等待下一条消息
+第二，令牌在这里不是“读取”，而是“消费”。也就是说，一个令牌只能成功使用一次。这样可以降低令牌泄漏后被重复利用的风险，也能让 WebSocket 建连的身份恢复过程更清晰。
 
-关键请求和响应对象包括：
+身份恢复完成之后，路由还会继续做一次会话校验：
+- 调用 `conversation_repo.get_by_id(db_session, conversation_id)`
+- 检查会话是否存在
+- 检查会话是否属于当前 `user_id`
+
+如果会话不存在，或不属于当前用户，路由不会继续进入聊天流程，而是先发送一个 `WebSocketErrorResponse`，再主动关闭连接。
+
+#### 5.5.4 历史消息与上下文恢复
+在确认连接和用户身份都有效之后，WebSocket 路由会先恢复这条会话已经存在的上下文，而不是直接拿本轮用户消息去调用 Agent。
+
+恢复过程分成两步。
+
+第一步是恢复历史消息：
+- 调用 `message_repo.ls(db_session, conversation_id)` 读取数据库里的历史消息
+- 取最后一条消息的 `context_seq`，作为当前会话上下文顺序号的起点
+- 逐条通过 `entity_to_schema` 把 Entity 消息恢复成 `MessageSchema`
+- 再通过 `schema_to_langchain_message` 把 `MessageSchema` 转成 Agent 运行时消息
+
+做完这一步之后，Router 手里拿到的 `messages` 已经不是数据库实体，而是后续可以直接传给 Agent 的运行时消息数组。
+
+第二步是恢复最近一次上下文压缩结果：
+- 调用 `context_compaction_repo.get_latest_by_conversation_id(...)`
+- 如果存在最近一次摘要压缩记录
+- 就把历史消息前段替换成一条新的运行时消息：
+
+```python
+{"role": "user", "content": context_compaction_entity.summary_message}
+```
+
+这一步的作用，是把长对话已经被压缩过的前半段历史收敛成一条摘要消息，避免每次重连都重新把完整长历史塞回模型上下文里。这样既能降低上下文长度和推理成本，也能保持后续继续追问时的语义连续性。
+
+#### 5.5.5 接收前端消息
+历史上下文准备好之后，路由才进入持续收发消息的主循环。这里的实现是一个 `while True` 循环，不断从 WebSocket 里接收前端发来的 JSON 请求。
+
+接收与校验的流程如下：
+- 调用 `await websocket.receive_json()` 读取前端消息
+- 用 `chat_schema.WebSocketChatRequest` 进行结构校验
+- 检查 `body.message.role` 是否为 `user`
+- 如果不是 `user`，就发送 `WebSocketErrorResponse`，继续等待下一条消息
+- 如果请求合法，就为这条用户消息补上新的 `context_seq`
+
+这里补 `context_seq` 的逻辑很关键。因为用户通过 WebSocket 发来的消息还只是一个前端协议对象，真正落库和进入上下文之前，需要先由 Router 按当前会话状态补齐顺序号。这样后续 Service 层和数据库层才能知道这条消息在整条会话里的位置。
+
+此外，这一层还处理了草稿会话转正式会话的逻辑：
+- 如果当前会话 `conversation.is_draft == 1`
+- 就先调用 `conversation_repo.update(..., is_draft=0)`
+
+这样就把“先上传附件、后发送第一条消息”的草稿会话，正式切换成普通会话。
+
+#### 5.5.6 调用 `chat_service.stream_chat`
+当本轮用户消息准备好之后，Router 不再自己处理聊天细节，而是把本轮会话状态交给 `chat_service.stream_chat()`。
+
+调用时传入的关键参数包括：
+- `db_session`
+- `user_id`
+- `conversation_id`
+- 已经恢复好的运行时 `messages`
+- 当前这一轮的 `body.message`
+- `has_applied_summary=context_compaction_entity is not None`
+
+这里最后一个参数表示当前运行时上下文里，是否已经提前应用过摘要压缩结果。Service 层后面在处理新的 `_summarization_event` 时，需要知道这个状态，才能正确计算本轮上下文替换边界，避免重复替换或边界错位。
+
+从职责划分上看，Router 到这里就完成了自己的主要工作：
+- 连接准备好了
+- 身份恢复好了
+- 会话校验好了
+- 历史消息准备好了
+- 当前用户消息也准备好了
+
+接下来真正和 Agent 交互、消费流式 `chunk`、落库和返回消息，都会进入 Service 层完成。
+
+#### 5.5.7 流式返回消息给前端
+虽然聊天执行已经交给了 Service，但消息最终还是需要由 WebSocket 路由发回前端。
+
+这里的实现方式是：
+- `async for message in chat_service.stream_chat(...)`
+- 每拿到一条 `MessageSchema`
+- 就包成一个 `WebSocketMessageResponse`
+- 再通过 `await websocket.send_json(...)` 发给前端
+
+也就是说，Router 并不关心这条消息到底是：
+- 模型回复
+- 工具调用
+- 工具结果
+- 还是兜底返回的错误提示消息
+
+对它来说，Service 只要持续产出标准的 `MessageSchema`，它就统一包装成：
+
+```python
+{
+    "type": "message",
+    "message": ...
+}
+```
+
+再推送给前端。
+
+这种设计的好处是前后端协议会比较稳定。前端只需要持续消费 `message` 类型事件并渲染消息，不需要知道 Service 内部到底经历了多少次工具调用、摘要压缩或者异常兜底。
+
+#### 5.5.8 接口代码与 WebSocket Schema
+这条 WebSocket 聊天链路里，前后端真正直接交互的数据结构主要有三类：
+
 - `WebSocketChatRequest`
+  前端发送给后端的请求对象，核心字段是 `message`
 - `WebSocketMessageResponse`
+  后端把正常消息事件返回给前端时使用
 - `WebSocketErrorResponse`
+  后端把错误事件返回给前端时使用
 
-附代码：
+其中 `WebSocketChatRequest` 内部包的是一个完整的 `MessageSchema`。也就是说，前端并不是单独传一段裸文本，而是沿用整个消息协议，把用户消息以统一结构发给后端。这样做的好处是，后续如果用户消息里包含附件、图片或其他消息片段，协议层不用重新设计。
+
+返回给前端时，后端会显式区分两种事件：
+- `type = "message"`：表示一条正常消息
+- `type = "error"`：表示一条错误事件
+
+这样前端在处理 WebSocket 事件时，就可以先按 `type` 分流，再分别决定是渲染消息气泡，还是展示错误提示。
+
+附代码片段：
 - [chat.py](./insight-agent/app/routers/api/chat.py)
+
+```python
+@router.websocket("/ws/chat")
+async def api_websocket_chat(
+    websocket: WebSocket,
+    conversation_id: int,
+    db_session: Annotated[AsyncSession, Depends(get_app_db)],
+):
+    """WebSocket 聊天接口"""
+    # 检查 WebSocket 临时令牌(从请求参数中获取)
+    websocket_token = websocket.query_params.get("websocket_token")
+    if not websocket_token:
+        await websocket.close(code=4401)
+        return
+    token_data = await websocket_token_repo.consume(websocket_token)
+    if token_data is None:
+        await websocket.close(code=4401)
+        return
+    user_id = token_data.user_id
+
+    # 将用户ID添加到上下文变量
+    context.user_id_ctx.set(str(user_id))
+
+    # 建立 WebSocket 连接
+    await websocket.accept()
+    logger.info(f"WebSocket connected: {conversation_id=}")
+
+    # 检查对话是否存在且属于当前用户，如不是则关闭连接
+    conversation = await conversation_repo.get_by_id(db_session, conversation_id)
+    if conversation is None or conversation.user_id != user_id:
+        await websocket.send_json(
+            chat_schema.WebSocketErrorResponse(
+                content=chat_error.ConversationNotFound.message
+            ).model_dump(mode="json")
+        )
+        await websocket.close(code=4404)
+        logger.info(f"WebSocket disconnected: {conversation_id=}")
+        return
+
+    # 从数据库加载历史消息
+    message_entities = await message_repo.ls(db_session, conversation_id)
+    # 获取最后一个消息的 context_seq；若没有历史消息，则首条消息从 0 开始
+    cur_context_seq = message_entities[-1].context_seq if message_entities else -1
+    # 将历史消息转换为 LangChain Message
+    messages = [
+        message_mapper.schema_to_langchain_message(
+            message_mapper.entity_to_schema(i),
+            user_id=user_id,
+            conversation_id=conversation_id,
+        )
+        for i in message_entities
+    ]
+    logger.info(
+        f"Load history messages: {conversation_id=}, message_count={len(messages)}"
+    )
+
+    # 从数据库加载最新压缩上下文
+    context_compaction_entity = (
+        await context_compaction_repo.get_latest_by_conversation_id(
+            db_session, conversation_id
+        )
+    )
+    if context_compaction_entity:
+        # 将历史消息替换为压缩上下文
+        messages[: context_compaction_entity.end_seq] = [
+            {"role": "user", "content": context_compaction_entity.summary_message}
+        ]
+        logger.info(f"Load context_compaction: {conversation_id=}")
+
+    try:
+        while True:
+            # 接收并解析 WebSocket 请求
+            try:
+                body = chat_schema.WebSocketChatRequest(
+                    **await websocket.receive_json()
+                )
+                # 检查是否为用户消息
+                if body.message.role != "user":
+                    await websocket.send_json(
+                        chat_schema.WebSocketErrorResponse(
+                            content="Invalid request format: message.role must be 'user'"
+                        ).model_dump(mode="json")
+                    )
+                    continue
+                # 为用户消息添加 context_seq
+                cur_context_seq += 1
+                body.message.context_seq = cur_context_seq
+            except (json.JSONDecodeError, ValidationError) as e:
+                await websocket.send_json(
+                    chat_schema.WebSocketErrorResponse(
+                        content=f"Invalid request: {str(e)}"
+                    ).model_dump(mode="json")
+                )
+                continue
+
+            # 将草稿对话修改为正式对话
+            if conversation.is_draft == 1:
+                await conversation_repo.update(db_session, conversation, is_draft=0)
+
+            # 调用 Agent
+            async for message in chat_service.stream_chat(
+                db_session,
+                user_id,
+                conversation_id,
+                messages,
+                body.message,
+                has_applied_summary=context_compaction_entity is not None,
+            ):
+                cur_context_seq += 1
+                event = chat_schema.WebSocketMessageResponse(message=message)
+                # 发送 WebSocket 响应
+                await websocket.send_json(event.model_dump(mode="json"))
+
+    # 客户端断开连接
+    except WebSocketDisconnect:
+        logger.info(f"WebSocket disconnected: {conversation_id=}")
+```
+
+- [chat_schema.py](./insight-agent/app/schemas/chat_schema.py)
+
+```python
+class WebSocketChatRequest(BaseModel):
+    message: MessageSchema = Field(..., description="用户消息")
+
+
+class WebSocketMessageResponse(BaseModel):
+    type: Literal["message"] = "message"
+    message: MessageSchema = Field(..., description="消息内容")
+
+
+class WebSocketErrorResponse(BaseModel):
+    type: Literal["error"] = "error"
+    content: str = Field(..., description="错误信息")
+```
+
+### 5.6 `chat_service` 聊天服务
+#### 5.6.1 职责介绍
+ `chat_service.stream_chat()` 负责真正的一轮聊天执行。
+
+这一层的职责可以概括为：
+- 接收 Router 传入的本轮用户消息和当前运行时上下文
+- 先把用户消息同步写入运行时消息数组和数据库
+- 调用 Agent，并持续消费流式返回的 `chunk`
+- 把普通消息转换成 `MessageSchema`，再落库并返回给 Router
+- 识别 `_summarization_event`，同步更新运行时上下文和摘要记录
+- 在模型异常或特殊能力不支持时，统一生成兜底回复
+
+#### 5.6.2 用户消息入库与上下文准备
+`stream_chat()` 一开始做的第一件事是先把本轮用户消息写入当前会话状态。
+
+这里实际走的是内部辅助函数 `_add_message()`，它会做三件事：
+- 调用 `schema_to_langchain_message()`，把 `MessageSchema` 追加进运行时 `messages`
+- 调用 `schema_to_entity()` 并通过 `message_repo.create()` 把消息写入数据库
+- 调用 `conversation_repo.touch_update_at()` 刷新会话更新时间
+
+也就是说，用户消息一进入 Service 层，就会同时进入两份上下文：
+- 一份是 Agent 接下来要直接消费的运行时消息数组
+- 一份是数据库里的持久化消息记录
+
+做完这一步之后，`stream_chat()` 会初始化几个和本轮聊天执行有关的状态变量：
+- `cur_context_seq`
+  当前已落库的最后一条消息顺序号，后续每产生一条新消息都会继续递增
+- `summary_message`
+  保存本轮压缩后得到的摘要文本
+- `last_saved_cutoff_index`
+  防止同一轮里相同压缩边界被重复写入 `context_compaction`
+- `seq_offset`
+  用于把运行时 `cutoff_index` 换算成数据库里的 `end_seq`
+- `applied_cutoff_index`
+  记录当前运行时上下文已经应用到哪一个压缩边界
+
+这些变量共同解决的是一个核心问题：运行时消息数组和数据库消息顺序不是简单的一一等长关系，尤其在引入摘要压缩之后，必须显式维护“运行时下标”和“数据库上下文顺序号”之间的对应关系。
+
+#### 5.6.3 调用 Agent 并消费流式 `chunk`
+准备好用户消息和运行时上下文之后，Service 才真正开始调用 Agent。
+
+调用流程如下：
+- 用 `get_workspace_dir(user_id, conversation_id)` 获取当前会话工作区
+- 构造 `RunnableConfig(configurable={"workspace_dir": ...})`
+- 调用 `get_agent()` 获取全局复用的 Agent 实例
+- 执行 `agent.astream(input={"messages": messages}, config=config)`
+- 用 `async for chunk in ...` 持续消费 Agent 的流式输出
+
+这里可以看到，Service 从 Agent 拿到的并不是最终已经整理好的消息列表，而是一个个 `chunk`。这些 `chunk` 里既可能包含：
+- `model.messages`
+- `tools.messages`
+- `_summarization_event`
+- 也可能包含中间件节点返回的其他运行过程信息
+
+因此，Service 在这一层做的不是“直接把 chunk 发回前端”，而是先判断：
+- 如果是摘要压缩事件，就走 `_summarization_event` 的处理逻辑
+- 如果是普通消息，就交给 `agent_chunk_to_schemas()` 转成标准 `MessageSchema`
+
+#### 5.6.4 普通消息的转换、落库与返回
+对于 Agent 返回的普通消息，Service 的处理流程相对统一：
+- 调用 `message_mapper.agent_chunk_to_schemas(chunk)` 提取并转换消息
+- 如果这一批 `responses` 为空，就继续消费下一个 `chunk`
+- 如果有消息，就逐条处理
+
+逐条处理时会做三件事：
+- `cur_context_seq += 1`
+- 把新的 `context_seq` 写回 `response.context_seq`
+- 再次调用 `_add_message()`，把消息同步写入运行时上下文和数据库
+
+最后，这条已经完成顺序号补齐并落库的 `response` 会被 `yield` 回 Router 层。这样 Router 就可以继续把它包装成 `WebSocketMessageResponse` 发给前端。
+
+通过 `_add_message()` 和 `yield response` 这一组固定流程，Service 保证了同一条 Agent 消息在运行时、数据库和前端三边都保持一致。
+
+#### 5.6.5 `_summarization_event` 的处理
+`_summarization_event` 是这条聊天链路里最特殊的一类流式事件。它不是普通消息，因此不会被转成 `MessageSchema` 返回前端，而是由 Service 单独识别和处理。
+
+当发现：
+
+```python
+"model" in chunk and "_summarization_event" in chunk["model"]
+```
+
+时，Service 会执行以下逻辑：
+- 读取 `cutoff_index`
+- 读取 `summary_message`
+- 计算当前这次应该替换运行时消息数组的边界
+- 用一条新的摘要消息替换历史消息前段
+- 把这次压缩结果写入 `context_compaction`
+
+这里最关键的是两次“换算”。
+
+第一层换算，是运行时消息数组里的替换边界：
+- 如果当前会话在进入本轮聊天之前已经应用过摘要
+- 那么新的 `cutoff_index` 不能直接拿来切片
+- 需要结合 `applied_cutoff_index` 和 `has_applied_summary` 计算增量替换范围
+
+第二层换算，是数据库里的 `end_seq`：
+- `cutoff_index` 是运行时数组里的下标概念
+- 数据库里保存的是整条会话的绝对上下文顺序号
+- 因此需要通过 `seq_offset + cutoff_index` 计算出实际的 `end_seq`
+
+做完这两步之后，Service 会构造一个 `ContextCompaction` 实体并调用 `context_compaction_repo.create()` 持久化。这样下次 WebSocket 重连时，Router 就能直接读取最近一次摘要结果，恢复成更短的运行时上下文。
+
+#### 5.6.6 异常兜底与特殊场景处理
+`chat_service` 的最后一层职责，是兜底。
+
+当前实现里主要处理两类异常场景。
+
+第一类是模型不支持图片输入：
+- 捕获 `openai.NotFoundError`
+- 检查错误信息里是否包含 `No endpoints found that support image input`
+- 如果是，就生成一条固定的助手消息：
+
+```python
+当前模型不支持图片输入。
+```
+
+然后像普通消息一样：
+- 添加 `context_seq`
+- 调用 `_add_message()` 落库
+- `yield` 给 Router 返回前端
+
+第二类是其他未预期异常：
+- 统一记录异常日志
+- 生成一条固定的助手兜底消息：
+
+```python
+模型调用失败，请稍后重试。
+```
+
+同样按正常消息流程落库并返回。
+
+这样做的好处是，无论 Agent、模型还是工具链路中间发生了什么问题，前端都不会直接“断流”或者拿到一个无法渲染的异常对象，而是始终能够收到一条结构合法的 `MessageSchema`。
+
+#### 5.6.7 代码实现
+附代码：
+- [chat_service.py](./insight-agent/app/services/chat_service.py)
 
 ## 6. 前端接入与应用入口
 
