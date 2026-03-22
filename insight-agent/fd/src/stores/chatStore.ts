@@ -24,7 +24,10 @@ interface ChatState {
 	ensureConversation: (conversation: ConversationResponse) => void;
 	appendMessage: (conversationId: number, message: MessageSchema) => void;
 	replaceMessages: (conversationId: number, messages: MessageSchema[]) => void;
-	appendAttachments: (conversationId: number, attachments: Attachment[]) => void;
+	appendAttachments: (
+		conversationId: number,
+		attachments: Attachment[],
+	) => void;
 	removeAttachment: (conversationId: number, attachmentName: string) => void;
 	clearAttachments: (conversationId: number) => void;
 }
@@ -172,8 +175,9 @@ export const useChatStore = create<ChatState>()((set, get) => ({
 		set((state) => ({
 			attachmentsByConversation: {
 				...state.attachmentsByConversation,
-				[conversationId]: (state.attachmentsByConversation[conversationId] ?? [])
-					.filter((attachment) => attachment.path !== attachmentName),
+				[conversationId]: (
+					state.attachmentsByConversation[conversationId] ?? []
+				).filter((attachment) => attachment.path !== attachmentName),
 			},
 		})),
 

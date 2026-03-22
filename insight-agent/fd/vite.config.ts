@@ -25,8 +25,8 @@ function readRequiredNumberEnv(
 export default defineConfig(({ mode }) => {
 	const env = loadEnv(mode, __dirname, "VITE_");
 	const port = readRequiredNumberEnv(env, "VITE_DEV_SERVER_PORT");
-	const authProxyTarget = readRequiredEnv(env, "VITE_DEV_AUTH_PROXY_TARGET");
-	const appProxyTarget = readRequiredEnv(env, "VITE_DEV_APP_PROXY_TARGET");
+	const appProxy = readRequiredEnv(env, "VITE_DEV_APP_PROXY");
+	const authApiProxy = readRequiredEnv(env, "VITE_DEV_AUTH_API_PROXY");
 
 	return {
 		plugins: [react()],
@@ -38,15 +38,15 @@ export default defineConfig(({ mode }) => {
 		server: {
 			port,
 			proxy: {
-				"/auth-api": {
-					target: authProxyTarget,
-					changeOrigin: true,
-					rewrite: (path) => path.replace(/^\/auth-api/, ""),
-				},
 				"/api": {
-					target: appProxyTarget,
+					target: appProxy,
 					ws: true,
 					changeOrigin: true,
+				},
+				"/auth-api": {
+					target: authApiProxy,
+					changeOrigin: true,
+					rewrite: (path) => path.replace(/^\/auth-api/, ""),
 				},
 			},
 		},

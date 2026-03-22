@@ -49,6 +49,7 @@ type ToolRunDisplayItem = {
 type DisplayItem = MessageDisplayItem | ToolRunDisplayItem;
 const TOOL_ARGS_PREVIEW_MAX_LENGTH = 96;
 
+// 消息中的图片资源使用全屏浮层预览
 function ImagePreview({
 	alt,
 	onClose,
@@ -74,6 +75,7 @@ function ImagePreview({
 	);
 }
 
+// 没有持久化 message_id 的本地消息，需要退回到内容级 key
 function getMessageKey(message: MessageSchema) {
 	if (message.message_id != null) {
 		return `message-${message.message_id}`;
@@ -82,6 +84,7 @@ function getMessageKey(message: MessageSchema) {
 	return `message-${message.timestamp ?? "draft"}-${message.role}-${JSON.stringify(message.parts)}`;
 }
 
+// 不同类型的消息片段要生成稳定 key，避免 React 反复重建节点
 function getMessagePartKey(part: MessagePart) {
 	switch (part.type) {
 		case "text":
@@ -95,6 +98,7 @@ function getMessagePartKey(part: MessagePart) {
 	}
 }
 
+// 附件文件名仅用于区分图片和 HTML 两类特殊展示
 function isImageAttachment(name: string) {
 	return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
 }
@@ -103,6 +107,7 @@ function isHtmlAttachment(name: string) {
 	return /\.(html?)$/i.test(name);
 }
 
+// 把后端原始消息流整理成适合渲染的普通消息和工具执行条目
 function buildDisplayItems(
 	conversationId: number | null,
 	messages: MessageSchema[],
@@ -191,6 +196,7 @@ function buildDisplayItems(
 	return items;
 }
 
+// 工具参数预览只显示扁平摘要，避免标题区过长
 function formatToolArgValue(value: unknown): string {
 	if (value === null) return "null";
 	if (value === undefined) return "undefined";
@@ -220,6 +226,7 @@ function getToolArgsPreview(args?: Record<string, unknown>): string | null {
 	return `${preview.slice(0, TOOL_ARGS_PREVIEW_MAX_LENGTH).trimEnd()}...`;
 }
 
+// 助手文本支持 Markdown，用户文本保持原样展示
 function MarkdownText({ text }: { text: string }) {
 	return (
 		<div className="text-[15px] tracking-wide opacity-95">
@@ -318,6 +325,7 @@ function MarkdownText({ text }: { text: string }) {
 	);
 }
 
+// 单个消息片段的渲染分为文本和图片两类
 function PartView({
 	part,
 	onPreview,
@@ -352,6 +360,7 @@ function PartView({
 	);
 }
 
+// 工具调用和工具结果合并成一条可折叠的执行记录
 function ToolRunBar({
 	item,
 	onOpenHtmlAttachment,
@@ -415,6 +424,7 @@ function ToolRunBar({
 						/>
 					</button>
 					{isOpen ? (
+						/* 展开后显示工具入参与执行结果，便于排查调用细节 */
 						<div
 							className={cn(
 								"space-y-3 px-3.5 pb-3.5 pt-2.5",
@@ -470,6 +480,7 @@ function ToolRunBar({
 				</div>
 			</div>
 			{hasAttachments ? (
+				/* 某些工具会返回附件，这里复用消息附件的展示方式 */
 				<div className="flex w-full justify-start">
 					<div className="max-w-[88%] rounded-[1.5rem] bg-transparent px-4 py-0.5 text-slate-800">
 						<div className="flex flex-wrap gap-2">
@@ -490,6 +501,7 @@ function ToolRunBar({
 	);
 }
 
+// 普通附件缩略图按需拉取真实文件内容，避免列表初始加载过重
 function AttachmentPreview({
 	attachment,
 	conversationId,
@@ -552,6 +564,7 @@ function AttachmentPreview({
 	);
 }
 
+// 附件 chip 统一承载预览、下载和 HTML 打开动作
 function AttachmentChip({
 	attachment,
 	conversationId,
@@ -568,6 +581,7 @@ function AttachmentChip({
 	const [isDownloading, setIsDownloading] = useState(false);
 	const isHtml = isHtmlAttachment(attachment.path);
 
+	// 下载走 blob 链接，避免直接暴露鉴权接口地址
 	const handleDownload = async () => {
 		if (!conversationId || isDownloading) return;
 
@@ -641,6 +655,7 @@ function AttachmentChip({
 	);
 }
 
+// 一条普通消息气泡内可以同时包含附件、文本和图片片段
 function MessageBubble({
 	message,
 	onOpenHtmlAttachment,
@@ -694,6 +709,7 @@ function MessageBubble({
 				</div>
 			</div>
 			{previewImage ? (
+				/* 消息内图片的预览能力和输入区附件预览保持一致 */
 				<ImagePreview
 					src={previewImage.src}
 					alt={previewImage.alt}
@@ -721,6 +737,7 @@ export function ChatMessages({
 	onOpenHtmlAttachment,
 	viewportRef,
 }: ChatMessagesProps) {
+	// 渲染前先把原始消息整理成适合 UI 的扁平列表
 	const displayItems = buildDisplayItems(conversationId, messages);
 
 	return (
@@ -730,18 +747,21 @@ export function ChatMessages({
 				className="min-h-0 flex-1 overflow-y-auto bg-[#fefdfa] pb-10 pt-6"
 			>
 				{!conversationSelected ? (
+					/* 未选择会话时显示空状态 */
 					<div className="flex h-full items-center justify-center">
 						<p className="text-base font-medium tracking-[0.18em] text-slate-400">
 							创建新对话
 						</p>
 					</div>
 				) : isLoading ? (
+					/* 历史消息加载时保持主区域占位不抖动 */
 					<div className="flex h-full items-center justify-center">
 						<div className="flex h-16 w-16 items-center justify-center">
 							<Loader2 className="h-7 w-7 animate-spin text-slate-700" />
 						</div>
 					</div>
 				) : (
+					/* 渲染顺序与消息数组一致，工具调用会穿插在普通消息之间 */
 					<div className="mx-auto w-[60%] min-w-[320px] max-w-[960px] space-y-2">
 						{displayItems.map((item) =>
 							item.type === "message" ? (

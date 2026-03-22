@@ -1,12 +1,12 @@
 import { Loader2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { lazy, Suspense } from "react";
-import { createBrowserRouter } from "react-router-dom";
+import { createBrowserRouter, Navigate } from "react-router-dom";
+import AuthCallbackPage from "@/auth/AuthCallbackPage";
+import { AUTH_CALLBACK_ROUTE } from "@/auth/constants";
+import { ProtectedRoute } from "@/auth/guards";
 import { ROUTES } from "@/config/constants";
-import { EntryRoute, ProtectedRoute } from "./guards";
 
-const AuthRedirect = lazy(() => import("@/pages/AuthRedirect"));
-const AuthCallback = lazy(() => import("@/pages/AuthCallback"));
 const ChatPage = lazy(() => import("@/pages/Chat"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 
@@ -24,24 +24,12 @@ function SuspenseWrapper({ children }: { children: ReactNode }) {
 
 export const router = createBrowserRouter([
 	{
-		path: ROUTES.home,
-		element: <EntryRoute />,
+		path: "/",
+		element: <Navigate to={ROUTES.chat} replace />,
 	},
 	{
-		path: ROUTES.login,
-		element: (
-			<SuspenseWrapper>
-				<AuthRedirect />
-			</SuspenseWrapper>
-		),
-	},
-	{
-		path: ROUTES.authCallback,
-		element: (
-			<SuspenseWrapper>
-				<AuthCallback />
-			</SuspenseWrapper>
-		),
+		path: AUTH_CALLBACK_ROUTE,
+		element: <AuthCallbackPage />,
 	},
 	{
 		path: ROUTES.chat,

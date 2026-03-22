@@ -1,10 +1,12 @@
 import { LogOut, MessageSquareMore, Plus, Trash2, User2 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { buildAuthProfileRedirectUrl } from "@/auth/authorize";
+import type { UserResponse } from "@/auth/types";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { getAuthAppBaseUrl, ROUTES } from "@/config/constants";
+import { ROUTES } from "@/config/constants";
 import { cn } from "@/lib/utils";
-import type { ConversationResponse, UserResponse } from "@/types";
+import type { ConversationResponse } from "@/types";
 
 interface ChatSidebarProps {
 	conversations: ConversationResponse[];
@@ -23,15 +25,13 @@ export function ChatSidebar({
 	onDelete,
 	onLogout,
 }: ChatSidebarProps) {
-	const profileUrl = new URL(`${getAuthAppBaseUrl()}${ROUTES.profile}`);
-	profileUrl.searchParams.set(
-		"redirect_uri",
-		`${window.location.origin}${window.location.pathname}${window.location.search}`,
-	);
+	// 用户信息按钮跳转到认证中心个人页，并把当前聊天页作为返回地址
+	const profileUrl = buildAuthProfileRedirectUrl(window.location.href);
 
 	return (
 		<div className="flex h-full flex-col overflow-hidden rounded-none border-r border-[#e6dfd4] bg-[#fefdfa] shadow-none">
 			<div className="px-4 pb-4 pt-5">
+				{/* 新建对话只影响当前聊天上下文，不会触发认证动作 */}
 				<Button
 					variant="default"
 					className="w-full justify-center rounded-full border-none bg-transparent text-slate-600 shadow-none transition-colors duration-200 hover:translate-y-0 hover:bg-[#dde3ec] hover:text-slate-800"
@@ -90,6 +90,7 @@ export function ChatSidebar({
 											: "text-slate-400 hover:bg-red-100/80 hover:text-red-600",
 									)}
 									onClick={(event) => {
+										// 删除按钮挂在链接卡片内部，需要阻止默认跳转
 										event.preventDefault();
 										event.stopPropagation();
 										onDelete(conversation.conversation_id);
@@ -109,8 +110,9 @@ export function ChatSidebar({
 			</div>
 			<Separator />
 			<div className="flex items-center gap-2 p-3">
+				{/* 左侧入口显示当前用户信息，并允许跳转到认证中心个人页 */}
 				<a
-					href={profileUrl.toString()}
+					href={profileUrl}
 					className="group flex h-12 min-w-0 flex-1 items-center gap-3 rounded-full border border-transparent bg-transparent px-3 text-left transition-all duration-300 hover:border-stone-400 hover:bg-transparent hover:shadow-[8px_8px_16px_rgba(201,197,190,0.35),-8px_-8px_16px_rgba(255,255,255,0.65)]"
 				>
 					<div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-stone-600 text-white transition-colors group-hover:bg-stone-700">
@@ -125,6 +127,7 @@ export function ChatSidebar({
 						</p>
 					</div>
 				</a>
+				{/* 右侧按钮负责显式退出当前应用登录态 */}
 				<Button
 					variant="ghost"
 					size="icon"
