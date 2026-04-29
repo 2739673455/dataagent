@@ -1,0 +1,10 @@
+__pycache__/
+*.py[oc]
+build/
+wheels/
+*.egg-info
+
+.venv
+logs
+.pytest_cache
+*.db

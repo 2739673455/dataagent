@@ -1,0 +1,59 @@
+app:
+  # 应用
+  host: 0.0.0.0 # 服务主机
+  port: 7100 # 服务端口
+  web_base_url: "" # Web 基础 URL，为空则取当前请求源
+  # web_base_url: "http://localhost:7101" # Web 基础 URL，为空则取当前请求源
+
+db:
+  # 数据库
+  driver: ${oc.env:DB_DRIVER} # 数据库驱动
+  mysql:
+    host: ${oc.env:DB_HOST} # MySQL 主机
+    port: ${oc.env:DB_PORT} # MySQL 端口
+    user: ${oc.env:DB_USER} # MySQL 用户名
+    password: ${oc.env:DB_PASSWORD} # MySQL 密码
+    database: auth # 数据库名称
+  sqlite:
+    file_path: ${oc.env:DB_SQLITE_FILE} # SQLite 数据库文件路径
+
+auth:
+  # 认证
+  secret_key: ${oc.env:AUTH_SECRET_KEY} # 令牌加密密钥
+  algorithm: HS256 # 加密算法
+  session_expire_days: 7 # Session 过期时间（天）
+  access_token_expire_days: 7 # 访问令牌过期时间（天）
+  auth_code_expire_seconds: 120 # 授权码过期时间（秒）
+  email_code_expire_seconds: 600 # 邮箱验证码过期时间（秒）
+
+cookie:
+  # Cookie
+  name: session_id # Session Cookie 名称
+  secure: false # 是否只允许 HTTPS 发送
+  httponly: true # 是否禁止前端 JS 读取
+  samesite: none # 跨站 Cookie 策略
+
+cors:
+  # 跨域
+  origins: [] # 允许跨域请求的源
+
+log:
+  # 日志
+  level: INFO # 日志级别(DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  max_file_size: 10MB # 单个日志文件最大大小
+
+admin:
+  # 管理员初始化默认信息
+  role: admin # 管理员角色
+  email: ${oc.env:ADMIN_EMAIL} # 管理员邮箱
+  username: ${oc.env:ADMIN_USERNAME} # 管理员用户名
+  password: ${oc.env:ADMIN_PASSWORD} # 管理员密码
+
+email:
+  # 邮件服务
+  smtp_host: smtp.qq.com # SMTP 服务器地址
+  smtp_port: 465 # SMTP 端口
+  smtp_user: ${oc.env:SMTP_USER} # SMTP 用户名（邮箱地址）
+  smtp_password: ${oc.env:SMTP_PASSWORD} # SMTP 密码
+  from_email: ${oc.env:SMTP_USER} # 发件人邮箱
+  from_name: "" # 发件人名称（可选）
