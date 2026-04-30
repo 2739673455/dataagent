@@ -123,20 +123,20 @@ class UserService:
             use_tls=True,
         )
 
-    async def _verify_email_code(
+    async def _consume_email_code(
         self,
         db_session: AsyncSession,
         email: str,
         code_type: str,
         code: str,
     ) -> bool:
-        """验证邮箱验证码"""
-        stored_code = await self.email_code_repo.get(
+        """验证并消费邮箱验证码"""
+        return await self.email_code_repo.consume(
             db_session,
             email,
             code_type,
+            code,
         )
-        return stored_code == code
 
     async def send_email_code(self, email: str, code_type: str) -> None:
         """发送邮箱验证码"""
@@ -176,7 +176,7 @@ class UserService:
         """注册新用户"""
         async with self.db_session_context_factory() as db_session:
             # 验证验证码
-            if not await self._verify_email_code(db_session, email, "register", code):
+            if not await self._consume_email_code(db_session, email, "register", code):
                 raise errors.InvalidVerificationCodeError
             # 检查邮箱是否已存在
             if await self.user_repo.get_by_email(db_session, email):
@@ -237,7 +237,7 @@ class UserService:
         """修改邮箱"""
         async with self.db_session_context_factory() as db_session:
             # 验证验证码
-            if not await self._verify_email_code(
+            if not await self._consume_email_code(
                 db_session, email, "reset_email", code
             ):
                 raise errors.InvalidVerificationCodeError
@@ -270,7 +270,7 @@ class UserService:
         """通过邮箱验证码重置密码"""
         async with self.db_session_context_factory() as db_session:
             # 验证验证码
-            if not await self._verify_email_code(
+            if not await self._consume_email_code(
                 db_session,
                 email,
                 "reset_password",

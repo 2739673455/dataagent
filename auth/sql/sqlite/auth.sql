@@ -121,6 +121,8 @@ CREATE TABLE email_code (
     code VARCHAR(20) NOT NULL, -- 验证码
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, -- 创建时间
     expires_at DATETIME NOT NULL, -- 过期时间
+    used_at DATETIME, -- 使用时间
     PRIMARY KEY (email, code_type)
 );
 CREATE INDEX idx_email_code_expires_at ON email_code (expires_at);
+CREATE INDEX idx_email_code_used_at ON email_code (used_at);

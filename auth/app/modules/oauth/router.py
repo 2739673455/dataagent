@@ -12,14 +12,14 @@ from ..shared.deps import (
     resolve_access_token_from_header,
 )
 from ..shared.schemas import AccessTokenPayload
-from . import auth_schema
-from .auth_service import AuthService
+from . import oauth_schema
+from .oauth_service import OAuthService
 
 
 def create_router(
-    app_config: AppCfg, cookie_config: CookieCfg, auth_service: AuthService
+    app_config: AppCfg, cookie_config: CookieCfg, oauth_service: OAuthService
 ) -> APIRouter:
-    """创建认证模块路由"""
+    """创建 OAuth 模块路由"""
     COOKIE_OPTIONS = {
         "secure": cookie_config.secure,
         "httponly": cookie_config.httponly,
@@ -29,6 +29,7 @@ def create_router(
     router = APIRouter()
 
     def authorization_error_page() -> HTMLResponse:
+        """授权错误页面"""
         return HTMLResponse(
             status_code=400,
             content="""
@@ -100,7 +101,7 @@ def create_router(
 
         # 校验授权请求，已登录则签发授权码
         try:
-            auth_result = await auth_service.create_authorization_code(
+            oauth_result = await oauth_service.create_authorization_code(
                 session_id,
                 response_type,
                 client_id,
@@ -111,20 +112,18 @@ def create_router(
             )
         except errors.InvalidAuthorizationRequestError:
             return authorization_error_page()
+
         # 未登录 — 跳转登录页
-        if auth_result is None:
+        if oauth_result is None:
             response = RedirectResponse(url=login_url)
             response.delete_cookie(key=cookie_config.name, **COOKIE_OPTIONS)
             return response
 
-        if redirect_uri is None or state is None:
-            return authorization_error_page()
-
         # 已登录 — 将授权码拼回 redirect_uri 并跳转
-        parsed_redirect_uri = urlparse(redirect_uri)
+        parsed_redirect_uri = urlparse(oauth_result.redirect_uri)
         redirect_query = dict(parse_qsl(parsed_redirect_uri.query))
-        redirect_query["code"] = auth_result.code
-        redirect_query["state"] = state
+        redirect_query["code"] = oauth_result.code
+        redirect_query["state"] = oauth_result.state
         redirect_url = urlunparse(
             parsed_redirect_uri._replace(query=urlencode(redirect_query))
         )
@@ -132,8 +131,8 @@ def create_router(
         response = RedirectResponse(url=redirect_url)
         response.set_cookie(
             key=cookie_config.name,
-            value=auth_result.session_id,
-            max_age=auth_result.session_expire_seconds,
+            value=oauth_result.session_id,
+            max_age=oauth_result.session_expire_seconds,
             **COOKIE_OPTIONS,
         )
         return response
@@ -145,31 +144,31 @@ def create_router(
         client_id: Annotated[str, Form(min_length=1)],
         redirect_uri: Annotated[str, Form(min_length=1)],
         code_verifier: Annotated[str, Form(min_length=1)],
-    ) -> auth_schema.TokenResponse:
+    ) -> oauth_schema.TokenResponse:
         """令牌端点 — 授权码换取访问令牌"""
-        access_token = await auth_service.exchange_token(
+        access_token = await oauth_service.exchange_token(
             grant_type,
             code,
             client_id,
             redirect_uri,
             code_verifier,
         )
-        return auth_schema.TokenResponse(access_token=access_token)
+        return oauth_schema.TokenResponse(access_token=access_token)
 
     @router.post("/introspection")
     async def introspection(
         authorization: Annotated[str | None, Header()] = None,
-    ) -> auth_schema.IntrospectionResponse:
+    ) -> oauth_schema.IntrospectionResponse:
         """令牌自省端点 — 校验访问令牌是否有效"""
         # 从 Authorization header 解析并校验令牌
         payload = await resolve_access_token_from_header(authorization)
 
         if payload is None:
             logger.info("访问令牌无效")
-            return auth_schema.IntrospectionResponse(active=False)
+            return oauth_schema.IntrospectionResponse(active=False)
 
         logger.info("访问令牌有效")
-        return auth_schema.IntrospectionResponse(
+        return oauth_schema.IntrospectionResponse(
             active=True,
             sub=payload.sub,
             exp=payload.exp,
@@ -178,12 +177,12 @@ def create_router(
 
     @router.post("/login")
     async def login(
-        body: auth_schema.LoginRequest,
+        body: oauth_schema.LoginRequest,
         response: Response,
     ) -> None:
         """用户登录 — 创建会话并设置 Cookie"""
         # 校验邮箱密码，创建会话
-        session_data = await auth_service.login(body.email, body.password)
+        session_data = await oauth_service.login(body.email, body.password)
         # 设置会话 Cookie
         response.set_cookie(
             key=cookie_config.name,
@@ -200,7 +199,7 @@ def create_router(
     ) -> None:
         """用户登出 — 撤销令牌和会话，清除 Cookie"""
         # 撤销访问令牌和会话
-        await auth_service.logout(payload.access_token, session_id)
+        await oauth_service.logout(payload.access_token, session_id)
         # 清除会话 Cookie
         response.delete_cookie(
             key=cookie_config.name,

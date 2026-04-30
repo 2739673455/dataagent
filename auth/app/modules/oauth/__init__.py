@@ -1,3 +1,3 @@
 from .auth_code_repo import auth_code_repo
-from .auth_service import AuthService
+from .oauth_service import OAuthService
 from .router import create_router

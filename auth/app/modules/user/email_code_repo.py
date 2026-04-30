@@ -1,7 +1,10 @@
 """邮箱验证码数据访问"""
 
+from typing import Any, cast
+
 from app.utils.datetime_str import future_str, now_str
 from sqlalchemy import text
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -41,26 +44,33 @@ class EmailCodeRepo:
             },
         )
 
-    async def get(
+    async def consume(
         self,
         db_session: AsyncSession,
         email: str,
         code_type: str,
-    ) -> str | None:
-        """获取该邮箱该类型验证码"""
+        code: str,
+    ) -> bool:
+        """消费一个未过期且未使用的验证码"""
         result = await db_session.execute(
             text(
                 """
-                SELECT code
-                FROM email_code
+                UPDATE email_code
+                SET used_at = :now
                 WHERE email = :email
                   AND code_type = :code_type
+                  AND code = :code
                   AND expires_at > :now
+                  AND used_at IS NULL
                 """
             ),
-            {"email": email, "code_type": code_type, "now": now_str()},
+            {
+                "email": email,
+                "code_type": code_type,
+                "code": code,
+                "now": now_str(),
+            },
         )
-        return result.scalar_one_or_none()
-
+        return cast(CursorResult[Any], result).rowcount == 1
 
 email_code_repo = EmailCodeRepo()

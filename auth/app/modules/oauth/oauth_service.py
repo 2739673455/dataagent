@@ -1,11 +1,10 @@
-"""认证模块服务"""
+"""OAuth 模块服务"""
 
 import base64
 import hashlib
 import re
 import secrets
 
-from app.core import cfg
 from app.core.settings import AuthCfg
 from app.core.types import DBSessionContextFactory
 from pydantic import BaseModel
@@ -21,12 +20,14 @@ from .auth_code_repo import AuthCodeRepo
 
 class AuthorizeResult(BaseModel):
     code: str
+    redirect_uri: str
     session_id: str
     session_expire_seconds: int
+    state: str
 
 
-class AuthService:
-    """认证服务"""
+class OAuthService:
+    """OAuth 服务"""
 
     def __init__(
         self,
@@ -126,7 +127,7 @@ class AuthService:
                 detail="code_challenge_method 必须为 S256"
             )
 
-        session_expire_seconds = cfg.auth.session_expire_days * 24 * 60 * 60
+        session_expire_seconds = self.auth_config.session_expire_days * 24 * 60 * 60
         async with self.db_session_context_factory() as db_session:
             # 获取会话
             session_data = await self.session_repo.get_and_refresh_session(
@@ -149,14 +150,16 @@ class AuthService:
                 state=state,
                 code_challenge=code_challenge,
                 code_challenge_method=code_challenge_method,
-                expire_seconds=cfg.auth.auth_code_expire_seconds,
+                expire_seconds=self.auth_config.auth_code_expire_seconds,
             )
             await db_session.commit()
 
         return AuthorizeResult(
             code=code,
+            redirect_uri=redirect_uri,
             session_id=session_data.session_id,
             session_expire_seconds=session_expire_seconds,
+            state=state,
         )
 
     async def exchange_token(
@@ -227,7 +230,7 @@ class AuthService:
                 email,
             )
             if not user:
-                raise errors.UserNotFoundError
+                raise errors.InvalidCredentialsError
             if not user.yn:
                 raise errors.UserDisabledError
             if not passwd_hash.verify(password, user.password_hash):

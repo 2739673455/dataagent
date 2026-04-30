@@ -5,9 +5,9 @@ from app.core import cfg, close_db, get_db_session_context
 from app.core.exceptions import base, exc_handlers
 from app.core.logging import setup_logger
 from app.core.middlewares import trace
-from app.modules import admin, frontend, health, oauth, shared, user
+from app.modules import admin, frontend, health, oauth, user
 from app.modules.admin import AdminService, permission_repo, relation_repo, role_repo
-from app.modules.oauth import AuthService, auth_code_repo
+from app.modules.oauth import OAuthService, auth_code_repo
 from app.modules.shared import session_repo, token_repo, user_repo
 from app.modules.user import UserService, email_code_repo
 from app.plugins.lifespan import create_admin_user, init_database
@@ -74,7 +74,7 @@ def register_routers(app: FastAPI) -> None:
         cfg.db.selected, cfg.db.driver
     )
 
-    auth_service = AuthService(
+    oauth_service = OAuthService(
         db_session_context_factory=db_session_context_factory,
         auth_config=cfg.auth,
         auth_code_repo=auth_code_repo,
@@ -103,7 +103,7 @@ def register_routers(app: FastAPI) -> None:
 
     app.include_router(health.router, prefix="")
     app.include_router(
-        oauth.create_router(cfg.app, cfg.cookie, auth_service),
+        oauth.create_router(cfg.app, cfg.cookie, oauth_service),
         prefix="/api",
         tags=["认证"],
     )

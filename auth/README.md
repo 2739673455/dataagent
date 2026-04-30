@@ -290,51 +290,56 @@ Authorization: Bearer <access_token>
 
 #### email_code
 邮箱验证码表，保存注册、修改邮箱、重置密码等流程使用的邮箱验证码。
-| 字段         | 类型         | 可空 | 说明                 |
-| ------------ | ------------ | ---- | -------------------- |
-| `email`      | VARCHAR(255) | 否   | 邮箱，联合主键       |
-| `code_type`  | VARCHAR(50)  | 否   | 验证码类型，联合主键 |
-| `code`       | VARCHAR(20)  | 否   | 验证码               |
-| `created_at` | DATETIME     | 否   | 创建时间             |
-| `expires_at` | DATETIME     | 否   | 过期时间             |
+| 字段         | 类型         | 可空 | 说明                     |
+| ------------ | ------------ | ---- | ------------------------ |
+| `email`      | VARCHAR(255) | 否   | 邮箱，联合主键           |
+| `code_type`  | VARCHAR(50)  | 否   | 验证码类型，联合主键     |
+| `code`       | VARCHAR(20)  | 否   | 验证码                   |
+| `created_at` | DATETIME     | 否   | 创建时间                 |
+| `expires_at` | DATETIME     | 否   | 过期时间                 |
+| `used_at`    | DATETIME     | 是   | 使用时间，为空表示未使用 |
 
 ## 后端接口定义
 ### 认证接口
 #### GET `/api/authorize`
 认证中心授权入口。
 - 接收 `response_type`、`client_id`、`redirect_uri`、`state`、`code_challenge`、`code_challenge_method`，读取 `session_id` Cookie。
-- 无登录态时跳转登录页并原样透传授权参数。
-- 有登录态时校验授权参数，校验通过后生成授权码并跳转到 `redirect_uri?code=...&state=...`。
-- 校验失败则显示授权错误页面。
+- 检查登录态 `session_id` Cookie。
+  - 如果无登录态，跳转登录页，并原样透传授权参数。
+  - 如果有登录态，校验授权参数。
+    - 如果校验通过，获取会话信息，生成并记录授权码，跳转到 `redirect_uri?code=...&state=...`。
+    - 如果校验失败，显示授权错误页面。
 
 #### POST `/api/token`
 授权码换访问令牌。
 - 以表单接收 `grant_type=authorization_code`、`code`、`client_id`、`redirect_uri`、`code_verifier`。
-- 认证中心校验授权码未过期、未使用，校验 `client_id`、`redirect_uri` 和 PKCE。
-- 校验通过后标记授权码已使用，并签发访问令牌。
-- 校验失败则返回 `400` 错误响应；应用回调页收到错误后清理临时数据和旧访问令牌，并展示认证失败提示。
+- 校验授权码未过期、未使用，校验 `client_id`、`redirect_uri` 和 PKCE。
+  - 如果校验通过，标记授权码已使用，并签发访问令牌。
+  - 如果校验失败，返回 `400` 错误响应；应用回调页收到错误后清理临时数据和旧访问令牌，并展示认证失败提示。
 
 #### POST `/api/introspection`
 校验访问令牌。
 - 通过 `Authorization: Bearer <access_token>` 传入 token。
-- 认证中心校验 token 是否存在、是否过期、是否已撤销，并获取当前用户身份和权限。
-- 如果 token 有效，返回 `active=true`、`sub`、`exp`、`scope`。
-- 如果 token 无效、过期或已撤销，返回 `active=false`。
+- 校验 token 是否存在、是否过期、是否已撤销，并获取当前用户身份和权限。
+  - 如果 token 有效，返回 `active=true`、`sub`、`exp`、`scope`。
+  - 如果 token 无效，返回 `active=false`。
 
 #### POST `/api/login`
 提交登录。
 - 请求体包含 `email`、`password`。
-- 认证中心校验账号是否存在、账号是否启用、密码是否正确。
-- 校验成功后创建 session 记录，并通过响应写入 `session_id` Cookie；前端负责跳回 `/api/authorize` 并原样携带授权参数。
-- 校验失败则返回错误响应，不写入 `session_id` Cookie。
+- 校验账号是否存在、账号是否启用、密码是否正确。
+  - 如果校验成功，创建 session 记录，并通过响应写入 `session_id` Cookie；前端负责跳回 `/api/authorize` 并原样携带授权参数。
+  - 如果校验失败。
+    - 如果邮箱不存在或密码错误，返回 `400 invalid-credentials`。
+    - 如果账号被禁用，返回 `403 user-disabled`。
 
 #### POST `/api/logout`
 退出或撤销当前登录状态。
 - 通过 `Authorization: Bearer <access_token>` 指定当前访问令牌。
-- 认证中心先将当前访问令牌标记为无效。
+- 撤销当前访问令牌。
 - 认证中心读取 `session_id` Cookie。
-- 如果 `session_id` 存在，撤销该 session 关联的所有访问令牌，删除或撤销 session，并通过响应清理 `session_id` Cookie。
-- 如果 `session_id` 不存在，只撤销当前访问令牌。
+  - 如果 `session_id` 存在，撤销该 session 关联的所有访问令牌，撤销 session，并通过响应清理 `session_id` Cookie。
+  - 如果 `session_id` 不存在，只撤销当前访问令牌。
 - 应用退出时，请求不携带 `session_id` Cookie，则只撤销当前应用访问令牌。
 - 认证中心退出时，请求携带 `session_id` Cookie，则同时退出认证中心登录态。
 
