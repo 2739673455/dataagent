@@ -9,26 +9,17 @@ from email.mime.text import MIMEText
 from email.utils import formataddr
 
 import aiosmtplib
-from pwdlib._hash import PasswordHash
-from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.settings import AuthCfg, EmailCfg
 from app.core.types import DBSessionContextFactory
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..auth.session_repo import SessionRepo
-from ..auth.token_repo import TokenRepo
-from . import user_error
+from ..shared import errors
+from ..shared.schemas import SessionCookieData
+from ..shared.session_repo import SessionRepo
+from ..shared.token_repo import TokenRepo
+from ..shared.user_repo import UserRepo
 from .email_code_repo import EmailCodeRepo
-from .user_repo import UserRepo
 from .user_schema import UserResponse
-
-passwd_hash = PasswordHash.recommended()
-
-
-class SessionCookieData(BaseModel):
-    session_id: str
-    session_expire_seconds: int
 
 
 class UserService:
@@ -39,18 +30,18 @@ class UserService:
         db_session_context_factory: DBSessionContextFactory,
         auth_config: AuthCfg,
         email_config: EmailCfg,
-        session_repo: SessionRepo,
-        token_repo: TokenRepo,
         user_repo: UserRepo,
         email_code_repo: EmailCodeRepo,
+        session_repo: SessionRepo,
+        token_repo: TokenRepo,
     ) -> None:
         self.db_session_context_factory = db_session_context_factory
         self.auth_config = auth_config
         self.email_config = email_config
-        self.session_repo = session_repo
-        self.token_repo = token_repo
         self.user_repo = user_repo
         self.email_code_repo = email_code_repo
+        self.session_repo = session_repo
+        self.token_repo = token_repo
 
     @staticmethod
     def _require_user_id(user_id: int | None) -> int:
@@ -155,13 +146,13 @@ class UserService:
             # 注册或重置邮箱，检查邮箱是否已存在
             if code_type in ["register", "reset_email"]:
                 if user:
-                    raise user_error.EmailAlreadyExistsError
+                    raise errors.EmailAlreadyExistsError
             # 重置密码，检查用户是否存在或被禁用
             elif code_type == "reset_password":
                 if not user:
-                    raise user_error.EmailNotFoundError
+                    raise errors.EmailNotFoundError
                 if not user.yn:
-                    raise user_error.UserDisabledError
+                    raise errors.UserDisabledError
 
             # 创建验证码
             code = await self._create_email_code(
@@ -186,10 +177,10 @@ class UserService:
         async with self.db_session_context_factory() as db_session:
             # 验证验证码
             if not await self._verify_email_code(db_session, email, "register", code):
-                raise user_error.InvalidVerificationCodeError
+                raise errors.InvalidVerificationCodeError
             # 检查邮箱是否已存在
             if await self.user_repo.get_by_email(db_session, email):
-                raise user_error.EmailAlreadyExistsError
+                raise errors.EmailAlreadyExistsError
 
             # 创建用户
             user = await self.user_repo.create(
@@ -216,56 +207,6 @@ class UserService:
             session_expire_seconds=session_expire_seconds,
         )
 
-    async def login(
-        self,
-        email: str,
-        password: str,
-    ) -> SessionCookieData:
-        """用户登录"""
-        async with self.db_session_context_factory() as db_session:
-            # 获取用户
-            user = await self.user_repo.get_by_email_with_role_permission(
-                db_session,
-                email,
-            )
-            # 检查用户是否存在，是否被禁用，密码是否正确
-            if not user:
-                raise user_error.UserNotFoundError
-            if not user.yn:
-                raise user_error.UserDisabledError
-            if not passwd_hash.verify(password, user.password_hash):
-                raise user_error.InvalidCredentialsError
-            user_id = self._require_user_id(user.id)
-
-            # 创建会话
-            session_id = secrets.token_urlsafe(32)
-            session_expire_seconds = self.auth_config.session_expire_days * 24 * 60 * 60
-            await self.session_repo.create_session(
-                db_session,
-                session_id,
-                user_id,
-                session_expire_seconds,
-            )
-            await db_session.commit()
-
-        return SessionCookieData(
-            session_id=session_id,
-            session_expire_seconds=session_expire_seconds,
-        )
-
-    async def logout(self, token_jti: str, session_id: str | None) -> None:
-        """登出当前用户"""
-        async with self.db_session_context_factory() as db_session:
-            # 撤销访问令牌
-            await self.token_repo.remove_token(db_session, token_jti)
-            # 如果有会话信息，撤销会话下所有访问令牌
-            if session_id:
-                await self.token_repo.remove_all_tokens_by_session(
-                    db_session, session_id
-                )
-                await self.session_repo.remove_session(db_session, session_id)
-            await db_session.commit()
-
     async def update_username(
         self,
         user_id: int,
@@ -277,11 +218,11 @@ class UserService:
             user = await self.user_repo.get_by_id(db_session, user_id)
             # 检查用户是否存在，是否被禁用，用户名是否相同
             if not user:
-                raise user_error.UserNotFoundError
+                raise errors.UserNotFoundError
             if not user.yn:
-                raise user_error.UserDisabledError
+                raise errors.UserDisabledError
             if user.name == username:
-                raise user_error.UsernameUnchangedError
+                raise errors.UsernameUnchangedError
 
             # 更新用户名
             user = await self.user_repo.update(db_session, user, username=username)
@@ -299,18 +240,20 @@ class UserService:
             if not await self._verify_email_code(
                 db_session, email, "reset_email", code
             ):
-                raise user_error.InvalidVerificationCodeError
+                raise errors.InvalidVerificationCodeError
             # 获取用户
-            user = await self.user_repo.get_by_id_with_role_permission(db_session, user_id)
+            user = await self.user_repo.get_by_id_with_role_permission(
+                db_session, user_id
+            )
             # 检查用户是否存在，是否被禁用，邮箱是否相同，邮箱是否已存在
             if not user:
-                raise user_error.UserNotFoundError
+                raise errors.UserNotFoundError
             if not user.yn:
-                raise user_error.UserDisabledError
+                raise errors.UserDisabledError
             if user.email == email:
-                raise user_error.EmailUnchangedError
+                raise errors.EmailUnchangedError
             if await self.user_repo.get_by_email(db_session, email):
-                raise user_error.EmailAlreadyExistsError
+                raise errors.EmailAlreadyExistsError
 
             # 更新邮箱
             user = await self.user_repo.update(db_session, user, email=email)
@@ -333,32 +276,33 @@ class UserService:
                 "reset_password",
                 code,
             ):
-                raise user_error.InvalidVerificationCodeError
+                raise errors.InvalidVerificationCodeError
             # 获取用户
             user = await self.user_repo.get_by_email(db_session, email)
             # 检查用户是否存在，是否被禁用
             if not user:
-                raise user_error.UserNotFoundError
+                raise errors.UserNotFoundError
             if not user.yn:
-                raise user_error.UserDisabledError
+                raise errors.UserDisabledError
             user_id = self._require_user_id(user.id)
 
             # 更新密码
             user = await self.user_repo.update(db_session, user, password=password)
-            # 撤销用户所有访问令牌
+            # 撤销用户所有会话和访问令牌
             await self.token_repo.remove_all_tokens_by_user(db_session, user_id)
+            await self.session_repo.remove_all_sessions(db_session, user_id)
             await db_session.commit()
 
-    async def get_me(self, user_id: int) -> UserResponse:
+    async def get_userinfo(self, user_id: int) -> UserResponse:
         """获取当前用户信息"""
         async with self.db_session_context_factory() as db_session:
             # 获取用户
             user = await self.user_repo.get_by_id_with_role(db_session, user_id)
             # 检查用户是否存在，是否被禁用
             if not user:
-                raise user_error.UserNotFoundError
+                raise errors.UserNotFoundError
             if not user.yn:
-                raise user_error.UserDisabledError
+                raise errors.UserDisabledError
 
             # 获取用户角色
             roles = [role.name for role in user.roles if role.yn == 1]

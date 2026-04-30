@@ -26,13 +26,13 @@ import type { SendCodeRequest, UpdatePasswordRequest } from "../types";
 export default function ForgetPassword() {
 	const navigate = useNavigate();
 
-	const redirectUri = new URLSearchParams(window.location.search).get(
-		"redirect_uri",
-	);
-
-	const loginLink = redirectUri
-		? `${ROUTE_PATHS.login}?redirect_uri=${encodeURIComponent(redirectUri)}`
+	const authQuery = new URLSearchParams(window.location.search).toString();
+	const loginLink = authQuery
+		? `${ROUTE_PATHS.login}?${authQuery}`
 		: ROUTE_PATHS.login;
+	const registerLink = authQuery
+		? `${ROUTE_PATHS.register}?${authQuery}`
+		: ROUTE_PATHS.register;
 
 	const [loading, setLoading] = useState(false);
 	const [sendingCode, setSendingCode] = useState(false);
@@ -179,7 +179,7 @@ export default function ForgetPassword() {
 			};
 			await userApi.updatePassword(data);
 			toast.success("密码重置成功");
-			navigate(loginLink, { replace: true });
+			navigate(registerLink, { replace: true });
 		} catch (error: unknown) {
 			handleApiError(error, "重置密码失败");
 		} finally {

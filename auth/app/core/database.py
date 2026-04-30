@@ -3,9 +3,8 @@ from __future__ import annotations
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, AsyncIterator
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
 from app.core.settings import MySQLCfg, SQLiteCfg
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 ENGINE_KWARGS_MAP = {
     "mysql": {
@@ -59,7 +58,7 @@ class DatabaseManager:
         db_url: str,
         db_driver: str,
     ) -> AsyncIterator[AsyncSession]:
-        """显式创建数据库会话"""
+        """创建数据库会话"""
         session_maker = self.get_session_maker(db_url, db_driver)
         async with session_maker() as db_session:
             yield db_session

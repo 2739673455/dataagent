@@ -11,7 +11,7 @@ import apiClient from "./client";
 
 export const userApi = {
 	// 获取当前登录用户信息
-	getCurrentUser: () => apiClient.get<UserResponse>("/api/me"),
+	getCurrentUser: () => apiClient.get<UserResponse>("/api/userinfo"),
 
 	// 发送邮箱验证码
 	sendEmailCode: (data: SendCodeRequest) =>

@@ -44,37 +44,43 @@ class RolePermissionRel:
 
 
 @dataclass
-class Sessions:
-    session_id: str | None
+class Session:
+    session_id: str
     user_id: int
     created_at: str
-    updated_at: str
     expires_at: str
+    revoked_at: str | None
 
 
 @dataclass
-class AccessTokens:
-    jti: str | None
+class AccessToken:
+    access_token: str
     user_id: int
     session_id: str
-    scopes_json: str
+    client_id: str
+    scope: str | None
     created_at: str
     expires_at: str
+    revoked_at: str | None
 
 
 @dataclass
-class AuthCodes:
-    code: str | None
+class AuthCode:
+    code: str
     user_id: int
     session_id: str
     client_id: str
     redirect_uri: str
+    state: str
+    code_challenge: str
+    code_challenge_method: str
     created_at: str
     expires_at: str
+    used_at: str | None
 
 
 @dataclass
-class EmailCodes:
+class EmailCode:
     email: str
     code_type: str
     code: str

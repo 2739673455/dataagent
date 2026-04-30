@@ -1,12 +1,10 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Cookie, Depends, Header, Response
-
 from app.core.settings import CookieCfg
+from fastapi import APIRouter, Depends, Response
 
-from ..auth.auth_error import InvalidAccessTokenError
-from ..auth.auth_schema import AccessTokenPayload
-from ..auth.deps import resolve_access_token_from_header
+from ..shared.deps import authenticate_access_token
+from ..shared.schemas import AccessTokenPayload
 from . import user_schema
 from .user_service import UserService
 
@@ -24,17 +22,10 @@ def create_router(
 
     router = APIRouter()
 
-    async def authenticate_access_token(
-        authorization: Annotated[str | None, Header()] = None,
-    ) -> AccessTokenPayload:
-        payload = await resolve_access_token_from_header(authorization)
-        if payload is None:
-            raise InvalidAccessTokenError
-        return payload
-
     @router.post("/send_email_code")
     async def send_email_code(body: user_schema.SendCodeRequest) -> None:
         """发送邮箱验证码"""
+        # 校验邮箱是否可用，生成验证码并发送邮件
         await user_service.send_email_code(body.email, body.type)
 
     @router.post("/register")
@@ -43,40 +34,15 @@ def create_router(
         response: Response,
     ) -> None:
         """用户注册"""
+        # 校验验证码，创建用户和会话
         session_data = await user_service.register(
             body.email, body.code, body.username, body.password
         )
+        # 设置会话 Cookie
         response.set_cookie(
             key=cookie_config.name,
             value=session_data.session_id,
             max_age=session_data.session_expire_seconds,
-            **COOKIE_OPTIONS,
-        )
-
-    @router.post("/login")
-    async def login(
-        body: user_schema.LoginRequest,
-        response: Response,
-    ) -> None:
-        """用户登录"""
-        session_data = await user_service.login(body.email, body.password)
-        response.set_cookie(
-            key=cookie_config.name,
-            value=session_data.session_id,
-            max_age=session_data.session_expire_seconds,
-            **COOKIE_OPTIONS,
-        )
-
-    @router.post("/logout")
-    async def logout(
-        response: Response,
-        payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
-        session_id: Annotated[str | None, Cookie(alias=cookie_config.name)] = None,
-    ) -> None:
-        """登出"""
-        await user_service.logout(payload.jti, session_id)
-        response.delete_cookie(
-            key=cookie_config.name,
             **COOKIE_OPTIONS,
         )
 
@@ -86,6 +52,7 @@ def create_router(
         payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
     ) -> None:
         """修改用户名"""
+        # 校验用户状态，更新用户名
         await user_service.update_username(payload.sub, body.username)
 
     @router.post("/update_email")
@@ -94,18 +61,21 @@ def create_router(
         payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
     ) -> None:
         """修改邮箱"""
+        # 校验验证码和用户状态，更新邮箱并撤销所有令牌
         await user_service.update_email(payload.sub, body.email, body.code)
 
     @router.post("/update_password")
     async def update_password(body: user_schema.UpdatePasswordRequest) -> None:
         """修改密码（通过邮箱验证码重置，无需登录）"""
+        # 校验验证码和用户状态，更新密码并撤销所有会话和令牌
         await user_service.update_password(body.email, body.code, body.password)
 
-    @router.get("/me")
-    async def me(
+    @router.get("/userinfo")
+    async def userinfo(
         payload: Annotated[AccessTokenPayload, Depends(authenticate_access_token)],
     ) -> user_schema.UserResponse:
         """获取当前用户信息"""
-        return await user_service.get_me(payload.sub)
+        # 查询用户及其角色，组装响应
+        return await user_service.get_userinfo(payload.sub)
 
     return router

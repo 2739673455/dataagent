@@ -5,11 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.types import DBSessionContextFactory
 
-from ..auth.session_repo import SessionRepo
-from ..auth.token_repo import TokenRepo
-from ..user.user_error import EmailAlreadyExistsError, UserNotFoundError
-from ..user.user_repo import UserRepo
-from . import admin_schema, role_error, permission_error
+from ..shared import errors
+from ..shared.session_repo import SessionRepo
+from ..shared.token_repo import TokenRepo
+from ..shared.user_repo import UserRepo
+from . import admin_schema
 from .role_repo import RoleRepo
 from .relation_repo import RelationRepo
 from .permission_repo import PermissionRepo
@@ -90,7 +90,7 @@ class AdminService:
         async with self.db_session_context_factory() as db_session:
             # 检查邮箱是否已存在
             if await self.user_repo.get_by_email(db_session, email):
-                raise EmailAlreadyExistsError
+                raise errors.EmailAlreadyExistsError
             # 创建用户
             user = await self.user_repo.create(db_session, email, username, password)
             self._require_user_id(user.id)
@@ -112,14 +112,14 @@ class AdminService:
             # 获取用户
             user = await self.user_repo.get_by_id(db_session, user_id)
             if not user:
-                raise UserNotFoundError
+                raise errors.UserNotFoundError
             # 检查邮箱是否与其他用户冲突
             if (
                 email
                 and email != user.email
                 and await self.user_repo.get_by_email(db_session, email)
             ):
-                raise EmailAlreadyExistsError
+                raise errors.EmailAlreadyExistsError
 
             # 更新用户信息
             user = await self.user_repo.update(
@@ -148,7 +148,7 @@ class AdminService:
             # 获取用户
             user = await self.user_repo.get_by_id(db_session, user_id)
             if not user:
-                raise UserNotFoundError
+                raise errors.UserNotFoundError
 
             ensured_user_id = self._require_user_id(user.id)
             username = user.name
@@ -185,7 +185,7 @@ class AdminService:
             # 获取用户及其角色、权限信息
             user = await self.user_repo.get_by_id_with_role_permission(db_session, user_id)
             if not user:
-                raise UserNotFoundError
+                raise errors.UserNotFoundError
 
         ensured_user_id = self._require_user_id(user.id)
         roles = [admin_schema.RoleInfo.from_role(role) for role in user.roles]
@@ -216,7 +216,7 @@ class AdminService:
         async with self.db_session_context_factory() as db_session:
             # 检查角色名是否已存在
             if await self.role_repo.get_by_name(db_session, name):
-                raise role_error.RoleAlreadyExistsError
+                raise errors.RoleAlreadyExistsError
             # 创建角色
             role = await self.role_repo.create(db_session, name)
             await db_session.commit()
@@ -235,14 +235,14 @@ class AdminService:
             # 获取角色
             role = await self.role_repo.get_by_id(db_session, role_id)
             if not role:
-                raise role_error.RoleNotFoundError
+                raise errors.RoleNotFoundError
             # 检查角色名是否与其他角色冲突
             if (
                 name
                 and name != role.name
                 and await self.role_repo.get_by_name(db_session, name)
             ):
-                raise role_error.RoleAlreadyExistsError
+                raise errors.RoleAlreadyExistsError
 
             original_yn = role.yn
             # 更新角色信息
@@ -268,7 +268,7 @@ class AdminService:
             # 获取角色及角色内用户
             role = await self.role_repo.get_by_id_with_user(db_session, role_id)
             if not role:
-                raise role_error.RoleNotFoundError
+                raise errors.RoleNotFoundError
 
             user_ids = {self._require_user_id(user.id) for user in role.user}
             role_name = role.name
@@ -305,7 +305,7 @@ class AdminService:
                 db_session, role_id
             )
             if not role:
-                raise role_error.RoleNotFoundError
+                raise errors.RoleNotFoundError
 
         return admin_schema.RoleDetailResponse(
             id=self._require_role_id(role.id),
@@ -325,7 +325,7 @@ class AdminService:
         async with self.db_session_context_factory() as db_session:
             # 检查权限名是否已存在
             if await self.permission_repo.get_by_name(db_session, name):
-                raise permission_error.PermissionAlreadyExistsError
+                raise errors.PermissionAlreadyExistsError
             # 创建权限
             permission = await self.permission_repo.create(db_session, name, description)
             await db_session.commit()
@@ -345,7 +345,7 @@ class AdminService:
             # 获取权限
             permission = await self.permission_repo.get_by_id(db_session, permission_id)
             if not permission:
-                raise permission_error.PermissionNotFoundError
+                raise errors.PermissionNotFoundError
 
             original_name = permission.name
             original_yn = permission.yn
@@ -355,7 +355,7 @@ class AdminService:
                 and name != permission.name
                 and await self.permission_repo.get_by_name(db_session, name)
             ):
-                raise permission_error.PermissionAlreadyExistsError
+                raise errors.PermissionAlreadyExistsError
 
             # 更新权限信息
             permission = await self.permission_repo.update(
@@ -393,7 +393,7 @@ class AdminService:
                 db_session, permission_id
             )
             if not permission:
-                raise permission_error.PermissionNotFoundError
+                raise errors.PermissionNotFoundError
 
             permission_name = permission.name
             user_ids = {
@@ -435,7 +435,7 @@ class AdminService:
                 db_session, permission_id
             )
             if not permission:
-                raise permission_error.PermissionNotFoundError
+                raise errors.PermissionNotFoundError
 
         roles = [admin_schema.RoleInfo.from_role(role) for role in permission.roles]
         # 根据角色启用状态合并用户有效性

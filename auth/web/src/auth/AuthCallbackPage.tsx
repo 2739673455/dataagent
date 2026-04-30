@@ -3,7 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { completeAuthCallback } from "@/auth/authorize";
 import { AuthErrorScreen, AuthLoadingScreen } from "@/auth/components";
-import { useAuthStore } from "@/auth/store";
+import { clearAuthorizationRequest } from "@/auth/oauth";
+import { clearAccessToken, useAuthStore } from "@/auth/store";
 import { ROUTE_PATHS } from "@/configs/settings";
 
 export default function AuthCallbackPage() {
@@ -17,21 +18,31 @@ export default function AuthCallbackPage() {
 		const run = async () => {
 			const searchParams = new URLSearchParams(window.location.search);
 			const code = searchParams.get("code");
+			const state = searchParams.get("state");
 
 			if (!code) {
+				clearAccessToken();
 				toast.error("缺少授权码");
 				setErrorMessage("缺少授权码，请返回首页后重试登录");
 				return;
 			}
+			if (!state) {
+				clearAccessToken();
+				toast.error("缺少授权状态");
+				setErrorMessage("缺少授权状态，请返回首页后重试登录");
+				return;
+			}
 
 			try {
-				await completeAuthCallback(code);
+				const returnTo = await completeAuthCallback(code, state);
 				if (cancelled) return;
-				navigate(searchParams.get("redirect_uri") || ROUTE_PATHS.home, {
+				navigate(returnTo || ROUTE_PATHS.home, {
 					replace: true,
 				});
 			} catch (error) {
 				if (cancelled) return;
+				clearAccessToken();
+				clearAuthorizationRequest(state);
 				clearAuth();
 				const message =
 					error instanceof Error ? error.message : "登录状态建立失败，请重试";

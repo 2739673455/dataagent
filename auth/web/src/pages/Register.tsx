@@ -2,7 +2,7 @@ import { KeyRound, Loader2, Lock, Mail, User } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { buildAuthCallbackUrl, buildAuthorizeApiUrl } from "@/auth";
+import { buildAuthorizeApiUrl, buildAuthorizeApiUrlFromParams } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -21,14 +21,11 @@ import type { RegisterRequest, SendCodeRequest } from "../types";
 
 export default function Register() {
 	const searchParams = new URLSearchParams(window.location.search);
-	const clientId = searchParams.get("client_id") || CLIENT_ID;
-	const redirectUri =
-		searchParams.get("redirect_uri") || buildAuthCallbackUrl(ROUTE_PATHS.home);
+	const authQuery = searchParams.toString();
 
-	const loginLink = `${ROUTE_PATHS.login}?${new URLSearchParams({
-		client_id: clientId,
-		redirect_uri: redirectUri,
-	}).toString()}`;
+	const loginLink = authQuery
+		? `${ROUTE_PATHS.login}?${authQuery}`
+		: ROUTE_PATHS.login;
 
 	const [loading, setLoading] = useState(false);
 	const [sendingCode, setSendingCode] = useState(false);
@@ -186,7 +183,10 @@ export default function Register() {
 		setLoading(true);
 		try {
 			await userApi.register(formData);
-			window.location.replace(buildAuthorizeApiUrl(clientId, redirectUri));
+			const authorizeUrl = authQuery
+				? buildAuthorizeApiUrlFromParams(searchParams)
+				: await buildAuthorizeApiUrl(CLIENT_ID, ROUTE_PATHS.home);
+			window.location.replace(authorizeUrl);
 		} catch (error: unknown) {
 			handleApiError(error, "注册失败");
 		} finally {

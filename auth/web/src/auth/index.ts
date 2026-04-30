@@ -10,4 +10,8 @@ export {
 	getAccessToken,
 	useAuthStore,
 } from "./store";
-export { buildAuthCallbackUrl, buildAuthorizeApiUrl } from "./urls";
+export {
+	buildAuthCallbackUrl,
+	buildAuthorizeApiUrl,
+	buildAuthorizeApiUrlFromParams,
+} from "./urls";

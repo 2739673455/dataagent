@@ -33,10 +33,20 @@ async function requestAuthApi<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const authApi = {
 	// 用授权码换访问令牌
-	exchangeToken: (code: string) =>
+	exchangeToken: (
+		code: string,
+		redirectUri: string,
+		codeVerifier: string,
+	) =>
 		requestAuthApi<TokenResponse>(AUTH_API_PATHS.token, {
 			method: "POST",
-			body: new URLSearchParams({ code, client_id: CLIENT_ID }),
+			body: new URLSearchParams({
+				grant_type: "authorization_code",
+				code,
+				client_id: CLIENT_ID,
+				redirect_uri: redirectUri,
+				code_verifier: codeVerifier,
+			}),
 			headers: { "Content-Type": "application/x-www-form-urlencoded" },
 		}),
 

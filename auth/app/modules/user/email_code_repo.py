@@ -1,9 +1,8 @@
 """邮箱验证码数据访问"""
 
+from app.utils.datetime_str import future_str, now_str
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.utils.datetime_str import future_str, now_str
 
 
 class EmailCodeRepo:
@@ -19,7 +18,7 @@ class EmailCodeRepo:
         await db_session.execute(
             text(
                 """
-                DELETE FROM email_codes
+                DELETE FROM email_code
                 WHERE email = :email
                   AND code_type = :code_type
                 """
@@ -29,7 +28,7 @@ class EmailCodeRepo:
         await db_session.execute(
             text(
                 """
-                INSERT INTO email_codes (email, code_type, code, created_at, expires_at)
+                INSERT INTO email_code (email, code_type, code, created_at, expires_at)
                 VALUES (:email, :code_type, :code, :created_at, :expires_at)
                 """
             ),
@@ -53,7 +52,7 @@ class EmailCodeRepo:
             text(
                 """
                 SELECT code
-                FROM email_codes
+                FROM email_code
                 WHERE email = :email
                   AND code_type = :code_type
                   AND expires_at > :now

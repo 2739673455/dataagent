@@ -6,7 +6,6 @@ dependencies = [
   "loguru>=0.7.3",
   "omegaconf>=2.3.0",
   "pwdlib[argon2]>=0.3.0",
-  "pyjwt>=2.11.0",
   "sqlalchemy>=2.0.46",
 ]
 description = "Add your description here"

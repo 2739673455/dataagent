@@ -2,7 +2,7 @@ import { Loader2, Lock, Mail } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { buildAuthCallbackUrl, buildAuthorizeApiUrl } from "@/auth";
+import { buildAuthorizeApiUrl, buildAuthorizeApiUrlFromParams } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -18,20 +18,14 @@ import type { LoginRequest } from "../types";
 
 export default function Login() {
 	const searchParams = new URLSearchParams(window.location.search);
-	const clientId = searchParams.get("client_id") || CLIENT_ID;
-	const redirectUri =
-		searchParams.get("redirect_uri") || buildAuthCallbackUrl(ROUTE_PATHS.home);
+	const authQuery = searchParams.toString();
 
-	const registerLink = `${ROUTE_PATHS.register}?${new URLSearchParams({
-		client_id: clientId,
-		redirect_uri: redirectUri,
-	}).toString()}`;
-	const forgetPasswordLink = `${ROUTE_PATHS.forgetPassword}?${new URLSearchParams(
-		{
-			client_id: clientId,
-			redirect_uri: redirectUri,
-		},
-	).toString()}`;
+	const registerLink = authQuery
+		? `${ROUTE_PATHS.register}?${authQuery}`
+		: ROUTE_PATHS.register;
+	const forgetPasswordLink = authQuery
+		? `${ROUTE_PATHS.forgetPassword}?${authQuery}`
+		: ROUTE_PATHS.forgetPassword;
 
 	const [loading, setLoading] = useState(false);
 	const [emailError, setEmailError] = useState("");
@@ -79,7 +73,10 @@ export default function Login() {
 		setLoading(true);
 		try {
 			await userApi.login(formData);
-			window.location.replace(buildAuthorizeApiUrl(clientId, redirectUri));
+			const authorizeUrl = authQuery
+				? buildAuthorizeApiUrlFromParams(searchParams)
+				: await buildAuthorizeApiUrl(CLIENT_ID, ROUTE_PATHS.home);
+			window.location.replace(authorizeUrl);
 		} catch (error: unknown) {
 			handleApiError(error, "登录失败");
 		} finally {

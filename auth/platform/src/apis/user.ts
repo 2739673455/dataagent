@@ -23,7 +23,7 @@ export const userApi = {
 	// 当前用户信息暂时仍由认证中心提供，后续再切到平台自己的用户接口。
 	getCurrentUser: async (): Promise<UserResponse> => {
 		const response = await currentUserClient(
-			joinUrl(AUTH_API_BASE_URL, "api/me"),
+			joinUrl(AUTH_API_BASE_URL, "api/userinfo"),
 		);
 
 		if (!response.ok) {

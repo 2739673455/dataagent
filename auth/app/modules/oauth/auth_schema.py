@@ -1,11 +1,18 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
-class AccessTokenPayload(BaseModel):
-    sub: int = Field(..., description="用户ID")
-    exp: float = Field(..., description="过期时间戳")
-    jti: str = Field(..., description="令牌唯一标识")
-    scope: list[str] = Field(default=[], description="权限范围")
+class LoginRequest(BaseModel):
+    email: EmailStr = Field(..., description="邮箱")
+    password: str = Field(..., description="密码")
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        if len(v) < 6:
+            raise ValueError("密码不少于6个字符")
+        if len(v) > 128:
+            raise ValueError("密码不超过128个字符")
+        return v
 
 
 class TokenResponse(BaseModel):

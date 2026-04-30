@@ -3,7 +3,7 @@ import { Navigate } from "react-router";
 import { checkAuth } from "@/auth/authorize";
 import { AuthLoadingScreen } from "@/auth/components";
 import { useAuthStore } from "@/auth/store";
-import { buildAuthCallbackUrl, buildAuthorizeApiUrl } from "@/auth/urls";
+import { buildAuthorizeApiUrl } from "@/auth/urls";
 import { CLIENT_ID, ROUTE_PATHS } from "@/configs/settings";
 
 function useAuthBootstrap(): boolean {
@@ -45,14 +45,10 @@ export function RequireAuth({
 	if (isLoading) return <AuthLoadingScreen />;
 
 	if (!isAuthenticated) {
-		window.location.replace(
-			buildAuthorizeApiUrl(
-				CLIENT_ID,
-				buildAuthCallbackUrl(
-					`${window.location.pathname}${window.location.search}`,
-				),
-			),
-		);
+		void buildAuthorizeApiUrl(
+			CLIENT_ID,
+			`${window.location.pathname}${window.location.search}`,
+		).then((url) => window.location.replace(url));
 		return <AuthLoadingScreen />;
 	}
 

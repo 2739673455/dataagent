@@ -5,10 +5,11 @@ from app.core import cfg, close_db, get_db_session_context
 from app.core.exceptions import base, exc_handlers
 from app.core.logging import setup_logger
 from app.core.middlewares import trace
-from app.modules import admin, auth, frontend, health, user
-from app.modules.admin import AdminService, role_repo, relation_repo, permission_repo
-from app.modules.auth import AuthService, auth_code_repo, session_repo, token_repo
-from app.modules.user import UserService, email_code_repo, user_repo
+from app.modules import admin, frontend, health, oauth, shared, user
+from app.modules.admin import AdminService, permission_repo, relation_repo, role_repo
+from app.modules.oauth import AuthService, auth_code_repo
+from app.modules.shared import session_repo, token_repo, user_repo
+from app.modules.user import UserService, email_code_repo
 from app.plugins.lifespan import create_admin_user, init_database
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
@@ -76,19 +77,19 @@ def register_routers(app: FastAPI) -> None:
     auth_service = AuthService(
         db_session_context_factory=db_session_context_factory,
         auth_config=cfg.auth,
-        user_repo=user_repo,
         auth_code_repo=auth_code_repo,
         session_repo=session_repo,
         token_repo=token_repo,
+        user_repo=user_repo,
     )
     user_service = UserService(
         db_session_context_factory=db_session_context_factory,
         auth_config=cfg.auth,
         email_config=cfg.email,
-        session_repo=session_repo,
-        token_repo=token_repo,
         user_repo=user_repo,
         email_code_repo=email_code_repo,
+        session_repo=session_repo,
+        token_repo=token_repo,
     )
     admin_service = AdminService(
         db_session_context_factory=db_session_context_factory,
@@ -102,7 +103,7 @@ def register_routers(app: FastAPI) -> None:
 
     app.include_router(health.router, prefix="")
     app.include_router(
-        auth.create_router(cfg.app, cfg.cookie, auth_service),
+        oauth.create_router(cfg.app, cfg.cookie, auth_service),
         prefix="/api",
         tags=["认证"],
     )
