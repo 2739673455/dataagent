@@ -10,7 +10,7 @@ from loguru import logger
 
 
 def _build_response(request: Request, exc: ProblemError) -> JSONResponse:
-    """构造 RFC 9457 Problem Details 错误响应。"""
+    """构造 RFC 9457 Problem Details 错误响应"""
     payload = exc.to_problem(instance=str(request.url))
     return JSONResponse(
         status_code=exc.status,

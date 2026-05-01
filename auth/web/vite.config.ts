@@ -5,7 +5,7 @@ import {
 	BASE_URL,
 	VITE_AUTH_API_PROXY,
 	VITE_SERVER_PORT,
-} from "./src/configs/settings";
+} from "./src/shared/config/settings";
 
 // https://vite.dev/config/
 export default defineConfig({

@@ -54,10 +54,12 @@ uv run -m app.main
 - 授权请求中只发送 `code_challenge`，不发送 `code_verifier`。
 - 回调后应用使用授权码换取访问令牌时，再提交 `code_verifier`。认证中心重新计算 `code_challenge` 并与授权码绑定的 `code_challenge` 比对，匹配后才签发令牌。
 
-应用在 sessionStorage 中临时保存以下信息供回调阶段校验使用：
+应用在 sessionStorage 中临时保存授权请求信息供回调阶段校验使用，key 格式为 `auth-request:{state}`，value 为 JSON 对象，包含以下字段：
+- `clientId`
+- `redirectUri`
+- `returnTo`
 - `state`
-- `code_verifier`
-- `return_to`
+- `codeVerifier`
 
 之后携带参数跳转到认证中心授权页：`http://auth.com/authorize?response_type=code&client_id=app&redirect_uri=http://app.com/auth/callback&state=...&code_challenge=...&code_challenge_method=S256`
 
@@ -68,7 +70,7 @@ uv run -m app.main
 
 登录与注册：
 - 登录页、注册页、忘记密码页之间切换时，都原样透传授权参数  
-- 忘记密码页设置完新密码后跳转注册页  
+- 忘记密码页设置完新密码后跳转登录页  
 - 登录页、注册页、忘记密码页只负责用户认证相关操作
 
 登录或注册成功后：
@@ -113,10 +115,7 @@ uv run -m app.main
 ### 6. 应用回调页校验 `state`，并使用授权码换取访问令牌
 应用回调页处理流程：
 - 从 URL 查询参数中读取 `code` 和 `state`。
-- 从当前标签页的 `sessionStorage` 中读取：
-  - `state`
-  - `code_verifier`
-  - `return_to`
+- 从当前标签页的 `sessionStorage` 中按 key `auth-request:{state}` 读取 JSON 对象，其中包含 `clientId`、`redirectUri`、`returnTo`、`state`、`codeVerifier`。
 - 校验回调参数：
   - `code` 必须存在。
   - `state` 必须存在。

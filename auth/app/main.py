@@ -1,16 +1,35 @@
 from contextlib import asynccontextmanager
+from functools import partial
 from typing import cast
 
+from app.application.admin.use_cases import create_admin_use_cases
+from app.application.oauth.use_cases import create_oauth_use_cases
+from app.application.shared.session_creator import SessionCreator
+from app.application.shared.token_issuer import TokenIssuer
+from app.application.user.use_cases import create_user_use_cases
 from app.core import cfg, close_db, get_db_session_context
 from app.core.exceptions import base, exc_handlers
 from app.core.logging import setup_logger
 from app.core.middlewares import trace
-from app.modules import admin, frontend, health, oauth, user
-from app.modules.admin import AdminService, permission_repo, relation_repo, role_repo
-from app.modules.oauth import OAuthService, auth_code_repo
-from app.modules.shared import session_repo, token_repo, user_repo
-from app.modules.user import UserService, email_code_repo
+from app.infrastructure.email_sender import SmtpEmailSender
+from app.infrastructure.repos.auth_code_repo import AuthCodeRepo
+from app.infrastructure.repos.email_code_repo import EmailCodeRepo
+from app.infrastructure.repos.permission_repo import PermissionRepo
+from app.infrastructure.repos.relation_repo import RelationRepo
+from app.infrastructure.repos.role_repo import RoleRepo
+from app.infrastructure.repos.session_repo import SessionRepo
+from app.infrastructure.repos.token_repo import TokenRepo
+from app.infrastructure.repos.user_repo import UserRepo
+from app.infrastructure.security import (
+    PasswordHasherImpl,
+    PkceServiceImpl,
+    TokenFactoryImpl,
+)
 from app.plugins.lifespan import create_admin_user, init_database
+from app.presentation import frontend
+from app.presentation.admin.router import create_router as create_admin_router
+from app.presentation.oauth.router import create_router as create_oauth_router
+from app.presentation.user.router import create_router as create_user_router
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,25 +38,15 @@ from starlette.types import ExceptionHandler
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 初始化日志
     setup_logger()
-    # 启动时自动补齐数据库结构
     init_database()
-    # 启动时确保管理员用户和管理员权限存在
-    async with get_db_session_context(
-        cfg.db.selected,
-        cfg.db.driver,
-    ) as db_session:
-        await create_admin_user(db_session)
-
+    async with get_db_session_context(cfg.db.selected, cfg.db.driver) as db_session:
+        await create_admin_user(db_session, password_hasher)
     yield
-
-    # 关闭数据库资源
     await close_db()
 
 
 def register_middlewares(app: FastAPI) -> None:
-    """注册中间件"""
     app.middleware("http")(trace.middleware)
     app.add_middleware(
         CORSMiddleware,
@@ -49,7 +58,6 @@ def register_middlewares(app: FastAPI) -> None:
 
 
 def register_exception_handlers(app: FastAPI) -> None:
-    """注册异常处理器"""
     app.add_exception_handler(
         base.ProblemError,
         cast(ExceptionHandler, exc_handlers.problem_error_handler),
@@ -69,51 +77,76 @@ def register_exception_handlers(app: FastAPI) -> None:
 
 
 def register_routers(app: FastAPI) -> None:
-    """注册路由"""
-    db_session_context_factory = lambda: get_db_session_context(
-        cfg.db.selected, cfg.db.driver
-    )
+    db_factory = partial(get_db_session_context, cfg.db.selected, cfg.db.driver)
 
-    oauth_service = OAuthService(
-        db_session_context_factory=db_session_context_factory,
+    # --- 基础设施实例 ---
+    token_factory = TokenFactoryImpl()
+    pkce = PkceServiceImpl()
+
+    user_repo = UserRepo(password_hasher)
+    token_repo = TokenRepo()
+    session_repo = SessionRepo()
+    auth_code_repo = AuthCodeRepo()
+    email_code_repo = EmailCodeRepo()
+    email_sender = SmtpEmailSender(cfg.email)
+
+    # --- 共享领域服务 ---
+    session_creator = SessionCreator(session_repo, cfg.auth, token_factory)
+    token_issuer = TokenIssuer(token_repo, user_repo, cfg.auth, token_factory)
+
+    # --- OAuth 用例 ---
+    oauth_use_cases = create_oauth_use_cases(
+        db_factory=db_factory,
         auth_config=cfg.auth,
         auth_code_repo=auth_code_repo,
         session_repo=session_repo,
         token_repo=token_repo,
         user_repo=user_repo,
+        password_hasher=password_hasher,
+        token_factory=token_factory,
+        pkce=pkce,
+        token_issuer=token_issuer,
+        session_creator=session_creator,
     )
-    user_service = UserService(
-        db_session_context_factory=db_session_context_factory,
+
+    # --- User 用例 ---
+    user_use_cases = create_user_use_cases(
+        db_factory=db_factory,
         auth_config=cfg.auth,
         email_config=cfg.email,
         user_repo=user_repo,
         email_code_repo=email_code_repo,
         session_repo=session_repo,
         token_repo=token_repo,
+        token_factory=token_factory,
+        email_sender=email_sender,
+        session_creator=session_creator,
     )
-    admin_service = AdminService(
-        db_session_context_factory=db_session_context_factory,
+
+    # --- Admin 用例 ---
+    admin_use_cases = create_admin_use_cases(
+        db_factory=db_factory,
         user_repo=user_repo,
         session_repo=session_repo,
         token_repo=token_repo,
-        role_repo=role_repo,
-        relation_repo=relation_repo,
-        permission_repo=permission_repo,
+        role_repo=RoleRepo(),
+        permission_repo=PermissionRepo(),
+        relation_repo=RelationRepo(),
     )
 
-    app.include_router(health.router, prefix="")
+    # --- 注册路由 ---
     app.include_router(
-        oauth.create_router(cfg.app, cfg.cookie, oauth_service),
+        create_oauth_router(cfg.app, cfg.cookie, oauth_use_cases, token_repo),
         prefix="/api",
         tags=["认证"],
     )
     app.include_router(
-        user.create_router(cfg.cookie, user_service),
+        create_user_router(cfg.cookie, user_use_cases, token_repo),
         prefix="/api",
         tags=["用户"],
     )
     app.include_router(
-        admin.create_router(admin_service),
+        create_admin_router(admin_use_cases, token_repo),
         prefix="/api/admin",
         tags=["权限管理"],
     )
@@ -121,7 +154,6 @@ def register_routers(app: FastAPI) -> None:
 
 
 def create_app() -> FastAPI:
-    """创建应用"""
     app = FastAPI(lifespan=lifespan)
     register_middlewares(app)
     register_exception_handlers(app)
@@ -129,14 +161,12 @@ def create_app() -> FastAPI:
     return app
 
 
-app = create_app()
+# 模块级基础设施 — lifespan 和 register_routers 共用
+password_hasher = PasswordHasherImpl()
 
+app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(
-        "app.main:app",
-        host=cfg.app.host,
-        port=cfg.app.port,
-    )
+    uvicorn.run("app.main:app", host=cfg.app.host, port=cfg.app.port)

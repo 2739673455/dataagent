@@ -69,11 +69,11 @@
   width: max-content !important;
   min-width: unset !important;
   max-width: 90vw !important; /* 防止超长文本溢出屏幕 */
-  
+
   /* 水平居中 */
   left: 50% !important;
-  translate: -50% 0; 
-  
+  translate: -50% 0;
+
   /* 确保内部容器也收缩 */
   display: flex !important;
   justify-content: center;

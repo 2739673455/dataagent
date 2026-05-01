@@ -1,166 +1,146 @@
-from pwdlib import PasswordHash
+from app.core import cfg
+from app.domain.ports import PasswordHasher
+from app.utils.datetime_str import now_str
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import cfg
-from app.utils.datetime_str import now_str
 
-passwd_hash = PasswordHash.recommended()
+async def create_admin_user(
+    db_session: AsyncSession, password_hasher: PasswordHasher
+) -> None:
+    """确保存在拥有 * 权限的管理员用户
 
-
-async def _make_role_name(db_session: AsyncSession, base_name: str) -> str:
-    """生成可用的角色名"""
-    role_name = base_name
-    suffix = 1
-
-    while True:
-        stmt = text("SELECT id FROM `role` WHERE name = :name")
-        result = await db_session.execute(stmt, {"name": role_name})
-        if result.scalar_one_or_none() is None:
-            return role_name
-        role_name = f"{base_name}_{suffix}"
-        suffix += 1
-
-
-async def create_admin_user(db_session: AsyncSession) -> None:
-    """创建管理员用户（如果不存在）"""
+    逻辑：
+    1. 若 * 权限存在且已有用户关联该权限 → 直接返回
+    2. 否则确保使用 cfg.admin 配置的用户最终拥有 * 权限
+    """
     admin_role = cfg.admin.role
     admin_email = cfg.admin.email
     admin_username = cfg.admin.username
     admin_password = cfg.admin.password
-    current_time = now_str()
+    now = now_str()
 
     async with db_session.begin():
-        # 查找 * 权限
-        permission_stmt = text("SELECT id FROM `permission` WHERE name = :name")
-        permission_result = await db_session.execute(permission_stmt, {"name": "*"})
-        all_permission_id = permission_result.scalar_one_or_none()
-
-        # 如果权限存在，则结束
-        if all_permission_id is not None:
-            return
-
-        # 如果权限不存在，则创建 * 权限，并创建一个新角色(默认为管理员角色，如果存在则添加后缀)，将 * 权限添加到角色
-        insert_permission_stmt = text(
-            """
-            INSERT INTO `permission` (name, description, created_at, updated_at)
-            VALUES (:name, :description, :created_at, :updated_at)
-            RETURNING id
-            """
+        # 1. 查找 * 权限
+        perm_result = await db_session.execute(
+            text("SELECT id FROM `permission` WHERE name = :name"), {"name": "*"}
         )
-        insert_permission_result = await db_session.execute(
-            insert_permission_stmt,
-            {
-                "name": "*",
-                "description": "全部权限",
-                "created_at": current_time,
-                "updated_at": current_time,
-            },
-        )
-        all_permission_id = insert_permission_result.scalar_one()
+        perm_id = perm_result.scalar_one_or_none()
 
-        role_name = await _make_role_name(db_session, admin_role)
-        insert_role_stmt = text(
-            """
-            INSERT INTO `role` (name, created_at, updated_at)
-            VALUES (:name, :created_at, :updated_at)
-            RETURNING id
-            """
-        )
-        insert_role_result = await db_session.execute(
-            insert_role_stmt,
-            {
-                "name": role_name,
-                "created_at": current_time,
-                "updated_at": current_time,
-            },
-        )
-        role_id = insert_role_result.scalar_one()
+        # 2. 若 * 权限存在，检查是否已有用户关联
+        if perm_id is not None:
+            user_result = await db_session.execute(
+                text(
+                    """SELECT u.id FROM `user` u
+                       JOIN user_role_rel urr ON urr.user_id = u.id
+                       JOIN role_permission_rel rpr ON rpr.role_id = urr.role_id
+                       WHERE rpr.permission_id = :perm_id
+                       LIMIT 1"""
+                ),
+                {"perm_id": perm_id},
+            )
+            if user_result.scalar_one_or_none() is not None:
+                return
 
-        await db_session.execute(
+        # 3. * 权限不存在则创建
+        if perm_id is None:
+            perm_result = await db_session.execute(
+                text(
+                    """INSERT INTO `permission` (name, description, created_at, updated_at)
+                       VALUES (:name, :description, :created_at, :updated_at)
+                       RETURNING id"""
+                ),
+                {
+                    "name": "*",
+                    "description": "全部权限",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            perm_id = perm_result.scalar_one()
+
+        # 4. 查找拥有 * 权限的角色，不存在则创建
+        role_result = await db_session.execute(
             text(
-                """
-                INSERT INTO role_permission_rel (role_id, permission_id)
-                VALUES (:role_id, :permission_id)
-                """
+                """SELECT r.id FROM `role` r
+                   JOIN role_permission_rel rpr ON rpr.role_id = r.id
+                   WHERE rpr.permission_id = :perm_id
+                   LIMIT 1"""
             ),
-            {"role_id": role_id, "permission_id": all_permission_id},
+            {"perm_id": perm_id},
         )
+        role_id = role_result.scalar_one_or_none()
 
-        # 查找是否存在预设的管理员用户
-        user_stmt = text("SELECT id FROM `user` WHERE email = :email")
-        user_result = await db_session.execute(user_stmt, {"email": admin_email})
+        if role_id is None:
+            role_result = await db_session.execute(
+                text(
+                    """INSERT INTO `role` (name, created_at, updated_at)
+                       VALUES (:name, :created_at, :updated_at)
+                       RETURNING id"""
+                ),
+                {"name": admin_role, "created_at": now, "updated_at": now},
+            )
+            role_id = role_result.scalar_one()
+
+            await db_session.execute(
+                text(
+                    """INSERT INTO role_permission_rel (role_id, permission_id)
+                       VALUES (:role_id, :perm_id)"""
+                ),
+                {"role_id": role_id, "perm_id": perm_id},
+            )
+
+        # 5. 确保默认管理员用户存在
+        user_result = await db_session.execute(
+            text("SELECT id FROM `user` WHERE email = :email"),
+            {"email": admin_email},
+        )
         user_id = user_result.scalar_one_or_none()
 
-        # 如果用户不存在，则创建
         if user_id is None:
-            insert_user_stmt = text(
-                """
-                INSERT INTO `user` (email, name, password_hash, created_at, updated_at)
-                VALUES (:email, :name, :password_hash, :created_at, :updated_at)
-                RETURNING id
-                """
-            )
-            insert_user_result = await db_session.execute(
-                insert_user_stmt,
+            user_result = await db_session.execute(
+                text(
+                    """INSERT INTO `user` (email, name, password_hash, created_at, updated_at)
+                       VALUES (:email, :name, :password_hash, :created_at, :updated_at)
+                       RETURNING id"""
+                ),
                 {
                     "email": admin_email,
                     "name": admin_username,
-                    "password_hash": passwd_hash.hash(admin_password),
-                    "created_at": current_time,
-                    "updated_at": current_time,
+                    "password_hash": password_hasher.hash(admin_password),
+                    "created_at": now,
+                    "updated_at": now,
                 },
             )
-            user_id = insert_user_result.scalar_one()
-
-            # 将用户添加到角色中
+            user_id = user_result.scalar_one()
+        else:
             await db_session.execute(
                 text(
-                    """
-                    INSERT INTO user_role_rel (role_id, user_id)
-                    VALUES (:role_id, :user_id)
-                    """
-                ),
-                {"role_id": role_id, "user_id": user_id},
-            )
-            return
-
-        # 如果用户存在但不在角色中，则修改用户名和密码为预设值，并添加到角色中
-        relation_stmt = text(
-            """
-            SELECT role_id
-            FROM user_role_rel
-            WHERE role_id = :role_id AND user_id = :user_id
-            """
-        )
-        relation_result = await db_session.execute(
-            relation_stmt,
-            {"role_id": role_id, "user_id": user_id},
-        )
-        relation_exists = relation_result.scalar_one_or_none() is not None
-
-        if not relation_exists:
-            await db_session.execute(
-                text(
-                    """
-                    UPDATE `user`
-                    SET name = :name, password_hash = :password_hash, updated_at = :updated_at
-                    WHERE id = :user_id
-                    """
+                    """UPDATE `user`
+                       SET name = :name, password_hash = :password_hash, updated_at = :updated_at
+                       WHERE id = :user_id"""
                 ),
                 {
                     "name": admin_username,
-                    "password_hash": passwd_hash.hash(admin_password),
-                    "updated_at": current_time,
+                    "password_hash": password_hasher.hash(admin_password),
+                    "updated_at": now,
                     "user_id": user_id,
                 },
             )
+
+        # 6. 确保用户与角色关联
+        rel_result = await db_session.execute(
+            text(
+                """SELECT 1 FROM user_role_rel
+                   WHERE user_id = :uid AND role_id = :rid"""
+            ),
+            {"uid": user_id, "rid": role_id},
+        )
+        if rel_result.scalar_one_or_none() is None:
             await db_session.execute(
                 text(
-                    """
-                    INSERT INTO user_role_rel (role_id, user_id)
-                    VALUES (:role_id, :user_id)
-                    """
+                    """INSERT INTO user_role_rel (user_id, role_id)
+                       VALUES (:uid, :rid)"""
                 ),
-                {"role_id": role_id, "user_id": user_id},
+                {"uid": user_id, "rid": role_id},
             )

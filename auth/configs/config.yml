@@ -2,8 +2,8 @@ app:
   # 应用
   host: 0.0.0.0 # 服务主机
   port: 7100 # 服务端口
-  web_base_url: "" # Web 基础 URL，为空则取当前请求源
-  # web_base_url: "http://localhost:7101" # Web 基础 URL，为空则取当前请求源
+  # web_base_url: "" # Web 基础 URL，为空则取当前请求源
+  web_base_url: "http://localhost:7101" # Web 基础 URL，为空则取当前请求源
 
 db:
   # 数据库
@@ -31,7 +31,7 @@ cookie:
   name: session_id # Session Cookie 名称
   secure: false # 是否只允许 HTTPS 发送
   httponly: true # 是否禁止前端 JS 读取
-  samesite: none # 跨站 Cookie 策略
+  samesite: lax # 跨站 Cookie 策略
 
 cors:
   # 跨域
