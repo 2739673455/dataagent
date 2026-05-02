@@ -17,24 +17,6 @@ async def create(
     return compaction
 
 
-async def get_latest_by_conversation_id(
-    db_session: AsyncSession,
-    conversation_id: int,
-    yn: int | None = 1,
-) -> ContextCompaction | None:
-    """获取某个对话最新一条上下文压缩记录"""
-    stmt = select(ContextCompaction).where(
-        ContextCompaction.conversation_id == conversation_id
-    )
-
-    if yn is not None:
-        stmt = stmt.where(ContextCompaction.yn == yn)
-
-    stmt = stmt.order_by(ContextCompaction.end_seq.desc(), ContextCompaction.id.desc())
-    result = await db_session.execute(stmt)
-    return result.scalars().first()
-
-
 async def update_yn_by_conversation_id(
     db_session: AsyncSession,
     conversation_id: int,
@@ -48,3 +30,19 @@ async def update_yn_by_conversation_id(
     )
     await db_session.execute(stmt)
     await db_session.commit()
+
+
+async def get_latest_by_conversation_id(
+    db_session: AsyncSession,
+    conversation_id: int,
+    yn: int | None = 1,
+) -> ContextCompaction | None:
+    """获取某个对话最新一条上下文压缩记录"""
+    stmt = select(ContextCompaction).where(
+        ContextCompaction.conversation_id == conversation_id
+    )
+    if yn is not None:
+        stmt = stmt.where(ContextCompaction.yn == yn)
+    stmt = stmt.order_by(ContextCompaction.end_seq.desc(), ContextCompaction.id.desc())
+    result = await db_session.execute(stmt)
+    return result.scalars().first()

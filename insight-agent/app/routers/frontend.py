@@ -1,8 +1,8 @@
 from pathlib import Path
 
 import httpx
-from app.core.settings import cfg
 from app.core.http_client import get_http_client
+from app.core.settings import cfg
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,7 +18,6 @@ SPA_EXCLUDED_PREFIXES = (
     "/api",
     "/auth-api",
     "/assets",
-    "/health",
     "/docs",
     "/openapi.json",
     "/redoc",
@@ -28,6 +27,7 @@ router = APIRouter()
 
 
 def _matches_prefix(path: str, prefix: str) -> bool:
+    """判断请求路径是否命中前缀"""
     return path == prefix or path.startswith(f"{prefix}/")
 
 
@@ -37,9 +37,10 @@ def _matches_prefix(path: str, prefix: str) -> bool:
 )
 async def proxy_auth_api(path: str, request: Request) -> Response:
     # 将前端访问的 /auth-api 请求转发到独立认证服务
-    upstream_url = f"{cfg.auth_service.base_url.rstrip('/')}/{path.lstrip('/')}"
     client = get_http_client()
+    upstream_url = f"{cfg.auth_service.base_url.rstrip('/')}/{path.lstrip('/')}"
     body = await request.body()
+
     try:
         upstream_response = await client.request(
             request.method,
@@ -79,20 +80,25 @@ async def proxy_auth_api(path: str, request: Request) -> Response:
 async def serve_spa(full_path: str):
     # SPA 前端路由回退：未命中后端接口时统一返回 index.html
     request_path = f"/{full_path}" if full_path else "/"
+
     # 后端专用路径不能错误回退到前端首页，命中这些前缀时直接返回 404
     if any(_matches_prefix(request_path, prefix) for prefix in SPA_EXCLUDED_PREFIXES):
         raise HTTPException(status_code=404)
+
     # 前端尚未构建或产物缺失时，明确返回 404，避免返回无意义的空响应
     if not SPA_ENTRY_FILE.exists():
         raise HTTPException(status_code=404, detail="Frontend build not found")
+
+    # 返回前端构建产物
     return FileResponse(SPA_ENTRY_FILE)
 
 
 def register_frontend(app: FastAPI) -> None:
-    # 挂载构建后的静态资源，并注册前端相关路由
+    # 挂载构建后的静态资源
     app.mount(
         "/assets",
         StaticFiles(directory=STATIC_ASSETS_DIR, check_dir=False),
         name="assets",
     )
+    # 注册前端相关路由
     app.include_router(router)

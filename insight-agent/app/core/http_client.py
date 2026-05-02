@@ -23,8 +23,8 @@ def get_http_client() -> httpx.AsyncClient:
     return _http_client
 
 
-async def close_clients():
-    """关闭所有客户端"""
+async def close_http_client():
+    """关闭客户端"""
     global _http_client
     if _http_client:
         await _http_client.aclose()

@@ -2,7 +2,7 @@ from collections.abc import AsyncIterator
 
 import openai
 from app.agent.agent import get_agent, get_workspace_dir
-from app.core.database import get_app_db_session
+from app.core.database import get_db_session
 from app.entities.chat import ContextCompaction
 from app.mappers import message_mapper
 from app.repositories import context_compaction_repo, conversation_repo, message_repo
@@ -20,7 +20,7 @@ async def load_conversation_context(
     返回 (messages, cur_context_seq, is_draft, has_applied_summary)，
     会话不存在或不属于当前用户时返回 None。
     """
-    async with get_app_db_session() as db_session:
+    async with get_db_session() as db_session:
         # 检查对话是否存在且属于当前用户
         conversation = await conversation_repo.get_by_id(db_session, conversation_id)
         if conversation is None or conversation.user_id != user_id:

@@ -7,7 +7,7 @@ from app.core.exceptions.base import ProblemError
 from app.core.exceptions.exc_handlers import problem_error_handler
 from app.core.http_client import get_http_client
 from app.core.settings import cfg
-from app.exceptions import auth_error
+from app.errors import auth_error
 from app.schemas import auth_schema
 from fastapi import Request, Response
 
@@ -17,7 +17,7 @@ AUTH_REQUIRED_PREFIXES = {"/api"}
 
 async def authenticate_authorization(
     authorization: str | None,
-) -> auth_schema.AccessTokenPayload:
+) -> auth_schema.IntrospectionResponse:
     if not authorization:
         raise auth_error.MissingAccessTokenError()
 
@@ -41,19 +41,23 @@ async def authenticate_authorization(
     if not data.active:
         raise auth_error.InvalidAccessTokenError()
 
-    return data.to_payload()
+    return data
 
 
 async def middleware(request: Request, call_next: Callable) -> Response:
+    # 获取请求路径
     path = request.url.path
 
+    # 如果不是需要认证的路径，直接返回
     if not any(path.startswith(p) for p in AUTH_REQUIRED_PREFIXES):
         return await call_next(request)
 
     try:
+        # 请求认证服务
         request.state.payload = await authenticate_authorization(
             request.headers.get("Authorization")
         )
+        # 将用户 ID 放入 ContextVar
         context.user_id_ctx.set(str(request.state.payload.sub))
     except ProblemError as exc:
         return problem_error_handler(request, exc)

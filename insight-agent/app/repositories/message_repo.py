@@ -34,9 +34,6 @@ async def update_yn_by_ids(
         message_ids: 要更新的消息 ID 列表
         yn: 启用状态（1-启用，0-禁用）
     """
-    if not message_ids:
-        return
-
     stmt = sql_update(Message).where(Message.id.in_(message_ids)).values(yn=yn)
     await db_session.execute(stmt)
     await db_session.commit()
@@ -79,10 +76,8 @@ async def ls(
         按上下文顺序正序排列的消息列表
     """
     base_stmt = select(Message).where(Message.conversation_id == conversation_id)
-
     if yn is not None:
         base_stmt = base_stmt.where(Message.yn == yn)
-
     stmt = base_stmt.order_by(Message.context_seq.asc(), Message.id.asc())
     result = await db_session.execute(stmt)
     return list(result.scalars().all())

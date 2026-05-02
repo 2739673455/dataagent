@@ -30,16 +30,14 @@ async def _stream_db_query(query: str) -> AsyncIterator[dict[str, Any]]:
 
         # data-agent 返回 SSE (Server-Sent Events) 流，逐行解析
         async for line in resp.aiter_lines():
-            # SSE 协议：有效数据行以 "data:" 开头，空行和注释行跳过
+            # 跳过非 "data:" 开头的数据
             if not line or not line.startswith("data:"):
                 continue
-
             # 去掉 "data:" 前缀并去除首尾空白
             payload = line.removeprefix("data:").strip()
             if not payload:
                 continue
-
-            # 尝试解析 JSON；解析失败时产出错误消息而非中断流
+            # 尝试解析 JSON；解析失败时抛出错误消息而非中断流
             try:
                 yield json.loads(payload)
             except json.JSONDecodeError as exc:
@@ -51,36 +49,44 @@ async def _stream_db_query(query: str) -> AsyncIterator[dict[str, Any]]:
 
 
 def _as_tabular_rows(result: Any) -> list[dict[str, Any]] | None:
-    """尝试将查询结果解释为表格行列表，无法解释时返回 None
+    """
+    尝试将查询结果解释为表格行列表，无法解释时返回 None。
 
     表格结果的特征：非空 list，且每个元素都是 dict。
+
     空列表视为合法表格（没有行但结构是表格），返回 []。
     """
     if not isinstance(result, list):
+        # 非列表返回 None
         return None
     if not result:
+        # 空列表返回空列表
         return []
     if not all(isinstance(row, dict) for row in result):
+        # 列表内非 dict 返回 None
         return None
     return result
 
 
 def _write_csv_result(file_path: Path, rows: list[dict[str, Any]]) -> list[str]:
-    """将表格行列表写入 CSV 文件并返回字段名列表
-
-    字段名从所有行的 key 中并集收集，按首次出现顺序排列，
-    避免某些行为 None 或缺少 key 时漏掉字段。
     """
-    # 按首次出现顺序收集所有字段名
+    将表格行列表写入 CSV 文件并返回字段名列表。
+
+    字段名从所有行的 key 中并集收集，按首次出现顺序排列，避免某些行为 None 或缺少 key 时漏掉字段。
+    """
+    # 遍历所有行，收集所有字段名
     fieldnames: list[str] = []
     for row in rows:
         for key in row:
             if key not in fieldnames:
                 fieldnames.append(key)
 
+    # 写入 CSV
     with file_path.open("w", encoding="utf-8", newline="") as fp:
         writer = csv.DictWriter(fp, fieldnames=fieldnames)
+        # 写入表头
         writer.writeheader()
+        # 逐行写入数据
         for row in rows:
             writer.writerow(row)
 
@@ -88,10 +94,10 @@ def _write_csv_result(file_path: Path, rows: list[dict[str, Any]]) -> list[str]:
 
 
 def _write_json_result(file_path: Path, result: Any) -> None:
-    """将非表格结果写入 JSON 文件
+    """
+    将非表格结果写入 JSON 文件。
 
-    default=str 确保 datetime、Decimal 等不可序列化类型也能落盘，
-    不会因单个字段导致整个写入失败。
+    default=str 确保 datetime、Decimal 等不可序列化类型也能落盘，不会因单个字段导致整个写入失败。
     """
     with file_path.open("w", encoding="utf-8") as fp:
         json.dump(result, fp, ensure_ascii=False, indent=2, default=str)
@@ -146,28 +152,33 @@ async def db_query(
 
     # data-agent 返回了消息但缺少最终结果
     if result is None:
-        return {
-            "status": "error",
-            "message": "data query API finished without result",
-        }
+        return {"status": "error", "message": "data query API finished without result"}
 
     # 将结果写入工作区文件（表格→CSV，非表格→JSON）
     try:
         tabular_rows = _as_tabular_rows(result)
+        # 表格结果
         if tabular_rows is not None:
-            # 表格结果：写入 CSV，返回前 N 行预览
+            # 获取文件路径
             file_path = workspace_dir / f"{file_name}.csv"
+            # 写入 CSV
             fields = _write_csv_result(file_path, tabular_rows)
+            # 返回前 N 行预览
             preview_rows = tabular_rows[:PREVIEW_ROWS]
+            # Pandas 读取提示
             pandas_read_hint = f"pd.read_csv('{file_path.as_posix()}')"
+        # 非表格结果
         else:
-            # 非表格结果：写入 JSON，整体或前 N 项预览
+            # 获取文件路径
             file_path = workspace_dir / f"{file_name}.json"
+            # 写入 JSON
             _write_json_result(file_path, result)
             fields = []
+            # 返回前 N 行预览
             preview_rows = (
                 result[:PREVIEW_ROWS] if isinstance(result, list) else [result]
             )
+            # Pandas 读取提示
             pandas_read_hint = f"pd.read_json('{file_path.as_posix()}')"
     except Exception as exc:
         return {
@@ -180,9 +191,9 @@ async def db_query(
     return {
         # 操作状态标识，Agent 可据此判断查询是否成功
         "status": "success",
-        # 结果文件的绝对路径（POSIX 风格，Agent 可直接用于读取）
+        # 结果文件的绝对路径
         "file_path": file_path.as_posix(),
-        # 文件格式后缀，不含点号："csv" 或 "json"，便于 Agent 选择解析方式
+        # 文件格式后缀："csv" 或 "json"，便于 Agent 选择解析方式
         "file_format": file_path.suffix.lstrip("."),
         # pandas 读取代码片段，Agent 可直接在 Python 代码中执行
         "pandas_read_hint": pandas_read_hint,

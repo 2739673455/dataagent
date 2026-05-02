@@ -47,6 +47,7 @@ async def lifespan(app: FastAPI):
 
 
 def register_middlewares(app: FastAPI) -> None:
+    """注册全局中间件"""
     app.middleware("http")(trace.middleware)
     app.add_middleware(
         CORSMiddleware,
@@ -58,6 +59,7 @@ def register_middlewares(app: FastAPI) -> None:
 
 
 def register_exception_handlers(app: FastAPI) -> None:
+    """注册全局异常处理器"""
     app.add_exception_handler(
         base.ProblemError,
         cast(ExceptionHandler, exc_handlers.problem_error_handler),
@@ -77,6 +79,8 @@ def register_exception_handlers(app: FastAPI) -> None:
 
 
 def register_routers(app: FastAPI) -> None:
+    """组装依赖并注册路由"""
+    # 预填函数参数
     db_factory = partial(get_db_session_context, cfg.db.selected, cfg.db.driver)
 
     # --- 基础设施实例 ---
@@ -154,6 +158,7 @@ def register_routers(app: FastAPI) -> None:
 
 
 def create_app() -> FastAPI:
+    """创建并组装 FastAPI 应用"""
     app = FastAPI(lifespan=lifespan)
     register_middlewares(app)
     register_exception_handlers(app)

@@ -9,7 +9,7 @@ async def get() -> Redis:
     global _redis_client
     if _redis_client is not None:
         try:
-            await _redis_client.ping()
+            await _redis_client.ping()  # pyright: ignore[reportGeneralTypeIssues]
             return _redis_client
         except Exception:
             _redis_client = None
@@ -28,7 +28,7 @@ async def get() -> Redis:
     return _redis_client
 
 
-async def close() -> None:
+async def close_redis() -> None:
     """关闭 Redis 连接"""
     global _redis_client
     if _redis_client is not None:

@@ -3,13 +3,12 @@ import sys
 import traceback
 from pathlib import Path
 
-from loguru import logger
-
 from app.core import context
 from app.core.settings import LogCfg, cfg
+from loguru import logger
 
 # 路径常量
-CURRENT_DIR = Path(__file__).parent  # core
+CURRENT_DIR = Path(__file__).parent
 ROOT_DIR = CURRENT_DIR.parent.parent  # 项目根目录
 
 LOGGER_CONFIGURED = False  # 日志是否已初始化
@@ -30,9 +29,11 @@ def _build_log_json(record):
         "client_ip": context.client_ip_ctx.get(),
     }
 
+    # 将 extra 中的信息添加到输出
     extra = {k: v for k, v in record.get("extra", {}).items() if k != "json"}
     log_json.update(extra)
 
+    # 捕获异常信息（如果有），格式化为字符串
     exc_info = record.get("exception")
     if exc_info:
         if exc_info.value is not None:
@@ -41,6 +42,7 @@ def _build_log_json(record):
                     exc_info.type, exc_info.value, exc_info.traceback
                 )
             )
+        # 清除 exception，阻止 loguru 默认格式化
         record["exception"] = None
 
     log_json = {k: v for k, v in log_json.items() if v}  # 滤空
@@ -88,7 +90,7 @@ def setup_logger():
     """初始化日志配置"""
     global LOGGER_CONFIGURED
     if not LOGGER_CONFIGURED:
-        logger.remove()
+        logger.remove()  # 移除默认的日志输出
         logger.configure(patcher=_build_log_json)
         _setup_logger(cfg.log)
         LOGGER_CONFIGURED = True

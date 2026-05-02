@@ -50,49 +50,42 @@ class ProblemError(Exception):
 
 
 class InternalServerError(ProblemError):
-    """服务器内部错误 (500)"""
     type = "internal-server-error"
     title = "服务器内部错误"
     status = http_status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
 class ValidationError(ProblemError):
-    """参数校验失败 (422)"""
     type = "validation-error"
     title = "参数校验失败"
     status = http_status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 class AuthError(ProblemError):
-    """认证失败 (401)"""
     type = "authentication-failed"
     title = "认证失败"
     status = http_status.HTTP_401_UNAUTHORIZED
 
 
 class PermissionDeniedError(ProblemError):
-    """权限不足 (403)"""
     type = "permission-denied"
     title = "权限不足"
     status = http_status.HTTP_403_FORBIDDEN
 
 
 class NotFoundError(ProblemError):
-    """资源不存在 (404)"""
     type = "not-found"
     title = "资源不存在"
     status = http_status.HTTP_404_NOT_FOUND
 
 
 class ConflictError(ProblemError):
-    """资源冲突 (409)"""
     type = "conflict"
     title = "资源冲突"
     status = http_status.HTTP_409_CONFLICT
 
 
 class BadRequestError(ProblemError):
-    """请求参数错误 (400)"""
     type = "bad-request"
     title = "请求参数错误"
     status = http_status.HTTP_400_BAD_REQUEST

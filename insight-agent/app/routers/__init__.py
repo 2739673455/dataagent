@@ -1,3 +1,2 @@
-from . import api, frontend
-
-__all__ = ["api", "frontend"]
+from . import frontend
+from .api import admin, attachment, chat

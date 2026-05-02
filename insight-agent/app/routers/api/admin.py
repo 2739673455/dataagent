@@ -2,7 +2,7 @@ from app.agent.agent import reset_agent
 from app.core.settings import reload_config
 from fastapi import APIRouter
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter(tags=["admin"])
 
 
 @router.post("/reload")

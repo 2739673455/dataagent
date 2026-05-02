@@ -1,4 +1,3 @@
-from app.core import context
 from app.core.exceptions.base import (
     InternalServerError,
     ProblemError,
@@ -13,9 +12,6 @@ from loguru import logger
 def _build_response(request: Request, exc: ProblemError) -> JSONResponse:
     """构造错误响应"""
     payload = exc.to_problem(instance=str(request.url))
-    trace_id = context.trace_id_ctx.get()
-    if trace_id:
-        payload["trace_id"] = trace_id
     return JSONResponse(
         status_code=exc.status,
         content=payload,
@@ -89,11 +85,3 @@ def unhandled_exception_handler(request: Request, exc: Exception) -> JSONRespons
         detail=detail,
     )
     return _build_response(request, problem)
-
-
-def register_exception_handlers(app) -> None:
-    """向 FastAPI 应用注册全局异常处理器"""
-    app.add_exception_handler(ProblemError, problem_error_handler)
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(HTTPException, http_exception_handler)
-    app.add_exception_handler(Exception, unhandled_exception_handler)

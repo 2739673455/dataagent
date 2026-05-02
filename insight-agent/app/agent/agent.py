@@ -32,9 +32,8 @@ def get_workspace_dir(user_id: int, conversation_id: int) -> Path:
 
 def _backend_factory(rt: Any) -> CompositeBackend:
     """根据运行时配置动态创建工作区后端"""
-    config = get_config()
-    configurable = config.get("configurable", {})
-    workspace_dir = configurable.get("workspace_dir")
+    # 从 LangGraph 运行时配置中获取工作区目录
+    workspace_dir = get_config().get("configurable", {}).get("workspace_dir")
     if workspace_dir is None:
         raise ValueError("workspace_dir not found in config")
 

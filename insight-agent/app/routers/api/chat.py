@@ -1,16 +1,13 @@
 import asyncio
 import json
-import mimetypes
-import re
 import secrets
 import shutil
 from typing import Annotated
-from uuid import uuid4
 
 from app.agent.agent import get_workspace_dir
 from app.core import context
-from app.core.database import get_app_db, get_app_db_session
-from app.exceptions import chat_error
+from app.core.database import get_db, get_db_session
+from app.errors import chat_error
 from app.mappers import message_mapper
 from app.repositories import (
     context_compaction_repo,
@@ -23,57 +20,111 @@ from app.services import chat_service
 from fastapi import (
     APIRouter,
     Depends,
-    File,
-    Form,
-    HTTPException,
     Request,
-    UploadFile,
     WebSocket,
     WebSocketDisconnect,
     status,
 )
-from fastapi.responses import FileResponse
 from loguru import logger
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-router = APIRouter(prefix="/chat", tags=["chat"])
+router = APIRouter(tags=["chat"])
 
 
-def _build_attachment_unique_name(filename: str) -> str:
-    """构造落盘文件名，尽量保留原文件名并附加唯一标识"""
-    # 只保留文件名本身，避免客户端传入路径片段
-    basename = filename.split("/")[-1].split("\\")[-1].strip()
-    # 将特殊字符替换为下划线，保留中英文、数字和常见文件名符号
-    normalized_name = re.sub(r"[^0-9A-Za-z._\-\u4e00-\u9fff]+", "_", basename)
-    # 去掉首尾无意义的点和下划线，并为空文件名提供兜底值
-    safe_name = normalized_name.strip("._") or "upload"
-    # 附加一个短随机后缀，避免同名文件互相覆盖
-    unique_suffix = uuid4().hex[:4]
-    # 没有扩展名时，直接在文件名末尾追加随机后缀
-    if "." not in safe_name:
-        return f"{safe_name}_{unique_suffix}"
-    # 有扩展名时，仅在主文件名后追加随机后缀，保留原始扩展名
-    stem, suffix = safe_name.rsplit(".", 1)
-    return f"{stem}_{unique_suffix}.{suffix}"
+@router.post("/create", status_code=status.HTTP_201_CREATED)
+async def api_create_conversation(
+    request: Request,
+    body: chat_schema.CreateConversationRequest,
+    db_session: Annotated[AsyncSession, Depends(get_db)],
+) -> chat_schema.ConversationResponse:
+    """创建新对话"""
+    user_id = request.state.payload.sub
+
+    conversation = await conversation_repo.create(
+        db_session,
+        user_id,
+        "新对话",
+        is_draft=body.is_draft,
+    )
+
+    logger.info(
+        f"Create conversation: conversation_id={conversation.id}, is_draft={conversation.is_draft}"
+    )
+
+    return chat_schema.ConversationResponse(
+        conversation_id=conversation.id,
+        title=conversation.title,
+        update_at=conversation.update_at,
+    )
 
 
-def _build_attachment_path(target_dir, path: str):
-    """基于工作区目录构造附件路径，并阻止路径逃逸"""
-    target_path = (target_dir / path).resolve()
-    if target_dir.resolve() not in target_path.parents:
+@router.post("/delete")
+async def api_delete_conversations(
+    request: Request,
+    body: chat_schema.DeleteConversationRequest,
+    db_session: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """删除对话(逻辑删除)"""
+    user_id = request.state.payload.sub
+
+    for conversation_id in body.conversation_ids:
+        # 检查对话是否存在且属于当前用户
+        conversation = await conversation_repo.get_by_id(db_session, conversation_id)
+        if (conversation is None) or (conversation.user_id != user_id):
+            raise chat_error.ConversationNotFound
+
+        # 禁用对话
+        await conversation_repo.update(db_session, conversation, yn=0)
+        # 禁用对话下所有消息
+        await message_repo.update_yn_by_conversation_id(
+            db_session, conversation_id, yn=0
+        )
+        # 禁用对话下所有上下文压缩记录
+        await context_compaction_repo.update_yn_by_conversation_id(
+            db_session, conversation_id, yn=0
+        )
+
+        # 删除对话对应工作区
+        await asyncio.to_thread(
+            shutil.rmtree,
+            get_workspace_dir(user_id, conversation_id),
+            ignore_errors=True,
+        )
+
+    logger.info(f"Delete conversations: conversation_ids={body.conversation_ids}")
+
+
+@router.post("/update")
+async def api_update_conversation(
+    request: Request,
+    body: chat_schema.UpdateConversationRequest,
+    db_session: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """修改对话信息"""
+    user_id = request.state.payload.sub
+
+    # 检查对话是否存在且属于当前用户
+    conversation = await conversation_repo.get_by_id(db_session, body.conversation_id)
+    if (conversation is None) or (conversation.user_id != user_id):
         raise chat_error.ConversationNotFound
-    return target_path
+
+    await conversation_repo.update(db_session, conversation, title=body.title)
+
+    logger.info(f"Update conversation: conversation_id={body.conversation_id}")
 
 
 @router.get("/ls")
 async def api_get_conversations(
-    request: Request, db_session: Annotated[AsyncSession, Depends(get_app_db)]
+    request: Request, db_session: Annotated[AsyncSession, Depends(get_db)]
 ) -> chat_schema.ConversationListResponse:
     """获取所有对话"""
     user_id = request.state.payload.sub
+
     conversations = await conversation_repo.ls(db_session, user_id)
+
     logger.info(f"Get conversations: conversation_ids={[i.id for i in conversations]}")
+
     return chat_schema.ConversationListResponse(
         conversations=[
             chat_schema.ConversationResponse(
@@ -86,78 +137,9 @@ async def api_get_conversations(
     )
 
 
-@router.post("/create", status_code=status.HTTP_201_CREATED)
-async def api_create_conversation(
-    request: Request,
-    body: chat_schema.CreateConversationRequest,
-    db_session: Annotated[AsyncSession, Depends(get_app_db)],
-) -> chat_schema.ConversationResponse:
-    """创建新对话"""
-    user_id = request.state.payload.sub
-    conversation = await conversation_repo.create(
-        db_session, user_id, "新对话", is_draft=body.is_draft
-    )
-    logger.info(
-        f"Create conversation: conversation_id={conversation.id}, is_draft={conversation.is_draft}"
-    )
-    return chat_schema.ConversationResponse(
-        conversation_id=conversation.id,
-        title=conversation.title,
-        update_at=conversation.update_at,
-    )
-
-
-@router.post("/update")
-async def api_update_conversation(
-    request: Request,
-    body: chat_schema.UpdateConversationRequest,
-    db_session: Annotated[AsyncSession, Depends(get_app_db)],
-) -> None:
-    """修改对话信息"""
-    user_id = request.state.payload.sub
-    # 检查对话是否存在且属于当前用户
-    conversation = await conversation_repo.get_by_id(db_session, body.conversation_id)
-    if (conversation is None) or (conversation.user_id != user_id):
-        raise chat_error.ConversationNotFound
-    await conversation_repo.update(db_session, conversation, title=body.title)
-    logger.info(f"Update conversation: conversation_id={body.conversation_id}")
-
-
-@router.post("/delete")
-async def api_delete_conversations(
-    request: Request,
-    body: chat_schema.DeleteConversationRequest,
-    db_session: Annotated[AsyncSession, Depends(get_app_db)],
-) -> None:
-    """删除对话(逻辑删除)"""
-    user_id = request.state.payload.sub
-    for conversation_id in body.conversation_ids:
-        # 检查对话是否存在且属于当前用户
-        conversation = await conversation_repo.get_by_id(db_session, conversation_id)
-        if (conversation is None) or (conversation.user_id != user_id):
-            continue
-        # 禁用对话
-        await conversation_repo.update(db_session, conversation, yn=0)
-        # 禁用对话下所有消息
-        await message_repo.update_yn_by_conversation_id(
-            db_session, conversation_id, yn=0
-        )
-        # 禁用对话下所有上下文压缩记录
-        await context_compaction_repo.update_yn_by_conversation_id(
-            db_session, conversation_id, yn=0
-        )
-        # 删除对话对应工作区
-        await asyncio.to_thread(
-            shutil.rmtree,
-            get_workspace_dir(user_id, conversation_id),
-            ignore_errors=True,
-        )
-    logger.info(f"Delete conversations: conversation_ids={body.conversation_ids}")
-
-
 @router.get("/ls/{conversation_id}")
 async def api_get_messages(
-    conversation_id: int, db_session: Annotated[AsyncSession, Depends(get_app_db)]
+    conversation_id: int, db_session: Annotated[AsyncSession, Depends(get_db)]
 ) -> chat_schema.MessageListResponse:
     """获取某个对话所有消息"""
     messages = await message_repo.ls(db_session, conversation_id)
@@ -174,16 +156,21 @@ async def api_create_websocket_token(
     """创建 WebSocket 临时令牌"""
     # 临时令牌过期时间
     WS_TOKEN_EXPIRE_SECONDS = 30
+
     # 获取用户ID
     user_id = request.state.payload.sub
+
     # 创建 WebSocket 临时令牌
     websocket_token = secrets.token_urlsafe(32)
+    # 存储 WebSocket 临时令牌
     await websocket_token_repo.create(
         token=websocket_token,
         user_id=user_id,
         expire_seconds=WS_TOKEN_EXPIRE_SECONDS,
     )
+
     logger.info("Create websocket token")
+
     return chat_schema.WebSocketTokenResponse(
         websocket_token=websocket_token,
         expires_in=WS_TOKEN_EXPIRE_SECONDS,
@@ -254,7 +241,7 @@ async def api_websocket_chat(
                 continue
 
             # 每轮对话使用独立的 DB 会话，避免长连接占用连接池
-            async with get_app_db_session() as db_session:
+            async with get_db_session() as db_session:
                 # 将草稿对话修改为正式对话
                 if is_draft:
                     conversation = await conversation_repo.get_by_id(
@@ -286,88 +273,3 @@ async def api_websocket_chat(
     # 客户端断开连接
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected: {conversation_id=}")
-
-
-@router.post("/attachment/upload")
-async def api_upload_attachment(
-    request: Request,
-    db_session: Annotated[AsyncSession, Depends(get_app_db)],
-    conversation_id: int = Form(...),
-    file: UploadFile = File(...),
-) -> chat_schema.UploadAttachmentResponse:
-    """上传附件到当前会话工作区"""
-    user_id = request.state.payload.sub
-    # 检查对话是否存在且属于当前用户
-    conversation = await conversation_repo.get_by_id(db_session, conversation_id)
-    if (conversation is None) or (conversation.user_id != user_id):
-        raise chat_error.ConversationNotFound
-
-    # 获取原始文件名
-    raw_name = file.filename or "upload"
-    # 构造唯一文件名
-    path = _build_attachment_unique_name(raw_name)
-    # 构造文件路径
-    workspace_dir = get_workspace_dir(user_id, conversation_id)
-    target_path = _build_attachment_path(workspace_dir, path)
-    # 按块读取并落盘，避免一次性把整个文件读入内存
-    with target_path.open("wb") as target_file:
-        while chunk := await file.read(1024 * 1024):
-            target_file.write(chunk)
-
-    logger.info(f"Upload attachment: {conversation_id=}, file={path}")
-    return chat_schema.UploadAttachmentResponse(
-        attachment=chat_schema.Attachment(raw_name=raw_name, path=path)
-    )
-
-
-@router.post("/attachment/delete")
-async def api_delete_attachment(
-    request: Request,
-    body: chat_schema.DeleteAttachmentRequest,
-    db_session: Annotated[AsyncSession, Depends(get_app_db)],
-) -> None:
-    """删除当前会话工作区中的附件"""
-    user_id = request.state.payload.sub
-    # 检查对话是否存在且属于当前用户
-    conversation = await conversation_repo.get_by_id(db_session, body.conversation_id)
-    if (conversation is None) or (conversation.user_id != user_id):
-        raise chat_error.ConversationNotFound
-
-    # 获取工作区目录并删除附件
-    workspace_dir = get_workspace_dir(user_id, body.conversation_id)
-    target_path = _build_attachment_path(workspace_dir, body.path)
-    if target_path.exists() and target_path.is_file():
-        target_path.unlink()
-
-    logger.info(
-        f"Delete attachment: conversation_id={body.conversation_id}, file={body.path}"
-    )
-
-
-@router.get("/attachment/get")
-async def api_get_attachment(
-    request: Request,
-    conversation_id: int,
-    path: str,
-    db_session: Annotated[AsyncSession, Depends(get_app_db)],
-) -> FileResponse:
-    """获取当前会话工作区中的附件文件"""
-    user_id = request.state.payload.sub
-    # 检查对话是否存在且属于当前用户
-    conversation = await conversation_repo.get_by_id(db_session, conversation_id)
-    if (conversation is None) or (conversation.user_id != user_id):
-        raise chat_error.ConversationNotFound
-
-    workspace_dir = get_workspace_dir(user_id, conversation_id)
-    target_path = _build_attachment_path(workspace_dir, path)
-    if not target_path.is_file():
-        raise HTTPException(status_code=404, detail="Attachment not found")
-
-    media_type, _ = mimetypes.guess_type(target_path.name)
-
-    logger.info(f"Get attachment: {conversation_id=}, file={path}")
-    return FileResponse(
-        path=target_path,
-        media_type=media_type or "application/octet-stream",
-        filename=target_path.name,
-    )

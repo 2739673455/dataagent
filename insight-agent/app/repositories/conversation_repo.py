@@ -6,32 +6,6 @@ from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-async def get_by_id(
-    db_session: AsyncSession,
-    conversation_id: int,
-    is_draft: int | None = None,
-    yn: int | None = 1,
-) -> Conversation | None:
-    """通过 ID 获取对话
-
-    Args:
-        db_session: 数据库会话
-        conversation_id: 对话 ID
-        is_draft: 草稿状态过滤，为 None 则不过滤
-        yn: 启用状态过滤，为 None 则不过滤
-
-    Returns:
-        对话对象，不存在则返回 None
-    """
-    stmt = select(Conversation).where(Conversation.id == conversation_id)
-    if is_draft is not None:
-        stmt = stmt.where(Conversation.is_draft == is_draft)
-    if yn is not None:
-        stmt = stmt.where(Conversation.yn == yn)
-    result = await db_session.execute(stmt)
-    return result.scalar_one_or_none()
-
-
 async def create(
     db_session: AsyncSession,
     user_id: int,
@@ -97,6 +71,32 @@ async def touch_update_at(
     await db_session.commit()
 
 
+async def get_by_id(
+    db_session: AsyncSession,
+    conversation_id: int,
+    is_draft: int | None = None,
+    yn: int | None = 1,
+) -> Conversation | None:
+    """通过 ID 获取对话
+
+    Args:
+        db_session: 数据库会话
+        conversation_id: 对话 ID
+        is_draft: 草稿状态过滤，为 None 则不过滤
+        yn: 启用状态过滤，为 None 则不过滤
+
+    Returns:
+        对话对象，不存在则返回 None
+    """
+    stmt = select(Conversation).where(Conversation.id == conversation_id)
+    if is_draft is not None:
+        stmt = stmt.where(Conversation.is_draft == is_draft)
+    if yn is not None:
+        stmt = stmt.where(Conversation.yn == yn)
+    result = await db_session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
 async def ls(
     db_session: AsyncSession,
     user_id: int,
@@ -115,13 +115,10 @@ async def ls(
         对话列表
     """
     base_stmt = select(Conversation).where(Conversation.user_id == user_id)
-
     if is_draft is not None:
         base_stmt = base_stmt.where(Conversation.is_draft == is_draft)
-
     if yn is not None:
         base_stmt = base_stmt.where(Conversation.yn == yn)
-
     stmt = base_stmt.order_by(Conversation.update_at.desc(), Conversation.id.desc())
     result = await db_session.execute(stmt)
     return list(result.scalars().all())

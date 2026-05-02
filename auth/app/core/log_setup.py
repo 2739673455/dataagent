@@ -3,13 +3,12 @@ import sys
 import traceback
 from pathlib import Path
 
-from loguru import logger
-
 from app.core import context
 from app.core.settings import LogCfg, cfg
+from loguru import logger
 
 # 路径常量
-CURRENT_DIR = Path(__file__).parent  # utils
+CURRENT_DIR = Path(__file__).parent
 ROOT_DIR = CURRENT_DIR.parent.parent  # 项目根目录
 
 LOGGER_CONFIGURED = False  # 日志是否已初始化
@@ -31,7 +30,6 @@ def _build_log_json(record):
     }
 
     # 将 extra 中的信息添加到输出
-
     extra = {k: v for k, v in record.get("extra", {}).items() if k != "json"}
     log_json.update(extra)
 

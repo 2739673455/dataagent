@@ -16,18 +16,20 @@ def return_file(
     workspace_dir = runtime.config.get("configurable", {}).get("workspace_dir")
     if workspace_dir is None:
         return {"status": "error", "message": "workspace_dir not found in config"}
-    workspace_dir = Path(workspace_dir).resolve()
-
     if not path:
         return {"status": "error", "message": "path is required"}
 
+    workspace_dir = Path(workspace_dir).resolve()
+
     # 兼容模型把工作区根目录文件写成 /foo.txt 的情况，统一归一化为相对路径
     normalized_path = path.lstrip("/")
+    # 拼接绝对路径
     candidate = (workspace_dir / normalized_path).resolve()
     if workspace_dir not in candidate.parents:
+        # 阻止路径逃逸
         return {"status": "error", "message": "path escapes workspace"}
-
     if not candidate.is_file():
+        # 文件不存在
         return {"status": "error", "message": "file not found"}
 
     return {

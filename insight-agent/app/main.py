@@ -1,56 +1,81 @@
 from contextlib import asynccontextmanager
+from typing import cast
 
 import uvicorn
 from app import routers
-from app.core import database as db
 from app.core import middlewares
-from app.core import redis as redis_util
-from app.core.exceptions.exc_handlers import register_exception_handlers
-from app.core.http_client import close_clients
+from app.core.database import close_db
+from app.core.exceptions import base, exc_handlers
+from app.core.http_client import close_http_client
 from app.core.log_setup import setup_logger
+from app.core.redis import close_redis
 from app.core.settings import cfg
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.types import ExceptionHandler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logger()
     yield
-    await close_clients()
-    await redis_util.close()
-    await db.close_all()
+    await close_http_client()
+    await close_redis()
+    await close_db()
 
 
-app = FastAPI(lifespan=lifespan)
-
-# 追踪中间件
-app.middleware("http")(middlewares.trace.middleware)
-# 认证中间件
-app.middleware("http")(middlewares.auth.middleware)
-# CORS 中间件
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cfg.cors_origins,  # 允许的源列表
-    allow_credentials=True,  # 允许 Authorization headers, Cookies
-    allow_methods=["*"],  # 允许的HTTP方法列表
-    allow_headers=["*"],  # 允许的请求头列表
-)
+def register_middlewares(app: FastAPI) -> None:
+    """注册全局中间件"""
+    app.middleware("http")(middlewares.trace.middleware)
+    app.middleware("http")(middlewares.auth.middleware)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cfg.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
-@app.get("/health")
-async def health():
-    return {"status": "healthy"}
+def register_exception_handlers(app: FastAPI) -> None:
+    """注册全局异常处理器"""
+    app.add_exception_handler(
+        base.ProblemError,
+        cast(ExceptionHandler, exc_handlers.problem_error_handler),
+    )
+    app.add_exception_handler(
+        RequestValidationError,
+        cast(ExceptionHandler, exc_handlers.validation_error_handler),
+    )
+    app.add_exception_handler(
+        HTTPException,
+        cast(ExceptionHandler, exc_handlers.http_exception_handler),
+    )
+    app.add_exception_handler(
+        Exception,
+        cast(ExceptionHandler, exc_handlers.unhandled_exception_handler),
+    )
 
 
-# 原生后端接口，便于直接调试或服务内部调用
-app.include_router(routers.api.router)
+def register_routers(app: FastAPI) -> None:
+    """注册路由"""
+    app.include_router(routers.chat.router, prefix="/api/chat")
+    app.include_router(routers.attachment.router, prefix="/api/chat")
+    app.include_router(routers.admin.router, prefix="/api")
+    routers.frontend.register_frontend(app)
 
-# 注册全局异常处理，统一返回应用约定的错误格式
-register_exception_handlers(app)
 
-# 前端静态部署接入：静态资源、SPA 回退页和 /auth-api 反向代理
-routers.frontend.register_frontend(app)
+def create_app() -> FastAPI:
+    """创建并组装 FastAPI 应用"""
+    app = FastAPI(lifespan=lifespan)
+    register_middlewares(app)
+    register_exception_handlers(app)
+    register_routers(app)
+    return app
+
+
+app = create_app()
 
 if __name__ == "__main__":
     uvicorn.run("app.main:app", host="0.0.0.0", port=cfg.port)
