@@ -1,8 +1,8 @@
 from pathlib import Path
 
 import httpx
-from app.config import CFG
-from app.utils.http_client import get_http_client
+from app.core.settings import cfg
+from app.core.http_client import get_http_client
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -37,7 +37,7 @@ def _matches_prefix(path: str, prefix: str) -> bool:
 )
 async def proxy_auth_api(path: str, request: Request) -> Response:
     # 将前端访问的 /auth-api 请求转发到独立认证服务
-    upstream_url = f"{CFG.auth_service.base_url.rstrip('/')}/{path.lstrip('/')}"
+    upstream_url = f"{cfg.auth_service.base_url.rstrip('/')}/{path.lstrip('/')}"
     client = get_http_client()
     body = await request.body()
     try:

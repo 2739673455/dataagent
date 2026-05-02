@@ -2,23 +2,17 @@
 基于 FastAPI 的认证服务后端，提供用户、角色、权限管理等功能。
 
 ## 快速开始
-### 1. 安装依赖
-```bash
-uv sync
-```
 
-### 2. 填写配置信息
+填写配置信息：  
 [configs/.env](configs/.env) 环境变量  
 [configs/config.yml](configs/config.yml) 应用配置  
 
-### 3. 初始化数据库
 ```bash
-uv run app/init_db.py
-```
+uv sync  # 安装依赖
 
-### 4. 启动服务
-```bash
-uv run -m app.main
+uv run app/init_db.py  # 初始化数据库
+
+uv run -m app.main  # 启动服务
 ```
 
 ## 认证流程

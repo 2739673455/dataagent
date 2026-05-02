@@ -85,7 +85,7 @@ class SQLiteInitializer(DBInitializer):
 
 
 def prepare():
-    db_driver = os.getenv("DB_DRIVER")
+    db_driver = os.environ["DB_DRIVER"]
 
     if db_driver == "sqlite":
         db_sqlite_file = os.environ["DB_SQLITE_FILE"]

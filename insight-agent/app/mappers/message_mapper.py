@@ -4,10 +4,11 @@ import mimetypes
 from datetime import datetime
 from typing import Any, cast
 
-from app.core.agent import get_workspace_dir
+from app.agent.agent import get_workspace_dir
 from app.entities.chat import Message
 from app.schemas import chat_schema
 from langchain.messages import AIMessage, ToolMessage
+from langchain_core.messages import ChatMessage
 from loguru import logger
 
 
@@ -105,27 +106,36 @@ def _build_image_data_url(
 
 
 def langchain_message_to_schema(
-    message: AIMessage | ToolMessage,
+    message: AIMessage | ChatMessage | ToolMessage,
 ) -> chat_schema.MessageSchema | None:
     """将 LangChain 消息转换为 MessageSchema，同时添加时间戳"""
     timestamp = datetime.now()
 
-    # 处理 AIMessage
-    if isinstance(message, AIMessage):
-        # 转换 content 与 tool_calls 为消息片段对象
+    # 处理 AIMessage / ChatMessage
+    if isinstance(message, (AIMessage, ChatMessage)):
         content = message.content
-        assert isinstance(content, str), "AI message content is not string"
-        parts: list[chat_schema.MessagePart] = [
-            chat_schema.TextContent(text=content),
-            *[
+        if isinstance(content, str):
+            parts: list[chat_schema.MessagePart] = [chat_schema.TextContent(text=content)]
+        elif isinstance(content, list):
+            parts = [
+                chat_schema.TextContent(
+                    text=item["text"] if isinstance(item, dict) else str(item)
+                )
+                for item in content
+                if isinstance(item, dict) and item.get("type") == "text"
+            ]
+        else:
+            parts = [chat_schema.TextContent(text=str(content))]
+        # 追加 tool_calls（仅 AIMessage 具有该属性）
+        if isinstance(message, AIMessage) and message.tool_calls:
+            parts.extend(
                 chat_schema.ToolCallPart(
                     tool_call_id=tool_call.get("id") or "",
                     name=tool_call.get("name") or "",
                     args=tool_call.get("args", {}),
                 )
                 for tool_call in message.tool_calls
-            ],
-        ]
+            )
         return chat_schema.MessageSchema(
             role="assistant",
             parts=parts,

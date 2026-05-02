@@ -2,8 +2,8 @@ app:
   # 应用
   host: 0.0.0.0 # 服务主机
   port: 7100 # 服务端口
-  # web_base_url: "" # Web 基础 URL，为空则取当前请求源
-  web_base_url: "http://localhost:7101" # Web 基础 URL，为空则取当前请求源
+  web_base_url: "" # Web 基础 URL，为空则取当前请求源
+  # web_base_url: "http://localhost:7101" # Web 基础 URL，为空则取当前请求源
 
 db:
   # 数据库

@@ -1,55 +1,57 @@
-db: # 数据库
+db:
+  # 数据库
   driver: mysql # 数据库驱动
   configs:
     mysql:
-      host: 127.0.0.1
-      port: 3306
-      user: root
-      password: ${oc.env:APP_DB_PASSWORD}
-      database: chat
+      host: ${oc.env:DB_HOST}
+      port: ${oc.env:DB_PORT}
+      user: ${oc.env:DB_USER}
+      password: ${oc.env:DB_PASSWORD}
+      database: ${oc.env:DB_NAME}
 
-redis: # Redis
+redis:
+  # Redis
   host: 127.0.0.1
   port: 6379
   password: ${oc.env:REDIS_PASSWORD}
   db: 0
 
-log: # 日志
-  to_console: true # 是否输出到控制台
-  to_console_level: INFO # 日志级别(DEBUG, INFO, WARNING, ERROR, CRITICAL)
-  to_file: true # 是否输出到文件
-  to_file_level: INFO # 日志级别(DEBUG, INFO, WARNING, ERROR, CRITICAL)
-  log_dir: app # 日志目录
+log:
+  # 日志
+  level: INFO # 日志级别 (DEBUG, INFO, WARNING, ERROR, CRITICAL)
   max_file_size: 10MB # 单个日志文件最大大小
 
 lm_config:
-  active: qwen3.5-397b-a17b
+  active: deepseek-v4-flash-openrouter
   models:
-    minimax-m2.5:
-      model: minimax/minimax-m2.5
+    deepseek-v4-flash-siliconflow:
+      model: deepseek-ai/DeepSeek-V4-Flash
+      base_url: https://api.siliconflow.cn/v1
+      api_key: ${oc.env:SILICONFLOW_API_KEY}
+      params: {}
+      profile:
+        max_input_tokens: 1048576 # 模型上下文长度，用于计算对话压缩阈值
+    deepseek-v4-flash-openrouter:
+      model: deepseek/deepseek-v4-flash
       base_url: https://openrouter.ai/api/v1
       api_key: ${oc.env:OPENROUTER_API_KEY}
       params: {}
       profile:
-        max_input_tokens: 196608 # 模型上下文长度，用于计算对话压缩阈值
-    qwen3.5-397b-a17b:
-      model: qwen/qwen3.5-397b-a17b
-      base_url: https://openrouter.ai/api/v1
-      api_key: ${oc.env:OPENROUTER_API_KEY}
-      params: {}
-      profile:
-        max_input_tokens: 262144 # 模型上下文长度，用于计算对话压缩阈值
+        max_input_tokens: 1048576 # 模型上下文长度，用于计算对话压缩阈值
 
-mcp: # MCP 工具
+mcp:
+  # MCP 工具
   tavily:
     transport: streamable_http
     url: https://mcp.tavily.com/mcp/?tavilyApiKey=${oc.env:TAVILY_API_KEY}
 
-auth_service: # 认证服务
+auth_service:
+  # 认证服务
   base_url: http://localhost:7100 # 认证服务url
   introspection: /api/introspection # 校验访问令牌
 
-data_agent: # 数据查询 Agent
+data_agent:
+  # 数据查询 Agent
   base_url: http://localhost:8000 # 数据查询 Agent url
   query: /api/query
 

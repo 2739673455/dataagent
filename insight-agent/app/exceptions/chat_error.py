@@ -1,6 +1,6 @@
-from app.exceptions.base import NotFoundError
+from app.core.exceptions.base import NotFoundError
 
 
 class ConversationNotFound(NotFoundError):
-    code = 1401
-    message = "对话不存在"
+    type = "conversation-not-found"
+    title = "对话不存在"

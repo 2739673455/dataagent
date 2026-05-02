@@ -9,7 +9,7 @@ from app.application.shared.token_issuer import TokenIssuer
 from app.application.user.use_cases import create_user_use_cases
 from app.core import cfg, close_db, get_db_session_context
 from app.core.exceptions import base, exc_handlers
-from app.core.logging import setup_logger
+from app.core.log_setup import setup_logger
 from app.core.middlewares import trace
 from app.infrastructure.email_sender import SmtpEmailSender
 from app.infrastructure.repos.auth_code_repo import AuthCodeRepo

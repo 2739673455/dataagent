@@ -6,7 +6,7 @@ from app.application.shared.schemas import SessionCookieResult
 from app.application.shared.session_creator import SessionCreator
 from app.application.shared.token_issuer import TokenIssuer
 from app.core.settings import AuthCfg
-from app.core.types import DBSessionContextFactory
+from app.core.database import DBSessionContextFactory
 from app.domain.errors import (
     InvalidAuthorizationRequestError,
     InvalidCredentialsError,

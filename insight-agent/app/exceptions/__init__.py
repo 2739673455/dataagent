@@ -1,1 +1,3 @@
-from . import auth_error, base, chat_error, handlers
+from . import auth_error, chat_error
+
+__all__ = ["auth_error", "chat_error"]

@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from app.core.types import DBSessionContextFactory
+from app.core.database import DBSessionContextFactory
 from app.domain.entities import Permission, Role, User
 from app.domain.errors import (
     EmailAlreadyExistsError,

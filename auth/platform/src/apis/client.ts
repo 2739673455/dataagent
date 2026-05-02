@@ -1,6 +1,6 @@
 import ky, { type Options } from "ky";
 import { getAccessToken, handleUnauthorizedError } from "@/auth";
-import { joinUrl } from "@/utils/url";
+import { joinUrl } from "@/auth-client";
 
 type ApiClientConfig = Omit<Options, "json" | "searchParams" | "method"> & {
 	params?: Record<string, string | number | boolean | undefined>;

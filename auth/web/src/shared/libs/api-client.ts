@@ -1,8 +1,7 @@
 import ky, { type Options } from "ky";
-import { clearAccessToken, getAccessToken, useAuthStore } from "@/features/auth";
-import { buildAuthorizeApiUrl } from "@/features/auth/urls";
-import { AUTH_API_BASE_URL, CLIENT_ID } from "@/shared/config/settings";
-import { joinUrl } from "@/shared/libs/url";
+import { getAccessToken, handleUnauthorizedError } from "@/features/auth";
+import { AUTH_API_BASE_URL } from "@/shared/config/settings";
+import { joinUrl } from "@/features/auth-client";
 
 type ApiClientConfig = Omit<Options, "json" | "searchParams" | "method"> & {
   params?: Record<string, string | number | boolean | undefined>;
@@ -27,17 +26,11 @@ export class ApiError extends Error {
   }
 }
 
-// 统一处理 401 未授权响应，清理状态后重新发起登录
-function handleUnauthorizedError(error: unknown): boolean {
+function onUnauthorized(error: unknown): boolean {
   if (!(error instanceof ApiError) || error.response.status !== 401) {
     return false;
   }
-
-  clearAccessToken();
-  useAuthStore.getState().clearAuth();
-  void buildAuthorizeApiUrl(CLIENT_ID, `${window.location.pathname}${window.location.search}`).then(
-    (url) => window.location.replace(url)
-  );
+  handleUnauthorizedError();
   return true;
 }
 
@@ -94,7 +87,7 @@ async function request<T>(
 
   if (!isValid) {
     const error = new ApiError(response, responseData);
-    handleUnauthorizedError(error);
+    onUnauthorized(error);
     throw error;
   }
 

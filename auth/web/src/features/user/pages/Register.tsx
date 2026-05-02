@@ -4,12 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { buildAuthorizeApiUrl, buildAuthorizeApiUrlFromParams } from "@/features/auth";
+import { buildAuthorizeUrl, buildAuthorizeApiUrlFromParams } from "@/features/auth";
 import { Button } from "@/shared/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/components/ui/card";
 import { Input } from "@/shared/components/ui/input";
 import { Label } from "@/shared/components/ui/label";
-import { CLIENT_ID, ROUTE_PATHS } from "@/shared/config/settings";
+import { ROUTE_PATHS } from "@/shared/config/settings";
 import { handleApiError } from "@/shared/libs/error";
 import { type RegisterFormData, registerSchema } from "@/features/user/schemas";
 import { userApi } from "@/features/user/api";
@@ -80,7 +80,7 @@ export default function Register() {
       });
       const authorizeUrl = authQuery
         ? buildAuthorizeApiUrlFromParams(searchParams)
-        : await buildAuthorizeApiUrl(CLIENT_ID, ROUTE_PATHS.home);
+        : await buildAuthorizeUrl(ROUTE_PATHS.home);
       window.location.replace(authorizeUrl);
     } catch (error: unknown) {
       handleApiError(error, "注册失败");

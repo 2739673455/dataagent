@@ -1,7 +1,8 @@
 from collections.abc import AsyncIterator
 
 import openai
-from app.core.agent import get_agent, get_workspace_dir
+from app.agent.agent import get_agent, get_workspace_dir
+from app.core.database import get_app_db_session
 from app.entities.chat import ContextCompaction
 from app.mappers import message_mapper
 from app.repositories import context_compaction_repo, conversation_repo, message_repo
@@ -9,6 +10,52 @@ from app.schemas import chat_schema
 from langchain_core.runnables import RunnableConfig
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def load_conversation_context(
+    conversation_id: int, user_id: int
+) -> tuple[list[dict], int, bool, bool] | None:
+    """加载会话初始上下文：校验归属、恢复历史消息、应用上下文压缩
+
+    返回 (messages, cur_context_seq, is_draft, has_applied_summary)，
+    会话不存在或不属于当前用户时返回 None。
+    """
+    async with get_app_db_session() as db_session:
+        # 检查对话是否存在且属于当前用户
+        conversation = await conversation_repo.get_by_id(db_session, conversation_id)
+        if conversation is None or conversation.user_id != user_id:
+            return None
+
+        is_draft = conversation.is_draft == 1
+
+        # 从数据库加载历史消息并转为运行时格式
+        message_entities = await message_repo.ls(db_session, conversation_id)
+        # 获取最后一个消息的 context_seq；若没有历史消息，则首条消息从 0 开始
+        cur_context_seq = message_entities[-1].context_seq if message_entities else -1
+        messages = [
+            message_mapper.schema_to_langchain_message(
+                message_mapper.entity_to_schema(i),
+                user_id=user_id,
+                conversation_id=conversation_id,
+            )
+            for i in message_entities
+        ]
+
+        # 从数据库加载最新压缩上下文
+        context_compaction_entity = (
+            await context_compaction_repo.get_latest_by_conversation_id(
+                db_session, conversation_id
+            )
+        )
+        has_applied_summary = False
+        # 如果存在压缩上下文，则替换历史消息前缀
+        if context_compaction_entity:
+            messages[: context_compaction_entity.end_seq] = [
+                {"role": "user", "content": context_compaction_entity.summary_message}
+            ]
+            has_applied_summary = True
+
+    return messages, cur_context_seq, is_draft, has_applied_summary
 
 
 async def _add_message(
@@ -45,11 +92,10 @@ async def stream_chat(
 
     await _add_message(db_session, user_id, conversation_id, messages, user_message)
 
-    # 当前已落库的最后一条消息的上下文顺序号（0-based）
     cur_context_seq = user_message.context_seq or 0
-    # 压缩后的纯文本摘要，用于替换运行时上下文并落库
-    summary_message = ""
-    # 防止同一轮中相同 cutoff_index 被重复写入 context_compaction
+    # 收集本轮产生的压缩记录，流结束后统一写入，避免消息写入失败时压缩记录成为孤儿
+    pending_compactions: list[ContextCompaction] = []
+    # 防止同一轮中相同 cutoff_index 被重复收集
     last_saved_cutoff_index = -1
     # 绝对顺序号与运行时下标的偏移量，用于将 cutoff_index 换算为 end_seq
     seq_offset = cur_context_seq - (len(messages) - 1)
@@ -89,15 +135,16 @@ async def stream_chat(
                 applied_cutoff_index = cutoff_index
                 has_applied_summary = True
 
-                # 将压缩上下文存入数据库
+                # 收集压缩记录，流结束后统一写入
                 if cutoff_index != last_saved_cutoff_index:
                     end_seq = seq_offset + cutoff_index
-                    compaction = ContextCompaction(
-                        conversation_id=conversation_id,
-                        end_seq=end_seq,
-                        summary_message=summary_message,
+                    pending_compactions.append(
+                        ContextCompaction(
+                            conversation_id=conversation_id,
+                            end_seq=end_seq,
+                            summary_message=summary_message,
+                        )
                     )
-                    await context_compaction_repo.create(db_session, compaction)
                     last_saved_cutoff_index = cutoff_index
 
             responses = message_mapper.agent_chunk_to_schemas(chunk)
@@ -113,8 +160,14 @@ async def stream_chat(
                 # 返回 Agent 响应
                 yield response
 
+        # 流结束后统一写入收集到的压缩记录
+        for compaction in pending_compactions:
+            await context_compaction_repo.create(db_session, compaction)
+
     except openai.NotFoundError as e:
-        if "No endpoints found that support image input" not in e.message:
+        if "No endpoints found that support image input" not in getattr(
+            e, "message", ""
+        ):
             raise
 
         # 处理模型不支持图片输入的情况
@@ -138,5 +191,4 @@ async def stream_chat(
             finish_reason="stop",
             context_seq=cur_context_seq,
         )
-        await _add_message(db_session, user_id, conversation_id, messages, response)
         yield response

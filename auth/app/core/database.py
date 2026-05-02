@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, AsyncIterator
 
 from app.core.settings import MySQLCfg, SQLiteCfg
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+DBSessionContextFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
 ENGINE_KWARGS_MAP = {
     "mysql": {

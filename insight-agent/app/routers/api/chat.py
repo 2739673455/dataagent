@@ -1,3 +1,4 @@
+import asyncio
 import json
 import mimetypes
 import re
@@ -6,7 +7,9 @@ import shutil
 from typing import Annotated
 from uuid import uuid4
 
-from app.core.agent import get_workspace_dir
+from app.agent.agent import get_workspace_dir
+from app.core import context
+from app.core.database import get_app_db, get_app_db_session
 from app.exceptions import chat_error
 from app.mappers import message_mapper
 from app.repositories import (
@@ -17,8 +20,6 @@ from app.repositories import (
 )
 from app.schemas import chat_schema
 from app.services import chat_service
-from app.utils import context
-from app.utils.db import get_app_db
 from fastapi import (
     APIRouter,
     Depends,
@@ -146,7 +147,11 @@ async def api_delete_conversations(
             db_session, conversation_id, yn=0
         )
         # 删除对话对应工作区
-        shutil.rmtree(get_workspace_dir(user_id, conversation_id), ignore_errors=True)
+        await asyncio.to_thread(
+            shutil.rmtree,
+            get_workspace_dir(user_id, conversation_id),
+            ignore_errors=True,
+        )
     logger.info(f"Delete conversations: conversation_ids={body.conversation_ids}")
 
 
@@ -189,7 +194,6 @@ async def api_create_websocket_token(
 async def api_websocket_chat(
     websocket: WebSocket,
     conversation_id: int,
-    db_session: Annotated[AsyncSession, Depends(get_app_db)],
 ):
     """WebSocket 聊天接口"""
     # 检查 WebSocket 临时令牌(从请求参数中获取)
@@ -210,47 +214,18 @@ async def api_websocket_chat(
     await websocket.accept()
     logger.info(f"WebSocket connected: {conversation_id=}")
 
-    # 检查对话是否存在且属于当前用户，如不是则关闭连接
-    conversation = await conversation_repo.get_by_id(db_session, conversation_id)
-    if conversation is None or conversation.user_id != user_id:
+    # 加载会话初始上下文
+    ctx = await chat_service.load_conversation_context(conversation_id, user_id)
+    if ctx is None:
         await websocket.send_json(
             chat_schema.WebSocketErrorResponse(
-                content=chat_error.ConversationNotFound.message
+                content=chat_error.ConversationNotFound.title
             ).model_dump(mode="json")
         )
         await websocket.close(code=4404)
         logger.info(f"WebSocket disconnected: {conversation_id=}")
         return
-
-    # 从数据库加载历史消息
-    message_entities = await message_repo.ls(db_session, conversation_id)
-    # 获取最后一个消息的 context_seq；若没有历史消息，则首条消息从 0 开始
-    cur_context_seq = message_entities[-1].context_seq if message_entities else -1
-    # 将历史消息转换为 LangChain Message
-    messages = [
-        message_mapper.schema_to_langchain_message(
-            message_mapper.entity_to_schema(i),
-            user_id=user_id,
-            conversation_id=conversation_id,
-        )
-        for i in message_entities
-    ]
-    logger.info(
-        f"Load history messages: {conversation_id=}, message_count={len(messages)}"
-    )
-
-    # 从数据库加载最新压缩上下文
-    context_compaction_entity = (
-        await context_compaction_repo.get_latest_by_conversation_id(
-            db_session, conversation_id
-        )
-    )
-    if context_compaction_entity:
-        # 将历史消息替换为压缩上下文
-        messages[: context_compaction_entity.end_seq] = [
-            {"role": "user", "content": context_compaction_entity.summary_message}
-        ]
-        logger.info(f"Load context_compaction: {conversation_id=}")
+    messages, cur_context_seq, is_draft, has_applied_summary = ctx
 
     try:
         while True:
@@ -278,23 +253,35 @@ async def api_websocket_chat(
                 )
                 continue
 
-            # 将草稿对话修改为正式对话
-            if conversation.is_draft == 1:
-                await conversation_repo.update(db_session, conversation, is_draft=0)
+            # 每轮对话使用独立的 DB 会话，避免长连接占用连接池
+            async with get_app_db_session() as db_session:
+                # 将草稿对话修改为正式对话
+                if is_draft:
+                    conversation = await conversation_repo.get_by_id(
+                        db_session, conversation_id
+                    )
+                    if conversation:
+                        await conversation_repo.update(
+                            db_session, conversation, is_draft=0
+                        )
+                        is_draft = False
 
-            # 调用 Agent
-            async for message in chat_service.stream_chat(
-                db_session,
-                user_id,
-                conversation_id,
-                messages,
-                body.message,
-                has_applied_summary=context_compaction_entity is not None,
-            ):
-                cur_context_seq += 1
-                event = chat_schema.WebSocketMessageResponse(message=message)
-                # 发送 WebSocket 响应
-                await websocket.send_json(event.model_dump(mode="json"))
+                # 调用 Agent 流式生成回复
+                async for message in chat_service.stream_chat(
+                    db_session,
+                    user_id,
+                    conversation_id,
+                    messages,
+                    body.message,
+                    has_applied_summary=has_applied_summary,
+                ):
+                    cur_context_seq += 1
+                    event = chat_schema.WebSocketMessageResponse(message=message)
+                    # 发送 WebSocket 响应
+                    await websocket.send_json(event.model_dump(mode="json"))
+
+                # 本轮对话结束后，后续轮次的 context_seq 从上一个值递增
+                has_applied_summary = True
 
     # 客户端断开连接
     except WebSocketDisconnect:

@@ -17,7 +17,7 @@ from app.presentation.oauth.schemas import (
     LoginRequest,
     TokenResponse,
 )
-from fastapi import APIRouter, Cookie, Depends, Form, Header, Query, Response
+from fastapi import APIRouter, Cookie, Depends, Form, Header, Query, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from loguru import logger
 
@@ -66,6 +66,7 @@ def create_router(
 
     @router.get("/authorize")
     async def authorize(
+        request: Request,
         response_type: Annotated[str | None, Query()] = None,
         client_id: Annotated[str | None, Query()] = None,
         redirect_uri: Annotated[str | None, Query()] = None,
@@ -75,7 +76,7 @@ def create_router(
         session_id: Annotated[str | None, Cookie(alias=cookie_config.name)] = None,
     ) -> Response:
         """OAuth 授权端点：校验请求并重定向（含授权码或回登录页）"""
-        base_url = app_config.web_base_url
+        base_url = app_config.web_base_url or str(request.base_url).rstrip("/")
         auth_params = {
             k: v
             for k, v in {

@@ -1,3 +1,5 @@
+// localStorage 中访问令牌的 key
+export const ACCESS_TOKEN_STORAGE_KEY = "auth:access-token";
 // 在认证中心注册的 client_id
 export const CLIENT_ID = "auth";
 // 认证中心 API 基路径

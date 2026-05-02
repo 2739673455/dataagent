@@ -1,0 +1,42 @@
+from pathlib import Path
+from typing import Annotated, Any
+
+from langchain.tools import tool
+from langgraph.prebuilt.tool_node import ToolRuntime
+
+
+@tool
+def return_file(
+    runtime: ToolRuntime,
+    path: Annotated[str, "相对于当前工作区的文件路径"],
+    raw_name: Annotated[str | None, "返回给用户展示的原始文件名，可选"] = None,
+) -> dict[str, Any]:
+    """将当前工作区中的某个文件返回给用户"""
+    # 获取工作区目录
+    workspace_dir = runtime.config.get("configurable", {}).get("workspace_dir")
+    if workspace_dir is None:
+        return {"status": "error", "message": "workspace_dir not found in config"}
+    workspace_dir = Path(workspace_dir).resolve()
+
+    if not path:
+        return {"status": "error", "message": "path is required"}
+
+    # 兼容模型把工作区根目录文件写成 /foo.txt 的情况，统一归一化为相对路径
+    normalized_path = path.lstrip("/")
+    candidate = (workspace_dir / normalized_path).resolve()
+    if workspace_dir not in candidate.parents:
+        return {"status": "error", "message": "path escapes workspace"}
+
+    if not candidate.is_file():
+        return {"status": "error", "message": "file not found"}
+
+    return {
+        # 操作状态标识，Agent 可据此判断文件返回是否成功
+        "status": "success",
+        # 人类可读的状态描述
+        "message": "file returned",
+        # 相对于工作区的文件路径，前端可拼接下载 URL
+        "path": normalized_path,
+        # 展示给用户的原始文件名，未提供时回退为路径中的文件名
+        "raw_name": raw_name or Path(normalized_path).name,
+    }

@@ -1,40 +1,17 @@
-# 项目配置
-
-## 后端配置
-
-[configs/config.yml](configs/config.yml)
-- `db`：MySQL 连接信息
-- `redis`：Redis 连接信息
-- `lm_config`：大模型与推理参数
-- `mcp`：外部 MCP 工具地址
-- `auth_service`：认证服务地址与 introspection 接口
-- `data_agent`：数据查询服务地址
-- `cors_origins`：允许跨域的来源列表
-- `port`：Insight Agent 后端监听端口，当前默认 `7300`
-
-[configs/.env](configs/.env)
-- `APP_DB_PASSWORD`
-- `REDIS_PASSWORD`
-- `TAVILY_API_KEY`
-
-## 前端配置
-
-[fd/.env](fd/.env)
-- `VITE_DEV_SERVER_PORT`：本地 Vite 开发服务器端口
-- `VITE_DEV_APP_PROXY`：本地开发代理到 Insight Agent 后端的地址
-- `VITE_DEV_AUTH_API_PROXY`：本地开发代理到认证服务的地址
-
-[fd/src/config/constants.ts](fd/src/config/constants.ts)
-- 项目常量配置
-
-前端构建产物默认放在 `app/static/dist`，后端启动后可直接提供静态页面。
-
 # 快速开始
+
+后端配置：  
+[configs/.env](configs/.env)  
+[configs/config.yml](configs/config.yml)  
+
+前端配置：  
+[fd/.env](fd/.env)  
+[fd/src/config/constants.ts](fd/src/config/constants.ts)  
 
 ```bash
 uv sync # 安装依赖
 
-uv run -m app.init_db # 初始化数据库
+uv run app/init_db.py # 初始化数据库
 
 uv run -m app.main # 启动服务
 ```

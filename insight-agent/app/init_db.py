@@ -1,27 +1,29 @@
 """初始化数据库"""
 
 import asyncio
-import sys
+import os
 from pathlib import Path
 
 import asyncmy
+import dotenv
 from loguru import logger
 from rich.console import Console
 from rich.progress import BarColumn, Progress, TextColumn
 from sqlacodegen.generators import DeclarativeGenerator
 from sqlalchemy import MetaData, create_engine
 
-from . import config
+CURRENT_DIR = Path(__file__).parent
+ROOT_DIR = CURRENT_DIR.parent  # 项目根目录
+dotenv.load_dotenv(ROOT_DIR / "configs" / ".env")
 
-# 路径常量
-CURRENT_DIR = Path(__file__).parent  # app
-UP1_DIR = CURRENT_DIR.parent  # 项目根目录
+
+def _write_code(output_path: Path, code: str) -> None:
+    """同步写入生成的模型代码到文件"""
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(code)
 
 
 class DBInit:
-    def __init__(self, cfg):
-        self.config = None
-        self.db_url = ""
 
     async def delete_db(self, db_name: str):
         """删除数据库"""
@@ -48,22 +50,20 @@ class DBInit:
         raise NotImplementedError
 
     async def gen_tb_model(self, output_path: Path, db_url: str):
-        """生成 SQLAlchemy 表模型"""
-        # 创建 SQLAlchemy 数据库引擎
+        """通过反射数据库结构自动生成 SQLAlchemy ORM 模型代码"""
         engine = create_engine(db_url)
-        # 创建元数据对象并反射数据库结构
-        metadata = MetaData()
-        metadata.reflect(engine)
-        # 使用 DeclarativeGenerator 生成模型代码
-        generator = DeclarativeGenerator(metadata, engine, [])
-        code = generator.generate()
-        # 将生成的代码写入文件
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(code)
+        try:
+            metadata = MetaData()
+            metadata.reflect(engine)
+            generator = DeclarativeGenerator(metadata, engine, [])
+            code = generator.generate()
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(_write_code, output_path, code)
+        finally:
+            engine.dispose()
 
     async def init_db(self, db_sql_orm: list[tuple], max_workers: int = 5):
-        """初始化数据库并导入数据"""
+        """并发执行建库、导表、生成模型全流程，通过进度条展示进度"""
         logger.info(f"开始初始化数据库 {[db_name for db_name, _, _ in db_sql_orm]}")
         with Progress(
             TextColumn("[progress.description]{task.description}"),
@@ -80,7 +80,8 @@ class DBInit:
                 """处理单个数据库的异步任务"""
                 async with semaphore:
                     try:
-                        await self.delete_db(db_name)
+                        if await self.check_db_exists(db_name):
+                            await self.delete_db(db_name)
                         await self.create_db(db_name)
                         await self.exec_sql_file(db_name, sql_file_path)
                         db_url = self.get_sync_db_url(db_name)
@@ -101,57 +102,19 @@ class DBInit:
         logger.info("数据库初始化完成")
 
 
-class MyInit(DBInit):
-    """MySQL 数据库初始化"""
+class MyInitializer(DBInit):
+    """MySQL 数据库初始化器，负责建库、导表、模型生成"""
 
-    def __init__(self, cfg: config.MySQLCfg):
-        self.config = cfg
+    def __init__(self, host: str, port: int, user: str, password: str):
+        """初始化 MySQL 连接配置"""
+
+        self._auth = f"{user}:{password}@{host}:{port}"
         self.conn_conf = {
-            "host": cfg.host,
-            "port": cfg.port,
-            "user": cfg.user,
-            "password": cfg.password,
+            "host": host,
+            "port": int(port),
+            "user": user,
+            "password": password,
         }
-
-    async def delete_db(self, db_name: str):
-        """删除数据库"""
-        conn = await asyncmy.connect(**self.conn_conf, autocommit=True)
-        try:
-            async with conn.cursor() as cur:
-                await cur.execute(f"DROP DATABASE IF EXISTS `{db_name}`")
-        except Exception as e:
-            logger.exception(f"数据库 {db_name} 删除失败: {e}")
-        finally:
-            conn.close()
-
-    async def create_db(self, db_name: str):
-        conn = await asyncmy.connect(**self.conn_conf, autocommit=True)
-        try:
-            async with conn.cursor() as cur:
-                await cur.execute(f"CREATE DATABASE `{db_name}` CHARACTER SET utf8mb4")
-        except Exception as e:
-            logger.exception(f"数据库 {db_name} 创建失败: {e}")
-        finally:
-            conn.close()
-
-    async def exec_sql_file(self, db_name: str, sql_file_path: Path):
-        with open(sql_file_path, "r", encoding="utf-8") as f:
-            sql = f.read()
-        conn = await asyncmy.connect(**self.conn_conf, db=db_name)
-        try:
-            await conn.begin()
-            async with conn.cursor() as cur:
-                await cur.execute(sql)
-        except Exception as e:
-            logger.exception(f"{sql_file_path.stem} 执行sql失败: {e}")
-        finally:
-            conn.close()
-
-    def get_sync_db_url(self, db_name: str):
-        return f"mysql+pymysql://{self.config.user}:{self.config.password}@{self.config.host}:{self.config.port}/{db_name}"
-
-    def get_async_db_url(self, db_name: str):
-        return f"mysql+asyncmy://{self.config.user}:{self.config.password}@{self.config.host}:{self.config.port}/{db_name}"
 
     async def check_db_exists(self, db_name: str) -> bool:
         """检查 MySQL 数据库是否存在"""
@@ -168,38 +131,80 @@ class MyInit(DBInit):
             finally:
                 conn.close()
         except Exception as e:
-            logger.warning(f"检查数据库存在性失败: {e}")
-            return False
+            logger.exception(f"检查数据库存在性失败: {e}")
+            raise
+
+    async def delete_db(self, db_name: str):
+        """删除数据库"""
+        conn = await asyncmy.connect(**self.conn_conf, autocommit=True)
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(f"DROP DATABASE `{db_name}`")
+        except Exception as e:
+            logger.exception(f"数据库 {db_name} 删除失败: {e}")
+            raise
+        finally:
+            conn.close()
+
+    async def create_db(self, db_name: str):
+        """创建数据库"""
+        conn = await asyncmy.connect(**self.conn_conf, autocommit=True)
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(f"CREATE DATABASE `{db_name}` CHARACTER SET utf8mb4")
+        except Exception as e:
+            logger.exception(f"数据库 {db_name} 创建失败: {e}")
+            raise
+        finally:
+            conn.close()
+
+    async def exec_sql_file(self, db_name: str, sql_file_path: Path):
+        """读取 SQL 文件并在目标库中执行"""
+        with open(sql_file_path, "r", encoding="utf-8") as f:
+            sql = f.read()
+        conn = await asyncmy.connect(**self.conn_conf, db=db_name)
+        try:
+            await conn.begin()
+            async with conn.cursor() as cur:
+                await cur.execute(sql)
+            await conn.commit()
+        except Exception as e:
+            await conn.rollback()
+            logger.exception(f"{sql_file_path.stem} 执行sql失败: {e}")
+            raise
+        finally:
+            conn.close()
+
+    def get_sync_db_url(self, db_name: str):
+        """获取同步数据库连接 URL（用于 sqlacodegen 反射）"""
+        return f"mysql+pymysql://{self._auth}/{db_name}"
+
+    def get_async_db_url(self, db_name: str):
+        """获取异步数据库连接 URL"""
+        return f"mysql+asyncmy://{self._auth}/{db_name}"
 
 
 def prepare():
-    """获取(数据库名,SQL脚本文件路径,表模型输出路径)元组"""
-    DB_DRIVER = config.CFG.db.driver
-    DB_CONFIG = config.CFG.db.configs[DB_DRIVER]
-
-    if isinstance(DB_CONFIG, config.MySQLCfg):
-        # 配置数据库连接
-        db_init = MyInit(DB_CONFIG)
+    """根据环境变量创建数据库初始化器并收集 SQL 文件与模型输出路径"""
+    db_driver = os.environ["DB_DRIVER"]
+    if db_driver == "mysql":
+        db_initializer = MyInitializer(
+            host=os.environ["DB_HOST"],
+            port=int(os.environ["DB_PORT"]),
+            user=os.environ["DB_USER"],
+            password=os.environ["DB_PASSWORD"],
+        )
     else:
-        logger.error(f"不支持的数据库驱动: {DB_DRIVER}")
-        sys.exit(1)
+        logger.error(f"不支持的数据库驱动: {db_driver}")
+        raise ValueError(f"不支持的数据库驱动: {db_driver}")
 
-    # SQL 文件目录
-    sql_dir = UP1_DIR / "sql" / DB_DRIVER
-    # 获取所有 SQL 文件
-    sql_files = list(sql_dir.glob("*.sql"))
-    # 表模型输出目录
+    sql_dir = ROOT_DIR / "sql" / db_driver
     orm_dir = CURRENT_DIR / "entities"
-    # db_name, sql_file_path, output_path
-    db_sql_orm = []
-    for f in sql_files:
-        db_name = f.stem
-        sql_file_path = f
-        output_path = orm_dir / f"{f.stem}.py"
-        db_sql_orm.append((db_name, sql_file_path, output_path))
-    return db_init, db_sql_orm
+    sql_files = list(sql_dir.glob("*.sql"))
+    db_sql_orm = [(f.stem, f, orm_dir / f"{f.stem}.py") for f in sql_files]
+    return db_initializer, db_sql_orm
 
 
 if __name__ == "__main__":
-    db_init, db_sql_orm = prepare()
-    asyncio.run(db_init.init_db(db_sql_orm))
+    db_initializer, db_sql_orm = prepare()
+    asyncio.run(db_initializer.init_db(db_sql_orm))

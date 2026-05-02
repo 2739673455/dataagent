@@ -5,9 +5,7 @@
 ### 1.1 功能介绍
 `insight-agent` 是一个面向归因分析场景的智能体应用。它主要服务于业务分析、经营诊断和问题定位这类需要“先提出问题，再逐步收集证据，最后形成分析结论”的工作。和普通问答式聊天应用不同，这个项目强调的不只是模型给出一句回答，而是让系统能够围绕一个真实分析任务持续推进，直到生成阶段性结论、分析材料和可交付结果。
 
-在很多真实业务场景里，用户面对的问题往往不是一句话就能回答清楚的。比如某个指标为什么下滑、某个业务区域为什么异常、某次活动为什么效果不达预期，这些问题通常都需要先拆解，再查数，再结合上下文做判断，最后把结果整理成可复用的输出。`insight-agent` 做的事情，就是把这条原本依赖人工来回切换工具、查找信息、整理文档的链路，尽量收拢进一次连续的智能分析流程里。
-
-对使用者来说，它的价值不只是“更快拿到一个答案”，而是把分析过程本身也沉淀下来。用户可以保留历史会话、继续追问前面的结论、复用已经上传的附件和已经生成的中间产物，从而把一次分析逐渐发展成一个可持续推进的工作过程。
+同时，用户可以保留历史会话、继续追问前面的结论、复用已经上传的附件和已经生成的中间产物，从而把一次分析逐渐发展成一个可持续推进的工作过程。
 
 ![Insight Agent 页面效果与分析交付示例](./assets/1.1_1.png)
 
@@ -24,7 +22,6 @@
 
 ### 1.3 技术栈与依赖
 - 后端：Python、FastAPI、SQLAlchemy、Redis、DeepAgents、LangChain 相关组件
-- 前端：React、Vite、TypeScript、Zustand、shadcn/ui
 - 数据与存储：MySQL、Redis
 - 外部依赖：认证服务、Data Agent、MCP 服务
 
@@ -72,6 +69,7 @@ flowchart TD
         AUTH[认证服务]
         DATA[Data Agent]
         MCP_SVC[MCP 服务]
+        LLM[LLM 服务]
         MYSQL[MySQL]
         REDIS[Redis]
     end
@@ -96,6 +94,7 @@ flowchart TD
     DA --> WS_DIR
     MW --> AUTH
     TOOL --> DATA
+    MODEL --> LLM
     MCP --> MCP_SVC
     REPO --> MYSQL
     REPO --> REDIS
@@ -110,14 +109,14 @@ flowchart TD
     class APP,ROUTER,MW,EX,STATIC app
     class SERVICE,REPO,MAPPER,SCHEMA biz
     class DA,MODEL,TOOL,SKILL,MCP,WS_DIR agent
-    class AUTH,DATA,MCP_SVC,MYSQL,REDIS dep
+    class AUTH,DATA,MCP_SVC,LLM,MYSQL,REDIS dep
 ```
 
 - 交互层：前端页面通过 HTTP 与 WebSocket 调用后端接口
 - 应用层：FastAPI 应用负责路由分发、中间件处理、异常处理和静态资源托管
 - 业务层：Service、Repository、Mapper、Schema 共同完成会话管理、消息持久化与协议转换
 - Agent 层：`deepagents` 负责组织模型、工具、Skill、MCP 工具和工作区运行时
-- 外部依赖层：认证服务、Data Agent、MCP 服务、MySQL、Redis 为系统提供鉴权、数据、扩展能力和存储支持
+- 外部依赖层：认证服务、Data Agent、MCP 服务、LLM 服务、MySQL、Redis 为系统提供鉴权、数据、扩展能力、模型推理和存储支持
 
 ### 1.5 一次完整请求的生命周期
 ```mermaid
@@ -132,34 +131,32 @@ sequenceDiagram
     participant DATA as Data Agent
 
     U->>FE: 发起会话消息
-    FE->>API: HTTP 请求(Authorization)
-    API->>AUTH: 校验访问令牌
+    FE->>API: POST /ws-token (Authorization)
+    API->>AUTH: (中间件) 校验访问令牌
     AUTH-->>API: 返回用户身份
-
-    FE->>API: 申请 WebSocket 临时 Token
     API->>REDIS: 写入临时 Token
     API-->>FE: 返回 websocket_token
 
     FE->>API: 建立 WebSocket 连接
     API->>REDIS: 校验并消费 websocket_token
-    API->>DB: 加载历史消息、附件、摘要上下文
+    API->>DB: 加载历史消息与摘要上下文
     DB-->>API: 返回会话上下文
 
     API->>AGENT: 转换消息并发起聊天
     AGENT->>DATA: 按需调用查数工具
     DATA-->>AGENT: 返回结果文件或数据
-    AGENT-->>API: 输出模型消息/工具消息
+    AGENT-->>API: 流式输出模型消息/工具消息/摘要事件
 
     API-->>FE: 流式推送消息和附件
-    API->>DB: 持久化消息与上下文压缩结果
+    API->>DB: 逐条持久化消息
+    API->>DB: 持久化上下文压缩结果
 ```
 
-- 用户在前端发起一次会话消息，请求先经过认证、路由和上下文准备
-- 普通 HTTP 请求通过请求头携带访问令牌，WebSocket 链路先通过 HTTP 申请临时 Token 再建立连接
-- 后端加载历史消息、附件信息和必要的摘要上下文，并转换成 Agent 可消费的消息格式
+- 用户在前端发起一次会话消息，前端通过 HTTP 申请 WebSocket 临时 Token（浏览器 WebSocket API 不支持自定义请求头，无法直接携带 Authorization，因此通过临时 Token 把 HTTP 鉴权结果传递到 WebSocket 建连过程），再以 Token 建立 WebSocket 连接
+- 后端加载历史消息和必要的摘要上下文，并转换成 Agent 可消费的消息格式
 - Agent 在 Skill 约束下结合模型推理，决定直接回复、调用内建工具，或进一步使用 MCP 工具
 - 工具执行产生的数据文件、分析结果或附件被写入对应会话工作区，并通过消息流实时回传
-- 本轮产生的用户消息、模型消息、工具消息和上下文压缩结果被持续写入数据库，供后续追问和恢复使用
+- 本轮产生的用户消息、模型消息和工具消息在流式过程中逐条写入数据库，上下文压缩结果在流结束后统一持久化，供后续追问和恢复使用
 
 ## 2. 项目基础模块
 
