@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
+import { cn, getAttachmentName } from "@/lib/utils";
 import type { Attachment } from "@/types";
 
 interface ChatComposerProps {
@@ -87,7 +87,7 @@ export function ChatComposer({
 		if (!attachment.preview_url) return;
 		setPreviewImage({
 			src: attachment.preview_url,
-			alt: attachment.raw_name,
+			alt: getAttachmentName(attachment.f_path),
 		});
 	};
 
@@ -111,7 +111,7 @@ export function ChatComposer({
 					<div className="flex flex-wrap gap-2 px-4 pt-4">
 						{attachments.map((attachment) => (
 							<div
-								key={attachment.path}
+								key={attachment.f_path}
 								className="flex max-w-full items-center gap-3 rounded-[1.1rem] bg-slate-100 px-3 py-2 text-sm text-slate-700"
 							>
 								<div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-200">
@@ -123,7 +123,7 @@ export function ChatComposer({
 										>
 											<img
 												src={attachment.preview_url}
-												alt={attachment.raw_name}
+												alt={getAttachmentName(attachment.f_path)}
 												className="h-full w-full object-cover"
 											/>
 										</button>
@@ -131,10 +131,10 @@ export function ChatComposer({
 										<FileText className="h-[18px] w-[18px] text-slate-600" />
 									)}
 								</div>
-								<span className="truncate">{attachment.raw_name}</span>
+								<span className="truncate">{getAttachmentName(attachment.f_path)}</span>
 								<button
 									type="button"
-									onClick={() => onRemoveAttachment(attachment.path)}
+									onClick={() => onRemoveAttachment(attachment.f_path)}
 									className="rounded-full p-0.5 text-slate-400 transition hover:bg-slate-200 hover:text-slate-600"
 								>
 									<X className="h-3.5 w-3.5" />

@@ -17,6 +17,8 @@ configureClient({
 		authorize: AUTH_API_PATHS.authorize,
 		token: AUTH_API_PATHS.token,
 		introspection: AUTH_API_PATHS.introspection,
+		logout: AUTH_API_PATHS.logout,
+		userinfo: AUTH_API_PATHS.me,
 	},
 	baseUrl: BASE_URL,
 	authCallbackPath: AUTH_CALLBACK_ROUTE,

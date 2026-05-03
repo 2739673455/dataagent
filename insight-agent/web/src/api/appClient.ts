@@ -1,4 +1,5 @@
 import axios, { type AxiosError } from "axios";
+import { toast } from "sonner";
 import { getAccessToken, handleUnauthorizedError } from "@/auth";
 
 const appClient = axios.create({
@@ -25,8 +26,14 @@ appClient.interceptors.request.use((config) => {
 appClient.interceptors.response.use(
 	(response) => response,
 	async (error: AxiosError) => {
-		// 401 说明本地 access token 已失效，统一走认证恢复逻辑。
-		handleUnauthorizedError(error);
+		const status = error.response?.status;
+
+		if (status === 401) {
+			handleUnauthorizedError(error);
+		} else if (status === 403) {
+			toast.error("无权限执行此操作");
+		}
+
 		return Promise.reject(error);
 	},
 );

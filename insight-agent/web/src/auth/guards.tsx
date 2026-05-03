@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { toast } from "sonner";
 import { AuthLoadingScreen } from "@/auth/AuthLoadingScreen";
 import { buildAuthorizeUrl, checkAuth } from "@/auth/authorize";
 import { useAuthStore } from "@/auth/store";
@@ -34,6 +35,7 @@ function RequireAuth({
 	}
 
 	if (requiredScopes && !hasScope(requiredScopes)) {
+		toast.error("无权限访问此页面");
 		window.location.replace("/");
 		return <AuthLoadingScreen />;
 	}
@@ -44,9 +46,4 @@ function RequireAuth({
 // 认证守卫
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
 	return <RequireAuth>{children}</RequireAuth>;
-}
-
-// 权限守卫
-export function PermissionRoute({ children }: { children: React.ReactNode }) {
-	return <RequireAuth requiredScopes={["*"]}>{children}</RequireAuth>;
 }

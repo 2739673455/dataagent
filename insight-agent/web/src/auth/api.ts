@@ -49,28 +49,25 @@ export const authApi = {
 
 	// 获取当前用户信息
 	getMe: (token: string) => {
-		const { authApiBaseUrl } = getConfig();
-		return axios.get<UserResponse>(
-			"/api/userinfo",
-			{
-				baseURL: authApiBaseUrl || undefined,
-				headers: {
-					Authorization: `Bearer ${token}`,
-				},
+		const { authApiBaseUrl, authApiPaths } = getConfig();
+		return axios.get<UserResponse>(authApiPaths.userinfo, {
+			baseURL: authApiBaseUrl || undefined,
+			headers: {
+				Authorization: `Bearer ${token}`,
 			},
-		);
+		});
 	},
 
 	// 显式退出时清理认证中心会话
 	logout: (token?: string | null) => {
-		const { authApiBaseUrl } = getConfig();
+		const { authApiBaseUrl, authApiPaths } = getConfig();
 		const headers = token
 			? {
 					Authorization: `Bearer ${token}`,
 				}
 			: undefined;
 
-		return axios.post<void>("/api/logout", undefined, {
+		return axios.post<void>(authApiPaths.logout, undefined, {
 			baseURL: authApiBaseUrl || undefined,
 			headers,
 		});

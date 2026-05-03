@@ -56,8 +56,8 @@ export async function handleAuthCallback(
 	if (!authRequest) {
 		throw new Error("授权请求已失效，请重新登录");
 	}
-	if (authRequest.state !== state) {
-		throw new Error("授权状态校验失败，请重新登录");
+	if (!authRequest.codeVerifier) {
+		throw new Error("授权请求参数不完整，请重新登录");
 	}
 
 	const tokenResponse = await authApi.exchangeToken(

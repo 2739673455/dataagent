@@ -61,7 +61,7 @@ def register_exception_handlers(app: FastAPI) -> None:
 def register_routers(app: FastAPI) -> None:
     """注册路由"""
     app.include_router(routers.chat.router, prefix="/api/chat")
-    app.include_router(routers.attachment.router, prefix="/api/chat")
+    app.include_router(routers.attachment.router, prefix="/api/chat/attachment")
     app.include_router(routers.admin.router, prefix="/api")
     routers.frontend.register_frontend(app)
 

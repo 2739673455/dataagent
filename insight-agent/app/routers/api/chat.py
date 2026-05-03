@@ -51,7 +51,6 @@ async def api_create_conversation(
     logger.info(
         f"Create conversation: conversation_id={conversation.id}, is_draft={conversation.is_draft}"
     )
-
     return chat_schema.ConversationResponse(
         conversation_id=conversation.id,
         title=conversation.title,
@@ -120,11 +119,8 @@ async def api_get_conversations(
 ) -> chat_schema.ConversationListResponse:
     """获取所有对话"""
     user_id = request.state.payload.sub
-
     conversations = await conversation_repo.ls(db_session, user_id)
-
     logger.info(f"Get conversations: conversation_ids={[i.id for i in conversations]}")
-
     return chat_schema.ConversationListResponse(
         conversations=[
             chat_schema.ConversationResponse(
@@ -183,17 +179,21 @@ async def api_websocket_chat(
     conversation_id: int,
 ):
     """WebSocket 聊天接口"""
-    # 检查 WebSocket 临时令牌(从请求参数中获取)
+    # ========== 检查 WebSocket 临时令牌 ==========
     websocket_token = websocket.query_params.get("websocket_token")
+    # 没有 WebSocket 临时令牌则关闭连接
     if not websocket_token:
         await websocket.close(code=4401)
         return
+    # 获取 WebSocket 临时令牌数据
     token_data = await websocket_token_repo.consume(websocket_token)
+    # 不存在、过期或已被消费则关闭连接
     if token_data is None:
         await websocket.close(code=4401)
         return
-    user_id = token_data.user_id
 
+    # 从令牌数据中获取用户ID
+    user_id = token_data.user_id
     # 将用户ID添加到上下文变量
     context.user_id_ctx.set(str(user_id))
 
@@ -201,8 +201,9 @@ async def api_websocket_chat(
     await websocket.accept()
     logger.info(f"WebSocket connected: {conversation_id=}")
 
-    # 加载会话初始上下文
+    # ========== 加载会话上下文 ==========
     ctx = await chat_service.load_conversation_context(conversation_id, user_id)
+    # 不存在或不属于当前用户则关闭连接
     if ctx is None:
         await websocket.send_json(
             chat_schema.WebSocketErrorResponse(
@@ -212,27 +213,39 @@ async def api_websocket_chat(
         await websocket.close(code=4404)
         logger.info(f"WebSocket disconnected: {conversation_id=}")
         return
-    messages, cur_context_seq, is_draft, has_applied_summary = ctx
+    # 获取消息列表、当前上下文序号、是否为草稿
+    messages, cur_context_seq, is_draft = ctx
+    stream_cancel: asyncio.Event | None = None
 
     try:
         while True:
-            # 接收并解析 WebSocket 请求
+            # ========== 接收并解析 WebSocket 请求，获取用户消息 ==========
             try:
-                body = chat_schema.WebSocketChatRequest(
-                    **await websocket.receive_json()
-                )
+                # 从 WebSocket 请求中获取 JSON
+                raw = await websocket.receive_json()
+
+                # 处理取消请求（用户点停止时由前端发送）
+                if isinstance(raw, dict) and raw.get("type") == "cancel":
+                    if stream_cancel is not None:
+                        stream_cancel.set()
+                    continue
+
+                body = chat_schema.WebSocketChatRequest(**raw)
                 # 检查是否为用户消息
                 if body.message.role != "user":
+                    # 返回错误响应：消息角色须为用户
                     await websocket.send_json(
                         chat_schema.WebSocketErrorResponse(
                             content="Invalid request format: message.role must be 'user'"
                         ).model_dump(mode="json")
                     )
                     continue
+
                 # 为用户消息添加 context_seq
                 cur_context_seq += 1
                 body.message.context_seq = cur_context_seq
             except (json.JSONDecodeError, ValidationError) as e:
+                # 返回错误响应：消息格式错误
                 await websocket.send_json(
                     chat_schema.WebSocketErrorResponse(
                         content=f"Invalid request: {str(e)}"
@@ -240,35 +253,58 @@ async def api_websocket_chat(
                 )
                 continue
 
+            # ========== 调用 Agent 流式生成回复，并持久化消息 ==========
             # 每轮对话使用独立的 DB 会话，避免长连接占用连接池
             async with get_db_session() as db_session:
-                # 将草稿对话修改为正式对话
+                # 如果是草稿对话，转换为正式对话
                 if is_draft:
+                    # 找出对应对话
                     conversation = await conversation_repo.get_by_id(
                         db_session, conversation_id
                     )
                     if conversation:
+                        # 将草稿对话修改为正式对话
                         await conversation_repo.update(
                             db_session, conversation, is_draft=0
                         )
                         is_draft = False
 
-                # 调用 Agent 流式生成回复
-                async for message in chat_service.stream_chat(
-                    db_session,
-                    user_id,
-                    conversation_id,
-                    messages,
-                    body.message,
-                    has_applied_summary=has_applied_summary,
-                ):
-                    cur_context_seq += 1
-                    event = chat_schema.WebSocketMessageResponse(message=message)
-                    # 发送 WebSocket 响应
-                    await websocket.send_json(event.model_dump(mode="json"))
+                stream_cancel = asyncio.Event()
 
-                # 本轮对话结束后，后续轮次的 context_seq 从上一个值递增
-                has_applied_summary = True
+                async def _run():
+                    # Agent 流式生成
+                    nonlocal cur_context_seq
+                    async for message in chat_service.stream_chat(
+                        db_session,
+                        user_id,
+                        conversation_id,
+                        messages,
+                        body.message,
+                        cancel=stream_cancel,
+                    ):
+                        cur_context_seq += 1
+                        try:
+                            await websocket.send_json(
+                                chat_schema.WebSocketMessageResponse(
+                                    message=message
+                                ).model_dump(mode="json")
+                            )
+                        except WebSocketDisconnect:
+                            pass
+
+                async def _wait_cancel():
+                    # cancel 消息监听
+                    try:
+                        while True:
+                            raw = await websocket.receive_json()
+                            if isinstance(raw, dict) and raw.get("type") == "cancel":
+                                if stream_cancel is not None:
+                                    stream_cancel.set()
+                                return
+                    except WebSocketDisconnect:
+                        pass
+
+                await asyncio.gather(_run(), _wait_cancel())
 
     # 客户端断开连接
     except WebSocketDisconnect:

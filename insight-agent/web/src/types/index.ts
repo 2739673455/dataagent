@@ -9,8 +9,7 @@ export interface ConversationListResponse {
 }
 
 export interface Attachment {
-	raw_name: string;
-	path: string;
+	f_path: string;
 	preview_url?: string;
 }
 

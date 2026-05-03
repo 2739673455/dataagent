@@ -171,7 +171,7 @@ def langchain_message_to_schema(
 
 
 def agent_chunk_to_schemas(chunk: dict) -> list[chat_schema.MessageSchema]:
-    """将 Agent 流式输出块转换为 MessageSchema 列表"""
+    """将 Agent 流式输出块中的模型消息和工具消息转换为 MessageSchema 列表"""
     schemas: list[chat_schema.MessageSchema] = []
     # 处理 model 和 tools 两类节点的返回消息
     # {'model': {'messages': [AIMessage, ChatMessage]}}
@@ -208,19 +208,88 @@ def _build_image_data_url(
     return f"data:{mime_type};base64,{encoded}"
 
 
+def _append_prompt(
+    content_parts: list[dict[str, Any]], header: str, lines: list[str]
+) -> None:
+    """向 content_parts 追加提示文本，与已有内容间用换行符分隔"""
+    prefix = "\n\n" if content_parts else ""
+    content_parts.append(
+        chat_schema.TextContent(
+            text=prefix + header + "\n" + "\n".join(lines)
+        ).model_dump()
+    )
+
+
+_IMAGE_SUFFIXES = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
+
+
+def _process_attachments(
+    content_parts: list[dict[str, Any]],
+    attachments: list[chat_schema.Attachment],
+    user_id: int | None,
+    conversation_id: int | None,
+) -> None:
+    """处理附件：文件追加提示文本，图片转换为 base64 data URL"""
+    images: list[chat_schema.Attachment] = []
+    docs: list[chat_schema.Attachment] = []
+
+    for a in attachments:
+        # 获取文件后缀
+        suffix = a.f_path.rsplit(".", 1)[-1].lower() if "." in a.f_path else ""
+        # 根据文件类型添加到相应列表
+        (images if suffix in _IMAGE_SUFFIXES else docs).append(a)
+
+    # 文档：在 prompt 中添加文本提示，告知模型文件已保存到工作区
+    if docs:
+        _append_prompt(
+            content_parts,
+            "用户上传的以下文件已保存到当前工作区，可直接读取：",
+            [f"- 文件：`{a.f_path}`" for a in docs],
+        )
+
+    # 图片：从工作区读取并转换为 base64 data URL，无法加载的图片记录到 lost 列表
+    if images:
+        # 需要从工作区读取图片，获取工作区目录依赖 user_id 和 conversation_id
+        # 如果缺少 user_id 或 conversation_id，则报错
+        if user_id is None or conversation_id is None:
+            raise ValueError(
+                "user_id and conversation_id are required for image attachments"
+            )
+        lost: list[str] = []
+        for a in images:
+            try:
+                # 将图片转换为 base64 内容，添加到 content_parts
+                content_parts.append(
+                    chat_schema.ImageContent(
+                        image_url=_build_image_data_url(user_id, conversation_id, a)
+                    ).model_dump()
+                )
+            except OSError:
+                logger.warning(
+                    f"Attachment image is unavailable: conversation_id={conversation_id}, file={a.f_path}"
+                )
+                # 记录缺失的图片
+                lost.append(f"- 图片：`{a.f_path}`")
+        # 图片缺失提示
+        if lost:
+            _append_prompt(
+                content_parts,
+                "用户之前上传了一些图片，但图片当前已不存在：",
+                lost,
+            )
+
+
 def schema_to_langchain_message(
     message: chat_schema.MessageSchema,
     user_id: int | None = None,
     conversation_id: int | None = None,
 ) -> dict[str, Any]:
     """将 MessageSchema 转换为 LangChain 消息"""
-    # 工具消息
+    # 处理工具消息，返回工具调用结果
     if message.role == "tool":
-        tool_result = next(
-            part
-            for part in message.parts
-            if isinstance(part, chat_schema.ToolResultPart)
-        )
+        tool_result = message.parts[0]
+        if not isinstance(tool_result, chat_schema.ToolResultPart):
+            raise ValueError("Tool message missing ToolResultPart")
         return {
             "role": "tool",
             "tool_call_id": tool_result.tool_call_id,
@@ -228,12 +297,14 @@ def schema_to_langchain_message(
             "content": tool_result.content,
         }
 
-    # 用户或模型消息
+    # 处理用户或模型消息
     content_parts: list[dict[str, Any]] = []
     tool_calls: list[dict[str, Any]] = []
     for part in message.parts:
+        # 处理文本或图片消息
         if isinstance(part, (chat_schema.TextContent, chat_schema.ImageContent)):
             content_parts.append(part.model_dump())
+        # 处理工具调用
         elif isinstance(part, chat_schema.ToolCallPart):
             tool_calls.append(
                 {
@@ -244,79 +315,14 @@ def schema_to_langchain_message(
                 }
             )
 
-    # 处理带附件的消息
+    # 处理用户带附件的消息
     if message.attachments and message.role == "user":
-        # 图片附件
-        image_attachments = []
-        # 文件附件
-        document_attachments = []
-
-        for attachment in message.attachments:
-            # 获取文件后缀
-            suffix = (
-                attachment.path.rsplit(".", 1)[-1].lower()
-                if "." in attachment.path
-                else ""
-            )
-            # 判断文件后缀是否为图片
-            if suffix in {"png", "jpg", "jpeg", "gif", "webp", "bmp"}:
-                image_attachments.append(attachment)
-            else:
-                document_attachments.append(attachment)
-
-        # 添加文件附件提示
-        if document_attachments:
-            # 用户消息，提示用户上传过文件
-            file_prompt = "用户上传的以下文件已保存到当前工作区，可直接读取："
-            if content_parts:
-                file_prompt = f"\n\n{file_prompt}"
-            # 拼接附件信息
-            attachment_lines = [
-                file_prompt,
-                *[
-                    f"- 文件名：`{attachment.f_path}`"
-                    for attachment in document_attachments
-                ],
-            ]
-            content_parts.append(
-                chat_schema.TextContent(text="\n".join(attachment_lines)).model_dump()
-            )
-
-        # 添加图片附件提示
-        if image_attachments:
-            # 如果缺少 user_id 或 conversation_id，则报错
-            if user_id is None or conversation_id is None:
-                raise ValueError(
-                    "user_id and conversation_id are required for image attachments"
-                )
-
-            image_loss_list = []
-            for attachment in image_attachments:
-                try:
-                    # 将图片转换为 base64 内容
-                    content_parts.append(
-                        chat_schema.ImageContent(
-                            image_url=_build_image_data_url(
-                                user_id, conversation_id, attachment
-                            )
-                        ).model_dump()
-                    )
-                except OSError:
-                    # 如果图片文件不存在，在 prompt 中添加提示
-                    logger.warning(
-                        f"Attachment image is unavailable: conversation_id={conversation_id}, file={attachment.f_path}"
-                    )
-                    image_loss_list.append(f"- 文件名：`{attachment.f_path}`")
-            if image_loss_list:
-                image_loss_prompt = "用户之前上传了一张图片，但该文件当前已不存在："
-                if content_parts:
-                    image_loss_prompt = f"\n\n{image_loss_prompt}"
-                image_loss_prompt += "\n".join(image_loss_list)
-                content_parts.append(
-                    chat_schema.TextContent(text=image_loss_prompt).model_dump()
-                )
+        _process_attachments(
+            content_parts, message.attachments, user_id, conversation_id
+        )
 
     payload: dict[str, Any] = {"role": message.role, "content": content_parts}
     if tool_calls:
         payload["tool_calls"] = tool_calls
+
     return payload

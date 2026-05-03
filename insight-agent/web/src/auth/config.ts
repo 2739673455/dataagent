@@ -6,6 +6,8 @@ export interface OAuthClientConfig {
 		authorize: string;
 		token: string;
 		introspection: string;
+		logout: string;
+		userinfo: string;
 	};
 	baseUrl: string;
 	authCallbackPath: string;

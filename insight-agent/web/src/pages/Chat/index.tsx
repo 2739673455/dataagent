@@ -12,6 +12,7 @@ import {
 } from "@/auth";
 import { ROUTES } from "@/config/settings";
 import { createLocalTimestamp } from "@/lib/message";
+import { getAttachmentName } from "@/lib/utils";
 import { useChatStore } from "@/stores/chatStore";
 import type {
 	Attachment,
@@ -48,8 +49,8 @@ function collectReturnedHtmlAttachments(
 		if (message.role === "user" || !message.attachments?.length) continue;
 
 		for (const attachment of message.attachments) {
-			if (isHtmlFile(attachment.path) && !unique.has(attachment.path)) {
-				unique.set(attachment.path, attachment);
+			if (isHtmlFile(attachment.f_path) && !unique.has(attachment.f_path)) {
+				unique.set(attachment.f_path, attachment);
 			}
 		}
 	}
@@ -132,7 +133,7 @@ export default function ChatPage() {
 		[currentMessages],
 	);
 	const activeHtmlAttachment =
-		returnedHtmlAttachments.find((item) => item.path === activeHtmlPath) ??
+		returnedHtmlAttachments.find((item) => item.f_path === activeHtmlPath) ??
 		returnedHtmlAttachments[0] ??
 		null;
 
@@ -188,11 +189,11 @@ export default function ChatPage() {
 		setActiveHtmlPath((current) => {
 			if (
 				current &&
-				returnedHtmlAttachments.some((item) => item.path === current)
+				returnedHtmlAttachments.some((item) => item.f_path === current)
 			) {
 				return current;
 			}
-			return returnedHtmlAttachments[0].path;
+			return returnedHtmlAttachments[0].f_path;
 		});
 	}, [returnedHtmlAttachments]);
 
@@ -203,7 +204,7 @@ export default function ChatPage() {
 		}
 		const previewCacheKey = getHtmlPreviewCacheKey(
 			routeConversationId,
-			activeHtmlAttachment.path,
+			activeHtmlAttachment.f_path,
 		);
 		if (htmlPreviewUrls[previewCacheKey]) {
 			return;
@@ -213,7 +214,7 @@ export default function ChatPage() {
 		let cancelled = false;
 
 		void chatApi
-			.fetchAttachmentFile(routeConversationId, activeHtmlAttachment.path)
+			.fetchAttachmentFile(routeConversationId, activeHtmlAttachment.f_path)
 			.then((response) => {
 				if (cancelled) return;
 				objectUrl = URL.createObjectURL(
@@ -226,7 +227,7 @@ export default function ChatPage() {
 			})
 			.catch(() => {
 				if (cancelled) return;
-				toast.error(`HTML 预览加载失败：${activeHtmlAttachment.raw_name}`);
+				toast.error(`HTML 预览加载失败：${getAttachmentName(activeHtmlAttachment.f_path)}`);
 			});
 
 		return () => {
@@ -242,7 +243,7 @@ export default function ChatPage() {
 	const activeHtmlPreviewUrl =
 		routeConversationId && activeHtmlAttachment
 			? htmlPreviewUrls[
-					getHtmlPreviewCacheKey(routeConversationId, activeHtmlAttachment.path)
+					getHtmlPreviewCacheKey(routeConversationId, activeHtmlAttachment.f_path)
 				]
 			: undefined;
 
@@ -366,8 +367,20 @@ export default function ChatPage() {
 
 		void connectSocket();
 
+		// 退出网页时通知后端停止 agent（beforeunload 不触发于 SPA 路由切换）
+		const handleBeforeUnload = () => {
+			if (
+				socketRef.current &&
+				socketRef.current.readyState === WebSocket.OPEN
+			) {
+				socketRef.current.send(JSON.stringify({ type: "cancel" }));
+			}
+		};
+		window.addEventListener("beforeunload", handleBeforeUnload);
+
 		// 会话切换或组件卸载时关闭旧连接
 		return () => {
+			window.removeEventListener("beforeunload", handleBeforeUnload);
 			cancelled = true;
 			isClosingSocketRef.current = true;
 			socketRef.current?.close();
@@ -403,11 +416,12 @@ export default function ChatPage() {
 		toast.success("对话已删除");
 	};
 
-	// “停止生成”本质上是关闭当前 websocket，并触发下次重连
+	// "停止生成" 先发取消信号再关闭 websocket，通知后端停止 agent
 	const handleStop = () => {
 		setIsStreaming(false);
 		pendingMessageRef.current = null;
 		if (socketRef.current) {
+			socketRef.current.send(JSON.stringify({ type: "cancel" }));
 			isClosingSocketRef.current = true;
 			socketRef.current.close(1000);
 			socketRef.current = null;
@@ -468,13 +482,13 @@ export default function ChatPage() {
 			await chatApi.deleteAttachment(targetConversationId, attachmentName);
 			setAttachments((current) => {
 				const target = current.find(
-					(attachment) => attachment.path === attachmentName,
+					(attachment) => attachment.f_path === attachmentName,
 				);
 				if (target?.preview_url) {
 					URL.revokeObjectURL(target.preview_url);
 				}
 				return current.filter(
-					(attachment) => attachment.path !== attachmentName,
+					(attachment) => attachment.f_path !== attachmentName,
 				);
 			});
 		} catch {
@@ -576,7 +590,7 @@ export default function ChatPage() {
 
 	// 点击消息里的 HTML 附件时展开右侧栏并切到对应预览
 	const handleOpenHtmlAttachment = useCallback((attachment: Attachment) => {
-		setActiveHtmlPath(attachment.path);
+		setActiveHtmlPath(attachment.f_path);
 		setIsHtmlSidebarOpen(true);
 	}, []);
 
@@ -669,16 +683,16 @@ export default function ChatPage() {
 									<div className="flex gap-2 overflow-x-auto border-b border-slate-200 px-3 py-2">
 										{returnedHtmlAttachments.map((attachment) => (
 											<button
-												key={attachment.path}
+												key={attachment.f_path}
 												type="button"
-												onClick={() => setActiveHtmlPath(attachment.path)}
+												onClick={() => setActiveHtmlPath(attachment.f_path)}
 												className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
-													activeHtmlAttachment?.path === attachment.path
+													activeHtmlAttachment?.f_path === attachment.f_path
 														? "bg-slate-900 text-white"
 														: "bg-slate-100 text-slate-600 hover:bg-slate-200"
 												}`}
 											>
-												{attachment.raw_name}
+												{getAttachmentName(attachment.f_path)}
 											</button>
 										))}
 									</div>
@@ -686,7 +700,7 @@ export default function ChatPage() {
 										{activeHtmlAttachment ? (
 											activeHtmlPreviewUrl ? (
 												<iframe
-													title={activeHtmlAttachment.raw_name}
+													title={getAttachmentName(activeHtmlAttachment.f_path)}
 													src={activeHtmlPreviewUrl}
 													className="h-full w-full border-0 bg-white"
 												/>

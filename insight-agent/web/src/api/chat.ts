@@ -1,5 +1,4 @@
 import { CHAT_API_ROUTES } from "@/config/settings";
-import { getAppWsBaseUrl } from "@/config/url";
 import type {
 	ConversationListResponse,
 	ConversationResponse,
@@ -42,18 +41,18 @@ export const chatApi = {
 		);
 	},
 
-	deleteAttachment(conversationId: number, path: string) {
+	deleteAttachment(conversationId: number, f_path: string) {
 		return appClient.post(CHAT_API_ROUTES.deleteAttachment, {
 			conversation_id: conversationId,
-			path,
+			f_path,
 		});
 	},
 
-	fetchAttachmentFile(conversationId: number, path: string) {
+	fetchAttachmentFile(conversationId: number, f_path: string) {
 		return appClient.get<Blob>(CHAT_API_ROUTES.getAttachment, {
 			params: {
 				conversation_id: conversationId,
-				path,
+				f_path,
 			},
 			responseType: "blob",
 		});
@@ -72,7 +71,8 @@ export const chatApi = {
 	},
 
 	buildChatSocket(conversationId: number, websocketToken: string) {
-		const url = new URL(`${getAppWsBaseUrl()}${CHAT_API_ROUTES.chatWebSocket}`);
+		const wsBase = window.location.origin.replace(/^http/, "ws");
+		const url = new URL(`${wsBase}${CHAT_API_ROUTES.chatWebSocket}`);
 		url.searchParams.set("conversation_id", String(conversationId));
 		url.searchParams.set("websocket_token", websocketToken);
 		return new WebSocket(url.toString());

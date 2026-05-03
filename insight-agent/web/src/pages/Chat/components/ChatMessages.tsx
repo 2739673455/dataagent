@@ -13,7 +13,7 @@ import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { chatApi } from "@/api/chat";
-import { cn } from "@/lib/utils";
+import { cn, getAttachmentName } from "@/lib/utils";
 import type {
 	Attachment,
 	ImageContent,
@@ -486,7 +486,7 @@ function ToolRunBar({
 						<div className="flex flex-wrap gap-2">
 							{(item.attachments ?? []).map((attachment) => (
 								<AttachmentChip
-									key={attachment.path}
+									key={attachment.f_path}
 									attachment={attachment}
 									conversationId={item.conversationId}
 									isUser={false}
@@ -514,7 +514,7 @@ function AttachmentPreview({
 	const [imageUrl, setImageUrl] = useState<string | null>(null);
 
 	useEffect(() => {
-		if (!conversationId || !isImageAttachment(attachment.path)) {
+		if (!conversationId || !isImageAttachment(attachment.f_path)) {
 			return;
 		}
 
@@ -522,7 +522,7 @@ function AttachmentPreview({
 		let cancelled = false;
 
 		void chatApi
-			.fetchAttachmentFile(conversationId, attachment.path)
+			.fetchAttachmentFile(conversationId, attachment.f_path)
 			.then((response) => {
 				if (cancelled) return;
 				objectUrl = URL.createObjectURL(response.data);
@@ -539,23 +539,23 @@ function AttachmentPreview({
 				URL.revokeObjectURL(objectUrl);
 			}
 		};
-	}, [attachment.path, conversationId]);
+	}, [attachment.f_path, conversationId]);
 
 	return (
 		<div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-slate-200">
 			{imageUrl ? (
 				<button
 					type="button"
-					onClick={() => onPreview?.(imageUrl, attachment.raw_name)}
+					onClick={() => onPreview?.(imageUrl, getAttachmentName(attachment.f_path))}
 					className="h-full w-full"
 				>
 					<img
 						src={imageUrl}
-						alt={attachment.raw_name}
+						alt={getAttachmentName(attachment.f_path)}
 						className="h-full w-full object-cover"
 					/>
 				</button>
-			) : isImageAttachment(attachment.path) ? (
+			) : isImageAttachment(attachment.f_path) ? (
 				<FileImage className="h-4 w-4 text-slate-500" />
 			) : (
 				<FileText className="h-4 w-4 text-slate-600" />
@@ -579,7 +579,7 @@ function AttachmentChip({
 	onOpenHtmlAttachment?: (attachment: Attachment) => void;
 }) {
 	const [isDownloading, setIsDownloading] = useState(false);
-	const isHtml = isHtmlAttachment(attachment.path);
+	const isHtml = isHtmlAttachment(attachment.f_path);
 
 	// 下载走 blob 链接，避免直接暴露鉴权接口地址
 	const handleDownload = async () => {
@@ -589,12 +589,12 @@ function AttachmentChip({
 			setIsDownloading(true);
 			const response = await chatApi.fetchAttachmentFile(
 				conversationId,
-				attachment.path,
+				attachment.f_path,
 			);
 			const objectUrl = URL.createObjectURL(response.data);
 			const link = document.createElement("a");
 			link.href = objectUrl;
-			link.download = attachment.raw_name;
+			link.download = getAttachmentName(attachment.f_path);
 			document.body.appendChild(link);
 			link.click();
 			link.remove();
@@ -616,8 +616,8 @@ function AttachmentChip({
 				conversationId={conversationId}
 				onPreview={onPreview}
 			/>
-			<span className="truncate" title={attachment.raw_name}>
-				{attachment.raw_name}
+			<span className="truncate" title={getAttachmentName(attachment.f_path)}>
+				{getAttachmentName(attachment.f_path)}
 			</span>
 			{isHtml ? (
 				<button
@@ -687,7 +687,7 @@ function MessageBubble({
 							<div className="flex flex-wrap gap-2">
 								{message.attachments.map((attachment) => (
 									<AttachmentChip
-										key={attachment.path}
+										key={attachment.f_path}
 										attachment={attachment}
 										conversationId={message.conversationId}
 										isUser={isUser}
