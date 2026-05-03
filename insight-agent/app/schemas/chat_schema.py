@@ -92,7 +92,7 @@ MessagePart = Annotated[
 class Attachment(BaseModel):
     """附件"""
 
-    f_name: str = Field(..., description="附件文件名称")
+    f_path: str = Field(..., description="工作区内的文件路径")
 
 
 class MessageSchema(BaseModel):
@@ -117,7 +117,7 @@ class DeleteAttachmentRequest(BaseModel):
     """删除附件请求"""
 
     conversation_id: int = Field(..., description="对话ID")
-    f_name: str = Field(..., description="附件文件名称")
+    f_path: str = Field(..., description="工作区内的文件路径")
 
 
 class MessageListResponse(BaseModel):

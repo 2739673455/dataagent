@@ -28,11 +28,11 @@ def entity_to_schema(message: Message) -> chat_schema.MessageSchema:
         parts.append(schema(**item))
 
     # 将 json 字符串转换为附件对象
-    attachments = (
-        [chat_schema.Attachment(**item) for item in json.loads(message.attachments)]
-        if message.attachments
-        else None
-    )
+    attachments = None
+    if message.attachments:
+        attachments = [
+            chat_schema.Attachment(**item) for item in json.loads(message.attachments)
+        ]
 
     return chat_schema.MessageSchema(
         message_id=message.id,
@@ -59,14 +59,12 @@ def schema_to_entity(
     )
 
     # 将附件对象转换为 json 字符串
-    attachments = (
-        json.dumps(
+    attachments = None
+    if message.attachments:
+        attachments = json.dumps(
             [attachment.model_dump() for attachment in message.attachments],
             ensure_ascii=False,
         )
-        if message.attachments is not None
-        else None
-    )
 
     entity = Message(
         conversation_id=conversation_id,
@@ -85,47 +83,36 @@ def schema_to_entity(
     return entity
 
 
-def _build_image_data_url(
-    user_id: int, conversation_id: int, attachment: chat_schema.Attachment
-) -> str:
-    """读取工作区中的图片附件，并转换为 data URL"""
-    # 仅允许读取当前会话工作区下的附件文件，避免路径逃逸
-    workspace_dir = get_workspace_dir(user_id, conversation_id).resolve()
-    attachment_path = (workspace_dir / attachment.path).resolve()
-    if workspace_dir not in attachment_path.parents:
-        raise ValueError(f"Attachment path escapes workspace: {attachment.path}")
-
-    # 根据文件名推断 MIME 类型，供 data URL 正确声明图片格式
-    mime_type, _ = mimetypes.guess_type(attachment.path)
-    if not mime_type:
-        mime_type = "application/octet-stream"
-
-    # 将图片二进制编码为 base64，并拼接成模型可直接消费的 data URL
-    encoded = base64.b64encode(attachment_path.read_bytes()).decode("ascii")
-    return f"data:{mime_type};base64,{encoded}"
-
-
 def langchain_message_to_schema(
     message: AIMessage | ChatMessage | ToolMessage,
 ) -> chat_schema.MessageSchema | None:
-    """将 LangChain 消息转换为 MessageSchema，同时添加时间戳"""
+    """
+    将 LangChain 消息转换为 MessageSchema，同时添加时间戳。
+
+    主要处理模型输出消息，包括 AIMessage、ChatMessage 和 ToolMessage。
+    """
     timestamp = datetime.now()
 
     # 处理 AIMessage / ChatMessage
     if isinstance(message, (AIMessage, ChatMessage)):
+        # 获取消息内容
         content = message.content
+        # 如果消息内容是字符串，转换为文本消息片段
         if isinstance(content, str):
-            parts: list[chat_schema.MessagePart] = [chat_schema.TextContent(text=content)]
+            parts: list[chat_schema.MessagePart] = [
+                chat_schema.TextContent(text=content)
+            ]
+        # 如果消息内容是列表，转换为文本消息片段列表
         elif isinstance(content, list):
             parts = [
-                chat_schema.TextContent(
-                    text=item["text"] if isinstance(item, dict) else str(item)
-                )
+                chat_schema.TextContent(text=item["text"])
                 for item in content
                 if isinstance(item, dict) and item.get("type") == "text"
             ]
+        # 其他情况，转换为文本消息片段
         else:
             parts = [chat_schema.TextContent(text=str(content))]
+
         # 追加 tool_calls（仅 AIMessage 具有该属性）
         if isinstance(message, AIMessage) and message.tool_calls:
             parts.extend(
@@ -136,6 +123,7 @@ def langchain_message_to_schema(
                 )
                 for tool_call in message.tool_calls
             )
+
         return chat_schema.MessageSchema(
             role="assistant",
             parts=parts,
@@ -148,21 +136,21 @@ def langchain_message_to_schema(
         parts: list[chat_schema.MessagePart] = []
         attachments: list[chat_schema.Attachment] | None = None
 
-        # 处理 return_file 的工具结果
+        # 处理 return_file 的工具结果：将文件路径添加到附件中
         if message.name == "return_file":
             if isinstance(message.content, str):
                 try:
+                    # 解析 JSON 字符串，获取工具调用结果
                     payload = json.loads(message.content)
                 except json.JSONDecodeError:
                     payload = None
 
+                # 检查工具调用结果格式，以及是否成功
                 if isinstance(payload, dict) and payload.get("status") == "success":
-                    path = payload.get("path")
-                    raw_name = payload.get("raw_name")
-                    if isinstance(path, str) and isinstance(raw_name, str):
-                        attachments = [
-                            chat_schema.Attachment(raw_name=raw_name, path=path)
-                        ]
+                    # 提取文件路径，转换为附件对象
+                    f_path = payload.get("f_path")
+                    if isinstance(f_path, str):
+                        attachments = [chat_schema.Attachment(f_path=f_path)]
 
         return chat_schema.MessageSchema(
             role="tool",
@@ -185,19 +173,39 @@ def langchain_message_to_schema(
 def agent_chunk_to_schemas(chunk: dict) -> list[chat_schema.MessageSchema]:
     """将 Agent 流式输出块转换为 MessageSchema 列表"""
     schemas: list[chat_schema.MessageSchema] = []
-
     # 处理 model 和 tools 两类节点的返回消息
+    # {'model': {'messages': [AIMessage, ChatMessage]}}
+    # {'tools': {'messages': [ToolMessage]}}
     for key in ("model", "tools"):
-        if (
-            (key in chunk)
-            and (messages := chunk[key].get("messages"))
-            and (isinstance(messages, list))
-        ):
-            for message in messages:
-                if schema := langchain_message_to_schema(message):
-                    schemas.append(schema)
-
+        messages = chunk.get(key, {}).get("messages")
+        if not isinstance(messages, list):
+            continue
+        for m in messages:
+            if s := langchain_message_to_schema(m):
+                schemas.append(s)
     return schemas
+
+
+def _build_image_data_url(
+    user_id: int, conversation_id: int, attachment: chat_schema.Attachment
+) -> str:
+    """读取工作区中的图片附件，并转换为 data URL"""
+    # 获取工作区目录
+    workspace_dir = get_workspace_dir(user_id, conversation_id).resolve()
+    # 获取附件文件路径
+    attachment_path = (workspace_dir / attachment.f_path).resolve()
+    # 检查路径是否逃逸
+    if workspace_dir not in attachment_path.parents:
+        raise ValueError(f"Attachment path escapes workspace: {attachment.f_path}")
+
+    # 根据文件名推断 MIME 类型，供 data URL 正确声明图片格式
+    mime_type, _ = mimetypes.guess_type(attachment.f_path)
+    if not mime_type:
+        mime_type = "application/octet-stream"
+
+    # 将图片二进制编码为 base64，并拼接成模型可直接消费的 data URL
+    encoded = base64.b64encode(attachment_path.read_bytes()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
 
 
 def schema_to_langchain_message(
@@ -266,7 +274,7 @@ def schema_to_langchain_message(
             attachment_lines = [
                 file_prompt,
                 *[
-                    f"- 原始文件名：`{attachment.raw_name}`，工作区相对路径：`{attachment.path}`"
+                    f"- 文件名：`{attachment.f_path}`"
                     for attachment in document_attachments
                 ],
             ]
@@ -296,11 +304,9 @@ def schema_to_langchain_message(
                 except OSError:
                     # 如果图片文件不存在，在 prompt 中添加提示
                     logger.warning(
-                        f"Attachment image is unavailable: conversation_id={conversation_id}, file={attachment.path}"
+                        f"Attachment image is unavailable: conversation_id={conversation_id}, file={attachment.f_path}"
                     )
-                    image_loss_list.append(
-                        f"- 原始文件名：`{attachment.raw_name}`，工作区路径：`{attachment.path}`"
-                    )
+                    image_loss_list.append(f"- 文件名：`{attachment.f_path}`")
             if image_loss_list:
                 image_loss_prompt = "用户之前上传了一张图片，但该文件当前已不存在："
                 if content_parts:
