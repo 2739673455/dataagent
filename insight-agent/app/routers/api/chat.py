@@ -315,7 +315,18 @@ async def api_websocket_chat(
                     except (WebSocketDisconnect, RuntimeError):
                         disconnected = True
 
-                await asyncio.gather(_run(), _wait_cancel())
+                _run_task = asyncio.create_task(_run())
+                _cancel_task = asyncio.create_task(_wait_cancel())
+                # 等待 Agent 流式回复完成
+                await _run_task
+                # 取消后台的取消信号监听任务
+                _cancel_task.cancel()
+                try:
+                    # 等待取消任务结束
+                    await _cancel_task
+                except asyncio.CancelledError:
+                    # asyncio 正常取消机制，忽略
+                    pass
                 # 连接已断开时直接退出，不再尝试 receive
                 if disconnected:
                     break
