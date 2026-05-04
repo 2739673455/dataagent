@@ -101,60 +101,29 @@ async def stream_chat(
     # 绝对顺序号（context_seq）与运行时下标的偏移量，用于将 cutoff_index 换算为 end_seq
     seq_offset = cur_context_seq - len(messages) + 1
 
-    # 上一轮压缩的 cutoff_index（Agent state 绝对索引），初始为 0
-    prev_cutoff = 0
-    # 本轮是否已做过消息列表替换（0/1），因为替换后列表缩短了
-    has_applied_summary = 0
-
-    # 当前 chunk 产生的压缩记录，消息写入后随即入库
-    pending_compaction: ContextCompaction | None = None
+    last_cutoff_index: int | None = None
+    last_summary: str | None = None
 
     # 【变量说明】
-    # - cutoff_index: Agent state 中模型可见范围的起始索引（state[:cutoff_index] 被摘要）
-    # - replace_count = cutoff_index - prev_cutoff + has_applied_summary: 运行时 messages 中需要被替换的前缀长度
-    # - end_seq = seq_offset + cutoff_index: DB 持久化的压缩范围上界（0-based exclusive）
+    # - cutoff_index: Agent state 中模型可见范围的起始索引（state[:cutoff_index] 被摘要），直接对应 messages 下标
+    # - end_seq = seq_offset + cutoff_index: 压缩的消息 context_seq 范围是 [0, end_seq)，不包含 end_seq
     #
-    # 【例1：首次压缩，无历史摘要】
+    # 【例：单次压缩】
     # messages = [0, 1, 2, 3, 4, 5] (6条)
     # cur_context_seq=5, seq_offset = 5 - 6 + 1 = 0
-    # prev_cutoff=0, has_applied_summary=0
     # cutoff_index=3 (即 state.messages[:3] 被摘要)
-    # replace_count = 3 - 0 + 0 = 3
-    # messages[:3] = [summary] → messages = [summary, 3, 4, 5]
+    # 结束后: messages[:3] = [summary] → messages = [summary, 3, 4, 5]
     # end_seq = 0 + 3 = 3 (0,1,2 被摘要)
-    #
-    # 【例2：输入已有历史摘要，本轮再次压缩】
-    # messages = [summary(代表0-2), 3, 4, 5, 6, 7, 8, 9, 10] (9条)
-    # cur_context_seq=10, seq_offset = 10 - 9 + 1 = 2
-    # prev_cutoff=0, has_applied_summary=0 (新一轮重新初始化)
-    # cutoff_index=4 (即 state.messages[0:4] = S,3,4,5 被摘要)
-    # replace_count = 4 - 0 + 0 = 4
-    # messages[:4] = [summary] → messages = [summary, 6, 7, 8, 9, 10]
-    # end_seq = 2 + 4 = 6 (即 0~5 被摘要)
-    #
-    # 【例3：一轮 Agent 输出中出现多次压缩】
-    # 在一轮输出内，Agent 内部维护完整的 state.messages，不会被压缩截断，cutoff_index 始终是完整消息列表的的下标。
-    # messages = [0, 1, 2, 3, 4, 5]
-    # cur_context_seq=5, seq_offset = 5 - 6 + 1 = 0
-    # prev_cutoff=0, has_applied_summary=0
-    # 第一次压缩：cutoff_index=3 (即 state.messages[:3] 被摘要)
-    #   replace_count = 3 - 0 + 0 = 3
-    #   messages[:3] = [summary1] → messages = [summary1, 3, 4, 5]
-    #   end_seq = 0 + 3 = 3
-    #   prev_cutoff=3, has_applied_summary=1
-    # 第二次压缩：Agent state 仍维护全量，cutoff_index=5（基于原始 state，即 state.messages[:5] 被摘要）
-    #   replace_count = 5 - 3 + 1 = 3
-    #   messages[:3] = [summary2] → messages = [summary2, 5]
-    #   end_seq = 0 + 5 = 5
-    #   prev_cutoff=5, has_applied_summary=1
 
-    # 调用 Agent
     # 获取工作区路径
     workspace_dir = get_workspace_dir(user_id, conversation_id)
     # 将工作区路径写入运行时配置
     config = RunnableConfig(configurable={"workspace_dir": str(workspace_dir)})
     # 获取 Agent 实例
     agent = await get_agent()
+
+    # 当前 chunk 产生的压缩记录，消息写入后随即入库
+    pending_compaction: ContextCompaction | None = None
 
     async for chunk in agent.astream(input={"messages": messages}, config=config):
         # 收到 cancel 信号时停止
@@ -185,13 +154,9 @@ async def stream_chat(
                 summary_message=summary_message,
             )
 
-            # 替换消息列表
-            replace_count = cutoff_index - prev_cutoff + has_applied_summary
-            messages[:replace_count] = [
-                {"role": "user", "content": summary_message}
-            ]
-            prev_cutoff = cutoff_index
-            has_applied_summary = 1
+            # 记录替换参数，Agent 输出完毕后再统一应用到消息列表
+            last_cutoff_index = cutoff_index
+            last_summary = summary_message
 
         # 将 agent 输出的模型消息和工具消息转换为 MessageSchema 列表
         responses = message_mapper.agent_chunk_to_schemas(chunk)
@@ -209,3 +174,7 @@ async def stream_chat(
         if pending_compaction is not None:
             await context_compaction_repo.create(db_session, pending_compaction)
             pending_compaction = None
+
+    # Agent 输出完毕，应用最后一次压缩到消息列表
+    if last_cutoff_index is not None and last_summary is not None:
+        messages[:last_cutoff_index] = [{"role": "user", "content": last_summary}]
