@@ -82,24 +82,76 @@ export default function ChatPage() {
 	const messagesByConversation = useChatStore(
 		(state) => state.messagesByConversation,
 	);
-	const connectionState = useChatStore((state) => state.connectionState);
 	const isLoadingMessages = useChatStore((state) => state.isLoadingMessages);
 	const loadConversations = useChatStore((state) => state.loadConversations);
 	const createConversation = useChatStore((state) => state.createConversation);
 	const deleteConversation = useChatStore((state) => state.deleteConversation);
 	const loadMessages = useChatStore((state) => state.loadMessages);
+	const streamingConversations = useChatStore(
+		(state) => state.streamingConversations,
+	);
+	const markStreaming = useChatStore((state) => state.markStreaming);
+	const unmarkStreaming = useChatStore((state) => state.unmarkStreaming);
 	const ensureConversation = useChatStore((state) => state.ensureConversation);
 	const appendMessage = useChatStore((state) => state.appendMessage);
-	const setConnectionState = useChatStore((state) => state.setConnectionState);
 	const clearAuth = useAuthStore((state) => state.clearAuth);
 	const user = useAuthStore((state) => state.user);
 
-	// socketRef 保存当前对话的实时连接，pendingMessageRef 用于在建连完成后补发首条消息
-	const socketRef = useRef<WebSocket | null>(null);
+	// 记录哪些会话的 WebSocket 当前是 open 状态
+	const [openSocketIds, setOpenSocketIds] = useState<Set<number>>(new Set());
+
+	// socketsRef: 每个对话独立维护 WebSocket，切换会话时不关闭旧连接
+	const socketsRef = useRef<Map<number, WebSocket>>(new Map());
+	const idleTimersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(
+		new Map(),
+	);
+	const closingSocketsRef = useRef<Set<number>>(new Set());
+	const routeConversationIdRef = useRef<number | null>(null);
 	const pendingMessageRef = useRef<PendingMessageState | null>(null);
-	const isClosingSocketRef = useRef(false);
 	const messageViewportRef = useRef<HTMLDivElement | null>(null);
 	const attachmentsRef = useRef<Attachment[]>([]);
+
+	// 辅助函数：关闭指定会话的 socket
+	const closeSocket = useCallback((conversationId: number) => {
+		closingSocketsRef.current.add(conversationId);
+		const socket = socketsRef.current.get(conversationId);
+		if (socket) {
+			socket.close();
+			socketsRef.current.delete(conversationId);
+		}
+		const timer = idleTimersRef.current.get(conversationId);
+		if (timer) {
+			clearTimeout(timer);
+			idleTimersRef.current.delete(conversationId);
+		}
+		setOpenSocketIds((prev) => {
+			const next = new Set(prev);
+			next.delete(conversationId);
+			return next;
+		});
+	}, []);
+
+	// 辅助函数：启动空闲断开定时器（agent 结束后 5s 关闭连接）
+	const startIdleTimer = useCallback(
+		(conversationId: number) => {
+			const existing = idleTimersRef.current.get(conversationId);
+			if (existing) clearTimeout(existing);
+			const timer = setTimeout(() => {
+				closeSocket(conversationId);
+			}, 5_000);
+			idleTimersRef.current.set(conversationId, timer);
+		},
+		[closeSocket],
+	);
+
+	// 辅助函数：取消空闲定时器
+	const cancelIdleTimer = useCallback((conversationId: number) => {
+		const timer = idleTimersRef.current.get(conversationId);
+		if (timer) {
+			clearTimeout(timer);
+			idleTimersRef.current.delete(conversationId);
+		}
+	}, []);
 	const htmlPreviewUrlsRef = useRef<Record<string, string>>({});
 
 	// draftConversationId 用于“尚未进入正式路由但已提前上传附件”的草稿会话
@@ -108,8 +160,6 @@ export default function ChatPage() {
 	);
 	const [attachments, setAttachments] = useState<Attachment[]>([]);
 	const [isUploadingAttachments, setIsUploadingAttachments] = useState(false);
-	const [isStreaming, setIsStreaming] = useState(false);
-	const [socketVersion, setSocketVersion] = useState(0);
 	const [isHtmlSidebarOpen, setIsHtmlSidebarOpen] = useState(true);
 	const [activeHtmlPath, setActiveHtmlPath] = useState<string | null>(null);
 	const [htmlPreviewUrls, setHtmlPreviewUrls] = useState<
@@ -123,6 +173,23 @@ export default function ChatPage() {
 		const parsed = Number(raw);
 		return Number.isNaN(parsed) ? null : parsed;
 	})();
+
+	const isStreaming =
+		routeConversationId != null &&
+		streamingConversations.has(routeConversationId);
+
+	// 同步 routeConversationId 到 ref，供 socket 回调闭包内读取最新值
+	useEffect(() => {
+		routeConversationIdRef.current = routeConversationId;
+	}, [routeConversationId]);
+
+	// 根据当前会话的 socket 是否存活推导连接状态
+	const connectionState: "idle" | "connecting" | "open" | "closed" =
+		routeConversationId
+			? openSocketIds.has(routeConversationId)
+				? "open"
+				: "closed"
+			: "idle";
 
 	const currentMessages = routeConversationId
 		? (messagesByConversation[routeConversationId] ?? [])
@@ -264,36 +331,61 @@ export default function ChatPage() {
 		scrollToBottom,
 	]);
 
-	// 进入具体会话后建立 websocket，并在连接断开或会话切换时清理
+	// 每个会话独立维护 WebSocket，切换会话时不关闭旧连接
 	useEffect(() => {
-		void socketVersion;
-
 		const token = getAccessToken();
 		if (!routeConversationId || !token) return;
+
+		const conversationId = routeConversationId;
+
+		// 取消该会话的空闲定时器
+		cancelIdleTimer(conversationId);
+
+		// 如果已有活跃连接则直接复用
+		const existingSocket = socketsRef.current.get(conversationId);
+		if (
+			existingSocket &&
+			(existingSocket.readyState === WebSocket.OPEN ||
+				existingSocket.readyState === WebSocket.CONNECTING)
+		) {
+			return () => {
+				const socket = socketsRef.current.get(conversationId);
+				if (
+					socket &&
+					socket.readyState === WebSocket.OPEN &&
+					!useChatStore.getState().streamingConversations.has(conversationId)
+				) {
+					startIdleTimer(conversationId);
+				}
+			};
+		}
 
 		let cancelled = false;
 
 		const connectSocket = async () => {
 			try {
-				setConnectionState("connecting");
-				// 先用 HTTP 接口申请一次性 websocket token，再换成实时连接
 				const response = await chatApi.createWebSocketToken();
 				if (cancelled) return;
 
 				const socket = chatApi.buildChatSocket(
-					routeConversationId,
+					conversationId,
 					response.data.websocket_token,
 				);
-				socketRef.current = socket;
+				socketsRef.current.set(conversationId, socket);
 
 				socket.onopen = () => {
-					isClosingSocketRef.current = false;
-					setConnectionState("open");
+					closingSocketsRef.current.delete(conversationId);
+					setOpenSocketIds((prev) => new Set([...prev, conversationId]));
+					// 若用户在 socket 建连期间已切走，且该会话未在生成，启动空闲定时器
+					if (
+						routeConversationIdRef.current !== conversationId &&
+						!useChatStore.getState().streamingConversations.has(conversationId)
+					) {
+						startIdleTimer(conversationId);
+					}
 
 					// 新建会话时，首条消息会先暂存在 ref，待连接建立后补发
-					if (
-						pendingMessageRef.current?.conversationId === routeConversationId
-					) {
+					if (pendingMessageRef.current?.conversationId === conversationId) {
 						socket.send(
 							chatApi.serializeChatRequest({
 								message: pendingMessageRef.current.message,
@@ -308,91 +400,107 @@ export default function ChatPage() {
 						| WebSocketMessageResponse
 						| WebSocketErrorResponse;
 
-					// 服务端主动返回错误时直接停止流式状态并提示用户
 					if (payload.type === "error") {
-						setIsStreaming(false);
+						unmarkStreaming(conversationId);
 						toast.error(payload.content);
 						return;
 					}
 
-					appendMessage(routeConversationId, payload.message);
+					appendMessage(conversationId, payload.message);
 					if (payload.message.finish_reason === "stop") {
-						setIsStreaming(false);
-						// 助手完成回复后刷新会话列表，让标题和更新时间同步
+						unmarkStreaming(conversationId);
 						void loadConversations();
+
+						// 后台会话：agent 结束后启动空闲定时器；当前会话保持连接
+						if (routeConversationIdRef.current !== conversationId) {
+							startIdleTimer(conversationId);
+						}
 					}
 				};
 
 				socket.onclose = (event) => {
-					setConnectionState("closed");
-					socketRef.current = null;
-					const isIntentionalClose = isClosingSocketRef.current;
-					isClosingSocketRef.current = false;
+					const isIntentional = closingSocketsRef.current.has(conversationId);
+					closingSocketsRef.current.delete(conversationId);
+					socketsRef.current.delete(conversationId);
+					cancelIdleTimer(conversationId);
+					setOpenSocketIds((prev) => {
+						const next = new Set(prev);
+						next.delete(conversationId);
+						return next;
+					});
 
-					// 后端标记未授权时直接回到认证中心
 					if (event.code === 4401) {
 						redirectToAuth();
 						return;
 					}
 
-					// 会话被删除或无权限访问时，不再继续保持流式状态
 					if (event.code === 4404) {
-						setIsStreaming(false);
 						toast.error("对话不存在或无权限访问");
 					}
 
-					// 除主动关闭和正常关闭外，其余都视为异常断连
-					if (
-						!isIntentionalClose &&
-						event.code !== 1000 &&
-						event.code !== 1005
-					) {
-						setIsStreaming(false);
+					if (!isIntentional && event.code !== 1000 && event.code !== 1005) {
 						toast.error("聊天连接已断开");
 					}
 				};
 
 				socket.onerror = () => {
-					if (isClosingSocketRef.current) return;
-					setIsStreaming(false);
+					if (closingSocketsRef.current.has(conversationId)) return;
+					unmarkStreaming(conversationId);
 					toast.error("聊天连接异常");
 				};
 			} catch {
 				if (cancelled) return;
-				setConnectionState("closed");
-				setIsStreaming(false);
+				setOpenSocketIds((prev) => {
+					const next = new Set(prev);
+					next.delete(conversationId);
+					return next;
+				});
+				unmarkStreaming(conversationId);
 				toast.error("聊天连接初始化失败");
 			}
 		};
 
 		void connectSocket();
 
-		// 退出网页时通知后端停止 agent（beforeunload 不触发于 SPA 路由切换）
-		const handleBeforeUnload = () => {
+		return () => {
+			cancelled = true;
+			// 切换离开时，若该会话未在生成中，5s 后断开连接
+			const socket = socketsRef.current.get(conversationId);
 			if (
-				socketRef.current &&
-				socketRef.current.readyState === WebSocket.OPEN
+				socket &&
+				socket.readyState === WebSocket.OPEN &&
+				!useChatStore.getState().streamingConversations.has(conversationId)
 			) {
-				socketRef.current.send(JSON.stringify({ type: "cancel" }));
+				startIdleTimer(conversationId);
+			}
+		};
+	}, [
+		appendMessage,
+		cancelIdleTimer,
+		loadConversations,
+		routeConversationId,
+		startIdleTimer,
+		unmarkStreaming,
+	]);
+
+	// 页面退出时取消所有正在生成的 agent，卸载时关闭所有连接
+	useEffect(() => {
+		const handleBeforeUnload = () => {
+			for (const socket of socketsRef.current.values()) {
+				if (socket.readyState === WebSocket.OPEN) {
+					socket.send(JSON.stringify({ type: "cancel" }));
+				}
 			}
 		};
 		window.addEventListener("beforeunload", handleBeforeUnload);
 
-		// 会话切换或组件卸载时关闭旧连接
 		return () => {
 			window.removeEventListener("beforeunload", handleBeforeUnload);
-			cancelled = true;
-			isClosingSocketRef.current = true;
-			socketRef.current?.close();
-			socketRef.current = null;
+			for (const [conversationId] of socketsRef.current) {
+				closeSocket(conversationId);
+			}
 		};
-	}, [
-		appendMessage,
-		loadConversations,
-		routeConversationId,
-		setConnectionState,
-		socketVersion,
-	]);
+	}, [closeSocket]);
 
 	// 新建对话按钮只重置当前页面态，不直接向后端发消息
 	const handleCreateConversation = () => {
@@ -416,16 +524,18 @@ export default function ChatPage() {
 		toast.success("对话已删除");
 	};
 
-	// "停止生成" 先发取消信号再关闭 websocket，通知后端停止 agent
+	// 停止生成：仅发送 cancel 信号，不断开 WebSocket，让后端在下一个 chunk 边界终止 agent
 	const handleStop = () => {
-		setIsStreaming(false);
+		if (routeConversationId != null) {
+			unmarkStreaming(routeConversationId);
+		}
 		pendingMessageRef.current = null;
-		if (socketRef.current) {
-			socketRef.current.send(JSON.stringify({ type: "cancel" }));
-			isClosingSocketRef.current = true;
-			socketRef.current.close(1000);
-			socketRef.current = null;
-			setSocketVersion((value) => value + 1);
+		const sock =
+			routeConversationId != null
+				? socketsRef.current.get(routeConversationId)
+				: undefined;
+		if (sock && sock.readyState === WebSocket.OPEN) {
+			sock.send(JSON.stringify({ type: "cancel" }));
 		}
 	};
 
@@ -520,7 +630,7 @@ export default function ChatPage() {
 				conversationId,
 				message: userMessage,
 			};
-			setIsStreaming(true);
+			markStreaming(conversationId);
 			appendMessage(conversationId, userMessage);
 			for (const attachment of attachments) {
 				if (attachment.preview_url) {
@@ -544,7 +654,7 @@ export default function ChatPage() {
 				conversationId,
 				message: userMessage,
 			};
-			setIsStreaming(true);
+			markStreaming(conversationId);
 			appendMessage(conversationId, userMessage);
 			for (const attachment of attachments) {
 				if (attachment.preview_url) {
@@ -557,14 +667,15 @@ export default function ChatPage() {
 		}
 
 		// 既有会话必须等 websocket 已经打开后才能发送
-		const socket = socketRef.current;
+		const socket = socketsRef.current.get(conversationId);
 		if (!conversationId || !socket || socket.readyState !== WebSocket.OPEN) {
 			toast.error("连接尚未建立，请稍后重试");
 			return;
 		}
 
 		appendMessage(conversationId, userMessage);
-		setIsStreaming(true);
+		cancelIdleTimer(conversationId);
+		markStreaming(conversationId);
 		for (const attachment of attachments) {
 			if (attachment.preview_url) {
 				URL.revokeObjectURL(attachment.preview_url);

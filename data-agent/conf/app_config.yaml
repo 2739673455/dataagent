@@ -39,6 +39,6 @@ es:
   index_name: data_agent
 
 llm:
-  model_name: minimax/minimax-m2.5
-  api_key: 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
+  model_name: deepseek/deepseek-v4-flash
+  api_key: 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
   base_url: https://openrouter.ai/api/v1

@@ -9,6 +9,7 @@ interface ChatState {
 	messagesByConversation: MessageState;
 	isLoadingMessages: boolean;
 	connectionState: "idle" | "connecting" | "open" | "closed";
+	streamingConversations: Set<number>;
 	setConnectionState: (state: ChatState["connectionState"]) => void;
 	loadConversations: () => Promise<ConversationResponse[]>;
 	createConversation: () => Promise<ConversationResponse>;
@@ -16,6 +17,8 @@ interface ChatState {
 	loadMessages: (conversationId: number) => Promise<MessageSchema[]>;
 	ensureConversation: (conversation: ConversationResponse) => void;
 	appendMessage: (conversationId: number, message: MessageSchema) => void;
+	markStreaming: (conversationId: number) => void;
+	unmarkStreaming: (conversationId: number) => void;
 }
 
 export const useChatStore = create<ChatState>()((set, _get) => ({
@@ -23,6 +26,7 @@ export const useChatStore = create<ChatState>()((set, _get) => ({
 	messagesByConversation: {},
 	isLoadingMessages: false,
 	connectionState: "idle",
+	streamingConversations: new Set<number>(),
 
 	setConnectionState: (connectionState) => set({ connectionState }),
 
@@ -100,4 +104,19 @@ export const useChatStore = create<ChatState>()((set, _get) => ({
 				],
 			},
 		})),
+
+	markStreaming: (conversationId) =>
+		set((state) => ({
+			streamingConversations: new Set([
+				...state.streamingConversations,
+				conversationId,
+			]),
+		})),
+
+	unmarkStreaming: (conversationId) =>
+		set((state) => {
+			const next = new Set(state.streamingConversations);
+			next.delete(conversationId);
+			return { streamingConversations: next };
+		}),
 }));

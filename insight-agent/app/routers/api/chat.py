@@ -49,7 +49,7 @@ async def api_create_conversation(
     )
 
     logger.info(
-        f"Create conversation: conversation_id={conversation.id}, is_draft={conversation.is_draft}"
+        f"conversation_id={conversation.id}: Create conversation(is_draft={conversation.is_draft})"
     )
     return chat_schema.ConversationResponse(
         conversation_id=conversation.id,
@@ -110,7 +110,7 @@ async def api_update_conversation(
 
     await conversation_repo.update(db_session, conversation, title=body.title)
 
-    logger.info(f"Update conversation: conversation_id={body.conversation_id}")
+    logger.info(f"conversation_id={body.conversation_id}: Update conversation")
 
 
 @router.get("/ls")
@@ -139,7 +139,7 @@ async def api_get_messages(
 ) -> chat_schema.MessageListResponse:
     """获取某个对话所有消息"""
     messages = await message_repo.ls(db_session, conversation_id)
-    logger.info(f"Get messages: {conversation_id=}, message_count={len(messages)}")
+    logger.info(f"{conversation_id=}: Get messages(count={len(messages)})")
     return chat_schema.MessageListResponse(
         messages=[message_mapper.entity_to_schema(message) for message in messages]
     )
@@ -192,14 +192,15 @@ async def api_websocket_chat(
         await websocket.close(code=4401)
         return
 
+    # ========== 获取用户 ID ==========
     # 从令牌数据中获取用户ID
     user_id = token_data.user_id
     # 将用户ID添加到上下文变量
     context.user_id_ctx.set(str(user_id))
 
-    # 建立 WebSocket 连接
+    # ========== 建立 WebSocket 连接 ==========
     await websocket.accept()
-    logger.info(f"WebSocket connected: {conversation_id=}")
+    logger.info(f"{conversation_id=}: WebSocket connected")
 
     # ========== 加载会话上下文 ==========
     ctx = await chat_service.load_conversation_context(conversation_id, user_id)
@@ -211,7 +212,7 @@ async def api_websocket_chat(
             ).model_dump(mode="json")
         )
         await websocket.close(code=4404)
-        logger.info(f"WebSocket disconnected: {conversation_id=}")
+        logger.info(f"{conversation_id=}: WebSocket disconnected")
         return
     # 获取消息列表、当前上下文序号、是否为草稿
     messages, cur_context_seq, is_draft = ctx
@@ -270,6 +271,7 @@ async def api_websocket_chat(
                         is_draft = False
 
                 stream_cancel = asyncio.Event()
+                disconnected = False
 
                 async def _run():
                     # Agent 流式生成
@@ -283,29 +285,41 @@ async def api_websocket_chat(
                         cancel=stream_cancel,
                     ):
                         cur_context_seq += 1
-                        try:
-                            await websocket.send_json(
-                                chat_schema.WebSocketMessageResponse(
-                                    message=message
-                                ).model_dump(mode="json")
-                            )
-                        except WebSocketDisconnect:
-                            pass
+                        # 客户端已断开时不发送，避免 RuntimeError
+                        if (
+                            websocket.client_state.name == "CONNECTED"
+                            and websocket.application_state.name == "CONNECTED"
+                        ):
+                            try:
+                                await websocket.send_json(
+                                    chat_schema.WebSocketMessageResponse(
+                                        message=message
+                                    ).model_dump(mode="json")
+                                )
+                            except WebSocketDisconnect:
+                                pass
 
                 async def _wait_cancel():
                     # cancel 消息监听
+                    nonlocal disconnected
                     try:
                         while True:
                             raw = await websocket.receive_json()
                             if isinstance(raw, dict) and raw.get("type") == "cancel":
                                 if stream_cancel is not None:
                                     stream_cancel.set()
+                                logger.info(
+                                    f"{conversation_id=}: Received cancel signal"
+                                )
                                 return
-                    except WebSocketDisconnect:
-                        pass
+                    except (WebSocketDisconnect, RuntimeError):
+                        disconnected = True
 
                 await asyncio.gather(_run(), _wait_cancel())
+                # 连接已断开时直接退出，不再尝试 receive
+                if disconnected:
+                    break
 
     # 客户端断开连接
-    except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected: {conversation_id=}")
+    except (WebSocketDisconnect, RuntimeError):
+        logger.info(f"{conversation_id=}: WebSocket disconnected")

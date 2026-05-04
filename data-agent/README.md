@@ -2,10 +2,7 @@
 
 ## 启动容器
 - 准备 `docker/elasticsearch`
-- 准备 `docker/volumes/embedding/bge-large-zh-v1.5`
-- 准备 `docker/volumes/mysql/sql/meta.sql`
-- 执行 `docker compose up -d`
-- 修改目录权限 `sudo chown -R 1000:0 docker/volumes/es_data` `sudo chmod -R u+rwX,g+rwX docker/volumes/es_data`
+- 准备 `docker/embedding`
 - 执行 `docker compose up -d`
 
 ## 在数据库中建表并导入数据

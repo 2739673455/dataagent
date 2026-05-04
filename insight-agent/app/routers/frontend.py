@@ -31,10 +31,12 @@ def _matches_prefix(path: str, prefix: str) -> bool:
     return path == prefix or path.startswith(f"{prefix}/")
 
 
-@router.api_route(
-    "/auth-api/{path:path}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-)
+@router.get("/auth-api/{path:path}")
+@router.post("/auth-api/{path:path}")
+@router.put("/auth-api/{path:path}")
+@router.patch("/auth-api/{path:path}")
+@router.delete("/auth-api/{path:path}")
+@router.options("/auth-api/{path:path}")
 async def proxy_auth_api(path: str, request: Request) -> Response:
     # 将前端访问的 /auth-api 请求转发到独立认证服务
     client = get_http_client()

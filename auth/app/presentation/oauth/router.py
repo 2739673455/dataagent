@@ -153,7 +153,6 @@ def create_router(
         if payload is None:
             logger.info("访问令牌无效")
             return IntrospectionResponse(active=False)
-        logger.info("访问令牌有效")
         return IntrospectionResponse(
             active=True,
             sub=payload.sub,

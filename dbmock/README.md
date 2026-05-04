@@ -2,6 +2,8 @@
 
 ## 使用方式
 
+修改 [./core/init_db.py](./core/init_db.py) 下方数据库连接配置  
+
 ```bash
 # 1. 安装依赖
 uv sync

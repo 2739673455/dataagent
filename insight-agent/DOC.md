@@ -1,166 +1,390 @@
-# Insight Agent 文档
-
-## 1. 项目介绍
-
-### 1.1 功能介绍
-`insight-agent` 是一个面向归因分析场景的智能体应用。它主要服务于业务分析、经营诊断和问题定位这类需要“先提出问题，再逐步收集证据，最后形成分析结论”的工作。和普通问答式聊天应用不同，这个项目强调的不只是模型给出一句回答，而是让系统能够围绕一个真实分析任务持续推进，直到生成阶段性结论、分析材料和可交付结果。
-
+# 1. 项目介绍
+## 1.1 项目背景
+`insight-agent` 是一个面向归因分析场景的智能体应用。  
+主要服务于业务分析、经营诊断和问题定位这类需要“先提出问题，再逐步收集证据，最后形成分析结论”的工作。  
+这个项目强调的是让系统能够围绕一个真实分析任务持续推进，直到生成阶段性结论、分析材料和可交付结果。  
 同时，用户可以保留历史会话、继续追问前面的结论、复用已经上传的附件和已经生成的中间产物，从而把一次分析逐渐发展成一个可持续推进的工作过程。
 
-![Insight Agent 页面效果与分析交付示例](./assets/1.1_1.png)
+![Insight Agent 示例](./doc_assets/1.1_1.png)
 
-### 1.2 核心能力
-- 会话管理：提供完整的会话管理能力，包括创建会话、获取历史消息、删除会话
-- 流式聊天：提供基于 WebSocket 的流式聊天能力，把模型回复、工具调用和工具结果实时返回给前端
-- Agent 运行时：基于 `deepagents` 组织 Agent 运行时，统一挂载模型、自定义工具、MCP 工具和 Skill
-- 工作区机制：为每个用户会话分配独立工作区，用来承接上传附件、分析中间产物和最终报告文件
-- 数据查询：通过 `db_query` 查询业务数据，并把结果沉淀为工作区内可继续分析的文件
-- 文件返回：通过 `return_file` 把工作区中的分析结果文件作为附件返回给用户
-- 消息转换：通过消息 Schema 与 Mapper 打通前端消息、数据库记录和 Agent 运行时消息三种格式
-- 上下文管理：支持上下文压缩与恢复，控制长对话成本，同时保持历史会话可继续追问
-- 用户鉴权：通过认证中间件、临时 WebSocket Token 和用户上下文实现用户鉴权与会话隔离
+## 1.2 功能支持
+### 1.2.1 Agent
+基于 `deepagents` 组织 Agent 运行时
+- 模型
+- 自定义工具:
+- `db_query` 数据查询
+- `return_file` 返回文件
+- `read_file` 读取文件
+- `write_file` 写入新文件
+- `edit_file` 修改已有文件
+- `ls` 列出目录中的文件
+- `glob` 按模式匹配搜索文件
+- `grep` 在文件中搜索文本
+- `execute` 执行命令行
+- `task` 启动独立子代理/隔离任务
+- `write_todos` 创建与管理任务清单
+- MCP 工具: `tavily_search`...
+- Skill: 
+- `insight` 业务数据分析与归因（需配合 db_query）
+- `docx` 处理 Word 文档
+- `pdf` 处理 PDF 文件
+- `pptx` 处理 PPT
+- `xlsx` 处理 Excel 表格
+- 上下文压缩: `SummarizationMiddleware`
+- 工作区: `LocalShellBackend`
+### 1.2.2 系统能力
+- 对话管理:
+  - 创建对话
+  - 删除对话
+  - 修改对话信息
+  - 获取所有对话
+  - 获取对话历史消息
+- 流式输出: 基于 WebSocket 流式返回模型回复、工具调用和工具结果
+- 消息格式转换: 消息在 DTO、数据库存储、模型运行时 三种消息格式之间转换
+- 消息持久化: 存储对话历史消息，存储上下文压缩结果
+- 用户鉴权：通过认证中间件实现用户鉴权
+- 文件上传
+- 日志记录
+- 统一异常处理
+- 热更新配置
 
-### 1.3 技术栈与依赖
-- 后端：Python、FastAPI、SQLAlchemy、Redis、DeepAgents、LangChain 相关组件
-- 数据与存储：MySQL、Redis
-- 外部依赖：认证服务、Data Agent、MCP 服务
+## 1.3 接口定义
+所有接口需要在请求头中携带 Bearer Token 鉴权（WebSocket 除外，通过临时令牌替代），由认证中间件统一校验。
 
-### 1.4 系统架构
+### 1.3.1 对话管理
+#### 1.3.1.1 创建对话 `POST /api/chat/create`
+请求：
+```json
+{
+  "is_draft": 0
+}
+```
+- `is_draft` (int, 可选) — 是否创建草稿对话，`0`=正式对话，`1`=草稿对话，默认 `0`
+
+响应（201）：
+```json
+{
+  "conversation_id": 1,
+  "title": "新对话",
+  "update_at": "2026-05-04T12:00:00"
+}
+```
+- `conversation_id` (int) — 对话 ID
+- `title` (str) — 对话标题
+- `update_at` (datetime) — 最后更新时间
+
+#### 1.3.1.2 删除对话 `POST /api/chat/delete`
+请求：
+```json
+{
+  "conversation_ids": [1, 2, 3]
+}
+```
+- `conversation_ids` (list[int], 必填) — 要删除的对话 ID 列表
+
+响应：无（逻辑删除，同时删除对话下的所有消息、上下文压缩记录和工作区目录）
+
+#### 1.3.1.3 修改对话信息 `POST /api/chat/update`
+请求：
+```json
+{
+  "conversation_id": 1,
+  "title": "新标题"
+}
+```
+- `conversation_id` (int, 必填) — 对话 ID
+- `title` (str, 必填) — 新标题
+
+响应：无
+
+#### 1.3.1.4 获取所有对话 `GET /api/chat/ls`
+请求：无
+
+响应：
+```json
+{
+  "conversations": [
+    {
+      "conversation_id": 1,
+      "title": "归因分析-2026年5月",
+      "update_at": "2026-05-04T12:00:00"
+    }
+  ]
+}
+```
+- `conversations` (list) — 对话列表，按更新时间倒序排列
+- `conversations[].conversation_id` (int) — 对话 ID
+- `conversations[].title` (str) — 对话标题
+- `conversations[].update_at` (datetime) — 最后更新时间
+
+#### 1.3.1.5 获取对话历史消息 `GET /api/chat/ls/{conversation_id}`
+请求：路径参数 `conversation_id`（对话 ID）
+
+响应：
+```json
+{
+  "messages": [
+    {
+      "message_id": 1,
+      "context_seq": 1,
+      "role": "user",
+      "parts": [{"type": "text", "text": "帮我分析一下最近的销售数据"}],
+      "attachments": null,
+      "finish_reason": null,
+      "timestamp": "2026-05-04T12:00:00"
+    }
+  ]
+}
+```
+- `messages` (list[MessageSchema]) — 消息列表，按 context_seq 顺序排列
+- `messages[].message_id` (int) — 消息 ID
+- `messages[].context_seq` (int) — 对话内上下文顺序号
+- `messages[].role` (str) — 发送者角色：`user` / `assistant` / `tool`
+- `messages[].parts` (list) — 消息片段，支持 text / image_url / tool_call / tool_result
+- `messages[].attachments` (list) — 附件列表（可空）
+- `messages[].finish_reason` (str) — 完成原因：`stop`（正常结束）/ `tool_calls`（进入工具调用），用户消息为 null
+- `messages[].timestamp` (datetime) — 消息时间戳
+
+#### 1.3.1.6 创建 WebSocket 临时令牌 `POST /api/chat/ws-token`
+浏览器 WebSocket API 无法在握手阶段自定义请求头，因此不能直接携带 Bearer Token 鉴权。改为先通过 HTTP 接口获取一个短时效的一次性令牌，WebSocket 连接时以查询参数传入，消费后立即失效。
+
+请求：无
+
+响应：
+```json
+{
+  "websocket_token": "dGhpcyBpcyBhIHRva2Vu...",
+  "expires_in": 30
+}
+```
+- `websocket_token` (str) — WebSocket 临时令牌（一次性使用，消费后即失效）
+- `expires_in` (int) — 过期时间，单位秒（30s）
+
+#### 1.3.1.7 基于 WebSocket 聊天 `WS /api/chat/ws/chat?websocket_token={token}&conversation_id={id}`
+连接参数：
+- `websocket_token` (str, 必填) — WebSocket 临时令牌（通过 `/api/chat/ws-token` 获取）
+- `conversation_id` (int, 必填) — 对话 ID
+
+**发送消息（JSON）：**
+```json
+{
+  "message": {
+    "role": "user",
+    "parts": [{"type": "text", "text": "帮我分析最近的趋势"}]
+  }
+}
+```
+- `message` (MessageSchema, 必填) — 用户消息，role 必须为 `user`
+- `message.role` (str, 必填) — 必须为 `user`
+- `message.parts` (list, 必填) — 消息片段
+- `message.attachments` (list, 可选) — 附件列表
+
+**取消生成：**
+```json
+{"type": "cancel"}
+```
+
+**接收消息（流式，JSON）：**
+```json
+{
+  "type": "message",
+  "message": {
+    "message_id": 2,
+    "context_seq": 2,
+    "role": "assistant",
+    "parts": [{"type": "text", "text": "根据分析..."}],
+    "finish_reason": null,
+    "timestamp": "2026-05-04T12:00:01"
+  }
+}
+```
+- 每条消息为一个 JSON 帧，`finish_reason` 为 `stop` 或 `tool_calls` 时表示本轮回复结束
+- 工具调用和工具结果分别以 `tool_call` 和 `tool_result` 类型发送
+
+**错误响应：**
+```json
+{
+  "type": "error",
+  "content": "错误描述"
+}
+```
+
+连接关闭状态码：
+- `4401` — WebSocket 令牌无效、过期或已被消费
+- `4404` — 对话不存在或不属于当前用户
+
+### 1.3.2 附件管理
+#### 1.3.2.1 上传文件 `POST /api/chat/attachment/upload`
+请求：`multipart/form-data`
+- `conversation_id` (int, 必填) — 对话 ID
+- `file` (file, 必填) — 上传的文件
+
+响应：
+```json
+{
+  "attachment": {
+    "f_path": "report.xlsx"
+  }
+}
+```
+- `attachment.f_path` (str) — 文件在对话工作区内的相对路径
+
+#### 1.3.2.2 删除文件 `POST /api/chat/attachment/delete`
+请求：
+```json
+{
+  "conversation_id": 1,
+  "f_path": "report.xlsx"
+}
+```
+- `conversation_id` (int, 必填) — 对话 ID
+- `f_path` (str, 必填) — 文件在对话工作区内的相对路径
+
+响应：无
+
+#### 1.3.2.3 下载文件 `GET /api/chat/attachment/get?conversation_id={id}&f_path={path}`
+请求参数：
+- `conversation_id` (int, 必填) — 对话 ID
+- `f_path` (str, 必填) — 文件在对话工作区内的相对路径
+
+响应：文件二进制流（`FileResponse`）
+
+### 1.3.3 服务管理
+#### 1.3.3.1 热更新配置 `POST /api/reload`
+请求：无
+
+响应：
+```json
+{
+  "status": "ok",
+  "message": "..."
+}
+```
+- 重新读取 `.env` 和 `config.yml`，重建 Agent 实例
+
+```bash
+curl -X POST http://127.0.0.1:7300/api/reload -H 'Authorization: Bearer <access_token>'
+```
+
+## 1.4 数据存储定义
+### 1.4.1 MySQL 存储
+#### 1.4.1.1 `conversation` — 对话表
+- `id` (BIGINT, PK) — 对话 ID
+- `user_id` (BIGINT, NOT NULL, INDEX) — 用户 ID
+- `title` (VARCHAR 128, NOT NULL) — 对话标题
+- `is_draft` (TINYINT, NOT NULL, DEFAULT 0) — 是否草稿对话，0=正式，1=草稿
+- `create_at` (DATETIME, NOT NULL) — 创建时间
+- `update_at` (DATETIME, NOT NULL, ON UPDATE) — 最后更新时间
+- `yn` (TINYINT, NOT NULL, DEFAULT 1) — 启用标记，0=逻辑删除，1=正常
+
+#### 1.4.1.2 `message` — 消息表
+- `id` (BIGINT, PK) — 消息 ID
+- `conversation_id` (BIGINT, NOT NULL, FK → conversation.id ON DELETE CASCADE) — 所属对话 ID
+- `context_seq` (BIGINT, NOT NULL, UNIQUE(conversation_id, context_seq)) — 对话内上下文顺序号
+- `role` (VARCHAR 10, NOT NULL) — 发送者角色：`user` / `assistant` / `tool`
+- `parts` (MEDIUMTEXT, NOT NULL) — 消息片段，JSON 数组，元素按 type 区分：text / image_url / tool_call / tool_result
+- `finish_reason` (VARCHAR 128, NULLABLE) — 完成原因：`stop` / `tool_calls`，用户消息为 null
+- `attachments` (TEXT, NULLABLE) — 附件列表，JSON 数组
+- `create_at` (DATETIME, NOT NULL) — 创建时间
+- `yn` (TINYINT, NOT NULL, DEFAULT 1) — 启用标记，0=逻辑删除，1=正常
+
+#### 1.4.1.3 `context_compaction` — 上下文压缩记录表
+- `id` (BIGINT, PK) — 压缩记录 ID
+- `conversation_id` (BIGINT, NOT NULL, FK → conversation.id ON DELETE CASCADE) — 所属对话 ID
+- `end_seq` (BIGINT, NOT NULL, INDEX(conversation_id, end_seq)) — 压缩范围的截止 context_seq（不包含）
+- `summary_message` (MEDIUMTEXT, NOT NULL) — 压缩后的摘要内容
+- `create_at` (DATETIME, NOT NULL) — 创建时间
+- `yn` (TINYINT, NOT NULL, DEFAULT 1) — 启用标记，0=逻辑删除，1=正常
+
+### 1.4.2 Redis 存储
+#### 1.4.2.1 WebSocket 临时令牌
+- Key 格式：`ws_token:{token}`（token 为 `secrets.token_urlsafe(32)` 生成的 43 字符字符串）
+- Value：`{"user_id": <int>}`（JSON）
+- TTL：30 秒
+- 写入：`SETEX ws_token:{token} 30 '{"user_id": ...}'`
+- 消费：`GETDEL ws_token:{token}` — 读取并原子删除，保证一次性使用。Key 不存在则连接被拒绝（状态码 4401）
+
+## 1.5 系统架构
 ```mermaid
 flowchart TD
-    classDef layer fill:#f8fafc,stroke:#94a3b8,stroke-width:1.5px,color:#0f172a;
-    classDef ui fill:#e0f2fe,stroke:#0284c7,stroke-width:1.5px,color:#0c4a6e;
-    classDef app fill:#ede9fe,stroke:#7c3aed,stroke-width:1.5px,color:#4c1d95;
-    classDef biz fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
-    classDef agent fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f;
-    classDef dep fill:#fee2e2,stroke:#dc2626,stroke-width:1.5px,color:#7f1d1d;
-
-    subgraph L1[交互层]
-        UI[前端页面]
-        HTTP[HTTP 接口]
-        WS[WebSocket 连接]
+    subgraph L1[前端]
+        UI[React SPA]
     end
 
-    subgraph L2[应用层]
-        APP[FastAPI 应用]
+    subgraph L2[FastAPI 应用]
         ROUTER[路由分发]
-        MW[中间件]
-        EX[异常处理]
-        STATIC[静态资源托管]
+        MW[中间件 trace / auth]
+        EX[统一异常处理]
+        STATIC[静态资源托管 / SPA 回退]
     end
 
     subgraph L3[业务层]
-        SERVICE[Service]
+        SVC[Chat Service]
         REPO[Repository]
-        MAPPER[Mapper]
-        SCHEMA[Schema]
+        MAPPER[消息 Mapper]
     end
 
-    subgraph L4[Agent 层]
-        DA[deepagents]
-        MODEL[模型]
-        TOOL[工具]
-        SKILL[Skill]
-        MCP[MCP 工具]
-        WS_DIR[工作区运行时]
+    subgraph L4[Agent 运行时]
+        AGENT[deepagents]
+        MODEL[LLM 模型]
+        TOOLS[工具 db_query / file / execute / task ...]
+        SKILLS[Skill insight / docx / xlsx / pdf / pptx]
+        MCP_CLIENT[MCP 客户端]
+        WS[工作区 LocalShellBackend]
     end
 
-    subgraph L5[外部依赖层]
+    subgraph L5[外部依赖]
         AUTH[认证服务]
-        DATA[Data Agent]
+        DATA_AGENT[Data Agent]
         MCP_SVC[MCP 服务]
-        LLM[LLM 服务]
+        LLM_SVC[LLM 服务]
         MYSQL[MySQL]
         REDIS[Redis]
     end
 
-    UI --> HTTP
-    UI --> WS
-    HTTP --> APP
-    WS --> APP
-    APP --> SERVICE
-    APP --> ROUTER
-    APP --> MW
-    APP --> EX
-    APP --> STATIC
-    SERVICE --> REPO
-    SERVICE --> MAPPER
-    SERVICE --> SCHEMA
-    SERVICE --> DA
-    DA --> MODEL
-    DA --> TOOL
-    DA --> SKILL
-    DA --> MCP
-    DA --> WS_DIR
+    UI -->|"HTTP"| ROUTER
+    UI -->|"WebSocket"| ROUTER
+    ROUTER --> SVC
+    SVC --> REPO
+    SVC --> MAPPER
+    SVC --> AGENT
+    AGENT --> MODEL
+    AGENT --> TOOLS
+    AGENT --> SKILLS
+    AGENT --> MCP_CLIENT
+    AGENT --> WS
+    MODEL --> LLM_SVC
+    TOOLS --> DATA_AGENT
+    MCP_CLIENT --> MCP_SVC
     MW --> AUTH
-    TOOL --> DATA
-    MODEL --> LLM
-    MCP --> MCP_SVC
     REPO --> MYSQL
     REPO --> REDIS
-
-    class L1 layer
-    class L2 layer
-    class L3 layer
-    class L4 layer
-    class L5 layer
-
-    class UI,HTTP,WS ui
-    class APP,ROUTER,MW,EX,STATIC app
-    class SERVICE,REPO,MAPPER,SCHEMA biz
-    class DA,MODEL,TOOL,SKILL,MCP,WS_DIR agent
-    class AUTH,DATA,MCP_SVC,LLM,MYSQL,REDIS dep
 ```
 
-- 交互层：前端页面通过 HTTP 与 WebSocket 调用后端接口
-- 应用层：FastAPI 应用负责路由分发、中间件处理、异常处理和静态资源托管
-- 业务层：Service、Repository、Mapper、Schema 共同完成会话管理、消息持久化与协议转换
-- Agent 层：`deepagents` 负责组织模型、工具、Skill、MCP 工具和工作区运行时
-- 外部依赖层：认证服务、Data Agent、MCP 服务、LLM 服务、MySQL、Redis 为系统提供鉴权、数据、扩展能力、模型推理和存储支持
+- **前端**：
+  - React SPA，构建产物由 FastAPI 托管
+  - 通过 HTTP 接口和 WebSocket 与后端通信
+- **应用层**：
+  - 路由按前缀分发（`/api/*` 业务接口、`/auth-api/*` 认证代理、`/*` SPA 回退）
+  - 中间件负责 trace 打点和 Bearer Token 鉴权
+  - 异常处理器统一错误响应格式
+- **业务层**：
+  - Chat Service 管理会话上下文和流式编排
+  - Repository 封装数据库和 Redis 访问
+  - Mapper 负责 DTO / 数据库实体 / LangChain 消息三种格式的互转
+- **Agent 运行时**：
+  - `deepagents` 框架组装模型、工具、Skill、MCP 客户端和工作区
+  - 中间件链在模型调用前后注入系统提示、上下文压缩等逻辑
+- **外部依赖**：
+  - 认证服务校验用户身份
+  - Data Agent 提供数据库查询能力
+  - MCP 服务扩展外部工具
+  - LLM 服务提供模型推理
+  - MySQL 持久化对话和消息
+  - Redis 存储 WebSocket 一次性令牌
 
-### 1.5 一次完整请求的生命周期
-```mermaid
-sequenceDiagram
-    participant U as 用户
-    participant FE as 前端
-    participant API as FastAPI
-    participant AUTH as 认证服务
-    participant REDIS as Redis
-    participant DB as MySQL
-    participant AGENT as Agent
-    participant DATA as Data Agent
-
-    U->>FE: 发起会话消息
-    FE->>API: POST /ws-token (Authorization)
-    API->>AUTH: (中间件) 校验访问令牌
-    AUTH-->>API: 返回用户身份
-    API->>REDIS: 写入临时 Token
-    API-->>FE: 返回 websocket_token
-
-    FE->>API: 建立 WebSocket 连接
-    API->>REDIS: 校验并消费 websocket_token
-    API->>DB: 加载历史消息与摘要上下文
-    DB-->>API: 返回会话上下文
-
-    API->>AGENT: 转换消息并发起聊天
-    AGENT->>DATA: 按需调用查数工具
-    DATA-->>AGENT: 返回结果文件或数据
-    AGENT-->>API: 流式输出模型消息/工具消息/摘要事件
-
-    API-->>FE: 流式推送消息和附件
-    API->>DB: 逐条持久化消息
-    API->>DB: 持久化上下文压缩结果
-```
-
-- 用户在前端发起一次会话消息，前端通过 HTTP 申请 WebSocket 临时 Token（浏览器 WebSocket API 不支持自定义请求头，无法直接携带 Authorization，因此通过临时 Token 把 HTTP 鉴权结果传递到 WebSocket 建连过程），再以 Token 建立 WebSocket 连接
-- 后端加载历史消息和必要的摘要上下文，并转换成 Agent 可消费的消息格式
-- Agent 在 Skill 约束下结合模型推理，决定直接回复、调用内建工具，或进一步使用 MCP 工具
-- 工具执行产生的数据文件、分析结果或附件被写入对应会话工作区，并通过消息流实时回传
-- 本轮产生的用户消息、模型消息和工具消息在流式过程中逐条写入数据库，上下文压缩结果在流结束后统一持久化，供后续追问和恢复使用
-
-## 2. 项目基础模块
-
-### 2.1 项目目录结构
+# 2. 项目基础设施
+## 2.1 目录结构
 ```text
 insight-agent/                项目根目录，统一组织后端、前端、配置与 Agent 资源
 ├── app/                      后端主目录，承载应用、Agent 和业务逻辑
@@ -182,7 +406,7 @@ insight-agent/                项目根目录，统一组织后端、前端、�
 └── .deepagents/              DeepAgents 资源目录，存放 Skills 和会话工作区
 ```
 
-### 2.2 项目依赖
+## 2.2 项目依赖
 依赖如下：
 - Web 框架与接口能力：`fastapi[standard]`
 - 数据库与 ORM：`sqlalchemy`、`asyncmy`、`pymysql`
@@ -195,7 +419,7 @@ insight-agent/                项目根目录，统一组织后端、前端、�
 附代码：
 - [pyproject.toml](./insight-agent/pyproject.toml)
 
-### 2.3 配置文件与配置加载
+## 2.3 配置文件与配置加载
 项目的配置主要分成两类：一类是描述系统行为的普通配置；另一类是更敏感的环境配置，例如账号、密钥、地址和令牌。这两类配置分别落在 `configs/config.yml` 和 `configs/.env` 中，既方便管理，也能避免把敏感信息硬编码到代码里。
 
 配置加载入口统一放在 `app/config.py`。应用启动时先从环境变量中读取 `.env`，再结合 `config.yml` 组织成项目内部统一使用的配置对象。
@@ -214,10 +438,10 @@ insight-agent/                项目根目录，统一组织后端、前端、�
 - [.env](./insight-agent/configs/.env)
 - [config.py](./insight-agent/app/config.py)
 
-### 2.4 通用工具模块
+## 2.4 通用工具模块
 `app/utils/` 用来集中放置通用基础能力，供路由、服务、工具和中间件统一复用，避免重复实现数据库、Redis、日志和上下文等底层逻辑。
 
-#### 2.4.1 数据库工具
+### 2.4.1 数据库工具
 `db.py` 统一管理数据库引擎、会话工厂和 FastAPI 依赖注入入口。项目后续无论是 Repository、Service 还是 Router，都不直接创建数据库连接，而是从这里拿到统一的 `AsyncSession`。
 
 模块职责：
@@ -236,19 +460,19 @@ insight-agent/                项目根目录，统一组织后端、前端、�
 附代码：
 - [db.py](./insight-agent/app/utils/db.py)
 
-#### 2.4.2 Redis 工具
+### 2.4.2 Redis 工具
 Redis 工具负责统一初始化和获取 Redis 客户端，主要服务于临时状态、短期缓存和一次性 Token 这类场景，避免业务代码重复维护连接。
 
 附代码：
 - [redis.py](./insight-agent/app/utils/redis.py)
 
-#### 2.4.3 HTTP 客户端工具
+### 2.4.3 HTTP 客户端工具
 HTTP 客户端工具负责统一封装对外部 HTTP 服务的调用入口，方便后续访问认证服务、Data Agent 或其他外部接口时复用同一套客户端配置。
 
 附代码：
 - [http_client.py](./insight-agent/app/utils/http_client.py)
 
-#### 2.4.4 日志与上下文工具
+### 2.4.4 日志与上下文工具
 日志工具负责统一日志初始化和输出格式；上下文工具负责管理请求级上下文信息，例如用户 ID。两者配合后，链路日志和业务调用就能共用同一份上下文数据。
 
 日志落文件时会先从上下文中读取请求相关信息，例如 `request_id`、`trace_id`、`user_id`、请求路径和响应耗时，再和本次日志消息一起组装成 JSON，最终按 `jsonl` 格式写入文件。方便后续排查问题、链路检索和日志分析。
@@ -257,10 +481,10 @@ HTTP 客户端工具负责统一封装对外部 HTTP 服务的调用入口，方
 - [context.py](./insight-agent/app/utils/context.py)
 - [log.py](./insight-agent/app/utils/log.py)
 
-### 2.5 异常体系与统一错误处理
+## 2.5 异常体系与统一错误处理
 异常模块统一放在 `app/exceptions/` 下，用来集中管理错误定义和错误返回格式，避免业务代码里到处写 `HTTPException`。
 
-#### 2.5.1 基础异常
+### 2.5.1 基础异常
 基础异常定义在 `base.py` 中，项目里的自定义异常都从 `AppError` 继承。基础字段包括：
 - `code`：业务错误码
 - `message`：默认错误消息
@@ -280,7 +504,7 @@ HTTP 客户端工具负责统一封装对外部 HTTP 服务的调用入口，方
 附代码：
 - [base.py](./insight-agent/app/exceptions/base.py)
 
-#### 2.5.2 业务异常
+### 2.5.2 业务异常
 业务异常按领域拆分到不同文件里，主要包括：
 - `auth_error.py`：认证相关异常
 - `chat_error.py`：聊天相关异常
@@ -301,7 +525,7 @@ HTTP 客户端工具负责统一封装对外部 HTTP 服务的调用入口，方
 - [auth_error.py](./insight-agent/app/exceptions/auth_error.py)
 - [chat_error.py](./insight-agent/app/exceptions/chat_error.py)
 
-#### 2.5.3 统一异常处理器
+### 2.5.3 统一异常处理器
 异常处理器定义在 `handlers.py` 中，负责把不同来源的异常统一收敛成稳定的 JSON 返回格式。处理的异常类型包括：
 - `AppError`
 - FastAPI 的 `RequestValidationError`
@@ -320,9 +544,9 @@ HTTP 客户端工具负责统一封装对外部 HTTP 服务的调用入口，方
 附代码：
 - [handlers.py](./insight-agent/app/exceptions/handlers.py)
 
-### 2.6 中间件
+## 2.6 中间件
 
-#### 2.6.1 trace 与日志体系
+### 2.6.1 trace 与日志体系
 `trace` 中间件负责给每个请求补齐统一的链路信息，并把这些信息写入 `ContextVar`，供后续日志输出和业务处理复用。
 
 这一中间件主要处理以下内容：
@@ -336,7 +560,7 @@ HTTP 客户端工具负责统一封装对外部 HTTP 服务的调用入口，方
 附代码：
 - [trace.py](./insight-agent/app/middlewares/trace.py)
 
-#### 2.6.2 auth 中间件
+### 2.6.2 auth 中间件
 `auth` 中间件负责统一处理访问令牌校验。将认证放在中间件层，请求在进入具体业务路由之前先完成身份确认，这样后面的 Router、Service 和 Agent 调用都可以直接使用已经解析好的用户信息。
 
 该实现会先根据请求路径判断接口是否需要鉴权。`/health`、`/docs`、`/openapi.json`、`/redoc` 等精确路径会直接放行，`/assets`、`/auth-api` 等前缀路径也会放行；真正进入业务处理的 HTTP 接口主要通过 `/api` 前缀统一纳入鉴权范围。由此可以将需要保护的业务接口与不需要保护的静态资源、文档接口区分开来。
@@ -355,9 +579,9 @@ HTTP 客户端工具负责统一封装对外部 HTTP 服务的调用入口，方
 - [auth_schema.py](./insight-agent/app/schemas/auth_schema.py)
 - [auth.py](./insight-agent/app/middlewares/auth.py)
 
-## 3. Agent 组装
+# 3. Agent 组装
 
-### 3.1 Agent 由哪些组件组成
+## 3.1 Agent 由哪些组件组成
 Agent 运行时由模型、工作区、工具、MCP、Skill 和 `deepagents` 提供的运行时能力共同组成。
 
 其中各部分职责如下：
@@ -370,7 +594,7 @@ Agent 运行时由模型、工作区、工具、MCP、Skill 和 `deepagents` 提
 - `SubAgentMiddleware`：负责在复杂任务下支持子代理拆分与协作
 - `SummarizationMiddleware`：负责在长对话场景下压缩上下文，降低上下文长度和推理成本
 
-### 3.2 工作区机制
+## 3.2 工作区机制
 每个会话都会分配一个独立的工作区，用来保存用户上传的附件、中间的分析过程文件，以及最终生成的报告或交付物。
 
 工作区机制主要解决三个问题：
@@ -385,8 +609,8 @@ Agent 运行时由模型、工作区、工具、MCP、Skill 和 `deepagents` 提
 
 因此，工作区是 Agent 在这个项目里能够处理文件、沉淀中间结果和交付最终产物的基础前提。
 
-### 3.3 工具
-#### 3.3.1 `db_query`
+## 3.3 工具
+### 3.3.1 `db_query`
 `db_query` 是项目里最核心的业务工具之一，负责把自然语言查询需求发送给 Data Agent，并将最终结果写入对应会话工作区。
 
 工具职责：
@@ -405,7 +629,7 @@ Agent 运行时由模型、工作区、工具、MCP、Skill 和 `deepagents` 提
 附代码：
 - [db_query.py](./insight-agent/app/core/tools/db_query.py)
 
-#### 3.3.2 `return_file`
+### 3.3.2 `return_file`
 `return_file` 负责把工作区中的文件返回给用户。这个工具本身不直接传输二进制内容，而是返回一个结构化结果，后续再由消息映射和前端展示逻辑把它转换成附件。
 
 工具职责：
@@ -423,7 +647,7 @@ Agent 运行时由模型、工作区、工具、MCP、Skill 和 `deepagents` 提
 附代码：
 - [return_file.py](./insight-agent/app/core/tools/return_file.py)
 
-### 3.4 MCP 接入
+## 3.4 MCP 接入
 `mcp.py` 的作用是把配置文件中的多个 MCP 服务统一初始化成一个客户端。实现中会先根据配置里的 `transport` 字段，把不同服务映射到对应的连接类型，例如：
 - `sse`
 - `stdio`
@@ -449,8 +673,8 @@ tools = [db_query, return_file, *mcp_tools]
 附代码：
 - [mcp.py](./insight-agent/app/core/mcp.py)
 
-### 3.5 Skill 系统
-#### 3.5.1 Skill 的作用与目录组织
+## 3.5 Skill 系统
+### 3.5.1 Skill 的作用与目录组织
 Skill 负责为 Agent 补充任务方法论、执行规范和交付要求。工具解决的是单步动作，例如查数、返回文件；Skill 解决的是“遇到某类任务时，应该按什么流程推进，产出什么结果”。
 
 项目里的 Skill 放在 `.deepagents/skills/` 下，目录中既有文档处理类 Skill，也有面向归因分析场景的 `insight` Skill。Agent 初始化时会通过：
@@ -464,7 +688,7 @@ create_deep_agent(
 
 把这一目录整体挂载进去，使 Agent 在运行时可以发现并使用这些 Skill。
 
-#### 3.5.2 `insight` Skill 如何约束分析流程
+### 3.5.2 `insight` Skill 如何约束分析流程
 `insight` Skill 负责把归因分析任务约束成固定工作流，避免 Agent 只停留在单点查数或自由发挥。
 
 它约束的内容主要包括：
@@ -483,7 +707,7 @@ create_deep_agent(
 - [insight/SKILL.md](./insight-agent/.deepagents/skills/insight/SKILL.md)
 - [render_report.py](./insight-agent/.deepagents/skills/insight/scripts/render_report.py)
 
-### 3.6 Agent 的组装与加载
+## 3.6 Agent 的组装与加载
 `agent.py`负责统一定义 Agent 的目录结构、工作区后端、组件装配方式和实例获取方式。
 
 目录与路径常量包括：
@@ -516,9 +740,9 @@ Agent 的组装由 `_build_agent()` 完成，装配内容包括：
 附代码：
 - [agent.py](./insight-agent/app/core/agent.py)
 
-## 4. 聊天相关数据模型与消息转换
+# 4. 聊天相关数据模型与消息转换
 
-### 4.1 接口设计与表设计
+## 4.1 接口设计与表设计
 项目实现了几类核心接口：会话管理、历史消息获取、WebSocket 聊天、附件上传与下载，以及 WebSocket 临时令牌获取。这些接口能力背后都需要稳定的存储结构来承接。
 
 在具体实现上，`sql/mysql/chat.sql` 定义了聊天系统依赖的核心表结构，`app/init_db.py` 负责初始化数据库表；而 WebSocket 临时令牌和会话文件则分别落在 Redis 与会话工作区中。也就是说，这里的“数据承接”不只包含 MySQL 表，还包含 Redis 和工作区文件系统。
@@ -537,14 +761,14 @@ Agent 的组装由 `_build_agent()` 完成，装配内容包括：
 - [chat.sql](./insight-agent/sql/mysql/chat.sql)
 - [init_db.py](./insight-agent/app/init_db.py)
 
-### 4.2 项目中的三种消息格式
+## 4.2 项目中的三种消息格式
 - Agent 运行时使用的 LangChain/DeepAgents 消息
 - 前后端交互的 Schema 消息
 - 数据库存储的 Entity 消息
 
 LangChain/DeepAgents 消息是 Agent 真正消费和产出的运行时格式，Schema 和 Entity 都是在运行时消息基础上做适配。
 
-#### 4.2.1 运行时消息
+### 4.2.1 运行时消息
 运行时消息主要有三种：
 - `HumanMessage`：用户输入消息
 - `AIMessage`：模型输出消息，可能包含 `tool_calls`
@@ -610,7 +834,7 @@ LangChain/DeepAgents 消息是 Agent 真正消费和产出的运行时格式，S
 - `name` 是工具名称
 - `content` 是工具执行结果，项目里统一按字符串处理
 
-#### 4.2.2 Schema 消息
+### 4.2.2 Schema 消息
 Schema 消息负责前后端交互，是运行时消息在应用层的结构化表达。核心结构是 `MessageSchema`：
 
 ```python
@@ -720,7 +944,7 @@ class MessageSchema(BaseModel):
 - `FinishReason` 用字面量约束消息结束原因，目前只允许 `stop` 和 `tool_calls`
 - `MessagePart` 用带判别字段的联合类型约束消息片段，要求每个片段都通过 `type` 字段区分具体结构
 
-#### 4.2.3 Entity 消息
+### 4.2.3 Entity 消息
 Entity 消息负责数据库持久化，是运行时消息和 Schema 消息在存储层的落地形式。项目中对应的是 `app/entities/chat.py` 里的 `Message` 实体：
 
 ```python
@@ -758,14 +982,14 @@ Entity 层保存的消息大致可以表示为：
 - 表结构保持稳定，不需要为每一种消息片段单独拆表
 - `parts` 和 `attachments` 仍然保留结构化信息，后续可以完整恢复成 Schema
 
-### 4.3 消息转换 Mapper
+## 4.3 消息转换 Mapper
 在运行过程中，这三种消息格式会随着请求链路不断相互转换。  
 用户消息进入系统时，通常先以 Schema 形式承接前端请求；需要持久化时，会再转换成 Entity 写入数据库；真正送进 Agent 推理时，又要转换成 LangChain/DeepAgents 能消费的运行时消息。  
 反过来，Agent 在运行过程中产出的模型消息和工具消息，也需要先转回 Schema，才能继续完成前端展示和数据库持久化。
 
 Mapper 层的职责，就是在这些阶段之间做稳定、可逆的格式转换，确保同一条消息在不同层里始终保持一致语义。
 
-#### 4.3.1 `langchain_message_to_schema`
+### 4.3.1 `langchain_message_to_schema`
 这一段负责把 Agent 运行时输出的消息转换成 `MessageSchema`，供前端展示和后续持久化。
 
 处理的消息类型主要包括：
@@ -872,7 +1096,7 @@ def langchain_message_to_schema(
 ...
 ```
 
-#### 4.3.2 `agent_chunk_to_schemas`
+### 4.3.2 `agent_chunk_to_schemas`
 在实际运行过程中，从 Agent 流式拿到的并不是一条条已经拆好的消息，而是一个个 `chunk`。`chunk` 大致会是下面几种形态：
 
 ```python
@@ -918,7 +1142,7 @@ def agent_chunk_to_schemas(chunk: dict) -> list[chat_schema.MessageSchema]:
 ...
 ```
 
-#### 4.3.3 `schema_to_entity`
+### 4.3.3 `schema_to_entity`
 这一段负责把 `MessageSchema` 写入数据库实体。
 
 `schema_to_entity` 的处理重点是：
@@ -977,7 +1201,7 @@ def schema_to_entity(
 ...
 ```
 
-#### 4.3.4 `entity_to_schema`
+### 4.3.4 `entity_to_schema`
 这一段负责把数据库实体恢复成 `MessageSchema`。
 
 `entity_to_schema` 的处理重点是：
@@ -1027,7 +1251,7 @@ def entity_to_schema(message: Message) -> chat_schema.MessageSchema:
 ...
 ```
 
-#### 4.3.5 `schema_to_langchain_message`
+### 4.3.5 `schema_to_langchain_message`
 这一段负责把 `MessageSchema` 转成 Agent 可直接消费的运行时消息。
 
 对 `user` 和 `assistant` 角色，核心处理是两步：
@@ -1165,9 +1389,9 @@ def schema_to_langchain_message(
 ...
 ```
 
-## 5. 接口功能实现
+# 5. 接口功能实现
 
-### 5.1 后端功能接口
+## 5.1 后端功能接口
 - `GET /health`：健康检查
 - `GET /api/chat/ls`：获取会话列表
 - `POST /api/chat/create`：创建会话
@@ -1191,8 +1415,8 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 ...
 ```
 
-### 5.2 会话与消息列表接口
-#### 5.2.1 接口介绍
+## 5.2 会话与消息列表接口
+### 5.2.1 接口介绍
 这一组接口负责承接聊天系统最基础的资源管理能力，包括会话本身的创建、更新、删除，以及历史消息列表的查询。
 
 相关接口包括：
@@ -1202,7 +1426,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 - `POST /api/chat/delete`：逻辑删除会话，并一并清理消息、上下文压缩记录和工作区目录
 - `GET /api/chat/ls/{conversation_id}`：查询某个会话下的历史消息列表
 
-#### 5.2.2 相关依赖
+### 5.2.2 相关依赖
 这一组接口背后主要依赖三个 Repository：
 - `conversation_repo`
   - 负责会话的查询、创建、更新和逻辑删除，是会话接口最核心的数据访问层。
@@ -1220,7 +1444,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
   - [context_compaction_repo.py](./insight-agent/app/repositories/context_compaction_repo.py)
 
 
-#### 5.2.3 `GET /api/chat/ls`
+### 5.2.3 `GET /api/chat/ls`
 `GET /api/chat/ls` 实现：
 - 从认证信息中拿到当前用户 ID
 - 调用 `conversation_repo.ls` 只查询当前用户自己的会话
@@ -1271,7 +1495,7 @@ class ConversationListResponse(BaseModel):
 ...
 ```
 
-#### 5.2.4 `POST /api/chat/create`
+### 5.2.4 `POST /api/chat/create`
 `POST /api/chat/create` 实现：
 - 调用 `conversation_repo.create` 创建会话
 - 初始标题固定为“新对话”
@@ -1326,7 +1550,7 @@ class CreateConversationRequest(BaseModel):
 ...
 ```
 
-#### 5.2.5 `POST /api/chat/update`
+### 5.2.5 `POST /api/chat/update`
 `POST /api/chat/update` 实现：
 - 先校验会话是否存在且属于当前用户
 - 再调用 `conversation_repo.update` 更新标题
@@ -1367,7 +1591,7 @@ class UpdateConversationRequest(BaseModel):
 ...
 ```
 
-#### 5.2.6 `POST /api/chat/delete`
+### 5.2.6 `POST /api/chat/delete`
 `POST /api/chat/delete` 实现：
 - 先校验会话归属
 - 调用 `conversation_repo.update` 把会话逻辑删除
@@ -1422,7 +1646,7 @@ class DeleteConversationRequest(BaseModel):
 ...
 ```
 
-#### 5.2.7 `GET /api/chat/ls/{conversation_id}`
+### 5.2.7 `GET /api/chat/ls/{conversation_id}`
 `GET /api/chat/ls/{conversation_id}` 实现：
 - 读取指定会话下的历史消息
 - 调用 `message_repo.ls` 返回消息实体列表
@@ -1459,8 +1683,8 @@ class MessageListResponse(BaseModel):
 ...
 ```
 
-### 5.3 附件接口
-#### 5.3.1 接口介绍
+## 5.3 附件接口
+### 5.3.1 接口介绍
 附件接口负责把文件写入会话工作区，并把工作区中的文件重新返回给前端。
 
 附件相关接口包括：
@@ -1468,12 +1692,12 @@ class MessageListResponse(BaseModel):
 - `POST /api/chat/attachment/delete`：删除工作区中的附件
 - `GET /api/chat/attachment/get`：获取工作区中的附件文件
 
-#### 5.3.2 相关依赖
+### 5.3.2 相关依赖
 这一组接口背后主要依赖两类基础能力：
 - `conversation_repo`：负责校验当前操作的会话是否存在且属于当前用户
 - 工作区相关函数：`get_workspace_dir()` 用来定位会话工作区，`_build_attachment_unique_name()` 和 `_build_attachment_path()` 用来保证文件名安全和路径安全
 
-#### 5.3.3 `POST /api/chat/attachment/upload`
+### 5.3.3 `POST /api/chat/attachment/upload`
 `POST /api/chat/attachment/upload` 实现：
 - 接收 `conversation_id` 和 `file`
 - 校验会话是否存在且属于当前用户
@@ -1560,7 +1784,7 @@ class UploadAttachmentResponse(BaseModel):
 ...
 ```
 
-#### 5.3.4 `POST /api/chat/attachment/delete`
+### 5.3.4 `POST /api/chat/attachment/delete`
 `POST /api/chat/attachment/delete` 实现：
 - 接收 `conversation_id` 和相对路径 `path`
 - 校验会话是否存在且属于当前用户
@@ -1611,7 +1835,7 @@ class DeleteAttachmentRequest(BaseModel):
 ...
 ```
 
-#### 5.3.5 `GET /api/chat/attachment/get`
+### 5.3.5 `GET /api/chat/attachment/get`
 `GET /api/chat/attachment/get` 实现：
 - 接收 `conversation_id` 和附件相对路径
 - 校验会话是否存在且属于当前用户
@@ -1656,8 +1880,8 @@ async def api_get_attachment(
 ...
 ```
 
-### 5.4 WebSocket Token 接口
-#### 5.4.1 接口介绍
+## 5.4 WebSocket Token 接口
+### 5.4.1 接口介绍
 WebSocket Token 接口负责把已经完成 HTTP 认证的用户身份，转换成一个短时可消费的建连令牌。
 
 接口如下：
@@ -1665,7 +1889,7 @@ WebSocket Token 接口负责把已经完成 HTTP 认证的用户身份，转换�
 
 这一接口的核心目标，是把已经在 HTTP 请求里完成校验的用户身份，安全地传递给后续 WebSocket 建连过程。因为浏览器发起 WebSocket 连接时，不适合继续沿用原本那套 HTTP 认证处理链，所以后端先发放一个短时有效、且只能消费一次的临时令牌，再由前端在建立 WebSocket 连接时携带这个令牌完成身份确认。
 
-#### 5.4.2 相关依赖
+### 5.4.2 相关依赖
 这一接口背后主要依赖：
 - `websocket_token_repo`：负责创建和消费 WebSocket 临时令牌
 - Redis：负责保存短期有效且只能消费一次的令牌数据
@@ -1673,7 +1897,7 @@ WebSocket Token 接口负责把已经完成 HTTP 认证的用户身份，转换�
 附代码：
 - [websocket_token_repo.py](./insight-agent/app/repositories/websocket_token_repo.py)
 
-#### 5.4.3 `POST /api/chat/ws-token`
+### 5.4.3 `POST /api/chat/ws-token`
 `POST /api/chat/ws-token` 实现：
 - 从 `request.state.payload.sub` 读取用户 ID
 - 设置临时令牌过期时间 `WS_TOKEN_EXPIRE_SECONDS = 30`
@@ -1728,8 +1952,8 @@ class WebSocketTokenResponse(BaseModel):
 ...
 ```
 
-### 5.5 WebSocket 聊天接口
-#### 5.5.1 接口介绍
+## 5.5 WebSocket 聊天接口
+### 5.5.1 接口介绍
 这个 WebSocket 聊天接口承载实时对话过程。
 
 接口为：
@@ -1751,7 +1975,7 @@ class WebSocketTokenResponse(BaseModel):
 - 处理进入聊天前的准备工作，包括会话校验、历史恢复和请求格式校验
 - 作为 Router 层调用 `chat_service.stream_chat()`，再把 Service 返回的消息包装成 WebSocket 事件发回前端
 
-#### 5.5.2 相关依赖
+### 5.5.2 相关依赖
 这一层的主要依赖包括：
 - `websocket_token_repo`：负责消费前一步通过 HTTP 接口签发的临时 WebSocket Token，并恢复出当前用户身份。
 - `conversation_repo`：负责校验当前会话是否存在，以及是否属于当前用户。
@@ -1764,7 +1988,7 @@ class WebSocketTokenResponse(BaseModel):
 
 可以看到，这个 WebSocket 路由本身并不承担复杂业务计算，它更多像一层编排入口：把身份恢复、会话检查、历史准备、请求校验和 Service 调用按顺序串起来。
 
-#### 5.5.3 `WS /api/chat/ws/chat` 建连与身份恢复
+### 5.5.3 `WS /api/chat/ws/chat` 建连与身份恢复
 WebSocket 路由的第一步是校验建连参数里的临时令牌。
 
 具体流程如下：
@@ -1789,7 +2013,7 @@ WebSocket 路由的第一步是校验建连参数里的临时令牌。
 
 如果会话不存在，或不属于当前用户，路由不会继续进入聊天流程，而是先发送一个 `WebSocketErrorResponse`，再主动关闭连接。
 
-#### 5.5.4 历史消息与上下文恢复
+### 5.5.4 历史消息与上下文恢复
 在确认连接和用户身份都有效之后，WebSocket 路由会先恢复这条会话已经存在的上下文，而不是直接拿本轮用户消息去调用 Agent。
 
 恢复过程分成两步。
@@ -1812,7 +2036,7 @@ WebSocket 路由的第一步是校验建连参数里的临时令牌。
 
 这一步的作用，是把长对话已经被压缩过的前半段历史收敛成一条摘要消息，避免每次重连都重新把完整长历史塞回模型上下文里。这样既能降低上下文长度和推理成本，也能保持后续继续追问时的语义连续性。
 
-#### 5.5.5 接收前端消息
+### 5.5.5 接收前端消息
 历史上下文准备好之后，路由才进入持续收发消息的主循环。这里的实现是一个 `while True` 循环，不断从 WebSocket 里接收前端发来的 JSON 请求。
 
 接收与校验的流程如下：
@@ -1830,7 +2054,7 @@ WebSocket 路由的第一步是校验建连参数里的临时令牌。
 
 这样就把“先上传附件、后发送第一条消息”的草稿会话，正式切换成普通会话。
 
-#### 5.5.6 调用 `chat_service.stream_chat`
+### 5.5.6 调用 `chat_service.stream_chat`
 当本轮用户消息准备好之后，Router 不再自己处理聊天细节，而是把本轮会话状态交给 `chat_service.stream_chat()`。
 
 调用时传入的关键参数包括：
@@ -1852,7 +2076,7 @@ WebSocket 路由的第一步是校验建连参数里的临时令牌。
 
 接下来真正和 Agent 交互、消费流式 `chunk`、落库和返回消息，都会进入 Service 层完成。
 
-#### 5.5.7 流式返回消息给前端
+### 5.5.7 流式返回消息给前端
 虽然聊天执行已经交给了 Service，但消息最终还是需要由 WebSocket 路由发回前端。
 
 这里的实现方式是：
@@ -1880,7 +2104,7 @@ WebSocket 路由的第一步是校验建连参数里的临时令牌。
 
 这种设计的好处是前后端协议会比较稳定。前端只需要持续消费 `message` 类型事件并渲染消息，不需要知道 Service 内部到底经历了多少次工具调用、摘要压缩或者异常兜底。
 
-#### 5.5.8 接口代码与 WebSocket Schema
+### 5.5.8 接口代码与 WebSocket Schema
 这条 WebSocket 聊天链路里，前后端真正直接交互的数据结构主要有三类：
 
 - `WebSocketChatRequest`:前端发送给后端的请求对象，核心字段是 `message`
@@ -2040,8 +2264,8 @@ class WebSocketErrorResponse(BaseModel):
 ...
 ```
 
-### 5.6 `chat_service` 聊天服务
-#### 5.6.1 职责介绍
+## 5.6 `chat_service` 聊天服务
+### 5.6.1 职责介绍
  `chat_service.stream_chat()` 负责真正的一轮聊天执行。
 
 这一层的职责可以概括为：
@@ -2052,7 +2276,7 @@ class WebSocketErrorResponse(BaseModel):
 - 识别 `_summarization_event`，同步更新运行时上下文和摘要记录
 - 在模型异常或特殊能力不支持时，统一生成兜底回复
 
-#### 5.6.2 用户消息入库与上下文准备
+### 5.6.2 用户消息入库与上下文准备
 `stream_chat()` 一开始做的第一件事是先把本轮用户消息写入当前会话状态。
 
 这里实际走的是内部辅助函数 `_add_message()`，它会做三件事：
@@ -2073,7 +2297,7 @@ class WebSocketErrorResponse(BaseModel):
 
 这些变量共同解决的是一个核心问题：运行时消息数组和数据库消息顺序不是简单的一一等长关系，尤其在引入摘要压缩之后，必须显式维护“运行时下标”和“数据库上下文顺序号”之间的对应关系。
 
-#### 5.6.3 调用 Agent 并消费流式 `chunk`
+### 5.6.3 调用 Agent 并消费流式 `chunk`
 准备好用户消息和运行时上下文之后，Service 才真正开始调用 Agent。
 
 调用流程如下：
@@ -2093,7 +2317,7 @@ class WebSocketErrorResponse(BaseModel):
 - 如果是摘要压缩事件，就走 `_summarization_event` 的处理逻辑
 - 如果是普通消息，就交给 `agent_chunk_to_schemas()` 转成标准 `MessageSchema`
 
-#### 5.6.4 普通消息的转换、落库与返回
+### 5.6.4 普通消息的转换、落库与返回
 对于 Agent 返回的普通消息，Service 的处理流程相对统一：
 - 调用 `message_mapper.agent_chunk_to_schemas(chunk)` 提取并转换消息
 - 如果这一批 `responses` 为空，就继续消费下一个 `chunk`
@@ -2108,7 +2332,7 @@ class WebSocketErrorResponse(BaseModel):
 
 通过 `_add_message()` 和 `yield response` 这一组固定流程，Service 保证了同一条 Agent 消息在运行时、数据库和前端三边都保持一致。
 
-#### 5.6.5 `_summarization_event` 的处理
+### 5.6.5 `_summarization_event` 的处理
 `_summarization_event` 是这条聊天链路里最特殊的一类流式事件。它不是普通消息，因此不会被转成 `MessageSchema` 返回前端，而是由 Service 单独识别和处理。
 
 当发现：
@@ -2138,7 +2362,7 @@ class WebSocketErrorResponse(BaseModel):
 
 做完这两步之后，Service 会构造一个 `ContextCompaction` 实体并调用 `context_compaction_repo.create()` 持久化。这样下次 WebSocket 重连时，Router 就能直接读取最近一次摘要结果，恢复成更短的运行时上下文。
 
-#### 5.6.6 异常兜底与特殊场景处理
+### 5.6.6 异常兜底与特殊场景处理
 `chat_service` 的最后一层职责，是兜底。
 
 当前实现里主要处理两类异常场景。
@@ -2169,11 +2393,11 @@ class WebSocketErrorResponse(BaseModel):
 
 这样做的好处是，无论 Agent、模型还是工具链路中间发生了什么问题，前端都不会直接“断流”或者拿到一个无法渲染的异常对象，而是始终能够收到一条结构合法的 `MessageSchema`。
 
-#### 5.6.7 代码实现
+### 5.6.7 代码实现
 附代码：
 - [chat_service.py](./insight-agent/app/services/chat_service.py)
 
-## 6. 前端接入与应用入口
+# 6. 前端接入与应用入口
 
 这一部分的目标是把已经构建好的前端资源稳定挂到后端服务上，并让前端页面、后端 API 和认证服务之间能够顺畅协同。
 
@@ -2183,7 +2407,7 @@ class WebSocketErrorResponse(BaseModel):
 - 提供 SPA 路由回退，把前端页面入口接到后端服务上
 - 提供 `/auth-api/{path:path}` 代理，把前端认证请求转发到独立认证服务
 
-### 6.1 前端构建产物的目录约定
+## 6.1 前端构建产物的目录约定
 前端构建完成后的文件放在 `app/static/dist` 下，其中：
 - `app/static/dist/index.html` 是前端页面入口
 - `app/static/dist/assets` 存放构建后的 JS、CSS 等静态资源
@@ -2205,7 +2429,7 @@ SPA_ENTRY_FILE = STATIC_DIST_DIR / "index.html"
 ...
 ```
 
-### 6.2 静态资源挂载
+## 6.2 静态资源挂载
 后端启动时会调用 `register_frontend(app)`，把前端构建后的 `/assets` 目录挂载到服务上。这样浏览器访问页面时，前端引用到的脚本、样式和其他静态资源都可以直接通过后端统一访问。
 
 附代码片段：
@@ -2226,7 +2450,7 @@ def register_frontend(app: FastAPI) -> None:
 ...
 ```
 
-### 6.3 SPA 路由回退
+## 6.3 SPA 路由回退
 由于前端是单页应用，很多页面路径实际上都由前端路由接管，而不是后端真实存在对应接口。因此后端需要提供一个兜底路由：当请求没有命中 `/api`、`/assets`、`/health` 等后端专用路径时，统一返回 `index.html`，交给前端继续处理页面路由。
 
 这里还做了两个保护：
@@ -2266,7 +2490,7 @@ async def serve_spa(full_path: str):
 ...
 ```
 
-### 6.4 认证代理转发
+## 6.4 认证代理转发
 前端认证并不是直接在本服务里完成的，而是由独立认证服务负责。为了让前端可以继续通过统一入口访问认证能力，后端额外提供了 `/auth-api/{path:path}` 代理接口，把请求原样转发到认证服务。
 
 这样设计有两个直接好处：
@@ -2310,7 +2534,7 @@ async def proxy_auth_api(path: str, request: Request) -> Response:
 ...
 ```
 
-### 6.5 项目入口 `main.py`
+## 6.5 项目入口 `main.py`
 `app/main.py` 是整个项目的应用入口。中间件、后端 API、异常处理、前端路由与静态资源挂载，最终都会在这里统一注册到 FastAPI 主应用中。
 
 从职责上看，`main.py` 主要做了几件事：

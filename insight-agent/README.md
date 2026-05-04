@@ -1,12 +1,7 @@
 # 快速开始
-
 后端配置：  
 [configs/.env](configs/.env)  
 [configs/config.yml](configs/config.yml)  
-
-前端配置：  
-[fd/.env](fd/.env)  
-[fd/src/config/constants.ts](fd/src/config/constants.ts)  
 
 ```bash
 uv sync # 安装依赖
@@ -17,7 +12,6 @@ uv run -m app.main # 启动服务
 ```
 
 # 案例
-
 ## 产品目录优化
 分析商品目录质量、属性缺失和描述不一致对搜索曝光与转化表现的影响，定位拖累商品发现和成交的关键因素。
 作用和目的：提升商品信息质量，提高搜索可见度、点击率和转化率。

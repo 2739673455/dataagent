@@ -83,7 +83,7 @@ class Cfg(BaseModel):
 
 def _load_config() -> Cfg:
     """从 .env 和 config.yml 加载配置"""
-    dotenv.load_dotenv(CONFIG_DIR / ".env", override=True)
+    dotenv.load_dotenv(CONFIG_DIR / ".env")
     raw_cfg = OmegaConf.to_container(
         OmegaConf.load(CONFIG_DIR / "config.yml"), resolve=True
     )
