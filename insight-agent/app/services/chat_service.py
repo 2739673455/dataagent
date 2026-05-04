@@ -1,7 +1,6 @@
 import asyncio
 from collections.abc import AsyncIterator
 
-import openai
 from app.agent.agent import get_agent, get_workspace_dir
 from app.core.database import get_db_session
 from app.entities.chat import ContextCompaction
@@ -150,85 +149,63 @@ async def stream_chat(
     #   prev_cutoff=5, has_applied_summary=1
 
     # 调用 Agent
-    try:
-        # 获取工作区路径
-        workspace_dir = get_workspace_dir(user_id, conversation_id)
-        # 将工作区路径写入运行时配置
-        config = RunnableConfig(configurable={"workspace_dir": str(workspace_dir)})
-        # 获取 Agent 实例
-        agent = await get_agent()
+    # 获取工作区路径
+    workspace_dir = get_workspace_dir(user_id, conversation_id)
+    # 将工作区路径写入运行时配置
+    config = RunnableConfig(configurable={"workspace_dir": str(workspace_dir)})
+    # 获取 Agent 实例
+    agent = await get_agent()
 
-        async for chunk in agent.astream(input={"messages": messages}, config=config):
-            # 收到 cancel 信号时停止
-            if cancel is not None and cancel.is_set():
-                logger.info(f"{conversation_id=}: agent cancelled")
-                break
+    async for chunk in agent.astream(input={"messages": messages}, config=config):
+        # 收到 cancel 信号时停止
+        if cancel is not None and cancel.is_set():
+            logger.info(f"{conversation_id=}: agent cancelled")
+            break
 
-            logger.info(f"{conversation_id=}: agent_response={chunk}")
+        logger.info(f"{conversation_id=}: agent_response={chunk}")
 
-            # ========== 处理上下文压缩 ==========
-            if "model" in chunk and "_summarization_event" in chunk["model"]:
-                # 获取压缩事件，从中获取 cutoff_index 和 summary_message
-                summarization_event = chunk["model"]["_summarization_event"]
-                cutoff_index = summarization_event["cutoff_index"]
-                summary_payload = summarization_event["summary_message"]
-                summary_message = (
-                    summary_payload.content
-                    if hasattr(summary_payload, "content")
-                    else str(summary_payload)
+        # ========== 处理上下文压缩 ==========
+        if "model" in chunk and "_summarization_event" in chunk["model"]:
+            # 获取压缩事件，从中获取 cutoff_index 和 summary_message
+            summarization_event = chunk["model"]["_summarization_event"]
+            cutoff_index = summarization_event["cutoff_index"]
+            summary_payload = summarization_event["summary_message"]
+            summary_message = (
+                summary_payload.content
+                if hasattr(summary_payload, "content")
+                else str(summary_payload)
+            )
+            logger.info(f"{conversation_id=}: {summary_message=}")
+
+            # 记录 end_seq 用于下次加载时重构消息列表
+            end_seq = seq_offset + cutoff_index
+            pending_compaction = ContextCompaction(
+                conversation_id=conversation_id,
+                end_seq=end_seq,
+                summary_message=summary_message,
+            )
+
+            # 替换消息列表
+            replace_count = cutoff_index - prev_cutoff + has_applied_summary
+            messages[:replace_count] = [
+                {"role": "user", "content": summary_message}
+            ]
+            prev_cutoff = cutoff_index
+            has_applied_summary = 1
+
+        # 将 agent 输出的模型消息和工具消息转换为 MessageSchema 列表
+        responses = message_mapper.agent_chunk_to_schemas(chunk)
+        if responses:
+            for response in responses:
+                cur_context_seq += 1
+                response.context_seq = cur_context_seq
+                await _add_message(
+                    db_session, user_id, conversation_id, messages, response
                 )
-                logger.info(f"{conversation_id=}: {summary_message=}")
+                # 返回 Agent 响应
+                yield response
 
-                # 记录 end_seq 用于下次加载时重构消息列表
-                end_seq = seq_offset + cutoff_index
-                pending_compaction = ContextCompaction(
-                    conversation_id=conversation_id,
-                    end_seq=end_seq,
-                    summary_message=summary_message,
-                )
-
-                # 替换消息列表
-                replace_count = cutoff_index - prev_cutoff + has_applied_summary
-                messages[:replace_count] = [
-                    {"role": "user", "content": summary_message}
-                ]
-                prev_cutoff = cutoff_index
-                has_applied_summary = 1
-
-            # 将 agent 输出的模型消息和工具消息转换为 MessageSchema 列表
-            responses = message_mapper.agent_chunk_to_schemas(chunk)
-            if responses:
-                for response in responses:
-                    cur_context_seq += 1
-                    response.context_seq = cur_context_seq
-                    await _add_message(
-                        db_session, user_id, conversation_id, messages, response
-                    )
-                    # 返回 Agent 响应
-                    yield response
-
-            # 消息写入后再写压缩记录，此时 end_seq 指向的历史消息已全部落库
-            if pending_compaction is not None:
-                await context_compaction_repo.create(db_session, pending_compaction)
-                pending_compaction = None
-
-    except openai.NotFoundError as e:
-        if "No endpoints found that support image input" not in getattr(
-            e, "message", ""
-        ):
-            raise
-
-        # 模型不支持图片输入
-        yield chat_schema.MessageSchema(
-            role="assistant",
-            parts=[chat_schema.TextContent(text="当前模型不支持图片输入。")],
-            finish_reason="stop",
-        )
-
-    except Exception as e:
-        logger.exception(f"{conversation_id=}: agent stream failed: {e!r}")
-        yield chat_schema.MessageSchema(
-            role="assistant",
-            parts=[chat_schema.TextContent(text="模型调用失败，请稍后重试。")],
-            finish_reason="stop",
-        )
+        # 消息写入后再写压缩记录，此时 end_seq 指向的历史消息已全部落库
+        if pending_compaction is not None:
+            await context_compaction_repo.create(db_session, pending_compaction)
+            pending_compaction = None

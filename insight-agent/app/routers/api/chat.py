@@ -317,8 +317,23 @@ async def api_websocket_chat(
 
                 _run_task = asyncio.create_task(_run())
                 _cancel_task = asyncio.create_task(_wait_cancel())
-                # 等待 Agent 流式回复完成
-                await _run_task
+                # 等待 Agent 流式回复完成，捕获模型调用异常
+                try:
+                    await _run_task
+                except Exception as exc:
+                    logger.exception(f"{conversation_id=}: agent failed: {exc!r}")
+                    if (
+                        websocket.client_state.name == "CONNECTED"
+                        and websocket.application_state.name == "CONNECTED"
+                    ):
+                        try:
+                            await websocket.send_json(
+                                chat_schema.WebSocketErrorResponse(
+                                    content="模型调用失败，请稍后重试。"
+                                ).model_dump(mode="json")
+                            )
+                        except WebSocketDisconnect:
+                            disconnected = True
                 # 取消后台的取消信号监听任务
                 _cancel_task.cancel()
                 try:
