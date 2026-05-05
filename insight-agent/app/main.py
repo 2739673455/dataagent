@@ -27,8 +27,8 @@ async def lifespan(app: FastAPI):
 
 def register_middlewares(app: FastAPI) -> None:
     """注册全局中间件"""
-    app.middleware("http")(middlewares.trace.middleware)
     app.middleware("http")(middlewares.auth.middleware)
+    app.middleware("http")(middlewares.trace.middleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cfg.cors_origins,

@@ -108,12 +108,19 @@ async def stream_chat(
     # - cutoff_index: Agent state 中模型可见范围的起始索引（state[:cutoff_index] 被摘要），直接对应 messages 下标
     # - end_seq = seq_offset + cutoff_index: 压缩的消息 context_seq 范围是 [0, end_seq)，不包含 end_seq
     #
-    # 【例：单次压缩】
+    # 【例：输入无压缩上下文】
     # messages = [0, 1, 2, 3, 4, 5] (6条)
     # cur_context_seq=5, seq_offset = 5 - 6 + 1 = 0
     # cutoff_index=3 (即 state.messages[:3] 被摘要)
     # 结束后: messages[:3] = [summary] → messages = [summary, 3, 4, 5]
-    # end_seq = 0 + 3 = 3 (0,1,2 被摘要)
+    # end_seq = 0 + 3 = 3 (context_seq 为 0,1,2 的消息被摘要)
+    #
+    # 【例：输入已含压缩上下文】
+    # messages = [summary, 3, 4, 5, 6, 7] (6条，第0条是前次压缩的摘要，覆盖 context_seq 0,1,2)
+    # cur_context_seq=7, seq_offset = 7 - 6 + 1 = 2
+    # cutoff_index=3 (即 state.messages[:3] = [summary, 3, 4] 被摘要)
+    # 结束后: messages[:3] = [new_summary] → messages = [new_summary, 5, 6, 7]
+    # end_seq = 2 + 3 = 5 (context_seq 为 0,1,2,3,4 的消息被摘要)
 
     # 获取工作区路径
     workspace_dir = get_workspace_dir(user_id, conversation_id)
