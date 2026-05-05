@@ -46,6 +46,10 @@ def _backend_factory(rt: Any) -> CompositeBackend:
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
     skills_backend = FilesystemBackend(root_dir=SKILLS_DIR, virtual_mode=True)
 
+    # CompositeBackend 将多个后端合并为一个统一视图，对 Agent 透明：
+    # - default: 工作区后端（LocalShellBackend），处理除 /skills/ 外的所有路径
+    # - routes["/skills/"]: 命中此前缀时，剥离前缀后将剩余路径转发到 skills_backend
+    #   例如 Agent 请求 /skills/insight/SKILL.md → skills_backend 收到 insight/SKILL.md
     return CompositeBackend(
         default=workspace_backend, routes={"/skills/": skills_backend}
     )
@@ -74,7 +78,7 @@ async def _build_agent() -> CompiledStateGraph:
         model=model,
         tools=tools,
         backend=_backend_factory,  # 根据运行时配置动态创建工作区后端
-        skills=["/skills/"],
+        skills=["/skills/"],  # 声明 Agent 可用的 Skill 前缀路径
     )
 
     return agent
