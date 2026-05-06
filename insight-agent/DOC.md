@@ -982,7 +982,7 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 - 调用 `websocket_token_repo.create()` 存入 Redis 并设 30 秒过期
 
 ### 5.4.2 WebSocket 聊天 `WS /api/chat/ws/chat`
-[chat.py:335-391](./app/routers/api/chat.py#L335-L391)
+[chat.py:316-381](./app/routers/api/chat.py#L316-L381)
 
 - Query 参数:
   - `conversation_id`: 对话 ID
@@ -996,16 +996,18 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
   - [_validate_and_accept()](./app/routers/api/chat.py#L176-L202) — WebSocket 令牌校验与连接建立
   - [_receive_user_message()](./app/routers/api/chat.py#L204-L240) — 接收并校验用户消息（cancel / 格式错误返回 None）
   - [_ensure_not_draft()](./app/routers/api/chat.py#L242-L247) — 草稿对话转正式对话
-  - [_run_turn_and_send()](./app/routers/api/chat.py#L249-L333) — 执行一轮 Agent 并将响应推送至 WebSocket；内部并行运行 _run() 与 _wait_cancel()；返回 (disconnected, cur_context_seq)
+  - [_TurnStream](./app/routers/api/chat.py#L249-L314) — 管理单轮 Agent 调用的 WebSocket I/O 与 cancel 协调；作为 `async with` context manager 使用，进入时启动 cancel 监听任务（与 Agent 并行），退出时自动取消；`send()` 断连时同步设 `cancel` 通知 Agent 中断
 - Service:
-  - [load_conversation_context()](./app/services/chat_service.py#L15-L62) — 加载历史消息并应用上下文压缩
+  - [ConversationContext](./app/services/chat_service.py#L16-L23) — WebSocket 会话状态数据类（`messages`, `context_seq`, `is_draft`）
+  - [load_conversation_context()](./app/services/chat_service.py#L25-L75) — 加载历史消息并应用上下文压缩，返回 `ConversationContext | None`
     - [conversation_repo.get_by_id()](./app/repositories/conversation_repo.py#L74-L98) — 校验会话归属
     - [message_repo.ls()](./app/repositories/message_repo.py#L63-L84) — 加载历史消息
     - [entity_to_schema()](./app/mappers/message_mapper.py#L15-L46) / [schema_to_langchain_message()](./app/mappers/message_mapper.py#L282-L330) — 消息格式转换
     - [context_compaction_repo.get_latest_by_conversation_id()](./app/repositories/context_compaction_repo.py#L35-L49) — 加载压缩上下文
-  - [run_agent_turn()](./app/services/chat_service.py#L107-L211) — 调用 Agent 流式生成回复；含 finish_reason 重试循环
-    - [_add_message()](./app/services/chat_service.py#L64-L83) — 消息持久化与列表同步
-    - [_execute_agent()](./app/services/chat_service.py#L85-L105) — agent.astream 薄封装
+  - [run_agent_turn()](./app/services/chat_service.py#L147-L217) — 调用 Agent 流式生成回复；通过 `asyncio.Event` 接收取消信号；`finish_reason != "stop"` 时自动重试
+    - [_add_message()](./app/services/chat_service.py#L77-L96) — 消息持久化与列表同步
+    - [_execute_agent()](./app/services/chat_service.py#L98-L113) — agent.astream 薄封装
+    - [_extract_compaction()](./app/services/chat_service.py#L115-L145) — 从 agent chunk 中提取上下文压缩事件
     - [get_agent()](./app/agent/agent.py#L87-L97) — 获取 Agent 实例
     - [agent_chunk_to_schemas()](./app/mappers/message_mapper.py#L173-L187) — Agent 输出块转 Schema
     - [context_compaction_repo.create()](./app/repositories/context_compaction_repo.py#L9-L18) — 保存压缩记录
@@ -1015,11 +1017,11 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 实现流程：
 
 1. **令牌校验** — `_validate_and_accept()` 从 query 参数获取 `websocket_token`，调用 `websocket_token_repo.consume()` 一次性消费令牌，无效或已消费则关闭连接（4401）
-2. **上下文加载** — 调用 `load_conversation_context()` 加载历史消息并应用上下文压缩；会话不存在则关闭连接（4404）
-3. **消息循环** — `_receive_user_message()` 接收 JSON 请求并校验 `message.role == "user"`；分配 `context_seq` 后调用 `_run_turn_and_send()` → `run_agent_turn()` 流式生成，每条消息通过 WebSocket 推送
-4. **取消机制** — `_run_turn_and_send()` 内部 `_run()` 与 `_wait_cancel()` 并行运行，收到 `{"type": "cancel"}` 时设置 `asyncio.Event` 通知 `run_agent_turn()` 中断
+2. **上下文加载** — 调用 `load_conversation_context()` 加载历史消息并应用上下文压缩，返回 `ConversationContext` 数据类；会话不存在则关闭连接（4404）
+3. **消息循环** — `_receive_user_message()` 接收 JSON 请求并校验 `message.role == "user"`；分配 `context_seq` 后进入 `async with _TurnStream(...)` 块，调用 `run_agent_turn()` 流式生成，每条消息通过 `stream.send()` 推送
+4. **取消机制** — `_TurnStream` 在 `__aenter__` 时启动 `_listen_cancel()` 任务与 Agent 执行并行运行，收到 `{"type": "cancel"}` 时设置 `asyncio.Event` 通知 `run_agent_turn()` 中断；`send()` 检测到客户端断开时同步设 `cancel`；`__aexit__` 时自动取消监听任务
 5. **草稿转换** — 首轮收到有效用户消息后调用 `_ensure_not_draft()` 将 `is_draft` 置为 0
-6. **异常处理** — Agent 调用异常时推送错误响应；客户端断开（WebSocketDisconnect）时退出循环
+6. **异常处理** — Agent 调用异常时通过 `stream.send_error()` 推送错误响应；客户端断开（WebSocketDisconnect）时退出循环
 
 ## 5.5 管理接口
 ### 5.5.1 热重载配置 `POST /api/admin/reload`
