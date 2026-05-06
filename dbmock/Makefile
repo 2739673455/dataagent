@@ -1,11 +1,9 @@
 .PHONY: help init_db generate clean
 
 help:
-	@echo "Available targets:"
-	@echo "  help      Show this help message"
-	@echo "  init_db   Initialize database schema"
-	@echo "  generate  Generate mock warehouse data"
-	@echo "  clean     Remove local project environment files"
+	@echo "make init_db      - 初始化数据库"
+	@echo "make generate     - 生成数据"
+	@echo "make clean        - 清理临时文件"
 
 init_db:
 	uv run core/init_db.py

@@ -320,6 +320,23 @@ async def api_websocket_chat(
                 # 等待 Agent 流式回复完成，捕获模型调用异常
                 try:
                     await _run_task
+                    # Agent 正常结束后发送结束信号，确保即使模型没给 finish_reason 前端也能可靠地结束流式状态
+                    if (
+                        websocket.client_state.name == "CONNECTED"
+                        and websocket.application_state.name == "CONNECTED"
+                    ):
+                        try:
+                            await websocket.send_json(
+                                chat_schema.WebSocketMessageResponse(
+                                    message=chat_schema.MessageSchema(
+                                        role="assistant",
+                                        parts=[],
+                                        finish_reason="stop",
+                                    )
+                                ).model_dump(mode="json")
+                            )
+                        except WebSocketDisconnect:
+                            pass
                 except Exception as exc:
                     logger.exception(f"{conversation_id=}: agent failed: {exc!r}")
                     if (

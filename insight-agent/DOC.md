@@ -982,7 +982,7 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 - 调用 `websocket_token_repo.create()` 存入 Redis 并设 30 秒过期
 
 ### 5.4.2 WebSocket 聊天 `WS /api/chat/ws/chat`
-[chat.py:176-352](./app/routers/api/chat.py#L176-L352)
+[chat.py:176-369](./app/routers/api/chat.py#L176-L369)
 
 - Query 参数:
   - `conversation_id`: 对话 ID
@@ -998,7 +998,7 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
     - [message_repo.ls()](./app/repositories/message_repo.py#L63-L84) — 加载历史消息
     - [entity_to_schema()](./app/mappers/message_mapper.py#L15-L46) / [schema_to_langchain_message()](./app/mappers/message_mapper.py#L282-L330) — 消息格式转换
     - [context_compaction_repo.get_latest_by_conversation_id()](./app/repositories/context_compaction_repo.py#L35-L49) — 加载压缩上下文
-  - [stream_chat()](./app/services/chat_service.py#L86-L188) — 调用 Agent 流式生成回复
+  - [stream_chat()](./app/services/chat_service.py#L86-L190) — 调用 Agent 流式生成回复
     - [_add_message()](./app/services/chat_service.py#L65-L84) — 消息持久化与列表同步
     - [get_agent()](./app/agent/agent.py#L87-L97) — 获取 Agent 实例
     - [agent_chunk_to_schemas()](./app/mappers/message_mapper.py#L173-L187) — Agent 输出块转 Schema

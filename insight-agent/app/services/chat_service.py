@@ -185,3 +185,5 @@ async def stream_chat(
     # Agent 输出完毕，应用最后一次压缩到消息列表
     if last_cutoff_index is not None and last_summary is not None:
         messages[:last_cutoff_index] = [{"role": "user", "content": last_summary}]
+
+    logger.info(f"{conversation_id=}: agent finished")

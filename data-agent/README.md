@@ -13,8 +13,11 @@
 编辑 `conf/app_config.yaml`，配置数据库信息
 编辑 `conf/meta_config.yaml`，配置表信息
 
+## 安装依赖
+`uv sync`
+
 ## 初始化导入元数据
-执行 `uv run -m app.scripts.build_meta_knowledge -c conf/meta_config.yaml`
+`uv run -m app.scripts.build_meta_knowledge -c conf/meta_config.yaml`
 
 ## 启动服务
-执行 `uv run main.py`
+`uv run main.py`

@@ -195,7 +195,7 @@ async def db_query(
         "file_path": file_path.as_posix(),
         # 文件格式后缀："csv" 或 "json"，便于 Agent 选择解析方式
         "file_format": file_path.suffix.lstrip("."),
-        # pandas 读取代码片段，Agent 可直接在 Python 代码中执行
+        # pandas 读取代码提示，Agent 可直接在 Python 代码中执行
         "pandas_read_hint": pandas_read_hint,
         # 表格结果的列名列表；非表格结果为空列表
         "fields": fields,

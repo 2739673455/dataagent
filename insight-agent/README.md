@@ -9,6 +9,9 @@ uv sync # 安装依赖
 uv run app/init_db.py # 初始化数据库
 
 uv run -m app.main # 启动服务
+
+# 刷新配置
+curl -X POST http://127.0.0.1:7300/api/reload -H 'Authorization: Bearer <access_token>'
 ```
 
 # 案例
