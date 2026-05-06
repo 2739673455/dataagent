@@ -1,3 +1,8 @@
+# 前置
+运行 dbmock 项目  
+启动 data-agent 服务，构建元数据索引  
+启动 auth 服务  
+
 # 快速开始
 后端配置：  
 [configs/.env](configs/.env)  

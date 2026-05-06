@@ -173,39 +173,181 @@ async def api_create_websocket_token(
     )
 
 
+async def _validate_and_accept(
+    websocket: WebSocket, conversation_id: int
+) -> int | None:
+    """校验 WebSocket 令牌并接受连接，返回 user_id；失败时关闭连接返回 None"""
+    # 从请求参数中获取 WebSocket 临时令牌
+    websocket_token = websocket.query_params.get("websocket_token")
+    if not websocket_token:
+        # 缺少 WebSocket 临时令牌则拒绝连接
+        await websocket.close(code=4401)
+        return None
+
+    # 使用 WebSocket 临时令牌获取用户信息
+    token_data = await websocket_token_repo.consume(websocket_token)
+    if token_data is None:
+        # 无法获取用户信息则拒绝连接
+        await websocket.close(code=4401)
+        return None
+
+    # 获取用户 ID 并放入上下文变量
+    user_id = token_data.user_id
+    context.user_id_ctx.set(str(user_id))
+
+    # 接收 WebSocket 连接
+    await websocket.accept()
+    logger.info(f"{conversation_id=}: WebSocket connected")
+    return user_id
+
+
+async def _receive_user_message(
+    websocket: WebSocket,
+) -> chat_schema.MessageSchema | None:
+    """接收并校验用户消息；cancel 或格式错误时返回 None"""
+    try:
+        raw = await websocket.receive_json()
+    except RuntimeError:
+        return None
+
+    # 接收到取消请求
+    if isinstance(raw, dict) and raw.get("type") == "cancel":
+        return None
+
+    # 校验消息格式
+    try:
+        body = chat_schema.WebSocketChatRequest(**raw)
+    except (json.JSONDecodeError, ValidationError) as e:
+        # 格式错误则发送错误响应
+        await websocket.send_json(
+            chat_schema.WebSocketErrorResponse(
+                content=f"Invalid request: {str(e)}"
+            ).model_dump(mode="json")
+        )
+        return None
+
+    # 校验消息角色
+    if body.message.role != "user":
+        # 非用户消息则发送错误响应
+        await websocket.send_json(
+            chat_schema.WebSocketErrorResponse(
+                content="Invalid request format: message.role must be 'user'"
+            ).model_dump(mode="json")
+        )
+        return None
+
+    return body.message
+
+
+async def _ensure_not_draft(db_session: AsyncSession, conversation_id: int) -> None:
+    """草稿对话转正式对话"""
+    conversation = await conversation_repo.get_by_id(db_session, conversation_id)
+    if conversation:
+        await conversation_repo.update(db_session, conversation, is_draft=0)
+
+
+async def _run_turn_and_send(
+    websocket: WebSocket,
+    db_session: AsyncSession,
+    user_id: int,
+    conversation_id: int,
+    messages: list[dict],
+    user_message: chat_schema.MessageSchema,
+) -> tuple[bool, int]:
+    """
+    执行一轮 Agent 并将响应通过 WebSocket 发送；返回 (disconnected, cur_context_seq)
+
+    _run() 与 _wait_cancel() 并行运行：
+    _run() 调用 Agent 并逐条推送响应；
+    _wait_cancel() 监听客户端 cancel 消息。任一检测到断开即设置 cancel 通知 Agent 中断。
+    """
+    cancel = asyncio.Event()  # 取消标志
+    disconnected = False  # 断开标志
+    cur_context_seq = user_message.context_seq or 0  # 追踪最新 context_seq
+
+    async def _run():
+        # Agent 流式生成 → 逐条推送给客户端
+        nonlocal disconnected, cur_context_seq
+        async for msg in chat_service.run_agent_turn(
+            db_session,
+            user_id,
+            conversation_id,
+            messages,
+            user_message,
+            cancel=cancel,
+        ):
+            cur_context_seq = msg.context_seq or cur_context_seq
+            try:
+                # 向客户端发送消息
+                await websocket.send_json(
+                    chat_schema.WebSocketMessageResponse(message=msg).model_dump(
+                        mode="json"
+                    )
+                )
+            except WebSocketDisconnect:
+                # WebSocket 断开，设置断开标志和取消标志，跳出循环
+                disconnected = True
+                cancel.set()
+                break
+
+    async def _wait_cancel():
+        # 监听客户端 cancel 消息，收到则通知 Agent 中断
+        nonlocal disconnected
+        try:
+            while True:
+                raw = await websocket.receive_json()
+                if isinstance(raw, dict) and raw.get("type") == "cancel":
+                    cancel.set()  # 设置取消标志
+                    logger.info(f"{conversation_id=}: Received cancel signal")
+                    return
+        except (WebSocketDisconnect, RuntimeError):
+            disconnected = True
+
+    # 并行执行 Agent 生成与 cancel 监听，任一完成即进入收尾
+    run_task = asyncio.create_task(_run())
+    cancel_task = asyncio.create_task(_wait_cancel())
+
+    try:
+        await run_task
+    except Exception as exc:
+        # Agent 内部未捕获的异常（非 WebSocket 断开）
+        logger.exception(f"{conversation_id=}: agent failed: {exc!r}")
+        if not disconnected:
+            try:
+                await websocket.send_json(
+                    chat_schema.WebSocketErrorResponse(
+                        content="模型调用失败，请稍后重试。"
+                    ).model_dump(mode="json")
+                )
+            except WebSocketDisconnect:
+                disconnected = True
+
+    # 收尾：run_task执行结束后，取消 cancel 监听，等待其退出
+    cancel_task.cancel()
+    try:
+        await cancel_task
+    except asyncio.CancelledError:
+        pass
+
+    return disconnected, cur_context_seq
+
+
 @router.websocket("/ws/chat")
 async def api_websocket_chat(
     websocket: WebSocket,
     conversation_id: int,
 ):
     """WebSocket 聊天接口"""
-    # ========== 检查 WebSocket 临时令牌 ==========
-    websocket_token = websocket.query_params.get("websocket_token")
-    # 没有 WebSocket 临时令牌则关闭连接
-    if not websocket_token:
-        await websocket.close(code=4401)
-        return
-    # 获取 WebSocket 临时令牌数据
-    token_data = await websocket_token_repo.consume(websocket_token)
-    # 不存在、过期或已被消费则关闭连接
-    if token_data is None:
-        await websocket.close(code=4401)
+
+    # ========== Phase 1: 校验令牌、建立连接 ==========
+    user_id = await _validate_and_accept(websocket, conversation_id)
+    if user_id is None:
         return
 
-    # ========== 获取用户 ID ==========
-    # 从令牌数据中获取用户ID
-    user_id = token_data.user_id
-    # 将用户ID添加到上下文变量
-    context.user_id_ctx.set(str(user_id))
-
-    # ========== 建立 WebSocket 连接 ==========
-    await websocket.accept()
-    logger.info(f"{conversation_id=}: WebSocket connected")
-
-    # ========== 加载会话上下文 ==========
+    # ========== Phase 2: 加载对话上下文 ==========
     ctx = await chat_service.load_conversation_context(conversation_id, user_id)
-    # 不存在或不属于当前用户则关闭连接
     if ctx is None:
+        # 对话不存在则发送错误响应，并关闭连接
         await websocket.send_json(
             chat_schema.WebSocketErrorResponse(
                 content=chat_error.ConversationNotFound.title
@@ -214,155 +356,35 @@ async def api_websocket_chat(
         await websocket.close(code=4404)
         logger.info(f"{conversation_id=}: WebSocket disconnected")
         return
-    # 获取消息列表、当前上下文序号、是否为草稿
     messages, cur_context_seq, is_draft = ctx
-    stream_cancel: asyncio.Event | None = None
 
+    # ========== Phase 3: 消息循环 ==========
     try:
         while True:
-            # ========== 接收并解析 WebSocket 请求，获取用户消息 ==========
-            try:
-                # 从 WebSocket 请求中获取 JSON
-                raw = await websocket.receive_json()
+            # 接收用户消息
+            user_message = await _receive_user_message(websocket)
+            if user_message is None:
+                continue  # 跳过无效消息，继续等待下一条
 
-                # 处理取消请求（用户点停止时由前端发送）
-                if isinstance(raw, dict) and raw.get("type") == "cancel":
-                    if stream_cancel is not None:
-                        stream_cancel.set()
-                    continue
+            # 上下文序号+1，并更新用户消息序号
+            cur_context_seq += 1
+            user_message.context_seq = cur_context_seq
 
-                body = chat_schema.WebSocketChatRequest(**raw)
-                # 检查是否为用户消息
-                if body.message.role != "user":
-                    # 返回错误响应：消息角色须为用户
-                    await websocket.send_json(
-                        chat_schema.WebSocketErrorResponse(
-                            content="Invalid request format: message.role must be 'user'"
-                        ).model_dump(mode="json")
-                    )
-                    continue
-
-                # 为用户消息添加 context_seq
-                cur_context_seq += 1
-                body.message.context_seq = cur_context_seq
-            except (json.JSONDecodeError, ValidationError) as e:
-                # 返回错误响应：消息格式错误
-                await websocket.send_json(
-                    chat_schema.WebSocketErrorResponse(
-                        content=f"Invalid request: {str(e)}"
-                    ).model_dump(mode="json")
-                )
-                continue
-
-            # ========== 调用 Agent 流式生成回复，并持久化消息 ==========
-            # 每轮对话使用独立的 DB 会话，避免长连接占用连接池
             async with get_db_session() as db_session:
-                # 如果是草稿对话，转换为正式对话
                 if is_draft:
-                    # 找出对应对话
-                    conversation = await conversation_repo.get_by_id(
-                        db_session, conversation_id
-                    )
-                    if conversation:
-                        # 将草稿对话修改为正式对话
-                        await conversation_repo.update(
-                            db_session, conversation, is_draft=0
-                        )
-                        is_draft = False
-
-                stream_cancel = asyncio.Event()
-                disconnected = False
-
-                async def _run():
-                    # Agent 流式生成
-                    nonlocal cur_context_seq
-                    async for message in chat_service.stream_chat(
-                        db_session,
-                        user_id,
-                        conversation_id,
-                        messages,
-                        body.message,
-                        cancel=stream_cancel,
-                    ):
-                        cur_context_seq += 1
-                        # 客户端已断开时不发送，避免 RuntimeError
-                        if (
-                            websocket.client_state.name == "CONNECTED"
-                            and websocket.application_state.name == "CONNECTED"
-                        ):
-                            try:
-                                await websocket.send_json(
-                                    chat_schema.WebSocketMessageResponse(
-                                        message=message
-                                    ).model_dump(mode="json")
-                                )
-                            except WebSocketDisconnect:
-                                pass
-
-                async def _wait_cancel():
-                    # cancel 消息监听
-                    nonlocal disconnected
-                    try:
-                        while True:
-                            raw = await websocket.receive_json()
-                            if isinstance(raw, dict) and raw.get("type") == "cancel":
-                                if stream_cancel is not None:
-                                    stream_cancel.set()
-                                logger.info(
-                                    f"{conversation_id=}: Received cancel signal"
-                                )
-                                return
-                    except (WebSocketDisconnect, RuntimeError):
-                        disconnected = True
-
-                _run_task = asyncio.create_task(_run())
-                _cancel_task = asyncio.create_task(_wait_cancel())
-                # 等待 Agent 流式回复完成，捕获模型调用异常
-                try:
-                    await _run_task
-                    # Agent 正常结束后发送结束信号，确保即使模型没给 finish_reason 前端也能可靠地结束流式状态
-                    if (
-                        websocket.client_state.name == "CONNECTED"
-                        and websocket.application_state.name == "CONNECTED"
-                    ):
-                        try:
-                            await websocket.send_json(
-                                chat_schema.WebSocketMessageResponse(
-                                    message=chat_schema.MessageSchema(
-                                        role="assistant",
-                                        parts=[],
-                                        finish_reason="stop",
-                                    )
-                                ).model_dump(mode="json")
-                            )
-                        except WebSocketDisconnect:
-                            pass
-                except Exception as exc:
-                    logger.exception(f"{conversation_id=}: agent failed: {exc!r}")
-                    if (
-                        websocket.client_state.name == "CONNECTED"
-                        and websocket.application_state.name == "CONNECTED"
-                    ):
-                        try:
-                            await websocket.send_json(
-                                chat_schema.WebSocketErrorResponse(
-                                    content="模型调用失败，请稍后重试。"
-                                ).model_dump(mode="json")
-                            )
-                        except WebSocketDisconnect:
-                            disconnected = True
-                # 取消后台的取消信号监听任务
-                _cancel_task.cancel()
-                try:
-                    # 等待取消任务结束
-                    await _cancel_task
-                except asyncio.CancelledError:
-                    # asyncio 正常取消机制，忽略
-                    pass
-                # 连接已断开时直接退出，不再尝试 receive
+                    # 草稿对话转正式对话
+                    await _ensure_not_draft(db_session, conversation_id)
+                    is_draft = False
+                disconnected, cur_context_seq = await _run_turn_and_send(
+                    websocket,
+                    db_session,
+                    user_id,
+                    conversation_id,
+                    messages,
+                    user_message,
+                )
                 if disconnected:
                     break
 
-    # 客户端断开连接
     except (WebSocketDisconnect, RuntimeError):
         logger.info(f"{conversation_id=}: WebSocket disconnected")
