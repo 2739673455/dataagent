@@ -1,0 +1,80 @@
+name: Auth CI
+
+on:
+  pull_request:
+    paths:
+      - "auth/**"
+      - ".github/workflows/auth-ci.yml"
+  push:
+    paths:
+      - "auth/**"
+      - ".github/workflows/auth-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  python-check:
+    name: Python Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: auth/uv.lock
+
+      - name: Install Python dependencies
+        working-directory: auth
+        run: uv sync --frozen --dev
+
+      - name: Run ruff
+        working-directory: auth
+        run: uv tool run ruff check .
+
+      - name: Run pyright
+        working-directory: auth
+        run: uv tool run pyright .
+
+  web-check:
+    name: Web Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install web dependencies
+        working-directory: auth/web
+        run: bun install --frozen-lockfile
+
+      - name: Run web lint
+        working-directory: auth/web
+        run: bun run lint
+
+      - name: Build web
+        working-directory: auth/web
+        run: bun run build
+
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build auth image
+        run: docker build -t auth:ci ./auth

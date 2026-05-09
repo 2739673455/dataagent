@@ -29,7 +29,7 @@ auth:
 cookie:
   # Cookie
   name: session_id # Session Cookie 名称
-  secure: false # 是否只允许 HTTPS 发送
+  secure: ${oc.env:COOKIE_SECURE} # 是否只允许 HTTPS 发送
   httponly: true # 是否禁止前端 JS 读取
   samesite: lax # 跨站 Cookie 策略
 

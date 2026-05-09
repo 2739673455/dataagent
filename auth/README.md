@@ -10,8 +10,6 @@
 ```bash
 uv sync  # 安装依赖
 
-uv run app/init_db.py  # 初始化数据库
-
 uv run -m app.main  # 启动服务
 ```
 
