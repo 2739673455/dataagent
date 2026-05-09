@@ -31,43 +31,6 @@ ghcr.io/<github-owner>/<repo-name>/auth
    - 平台负责 HTTPS、域名、运行时环境变量、持久化存储
    - 镜像本身不包含 `.env`、数据库文件、日志文件等运行时状态
 
-## 已创建的文件
-### `.github/workflows/auth-image.yml`
-触发条件：
-
-- `push` 到 `main`，且 `auth/**` 有变化
-- `push` tag：`auth-v*`
-- 手动触发：`workflow_dispatch`
-
-核心步骤：
-
-- `actions/checkout@v4`
-- `docker/setup-buildx-action@v3` 启用 Docker Buildx
-- `docker/login-action@v3` 登录 GHCR
-- `docker/metadata-action@v5` 生成镜像标签
-- `docker/build-push-action@v6` 构建并推送 `./auth`，并使用 GitHub Actions cache 加速后续构建
-
-权限：
-
-```yaml
-permissions:
-  contents: read
-  packages: write
-```
-
-推荐标签规则：
-
-- `main` 分支：`latest`
-- 每次提交：`sha-<short-sha>`
-- Git tag：`auth-v0.1.0`
-
-镜像示例：
-
-```text
-ghcr.io/<github-owner>/<repo-name>/auth:latest
-ghcr.io/<github-owner>/<repo-name>/auth:sha-a1b2c3d
-ghcr.io/<github-owner>/<repo-name>/auth:auth-v0.1.0
-```
 
 ## 运行时配置
 镜像启动时需要由平台注入以下环境变量：
