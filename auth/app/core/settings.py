@@ -19,24 +19,15 @@ class AppCfg(BaseModel):
 
 
 class DBCfg(BaseModel):
-    driver: Literal["mysql", "sqlite"]
+    driver: Literal["sqlite"]
     sqlite: SQLiteCfg | None = None
-    mysql: MySQLCfg | None = None
 
     @property
-    def selected(self) -> SQLiteCfg | MySQLCfg:
+    def selected(self) -> SQLiteCfg:
         cfg = getattr(self, self.driver, None)
         if cfg is None:
             raise ValueError(f"数据库驱动 {self.driver} 缺少对应配置")
         return cfg
-
-
-class MySQLCfg(BaseModel):
-    host: str
-    port: int
-    user: str
-    password: str
-    database: str
 
 
 class SQLiteCfg(BaseModel):

@@ -15,11 +15,13 @@ from app.core.http_client import close_http_client
 from app.core.log_setup import setup_logger
 from app.core.redis import close_redis
 from app.core.settings import cfg
+from app.plugins.lifespan import init_database
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logger()
+    await init_database()
     yield
     await close_http_client()
     await close_redis()

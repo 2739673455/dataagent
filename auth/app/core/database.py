@@ -10,19 +10,11 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from app.core.settings import MySQLCfg, SQLiteCfg
+from app.core.settings import SQLiteCfg
 
 DBSessionContextFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
 ENGINE_KWARGS_MAP: dict[str, dict[str, object]] = {
-    "mysql": {
-        "echo": False,
-        "pool_size": 10,
-        "max_overflow": 20,
-        "pool_pre_ping": True,
-        "pool_recycle": 1800,
-        "pool_timeout": 30,
-    },
     "sqlite": {
         "echo": False,
     },
@@ -71,17 +63,7 @@ class DatabaseManager:
         self._session_makers.clear()
 
 
-def _get_db_url(db_cfg: SQLiteCfg | MySQLCfg, db_driver: str, async_mode: bool = True) -> str:
-    """获取数据库连接 URL"""
-    if db_driver == "mysql":
-        if not isinstance(db_cfg, MySQLCfg):
-            raise TypeError("MySQL 配置错误")
-        driver = "mysql+asyncmy" if async_mode else "mysql+pymysql"
-        return (
-            f"{driver}://{db_cfg.user}:{db_cfg.password}@"
-            f"{db_cfg.host}:{db_cfg.port}/{db_cfg.database}"
-        )
-
+def _get_db_url(db_cfg: SQLiteCfg, db_driver: str, async_mode: bool = True) -> str:
     if db_driver == "sqlite":
         if not isinstance(db_cfg, SQLiteCfg):
             raise TypeError("SQLite 配置错误")
@@ -95,7 +77,7 @@ _db_manager = DatabaseManager()
 
 
 def get_db_session_context(
-    db_cfg: SQLiteCfg | MySQLCfg,
+    db_cfg: SQLiteCfg,
     db_driver: str,
     async_mode: bool = True,
 ) -> AbstractAsyncContextManager[AsyncSession]:

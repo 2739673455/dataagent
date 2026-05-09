@@ -8,12 +8,6 @@ app:
 db:
   # 数据库
   driver: ${oc.env:DB_DRIVER} # 数据库驱动
-  mysql:
-    host: ${oc.env:DB_HOST} # MySQL 主机
-    port: ${oc.env:DB_PORT} # MySQL 端口
-    user: ${oc.env:DB_USER} # MySQL 用户名
-    password: ${oc.env:DB_PASSWORD} # MySQL 密码
-    database: auth # 数据库名称
   sqlite:
     file_path: ${oc.env:DB_SQLITE_FILE} # SQLite 数据库文件路径
 
