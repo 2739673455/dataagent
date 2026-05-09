@@ -23,7 +23,7 @@ def create_router(
     user_use_cases: UserUseCases,
     token_repo: TokenRepository,
 ) -> APIRouter:
-    COOKIE_OPTIONS = {
+    cookie_options = {
         "secure": cookie_config.secure,
         "httponly": cookie_config.httponly,
         "samesite": cookie_config.samesite,
@@ -41,11 +41,16 @@ def create_router(
     async def register(body: RegisterRequest, response: Response) -> None:
         """用户注册：验证码 + 创建账户 + 设置会话 Cookie"""
         session_data = await user_use_cases.register_user.execute(
-            body.email, body.code, body.username, body.password,
+            body.email,
+            body.code,
+            body.username,
+            body.password,
         )
         response.set_cookie(
-            key=cookie_config.name, value=session_data.session_id,
-            max_age=session_data.session_expire_seconds, **COOKIE_OPTIONS,
+            key=cookie_config.name,
+            value=session_data.session_id,
+            max_age=session_data.session_expire_seconds,
+            **cookie_options,
         )
 
     @router.post("/update_username")

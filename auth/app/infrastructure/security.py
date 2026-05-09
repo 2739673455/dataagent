@@ -5,8 +5,9 @@ import hashlib
 import re
 import secrets
 
-from app.domain.ports import PasswordHasher, PkceService, TokenFactory
 from pwdlib._hash import PasswordHash as PwdLibHash
+
+from app.domain.ports import PasswordHasher, PkceService, TokenFactory
 
 
 class TokenFactoryImpl(TokenFactory):

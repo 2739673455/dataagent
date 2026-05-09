@@ -1,8 +1,9 @@
 import uuid
-from typing import Callable
+from collections.abc import Callable
+
+from fastapi import Request, Response
 
 from app.core import context
-from fastapi import Request, Response
 
 
 def _get_client_ip(request: Request) -> str:

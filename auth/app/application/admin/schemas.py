@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 @dataclass(frozen=True, slots=True)
 class UserInfoResult:
     """用户基本信息"""
+
     id: int
     email: str
     username: str
@@ -17,6 +18,7 @@ class UserInfoResult:
 @dataclass(frozen=True, slots=True)
 class RoleInfoResult:
     """角色基本信息"""
+
     id: int
     name: str
     yn: int
@@ -26,6 +28,7 @@ class RoleInfoResult:
 @dataclass(frozen=True, slots=True)
 class PermissionInfoResult:
     """权限基本信息"""
+
     id: int
     name: str
     description: str | None = None
@@ -37,6 +40,7 @@ class PermissionInfoResult:
 @dataclass(frozen=True, slots=True)
 class UserDetailResult:
     """用户详情（含角色和权限列表）"""
+
     id: int
     email: str
     username: str
@@ -50,6 +54,7 @@ class UserDetailResult:
 @dataclass(frozen=True, slots=True)
 class UserListResult:
     """用户列表（分页）"""
+
     total: int
     items: list[UserInfoResult] = field(default_factory=list)
 
@@ -57,6 +62,7 @@ class UserListResult:
 @dataclass(frozen=True, slots=True)
 class RoleDetailResult:
     """角色详情（含用户和权限列表）"""
+
     id: int
     name: str
     yn: int
@@ -68,6 +74,7 @@ class RoleDetailResult:
 @dataclass(frozen=True, slots=True)
 class RoleListResult:
     """角色列表（分页）"""
+
     total: int
     items: list[RoleInfoResult] = field(default_factory=list)
 
@@ -75,6 +82,7 @@ class RoleListResult:
 @dataclass(frozen=True, slots=True)
 class PermissionDetailResult:
     """权限详情（含角色和用户列表）"""
+
     id: int
     name: str
     yn: int
@@ -88,5 +96,6 @@ class PermissionDetailResult:
 @dataclass(frozen=True, slots=True)
 class PermissionListResult:
     """权限列表（分页）"""
+
     total: int
     items: list[PermissionInfoResult] = field(default_factory=list)

@@ -1,4 +1,9 @@
 [project]
+name = "insight-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
 dependencies = [
   "asyncmy>=0.2.11",
   "deepagents>=0.4.7",
@@ -16,8 +21,39 @@ dependencies = [
   "sqlacodegen>=3.2.0",
   "sqlalchemy>=2.0.46",
 ]
-description = "Add your description here"
-name = "insight-agent"
-readme = "README.md"
-requires-python = ">=3.12"
-version = "0.1.0"
+
+[dependency-groups]
+dev = [
+  "ruff>=0.15.10",
+  "pyright>=1.1.408",
+]
+
+[tool.ruff]
+exclude = [
+  ".deepagents/*",
+  "docker/*",
+]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+ignore = [
+  "E501", # line too long handled by formatter
+  "B008", # FastAPI File/Form uses call in defaults
+  "ASYNC240", # Path.read_text in init — one-shot, not a hot path
+]
+select = [
+  "I", # isort
+  "N", # pep8-naming
+  "UP", # pyupgrade
+  "B", # flake8-bugbear
+  "SIM", # flake8-simplify
+  "ASYNC", # flake8-async
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.pyright]
+venv = ".venv"
+venvPath = "."

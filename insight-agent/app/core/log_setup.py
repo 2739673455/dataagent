@@ -3,9 +3,10 @@ import sys
 import traceback
 from pathlib import Path
 
+from loguru import logger
+
 from app.core import context
 from app.core.settings import LogCfg, cfg
-from loguru import logger
 
 # 路径常量
 CURRENT_DIR = Path(__file__).parent
@@ -38,9 +39,7 @@ def _build_log_json(record):
     if exc_info:
         if exc_info.value is not None:
             log_json["exception"] = "".join(
-                traceback.format_exception(
-                    exc_info.type, exc_info.value, exc_info.traceback
-                )
+                traceback.format_exception(exc_info.type, exc_info.value, exc_info.traceback)
             )
         # 清除 exception，阻止 loguru 默认格式化
         record["exception"] = None

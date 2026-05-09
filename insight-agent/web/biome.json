@@ -24,6 +24,9 @@
       },
       "suspicious": {
         "noUnknownAtRules": "off"
+      },
+      "style": {
+        "noNonNullAssertion": "off"
       }
     }
   },

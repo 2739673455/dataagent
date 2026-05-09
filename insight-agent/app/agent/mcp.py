@@ -1,4 +1,3 @@
-from app.core import settings
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.sessions import (
     SSEConnection,
@@ -6,6 +5,8 @@ from langchain_mcp_adapters.sessions import (
     StreamableHttpConnection,
     WebsocketConnection,
 )
+
+from app.core import settings
 
 
 async def get_mcp_tools() -> list:

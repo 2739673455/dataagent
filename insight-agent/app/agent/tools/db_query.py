@@ -6,10 +6,11 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Annotated, Any
 
-from app.core.http_client import get_http_client
-from app.core.settings import cfg
 from langchain.tools import tool
 from langgraph.prebuilt.tool_node import ToolRuntime
+
+from app.core.http_client import get_http_client
+from app.core.settings import cfg
 
 # data-agent 查询接口完整 URL
 DB_QUERY_URL = cfg.data_agent.base_url + cfg.data_agent.query
@@ -106,9 +107,7 @@ def _write_json_result(file_path: Path, result: Any) -> None:
 @tool
 async def db_query(
     runtime: ToolRuntime,
-    query: Annotated[
-        str, "用户的自然语言数据查询需求，例如查看销量、库存、退货率等业务问题"
-    ],
+    query: Annotated[str, "用户的自然语言数据查询需求，例如查看销量、库存、退货率等业务问题"],
     file_name: Annotated[str, "输出查询结果文件的文件名"],
 ) -> dict[str, Any]:
     """查询数据库业务数据，将最终结果写入当前会话工作区，并返回文件路径、字段和前几行数据
@@ -175,17 +174,13 @@ async def db_query(
             _write_json_result(file_path, result)
             fields = []
             # 返回前 N 行预览
-            preview_rows = (
-                result[:PREVIEW_ROWS] if isinstance(result, list) else [result]
-            )
+            preview_rows = result[:PREVIEW_ROWS] if isinstance(result, list) else [result]
             # Pandas 读取提示
             pandas_read_hint = f"pd.read_json('{file_path.as_posix()}')"
     except Exception as exc:
         return {
             "status": "error",
-            "message": (
-                f"failed to write query result file: {type(exc).__name__}: {exc!r}"
-            ),
+            "message": (f"failed to write query result file: {type(exc).__name__}: {exc!r}"),
         }
 
     return {

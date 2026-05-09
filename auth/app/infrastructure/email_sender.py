@@ -6,6 +6,7 @@ from email.mime.text import MIMEText
 from email.utils import formataddr
 
 import aiosmtplib
+
 from app.core.settings import EmailCfg
 from app.domain.ports import EmailSender
 

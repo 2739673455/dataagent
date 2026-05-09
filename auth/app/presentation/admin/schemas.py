@@ -76,9 +76,7 @@ class PermissionInfo(BaseModel):
     created_at: str | None = Field(default=None, description="创建时间")
 
     @classmethod
-    def from_permission(
-        cls, permission: "Permission", effective: int = 1
-    ) -> "PermissionInfo":
+    def from_permission(cls, permission: "Permission", effective: int = 1) -> "PermissionInfo":
         """从 Permission 实体构造 PermissionInfo"""
         return cls(
             id=_require_permission_id(permission.id),

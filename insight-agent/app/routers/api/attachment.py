@@ -2,15 +2,16 @@ import mimetypes
 from pathlib import Path
 from typing import Annotated
 
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
+from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.agent.agent import get_workspace_dir
 from app.core.database import get_db
 from app.errors import attachment_error, chat_error
 from app.repositories import conversation_repo
 from app.schemas import chat_schema
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
-from loguru import logger
-from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(tags=["attachment"])
 
@@ -36,7 +37,7 @@ async def api_upload_attachment(
     # 检查对话是否存在且属于当前用户
     conversation = await conversation_repo.get_by_id(db_session, conversation_id)
     if (conversation is None) or (conversation.user_id != user_id):
-        raise chat_error.ConversationNotFound
+        raise chat_error.ConversationNotFoundError
 
     # 获取文件名
     f_path = file.filename or "upload"
@@ -49,9 +50,7 @@ async def api_upload_attachment(
             target_file.write(chunk)
 
     logger.info(f"Upload attachment: {conversation_id=}, file={f_path}")
-    return chat_schema.UploadAttachmentResponse(
-        attachment=chat_schema.Attachment(f_path=f_path)
-    )
+    return chat_schema.UploadAttachmentResponse(attachment=chat_schema.Attachment(f_path=f_path))
 
 
 @router.post("/delete")
@@ -66,7 +65,7 @@ async def api_delete_attachment(
     # 检查对话是否存在且属于当前用户
     conversation = await conversation_repo.get_by_id(db_session, body.conversation_id)
     if (conversation is None) or (conversation.user_id != user_id):
-        raise chat_error.ConversationNotFound
+        raise chat_error.ConversationNotFoundError
 
     # 获取工作区目录
     workspace_dir = get_workspace_dir(user_id, body.conversation_id)
@@ -76,9 +75,7 @@ async def api_delete_attachment(
     if target_path.exists() and target_path.is_file():
         target_path.unlink()
 
-    logger.info(
-        f"Delete attachment: conversation_id={body.conversation_id}, file={body.f_path}"
-    )
+    logger.info(f"Delete attachment: conversation_id={body.conversation_id}, file={body.f_path}")
 
 
 @router.get("/get")
@@ -94,7 +91,7 @@ async def api_get_attachment(
     # 检查对话是否存在且属于当前用户
     conversation = await conversation_repo.get_by_id(db_session, conversation_id)
     if (conversation is None) or (conversation.user_id != user_id):
-        raise chat_error.ConversationNotFound
+        raise chat_error.ConversationNotFoundError
 
     # 获取工作区目录
     workspace_dir = get_workspace_dir(user_id, conversation_id)

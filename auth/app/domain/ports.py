@@ -23,9 +23,7 @@ class UserRepository(ABC):
     """用户仓库"""
 
     @abstractmethod
-    async def create(
-        self, db: AsyncSession, email: str, username: str, password: str
-    ) -> User: ...
+    async def create(self, db: AsyncSession, email: str, username: str, password: str) -> User: ...
 
     @abstractmethod
     async def remove(self, db: AsyncSession, user_id: int) -> None: ...
@@ -46,9 +44,7 @@ class UserRepository(ABC):
     async def get_by_id(self, db: AsyncSession, user_id: int) -> User | None: ...
 
     @abstractmethod
-    async def get_by_id_with_role(
-        self, db: AsyncSession, user_id: int
-    ) -> UserWithRoles | None: ...
+    async def get_by_id_with_role(self, db: AsyncSession, user_id: int) -> UserWithRoles | None: ...
 
     @abstractmethod
     async def get_by_id_with_role_permission(
@@ -101,14 +97,10 @@ class TokenRepository(ABC):
     async def remove_all_by_user(self, db: AsyncSession, user_id: int) -> None: ...
 
     @abstractmethod
-    async def remove_all_by_session(
-        self, db: AsyncSession, session_id: str
-    ) -> None: ...
+    async def remove_all_by_session(self, db: AsyncSession, session_id: str) -> None: ...
 
     @abstractmethod
-    async def get_active(
-        self, db: AsyncSession, access_token: str
-    ) -> AccessToken | None: ...
+    async def get_active(self, db: AsyncSession, access_token: str) -> AccessToken | None: ...
 
     @abstractmethod
     async def update_all_by_user(
@@ -176,18 +168,14 @@ class EmailCodeRepository(ABC):
     ) -> None: ...
 
     @abstractmethod
-    async def consume(
-        self, db: AsyncSession, email: str, code_type: str, code: str
-    ) -> bool: ...
+    async def consume(self, db: AsyncSession, email: str, code_type: str, code: str) -> bool: ...
 
 
 class EmailSender(ABC):
     """邮件发送服务"""
 
     @abstractmethod
-    async def send_verification_code(
-        self, to: str, code: str, code_type: str
-    ) -> None: ...
+    async def send_verification_code(self, to: str, code: str, code_type: str) -> None: ...
 
 
 class PasswordHasher(ABC):
@@ -242,9 +230,7 @@ class RoleRepository(ABC):
     async def get_by_name(self, db: AsyncSession, name: str) -> Role | None: ...
 
     @abstractmethod
-    async def get_by_id_with_user(
-        self, db: AsyncSession, role_id: int
-    ) -> RoleWithUsers | None: ...
+    async def get_by_id_with_user(self, db: AsyncSession, role_id: int) -> RoleWithUsers | None: ...
 
     @abstractmethod
     async def get_by_id_with_user_permission(
@@ -285,9 +271,7 @@ class PermissionRepository(ABC):
     ) -> Permission: ...
 
     @abstractmethod
-    async def get_by_id(
-        self, db: AsyncSession, permission_id: int
-    ) -> Permission | None: ...
+    async def get_by_id(self, db: AsyncSession, permission_id: int) -> Permission | None: ...
 
     @abstractmethod
     async def get_by_name(self, db: AsyncSession, name: str) -> Permission | None: ...
@@ -312,19 +296,13 @@ class RelationRepository(ABC):
     """关联关系仓库"""
 
     @abstractmethod
-    async def add_user_role(
-        self, db: AsyncSession, pairs: list[tuple[int, int]]
-    ) -> None: ...
+    async def add_user_role(self, db: AsyncSession, pairs: list[tuple[int, int]]) -> None: ...
 
     @abstractmethod
-    async def remove_user_role(
-        self, db: AsyncSession, pairs: list[tuple[int, int]]
-    ) -> None: ...
+    async def remove_user_role(self, db: AsyncSession, pairs: list[tuple[int, int]]) -> None: ...
 
     @abstractmethod
-    async def add_role_permission(
-        self, db: AsyncSession, pairs: list[tuple[int, int]]
-    ) -> None: ...
+    async def add_role_permission(self, db: AsyncSession, pairs: list[tuple[int, int]]) -> None: ...
 
     @abstractmethod
     async def remove_role_permission(

@@ -37,13 +37,17 @@ jobs:
         working-directory: auth
         run: uv sync --frozen --dev
 
+      - name: Run ruff format
+        working-directory: auth
+        run: uv run ruff format --check .
+
       - name: Run ruff
         working-directory: auth
-        run: uv tool run ruff check .
+        run: uv run ruff check .
 
       - name: Run pyright
         working-directory: auth
-        run: uv tool run pyright .
+        run: uv run pyright .
 
   web-check:
     name: Web Check
@@ -63,6 +67,10 @@ jobs:
       - name: Run web lint
         working-directory: auth/web
         run: bun run lint
+
+      - name: Check web format
+        working-directory: auth/web
+        run: bun run format:check
 
       - name: Build web
         working-directory: auth/web

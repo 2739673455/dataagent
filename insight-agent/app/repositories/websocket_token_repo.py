@@ -1,7 +1,8 @@
 """WebSocket 临时令牌数据访问"""
 
-from app.core import redis as redis_util
 from pydantic import BaseModel
+
+from app.core import redis as redis_util
 
 # Redis Key
 WEBSOCKET_TOKEN_KEY = "ws_token:{token}"

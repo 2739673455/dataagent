@@ -1,5 +1,8 @@
 """权限仓库 — SQLAlchemy 实现"""
 
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.domain.entities import (
     Permission,
     PermissionWithRoleUsers,
@@ -9,8 +12,6 @@ from app.domain.entities import (
 )
 from app.domain.ports import PermissionRepository
 from app.utils.datetime_str import now_str
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def _permission_from_row(row) -> Permission:
@@ -73,18 +74,14 @@ class PermissionRepo(PermissionRepository):
             {
                 "permission_id": permission.id,
                 "name": permission.name if name is None else name,
-                "description": permission.description
-                if description is None
-                else description,
+                "description": permission.description if description is None else description,
                 "yn": permission.yn if yn is None else yn,
                 "now": now_str(),
             },
         )
         return _permission_from_row(result.mappings().one())
 
-    async def get_by_id(
-        self, db: AsyncSession, permission_id: int
-    ) -> Permission | None:
+    async def get_by_id(self, db: AsyncSession, permission_id: int) -> Permission | None:
         """根据 ID 获取权限"""
         result = await db.execute(
             text(

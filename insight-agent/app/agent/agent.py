@@ -2,14 +2,15 @@ from asyncio import Lock
 from pathlib import Path
 from typing import Any
 
-from app.agent.mcp import get_mcp_tools
-from app.agent.tools import db_query, return_file
-from app.core import settings
 from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, FilesystemBackend, LocalShellBackend
 from langchain.chat_models import init_chat_model
 from langgraph.config import get_config
 from langgraph.graph.state import CompiledStateGraph
+
+from app.agent.mcp import get_mcp_tools
+from app.agent.tools import db_query, return_file
+from app.core import settings
 
 # 路径常量
 CURRENT_DIR = Path(__file__).parent  # agent
@@ -50,9 +51,7 @@ def _backend_factory(rt: Any) -> CompositeBackend:
     # - default: 工作区后端（LocalShellBackend），处理除 /skills/ 外的所有路径
     # - routes["/skills/"]: 命中此前缀时，剥离前缀后将剩余路径转发到 skills_backend
     #   例如 Agent 请求 /skills/insight/SKILL.md → skills_backend 收到 insight/SKILL.md
-    return CompositeBackend(
-        default=workspace_backend, routes={"/skills/": skills_backend}
-    )
+    return CompositeBackend(default=workspace_backend, routes={"/skills/": skills_backend})
 
 
 async def _build_agent() -> CompiledStateGraph:

@@ -3,13 +3,14 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from app.core.settings import MySQLCfg, cfg
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+
+from app.core.settings import MySQLCfg, cfg
 
 ENGINE_KWARGS_MAP: dict[str, dict[str, object]] = {
     "mysql": {
@@ -39,9 +40,7 @@ class DatabaseManager:
             )
         return self._engines[db_url]
 
-    def _get_session_maker(
-        self, db_url: str, db_driver: str
-    ) -> async_sessionmaker[AsyncSession]:
+    def _get_session_maker(self, db_url: str, db_driver: str) -> async_sessionmaker[AsyncSession]:
         """获取或创建会话工厂"""
         if db_url not in self._session_makers:
             engine = self._get_engine(db_url, db_driver)

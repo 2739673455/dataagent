@@ -9,9 +9,7 @@ from app.domain.ports import RelationRepository
 class RelationRepo(RelationRepository):
     """关联关系仓库 SQLAlchemy 实现"""
 
-    async def add_user_role(
-        self, db: AsyncSession, pairs: list[tuple[int, int]]
-    ) -> None:
+    async def add_user_role(self, db: AsyncSession, pairs: list[tuple[int, int]]) -> None:
         """批量添加用户-角色关联"""
         for user_id, role_id in set(pairs):
             await db.execute(
@@ -22,9 +20,7 @@ class RelationRepo(RelationRepository):
                 {"user_id": user_id, "role_id": role_id},
             )
 
-    async def remove_user_role(
-        self, db: AsyncSession, pairs: list[tuple[int, int]]
-    ) -> None:
+    async def remove_user_role(self, db: AsyncSession, pairs: list[tuple[int, int]]) -> None:
         """批量删除用户-角色关联"""
         for user_id, role_id in set(pairs):
             await db.execute(
@@ -35,9 +31,7 @@ class RelationRepo(RelationRepository):
                 {"user_id": user_id, "role_id": role_id},
             )
 
-    async def add_role_permission(
-        self, db: AsyncSession, pairs: list[tuple[int, int]]
-    ) -> None:
+    async def add_role_permission(self, db: AsyncSession, pairs: list[tuple[int, int]]) -> None:
         """批量添加角色-权限关联"""
         for role_id, permission_id in set(pairs):
             await db.execute(
@@ -48,9 +42,7 @@ class RelationRepo(RelationRepository):
                 {"role_id": role_id, "permission_id": permission_id},
             )
 
-    async def remove_role_permission(
-        self, db: AsyncSession, pairs: list[tuple[int, int]]
-    ) -> None:
+    async def remove_role_permission(self, db: AsyncSession, pairs: list[tuple[int, int]]) -> None:
         """批量删除角色-权限关联"""
         for role_id, permission_id in set(pairs):
             await db.execute(

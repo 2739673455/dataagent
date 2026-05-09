@@ -2,11 +2,12 @@
 
 from typing import Any, cast
 
-from app.domain.ports import EmailCodeRepository
-from app.utils.datetime_str import future_str, now_str
 from sqlalchemy import text
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.domain.ports import EmailCodeRepository
+from app.utils.datetime_str import future_str, now_str
 
 
 class EmailCodeRepo(EmailCodeRepository):
@@ -39,9 +40,7 @@ class EmailCodeRepo(EmailCodeRepository):
             },
         )
 
-    async def consume(
-        self, db: AsyncSession, email: str, code_type: str, code: str
-    ) -> bool:
+    async def consume(self, db: AsyncSession, email: str, code_type: str, code: str) -> bool:
         """消费验证码（标记为已使用），返回是否消费成功"""
         result = await db.execute(
             text(

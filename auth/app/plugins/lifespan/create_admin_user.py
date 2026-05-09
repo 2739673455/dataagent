@@ -1,13 +1,12 @@
-from app.core import cfg
-from app.domain.ports import PasswordHasher
-from app.utils.datetime_str import now_str
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import cfg
+from app.domain.ports import PasswordHasher
+from app.utils.datetime_str import now_str
 
-async def create_admin_user(
-    db_session: AsyncSession, password_hasher: PasswordHasher
-) -> None:
+
+async def create_admin_user(db_session: AsyncSession, password_hasher: PasswordHasher) -> None:
     """确保存在拥有 * 权限的管理员用户
 
     逻辑：

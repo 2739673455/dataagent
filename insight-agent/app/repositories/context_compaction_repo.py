@@ -1,9 +1,10 @@
 """上下文压缩数据访问"""
 
-from app.entities.chat import ContextCompaction
 from sqlalchemy import select
 from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.entities.chat import ContextCompaction
 
 
 async def create(
@@ -38,9 +39,7 @@ async def get_latest_by_conversation_id(
     yn: int | None = 1,
 ) -> ContextCompaction | None:
     """获取某个对话最新一条上下文压缩记录"""
-    stmt = select(ContextCompaction).where(
-        ContextCompaction.conversation_id == conversation_id
-    )
+    stmt = select(ContextCompaction).where(ContextCompaction.conversation_id == conversation_id)
     if yn is not None:
         stmt = stmt.where(ContextCompaction.yn == yn)
     stmt = stmt.order_by(ContextCompaction.end_seq.desc(), ContextCompaction.id.desc())

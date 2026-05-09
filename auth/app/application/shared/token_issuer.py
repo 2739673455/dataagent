@@ -1,8 +1,8 @@
 """签发访问令牌的共享领域服务"""
 
 from app.core.settings import AuthCfg
-from app.domain.ports import TokenFactory, TokenRepository, UserRepository
 from app.domain.errors import UserNotFoundError
+from app.domain.ports import TokenFactory, TokenRepository, UserRepository
 
 
 def _active_scopes(user) -> list[str]:
@@ -35,9 +35,7 @@ class TokenIssuer:
         self._cfg = auth_config
         self._tf = token_factory
 
-    async def issue(
-        self, db, user_id: int, session_id: str, client_id: str
-    ) -> str:
+    async def issue(self, db, user_id: int, session_id: str, client_id: str) -> str:
         """查询用户权限范围，生成 access token 并持久化"""
         user = await self._user_repo.get_by_id_with_role_permission(db, user_id)
         if not user:
@@ -46,7 +44,12 @@ class TokenIssuer:
         access_token = self._tf.access_token()
         expire = self._cfg.access_token_expire_days * 24 * 60 * 60
         await self._token_repo.create(
-            db, user_id, session_id, access_token, client_id, expire,
+            db,
+            user_id,
+            session_id,
+            access_token,
+            client_id,
+            expire,
             _active_scopes(user),
         )
         return access_token

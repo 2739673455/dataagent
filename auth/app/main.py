@@ -2,6 +2,11 @@ from contextlib import asynccontextmanager
 from functools import partial
 from typing import cast
 
+from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.types import ExceptionHandler
+
 from app.application.admin.use_cases import create_admin_use_cases
 from app.application.oauth.use_cases import create_oauth_use_cases
 from app.application.shared.session_creator import SessionCreator
@@ -30,10 +35,6 @@ from app.presentation import frontend
 from app.presentation.admin.router import create_router as create_admin_router
 from app.presentation.oauth.router import create_router as create_oauth_router
 from app.presentation.user.router import create_router as create_user_router
-from fastapi import FastAPI, HTTPException
-from fastapi.exceptions import RequestValidationError
-from fastapi.middleware.cors import CORSMiddleware
-from starlette.types import ExceptionHandler
 
 
 @asynccontextmanager

@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from loguru import logger
+
 from app.core.database import DBSessionContextFactory
 from app.domain.entities import Permission, Role, User
 from app.domain.errors import (
@@ -20,7 +22,6 @@ from app.domain.ports import (
     TokenRepository,
     UserRepository,
 )
-from loguru import logger
 
 from .schemas import (
     PermissionDetailResult,
@@ -78,9 +79,7 @@ def _role_to_info(role: Role) -> RoleInfoResult:
     )
 
 
-def _permission_to_info(
-    permission: Permission, effective: int = 1
-) -> PermissionInfoResult:
+def _permission_to_info(permission: Permission, effective: int = 1) -> PermissionInfoResult:
     """Permission 实体 → PermissionInfoResult DTO"""
     return PermissionInfoResult(
         id=_ensure_permission_id(permission.id),
@@ -194,11 +193,7 @@ class UpdateUserUseCase:
             user = await self._users.get_by_id(db, user_id)
             if not user:
                 raise UserNotFoundError
-            if (
-                email
-                and email != user.email
-                and await self._users.get_by_email(db, email)
-            ):
+            if email and email != user.email and await self._users.get_by_email(db, email):
                 raise EmailAlreadyExistsError
 
             user = await self._users.update(
@@ -250,9 +245,7 @@ class RemoveUserUseCase:
 class ListUsersUseCase:
     """管理员分页/全量查询用户列表"""
 
-    def __init__(
-        self, db_factory: DBSessionContextFactory, user_repo: UserRepository
-    ) -> None:
+    def __init__(self, db_factory: DBSessionContextFactory, user_repo: UserRepository) -> None:
         self._db = db_factory
         self._users = user_repo
 
@@ -275,9 +268,7 @@ class ListUsersUseCase:
 class GetUserUseCase:
     """管理员查看用户详情（含角色和权限）"""
 
-    def __init__(
-        self, db_factory: DBSessionContextFactory, user_repo: UserRepository
-    ) -> None:
+    def __init__(self, db_factory: DBSessionContextFactory, user_repo: UserRepository) -> None:
         self._db = db_factory
         self._users = user_repo
 
@@ -304,9 +295,7 @@ class GetUserUseCase:
 class CreateRoleUseCase:
     """管理员创建角色"""
 
-    def __init__(
-        self, db_factory: DBSessionContextFactory, role_repo: RoleRepository
-    ) -> None:
+    def __init__(self, db_factory: DBSessionContextFactory, role_repo: RoleRepository) -> None:
         self._db = db_factory
         self._roles = role_repo
 
@@ -394,9 +383,7 @@ class RemoveRoleUseCase:
 class ListRolesUseCase:
     """管理员分页/全量查询角色列表"""
 
-    def __init__(
-        self, db_factory: DBSessionContextFactory, role_repo: RoleRepository
-    ) -> None:
+    def __init__(self, db_factory: DBSessionContextFactory, role_repo: RoleRepository) -> None:
         self._db = db_factory
         self._roles = role_repo
 
@@ -419,9 +406,7 @@ class ListRolesUseCase:
 class GetRoleUseCase:
     """管理员查看角色详情（含用户和权限列表）"""
 
-    def __init__(
-        self, db_factory: DBSessionContextFactory, role_repo: RoleRepository
-    ) -> None:
+    def __init__(self, db_factory: DBSessionContextFactory, role_repo: RoleRepository) -> None:
         self._db = db_factory
         self._roles = role_repo
 
@@ -450,9 +435,7 @@ class CreatePermissionUseCase:
         self._db = db_factory
         self._permissions = permission_repo
 
-    async def execute(
-        self, name: str, description: str | None = None
-    ) -> PermissionInfoResult:
+    async def execute(self, name: str, description: str | None = None) -> PermissionInfoResult:
         """创建权限，同名时抛出 PermissionAlreadyExistsError"""
         async with self._db() as db:
             if await self._permissions.get_by_name(db, name):
@@ -493,11 +476,7 @@ class UpdatePermissionUseCase:
 
             original_name = permission.name
             original_yn = permission.yn
-            if (
-                name
-                and name != permission.name
-                and await self._permissions.get_by_name(db, name)
-            ):
+            if name and name != permission.name and await self._permissions.get_by_name(db, name):
                 raise PermissionAlreadyExistsError
 
             permission = await self._permissions.update(
@@ -510,15 +489,10 @@ class UpdatePermissionUseCase:
             if (yn is not None and yn != original_yn) or (
                 name is not None and name != original_name
             ):
-                pwr = await self._permissions.get_by_id_with_role_user(
-                    db, permission_id
-                )
+                pwr = await self._permissions.get_by_id_with_role_user(db, permission_id)
                 if pwr and pwr.roles:
                     user_ids = {
-                        _ensure_user_id(u.id)
-                        for role in pwr.roles
-                        if role.yn
-                        for u in role.users
+                        _ensure_user_id(u.id) for role in pwr.roles if role.yn for u in role.users
                     }
                     await _refresh_user_tokens(db, user_ids, self._users, self._tokens)
             await db.commit()
@@ -546,17 +520,12 @@ class RemovePermissionUseCase:
     async def execute(self, permission_id: int) -> None:
         """删除权限并刷新关联用户的令牌 scope"""
         async with self._db() as db:
-            permission = await self._permissions.get_by_id_with_role_user(
-                db, permission_id
-            )
+            permission = await self._permissions.get_by_id_with_role_user(db, permission_id)
             if not permission:
                 raise PermissionNotFoundError
             permission_name = permission.name
             user_ids = {
-                _ensure_user_id(u.id)
-                for role in permission.roles
-                if role.yn
-                for u in role.users
+                _ensure_user_id(u.id) for role in permission.roles if role.yn for u in role.users
             }
             await self._permissions.remove(db, permission_id)
             await _refresh_user_tokens(db, user_ids, self._users, self._tokens)
@@ -584,9 +553,7 @@ class ListPermissionsUseCase:
     ) -> PermissionListResult:
         """分页查询权限，all=True 时返回全部"""
         async with self._db() as db:
-            permissions, total = await self._permissions.ls(
-                db, offset, limit, keyword, all
-            )
+            permissions, total = await self._permissions.ls(db, offset, limit, keyword, all)
         return PermissionListResult(
             total=total,
             items=[_permission_to_info(p) for p in permissions],
@@ -607,9 +574,7 @@ class GetPermissionUseCase:
     async def execute(self, permission_id: int) -> PermissionDetailResult:
         """获取权限详情，包含关联角色列表与用户列表（根据角色状态标记 effective）"""
         async with self._db() as db:
-            permission = await self._permissions.get_by_id_with_role_user(
-                db, permission_id
-            )
+            permission = await self._permissions.get_by_id_with_role_user(db, permission_id)
             if not permission:
                 raise PermissionNotFoundError
         roles = [_role_to_info(role) for role in permission.roles]
@@ -794,12 +759,8 @@ def create_admin_use_cases(
         ),
         list_permissions=ListPermissionsUseCase(db_factory, permission_repo),
         get_permission=GetPermissionUseCase(db_factory, permission_repo),
-        add_user_role=AddUserRoleUseCase(
-            db_factory, relation_repo, user_repo, token_repo
-        ),
-        remove_user_role=RemoveUserRoleUseCase(
-            db_factory, relation_repo, user_repo, token_repo
-        ),
+        add_user_role=AddUserRoleUseCase(db_factory, relation_repo, user_repo, token_repo),
+        remove_user_role=RemoveUserRoleUseCase(db_factory, relation_repo, user_repo, token_repo),
         add_role_permission=AddRolePermissionUseCase(
             db_factory, relation_repo, role_repo, user_repo, token_repo
         ),

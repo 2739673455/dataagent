@@ -1,4 +1,8 @@
-export type { FilterState, SortOrder, SortState } from "@/features/permission/types";
+export type {
+  FilterState,
+  SortOrder,
+  SortState,
+} from "@/features/permission/types";
 export {
   usePermissionActions,
   useRoleActions,

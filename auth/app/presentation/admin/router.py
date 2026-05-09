@@ -1,8 +1,9 @@
 """Admin HTTP 路由"""
 
 import dataclasses
-from typing import Annotated, Any, TypeVar
+from typing import Annotated, Any
 
+from fastapi import APIRouter, Depends, Header, Query, status
 from pydantic import BaseModel
 
 from app.application.admin.use_cases import AdminUseCases
@@ -12,14 +13,11 @@ from app.presentation.deps import (
     AccessTokenPayload,
     resolve_access_token_from_header,
 )
-from fastapi import APIRouter, Depends, Header, Query, status
 
 from . import schemas
 
-T = TypeVar("T", bound=BaseModel)
 
-
-def _convert(dto: Any, pydantic_cls: type[T]) -> T:
+def _convert[T: BaseModel](dto: Any, pydantic_cls: type[T]) -> T:
     """dataclass DTO → Pydantic 模型转换"""
     return pydantic_cls.model_validate(dataclasses.asdict(dto))
 
@@ -46,9 +44,7 @@ def create_router(
         body: schemas.CreateUserRequest,
     ) -> schemas.UserInfo:
         """管理员创建用户"""
-        result = await admin_use_cases.create_user.execute(
-            body.email, body.username, body.password
-        )
+        result = await admin_use_cases.create_user.execute(body.email, body.username, body.password)
         return _convert(result, schemas.UserInfo)
 
     @router.post("/update_user")
@@ -140,9 +136,7 @@ def create_router(
         body: schemas.CreatePermissionRequest,
     ) -> schemas.PermissionInfo:
         """管理员创建权限"""
-        result = await admin_use_cases.create_permission.execute(
-            body.name, body.description
-        )
+        result = await admin_use_cases.create_permission.execute(body.name, body.description)
         return _convert(result, schemas.PermissionInfo)
 
     @router.post("/update_permission")
@@ -171,9 +165,7 @@ def create_router(
         all: bool = Query(default=False, description="是否查询全部数据"),
     ) -> schemas.PermissionListResponse:
         """管理员分页查询权限列表"""
-        result = await admin_use_cases.list_permissions.execute(
-            offset, limit, keyword, all
-        )
+        result = await admin_use_cases.list_permissions.execute(offset, limit, keyword, all)
         return schemas.PermissionListResponse(
             total=result.total,
             items=[_convert(item, schemas.PermissionInfo) for item in result.items],

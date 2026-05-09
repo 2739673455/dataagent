@@ -1,11 +1,12 @@
 from pathlib import Path
 
 import httpx
-from app.core.http_client import get_http_client
-from app.core.settings import cfg
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+
+from app.core.http_client import get_http_client
+from app.core.settings import cfg
 
 # 前端构建产物目录
 APP_DIR = Path(__file__).resolve().parent.parent

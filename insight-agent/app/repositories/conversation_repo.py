@@ -1,9 +1,10 @@
 """对话数据访问"""
 
-from app.entities.chat import Conversation
 from sqlalchemy import func, select
 from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.entities.chat import Conversation
 
 
 async def create(

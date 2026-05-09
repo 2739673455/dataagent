@@ -1,5 +1,6 @@
-from app.core.exceptions.base import AuthError, ProblemError
 from fastapi import status
+
+from app.core.exceptions.base import AuthError, ProblemError
 
 
 class MissingAccessTokenError(AuthError):

@@ -15,9 +15,7 @@ class SendCodeRequest(BaseModel):
     def validate_type(cls, v: str) -> str:
         """校验验证码类型只能为预定义的三种值"""
         if v not in ("register", "reset_email", "reset_password"):
-            raise ValueError(
-                "Email code 类型只能为 register/reset_email/reset_password"
-            )
+            raise ValueError("Email code 类型只能为 register/reset_email/reset_password")
         return v
 
 

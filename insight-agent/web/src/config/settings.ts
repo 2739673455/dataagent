@@ -10,11 +10,11 @@ export const AUTH_API_BASE_URL = "/auth-api";
 export const AUTH_WEB_BASE_URL = "http://localhost:7100";
 // 认证中心 API 路径
 export const AUTH_API_PATHS = {
-	authorize: "/api/authorize",
-	token: "/api/token",
-	introspection: "/api/introspection",
-	logout: "/api/logout",
-	me: "/api/userinfo",
+  authorize: "/api/authorize",
+  token: "/api/token",
+  introspection: "/api/introspection",
+  logout: "/api/logout",
+  me: "/api/userinfo",
 } as const;
 
 // 前端基路径
@@ -24,21 +24,20 @@ export const AUTH_CALLBACK_ROUTE = "/auth/callback";
 
 // 页面路由
 export const ROUTES = {
-	chat: "/chat",
-	chatConversation: (conversationId: number | string) =>
-		`/chat/${conversationId}`,
+  chat: "/chat",
+  chatConversation: (conversationId: number | string) => `/chat/${conversationId}`,
 } as const;
 
 export const CHAT_API_ROUTES = {
-	createConversation: "/api/chat/create",
-	listConversations: "/api/chat/ls",
-	deleteConversations: "/api/chat/delete",
-	getMessages: (conversationId: number) => `/api/chat/ls/${conversationId}`,
-	uploadAttachment: "/api/chat/attachment/upload",
-	getAttachment: "/api/chat/attachment/get",
-	deleteAttachment: "/api/chat/attachment/delete",
-	createWebSocketToken: "/api/chat/ws-token",
-	chatWebSocket: "/api/chat/ws/chat",
+  createConversation: "/api/chat/create",
+  listConversations: "/api/chat/ls",
+  deleteConversations: "/api/chat/delete",
+  getMessages: (conversationId: number) => `/api/chat/ls/${conversationId}`,
+  uploadAttachment: "/api/chat/attachment/upload",
+  getAttachment: "/api/chat/attachment/get",
+  deleteAttachment: "/api/chat/attachment/delete",
+  createWebSocketToken: "/api/chat/ws-token",
+  chatWebSocket: "/api/chat/ws/chat",
 } as const;
 
 // 开发服务器端口

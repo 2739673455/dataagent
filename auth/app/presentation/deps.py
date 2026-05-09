@@ -4,18 +4,17 @@ import json
 from datetime import datetime
 from typing import Annotated
 
+from fastapi import Header
+
 from app.core import cfg, context, get_db_session_context
 from app.domain.errors import InvalidAccessTokenError
 from app.domain.ports import TokenRepository
-from fastapi import Header
 
 
 class AccessTokenPayload:
     """由 deps 解析后的令牌载荷 — 不是领域对象，仅用于 FastAPI 注入"""
 
-    def __init__(
-        self, access_token: str, sub: int, exp: float, scope: list[str]
-    ) -> None:
+    def __init__(self, access_token: str, sub: int, exp: float, scope: list[str]) -> None:
         self.access_token = access_token
         self.sub = sub
         self.exp = exp
@@ -34,9 +33,7 @@ async def resolve_access_token_from_header(
         return None
 
     async with get_db_session_context(cfg.db.selected, cfg.db.driver) as db:
-        token_record = (
-            await token_repo.get_active(db, credentials) if token_repo else None
-        )
+        token_record = await token_repo.get_active(db, credentials) if token_repo else None
 
     if token_record is None:
         return None

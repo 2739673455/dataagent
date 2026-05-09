@@ -4,23 +4,23 @@ from dataclasses import dataclass
 
 from app.application.shared.schemas import SessionCookieResult
 from app.application.shared.session_creator import SessionCreator
-from app.core.settings import AuthCfg, EmailCfg
 from app.core.database import DBSessionContextFactory
+from app.core.settings import AuthCfg, EmailCfg
 from app.domain.errors import (
     EmailAlreadyExistsError,
     EmailNotFoundError,
     EmailUnchangedError,
     InvalidVerificationCodeError,
     UserDisabledError,
-    UserNotFoundError,
     UsernameUnchangedError,
+    UserNotFoundError,
 )
 from app.domain.ports import (
     EmailCodeRepository,
     EmailSender,
+    SessionRepository,
     TokenFactory,
     TokenRepository,
-    SessionRepository,
     UserRepository,
 )
 

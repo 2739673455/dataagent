@@ -165,7 +165,9 @@ export function UserDialogs({ roles }: UserDialogsProps) {
               <PanelInput
                 id="edit-username"
                 hasError={!!editForm.formState.errors.username}
-                {...editForm.register("username", { setValueAs: (v: string) => v === "" ? undefined : v })}
+                {...editForm.register("username", {
+                  setValueAs: (v: string) => (v === "" ? undefined : v),
+                })}
               />
               {editForm.formState.errors.username && (
                 <p className="text-sm text-red-500">{editForm.formState.errors.username.message}</p>
@@ -179,7 +181,9 @@ export function UserDialogs({ roles }: UserDialogsProps) {
                 id="edit-email"
                 type="email"
                 hasError={!!editForm.formState.errors.email}
-                {...editForm.register("email", { setValueAs: (v: string) => v === "" ? undefined : v })}
+                {...editForm.register("email", {
+                  setValueAs: (v: string) => (v === "" ? undefined : v),
+                })}
               />
               {editForm.formState.errors.email && (
                 <p className="text-sm text-red-500">{editForm.formState.errors.email.message}</p>
@@ -193,7 +197,9 @@ export function UserDialogs({ roles }: UserDialogsProps) {
                 id="edit-password"
                 type="password"
                 hasError={!!editForm.formState.errors.password}
-                {...editForm.register("password", { setValueAs: (v: string) => v === "" ? undefined : v })}
+                {...editForm.register("password", {
+                  setValueAs: (v: string) => (v === "" ? undefined : v),
+                })}
               />
               {editForm.formState.errors.password && (
                 <p className="text-sm text-red-500">{editForm.formState.errors.password.message}</p>

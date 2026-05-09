@@ -1,8 +1,21 @@
 import asyncio
+import contextlib
 import json
 import secrets
 import shutil
 from typing import Annotated
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
+from loguru import logger
+from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.agent import get_workspace_dir
 from app.core import context
@@ -17,17 +30,6 @@ from app.repositories import (
 )
 from app.schemas import chat_schema
 from app.services import chat_service
-from fastapi import (
-    APIRouter,
-    Depends,
-    Request,
-    WebSocket,
-    WebSocketDisconnect,
-    status,
-)
-from loguru import logger
-from pydantic import ValidationError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(tags=["chat"])
 
@@ -71,14 +73,12 @@ async def api_delete_conversations(
         # 检查对话是否存在且属于当前用户
         conversation = await conversation_repo.get_by_id(db_session, conversation_id)
         if (conversation is None) or (conversation.user_id != user_id):
-            raise chat_error.ConversationNotFound
+            raise chat_error.ConversationNotFoundError
 
         # 禁用对话
         await conversation_repo.update(db_session, conversation, yn=0)
         # 禁用对话下所有消息
-        await message_repo.update_yn_by_conversation_id(
-            db_session, conversation_id, yn=0
-        )
+        await message_repo.update_yn_by_conversation_id(db_session, conversation_id, yn=0)
         # 禁用对话下所有上下文压缩记录
         await context_compaction_repo.update_yn_by_conversation_id(
             db_session, conversation_id, yn=0
@@ -106,7 +106,7 @@ async def api_update_conversation(
     # 检查对话是否存在且属于当前用户
     conversation = await conversation_repo.get_by_id(db_session, body.conversation_id)
     if (conversation is None) or (conversation.user_id != user_id):
-        raise chat_error.ConversationNotFound
+        raise chat_error.ConversationNotFoundError
 
     await conversation_repo.update(db_session, conversation, title=body.title)
 
@@ -151,7 +151,7 @@ async def api_create_websocket_token(
 ) -> chat_schema.WebSocketTokenResponse:
     """创建 WebSocket 临时令牌"""
     # 临时令牌过期时间
-    WS_TOKEN_EXPIRE_SECONDS = 30
+    ws_token_expire_seconds = 30
 
     # 获取用户ID
     user_id = request.state.payload.sub
@@ -162,20 +162,18 @@ async def api_create_websocket_token(
     await websocket_token_repo.create(
         token=websocket_token,
         user_id=user_id,
-        expire_seconds=WS_TOKEN_EXPIRE_SECONDS,
+        expire_seconds=ws_token_expire_seconds,
     )
 
     logger.info("Create websocket token")
 
     return chat_schema.WebSocketTokenResponse(
         websocket_token=websocket_token,
-        expires_in=WS_TOKEN_EXPIRE_SECONDS,
+        expires_in=ws_token_expire_seconds,
     )
 
 
-async def _validate_and_accept(
-    websocket: WebSocket, conversation_id: int
-) -> int | None:
+async def _validate_and_accept(websocket: WebSocket, conversation_id: int) -> int | None:
     """校验 WebSocket 令牌并接受连接，返回 user_id；失败时关闭连接返回 None"""
     # 从请求参数中获取 WebSocket 临时令牌
     websocket_token = websocket.query_params.get("websocket_token")
@@ -220,9 +218,9 @@ async def _receive_user_message(
     except (json.JSONDecodeError, ValidationError) as e:
         # 格式错误则发送错误响应
         await websocket.send_json(
-            chat_schema.WebSocketErrorResponse(
-                content=f"Invalid request: {str(e)}"
-            ).model_dump(mode="json")
+            chat_schema.WebSocketErrorResponse(content=f"Invalid request: {str(e)}").model_dump(
+                mode="json"
+            )
         )
         return None
 
@@ -279,9 +277,7 @@ class _TurnStream:
         """向客户端推送 Agent 消息，断开时自动标记并通知 Agent 中断"""
         try:
             await self._ws.send_json(
-                chat_schema.WebSocketMessageResponse(message=msg).model_dump(
-                    mode="json"
-                )
+                chat_schema.WebSocketMessageResponse(message=msg).model_dump(mode="json")
             )
         except WebSocketDisconnect:
             self.disconnected = True  # 标记连接已断开
@@ -291,9 +287,7 @@ class _TurnStream:
         """向客户端推送错误消息"""
         try:
             await self._ws.send_json(
-                chat_schema.WebSocketErrorResponse(content=content).model_dump(
-                    mode="json"
-                )
+                chat_schema.WebSocketErrorResponse(content=content).model_dump(mode="json")
             )
         except WebSocketDisconnect:
             self.disconnected = True  # 标记连接已断开
@@ -307,10 +301,8 @@ class _TurnStream:
         # 收尾：取消 cancel 监听任务，等待其退出
         if self._listener:
             self._listener.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._listener
-            except asyncio.CancelledError:
-                pass
 
 
 @router.websocket("/ws/chat")
@@ -329,7 +321,7 @@ async def api_websocket_chat(
     if ctx is None:
         await websocket.send_json(
             chat_schema.WebSocketErrorResponse(
-                content=chat_error.ConversationNotFound.title
+                content=chat_error.ConversationNotFoundError.title
             ).model_dump(mode="json")
         )
         await websocket.close(code=4404)

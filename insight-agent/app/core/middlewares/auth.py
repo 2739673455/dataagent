@@ -1,6 +1,8 @@
 """认证中间件 — 校验请求的 Authorization 头，将令牌载荷注入 Request.state"""
 
-from typing import Callable
+from collections.abc import Callable
+
+from fastapi import Request, Response
 
 from app.core import context
 from app.core.exceptions.base import ProblemError
@@ -9,7 +11,6 @@ from app.core.http_client import get_http_client
 from app.core.settings import cfg
 from app.errors import auth_error
 from app.schemas import auth_schema
-from fastapi import Request, Response
 
 # 需要认证的请求路径前缀
 AUTH_REQUIRED_PREFIXES = {"/api"}
@@ -28,7 +29,7 @@ async def authenticate_authorization(
             headers={"Authorization": authorization},
         )
     except Exception as e:
-        raise auth_error.AuthServiceUnavailableError(detail=str(e))
+        raise auth_error.AuthServiceUnavailableError(detail=str(e)) from e
 
     if resp.status_code != 200:
         raise auth_error.AuthServiceResponseError(detail=resp.text)
@@ -36,7 +37,7 @@ async def authenticate_authorization(
     try:
         data = auth_schema.IntrospectionResponse.model_validate(resp.json())
     except Exception as e:
-        raise auth_error.AuthServiceResponseError(detail=str(e))
+        raise auth_error.AuthServiceResponseError(detail=str(e)) from e
 
     if not data.active:
         raise auth_error.InvalidAccessTokenError()

@@ -3,13 +3,14 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
-from app.core.settings import MySQLCfg, SQLiteCfg
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+
+from app.core.settings import MySQLCfg, SQLiteCfg
 
 DBSessionContextFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
@@ -44,9 +45,7 @@ class DatabaseManager:
             )
         return self._engines[db_url]
 
-    def _get_session_maker(
-        self, db_url: str, db_driver: str
-    ) -> async_sessionmaker[AsyncSession]:
+    def _get_session_maker(self, db_url: str, db_driver: str) -> async_sessionmaker[AsyncSession]:
         """获取或创建会话工厂"""
         if db_url not in self._session_makers:
             engine = self._get_engine(db_url, db_driver)
@@ -72,9 +71,7 @@ class DatabaseManager:
         self._session_makers.clear()
 
 
-def _get_db_url(
-    db_cfg: SQLiteCfg | MySQLCfg, db_driver: str, async_mode: bool = True
-) -> str:
+def _get_db_url(db_cfg: SQLiteCfg | MySQLCfg, db_driver: str, async_mode: bool = True) -> str:
     """获取数据库连接 URL"""
     if db_driver == "mysql":
         if not isinstance(db_cfg, MySQLCfg):

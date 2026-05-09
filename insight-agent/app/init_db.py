@@ -24,7 +24,6 @@ def _write_code(output_path: Path, code: str) -> None:
 
 
 class DBInit:
-
     async def delete_db(self, db_name: str):
         """删除数据库"""
         raise NotImplementedError
@@ -74,9 +73,7 @@ class DBInit:
             task_id = progress.add_task("Start", total=len(db_sql_orm))
             semaphore = asyncio.Semaphore(max_workers)  # 信号量控制并发
 
-            async def process_database(
-                db_name: str, sql_file_path: Path, output_path: Path
-            ):
+            async def process_database(db_name: str, sql_file_path: Path, output_path: Path):
                 """处理单个数据库的异步任务"""
                 async with semaphore:
                     try:
@@ -87,9 +84,7 @@ class DBInit:
                         db_url = self.get_sync_db_url(db_name)
                         await self.gen_tb_model(output_path, db_url)
                     finally:
-                        progress.update(
-                            task_id, advance=1, description=f"{db_name[:8]:<8}"
-                        )
+                        progress.update(task_id, advance=1, description=f"{db_name[:8]:<8}")
 
             # 并发执行任务
             await asyncio.gather(
@@ -160,8 +155,7 @@ class MyInitializer(DBInit):
 
     async def exec_sql_file(self, db_name: str, sql_file_path: Path):
         """读取 SQL 文件并在目标库中执行"""
-        with open(sql_file_path, "r", encoding="utf-8") as f:
-            sql = f.read()
+        sql = sql_file_path.read_text(encoding="utf-8")
         conn = await asyncmy.connect(**self.conn_conf, db=db_name)
         try:
             await conn.begin()

@@ -2,15 +2,16 @@ import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
+from langchain_core.runnables import RunnableConfig
+from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.agent.agent import get_agent, get_workspace_dir
 from app.core.database import get_db_session
 from app.entities.chat import ContextCompaction
 from app.mappers import message_mapper
 from app.repositories import context_compaction_repo, conversation_repo, message_repo
 from app.schemas import chat_schema
-from langchain_core.runnables import RunnableConfig
-from loguru import logger
-from sqlalchemy.ext.asyncio import AsyncSession
 
 
 @dataclass
@@ -56,10 +57,8 @@ async def load_conversation_context(
 
         # ======== 应用压缩上下文 =========
         # 从数据库加载最新压缩上下文
-        context_compaction_entity = (
-            await context_compaction_repo.get_latest_by_conversation_id(
-                db_session, conversation_id
-            )
+        context_compaction_entity = await context_compaction_repo.get_latest_by_conversation_id(
+            db_session, conversation_id
         )
         # 如果存在压缩上下文，则替换历史消息前缀
         if context_compaction_entity:
@@ -122,9 +121,7 @@ def _extract_compaction(
     cutoff_index = event["cutoff_index"]
     summary_payload = event["summary_message"]
     summary = (
-        summary_payload.content
-        if hasattr(summary_payload, "content")
-        else str(summary_payload)
+        summary_payload.content if hasattr(summary_payload, "content") else str(summary_payload)
     )
     logger.info(f"{conversation_id=}: {summary=}")
     # seq_offset: context_seq 与 messages 索引之间的偏移量
@@ -193,9 +190,7 @@ async def run_agent_turn(
                     cur_context_seq += 1  # 递增 context_seq
                     response.context_seq = cur_context_seq
                     # 消息入库，同时追加到内存消息列表
-                    await _add_message(
-                        db_session, user_id, conversation_id, messages, response
-                    )
+                    await _add_message(db_session, user_id, conversation_id, messages, response)
                     # 记录模型最后一条消息的 finish_reason
                     last_finish_reason = response.finish_reason
                     yield response

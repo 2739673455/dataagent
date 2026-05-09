@@ -32,7 +32,13 @@ export default function Register() {
     formState: { errors, isSubmitting },
   } = useForm<RegisterFormData>({
     resolver: zodResolver(registerSchema),
-    defaultValues: { email: "", code: "", username: "", password: "", confirmPassword: "" },
+    defaultValues: {
+      email: "",
+      code: "",
+      username: "",
+      password: "",
+      confirmPassword: "",
+    },
   });
 
   useEffect(() => {

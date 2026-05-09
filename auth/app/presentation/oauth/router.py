@@ -3,6 +3,10 @@
 from typing import Annotated
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+from fastapi import APIRouter, Cookie, Depends, Form, Header, Query, Request, Response
+from fastapi.responses import HTMLResponse, RedirectResponse
+from loguru import logger
+
 from app.application.oauth.use_cases import OAuthUseCases
 from app.core.settings import AppCfg, CookieCfg
 from app.domain.errors import InvalidAuthorizationRequestError
@@ -17,9 +21,6 @@ from app.presentation.oauth.schemas import (
     LoginRequest,
     TokenResponse,
 )
-from fastapi import APIRouter, Cookie, Depends, Form, Header, Query, Request, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
-from loguru import logger
 
 
 def _authorization_error_page() -> HTMLResponse:
@@ -55,7 +56,7 @@ def create_router(
     oauth_use_cases: OAuthUseCases,
     token_repo: TokenRepository,
 ) -> APIRouter:
-    COOKIE_OPTIONS = {
+    cookie_options = {
         "secure": cookie_config.secure,
         "httponly": cookie_config.httponly,
         "samesite": cookie_config.samesite,
@@ -108,7 +109,7 @@ def create_router(
         if result is None:
             logger.info("无登录会话，重定向到登录页")
             resp = RedirectResponse(url=login_url)
-            resp.delete_cookie(key=cookie_config.name, **COOKIE_OPTIONS)
+            resp.delete_cookie(key=cookie_config.name, **cookie_options)
             return resp
 
         parsed = urlparse(result.redirect_uri)
@@ -122,7 +123,7 @@ def create_router(
             key=cookie_config.name,
             value=result.session_id,
             max_age=result.session_expire_seconds,
-            **COOKIE_OPTIONS,
+            **cookie_options,
         )
         return resp
 
@@ -169,7 +170,7 @@ def create_router(
             key=cookie_config.name,
             value=session_data.session_id,
             max_age=session_data.session_expire_seconds,
-            **COOKIE_OPTIONS,
+            **cookie_options,
         )
 
     @router.post("/logout")
@@ -180,6 +181,6 @@ def create_router(
     ) -> None:
         """OAuth 登出：清除令牌和会话 Cookie"""
         await oauth_use_cases.logout.execute(payload.access_token, session_id)
-        response.delete_cookie(key=cookie_config.name, **COOKIE_OPTIONS)
+        response.delete_cookie(key=cookie_config.name, **cookie_options)
 
     return router
