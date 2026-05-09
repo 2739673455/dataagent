@@ -587,8 +587,8 @@ Agent 运行时由以下组件组成：
 - **文件承接** — `db_query` 查询结果写入文件，工具执行结果稳定落盘
 - **结果回传** — 工作区文件可通过 `return_file` 返回给前端作为附件
 
-`get_workspace_dir()`（[agent.py:26-31](./app/agent/agent.py#L26-L31)）负责确保目录存在。  
-`_backend_factory()`（[agent.py:33-56](./app/agent/agent.py#L33-L56)）中的 `LocalShellBackend` 将工作区目录挂载为 Agent 可读写的文件系统。
+`get_workspace_dir()`（[agent.py:27-32](./app/agent/agent.py#L27-L32)）负责确保目录存在。  
+`_backend_factory()`（[agent.py:34-55](./app/agent/agent.py#L34-L55)）中的 `LocalShellBackend` 将工作区目录挂载为 Agent 可读写的文件系统。
 
 ## 3.3 本地工具
 ### 3.3.1 `db_query`
@@ -647,8 +647,8 @@ Agent 运行时由以下组件组成：
 
 ## 3.5 Skill 系统
 Skill 指导 Agent “遇到某类任务时，应按什么流程推进、产出什么结果”。项目 Skill 放在 `.deepagents/skills/` 下。
-- Agent 初始化时通过 `skills=[“/skills/”]` 整体挂载（[agent.py:81](./app/agent/agent.py#L81)）
-- `_backend_factory()` 中的 `FilesystemBackend` 将 `/skills/` 路由到 Skill 目录（[agent.py:49-56](./app/agent/agent.py#L49-L56)）
+- Agent 初始化时通过 `skills=[“/skills/”]` 整体挂载（[agent.py:80](./app/agent/agent.py#L80)）
+- `_backend_factory()` 中的 `FilesystemBackend` 将 `/skills/` 路由到 Skill 目录（[agent.py:48-55](./app/agent/agent.py#L48-L55)）
 - Agent 运行时根据任务类型自动发现并使用对应 Skill
 
 ## 3.6 insight Skill
@@ -750,7 +750,7 @@ class MessageSchema(BaseModel):
 `attachments` 中存放附件列表，附件结构为 `{“f_path”: “...”}`。
 
 ### 4.1.3 数据库存储消息格式
-数据库使用 `Message` 实体存储（[chat.py:50-70](./app/entities/chat.py#L50-L70)），与 Schema 的差异在于：
+数据库使用 `Message` 实体存储（[chat.py:76-110](./app/entities/chat.py#L76-L110)），与 Schema 的差异在于：
 - `parts` 和 `attachments` 在 Entity 中为 JSON 字符串，Schema 中为结构化对象
 - 表结构保持稳定，不需要为每种消息片段单独拆表
 
@@ -795,9 +795,9 @@ sequenceDiagram
 ### 4.2.1 Agent 流式消息转 Schema
 Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 
-**`agent_chunk_to_schemas()`**（[message_mapper.py:173-187](./app/mappers/message_mapper.py#L173-L187)）遍历 `model` 和 `tools` 节点，提取其中的 `messages` 列表后逐条调用 `langchain_message_to_schema()` 进行转换。中间件节点（如 `SkillsMiddleware`、`TodoListMiddleware`）的输出不含 `messages` 列表，不会被转成消息。
+**`agent_chunk_to_schemas()`**（[message_mapper.py:165-179](./app/mappers/message_mapper.py#L165-L179)）遍历 `model` 和 `tools` 节点，提取其中的 `messages` 列表后逐条调用 `langchain_message_to_schema()` 进行转换。中间件节点（如 `SkillsMiddleware`、`TodoListMiddleware`）的输出不含 `messages` 列表，不会被转成消息。
 
-**`langchain_message_to_schema()`**（[message_mapper.py:86-171](./app/mappers/message_mapper.py#L86-L171)）将单条 LangChain 消息转为 `MessageSchema`，转换规则：
+**`langchain_message_to_schema()`**（[message_mapper.py:81-163](./app/mappers/message_mapper.py#L81-L163)）将单条 LangChain 消息转为 `MessageSchema`，转换规则：
 
 `AIMessage` / `ChatMessage` → `role: "assistant"`：
 - `content`（字符串或列表）转为 `TextContent`
@@ -809,19 +809,19 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 - 当 `name == "return_file"` 且结果为成功状态时，提取 `f_path` 组装为 `Attachment`
 
 ### 4.2.2 Schema 转 Agent 运行时消息
-**`schema_to_langchain_message()`**（[message_mapper.py:282-329](./app/mappers/message_mapper.py#L282-L329)）将 `MessageSchema` 转为 LangChain 运行时消息：
+**`schema_to_langchain_message()`**（[message_mapper.py:268-313](./app/mappers/message_mapper.py#L268-L313)）将 `MessageSchema` 转为 LangChain 运行时消息：
 
 - `user` / `assistant`：
   - `TextContent` / `ImageContent` → `content`
   - `ToolCallPart` → `tool_calls`
 - `tool`：提取 `ToolResultPart` 转为运行时工具消息
-- 用户消息有附件时调用 `_process_attachments()`（[message_mapper.py:226-280](./app/mappers/message_mapper.py#L226-L280)）：
+- 用户消息有附件时调用 `_process_attachments()`（[message_mapper.py:214-266](./app/mappers/message_mapper.py#L214-L266)）：
   - 文档附件：追加文本提示告知 Agent 文件已保存到工作区
-  - 图片附件：通过 `_build_image_data_url()`（[message_mapper.py:189-209](./app/mappers/message_mapper.py#L189-L209)）从工作区读取并转为 `data URL`
+  - 图片附件：通过 `_build_image_data_url()`（[message_mapper.py:181-201](./app/mappers/message_mapper.py#L181-L201)）从工作区读取并转为 `data URL`
   - 图片文件丢失时：追加文本提示告知图片已不可用
 
 ### 4.2.3 Schema 转数据库存储消息
-**`schema_to_entity()`**（[message_mapper.py:48-84](./app/mappers/message_mapper.py#L48-L84)）将 `MessageSchema` 转为数据库实体：
+**`schema_to_entity()`**（[message_mapper.py:47-79](./app/mappers/message_mapper.py#L47-L79)）将 `MessageSchema` 转为数据库实体：
 
 - 检查 `context_seq` 是否存在
 - `parts` 序列化为 JSON 字符串
@@ -830,7 +830,7 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 - 若 `message_id` 或 `timestamp` 存在则保留
 
 ### 4.2.4 数据库存储消息转 Schema
-**`entity_to_schema()`**（[message_mapper.py:15-46](./app/mappers/message_mapper.py#L15-L46)）将数据库实体恢复为 `MessageSchema`：
+**`entity_to_schema()`**（[message_mapper.py:16-45](./app/mappers/message_mapper.py#L16-L45)）将数据库实体恢复为 `MessageSchema`：
 
 - `parts` JSON 字符串按 `type` 字段解析为 `TextContent` / `ImageContent` / `ToolCallPart` / `ToolResultPart`
 - `attachments` JSON 字符串解析为 `Attachment` 列表
@@ -839,7 +839,7 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 # 5. 接口实现
 ## 5.1 对话接口
 ### 5.1.1 创建对话 `POST /api/chat/create`
-[chat.py:35-59](./app/routers/api/chat.py#L35-L59)
+[chat.py:37-61](./app/routers/api/chat.py#L37-L61)
 
 - Request: [CreateConversationRequest](./app/schemas/chat_schema.py#L9-L13)
   - `is_draft`: 是否创建草稿对话（默认 0）
@@ -848,24 +848,24 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
   - `title`: 对话标题
   - `update_at`: 最后更新时间
 - Repo:
-  - [conversation_repo.create()](./app/repositories/conversation_repo.py#L9-L31) — 创建新对话记录
+  - [conversation_repo.create()](./app/repositories/conversation_repo.py#L10-L32) — 创建新对话记录
 
 实现：
 - 从 `request.state.payload.sub` 获取用户 ID
 - 调用 `conversation_repo.create()` 创建标题为"新对话"的对话
 
 ### 5.1.2 删除对话 `POST /api/chat/delete`
-[chat.py:61-95](./app/routers/api/chat.py#L61-L95)
+[chat.py:63-95](./app/routers/api/chat.py#L63-L95)
 
 - Request: [DeleteConversationRequest](./app/schemas/chat_schema.py#L15-L19)
   - `conversation_ids`: 要删除的对话 ID 列表
 - Response: 无
-- Error: [ConversationNotFound](./app/errors/chat_error.py#L4-L7)
+- Error: [ConversationNotFoundError](./app/errors/chat_error.py#L4-L8)
 - Repo:
-  - [conversation_repo.get_by_id()](./app/repositories/conversation_repo.py#L74-L98) — 按 ID 查询对话
-  - [conversation_repo.update()](./app/repositories/conversation_repo.py#L33-L58) — 更新对话字段（此处将 `yn` 置 0）
-  - [message_repo.update_yn_by_conversation_id()](./app/repositories/message_repo.py#L42-L61) — 按对话 ID 级联禁用消息
-  - [context_compaction_repo.update_yn_by_conversation_id()](./app/repositories/context_compaction_repo.py#L20-L33) — 按对话 ID 级联禁用压缩记录
+  - [conversation_repo.get_by_id()](./app/repositories/conversation_repo.py#L75-L99) — 按 ID 查询对话
+  - [conversation_repo.update()](./app/repositories/conversation_repo.py#L34-L59) — 更新对话字段（此处将 `yn` 置 0）
+  - [message_repo.update_yn_by_conversation_id()](./app/repositories/message_repo.py#L43-L58) — 按对话 ID 级联禁用消息
+  - [context_compaction_repo.update_yn_by_conversation_id()](./app/repositories/context_compaction_repo.py#L21-L34) — 按对话 ID 级联禁用压缩记录
 
 实现：
 - 遍历 `conversation_ids`，调用 `conversation_repo.get_by_id()` 校验归属
@@ -880,10 +880,10 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
   - `conversation_id`: 对话 ID
   - `title`: 新标题
 - Response: 无
-- Error: [ConversationNotFound](./app/errors/chat_error.py#L4-L7)
+- Error: [ConversationNotFoundError](./app/errors/chat_error.py#L4-L8)
 - Repo:
-  - [conversation_repo.get_by_id()](./app/repositories/conversation_repo.py#L74-L98) — 按 ID 查询对话
-  - [conversation_repo.update()](./app/repositories/conversation_repo.py#L33-L58) — 更新对话字段（此处更新 `title`）
+  - [conversation_repo.get_by_id()](./app/repositories/conversation_repo.py#L75-L99) — 按 ID 查询对话
+  - [conversation_repo.update()](./app/repositories/conversation_repo.py#L34-L59) — 更新对话字段（此处更新 `title`）
 
 实现：
 - 调用 `conversation_repo.get_by_id()` 校验对话归属
@@ -895,7 +895,7 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 - Response: [ConversationListResponse](./app/schemas/chat_schema.py#L36-L40)
   - `conversations`: 对话列表，每项为 [ConversationResponse](./app/schemas/chat_schema.py#L28-L34)（含 `conversation_id`、`title`、`update_at`）
 - Repo:
-  - [conversation_repo.ls()](./app/repositories/conversation_repo.py#L100-L125) — 按用户 ID 查询非草稿、未删除的对话，按 `update_at` 倒序排序
+  - [conversation_repo.ls()](./app/repositories/conversation_repo.py#L101-L126) — 按用户 ID 查询非草稿、未删除的对话，按 `update_at` 倒序排序
 
 实现：
 - 调用 `conversation_repo.ls()` 获取对话列表
@@ -908,7 +908,7 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 - Response: [MessageListResponse](./app/schemas/chat_schema.py#L123-L127)
   - `messages`: 消息列表，每项为 [MessageSchema](./app/schemas/chat_schema.py#L98-L108)（含 `message_id`、`context_seq`、`role`、`parts`、`attachments`、`finish_reason`、`timestamp`）
 - Repo:
-  - [message_repo.ls()](./app/repositories/message_repo.py#L63-L84) — 按对话 ID 查询所有未删除消息，按 `context_seq`、`id` 正序排序
+  - [message_repo.ls()](./app/repositories/message_repo.py#L60-L81) — 按对话 ID 查询所有未删除消息，按 `context_seq`、`id` 正序排序
 
 实现：
 - 调用 `message_repo.ls()` 获取消息列表
@@ -916,17 +916,17 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 
 ## 5.3 附件接口
 ### 5.3.1 上传附件 `POST /api/attachment/upload`
-[attachment.py:26-55](./app/routers/api/attachment.py#L26-L55)
+[attachment.py:27-54](./app/routers/api/attachment.py#L27-L54)
 
 - Request: `multipart/form-data`
   - `conversation_id`: 对话 ID
   - `file`: 上传文件（UploadFile）
 - Response: [UploadAttachmentResponse](./app/schemas/chat_schema.py#L143-L147)
   - `attachment`: 附件信息（`Attachment`，含 `f_path`）
-- Error: [ConversationNotFound](./app/errors/chat_error.py#L4-L7)、[PathTraversalError](./app/errors/attachment_error.py#L4-L7)
+- Error: [ConversationNotFoundError](./app/errors/chat_error.py#L4-L8)、[PathTraversalError](./app/errors/attachment_error.py#L4-L8)
 - Repo:
-  - [conversation_repo.get_by_id()](./app/repositories/conversation_repo.py#L74-L98) — 按 ID 查询对话
-- Helper: [_build_attachment_path()](./app/routers/api/attachment.py#L18-L24) — 基于工作区目录构造路径，阻止路径逃逸
+  - [conversation_repo.get_by_id()](./app/repositories/conversation_repo.py#L75-L99) — 按 ID 查询对话
+- Helper: [_build_attachment_path()](./app/routers/api/attachment.py#L19-L25) — 基于工作区目录构造路径，阻止路径逃逸
 
 实现：
 - 调用 `conversation_repo.get_by_id()` 校验对话归属
@@ -934,16 +934,16 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 - 返回附件路径
 
 ### 5.3.2 删除附件 `POST /api/attachment/delete`
-[attachment.py:57-82](./app/routers/api/attachment.py#L57-L82)
+[attachment.py:56-79](./app/routers/api/attachment.py#L56-L79)
 
 - Request: [DeleteAttachmentRequest](./app/schemas/chat_schema.py#L116-L121)
   - `conversation_id`: 对话 ID
   - `f_path`: 工作区内的文件路径
 - Response: 无
-- Error: [ConversationNotFound](./app/errors/chat_error.py#L4-L7)、[PathTraversalError](./app/errors/attachment_error.py#L4-L7)
+- Error: [ConversationNotFoundError](./app/errors/chat_error.py#L4-L8)、[PathTraversalError](./app/errors/attachment_error.py#L4-L8)
 - Repo:
-  - [conversation_repo.get_by_id()](./app/repositories/conversation_repo.py#L74-L98) — 按 ID 查询对话
-- Helper: [_build_attachment_path()](./app/routers/api/attachment.py#L18-L24) — 基于工作区目录构造路径，阻止路径逃逸
+  - [conversation_repo.get_by_id()](./app/repositories/conversation_repo.py#L75-L99) — 按 ID 查询对话
+- Helper: [_build_attachment_path()](./app/routers/api/attachment.py#L19-L25) — 基于工作区目录构造路径，阻止路径逃逸
 
 实现：
 - 调用 `conversation_repo.get_by_id()` 校验对话归属
@@ -951,16 +951,16 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 - 若文件存在则删除
 
 ### 5.3.3 获取附件 `GET /api/attachment/get`
-[attachment.py:84-116](./app/routers/api/attachment.py#L84-L116)
+[attachment.py:81-113](./app/routers/api/attachment.py#L81-L113)
 
 - Request: Query 参数
   - `conversation_id`: 对话 ID
   - `f_path`: 工作区内的文件路径
 - Response: `FileResponse`，自动推断 MIME 类型
-- Error: [ConversationNotFound](./app/errors/chat_error.py#L4-L7)、[PathTraversalError](./app/errors/attachment_error.py#L4-L7)、HTTP 404
+- Error: [ConversationNotFoundError](./app/errors/chat_error.py#L4-L8)、[PathTraversalError](./app/errors/attachment_error.py#L4-L8)、HTTP 404
 - Repo:
-  - [conversation_repo.get_by_id()](./app/repositories/conversation_repo.py#L74-L98) — 按 ID 查询对话
-- Helper: [_build_attachment_path()](./app/routers/api/attachment.py#L18-L24) — 基于工作区目录构造路径，阻止路径逃逸
+  - [conversation_repo.get_by_id()](./app/repositories/conversation_repo.py#L75-L99) — 按 ID 查询对话
+- Helper: [_build_attachment_path()](./app/routers/api/attachment.py#L19-L25) — 基于工作区目录构造路径，阻止路径逃逸
 
 实现：
 - 调用 `conversation_repo.get_by_id()` 校验对话归属
@@ -975,14 +975,14 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
   - `websocket_token`: 32 字节随机令牌
   - `expires_in`: 过期时间（30 秒）
 - Repo:
-  - [websocket_token_repo.create()](./app/repositories/websocket_token_repo.py#L28-L40) — 将令牌写入 Redis 并设过期时间
+  - [websocket_token_repo.create()](./app/repositories/websocket_token_repo.py#L29-L41) — 将令牌写入 Redis 并设过期时间
 
 实现：
 - 生成 32 字节 URL-safe 随机令牌
 - 调用 `websocket_token_repo.create()` 存入 Redis 并设 30 秒过期
 
 ### 5.4.2 WebSocket 聊天 `WS /api/chat/ws/chat`
-[chat.py:316-381](./app/routers/api/chat.py#L316-L381)
+[chat.py:308-373](./app/routers/api/chat.py#L308-L373)
 
 - Query 参数:
   - `conversation_id`: 对话 ID
@@ -993,26 +993,26 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 - Response: [WebSocketMessageResponse](./app/schemas/chat_schema.py#L129-L134)（逐条流式推送）或 [WebSocketErrorResponse](./app/schemas/chat_schema.py#L136-L141)
 - Error: 令牌无效/过期返回 4401，会话不存在返回 4404
 - Router helpers:
-  - [_validate_and_accept()](./app/routers/api/chat.py#L176-L202) — WebSocket 令牌校验与连接建立
-  - [_receive_user_message()](./app/routers/api/chat.py#L204-L240) — 接收并校验用户消息（cancel / 格式错误返回 None）
-  - [_ensure_not_draft()](./app/routers/api/chat.py#L242-L247) — 草稿对话转正式对话
-  - [_TurnStream](./app/routers/api/chat.py#L249-L314) — 管理单轮 Agent 调用的 WebSocket I/O 与 cancel 协调；作为 `async with` context manager 使用，进入时启动 cancel 监听任务（与 Agent 并行），退出时自动取消；`send()` 断连时同步设 `cancel` 通知 Agent 中断
+  - [_validate_and_accept()](./app/routers/api/chat.py#L176-L200) — WebSocket 令牌校验与连接建立
+  - [_receive_user_message()](./app/routers/api/chat.py#L202-L238) — 接收并校验用户消息（cancel / 格式错误返回 None）
+  - [_ensure_not_draft()](./app/routers/api/chat.py#L240-L245) — 草稿对话转正式对话
+  - [_TurnStream](./app/routers/api/chat.py#L247-L306) — 管理单轮 Agent 调用的 WebSocket I/O 与 cancel 协调；作为 `async with` context manager 使用，进入时启动 cancel 监听任务（与 Agent 并行），退出时自动取消；`send()` 断连时同步设 `cancel` 通知 Agent 中断
 - Service:
-  - [ConversationContext](./app/services/chat_service.py#L16-L23) — WebSocket 会话状态数据类（`messages`, `context_seq`, `is_draft`）
-  - [load_conversation_context()](./app/services/chat_service.py#L25-L75) — 加载历史消息并应用上下文压缩，返回 `ConversationContext | None`
-    - [conversation_repo.get_by_id()](./app/repositories/conversation_repo.py#L74-L98) — 校验会话归属
-    - [message_repo.ls()](./app/repositories/message_repo.py#L63-L84) — 加载历史消息
-    - [entity_to_schema()](./app/mappers/message_mapper.py#L15-L46) / [schema_to_langchain_message()](./app/mappers/message_mapper.py#L282-L330) — 消息格式转换
-    - [context_compaction_repo.get_latest_by_conversation_id()](./app/repositories/context_compaction_repo.py#L35-L49) — 加载压缩上下文
-  - [run_agent_turn()](./app/services/chat_service.py#L147-L217) — 调用 Agent 流式生成回复；通过 `asyncio.Event` 接收取消信号；`finish_reason != "stop"` 时自动重试
-    - [_add_message()](./app/services/chat_service.py#L77-L96) — 消息持久化与列表同步
-    - [_execute_agent()](./app/services/chat_service.py#L98-L113) — agent.astream 薄封装
-    - [_extract_compaction()](./app/services/chat_service.py#L115-L145) — 从 agent chunk 中提取上下文压缩事件
-    - [get_agent()](./app/agent/agent.py#L87-L97) — 获取 Agent 实例
-    - [agent_chunk_to_schemas()](./app/mappers/message_mapper.py#L173-L187) — Agent 输出块转 Schema
-    - [context_compaction_repo.create()](./app/repositories/context_compaction_repo.py#L9-L18) — 保存压缩记录
+  - [ConversationContext](./app/services/chat_service.py#L18-L24) — WebSocket 会话状态数据类（`messages`, `context_seq`, `is_draft`）
+  - [load_conversation_context()](./app/services/chat_service.py#L26-L74) — 加载历史消息并应用上下文压缩，返回 `ConversationContext | None`
+    - [conversation_repo.get_by_id()](./app/repositories/conversation_repo.py#L75-L99) — 校验会话归属
+    - [message_repo.ls()](./app/repositories/message_repo.py#L60-L81) — 加载历史消息
+    - [entity_to_schema()](./app/mappers/message_mapper.py#L16-L45) / [schema_to_langchain_message()](./app/mappers/message_mapper.py#L268-L313) — 消息格式转换
+    - [context_compaction_repo.get_latest_by_conversation_id()](./app/repositories/context_compaction_repo.py#L36-L48) — 加载压缩上下文
+  - [run_agent_turn()](./app/services/chat_service.py#L144-L212) — 调用 Agent 流式生成回复；通过 `asyncio.Event` 接收取消信号；`finish_reason != "stop"` 时自动重试
+    - [_add_message()](./app/services/chat_service.py#L76-L95) — 消息持久化与列表同步
+    - [_execute_agent()](./app/services/chat_service.py#L97-L112) — agent.astream 薄封装
+    - [_extract_compaction()](./app/services/chat_service.py#L114-L142) — 从 agent chunk 中提取上下文压缩事件
+    - [get_agent()](./app/agent/agent.py#L86-L96) — 获取 Agent 实例
+    - [agent_chunk_to_schemas()](./app/mappers/message_mapper.py#L165-L179) — Agent 输出块转 Schema
+    - [context_compaction_repo.create()](./app/repositories/context_compaction_repo.py#L10-L19) — 保存压缩记录
 - Repo:
-  - [websocket_token_repo.consume()](./app/repositories/websocket_token_repo.py#L42-L57) — 一次性消费 Redis 中的令牌
+  - [websocket_token_repo.consume()](./app/repositories/websocket_token_repo.py#L43-L58) — 一次性消费 Redis 中的令牌
 
 实现流程：
 
@@ -1025,7 +1025,7 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 
 ## 5.5 管理接口
 ### 5.5.1 热重载配置 `POST /api/admin/reload`
-[admin.py:8-14](./app/routers/api/admin.py#L8-L14)
+[admin.py:9-15](./app/routers/api/admin.py#L9-L15)
 
 - Response: `{"status": "ok", "message": "..."}`
 
@@ -1036,14 +1036,14 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 # 6. 应用组装与前端路由
 ## 6.1 前端路由
 ### 6.1.1 SPA 回退 `GET /{full_path:path}`
-[frontend.py:81-96](./app/routers/frontend.py#L81-L96)
+[frontend.py:82-97](./app/routers/frontend.py#L82-L97)
 - 前端是 SPA 单页应用，用户在地址栏刷新或直接访问前端子路径时，浏览器会向服务端请求该路径，但这些路径在后端并不存在，需要 SPA 回退机制兜底
 - 通过 `_matches_prefix()` 排除 `/api`、`/auth-api`、`/assets`、`/docs`、`/openapi.json`、`/redoc` 等后端专用前缀，命中时返回 404，避免错误地将接口请求回退到前端
 - 未命中排除前缀时，检查 `index.html` 是否存在（前端是否已构建），若不存在返回 404
 - 前端已构建时返回 `SPA_ENTRY_FILE`（`STATIC_DIST_DIR/index.html`），后续路由交由前端 JS 处理
 
 ### 6.1.2 认证反向代理 `ALL /auth-api/{path:path}`
-[frontend.py:34-79](./app/routers/frontend.py#L34-L79)
+[frontend.py:35-80](./app/routers/frontend.py#L35-L80)
 - 认证服务独立部署，若未配置 CORS，浏览器会因同源策略拦截前端的跨域请求，因此通过后端反向代理中转（服务端请求不受跨域限制）
 - 支持 GET/POST/PUT/PATCH/DELETE/OPTIONS 全部 HTTP 方法，覆盖认证接口的各类操作
 - 请求转发：将 method、body、query params 原样发往 `cfg.auth_service.base_url`，透传 headers 时剥离 `host` 和 `content-length`（这些头指向代理自身，不能透传）
@@ -1051,20 +1051,20 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 - 认证服务不可达时捕获 `httpx.HTTPError` 并返回 502
 
 ### 6.1.3 静态资源与路由注册
-[frontend.py:98-107](./app/routers/frontend.py#L98-L107)
+[frontend.py:99-108](./app/routers/frontend.py#L99-L108)
 - 将前端构建产物 `STATIC_ASSETS_DIR`（JS/CSS/图片等）通过 `StaticFiles` 挂载到 `/assets` 路径，`check_dir=False` 表示目录不存在时不报错（允许先启动后端再构建前端）
 - 注册前端 router，使 SPA 回退和认证反向代理两个端点生效
 
 ## 6.2 应用组装
 ### 6.2.1 生命周期 `lifespan`
-[main.py:19-26](./app/main.py#L19-L26)
+[main.py:22-29](./app/main.py#L22-L29)
 | 阶段 | 操作 |
 |---|---|
-| 启动 | 调用 `setup_logger()` 初始化日志 |
+| 启动 | 调用 `setup_logger()` 初始化日志，调用 [init_database()](./app/plugins/lifespan/init_database.py) 检查并自动初始化数据库 |
 | 关闭 | 依次调用 `close_http_client()`、`close_redis()`、`close_db()` 释放连接池和资源 |
 
 ### 6.2.2 中间件注册
-[main.py:28-39](./app/main.py#L28-L39)
+[main.py:31-42](./app/main.py#L31-L42)
 | 中间件 | 说明 |
 |---|---|
 | `auth.middleware` | 校验 Bearer Token，解析用户身份写入 `request.state` |
@@ -1074,10 +1074,10 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 后注册的在外层，执行顺序为 trace → auth → 业务。
 
 ### 6.2.3 异常处理器注册
-[main.py:41-59](./app/main.py#L41-L59)
+[main.py:44-62](./app/main.py#L44-L62)
 
 ### 6.2.4 路由注册
-[main.py:61-67](./app/main.py#L61-L67)
+[main.py:64-70](./app/main.py#L64-L70)
 | 路由模块 | 挂载前缀 | 承载内容 |
 |---|---|---|
 | `chat.router` | `/api/chat` | 对话管理、消息查询、WebSocket 聊天和令牌接口 |
@@ -1086,7 +1086,7 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 | `frontend` | `/assets` + `/*` | 静态资源、SPA 回退、认证反向代理 |
 
 ### 6.2.5 创建应用
-[main.py:69-76](./app/main.py#L69-L76)
+[main.py:72-79](./app/main.py#L72-L79)
 - `create_app()` 按顺序组装：
   - 创建 `FastAPI(lifespan=lifespan)`
   - 注册中间件
