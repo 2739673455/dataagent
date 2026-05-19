@@ -1,4 +1,5 @@
 # 前置
+启动 data-agent 容器  
 运行 dbmock 项目  
 启动 data-agent 服务，构建元数据索引  
 启动 auth 服务  
