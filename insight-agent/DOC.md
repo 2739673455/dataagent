@@ -435,7 +435,7 @@ flowchart LR
 - **业务层**：
   - Chat Service 管理对话上下文和流式编排
   - Repository 封装数据库和 Redis 访问
-  - Mapper 负责 DTO / 数据库实体 / LangChain 消息三种格式的互转
+  - Mapper 负责 DTO / 数据库实体 / Agent 运行时消息三种格式的互转
 - **Agent 运行时**：
   - `deepagents` 框架组装模型、工具、Skill、MCP 客户端和工作区
   - 中间件链在模型调用前后注入系统提示、上下文压缩等逻辑
@@ -778,7 +778,7 @@ class Message(Base):
 sequenceDiagram
     participant C as 客户端
     participant S as Schema
-    participant L as LangChain
+    participant L as Agent运行时
     participant E as Entity
 
     Note over C,E: 加载历史消息
@@ -801,7 +801,7 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 
 **`agent_chunk_to_schemas()`**（[message_mapper.py:165-179](./app/mappers/message_mapper.py#L165-L179)）遍历 `model` 和 `tools` 节点，提取其中的 `messages` 列表后逐条调用 `langchain_message_to_schema()` 进行转换。中间件节点（如 `SkillsMiddleware`、`TodoListMiddleware`）的输出不含 `messages` 列表，不会被转成消息。
 
-**`langchain_message_to_schema()`**（[message_mapper.py:81-163](./app/mappers/message_mapper.py#L81-L163)）将单条 LangChain 消息转为 `MessageSchema`，转换规则：
+**`langchain_message_to_schema()`**（[message_mapper.py:81-163](./app/mappers/message_mapper.py#L81-L163)）将单条 Agent 运行时消息转为 `MessageSchema`，转换规则：
 
 `AIMessage` / `ChatMessage` → `role: "assistant"`：
 - `content`（字符串或列表）转为 `TextContent`
@@ -813,7 +813,7 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 - 当 `name == "return_file"` 且结果为成功状态时，提取 `f_path` 组装为 `Attachment`
 
 ### 4.2.2 Schema 转 Agent 运行时消息
-**`schema_to_langchain_message()`**（[message_mapper.py:268-313](./app/mappers/message_mapper.py#L268-L313)）将 `MessageSchema` 转为 LangChain 运行时消息：
+**`schema_to_langchain_message()`**（[message_mapper.py:268-313](./app/mappers/message_mapper.py#L268-L313)）将 `MessageSchema` 转为 Agent 运行时消息：
 
 - `user` / `assistant`：
   - `TextContent` / `ImageContent` → `content`
@@ -988,44 +988,126 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 ### 5.4.2 WebSocket 聊天 `WS /api/chat/ws/chat`
 [chat.py:308-373](./app/routers/api/chat.py#L308-L373)
 
-- Query 参数:
-  - `conversation_id`: 对话 ID
-  - `websocket_token`: WebSocket 临时令牌
-- Request: [WebSocketChatRequest](./app/schemas/chat_schema.py#L110-L114)
-  - `message`: 用户消息（`MessageSchema`，role 须为 `"user"`）
+一条用户消息从 WebSocket 进来到流式返回，涉及鉴权、上下文加载、Agent 执行、消息持久化、压缩、取消信号多个环节。
+
+**执行总览（三个阶段）：**
+
+```
+Phase 1: 令牌校验   →  Redis GETDEL 一次性消费，失败 → 4401
+Phase 2: 上下文加载  →  加载历史消息 + 应用压缩上下文，失败 → 4404
+Phase 3: 消息循环   →  接收消息 → 序号分配 → 草稿转正 → Agent 调用 → 流式推送
+                     ↑_____________________________________________↓
+                     循环，等待下一条用户消息（WebSocket 长连接保持）
+```
+
+#### Phase 3 深入：单轮 Agent 调用的完整链路
+
+一条用户消息在 Phase 3 中的完整处理流程：
+
+```
+_recieve_user_message()         1. 接收 JSON，校验 role == "user"
+       ↓
+分配 context_seq                2. ctx.context_seq += 1
+       ↓
+_ensure_not_draft()             3. 草稿对话 → 正式对话
+       ↓
+async with _TurnStream(...):    4. 启动取消监听任务（与 Agent 并行）
+       ↓
+run_agent_turn()                5. 核心：调用 Agent 并流式处理
+       ├── _add_message()        5a. 用户消息入库 + 追加到 messages 列表
+       ├── while True:           5b. 循环体（自动重试）
+       │   ├── _execute_agent()   5c. agent.astream() 流式输出
+       │   ├── _extract_compaction() 5d. 提取压缩事件
+       │   ├── agent_chunk_to_schemas() 5e. chunk → MessageSchema
+       │   ├── _add_message()     5f. assistant/tool 消息入库
+       │   └── yield response     5g. 推送给 WebSocket
+       └── 压缩收尾               6. 将压缩应用到内存 messages
+stream.send(msg)                7. 逐条推送至客户端
+```
+
+#### 关键机制一：`_TurnStream` — 取消信号的双向协调
+
+[chat.py:247-306](./app/routers/api/chat.py#L247-L306)
+
+`_TurnStream` 是一个 `async with` 上下文管理器，管理单轮 Agent 调用期间的 WebSocket I/O 和取消信号。核心设计是用 `asyncio.Event`（协作式）而非 `Task.cancel()`（强制式）：
+
+- **进入**（`__aenter__`）：启动后台 `_listen_cancel()` 任务，与 Agent 执行**并行运行**
+- **`_listen_cancel()`**：循环接收 WebSocket 消息，收到 `{"type": "cancel"}` 时设置 `cancel` 事件；客户端断开则标记 `disconnected = True`
+- **`send(msg)`**：推送一条消息到客户端；若断开则自动设置 `cancel` 事件和 `disconnected` 标志
+- **`send_error(text)`**：推送错误消息（客户端仍在时）
+- **退出**（`__aexit__`）：取消监听任务
+
+为什么用 `Event` 而不是 `Task.cancel()`：
+
+Agent 内部有多层嵌套的 `astream` 调用栈（LangGraph 状态机 → deepagents 中间件链 → LLM 推理）。`Task.cancel()` 会向调用栈任意位置注入 `CancelledError`，可能让状态机处于不一致状态。用 `asyncio.Event` 让 Agent 在自己可控的点**协作式检查 `cancel.is_set()` 后干净退出**，保证状态完整性。
+
+#### 关键机制二：`run_agent_turn()` — 自动重试 + 流式压缩
+
+[chat_service.py:144-212](./app/services/chat_service.py#L144-L212)
+
+Agent 调用采用"流式输出 + 自动重试"模式：
+
+**自动重试循环**：外层 `while True` 在 `finish_reason != "stop"` 且未取消时自动重试。当模型输出因 token 截断或非标准终止而导致 `finish_reason` 不是 `"stop"` 时，同一个 messages 列表会再次输入 Agent 继续生成，而不是悄无声息地截断。
+
+**流式处理中的压缩**：压缩事件由 deepagents 的 `SummarizationMiddleware` 在 Agent 输出过程中产生，携带 `cutoff_index` 和 `summary_message`。`_extract_compaction()` 将其转换为 `ContextCompaction` 实体：
+
+```
+messages=[0,1,2,3,4,5], cur_context_seq=5, len=6
+→ seq_offset=0, cutoff_index=3 → end_seq=3
+
+messages=[summary,3,4,5,6,7], cur_context_seq=7, len=6
+→ seq_offset=2, cutoff_index=3 → end_seq=5 (seq 0..4 被压缩)
+```
+
+`seq_offset = cur_context_seq - len(messages) + 1` 是核心——它保证压缩的 `end_seq` 对应的是 **数据库中的真实 context_seq**，而非压缩过后的 messages 列表索引。压缩记录在当轮结束后写入数据库，同时在内存 messages 上立即生效，为下一轮重试或下一条用户消息做好准备。
+
+**`_add_message()` — 双写同步**：[chat_service.py:76-95](./app/services/chat_service.py#L76-L95)
+
+每条消息（用户输入、assistant 回复、工具调用、工具结果）在产生时立即：
+1. 写入数据库（Entity）
+2. 追加到内存 `messages` 列表（Agent 运行时格式）
+3. 刷新对话 `update_at` 时间戳
+
+这保证了即便 WebSocket 意外断开，已产生的消息也不会丢失。
+
+#### 关键机制三：异常隔离
+
+[chat.py:349-367](./app/routers/api/chat.py#L349-L367)
+
+`_TurnStream` 内的 Agent 调用失败不会被扩散到整个 WebSocket 连接：
+
+```
+async with _TurnStream(websocket, conversation_id) as stream:
+    async for msg in run_agent_turn(...):
+        ...
+except Exception:
+    logger.exception(...)
+    await stream.send_error("模型调用失败，请稍后重试。")
+```
+
+单轮失败 → 推送错误消息 → 循环回到 `_receive_user_message()` → 等待下一条用户消息。整个 WebSocket 连接不会断开。
+
+#### 涉及的组件索引
+
+- Query 参数: `conversation_id`、`websocket_token`
+- Request: [WebSocketChatRequest](./app/schemas/chat_schema.py#L110-L114) — `message`（`MessageSchema`，role 须为 `"user"`）
 - 取消: `{"type": "cancel"}` 中断当前生成
 - Response: [WebSocketMessageResponse](./app/schemas/chat_schema.py#L129-L134)（逐条流式推送）或 [WebSocketErrorResponse](./app/schemas/chat_schema.py#L136-L141)
-- Error: 令牌无效/过期返回 4401，会话不存在返回 4404
+- Error: 令牌无效/过期 → 4401，会话不存在 → 4404
 - Router helpers:
-  - [_validate_and_accept()](./app/routers/api/chat.py#L176-L200) — WebSocket 令牌校验与连接建立
-  - [_receive_user_message()](./app/routers/api/chat.py#L202-L238) — 接收并校验用户消息（cancel / 格式错误返回 None）
-  - [_ensure_not_draft()](./app/routers/api/chat.py#L240-L245) — 草稿对话转正式对话
-  - [_TurnStream](./app/routers/api/chat.py#L247-L306) — 管理单轮 Agent 调用的 WebSocket I/O 与 cancel 协调；作为 `async with` context manager 使用，进入时启动 cancel 监听任务（与 Agent 并行），退出时自动取消；`send()` 断连时同步设 `cancel` 通知 Agent 中断
+  - [_validate_and_accept()](./app/routers/api/chat.py#L176-L200) — Redis GETDEL 一次性消费令牌，失败关闭连接
+  - [_receive_user_message()](./app/routers/api/chat.py#L202-L238) — 接收 JSON 并校验 role；cancel / 格式错误返回 None
+  - [_ensure_not_draft()](./app/routers/api/chat.py#L240-L245) — 草稿转正式
+  - [_TurnStream](./app/routers/api/chat.py#L247-L306) — 上下文管理器，管理 WebSocket I/O 与 cancel 协调
 - Service:
-  - [ConversationContext](./app/services/chat_service.py#L18-L24) — WebSocket 会话状态数据类（`messages`, `context_seq`, `is_draft`）
-  - [load_conversation_context()](./app/services/chat_service.py#L26-L74) — 加载历史消息并应用上下文压缩，返回 `ConversationContext | None`
-    - [conversation_repo.get_by_id()](./app/repositories/conversation_repo.py#L75-L99) — 校验会话归属
-    - [message_repo.ls()](./app/repositories/message_repo.py#L60-L81) — 加载历史消息
-    - [entity_to_schema()](./app/mappers/message_mapper.py#L16-L45) / [schema_to_langchain_message()](./app/mappers/message_mapper.py#L268-L313) — 消息格式转换
-    - [context_compaction_repo.get_latest_by_conversation_id()](./app/repositories/context_compaction_repo.py#L36-L48) — 加载压缩上下文
-  - [run_agent_turn()](./app/services/chat_service.py#L144-L212) — 调用 Agent 流式生成回复；通过 `asyncio.Event` 接收取消信号；`finish_reason != "stop"` 时自动重试
-    - [_add_message()](./app/services/chat_service.py#L76-L95) — 消息持久化与列表同步
-    - [_execute_agent()](./app/services/chat_service.py#L97-L112) — agent.astream 薄封装
-    - [_extract_compaction()](./app/services/chat_service.py#L114-L142) — 从 agent chunk 中提取上下文压缩事件
-    - [get_agent()](./app/agent/agent.py#L86-L96) — 获取 Agent 实例
-    - [agent_chunk_to_schemas()](./app/mappers/message_mapper.py#L165-L179) — Agent 输出块转 Schema
-    - [context_compaction_repo.create()](./app/repositories/context_compaction_repo.py#L10-L19) — 保存压缩记录
+  - [ConversationContext](./app/services/chat_service.py#L18-L24) — `messages`、`context_seq`、`is_draft`
+  - [load_conversation_context()](./app/services/chat_service.py#L26-L74) — 加载历史消息 + 应用压缩上下文
+  - [run_agent_turn()](./app/services/chat_service.py#L144-L212) — 自动重试 + 流式压缩
+  - [_add_message()](./app/services/chat_service.py#L76-L95) — 双写（DB + 内存）
+  - [_execute_agent()](./app/services/chat_service.py#L97-L112) — `agent.astream()` 薄封装
+  - [_extract_compaction()](./app/services/chat_service.py#L114-L142) — 压缩事件提取 + seq_offset 计算
 - Repo:
-  - [websocket_token_repo.consume()](./app/repositories/websocket_token_repo.py#L43-L58) — 一次性消费 Redis 中的令牌
-
-实现流程：
-
-1. **令牌校验** — `_validate_and_accept()` 从 query 参数获取 `websocket_token`，调用 `websocket_token_repo.consume()` 一次性消费令牌，无效或已消费则关闭连接（4401）
-2. **上下文加载** — 调用 `load_conversation_context()` 加载历史消息并应用上下文压缩，返回 `ConversationContext` 数据类；会话不存在则关闭连接（4404）
-3. **消息循环** — `_receive_user_message()` 接收 JSON 请求并校验 `message.role == "user"`；分配 `context_seq` 后进入 `async with _TurnStream(...)` 块，调用 `run_agent_turn()` 流式生成，每条消息通过 `stream.send()` 推送
-4. **取消机制** — `_TurnStream` 在 `__aenter__` 时启动 `_listen_cancel()` 任务与 Agent 执行并行运行，收到 `{"type": "cancel"}` 时设置 `asyncio.Event` 通知 `run_agent_turn()` 中断；`send()` 检测到客户端断开时同步设 `cancel`；`__aexit__` 时自动取消监听任务
-5. **草稿转换** — 首轮收到有效用户消息后调用 `_ensure_not_draft()` 将 `is_draft` 置为 0
-6. **异常处理** — Agent 调用异常时通过 `stream.send_error()` 推送错误响应；客户端断开（WebSocketDisconnect）时退出循环
+  - [websocket_token_repo.consume()](./app/repositories/websocket_token_repo.py#L43-L58) — Redis GETDEL 一次性消费
 
 ## 5.5 管理接口
 ### 5.5.1 热重载配置 `POST /api/admin/reload`
