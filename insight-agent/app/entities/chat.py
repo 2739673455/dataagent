@@ -103,7 +103,7 @@ class Message(Base):
     yn: Mapped[int] = mapped_column(
         TINYINT, nullable=False, server_default=text("'1'"), comment="是否启用"
     )
-    finish_reason: Mapped[str | None] = mapped_column(String(128), comment="完成原因")
-    attachments: Mapped[str | None] = mapped_column(Text, comment="附件列表 (JSON 字符串)")
+    finish_reason: Mapped[Optional[str]] = mapped_column(String(128), comment="完成原因")
+    attachments: Mapped[Optional[str]] = mapped_column(Text, comment="附件列表 (JSON 字符串)")
 
     conversation: Mapped["Conversation"] = relationship("Conversation", back_populates="message")

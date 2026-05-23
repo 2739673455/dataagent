@@ -19,7 +19,7 @@ dependencies = [
   "pypdf>=6.8.0",
   "redis>=7.2.0",
   "sqlacodegen>=3.2.0",
-  "sqlalchemy>=2.0.46",
+  "sqlalchemy[asyncmy]>=2.0.46",
 ]
 
 [dependency-groups]
