@@ -1,22 +1,14 @@
 # 数据生成
-
 ## 使用方式
-
-修改 [./core/init_db.py](./core/init_db.py) 下方数据库连接配置  
+修改 [./core/init_db.py](./core/init_db.py#L195) 下方数据库连接配置  
 
 ```bash
-# 1. 安装依赖
-uv sync
-
-# 2. 初始化数据库（创建表结构）
-uv run core/init_db.py
-
-# 3. 生成数据
-uv run -m core.generators.main
+uv sync                         # 安装依赖
+uv run core/init_db.py          # 初始化数据库（创建表结构）
+uv run -m core.generators.main  # 生成数据
 ```
 
 ## 数据规模与生成顺序
-
 按批次生成，考虑外键依赖关系：
 
 | 批次 | 表               | 数据量          | 说明                                               |
@@ -47,7 +39,6 @@ uv run -m core.generators.main
 | 5    | 搜索表           | 8-15*用户       | 搜索行为，默认按 10*用户 生成                      |
 
 ## 业务规则
-
 ### 1. 时间分布
 - **时间范围**: 近三年数据（三年前 至 今天）
 - **促销高峰**: 

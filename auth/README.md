@@ -2,14 +2,12 @@
 基于 FastAPI 的认证服务后端，提供用户、角色、权限管理等功能。
 
 ## 快速开始
-
 填写配置信息：  
 [configs/.env](configs/.env) 环境变量  
 [configs/config.yml](configs/config.yml) 应用配置  
 
 ```bash
-uv sync  # 安装依赖
-
+uv sync             # 安装依赖
 uv run -m app.main  # 启动服务
 ```
 

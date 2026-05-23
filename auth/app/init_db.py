@@ -65,7 +65,11 @@ class SQLiteInitializer(DBInitializer):
 
     def delete_db(self, db_name: str):
         """删除数据库"""
-        self.file_path.unlink()
+        self.file_path.unlink(missing_ok=True)
+        # 同时删除 WAL/SHM 文件，否则下次连接会恢复旧数据
+        for suffix in ("-wal", "-shm"):
+            p = self.file_path.with_suffix(self.file_path.suffix + suffix)
+            p.unlink(missing_ok=True)
 
     def create_db(self, db_name: str):
         """创建数据库"""
