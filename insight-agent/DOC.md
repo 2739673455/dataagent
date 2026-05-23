@@ -366,44 +366,48 @@ curl -X POST http://127.0.0.1:7300/api/reload -H 'Authorization: Bearer <access_
 
 ## 1.5 系统架构
 ```mermaid
-flowchart TD
+flowchart LR
     subgraph L1[前端]
+        direction TB
         UI[React SPA]
     end
 
     subgraph L2[FastAPI 应用]
-        ROUTER[路由分发]
-        MW[中间件 trace / auth]
+        direction TB
         EX[统一异常处理]
         STATIC[静态资源托管 / SPA 回退]
+        ROUTER[路由分发]
+        MW[中间件 trace / auth]
     end
 
     subgraph L3[业务层]
+        direction TB
         SVC[Chat Service]
         REPO[Repository]
         MAPPER[消息 Mapper]
     end
 
     subgraph L4[Agent 运行时]
+        direction TB
         AGENT[deepagents]
         MODEL[LLM 模型]
-        TOOLS[工具 db_query / file / execute / task ...]
-        SKILLS[Skill insight / docx / xlsx / pdf / pptx]
+        TOOLS[工具<br/>db_query / file / execute / task ...]
+        SKILLS[Skill<br/>insight / docx / xlsx / pdf / pptx]
         MCP_CLIENT[MCP 客户端]
-        WS[工作区 LocalShellBackend]
+        WS[工作区<br/>LocalShellBackend]
     end
 
     subgraph L5[外部依赖]
-        AUTH[认证服务]
+        direction TB
         DATA_AGENT[Data Agent]
         MCP_SVC[MCP 服务]
         LLM_SVC[LLM 服务]
         MYSQL[MySQL]
         REDIS[Redis]
+        AUTH[认证服务]
     end
 
-    UI -->|"HTTP"| ROUTER
-    UI -->|"WebSocket"| ROUTER
+    L1 --> L2
     ROUTER --> SVC
     SVC --> REPO
     SVC --> MAPPER
@@ -1058,18 +1062,18 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 ## 6.2 应用组装
 ### 6.2.1 生命周期 `lifespan`
 [main.py:22-29](./app/main.py#L22-L29)
-| 阶段 | 操作 |
-|---|---|
+| 阶段 | 操作                                                                                                                     |
+| ---- | ------------------------------------------------------------------------------------------------------------------------ |
 | 启动 | 调用 `setup_logger()` 初始化日志，调用 [init_database()](./app/plugins/lifespan/init_database.py) 检查并自动初始化数据库 |
-| 关闭 | 依次调用 `close_http_client()`、`close_redis()`、`close_db()` 释放连接池和资源 |
+| 关闭 | 依次调用 `close_http_client()`、`close_redis()`、`close_db()` 释放连接池和资源                                           |
 
 ### 6.2.2 中间件注册
 [main.py:31-42](./app/main.py#L31-L42)
-| 中间件 | 说明 |
-|---|---|
-| `auth.middleware` | 校验 Bearer Token，解析用户身份写入 `request.state` |
-| `trace.middleware` | 注入追踪 ID，便于日志关联 |
-| `CORSMiddleware` | `allow_origins` 由配置决定，允许所有 method 和 header，支持携带凭证 |
+| 中间件             | 说明                                                                |
+| ------------------ | ------------------------------------------------------------------- |
+| `auth.middleware`  | 校验 Bearer Token，解析用户身份写入 `request.state`                 |
+| `trace.middleware` | 注入追踪 ID，便于日志关联                                           |
+| `CORSMiddleware`   | `allow_origins` 由配置决定，允许所有 method 和 header，支持携带凭证 |
 
 后注册的在外层，执行顺序为 trace → auth → 业务。
 
@@ -1078,12 +1082,12 @@ Agent 流式输出的 `chunk` 按 LangGraph 节点组织。
 
 ### 6.2.4 路由注册
 [main.py:64-70](./app/main.py#L64-L70)
-| 路由模块 | 挂载前缀 | 承载内容 |
-|---|---|---|
-| `chat.router` | `/api/chat` | 对话管理、消息查询、WebSocket 聊天和令牌接口 |
-| `attachment.router` | `/api/chat/attachment` | 附件上传/删除/下载 |
-| `admin.router` | `/api` | 管理接口（热重载配置） |
-| `frontend` | `/assets` + `/*` | 静态资源、SPA 回退、认证反向代理 |
+| 路由模块            | 挂载前缀               | 承载内容                                     |
+| ------------------- | ---------------------- | -------------------------------------------- |
+| `chat.router`       | `/api/chat`            | 对话管理、消息查询、WebSocket 聊天和令牌接口 |
+| `attachment.router` | `/api/chat/attachment` | 附件上传/删除/下载                           |
+| `admin.router`      | `/api`                 | 管理接口（热重载配置）                       |
+| `frontend`          | `/assets` + `/*`       | 静态资源、SPA 回退、认证反向代理             |
 
 ### 6.2.5 创建应用
 [main.py:72-79](./app/main.py#L72-L79)
