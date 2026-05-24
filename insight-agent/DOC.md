@@ -591,8 +591,28 @@ Agent 运行时由以下组件组成：
 - **文件承接** — `db_query` 查询结果写入文件，工具执行结果稳定落盘
 - **结果回传** — 工作区文件可通过 `return_file` 返回给前端作为附件
 
-`get_workspace_dir()`（[agent.py:27-32](./app/agent/agent.py#L27-L32)）负责确保目录存在。  
-`_backend_factory()`（[agent.py:34-55](./app/agent/agent.py#L34-L55)）中的 `LocalShellBackend` 将工作区目录挂载为 Agent 可读写的文件系统。
+工作区不是在创建对话时预创建，而是在第一次需要访问文件系统时懒创建。常见触发点包括附件上传/下载、消息附件转模型输入、对话删除清理，以及最核心的 Agent 执行。
+
+**从创建到正式生效的链路：**
+
+```
+首次访问文件系统
+    ↓
+按 user_id + conversation_id 创建/取得工作区目录
+    ↓
+Agent 执行时把工作区路径放入运行时配置
+    ↓
+DeepAgents 后端读取运行时配置，将该目录挂载为默认文件系统
+    ↓
+Agent 与工具在当前对话工作区内读写文件
+```
+
+关键点：
+- `get_workspace_dir()`（[agent.py:27-32](./app/agent/agent.py#L27-L32)）负责路径计算和确保目录存在
+- `_execute_agent()`（[chat_service.py:97-112](./app/services/chat_service.py#L97-L112)）在 Agent 执行前把工作区路径写入运行时配置，这一步是工作区正式传给 Agent 的时机
+- `_backend_factory()`（[agent.py:34-55](./app/agent/agent.py#L34-L55)）根据运行时配置创建文件系统后端，将该目录挂载为 Agent 默认工作区
+- `db_query`、`return_file` 等工具也从运行时配置读取同一个 `workspace_dir`，因此它们写入、读取和返回的都是当前对话工作区里的文件
+- `CompositeBackend` 还额外把 `/skills/` 路径路由到技能目录；除 `/skills/` 外的普通文件路径默认落到当前对话工作区
 
 ## 3.3 本地工具
 ### 3.3.1 `db_query`
@@ -1005,7 +1025,7 @@ Phase 3: 消息循环   →  接收消息 → 序号分配 → 草稿转正 → 
 一条用户消息在 Phase 3 中的完整处理流程：
 
 ```
-_recieve_user_message()         1. 接收 JSON，校验 role == "user"
+_receive_user_message()         1. 接收 JSON，校验 role == "user"
        ↓
 分配 context_seq                2. ctx.context_seq += 1
        ↓
@@ -1025,7 +1045,7 @@ run_agent_turn()                5. 核心：调用 Agent 并流式处理
 stream.send(msg)                7. 逐条推送至客户端
 ```
 
-#### 关键机制一：`_TurnStream` — 取消信号的双向协调
+#### 关键机制一：`_TurnStream` — 取消信号监听
 
 [chat.py:247-306](./app/routers/api/chat.py#L247-L306)
 
@@ -1039,9 +1059,11 @@ stream.send(msg)                7. 逐条推送至客户端
 
 为什么用 `Event` 而不是 `Task.cancel()`：
 
-Agent 内部有多层嵌套的 `astream` 调用栈（LangGraph 状态机 → deepagents 中间件链 → LLM 推理）。`Task.cancel()` 会向调用栈任意位置注入 `CancelledError`，可能让状态机处于不一致状态。用 `asyncio.Event` 让 Agent 在自己可控的点**协作式检查 `cancel.is_set()` 后干净退出**，保证状态完整性。
+Agent 内部有多层嵌套的 `astream` 调用栈（LangGraph 状态机 → deepagents 中间件链 → LLM 推理）。`Task.cancel()` 会向调用栈任意位置注入 `CancelledError`，可能让状态机处于不一致状态。用 `asyncio.Event` 让 Agent 在流式产出边界协作式检查 `cancel.is_set()`，可以降低强制取消导致中间状态不一致的风险。
 
-#### 关键机制二：`run_agent_turn()` — 自动重试 + 流式压缩
+需要注意：取消不是抢占式立即中断。当前实现会在 `agent.astream()` 产出 chunk 后检查 `cancel.is_set()`；如果底层模型调用或工具调用长时间没有返回 chunk，取消会延后生效。
+
+#### 关键机制二：`run_agent_turn()` — 自动重试 + 压缩
 
 [chat_service.py:144-212](./app/services/chat_service.py#L144-L212)
 
@@ -1059,9 +1081,9 @@ messages=[summary,3,4,5,6,7], cur_context_seq=7, len=6
 → seq_offset=2, cutoff_index=3 → end_seq=5 (seq 0..4 被压缩)
 ```
 
-`seq_offset = cur_context_seq - len(messages) + 1` 是核心——它保证压缩的 `end_seq` 对应的是 **数据库中的真实 context_seq**，而非压缩过后的 messages 列表索引。压缩记录在当轮结束后写入数据库，同时在内存 messages 上立即生效，为下一轮重试或下一条用户消息做好准备。
+`seq_offset = cur_context_seq - len(messages) + 1` 保证压缩的 `end_seq` 对应的是 **数据库中的真实 context_seq**，而非压缩过后的 messages 列表索引。压缩事件被提取后会生成待写入的 `ContextCompaction`；当前 chunk 处理完成后写入数据库，当轮 Agent 调用结束后再把最后一次压缩应用到内存 `messages`，为下一轮重试或下一条用户消息做好准备。
 
-**`_add_message()` — 双写同步**：[chat_service.py:76-95](./app/services/chat_service.py#L76-L95)
+**`_add_message()`**：[chat_service.py:76-95](./app/services/chat_service.py#L76-L95)
 
 每条消息（用户输入、assistant 回复、工具调用、工具结果）在产生时立即：
 1. 写入数据库（Entity）
