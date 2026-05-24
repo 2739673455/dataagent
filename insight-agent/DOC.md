@@ -232,7 +232,7 @@
   }
 }
 ```
-- 每条消息为一个 JSON 帧，`finish_reason` 为 `stop` 或 `tool_calls` 时表示本轮回复结束
+- 每条消息为一个 JSON 帧，`finish_reason` 为 `stop` 时表示本轮回复结束
 - 工具调用和工具结果分别以 `tool_call` 和 `tool_result` 类型发送
 
 **错误响应：**
