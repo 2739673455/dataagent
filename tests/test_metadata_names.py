@@ -37,7 +37,7 @@ from app.routes.api.v1.meta.schemas import (
 from app.services.index_service import IndexService
 from app.services.meta_import_service import ImportMode, MetaImportService
 from app.services.meta_service import MetaService
-from dbmock.src.entities.ecommerce import Base as EcommerceBase
+from scripts.generate_meta_config import build_config, parse_ecommerce_schema
 
 
 class _MetaRepo:
@@ -977,6 +977,7 @@ class MetadataSchemaTest(unittest.TestCase):
         raw_config = yaml.safe_load(Path("conf/meta_config.yaml").read_text())
         config = MetaConfig.model_validate(raw_config)
 
+        self.assertEqual(raw_config, build_config())
         self.assertTrue(config.tables)
         self.assertTrue(config.metrics)
         self.assertNotIn("version", raw_config)
@@ -984,12 +985,27 @@ class MetadataSchemaTest(unittest.TestCase):
         self.assertTrue(
             all("primary_key_columns" not in table for table in raw_config["tables"])
         )
-        source_tables = EcommerceBase.metadata.tables
+        source_tables = parse_ecommerce_schema()
+        self.assertEqual({table.name for table in config.tables}, set(source_tables))
+        self.assertTrue(
+            all(
+                {column.name for column in table.columns}
+                == {
+                    source_column["name"]
+                    for source_column in source_tables[table.name]["columns"]
+                }
+                for table in config.tables
+            )
+        )
         self.assertTrue(
             all(
                 table.name in source_tables
                 and all(
-                    column.name in source_tables[table.name].columns
+                    column.name
+                    in {
+                        source_column["name"]
+                        for source_column in source_tables[table.name]["columns"]
+                    }
                     for column in table.columns
                 )
                 for table in config.tables
