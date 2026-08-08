@@ -1,0 +1,355 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="5600" viewBox="0 0 2400 5600" role="img" aria-labelledby="title desc">
+<title id="title">掌柜问数完整查询流程</title>
+<desc id="desc">根据尚硅谷大模型项目之掌柜问数文档，以统计去年广东省各城市销售总额为例，展示关键词抽取、并行召回、信息合并、基于数仓角色的表列行权限过滤、SQL 生成、校验、修正、执行和业务正确性反思</desc>
+<defs>
+  <linearGradient id="page-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F8FAFC"/><stop offset="1" stop-color="#ECFDF5"/></linearGradient>
+  <linearGradient id="question-bg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#312E81"/><stop offset=".55" stop-color="#4F46E5"/><stop offset="1" stop-color="#6366F1"/></linearGradient>
+  <filter id="shadow" x="-10%" y="-10%" width="120%" height="140%"><feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#0F172A" flood-opacity=".10"/></filter>
+  <marker id="arrow" markerWidth="18" markerHeight="18" refX="16" refY="9" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 1L17 9L0 17Z" fill="#64748B"/></marker>
+  <marker id="arrow-blue" markerWidth="18" markerHeight="18" refX="16" refY="9" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 1L17 9L0 17Z" fill="#2563EB"/></marker>
+  <marker id="arrow-orange" markerWidth="18" markerHeight="18" refX="16" refY="9" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 1L17 9L0 17Z" fill="#F97316"/></marker>
+  <marker id="arrow-purple" markerWidth="18" markerHeight="18" refX="16" refY="9" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 1L17 9L0 17Z" fill="#9333EA"/></marker>
+  <marker id="arrow-green" markerWidth="18" markerHeight="18" refX="16" refY="9" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 1L17 9L0 17Z" fill="#059669"/></marker>
+  <marker id="arrow-red" markerWidth="18" markerHeight="18" refX="16" refY="9" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 1L17 9L0 17Z" fill="#DC2626"/></marker>
+  <marker id="arrow-teal" markerWidth="18" markerHeight="18" refX="16" refY="9" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 1L17 9L0 17Z" fill="#0F8F83"/></marker>
+  <style>
+    text{font-family:Inter,"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif}
+    .section-panel{fill:#FFFFFF;stroke:#D8E2EE;stroke-width:1.8;filter:url(#shadow)}
+    .card{fill:#FFFFFF;stroke:#CBD5E1;stroke-width:1.6;filter:url(#shadow)}
+    .section-title{fill:#0F172A;font-size:30px;font-weight:780}.section-sub{fill:#64748B;font-size:18px}
+    .question-text{fill:#FFFFFF;font-size:38px;font-weight:760}
+    .node-number{fill:#334155;font-size:18px;font-weight:800}.node-title{fill:#FFFFFF;font-size:27px;font-weight:760}.node-subtitle{fill:#FFFFFF;font-size:18px;font-weight:700;opacity:.9}
+    .label{fill:#64748B;font-size:18px;font-weight:760}.body{fill:#475569;font-size:20px}.body-strong{fill:#334155;font-size:20px;font-weight:700}.lane-label{fill:#334155;font-size:19px;font-weight:760}
+    .chip-white{fill:#FFFFFF;opacity:.95}.chip-blue{fill:#DBEAFE}.chip-text{fill:#334155;font-size:16px;font-weight:720}
+    .code-light{fill:#EEF2FF}.code-blue{fill:#EFF6FF}.code-orange{fill:#FFF7ED}.code-purple{fill:#FAF5FF}
+    .mono,.mono-blue,.mono-orange,.mono-purple,.mono-strong{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:17px}.mono{fill:#475569}.mono-blue{fill:#1D4ED8}.mono-orange{fill:#C2410C}.mono-purple{fill:#7E22CE}.mono-strong{fill:#0F766E;font-weight:700}
+    .result-blue{fill:#EFF6FF;stroke:#93C5FD}.result-orange{fill:#FFF7ED;stroke:#FDBA74}.result-purple{fill:#FAF5FF;stroke:#D8B4FE}.result-title-blue{fill:#1D4ED8;font-size:20px;font-weight:780}.result-title-orange{fill:#C2410C;font-size:20px;font-weight:780}.result-title-purple{fill:#7E22CE;font-size:20px;font-weight:780}
+    .mini{stroke-width:1.4}.mini-blue{fill:#EFF6FF;stroke:#93C5FD}.mini-orange{fill:#FFF7ED;stroke:#FDBA74}.mini-purple{fill:#FAF5FF;stroke:#D8B4FE}.mini-teal{fill:#F0FDFA;stroke:#5EEAD4}.mini-green{fill:#ECFDF5;stroke:#6EE7B7}.mini-red{fill:#FEF2F2;stroke:#FCA5A5}.mini-title{font-size:18px;font-weight:780}.mini-title-blue{fill:#1D4ED8}.mini-title-orange{fill:#C2410C}.mini-title-purple{fill:#7E22CE}.mini-title-teal{fill:#0F766E}.mini-title-green{fill:#047857}.mini-title-red{fill:#B91C1C}.mini-body{fill:#475569;font-size:17px}
+    .output-title{fill:#0F172A;font-size:21px;font-weight:780}.state-box{fill:#F8FAFC;stroke:#CBD5E1}.state-text{fill:#334155;font-family:"SFMono-Regular",Consolas,monospace;font-size:16px}
+    .sql-box{fill:#0F172A}.sql-title{fill:#A7F3D0;font-size:21px;font-weight:760}.sql-code{fill:#E2E8F0;font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:17px}
+    .sql-box-light{fill:#F8FAFC;stroke:#C7D2FE;stroke-width:1.6}.sql-title-light{fill:#4338CA;font-size:21px;font-weight:780}.sql-code-light{fill:#334155;font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:17px}
+    .decision-pill{fill:#FFFBEB;stroke:#F59E0B;stroke-width:1.5}.decision-text{fill:#92400E;font-size:18px;font-weight:780}
+    .result-card{fill:#F0FDF4;stroke:#34D399;stroke-width:1.8;filter:url(#shadow)}.result-card-title{fill:#047857;font-size:24px;font-weight:780}.result-table{fill:#FFFFFF;stroke:#A7F3D0}.table-head{fill:#334155;font-size:17px;font-weight:780}.table-cell{fill:#334155;font-size:18px}.table-cell-number{fill:#047857;font-family:"SFMono-Regular",Consolas,monospace;font-size:18px;font-weight:700}.grid-line{stroke:#CBD5E1}.note{fill:#64748B;font-size:15px}
+    .flow-halo{fill:none;stroke:#FFFFFF;stroke-width:12;stroke-linecap:round;stroke-linejoin:round}.flow,.flow-blue,.flow-orange,.flow-purple,.flow-green,.flow-red,.flow-teal{fill:none;stroke-width:4;stroke-linecap:round;stroke-linejoin:round}.flow{stroke:#64748B}.flow-blue{stroke:#2563EB}.flow-orange{stroke:#F97316}.flow-purple{stroke:#9333EA}.flow-green{stroke:#059669}.flow-red{stroke:#DC2626}.flow-teal{stroke:#0F8F83}.branch-success{fill:#047857;font-size:17px;font-weight:760}.branch-error{fill:#B91C1C;font-size:17px;font-weight:760}.flow-label{fill:#64748B;font-size:16px;font-weight:760}.end-pill{fill:#ECFDF5;stroke:#10B981;stroke-width:1.5}.end-text{fill:#047857;font-size:18px;font-weight:800}
+  </style>
+</defs>
+<rect width="2400" height="5600" fill="url(#page-bg)"/>
+<circle cx="2320" cy="40" r="310" fill="#99F6E4" opacity=".18"/>
+<circle cx="80" cy="5250" r="250" fill="#C7D2FE" opacity=".18"/>
+<rect x="50" y="110" width="2300" height="190" rx="24" fill="url(#question-bg)" filter="url(#shadow)"/>
+<rect x="50" y="680" width="2300" height="880" rx="26" class="section-panel"/>
+<rect x="50" y="2250" width="2300" height="740" rx="26" class="section-panel"/>
+<rect x="50" y="4120" width="2300" height="1380" rx="26" class="section-panel"/>
+<path d="M1200 300V350" class="flow-halo"/>
+<path d="M1200 300V350" class="flow" marker-end="url(#arrow)"/>
+<path d="M1200 670V718" class="flow-halo"/>
+<path d="M1200 670V718" class="flow"/>
+<circle cx="1200" cy="718" r="9" fill="#FFFFFF" stroke="#64748B" stroke-width="4"/>
+<path d="M1191 718H470Q430 718 430 760" class="flow-halo"/>
+<path d="M1191 718H470Q430 718 430 760" class="flow-blue" marker-end="url(#arrow-blue)"/>
+<path d="M1200 727V760" class="flow-halo"/>
+<path d="M1200 727V760" class="flow-orange" marker-end="url(#arrow-orange)"/>
+<path d="M1209 718H1930Q1970 718 1970 760" class="flow-halo"/>
+<path d="M1209 718H1930Q1970 718 1970 760" class="flow-purple" marker-end="url(#arrow-purple)"/>
+<path d="M430 1460C430 1540 900 1555 1191 1590" class="flow-halo"/>
+<path d="M430 1460C430 1540 900 1555 1191 1590" class="flow-blue"/>
+<path d="M1200 1460V1581" class="flow-halo"/>
+<path d="M1200 1460V1581" class="flow-orange"/>
+<path d="M1970 1460C1970 1540 1500 1555 1209 1590" class="flow-halo"/>
+<path d="M1970 1460C1970 1540 1500 1555 1209 1590" class="flow-purple"/>
+<circle cx="1200" cy="1590" r="10" fill="#FFFFFF" stroke="#0F8F83" stroke-width="4"/>
+<path d="M1200 1600V1632" class="flow-halo"/>
+<path d="M1200 1600V1632" class="flow-teal" marker-end="url(#arrow-teal)"/>
+<path d="M1200 2180V2320" class="flow-halo"/>
+<path d="M1200 2180V2320" class="flow-teal" marker-end="url(#arrow-teal)"/>
+<path d="M1840 2410H1880" class="flow-halo"/>
+<path d="M1840 2410H1880" class="flow-red" marker-end="url(#arrow-red)"/>
+<path d="M1200 2500V2570" class="flow-halo"/>
+<path d="M1200 2500V2570" class="flow-teal"/>
+<circle cx="1200" cy="2570" r="9" fill="#FFFFFF" stroke="#0F8F83" stroke-width="4"/>
+<path d="M1200 2570H620" class="flow-halo"/>
+<path d="M1200 2570H620" class="flow-blue"/>
+<path d="M1200 2570H1780" class="flow-halo"/>
+<path d="M1200 2570H1780" class="flow-purple"/>
+<path d="M620 2570V2630" class="flow-halo"/>
+<path d="M620 2570V2630" class="flow-blue" marker-end="url(#arrow-blue)"/>
+<path d="M1780 2570V2630" class="flow-halo"/>
+<path d="M1780 2570V2630" class="flow-purple" marker-end="url(#arrow-purple)"/>
+<path d="M620 2960V3000C620 3040 910 3070 1190 3070" class="flow-halo"/>
+<path d="M620 2960V3000C620 3040 910 3070 1190 3070" class="flow-blue"/>
+<path d="M1780 2960V3000C1780 3040 1490 3070 1210 3070" class="flow-halo"/>
+<path d="M1780 2960V3000C1780 3040 1490 3070 1210 3070" class="flow-purple"/>
+<circle cx="1200" cy="3070" r="9" fill="#FFFFFF" stroke="#0F8F83" stroke-width="4"/>
+<path d="M1200 3079V3120" class="flow-halo"/>
+<path d="M1200 3079V3120" class="flow-teal" marker-end="url(#arrow-teal)"/>
+<path d="M1200 3360V3420" class="flow-halo"/>
+<path d="M1200 3360V3420" class="flow" marker-end="url(#arrow)"/>
+<path d="M1200 4000C1200 4100 575 4090 575 4210" class="flow-halo"/>
+<path d="M1200 4000C1200 4100 575 4090 575 4210" class="flow" marker-end="url(#arrow)"/>
+<path d="M575 4410V4660" class="flow-halo"/>
+<path d="M575 4410V4660" class="flow-green" marker-end="url(#arrow-green)"/>
+<path d="M1000 4350H1400" class="flow-halo"/>
+<path d="M1000 4350H1400" class="flow-red" marker-end="url(#arrow-red)"/>
+<path d="M1400 4460C1220 4660 850 4660 850 4410" class="flow-halo"/>
+<path d="M1400 4460C1220 4660 850 4660 850 4410" class="flow-red" marker-end="url(#arrow-red)"/>
+<path d="M1000 4800H1400" class="flow-halo"/>
+<path d="M1000 4800H1400" class="flow-purple" marker-end="url(#arrow-purple)"/>
+<path d="M1600 4910V5040" class="flow-halo"/>
+<path d="M1600 4910V5040" class="flow-purple" marker-end="url(#arrow-purple)"/>
+<text x="100" y="176" class="question-text" >统计去年广东省各城市的销售总额</text>
+<rect x="100" y="238" width="315" height="38" rx="19" class="chip-white"/>
+<text x="257.5" y="264" class="chip-text" text-anchor="middle">时间：去年 → 2025 年</text>
+<rect x="435" y="238" width="350" height="38" rx="19" class="chip-white"/>
+<text x="610" y="264" class="chip-text" text-anchor="middle">筛选：province_name = 广东省</text>
+<rect x="805" y="238" width="320" height="38" rx="19" class="chip-white"/>
+<text x="965" y="264" class="chip-text" text-anchor="middle">分组：city_name（各城市）</text>
+<rect x="1145" y="238" width="335" height="38" rx="19" class="chip-white"/>
+<text x="1312.5" y="264" class="chip-text" text-anchor="middle">指标：销售额 / 销售总额</text>
+<g aria-label="节点 1 抽取关键词">
+<rect x="400" y="350" width="1600" height="320" rx="20" class="card"/>
+<path d="M420 350H1980Q2000 350 2000 370V414H400V370Q400 350 420 350Z" fill="#4F46E5"/>
+<circle cx="434" cy="382" r="20" fill="#FFFFFF" opacity=".96"/>
+<text x="434" y="389" class="node-number" text-anchor="middle">1</text>
+<text x="470" y="391" class="node-title" >抽取关键词</text>
+<text x="1980" y="389" class="node-subtitle" text-anchor="end">Jieba</text>
+</g>
+<text x="435" y="460" class="label" >处理</text>
+<text x="535" y="460" class="body" >使用 jieba.analyse.extract_tags（TF-IDF）按指定词性抽取关键词，并保留原始问题</text>
+<text x="435" y="505" class="label" >示例输出</text>
+<rect x="535" y="478" width="1415" height="60" rx="12" class="code-light"/>
+<text x="560" y="516" class="mono-blue" >keywords = [&quot;去年&quot;, &quot;广东省&quot;, &quot;城市&quot;, &quot;销售总额&quot;, &quot;统计去年广东省各城市的销售总额&quot;]</text>
+<rect x="435" y="555" width="735" height="95" rx="14" class="mini mini-blue"/>
+<text x="453" y="586" class="mini-title mini-title-blue" >TF-IDF 简介</text>
+<text x="453" y="616" class="mini-body" ><tspan x="453" dy="0">TF：当前文本词频；IDF：词越少见权重越高</tspan><tspan x="453" dy="23">关键词权重 = TF × IDF</tspan></text>
+<rect x="1190" y="555" width="760" height="95" rx="14" class="mini mini-teal"/>
+<text x="1208" y="586" class="mini-title mini-title-teal" >关键词抽取的实现</text>
+<text x="1208" y="616" class="mini-body" ><tspan x="1208" dy="0">分词 → 过滤停用词/词性 → 归一化 TF × 内置 IDF</tspan><tspan x="1208" dy="23">未登录词取 IDF 中位数；按权重降序返回前 topK 个词</tspan></text>
+<text x="80" y="728" class="section-title" >并行召回</text>
+<g aria-label="节点 2 召回字段">
+<rect x="75" y="770" width="710" height="690" rx="20" class="card"/>
+<path d="M95 770H765Q785 770 785 790V834H75V790Q75 770 95 770Z" fill="#2563EB"/>
+<circle cx="109" cy="802" r="20" fill="#FFFFFF" opacity=".96"/>
+<text x="109" y="809" class="node-number" text-anchor="middle">2</text>
+<text x="145" y="811" class="node-title" >召回字段</text>
+<text x="765" y="809" class="node-subtitle" text-anchor="end">Qdrant</text>
+</g>
+<text x="105" y="875" class="lane-label" >① 大模型扩展字段关键词</text>
+<rect x="105" y="895" width="650" height="64" rx="12" class="code-blue"/>
+<text x="125" y="935" class="mono-blue" >[&quot;省份&quot;, &quot;城市&quot;, &quot;销售金额&quot;, &quot;自然日期&quot;, &quot;去年&quot;]</text>
+<text x="105" y="1025" class="lane-label" >② 每个关键词 → 向量化 → 向量检索</text>
+<text x="125" y="1060" class="mono" >索引集合：column_info</text>
+<text x="105" y="1145" class="lane-label" >③ 按 column.id 去重</text>
+<rect x="105" y="1170" width="650" height="240" rx="14" class="result-blue"/>
+<text x="125" y="1205" class="result-title-blue" >召回结果</text>
+<text x="125" y="1240" class="mono-strong" ><tspan x="125" dy="0">dim_geo_region_zip.province_name</tspan><tspan x="125" dy="34">dim_geo_region_zip.city_name</tspan><tspan x="125" dy="34">dwd_trade_order_detail_di.sale_amount</tspan><tspan x="125" dy="34">dim_date.full_date</tspan></text>
+<g aria-label="节点 3 召回字段取值">
+<rect x="845" y="770" width="710" height="690" rx="20" class="card"/>
+<path d="M865 770H1535Q1555 770 1555 790V834H845V790Q845 770 865 770Z" fill="#F97316"/>
+<circle cx="879" cy="802" r="20" fill="#FFFFFF" opacity=".96"/>
+<text x="879" y="809" class="node-number" text-anchor="middle">3</text>
+<text x="915" y="811" class="node-title" >召回字段取值</text>
+<text x="1535" y="809" class="node-subtitle" text-anchor="end">Elasticsearch</text>
+</g>
+<text x="875" y="875" class="lane-label" >① 大模型扩展字段取值关键词</text>
+<rect x="875" y="895" width="650" height="64" rx="12" class="code-orange"/>
+<text x="895" y="935" class="mono-orange" >[&quot;广东省&quot;, &quot;广东&quot;, &quot;省份&quot;]</text>
+<text x="875" y="1025" class="lane-label" >② 每个关键词 → match(value) → 全文检索</text>
+<text x="895" y="1060" class="mono" >索引：value_info</text>
+<text x="875" y="1145" class="lane-label" >③ 按 value.id 去重</text>
+<rect x="875" y="1170" width="650" height="240" rx="14" class="result-orange"/>
+<text x="895" y="1205" class="result-title-orange" >召回结果</text>
+<text x="895" y="1240" class="mono-strong" ><tspan x="895" dy="0">value: 广东省</tspan><tspan x="895" dy="34">column_id: dim_geo_region_zip.province_name</tspan></text>
+<g aria-label="节点 4 召回指标">
+<rect x="1615" y="770" width="710" height="690" rx="20" class="card"/>
+<path d="M1635 770H2305Q2325 770 2325 790V834H1615V790Q1615 770 1635 770Z" fill="#9333EA"/>
+<circle cx="1649" cy="802" r="20" fill="#FFFFFF" opacity=".96"/>
+<text x="1649" y="809" class="node-number" text-anchor="middle">4</text>
+<text x="1685" y="811" class="node-title" >召回指标</text>
+<text x="2305" y="809" class="node-subtitle" text-anchor="end">Qdrant</text>
+</g>
+<text x="1645" y="875" class="lane-label" >① 大模型扩展指标关键词</text>
+<rect x="1645" y="895" width="650" height="64" rx="12" class="code-purple"/>
+<text x="1665" y="935" class="mono-purple" >[&quot;销售总额&quot;, &quot;销售额&quot;, &quot;成交金额&quot;]</text>
+<text x="1645" y="1025" class="lane-label" >② 每个关键词 → 向量化 → 向量检索</text>
+<text x="1665" y="1060" class="mono" >索引集合：metric_info</text>
+<text x="1645" y="1145" class="lane-label" >③ 按 metric.id 去重</text>
+<rect x="1645" y="1170" width="650" height="240" rx="14" class="result-purple"/>
+<text x="1665" y="1205" class="result-title-purple" >召回结果</text>
+<text x="1665" y="1240" class="mono-strong" ><tspan x="1665" dy="0">name: 销售额</tspan><tspan x="1665" dy="34">description: 优惠前销售金额之和</tspan><tspan x="1665" dy="34">公式: SUM(sale_amount)</tspan><tspan x="1665" dy="34">relevant_columns: dwd_trade_order_detail_di.sale_amount</tspan></text>
+<g aria-label="节点 5 合并召回信息 · 组装查询所需元数据">
+<rect x="80" y="1640" width="2240" height="540" rx="20" class="card"/>
+<path d="M100 1640H2300Q2320 1640 2320 1660V1704H80V1660Q80 1640 100 1640Z" fill="#0F8F83"/>
+<circle cx="114" cy="1672" r="20" fill="#FFFFFF" opacity=".96"/>
+<text x="114" y="1679" class="node-number" text-anchor="middle">5</text>
+<text x="150" y="1681" class="node-title" >合并召回信息 · 组装查询所需元数据</text>
+<text x="2300" y="1679" class="node-subtitle" text-anchor="end">元数据库</text>
+</g>
+<rect x="120" y="1730" width="850" height="430" rx="16" class="state-box"/>
+<text x="150" y="1775" class="output-title" >召回结果如何合并</text>
+<text x="150" y="1820" class="body" ><tspan x="150" dy="0">召回字段：按 column.id 去重</tspan><tspan x="150" dy="58">字段取值：按 column_id 写入对应字段的 examples</tspan><tspan x="150" dy="58">召回指标：补入 relevant_columns 指向的字段</tspan><tspan x="150" dy="58">涉及的表：按 table_id 查询 table_info</tspan><tspan x="150" dy="58">从元数据库补齐主键和外键</tspan><tspan x="150" dy="58">生成表信息列表和指标信息列表</tspan></text>
+<rect x="995" y="1730" width="1275" height="430" rx="16" class="state-box"/>
+<text x="1025" y="1775" class="output-title" >合并结果</text>
+<text x="1025" y="1820" class="state-text" ><tspan x="1025" dy="0">表信息</tspan><tspan x="1025" dy="58">dwd_trade_order_detail_di（事实表）：sale_amount、receiver_region_sk、order_date_key</tspan><tspan x="1025" dy="58">dim_geo_region_zip（维度表）：region_sk、province_name { examples: [广东省] }、city_name</tspan><tspan x="1025" dy="58">dim_date（维度表）：date_key、full_date</tspan><tspan x="1025" dy="58">指标信息  销售额：description=优惠前销售金额之和；relevant_columns=[dwd_trade_order_detail_di.sale_amount]</tspan></text>
+<text x="80" y="2298" class="section-title" >权限过滤与问题筛选</text>
+<g aria-label="节点 A 按用户权限过滤召回结果">
+<rect x="80" y="2320" width="1760" height="180" rx="20" class="card"/>
+<path d="M100 2320H1820Q1840 2320 1840 2340V2384H80V2340Q80 2320 100 2320Z" fill="#0F766E"/>
+<circle cx="114" cy="2352" r="20" fill="#FFFFFF" opacity=".96"/>
+<text x="114" y="2359" class="node-number" text-anchor="middle">A</text>
+<text x="150" y="2361" class="node-title" >按用户权限过滤召回结果</text>
+<text x="1820" y="2359" class="node-subtitle" text-anchor="end">数仓权限系统</text>
+</g>
+<text x="120" y="2420" class="label" >用户身份</text>
+<text x="250" y="2420" class="body-strong" >登录用户 → 映射到数仓角色</text>
+<text x="120" y="2470" class="label" >权限过滤</text>
+<text x="250" y="2470" class="body" >读取表权限、列权限和行级数据范围，过滤召回的表、字段与字段取值，并生成强制行过滤条件</text>
+<g aria-label="节点 × 权限不足">
+<rect x="1880" y="2320" width="440" height="180" rx="20" class="card"/>
+<path d="M1900 2320H2300Q2320 2320 2320 2340V2384H1880V2340Q1880 2320 1900 2320Z" fill="#DC2626"/>
+<circle cx="1914" cy="2352" r="20" fill="#FFFFFF" opacity=".96"/>
+<text x="1914" y="2359" class="node-number" text-anchor="middle">×</text>
+<text x="1950" y="2361" class="node-title" >权限不足</text>
+</g>
+<text x="1920" y="2420" class="body-strong" >没有可用的数据范围</text>
+<text x="1920" y="2470" class="body" >停止流程并提示用户</text>
+<g aria-label="节点 6 筛选表和字段">
+<rect x="80" y="2630" width="1080" height="330" rx="20" class="card"/>
+<path d="M100 2630H1140Q1160 2630 1160 2650V2694H80V2650Q80 2630 100 2630Z" fill="#2563EB"/>
+<circle cx="114" cy="2662" r="20" fill="#FFFFFF" opacity=".96"/>
+<text x="114" y="2669" class="node-number" text-anchor="middle">6</text>
+<text x="150" y="2671" class="node-title" >筛选表和字段</text>
+<text x="1140" y="2669" class="node-subtitle" text-anchor="end">大模型</text>
+</g>
+<text x="120" y="2735" class="label" >输入</text>
+<text x="220" y="2735" class="body" >原始问题 + 权限过滤后的表信息</text>
+<text x="120" y="2790" class="label" >判断</text>
+<text x="220" y="2790" class="body-strong" >哪些表和字段足以完成本次查询</text>
+<text x="120" y="2845" class="label" >输出</text>
+<text x="220" y="2845" class="mono-blue" ><tspan x="220" dy="0">dwd_trade_order_detail_di: sale_amount, receiver_region_sk, order_date_key</tspan><tspan x="220" dy="34">dim_geo_region_zip: region_sk, province_name, city_name</tspan><tspan x="220" dy="34">dim_date: date_key, full_date</tspan></text>
+<g aria-label="节点 7 筛选指标">
+<rect x="1240" y="2630" width="1080" height="330" rx="20" class="card"/>
+<path d="M1260 2630H2300Q2320 2630 2320 2650V2694H1240V2650Q1240 2630 1260 2630Z" fill="#9333EA"/>
+<circle cx="1274" cy="2662" r="20" fill="#FFFFFF" opacity=".96"/>
+<text x="1274" y="2669" class="node-number" text-anchor="middle">7</text>
+<text x="1310" y="2671" class="node-title" >筛选指标</text>
+<text x="2300" y="2669" class="node-subtitle" text-anchor="end">大模型</text>
+</g>
+<text x="1280" y="2735" class="label" >输入</text>
+<text x="1380" y="2735" class="body" >原始问题 + 权限过滤后的指标信息</text>
+<text x="1280" y="2790" class="label" >判断</text>
+<text x="1380" y="2790" class="body-strong" >问题需要使用哪个指标口径</text>
+<text x="1280" y="2845" class="label" >输出</text>
+<text x="1380" y="2845" class="mono-purple" ><tspan x="1380" dy="0">销售额</tspan><tspan x="1380" dy="34">description: 优惠前销售金额之和</tspan><tspan x="1380" dy="34">relevant_columns: dwd_trade_order_detail_di.sale_amount</tspan></text>
+<g aria-label="节点 8 补充生成 SQL 所需的环境信息">
+<rect x="300" y="3120" width="1800" height="240" rx="20" class="card"/>
+<path d="M320 3120H2080Q2100 3120 2100 3140V3184H300V3140Q300 3120 320 3120Z" fill="#0F766E"/>
+<circle cx="334" cy="3152" r="20" fill="#FFFFFF" opacity=".96"/>
+<text x="334" y="3159" class="node-number" text-anchor="middle">8</text>
+<text x="370" y="3161" class="node-title" >补充生成 SQL 所需的环境信息</text>
+</g>
+<rect x="350" y="3210" width="800" height="130" rx="14" class="mini mini-teal"/>
+<text x="368" y="3241" class="mini-title mini-title-teal" >日期信息</text>
+<text x="368" y="3271" class="mini-body" ><tspan x="368" dy="0">日期：2026-08-09</tspan><tspan x="368" dy="23">星期：星期日</tspan><tspan x="368" dy="23">季度：第三季度</tspan></text>
+<rect x="1250" y="3210" width="800" height="130" rx="14" class="mini mini-blue"/>
+<text x="1268" y="3241" class="mini-title mini-title-blue" >数仓数据库</text>
+<text x="1268" y="3271" class="mini-body" ><tspan x="1268" dy="0">Apache Doris</tspan><tspan x="1268" dy="23">或 StarRocks</tspan><tspan x="1268" dy="23">或 ClickHouse</tspan></text>
+<g aria-label="节点 9 生成 SQL">
+<rect x="80" y="3420" width="2240" height="580" rx="20" class="card"/>
+<path d="M100 3420H2300Q2320 3420 2320 3440V3484H80V3440Q80 3420 100 3420Z" fill="#4F46E5"/>
+<circle cx="114" cy="3452" r="20" fill="#FFFFFF" opacity=".96"/>
+<text x="114" y="3459" class="node-number" text-anchor="middle">9</text>
+<text x="150" y="3461" class="node-title" >生成 SQL</text>
+<text x="2300" y="3459" class="node-subtitle" text-anchor="end">大模型</text>
+</g>
+<text x="120" y="3533" class="label" >生成依据</text>
+<rect x="250" y="3507" width="240" height="38" rx="19" class="chip-blue"/>
+<text x="370" y="3533" class="chip-text" text-anchor="middle">原始问题</text>
+<rect x="510" y="3507" width="280" height="38" rx="19" class="chip-blue"/>
+<text x="650" y="3533" class="chip-text" text-anchor="middle">筛选后的表信息</text>
+<rect x="810" y="3507" width="280" height="38" rx="19" class="chip-blue"/>
+<text x="950" y="3533" class="chip-text" text-anchor="middle">筛选后的指标信息</text>
+<rect x="1110" y="3507" width="220" height="38" rx="19" class="chip-blue"/>
+<text x="1220" y="3533" class="chip-text" text-anchor="middle">日期信息</text>
+<rect x="1350" y="3507" width="260" height="38" rx="19" class="chip-blue"/>
+<text x="1480" y="3533" class="chip-text" text-anchor="middle">数仓数据库</text>
+<rect x="1630" y="3507" width="300" height="38" rx="19" class="chip-blue"/>
+<text x="1780" y="3533" class="chip-text" text-anchor="middle">权限过滤条件</text>
+<rect x="120" y="3580" width="2160" height="400" rx="16" class="sql-box-light"/>
+<rect x="120" y="3580" width="9" height="400" rx="5" fill="#6366F1"/>
+<text x="160" y="3630" class="sql-title-light" >生成的 SQL</text>
+<text x="160" y="3675" class="sql-code-light" ><tspan x="160" dy="0">SELECT r.city_name, SUM(f.sale_amount) AS total_sale_amount</tspan><tspan x="160" dy="34">FROM dwd_trade_order_detail_di AS f</tspan><tspan x="160" dy="34">JOIN dim_geo_region_zip AS r ON f.receiver_region_sk = r.region_sk</tspan><tspan x="160" dy="34">JOIN dim_date AS d ON f.order_date_key = d.date_key</tspan><tspan x="160" dy="34">WHERE r.province_name = '广东省'</tspan><tspan x="160" dy="34">  AND d.full_date &gt;= '2025-01-01'</tspan><tspan x="160" dy="34">  AND d.full_date &lt;  '2026-01-01'</tspan><tspan x="160" dy="34">GROUP BY r.city_name</tspan><tspan x="160" dy="34">ORDER BY total_sale_amount DESC;</tspan></text>
+<text x="80" y="4168" class="section-title" >校验、修正、执行与业务结果复核</text>
+<g aria-label="节点 10 使用 EXPLAIN 校验 SQL">
+<rect x="150" y="4210" width="850" height="200" rx="20" class="card"/>
+<path d="M170 4210H980Q1000 4210 1000 4230V4274H150V4230Q150 4210 170 4210Z" fill="#D97706"/>
+<circle cx="184" cy="4242" r="20" fill="#FFFFFF" opacity=".96"/>
+<text x="184" y="4249" class="node-number" text-anchor="middle">10</text>
+<text x="220" y="4251" class="node-title" >使用 EXPLAIN 校验 SQL</text>
+<text x="980" y="4249" class="node-subtitle" text-anchor="end">数据仓库</text>
+</g>
+<text x="190" y="4325" class="label" >校验语句</text>
+<text x="320" y="4325" class="mono-strong" >EXPLAIN &lt;sql&gt;</text>
+<g aria-label="节点 11 根据错误修正 SQL">
+<rect x="1400" y="4210" width="850" height="260" rx="20" class="card"/>
+<path d="M1420 4210H2230Q2250 4210 2250 4230V4274H1400V4230Q1400 4210 1420 4210Z" fill="#DC2626"/>
+<circle cx="1434" cy="4242" r="20" fill="#FFFFFF" opacity=".96"/>
+<text x="1434" y="4249" class="node-number" text-anchor="middle">11</text>
+<text x="1470" y="4251" class="node-title" >根据错误修正 SQL</text>
+<text x="2230" y="4249" class="node-subtitle" text-anchor="end">大模型</text>
+</g>
+<text x="1440" y="4315" class="label" >输入</text>
+<text x="1540" y="4315" class="body" >原始问题、元数据、原 SQL、数据库错误</text>
+<text x="1440" y="4370" class="label" >处理</text>
+<text x="1540" y="4370" class="body-strong" >根据报错定位字段、表名或语法问题</text>
+<text x="1440" y="4425" class="label" >输出</text>
+<text x="1540" y="4425" class="body" >修正后的 SQL，重新校验</text>
+<g aria-label="节点 12 使用用户对应的数仓角色执行查询">
+<rect x="150" y="4660" width="850" height="160" rx="20" class="card"/>
+<path d="M170 4660H980Q1000 4660 1000 4680V4724H150V4680Q150 4660 170 4660Z" fill="#059669"/>
+<circle cx="184" cy="4692" r="20" fill="#FFFFFF" opacity=".96"/>
+<text x="184" y="4699" class="node-number" text-anchor="middle">12</text>
+<text x="220" y="4701" class="node-title" >使用用户对应的数仓角色执行查询</text>
+<text x="980" y="4699" class="node-subtitle" text-anchor="end">数仓权限二次校验</text>
+</g>
+<text x="190" y="4775" class="label" >输出</text>
+<text x="290" y="4775" class="body-strong" >城市及对应的销售总额</text>
+<g aria-label="节点 13 核对结果是否回答原问题">
+<rect x="1400" y="4660" width="850" height="250" rx="20" class="card"/>
+<path d="M1420 4660H2230Q2250 4660 2250 4680V4724H1400V4680Q1400 4660 1420 4660Z" fill="#7C3AED"/>
+<circle cx="1434" cy="4692" r="20" fill="#FFFFFF" opacity=".96"/>
+<text x="1434" y="4699" class="node-number" text-anchor="middle">13</text>
+<text x="1470" y="4701" class="node-title" >核对结果是否回答原问题</text>
+<text x="2230" y="4699" class="node-subtitle" text-anchor="end">大模型</text>
+</g>
+<text x="1440" y="4765" class="label" >对照</text>
+<text x="1540" y="4765" class="body" >原始问题 + SQL + 查询结果</text>
+<text x="1440" y="4820" class="label" >检查</text>
+<text x="1540" y="4820" class="body-strong" >是否按城市分组、是否使用销售额口径、时间和省份是否正确</text>
+<text x="1440" y="4875" class="label" >结论</text>
+<text x="1540" y="4875" class="body" >一致则返回结果；不一致则返回问题说明</text>
+<g aria-label="节点 14 查询结果">
+<rect x="400" y="5040" width="1600" height="350" rx="20" class="card"/>
+<path d="M420 5040H1980Q2000 5040 2000 5060V5104H400V5060Q400 5040 420 5040Z" fill="#059669"/>
+<circle cx="434" cy="5072" r="20" fill="#FFFFFF" opacity=".96"/>
+<text x="434" y="5079" class="node-number" text-anchor="middle">14</text>
+<text x="470" y="5081" class="node-title" >查询结果</text>
+</g>
+<rect x="440" y="5130" width="1520" height="240" rx="12" class="result-table"/>
+<rect x="440" y="5130" width="1520" height="60" rx="12" fill="#EFF6FF"/>
+<text x="480" y="5170" class="table-head" >city_name</text>
+<text x="1200" y="5170" class="table-head" >total_sale_amount</text>
+<line x1="440" y1="5190" x2="1960" y2="5190" class="grid-line"/>
+<line x1="440" y1="5250" x2="1960" y2="5250" class="grid-line"/>
+<line x1="440" y1="5310" x2="1960" y2="5310" class="grid-line"/>
+<line x1="1150" y1="5130" x2="1150" y2="5370" class="grid-line"/>
+<text x="480" y="5230" class="table-cell" >深圳市</text>
+<text x="1200" y="5230" class="table-cell-number" >8,420,000</text>
+<text x="480" y="5290" class="table-cell" >广州市</text>
+<text x="1200" y="5290" class="table-cell-number" >6,730,000</text>
+<text x="480" y="5350" class="table-cell" >东莞市</text>
+<text x="1200" y="5350" class="table-cell-number" >3,180,000</text>
+<text x="1240" y="337" class="flow-label" >开始</text>
+<text x="605" y="4580" class="branch-success" >校验通过</text>
+<text x="1110" y="4305" class="branch-error" >校验失败</text>
+<text x="1000" y="4510" class="branch-error" >修正后重新校验（最多 3 轮）</text>
+</svg>

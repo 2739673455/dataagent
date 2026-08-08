@@ -1,0 +1,249 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="1200" viewBox="0 0 2400 1200" role="img" aria-labelledby="title desc">
+<title id="title">业务数据库与数据仓库建模对比</title>
+<desc id="desc">以订单销售场景为例，对比业务数据库面向交易和数据仓库面向分析的建模差异，展示规范化 ER 模型、星型模型与关键对比维度</desc>
+<defs>
+  <linearGradient id="page-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F8FAFC"/><stop offset="1" stop-color="#ECFDF5"/></linearGradient>
+  <linearGradient id="oltp-head" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#1D4ED8"/><stop offset="1" stop-color="#3B82F6"/></linearGradient>
+  <linearGradient id="olap-head" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0F766E"/><stop offset="1" stop-color="#14B8A6"/></linearGradient>
+  <linearGradient id="fact-head" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#7E22CE"/><stop offset="1" stop-color="#A855F7"/></linearGradient>
+  <filter id="shadow" x="-10%" y="-10%" width="120%" height="140%"><feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#0F172A" flood-opacity=".09"/></filter>
+  <filter id="soft-shadow" x="-10%" y="-10%" width="120%" height="140%"><feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#0F172A" flood-opacity=".06"/></filter>
+  <marker id="arrow-blue" markerWidth="15" markerHeight="15" refX="13" refY="7.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 1L14 7.5L0 14Z" fill="#2563EB"/></marker>
+  <marker id="arrow-teal" markerWidth="15" markerHeight="15" refX="13" refY="7.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 1L14 7.5L0 14Z" fill="#0F8F83"/></marker>
+  <style>
+    text{font-family:Inter,"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif}
+    .page-title{fill:#0F172A;font-size:42px;font-weight:780}.page-sub{fill:#64748B;font-size:19px}.top-pill{fill:#FFFFFF;stroke:#CBD5E1;stroke-width:1.2}.top-pill-text{fill:#334155;font-size:15px;font-weight:720}
+    .panel{fill:#FFFFFF;stroke:#D8E2EE;stroke-width:1.6;filter:url(#shadow)}.panel-title{fill:#FFFFFF;font-size:29px;font-weight:780}.panel-en{fill:#DBEAFE;font-size:15px;font-weight:760}.panel-en-teal{fill:#CCFBF1;font-size:15px;font-weight:760}.panel-sub{fill:#FFFFFF;font-size:16px;opacity:.9}
+    .scene-pill-blue{fill:#EFF6FF;stroke:#93C5FD;stroke-width:1.2}.scene-pill-teal{fill:#F0FDFA;stroke:#5EEAD4;stroke-width:1.2}.scene-text-blue{fill:#1D4ED8;font-size:16px;font-weight:760}.scene-text-teal{fill:#0F766E;font-size:16px;font-weight:760}.model-label{fill:#334155;font-size:20px;font-weight:780}.model-note{fill:#64748B;font-size:15px}
+    .entity{fill:#FFFFFF;stroke:#BFDBFE;stroke-width:1.5;filter:url(#soft-shadow)}.dimension{fill:#FFFFFF;stroke:#99F6E4;stroke-width:1.5;filter:url(#soft-shadow)}.fact{fill:#FFFFFF;stroke:#D8B4FE;stroke-width:1.8;filter:url(#soft-shadow)}
+    .entity-head{fill:#2563EB}.dimension-head{fill:#0F8F83}.fact-head{fill:url(#fact-head)}.table-title{fill:#FFFFFF;font-family:"SFMono-Regular",Consolas,monospace;font-size:17px;font-weight:760}.table-role{fill:#FFFFFF;font-size:12px;font-weight:720;opacity:.9}
+    .row-a{fill:#FFFFFF}.row-b{fill:#F8FAFC}.row-label{fill:#334155;font-family:"SFMono-Regular",Consolas,monospace;font-size:13.5px}.row-label-strong{fill:#1D4ED8;font-family:"SFMono-Regular",Consolas,monospace;font-size:13.5px;font-weight:750}.row-label-teal{fill:#0F766E;font-family:"SFMono-Regular",Consolas,monospace;font-size:13.5px;font-weight:750}.row-label-purple{fill:#7E22CE;font-family:"SFMono-Regular",Consolas,monospace;font-size:13.5px;font-weight:750}.key-pill{fill:#DBEAFE}.key-pill-teal{fill:#CCFBF1}.key-pill-purple{fill:#F3E8FF}.key-text{fill:#1D4ED8;font-size:9.5px;font-weight:800}.key-text-teal{fill:#0F766E;font-size:9.5px;font-weight:800}.key-text-purple{fill:#7E22CE;font-size:9.5px;font-weight:800}
+    .relation-halo{fill:none;stroke:#FFFFFF;stroke-width:9;stroke-linecap:round;stroke-linejoin:round}.relation-blue{fill:none;stroke:#2563EB;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.relation-teal{fill:none;stroke:#0F8F83;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.relation-dot{stroke:#FFFFFF;stroke-width:2}.relation-text{fill:#64748B;font-size:12px;font-weight:700}
+    .trait{fill:#F8FAFC;stroke:#D8E2EE;stroke-width:1.2}.trait-blue{fill:#EFF6FF;stroke:#BFDBFE;stroke-width:1.2}.trait-teal{fill:#F0FDFA;stroke:#99F6E4;stroke-width:1.2}.trait-label{fill:#64748B;font-size:13px;font-weight:760}.trait-value{fill:#334155;font-size:17px;font-weight:760}.trait-value-blue{fill:#1D4ED8;font-size:17px;font-weight:780}.trait-value-teal{fill:#0F766E;font-size:17px;font-weight:780}.trait-note{fill:#64748B;font-size:12.5px}
+    .etl-ring{fill:#FFFFFF;stroke:#CBD5E1;stroke-width:1.5;filter:url(#soft-shadow)}.etl-title{fill:#0F766E;font-size:17px;font-weight:820}.etl-sub{fill:#64748B;font-size:10.5px;font-weight:700}
+    .compare-panel{fill:#FFFFFF;stroke:#D8E2EE;stroke-width:1.6;filter:url(#shadow)}.compare-title{fill:#0F172A;font-size:28px;font-weight:780}.compare-sub{fill:#64748B;font-size:15px}.compare-head{fill:#F8FAFC}.compare-head-dim{fill:#475569;font-size:16px;font-weight:780}.compare-head-blue{fill:#1D4ED8;font-size:17px;font-weight:780}.compare-head-teal{fill:#0F766E;font-size:17px;font-weight:780}.compare-row-a{fill:#FFFFFF}.compare-row-b{fill:#F8FAFC}.compare-dim{fill:#334155;font-size:15px;font-weight:780}.compare-cell{fill:#475569;font-size:15px}.compare-cell-strong-blue{fill:#1D4ED8;font-size:15px;font-weight:720}.compare-cell-strong-teal{fill:#0F766E;font-size:15px;font-weight:720}.grid{stroke:#E2E8F0;stroke-width:1}.footer{fill:#64748B;font-size:13px}.footer-strong{fill:#0F766E;font-size:13px;font-weight:760}
+  </style>
+</defs>
+<rect width="2400" height="1800" fill="url(#page-bg)"/>
+<circle cx="2300" cy="35" r="250" fill="#99F6E4" opacity=".2"/>
+<circle cx="50" cy="1160" r="210" fill="#C7D2FE" opacity=".18"/>
+<g id="diagram-content" transform="translate(0 -110)">
+<g id="model-comparison">
+
+<rect x="50" y="150" width="1120" height="1080" rx="26" class="panel"/>
+<path d="M76 150H1144Q1170 150 1170 176V252H50V176Q50 150 76 150Z" fill="url(#oltp-head)"/>
+<g aria-label="业务数据库图标">
+  <ellipse cx="91" cy="183" rx="20" ry="8" fill="#FFFFFF" opacity=".95"/>
+  <path d="M71 183V215C71 220 80 224 91 224C102 224 111 220 111 215V183" fill="none" stroke="#FFFFFF" stroke-width="3"/>
+  <path d="M71 198C71 203 80 207 91 207C102 207 111 203 111 198" fill="none" stroke="#FFFFFF" stroke-width="2.5"/>
+</g>
+<text x="130" y="210" class="panel-title">业务数据库</text>
+
+<rect x="90" y="280" width="360" height="42" rx="21" class="scene-pill-blue"/>
+<text x="270" y="307" class="scene-text-blue" text-anchor="middle">例：创建订单、扣库存、改状态</text>
+<text x="90" y="365" class="model-label">规范化 ER 模型</text>
+
+<path d="M400 505H450" class="relation-halo"/>
+<path d="M400 505H450" class="relation-blue" marker-end="url(#arrow-blue)"/>
+<path d="M760 505H810" class="relation-halo"/>
+<path d="M760 505H810" class="relation-blue" marker-end="url(#arrow-blue)"/>
+<path d="M965 690V735" class="relation-halo"/>
+<path d="M965 690V735" class="relation-blue" marker-end="url(#arrow-blue)"/>
+<g aria-label="customer 客户表">
+  <rect x="90" y="420" width="310" height="225" rx="15" class="entity"/>
+  <path d="M105 420H385Q400 420 400 435V470H90V435Q90 420 105 420Z" class="entity-head"/>
+  <text x="108" y="451" class="table-title">customer</text>
+  <text x="382" y="450" class="table-role" text-anchor="end">客户</text>
+  <rect x="90" y="470" width="310" height="43" class="row-a"/>
+  <rect x="104" y="482" width="28" height="18" rx="9" class="key-pill"/><text x="118" y="495" class="key-text" text-anchor="middle">PK</text>
+  <text x="143" y="497" class="row-label-strong">customer_id</text>
+  <rect x="90" y="513" width="310" height="43" class="row-b"/><text x="108" y="540" class="row-label">customer_name</text>
+  <rect x="90" y="556" width="310" height="43" class="row-a"/><text x="108" y="583" class="row-label">mobile</text>
+  <rect x="90" y="599" width="310" height="46" class="row-b"/><text x="108" y="627" class="row-label">customer_level</text>
+</g>
+
+<g aria-label="sales_order 订单主表">
+  <rect x="450" y="390" width="310" height="300" rx="15" class="entity"/>
+  <path d="M465 390H745Q760 390 760 405V440H450V405Q450 390 465 390Z" class="entity-head"/>
+  <text x="468" y="421" class="table-title">sales_order</text>
+  <text x="742" y="420" class="table-role" text-anchor="end">订单主表</text>
+  <rect x="450" y="440" width="310" height="41" class="row-a"/>
+  <rect x="464" y="451" width="28" height="18" rx="9" class="key-pill"/><text x="478" y="464" class="key-text" text-anchor="middle">PK</text>
+  <text x="503" y="466" class="row-label-strong">order_id</text>
+  <rect x="450" y="481" width="310" height="41" class="row-b"/>
+  <rect x="464" y="492" width="28" height="18" rx="9" class="key-pill"/><text x="478" y="505" class="key-text" text-anchor="middle">FK</text>
+  <text x="503" y="507" class="row-label">customer_id</text>
+  <rect x="450" y="522" width="310" height="41" class="row-a"/><text x="468" y="548" class="row-label">order_status</text>
+  <rect x="450" y="563" width="310" height="41" class="row-b"/><text x="468" y="589" class="row-label">order_amount</text>
+  <rect x="450" y="604" width="310" height="41" class="row-a"/><text x="468" y="630" class="row-label">shipping_address</text>
+  <rect x="450" y="645" width="310" height="45" class="row-b"/><text x="468" y="673" class="row-label">created_at</text>
+</g>
+
+<g aria-label="order_item 订单明细表">
+  <rect x="810" y="390" width="310" height="300" rx="15" class="entity"/>
+  <path d="M825 390H1105Q1120 390 1120 405V440H810V405Q810 390 825 390Z" class="entity-head"/>
+  <text x="828" y="421" class="table-title">order_item</text>
+  <text x="1102" y="420" class="table-role" text-anchor="end">订单明细</text>
+  <rect x="810" y="440" width="310" height="41" class="row-a"/>
+  <rect x="824" y="451" width="28" height="18" rx="9" class="key-pill"/><text x="838" y="464" class="key-text" text-anchor="middle">PK</text>
+  <text x="863" y="466" class="row-label-strong">item_id</text>
+  <rect x="810" y="481" width="310" height="41" class="row-b"/>
+  <rect x="824" y="492" width="28" height="18" rx="9" class="key-pill"/><text x="838" y="505" class="key-text" text-anchor="middle">FK</text>
+  <text x="863" y="507" class="row-label">order_id</text>
+  <rect x="810" y="522" width="310" height="41" class="row-a"/>
+  <rect x="824" y="533" width="28" height="18" rx="9" class="key-pill"/><text x="838" y="546" class="key-text" text-anchor="middle">FK</text>
+  <text x="863" y="548" class="row-label">product_id</text>
+  <rect x="810" y="563" width="310" height="41" class="row-b"/><text x="828" y="589" class="row-label">quantity</text>
+  <rect x="810" y="604" width="310" height="41" class="row-a"/><text x="828" y="630" class="row-label">sale_price</text>
+  <rect x="810" y="645" width="310" height="45" class="row-b"/><text x="828" y="673" class="row-label">discount_amount</text>
+</g>
+
+<g aria-label="product 商品表">
+  <rect x="810" y="735" width="310" height="210" rx="15" class="entity"/>
+  <path d="M825 735H1105Q1120 735 1120 750V785H810V750Q810 735 825 735Z" class="entity-head"/>
+  <text x="828" y="766" class="table-title">product</text>
+  <text x="1102" y="765" class="table-role" text-anchor="end">商品</text>
+  <rect x="810" y="785" width="310" height="40" class="row-a"/>
+  <rect x="824" y="796" width="28" height="18" rx="9" class="key-pill"/><text x="838" y="809" class="key-text" text-anchor="middle">PK</text>
+  <text x="863" y="811" class="row-label-strong">product_id</text>
+  <rect x="810" y="825" width="310" height="40" class="row-b"/><text x="828" y="850" class="row-label">product_name</text>
+  <rect x="810" y="865" width="310" height="40" class="row-a"/><text x="828" y="890" class="row-label">category_id</text>
+  <rect x="810" y="905" width="310" height="40" class="row-b"/><text x="828" y="930" class="row-label">list_price</text>
+</g>
+
+<rect x="90" y="985" width="320" height="185" rx="16" class="trait-blue"/>
+<text x="112" y="1018" class="trait-label">首要目标</text>
+<text x="112" y="1052" class="trait-value-blue">支撑业务操作，保证交易正确</text>
+<text x="112" y="1086" class="trait-note">围绕用户、订单、商品等业务实体建模</text>
+<rect x="430" y="985" width="320" height="185" rx="16" class="trait"/>
+<text x="452" y="1018" class="trait-label">模型形态</text>
+<text x="452" y="1052" class="trait-value">ER 模型 / 3NF</text>
+<text x="452" y="1086" class="trait-note">多表分工，尽量消除冗余</text>
+<rect x="770" y="985" width="350" height="185" rx="16" class="trait"/>
+<text x="792" y="1018" class="trait-label">读写特征</text>
+<text x="792" y="1052" class="trait-value">持续小批量读写，高并发</text>
+<text x="792" y="1086" class="trait-note">强事务</text>
+
+<rect x="1230" y="150" width="1120" height="1080" rx="26" class="panel"/>
+<path d="M1256 150H2324Q2350 150 2350 176V252H1230V176Q1230 150 1256 150Z" fill="url(#olap-head)"/>
+<g aria-label="数据仓库图标">
+  <path d="M1260 218V182L1281 169L1302 182V218Z" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M1268 218V193H1294V218M1275 193V218M1287 193V218" fill="none" stroke="#FFFFFF" stroke-width="2.5"/>
+</g>
+<text x="1320" y="210" class="panel-title">数据仓库</text>
+
+<rect x="1270" y="280" width="400" height="42" rx="21" class="scene-pill-teal"/>
+<text x="1470" y="307" class="scene-text-teal" text-anchor="middle">例：按日期、地区、商品分析销售额</text>
+<text x="1270" y="365" class="model-label">维度建模 · 星型模型</text>
+
+<path d="M1565 505H1645" class="relation-halo"/>
+<path d="M1565 505H1645" class="relation-teal" marker-end="url(#arrow-teal)"/>
+<path d="M1995 505H1955" class="relation-halo"/>
+<path d="M1995 505H1955" class="relation-teal" marker-end="url(#arrow-teal)"/>
+<path d="M1565 820H1645" class="relation-halo"/>
+<path d="M1565 820H1645" class="relation-teal" marker-end="url(#arrow-teal)"/>
+<path d="M1995 820H1955" class="relation-halo"/>
+<path d="M1995 820H1955" class="relation-teal" marker-end="url(#arrow-teal)"/>
+<g aria-label="dim_date 日期维度">
+  <rect x="1270" y="405" width="295" height="200" rx="15" class="dimension"/>
+  <path d="M1285 405H1550Q1565 405 1565 420V455H1270V420Q1270 405 1285 405Z" class="dimension-head"/>
+  <text x="1288" y="436" class="table-title">dim_date</text>
+  <text x="1547" y="435" class="table-role" text-anchor="end">DIM</text>
+  <rect x="1270" y="455" width="295" height="37" class="row-a"/>
+  <rect x="1284" y="464" width="28" height="18" rx="9" class="key-pill-teal"/><text x="1298" y="477" class="key-text-teal" text-anchor="middle">PK</text>
+  <text x="1323" y="480" class="row-label-teal">date_key</text>
+  <rect x="1270" y="492" width="295" height="37" class="row-b"/><text x="1288" y="516" class="row-label">full_date</text>
+  <rect x="1270" y="529" width="295" height="37" class="row-a"/><text x="1288" y="553" class="row-label">calendar_month</text>
+  <rect x="1270" y="566" width="295" height="39" class="row-b"/><text x="1288" y="591" class="row-label">is_holiday</text>
+</g>
+
+<g aria-label="dim_product 商品维度">
+  <rect x="1995" y="405" width="295" height="200" rx="15" class="dimension"/>
+  <path d="M2010 405H2275Q2290 405 2290 420V455H1995V420Q1995 405 2010 405Z" class="dimension-head"/>
+  <text x="2013" y="436" class="table-title">dim_product</text>
+  <text x="2272" y="435" class="table-role" text-anchor="end">DIM</text>
+  <rect x="1995" y="455" width="295" height="37" class="row-a"/>
+  <rect x="2009" y="464" width="28" height="18" rx="9" class="key-pill-teal"/><text x="2023" y="477" class="key-text-teal" text-anchor="middle">SK</text>
+  <text x="2048" y="480" class="row-label-teal">product_sk</text>
+  <rect x="1995" y="492" width="295" height="37" class="row-b"/><text x="2013" y="516" class="row-label">product_name</text>
+  <rect x="1995" y="529" width="295" height="37" class="row-a"/><text x="2013" y="553" class="row-label">category_name</text>
+  <rect x="1995" y="566" width="295" height="39" class="row-b"/><text x="2013" y="591" class="row-label">brand_name</text>
+</g>
+
+<g aria-label="fact_order_detail 订单明细事实表">
+  <rect x="1645" y="430" width="310" height="440" rx="16" class="fact"/>
+  <path d="M1661 430H1939Q1955 430 1955 446V492H1645V446Q1645 430 1661 430Z" class="fact-head"/>
+  <text x="1663" y="459" class="table-title">fact_order_detail</text>
+  <text x="1663" y="479" class="table-role">每个订单商品一行</text>
+  <text x="1937" y="459" class="table-role" text-anchor="end">FACT</text>
+  <rect x="1645" y="492" width="310" height="40" class="row-a"/>
+  <rect x="1659" y="503" width="28" height="18" rx="9" class="key-pill-purple"/><text x="1673" y="516" class="key-text-purple" text-anchor="middle">DD</text>
+  <text x="1698" y="518" class="row-label">order_id</text>
+  <rect x="1645" y="532" width="310" height="40" class="row-b"/>
+  <rect x="1659" y="543" width="28" height="18" rx="9" class="key-pill-teal"/><text x="1673" y="556" class="key-text-teal" text-anchor="middle">FK</text>
+  <text x="1698" y="558" class="row-label-teal">date_key</text>
+  <rect x="1645" y="572" width="310" height="40" class="row-a"/>
+  <rect x="1659" y="583" width="28" height="18" rx="9" class="key-pill-teal"/><text x="1673" y="596" class="key-text-teal" text-anchor="middle">FK</text>
+  <text x="1698" y="598" class="row-label-teal">product_sk</text>
+  <rect x="1645" y="612" width="310" height="40" class="row-b"/>
+  <rect x="1659" y="623" width="28" height="18" rx="9" class="key-pill-teal"/><text x="1673" y="636" class="key-text-teal" text-anchor="middle">FK</text>
+  <text x="1698" y="638" class="row-label-teal">customer_sk</text>
+  <rect x="1645" y="652" width="310" height="40" class="row-a"/>
+  <rect x="1659" y="663" width="28" height="18" rx="9" class="key-pill-teal"/><text x="1673" y="676" class="key-text-teal" text-anchor="middle">FK</text>
+  <text x="1698" y="678" class="row-label-teal">region_sk</text>
+  <rect x="1645" y="692" width="310" height="40" class="row-b"/><text x="1663" y="718" class="row-label-purple">quantity</text>
+  <rect x="1645" y="732" width="310" height="40" class="row-a"/><text x="1663" y="758" class="row-label-purple">sale_amount</text>
+  <rect x="1645" y="772" width="310" height="40" class="row-b"/><text x="1663" y="798" class="row-label-purple">discount_amount</text>
+  <rect x="1645" y="812" width="310" height="58" class="row-a"/>
+  <rect x="1663" y="826" width="118" height="25" rx="12.5" fill="#FAF5FF" stroke="#D8B4FE"/>
+  <text x="1722" y="844" class="key-text-purple" text-anchor="middle">可加性度量</text>
+</g>
+
+<g aria-label="dim_customer 客户维度">
+  <rect x="1270" y="720" width="295" height="200" rx="15" class="dimension"/>
+  <path d="M1285 720H1550Q1565 720 1565 735V770H1270V735Q1270 720 1285 720Z" class="dimension-head"/>
+  <text x="1288" y="751" class="table-title">dim_customer</text>
+  <text x="1547" y="750" class="table-role" text-anchor="end">DIM</text>
+  <rect x="1270" y="770" width="295" height="37" class="row-a"/>
+  <rect x="1284" y="779" width="28" height="18" rx="9" class="key-pill-teal"/><text x="1298" y="792" class="key-text-teal" text-anchor="middle">SK</text>
+  <text x="1323" y="795" class="row-label-teal">customer_sk</text>
+  <rect x="1270" y="807" width="295" height="37" class="row-b"/><text x="1288" y="831" class="row-label">customer_id</text>
+  <rect x="1270" y="844" width="295" height="37" class="row-a"/><text x="1288" y="868" class="row-label">customer_level</text>
+  <rect x="1270" y="881" width="295" height="39" class="row-b"/><text x="1288" y="906" class="row-label">valid_from / to</text>
+</g>
+
+<g aria-label="dim_region 地区维度">
+  <rect x="1995" y="720" width="295" height="200" rx="15" class="dimension"/>
+  <path d="M2010 720H2275Q2290 720 2290 735V770H1995V735Q1995 720 2010 720Z" class="dimension-head"/>
+  <text x="2013" y="751" class="table-title">dim_region</text>
+  <text x="2272" y="750" class="table-role" text-anchor="end">DIM</text>
+  <rect x="1995" y="770" width="295" height="37" class="row-a"/>
+  <rect x="2009" y="779" width="28" height="18" rx="9" class="key-pill-teal"/><text x="2023" y="792" class="key-text-teal" text-anchor="middle">SK</text>
+  <text x="2048" y="795" class="row-label-teal">region_sk</text>
+  <rect x="1995" y="807" width="295" height="37" class="row-b"/><text x="2013" y="831" class="row-label">province_name</text>
+  <rect x="1995" y="844" width="295" height="37" class="row-a"/><text x="2013" y="868" class="row-label">city_name</text>
+  <rect x="1995" y="881" width="295" height="39" class="row-b"/><text x="2013" y="906" class="row-label">district_name</text>
+</g>
+
+<rect x="1270" y="985" width="320" height="185" rx="16" class="trait-teal"/>
+<text x="1292" y="1018" class="trait-label">首要目标</text>
+<text x="1292" y="1052" class="trait-value-teal">支撑统计分析，保证口径一致</text>
+<text x="1292" y="1086" class="trait-note"><tspan x="1292" dy="0">围绕业务过程、事实粒度</tspan><tspan x="1292" dy="22">维度和度量建模</tspan></text>
+<rect x="1610" y="985" width="320" height="185" rx="16" class="trait"/>
+<text x="1632" y="1018" class="trait-label">模型形态</text>
+<text x="1632" y="1052" class="trait-value">星型 / 雪花型</text>
+<text x="1632" y="1086" class="trait-note">事实表连接维度表</text>
+<rect x="1950" y="985" width="340" height="185" rx="16" class="trait"/>
+<text x="1972" y="1018" class="trait-label">读写特征</text>
+<text x="1972" y="1052" class="trait-value">周期性批量加载，大范围聚合</text>
+<text x="1972" y="1086" class="trait-note">扫描范围大，聚合多</text>
+
+<path d="M1140 680H1260" class="relation-halo"/>
+<path d="M1140 680H1260" class="relation-teal" marker-end="url(#arrow-teal)"/>
+<circle cx="1200" cy="680" r="44" class="etl-ring"/>
+<text x="1200" y="675" class="etl-title" text-anchor="middle">ETL</text>
+<text x="1200" y="695" class="etl-sub" text-anchor="middle">抽取 · 清洗 · 整合</text>
+
+</g>
+</g>
+</svg>

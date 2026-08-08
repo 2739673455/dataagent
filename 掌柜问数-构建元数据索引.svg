@@ -1,0 +1,1940 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4660" height="3550" viewBox="0 0 4660 3550" role="img" aria-labelledby="title desc">
+<title id="title">掌柜问数——业务数据模型、MySQL 元数据与检索索引关系</title>
+<desc id="desc">左侧上方展示一张事实表与六张维度表，左下方按数据域划分全部 45 张表并标注事实表与维度表，中间展示完整 MySQL 元数据，右侧展示 Qdrant 字段与指标向量索引以及 Elasticsearch 字段取值索引</desc>
+<defs>
+  <linearGradient id="page-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F8FAFC"/><stop offset="1" stop-color="#ECFDF5"/></linearGradient>
+  <linearGradient id="dim-head" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#1D4ED8"/><stop offset="1" stop-color="#3B82F6"/></linearGradient>
+  <linearGradient id="fact-head" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#0F766E"/><stop offset="1" stop-color="#14B8A6"/></linearGradient>
+  <linearGradient id="metric-head" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#7E22CE"/><stop offset="1" stop-color="#A855F7"/></linearGradient>
+  <linearGradient id="domain-accent" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#2563EB"/><stop offset="1" stop-color="#14B8A6"/></linearGradient>
+  <filter id="shadow" x="-10%" y="-10%" width="120%" height="140%"><feDropShadow dx="0" dy="5" stdDeviation="8" flood-color="#0F172A" flood-opacity=".08"/></filter>
+  <filter id="domain-shadow" x="-8%" y="-12%" width="116%" height="132%"><feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#0F172A" flood-opacity=".055"/></filter>
+  <style>
+    text{font-family:Inter,"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",sans-serif}
+    .page-title{fill:#0F172A;font-size:38px;font-weight:780}.page-sub{fill:#64748B;font-size:15px}.section-title{fill:#0F172A;font-size:30px;font-weight:760}.section-sub{fill:#64748B;font-size:14px}
+    .section-panel{fill:#FFFFFF;stroke:#D8E2EE;stroke-width:1.4;filter:url(#shadow)}
+    .dw-card,.fact-card,.meta-card{fill:#FFFFFF;stroke:#CBD5E1;stroke-width:1.3;filter:url(#shadow)}.fact-card{stroke:#14B8A6;stroke-width:1.8}
+    .dim-head{fill:url(#dim-head)}.fact-head{fill:url(#fact-head)}.dw-title,.fact-title,.meta-title{fill:#FFFFFF;font-size:22px;font-weight:760}.meta-title{font-size:25px}.fact-title{font-size:26px}.dw-role,.fact-role{fill:#DBEAFE;font-size:13px;font-weight:730}.fact-role{fill:#CCFBF1}.fact-sub{fill:#CCFBF1;font-size:14px}
+    .dw-column-head,.meta-column-head{fill:#EFF6FF}.dw-column-label{fill:#475569;font-size:14px;font-weight:720}.dw-row-a{fill:#FFFFFF}.dw-row-b{fill:#F8FAFC}
+    .field-main,.field-pk,.field-fk,.field-measure,.field-dimension,.field-type,.field-desc{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:13.2px}.field-main{fill:#334155}.field-pk{fill:#1D4ED8;font-weight:750}.field-fk{fill:#0891B2;font-weight:720}.field-measure{fill:#7E22CE;font-weight:750}.field-dimension{fill:#047857;font-weight:720}.field-type{fill:#475569;font-size:11.8px}.field-desc{fill:#64748B;font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;font-size:11.8px}
+    .table-info-head{fill:url(#dim-head)}.column-info-head,.column-metric-head{fill:#0F8F83}.metric-info-head{fill:url(#metric-head)}.meta-count{fill:#E0F2FE;font-size:12px;font-weight:650}.meta-column-label{fill:#334155;font-family:"SFMono-Regular",Consolas,monospace;font-size:14px;font-weight:720}.metric-column-label{fill:#334155;font-size:14px;font-weight:720}
+    .meta-row-a{fill:#FFFFFF}.meta-row-b{fill:#F8FAFC}.meta-id{fill:#0F766E;font-family:"SFMono-Regular",Consolas,monospace;font-size:15px;font-weight:700}.meta-text{fill:#475569;font-size:14.5px}.meta-id-full,.meta-name-cell,.meta-type-cell,.meta-table-cell{font-family:"SFMono-Regular",Consolas,monospace}.meta-id-full{fill:#0F766E;font-size:10.9px;font-weight:680}.meta-name-cell{fill:#0F766E;font-size:12.7px;font-weight:690}.meta-type-cell{fill:#475569;font-size:11.8px}.meta-role-cell{fill:#475569;font-size:11.8px}.meta-example-cell{fill:#475569;font-size:11.2px}.meta-description-cell{fill:#475569;font-size:12.2px}.meta-alias-cell{fill:#475569;font-size:11.5px}.meta-table-cell{fill:#0F766E;font-size:11.4px;font-weight:680}
+    .dim-group{fill:#DBEAFE}.fact-group{fill:#CCFBF1}.dim-group-text{fill:#1D4ED8;font-family:"SFMono-Regular",Consolas,monospace;font-size:14.5px;font-weight:760}.fact-group-text{fill:#0F766E;font-family:"SFMono-Regular",Consolas,monospace;font-size:14.5px;font-weight:760}
+    .relation-id{fill:#0F766E;font-family:"SFMono-Regular",Consolas,monospace;font-size:14px;font-weight:680}.relation-metric{fill:#7E22CE;font-size:16px;font-weight:740}
+    .metric-row-a{fill:#FAF5FF}.metric-row-b{fill:#FFFFFF}.metric-id{fill:#7E22CE;font-family:"SFMono-Regular",Consolas,monospace;font-size:14px;font-weight:680}.metric-name{fill:#6B21A8;font-size:18px;font-weight:760}.metric-detail{fill:#475569;font-size:14.5px}.metric-columns{fill:#0F766E;font-family:"SFMono-Regular",Consolas,monospace;font-size:12.2px}.metric-alias{fill:#6B21A8;font-size:13.5px}
+    .vector-source-head{fill:#FEF3C7}.value-source-head{fill:#FFEDD5}.vector-source-cell{fill:#FFFBEB}.value-source-cell{fill:#FFF7ED}
+    .qdrant-column-index-head{fill:url(#dim-head)}.qdrant-metric-index-head{fill:url(#metric-head)}.es-index-head{fill:#F97316}.index-title{fill:#FFFFFF;font-size:26px;font-weight:760}.index-column-head{fill:#EFF6FF}.index-column-label{fill:#334155;font-family:"SFMono-Regular",Consolas,monospace;font-size:18px;font-weight:720}
+    .qdrant-column-row-a{fill:#EFF6FF}.qdrant-column-row-b{fill:#FFFFFF}.qdrant-metric-row-a{fill:#FAF5FF}.qdrant-metric-row-b{fill:#FFFFFF}.es-row-a{fill:#FFF7ED}.es-row-b{fill:#FFFFFF}.index-inner-line{stroke:#CBD5E1;stroke-width:.8;opacity:.7}.index-id{fill:#0F766E;font-family:"SFMono-Regular",Consolas,monospace;font-size:16.5px;font-weight:720}.index-vector{fill:#1D4ED8;font-family:"SFMono-Regular",Consolas,monospace;font-size:16.5px}.index-payload{fill:#475569;font-family:"SFMono-Regular",Consolas,monospace;font-size:12.5px}.value-text{fill:#C2410C;font-size:18px;font-weight:720}.value-column-id{fill:#475569;font-family:"SFMono-Regular",Consolas,monospace;font-size:16px}
+    .table-link-halo,.metric-link-halo,.index-link-halo{fill:none;stroke:#FFFFFF;stroke-width:7;stroke-linecap:round;stroke-linejoin:round}.table-link{fill:none;stroke:#3B82F6;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}.fact-link{fill:none;stroke:#0F9F8F;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}.metric-link{fill:none;stroke:#9333EA;stroke-width:2.3;stroke-linecap:round}.column-index-link,.metric-index-link,.value-index-link{fill:none;stroke-width:3;stroke-linecap:round}.column-index-link{stroke:#2563EB}.metric-index-link{stroke:#9333EA}.value-index-link{stroke:#F97316}.link-dot{stroke:#FFFFFF;stroke-width:1.5}
+    .legend-pill{fill:#FFFFFF;stroke:#CBD5E1;stroke-width:1}.legend-text{fill:#334155;font-size:11px;font-weight:700}.footer{fill:#0F766E;font-size:11.5px;font-weight:680}
+    .domain-card{fill:#FFFFFF;stroke:#D8E2EE;stroke-width:1.2;filter:url(#domain-shadow)}.domain-head{fill:#F8FAFC}.domain-accent{fill:url(#domain-accent)}.domain-title{fill:#1E293B;font-size:15px;font-weight:760}.chip-dim{fill:#F8FAFF;stroke:#BFDBFE;stroke-width:1}.chip-fact{fill:#F4FFFC;stroke:#99F6E4;stroke-width:1}.domain-table-name{fill:#334155;font-family:"SFMono-Regular",Consolas,monospace;font-size:10.2px;font-weight:650}.domain-table-cn{fill:#64748B;font-size:10.5px;font-weight:650}.badge-dim{fill:#2563EB}.badge-fact{fill:#0F8F83}.badge-text{fill:#FFFFFF;font-size:8.5px;font-weight:800;letter-spacing:.5px;text-anchor:middle;dominant-baseline:middle}
+  </style>
+</defs>
+<rect width="4660" height="3550" fill="url(#page-bg)"/>
+<circle cx="4540" cy="30" r="260" fill="#99F6E4" opacity=".18"/>
+<g id="diagram-content" transform="translate(0 -70)">
+<rect x="40" y="110" width="1430" height="3460" rx="22" class="section-panel"/>
+<text x="70" y="150" class="section-title" >事实表+维度表</text>
+<g aria-label="dim_date">
+<rect x="70" y="210" width="430" height="330" rx="16" class="dw-card"/>
+<path d="M86 210H484Q500 210 500 226V264H70V226Q70 210 86 210Z" class="dim-head"/>
+<text x="88" y="239" class="dw-title" >dim_date</text>
+<text x="482" y="239" class="dw-role" text-anchor="end">DIM · 公共日期维度</text>
+<rect x="70" y="264" width="430" height="34" class="dw-column-head"/>
+<text x="88" y="286" class="dw-column-label" >列名</text>
+<text x="275" y="286" class="dw-column-label" >类型</text>
+<text x="375" y="286" class="dw-column-label" >注释</text>
+<rect x="70" y="298" width="430" height="31" class="dw-row-a"/>
+<text x="88" y="318" class="field-pk" >date_key</text>
+<text x="275" y="318" class="field-type" >INT</text>
+<text x="375" y="318" class="field-desc" >日期键，格式 YYYYMMDD</text>
+<rect x="70" y="329" width="430" height="31" class="dw-row-b"/>
+<text x="88" y="349" class="field-dimension" >full_date</text>
+<text x="275" y="349" class="field-type" >DATE</text>
+<text x="375" y="349" class="field-desc" >自然日期</text>
+<rect x="70" y="360" width="430" height="31" class="dw-row-a"/>
+<text x="88" y="380" class="field-dimension" >calendar_year</text>
+<text x="275" y="380" class="field-type" >SMALLINT</text>
+<text x="375" y="380" class="field-desc" >自然年</text>
+<rect x="70" y="391" width="430" height="31" class="dw-row-b"/>
+<text x="88" y="411" class="field-dimension" >calendar_quarter</text>
+<text x="275" y="411" class="field-type" >TINYINT</text>
+<text x="375" y="411" class="field-desc" >自然季度</text>
+<rect x="70" y="422" width="430" height="31" class="dw-row-a"/>
+<text x="88" y="442" class="field-dimension" >calendar_month</text>
+<text x="275" y="442" class="field-type" >TINYINT</text>
+<text x="375" y="442" class="field-desc" >自然月</text>
+<rect x="70" y="453" width="430" height="31" class="dw-row-b"/>
+<text x="88" y="473" class="field-dimension" >is_workday</text>
+<text x="275" y="473" class="field-type" >TINYINT</text>
+<text x="375" y="473" class="field-desc" >是否工作日</text>
+<rect x="70" y="484" width="430" height="31" class="dw-row-a"/>
+<text x="88" y="504" class="field-dimension" >is_holiday</text>
+<text x="275" y="504" class="field-type" >TINYINT</text>
+<text x="375" y="504" class="field-desc" >是否法定节假日</text>
+</g>
+<g aria-label="dim_category_info_zip">
+<rect x="520" y="210" width="430" height="330" rx="16" class="dw-card"/>
+<path d="M536 210H934Q950 210 950 226V264H520V226Q520 210 536 210Z" class="dim-head"/>
+<text x="538" y="239" class="dw-title" >dim_category_info_zip</text>
+<text x="932" y="239" class="dw-role" text-anchor="end">DIM · 类目拉链维度</text>
+<rect x="520" y="264" width="430" height="34" class="dw-column-head"/>
+<text x="538" y="286" class="dw-column-label" >列名</text>
+<text x="725" y="286" class="dw-column-label" >类型</text>
+<text x="825" y="286" class="dw-column-label" >注释</text>
+<rect x="520" y="298" width="430" height="31" class="dw-row-a"/>
+<text x="538" y="318" class="field-pk" >category_sk</text>
+<text x="725" y="318" class="field-type" >BIGINT</text>
+<text x="825" y="318" class="field-desc" >类目版本代理键</text>
+<rect x="520" y="329" width="430" height="31" class="dw-row-b"/>
+<text x="538" y="349" class="field-dimension" >category_id</text>
+<text x="725" y="349" class="field-type" >BIGINT</text>
+<text x="825" y="349" class="field-desc" >类目业务 ID</text>
+<rect x="520" y="360" width="430" height="31" class="dw-row-a"/>
+<text x="538" y="380" class="field-dimension" >category_name</text>
+<text x="725" y="380" class="field-type" >VARCHAR(512)</text>
+<text x="825" y="380" class="field-desc" >类目名称</text>
+<rect x="520" y="391" width="430" height="31" class="dw-row-b"/>
+<text x="538" y="411" class="field-dimension" >category_level</text>
+<text x="725" y="411" class="field-type" >TINYINT</text>
+<text x="825" y="411" class="field-desc" >类目层级</text>
+<rect x="520" y="422" width="430" height="31" class="dw-row-a"/>
+<text x="538" y="442" class="field-dimension" >root_category_name</text>
+<text x="725" y="442" class="field-type" >VARCHAR(512)</text>
+<text x="825" y="442" class="field-desc" >一级类目名称快照</text>
+<rect x="520" y="453" width="430" height="31" class="dw-row-b"/>
+<text x="538" y="473" class="field-dimension" >category_status</text>
+<text x="725" y="473" class="field-type" >TINYINT</text>
+<text x="825" y="473" class="field-desc" >状态：0 停用，1 启用</text>
+</g>
+<g aria-label="dim_brand_info">
+<rect x="970" y="210" width="430" height="330" rx="16" class="dw-card"/>
+<path d="M986 210H1384Q1400 210 1400 226V264H970V226Q970 210 986 210Z" class="dim-head"/>
+<text x="988" y="239" class="dw-title" >dim_brand_info</text>
+<text x="1382" y="239" class="dw-role" text-anchor="end">DIM · 品牌一致性维度</text>
+<rect x="970" y="264" width="430" height="34" class="dw-column-head"/>
+<text x="988" y="286" class="dw-column-label" >列名</text>
+<text x="1175" y="286" class="dw-column-label" >类型</text>
+<text x="1275" y="286" class="dw-column-label" >注释</text>
+<rect x="970" y="298" width="430" height="31" class="dw-row-a"/>
+<text x="988" y="318" class="field-pk" >brand_sk</text>
+<text x="1175" y="318" class="field-type" >BIGINT</text>
+<text x="1275" y="318" class="field-desc" >品牌维度代理键</text>
+<rect x="970" y="329" width="430" height="31" class="dw-row-b"/>
+<text x="988" y="349" class="field-dimension" >brand_id</text>
+<text x="1175" y="349" class="field-type" >BIGINT</text>
+<text x="1275" y="349" class="field-desc" >品牌业务 ID</text>
+<rect x="970" y="360" width="430" height="31" class="dw-row-a"/>
+<text x="988" y="380" class="field-dimension" >brand_name</text>
+<text x="1175" y="380" class="field-type" >VARCHAR(512)</text>
+<text x="1275" y="380" class="field-desc" >品牌名称</text>
+<rect x="970" y="391" width="430" height="31" class="dw-row-b"/>
+<text x="988" y="411" class="field-dimension" >brand_alias</text>
+<text x="1175" y="411" class="field-type" >VARCHAR(512)</text>
+<text x="1275" y="411" class="field-desc" >品牌别名</text>
+<rect x="970" y="422" width="430" height="31" class="dw-row-a"/>
+<text x="988" y="442" class="field-dimension" >country_name</text>
+<text x="1175" y="442" class="field-type" >VARCHAR(256)</text>
+<text x="1275" y="442" class="field-desc" >品牌国家名称</text>
+</g>
+<g aria-label="dwd_trade_order_detail_di">
+<rect x="300" y="780" width="910" height="410" rx="18" class="fact-card"/>
+<path d="M318 780H1192Q1210 780 1210 798V842H300V798Q300 780 318 780Z" class="fact-head"/>
+<text x="322" y="810" class="fact-title" >dwd_trade_order_detail_di</text>
+<text x="322" y="832" class="fact-sub" >交易域下单明细事务事实，每个订单商品明细一行</text>
+<text x="1188" y="811" class="fact-role" text-anchor="end">FACT · 交易域下单明细</text>
+<rect x="310" y="852" width="440" height="34" class="dw-column-head"/>
+<text x="320" y="875" class="dw-column-label" >列名</text>
+<text x="485" y="875" class="dw-column-label" >类型</text>
+<text x="595" y="875" class="dw-column-label" >注释</text>
+<rect x="310" y="886" width="440" height="31" class="dw-row-a"/>
+<text x="320" y="906" class="field-pk" >order_detail_id</text>
+<text x="485" y="906" class="field-type" >BIGINT</text>
+<text x="595" y="906" class="field-desc" >订单明细业务 ID</text>
+<rect x="310" y="917" width="440" height="31" class="dw-row-b"/>
+<text x="320" y="937" class="field-dimension" >order_id</text>
+<text x="485" y="937" class="field-type" >BIGINT</text>
+<text x="595" y="937" class="field-desc" >订单业务 ID</text>
+<rect x="310" y="948" width="440" height="31" class="dw-row-a"/>
+<text x="320" y="968" class="field-fk" >order_date_key</text>
+<text x="485" y="968" class="field-type" >INT</text>
+<text x="595" y="968" class="field-desc" >下单日期键</text>
+<rect x="310" y="979" width="440" height="31" class="dw-row-b"/>
+<text x="320" y="999" class="field-fk" >category_sk</text>
+<text x="485" y="999" class="field-type" >BIGINT</text>
+<text x="595" y="999" class="field-desc" >下单时叶子类目版本代理键</text>
+<rect x="310" y="1010" width="440" height="31" class="dw-row-a"/>
+<text x="320" y="1030" class="field-fk" >shop_sk</text>
+<text x="485" y="1030" class="field-type" >BIGINT</text>
+<text x="595" y="1030" class="field-desc" >下单时店铺版本代理键</text>
+<rect x="310" y="1041" width="440" height="31" class="dw-row-b"/>
+<text x="320" y="1061" class="field-fk" >brand_sk</text>
+<text x="485" y="1061" class="field-type" >BIGINT</text>
+<text x="595" y="1061" class="field-desc" >品牌代理键</text>
+<rect x="310" y="1072" width="440" height="31" class="dw-row-a"/>
+<text x="320" y="1092" class="field-fk" >receiver_region_sk</text>
+<text x="485" y="1092" class="field-type" >BIGINT</text>
+<text x="595" y="1092" class="field-desc" >收货区县版本代理键</text>
+<rect x="310" y="1103" width="440" height="31" class="dw-row-b"/>
+<text x="320" y="1123" class="field-fk" >channel_sk</text>
+<text x="485" y="1123" class="field-type" >BIGINT</text>
+<text x="595" y="1123" class="field-desc" >下单渠道代理键</text>
+<rect x="310" y="1134" width="440" height="31" class="dw-row-a"/>
+<text x="320" y="1154" class="field-measure" >sku_qty</text>
+<text x="485" y="1154" class="field-type" >INT</text>
+<text x="595" y="1154" class="field-desc" >购买件数</text>
+<rect x="760" y="852" width="440" height="34" class="dw-column-head"/>
+<text x="770" y="875" class="dw-column-label" >列名</text>
+<text x="935" y="875" class="dw-column-label" >类型</text>
+<text x="1045" y="875" class="dw-column-label" >注释</text>
+<rect x="760" y="886" width="440" height="31" class="dw-row-a"/>
+<text x="770" y="906" class="field-measure" >sale_amount</text>
+<text x="935" y="906" class="field-type" >DECIMAL(18,2)</text>
+<text x="1045" y="906" class="field-desc" >优惠前销售金额</text>
+<rect x="760" y="917" width="440" height="31" class="dw-row-b"/>
+<text x="770" y="937" class="field-measure" >receivable_amount</text>
+<text x="935" y="937" class="field-type" >DECIMAL(18,2)</text>
+<text x="1045" y="937" class="field-desc" >下单应收金额</text>
+<rect x="760" y="948" width="440" height="31" class="dw-row-a"/>
+<text x="770" y="968" class="field-measure" >cost_amount</text>
+<text x="935" y="968" class="field-type" >DECIMAL(18,2)</text>
+<text x="1045" y="968" class="field-desc" >下单时标准成本金额快照</text>
+<rect x="760" y="979" width="440" height="31" class="dw-row-b"/>
+<text x="770" y="999" class="field-dimension" >user_id</text>
+<text x="935" y="999" class="field-type" >BIGINT</text>
+<text x="1045" y="999" class="field-desc" >用户业务 ID</text>
+<rect x="760" y="1010" width="440" height="31" class="dw-row-a"/>
+<text x="770" y="1030" class="field-dimension" >sku_id</text>
+<text x="935" y="1030" class="field-type" >BIGINT</text>
+<text x="1045" y="1030" class="field-desc" >SKU 业务 ID</text>
+<rect x="760" y="1041" width="440" height="31" class="dw-row-b"/>
+<text x="770" y="1061" class="field-dimension" >order_source</text>
+<text x="935" y="1061" class="field-type" >VARCHAR(128)</text>
+<text x="1045" y="1061" class="field-desc" >下单来源</text>
+<rect x="760" y="1072" width="440" height="31" class="dw-row-a"/>
+<text x="770" y="1092" class="field-dimension" >order_scene</text>
+<text x="935" y="1092" class="field-type" >VARCHAR(128)</text>
+<text x="1045" y="1092" class="field-desc" >订单场景</text>
+<rect x="760" y="1103" width="440" height="31" class="dw-row-b"/>
+<text x="770" y="1123" class="field-dimension" >currency_code</text>
+<text x="935" y="1123" class="field-type" >CHAR(3)</text>
+<text x="1045" y="1123" class="field-desc" >币种编码</text>
+<rect x="760" y="1134" width="440" height="31" class="dw-row-a"/>
+<text x="770" y="1154" class="field-dimension" >biz_date</text>
+<text x="935" y="1154" class="field-type" >DATE</text>
+<text x="1045" y="1154" class="field-desc" >业务日期，取下单日期</text>
+</g>
+<g aria-label="dim_geo_region_zip">
+<rect x="70" y="1510" width="430" height="330" rx="16" class="dw-card"/>
+<path d="M86 1510H484Q500 1510 500 1526V1564H70V1526Q70 1510 86 1510Z" class="dim-head"/>
+<text x="88" y="1539" class="dw-title" >dim_geo_region_zip</text>
+<text x="482" y="1539" class="dw-role" text-anchor="end">DIM · 行政区划拉链维度</text>
+<rect x="70" y="1564" width="430" height="34" class="dw-column-head"/>
+<text x="88" y="1586" class="dw-column-label" >列名</text>
+<text x="275" y="1586" class="dw-column-label" >类型</text>
+<text x="375" y="1586" class="dw-column-label" >注释</text>
+<rect x="70" y="1598" width="430" height="31" class="dw-row-a"/>
+<text x="88" y="1618" class="field-pk" >region_sk</text>
+<text x="275" y="1618" class="field-type" >BIGINT</text>
+<text x="375" y="1618" class="field-desc" >行政区域维度代理键</text>
+<rect x="70" y="1629" width="430" height="31" class="dw-row-b"/>
+<text x="88" y="1649" class="field-dimension" >region_code</text>
+<text x="275" y="1649" class="field-type" >VARCHAR(80)</text>
+<text x="375" y="1649" class="field-desc" >区域业务编码</text>
+<rect x="70" y="1660" width="430" height="31" class="dw-row-a"/>
+<text x="88" y="1680" class="field-dimension" >province_name</text>
+<text x="275" y="1680" class="field-type" >VARCHAR(512)</text>
+<text x="375" y="1680" class="field-desc" >省名称</text>
+<rect x="70" y="1691" width="430" height="31" class="dw-row-b"/>
+<text x="88" y="1711" class="field-dimension" >city_name</text>
+<text x="275" y="1711" class="field-type" >VARCHAR(512)</text>
+<text x="375" y="1711" class="field-desc" >市名称</text>
+<rect x="70" y="1722" width="430" height="31" class="dw-row-a"/>
+<text x="88" y="1742" class="field-dimension" >district_name</text>
+<text x="275" y="1742" class="field-type" >VARCHAR(512)</text>
+<text x="375" y="1742" class="field-desc" >区县名称</text>
+<rect x="70" y="1753" width="430" height="31" class="dw-row-b"/>
+<text x="88" y="1773" class="field-dimension" >region_path</text>
+<text x="275" y="1773" class="field-type" >VARCHAR(2048)</text>
+<text x="375" y="1773" class="field-desc" >完整区域路径</text>
+</g>
+<g aria-label="dim_shop_info_zip">
+<rect x="520" y="1510" width="430" height="330" rx="16" class="dw-card"/>
+<path d="M536 1510H934Q950 1510 950 1526V1564H520V1526Q520 1510 536 1510Z" class="dim-head"/>
+<text x="538" y="1539" class="dw-title" >dim_shop_info_zip</text>
+<text x="932" y="1539" class="dw-role" text-anchor="end">DIM · 店铺拉链维度</text>
+<rect x="520" y="1564" width="430" height="34" class="dw-column-head"/>
+<text x="538" y="1586" class="dw-column-label" >列名</text>
+<text x="725" y="1586" class="dw-column-label" >类型</text>
+<text x="825" y="1586" class="dw-column-label" >注释</text>
+<rect x="520" y="1598" width="430" height="31" class="dw-row-a"/>
+<text x="538" y="1618" class="field-pk" >shop_sk</text>
+<text x="725" y="1618" class="field-type" >BIGINT</text>
+<text x="825" y="1618" class="field-desc" >店铺维度代理键</text>
+<rect x="520" y="1629" width="430" height="31" class="dw-row-b"/>
+<text x="538" y="1649" class="field-dimension" >shop_id</text>
+<text x="725" y="1649" class="field-type" >BIGINT</text>
+<text x="825" y="1649" class="field-desc" >店铺业务 ID</text>
+<rect x="520" y="1660" width="430" height="31" class="dw-row-a"/>
+<text x="538" y="1680" class="field-dimension" >shop_name</text>
+<text x="725" y="1680" class="field-type" >VARCHAR(512)</text>
+<text x="825" y="1680" class="field-desc" >店铺名称</text>
+<rect x="520" y="1691" width="430" height="31" class="dw-row-b"/>
+<text x="538" y="1711" class="field-dimension" >shop_type</text>
+<text x="725" y="1711" class="field-type" >VARCHAR(128)</text>
+<text x="825" y="1711" class="field-desc" >店铺类型</text>
+<rect x="520" y="1722" width="430" height="31" class="dw-row-a"/>
+<text x="538" y="1742" class="field-dimension" >industry_type</text>
+<text x="725" y="1742" class="field-type" >VARCHAR(256)</text>
+<text x="825" y="1742" class="field-desc" >行业类型</text>
+</g>
+<g aria-label="dim_channel_info">
+<rect x="970" y="1510" width="430" height="330" rx="16" class="dw-card"/>
+<path d="M986 1510H1384Q1400 1510 1400 1526V1564H970V1526Q970 1510 986 1510Z" class="dim-head"/>
+<text x="988" y="1539" class="dw-title" >dim_channel_info</text>
+<text x="1382" y="1539" class="dw-role" text-anchor="end">DIM · 渠道一致性维度</text>
+<rect x="970" y="1564" width="430" height="34" class="dw-column-head"/>
+<text x="988" y="1586" class="dw-column-label" >列名</text>
+<text x="1175" y="1586" class="dw-column-label" >类型</text>
+<text x="1275" y="1586" class="dw-column-label" >注释</text>
+<rect x="970" y="1598" width="430" height="31" class="dw-row-a"/>
+<text x="988" y="1618" class="field-pk" >channel_sk</text>
+<text x="1175" y="1618" class="field-type" >BIGINT</text>
+<text x="1275" y="1618" class="field-desc" >渠道维度代理键</text>
+<rect x="970" y="1629" width="430" height="31" class="dw-row-b"/>
+<text x="988" y="1649" class="field-dimension" >channel_code</text>
+<text x="1175" y="1649" class="field-type" >VARCHAR(128)</text>
+<text x="1275" y="1649" class="field-desc" >渠道业务编码</text>
+<rect x="970" y="1660" width="430" height="31" class="dw-row-a"/>
+<text x="988" y="1680" class="field-dimension" >channel_name</text>
+<text x="1175" y="1680" class="field-type" >VARCHAR(256)</text>
+<text x="1275" y="1680" class="field-desc" >渠道名称</text>
+<rect x="970" y="1691" width="430" height="31" class="dw-row-b"/>
+<text x="988" y="1711" class="field-dimension" >channel_group</text>
+<text x="1175" y="1711" class="field-type" >VARCHAR(128)</text>
+<text x="1275" y="1711" class="field-desc" >渠道分组</text>
+<rect x="970" y="1722" width="430" height="31" class="dw-row-a"/>
+    <text x="988" y="1742" class="field-dimension" >platform_type</text>
+    <text x="1175" y="1742" class="field-type" >VARCHAR(128)</text>
+    <text x="1275" y="1742" class="field-desc" >平台类型</text>
+</g>
+<g id="data-domain-map" transform="translate(0 70)" aria-label="数据域划分与全量表清单">
+<g aria-label="公共域">
+<rect x="70" y="1872" width="1370" height="144" rx="12" class="domain-card"/>
+<rect x="70" y="1872" width="1370" height="34" rx="12" class="domain-head"/>
+<rect x="70" y="1896" width="1370" height="10" class="domain-head"/>
+<rect x="70" y="1872" width="1370" height="4" rx="2" class="domain-accent"/>
+<text x="88" y="1895" class="domain-title" >公共域 · 公共维度</text>
+<g aria-label="dim_date · 日期维度">
+<rect x="82" y="1916" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="92" y="1931" class="domain-table-name" >dim_date</text>
+<text x="92" y="1949" class="domain-table-cn" >日期维度</text>
+<rect x="694" y="1936" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="716" y="1944" class="badge-text" >DIM</text>
+</g>
+<g aria-label="dim_geo_region_zip · 地理区域拉链维度">
+<rect x="760" y="1916" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="770" y="1931" class="domain-table-name" >dim_geo_region_zip</text>
+<text x="770" y="1949" class="domain-table-cn" >地理区域拉链维度</text>
+<rect x="1372" y="1936" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="1394" y="1944" class="badge-text" >DIM</text>
+</g>
+<g aria-label="dim_payment_type · 支付方式维度">
+<rect x="82" y="1964" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="92" y="1979" class="domain-table-name" >dim_payment_type</text>
+<text x="92" y="1997" class="domain-table-cn" >支付方式维度</text>
+<rect x="694" y="1984" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="716" y="1992" class="badge-text" >DIM</text>
+</g>
+<g aria-label="dim_logistics_company · 物流公司维度">
+<rect x="760" y="1964" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="770" y="1979" class="domain-table-name" >dim_logistics_company</text>
+<text x="770" y="1997" class="domain-table-cn" >物流公司维度</text>
+<rect x="1372" y="1984" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="1394" y="1992" class="badge-text" >DIM</text>
+</g>
+</g>
+<g aria-label="用户域">
+<rect x="70" y="2030" width="1370" height="144" rx="12" class="domain-card"/>
+<rect x="70" y="2030" width="1370" height="34" rx="12" class="domain-head"/>
+<rect x="70" y="2054" width="1370" height="10" class="domain-head"/>
+<rect x="70" y="2030" width="1370" height="4" rx="2" class="domain-accent"/>
+<text x="88" y="2053" class="domain-title" >用户域 · 用户画像与标签</text>
+<g aria-label="dim_user_info_zip · 用户信息拉链维度">
+<rect x="82" y="2074" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="92" y="2089" class="domain-table-name" >dim_user_info_zip</text>
+<text x="92" y="2107" class="domain-table-cn" >用户信息拉链维度</text>
+<rect x="694" y="2094" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="716" y="2102" class="badge-text" >DIM</text>
+</g>
+<g aria-label="dim_user_tag_info · 用户标签维度">
+<rect x="760" y="2074" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="770" y="2089" class="domain-table-name" >dim_user_tag_info</text>
+<text x="770" y="2107" class="domain-table-cn" >用户标签维度</text>
+<rect x="1372" y="2094" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="1394" y="2102" class="badge-text" >DIM</text>
+</g>
+<g aria-label="bridge_user_tag_relation_zip · 用户标签关系拉链表">
+<rect x="82" y="2122" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="92" y="2137" class="domain-table-name" >bridge_user_tag_relation_zip</text>
+<text x="92" y="2155" class="domain-table-cn" >用户标签关系拉链表</text>
+<rect x="694" y="2142" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="716" y="2150" class="badge-text" >DIM</text>
+</g>
+</g>
+<g aria-label="商品域">
+<rect x="70" y="2188" width="1370" height="288" rx="12" class="domain-card"/>
+<rect x="70" y="2188" width="1370" height="34" rx="12" class="domain-head"/>
+<rect x="70" y="2212" width="1370" height="10" class="domain-head"/>
+<rect x="70" y="2188" width="1370" height="4" rx="2" class="domain-accent"/>
+<text x="88" y="2211" class="domain-title" >商品域 · 商家店铺与库存</text>
+<g aria-label="dim_seller_info_zip · 商家信息拉链维度">
+<rect x="82" y="2232" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="92" y="2247" class="domain-table-name" >dim_seller_info_zip</text>
+<text x="92" y="2265" class="domain-table-cn" >商家信息拉链维度</text>
+<rect x="694" y="2252" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="716" y="2260" class="badge-text" >DIM</text>
+</g>
+<g aria-label="dim_shop_info_zip · 店铺信息拉链维度">
+<rect x="760" y="2232" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="770" y="2247" class="domain-table-name" >dim_shop_info_zip</text>
+<text x="770" y="2265" class="domain-table-cn" >店铺信息拉链维度</text>
+<rect x="1372" y="2252" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="1394" y="2260" class="badge-text" >DIM</text>
+</g>
+<g aria-label="dim_category_info_zip · 类目信息拉链维度">
+<rect x="82" y="2280" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="92" y="2295" class="domain-table-name" >dim_category_info_zip</text>
+<text x="92" y="2313" class="domain-table-cn" >类目信息拉链维度</text>
+<rect x="694" y="2300" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="716" y="2308" class="badge-text" >DIM</text>
+</g>
+<g aria-label="dim_brand_info · 品牌信息维度">
+<rect x="760" y="2280" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="770" y="2295" class="domain-table-name" >dim_brand_info</text>
+<text x="770" y="2313" class="domain-table-cn" >品牌信息维度</text>
+<rect x="1372" y="2300" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="1394" y="2308" class="badge-text" >DIM</text>
+</g>
+<g aria-label="dim_warehouse_info_zip · 仓库信息拉链维度">
+<rect x="82" y="2328" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="92" y="2343" class="domain-table-name" >dim_warehouse_info_zip</text>
+<text x="92" y="2361" class="domain-table-cn" >仓库信息拉链维度</text>
+<rect x="694" y="2348" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="716" y="2356" class="badge-text" >DIM</text>
+</g>
+<g aria-label="dim_spu_info_zip · SPU 信息拉链维度">
+<rect x="760" y="2328" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="770" y="2343" class="domain-table-name" >dim_spu_info_zip</text>
+<text x="770" y="2361" class="domain-table-cn" >SPU 信息拉链维度</text>
+<rect x="1372" y="2348" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="1394" y="2356" class="badge-text" >DIM</text>
+</g>
+<g aria-label="dim_sku_info_zip · SKU 信息拉链维度">
+<rect x="82" y="2376" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="92" y="2391" class="domain-table-name" >dim_sku_info_zip</text>
+<text x="92" y="2409" class="domain-table-cn" >SKU 信息拉链维度</text>
+<rect x="694" y="2396" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="716" y="2404" class="badge-text" >DIM</text>
+</g>
+<g aria-label="dwd_product_sku_price_change_di · SKU 价格变更明细">
+<rect x="760" y="2376" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="770" y="2391" class="domain-table-name" >dwd_product_sku_price_change_di</text>
+<text x="770" y="2409" class="domain-table-cn" >SKU 价格变更明细</text>
+<rect x="1372" y="2396" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="1394" y="2404" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_inventory_change_di · 库存变更明细">
+<rect x="82" y="2424" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="92" y="2439" class="domain-table-name" >dwd_inventory_change_di</text>
+<text x="92" y="2457" class="domain-table-cn" >库存变更明细</text>
+<rect x="694" y="2444" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="716" y="2452" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_inventory_daily_snapshot_df · 库存日快照">
+<rect x="760" y="2424" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="770" y="2439" class="domain-table-name" >dwd_inventory_daily_snapshot_df</text>
+<text x="770" y="2457" class="domain-table-cn" >库存日快照</text>
+<rect x="1372" y="2444" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="1394" y="2452" class="badge-text" >FACT</text>
+</g>
+</g>
+<g aria-label="交易域">
+<rect x="70" y="2490" width="1370" height="384" rx="12" class="domain-card"/>
+<rect x="70" y="2490" width="1370" height="34" rx="12" class="domain-head"/>
+<rect x="70" y="2514" width="1370" height="10" class="domain-head"/>
+<rect x="70" y="2490" width="1370" height="4" rx="2" class="domain-accent"/>
+<text x="88" y="2513" class="domain-title" >交易域 · 订单支付物流退款</text>
+<g aria-label="dwd_trade_order_detail_di · 订单明细">
+<rect x="82" y="2534" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="92" y="2549" class="domain-table-name" >dwd_trade_order_detail_di</text>
+<text x="92" y="2567" class="domain-table-cn" >订单明细</text>
+<rect x="694" y="2554" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="716" y="2562" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_trade_order_status_event_di · 订单状态事件">
+<rect x="760" y="2534" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="770" y="2549" class="domain-table-name" >dwd_trade_order_status_event_di</text>
+<text x="770" y="2567" class="domain-table-cn" >订单状态事件</text>
+<rect x="1372" y="2554" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="1394" y="2562" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_trade_order_detail_activity_di · 订单活动明细">
+<rect x="82" y="2582" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="92" y="2597" class="domain-table-name" >dwd_trade_order_detail_activity_di</text>
+<text x="92" y="2615" class="domain-table-cn" >订单活动明细</text>
+<rect x="694" y="2602" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="716" y="2610" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_trade_order_detail_coupon_di · 订单优惠券明细">
+<rect x="760" y="2582" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="770" y="2597" class="domain-table-name" >dwd_trade_order_detail_coupon_di</text>
+<text x="770" y="2615" class="domain-table-cn" >订单优惠券明细</text>
+<rect x="1372" y="2602" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="1394" y="2610" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_trade_pay_detail_di · 支付明细">
+<rect x="82" y="2630" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="92" y="2645" class="domain-table-name" >dwd_trade_pay_detail_di</text>
+<text x="92" y="2663" class="domain-table-cn" >支付明细</text>
+<rect x="694" y="2650" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="716" y="2658" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_trade_pay_order_detail_di · 支付订单明细">
+<rect x="760" y="2630" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="770" y="2645" class="domain-table-name" >dwd_trade_pay_order_detail_di</text>
+<text x="770" y="2663" class="domain-table-cn" >支付订单明细</text>
+<rect x="1372" y="2650" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="1394" y="2658" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_trade_pay_status_event_di · 支付状态事件">
+<rect x="82" y="2678" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="92" y="2693" class="domain-table-name" >dwd_trade_pay_status_event_di</text>
+<text x="92" y="2711" class="domain-table-cn" >支付状态事件</text>
+<rect x="694" y="2698" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="716" y="2706" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_trade_delivery_di · 配送明细">
+<rect x="760" y="2678" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="770" y="2693" class="domain-table-name" >dwd_trade_delivery_di</text>
+<text x="770" y="2711" class="domain-table-cn" >配送明细</text>
+<rect x="1372" y="2698" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="1394" y="2706" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_trade_delivery_item_di · 配送商品明细">
+<rect x="82" y="2726" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="92" y="2741" class="domain-table-name" >dwd_trade_delivery_item_di</text>
+<text x="92" y="2759" class="domain-table-cn" >配送商品明细</text>
+<rect x="694" y="2746" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="716" y="2754" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_trade_delivery_status_event_di · 配送状态事件">
+<rect x="760" y="2726" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="770" y="2741" class="domain-table-name" >dwd_trade_delivery_status_event_di</text>
+<text x="770" y="2759" class="domain-table-cn" >配送状态事件</text>
+<rect x="1372" y="2746" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="1394" y="2754" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_trade_refund_detail_di · 退款明细">
+<rect x="82" y="2774" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="92" y="2789" class="domain-table-name" >dwd_trade_refund_detail_di</text>
+<text x="92" y="2807" class="domain-table-cn" >退款明细</text>
+<rect x="694" y="2794" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="716" y="2802" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_trade_refund_status_event_di · 退款状态事件">
+<rect x="760" y="2774" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="770" y="2789" class="domain-table-name" >dwd_trade_refund_status_event_di</text>
+<text x="770" y="2807" class="domain-table-cn" >退款状态事件</text>
+<rect x="1372" y="2794" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="1394" y="2802" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_trade_refund_pay_detail_di · 退款支付明细">
+<rect x="82" y="2822" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="92" y="2837" class="domain-table-name" >dwd_trade_refund_pay_detail_di</text>
+<text x="92" y="2855" class="domain-table-cn" >退款支付明细</text>
+<rect x="694" y="2842" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="716" y="2850" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_trade_refund_pay_status_event_di · 退款支付状态事件">
+<rect x="760" y="2822" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="770" y="2837" class="domain-table-name" >dwd_trade_refund_pay_status_event_di</text>
+<text x="770" y="2855" class="domain-table-cn" >退款支付状态事件</text>
+<rect x="1372" y="2842" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="1394" y="2850" class="badge-text" >FACT</text>
+</g>
+</g>
+<g aria-label="营销域">
+<rect x="70" y="2888" width="1370" height="192" rx="12" class="domain-card"/>
+<rect x="70" y="2888" width="1370" height="34" rx="12" class="domain-head"/>
+<rect x="70" y="2912" width="1370" height="10" class="domain-head"/>
+<rect x="70" y="2888" width="1370" height="4" rx="2" class="domain-accent"/>
+<text x="88" y="2911" class="domain-title" >营销域 · 促销与优惠券</text>
+<g aria-label="dim_promotion_rule_version · 促销规则版本维度">
+<rect x="82" y="2932" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="92" y="2947" class="domain-table-name" >dim_promotion_rule_version</text>
+<text x="92" y="2965" class="domain-table-cn" >促销规则版本维度</text>
+<rect x="694" y="2952" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="716" y="2960" class="badge-text" >DIM</text>
+</g>
+<g aria-label="bridge_promotion_scope · 促销适用范围桥接表">
+<rect x="760" y="2932" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="770" y="2947" class="domain-table-name" >bridge_promotion_scope</text>
+<text x="770" y="2965" class="domain-table-cn" >促销适用范围桥接表</text>
+<rect x="1372" y="2952" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="1394" y="2960" class="badge-text" >DIM</text>
+</g>
+<g aria-label="dim_coupon_template_version · 优惠券模板版本维度">
+<rect x="82" y="2980" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="92" y="2995" class="domain-table-name" >dim_coupon_template_version</text>
+<text x="92" y="3013" class="domain-table-cn" >优惠券模板版本维度</text>
+<rect x="694" y="3000" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="716" y="3008" class="badge-text" >DIM</text>
+</g>
+<g aria-label="bridge_coupon_scope · 优惠券适用范围桥接表">
+<rect x="760" y="2980" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="770" y="2995" class="domain-table-name" >bridge_coupon_scope</text>
+<text x="770" y="3013" class="domain-table-cn" >优惠券适用范围桥接表</text>
+<rect x="1372" y="3000" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="1394" y="3008" class="badge-text" >DIM</text>
+</g>
+<g aria-label="dwd_marketing_user_coupon_event_di · 用户优惠券事件">
+<rect x="82" y="3028" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="92" y="3043" class="domain-table-name" >dwd_marketing_user_coupon_event_di</text>
+<text x="92" y="3061" class="domain-table-cn" >用户优惠券事件</text>
+<rect x="694" y="3048" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="716" y="3056" class="badge-text" >FACT</text>
+</g>
+</g>
+<g aria-label="流量域">
+<rect x="70" y="3094" width="1370" height="240" rx="12" class="domain-card"/>
+<rect x="70" y="3094" width="1370" height="34" rx="12" class="domain-head"/>
+<rect x="70" y="3118" width="1370" height="10" class="domain-head"/>
+<rect x="70" y="3094" width="1370" height="4" rx="2" class="domain-accent"/>
+<text x="88" y="3117" class="domain-title" >流量域 · 渠道页面搜索互动</text>
+<g aria-label="dim_channel_info · 渠道信息维度">
+<rect x="82" y="3138" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="92" y="3153" class="domain-table-name" >dim_channel_info</text>
+<text x="92" y="3171" class="domain-table-cn" >渠道信息维度</text>
+<rect x="694" y="3158" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="716" y="3166" class="badge-text" >DIM</text>
+</g>
+<g aria-label="dim_page_info · 页面信息维度">
+<rect x="760" y="3138" width="668" height="40" rx="7" class="chip-dim"/>
+<text x="770" y="3153" class="domain-table-name" >dim_page_info</text>
+<text x="770" y="3171" class="domain-table-cn" >页面信息维度</text>
+<rect x="1372" y="3158" width="44" height="16" rx="8" class="badge-dim"/>
+<text x="1394" y="3166" class="badge-text" >DIM</text>
+</g>
+<g aria-label="dwd_interaction_cart_event_di · 加购事件">
+<rect x="82" y="3186" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="92" y="3201" class="domain-table-name" >dwd_interaction_cart_event_di</text>
+<text x="92" y="3219" class="domain-table-cn" >加购事件</text>
+<rect x="694" y="3206" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="716" y="3214" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_interaction_favor_event_di · 收藏事件">
+<rect x="760" y="3186" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="770" y="3201" class="domain-table-name" >dwd_interaction_favor_event_di</text>
+<text x="770" y="3219" class="domain-table-cn" >收藏事件</text>
+<rect x="1372" y="3206" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="1394" y="3214" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_traffic_session_di · 会话明细">
+<rect x="82" y="3234" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="92" y="3249" class="domain-table-name" >dwd_traffic_session_di</text>
+<text x="92" y="3267" class="domain-table-cn" >会话明细</text>
+<rect x="694" y="3254" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="716" y="3262" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_traffic_page_view_di · 页面浏览明细">
+<rect x="760" y="3234" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="770" y="3249" class="domain-table-name" >dwd_traffic_page_view_di</text>
+<text x="770" y="3267" class="domain-table-cn" >页面浏览明细</text>
+<rect x="1372" y="3254" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="1394" y="3262" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_traffic_search_di · 搜索明细">
+<rect x="82" y="3282" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="92" y="3297" class="domain-table-name" >dwd_traffic_search_di</text>
+<text x="92" y="3315" class="domain-table-cn" >搜索明细</text>
+<rect x="694" y="3302" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="716" y="3310" class="badge-text" >FACT</text>
+</g>
+<g aria-label="dwd_traffic_search_click_di · 搜索点击明细">
+<rect x="760" y="3282" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="770" y="3297" class="domain-table-name" >dwd_traffic_search_click_di</text>
+<text x="770" y="3315" class="domain-table-cn" >搜索点击明细</text>
+<rect x="1372" y="3302" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="1394" y="3310" class="badge-text" >FACT</text>
+</g>
+</g>
+<g aria-label="服务域">
+<rect x="70" y="3348" width="1370" height="96" rx="12" class="domain-card"/>
+<rect x="70" y="3348" width="1370" height="34" rx="12" class="domain-head"/>
+<rect x="70" y="3372" width="1370" height="10" class="domain-head"/>
+<rect x="70" y="3348" width="1370" height="4" rx="2" class="domain-accent"/>
+<text x="88" y="3371" class="domain-title" >服务域 · 售后评价</text>
+<g aria-label="dwd_service_comment_detail_di · 售后评价明细">
+<rect x="82" y="3392" width="668" height="40" rx="7" class="chip-fact"/>
+<text x="92" y="3407" class="domain-table-name" >dwd_service_comment_detail_di</text>
+<text x="92" y="3425" class="domain-table-cn" >售后评价明细</text>
+<rect x="694" y="3412" width="44" height="16" rx="8" class="badge-fact"/>
+<text x="716" y="3420" class="badge-text" >FACT</text>
+</g>
+</g>
+</g>
+<rect x="1500" y="110" width="1660" height="3460" rx="22" class="section-panel"/>
+<text x="1530" y="150" class="section-title" >MySQL元数据</text>
+<g id="table-info">
+<rect x="1530" y="180" width="1460" height="368" rx="16" class="meta-card"/>
+<rect x="1530" y="180" width="1460" height="54" rx="16" class="table-info-head"/>
+<rect x="1530" y="218" width="1460" height="16" class="table-info-head"/>
+<text x="1550" y="214" class="meta-title" >table_info</text>
+<rect x="1530" y="234" width="300" height="48" class="meta-column-head"/>
+<text x="1544" y="264" class="meta-column-label" >id · 表编号</text>
+<rect x="1830" y="234" width="300" height="48" class="meta-column-head"/>
+<text x="1844" y="264" class="meta-column-label" >name · 表名称</text>
+<rect x="2130" y="234" width="190" height="48" class="meta-column-head"/>
+<text x="2144" y="264" class="meta-column-label" >role · fact / dim</text>
+<rect x="2320" y="234" width="670" height="48" class="meta-column-head"/>
+<text x="2334" y="264" class="meta-column-label" >description · 表描述与粒度</text>
+<rect x="1530" y="282" width="1460" height="38" class="meta-row-a"/>
+<text x="1544" y="307" class="meta-id" >dim_date</text>
+<text x="1844" y="307" class="meta-id" >dim_date</text>
+<text x="2144" y="307" class="meta-text" >dim</text>
+<text x="2334" y="307" class="meta-text" >公共日期维度，每个自然日期一行</text>
+<rect x="1530" y="320" width="1460" height="38" class="meta-row-b"/>
+<text x="1544" y="345" class="meta-id" >dim_category_info_zip</text>
+<text x="1844" y="345" class="meta-id" >dim_category_info_zip</text>
+<text x="2144" y="345" class="meta-text" >dim</text>
+<text x="2334" y="345" class="meta-text" >商品类目一致性维度拉链表，每个类目业务版本一行</text>
+<rect x="1530" y="358" width="1460" height="38" class="meta-row-a"/>
+<text x="1544" y="383" class="meta-id" >dim_brand_info</text>
+<text x="1844" y="383" class="meta-id" >dim_brand_info</text>
+<text x="2144" y="383" class="meta-text" >dim</text>
+<text x="2334" y="383" class="meta-text" >品牌 Type 1 一致性维度，每个品牌一行</text>
+<rect x="1530" y="396" width="1460" height="38" class="meta-row-b"/>
+<text x="1544" y="421" class="meta-id" >dwd_trade_order_detail_di</text>
+<text x="1844" y="421" class="meta-id" >dwd_trade_order_detail_di</text>
+<text x="2144" y="421" class="meta-text" >fact</text>
+<text x="2334" y="421" class="meta-text" >交易域下单明细事务事实，每个订单商品明细一行</text>
+<rect x="1530" y="434" width="1460" height="38" class="meta-row-a"/>
+<text x="1544" y="459" class="meta-id" >dim_geo_region_zip</text>
+<text x="1844" y="459" class="meta-id" >dim_geo_region_zip</text>
+<text x="2144" y="459" class="meta-text" >dim</text>
+<text x="2334" y="459" class="meta-text" >行政区域一致性维度拉链表，每个地区业务版本一行</text>
+<rect x="1530" y="472" width="1460" height="38" class="meta-row-b"/>
+<text x="1544" y="497" class="meta-id" >dim_shop_info_zip</text>
+<text x="1844" y="497" class="meta-id" >dim_shop_info_zip</text>
+<text x="2144" y="497" class="meta-text" >dim</text>
+<text x="2334" y="497" class="meta-text" >店铺一致性维度拉链表，每个店铺业务版本一行</text>
+<rect x="1530" y="510" width="1460" height="38" class="meta-row-a"/>
+<text x="1544" y="535" class="meta-id" >dim_channel_info</text>
+<text x="1844" y="535" class="meta-id" >dim_channel_info</text>
+<text x="2144" y="535" class="meta-text" >dim</text>
+<text x="2334" y="535" class="meta-text" >渠道 Type 1 一致性维度，每个渠道一行</text>
+</g>
+<g id="column-info">
+<rect x="1530" y="580" width="1460" height="1638" rx="16" class="meta-card"/>
+<rect x="1530" y="580" width="1460" height="54" rx="16" class="column-info-head"/>
+<rect x="1530" y="618" width="1460" height="16" class="column-info-head"/>
+<text x="1550" y="614" class="meta-title" >column_info</text>
+<rect x="1530" y="634" width="300" height="50" class="meta-column-head value-source-head"/>
+<text x="1540" y="665" class="meta-column-label" >id</text>
+<rect x="1830" y="634" width="155" height="50" class="meta-column-head vector-source-head"/>
+<text x="1840" y="665" class="meta-column-label" >name</text>
+<rect x="1985" y="634" width="140" height="50" class="meta-column-head"/>
+<text x="1995" y="665" class="meta-column-label" >type</text>
+<rect x="2125" y="634" width="115" height="50" class="meta-column-head"/>
+<text x="2135" y="665" class="meta-column-label" >role</text>
+<rect x="2240" y="634" width="160" height="50" class="meta-column-head"/>
+<text x="2250" y="665" class="meta-column-label" >examples</text>
+<rect x="2400" y="634" width="220" height="50" class="meta-column-head vector-source-head"/>
+<text x="2410" y="665" class="meta-column-label" >description</text>
+<rect x="2620" y="634" width="180" height="50" class="meta-column-head vector-source-head"/>
+<text x="2630" y="665" class="meta-column-label" >alias</text>
+<rect x="2800" y="634" width="190" height="50" class="meta-column-head"/>
+<text x="2810" y="665" class="meta-column-label" >table_id</text>
+<rect x="1530" y="684" width="1460" height="26" class="dim-group"/>
+<text x="1542" y="702" class="dim-group-text" >dim_date</text>
+<rect x="1530" y="710" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="710" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="728" class="meta-id-full" >dim_date.date_key</text>
+<rect x="1830" y="710" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="728" class="meta-name-cell" >date_key</text>
+<text x="1994" y="728" class="meta-type-cell" >int</text>
+<text x="2134" y="728" class="meta-role-cell" >primary_key</text>
+<text x="2249" y="728" class="meta-example-cell" >[20260808]</text>
+<rect x="2400" y="710" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="728" class="meta-description-cell" >日期键，格式 YYYYMMDD</text>
+<rect x="2620" y="710" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="728" class="meta-alias-cell" >日期键</text>
+<text x="2809" y="728" class="meta-table-cell" >dim_date</text>
+<rect x="1530" y="736" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="736" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="754" class="meta-id-full" >dim_date.full_date</text>
+<rect x="1830" y="736" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="754" class="meta-name-cell" >full_date</text>
+<text x="1994" y="754" class="meta-type-cell" >date</text>
+<text x="2134" y="754" class="meta-role-cell" >dimension</text>
+<text x="2249" y="754" class="meta-example-cell" >[2026-08-08]</text>
+<rect x="2400" y="736" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="754" class="meta-description-cell" >自然日期</text>
+<rect x="2620" y="736" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="754" class="meta-alias-cell" >日期 / 自然日期</text>
+<text x="2809" y="754" class="meta-table-cell" >dim_date</text>
+<rect x="1530" y="762" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="762" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="780" class="meta-id-full" >dim_date.calendar_year</text>
+<rect x="1830" y="762" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="780" class="meta-name-cell" >calendar_year</text>
+<text x="1994" y="780" class="meta-type-cell" >smallint</text>
+<text x="2134" y="780" class="meta-role-cell" >dimension</text>
+<text x="2249" y="780" class="meta-example-cell" >[2026]</text>
+<rect x="2400" y="762" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="780" class="meta-description-cell" >自然年</text>
+<rect x="2620" y="762" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="780" class="meta-alias-cell" >年份</text>
+<text x="2809" y="780" class="meta-table-cell" >dim_date</text>
+<rect x="1530" y="788" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="788" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="806" class="meta-id-full" >dim_date.calendar_quarter</text>
+<rect x="1830" y="788" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="806" class="meta-name-cell" >calendar_quarter</text>
+<text x="1994" y="806" class="meta-type-cell" >tinyint</text>
+<text x="2134" y="806" class="meta-role-cell" >dimension</text>
+<text x="2249" y="806" class="meta-example-cell" >[3]</text>
+<rect x="2400" y="788" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="806" class="meta-description-cell" >自然季度</text>
+<rect x="2620" y="788" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="806" class="meta-alias-cell" >季度</text>
+<text x="2809" y="806" class="meta-table-cell" >dim_date</text>
+<rect x="1530" y="814" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="814" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="832" class="meta-id-full" >dim_date.calendar_month</text>
+<rect x="1830" y="814" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="832" class="meta-name-cell" >calendar_month</text>
+<text x="1994" y="832" class="meta-type-cell" >tinyint</text>
+<text x="2134" y="832" class="meta-role-cell" >dimension</text>
+<text x="2249" y="832" class="meta-example-cell" >[8]</text>
+<rect x="2400" y="814" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="832" class="meta-description-cell" >自然月</text>
+<rect x="2620" y="814" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="832" class="meta-alias-cell" >月份</text>
+<text x="2809" y="832" class="meta-table-cell" >dim_date</text>
+<rect x="1530" y="840" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="840" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="858" class="meta-id-full" >dim_date.is_workday</text>
+<rect x="1830" y="840" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="858" class="meta-name-cell" >is_workday</text>
+<text x="1994" y="858" class="meta-type-cell" >tinyint</text>
+<text x="2134" y="858" class="meta-role-cell" >dimension</text>
+<text x="2249" y="858" class="meta-example-cell" >[0, 1]</text>
+<rect x="2400" y="840" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="858" class="meta-description-cell" >是否工作日</text>
+<rect x="2620" y="840" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="858" class="meta-alias-cell" >工作日</text>
+<text x="2809" y="858" class="meta-table-cell" >dim_date</text>
+<rect x="1530" y="866" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="866" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="884" class="meta-id-full" >dim_date.is_holiday</text>
+<rect x="1830" y="866" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="884" class="meta-name-cell" >is_holiday</text>
+<text x="1994" y="884" class="meta-type-cell" >tinyint</text>
+<text x="2134" y="884" class="meta-role-cell" >dimension</text>
+<text x="2249" y="884" class="meta-example-cell" >[0, 1]</text>
+<rect x="2400" y="866" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="884" class="meta-description-cell" >是否法定节假日</text>
+<rect x="2620" y="866" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="884" class="meta-alias-cell" >节假日</text>
+<text x="2809" y="884" class="meta-table-cell" >dim_date</text>
+<rect x="1530" y="892" width="1460" height="26" class="dim-group"/>
+<text x="1542" y="910" class="dim-group-text" >dim_category_info_zip</text>
+<rect x="1530" y="918" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="918" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="936" class="meta-id-full" >dim_category_info_zip.category_sk</text>
+<rect x="1830" y="918" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="936" class="meta-name-cell" >category_sk</text>
+<text x="1994" y="936" class="meta-type-cell" >bigint</text>
+<text x="2134" y="936" class="meta-role-cell" >primary_key</text>
+<text x="2249" y="936" class="meta-example-cell" >—</text>
+<rect x="2400" y="918" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="936" class="meta-description-cell" >类目版本代理键</text>
+<rect x="2620" y="918" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="936" class="meta-alias-cell" >类目代理键</text>
+<text x="2809" y="936" class="meta-table-cell" >dim_category_info_zip</text>
+<rect x="1530" y="944" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="944" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="962" class="meta-id-full" >dim_category_info_zip.category_id</text>
+<rect x="1830" y="944" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="962" class="meta-name-cell" >category_id</text>
+<text x="1994" y="962" class="meta-type-cell" >bigint</text>
+<text x="2134" y="962" class="meta-role-cell" >dimension</text>
+<text x="2249" y="962" class="meta-example-cell" >—</text>
+<rect x="2400" y="944" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="962" class="meta-description-cell" >类目业务 ID</text>
+<rect x="2620" y="944" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="962" class="meta-alias-cell" >类目 ID</text>
+<text x="2809" y="962" class="meta-table-cell" >dim_category_info_zip</text>
+<rect x="1530" y="970" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="970" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="988" class="meta-id-full" >dim_category_info_zip.category_name</text>
+<rect x="1830" y="970" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="988" class="meta-name-cell" >category_name</text>
+<text x="1994" y="988" class="meta-type-cell" >varchar(512)</text>
+<text x="2134" y="988" class="meta-role-cell" >dimension</text>
+<text x="2249" y="988" class="meta-example-cell" >[手机数码, 家用电器]</text>
+<rect x="2400" y="970" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="988" class="meta-description-cell" >类目名称</text>
+<rect x="2620" y="970" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="988" class="meta-alias-cell" >类目名称 / 品类名称</text>
+<text x="2809" y="988" class="meta-table-cell" >dim_category_info_zip</text>
+<rect x="1530" y="996" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="996" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1014" class="meta-id-full" >dim_category_info_zip.category_level</text>
+<rect x="1830" y="996" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1014" class="meta-name-cell" >category_level</text>
+<text x="1994" y="1014" class="meta-type-cell" >tinyint</text>
+<text x="2134" y="1014" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1014" class="meta-example-cell" >[1, 2, 3]</text>
+<rect x="2400" y="996" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1014" class="meta-description-cell" >类目层级</text>
+<rect x="2620" y="996" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1014" class="meta-alias-cell" >类目级别</text>
+<text x="2809" y="1014" class="meta-table-cell" >dim_category_info_zip</text>
+<rect x="1530" y="1022" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="1022" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1040" class="meta-id-full" >dim_category_info_zip.root_category_name</text>
+<rect x="1830" y="1022" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1040" class="meta-name-cell" >root_category_name</text>
+<text x="1994" y="1040" class="meta-type-cell" >varchar(512)</text>
+<text x="2134" y="1040" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1040" class="meta-example-cell" >[数码, 家电]</text>
+<rect x="2400" y="1022" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1040" class="meta-description-cell" >一级类目名称快照</text>
+<rect x="2620" y="1022" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1040" class="meta-alias-cell" >一级类目</text>
+<text x="2809" y="1040" class="meta-table-cell" >dim_category_info_zip</text>
+<rect x="1530" y="1048" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="1048" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1066" class="meta-id-full" >dim_category_info_zip.category_status</text>
+<rect x="1830" y="1048" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1066" class="meta-name-cell" >category_status</text>
+<text x="1994" y="1066" class="meta-type-cell" >tinyint</text>
+<text x="2134" y="1066" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1066" class="meta-example-cell" >[0, 1]</text>
+<rect x="2400" y="1048" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1066" class="meta-description-cell" >状态：0 停用，1 启用</text>
+<rect x="2620" y="1048" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1066" class="meta-alias-cell" >启用状态</text>
+<text x="2809" y="1066" class="meta-table-cell" >dim_category_info_zip</text>
+<rect x="1530" y="1074" width="1460" height="26" class="dim-group"/>
+<text x="1542" y="1092" class="dim-group-text" >dim_brand_info</text>
+<rect x="1530" y="1100" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="1100" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1118" class="meta-id-full" >dim_brand_info.brand_sk</text>
+<rect x="1830" y="1100" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1118" class="meta-name-cell" >brand_sk</text>
+<text x="1994" y="1118" class="meta-type-cell" >bigint</text>
+<text x="2134" y="1118" class="meta-role-cell" >primary_key</text>
+<text x="2249" y="1118" class="meta-example-cell" >—</text>
+<rect x="2400" y="1100" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1118" class="meta-description-cell" >品牌维度代理键</text>
+<rect x="2620" y="1100" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1118" class="meta-alias-cell" >品牌代理键</text>
+<text x="2809" y="1118" class="meta-table-cell" >dim_brand_info</text>
+<rect x="1530" y="1126" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="1126" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1144" class="meta-id-full" >dim_brand_info.brand_id</text>
+<rect x="1830" y="1126" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1144" class="meta-name-cell" >brand_id</text>
+<text x="1994" y="1144" class="meta-type-cell" >bigint</text>
+<text x="2134" y="1144" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1144" class="meta-example-cell" >—</text>
+<rect x="2400" y="1126" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1144" class="meta-description-cell" >品牌业务 ID</text>
+<rect x="2620" y="1126" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1144" class="meta-alias-cell" >品牌 ID</text>
+<text x="2809" y="1144" class="meta-table-cell" >dim_brand_info</text>
+<rect x="1530" y="1152" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="1152" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1170" class="meta-id-full" >dim_brand_info.brand_name</text>
+<rect x="1830" y="1152" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1170" class="meta-name-cell" >brand_name</text>
+<text x="1994" y="1170" class="meta-type-cell" >varchar(512)</text>
+<text x="2134" y="1170" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1170" class="meta-example-cell" >[华为, Apple]</text>
+<rect x="2400" y="1152" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1170" class="meta-description-cell" >品牌名称</text>
+<rect x="2620" y="1152" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1170" class="meta-alias-cell" >品牌名称</text>
+<text x="2809" y="1170" class="meta-table-cell" >dim_brand_info</text>
+<rect x="1530" y="1178" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="1178" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1196" class="meta-id-full" >dim_brand_info.brand_alias</text>
+<rect x="1830" y="1178" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1196" class="meta-name-cell" >brand_alias</text>
+<text x="1994" y="1196" class="meta-type-cell" >varchar(512)</text>
+<text x="2134" y="1196" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1196" class="meta-example-cell" >[苹果]</text>
+<rect x="2400" y="1178" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1196" class="meta-description-cell" >品牌别名</text>
+<rect x="2620" y="1178" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1196" class="meta-alias-cell" >品牌别名</text>
+<text x="2809" y="1196" class="meta-table-cell" >dim_brand_info</text>
+<rect x="1530" y="1204" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="1204" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1222" class="meta-id-full" >dim_brand_info.country_name</text>
+<rect x="1830" y="1204" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1222" class="meta-name-cell" >country_name</text>
+<text x="1994" y="1222" class="meta-type-cell" >varchar(256)</text>
+<text x="2134" y="1222" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1222" class="meta-example-cell" >[中国, 美国]</text>
+<rect x="2400" y="1204" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1222" class="meta-description-cell" >品牌国家名称</text>
+<rect x="2620" y="1204" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1222" class="meta-alias-cell" >品牌国家</text>
+<text x="2809" y="1222" class="meta-table-cell" >dim_brand_info</text>
+<rect x="1530" y="1230" width="1460" height="26" class="fact-group"/>
+<text x="1542" y="1248" class="fact-group-text" >dwd_trade_order_detail_di</text>
+<rect x="1530" y="1256" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="1256" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1274" class="meta-id-full" >dwd_trade_order_detail_di.order_detail_id</text>
+<rect x="1830" y="1256" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1274" class="meta-name-cell" >order_detail_id</text>
+<text x="1994" y="1274" class="meta-type-cell" >bigint</text>
+<text x="2134" y="1274" class="meta-role-cell" >primary_key</text>
+<text x="2249" y="1274" class="meta-example-cell" >—</text>
+<rect x="2400" y="1256" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1274" class="meta-description-cell" >订单明细业务 ID</text>
+<rect x="2620" y="1256" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1274" class="meta-alias-cell" >订单明细 ID</text>
+<text x="2809" y="1274" class="meta-table-cell" >dwd_trade_order_detail_di</text>
+<rect x="1530" y="1282" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="1282" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1300" class="meta-id-full" >dwd_trade_order_detail_di.order_id</text>
+<rect x="1830" y="1282" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1300" class="meta-name-cell" >order_id</text>
+<text x="1994" y="1300" class="meta-type-cell" >bigint</text>
+<text x="2134" y="1300" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1300" class="meta-example-cell" >—</text>
+<rect x="2400" y="1282" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1300" class="meta-description-cell" >订单业务 ID</text>
+<rect x="2620" y="1282" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1300" class="meta-alias-cell" >订单 ID</text>
+<text x="2809" y="1300" class="meta-table-cell" >dwd_trade_order_detail_di</text>
+<rect x="1530" y="1308" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="1308" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1326" class="meta-id-full" >dwd_trade_order_detail_di.order_date_key</text>
+<rect x="1830" y="1308" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1326" class="meta-name-cell" >order_date_key</text>
+<text x="1994" y="1326" class="meta-type-cell" >int</text>
+<text x="2134" y="1326" class="meta-role-cell" >foreign_key</text>
+<text x="2249" y="1326" class="meta-example-cell" >—</text>
+<rect x="2400" y="1308" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1326" class="meta-description-cell" >下单日期键</text>
+<rect x="2620" y="1308" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1326" class="meta-alias-cell" >下单日期</text>
+<text x="2809" y="1326" class="meta-table-cell" >dwd_trade_order_detail_di</text>
+<rect x="1530" y="1334" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="1334" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1352" class="meta-id-full" >dwd_trade_order_detail_di.category_sk</text>
+<rect x="1830" y="1334" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1352" class="meta-name-cell" >category_sk</text>
+<text x="1994" y="1352" class="meta-type-cell" >bigint</text>
+<text x="2134" y="1352" class="meta-role-cell" >foreign_key</text>
+<text x="2249" y="1352" class="meta-example-cell" >—</text>
+<rect x="2400" y="1334" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1352" class="meta-description-cell" >下单时叶子类目版本代理键</text>
+<rect x="2620" y="1334" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1352" class="meta-alias-cell" >类目代理键</text>
+<text x="2809" y="1352" class="meta-table-cell" >dwd_trade_order_detail_di</text>
+<rect x="1530" y="1360" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="1360" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1378" class="meta-id-full" >dwd_trade_order_detail_di.shop_sk</text>
+<rect x="1830" y="1360" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1378" class="meta-name-cell" >shop_sk</text>
+<text x="1994" y="1378" class="meta-type-cell" >bigint</text>
+<text x="2134" y="1378" class="meta-role-cell" >foreign_key</text>
+<text x="2249" y="1378" class="meta-example-cell" >—</text>
+<rect x="2400" y="1360" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1378" class="meta-description-cell" >下单时店铺版本代理键</text>
+<rect x="2620" y="1360" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1378" class="meta-alias-cell" >店铺代理键</text>
+<text x="2809" y="1378" class="meta-table-cell" >dwd_trade_order_detail_di</text>
+<rect x="1530" y="1386" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="1386" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1404" class="meta-id-full" >dwd_trade_order_detail_di.brand_sk</text>
+<rect x="1830" y="1386" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1404" class="meta-name-cell" >brand_sk</text>
+<text x="1994" y="1404" class="meta-type-cell" >bigint</text>
+<text x="2134" y="1404" class="meta-role-cell" >foreign_key</text>
+<text x="2249" y="1404" class="meta-example-cell" >—</text>
+<rect x="2400" y="1386" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1404" class="meta-description-cell" >品牌代理键</text>
+<rect x="2620" y="1386" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1404" class="meta-alias-cell" >品牌代理键</text>
+<text x="2809" y="1404" class="meta-table-cell" >dwd_trade_order_detail_di</text>
+<rect x="1530" y="1412" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="1412" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1430" class="meta-id-full" >dwd_trade_order_detail_di.receiver_region_sk</text>
+<rect x="1830" y="1412" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1430" class="meta-name-cell" >receiver_region_sk</text>
+<text x="1994" y="1430" class="meta-type-cell" >bigint</text>
+<text x="2134" y="1430" class="meta-role-cell" >foreign_key</text>
+<text x="2249" y="1430" class="meta-example-cell" >—</text>
+<rect x="2400" y="1412" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1430" class="meta-description-cell" >收货区县版本代理键</text>
+<rect x="2620" y="1412" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1430" class="meta-alias-cell" >收货地区</text>
+<text x="2809" y="1430" class="meta-table-cell" >dwd_trade_order_detail_di</text>
+<rect x="1530" y="1438" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="1438" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1456" class="meta-id-full" >dwd_trade_order_detail_di.channel_sk</text>
+<rect x="1830" y="1438" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1456" class="meta-name-cell" >channel_sk</text>
+<text x="1994" y="1456" class="meta-type-cell" >bigint</text>
+<text x="2134" y="1456" class="meta-role-cell" >foreign_key</text>
+<text x="2249" y="1456" class="meta-example-cell" >—</text>
+<rect x="2400" y="1438" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1456" class="meta-description-cell" >下单渠道代理键</text>
+<rect x="2620" y="1438" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1456" class="meta-alias-cell" >渠道代理键</text>
+<text x="2809" y="1456" class="meta-table-cell" >dwd_trade_order_detail_di</text>
+<rect x="1530" y="1464" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="1464" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1482" class="meta-id-full" >dwd_trade_order_detail_di.sku_qty</text>
+<rect x="1830" y="1464" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1482" class="meta-name-cell" >sku_qty</text>
+<text x="1994" y="1482" class="meta-type-cell" >int</text>
+<text x="2134" y="1482" class="meta-role-cell" >measure</text>
+<text x="2249" y="1482" class="meta-example-cell" >—</text>
+<rect x="2400" y="1464" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1482" class="meta-description-cell" >购买件数</text>
+<rect x="2620" y="1464" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1482" class="meta-alias-cell" >销售件数 / 销量</text>
+<text x="2809" y="1482" class="meta-table-cell" >dwd_trade_order_detail_di</text>
+<rect x="1530" y="1490" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="1490" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1508" class="meta-id-full" >dwd_trade_order_detail_di.sale_amount</text>
+<rect x="1830" y="1490" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1508" class="meta-name-cell" >sale_amount</text>
+<text x="1994" y="1508" class="meta-type-cell" >decimal(18,2)</text>
+<text x="2134" y="1508" class="meta-role-cell" >measure</text>
+<text x="2249" y="1508" class="meta-example-cell" >—</text>
+<rect x="2400" y="1490" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1508" class="meta-description-cell" >优惠前销售金额</text>
+<rect x="2620" y="1490" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1508" class="meta-alias-cell" >销售额</text>
+<text x="2809" y="1508" class="meta-table-cell" >dwd_trade_order_detail_di</text>
+<rect x="1530" y="1516" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="1516" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1534" class="meta-id-full" >dwd_trade_order_detail_di.receivable_amount</text>
+<rect x="1830" y="1516" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1534" class="meta-name-cell" >receivable_amount</text>
+<text x="1994" y="1534" class="meta-type-cell" >decimal(18,2)</text>
+<text x="2134" y="1534" class="meta-role-cell" >measure</text>
+<text x="2249" y="1534" class="meta-example-cell" >—</text>
+<rect x="2400" y="1516" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1534" class="meta-description-cell" >下单应收金额</text>
+<rect x="2620" y="1516" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1534" class="meta-alias-cell" >GMV / 下单金额</text>
+<text x="2809" y="1534" class="meta-table-cell" >dwd_trade_order_detail_di</text>
+<rect x="1530" y="1542" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="1542" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1560" class="meta-id-full" >dwd_trade_order_detail_di.cost_amount</text>
+<rect x="1830" y="1542" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1560" class="meta-name-cell" >cost_amount</text>
+<text x="1994" y="1560" class="meta-type-cell" >decimal(18,2)</text>
+<text x="2134" y="1560" class="meta-role-cell" >measure</text>
+<text x="2249" y="1560" class="meta-example-cell" >—</text>
+<rect x="2400" y="1542" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1560" class="meta-description-cell" >下单时标准成本金额快照</text>
+<rect x="2620" y="1542" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1560" class="meta-alias-cell" >成本金额</text>
+<text x="2809" y="1560" class="meta-table-cell" >dwd_trade_order_detail_di</text>
+<rect x="1530" y="1568" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="1568" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1586" class="meta-id-full" >dwd_trade_order_detail_di.user_id</text>
+<rect x="1830" y="1568" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1586" class="meta-name-cell" >user_id</text>
+<text x="1994" y="1586" class="meta-type-cell" >bigint</text>
+<text x="2134" y="1586" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1586" class="meta-example-cell" >—</text>
+<rect x="2400" y="1568" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1586" class="meta-description-cell" >用户业务 ID</text>
+<rect x="2620" y="1568" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1586" class="meta-alias-cell" >用户 ID</text>
+<text x="2809" y="1586" class="meta-table-cell" >dwd_trade_order_detail_di</text>
+<rect x="1530" y="1594" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="1594" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1612" class="meta-id-full" >dwd_trade_order_detail_di.sku_id</text>
+<rect x="1830" y="1594" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1612" class="meta-name-cell" >sku_id</text>
+<text x="1994" y="1612" class="meta-type-cell" >bigint</text>
+<text x="2134" y="1612" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1612" class="meta-example-cell" >—</text>
+<rect x="2400" y="1594" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1612" class="meta-description-cell" >SKU 业务 ID</text>
+<rect x="2620" y="1594" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1612" class="meta-alias-cell" >商品 ID</text>
+<text x="2809" y="1612" class="meta-table-cell" >dwd_trade_order_detail_di</text>
+<rect x="1530" y="1620" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="1620" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1638" class="meta-id-full" >dwd_trade_order_detail_di.order_source</text>
+<rect x="1830" y="1620" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1638" class="meta-name-cell" >order_source</text>
+<text x="1994" y="1638" class="meta-type-cell" >varchar(128)</text>
+<text x="2134" y="1638" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1638" class="meta-example-cell" >[APP, H5]</text>
+<rect x="2400" y="1620" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1638" class="meta-description-cell" >下单来源</text>
+<rect x="2620" y="1620" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1638" class="meta-alias-cell" >订单来源</text>
+<text x="2809" y="1638" class="meta-table-cell" >dwd_trade_order_detail_di</text>
+<rect x="1530" y="1646" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="1646" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1664" class="meta-id-full" >dwd_trade_order_detail_di.order_scene</text>
+<rect x="1830" y="1646" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1664" class="meta-name-cell" >order_scene</text>
+<text x="1994" y="1664" class="meta-type-cell" >varchar(128)</text>
+<text x="2134" y="1664" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1664" class="meta-example-cell" >[普通, 直播]</text>
+<rect x="2400" y="1646" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1664" class="meta-description-cell" >订单场景</text>
+<rect x="2620" y="1646" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1664" class="meta-alias-cell" >下单场景</text>
+<text x="2809" y="1664" class="meta-table-cell" >dwd_trade_order_detail_di</text>
+<rect x="1530" y="1672" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="1672" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1690" class="meta-id-full" >dwd_trade_order_detail_di.currency_code</text>
+<rect x="1830" y="1672" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1690" class="meta-name-cell" >currency_code</text>
+<text x="1994" y="1690" class="meta-type-cell" >char(3)</text>
+<text x="2134" y="1690" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1690" class="meta-example-cell" >[CNY]</text>
+<rect x="2400" y="1672" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1690" class="meta-description-cell" >币种编码</text>
+<rect x="2620" y="1672" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1690" class="meta-alias-cell" >币种</text>
+<text x="2809" y="1690" class="meta-table-cell" >dwd_trade_order_detail_di</text>
+<rect x="1530" y="1698" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="1698" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1716" class="meta-id-full" >dwd_trade_order_detail_di.biz_date</text>
+<rect x="1830" y="1698" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1716" class="meta-name-cell" >biz_date</text>
+<text x="1994" y="1716" class="meta-type-cell" >date</text>
+<text x="2134" y="1716" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1716" class="meta-example-cell" >[2026-08-08]</text>
+<rect x="2400" y="1698" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1716" class="meta-description-cell" >业务日期，取下单日期</text>
+<rect x="2620" y="1698" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1716" class="meta-alias-cell" >业务日期</text>
+<text x="2809" y="1716" class="meta-table-cell" >dwd_trade_order_detail_di</text>
+<rect x="1530" y="1724" width="1460" height="26" class="dim-group"/>
+<text x="1542" y="1742" class="dim-group-text" >dim_geo_region_zip</text>
+<rect x="1530" y="1750" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="1750" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1768" class="meta-id-full" >dim_geo_region_zip.region_sk</text>
+<rect x="1830" y="1750" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1768" class="meta-name-cell" >region_sk</text>
+<text x="1994" y="1768" class="meta-type-cell" >bigint</text>
+<text x="2134" y="1768" class="meta-role-cell" >primary_key</text>
+<text x="2249" y="1768" class="meta-example-cell" >—</text>
+<rect x="2400" y="1750" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1768" class="meta-description-cell" >行政区域维度代理键</text>
+<rect x="2620" y="1750" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1768" class="meta-alias-cell" >地区代理键</text>
+<text x="2809" y="1768" class="meta-table-cell" >dim_geo_region_zip</text>
+<rect x="1530" y="1776" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="1776" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1794" class="meta-id-full" >dim_geo_region_zip.region_code</text>
+<rect x="1830" y="1776" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1794" class="meta-name-cell" >region_code</text>
+<text x="1994" y="1794" class="meta-type-cell" >varchar(80)</text>
+<text x="2134" y="1794" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1794" class="meta-example-cell" >—</text>
+<rect x="2400" y="1776" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1794" class="meta-description-cell" >区域业务编码</text>
+<rect x="2620" y="1776" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1794" class="meta-alias-cell" >地区编码</text>
+<text x="2809" y="1794" class="meta-table-cell" >dim_geo_region_zip</text>
+<rect x="1530" y="1802" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="1802" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1820" class="meta-id-full" >dim_geo_region_zip.province_name</text>
+<rect x="1830" y="1802" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1820" class="meta-name-cell" >province_name</text>
+<text x="1994" y="1820" class="meta-type-cell" >varchar(512)</text>
+<text x="2134" y="1820" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1820" class="meta-example-cell" >[广东省, 浙江省]</text>
+<rect x="2400" y="1802" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1820" class="meta-description-cell" >省名称</text>
+<rect x="2620" y="1802" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1820" class="meta-alias-cell" >省份</text>
+<text x="2809" y="1820" class="meta-table-cell" >dim_geo_region_zip</text>
+<rect x="1530" y="1828" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="1828" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1846" class="meta-id-full" >dim_geo_region_zip.city_name</text>
+<rect x="1830" y="1828" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1846" class="meta-name-cell" >city_name</text>
+<text x="1994" y="1846" class="meta-type-cell" >varchar(512)</text>
+<text x="2134" y="1846" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1846" class="meta-example-cell" >[深圳市, 杭州市]</text>
+<rect x="2400" y="1828" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1846" class="meta-description-cell" >市名称</text>
+<rect x="2620" y="1828" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1846" class="meta-alias-cell" >城市</text>
+<text x="2809" y="1846" class="meta-table-cell" >dim_geo_region_zip</text>
+<rect x="1530" y="1854" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="1854" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1872" class="meta-id-full" >dim_geo_region_zip.district_name</text>
+<rect x="1830" y="1854" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1872" class="meta-name-cell" >district_name</text>
+<text x="1994" y="1872" class="meta-type-cell" >varchar(512)</text>
+<text x="2134" y="1872" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1872" class="meta-example-cell" >[南山区, 余杭区]</text>
+<rect x="2400" y="1854" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1872" class="meta-description-cell" >区县名称</text>
+<rect x="2620" y="1854" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1872" class="meta-alias-cell" >区县</text>
+<text x="2809" y="1872" class="meta-table-cell" >dim_geo_region_zip</text>
+<rect x="1530" y="1880" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="1880" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1898" class="meta-id-full" >dim_geo_region_zip.region_path</text>
+<rect x="1830" y="1880" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1898" class="meta-name-cell" >region_path</text>
+<text x="1994" y="1898" class="meta-type-cell" >varchar(2048)</text>
+<text x="2134" y="1898" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1898" class="meta-example-cell" >[中国/广东省/深圳市]</text>
+<rect x="2400" y="1880" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1898" class="meta-description-cell" >完整区域路径</text>
+<rect x="2620" y="1880" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1898" class="meta-alias-cell" >地区路径</text>
+<text x="2809" y="1898" class="meta-table-cell" >dim_geo_region_zip</text>
+<rect x="1530" y="1906" width="1460" height="26" class="dim-group"/>
+<text x="1542" y="1924" class="dim-group-text" >dim_shop_info_zip</text>
+<rect x="1530" y="1932" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="1932" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1950" class="meta-id-full" >dim_shop_info_zip.shop_sk</text>
+<rect x="1830" y="1932" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1950" class="meta-name-cell" >shop_sk</text>
+<text x="1994" y="1950" class="meta-type-cell" >bigint</text>
+<text x="2134" y="1950" class="meta-role-cell" >primary_key</text>
+<text x="2249" y="1950" class="meta-example-cell" >—</text>
+<rect x="2400" y="1932" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1950" class="meta-description-cell" >店铺维度代理键</text>
+<rect x="2620" y="1932" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1950" class="meta-alias-cell" >店铺代理键</text>
+<text x="2809" y="1950" class="meta-table-cell" >dim_shop_info_zip</text>
+<rect x="1530" y="1958" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="1958" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="1976" class="meta-id-full" >dim_shop_info_zip.shop_id</text>
+<rect x="1830" y="1958" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="1976" class="meta-name-cell" >shop_id</text>
+<text x="1994" y="1976" class="meta-type-cell" >bigint</text>
+<text x="2134" y="1976" class="meta-role-cell" >dimension</text>
+<text x="2249" y="1976" class="meta-example-cell" >—</text>
+<rect x="2400" y="1958" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="1976" class="meta-description-cell" >店铺业务 ID</text>
+<rect x="2620" y="1958" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="1976" class="meta-alias-cell" >店铺 ID</text>
+<text x="2809" y="1976" class="meta-table-cell" >dim_shop_info_zip</text>
+<rect x="1530" y="1984" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="1984" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="2002" class="meta-id-full" >dim_shop_info_zip.shop_name</text>
+<rect x="1830" y="1984" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="2002" class="meta-name-cell" >shop_name</text>
+<text x="1994" y="2002" class="meta-type-cell" >varchar(512)</text>
+<text x="2134" y="2002" class="meta-role-cell" >dimension</text>
+<text x="2249" y="2002" class="meta-example-cell" >[官方旗舰店]</text>
+<rect x="2400" y="1984" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="2002" class="meta-description-cell" >店铺名称</text>
+<rect x="2620" y="1984" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="2002" class="meta-alias-cell" >店铺名称</text>
+<text x="2809" y="2002" class="meta-table-cell" >dim_shop_info_zip</text>
+<rect x="1530" y="2010" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="2010" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="2028" class="meta-id-full" >dim_shop_info_zip.shop_type</text>
+<rect x="1830" y="2010" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="2028" class="meta-name-cell" >shop_type</text>
+<text x="1994" y="2028" class="meta-type-cell" >varchar(128)</text>
+<text x="2134" y="2028" class="meta-role-cell" >dimension</text>
+<text x="2249" y="2028" class="meta-example-cell" >[旗舰店, 专营店]</text>
+<rect x="2400" y="2010" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="2028" class="meta-description-cell" >店铺类型</text>
+<rect x="2620" y="2010" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="2028" class="meta-alias-cell" >店铺类型</text>
+<text x="2809" y="2028" class="meta-table-cell" >dim_shop_info_zip</text>
+<rect x="1530" y="2036" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="2036" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="2054" class="meta-id-full" >dim_shop_info_zip.industry_type</text>
+<rect x="1830" y="2036" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="2054" class="meta-name-cell" >industry_type</text>
+<text x="1994" y="2054" class="meta-type-cell" >varchar(256)</text>
+<text x="2134" y="2054" class="meta-role-cell" >dimension</text>
+<text x="2249" y="2054" class="meta-example-cell" >[3C 数码, 家电]</text>
+<rect x="2400" y="2036" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="2054" class="meta-description-cell" >行业类型</text>
+<rect x="2620" y="2036" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="2054" class="meta-alias-cell" >行业类型</text>
+<text x="2809" y="2054" class="meta-table-cell" >dim_shop_info_zip</text>
+<rect x="1530" y="2062" width="1460" height="26" class="dim-group"/>
+<text x="1542" y="2080" class="dim-group-text" >dim_channel_info</text>
+<rect x="1530" y="2088" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="2088" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="2106" class="meta-id-full" >dim_channel_info.channel_sk</text>
+<rect x="1830" y="2088" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="2106" class="meta-name-cell" >channel_sk</text>
+<text x="1994" y="2106" class="meta-type-cell" >bigint</text>
+<text x="2134" y="2106" class="meta-role-cell" >primary_key</text>
+<text x="2249" y="2106" class="meta-example-cell" >—</text>
+<rect x="2400" y="2088" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="2106" class="meta-description-cell" >渠道维度代理键</text>
+<rect x="2620" y="2088" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="2106" class="meta-alias-cell" >渠道代理键</text>
+<text x="2809" y="2106" class="meta-table-cell" >dim_channel_info</text>
+<rect x="1530" y="2114" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="2114" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="2132" class="meta-id-full" >dim_channel_info.channel_code</text>
+<rect x="1830" y="2114" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="2132" class="meta-name-cell" >channel_code</text>
+<text x="1994" y="2132" class="meta-type-cell" >varchar(128)</text>
+<text x="2134" y="2132" class="meta-role-cell" >dimension</text>
+<text x="2249" y="2132" class="meta-example-cell" >[APP, H5, PC]</text>
+<rect x="2400" y="2114" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="2132" class="meta-description-cell" >渠道业务编码</text>
+<rect x="2620" y="2114" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="2132" class="meta-alias-cell" >渠道编码</text>
+<text x="2809" y="2132" class="meta-table-cell" >dim_channel_info</text>
+<rect x="1530" y="2140" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="2140" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="2158" class="meta-id-full" >dim_channel_info.channel_name</text>
+<rect x="1830" y="2140" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="2158" class="meta-name-cell" >channel_name</text>
+<text x="1994" y="2158" class="meta-type-cell" >varchar(256)</text>
+<text x="2134" y="2158" class="meta-role-cell" >dimension</text>
+<text x="2249" y="2158" class="meta-example-cell" >[客户端, 小程序]</text>
+<rect x="2400" y="2140" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="2158" class="meta-description-cell" >渠道名称</text>
+<rect x="2620" y="2140" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="2158" class="meta-alias-cell" >渠道名称</text>
+<text x="2809" y="2158" class="meta-table-cell" >dim_channel_info</text>
+<rect x="1530" y="2166" width="1460" height="26" class="meta-row-b"/>
+<rect x="1530" y="2166" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="2184" class="meta-id-full" >dim_channel_info.channel_group</text>
+<rect x="1830" y="2166" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="2184" class="meta-name-cell" >channel_group</text>
+<text x="1994" y="2184" class="meta-type-cell" >varchar(128)</text>
+<text x="2134" y="2184" class="meta-role-cell" >dimension</text>
+<text x="2249" y="2184" class="meta-example-cell" >[自有渠道, 外部渠道]</text>
+<rect x="2400" y="2166" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="2184" class="meta-description-cell" >渠道分组</text>
+<rect x="2620" y="2166" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="2184" class="meta-alias-cell" >渠道组</text>
+<text x="2809" y="2184" class="meta-table-cell" >dim_channel_info</text>
+<rect x="1530" y="2192" width="1460" height="26" class="meta-row-a"/>
+<rect x="1530" y="2192" width="300" height="26" class="value-source-cell"/>
+<text x="1539" y="2210" class="meta-id-full" >dim_channel_info.platform_type</text>
+<rect x="1830" y="2192" width="155" height="26" class="vector-source-cell"/>
+<text x="1839" y="2210" class="meta-name-cell" >platform_type</text>
+<text x="1994" y="2210" class="meta-type-cell" >varchar(128)</text>
+<text x="2134" y="2210" class="meta-role-cell" >dimension</text>
+<text x="2249" y="2210" class="meta-example-cell" >[移动端, Web]</text>
+<rect x="2400" y="2192" width="220" height="26" class="vector-source-cell"/>
+<text x="2409" y="2210" class="meta-description-cell" >平台类型</text>
+<rect x="2620" y="2192" width="180" height="26" class="vector-source-cell"/>
+<text x="2629" y="2210" class="meta-alias-cell" >平台类型</text>
+<text x="2809" y="2210" class="meta-table-cell" >dim_channel_info</text>
+</g>
+<g id="column-metric">
+<rect x="1530" y="2290" width="1460" height="516" rx="16" class="meta-card"/>
+<rect x="1530" y="2290" width="1460" height="54" rx="16" class="column-metric-head"/>
+<rect x="1530" y="2328" width="1460" height="16" class="column-metric-head"/>
+<text x="1550" y="2324" class="meta-title" >column_metric</text>
+<rect x="1530" y="2344" width="980" height="48" class="meta-column-head"/>
+<text x="1540" y="2374" class="meta-column-label" >column_id</text>
+<rect x="2510" y="2344" width="480" height="48" class="meta-column-head"/>
+<text x="2520" y="2374" class="meta-column-label" >metric_id</text>
+<rect x="1530" y="2392" width="1460" height="46" class="meta-row-a"/>
+<text x="1540" y="2421" class="relation-id" >dwd_trade_order_detail_di.order_id</text>
+    <text x="2520" y="2421" class="relation-metric" >metric_order_count</text>
+<rect x="1530" y="2438" width="1460" height="46" class="meta-row-b"/>
+<text x="1540" y="2467" class="relation-id" >dwd_trade_order_detail_di.order_id</text>
+    <text x="2520" y="2467" class="relation-metric" >metric_aov</text>
+<rect x="1530" y="2484" width="1460" height="46" class="meta-row-a"/>
+<text x="1540" y="2513" class="relation-id" >dwd_trade_order_detail_di.receivable_amount</text>
+    <text x="2520" y="2513" class="relation-metric" >metric_aov</text>
+<rect x="1530" y="2530" width="1460" height="46" class="meta-row-b"/>
+<text x="1540" y="2559" class="relation-id" >dwd_trade_order_detail_di.sku_qty</text>
+    <text x="2520" y="2559" class="relation-metric" >metric_sku_qty</text>
+<rect x="1530" y="2576" width="1460" height="46" class="meta-row-a"/>
+<text x="1540" y="2605" class="relation-id" >dwd_trade_order_detail_di.sku_qty</text>
+    <text x="2520" y="2605" class="relation-metric" >metric_unit_price</text>
+<rect x="1530" y="2622" width="1460" height="46" class="meta-row-b"/>
+<text x="1540" y="2651" class="relation-id" >dwd_trade_order_detail_di.receivable_amount</text>
+    <text x="2520" y="2651" class="relation-metric" >metric_unit_price</text>
+<rect x="1530" y="2668" width="1460" height="46" class="meta-row-a"/>
+<text x="1540" y="2697" class="relation-id" >dwd_trade_order_detail_di.sale_amount</text>
+    <text x="2520" y="2697" class="relation-metric" >metric_sale_amount</text>
+<rect x="1530" y="2714" width="1460" height="46" class="meta-row-b"/>
+<text x="1540" y="2743" class="relation-id" >dwd_trade_order_detail_di.receivable_amount</text>
+    <text x="2520" y="2743" class="relation-metric" >metric_gmv</text>
+<rect x="1530" y="2760" width="1460" height="46" class="meta-row-a"/>
+<text x="1540" y="2789" class="relation-id" >dwd_trade_order_detail_di.cost_amount</text>
+    <text x="2520" y="2789" class="relation-metric" >metric_cost_amount</text>
+</g>
+<g id="metric-info">
+<rect x="1530" y="2870" width="1460" height="640" rx="16" class="meta-card"/>
+<rect x="1530" y="2870" width="1460" height="54" rx="16" class="metric-info-head"/>
+<rect x="1530" y="2908" width="1460" height="16" class="metric-info-head"/>
+<text x="1550" y="2904" class="meta-title" >metric_info</text>
+<rect x="1530" y="2924" width="180" height="54" class="meta-column-head"/>
+<text x="1538" y="2956" class="metric-column-label" >id</text>
+<rect x="1710" y="2924" width="180" height="54" class="meta-column-head vector-source-head"/>
+<text x="1718" y="2956" class="metric-column-label" >name</text>
+<rect x="1890" y="2924" width="390" height="54" class="meta-column-head vector-source-head"/>
+<text x="1898" y="2956" class="metric-column-label" >description</text>
+<rect x="2280" y="2924" width="450" height="54" class="meta-column-head"/>
+<text x="2288" y="2956" class="metric-column-label" >relevant_columns</text>
+<rect x="2730" y="2924" width="260" height="54" class="meta-column-head vector-source-head"/>
+<text x="2738" y="2956" class="metric-column-label" >alias</text>
+<rect x="1530" y="2978" width="1460" height="76" class="metric-row-a"/>
+<rect x="1710" y="2978" width="180" height="76" class="vector-source-cell"/>
+<rect x="1890" y="2978" width="390" height="76" class="vector-source-cell"/>
+<rect x="2730" y="2978" width="260" height="76" class="vector-source-cell"/>
+<text x="1538" y="3007" class="metric-id" >metric_order_count</text>
+<text x="1718" y="3007" class="metric-name" >下单订单数</text>
+<text x="1898" y="3000" class="metric-detail" ><tspan x="1898" dy="0">下单明细中的去重订单数</tspan><tspan x="1898" dy="18">公式：COUNT(DISTINCT order_id)</tspan></text>
+<text x="2288" y="3002" class="metric-columns" ><tspan x="2288" dy="0">dwd_trade_order_detail_di.order_id</tspan></text>
+<text x="2738" y="3002" class="metric-alias" ><tspan x="2738" dy="0">订单数</tspan><tspan x="2738" dy="18">下单量</tspan></text>
+<rect x="1530" y="3054" width="1460" height="76" class="metric-row-b"/>
+<rect x="1710" y="3054" width="180" height="76" class="vector-source-cell"/>
+<rect x="1890" y="3054" width="390" height="76" class="vector-source-cell"/>
+<rect x="2730" y="3054" width="260" height="76" class="vector-source-cell"/>
+<text x="1538" y="3083" class="metric-id" >metric_aov</text>
+<text x="1718" y="3083" class="metric-name" >客单价</text>
+<text x="1898" y="3076" class="metric-detail" ><tspan x="1898" dy="0">平均每个订单的下单应收金额</tspan><tspan x="1898" dy="18">公式：SUM(receivable_amount) /</tspan><tspan x="1898" dy="18">COUNT(DISTINCT order_id)</tspan></text>
+<text x="2288" y="3078" class="metric-columns" ><tspan x="2288" dy="0">dwd_trade_order_detail_di.order_id</tspan><tspan x="2288" dy="18">dwd_trade_order_detail_di.receivable_amount</tspan></text>
+<text x="2738" y="3078" class="metric-alias" ><tspan x="2738" dy="0">AOV</tspan><tspan x="2738" dy="18">平均订单金额</tspan></text>
+<rect x="1530" y="3130" width="1460" height="76" class="metric-row-a"/>
+<rect x="1710" y="3130" width="180" height="76" class="vector-source-cell"/>
+<rect x="1890" y="3130" width="390" height="76" class="vector-source-cell"/>
+<rect x="2730" y="3130" width="260" height="76" class="vector-source-cell"/>
+<text x="1538" y="3159" class="metric-id" >metric_sku_qty</text>
+<text x="1718" y="3159" class="metric-name" >销量</text>
+<text x="1898" y="3152" class="metric-detail" ><tspan x="1898" dy="0">订单明细购买件数之和</tspan><tspan x="1898" dy="18">公式：SUM(sku_qty)</tspan></text>
+<text x="2288" y="3154" class="metric-columns" ><tspan x="2288" dy="0">dwd_trade_order_detail_di.sku_qty</tspan></text>
+<text x="2738" y="3154" class="metric-alias" ><tspan x="2738" dy="0">销售件数</tspan><tspan x="2738" dy="18">销售数量</tspan></text>
+<rect x="1530" y="3206" width="1460" height="76" class="metric-row-b"/>
+<rect x="1710" y="3206" width="180" height="76" class="vector-source-cell"/>
+<rect x="1890" y="3206" width="390" height="76" class="vector-source-cell"/>
+<rect x="2730" y="3206" width="260" height="76" class="vector-source-cell"/>
+<text x="1538" y="3235" class="metric-id" >metric_unit_price</text>
+<text x="1718" y="3235" class="metric-name" >件单价</text>
+<text x="1898" y="3228" class="metric-detail" ><tspan x="1898" dy="0">平均每件商品的下单应收金额</tspan><tspan x="1898" dy="18">公式：SUM(receivable_amount) /</tspan><tspan x="1898" dy="18">SUM(sku_qty)</tspan></text>
+<text x="2288" y="3230" class="metric-columns" ><tspan x="2288" dy="0">dwd_trade_order_detail_di.sku_qty</tspan><tspan x="2288" dy="18">dwd_trade_order_detail_di.receivable_amount</tspan></text>
+<text x="2738" y="3230" class="metric-alias" ><tspan x="2738" dy="0">平均件单成交价</tspan></text>
+<rect x="1530" y="3282" width="1460" height="76" class="metric-row-a"/>
+<rect x="1710" y="3282" width="180" height="76" class="vector-source-cell"/>
+<rect x="1890" y="3282" width="390" height="76" class="vector-source-cell"/>
+<rect x="2730" y="3282" width="260" height="76" class="vector-source-cell"/>
+<text x="1538" y="3311" class="metric-id" >metric_sale_amount</text>
+<text x="1718" y="3311" class="metric-name" >销售额</text>
+<text x="1898" y="3304" class="metric-detail" ><tspan x="1898" dy="0">优惠前销售金额之和</tspan><tspan x="1898" dy="18">公式：SUM(sale_amount)</tspan></text>
+<text x="2288" y="3306" class="metric-columns" ><tspan x="2288" dy="0">dwd_trade_order_detail_di.sale_amount</tspan></text>
+<text x="2738" y="3306" class="metric-alias" ><tspan x="2738" dy="0">优惠前销售金额</tspan></text>
+<rect x="1530" y="3358" width="1460" height="76" class="metric-row-b"/>
+<rect x="1710" y="3358" width="180" height="76" class="vector-source-cell"/>
+<rect x="1890" y="3358" width="390" height="76" class="vector-source-cell"/>
+<rect x="2730" y="3358" width="260" height="76" class="vector-source-cell"/>
+<text x="1538" y="3387" class="metric-id" >metric_gmv</text>
+<text x="1718" y="3387" class="metric-name" >下单GMV</text>
+<text x="1898" y="3380" class="metric-detail" ><tspan x="1898" dy="0">下单口径应收金额之和</tspan><tspan x="1898" dy="18">公式：SUM(receivable_amount)</tspan></text>
+<text x="2288" y="3382" class="metric-columns" ><tspan x="2288" dy="0">dwd_trade_order_detail_di.receivable_amount</tspan></text>
+<text x="2738" y="3382" class="metric-alias" ><tspan x="2738" dy="0">GMV</tspan><tspan x="2738" dy="18">下单金额</tspan><tspan x="2738" dy="18">成交总额</tspan></text>
+<rect x="1530" y="3434" width="1460" height="76" class="metric-row-a"/>
+<rect x="1710" y="3434" width="180" height="76" class="vector-source-cell"/>
+<rect x="1890" y="3434" width="390" height="76" class="vector-source-cell"/>
+<rect x="2730" y="3434" width="260" height="76" class="vector-source-cell"/>
+<text x="1538" y="3463" class="metric-id" >metric_cost_amount</text>
+<text x="1718" y="3463" class="metric-name" >成本金额</text>
+<text x="1898" y="3456" class="metric-detail" ><tspan x="1898" dy="0">下单时标准成本金额之和</tspan><tspan x="1898" dy="18">公式：SUM(cost_amount)</tspan></text>
+<text x="2288" y="3458" class="metric-columns" ><tspan x="2288" dy="0">dwd_trade_order_detail_di.cost_amount</tspan></text>
+<text x="2738" y="3458" class="metric-alias" ><tspan x="2738" dy="0">标准成本</tspan><tspan x="2738" dy="18">成本</tspan></text>
+</g>
+<rect x="3190" y="110" width="1430" height="3460" rx="22" class="section-panel"/>
+<text x="3220" y="150" class="section-title" >检索索引</text>
+<g aria-label="Qdrant · column_info">
+<rect x="3220" y="580" width="1370" height="676" rx="16" class="meta-card"/>
+<rect x="3220" y="580" width="1370" height="54" rx="16" class="qdrant-column-index-head"/>
+<rect x="3220" y="618" width="1370" height="16" class="qdrant-column-index-head"/>
+<text x="3240" y="614" class="index-title" >Qdrant · column_info</text>
+<rect x="3220" y="634" width="140" height="52" class="index-column-head"/>
+<text x="3232" y="666" class="index-column-label" >point_id</text>
+<rect x="3360" y="634" width="500" height="52" class="index-column-head"/>
+<text x="3372" y="666" class="index-column-label" >vector</text>
+<rect x="3860" y="634" width="730" height="52" class="index-column-head"/>
+<text x="3872" y="666" class="index-column-label" >payload</text>
+<rect x="3220" y="686" width="1370" height="90" class="qdrant-column-row-a"/>
+<text x="3232" y="706" class="index-id" >col-001-1</text>
+<text x="3372" y="706" class="index-vector" >Embedding(&quot;full_date&quot;)</text>
+<line x1="3220" y1="716" x2="3860" y2="716" class="index-inner-line"/>
+<text x="3232" y="736" class="index-id" >col-001-2</text>
+<text x="3372" y="736" class="index-vector" >Embedding(&quot;自然日期&quot;)</text>
+<line x1="3220" y1="746" x2="3860" y2="746" class="index-inner-line"/>
+<text x="3232" y="766" class="index-id" >col-001-3</text>
+<text x="3372" y="766" class="index-vector" >Embedding(&quot;日期&quot;)</text>
+<text x="3872" y="724" class="index-payload" ><tspan x="3872" dy="0">{id:&quot;dim_date.full_date&quot;, name:&quot;full_date&quot;, type:&quot;date&quot;,</tspan><tspan x="3872" dy="24"> role:&quot;dimension&quot;, alias:[&quot;日期&quot;,&quot;自然日期&quot;], table_id:&quot;dim_date&quot;}</tspan></text>
+<rect x="3220" y="776" width="1370" height="90" class="qdrant-column-row-b"/>
+<text x="3232" y="796" class="index-id" >col-002-1</text>
+<text x="3372" y="796" class="index-vector" >Embedding(&quot;category_name&quot;)</text>
+<line x1="3220" y1="806" x2="3860" y2="806" class="index-inner-line"/>
+<text x="3232" y="826" class="index-id" >col-002-2</text>
+<text x="3372" y="826" class="index-vector" >Embedding(&quot;类目名称&quot;)</text>
+<line x1="3220" y1="836" x2="3860" y2="836" class="index-inner-line"/>
+<text x="3232" y="856" class="index-id" >col-002-3</text>
+<text x="3372" y="856" class="index-vector" >Embedding(&quot;品类名称&quot;)</text>
+<text x="3872" y="814" class="index-payload" ><tspan x="3872" dy="0">{id:&quot;dim_category_info_zip.category_name&quot;, name:&quot;category_name&quot;,</tspan><tspan x="3872" dy="24"> role:&quot;dimension&quot;, examples:[&quot;手机数码&quot;,&quot;家用电器&quot;], alias:[&quot;品类名称&quot;]}</tspan></text>
+<rect x="3220" y="866" width="1370" height="60" class="qdrant-column-row-a"/>
+<text x="3232" y="886" class="index-id" >col-003-1</text>
+<text x="3372" y="886" class="index-vector" >Embedding(&quot;brand_name&quot;)</text>
+<line x1="3220" y1="896" x2="3860" y2="896" class="index-inner-line"/>
+<text x="3232" y="916" class="index-id" >col-003-2</text>
+<text x="3372" y="916" class="index-vector" >Embedding(&quot;品牌名称&quot;)</text>
+<text x="3872" y="889" class="index-payload" ><tspan x="3872" dy="0">{id:&quot;dim_brand_info.brand_name&quot;, name:&quot;brand_name&quot;, type:&quot;varchar(512)&quot;,</tspan><tspan x="3872" dy="24"> role:&quot;dimension&quot;, examples:[&quot;华为&quot;,&quot;Apple&quot;], table_id:&quot;dim_brand_info&quot;}</tspan></text>
+<rect x="3220" y="926" width="1370" height="60" class="qdrant-column-row-b"/>
+<text x="3232" y="946" class="index-id" >col-004-1</text>
+<text x="3372" y="946" class="index-vector" >Embedding(&quot;channel_name&quot;)</text>
+<line x1="3220" y1="956" x2="3860" y2="956" class="index-inner-line"/>
+<text x="3232" y="976" class="index-id" >col-004-2</text>
+<text x="3372" y="976" class="index-vector" >Embedding(&quot;渠道名称&quot;)</text>
+<text x="3872" y="949" class="index-payload" ><tspan x="3872" dy="0">{id:&quot;dim_channel_info.channel_name&quot;, name:&quot;channel_name&quot;,</tspan><tspan x="3872" dy="24"> role:&quot;dimension&quot;, examples:[&quot;客户端&quot;,&quot;小程序&quot;], table_id:&quot;dim_channel_info&quot;}</tspan></text>
+<rect x="3220" y="986" width="1370" height="90" class="qdrant-column-row-a"/>
+<text x="3232" y="1006" class="index-id" >col-005-1</text>
+<text x="3372" y="1006" class="index-vector" >Embedding(&quot;province_name&quot;)</text>
+<line x1="3220" y1="1016" x2="3860" y2="1016" class="index-inner-line"/>
+<text x="3232" y="1036" class="index-id" >col-005-2</text>
+<text x="3372" y="1036" class="index-vector" >Embedding(&quot;省名称&quot;)</text>
+<line x1="3220" y1="1046" x2="3860" y2="1046" class="index-inner-line"/>
+<text x="3232" y="1066" class="index-id" >col-005-3</text>
+<text x="3372" y="1066" class="index-vector" >Embedding(&quot;省份&quot;)</text>
+<text x="3872" y="1024" class="index-payload" ><tspan x="3872" dy="0">{id:&quot;dim_geo_region_zip.province_name&quot;, name:&quot;province_name&quot;,</tspan><tspan x="3872" dy="24"> role:&quot;dimension&quot;, examples:[&quot;广东省&quot;,&quot;浙江省&quot;], alias:[&quot;省份&quot;]}</tspan></text>
+<rect x="3220" y="1076" width="1370" height="60" class="qdrant-column-row-b"/>
+<text x="3232" y="1096" class="index-id" >col-006-1</text>
+<text x="3372" y="1096" class="index-vector" >Embedding(&quot;shop_name&quot;)</text>
+<line x1="3220" y1="1106" x2="3860" y2="1106" class="index-inner-line"/>
+<text x="3232" y="1126" class="index-id" >col-006-2</text>
+<text x="3372" y="1126" class="index-vector" >Embedding(&quot;店铺名称&quot;)</text>
+<text x="3872" y="1099" class="index-payload" ><tspan x="3872" dy="0">{id:&quot;dim_shop_info_zip.shop_name&quot;, name:&quot;shop_name&quot;, type:&quot;varchar(512)&quot;,</tspan><tspan x="3872" dy="24"> role:&quot;dimension&quot;, examples:[&quot;官方旗舰店&quot;], table_id:&quot;dim_shop_info_zip&quot;}</tspan></text>
+<rect x="3220" y="1136" width="1370" height="120" class="qdrant-column-row-a"/>
+<text x="3232" y="1156" class="index-id" >col-007-1</text>
+<text x="3372" y="1156" class="index-vector" >Embedding(&quot;receivable_amount&quot;)</text>
+<line x1="3220" y1="1166" x2="3860" y2="1166" class="index-inner-line"/>
+<text x="3232" y="1186" class="index-id" >col-007-2</text>
+<text x="3372" y="1186" class="index-vector" >Embedding(&quot;下单应收金额&quot;)</text>
+<line x1="3220" y1="1196" x2="3860" y2="1196" class="index-inner-line"/>
+<text x="3232" y="1216" class="index-id" >col-007-3</text>
+<text x="3372" y="1216" class="index-vector" >Embedding(&quot;GMV&quot;)</text>
+<line x1="3220" y1="1226" x2="3860" y2="1226" class="index-inner-line"/>
+<text x="3232" y="1246" class="index-id" >col-007-4</text>
+<text x="3372" y="1246" class="index-vector" >Embedding(&quot;下单金额&quot;)</text>
+<text x="3872" y="1189" class="index-payload" ><tspan x="3872" dy="0">{id:&quot;dwd_trade_order_detail_di.receivable_amount&quot;, name:&quot;receivable_amount&quot;,</tspan><tspan x="3872" dy="24"> role:&quot;measure&quot;, alias:[&quot;GMV&quot;,&quot;下单金额&quot;], table_id:&quot;dwd_trade_order_detail_di&quot;}</tspan></text>
+</g>
+<g aria-label="Elasticsearch value_info">
+<rect x="3220" y="1310" width="1370" height="1498" rx="16" class="meta-card"/>
+<rect x="3220" y="1310" width="1370" height="54" rx="16" class="es-index-head"/>
+<rect x="3220" y="1348" width="1370" height="16" class="es-index-head"/>
+<text x="3240" y="1344" class="index-title" >Elasticsearch · value_info</text>
+<rect x="3220" y="1364" width="160" height="52" class="index-column-head"/>
+<text x="3232" y="1396" class="index-column-label" >id</text>
+<rect x="3380" y="1364" width="300" height="52" class="index-column-head"/>
+<text x="3392" y="1396" class="index-column-label" >value</text>
+<rect x="3680" y="1364" width="910" height="52" class="index-column-head"/>
+<text x="3692" y="1396" class="index-column-label" >column_id</text>
+<rect x="3220" y="1416" width="1370" height="58" class="es-row-a"/>
+<text x="3232" y="1453" class="index-id" >val-001</text>
+<text x="3392" y="1453" class="value-text" >广东省</text>
+<text x="3692" y="1453" class="value-column-id" >dim_geo_region_zip.province_name</text>
+<rect x="3220" y="1474" width="1370" height="58" class="es-row-b"/>
+<text x="3232" y="1511" class="index-id" >val-002</text>
+<text x="3392" y="1511" class="value-text" >浙江省</text>
+<text x="3692" y="1511" class="value-column-id" >dim_geo_region_zip.province_name</text>
+<rect x="3220" y="1532" width="1370" height="58" class="es-row-a"/>
+<text x="3232" y="1569" class="index-id" >val-003</text>
+<text x="3392" y="1569" class="value-text" >深圳市</text>
+<text x="3692" y="1569" class="value-column-id" >dim_geo_region_zip.city_name</text>
+<rect x="3220" y="1590" width="1370" height="58" class="es-row-b"/>
+<text x="3232" y="1627" class="index-id" >val-004</text>
+<text x="3392" y="1627" class="value-text" >杭州市</text>
+<text x="3692" y="1627" class="value-column-id" >dim_geo_region_zip.city_name</text>
+<rect x="3220" y="1648" width="1370" height="58" class="es-row-a"/>
+<text x="3232" y="1685" class="index-id" >val-005</text>
+<text x="3392" y="1685" class="value-text" >南山区</text>
+<text x="3692" y="1685" class="value-column-id" >dim_geo_region_zip.district_name</text>
+<rect x="3220" y="1706" width="1370" height="58" class="es-row-b"/>
+<text x="3232" y="1743" class="index-id" >val-006</text>
+<text x="3392" y="1743" class="value-text" >余杭区</text>
+<text x="3692" y="1743" class="value-column-id" >dim_geo_region_zip.district_name</text>
+<rect x="3220" y="1764" width="1370" height="58" class="es-row-a"/>
+<text x="3232" y="1801" class="index-id" >val-007</text>
+<text x="3392" y="1801" class="value-text" >手机数码</text>
+<text x="3692" y="1801" class="value-column-id" >dim_category_info_zip.category_name</text>
+<rect x="3220" y="1822" width="1370" height="58" class="es-row-b"/>
+<text x="3232" y="1859" class="index-id" >val-008</text>
+<text x="3392" y="1859" class="value-text" >家用电器</text>
+<text x="3692" y="1859" class="value-column-id" >dim_category_info_zip.category_name</text>
+<rect x="3220" y="1880" width="1370" height="58" class="es-row-a"/>
+<text x="3232" y="1917" class="index-id" >val-009</text>
+<text x="3392" y="1917" class="value-text" >数码</text>
+<text x="3692" y="1917" class="value-column-id" >dim_category_info_zip.root_category_name</text>
+<rect x="3220" y="1938" width="1370" height="58" class="es-row-b"/>
+<text x="3232" y="1975" class="index-id" >val-010</text>
+<text x="3392" y="1975" class="value-text" >家电</text>
+<text x="3692" y="1975" class="value-column-id" >dim_category_info_zip.root_category_name</text>
+<rect x="3220" y="1996" width="1370" height="58" class="es-row-a"/>
+<text x="3232" y="2033" class="index-id" >val-011</text>
+<text x="3392" y="2033" class="value-text" >华为</text>
+<text x="3692" y="2033" class="value-column-id" >dim_brand_info.brand_name</text>
+<rect x="3220" y="2054" width="1370" height="58" class="es-row-b"/>
+<text x="3232" y="2091" class="index-id" >val-012</text>
+<text x="3392" y="2091" class="value-text" >Apple</text>
+<text x="3692" y="2091" class="value-column-id" >dim_brand_info.brand_name</text>
+<rect x="3220" y="2112" width="1370" height="58" class="es-row-a"/>
+<text x="3232" y="2149" class="index-id" >val-013</text>
+<text x="3392" y="2149" class="value-text" >苹果</text>
+<text x="3692" y="2149" class="value-column-id" >dim_brand_info.brand_alias</text>
+<rect x="3220" y="2170" width="1370" height="58" class="es-row-b"/>
+<text x="3232" y="2207" class="index-id" >val-014</text>
+<text x="3392" y="2207" class="value-text" >中国</text>
+<text x="3692" y="2207" class="value-column-id" >dim_brand_info.country_name</text>
+<rect x="3220" y="2228" width="1370" height="58" class="es-row-a"/>
+<text x="3232" y="2265" class="index-id" >val-015</text>
+<text x="3392" y="2265" class="value-text" >美国</text>
+<text x="3692" y="2265" class="value-column-id" >dim_brand_info.country_name</text>
+<rect x="3220" y="2286" width="1370" height="58" class="es-row-b"/>
+<text x="3232" y="2323" class="index-id" >val-016</text>
+<text x="3392" y="2323" class="value-text" >官方旗舰店</text>
+<text x="3692" y="2323" class="value-column-id" >dim_shop_info_zip.shop_name</text>
+<rect x="3220" y="2344" width="1370" height="58" class="es-row-a"/>
+<text x="3232" y="2381" class="index-id" >val-017</text>
+<text x="3392" y="2381" class="value-text" >旗舰店</text>
+<text x="3692" y="2381" class="value-column-id" >dim_shop_info_zip.shop_type</text>
+<rect x="3220" y="2402" width="1370" height="58" class="es-row-b"/>
+<text x="3232" y="2439" class="index-id" >val-018</text>
+<text x="3392" y="2439" class="value-text" >专营店</text>
+<text x="3692" y="2439" class="value-column-id" >dim_shop_info_zip.shop_type</text>
+<rect x="3220" y="2460" width="1370" height="58" class="es-row-a"/>
+<text x="3232" y="2497" class="index-id" >val-019</text>
+<text x="3392" y="2497" class="value-text" >APP</text>
+<text x="3692" y="2497" class="value-column-id" >dim_channel_info.channel_code</text>
+<rect x="3220" y="2518" width="1370" height="58" class="es-row-b"/>
+<text x="3232" y="2555" class="index-id" >val-020</text>
+<text x="3392" y="2555" class="value-text" >H5</text>
+<text x="3692" y="2555" class="value-column-id" >dim_channel_info.channel_code</text>
+<rect x="3220" y="2576" width="1370" height="58" class="es-row-a"/>
+<text x="3232" y="2613" class="index-id" >val-021</text>
+<text x="3392" y="2613" class="value-text" >PC</text>
+<text x="3692" y="2613" class="value-column-id" >dim_channel_info.channel_code</text>
+<rect x="3220" y="2634" width="1370" height="58" class="es-row-b"/>
+<text x="3232" y="2671" class="index-id" >val-022</text>
+<text x="3392" y="2671" class="value-text" >客户端</text>
+<text x="3692" y="2671" class="value-column-id" >dim_channel_info.channel_name</text>
+<rect x="3220" y="2692" width="1370" height="58" class="es-row-a"/>
+<text x="3232" y="2729" class="index-id" >val-023</text>
+<text x="3392" y="2729" class="value-text" >小程序</text>
+<text x="3692" y="2729" class="value-column-id" >dim_channel_info.channel_name</text>
+<rect x="3220" y="2750" width="1370" height="58" class="es-row-b"/>
+<text x="3232" y="2787" class="index-id" >val-024</text>
+<text x="3392" y="2787" class="value-text" >移动端</text>
+<text x="3692" y="2787" class="value-column-id" >dim_channel_info.platform_type</text>
+</g>
+<g aria-label="Qdrant · metric_info">
+<rect x="3220" y="2870" width="1370" height="616" rx="16" class="meta-card"/>
+<rect x="3220" y="2870" width="1370" height="54" rx="16" class="qdrant-metric-index-head"/>
+<rect x="3220" y="2908" width="1370" height="16" class="qdrant-metric-index-head"/>
+<text x="3240" y="2904" class="index-title" >Qdrant · metric_info</text>
+<rect x="3220" y="2924" width="140" height="52" class="index-column-head"/>
+<text x="3232" y="2956" class="index-column-label" >point_id</text>
+<rect x="3360" y="2924" width="500" height="52" class="index-column-head"/>
+<text x="3372" y="2956" class="index-column-label" >vector</text>
+<rect x="3860" y="2924" width="730" height="52" class="index-column-head"/>
+<text x="3872" y="2956" class="index-column-label" >payload</text>
+<rect x="3220" y="2976" width="1370" height="120" class="qdrant-metric-row-a"/>
+<text x="3232" y="2996" class="index-id" >met-001-1</text>
+<text x="3372" y="2996" class="index-vector" >Embedding(&quot;下单订单数&quot;)</text>
+<line x1="3220" y1="3006" x2="3860" y2="3006" class="index-inner-line"/>
+<text x="3232" y="3026" class="index-id" >met-001-2</text>
+<text x="3372" y="3026" class="index-vector" >Embedding(&quot;下单明细中的去重订单数&quot;)</text>
+<line x1="3220" y1="3036" x2="3860" y2="3036" class="index-inner-line"/>
+<text x="3232" y="3056" class="index-id" >met-001-3</text>
+<text x="3372" y="3056" class="index-vector" >Embedding(&quot;订单数&quot;)</text>
+<line x1="3220" y1="3066" x2="3860" y2="3066" class="index-inner-line"/>
+<text x="3232" y="3086" class="index-id" >met-001-4</text>
+<text x="3372" y="3086" class="index-vector" >Embedding(&quot;下单量&quot;)</text>
+<text x="3872" y="3017" class="index-payload" ><tspan x="3872" dy="0">{id:&quot;metric_order_count&quot;, name:&quot;下单订单数&quot;,</tspan><tspan x="3872" dy="24"> description:&quot;下单明细中的去重订单数；COUNT(DISTINCT order_id)&quot;,</tspan><tspan x="3872" dy="24"> relevant_columns:[&quot;dwd_trade_order_detail_di.order_id&quot;], alias:[&quot;订单数&quot;,&quot;下单量&quot;]}</tspan></text>
+<rect x="3220" y="3096" width="1370" height="120" class="qdrant-metric-row-b"/>
+<text x="3232" y="3116" class="index-id" >met-002-1</text>
+<text x="3372" y="3116" class="index-vector" >Embedding(&quot;客单价&quot;)</text>
+<line x1="3220" y1="3126" x2="3860" y2="3126" class="index-inner-line"/>
+<text x="3232" y="3146" class="index-id" >met-002-2</text>
+<text x="3372" y="3146" class="index-vector" >Embedding(&quot;平均每个订单的下单应收金额&quot;)</text>
+<line x1="3220" y1="3156" x2="3860" y2="3156" class="index-inner-line"/>
+<text x="3232" y="3176" class="index-id" >met-002-3</text>
+<text x="3372" y="3176" class="index-vector" >Embedding(&quot;AOV&quot;)</text>
+<line x1="3220" y1="3186" x2="3860" y2="3186" class="index-inner-line"/>
+<text x="3232" y="3206" class="index-id" >met-002-4</text>
+<text x="3372" y="3206" class="index-vector" >Embedding(&quot;平均订单金额&quot;)</text>
+<text x="3872" y="3116" class="index-payload" ><tspan x="3872" dy="0">{id:&quot;metric_aov&quot;, name:&quot;客单价&quot;,</tspan><tspan x="3872" dy="20"> description:&quot;平均每个订单的下单应收金额；SUM(receivable_amount)/COUNT(DISTINCT order_id)&quot;,</tspan><tspan x="3872" dy="20"> relevant_columns:[&quot;dwd_trade_order_detail_di.order_id&quot;,</tspan><tspan x="3872" dy="20"> &quot;dwd_trade_order_detail_di.receivable_amount&quot;],</tspan><tspan x="3872" dy="20"> alias:[&quot;AOV&quot;,&quot;平均订单金额&quot;]}</tspan></text>
+<rect x="3220" y="3216" width="1370" height="120" class="qdrant-metric-row-a"/>
+<text x="3232" y="3236" class="index-id" >met-003-1</text>
+<text x="3372" y="3236" class="index-vector" >Embedding(&quot;销量&quot;)</text>
+<line x1="3220" y1="3246" x2="3860" y2="3246" class="index-inner-line"/>
+<text x="3232" y="3266" class="index-id" >met-003-2</text>
+<text x="3372" y="3266" class="index-vector" >Embedding(&quot;订单明细购买件数之和&quot;)</text>
+<line x1="3220" y1="3276" x2="3860" y2="3276" class="index-inner-line"/>
+<text x="3232" y="3296" class="index-id" >met-003-3</text>
+<text x="3372" y="3296" class="index-vector" >Embedding(&quot;销售件数&quot;)</text>
+<line x1="3220" y1="3306" x2="3860" y2="3306" class="index-inner-line"/>
+<text x="3232" y="3326" class="index-id" >met-003-4</text>
+<text x="3372" y="3326" class="index-vector" >Embedding(&quot;销售数量&quot;)</text>
+<text x="3872" y="3257" class="index-payload" ><tspan x="3872" dy="0">{id:&quot;metric_sku_qty&quot;, name:&quot;销量&quot;,</tspan><tspan x="3872" dy="24"> description:&quot;订单明细购买件数之和；SUM(sku_qty)&quot;,</tspan><tspan x="3872" dy="24"> relevant_columns:[&quot;dwd_trade_order_detail_di.sku_qty&quot;], alias:[&quot;销售件数&quot;,&quot;销售数量&quot;]}</tspan></text>
+<rect x="3220" y="3336" width="1370" height="150" class="qdrant-metric-row-b"/>
+<text x="3232" y="3356" class="index-id" >met-004-1</text>
+<text x="3372" y="3356" class="index-vector" >Embedding(&quot;下单GMV&quot;)</text>
+<line x1="3220" y1="3366" x2="3860" y2="3366" class="index-inner-line"/>
+<text x="3232" y="3386" class="index-id" >met-004-2</text>
+<text x="3372" y="3386" class="index-vector" >Embedding(&quot;下单口径应收金额之和&quot;)</text>
+<line x1="3220" y1="3396" x2="3860" y2="3396" class="index-inner-line"/>
+<text x="3232" y="3416" class="index-id" >met-004-3</text>
+<text x="3372" y="3416" class="index-vector" >Embedding(&quot;GMV&quot;)</text>
+<line x1="3220" y1="3426" x2="3860" y2="3426" class="index-inner-line"/>
+<text x="3232" y="3446" class="index-id" >met-004-4</text>
+<text x="3372" y="3446" class="index-vector" >Embedding(&quot;下单金额&quot;)</text>
+<line x1="3220" y1="3456" x2="3860" y2="3456" class="index-inner-line"/>
+<text x="3232" y="3476" class="index-id" >met-004-5</text>
+<text x="3372" y="3476" class="index-vector" >Embedding(&quot;成交总额&quot;)</text>
+<text x="3872" y="3380" class="index-payload" ><tspan x="3872" dy="0">{id:&quot;metric_gmv&quot;, name:&quot;下单GMV&quot;,</tspan><tspan x="3872" dy="24"> description:&quot;下单口径应收金额之和；SUM(receivable_amount)&quot;,</tspan><tspan x="3872" dy="24"> relevant_columns:[&quot;dwd_trade_order_detail_di.receivable_amount&quot;],</tspan><tspan x="3872" dy="24"> alias:[&quot;GMV&quot;,&quot;下单金额&quot;,&quot;成交总额&quot;]}</tspan></text>
+</g>
+<g id="search-index-links" aria-label="MySQL 元数据到检索索引的连接">
+<path d="M2990 659C3070 659 3140 660 3220 660" class="index-link-halo"/>
+<path d="M2990 673C3150 673 3150 1390 3220 1390" class="index-link-halo"/>
+<path d="M2990 2951C3070 2951 3140 2950 3220 2950" class="index-link-halo"/>
+<path d="M2990 659C3070 659 3140 660 3220 660" class="column-index-link"/>
+<circle cx="2990" cy="659" r="4" fill="#2563EB" class="link-dot"/>
+<circle cx="3220" cy="660" r="4" fill="#2563EB" class="link-dot"/>
+<path d="M2990 673C3150 673 3150 1390 3220 1390" class="value-index-link"/>
+<circle cx="2990" cy="673" r="4" fill="#F97316" class="link-dot"/>
+<circle cx="3220" cy="1390" r="4" fill="#F97316" class="link-dot"/>
+<path d="M2990 2951C3070 2951 3140 2950 3220 2950" class="metric-index-link"/>
+<circle cx="2990" cy="2951" r="4" fill="#9333EA" class="link-dot"/>
+<circle cx="3220" cy="2950" r="4" fill="#9333EA" class="link-dot"/>
+</g>
+<g id="business-column-links" aria-label="数仓表到 column_info 表分组的连接">
+<path d="M285 540C285 565 305 575 335 575H1435C1495 575 1495 697 1530 697" class="table-link-halo"/>
+<path d="M735 540C735 575 755 595 785 595H1445C1500 595 1500 905 1530 905" class="table-link-halo"/>
+<path d="M1185 540C1185 585 1205 615 1235 615H1455C1505 615 1505 1087 1530 1087" class="table-link-halo"/>
+<path d="M1210 985C1350 985 1390 1243 1530 1243" class="table-link-halo"/>
+<path d="M285 1510C285 1460 305 1425 345 1425H1440C1500 1425 1500 1737 1530 1737" class="table-link-halo"/>
+<path d="M735 1510C735 1470 755 1445 795 1445H1450C1505 1445 1505 1919 1530 1919" class="table-link-halo"/>
+<path d="M1185 1510C1185 1480 1205 1465 1245 1465H1460C1510 1465 1510 2075 1530 2075" class="table-link-halo"/>
+<path d="M285 540C285 565 305 575 335 575H1435C1495 575 1495 697 1530 697" class="table-link"/>
+<path d="M735 540C735 575 755 595 785 595H1445C1500 595 1500 905 1530 905" class="table-link"/>
+<path d="M1185 540C1185 585 1205 615 1235 615H1455C1505 615 1505 1087 1530 1087" class="table-link"/>
+<path d="M1210 985C1350 985 1390 1243 1530 1243" class="fact-link"/>
+<path d="M285 1510C285 1460 305 1425 345 1425H1440C1500 1425 1500 1737 1530 1737" class="table-link"/>
+<path d="M735 1510C735 1470 755 1445 795 1445H1450C1505 1445 1505 1919 1530 1919" class="table-link"/>
+<path d="M1185 1510C1185 1480 1205 1465 1245 1465H1460C1510 1465 1510 2075 1530 2075" class="table-link"/>
+<circle cx="285" cy="540" r="4" fill="#3B82F6" class="link-dot"/>
+<circle cx="1530" cy="697" r="4" fill="#3B82F6" class="link-dot"/>
+<circle cx="735" cy="540" r="4" fill="#3B82F6" class="link-dot"/>
+<circle cx="1530" cy="905" r="4" fill="#3B82F6" class="link-dot"/>
+<circle cx="1185" cy="540" r="4" fill="#3B82F6" class="link-dot"/>
+<circle cx="1530" cy="1087" r="4" fill="#3B82F6" class="link-dot"/>
+<circle cx="1210" cy="985" r="4" fill="#0F9F8F" class="link-dot"/>
+<circle cx="1530" cy="1243" r="4" fill="#0F9F8F" class="link-dot"/>
+<circle cx="285" cy="1510" r="4" fill="#3B82F6" class="link-dot"/>
+<circle cx="1530" cy="1737" r="4" fill="#3B82F6" class="link-dot"/>
+<circle cx="735" cy="1510" r="4" fill="#3B82F6" class="link-dot"/>
+<circle cx="1530" cy="1919" r="4" fill="#3B82F6" class="link-dot"/>
+<circle cx="1185" cy="1510" r="4" fill="#3B82F6" class="link-dot"/>
+<circle cx="1530" cy="2075" r="4" fill="#3B82F6" class="link-dot"/>
+</g>
+<g id="column-metric-links" aria-label="column_info 到 column_metric 的字段依赖">
+<path d="M2990 1295C3040 1295 3040 2415 2990 2415" class="metric-link-halo"/>
+<path d="M2990 1295C3049 1295 3049 2461 2990 2461" class="metric-link-halo"/>
+<path d="M2990 1529C3058 1529 3058 2507 2990 2507" class="metric-link-halo"/>
+<path d="M2990 1477C3067 1477 3067 2553 2990 2553" class="metric-link-halo"/>
+<path d="M2990 1477C3076 1477 3076 2599 2990 2599" class="metric-link-halo"/>
+<path d="M2990 1529C3085 1529 3085 2645 2990 2645" class="metric-link-halo"/>
+<path d="M2990 1503C3094 1503 3094 2691 2990 2691" class="metric-link-halo"/>
+<path d="M2990 1529C3103 1529 3103 2737 2990 2737" class="metric-link-halo"/>
+<path d="M2990 1555C3112 1555 3112 2783 2990 2783" class="metric-link-halo"/>
+<path d="M2990 1295C3040 1295 3040 2415 2990 2415" class="metric-link"/>
+<circle cx="2990" cy="1295" r="3.5" fill="#9333EA" class="link-dot"/>
+<circle cx="2990" cy="2415" r="3.5" fill="#9333EA" class="link-dot"/>
+<path d="M2990 1295C3049 1295 3049 2461 2990 2461" class="metric-link"/>
+<circle cx="2990" cy="1295" r="3.5" fill="#9333EA" class="link-dot"/>
+<circle cx="2990" cy="2461" r="3.5" fill="#9333EA" class="link-dot"/>
+<path d="M2990 1529C3058 1529 3058 2507 2990 2507" class="metric-link"/>
+<circle cx="2990" cy="1529" r="3.5" fill="#9333EA" class="link-dot"/>
+<circle cx="2990" cy="2507" r="3.5" fill="#9333EA" class="link-dot"/>
+<path d="M2990 1477C3067 1477 3067 2553 2990 2553" class="metric-link"/>
+<circle cx="2990" cy="1477" r="3.5" fill="#9333EA" class="link-dot"/>
+<circle cx="2990" cy="2553" r="3.5" fill="#9333EA" class="link-dot"/>
+<path d="M2990 1477C3076 1477 3076 2599 2990 2599" class="metric-link"/>
+<circle cx="2990" cy="1477" r="3.5" fill="#9333EA" class="link-dot"/>
+<circle cx="2990" cy="2599" r="3.5" fill="#9333EA" class="link-dot"/>
+<path d="M2990 1529C3085 1529 3085 2645 2990 2645" class="metric-link"/>
+<circle cx="2990" cy="1529" r="3.5" fill="#9333EA" class="link-dot"/>
+<circle cx="2990" cy="2645" r="3.5" fill="#9333EA" class="link-dot"/>
+<path d="M2990 1503C3094 1503 3094 2691 2990 2691" class="metric-link"/>
+<circle cx="2990" cy="1503" r="3.5" fill="#9333EA" class="link-dot"/>
+<circle cx="2990" cy="2691" r="3.5" fill="#9333EA" class="link-dot"/>
+<path d="M2990 1529C3103 1529 3103 2737 2990 2737" class="metric-link"/>
+<circle cx="2990" cy="1529" r="3.5" fill="#9333EA" class="link-dot"/>
+<circle cx="2990" cy="2737" r="3.5" fill="#9333EA" class="link-dot"/>
+<path d="M2990 1555C3112 1555 3112 2783 2990 2783" class="metric-link"/>
+<circle cx="2990" cy="1555" r="3.5" fill="#9333EA" class="link-dot"/>
+<circle cx="2990" cy="2783" r="3.5" fill="#9333EA" class="link-dot"/>
+</g>
+<g id="metric-definition-links" aria-label="column_metric 到 metric_info 的指标定义">
+<path d="M2990 2415C3050 2415 3050 3016 2990 3016" class="metric-link-halo"/>
+<path d="M2990 2461C3059 2461 3059 3092 2990 3092" class="metric-link-halo"/>
+<path d="M2990 2507C3068 2507 3068 3092 2990 3092" class="metric-link-halo"/>
+<path d="M2990 2553C3077 2553 3077 3168 2990 3168" class="metric-link-halo"/>
+<path d="M2990 2599C3086 2599 3086 3244 2990 3244" class="metric-link-halo"/>
+<path d="M2990 2645C3095 2645 3095 3244 2990 3244" class="metric-link-halo"/>
+<path d="M2990 2691C3104 2691 3104 3320 2990 3320" class="metric-link-halo"/>
+<path d="M2990 2737C3113 2737 3113 3396 2990 3396" class="metric-link-halo"/>
+<path d="M2990 2783C3122 2783 3122 3472 2990 3472" class="metric-link-halo"/>
+<path d="M2990 2415C3050 2415 3050 3016 2990 3016" class="metric-link"/>
+<circle cx="2990" cy="2415" r="3.5" fill="#9333EA" class="link-dot"/>
+<circle cx="2990" cy="3016" r="3.5" fill="#9333EA" class="link-dot"/>
+<path d="M2990 2461C3059 2461 3059 3092 2990 3092" class="metric-link"/>
+<circle cx="2990" cy="2461" r="3.5" fill="#9333EA" class="link-dot"/>
+<circle cx="2990" cy="3092" r="3.5" fill="#9333EA" class="link-dot"/>
+<path d="M2990 2507C3068 2507 3068 3092 2990 3092" class="metric-link"/>
+<circle cx="2990" cy="2507" r="3.5" fill="#9333EA" class="link-dot"/>
+<circle cx="2990" cy="3092" r="3.5" fill="#9333EA" class="link-dot"/>
+<path d="M2990 2553C3077 2553 3077 3168 2990 3168" class="metric-link"/>
+<circle cx="2990" cy="2553" r="3.5" fill="#9333EA" class="link-dot"/>
+<circle cx="2990" cy="3168" r="3.5" fill="#9333EA" class="link-dot"/>
+<path d="M2990 2599C3086 2599 3086 3244 2990 3244" class="metric-link"/>
+<circle cx="2990" cy="2599" r="3.5" fill="#9333EA" class="link-dot"/>
+<circle cx="2990" cy="3244" r="3.5" fill="#9333EA" class="link-dot"/>
+<path d="M2990 2645C3095 2645 3095 3244 2990 3244" class="metric-link"/>
+<circle cx="2990" cy="2645" r="3.5" fill="#9333EA" class="link-dot"/>
+<circle cx="2990" cy="3244" r="3.5" fill="#9333EA" class="link-dot"/>
+<path d="M2990 2691C3104 2691 3104 3320 2990 3320" class="metric-link"/>
+<circle cx="2990" cy="2691" r="3.5" fill="#9333EA" class="link-dot"/>
+<circle cx="2990" cy="3320" r="3.5" fill="#9333EA" class="link-dot"/>
+<path d="M2990 2737C3113 2737 3113 3396 2990 3396" class="metric-link"/>
+<circle cx="2990" cy="2737" r="3.5" fill="#9333EA" class="link-dot"/>
+<circle cx="2990" cy="3396" r="3.5" fill="#9333EA" class="link-dot"/>
+<path d="M2990 2783C3122 2783 3122 3472 2990 3472" class="metric-link"/>
+<circle cx="2990" cy="2783" r="3.5" fill="#9333EA" class="link-dot"/>
+<circle cx="2990" cy="3472" r="3.5" fill="#9333EA" class="link-dot"/>
+</g>
+</g>
+</svg>
