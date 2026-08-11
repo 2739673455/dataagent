@@ -1,0 +1,8 @@
+{
+  "name": "dataagent-sandbox-runtime",
+  "private": true,
+  "dependencies": {
+    "lodash": "4.17.21",
+    "papaparse": "5.5.3"
+  }
+}

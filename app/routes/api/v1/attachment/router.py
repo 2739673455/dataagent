@@ -8,7 +8,9 @@ from fastapi.responses import Response
 from loguru import logger
 
 from app.clients.docker_sandbox_manager import (
+    SandboxFileTooLargeError,
     SandboxPathError,
+    SandboxStorageLimitError,
     docker_sandbox_manager,
 )
 from app.errors import attachment_error, chat_error
@@ -43,6 +45,10 @@ async def api_upload_attachment(
         )
     except SandboxPathError:
         raise attachment_error.PathTraversalError from None
+    except SandboxFileTooLargeError:
+        raise attachment_error.AttachmentTooLargeError from None
+    except SandboxStorageLimitError:
+        raise attachment_error.SandboxStorageLimitError from None
 
     logger.info(f"Upload attachment: {conversation_id=}, file={f_path}")
     return chat_schema.UploadAttachmentResponse(
@@ -101,6 +107,8 @@ async def api_get_attachment(
         raise attachment_error.PathTraversalError from None
     except FileNotFoundError:
         raise attachment_error.AttachmentNotFoundError(detail=f_path)
+    except SandboxFileTooLargeError:
+        raise attachment_error.AttachmentTooLargeError from None
 
     # 获取文件 MIME 类型
     media_type, _ = mimetypes.guess_type(f_path)

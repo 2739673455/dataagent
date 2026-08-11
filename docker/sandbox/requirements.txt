@@ -1,0 +1,10 @@
+duckdb==1.5.5
+matplotlib==3.11.1
+numpy==2.5.2
+openpyxl==3.1.5
+pandas==3.0.5
+polars==1.43.2
+pyarrow==25.0.1
+scikit-learn==1.9.0
+scipy==1.18.0
+seaborn==0.13.2

@@ -1,5 +1,5 @@
 ---
-name: insight
+name: dataagent
 description: 当任务涉及归因分析、业务诊断、活动复盘、营销分析、渠道/用户/商品/优惠/地域/漏斗分析，或需要先通过 `db_query` 查询业务数据库、再用 pandas 在工作区完成多维对比分析并最终输出 HTML 报告时使用此技能。
 ---
 

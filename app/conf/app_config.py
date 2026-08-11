@@ -4,7 +4,7 @@ from typing import Annotated, Any, Literal, cast
 
 import dotenv
 from omegaconf import OmegaConf
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # 路径常量
 ROOT_DIR = Path(__file__).parents[2]
@@ -55,11 +55,37 @@ class SandboxConfig(BaseModel):
     image: str
     build_context: str
     build_network_mode: str
+    rebuild_image: bool
+    node_version: str
+    node_download_base: str
+    pypi_index_url: str
+    npm_registry: str
     memory_limit: str
-    nano_cpus: int
-    pids_limit: int
-    network_mode: str
-    max_output_bytes: int
+    nano_cpus: int = Field(gt=0)
+    pids_limit: int = Field(gt=0)
+    network_mode: Literal["none", "bridge"]
+    max_output_bytes: int = Field(ge=4 * 1024 * 1024)
+    max_capture_bytes: int = Field(gt=0)
+    max_file_bytes: int = Field(gt=0)
+    max_workspace_bytes: int = Field(gt=0)
+    idle_stop_seconds: int = Field(gt=0)
+    idle_remove_seconds: int = Field(gt=0)
+    cleanup_interval_seconds: int = Field(gt=0)
+    max_running_containers: int = Field(gt=0)
+    stop_containers_on_shutdown: bool
+
+    @model_validator(mode="after")
+    def validate_size_limits(self) -> "SandboxConfig":
+        """校验沙盒容量限制之间的关系"""
+        if self.max_output_bytes > self.max_capture_bytes:
+            raise ValueError("max_output_bytes must not exceed max_capture_bytes")
+        if self.max_capture_bytes > self.max_file_bytes:
+            raise ValueError("max_capture_bytes must not exceed max_file_bytes")
+        if self.max_file_bytes > self.max_workspace_bytes:
+            raise ValueError("max_file_bytes must not exceed max_workspace_bytes")
+        if self.idle_stop_seconds >= self.idle_remove_seconds:
+            raise ValueError("idle_stop_seconds must be less than idle_remove_seconds")
+        return self
 
 
 class SSEMCPCfg(BaseModel):

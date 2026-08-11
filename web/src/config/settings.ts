@@ -1,9 +1,9 @@
 // localStorage 中访问令牌的 key
-export const ACCESS_TOKEN_STORAGE_KEY = "insight-agent:access-token";
+export const ACCESS_TOKEN_STORAGE_KEY = "dataagent:access-token";
 // sessionStorage 中 PKCE 授权请求的 key 前缀
 export const AUTH_REQUEST_PREFIX = "auth-request:";
 // 在认证中心注册的 client_id
-export const CLIENT_ID = "insight-agent";
+export const CLIENT_ID = "dataagent";
 // 认证中心 API 基路径
 export const AUTH_API_BASE_URL = "/auth-api";
 // 认证中心页面基路径

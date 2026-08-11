@@ -38,14 +38,27 @@ embedding:
   timeout: 30.0
 
 sandbox:
-  image: insight-sandbox:latest
+  image: dataagent-sandbox:latest
   build_context: docker/sandbox
   build_network_mode: host
+  rebuild_image: true # 启动时通过 Docker 构建缓存同步镜像变更
+  node_version: 20.19.2
+  node_download_base: https://npmmirror.com/mirrors/node
+  pypi_index_url: https://mirrors.aliyun.com/pypi/simple
+  npm_registry: https://registry.npmmirror.com
   memory_limit: 2g
   nano_cpus: 2000000000 # 每个用户沙盒最多使用 2 个 CPU 核心
   pids_limit: 256
-  network_mode: bridge
-  max_output_bytes: 1048576
+  network_mode: none # 运行时断网，依赖统一构建到沙盒镜像
+  max_output_bytes: 4194304 # 覆盖 DeepAgents 结构化读取的最坏 JSON 转义开销
+  max_capture_bytes: 10485760
+  max_file_bytes: 104857600
+  max_workspace_bytes: 1073741824
+  idle_stop_seconds: 600 # 空闲 10 分钟后停止容器
+  idle_remove_seconds: 3600 # 空闲 1 小时后删除容器，但保留用户数据卷
+  cleanup_interval_seconds: 60
+  max_running_containers: 8 # 按部署机器容量调整，超出后等待或回收空闲容器
+  stop_containers_on_shutdown: true
 
 lm_config:
   active: deepseek-v4-flash-openrouter

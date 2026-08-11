@@ -500,7 +500,7 @@ dev = [
 requires-dist = [
     { name = "asyncmy", specifier = ">=0.2.11" },
     { name = "cryptography", specifier = ">=46.0.4" },
-    { name = "deepagents", specifier = ">=0.4.7" },
+    { name = "deepagents", specifier = ">=0.7.1,<0.8" },
     { name = "docker", specifier = ">=7.1,<8" },
     { name = "elasticsearch", extras = ["async"], specifier = ">=8.19,<9" },
     { name = "fastapi", specifier = ">=0.135.1" },

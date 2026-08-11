@@ -43,7 +43,7 @@ def _two_years_ago() -> date:
 class DorisConfig:
     host: str = field(default_factory=lambda: os.environ["DB_HOST"])
     port: int = field(default_factory=lambda: int(os.environ["DB_PORT"]))
-    http_port: int = 8030
+    http_port: int = field(default_factory=lambda: int(os.environ["DB_HTTP_PORT"]))
     user: str = field(default_factory=lambda: os.environ["DB_USER"])
     password: str = field(default_factory=lambda: os.environ["DB_PASSWORD"])
     database: str = field(default_factory=lambda: os.environ["DB_NAME"])

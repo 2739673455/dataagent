@@ -45,13 +45,14 @@ async def _execute_agent(
     conversation_id: UUID,
 ) -> AsyncGenerator[dict[str, Any]]:
     """执行 Agent 并流式返回原始更新"""
-    agent = await agent_manager.get_agent(user_id, conversation_id)
-    config = get_agent_config(user_id, conversation_id)
-    async for chunk in agent.astream(
-        input={"messages": input_messages},
-        config=config,
-    ):
-        yield chunk
+    async with agent_manager.execution(user_id, conversation_id):
+        agent = await agent_manager.get_agent(user_id, conversation_id)
+        config = get_agent_config(user_id, conversation_id)
+        async for chunk in agent.astream(
+            input={"messages": input_messages},
+            config=config,
+        ):
+            yield chunk
 
 
 async def run_agent_turn(

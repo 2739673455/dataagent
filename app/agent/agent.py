@@ -1,5 +1,7 @@
 import asyncio
 from collections import OrderedDict
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import UUID
 
@@ -59,7 +61,7 @@ def _build_backend(sandbox_backend: DockerSandboxBackend) -> CompositeBackend:
     # CompositeBackend 将多个后端合并为一个统一视图，对 Agent 透明：
     # - default: 当前用户沙盒中的会话目录，处理除 /skills/ 外的所有路径
     # - routes["/skills/"]: 命中此前缀时，剥离前缀后将剩余路径转发到 skills_backend
-    #   例如 Agent 请求 /skills/insight/SKILL.md → skills_backend 收到 insight/SKILL.md
+    #   例如 Agent 请求 /skills/dataagent/SKILL.md → skills_backend 收到 dataagent/SKILL.md
     return CompositeBackend(
         default=sandbox_backend, routes={"/skills/": skills_backend}
     )
@@ -80,6 +82,8 @@ class AgentManager:
         self._max_cached_agents = max_cached_agents
         self._agents: OrderedDict[AgentKey, CompiledStateGraph] = OrderedDict()
         self._build_tasks: dict[AgentKey, asyncio.Task[CompiledStateGraph]] = {}
+        self._run_tasks: dict[AgentKey, set[asyncio.Task[object]]] = {}
+        self._deleted_agent_keys: set[AgentKey] = set()
         self._state_lock = asyncio.Lock()
         self._model: BaseChatModel | None = None
         self._tools: list[BaseTool] | None = None
@@ -163,6 +167,8 @@ class AgentManager:
         await self.init()
         agent_key = (user_id, conversation_id)
         async with self._state_lock:
+            if agent_key in self._deleted_agent_keys:
+                raise RuntimeError("Agent conversation has been deleted")
             if agent := self._agents.get(agent_key):
                 self._agents.move_to_end(agent_key)
                 return agent
@@ -187,27 +193,65 @@ class AgentManager:
         """删除会话 Agent 实例及其持久化状态"""
         agent_key = (user_id, conversation_id)
         async with self._state_lock:
+            self._deleted_agent_keys.add(agent_key)
             self._agents.pop(agent_key, None)
             build_task = self._build_tasks.pop(agent_key, None)
+            run_tasks = list(self._run_tasks.pop(agent_key, ()))
         if build_task is not None:
             build_task.cancel()
             await asyncio.gather(build_task, return_exceptions=True)
+        for run_task in run_tasks:
+            run_task.cancel()
+        if run_tasks:
+            await asyncio.gather(*run_tasks, return_exceptions=True)
         await self._persistence_manager.delete_thread(
             get_thread_id(user_id, conversation_id)
         )
+
+    @asynccontextmanager
+    async def execution(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+    ) -> AsyncIterator[None]:
+        """登记会话执行任务以支持删除时安全取消"""
+        current_task = asyncio.current_task()
+        if current_task is None:
+            raise RuntimeError("Agent execution requires an asyncio task")
+        agent_key = (user_id, conversation_id)
+        async with self._state_lock:
+            if agent_key in self._deleted_agent_keys:
+                raise RuntimeError("Agent conversation has been deleted")
+            self._run_tasks.setdefault(agent_key, set()).add(current_task)
+        try:
+            yield
+        finally:
+            async with self._state_lock:
+                tasks = self._run_tasks.get(agent_key)
+                if tasks is not None:
+                    tasks.discard(current_task)
+                    if not tasks:
+                        self._run_tasks.pop(agent_key, None)
 
     async def close(self) -> None:
         """释放 Agent 缓存和未完成的构建任务"""
         async with self._state_lock:
             build_tasks = list(self._build_tasks.values())
+            run_tasks = [
+                task for tasks in self._run_tasks.values() for task in tasks
+            ]
             self._build_tasks.clear()
+            self._run_tasks.clear()
             self._agents.clear()
             self._model = None
             self._tools = None
         for build_task in build_tasks:
             build_task.cancel()
-        if build_tasks:
-            await asyncio.gather(*build_tasks, return_exceptions=True)
+        for run_task in run_tasks:
+            run_task.cancel()
+        pending_tasks = [*build_tasks, *run_tasks]
+        if pending_tasks:
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
 
 
 agent_manager = AgentManager(langgraph_postgres_manager)

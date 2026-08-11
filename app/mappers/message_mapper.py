@@ -19,7 +19,7 @@ from pydantic import ValidationError
 from app.clients.docker_sandbox_manager import docker_sandbox_manager
 from app.routes.api.v1.chat import schemas as chat_schema
 
-_MESSAGE_METADATA_KEY = "insight_message"
+_MESSAGE_METADATA_KEY = "dataagent_message"
 
 
 def _content_to_parts(content: Any) -> list[chat_schema.MessagePart]:
