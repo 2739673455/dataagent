@@ -7,8 +7,7 @@ from langchain_core.messages import BaseMessage
 from loguru import logger
 
 from app.agent.agent import (
-    delete_agent,
-    get_agent,
+    agent_manager,
     get_agent_config,
 )
 from app.mappers import message_mapper
@@ -20,7 +19,7 @@ async def list_messages(
     conversation_id: UUID,
 ) -> list[chat_schema.MessageSchema]:
     """从 LangGraph 最新线程状态读取消息"""
-    agent = await get_agent(user_id, conversation_id)
+    agent = await agent_manager.get_agent(user_id, conversation_id)
     state = await agent.aget_state(get_agent_config(user_id, conversation_id))
     messages = state.values.get("messages", [])
     if not isinstance(messages, list):
@@ -37,7 +36,7 @@ async def list_messages(
 
 async def delete_conversation_state(user_id: int, conversation_id: UUID) -> None:
     """删除会话的 LangGraph 持久化状态"""
-    await delete_agent(user_id, conversation_id)
+    await agent_manager.delete_agent(user_id, conversation_id)
 
 
 async def _execute_agent(
@@ -46,7 +45,7 @@ async def _execute_agent(
     conversation_id: UUID,
 ) -> AsyncGenerator[dict[str, Any]]:
     """执行 Agent 并流式返回原始更新"""
-    agent = await get_agent(user_id, conversation_id)
+    agent = await agent_manager.get_agent(user_id, conversation_id)
     config = get_agent_config(user_id, conversation_id)
     async for chunk in agent.astream(
         input={"messages": input_messages},
@@ -65,7 +64,7 @@ async def run_agent_turn(
     logger.info(f"{conversation_id=}: {user_message=}")
 
     input_messages: list[BaseMessage] = [
-        message_mapper.schema_to_human_message(
+        await message_mapper.schema_to_human_message(
             user_message,
             user_id,
             conversation_id,

@@ -37,10 +37,21 @@ embedding:
   model: BAAI/bge-m3
   timeout: 30.0
 
+sandbox:
+  image: insight-sandbox:latest
+  build_context: docker/sandbox
+  build_network_mode: host
+  memory_limit: 2g
+  nano_cpus: 2000000000 # 每个用户沙盒最多使用 2 个 CPU 核心
+  pids_limit: 256
+  network_mode: bridge
+  max_output_bytes: 1048576
+
 lm_config:
   active: deepseek-v4-flash-openrouter
   models:
     deepseek-v4-flash-openrouter:
+      model_provider: openai
       model: deepseek/deepseek-v4-flash-0731
       base_url: https://openrouter.ai/api/v1
       api_key: ${oc.env:OPENROUTER_API_KEY}
@@ -48,6 +59,7 @@ lm_config:
       profile:
         max_input_tokens: 1048576 # 模型上下文长度，用于计算对话压缩阈值
     qwen3.6-plus-openrouter:
+      model_provider: openai
       model: qwen/qwen3.7-flash
       base_url: https://openrouter.ai/api/v1
       api_key: ${oc.env:OPENROUTER_API_KEY}

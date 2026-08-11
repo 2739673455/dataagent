@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import shutil
 from collections.abc import AsyncIterator
 from uuid import UUID
 
@@ -8,7 +7,7 @@ from fastapi import APIRouter, Request, status
 from fastapi.responses import StreamingResponse
 from loguru import logger
 
-from app.agent.agent import get_workspace_dir
+from app.clients.docker_sandbox_manager import docker_sandbox_manager
 from app.core import context
 from app.errors import chat_error
 from app.routes.api.v1.chat import schemas as chat_schema
@@ -60,15 +59,10 @@ async def api_delete_conversations(
 
         # 删除 LangGraph 线程状态
         await chat_service.delete_conversation_state(user_id, conversation_id)
+        # 删除用户沙盒中的会话目录
+        await docker_sandbox_manager.delete_conversation(user_id, conversation_id)
         # 删除会话目录信息
         await conversation_repo.delete(user_id, conversation_id)
-
-        # 删除对话对应工作区
-        await asyncio.to_thread(
-            shutil.rmtree,
-            get_workspace_dir(user_id, conversation_id),
-            ignore_errors=True,
-        )
 
     logger.info(f"Delete conversations: conversation_ids={body.conversation_ids}")
 

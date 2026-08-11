@@ -49,6 +49,19 @@ class EmbeddingConfig(BaseModel):
     timeout: float
 
 
+class SandboxConfig(BaseModel):
+    """本地 Docker 沙盒配置"""
+
+    image: str
+    build_context: str
+    build_network_mode: str
+    memory_limit: str
+    nano_cpus: int
+    pids_limit: int
+    network_mode: str
+    max_output_bytes: int
+
+
 class SSEMCPCfg(BaseModel):
     """SSE 传输方式的 MCP 服务配置"""
 
@@ -102,6 +115,7 @@ MCPCfg = Annotated[
 class ModelCfg(BaseModel):
     """语言模型配置"""
 
+    model_provider: str
     model: str
     base_url: str
     api_key: str
@@ -125,6 +139,7 @@ class Cfg(BaseModel):
     langgraph_postgresql: DBConfig
     elasticsearch: ESConfig
     embedding: EmbeddingConfig
+    sandbox: SandboxConfig
     lm_config: LMConfigCfg
     mcp: dict[str, MCPCfg]
     cors_origins: list[str]

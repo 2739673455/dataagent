@@ -1,4 +1,4 @@
-"""元数据管理服务"""
+"""元数据目录管理服务"""
 
 from typing import cast
 
@@ -21,22 +21,22 @@ from app.entities.meta import (
 from app.errors import meta_error
 from app.repositories.meta_pg_repo import MetaPGRepo
 from app.repositories.source_doris_repo import SourceDorisRepo
-from app.services.index_service import IndexService
+from app.services.meta_index_service import MetaIndexService
 
 
-class MetaService:
+class MetaCatalogService:
     """管理表、字段和指标元数据"""
 
     def __init__(
         self,
         meta_repo: MetaPGRepo,
         source_repo: SourceDorisRepo,
-        index_service: IndexService,
+        meta_index_service: MetaIndexService,
     ) -> None:
-        """初始化元数据管理服务"""
+        """初始化元数据目录管理服务"""
         self._meta_repo = meta_repo
         self._source_repo = source_repo
-        self._index_service = index_service
+        self._meta_index_service = meta_index_service
 
     async def list_table_infos(self) -> list[TableInfo]:
         """查询全部表元数据"""
@@ -187,7 +187,7 @@ class MetaService:
                 if column_info.t_name == t_name
             ]
             await self._validate_column_deletion(column_keys, column_infos)
-        await self._index_service.delete_column_indexes(column_keys)
+        await self._meta_index_service.delete_column_indexes(column_keys)
         async with self._meta_repo.transaction():
             await self._meta_repo.delete_column_infos(column_keys)
             await self._meta_repo.delete_table_infos([t_name])
@@ -199,7 +199,7 @@ class MetaService:
             column_infos = await self._meta_repo.list_column_infos()
             column_keys = [(t_name, c_name)]
             await self._validate_column_deletion(column_keys, column_infos)
-        await self._index_service.delete_column_indexes(column_keys)
+        await self._meta_index_service.delete_column_indexes(column_keys)
         async with self._meta_repo.transaction():
             await self._meta_repo.delete_column_infos(column_keys)
 
@@ -207,7 +207,7 @@ class MetaService:
         """删除指标元数据和索引"""
         async with self._meta_repo.transaction():
             await self._meta_repo.get_metric_info(metric_name)
-        await self._index_service.delete_metric_indexes([metric_name])
+        await self._meta_index_service.delete_metric_indexes([metric_name])
         async with self._meta_repo.transaction():
             await self._meta_repo.delete_metric_infos([metric_name])
 

@@ -1,4 +1,4 @@
-"""检索索引同步服务"""
+"""元数据检索索引同步服务"""
 
 import uuid
 from datetime import date, datetime
@@ -14,7 +14,7 @@ from app.repositories.source_doris_repo import SourceDorisRepo
 from app.repositories.value_es_repo import ValueESRepo
 
 
-class IndexService:
+class MetaIndexService:
     """同步字段、字段值和指标检索索引"""
 
     _embedding_batch_size = 64
@@ -28,7 +28,7 @@ class IndexService:
         embedding_client: EmbeddingClient,
         value_repo: ValueESRepo,
     ) -> None:
-        """初始化检索索引同步服务"""
+        """初始化元数据检索索引同步服务"""
         self._meta_repo = meta_repo
         self._source_repo = source_repo
         self._column_repo = column_repo

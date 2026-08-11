@@ -34,24 +34,24 @@ from app.repositories.metric_es_repo import MetricESRepo
 from app.repositories.source_doris_repo import SourceDorisRepo
 from app.repositories.value_es_repo import ValueESRepo
 from app.routes.api.v1.meta import schemas
-from app.services.index_service import IndexService
+from app.services.meta_catalog_service import MetaCatalogService
 from app.services.meta_import_service import (
     ImportMode,
     MetaImportService,
     ResourceChanges,
 )
-from app.services.meta_service import MetaService
+from app.services.meta_index_service import MetaIndexService
 
 router = APIRouter(tags=["meta"])
 MetadataPath = Annotated[MetadataName, Path()]
 
 
-def _build_index_service(
+def _build_meta_index_service(
     meta_repo: MetaPGRepo,
     source_repo: SourceDorisRepo,
-) -> IndexService:
-    """创建索引同步服务"""
-    return IndexService(
+) -> MetaIndexService:
+    """创建元数据索引同步服务"""
+    return MetaIndexService(
         meta_repo=meta_repo,
         source_repo=source_repo,
         column_repo=ColumnESRepo(es_client_manager.get_client()),
@@ -61,28 +61,28 @@ def _build_index_service(
     )
 
 
-async def get_meta_service() -> AsyncGenerator[MetaService]:
-    """创建请求级元数据管理服务"""
+async def get_meta_catalog_service() -> AsyncGenerator[MetaCatalogService]:
+    """创建请求级元数据目录管理服务"""
     async with (
         meta_postgres_client_manager.session() as meta_session,
         source_doris_client_manager.connection() as source_connection,
     ):
         meta_repo = MetaPGRepo(meta_session)
         source_repo = SourceDorisRepo(source_connection)
-        yield MetaService(
+        yield MetaCatalogService(
             meta_repo=meta_repo,
             source_repo=source_repo,
-            index_service=_build_index_service(meta_repo, source_repo),
+            meta_index_service=_build_meta_index_service(meta_repo, source_repo),
         )
 
 
-async def get_index_service() -> AsyncGenerator[IndexService]:
-    """创建请求级索引同步服务"""
+async def get_meta_index_service() -> AsyncGenerator[MetaIndexService]:
+    """创建请求级元数据索引同步服务"""
     async with (
         meta_postgres_client_manager.session() as meta_session,
         source_doris_client_manager.connection() as source_connection,
     ):
-        yield _build_index_service(
+        yield _build_meta_index_service(
             MetaPGRepo(meta_session),
             SourceDorisRepo(source_connection),
         )
@@ -99,12 +99,18 @@ async def get_meta_import_service() -> AsyncGenerator[MetaImportService]:
         yield MetaImportService(
             meta_repo=meta_repo,
             source_repo=source_repo,
-            index_service=_build_index_service(meta_repo, source_repo),
+            meta_index_service=_build_meta_index_service(meta_repo, source_repo),
         )
 
 
-MetaServiceDep = Annotated[MetaService, Depends(get_meta_service)]
-IndexServiceDep = Annotated[IndexService, Depends(get_index_service)]
+MetaCatalogServiceDep = Annotated[
+    MetaCatalogService,
+    Depends(get_meta_catalog_service),
+]
+MetaIndexServiceDep = Annotated[
+    MetaIndexService,
+    Depends(get_meta_index_service),
+]
 MetaImportServiceDep = Annotated[
     MetaImportService,
     Depends(get_meta_import_service),
@@ -185,7 +191,7 @@ async def import_metadata(
 
 
 @router.get("/export", response_class=Response)
-async def export_metadata(service: MetaServiceDep) -> Response:
+async def export_metadata(service: MetaCatalogServiceDep) -> Response:
     """以 YAML 格式导出全部元数据"""
     meta_config = await service.export_metadata()
     content = yaml.safe_dump(
@@ -202,7 +208,7 @@ async def export_metadata(service: MetaServiceDep) -> Response:
 
 @router.get("/tables", response_model=list[schemas.TableInfoResponse])
 async def list_table_infos(
-    service: MetaServiceDep,
+    service: MetaCatalogServiceDep,
 ) -> list[schemas.TableInfoResponse]:
     """查询全部表元数据"""
     return [
@@ -217,7 +223,7 @@ async def list_table_infos(
 )
 async def list_column_infos(
     t_name: MetadataPath,
-    service: MetaServiceDep,
+    service: MetaCatalogServiceDep,
 ) -> list[schemas.ColumnInfoResponse]:
     """查询表下全部字段元数据"""
     return [
@@ -228,7 +234,7 @@ async def list_column_infos(
 
 @router.get("/metrics", response_model=list[schemas.MetricInfoResponse])
 async def list_metric_infos(
-    service: MetaServiceDep,
+    service: MetaCatalogServiceDep,
 ) -> list[schemas.MetricInfoResponse]:
     """查询全部指标元数据"""
     return [
@@ -241,7 +247,7 @@ async def list_metric_infos(
 async def upsert_table_info(
     t_name: MetadataPath,
     body: schemas.TableInfoRequest,
-    service: MetaServiceDep,
+    service: MetaCatalogServiceDep,
 ) -> None:
     """新增或更新表元数据"""
     await service.upsert_table_info(
@@ -259,7 +265,7 @@ async def upsert_column_info(
     t_name: MetadataPath,
     c_name: MetadataPath,
     body: schemas.ColumnInfoRequest,
-    service: MetaServiceDep,
+    service: MetaCatalogServiceDep,
 ) -> None:
     """新增或更新字段元数据"""
     await service.upsert_column_info(
@@ -277,7 +283,7 @@ async def upsert_column_info(
 async def upsert_metric_info(
     metric_name: MetadataPath,
     body: schemas.MetricInfoRequest,
-    service: MetaServiceDep,
+    service: MetaCatalogServiceDep,
 ) -> None:
     """新增或更新指标元数据"""
     await service.upsert_metric_info(
@@ -297,7 +303,10 @@ async def upsert_metric_info(
 
 
 @router.delete("/tables/{t_name}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_table_info(t_name: MetadataPath, service: MetaServiceDep) -> None:
+async def delete_table_info(
+    t_name: MetadataPath,
+    service: MetaCatalogServiceDep,
+) -> None:
     """删除表及其字段元数据和索引"""
     await service.delete_table_info(t_name)
 
@@ -309,7 +318,7 @@ async def delete_table_info(t_name: MetadataPath, service: MetaServiceDep) -> No
 async def delete_column_info(
     t_name: MetadataPath,
     c_name: MetadataPath,
-    service: MetaServiceDep,
+    service: MetaCatalogServiceDep,
 ) -> None:
     """删除字段元数据和索引"""
     await service.delete_column_info(t_name, c_name)
@@ -318,7 +327,7 @@ async def delete_column_info(
 @router.delete("/metrics/{metric_name}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_metric_info(
     metric_name: MetadataPath,
-    service: MetaServiceDep,
+    service: MetaCatalogServiceDep,
 ) -> None:
     """删除指标元数据和索引"""
     await service.delete_metric_info(metric_name)
@@ -327,7 +336,7 @@ async def delete_metric_info(
 @router.post("/columns/sync", response_model=schemas.BatchIndexSyncResponse)
 async def sync_column_indexes(
     body: schemas.ColumnIndexSyncRequest,
-    service: IndexServiceDep,
+    service: MetaIndexServiceDep,
 ) -> schemas.BatchIndexSyncResponse:
     """同步多个字段的语义索引"""
     results = await service.sync_column_indexes(
@@ -348,7 +357,7 @@ async def sync_column_indexes(
 @router.post("/columns/sync-values", response_model=schemas.BatchIndexSyncResponse)
 async def sync_column_values(
     body: schemas.ColumnIndexSyncRequest,
-    service: IndexServiceDep,
+    service: MetaIndexServiceDep,
 ) -> schemas.BatchIndexSyncResponse:
     """同步多个字段的全部取值索引"""
     results = await service.sync_column_values(
@@ -369,7 +378,7 @@ async def sync_column_values(
 @router.post("/metrics/sync", response_model=schemas.BatchMetricIndexSyncResponse)
 async def sync_metric_indexes(
     body: schemas.MetricIndexSyncRequest,
-    service: IndexServiceDep,
+    service: MetaIndexServiceDep,
 ) -> schemas.BatchMetricIndexSyncResponse:
     """同步多个指标的语义索引"""
     results = await service.sync_metric_indexes(body.metrics)

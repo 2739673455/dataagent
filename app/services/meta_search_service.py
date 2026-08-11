@@ -1,4 +1,4 @@
-"""确定性的语义目录检索服务"""
+"""确定性的元数据语义搜索服务"""
 
 import asyncio
 import uuid
@@ -68,7 +68,7 @@ class _ColumnContext:
             self.inclusion_reasons.append(reason)
 
 
-class SemanticCatalogService:
+class MetaSearchService:
     """聚合元数据、语义索引和字段值索引"""
 
     def __init__(
@@ -79,7 +79,7 @@ class SemanticCatalogService:
         value_repo: ValueESRepo,
         meta_repo: MetaPGRepo,
     ) -> None:
-        """初始化语义目录检索服务"""
+        """初始化元数据语义搜索服务"""
         self._embedding_client = embedding_client
         self._column_repo = column_repo
         self._metric_repo = metric_repo

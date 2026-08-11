@@ -3,6 +3,8 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 
+from app.agent.agent import agent_manager
+from app.clients.docker_sandbox_manager import docker_sandbox_manager
 from app.clients.doris_client_manager import source_doris_client_manager
 from app.clients.embedding_client_manager import embedding_client_manager
 from app.clients.es_client_manager import es_client_manager
@@ -21,6 +23,8 @@ async def lifespan(app: FastAPI):
         embedding_client_manager.init()
         es_client_manager.init()
         await langgraph_postgres_manager.init()
+        await docker_sandbox_manager.init()
+        await agent_manager.init()
         meta_postgres_client_manager.init()
         await meta_postgres_client_manager.init_meta_tables()
         source_doris_client_manager.init()
@@ -28,6 +32,8 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         # FastAPI 应用结束前执行
+        await agent_manager.close()
+        await docker_sandbox_manager.close()
         await langgraph_postgres_manager.close()
         await embedding_client_manager.close()
         await es_client_manager.close()

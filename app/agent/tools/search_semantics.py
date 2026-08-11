@@ -13,7 +13,7 @@ from app.repositories.column_es_repo import ColumnESRepo
 from app.repositories.meta_pg_repo import MetaPGRepo
 from app.repositories.metric_es_repo import MetricESRepo
 from app.repositories.value_es_repo import ValueESRepo
-from app.services.semantic_catalog_service import SemanticCatalogService
+from app.services.meta_search_service import MetaSearchService
 
 
 @tool
@@ -64,7 +64,7 @@ async def search_semantics(
 
     try:
         async with meta_postgres_client_manager.session() as meta_session:
-            service = SemanticCatalogService(
+            service = MetaSearchService(
                 embedding_client=embedding_client_manager.get_client(),
                 column_repo=ColumnESRepo(es_client_manager.get_client()),
                 metric_repo=MetricESRepo(es_client_manager.get_client()),
@@ -75,7 +75,7 @@ async def search_semantics(
     except Exception as exc:  # noqa: BLE001
         return {
             "status": "error",
-            "message": (f"Semantic catalog search failed: {type(exc).__name__}: {exc}"),
+            "message": (f"Metadata search failed: {type(exc).__name__}: {exc}"),
         }
 
     return response.model_dump(mode="json")

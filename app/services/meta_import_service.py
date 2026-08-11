@@ -17,7 +17,7 @@ from app.entities.meta import (
 from app.errors import meta_error
 from app.repositories.meta_pg_repo import MetaPGRepo
 from app.repositories.source_doris_repo import SourceDorisRepo
-from app.services.index_service import IndexService
+from app.services.meta_index_service import MetaIndexService
 
 
 class ImportMode(StrEnum):
@@ -54,12 +54,12 @@ class MetaImportService:
         self,
         meta_repo: MetaPGRepo,
         source_repo: SourceDorisRepo,
-        index_service: IndexService,
+        meta_index_service: MetaIndexService,
     ) -> None:
         """初始化元数据批量导入服务"""
         self._meta_repo = meta_repo
         self._source_repo = source_repo
-        self._index_service = index_service
+        self._meta_index_service = meta_index_service
 
     async def import_metadata(
         self,
@@ -130,8 +130,12 @@ class MetaImportService:
             return result
 
         if mode is ImportMode.REPLACE:
-            await self._index_service.delete_metric_indexes(metric_changes.deleted)
-            await self._index_service.delete_column_indexes(column_changes.deleted)
+            await self._meta_index_service.delete_metric_indexes(
+                metric_changes.deleted
+            )
+            await self._meta_index_service.delete_column_indexes(
+                column_changes.deleted
+            )
 
         async with self._meta_repo.transaction():
             if mode is ImportMode.REPLACE:

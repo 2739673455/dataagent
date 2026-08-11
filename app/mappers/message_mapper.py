@@ -16,7 +16,7 @@ from langchain_core.messages import (
 from loguru import logger
 from pydantic import ValidationError
 
-from app.agent.agent import get_workspace_dir
+from app.clients.docker_sandbox_manager import docker_sandbox_manager
 from app.routes.api.v1.chat import schemas as chat_schema
 
 _MESSAGE_METADATA_KEY = "insight_message"
@@ -156,25 +156,22 @@ def agent_chunk_to_schemas(chunk: dict) -> list[chat_schema.MessageSchema]:
     return schemas
 
 
-def _build_image_data_url(
+async def _build_image_data_url(
     user_id: int, conversation_id: UUID, attachment: chat_schema.Attachment
 ) -> str:
-    """读取工作区中的图片附件，并转换为 data URL"""
-    # 获取工作区目录
-    workspace_dir = get_workspace_dir(user_id, conversation_id).resolve()
-    # 获取附件文件路径
-    attachment_path = (workspace_dir / attachment.f_path).resolve()
-    # 检查路径是否逃逸
-    if workspace_dir not in attachment_path.parents:
-        raise ValueError(f"Attachment path escapes workspace: {attachment.f_path}")
-
+    """读取沙盒中的图片附件，并转换为 data URL"""
     # 根据文件名推断 MIME 类型，供 data URL 正确声明图片格式
     mime_type, _ = mimetypes.guess_type(attachment.f_path)
     if not mime_type:
         mime_type = "application/octet-stream"
 
     # 将图片二进制编码为 base64，并拼接成模型可直接消费的 data URL
-    encoded = base64.b64encode(attachment_path.read_bytes()).decode("ascii")
+    content = await docker_sandbox_manager.download_file(
+        user_id,
+        conversation_id,
+        attachment.f_path,
+    )
+    encoded = base64.b64encode(content).decode("ascii")
     return f"data:{mime_type};base64,{encoded}"
 
 
@@ -193,7 +190,7 @@ def _append_prompt(
 _IMAGE_SUFFIXES = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 
 
-def _process_attachments(
+async def _process_attachments(
     content_parts: list[dict[str, Any]],
     attachments: list[chat_schema.Attachment],
     user_id: int | None,
@@ -231,7 +228,11 @@ def _process_attachments(
                 # 将图片转换为 base64 内容，添加到 content_parts
                 content_parts.append(
                     chat_schema.ImageContent(
-                        image_url=_build_image_data_url(user_id, conversation_id, a)
+                        image_url=await _build_image_data_url(
+                            user_id,
+                            conversation_id,
+                            a,
+                        )
                     ).model_dump()
                 )
             except OSError:
@@ -249,7 +250,7 @@ def _process_attachments(
             )
 
 
-def schema_to_human_message(
+async def schema_to_human_message(
     message: chat_schema.MessageSchema,
     user_id: int,
     conversation_id: UUID,
@@ -266,7 +267,7 @@ def schema_to_human_message(
             raise TypeError("User messages only support text and image parts")
 
     if message.attachments:
-        _process_attachments(
+        await _process_attachments(
             content_parts, message.attachments, user_id, conversation_id
         )
 

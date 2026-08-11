@@ -6,8 +6,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
-# 对话
-
 
 class CreateConversationRequest(BaseModel):
     """创建对话请求"""
@@ -40,9 +38,6 @@ class ConversationListResponse(BaseModel):
     """对话列表响应"""
 
     conversations: list[ConversationResponse]
-
-
-# 消息
 
 
 class TextContent(BaseModel):
