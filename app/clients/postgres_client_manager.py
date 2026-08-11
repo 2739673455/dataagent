@@ -1,7 +1,8 @@
-"""MySQL 协议数据库客户端管理"""
+"""PostgreSQL 元数据客户端管理"""
 
 from collections.abc import AsyncIterator
 
+from sqlalchemy import URL
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -10,23 +11,28 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.conf.app_config import DBConfig, cfg
+from app.entities.meta import Base
 
 
-class MysqlClientManager:
-    """MySQL 客户端管理器"""
+class PostgresClientManager:
+    """PostgreSQL 元数据客户端管理器"""
 
     def __init__(self, db_config: DBConfig) -> None:
-        """初始化 MySQL 客户端管理器"""
+        """初始化 PostgreSQL 元数据客户端管理器"""
         self._db_config = db_config
         self._engine: AsyncEngine | None = None
         self._session_maker: async_sessionmaker[AsyncSession] | None = None
 
     @property
-    def _url(self) -> str:
+    def _url(self) -> URL:
         """获取异步数据库连接 URL"""
-        return (
-            f"mysql+asyncmy://{self._db_config.user}:{self._db_config.password}@"
-            f"{self._db_config.host}:{self._db_config.port}/{self._db_config.database}"
+        return URL.create(
+            drivername="postgresql+psycopg",
+            username=self._db_config.user,
+            password=self._db_config.password,
+            host=self._db_config.host,
+            port=self._db_config.port,
+            database=self._db_config.database,
         )
 
     def init(self) -> None:
@@ -49,7 +55,7 @@ class MysqlClientManager:
     def _get_session_maker(self) -> async_sessionmaker[AsyncSession]:
         """获取数据库会话工厂"""
         if self._session_maker is None:
-            raise RuntimeError("MySQL client manager is not initialized")
+            raise RuntimeError("PostgreSQL client manager is not initialized")
         return self._session_maker
 
     def session(self) -> AsyncSession:
@@ -68,25 +74,37 @@ class MysqlClientManager:
         self._engine = None
         self._session_maker = None
 
+    async def init_meta_tables(self) -> None:
+        """初始化元数据表"""
+        if self._engine is None:
+            raise RuntimeError("PostgreSQL client manager is not initialized")
+        async with self._engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
 
-meta_mysql_client_manager = MysqlClientManager(cfg.db_meta)
+
+meta_postgres_client_manager = PostgresClientManager(cfg.meta_postgresql)
 
 if __name__ == "__main__":
     import asyncio
 
     from sqlalchemy import text
 
-    meta_mysql_client_manager.init()
+    meta_postgres_client_manager.init()
 
     async def test() -> None:
+        await meta_postgres_client_manager.init_meta_tables()
+
         try:
-            async with meta_mysql_client_manager.session() as session:
+            async with meta_postgres_client_manager.session() as session:
                 result = await session.execute(
-                    text("select * from table_info limit 10")
+                    text(
+                        "select tablename from pg_tables "
+                        "where schemaname = 'public' order by tablename"
+                    )
                 )
                 rows = result.fetchall()
                 print(rows)
         finally:
-            await meta_mysql_client_manager.close()
+            await meta_postgres_client_manager.close()
 
     asyncio.run(test())

@@ -43,58 +43,63 @@ if __name__ == "__main__":
     es_client_manager.init()
 
     async def test() -> None:
+        client = es_client_manager.get_client()
         try:
-            client = es_client_manager.get_client()
-
             # 创建索引
-            await client.indices.create(
-                index="my-books",
-                mappings={
-                    "dynamic": False,
-                    "properties": {
-                        "name": {"type": "text"},
-                        "author": {"type": "text"},
-                        "release_date": {
-                            "type": "date",
-                            "format": "yyyy-MM-dd",
+            if not await client.indices.exists(index="my-books"):
+                await client.indices.create(
+                    index="my-books",
+                    mappings={
+                        "dynamic": False,
+                        "properties": {
+                            "name": {"type": "text"},
+                            "author": {"type": "text"},
+                            "release_date": {
+                                "type": "date",
+                                "format": "yyyy-MM-dd",
+                            },
+                            "page_count": {"type": "integer"},
                         },
-                        "page_count": {"type": "integer"},
                     },
-                },
-            )
+                )
 
             # 插入数据
-            await client.bulk(
+            bulk_response = await client.bulk(
                 operations=[
-                    {"index": {"_index": "my-books"}},
+                    {
+                        "index": {
+                            "_index": "my-books",
+                            "_id": "revelation-space",
+                        }
+                    },
                     {
                         "name": "Revelation Space",
                         "author": "Alastair Reynolds",
                         "release_date": "2000-03-15",
                         "page_count": 585,
                     },
-                    {"index": {"_index": "my-books"}},
+                    {"index": {"_index": "my-books", "_id": "1984"}},
                     {
                         "name": "1984",
                         "author": "George Orwell",
                         "release_date": "1985-06-01",
                         "page_count": 328,
                     },
-                    {"index": {"_index": "my-books"}},
+                    {"index": {"_index": "my-books", "_id": "fahrenheit-451"}},
                     {
                         "name": "Fahrenheit 451",
                         "author": "Ray Bradbury",
                         "release_date": "1953-10-15",
                         "page_count": 227,
                     },
-                    {"index": {"_index": "my-books"}},
+                    {"index": {"_index": "my-books", "_id": "brave-new-world"}},
                     {
                         "name": "Brave New World",
                         "author": "Aldous Huxley",
                         "release_date": "1932-06-01",
                         "page_count": 268,
                     },
-                    {"index": {"_index": "my-books"}},
+                    {"index": {"_index": "my-books", "_id": "handmaids-tale"}},
                     {
                         "name": "The Handmaids Tale",
                         "author": "Margaret Atwood",
@@ -102,7 +107,10 @@ if __name__ == "__main__":
                         "page_count": 311,
                     },
                 ],
+                refresh="wait_for",
             )
+            if bulk_response.get("errors"):
+                raise RuntimeError("Elasticsearch bulk indexing contains failed items")
 
             # 搜索
             resp = await client.search(
@@ -111,6 +119,12 @@ if __name__ == "__main__":
             )
             print(resp)
         finally:
-            await es_client_manager.close()
+            try:
+                await client.indices.delete(
+                    index="my-books",
+                    ignore_unavailable=True,
+                )
+            finally:
+                await es_client_manager.close()
 
     asyncio.run(test())

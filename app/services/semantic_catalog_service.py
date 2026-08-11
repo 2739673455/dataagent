@@ -25,7 +25,7 @@ from app.entities.semantic_search import (
     SemanticValueResult,
 )
 from app.repositories.column_es_repo import ColumnESRepo
-from app.repositories.meta_mysql_repo import MetaMySQLRepo
+from app.repositories.meta_pg_repo import MetaPGRepo
 from app.repositories.metric_es_repo import MetricESRepo
 from app.repositories.value_es_repo import ValueESRepo
 
@@ -77,7 +77,7 @@ class SemanticCatalogService:
         column_repo: ColumnESRepo,
         metric_repo: MetricESRepo,
         value_repo: ValueESRepo,
-        meta_repo: MetaMySQLRepo,
+        meta_repo: MetaPGRepo,
     ) -> None:
         """初始化语义目录检索服务"""
         self._embedding_client = embedding_client

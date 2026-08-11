@@ -1,27 +1,23 @@
 services:
-  mysql:
-    image: mysql:8.0
-    container_name: mysql
+  postgres:
+    image: postgres:17-alpine
+    container_name: postgres
     restart: unless-stopped
     ports:
-      - "3306:3306"
+      - "5432:5432"
     environment:
-      MYSQL_ROOT_PASSWORD: 123123
+      POSTGRES_DB: postgres
+      POSTGRES_USER: atguigu
+      POSTGRES_PASSWORD: 123123
     volumes:
-      - mysql-data:/var/lib/mysql
-    command: --default-authentication-plugin=mysql_native_password
-      --character-set-server=utf8mb4
-      --collation-server=utf8mb4_unicode_ci
-
-  redis:
-    image: redis:8-alpine
-    container_name: redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
-    command: redis-server --appendonly yes
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init-databases.sql:/docker-entrypoint-initdb.d/init-databases.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atguigu -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   elasticsearch:
     build: ./elasticsearch
@@ -53,7 +49,11 @@ services:
     volumes:
       - doris-fe-meta:/opt/apache-doris/fe/doris-meta
     healthcheck:
-      test: ["CMD-SHELL", "mysql -h127.0.0.1 -P9030 -uroot -e 'SHOW FRONTENDS' >/dev/null 2>&1"]
+      test:
+        [
+          "CMD-SHELL",
+          "mysql -h127.0.0.1 -P9030 -uroot -e 'SHOW FRONTENDS' >/dev/null 2>&1",
+        ]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -78,8 +78,14 @@ services:
     depends_on:
       doris-fe:
         condition: service_healthy
+      doris-init:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "mysql -h172.30.80.2 -P9030 -uroot -N -e 'SHOW BACKENDS' 2>/dev/null | grep -q '172.30.80.3.*true'"]
+      test:
+        [
+          "CMD-SHELL",
+          "mysql -h172.30.80.2 -P9030 -uatguigu -p123123 -N -e 'SHOW BACKENDS' 2>/dev/null | grep -q '172.30.80.3.*true'",
+        ]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -88,9 +94,26 @@ services:
       doris-network:
         ipv4_address: 172.30.80.3
 
+  doris-init:
+    image: apache/doris:fe-4.0.7
+    container_name: doris-init
+    restart: "no"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        mysql -hdoris-fe -P9030 -uroot <<'SQL'
+        CREATE USER IF NOT EXISTS 'atguigu'@'%' IDENTIFIED BY '123123';
+        ALTER USER IF EXISTS 'atguigu'@'%' IDENTIFIED BY '123123';
+        GRANT SELECT_PRIV, LOAD_PRIV, ALTER_PRIV, CREATE_PRIV, DROP_PRIV ON internal.*.* TO 'atguigu'@'%';
+        SQL
+    depends_on:
+      doris-fe:
+        condition: service_healthy
+    networks:
+      - doris-network
+
 volumes:
-  mysql-data:
-  redis-data:
+  postgres-data:
   es-data:
   doris-fe-meta:
   doris-be-storage:

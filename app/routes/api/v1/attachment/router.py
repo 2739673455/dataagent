@@ -10,7 +10,7 @@ from loguru import logger
 from app.agent.agent import get_workspace_dir
 from app.errors import attachment_error, chat_error
 from app.routes.api.v1.chat import schemas as chat_schema
-from app.routes.api.v1.chat.dependencies import ConversationRepoDep
+from app.routes.api.v1.chat.dependencies import ConversationPGRepoDep
 
 router = APIRouter(tags=["attachment"])
 
@@ -26,7 +26,7 @@ def _build_attachment_path(target_dir: Path, path: str) -> Path:
 @router.post("/upload")
 async def api_upload_attachment(
     request: Request,
-    conversation_repo: ConversationRepoDep,
+    conversation_repo: ConversationPGRepoDep,
     conversation_id: Annotated[UUID, Form()],
     file: Annotated[UploadFile, File()],
 ) -> chat_schema.UploadAttachmentResponse:
@@ -57,7 +57,7 @@ async def api_upload_attachment(
 async def api_delete_attachment(
     request: Request,
     body: chat_schema.DeleteAttachmentRequest,
-    conversation_repo: ConversationRepoDep,
+    conversation_repo: ConversationPGRepoDep,
 ) -> None:
     """删除当前会话工作区中的附件"""
     user_id = request.state.payload.sub
@@ -84,7 +84,7 @@ async def api_get_attachment(
     request: Request,
     conversation_id: UUID,
     f_path: str,
-    conversation_repo: ConversationRepoDep,
+    conversation_repo: ConversationPGRepoDep,
 ) -> FileResponse:
     """获取当前会话工作区中的附件文件"""
     user_id = request.state.payload.sub

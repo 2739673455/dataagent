@@ -1,9 +1,9 @@
-"""Redis 会话目录数据访问"""
+"""PostgreSQL 会话目录数据访问"""
 
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from langgraph.store.redis.aio import AsyncRedisStore
+from langgraph.store.base import BaseStore
 
 from app.entities.conversation import ConversationInfo
 
@@ -11,10 +11,10 @@ _CONVERSATION_NAMESPACE = "conversations"
 _MAX_CONVERSATIONS_PER_USER = 10_000
 
 
-class ConversationRedisRepo:
-    """使用 LangGraph Redis Store 存储会话目录"""
+class ConversationPGRepo:
+    """使用 LangGraph PostgreSQL Store 存储会话目录"""
 
-    def __init__(self, store: AsyncRedisStore) -> None:
+    def __init__(self, store: BaseStore) -> None:
         """初始化会话目录数据访问"""
         self._store = store
 

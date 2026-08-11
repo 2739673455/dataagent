@@ -13,11 +13,15 @@ CONFIG_FILE = CONFIG_DIR / "app_config.yaml"
 
 
 class LogCfg(BaseModel):
+    """日志配置"""
+
     level: str
     rotation: str
 
 
 class DBConfig(BaseModel):
+    """数据库连接配置"""
+
     host: str
     port: int
     user: str
@@ -25,14 +29,9 @@ class DBConfig(BaseModel):
     database: str
 
 
-class RedisCfg(BaseModel):
-    host: str
-    port: int
-    password: str
-    db: int
-
-
 class ESConfig(BaseModel):
+    """Elasticsearch 连接与索引配置"""
+
     host: str
     port: int
     column_index: str
@@ -42,6 +41,8 @@ class ESConfig(BaseModel):
 
 
 class EmbeddingConfig(BaseModel):
+    """嵌入模型服务配置"""
+
     base_url: str
     api_key: str | None
     model: str
@@ -49,6 +50,8 @@ class EmbeddingConfig(BaseModel):
 
 
 class SSEMCPCfg(BaseModel):
+    """SSE 传输方式的 MCP 服务配置"""
+
     transport: Literal["sse"]
     url: str
     headers: dict[str, str] | None = None
@@ -58,6 +61,8 @@ class SSEMCPCfg(BaseModel):
 
 
 class StdioMCPCfg(BaseModel):
+    """标准输入输出传输方式的 MCP 服务配置"""
+
     transport: Literal["stdio"]
     command: str
     args: list[str] = Field(default_factory=list)
@@ -69,12 +74,16 @@ class StdioMCPCfg(BaseModel):
 
 
 class WebsocketMCPCfg(BaseModel):
+    """WebSocket 传输方式的 MCP 服务配置"""
+
     transport: Literal["websocket"]
     url: str
     session_kwargs: dict[str, Any] | None = None
 
 
 class StreamableHttpMCPCfg(BaseModel):
+    """可流式 HTTP 传输方式的 MCP 服务配置"""
+
     transport: Literal["streamable_http"]
     url: str
     headers: dict[str, str] | None = None
@@ -91,6 +100,8 @@ MCPCfg = Annotated[
 
 
 class ModelCfg(BaseModel):
+    """语言模型配置"""
+
     model: str
     base_url: str
     api_key: str
@@ -99,15 +110,19 @@ class ModelCfg(BaseModel):
 
 
 class LMConfigCfg(BaseModel):
+    """语言模型集合与激活项配置"""
+
     active: str
     models: dict[str, ModelCfg]
 
 
 class Cfg(BaseModel):
+    """应用全局配置"""
+
     log: LogCfg
-    db_source: DBConfig
-    db_meta: DBConfig
-    redis: RedisCfg
+    doris: DBConfig
+    meta_postgresql: DBConfig
+    langgraph_postgresql: DBConfig
     elasticsearch: ESConfig
     embedding: EmbeddingConfig
     lm_config: LMConfigCfg

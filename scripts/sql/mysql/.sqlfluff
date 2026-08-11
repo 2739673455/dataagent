@@ -1,5 +1,0 @@
-[sqlfluff]
-dialect = mysql
-
-[sqlfluff:rules:references.keywords]
-ignore_words = name, role, type, description, alias

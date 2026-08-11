@@ -19,7 +19,7 @@ from app.entities.meta import (
     serialize_column_examples,
 )
 from app.errors import meta_error
-from app.repositories.meta_mysql_repo import MetaMySQLRepo
+from app.repositories.meta_pg_repo import MetaPGRepo
 from app.repositories.source_doris_repo import SourceDorisRepo
 from app.services.index_service import IndexService
 
@@ -29,7 +29,7 @@ class MetaService:
 
     def __init__(
         self,
-        meta_repo: MetaMySQLRepo,
+        meta_repo: MetaPGRepo,
         source_repo: SourceDorisRepo,
         index_service: IndexService,
     ) -> None:

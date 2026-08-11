@@ -4,16 +4,16 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from app.clients.langgraph_redis_manager import langgraph_redis_manager
-from app.repositories.conversation_redis_repo import ConversationRedisRepo
+from app.clients.langgraph_postgres_manager import langgraph_postgres_manager
+from app.repositories.conversation_pg_repo import ConversationPGRepo
 
 
-def get_conversation_repo() -> ConversationRedisRepo:
+def get_conversation_pg_repo() -> ConversationPGRepo:
     """创建会话目录数据访问"""
-    return ConversationRedisRepo(langgraph_redis_manager.get_store())
+    return ConversationPGRepo(langgraph_postgres_manager.get_store())
 
 
-ConversationRepoDep = Annotated[
-    ConversationRedisRepo,
-    Depends(get_conversation_repo),
+ConversationPGRepoDep = Annotated[
+    ConversationPGRepo,
+    Depends(get_conversation_pg_repo),
 ]

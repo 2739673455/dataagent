@@ -20,7 +20,7 @@ from yaml import YAMLError
 from app.clients.doris_client_manager import source_doris_client_manager
 from app.clients.embedding_client_manager import embedding_client_manager
 from app.clients.es_client_manager import es_client_manager
-from app.clients.mysql_client_manager import meta_mysql_client_manager
+from app.clients.postgres_client_manager import meta_postgres_client_manager
 from app.conf.meta_config import MetaConfig, MetadataName
 from app.entities.meta import (
     ColumnKey,
@@ -29,7 +29,7 @@ from app.entities.meta import (
 )
 from app.errors import meta_error
 from app.repositories.column_es_repo import ColumnESRepo
-from app.repositories.meta_mysql_repo import MetaMySQLRepo
+from app.repositories.meta_pg_repo import MetaPGRepo
 from app.repositories.metric_es_repo import MetricESRepo
 from app.repositories.source_doris_repo import SourceDorisRepo
 from app.repositories.value_es_repo import ValueESRepo
@@ -47,7 +47,7 @@ MetadataPath = Annotated[MetadataName, Path()]
 
 
 def _build_index_service(
-    meta_repo: MetaMySQLRepo,
+    meta_repo: MetaPGRepo,
     source_repo: SourceDorisRepo,
 ) -> IndexService:
     """创建索引同步服务"""
@@ -64,10 +64,10 @@ def _build_index_service(
 async def get_meta_service() -> AsyncGenerator[MetaService]:
     """创建请求级元数据管理服务"""
     async with (
-        meta_mysql_client_manager.session() as meta_session,
+        meta_postgres_client_manager.session() as meta_session,
         source_doris_client_manager.connection() as source_connection,
     ):
-        meta_repo = MetaMySQLRepo(meta_session)
+        meta_repo = MetaPGRepo(meta_session)
         source_repo = SourceDorisRepo(source_connection)
         yield MetaService(
             meta_repo=meta_repo,
@@ -79,11 +79,11 @@ async def get_meta_service() -> AsyncGenerator[MetaService]:
 async def get_index_service() -> AsyncGenerator[IndexService]:
     """创建请求级索引同步服务"""
     async with (
-        meta_mysql_client_manager.session() as meta_session,
+        meta_postgres_client_manager.session() as meta_session,
         source_doris_client_manager.connection() as source_connection,
     ):
         yield _build_index_service(
-            MetaMySQLRepo(meta_session),
+            MetaPGRepo(meta_session),
             SourceDorisRepo(source_connection),
         )
 
@@ -91,10 +91,10 @@ async def get_index_service() -> AsyncGenerator[IndexService]:
 async def get_meta_import_service() -> AsyncGenerator[MetaImportService]:
     """创建请求级元数据导入服务"""
     async with (
-        meta_mysql_client_manager.session() as meta_session,
+        meta_postgres_client_manager.session() as meta_session,
         source_doris_client_manager.connection() as source_connection,
     ):
-        meta_repo = MetaMySQLRepo(meta_session)
+        meta_repo = MetaPGRepo(meta_session)
         source_repo = SourceDorisRepo(source_connection)
         yield MetaImportService(
             meta_repo=meta_repo,

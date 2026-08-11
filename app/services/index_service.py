@@ -8,7 +8,7 @@ from app.clients.embedding_client_manager import EmbeddingClient
 from app.entities.meta import ColumnInfo, ColumnKey, MetricInfo, ValueInfo
 from app.entities.semantic_search import SemanticTextType
 from app.repositories.column_es_repo import ColumnESRepo
-from app.repositories.meta_mysql_repo import MetaMySQLRepo
+from app.repositories.meta_pg_repo import MetaPGRepo
 from app.repositories.metric_es_repo import MetricESRepo
 from app.repositories.source_doris_repo import SourceDorisRepo
 from app.repositories.value_es_repo import ValueESRepo
@@ -21,7 +21,7 @@ class IndexService:
 
     def __init__(
         self,
-        meta_repo: MetaMySQLRepo,
+        meta_repo: MetaPGRepo,
         source_repo: SourceDorisRepo,
         column_repo: ColumnESRepo,
         metric_repo: MetricESRepo,

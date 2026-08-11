@@ -10,7 +10,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from app.agent.mcp import get_mcp_tools
 from app.agent.tools import return_file, search_semantics
-from app.clients.langgraph_redis_manager import langgraph_redis_manager
+from app.clients.langgraph_postgres_manager import langgraph_postgres_manager
 from app.conf import app_config
 
 # 路径常量
@@ -93,8 +93,8 @@ async def _build_agent(workspace_dir: Path) -> CompiledStateGraph:
         tools=tools,
         backend=_build_backend(workspace_dir),
         skills=["/skills/"],  # 声明 Agent 可用的 Skill 前缀路径
-        checkpointer=langgraph_redis_manager.get_checkpointer(),
-        store=langgraph_redis_manager.get_store(),
+        checkpointer=langgraph_postgres_manager.get_checkpointer(),
+        store=langgraph_postgres_manager.get_store(),
     )
 
     return agent
@@ -124,4 +124,6 @@ async def delete_agent(user_id: int, conversation_id: UUID) -> None:
     """删除会话 Agent 实例及其持久化状态"""
     async with _agent_lock:
         _agents.pop((user_id, conversation_id), None)
-    await langgraph_redis_manager.delete_thread(get_thread_id(user_id, conversation_id))
+    await langgraph_postgres_manager.delete_thread(
+        get_thread_id(user_id, conversation_id)
+    )

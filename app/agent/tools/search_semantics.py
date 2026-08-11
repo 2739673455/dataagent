@@ -7,10 +7,10 @@ from pydantic import ValidationError
 
 from app.clients.embedding_client_manager import embedding_client_manager
 from app.clients.es_client_manager import es_client_manager
-from app.clients.mysql_client_manager import meta_mysql_client_manager
+from app.clients.postgres_client_manager import meta_postgres_client_manager
 from app.entities.semantic_search import SemanticSearchRequest
 from app.repositories.column_es_repo import ColumnESRepo
-from app.repositories.meta_mysql_repo import MetaMySQLRepo
+from app.repositories.meta_pg_repo import MetaPGRepo
 from app.repositories.metric_es_repo import MetricESRepo
 from app.repositories.value_es_repo import ValueESRepo
 from app.services.semantic_catalog_service import SemanticCatalogService
@@ -63,13 +63,13 @@ async def search_semantics(
         }
 
     try:
-        async with meta_mysql_client_manager.session() as meta_session:
+        async with meta_postgres_client_manager.session() as meta_session:
             service = SemanticCatalogService(
                 embedding_client=embedding_client_manager.get_client(),
                 column_repo=ColumnESRepo(es_client_manager.get_client()),
                 metric_repo=MetricESRepo(es_client_manager.get_client()),
                 value_repo=ValueESRepo(es_client_manager.get_client()),
-                meta_repo=MetaMySQLRepo(meta_session),
+                meta_repo=MetaPGRepo(meta_session),
             )
             response = await service.search(request)
     except Exception as exc:  # noqa: BLE001

@@ -55,4 +55,4 @@ class DorisClientManager:
         self._engine = None
 
 
-source_doris_client_manager = DorisClientManager(cfg.db_source)
+source_doris_client_manager = DorisClientManager(cfg.doris)

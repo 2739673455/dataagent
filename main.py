@@ -6,8 +6,8 @@ from fastapi import FastAPI
 from app.clients.doris_client_manager import source_doris_client_manager
 from app.clients.embedding_client_manager import embedding_client_manager
 from app.clients.es_client_manager import es_client_manager
-from app.clients.langgraph_redis_manager import langgraph_redis_manager
-from app.clients.mysql_client_manager import meta_mysql_client_manager
+from app.clients.langgraph_postgres_manager import langgraph_postgres_manager
+from app.clients.postgres_client_manager import meta_postgres_client_manager
 from app.conf.app_config import cfg
 from app.core.middlewares import trace
 from app.errors.exc_handlers import register_exception_handlers
@@ -16,21 +16,23 @@ from app.routes import api
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # FastAPI 应用启动前执行
-    embedding_client_manager.init()
-    es_client_manager.init()
-    await langgraph_redis_manager.init()
-    meta_mysql_client_manager.init()
-    source_doris_client_manager.init()
+    try:
+        # FastAPI 应用启动前执行
+        embedding_client_manager.init()
+        es_client_manager.init()
+        await langgraph_postgres_manager.init()
+        meta_postgres_client_manager.init()
+        await meta_postgres_client_manager.init_meta_tables()
+        source_doris_client_manager.init()
 
-    yield
-
-    # FastAPI 应用结束前执行
-    await langgraph_redis_manager.close()
-    await embedding_client_manager.close()
-    await es_client_manager.close()
-    await meta_mysql_client_manager.close()
-    await source_doris_client_manager.close()
+        yield
+    finally:
+        # FastAPI 应用结束前执行
+        await langgraph_postgres_manager.close()
+        await embedding_client_manager.close()
+        await es_client_manager.close()
+        await meta_postgres_client_manager.close()
+        await source_doris_client_manager.close()
 
 
 def register_routes(app: FastAPI) -> None:

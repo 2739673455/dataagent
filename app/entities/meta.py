@@ -109,7 +109,7 @@ class ColumnInfo(Base):
         Boolean,
         nullable=False,
         default=False,
-        server_default=text("0"),
+        server_default=text("false"),
         comment="是否索引字段值",
     )
     reference_t_name: Mapped[str | None] = mapped_column(

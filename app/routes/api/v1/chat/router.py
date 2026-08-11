@@ -12,7 +12,7 @@ from app.agent.agent import get_workspace_dir
 from app.core import context
 from app.errors import chat_error
 from app.routes.api.v1.chat import schemas as chat_schema
-from app.routes.api.v1.chat.dependencies import ConversationRepoDep
+from app.routes.api.v1.chat.dependencies import ConversationPGRepoDep
 from app.services import chat_service
 
 router = APIRouter(tags=["chat"])
@@ -23,7 +23,7 @@ _SSE_HEARTBEAT_SECONDS = 15
 async def api_create_conversation(
     request: Request,
     body: chat_schema.CreateConversationRequest,
-    conversation_repo: ConversationRepoDep,
+    conversation_repo: ConversationPGRepoDep,
 ) -> chat_schema.ConversationResponse:
     """创建新对话"""
     user_id = request.state.payload.sub
@@ -47,7 +47,7 @@ async def api_create_conversation(
 async def api_delete_conversations(
     request: Request,
     body: chat_schema.DeleteConversationRequest,
-    conversation_repo: ConversationRepoDep,
+    conversation_repo: ConversationPGRepoDep,
 ) -> None:
     """删除对话"""
     user_id = request.state.payload.sub
@@ -77,7 +77,7 @@ async def api_delete_conversations(
 async def api_update_conversation(
     request: Request,
     body: chat_schema.UpdateConversationRequest,
-    conversation_repo: ConversationRepoDep,
+    conversation_repo: ConversationPGRepoDep,
 ) -> None:
     """修改对话信息"""
     user_id = request.state.payload.sub
@@ -94,7 +94,7 @@ async def api_update_conversation(
 @router.get("/ls")
 async def api_get_conversations(
     request: Request,
-    conversation_repo: ConversationRepoDep,
+    conversation_repo: ConversationPGRepoDep,
 ) -> chat_schema.ConversationListResponse:
     """获取所有对话"""
     user_id = request.state.payload.sub
@@ -118,7 +118,7 @@ async def api_get_conversations(
 async def api_get_messages(
     conversation_id: UUID,
     request: Request,
-    conversation_repo: ConversationRepoDep,
+    conversation_repo: ConversationPGRepoDep,
 ) -> chat_schema.MessageListResponse:
     """从 LangGraph 状态获取某个对话的所有消息"""
     user_id = request.state.payload.sub
@@ -200,7 +200,7 @@ async def _stream_agent_response(
 async def api_stream_chat(
     request: Request,
     body: chat_schema.ChatStreamRequest,
-    conversation_repo: ConversationRepoDep,
+    conversation_repo: ConversationPGRepoDep,
 ) -> StreamingResponse:
     """通过 SSE 执行单轮对话并流式返回 Agent 事件"""
     user_id = request.state.payload.sub

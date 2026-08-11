@@ -1,4 +1,4 @@
-"""元数据访问"""
+"""PostgreSQL 元数据访问"""
 
 from datetime import UTC, datetime
 
@@ -15,8 +15,8 @@ from app.entities.meta import (
 from app.errors import meta_error
 
 
-class MetaMySQLRepo:
-    """元数据存储"""
+class MetaPGRepo:
+    """PostgreSQL 元数据存储"""
 
     def __init__(self, session: AsyncSession) -> None:
         """初始化元数据存储"""

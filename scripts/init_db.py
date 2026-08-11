@@ -1,131 +1,123 @@
-"""初始化数据库"""
+"""初始化 PostgreSQL 数据库"""
 
 import logging
-import os
 from pathlib import Path
 
 import dotenv
-import pymysql
-from sqlacodegen.generators import DeclarativeGenerator
-from sqlalchemy import MetaData, create_engine
+import psycopg
+from psycopg import sql
+from psycopg.errors import DuplicateDatabase
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+ENV_FILE = ROOT_DIR / "conf" / ".env"
+
+POSTGRES_HOST = "127.0.0.1"
+POSTGRES_PORT = 5432
+POSTGRES_USER = "atguigu"
+MAINTENANCE_DATABASE = "postgres"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-ROOT_DIR = Path(__file__).parents[1]
-ENV_FILE = ROOT_DIR / "conf" / ".env"
-MYSQL_SQL_DIR = ROOT_DIR / "scripts" / "sql" / "mysql"
-ENTITIES_DIR = ROOT_DIR / "app" / "entities"
 
+class PostgresInitializer:
+    """PostgreSQL 数据库初始化器"""
 
-class MySQLInitializer:
-    """MySQL 数据库初始化器"""
-
-    def __init__(self, host: str, port: int, user: str, password: str) -> None:
-        """初始化 MySQL 连接配置"""
-        self._sync_db_url = f"mysql+pymysql://{user}:{password}@{host}:{port}"
-        self._conn_conf = {
-            "host": host,
-            "port": int(port),
-            "user": user,
-            "password": password,
-        }
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        user: str,
+        password: str,
+    ) -> None:
+        """初始化 PostgreSQL 连接配置"""
+        self._host = host
+        self._port = port
+        self._user = user
+        self._password = password
 
     def delete_db(self, db_name: str) -> None:
-        """删除数据库"""
-        conn = None
+        """数据库存在时删除数据库"""
         try:
-            conn = pymysql.connect(**self._conn_conf, autocommit=True)
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA "
-                    "WHERE SCHEMA_NAME = %s",
+            with (
+                psycopg.connect(
+                    host=self._host,
+                    port=self._port,
+                    user=self._user,
+                    password=self._password,
+                    dbname=MAINTENANCE_DATABASE,
+                    autocommit=True,
+                ) as connection,
+                connection.cursor() as cursor,
+            ):
+                cursor.execute(
+                    "SELECT 1 FROM pg_database WHERE datname = %s",
                     (db_name,),
                 )
-                if cur.fetchone() is None:
+                if cursor.fetchone() is None:
                     logger.info("数据库 %s 不存在，无需删除", db_name)
                     return
-                cur.execute(f"DROP DATABASE `{db_name}`")
+
+                cursor.execute(
+                    sql.SQL("DROP DATABASE {}").format(sql.Identifier(db_name))
+                )
                 logger.info("数据库 %s 删除成功", db_name)
-        except pymysql.MySQLError:
+        except psycopg.Error:
             logger.exception("数据库 %s 删除失败", db_name)
             raise
-        finally:
-            if conn is not None:
-                conn.close()
 
     def create_db(self, db_name: str) -> None:
-        """创建数据库"""
-        conn = None
+        """数据库不存在时创建数据库"""
         try:
-            conn = pymysql.connect(**self._conn_conf, autocommit=True)
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA "
-                    "WHERE SCHEMA_NAME = %s",
+            with (
+                psycopg.connect(
+                    host=self._host,
+                    port=self._port,
+                    user=self._user,
+                    password=self._password,
+                    dbname=MAINTENANCE_DATABASE,
+                    autocommit=True,
+                ) as connection,
+                connection.cursor() as cursor,
+            ):
+                cursor.execute(
+                    "SELECT 1 FROM pg_database WHERE datname = %s",
                     (db_name,),
                 )
-                if cur.fetchone() is not None:
+                if cursor.fetchone() is not None:
                     logger.info("数据库 %s 已存在，无需创建", db_name)
                     return
-                cur.execute(f"CREATE DATABASE `{db_name}` CHARACTER SET utf8mb4")
+
+                try:
+                    cursor.execute(
+                        sql.SQL("CREATE DATABASE {} OWNER {}").format(
+                            sql.Identifier(db_name),
+                            sql.Identifier(self._user),
+                        )
+                    )
+                except DuplicateDatabase:
+                    logger.info("数据库 %s 已由其他进程创建", db_name)
+                    return
+
                 logger.info("数据库 %s 创建成功", db_name)
-        except pymysql.MySQLError:
+        except psycopg.Error:
             logger.exception("数据库 %s 创建失败", db_name)
             raise
-        finally:
-            if conn is not None:
-                conn.close()
-
-    def exec_sql_file(self, db_name: str, sql_file_path: Path) -> None:
-        """执行 SQL 文件"""
-        sql = sql_file_path.read_text(encoding="utf-8")
-        statements = [
-            statement.strip() for statement in sql.split(";") if statement.strip()
-        ]
-        conn = None
-        try:
-            conn = pymysql.connect(**self._conn_conf, database=db_name)
-            conn.begin()
-            with conn.cursor() as cur:
-                for statement in statements:
-                    cur.execute(statement)
-            conn.commit()
-            logger.info("%s 执行成功", sql_file_path.name)
-        except pymysql.MySQLError:
-            if conn is not None:
-                conn.rollback()
-            logger.exception("%s 执行失败", sql_file_path.name)
-            raise
-        finally:
-            if conn is not None:
-                conn.close()
-
-    def gen_tb_model(self, db_name: str, output_path: Path) -> None:
-        """通过反射数据库结构自动生成 SQLAlchemy ORM 模型代码"""
-        engine = create_engine(f"{self._sync_db_url}/{db_name}")
-        try:
-            metadata = MetaData()
-            metadata.reflect(engine)
-            generator = DeclarativeGenerator(metadata, engine, [])
-            code = generator.generate()
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(code, encoding="utf-8")
-            logger.info("SQLAlchemy ORM 模型代码已生成到 %s", output_path)
-        finally:
-            engine.dispose()
 
 
 if __name__ == "__main__":
-    dotenv.load_dotenv(ENV_FILE)
+    password = dotenv.dotenv_values(ENV_FILE).get("POSTGRES_PASSWORD")
+    if password is None:
+        raise ValueError(f"{ENV_FILE} 中缺少 POSTGRES_PASSWORD")
 
-    db_initializer = MySQLInitializer(
-        host="127.0.0.1",
-        port=3306,
-        user="root",
-        password=os.environ["DB_META_PASSWORD"],
+    initializer = PostgresInitializer(
+        host=POSTGRES_HOST,
+        port=POSTGRES_PORT,
+        user=POSTGRES_USER,
+        password=password,
     )
 
-    db_initializer.delete_db("meta")
-    db_initializer.create_db("meta")
-    db_initializer.exec_sql_file("meta", MYSQL_SQL_DIR / "meta.sql")
+    initializer.delete_db("meta")
+    initializer.create_db("meta")
+    initializer.delete_db("langgraph")
+    initializer.create_db("langgraph")
