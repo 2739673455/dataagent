@@ -2,6 +2,19 @@
 
 ## 环境要求
 
+### 拉取 Git LFS 数据文件
+
+`dbmock/data` 中的数据文件通过 Git LFS 管理。首次使用本仓库前，请先安装 Git LFS，然后在仓库根目录执行：
+
+```bash
+git lfs install
+git lfs pull
+```
+
+`git lfs install` 通常只需为当前用户执行一次。未正确拉取时，数据文件的内容会是以 `version https://git-lfs.github.com/spec/v1` 开头的 Git LFS 指针；执行 `git lfs pull` 后会替换为实际数据
+
+### 启动依赖服务
+
 启动 `docker/compose.yml` 中的 Doris：
 
 ```bash
