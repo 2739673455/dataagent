@@ -5,7 +5,6 @@ import base64
 import hashlib
 import io
 import json
-import os
 import posixpath
 import secrets
 import shlex
@@ -13,10 +12,13 @@ import tarfile
 import tempfile
 import threading
 import time
+from collections import deque
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, TypeVar
 from uuid import UUID
 
 from deepagents.backends.protocol import (
@@ -45,9 +47,10 @@ from loguru import logger
 import docker
 from app.conf.app_config import ROOT_DIR, SandboxConfig, cfg
 
-_CONTAINER_LABEL = "dataagent.sandbox.user_id"
-_CONTAINER_PREFIX = "dataagent-sandbox-user"
-_VOLUME_PREFIX = "dataagent-sandbox-user"
+_DEPLOYMENT_LABEL = "dataagent.sandbox.deployment"
+_USER_LABEL = "dataagent.sandbox.user_id"
+_QUOTA_MODE_LABEL = "dataagent.sandbox.quota_mode"
+_QUOTA_BYTES_LABEL = "dataagent.sandbox.quota_bytes"
 _SANDBOX_WORKSPACE_ROOT = "/workspace/conversations"
 _DEFAULT_EXECUTE_TIMEOUT = 120
 _MIN_CONVERSATION_UID = 100_000
@@ -57,8 +60,13 @@ _PATH_MAX_BYTES = 4096
 _PATH_COMPONENT_MAX_BYTES = 255
 _SANDBOX_STAGING_ROOT = "/workspace/.dataagent-staging"
 _SANDBOX_UID_REGISTRY = "/workspace/.dataagent-uids.json"
+_SANDBOX_ACTIVITY_FILE = "/workspace/.dataagent-activity.json"
 _UID_REGISTRY_VERSION = 1
+_ACTIVITY_FILE_VERSION = 1
 _ARCHIVE_SPOOL_BYTES = 8 * 1024 * 1024
+_CAPACITY_WAIT_POLL_SECONDS = 0.25
+
+_ResultT = TypeVar("_ResultT")
 
 _COMMIT_UPLOAD_SCRIPT = """
 import base64
@@ -210,6 +218,235 @@ class SandboxStorageLimitError(OSError):
 
 class SandboxDeletedError(RuntimeError):
     """沙盒资源已被删除"""
+
+
+class SandboxCapacityError(RuntimeError):
+    """沙盒运行容量不可用"""
+
+
+class SandboxCapacityTimeoutError(SandboxCapacityError):
+    """等待沙盒运行容量超时"""
+
+
+class SandboxCapacityQueueFullError(SandboxCapacityError):
+    """沙盒容量等待队列已满"""
+
+
+class SandboxCapacityClosedError(SandboxCapacityError):
+    """沙盒容量调度器已关闭"""
+
+
+class SandboxCapacityCancelledError(SandboxCapacityError):
+    """沙盒容量等待已取消"""
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxCapacitySnapshot:
+    """沙盒容量调度状态快照"""
+
+    running: int
+    reserved: int
+    waiting: int
+    max_running: int
+    max_waiting: int
+    closed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DockerSandboxHealth:
+    """Docker 沙盒管理器健康状态"""
+
+    cleanup_task_running: bool
+    last_cleanup_started_at: float | None
+    last_cleanup_completed_at: float | None
+    cleanup_consecutive_failures: int
+    cleanup_last_error: str | None
+    quota_mode: str
+    capacity: SandboxCapacitySnapshot
+
+
+@dataclass(eq=False, slots=True)
+class _CapacityWaiter:
+    """公平容量队列中的等待项"""
+
+    user_id: int
+    deadline: float
+    cancel_event: threading.Event | None
+    cancelled: bool = False
+
+
+class _FairCapacityLimiter:
+    """提供有界 FIFO 等待、超时和取消的运行容器容量限制器"""
+
+    def __init__(
+        self,
+        max_running: int,
+        max_waiting: int,
+        wait_timeout_seconds: float,
+    ) -> None:
+        self._max_running = max_running
+        self._max_waiting = max_waiting
+        self._wait_timeout_seconds = wait_timeout_seconds
+        self._condition = threading.Condition()
+        self._running_users: set[int] = set()
+        self._reserved_users: set[int] = set()
+        self._waiters: deque[_CapacityWaiter] = deque()
+        self._closed = False
+
+    def _remove_waiter_unlocked(self, waiter: _CapacityWaiter) -> None:
+        try:
+            self._waiters.remove(waiter)
+        except ValueError:
+            return
+        self._condition.notify_all()
+
+    def acquire(
+        self,
+        user_id: int,
+        idle_priority: Callable[[int], float],
+        evict_idle_user: Callable[[int], bool],
+        cancel_event: threading.Event | None = None,
+    ) -> bool:
+        """公平等待运行槽位并返回是否创建了新预留"""
+        waiter: _CapacityWaiter | None = None
+        deadline = time.monotonic() + self._wait_timeout_seconds
+        try:
+            while True:
+                candidates: list[int] = []
+                with self._condition:
+                    if self._closed:
+                        raise SandboxCapacityClosedError(
+                            "Docker sandbox capacity limiter is closed"
+                        )
+                    if (
+                        waiter is not None
+                        and waiter.cancelled
+                        or cancel_event is not None
+                        and cancel_event.is_set()
+                    ):
+                        raise SandboxCapacityCancelledError(
+                            "Docker sandbox capacity wait was cancelled"
+                        )
+                    if user_id in self._running_users:
+                        return False
+                    if waiter is None:
+                        occupied = len(self._running_users) + len(self._reserved_users)
+                        if occupied < self._max_running and not self._waiters:
+                            self._reserved_users.add(user_id)
+                            return True
+                        if len(self._waiters) >= self._max_waiting:
+                            raise SandboxCapacityQueueFullError(
+                                "Docker sandbox capacity queue is full"
+                            )
+                        waiter = _CapacityWaiter(
+                            user_id=user_id,
+                            deadline=deadline,
+                            cancel_event=cancel_event,
+                        )
+                        self._waiters.append(waiter)
+
+                    remaining = waiter.deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise SandboxCapacityTimeoutError(
+                            "Timed out waiting for Docker sandbox capacity"
+                        )
+                    is_head = bool(self._waiters and self._waiters[0] is waiter)
+                    occupied = len(self._running_users) + len(self._reserved_users)
+                    if is_head and occupied < self._max_running:
+                        self._waiters.popleft()
+                        waiter = None
+                        self._reserved_users.add(user_id)
+                        self._condition.notify_all()
+                        return True
+                    if is_head:
+                        candidates = sorted(
+                            self._running_users,
+                            key=idle_priority,
+                        )
+
+                if candidates and any(
+                    evict_idle_user(candidate) for candidate in candidates
+                ):
+                    continue
+                with self._condition:
+                    if waiter is None:
+                        continue
+                    remaining = waiter.deadline - time.monotonic()
+                    if remaining <= 0:
+                        continue
+                    self._condition.wait(
+                        timeout=min(_CAPACITY_WAIT_POLL_SECONDS, remaining)
+                    )
+        finally:
+            if waiter is not None:
+                with self._condition:
+                    self._remove_waiter_unlocked(waiter)
+
+    def complete_reservation(self, user_id: int, *, running: bool) -> None:
+        """提交或回滚一个运行槽位预留"""
+        with self._condition:
+            self._reserved_users.discard(user_id)
+            if running:
+                self._running_users.add(user_id)
+            else:
+                self._running_users.discard(user_id)
+            self._condition.notify_all()
+
+    def mark_running(self, user_id: int) -> None:
+        """登记已经运行的用户容器"""
+        with self._condition:
+            self._running_users.add(user_id)
+            self._condition.notify_all()
+
+    def mark_not_running(self, user_id: int) -> None:
+        """释放用户占用的运行槽位"""
+        with self._condition:
+            self._running_users.discard(user_id)
+            self._reserved_users.discard(user_id)
+            self._condition.notify_all()
+
+    def reconcile(self, running_user_ids: list[int]) -> list[int]:
+        """登记已有运行容器并返回超过上限的用户"""
+        keep = running_user_ids[: self._max_running]
+        overflow = running_user_ids[self._max_running :]
+        with self._condition:
+            self._running_users = set(keep)
+            self._reserved_users.clear()
+            self._condition.notify_all()
+        return overflow
+
+    def cancel_user(self, user_id: int) -> None:
+        """取消指定用户的全部容量等待"""
+        with self._condition:
+            for waiter in self._waiters:
+                if waiter.user_id == user_id:
+                    waiter.cancelled = True
+            self._condition.notify_all()
+
+    def notify_waiters(self) -> None:
+        """唤醒等待线程以重新检查取消和容量状态"""
+        with self._condition:
+            self._condition.notify_all()
+
+    def close(self) -> None:
+        """关闭容量限制器并取消全部等待"""
+        with self._condition:
+            self._closed = True
+            for waiter in self._waiters:
+                waiter.cancelled = True
+            self._condition.notify_all()
+
+    def snapshot(self) -> SandboxCapacitySnapshot:
+        """返回当前容量状态快照"""
+        with self._condition:
+            return SandboxCapacitySnapshot(
+                running=len(self._running_users),
+                reserved=len(self._reserved_users),
+                waiting=len(self._waiters),
+                max_running=self._max_running,
+                max_waiting=self._max_waiting,
+                closed=self._closed,
+            )
 
 
 class _IteratorReader(io.RawIOBase):
@@ -375,7 +612,8 @@ class DockerSandboxBackend(BaseSandbox):
         conversation_guard: _LifecycleGuard,
         mutation_lock: threading.RLock,
         touch: Callable[[], None],
-        get_running_container: Callable[[], Container],
+        get_running_container: Callable[[threading.Event | None], Container],
+        notify_capacity_waiters: Callable[[], None],
     ) -> None:
         """初始化会话级 Docker 沙盒后端"""
         self._user_id = user_id
@@ -391,6 +629,7 @@ class DockerSandboxBackend(BaseSandbox):
         self._mutation_lock = mutation_lock
         self._touch = touch
         self._get_running_container = get_running_container
+        self._notify_capacity_waiters = notify_capacity_waiters
         self._operation_local = threading.local()
 
     @property
@@ -456,18 +695,42 @@ class DockerSandboxBackend(BaseSandbox):
         """在资源生命周期保护下执行沙盒操作"""
         self._touch()
         existing_container = getattr(self._operation_local, "container", None)
+        cancel_event = getattr(self._operation_local, "cancel_event", None)
         try:
-            with self._user_guard.operation():
+            with self._user_guard.operation(), self._conversation_guard.operation():
                 if existing_container is None:
-                    self._operation_local.container = self._get_running_container()
-                with self._conversation_guard.operation():
-                    yield
+                    self._operation_local.container = self._get_running_container(
+                        cancel_event
+                    )
+                yield
         finally:
             if existing_container is None and hasattr(
                 self._operation_local, "container"
             ):
                 del self._operation_local.container
             self._touch()
+
+    async def _run_async(
+        self,
+        operation: Callable[[], _ResultT],
+    ) -> _ResultT:
+        """在线程中运行同步操作并向容量等待传播任务取消"""
+        cancel_event = threading.Event()
+
+        def run() -> _ResultT:
+            self._operation_local.cancel_event = cancel_event
+            try:
+                return operation()
+            finally:
+                del self._operation_local.cancel_event
+
+        task = asyncio.create_task(asyncio.to_thread(run))
+        try:
+            return await task
+        except asyncio.CancelledError:
+            cancel_event.set()
+            self._notify_capacity_waiters()
+            raise
 
     def _execute_unlocked(
         self,
@@ -585,6 +848,15 @@ class DockerSandboxBackend(BaseSandbox):
                 result.truncated = True
             return result
 
+    async def aexecute(
+        self,
+        command: str,
+        *,
+        timeout: int | None = None,
+    ) -> ExecuteResponse:
+        """异步执行命令并支持取消容量等待"""
+        return await self._run_async(lambda: self.execute(command, timeout=timeout))
+
     def execute_with_offload(
         self,
         command: str,
@@ -626,7 +898,7 @@ class DockerSandboxBackend(BaseSandbox):
 
     async def als(self, path: str) -> LsResult:
         """异步列出当前会话目录内容"""
-        return await asyncio.to_thread(self.ls, path)
+        return await self._run_async(lambda: self.ls(path))
 
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         """读取当前会话文件"""
@@ -646,7 +918,7 @@ class DockerSandboxBackend(BaseSandbox):
         limit: int = 2000,
     ) -> ReadResult:
         """异步读取当前会话文件"""
-        return await asyncio.to_thread(self.read, file_path, offset, limit)
+        return await self._run_async(lambda: self.read(file_path, offset, limit))
 
     def write(self, file_path: str, content: str) -> WriteResult:
         """写入当前会话文件"""
@@ -663,7 +935,7 @@ class DockerSandboxBackend(BaseSandbox):
 
     async def awrite(self, file_path: str, content: str) -> WriteResult:
         """异步写入当前会话文件"""
-        return await asyncio.to_thread(self.write, file_path, content)
+        return await self._run_async(lambda: self.write(file_path, content))
 
     def edit(
         self,
@@ -750,12 +1022,13 @@ class DockerSandboxBackend(BaseSandbox):
         replace_all: bool = False,
     ) -> EditResult:
         """异步编辑当前会话文件"""
-        return await asyncio.to_thread(
-            self.edit,
-            file_path,
-            old_string,
-            new_string,
-            replace_all,
+        return await self._run_async(
+            lambda: self.edit(
+                file_path,
+                old_string,
+                new_string,
+                replace_all,
+            )
         )
 
     def delete(self, file_path: str) -> DeleteResult:
@@ -774,7 +1047,7 @@ class DockerSandboxBackend(BaseSandbox):
 
     async def adelete(self, file_path: str) -> DeleteResult:
         """异步删除当前会话文件或目录"""
-        return await asyncio.to_thread(self.delete, file_path)
+        return await self._run_async(lambda: self.delete(file_path))
 
     def grep(
         self,
@@ -815,12 +1088,13 @@ class DockerSandboxBackend(BaseSandbox):
         max_count: int | None = None,
     ) -> GrepResult:
         """异步搜索当前会话文件内容"""
-        return await asyncio.to_thread(
-            self.grep,
-            pattern,
-            path,
-            glob,
-            max_count=max_count,
+        return await self._run_async(
+            lambda: self.grep(
+                pattern,
+                path,
+                glob,
+                max_count=max_count,
+            )
         )
 
     def glob(self, pattern: str, path: str | None = None) -> GlobResult:
@@ -843,7 +1117,7 @@ class DockerSandboxBackend(BaseSandbox):
 
     async def aglob(self, pattern: str, path: str | None = None) -> GlobResult:
         """异步匹配当前会话中的文件"""
-        return await asyncio.to_thread(self.glob, pattern, path)
+        return await self._run_async(lambda: self.glob(pattern, path))
 
     def _put_archive(self, path: str, content: BinaryIO, size: int) -> None:
         """先写入受保护的暂存目录，再由会话 UID 安全提交文件"""
@@ -1000,7 +1274,7 @@ class DockerSandboxBackend(BaseSandbox):
         files: list[tuple[str, bytes]],
     ) -> list[FileUploadResponse]:
         """异步批量上传字节内容到当前会话"""
-        return await asyncio.to_thread(self.upload_files, files)
+        return await self._run_async(lambda: self.upload_files(files))
 
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
         """批量下载当前会话文件"""
@@ -1087,7 +1361,7 @@ class DockerSandboxBackend(BaseSandbox):
         paths: list[str],
     ) -> list[FileDownloadResponse]:
         """异步批量下载当前会话文件"""
-        return await asyncio.to_thread(self.download_files, paths)
+        return await self._run_async(lambda: self.download_files(paths))
 
     def is_file(self, path: str) -> bool:
         """检查当前会话路径是否为文件"""
@@ -1114,9 +1388,17 @@ class DockerSandboxManager:
         self._start_locks: dict[int, threading.Lock] = {}
         self._activity_lock = threading.Lock()
         self._last_activity: dict[int, float] = {}
-        self._capacity_condition = threading.Condition()
-        self._running_users: set[int] = set()
-        self._reserved_users: set[int] = set()
+        self._last_persisted_activity: dict[int, float] = {}
+        self._capacity = _FairCapacityLimiter(
+            max_running=sandbox_config.max_running_containers,
+            max_waiting=sandbox_config.max_capacity_waiters,
+            wait_timeout_seconds=sandbox_config.capacity_wait_timeout_seconds,
+        )
+        self._health_lock = threading.Lock()
+        self._last_cleanup_started_at: float | None = None
+        self._last_cleanup_completed_at: float | None = None
+        self._cleanup_consecutive_failures = 0
+        self._cleanup_last_error: str | None = None
         self._cleanup_task: asyncio.Task[None] | None = None
 
     def _get_client(self) -> docker.DockerClient:
@@ -1135,46 +1417,29 @@ class DockerSandboxManager:
                 build_context = ROOT_DIR / build_context
             if self._config.rebuild_image:
                 logger.info(f"Build Docker sandbox image: image={self._config.image}")
-                proxy_build_args = {
-                    name: value
-                    for name in (
-                        "HTTP_PROXY",
-                        "HTTPS_PROXY",
-                        "NO_PROXY",
-                        "http_proxy",
-                        "https_proxy",
-                        "no_proxy",
-                    )
-                    if (value := os.getenv(name))
+                build_args = {
+                    "NODE_VERSION": self._config.node_version,
+                    "NODE_DOWNLOAD_BASE": self._config.node_download_base,
+                    "PYPI_INDEX_URL": self._config.pypi_index_url,
+                    "NPM_REGISTRY": self._config.npm_registry,
                 }
-                proxy_build_args.update(
-                    {
-                        "NODE_VERSION": self._config.node_version,
-                        "NODE_DOWNLOAD_BASE": self._config.node_download_base,
-                        "PYPI_INDEX_URL": self._config.pypi_index_url,
-                        "NPM_REGISTRY": self._config.npm_registry,
-                    }
-                )
                 image, _ = client.images.build(
                     path=str(build_context),
                     tag=self._config.image,
                     rm=True,
                     network_mode=self._config.build_network_mode,
-                    buildargs=proxy_build_args,
+                    buildargs=build_args,
                 )
             else:
                 image = client.images.get(self._config.image)
-            spec_payload = {
-                "layout_version": 3,
-                "image_id": image.id,
-                "memory_limit": self._config.memory_limit,
-                "nano_cpus": self._config.nano_cpus,
-                "pids_limit": self._config.pids_limit,
-                "network_mode": self._config.network_mode,
-            }
-            self._container_spec = hashlib.sha256(
-                json.dumps(spec_payload, sort_keys=True).encode()
-            ).hexdigest()
+            if self._config.workspace_quota_mode == "application":
+                logger.warning(
+                    "Docker sandbox uses application-enforced workspace quotas; "
+                    "host disk usage can temporarily exceed the configured limit"
+                )
+            if image.id is None:
+                raise RuntimeError("Docker sandbox image has no immutable ID")
+            self._container_spec = self._container_spec_digest(image.id)
         except Exception:
             client.close()
             raise
@@ -1230,8 +1495,12 @@ class DockerSandboxManager:
         """记录用户沙盒最近活动时间"""
         with self._activity_lock:
             self._last_activity[user_id] = time.time()
-        with self._capacity_condition:
-            self._capacity_condition.notify_all()
+        self._capacity.notify_waiters()
+
+    def _last_activity_timestamp(self, user_id: int) -> float:
+        """获取用户最近活动时间戳"""
+        with self._activity_lock:
+            return self._last_activity.get(user_id, 0.0)
 
     def _idle_seconds(self, user_id: int) -> float:
         """获取用户沙盒持续空闲的秒数"""
@@ -1243,11 +1512,80 @@ class DockerSandboxManager:
 
     def _container_name(self, user_id: int) -> str:
         """构造用户容器名称"""
-        return f"{_CONTAINER_PREFIX}-{user_id}"
+        return f"dataagent-{self._config.deployment_namespace}-sandbox-user-{user_id}"
 
     def _volume_name(self, user_id: int) -> str:
         """构造用户数据卷名称"""
-        return f"{_VOLUME_PREFIX}-{user_id}-data"
+        return f"{self._container_name(user_id)}-data"
+
+    def _resource_labels(self, user_id: int) -> dict[str, str]:
+        """构造容器和卷的归属标签"""
+        return {
+            _DEPLOYMENT_LABEL: self._config.deployment_namespace,
+            _USER_LABEL: str(user_id),
+            _QUOTA_MODE_LABEL: self._config.workspace_quota_mode,
+            _QUOTA_BYTES_LABEL: str(self._config.max_workspace_bytes),
+        }
+
+    def _container_filters(self) -> dict[str, str | list[str] | bool]:
+        """构造当前部署实例的 Docker 资源过滤条件"""
+        return {
+            "label": [
+                f"{_DEPLOYMENT_LABEL}={self._config.deployment_namespace}",
+                _USER_LABEL,
+            ]
+        }
+
+    def _volume_driver_options(self, user_id: int) -> dict[str, str]:
+        """渲染用户卷驱动参数"""
+        fields = {
+            "deployment_namespace": self._config.deployment_namespace,
+            "user_id": user_id,
+            "max_workspace_bytes": self._config.max_workspace_bytes,
+        }
+        return {
+            key: value.format_map(fields)
+            for key, value in self._config.volume_driver_options.items()
+        }
+
+    def _runtime_container_spec(self) -> dict[str, Any]:
+        """返回创建容器使用的完整运行规格"""
+        return {
+            "command": ["sleep", "infinity"],
+            "init": True,
+            "read_only": True,
+            "user": "1000:1000",
+            "working_dir": "/workspace",
+            "tmpfs": {"/tmp": "rw,nosuid,nodev,size=256m"},
+            "cap_drop": ["ALL"],
+            "security_opt": ["no-new-privileges:true"],
+            "mem_limit": self._config.memory_limit,
+            "nano_cpus": self._config.nano_cpus,
+            "pids_limit": self._config.pids_limit,
+            "network_mode": self._config.network_mode,
+            "environment": {"HOME": "/tmp"},
+        }
+
+    def _container_spec_digest(self, image_id: str) -> str:
+        """计算完整容器运行和存储规格的稳定摘要"""
+        spec_payload = {
+            "layout_version": 4,
+            "image_id": image_id,
+            "runtime": self._runtime_container_spec(),
+            "workspace_mount": {
+                "target": "/workspace",
+                "mode": "rw",
+            },
+            "volume": {
+                "driver": self._config.volume_driver,
+                "driver_options": self._config.volume_driver_options,
+                "quota_mode": self._config.workspace_quota_mode,
+                "quota_bytes": self._config.max_workspace_bytes,
+            },
+        }
+        return hashlib.sha256(
+            json.dumps(spec_payload, sort_keys=True).encode()
+        ).hexdigest()
 
     def _get_or_create_volume(self, user_id: int):
         """获取用户数据卷并校验归属"""
@@ -1258,11 +1596,27 @@ class DockerSandboxManager:
         except NotFound:
             return client.volumes.create(
                 name=volume_name,
-                labels={_CONTAINER_LABEL: str(user_id)},
+                driver=self._config.volume_driver,
+                driver_opts=self._volume_driver_options(user_id),
+                labels=self._resource_labels(user_id),
             )
         volume.reload()
-        if volume.attrs.get("Labels", {}).get(_CONTAINER_LABEL) != str(user_id):
+        expected_labels = self._resource_labels(user_id)
+        actual_labels = volume.attrs.get("Labels") or {}
+        if any(
+            actual_labels.get(key) != value for key, value in expected_labels.items()
+        ):
             raise RuntimeError(f"Docker volume name is already in use: {volume_name}")
+        actual_driver = volume.attrs.get("Driver")
+        actual_options = volume.attrs.get("Options") or {}
+        expected_options = self._volume_driver_options(user_id)
+        if (
+            actual_driver != self._config.volume_driver
+            or actual_options != expected_options
+        ):
+            raise RuntimeError(
+                f"Docker volume storage policy changed and requires migration: {volume_name}"
+            )
         return volume
 
     def _create_container(self, user_id: int) -> Container:
@@ -1275,26 +1629,12 @@ class DockerSandboxManager:
         container = client.containers.create(
             self._config.image,
             name=self._container_name(user_id),
-            command=["sleep", "infinity"],
-            init=True,
-            read_only=True,
-            user="1000:1000",
-            working_dir="/workspace",
             volumes={volume.name: {"bind": "/workspace", "mode": "rw"}},
-            tmpfs={"/tmp": "rw,nosuid,nodev,size=256m"},
-            cap_drop=["ALL"],
-            security_opt=["no-new-privileges:true"],
-            mem_limit=self._config.memory_limit,
-            nano_cpus=self._config.nano_cpus,
-            pids_limit=self._config.pids_limit,
-            network_mode=self._config.network_mode,
-            environment={
-                "HOME": "/tmp",
-            },
             labels={
-                _CONTAINER_LABEL: str(user_id),
+                **self._resource_labels(user_id),
                 _CONTAINER_SPEC_LABEL: self._container_spec,
             },
+            **self._runtime_container_spec(),
         )
         logger.info(f"Create stopped user Docker sandbox: user_id={user_id}")
         return container
@@ -1329,16 +1669,16 @@ class DockerSandboxManager:
         except NotFound:
             return None
         container.reload()
-        if container.labels.get(_CONTAINER_LABEL) != str(user_id):
+        expected_labels = self._resource_labels(user_id)
+        if any(
+            container.labels.get(key) != value for key, value in expected_labels.items()
+        ):
             raise RuntimeError(f"Docker container name is already in use: {name}")
         return container
 
     def _mark_user_not_running(self, user_id: int) -> None:
         """释放用户占用的全局运行槽位"""
-        with self._capacity_condition:
-            self._running_users.discard(user_id)
-            self._reserved_users.discard(user_id)
-            self._capacity_condition.notify_all()
+        self._capacity.mark_not_running(user_id)
 
     def _complete_running_reservation(
         self,
@@ -1347,13 +1687,7 @@ class DockerSandboxManager:
         running: bool,
     ) -> None:
         """完成或回滚运行槽位预留"""
-        with self._capacity_condition:
-            self._reserved_users.discard(user_id)
-            if running:
-                self._running_users.add(user_id)
-            else:
-                self._running_users.discard(user_id)
-            self._capacity_condition.notify_all()
+        self._capacity.complete_reservation(user_id, running=running)
 
     def _try_evict_idle_user_sync(self, user_id: int) -> bool:
         """尝试停止一个没有活跃操作的用户容器"""
@@ -1373,44 +1707,35 @@ class DockerSandboxManager:
                 self._mark_user_not_running(user_id)
                 return True
 
-    def _reserve_running_slot_sync(self, user_id: int) -> bool:
+    def _reserve_running_slot_sync(
+        self,
+        user_id: int,
+        cancel_event: threading.Event | None = None,
+    ) -> bool:
         """等待并预留一个全局运行容器槽位"""
-        while True:
-            with self._capacity_condition:
-                if user_id in self._running_users:
-                    return False
-                if user_id in self._reserved_users:
-                    self._capacity_condition.wait(timeout=0.5)
-                    continue
-                occupied = len(self._running_users) + len(self._reserved_users)
-                if occupied < self._config.max_running_containers:
-                    self._reserved_users.add(user_id)
-                    return True
-                with self._activity_lock:
-                    last_activity = dict(self._last_activity)
-                candidates = sorted(
-                    self._running_users,
-                    key=lambda candidate: last_activity.get(candidate, 0.0),
-                )
-
-            if any(
-                self._try_evict_idle_user_sync(candidate) for candidate in candidates
-            ):
-                continue
-            with self._capacity_condition:
-                self._capacity_condition.wait(timeout=0.5)
+        return self._capacity.acquire(
+            user_id,
+            self._last_activity_timestamp,
+            self._try_evict_idle_user_sync,
+            cancel_event,
+        )
 
     def _get_running_container_sync(
         self,
         user_id: int,
         start_lock: threading.Lock,
+        cancel_event: threading.Event | None = None,
     ) -> Container:
         """获取用户容器并在取得全局槽位后按需启动"""
         with start_lock:
             container = self._get_or_create_storage_container_sync(user_id)
             container.reload()
-            reserved = self._reserve_running_slot_sync(user_id)
+            reserved = self._reserve_running_slot_sync(user_id, cancel_event)
             try:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise SandboxCapacityCancelledError(
+                        "Docker sandbox start was cancelled"
+                    )
                 if container.status != "running":
                     container.start()
                     container.reload()
@@ -1422,20 +1747,18 @@ class DockerSandboxManager:
             if reserved:
                 self._complete_running_reservation(user_id, running=True)
             else:
-                with self._capacity_condition:
-                    self._running_users.add(user_id)
+                self._capacity.mark_running(user_id)
             return container
 
     def _reconcile_running_containers_sync(self) -> None:
         """启动时登记已有容器并收敛到运行上限"""
         containers = self._get_client().containers.list(
             all=True,
-            filters={"label": _CONTAINER_LABEL},
+            filters=self._container_filters(),
         )
-        now = time.time()
         running: list[tuple[int, Container]] = []
         for container in containers:
-            raw_user_id = container.labels.get(_CONTAINER_LABEL)
+            raw_user_id = container.labels.get(_USER_LABEL)
             try:
                 user_id = int(raw_user_id)
             except (TypeError, ValueError):
@@ -1443,18 +1766,23 @@ class DockerSandboxManager:
             with self._resource_lock:
                 self._user_guards.setdefault(user_id, _LifecycleGuard())
                 self._start_locks.setdefault(user_id, threading.Lock())
-            with self._activity_lock:
-                self._last_activity.setdefault(user_id, now)
             container.reload()
+            activity_at = self._recover_activity_timestamp_sync(container)
+            with self._activity_lock:
+                self._last_activity.setdefault(user_id, activity_at)
+                self._last_persisted_activity.setdefault(user_id, activity_at)
             if container.status == "running":
                 running.append((user_id, container))
 
-        keep = running[: self._config.max_running_containers]
-        overflow = running[self._config.max_running_containers :]
-        with self._capacity_condition:
-            self._running_users = {user_id for user_id, _ in keep}
-            self._reserved_users.clear()
-        for user_id, container in overflow:
+        running.sort(
+            key=lambda item: self._last_activity_timestamp(item[0]), reverse=True
+        )
+        overflow_user_ids = set(
+            self._capacity.reconcile([user_id for user_id, _ in running])
+        )
+        for user_id, container in running:
+            if user_id not in overflow_user_ids:
+                continue
             container.stop(timeout=10)
             logger.info(f"Stop excess Docker sandbox during startup: user_id={user_id}")
 
@@ -1511,6 +1839,87 @@ class DockerSandboxManager:
             if len(content) > max_bytes:
                 raise SandboxFileTooLargeError(f"file too large: > {max_bytes}")
             return content, member
+
+    @staticmethod
+    def _parse_docker_timestamp(value: object) -> float:
+        """解析 Docker 返回的 RFC3339 时间戳"""
+        if not isinstance(value, str) or not value or value.startswith("0001-"):
+            return 0.0
+        try:
+            parsed = datetime.fromisoformat(value)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            return parsed.timestamp()
+        except ValueError:
+            return 0.0
+
+    def _recover_activity_timestamp_sync(self, container: Container) -> float:
+        """从持久文件或 Docker 状态恢复最近活动时间"""
+        now = time.time()
+        try:
+            content, member = self._read_archive_file_sync(
+                container,
+                _SANDBOX_ACTIVITY_FILE,
+                16 * 1024,
+            )
+            if member.uid != 0:
+                raise RuntimeError("Sandbox activity file has an invalid owner")
+            payload = json.loads(content)
+            if payload.get("version") != _ACTIVITY_FILE_VERSION:
+                raise RuntimeError("Unsupported sandbox activity file version")
+            activity_at = float(payload["last_activity_at"])
+            if 0 < activity_at <= now + 300:
+                return activity_at
+            raise RuntimeError("Sandbox activity file has an invalid timestamp")
+        except (NotFound, FileNotFoundError):
+            pass
+
+        state = container.attrs.get("State") or {}
+        candidates = [
+            self._parse_docker_timestamp(state.get("StartedAt")),
+            self._parse_docker_timestamp(state.get("FinishedAt")),
+            self._parse_docker_timestamp(container.attrs.get("Created")),
+        ]
+        recovered = max(candidates, default=0.0)
+        return min(recovered, now) if recovered > 0 else now
+
+    def _persist_activity_sync(
+        self,
+        user_id: int,
+        container: Container,
+        *,
+        force: bool = False,
+    ) -> None:
+        """将内存活动时间写入用户持久卷"""
+        with self._activity_lock:
+            activity_at = self._last_activity.get(user_id)
+            persisted_at = self._last_persisted_activity.get(user_id, 0.0)
+        if activity_at is None or not force and activity_at <= persisted_at:
+            return
+        content = json.dumps(
+            {
+                "version": _ACTIVITY_FILE_VERSION,
+                "last_activity_at": activity_at,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        self._put_archive_sync(
+            container,
+            "/workspace",
+            [],
+            [
+                (
+                    PurePosixPath(_SANDBOX_ACTIVITY_FILE).name,
+                    0,
+                    0o600,
+                    io.BytesIO(content),
+                    len(content),
+                )
+            ],
+        )
+        with self._activity_lock:
+            self._last_persisted_activity[user_id] = activity_at
 
     def _put_archive_sync(
         self,
@@ -1729,10 +2138,12 @@ class DockerSandboxManager:
             conversation_guard,
             mutation_lock,
             lambda: self._touch_user(user_id),
-            lambda: self._get_running_container_sync(
+            lambda cancel_event: self._get_running_container_sync(
                 user_id,
                 start_lock,
+                cancel_event,
             ),
+            self._capacity.notify_waiters,
         )
         return backend
 
@@ -2074,9 +2485,9 @@ class DockerSandboxManager:
                 mapping = self._load_uid_registry_sync(container)
                 mapping.pop(str(conversation_id), None)
                 self._write_uid_registry_sync(container, mapping)
-                conversation_guard.mark_deleted()
 
         async with user_lock:
+            conversation_guard.mark_deleted()
             await asyncio.to_thread(delete)
         self._touch_user(user_id)
 
@@ -2098,9 +2509,10 @@ class DockerSandboxManager:
                     client.volumes.get(self._volume_name(user_id)).remove(force=True)
                 except NotFound:
                     pass
-                user_guard.mark_deleted()
 
         async with user_lock:
+            user_guard.mark_deleted()
+            self._capacity.cancel_user(user_id)
             await asyncio.to_thread(delete)
         self._mark_user_not_running(user_id)
         with self._resource_lock:
@@ -2112,20 +2524,72 @@ class DockerSandboxManager:
                 self._mutation_locks.pop(key, None)
         with self._activity_lock:
             self._last_activity.pop(user_id, None)
+            self._last_persisted_activity.pop(user_id, None)
 
-    async def _cleanup_idle_containers(self) -> None:
-        """定期停止或删除空闲容器，并始终保留数据卷"""
-        while True:
-            await asyncio.sleep(self._config.cleanup_interval_seconds)
+    def health(self) -> DockerSandboxHealth:
+        """返回可供健康检查和监控采集的状态快照"""
+        cleanup_task = self._cleanup_task
+        with self._health_lock:
+            return DockerSandboxHealth(
+                cleanup_task_running=bool(
+                    cleanup_task is not None and not cleanup_task.done()
+                ),
+                last_cleanup_started_at=self._last_cleanup_started_at,
+                last_cleanup_completed_at=self._last_cleanup_completed_at,
+                cleanup_consecutive_failures=self._cleanup_consecutive_failures,
+                cleanup_last_error=self._cleanup_last_error,
+                quota_mode=self._config.workspace_quota_mode,
+                capacity=self._capacity.snapshot(),
+            )
+
+    def _record_cleanup_result(
+        self,
+        started_at: float,
+        errors: list[str],
+    ) -> None:
+        """记录一次清理周期的健康状态"""
+        with self._health_lock:
+            self._last_cleanup_started_at = started_at
+            self._last_cleanup_completed_at = time.time()
+            if errors:
+                self._cleanup_consecutive_failures += 1
+                self._cleanup_last_error = errors[-1]
+                failures = self._cleanup_consecutive_failures
+            else:
+                self._cleanup_consecutive_failures = 0
+                self._cleanup_last_error = None
+                failures = 0
+        if failures >= self._config.cleanup_failure_alert_threshold:
+            logger.error(
+                "Docker sandbox cleanup repeatedly failed: "
+                f"consecutive_failures={failures}, last_error={errors[-1]}"
+            )
+
+    async def _run_cleanup_cycle(self) -> None:
+        """执行一个带用户级错误隔离的清理周期"""
+        started_at = time.time()
+        errors: list[str] = []
+        try:
             with self._activity_lock:
                 user_ids = set(self._last_activity)
             user_ids.update(await asyncio.to_thread(self._managed_user_ids_sync))
-            for user_id in user_ids:
-                if self._idle_seconds(user_id) < self._config.idle_stop_seconds:
-                    continue
-                user_lock, user_guard, start_lock, _, _ = await self._get_resources(
-                    user_id
-                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"resource discovery failed: {exc}")
+            logger.exception("Discover Docker sandbox resources failed")
+            self._record_cleanup_result(started_at, errors)
+            return
+
+        for user_id in user_ids:
+            try:
+                (
+                    user_lock,
+                    user_guard,
+                    start_lock,
+                    _,
+                    _,
+                ) = await self._get_resources(user_id)
                 async with user_lock:
                     await asyncio.to_thread(
                         self._cleanup_idle_container_sync,
@@ -2133,16 +2597,36 @@ class DockerSandboxManager:
                         user_guard,
                         start_lock,
                     )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"user_id={user_id}: {exc}")
+                logger.exception(f"Cleanup Docker sandbox failed: user_id={user_id}")
+        self._record_cleanup_result(started_at, errors)
+
+    async def _cleanup_idle_containers(self) -> None:
+        """定期停止或删除空闲容器，并始终保留数据卷"""
+        while True:
+            try:
+                await asyncio.sleep(self._config.cleanup_interval_seconds)
+                await self._run_cleanup_cycle()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                started_at = time.time()
+                error = f"cleanup loop failed: {exc}"
+                logger.exception("Docker sandbox cleanup loop failed")
+                self._record_cleanup_result(started_at, [error])
 
     def _managed_user_ids_sync(self) -> set[int]:
         """列出 Docker 中已有的用户沙盒"""
         user_ids: set[int] = set()
         containers = self._get_client().containers.list(
             all=True,
-            filters={"label": _CONTAINER_LABEL},
+            filters=self._container_filters(),
         )
         for container in containers:
-            raw_user_id = container.labels.get(_CONTAINER_LABEL)
+            raw_user_id = container.labels.get(_USER_LABEL)
             try:
                 user_ids.add(int(raw_user_id))
             except (TypeError, ValueError):
@@ -2158,24 +2642,23 @@ class DockerSandboxManager:
         start_lock: threading.Lock,
     ) -> None:
         """在没有活跃操作时停止或删除空闲用户容器"""
-        idle_seconds = self._idle_seconds(user_id)
-        if idle_seconds < self._config.idle_stop_seconds:
-            return
         with user_guard.try_maintenance() as acquired:
             if not acquired:
                 return
             with start_lock:
-                idle_seconds = self._idle_seconds(user_id)
-                if idle_seconds < self._config.idle_stop_seconds:
-                    return
                 container = self._get_existing_container_sync(user_id)
                 if container is None:
+                    return
+                self._persist_activity_sync(user_id, container)
+                idle_seconds = self._idle_seconds(user_id)
+                if idle_seconds < self._config.idle_stop_seconds:
                     return
                 if idle_seconds >= self._config.idle_remove_seconds:
                     container.remove(force=True)
                     self._mark_user_not_running(user_id)
                     with self._activity_lock:
                         self._last_activity.pop(user_id, None)
+                        self._last_persisted_activity.pop(user_id, None)
                     logger.info(
                         "Remove idle Docker sandbox and preserve volume: "
                         f"user_id={user_id}"
@@ -2186,24 +2669,38 @@ class DockerSandboxManager:
                     self._mark_user_not_running(user_id)
                     logger.info(f"Stop idle Docker sandbox: user_id={user_id}")
 
-    def _stop_all_containers_sync(self) -> None:
-        """停止本应用管理的全部运行中容器"""
+    def _finalize_containers_sync(self) -> None:
+        """持久化活动时间并按配置停止运行中容器"""
         containers = self._get_client().containers.list(
-            filters={"label": _CONTAINER_LABEL}
+            all=True, filters=self._container_filters()
         )
         for container in containers:
             try:
-                raw_user_id = container.labels.get(_CONTAINER_LABEL)
-                container.stop(timeout=10)
+                raw_user_id = container.labels.get(_USER_LABEL)
                 try:
-                    self._mark_user_not_running(int(raw_user_id))
+                    user_id = int(raw_user_id)
+                    self._persist_activity_sync(user_id, container, force=True)
                 except (TypeError, ValueError):
-                    pass
+                    user_id = None
+                except Exception:  # noqa: BLE001
+                    user_id = None
+                    logger.exception(
+                        f"Persist Docker sandbox activity failed: container={container.name}"
+                    )
+                container.reload()
+                if (
+                    self._config.stop_containers_on_shutdown
+                    and container.status == "running"
+                ):
+                    container.stop(timeout=10)
+                if user_id is not None:
+                    self._mark_user_not_running(user_id)
             except NotFound:
                 continue
 
     async def close(self) -> None:
         """停止后台任务并关闭 Docker 客户端"""
+        self._capacity.close()
         cleanup_task = self._cleanup_task
         self._cleanup_task = None
         if cleanup_task is not None:
@@ -2212,8 +2709,7 @@ class DockerSandboxManager:
         client = self._client
         if client is not None:
             try:
-                if self._config.stop_containers_on_shutdown:
-                    await asyncio.to_thread(self._stop_all_containers_sync)
+                await asyncio.to_thread(self._finalize_containers_sync)
             finally:
                 self._client = None
                 await asyncio.to_thread(client.close)

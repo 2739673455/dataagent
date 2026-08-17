@@ -6,6 +6,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.entities.semantic_recall import SemanticRecallKind
+from app.entities.semantic_search import SemanticSearchRequest, SemanticSearchResponse
+
 
 class CreateConversationRequest(BaseModel):
     """创建对话请求"""
@@ -121,6 +124,52 @@ class MessageListResponse(BaseModel):
     """消息列表响应"""
 
     messages: list[MessageSchema]
+
+
+class SemanticRecallResponse(BaseModel):
+    """语义召回记录响应"""
+
+    recall_id: str
+    kind: SemanticRecallKind
+    request: SemanticSearchRequest | None
+    response: SemanticSearchResponse
+    source_recall_ids: list[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class SemanticRecallListResponse(BaseModel):
+    """语义召回记录列表响应"""
+
+    recalls: list[SemanticRecallResponse]
+
+
+class MergeSemanticRecallsRequest(BaseModel):
+    """合并语义召回记录请求"""
+
+    conversation_id: UUID
+    recall_ids: list[str] = Field(min_length=2, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_distinct_recall_ids(self) -> Self:
+        """要求至少两个不同的召回记录"""
+        if len(set(self.recall_ids)) < 2:
+            raise ValueError("at least two distinct recall IDs are required")
+        return self
+
+
+class DeleteSemanticRecallsRequest(BaseModel):
+    """删除语义召回记录请求"""
+
+    conversation_id: UUID
+    recall_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class DeleteSemanticRecallsResponse(BaseModel):
+    """删除语义召回记录响应"""
+
+    deleted_recall_ids: list[str]
+    missing_recall_ids: list[str]
 
 
 class ChatStreamMessageEvent(BaseModel):

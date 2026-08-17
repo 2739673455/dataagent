@@ -312,9 +312,7 @@ Planner 状态包括：
 专业 Agent 调用时复用 `thread_id`，替换 `checkpoint_ns`：
 
 ```python
-checkpoint_ns = (
-    f"subagents/{analysis_id}/{agent_type}/{session_id}"
-)
+checkpoint_ns = f"subagents/{analysis_id}/{agent_type}/{session_id}"
 ```
 
 专业 Agent 图直接使用实际的 PostgreSQL Checkpointer：
@@ -381,10 +379,7 @@ class AgentSessionKey:
 
     @property
     def checkpoint_ns(self) -> str:
-        return (
-            f"subagents/{self.analysis_id}/"
-            f"{self.agent_type}/{self.session_id}"
-        )
+        return f"subagents/{self.analysis_id}/{self.agent_type}/{self.session_id}"
 ```
 
 ### 9.2 命名规则
@@ -772,10 +767,22 @@ Planner 不直接拥有：
 
 建议工具：
 
-- `search_semantics`
+- `search_semantic_resources`
+- `list_semantic_recalls`
+- `get_semantic_recall`
+- `merge_semantic_recalls`
+- `delete_semantic_recalls`
 - `run_analysis`
 - `run_readonly_sql`
 - 文件读写工具
+
+每次 `search_semantic_resources` 成功召回后，使用 `search_id` 作为独立的
+`recall_id`，在会话级 Store 命名空间中保存检索请求、完整结果和创建时间。
+不同查询通过 `recall_id` 和原始请求区分。合并操作创建去重后的新快照并记录
+`source_recall_ids`，源记录保持不变；召回记录可以单独查询和删除。聊天接口提供
+分页列表、详情、合并和批量删除入口，删除会话时同步清理全部召回记录。
+完整召回结果仅在当前工具调用中进入模型，回合结束后将历史 `ToolMessage` 压缩为
+`recall_id` 引用。后续回合按需读取独立记录，删除记录后上下文中不再保留完整载荷。
 
 输出至少包含：
 
@@ -998,7 +1005,7 @@ app/agent/
 │   └── visualization_agent.py
 └── tools/
     ├── delegate_agent.py
-    ├── search_semantics.py
+    ├── semantic_recall.py
     ├── run_analysis.py
     ├── run_readonly_sql.py
     ├── attribution.py
@@ -1008,6 +1015,7 @@ app/agent/
 app/services/
 ├── agent_session_service.py
 ├── meta_search_service.py
+├── semantic_recall_service.py
 ├── analysis_query_service.py
 ├── query_guard_service.py
 ├── attribution_service.py

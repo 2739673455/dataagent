@@ -1,6 +1,17 @@
 """智能体工具"""
 
-from .return_file import return_file
-from .search_semantics import search_semantics
+from .semantic_recall import (
+    delete_semantic_recalls,
+    get_semantic_recall,
+    list_semantic_recalls,
+    merge_semantic_recalls,
+    search_semantic_resources,
+)
 
-__all__ = ["return_file", "search_semantics"]
+__all__ = [
+    "delete_semantic_recalls",
+    "get_semantic_recall",
+    "list_semantic_recalls",
+    "merge_semantic_recalls",
+    "search_semantic_resources",
+]

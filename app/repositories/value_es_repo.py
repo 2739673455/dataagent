@@ -93,17 +93,9 @@ class ValueESRepo:
         keyword: str,
         score_threshold: float = 0.6,
         limit: int = 5,
-        table_names: list[str] | None = None,
     ) -> list[SearchHit[ValueInfo]]:
         """根据关键词检索字段取值并保留命中分数"""
         query: dict[str, Any] = {"match": {"value": keyword}}
-        if table_names:
-            query = {
-                "bool": {
-                    "must": [query],
-                    "filter": [{"terms": {"t_name": table_names}}],
-                }
-            }
         result = await self._client.search(
             index=self._index_name,
             query=query,

@@ -2,9 +2,9 @@
 
 ## 1. 文档状态
 
-本文记录 DataAgent 本地 Docker 沙盒的目标方案和已经确定的技术决策。
+本文记录 DataAgent 本地 Docker 沙盒的目标方案、已经确定的技术决策和生产部署约束。
 
-当前阶段不引入 MinIO，不使用 gVisor，也不处理多个 FastAPI 进程或多节点之间的沙盒状态协调。本文范围内的单进程、单 Docker 主机方案已经实现，实际状态见“落地状态”章节。
+当前阶段不引入 MinIO，不使用 gVisor，也不处理多个 FastAPI 进程或多节点之间的沙盒状态协调。本文范围内的单进程、单 Docker 主机方案已经实现。可信内部部署可以使用应用层工作区配额；要求硬磁盘边界的生产部署必须使用支持容量限制的 Docker Volume Driver。实际状态见“落地状态”章节。
 
 ## 2. 设计结论
 
@@ -15,6 +15,9 @@
 - 用户连续空闲 10 分钟后停止容器，连续空闲 1 小时后删除容器，但始终保留用户 Volume。
 - 再次执行任务时，使用原 Volume 重建或启动容器，用户文件不需要重新复制或挂载。
 - 全局限制同时运行的容器数量。达到上限时优先停止最久未使用且没有活跃任务的容器；如果所有容器都在执行，则新任务排队。
+- 容量等待采用有界 FIFO 队列，支持超时、异步任务取消、用户删除和服务关闭取消。
+- 容器、Volume 和 Docker 标签包含部署命名空间，同一 Docker 主机上的开发、测试和生产实例不会共享资源。
+- 活动时间持久化在用户 Volume 中，服务重启后继续执行原 TTL，不会把全部容器重新视为刚刚活跃。
 - 当前使用普通 Docker。它适合可信内部用户和第一版部署，但不作为面对恶意公网用户的强安全边界。
 - 当前不使用 MinIO。未来多节点部署时，可以将 MinIO 作为持久对象存储，通过显式同步进入本地工作区，但不直接以文件系统形式挂载到沙盒。
 
@@ -51,8 +54,8 @@ Agent 文件工具/execute ───▶│ 生命周期、并发、权限控制 
 建议保持以下命名方式：
 
 ```text
-容器：dataagent-sandbox-user-{user_id}
-卷：  dataagent-sandbox-user-{user_id}-data
+容器：dataagent-{deployment_namespace}-sandbox-user-{user_id}
+卷：  dataagent-{deployment_namespace}-sandbox-user-{user_id}-data
 ```
 
 每个容器只挂载当前用户自己的 Volume，不得挂载其他用户的目录或 Volume。这样跨用户隔离由 Docker mount namespace 和独立存储卷共同保证。
@@ -72,15 +75,43 @@ Named Volume 由 Docker 管理。容器停止、删除或按照新镜像重建�
 │   │   └── outputs/
 │   └── {conversation_id_2}/
 ├── .dataagent-staging/
-└── .dataagent-uids.json
+├── .dataagent-uids.json
+└── .dataagent-activity.json
 ```
 
 - `/workspace/conversations` 归 `root:root` 所有，权限为 `0711`。
 - 每个会话目录使用独立 UID/GID，权限为 `0700`。
 - 会话内的 `HOME`、缓存和临时文件必须位于本会话目录中，避免不同会话共享用户级缓存。
 - `.dataagent-staging` 只允许受信任的管理逻辑使用，不能暴露给 Agent 命令。
+- `.dataagent-activity.json` 记录最近活动时间，归 `root:root` 所有、权限为 `0600`。
 
-### 4.3 会话 UID
+### 4.3 工作区容量策略
+
+容量限制提供两个明确模式：
+
+- `application`：上传、写入和编辑前检查容量；Shell 执行前后再次检查，并对单文件设置 `ulimit`。该模式允许命令执行期间短暂超过工作区上限，适合可信内部部署。
+- `volume_driver`：创建每用户 Volume 时把 `max_workspace_bytes` 传给支持硬配额的外部 Volume Driver，由存储层阻止超量写入。该模式用于需要硬磁盘边界的生产部署。
+
+硬配额配置示例：
+
+```yaml
+sandbox:
+  workspace_quota_mode: volume_driver
+  volume_driver: your-quota-driver
+  volume_driver_options:
+    size: "{max_workspace_bytes}"
+    deployment: "{deployment_namespace}"
+    user: "{user_id}"
+```
+
+`volume_driver` 模式必须满足以下条件：
+
+- 驱动不能是普通 Docker `local` 驱动。
+- 至少一个驱动参数包含 `{max_workspace_bytes}`。
+- 已有 Volume 的驱动、参数、配额模式和配额值必须与当前配置完全一致；不一致时服务拒绝使用该 Volume，先执行显式数据迁移。
+- 驱动必须保证容量参数形成存储层硬边界；部署验收需要执行磁盘写满测试。
+
+### 4.4 会话 UID
 
 为每个 `(user_id, conversation_id)` 分配稳定且不重复的 Linux UID：
 
@@ -147,8 +178,13 @@ sandbox:
 - 空闲达到 1 小时：删除容器，保留 Volume。
 - 发现容器镜像或安全配置发生变化：在没有活跃操作时删除旧容器，下次使用时按新规格重建。
 - 服务关闭：停止本服务管理的运行中容器，不删除 Volume。
+- 每个清理周期将最新活动时间写入用户 Volume；服务启动时优先从 Volume 恢复，旧容器则使用 Docker 状态时间迁移。
+- 单个用户的 Docker API 错误只影响该用户，本轮继续清理其他用户。
+- 清理循环捕获周期级异常并继续运行，连续失败达到阈值时记录告警日志。
 
 后端对象使用稳定的用户/会话标识，不永久缓存某个 Docker container 实例。每次操作都通过管理器重新解析当前容器，因此能够适应 TTL 删除和容器重建。
+
+管理器通过 `health()` 暴露清理任务存活状态、最近清理时间、连续失败次数、最后错误、配额模式以及运行、预留和等待数量，供健康检查或监控采集。
 
 ## 6. 文件上传与下载
 
@@ -187,6 +223,19 @@ HTTP 上传和下载不应调用 `docker exec`，也不应为了传输文件启�
 - 全局等待队列：所有运行槽位都被活跃任务占用时，新任务排队。
 - LRU 回收：达到上限时，优先停止最久未使用且没有活跃任务的容器。
 
+等待队列按 FIFO 调度，并配置以下边界：
+
+```yaml
+sandbox:
+  max_capacity_waiters: 2048
+  capacity_wait_timeout_seconds: 300
+```
+
+- 队列达到上限时立即返回容量队列已满错误。
+- 等待超过时限时返回容量等待超时错误。
+- Agent 异步任务取消、用户沙盒删除或服务关闭时，等待项立即退出。
+- 只有队首等待项可以预留空闲槽位或触发 LRU 回收，避免后来的任务插队。
+
 不能根据 Agent 并发量直接设置容器上限。应根据单机可用 CPU、内存和任务特征压测确定：
 
 ```text
@@ -209,7 +258,7 @@ max_running_containers <= min(
 - `no-new-privileges`。
 - 不挂载 Docker socket、宿主机目录或其他用户 Volume。
 - 默认 `network_mode: none`；确实需要网络时通过受控代理和白名单提供。
-- 设置内存、CPU、PID、超时、输出和磁盘容量限制。
+- 设置内存、CPU、PID、超时和输出限制；生产硬磁盘边界使用 quota-capable Volume Driver。
 - 管理操作和 Agent 命令分开：只有受信任管理逻辑可以创建目录、调整 UID 或删除会话。
 
 普通 Docker 仍然共享宿主机内核，因此这个方案属于工程上可接受的容器隔离，不等同于虚拟机安全边界。若未来开放给恶意或完全不可信的公网用户，应重新评估 gVisor、Kata Containers、微虚拟机或独立执行集群。
@@ -264,6 +313,12 @@ MinIO（持久对象源）
 | 空闲 1 小时删除容器并保留 Volume | 已完成 | 缓存 Backend 可自动重建容器 |
 | HTTP 上传/下载不启动容器 | 已完成 | 使用 stopped-container Archive API |
 | 全局运行容器上限、排队和 LRU 回收 | 已完成 | 当前默认上限为 8 |
+| 有界 FIFO、超时和取消 | 已完成 | 默认最多等待 2048 个用户，超时 300 秒 |
+| 部署资源命名空间 | 已完成 | 容器、Volume 和过滤标签包含 deployment namespace |
+| 完整容器规格指纹 | 已完成 | 镜像、只读根、tmpfs、能力、安全选项、资源、网络和卷策略全部参与哈希 |
+| 清理容错与健康状态 | 已完成 | 错误隔离、持续重试、失败告警和 `health()` 快照 |
+| 服务重启恢复 TTL 活动时间 | 已完成 | 活动时间持久化在用户 Volume |
+| 硬磁盘配额部署能力 | 已完成 | `volume_driver` 模式失败关闭；当前本地配置使用 `application` 模式 |
 | 后端适应容器被删除和重建 | 已完成 | 操作时动态解析容器 |
 | 多进程/多节点协调 | 暂不实现 | 扩容前重新设计 |
 
@@ -276,6 +331,11 @@ MinIO（持久对象源）
 5. 已增加全局运行槽位、等待队列和空闲容器 LRU 回收。
 6. 会话 UID 注册表会随 Volume 持久化，并拒绝重复或非法 UID。
 7. 已增加生命周期竞争、停止状态文件传输、容器重建、排队和跨会话越权测试。
+8. 容量调度已改为有界 FIFO，支持队列上限、超时、取消和关闭。
+9. 容器与 Volume 已按部署命名空间隔离，Volume 存储策略不匹配时拒绝继续使用。
+10. 容器规格指纹覆盖完整运行安全配置和 Volume 策略。
+11. 活动时间会写入 Volume，重启后恢复 TTL；清理失败不会终止后台任务。
+12. `make test` 默认执行全部单元测试和真实 Docker 集成测试。
 
 ## 13. 验收条件
 
@@ -288,6 +348,13 @@ MinIO（持久对象源）
 - [x] 达到 `max_running_containers` 后不会继续无上限创建运行中容器，新任务会排队或回收安全的空闲容器。
 - [x] 容器镜像或安全配置更新后能够重建容器，同时保留用户文件。
 - [x] 删除单个会话只删除该会话目录；只有显式删除用户沙盒数据才删除整个 Volume。
+- [x] 容量等待严格按照 FIFO 获取槽位，队列满、等待超时和取消都有确定结果。
+- [x] 两个 deployment namespace 不会发现、停止或挂载对方的容器和 Volume。
+- [x] 修改任意容器运行安全配置都会改变规格指纹并触发容器重建。
+- [x] 服务重启后从 Volume 恢复活动时间，不会重置 TTL。
+- [x] 单个 Docker API 清理失败不会终止清理循环，连续失败可通过健康状态和日志发现。
+- [x] `volume_driver` 模式拒绝普通 `local` 驱动、缺少容量参数及不匹配的已有 Volume。
+- [x] `make test` 默认运行真实 Docker 沙盒测试。
 
 ## 14. 参考资料
 

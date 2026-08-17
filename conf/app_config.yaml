@@ -38,6 +38,7 @@ embedding:
   timeout: 30.0
 
 sandbox:
+  deployment_namespace: local # 同一 Docker 主机上的部署实例必须使用不同命名空间
   image: dataagent-sandbox:latest
   build_context: docker/sandbox
   build_network_mode: host
@@ -54,10 +55,16 @@ sandbox:
   max_capture_bytes: 10485760
   max_file_bytes: 104857600
   max_workspace_bytes: 1073741824
+  workspace_quota_mode: application # 生产环境应改为 volume_driver 并使用支持硬配额的卷驱动
+  volume_driver: local
+  volume_driver_options: {}
   idle_stop_seconds: 600 # 空闲 10 分钟后停止容器
   idle_remove_seconds: 3600 # 空闲 1 小时后删除容器，但保留用户数据卷
   cleanup_interval_seconds: 60
+  cleanup_failure_alert_threshold: 3
   max_running_containers: 8 # 按部署机器容量调整，超出后等待或回收空闲容器
+  max_capacity_waiters: 2048
+  capacity_wait_timeout_seconds: 300
   stop_containers_on_shutdown: true
 
 lm_config:

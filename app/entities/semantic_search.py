@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 SemanticResourceType = Literal["column", "metric", "value"]
 SemanticIndexStatus = Literal["current", "stale", "missing"]
 SemanticTextType = Literal["name", "description", "alias"]
+SemanticMatchType = Literal["fulltext", "vector"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,15 +26,12 @@ class SemanticSearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     query: str = Field(min_length=1, max_length=1000)
-    terms: list[str] = Field(default_factory=list, max_length=8)
+    terms: list[str] = Field(default_factory=list, max_length=20)
     resource_types: list[SemanticResourceType] = Field(
-        default_factory=lambda: ["column", "metric", "value"],
         min_length=1,
         max_length=3,
     )
-    table_names: list[str] = Field(default_factory=list, max_length=20)
     limit_per_type: int = Field(default=5, ge=1, le=20)
-    include_relations: bool = True
 
     @field_validator("query", mode="before")
     @classmethod
@@ -41,7 +39,7 @@ class SemanticSearchRequest(BaseModel):
         """清理原始检索文本"""
         return value.strip() if isinstance(value, str) else value
 
-    @field_validator("terms", "table_names")
+    @field_validator("terms")
     @classmethod
     def normalize_string_list(cls, values: list[str]) -> list[str]:
         """清理并稳定去重字符串列表"""
@@ -56,6 +54,16 @@ class SemanticSearchRequest(BaseModel):
         return list(dict.fromkeys(values))
 
 
+class SemanticMatchReason(BaseModel):
+    """一次索引命中的结构化依据"""
+
+    model_config = ConfigDict(frozen=True)
+
+    match_type: SemanticMatchType
+    query: str
+    score: float
+
+
 class SemanticMetricResult(BaseModel):
     """指标语义检索结果"""
 
@@ -64,7 +72,7 @@ class SemanticMetricResult(BaseModel):
     alias: list[str]
     relevant_columns: list[dict[str, str]]
     rank_score: float
-    match_reasons: list[str]
+    match_reasons: list[SemanticMatchReason]
     meta_version: int
     index_version: int
     index_status: SemanticIndexStatus
@@ -83,7 +91,7 @@ class SemanticColumnResult(BaseModel):
     reference_c_name: str | None
     inclusion_reasons: list[str]
     rank_score: float | None
-    match_reasons: list[str]
+    match_reasons: list[SemanticMatchReason]
     meta_version: int
     index_version: int
     index_status: SemanticIndexStatus
@@ -96,7 +104,7 @@ class SemanticValueResult(BaseModel):
     t_name: str
     c_name: str
     rank_score: float
-    match_reasons: list[str]
+    match_reasons: list[SemanticMatchReason]
     sync_status: Literal["syncing", "succeeded", "failed"] | None
     synced_at: datetime | None
 

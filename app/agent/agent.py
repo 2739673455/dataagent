@@ -14,7 +14,13 @@ from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 
 from app.agent.mcp import get_mcp_tools
-from app.agent.tools import return_file, search_semantics
+from app.agent.tools import (
+    delete_semantic_recalls,
+    get_semantic_recall,
+    list_semantic_recalls,
+    merge_semantic_recalls,
+    search_semantic_resources,
+)
 from app.clients.docker_sandbox_manager import (
     DockerSandboxBackend,
     docker_sandbox_manager,
@@ -106,8 +112,11 @@ class AgentManager:
                 **model_cfg.params,
             )
             tools: list[BaseTool] = [
-                search_semantics,
-                return_file,
+                search_semantic_resources,
+                list_semantic_recalls,
+                get_semantic_recall,
+                merge_semantic_recalls,
+                delete_semantic_recalls,
                 *await get_mcp_tools(),
             ]
             self._model = model
@@ -237,9 +246,7 @@ class AgentManager:
         """释放 Agent 缓存和未完成的构建任务"""
         async with self._state_lock:
             build_tasks = list(self._build_tasks.values())
-            run_tasks = [
-                task for tasks in self._run_tasks.values() for task in tasks
-            ]
+            run_tasks = [task for tasks in self._run_tasks.values() for task in tasks]
             self._build_tasks.clear()
             self._run_tasks.clear()
             self._agents.clear()

@@ -27,7 +27,11 @@
 - 容器规格发生变化时会重建容器，但保留用户 volume；空闲 10 分钟后停止容器，
   空闲 1 小时后删除容器但保留 volume。
 - 同时运行的容器受全局上限控制；容量不足时回收空闲 LRU 容器，所有槽位活跃时新任务排队。
+- 容量等待使用有界 FIFO 队列，支持超时以及任务取消、用户删除和服务关闭取消。
+- 容器和 volume 名称包含 `deployment_namespace`，共享 Docker 主机的多个部署实例相互隔离。
+- 最近活动时间持久化在用户 volume 中，服务重启后继续执行原 TTL。
 
 Docker named volume 本身没有跨文件系统通用的硬配额。当前实现会对上传、写入、编辑做写前校验，
 对 shell 进程设置单文件上限，并在命令前后检查会话工作区总量。若部署环境要求不可短暂超出的硬磁盘配额，
-还需要在 Docker 数据目录所在的宿主文件系统上配置 project quota，或为每个用户挂载带配额的独立卷。
+将 `workspace_quota_mode` 设置为 `volume_driver`，并配置支持容量参数的外部 Docker Volume Driver。
+管理器会把 `{max_workspace_bytes}` 渲染到驱动参数，并拒绝普通 `local` 驱动、缺少容量参数或存储策略不匹配的已有 volume。

@@ -52,6 +52,11 @@ class EmbeddingConfig(BaseModel):
 class SandboxConfig(BaseModel):
     """本地 Docker 沙盒配置"""
 
+    deployment_namespace: str = Field(
+        min_length=1,
+        max_length=32,
+        pattern=r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+    )
     image: str
     build_context: str
     build_network_mode: str
@@ -68,10 +73,16 @@ class SandboxConfig(BaseModel):
     max_capture_bytes: int = Field(gt=0)
     max_file_bytes: int = Field(gt=0)
     max_workspace_bytes: int = Field(gt=0)
+    workspace_quota_mode: Literal["application", "volume_driver"]
+    volume_driver: str = Field(min_length=1)
+    volume_driver_options: dict[str, str]
     idle_stop_seconds: int = Field(gt=0)
     idle_remove_seconds: int = Field(gt=0)
     cleanup_interval_seconds: int = Field(gt=0)
+    cleanup_failure_alert_threshold: int = Field(gt=0)
     max_running_containers: int = Field(gt=0)
+    max_capacity_waiters: int = Field(gt=0)
+    capacity_wait_timeout_seconds: float = Field(gt=0)
     stop_containers_on_shutdown: bool
 
     @model_validator(mode="after")
@@ -85,6 +96,37 @@ class SandboxConfig(BaseModel):
             raise ValueError("max_file_bytes must not exceed max_workspace_bytes")
         if self.idle_stop_seconds >= self.idle_remove_seconds:
             raise ValueError("idle_stop_seconds must be less than idle_remove_seconds")
+        option_fields = {
+            "deployment_namespace": self.deployment_namespace,
+            "user_id": 1,
+            "max_workspace_bytes": self.max_workspace_bytes,
+        }
+        try:
+            rendered_options = {
+                key: value.format_map(option_fields)
+                for key, value in self.volume_driver_options.items()
+            }
+        except (KeyError, ValueError) as exc:
+            placeholder = exc.args[0] if exc.args else "invalid format"
+            raise ValueError(
+                f"invalid volume driver option template: {placeholder}"
+            ) from exc
+        if any(not key or not value for key, value in rendered_options.items()):
+            raise ValueError("volume driver options must not contain empty values")
+        if self.workspace_quota_mode == "volume_driver" and not any(
+            "{max_workspace_bytes}" in value
+            for value in self.volume_driver_options.values()
+        ):
+            raise ValueError(
+                "volume_driver quota mode requires a max_workspace_bytes placeholder"
+            )
+        if (
+            self.workspace_quota_mode == "volume_driver"
+            and self.volume_driver == "local"
+        ):
+            raise ValueError(
+                "volume_driver quota mode requires a quota-capable external driver"
+            )
         return self
 
 

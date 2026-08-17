@@ -1,5 +1,4 @@
 import base64
-import json
 import mimetypes
 import uuid
 from typing import Any, cast
@@ -68,17 +67,6 @@ def _schema_from_metadata(
 
 def _tool_message_to_schema(message: ToolMessage) -> chat_schema.MessageSchema:
     """将工具结果转换为接口消息"""
-    attachments: list[chat_schema.Attachment] | None = None
-    if message.name == "return_file" and isinstance(message.content, str):
-        try:
-            payload = json.loads(message.content)
-        except json.JSONDecodeError:
-            payload = None
-        if isinstance(payload, dict) and payload.get("status") == "success":
-            f_path = payload.get("f_path")
-            if isinstance(f_path, str):
-                attachments = [chat_schema.Attachment(f_path=f_path)]
-
     return chat_schema.MessageSchema(
         message_id=message.id,
         role="tool",
@@ -89,7 +77,6 @@ def _tool_message_to_schema(message: ToolMessage) -> chat_schema.MessageSchema:
                 content=str(message.content),
             )
         ],
-        attachments=attachments,
     )
 
 

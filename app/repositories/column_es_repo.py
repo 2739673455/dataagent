@@ -122,17 +122,12 @@ class ColumnESRepo:
         embedding: list[float],
         score_threshold: float = 0.6,
         limit: int = 5,
-        table_names: list[str] | None = None,
     ) -> list[SearchHit[ColumnInfo]]:
         """根据向量检索字段并保留命中分数"""
-        filters: list[dict[str, Any]] = []
-        if table_names:
-            filters.append({"terms": {"t_name": table_names}})
         result = await self._vector_search(
             embedding,
             score_threshold,
             limit,
-            filters,
         )
         return self._hits(result)
 
@@ -140,13 +135,9 @@ class ColumnESRepo:
         self,
         query: str,
         limit: int = 5,
-        table_names: list[str] | None = None,
     ) -> list[SearchHit[ColumnInfo]]:
         """根据关键词检索字段并保留命中分数"""
-        filters: list[dict[str, Any]] = []
-        if table_names:
-            filters.append({"terms": {"t_name": table_names}})
-        result = await self._text_search(query, limit, filters)
+        result = await self._text_search(query, limit)
         return self._hits(result)
 
     async def _bulk_index(
@@ -187,7 +178,6 @@ class ColumnESRepo:
         embedding: list[float],
         score_threshold: float,
         limit: int,
-        filters: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """执行字段向量检索"""
         knn: dict[str, Any] = {
@@ -197,8 +187,6 @@ class ColumnESRepo:
             "num_candidates": min(10_000, max(100, limit * 10)),
             "similarity": score_threshold,
         }
-        if filters:
-            knn["filter"] = {"bool": {"filter": filters}}
         result = await self._client.search(
             index=self._index_name,
             knn=knn,
@@ -211,7 +199,6 @@ class ColumnESRepo:
         self,
         query: str,
         limit: int,
-        filters: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """执行字段全文检索"""
         exact_queries = [
@@ -242,17 +229,9 @@ class ColumnESRepo:
                 ]
             }
         }
-        search_query = text_query
-        if filters:
-            search_query = {
-                "bool": {
-                    "filter": filters,
-                    "must": [text_query],
-                }
-            }
         result = await self._client.search(
             index=self._index_name,
-            query=search_query,
+            query=text_query,
             size=limit,
         )
         body = result.body if hasattr(result, "body") else result
