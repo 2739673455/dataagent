@@ -52,19 +52,21 @@
 - **配置与日志体系**：采用 YAML + OmegaConf + Pydantic 分层配置，结合 Loguru 结构化日志与全链路 TraceId 中间件。
 - **代码质量与测试**：核心应用通过 Pyright 严格类型检查与 Ruff 代码规范校验，配备单元测试与沙盒集成测试套件。
 
-### 8. 用户认证、RBAC 与多租户授权
+### 8. 用户认证、Doris RBAC 与多租户授权
 - **认证与令牌安全**：支持注册、用户名或邮箱登录、登出和当前用户查询；密码使用 Argon2id 哈希，JWT Access Token 与 Refresh Token 支持轮换、重放检测和令牌族吊销，注册、登录与刷新接口带有过载保护。
-- **平台角色管理**：内置 Admin、Analyst 和 Viewer 角色，公开注册用户固定获得 Viewer；Admin 可管理用户角色与资产白名单，最后一名 Admin 受防护。
-- **数据资产白名单**：支持数据源、数据库、数据表和字段四级授权；元数据目录、语义检索、召回快照和 SQL Guard 都在返回或执行前按当前权限过滤。
+- **单一 Doris 数据角色**：每个用户必须且只能绑定一个 `doris_role_name`，公开注册自动绑定唯一缺省角色；平台管理员身份使用独立的 `is_admin` 标志，不占用数据角色。
+- **Doris 细粒度权限**：表级和列级 `SELECT_PRIV`、角色 Row Policy 由 Doris 执行；成功的 SELECT 授权同步到应用侧可见性投影，语义检索、召回快照和 SQL Guard 在连接 Doris 前按当前角色过滤。
+- **管理员边界**：只有平台管理员可以查看或修改元数据、用户角色绑定和 Doris 角色权限；最后一位平台管理员受防护。
 - **租户隔离**：会话、附件、语义召回、LangGraph 线程、Agent Session 和 Docker 工作区均绑定 `user_id` 与 `conversation_id`，越权访问在路由或服务层拦截。
 
 ### 9. SQL 语法与安全检查工具（`check_sql_syntax`）
 - **AST 静态检查**：使用 `sqlglot` 按 Doris / MySQL 方言解析 SQL，仅接受单条 `SELECT` / `WITH` 查询。
 - **只读边界**：拒绝 DML、DDL、多语句、查询 Hint、参数占位符、高风险函数、表值函数和无约束 JOIN，并在执行前输出确定性校验结果。
-- **目录与权限对齐**：先按资产白名单构造用户可见目录，再检查表、字段、别名、CTE、类型与 JOIN 条件，避免通过校验信息探测未授权资产。
+- **目录与权限对齐**：先按用户唯一 Doris 角色的 SELECT 权限投影构造可见目录，再检查表、字段、别名、CTE、类型与 JOIN 条件，避免通过校验信息探测未授权资产。
 
 ### 10. SQL 只读查询工具（`run_readonly_sql`）
-- **独立只读连接**：使用 `doris_query` 独立连接池和凭据，启动时通过 `SHOW GRANTS` 检查有效权限，并验证查询账号可进入指定 `workload_group`。
+- **稳定查询身份**：`doris_roles` 为每个 Doris 数据角色配置一个稳定共享查询账号和独立连接池；服务端按 `users.doris_role_name` 精确选择，客户端不能指定或切换查询身份。
+- **数据库侧权限校验**：应用启动时逐一通过 `SHOW GRANTS` 检查查询账号只绑定预期角色、仅具备只读权限、可见目标数据库并可使用指定 Workload Group。
 - **查询前资源守卫**：在读取数据前执行 `EXPLAIN`，校验扫描行数和扫描字节估算，估算缺失或超限时拒绝执行；查询会话同时设置 workload group、超时、内存和单元格限制。
 - **有界流式输出**：服务端游标分批读取，强制最大行数与 UTF-8 输出字节数，并防护 CSV 公式注入；超时或取消时作废当前连接。
 - **会话产物**：CSV 写入 `/analyses/{analysis_id}/sessions/{agent_type}/{session_id}/query_{uuid}.csv`，Agent 仅接收路径、Schema、行数、时间范围和少量样例。
@@ -87,14 +89,19 @@
 复制 `conf/.env.example` 为 `conf/.env`，至少配置数据库密码、模型密钥和以下安全变量：
 
 - `JWT_SECRET`：至少 32 字符的高强度随机值，生产环境由密钥管理系统注入。
-- `DORIS_QUERY_PASSWORD`：Doris 专用只读分析账号密码，与 `doris_query` 配置一致。
+- `DORIS_SECURITY_ADMIN_PASSWORD`：独立 Doris 权限管理账号密码，只用于管理员 API。
+- `DORIS_DEFAULT_QUERY_PASSWORD`、`DORIS_PRIVILEGED_QUERY_PASSWORD`：示例 Doris 角色对应的稳定共享只读查询账号密码；新增角色时同步增加独立环境变量。
 - `DATAAGENT_BOOTSTRAP_ADMIN_USERNAME`、`DATAAGENT_BOOTSTRAP_ADMIN_EMAIL`、`DATAAGENT_BOOTSTRAP_ADMIN_PASSWORD`：仅在执行管理员引导命令时提供。
 
-### 2. Doris 只读账号与 Workload Group
+### 2. Doris 角色、稳定查询身份与 Workload Group
 
-- 在 `conf/app_config.yaml` 中将 `doris_query` 配置为专用查询账号，其 `database` 必须与元数据源 `doris.database` 一致。
-- 由 DBA 按当前 Doris 版本创建账号和 `query.workload_group`，仅授予目标库表的查询权限以及使用该 Workload Group 所需的权限；不授予导入、建表、修改、删除、授权或节点管理权限。Doris 版本间授权语法有差异，部署时使用对应版本的官方语法。
-- 应用启动时检查 `SHOW GRANTS`、目标数据库可见性并尝试设置 Workload Group，检测到写入/管理权限、目标库不可访问或 Workload Group 不可用时拒绝启动。运行时还会执行 `query` 下的超时、内存、扫描、结果行数与输出字节限制。
+- 在 `conf/app_config.yaml` 的 `doris_roles` 中维护可分配角色。每项包含角色说明、是否为缺省角色、独立共享查询账号和 Workload Group；配置必须且只能有一个缺省角色，查询账号不能复用。
+- DBA 先在 Doris 创建同名角色、对应查询账号和 Workload Group，再把每个查询账号只绑定到一个配置角色。查询账号不授予导入、建表、修改、删除、授权或节点管理权限。
+- `doris_security_admin` 是独立管理连接。它不进入 Agent 和 SQL 执行路径；管理 Row Policy 需要 Doris `ADMIN_PRIV`，部署时应限制来源地址并妥善托管密码。
+- 应用启动时确认全部配置角色存在，并逐个检查查询账号只绑定预期角色、有效权限只读、目标库可见和 Workload Group 可用。任一项不符合时拒绝启动。
+- 管理员 API 可直接操作 Doris：`GET /api/v1/admin/doris-roles` 查看实时角色授权，`POST|DELETE /api/v1/admin/doris-roles/{role}/select-grants` 管理库、表、列 SELECT 权限，`GET|POST|DELETE /api/v1/admin/doris-roles/{role}/row-policies` 管理行策略。
+- 平台管理员登录后可从聊天侧栏进入 `/admin`，在同一页面调整用户唯一 Doris 角色、平台管理员身份、SELECT 权限和 Row Policy。
+- SELECT 授权必须通过管理员 API 修改，使 Doris 权限与应用侧语义检索投影同步。外部 DBA 修改后需要通过同一 API重放对应授权目标。
 
 ### 3. Elasticsearch 索引升级
 
@@ -102,7 +109,7 @@
 
 ### 4. 管理员引导
 
-公开注册不会产生 Admin。完成 `conf/.env` 和 PostgreSQL 配置后，显式执行幂等的管理员引导脚本：
+公开注册不会产生平台管理员。完成 `conf/.env`、PostgreSQL 和缺省 Doris 角色配置后，显式执行幂等的管理员引导脚本：
 
 ```bash
 DATAAGENT_BOOTSTRAP_ADMIN_USERNAME=admin \
@@ -113,11 +120,11 @@ uv run python -m scripts.bootstrap_admin
 
 引导完成后从运行环境移除三个 `DATAAGENT_BOOTSTRAP_ADMIN_*` 变量。
 
-公开注册用户初始为 Viewer。Admin 通过 `/api/v1/admin/users/{user_id}/roles` 授予 Analyst 后，用户才能创建会话、上传附件和运行分析。
+公开注册用户自动绑定 `doris_roles` 中的唯一缺省角色。平台管理员通过 `PUT /api/v1/admin/users/{user_id}/doris-role` 替换用户唯一 Doris 角色，通过 `PUT /api/v1/admin/users/{user_id}/administrator` 管理平台管理员身份。元数据 REST 接口全部要求平台管理员身份。
 
 ### 5. 授权撤销与历史留存
 
-角色或资产白名单变更会立即作用于新的目录读取、语义检索、召回读取和 SQL 校验。已写入用户会话的历史消息与分析产物按会话留存策略保存，仍由原会话所有者读取；需要同时清除历史副本时，删除对应会话以级联清理 Checkpoint 和 Docker 工作区。
+Doris 角色或 SELECT 权限变更会立即作用于新的目录读取、语义检索、召回读取和 SQL 校验，Row Policy 由 Doris 自动追加到实际查询。已写入用户会话的历史消息与分析产物按会话留存策略保存，仍由原会话所有者读取；需要同时清除历史副本时，删除对应会话以级联清理 Checkpoint 和 Docker 工作区。
 
 ### 6. 启动、前端代理与 Docker 部署边界
 

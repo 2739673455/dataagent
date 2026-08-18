@@ -1,4 +1,4 @@
-import { LogOut, MessageSquareMore, Plus, Trash2, User2 } from "lucide-react";
+import { LogOut, MessageSquareMore, Plus, Settings, Trash2, User2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { UserResponse } from "@/auth";
 import { Button } from "@/components/ui/button";
@@ -109,10 +109,17 @@ export function ChatSidebar({
               {user?.username || "未登录"}
             </p>
             <p className="truncate text-xs text-muted-foreground">
-              {user ? `${user.email} · ${user.roles.join(" / ")}` : "未认证"}
+              {user ? `${user.email} · ${user.doris_role}` : "未认证"}
             </p>
           </div>
         </div>
+        {user?.is_admin && (
+          <Button asChild variant="ghost" size="icon" className="h-12 w-12 shrink-0 text-cyan-800">
+            <Link to={ROUTES.admin} aria-label="权限管理">
+              <Settings className="h-4 w-4" />
+            </Link>
+          </Button>
+        )}
         {/* 右侧按钮负责显式退出当前应用登录态 */}
         <Button
           variant="ghost"

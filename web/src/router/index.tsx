@@ -1,11 +1,12 @@
 import type { ReactNode } from "react";
 import { lazy, Suspense } from "react";
 import { createBrowserRouter, Navigate } from "react-router-dom";
-import { AuthLoadingScreen, ProtectedRoute } from "@/auth";
+import { AdminRoute, AuthLoadingScreen, ProtectedRoute } from "@/auth";
 import { ROUTES } from "@/config/settings";
 
 const ChatPage = lazy(() => import("@/pages/Chat"));
 const LoginPage = lazy(() => import("@/pages/Login"));
+const AdminPage = lazy(() => import("@/pages/Admin"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 
 function SuspenseWrapper({ children }: { children: ReactNode }) {
@@ -13,6 +14,16 @@ function SuspenseWrapper({ children }: { children: ReactNode }) {
 }
 
 export const router = createBrowserRouter([
+  {
+    path: ROUTES.admin,
+    element: (
+      <AdminRoute>
+        <SuspenseWrapper>
+          <AdminPage />
+        </SuspenseWrapper>
+      </AdminRoute>
+    ),
+  },
   {
     path: "/",
     element: <Navigate to={ROUTES.chat} replace />,

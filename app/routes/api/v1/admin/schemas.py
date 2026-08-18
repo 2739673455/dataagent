@@ -1,32 +1,45 @@
 """管理员接口请求与响应模型"""
 
 from datetime import datetime
-from typing import Self
+from typing import Any, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.entities.auth import PlatformRole, Role, RoleAssetGrant
+from app.entities.auth import DorisRoleAssetGrant, normalize_doris_role_name
 from app.routes.api.v1.auth.schemas import UserResponse
-from app.services.authorization_service import AssetIdentity
+from app.services.doris_permission_service import DorisRoleStatus
+
+_IDENTIFIER_PATTERN = r"^[A-Za-z_][A-Za-z0-9_$.-]{0,127}$"
 
 
-class RoleResponse(BaseModel):
-    """角色响应"""
+class DorisRoleResponse(BaseModel):
+    """Doris 数据角色响应"""
 
-    name: PlatformRole
+    name: str
     description: str
+    is_default: bool
+    query_user: str
+    exists_in_doris: bool
+    doris_grants: dict[str, Any] | None
 
     @classmethod
-    def from_entity(cls, role: Role) -> Self:
-        """从角色实体构造响应"""
-        return cls(name=PlatformRole(role.name), description=role.description)
+    def from_status(cls, role: DorisRoleStatus) -> Self:
+        """从实时角色状态构造响应"""
+        return cls(
+            name=role.name,
+            description=role.description,
+            is_default=role.is_default,
+            query_user=role.query_user,
+            exists_in_doris=role.exists_in_doris,
+            doris_grants=role.doris_grants,
+        )
 
 
-class RoleListResponse(BaseModel):
-    """角色列表响应"""
+class DorisRoleListResponse(BaseModel):
+    """Doris 数据角色列表"""
 
-    roles: list[RoleResponse]
+    roles: list[DorisRoleResponse]
 
 
 class UserListResponse(BaseModel):
@@ -35,57 +48,59 @@ class UserListResponse(BaseModel):
     users: list[UserResponse]
 
 
-class SetUserRolesRequest(BaseModel):
-    """替换用户角色请求"""
+class SetUserDorisRoleRequest(BaseModel):
+    """设置用户唯一 Doris 角色请求"""
 
-    roles: list[PlatformRole] = Field(min_length=1, max_length=3)
+    role: str = Field(min_length=1, max_length=64)
+
+    @field_validator("role")
+    @classmethod
+    def normalize_role(cls, role: str) -> str:
+        """校验 Doris 角色名"""
+        return normalize_doris_role_name(role)
+
+
+class SetUserAdministratorRequest(BaseModel):
+    """设置平台管理员请求"""
+
+    is_admin: bool
+
+
+class SelectGrantRequest(BaseModel):
+    """Doris SELECT 授权或回收请求"""
+
+    table_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=_IDENTIFIER_PATTERN,
+    )
+    columns: list[str] = Field(default_factory=list, max_length=256)
+
+    @field_validator("columns")
+    @classmethod
+    def validate_columns(cls, columns: list[str]) -> list[str]:
+        """校验列名且拒绝重复"""
+        if len(set(columns)) != len(columns):
+            raise ValueError("columns must be distinct")
+        for column in columns:
+            if not column or len(column) > 128:
+                raise ValueError("invalid column name")
+        return columns
 
     @model_validator(mode="after")
-    def require_distinct_roles(self) -> Self:
-        """校验角色列表不重复"""
-        if len(set(self.roles)) != len(self.roles):
-            raise ValueError("roles must be distinct")
+    def validate_scope(self) -> Self:
+        """校验库、表和列授权层级"""
+        if self.table_name is None and self.columns:
+            raise ValueError("columns require table_name")
         return self
-
-
-class AssetGrantRequest(BaseModel):
-    """资产白名单授权请求"""
-
-    data_source: str = Field(min_length=1, max_length=256)
-    database_name: str | None = Field(default=None, min_length=1, max_length=256)
-    table_name: str | None = Field(default=None, min_length=1, max_length=256)
-    column_name: str | None = Field(default=None, min_length=1, max_length=256)
-
-    @model_validator(mode="after")
-    def validate_hierarchy(self) -> Self:
-        """校验资产层级并清除边缘空白"""
-        for field_name in (
-            "data_source",
-            "database_name",
-            "table_name",
-            "column_name",
-        ):
-            value = getattr(self, field_name)
-            if value is not None:
-                object.__setattr__(self, field_name, value.strip())
-        self.to_identity()
-        return self
-
-    def to_identity(self) -> AssetIdentity:
-        """转换为资产领域标识"""
-        return AssetIdentity(
-            data_source=self.data_source,
-            database_name=self.database_name,
-            table_name=self.table_name,
-            column_name=self.column_name,
-        )
 
 
 class AssetGrantResponse(BaseModel):
-    """资产白名单授权响应"""
+    """Doris SELECT 权限投影响应"""
 
     id: UUID
-    role: PlatformRole
+    role: str
     scope: str
     data_source: str
     database_name: str | None
@@ -94,11 +109,11 @@ class AssetGrantResponse(BaseModel):
     created_at: datetime
 
     @classmethod
-    def from_entity(cls, grant: RoleAssetGrant) -> Self:
-        """从授权实体构造响应"""
+    def from_entity(cls, grant: DorisRoleAssetGrant) -> Self:
+        """从权限投影实体构造响应"""
         return cls(
             id=grant.id,
-            role=PlatformRole(grant.role_name),
+            role=grant.role_name,
             scope=grant.scope,
             data_source=grant.data_source,
             database_name=grant.database_name,
@@ -109,6 +124,44 @@ class AssetGrantResponse(BaseModel):
 
 
 class AssetGrantListResponse(BaseModel):
-    """资产授权列表响应"""
+    """Doris SELECT 权限投影列表"""
 
     grants: list[AssetGrantResponse]
+
+
+class RowPolicyRequest(BaseModel):
+    """创建 Doris 行策略请求"""
+
+    policy_name: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=_IDENTIFIER_PATTERN,
+    )
+    table_name: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=_IDENTIFIER_PATTERN,
+    )
+    policy_type: Literal["RESTRICTIVE", "PERMISSIVE"] = "RESTRICTIVE"
+    predicate: str = Field(min_length=1, max_length=4096)
+
+
+class DropRowPolicyRequest(BaseModel):
+    """删除 Doris 行策略请求"""
+
+    policy_name: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=_IDENTIFIER_PATTERN,
+    )
+    table_name: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=_IDENTIFIER_PATTERN,
+    )
+
+
+class RowPolicyListResponse(BaseModel):
+    """Doris 实时行策略列表"""
+
+    policies: list[dict[str, Any]]

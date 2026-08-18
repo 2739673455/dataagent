@@ -1,34 +1,18 @@
-"""PostgreSQL 认证与授权数据访问"""
+"""PostgreSQL 认证身份与 Doris 权限投影访问"""
 
-from collections.abc import Collection, Sequence
 from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import delete, func, select, text, update
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
-from sqlalchemy.orm import selectinload
 
-from app.entities.auth import (
-    BASE_PLATFORM_ROLES,
-    PlatformRole,
-    RefreshToken,
-    Role,
-    RoleAssetGrant,
-    User,
-    UserRole,
-)
+from app.entities.auth import DorisRoleAssetGrant, RefreshToken, User
 
-_ROLE_DESCRIPTIONS = {
-    PlatformRole.ADMIN: "平台管理员",
-    PlatformRole.ANALYST: "数据分析人员",
-    PlatformRole.VIEWER: "只读访问人员",
-}
-_USER_PROVISIONING_LOCK_KEY = 0x444154414147454E
+_SECURITY_MUTATION_LOCK_KEY = 0x444154414147454E
 
 
 class AuthPGRepo:
-    """PostgreSQL 认证与授权存储"""
+    """PostgreSQL 认证身份与 Doris 权限投影存储"""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -37,35 +21,18 @@ class AuthPGRepo:
         """创建事务上下文"""
         return self._session.begin()
 
-    async def lock_user_provisioning(self) -> None:
-        """串行化用户创建与高权限授予"""
+    async def lock_security_mutation(self) -> None:
+        """串行化用户身份与跨数据库权限变更"""
         await self._session.execute(
             text("SELECT pg_advisory_xact_lock(:lock_key)"),
-            {"lock_key": _USER_PROVISIONING_LOCK_KEY},
+            {"lock_key": _SECURITY_MUTATION_LOCK_KEY},
         )
 
-    async def ensure_base_roles(self) -> None:
-        """幂等创建平台内置角色"""
-        statement = insert(Role).values(
-            [
-                {
-                    "name": role.value,
-                    "description": _ROLE_DESCRIPTIONS[role],
-                }
-                for role in BASE_PLATFORM_ROLES
-            ]
-        )
-        await self._session.execute(
-            statement.on_conflict_do_nothing(index_elements=[Role.name])
-        )
-
-    async def count_users_with_role(self, role: PlatformRole) -> int:
-        """统计拥有指定角色的用户数"""
+    async def count_admins(self) -> int:
+        """统计当前平台管理员数量"""
         return int(
             await self._session.scalar(
-                select(func.count(UserRole.user_id)).where(
-                    UserRole.role_name == role.value
-                )
+                select(func.count(User.id)).where(User.is_admin.is_(True))
             )
             or 0
         )
@@ -77,63 +44,38 @@ class AuthPGRepo:
         return user
 
     async def get_user_by_id(self, user_id: int) -> User | None:
-        """按主键读取用户及角色"""
+        """按主键读取用户"""
         return await self._session.scalar(
             select(User)
             .where(User.id == user_id)
-            .options(selectinload(User.roles))
             .execution_options(populate_existing=True)
         )
 
     async def get_user_by_email(self, email: str) -> User | None:
-        """按规范化邮箱读取用户及角色"""
-        return await self._session.scalar(
-            select(User)
-            .where(User.email == email)
-            .options(selectinload(User.roles))
-        )
+        """按规范化邮箱读取用户"""
+        return await self._session.scalar(select(User).where(User.email == email))
 
     async def get_user_by_username(self, username: str) -> User | None:
-        """按规范化用户名读取用户及角色"""
+        """按规范化用户名读取用户"""
         return await self._session.scalar(
-            select(User)
-            .where(User.username == username)
-            .options(selectinload(User.roles))
+            select(User).where(User.username == username)
         )
 
     async def list_users(self, *, limit: int, offset: int) -> list[User]:
-        """分页读取用户及角色"""
+        """分页读取用户"""
         result = await self._session.scalars(
-            select(User)
-            .options(selectinload(User.roles))
-            .order_by(User.id)
-            .limit(limit)
-            .offset(offset)
+            select(User).order_by(User.id).limit(limit).offset(offset)
         )
-        return list(result.unique())
-
-    async def list_roles(self) -> list[Role]:
-        """读取全部平台角色"""
-        result = await self._session.scalars(select(Role).order_by(Role.name))
         return list(result)
 
-    async def get_role(self, role: PlatformRole) -> Role | None:
-        """读取指定平台角色"""
-        return await self._session.get(Role, role.value)
+    async def set_user_doris_role(self, user: User, role_name: str) -> None:
+        """替换用户唯一 Doris 角色"""
+        user.doris_role_name = role_name
+        await self._session.flush()
 
-    async def set_user_roles(
-        self,
-        user_id: int,
-        roles: Collection[PlatformRole],
-    ) -> None:
-        """整体替换用户角色"""
-        await self._session.execute(delete(UserRole).where(UserRole.user_id == user_id))
-        self._session.add_all(
-            [
-                UserRole(user_id=user_id, role_name=role.value)
-                for role in sorted(roles, key=str)
-            ]
-        )
+    async def set_user_admin(self, user: User, is_admin: bool) -> None:
+        """设置平台管理员标志"""
+        user.is_admin = is_admin
         await self._session.flush()
 
     async def add_refresh_token(self, token: RefreshToken) -> None:
@@ -147,9 +89,7 @@ class AuthPGRepo:
     ) -> RefreshToken | None:
         """锁定并读取刷新令牌"""
         return await self._session.scalar(
-            select(RefreshToken)
-            .where(RefreshToken.id == token_id)
-            .with_for_update()
+            select(RefreshToken).where(RefreshToken.id == token_id).with_for_update()
         )
 
     @staticmethod
@@ -198,69 +138,51 @@ class AuthPGRepo:
             .values(revoked_at=revoked_at)
         )
 
-    async def list_asset_grants_for_roles(
-        self,
-        roles: Collection[PlatformRole],
-    ) -> list[RoleAssetGrant]:
-        """读取多个角色的全部资产授权"""
-        if not roles:
-            return []
-        result = await self._session.scalars(
-            select(RoleAssetGrant)
-            .where(RoleAssetGrant.role_name.in_([role.value for role in roles]))
-            .order_by(RoleAssetGrant.role_name, RoleAssetGrant.resource_key)
-        )
-        return list(result)
-
     async def list_role_asset_grants(
         self,
-        role: PlatformRole,
-    ) -> list[RoleAssetGrant]:
-        """读取指定角色的资产授权"""
+        role_name: str,
+    ) -> list[DorisRoleAssetGrant]:
+        """读取指定 Doris 角色的权限投影"""
         result = await self._session.scalars(
-            select(RoleAssetGrant)
-            .where(RoleAssetGrant.role_name == role.value)
-            .order_by(RoleAssetGrant.resource_key)
+            select(DorisRoleAssetGrant)
+            .where(DorisRoleAssetGrant.role_name == role_name)
+            .order_by(DorisRoleAssetGrant.resource_key)
         )
         return list(result)
-
-    async def get_asset_grant(self, grant_id: UUID) -> RoleAssetGrant | None:
-        """读取资产授权"""
-        return await self._session.get(RoleAssetGrant, grant_id)
 
     async def find_asset_grant(
         self,
-        role: PlatformRole,
+        role_name: str,
         scope: str,
         resource_key: str,
-    ) -> RoleAssetGrant | None:
-        """按角色和资产键读取授权"""
+    ) -> DorisRoleAssetGrant | None:
+        """按角色和资产键读取权限投影"""
         return await self._session.scalar(
-            select(RoleAssetGrant).where(
-                RoleAssetGrant.role_name == role.value,
-                RoleAssetGrant.scope == scope,
-                RoleAssetGrant.resource_key == resource_key,
+            select(DorisRoleAssetGrant).where(
+                DorisRoleAssetGrant.role_name == role_name,
+                DorisRoleAssetGrant.scope == scope,
+                DorisRoleAssetGrant.resource_key == resource_key,
             )
         )
 
-    async def add_asset_grant(self, grant: RoleAssetGrant) -> RoleAssetGrant:
-        """新增角色资产授权"""
+    async def add_asset_grant(
+        self,
+        grant: DorisRoleAssetGrant,
+    ) -> DorisRoleAssetGrant:
+        """新增 Doris 权限投影"""
         self._session.add(grant)
         await self._session.flush()
         return grant
 
-    async def delete_asset_grant(self, grant: RoleAssetGrant) -> None:
-        """删除角色资产授权"""
+    async def delete_asset_grant(self, grant: DorisRoleAssetGrant) -> None:
+        """删除 Doris 权限投影"""
         await self._session.delete(grant)
         await self._session.flush()
 
-    async def roles_exist(self, roles: Sequence[PlatformRole]) -> bool:
-        """检查指定角色是否全部存在"""
-        if not roles:
-            return True
-        count = await self._session.scalar(
-            select(func.count(Role.name)).where(
-                Role.name.in_([role.value for role in roles])
+    async def delete_role_asset_grants(self, role_name: str) -> None:
+        """删除指定 Doris 角色的全部权限投影"""
+        await self._session.execute(
+            delete(DorisRoleAssetGrant).where(
+                DorisRoleAssetGrant.role_name == role_name
             )
         )
-        return int(count or 0) == len(set(roles))

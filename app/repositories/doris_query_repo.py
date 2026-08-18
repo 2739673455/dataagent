@@ -62,8 +62,9 @@ class DorisQueryRepository:
         self,
         workload_group: str,
         database: str,
+        expected_role: str,
     ) -> None:
-        """启动前确认查询账号只读且可见目标数据库"""
+        """启动前确认查询账号仅绑定预期角色且可见目标数据库"""
         if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", workload_group) is None:
             raise ValueError("invalid Doris workload group")
         if not database.strip():
@@ -81,7 +82,7 @@ class DorisQueryRepository:
             await connection.execute(
                 text(f"SET workload_group = '{workload_group}'")
             )
-        self.require_readonly_grants(rows)
+        self.require_readonly_grants(rows, expected_role)
         if database not in visible_databases:
             raise DorisReadonlyPrivilegeError(
                 "Doris query account cannot access the configured database"
@@ -90,6 +91,7 @@ class DorisQueryRepository:
     @staticmethod
     def require_readonly_grants(
         rows: Sequence[Mapping[str, object]],
+        expected_role: str,
     ) -> None:
         """校验 SHOW GRANTS 返回的当前账号合并权限"""
         if not rows:
@@ -120,6 +122,20 @@ class DorisQueryRepository:
         if "select_priv" not in tokens and "read_only" not in tokens:
             raise DorisReadonlyPrivilegeError(
                 "Doris query account requires SELECT_PRIV"
+            )
+        roles: set[str] = set()
+        for row in rows:
+            for key, value in row.items():
+                if key.casefold() != "roles" or value is None:
+                    continue
+                roles.update(
+                    role.strip().strip("'\"")
+                    for role in re.split(r"[,;]", str(value))
+                    if role.strip()
+                )
+        if roles != {expected_role}:
+            raise DorisReadonlyPrivilegeError(
+                "Doris query account must be bound to exactly the configured role"
             )
 
     @staticmethod

@@ -1,6 +1,6 @@
 export { AuthLoadingScreen } from "@/auth/AuthLoadingScreen";
 export { authApi } from "@/auth/api";
-export { ProtectedRoute } from "@/auth/guards";
+export { AdminRoute, ProtectedRoute } from "@/auth/guards";
 export {
   checkAuth,
   clearSession,

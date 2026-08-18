@@ -1,5 +1,6 @@
-"""认证与资产授权实体"""
+"""认证身份与 Doris 权限投影实体"""
 
+import re
 from datetime import datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
@@ -16,20 +17,19 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.entities.base import Base
 
-
-class PlatformRole(StrEnum):
-    """平台内置角色"""
-
-    ADMIN = "Admin"
-    ANALYST = "Analyst"
-    VIEWER = "Viewer"
+DORIS_ROLE_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
 
 
-BASE_PLATFORM_ROLES = tuple(PlatformRole)
+def normalize_doris_role_name(value: str) -> str:
+    """校验并规范化 Doris 角色名"""
+    normalized = value.strip()
+    if DORIS_ROLE_NAME_PATTERN.fullmatch(normalized) is None:
+        raise ValueError("invalid Doris role name")
+    return normalized
 
 
 class AssetScope(StrEnum):
@@ -56,6 +56,13 @@ class User(Base):
         default=True,
         server_default=text("true"),
     )
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    doris_role_name: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -66,57 +73,6 @@ class User(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
-    )
-
-    roles: Mapped[list["Role"]] = relationship(
-        secondary="user_roles",
-        lazy="selectin",
-        back_populates="users",
-    )
-
-    @property
-    def role_names(self) -> frozenset[PlatformRole]:
-        """返回用户的内置角色集合"""
-        return frozenset(PlatformRole(role.name) for role in self.roles)
-
-
-class Role(Base):
-    """平台角色"""
-
-    __tablename__ = "roles"
-
-    name: Mapped[str] = mapped_column(String(32), primary_key=True)
-    description: Mapped[str] = mapped_column(String(256), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-    )
-
-    users: Mapped[list[User]] = relationship(
-        secondary="user_roles",
-        lazy="selectin",
-        back_populates="roles",
-    )
-
-
-class UserRole(Base):
-    """用户角色关联"""
-
-    __tablename__ = "user_roles"
-
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    role_name: Mapped[str] = mapped_column(
-        ForeignKey("roles.name", ondelete="CASCADE"),
-        primary_key=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
     )
 
 
@@ -152,17 +108,13 @@ class RefreshToken(Base):
     )
 
 
-class RoleAssetGrant(Base):
-    """角色的数据资产白名单授权"""
+class DorisRoleAssetGrant(Base):
+    """Doris 角色 SELECT 权限的应用侧可见性投影"""
 
-    __tablename__ = "role_asset_grants"
+    __tablename__ = "doris_role_asset_grants"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    role_name: Mapped[str] = mapped_column(
-        ForeignKey("roles.name", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
+    role_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     scope: Mapped[str] = mapped_column(String(16), nullable=False)
     data_source: Mapped[str] = mapped_column(String(256), nullable=False)
     database_name: Mapped[str | None] = mapped_column(String(256))
@@ -180,7 +132,7 @@ class RoleAssetGrant(Base):
             "role_name",
             "scope",
             "resource_key",
-            name="uq_role_asset_grant_resource",
+            name="uq_doris_role_asset_grant_resource",
         ),
         CheckConstraint(
             "(scope = 'data_source' AND database_name IS NULL "
@@ -191,6 +143,6 @@ class RoleAssetGrant(Base):
             "AND table_name IS NOT NULL AND column_name IS NULL) OR "
             "(scope = 'column' AND database_name IS NOT NULL "
             "AND table_name IS NOT NULL AND column_name IS NOT NULL)",
-            name="ck_role_asset_grant_hierarchy",
+            name="ck_doris_role_asset_grant_hierarchy",
         ),
     )

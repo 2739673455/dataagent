@@ -36,10 +36,9 @@ from app.repositories.source_doris_repo import SourceDorisRepo
 from app.repositories.value_es_repo import ValueESRepo
 from app.routes.api.v1.auth.dependencies import (
     AdminUserDep,
-    AuthorizationServiceDep,
-    CurrentUserDep,
 )
 from app.routes.api.v1.meta import schemas
+from app.services.authorization_service import AssetAccessPolicy
 from app.services.meta_catalog_service import MetaCatalogService
 from app.services.meta_import_service import (
     ImportMode,
@@ -68,22 +67,23 @@ def _build_meta_index_service(
 
 
 async def get_meta_catalog_service(
-    current_user: CurrentUserDep,
-    authorization_service: AuthorizationServiceDep,
+    current_user: AdminUserDep,
 ) -> AsyncGenerator[MetaCatalogService]:
-    """创建请求级元数据目录管理服务"""
+    """为平台管理员创建完整元数据目录服务"""
     async with (
         meta_postgres_client_manager.session() as meta_session,
         source_doris_client_manager.connection() as source_connection,
     ):
         meta_repo = MetaPGRepo(meta_session)
         source_repo = SourceDorisRepo(source_connection)
-        asset_policy = await authorization_service.get_asset_policy(current_user.id)
         yield MetaCatalogService(
             meta_repo=meta_repo,
             source_repo=source_repo,
             meta_index_service=_build_meta_index_service(meta_repo, source_repo),
-            asset_policy=asset_policy,
+            asset_policy=AssetAccessPolicy(
+                user_id=current_user.id,
+                unrestricted=True,
+            ),
             data_source=cfg.query.data_source,
             database_name=cfg.doris.database,
         )
@@ -226,7 +226,7 @@ async def export_metadata(
 @router.get("/tables", response_model=list[schemas.TableInfoResponse])
 async def list_table_infos(
     service: MetaCatalogServiceDep,
-    _: CurrentUserDep,
+    _: AdminUserDep,
 ) -> list[schemas.TableInfoResponse]:
     """查询全部表元数据"""
     return [
@@ -242,7 +242,7 @@ async def list_table_infos(
 async def list_column_infos(
     t_name: MetadataPath,
     service: MetaCatalogServiceDep,
-    _: CurrentUserDep,
+    _: AdminUserDep,
 ) -> list[schemas.ColumnInfoResponse]:
     """查询表下全部字段元数据"""
     return [
@@ -254,7 +254,7 @@ async def list_column_infos(
 @router.get("/metrics", response_model=list[schemas.MetricInfoResponse])
 async def list_metric_infos(
     service: MetaCatalogServiceDep,
-    _: CurrentUserDep,
+    _: AdminUserDep,
 ) -> list[schemas.MetricInfoResponse]:
     """查询全部指标元数据"""
     return [

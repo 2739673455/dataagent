@@ -76,10 +76,16 @@ class AssetGrantAlreadyExistsError(ProblemError):
     status = HTTPStatus.CONFLICT
 
 
-class LastAdminRoleError(ProblemError):
-    type = "last-admin-role"
+class LastAdministratorError(ProblemError):
+    type = "last-administrator"
     title = "必须保留至少一位管理员"
     status = HTTPStatus.CONFLICT
+
+
+class InvalidDorisPermissionError(ProblemError):
+    type = "invalid-doris-permission"
+    title = "Doris 权限配置无效"
+    status = HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 class RateLimitExceededError(ProblemError):

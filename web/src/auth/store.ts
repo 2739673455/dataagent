@@ -7,7 +7,7 @@ export const useAuthStore = create<{
   isLoading: boolean;
   setAuth: (user: UserResponse) => void;
   clearAuth: () => void;
-  hasRole: (requiredRoles: string[]) => boolean;
+  isAdmin: () => boolean;
 }>()((set, get) => ({
   user: null,
   isAuthenticated: false,
@@ -29,9 +29,5 @@ export const useAuthStore = create<{
     });
   },
 
-  hasRole: (requiredRoles) => {
-    if (requiredRoles.length === 0) return true;
-    const roles = new Set(get().user?.roles ?? []);
-    return requiredRoles.some((role) => roles.has(role));
-  },
+  isAdmin: () => get().user?.is_admin === true,
 }));

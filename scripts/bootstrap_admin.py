@@ -34,12 +34,13 @@ async def bootstrap_admin() -> None:
                 AuthPGRepo(session),
                 cfg.auth,
                 Argon2PasswordManager(),
+                default_doris_role=cfg.default_doris_role,
             ).bootstrap_admin(username, email, password)
         outcome = "created" if result.created else "verified"
         grant = "granted" if result.admin_granted else "already-present"
         print(
             f"Admin bootstrap {outcome}: user_id={result.user.id}, "
-            f"admin_role={grant}"
+            f"administrator={grant}, doris_role={result.user.doris_role_name}"
         )
     finally:
         await meta_postgres_client_manager.close()

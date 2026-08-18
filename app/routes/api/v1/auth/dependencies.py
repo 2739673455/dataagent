@@ -8,17 +8,20 @@ from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.clients.doris_client_manager import security_admin_doris_client_manager
 from app.clients.postgres_client_manager import meta_postgres_client_manager
 from app.conf.app_config import cfg
-from app.entities.auth import PlatformRole, User
+from app.entities.auth import User
 from app.errors import auth_error
 from app.repositories.auth_pg_repo import AuthPGRepo
+from app.repositories.doris_role_repo import DorisRoleRepository
 from app.services.auth_rate_limit_service import AuthRateLimitService
 from app.services.auth_service import Argon2PasswordManager, AuthService
 from app.services.authorization_service import (
     AuthorizationService,
-    RoleManagementService,
+    DorisRoleManagementService,
 )
+from app.services.doris_permission_service import DorisPermissionService
 
 SessionDep = Annotated[
     AsyncSession,
@@ -48,7 +51,12 @@ def get_auth_service(
     ],
 ) -> AuthService:
     """创建请求级认证服务"""
-    return AuthService(repo, cfg.auth, password_manager)
+    return AuthService(
+        repo,
+        cfg.auth,
+        password_manager,
+        default_doris_role=cfg.default_doris_role,
+    )
 
 
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
@@ -89,8 +97,8 @@ CurrentUserDep = Annotated[User, Depends(get_current_user)]
 
 
 async def require_admin(current_user: CurrentUserDep) -> User:
-    """要求当前用户具备管理员角色"""
-    AuthorizationService.require_role(current_user, {PlatformRole.ADMIN})
+    """要求当前用户是平台管理员"""
+    AuthorizationService.require_admin(current_user)
     return current_user
 
 
@@ -99,10 +107,7 @@ AdminUserDep = Annotated[User, Depends(require_admin)]
 
 async def require_analysis_access(current_user: CurrentUserDep) -> User:
     """要求当前用户可创建和执行分析"""
-    AuthorizationService.require_role(
-        current_user,
-        {PlatformRole.ADMIN, PlatformRole.ANALYST},
-    )
+    AuthorizationService.require_analysis_access(current_user, cfg.doris_roles)
     return current_user
 
 
@@ -121,13 +126,32 @@ AuthorizationServiceDep = Annotated[
 ]
 
 
-async def get_role_management_service() -> AsyncGenerator[RoleManagementService]:
-    """创建独立会话的角色管理服务"""
+async def get_role_management_service() -> AsyncGenerator[DorisRoleManagementService]:
+    """创建独立会话的 Doris 角色管理服务"""
     async with meta_postgres_client_manager.session() as session:
-        yield RoleManagementService(AuthPGRepo(session))
+        yield DorisRoleManagementService(AuthPGRepo(session), cfg.doris_roles)
 
 
-RoleManagementServiceDep = Annotated[
-    RoleManagementService,
+DorisRoleManagementServiceDep = Annotated[
+    DorisRoleManagementService,
     Depends(get_role_management_service),
+]
+
+
+async def get_doris_permission_service() -> AsyncGenerator[DorisPermissionService]:
+    """创建 Doris 权限管理服务"""
+    async with meta_postgres_client_manager.session() as session:
+        yield DorisPermissionService(
+            AuthPGRepo(session),
+            DorisRoleRepository(security_admin_doris_client_manager),
+            cfg.doris_roles,
+            data_source=cfg.query.data_source,
+            catalog="internal",
+            database=cfg.doris.database,
+        )
+
+
+DorisPermissionServiceDep = Annotated[
+    DorisPermissionService,
+    Depends(get_doris_permission_service),
 ]

@@ -13,6 +13,7 @@ export const AUTH_API_PATHS = {
 export const ROUTES = {
   login: "/login",
   chat: "/chat",
+  admin: "/admin",
   chatConversation: (conversationId: string) => `/chat/${conversationId}`,
 } as const;
 

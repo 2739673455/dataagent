@@ -7,7 +7,7 @@ from typing import Self
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from app.conf.app_config import cfg
-from app.entities.auth import PlatformRole, User
+from app.entities.auth import User
 from app.services.auth_service import TokenPair
 
 _EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -67,7 +67,8 @@ class UserResponse(BaseModel):
     username: str
     email: str
     is_active: bool
-    roles: list[PlatformRole]
+    is_admin: bool
+    doris_role: str
     created_at: datetime
 
     @classmethod
@@ -78,7 +79,8 @@ class UserResponse(BaseModel):
             username=user.username,
             email=user.email,
             is_active=user.is_active,
-            roles=sorted(user.role_names, key=str),
+            is_admin=user.is_admin,
+            doris_role=user.doris_role_name,
             created_at=user.created_at,
         )
 

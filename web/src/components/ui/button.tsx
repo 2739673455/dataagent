@@ -16,6 +16,7 @@ const buttonVariants = cva(
           "border border-border bg-background/80 hover:bg-secondary hover:text-secondary-foreground",
         accent:
           "bg-accent text-accent-foreground shadow-lg shadow-orange-500/20 hover:bg-accent/90",
+        destructive: "bg-red-700 text-white shadow-lg shadow-red-950/15 hover:bg-red-800",
       },
       size: {
         default: "h-11 px-5 py-2",

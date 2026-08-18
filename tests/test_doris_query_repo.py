@@ -47,21 +47,39 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
             [
                 {
                     "GlobalPrivs": None,
+                    "Roles": "dataagent_default",
                     "TablePrivs": "internal.analytics.orders: Select_priv",
                     "WorkloadGroupPrivs": "dataagent_readonly: Usage_priv",
                 }
-            ]
+            ],
+            "dataagent_default",
         )
 
         with self.assertRaises(DorisReadonlyPrivilegeError):
             DorisQueryRepository.require_readonly_grants(
                 [
                     {
+                        "Roles": "dataagent_default",
                         "DatabasePrivs": (
                             "internal.analytics: Select_priv,Load_priv"
                         )
                     }
-                ]
+                ],
+                "dataagent_default",
+            )
+
+        with self.assertRaisesRegex(
+            DorisReadonlyPrivilegeError,
+            "exactly the configured role",
+        ):
+            DorisQueryRepository.require_readonly_grants(
+                [
+                    {
+                        "Roles": "dataagent_default,finance",
+                        "TablePrivs": "internal.analytics.orders: Select_priv",
+                    }
+                ],
+                "dataagent_default",
             )
 
     async def test_startup_check_requires_target_database_visibility(self) -> None:
@@ -69,7 +87,10 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
         connection.__aenter__.return_value = connection
         grants_result = Mock()
         grants_result.mappings.return_value.all.return_value = [
-            {"DatabasePrivs": "internal.other_db: Select_priv"}
+            {
+                "Roles": "dataagent_default",
+                "DatabasePrivs": "internal.other_db: Select_priv",
+            }
         ]
         databases_result = Mock()
         databases_result.fetchall.return_value = [("other_db",)]
@@ -81,7 +102,11 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
             DorisReadonlyPrivilegeError,
             "configured database",
         ):
-            await repo.verify_readonly_access("dataagent_readonly", "ecommerce")
+            await repo.verify_readonly_access(
+                "dataagent_readonly",
+                "ecommerce",
+                "dataagent_default",
+            )
 
         visibility_call = connection.execute.await_args_list[1]
         self.assertEqual(str(visibility_call.args[0]), "SHOW DATABASES LIKE :database")

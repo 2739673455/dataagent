@@ -44,7 +44,7 @@ def build_query_guard(session: AsyncSession) -> QueryGuardService:
     return QueryGuardService(
         MetaPGRepo(session),
         data_source=cfg.query.data_source,
-        current_database=cfg.doris_query.database,
+        current_database=cfg.doris.database,
         max_cell_bytes=cfg.query.max_cell_bytes,
         policy_provider=AuthorizationService(AuthPGRepo(session)),
     )

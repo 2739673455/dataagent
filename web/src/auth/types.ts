@@ -2,7 +2,8 @@ export interface UserResponse {
   id: number;
   username: string;
   email: string;
-  roles: string[];
+  is_admin: boolean;
+  doris_role: string;
   is_active: boolean;
   created_at: string;
 }

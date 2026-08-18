@@ -9,12 +9,26 @@ doris:
   password: ${oc.env:DORIS_PASSWORD}
   database: ecommerce
 
-doris_query:
+doris_security_admin:
   host: 127.0.0.1
   port: 9030
-  user: dataagent_readonly
-  password: ${oc.env:DORIS_QUERY_PASSWORD,123123}
+  user: dataagent_security_admin
+  password: ${oc.env:DORIS_SECURITY_ADMIN_PASSWORD,123123}
   database: ecommerce
+
+doris_roles:
+  dataagent_default:
+    description: 缺省数据访问角色
+    is_default: true
+    query_user: dataagent_default_query
+    query_password: ${oc.env:DORIS_DEFAULT_QUERY_PASSWORD,123123}
+    workload_group: dataagent_default
+  dataagent_privileged:
+    description: 扩展数据访问角色
+    is_default: false
+    query_user: dataagent_privileged_query
+    query_password: ${oc.env:DORIS_PRIVILEGED_QUERY_PASSWORD,123123}
+    workload_group: dataagent_privileged
 
 meta_postgresql:
   host: 127.0.0.1
@@ -45,7 +59,7 @@ embedding:
   timeout: 30.0
 
 auth:
-  jwt_secret: ${oc.env:JWT_SECRET,dataagent-dev-secret-key-change-in-production}
+  jwt_secret: ${oc.env:JWT_SECRET}
   jwt_algorithm: HS256
   issuer: dataagent
   access_token_minutes: 15
@@ -54,7 +68,6 @@ auth:
 
 query:
   data_source: doris
-  workload_group: dataagent_readonly
   timeout_seconds: 60
   memory_limit_bytes: 1073741824
   max_scan_rows: 10000000

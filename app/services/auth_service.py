@@ -16,7 +16,7 @@ from pwdlib import PasswordHash
 from sqlalchemy.exc import IntegrityError
 
 from app.conf.app_config import AuthConfig
-from app.entities.auth import PlatformRole, RefreshToken, User
+from app.entities.auth import RefreshToken, User, normalize_doris_role_name
 from app.errors import auth_error
 from app.repositories.auth_pg_repo import AuthPGRepo
 
@@ -118,7 +118,8 @@ class JWTCodec:
             "sub": str(user.id),
             "jti": str(token_id),
             "token_type": "access",
-            "roles": sorted(role.value for role in user.role_names),
+            "is_admin": user.is_admin,
+            "doris_role": user.doris_role_name,
             "iat": now,
             "exp": expires_at,
             "iss": self._config.issuer,
@@ -229,11 +230,13 @@ class AuthService:
         config: AuthConfig,
         password_manager: PasswordManager,
         *,
+        default_doris_role: str,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._repo = repo
         self._config = config
         self._password_manager = password_manager
+        self._default_doris_role = normalize_doris_role_name(default_doris_role)
         self._codec = JWTCodec(config)
         self._now = now or (lambda: datetime.now(UTC))
 
@@ -252,12 +255,10 @@ class AuthService:
 
         try:
             async with self._repo.transaction():
-                await self._repo.lock_user_provisioning()
-                await self._repo.ensure_base_roles()
-                if (
-                    await self._repo.get_user_by_username(normalized_username)
-                    or await self._repo.get_user_by_email(normalized_email)
-                ):
+                await self._repo.lock_security_mutation()
+                if await self._repo.get_user_by_username(
+                    normalized_username
+                ) or await self._repo.get_user_by_email(normalized_email):
                     raise auth_error.UserAlreadyExistsError
                 user = await self._repo.add_user(
                     User(
@@ -265,11 +266,9 @@ class AuthService:
                         email=normalized_email,
                         password_hash=password_hash,
                         is_active=True,
+                        is_admin=False,
+                        doris_role_name=self._default_doris_role,
                     )
-                )
-                await self._repo.set_user_roles(
-                    user.id,
-                    {PlatformRole.VIEWER},
                 )
                 loaded_user = await self._repo.get_user_by_id(user.id)
                 if loaded_user is None:
@@ -294,11 +293,8 @@ class AuthService:
 
         try:
             async with self._repo.transaction():
-                await self._repo.lock_user_provisioning()
-                await self._repo.ensure_base_roles()
-                by_username = await self._repo.get_user_by_username(
-                    normalized_username
-                )
+                await self._repo.lock_security_mutation()
+                by_username = await self._repo.get_user_by_username(normalized_username)
                 by_email = await self._repo.get_user_by_email(normalized_email)
                 existing = by_username or by_email
                 if existing is not None:
@@ -315,12 +311,9 @@ class AuthService:
                             detail="Bootstrap identity conflicts with an existing account"
                         )
                     self._ensure_active(existing)
-                    admin_granted = PlatformRole.ADMIN not in existing.role_names
+                    admin_granted = not existing.is_admin
                     if admin_granted:
-                        await self._repo.set_user_roles(
-                            existing.id,
-                            {*existing.role_names, PlatformRole.ADMIN},
-                        )
+                        await self._repo.set_user_admin(existing, True)
                     loaded = await self._repo.get_user_by_id(existing.id)
                     if loaded is None:
                         raise RuntimeError("Bootstrap user could not be reloaded")
@@ -336,9 +329,10 @@ class AuthService:
                         email=normalized_email,
                         password_hash=password_hash,
                         is_active=True,
+                        is_admin=True,
+                        doris_role_name=self._default_doris_role,
                     )
                 )
-                await self._repo.set_user_roles(user.id, {PlatformRole.ADMIN})
                 loaded = await self._repo.get_user_by_id(user.id)
                 if loaded is None:
                     raise RuntimeError("Bootstrap user could not be reloaded")

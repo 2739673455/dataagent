@@ -2,20 +2,17 @@
 
 import hashlib
 import json
-from collections.abc import Callable, Collection, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TypeVar
-from uuid import UUID
 
-from sqlalchemy.exc import IntegrityError
-
+from app.conf.app_config import DorisRoleConfig
 from app.entities.auth import (
     AssetScope,
-    PlatformRole,
-    Role,
-    RoleAssetGrant,
+    DorisRoleAssetGrant,
     User,
+    normalize_doris_role_name,
 )
 from app.errors import auth_error
 from app.repositories.auth_pg_repo import AuthPGRepo
@@ -39,7 +36,10 @@ class AssetIdentity:
             self.table_name,
             self.column_name,
         )
-        if any(value is not None and (not value or value != value.strip()) for value in values):
+        if any(
+            value is not None and (not value or value != value.strip())
+            for value in values
+        ):
             raise ValueError("asset identifiers must be non-empty and trimmed")
         if not self.data_source:
             raise ValueError("data_source is required")
@@ -162,9 +162,7 @@ class AuthorizationService:
             raise auth_error.UserNotFoundError
         if not user.is_active:
             raise auth_error.InactiveUserError
-        if PlatformRole.ADMIN in user.role_names:
-            return AssetAccessPolicy(user_id=user.id, unrestricted=True)
-        grants = await self._repo.list_asset_grants_for_roles(user.role_names)
+        grants = await self._repo.list_role_asset_grants(user.doris_role_name)
         return AssetAccessPolicy(
             user_id=user.id,
             grants=frozenset(self._grant_identity(grant) for grant in grants),
@@ -179,20 +177,26 @@ class AuthorizationService:
         (await self.get_asset_policy(user_id)).require(asset)
 
     @staticmethod
-    def require_role(
-        user: User,
-        required_roles: Collection[PlatformRole],
-    ) -> None:
-        """校验用户是否拥有任一指定角色"""
-        if user.role_names.isdisjoint(required_roles):
+    def require_admin(user: User) -> None:
+        """要求用户是平台管理员"""
+        if not user.is_admin:
             raise auth_error.PermissionDeniedError(
-                extensions={
-                    "required_roles": sorted(role.value for role in required_roles)
-                }
+                detail="Platform administrator access is required"
             )
 
     @staticmethod
-    def _grant_identity(grant: RoleAssetGrant) -> AssetIdentity:
+    def require_analysis_access(
+        user: User,
+        roles: Mapping[str, DorisRoleConfig],
+    ) -> None:
+        """要求用户绑定了已配置的 Doris 数据角色"""
+        if user.doris_role_name not in roles:
+            raise auth_error.PermissionDeniedError(
+                detail="The assigned Doris role is not available"
+            )
+
+    @staticmethod
+    def _grant_identity(grant: DorisRoleAssetGrant) -> AssetIdentity:
         """将持久化授权转换为资产标识"""
         identity = AssetIdentity(
             data_source=grant.data_source,
@@ -205,48 +209,76 @@ class AuthorizationService:
         return identity
 
 
-class RoleManagementService:
-    """管理员角色与资产白名单管理服务"""
+@dataclass(frozen=True, slots=True)
+class DorisRoleDescriptor:
+    """可分配的 Doris 数据角色"""
 
-    def __init__(self, repo: AuthPGRepo) -> None:
+    name: str
+    description: str
+    is_default: bool
+    query_user: str
+
+
+class DorisRoleManagementService:
+    """平台管理员维护用户与 Doris 角色绑定"""
+
+    def __init__(
+        self,
+        repo: AuthPGRepo,
+        roles: Mapping[str, DorisRoleConfig],
+    ) -> None:
         self._repo = repo
+        self._roles = roles
 
-    async def list_roles(self) -> list[Role]:
-        """列出平台基础角色"""
-        async with self._repo.transaction():
-            await self._repo.ensure_base_roles()
-            return await self._repo.list_roles()
+    async def list_roles(self) -> list[DorisRoleDescriptor]:
+        """列出全部可分配的 Doris 数据角色"""
+        return [
+            DorisRoleDescriptor(
+                name=name,
+                description=config.description,
+                is_default=config.is_default,
+                query_user=config.query_user,
+            )
+            for name, config in sorted(self._roles.items())
+        ]
 
     async def list_users(self, *, limit: int, offset: int) -> list[User]:
         """分页列出用户与角色"""
         return await self._repo.list_users(limit=limit, offset=offset)
 
-    async def set_user_roles(
+    async def set_user_doris_role(
         self,
         user_id: int,
-        roles: Collection[PlatformRole],
+        role_name: str,
     ) -> User:
-        """整体替换用户角色并吊销已有刷新令牌"""
-        normalized_roles = frozenset(roles)
-        if not normalized_roles:
-            raise ValueError("at least one role is required")
+        """替换用户唯一 Doris 角色并吊销已有刷新令牌"""
+        normalized_role = normalize_doris_role_name(role_name)
+        if normalized_role not in self._roles:
+            raise auth_error.RoleNotFoundError
         now = datetime.now(UTC)
         async with self._repo.transaction():
-            await self._repo.lock_user_provisioning()
-            await self._repo.ensure_base_roles()
+            await self._repo.lock_security_mutation()
             user = await self._repo.get_user_by_id(user_id)
             if user is None:
                 raise auth_error.UserNotFoundError
-            removing_admin = (
-                PlatformRole.ADMIN in user.role_names
-                and PlatformRole.ADMIN not in normalized_roles
-            )
-            if (
-                removing_admin
-                and await self._repo.count_users_with_role(PlatformRole.ADMIN) <= 1
-            ):
-                raise auth_error.LastAdminRoleError
-            await self._repo.set_user_roles(user.id, normalized_roles)
+            await self._repo.set_user_doris_role(user, normalized_role)
+            await self._repo.revoke_user_refresh_tokens(user.id, now)
+            updated = await self._repo.get_user_by_id(user.id)
+            if updated is None:
+                raise RuntimeError("Updated user could not be reloaded")
+            return updated
+
+    async def set_user_admin(self, user_id: int, is_admin: bool) -> User:
+        """设置平台管理员标志并保护最后一位管理员"""
+        now = datetime.now(UTC)
+        async with self._repo.transaction():
+            await self._repo.lock_security_mutation()
+            user = await self._repo.get_user_by_id(user_id)
+            if user is None:
+                raise auth_error.UserNotFoundError
+            if user.is_admin and not is_admin and await self._repo.count_admins() <= 1:
+                raise auth_error.LastAdministratorError
+            await self._repo.set_user_admin(user, is_admin)
             await self._repo.revoke_user_refresh_tokens(user.id, now)
             updated = await self._repo.get_user_by_id(user.id)
             if updated is None:
@@ -255,51 +287,10 @@ class RoleManagementService:
 
     async def list_asset_grants(
         self,
-        role: PlatformRole,
-    ) -> list[RoleAssetGrant]:
-        """列出角色的资产授权"""
-        return await self._repo.list_role_asset_grants(role)
-
-    async def create_asset_grant(
-        self,
-        role: PlatformRole,
-        asset: AssetIdentity,
-    ) -> RoleAssetGrant:
-        """为角色新增资产白名单授权"""
-        try:
-            async with self._repo.transaction():
-                await self._repo.ensure_base_roles()
-                if await self._repo.get_role(role) is None:
-                    raise auth_error.RoleNotFoundError
-                existing = await self._repo.find_asset_grant(
-                    role,
-                    asset.scope.value,
-                    asset.resource_key,
-                )
-                if existing is not None:
-                    raise auth_error.AssetGrantAlreadyExistsError
-                return await self._repo.add_asset_grant(
-                    RoleAssetGrant(
-                        role_name=role.value,
-                        scope=asset.scope.value,
-                        data_source=asset.data_source,
-                        database_name=asset.database_name,
-                        table_name=asset.table_name,
-                        column_name=asset.column_name,
-                        resource_key=asset.resource_key,
-                    )
-                )
-        except IntegrityError as exc:
-            raise auth_error.AssetGrantAlreadyExistsError from exc
-
-    async def delete_asset_grant(
-        self,
-        role: PlatformRole,
-        grant_id: UUID,
-    ) -> None:
-        """删除角色的资产白名单授权"""
-        async with self._repo.transaction():
-            grant = await self._repo.get_asset_grant(grant_id)
-            if grant is None or grant.role_name != role.value:
-                raise auth_error.AssetGrantNotFoundError
-            await self._repo.delete_asset_grant(grant)
+        role_name: str,
+    ) -> list[DorisRoleAssetGrant]:
+        """列出 Doris 角色的 SELECT 权限投影"""
+        normalized_name = normalize_doris_role_name(role_name)
+        if normalized_name not in self._roles:
+            raise auth_error.RoleNotFoundError
+        return await self._repo.list_role_asset_grants(normalized_name)

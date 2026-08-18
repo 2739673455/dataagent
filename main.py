@@ -7,7 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.agents.manager import agent_manager
 from app.clients.docker_sandbox_manager import docker_sandbox_manager
 from app.clients.doris_client_manager import (
-    query_doris_client_manager,
+    query_doris_client_registry,
+    security_admin_doris_client_manager,
     source_doris_client_manager,
 )
 from app.clients.embedding_client_manager import embedding_client_manager
@@ -18,6 +19,7 @@ from app.conf.app_config import cfg
 from app.core.middlewares import trace
 from app.errors.exc_handlers import register_exception_handlers
 from app.repositories.doris_query_repo import DorisQueryRepository
+from app.repositories.doris_role_repo import DorisRoleRepository
 from app.routes import api
 
 
@@ -33,11 +35,19 @@ async def lifespan(app: FastAPI):
         meta_postgres_client_manager.init()
         await meta_postgres_client_manager.init_tables()
         source_doris_client_manager.init()
-        query_doris_client_manager.init()
-        await DorisQueryRepository(query_doris_client_manager).verify_readonly_access(
-            cfg.query.workload_group,
-            cfg.doris_query.database,
-        )
+        security_admin_doris_client_manager.init()
+        query_doris_client_registry.init()
+        await DorisRoleRepository(
+            security_admin_doris_client_manager
+        ).verify_configured_roles(tuple(cfg.doris_roles))
+        for role_name, role in cfg.doris_roles.items():
+            await DorisQueryRepository(
+                query_doris_client_registry.get(role_name)
+            ).verify_readonly_access(
+                role.workload_group,
+                cfg.doris.database,
+                role_name,
+            )
 
         yield
     finally:
@@ -49,7 +59,8 @@ async def lifespan(app: FastAPI):
         await es_client_manager.close()
         await meta_postgres_client_manager.close()
         await source_doris_client_manager.close()
-        await query_doris_client_manager.close()
+        await security_admin_doris_client_manager.close()
+        await query_doris_client_registry.close()
 
 
 def register_routes(app: FastAPI) -> None:

@@ -3,7 +3,7 @@
 from sqlalchemy import URL
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
-from app.conf.app_config import DBConfig, cfg
+from app.conf.app_config import DBConfig, DorisRoleConfig, cfg
 
 
 class DorisClientManager:
@@ -55,5 +55,49 @@ class DorisClientManager:
         self._engine = None
 
 
+class DorisQueryClientRegistry:
+    """管理稳定查询身份对应的 Doris 连接池"""
+
+    def __init__(
+        self,
+        endpoint: DBConfig,
+        roles: dict[str, DorisRoleConfig],
+    ) -> None:
+        """按查询配置创建未初始化的连接池注册表"""
+        self._managers = {
+            name: DorisClientManager(
+                DBConfig(
+                    host=endpoint.host,
+                    port=endpoint.port,
+                    user=role.query_user,
+                    password=role.query_password,
+                    database=endpoint.database,
+                )
+            )
+            for name, role in roles.items()
+        }
+
+    def init(self) -> None:
+        """初始化全部稳定查询身份连接池"""
+        for manager in self._managers.values():
+            manager.init()
+
+    def get(self, role_name: str) -> DorisClientManager:
+        """读取服务端选定 Doris 角色的查询连接池"""
+        try:
+            return self._managers[role_name]
+        except KeyError as exc:
+            raise RuntimeError("Doris query profile is not configured") from exc
+
+    async def close(self) -> None:
+        """关闭全部查询身份连接池"""
+        for manager in self._managers.values():
+            await manager.close()
+
+
 source_doris_client_manager = DorisClientManager(cfg.doris)
-query_doris_client_manager = DorisClientManager(cfg.doris_query)
+security_admin_doris_client_manager = DorisClientManager(cfg.doris_security_admin)
+query_doris_client_registry = DorisQueryClientRegistry(
+    cfg.doris,
+    cfg.doris_roles,
+)
