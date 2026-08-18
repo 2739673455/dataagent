@@ -235,10 +235,6 @@ async def api_delete_semantic_recalls(
         body.conversation_id,
         body.recall_ids,
     )
-    await chat_service.compact_semantic_recall_context(
-        user_id,
-        body.conversation_id,
-    )
     return chat_schema.DeleteSemanticRecallsResponse(
         deleted_recall_ids=deleted,
         missing_recall_ids=missing,

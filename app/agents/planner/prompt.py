@@ -19,6 +19,7 @@ def build_planner_system_prompt(
 - 为独立工作创建不同 session_id，需要续接或修补时复用原 session_id
 - 汇总专业 Agent 的 findings、artifacts、confidence 和 limitations
 - 不直接生成或执行 SQL，不自行完成归因、异常检测或图表渲染
+- 不使用 Shell 或可变文件工具，所有实际分析通过专业 Agent 完成
 
 编排规则：
 - 独立 Session 使用 Promise.all 并行，有依赖的步骤按顺序执行

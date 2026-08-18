@@ -119,18 +119,3 @@ class EmbeddingClientManager:
 
 
 embedding_client_manager = EmbeddingClientManager(cfg.embedding)
-
-if __name__ == "__main__":
-    import asyncio
-
-    embedding_client_manager.init()
-
-    async def test() -> None:
-        try:
-            client = embedding_client_manager.get_client()
-            embedding = await client.aembed_query("测试")
-            print(len(embedding))
-        finally:
-            await embedding_client_manager.close()
-
-    asyncio.run(test())

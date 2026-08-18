@@ -32,7 +32,7 @@
 7. 大型数据集、SQL、图表和报告保存在 Docker 沙盒，Agent 消息中只传递摘要和文件引用
 8. Dynamic Interpreter 在运行时生成循环、分支和并行代码，不使用显式 LangGraph 业务工作流
 9. 业务专业 Agent 的持久化委派统一经过 `delegate_agent`，避免直接使用无 Session 标识的临时 `task()`
-10. 查询安全由确定性 Service 执行，归因计算、异常检测和图表渲染统一调用 `app/analysis` 中的共享确定性 Kernel
+10. 查询安全由确定性 Service 执行，归因、异常检测和可视化 Agent 在各自 Session 沙盒中自主编写并运行分析代码
 
 ## 3. 设计目标
 
@@ -174,12 +174,9 @@ flowchart TD
 | Planner | 目标理解、动态拆分、委派、修补控制、结果汇总 | 直接编写复杂 SQL、执行统计算法 |
 | Dynamic Interpreter | 运行模型生成的循环、分支和并行调度代码 | 保存专业 Agent 消息历史 |
 | Delegate Service | Session 定位、配置构造、并发控制、Agent 调用 | 决定业务分析流程 |
-| Specialist Agent | 选择输入数据、方法和参数，解释结果，执行下钻并提交修补请求 | 实现确定性算法、处理容器 I/O |
-| Specialist Tool | 类型化请求适配、Agent Session 绑定、沙盒调用和产物引用返回 | 实现归因、异常检测或渲染算法 |
+| Specialist Agent | 选择输入数据与方法，编写并运行代码，验证结果，执行下钻并提交修补请求 | 绕过 Sandbox 或平台数据权限 |
 | PostgreSQL Checkpointer | Planner 和各 Session 的消息及图状态 | 大数据文件存储 |
-| Docker Sandbox | 数据集、SQL、证据、图表和报告 | Agent 对话状态 |
-| Shared Analysis Kernel | 归因、异常检测和可视化的唯一确定性算法实现 | Agent 决策、Session 管理和容器调度 |
-| Sandbox Analysis Worker | 受控 CSV I/O、产物写入、响应压缩和 operation dispatch | 维护独立算法实现 |
+| Docker Sandbox | 专业 Agent 的 Shell 执行、Session 文件、数据集、代码、证据、图表和报告 | Agent 对话状态和业务数据库直连 |
 
 ## 6. 为什么需要 Session-aware Delegation
 
@@ -751,8 +748,7 @@ Planner 不直接拥有：
 
 - Doris 查询工具
 - SQL 执行工具
-- 归因算法工具
-- 异常检测算法工具
+- 专业 Agent 的 Shell 执行能力
 
 ### 14.2 Data Query Agent
 
@@ -774,7 +770,6 @@ Planner 不直接拥有：
 - `get_semantic_recall`
 - `merge_semantic_recalls`
 - `delete_semantic_recalls`
-- `run_analysis`
 - `run_readonly_sql`
 - 文件读写工具
 
@@ -783,8 +778,10 @@ Planner 不直接拥有：
 不同查询通过 `recall_id` 和原始请求区分。合并操作创建去重后的新快照并记录
 `source_recall_ids`，源记录保持不变；召回记录可以单独查询和删除。聊天接口提供
 分页列表、详情、合并和批量删除入口，删除会话时同步清理全部召回记录。
-完整召回结果仅在当前工具调用中进入模型，回合结束后将历史 `ToolMessage` 压缩为
-`recall_id` 引用。后续回合按需读取独立记录，删除记录后上下文中不再保留完整载荷。
+语义工具从首次返回开始只向 `ToolMessage` 写入 `recall_id` 和引用类型。Data Query Agent 的
+Middleware 在每次模型调用前，对当前用户回合产生的引用按最新权限临时展开，展开内容只存在于
+`ModelRequest.messages`，不回写 Agent state 或 checkpoint。后续回合需要旧召回详情时，Agent 通过
+`get_semantic_recall` 重新读取；删除独立记录后，历史引用无法再展开内容。
 
 输出至少包含：
 
@@ -802,7 +799,7 @@ Planner 不直接拥有：
 职责：
 
 - 选择输入数据、归因维度、分析方法和计算参数
-- 调用确定性贡献计算工具
+- 编写并运行适合当前指标和数据的归因分析代码
 - 评估贡献覆盖率和残差
 - 解释计算结果并继续维度下钻
 - 分析分组内部变化和结构变化
@@ -811,11 +808,10 @@ Planner 不直接拥有：
 - 对数据或口径缺失发起 Repair Request
 - 针对不同因素创建多个并行 Session
 
-建议工具：
+执行能力：
 
-- `decompose_change`
-- `calculate_contribution`
-- 文件读写工具
+- DeepAgents 内置 `execute`
+- DeepAgents 内置文件读取、写入、编辑和检索工具
 
 归因结论默认属于变化贡献分析，不直接表述为严格因果关系。
 
@@ -825,6 +821,7 @@ Planner 不直接拥有：
 
 - 选择输入数据、时间字段、检测方法和阈值参数
 - 检查输入数据质量
+- 编写并运行适合当前数据特征的检测代码
 - 检测点异常、区间异常和趋势突变
 - 比较多个检测方法结果
 - 识别缺失值、重复值和时间断层
@@ -832,35 +829,31 @@ Planner 不直接拥有：
 - 按时间区间或业务维度继续下钻
 - 对不完整输入发起 Repair Request
 
-建议工具：
+执行能力：
 
-- `detect_point_anomalies`
-- `detect_change_points`
-- `validate_time_series`
-- 文件读写工具
+- DeepAgents 内置 `execute`
+- DeepAgents 内置文件读取、写入、编辑和检索工具
 
 ### 14.5 Visualization Agent
 
 职责：
 
 - 选择输入数据、图表类型、视觉编码和渲染参数
-- 生成图表配置
-- 调用确定性渲染工具
+- 编写并运行可视化代码
+- 生成图表配置和交付文件
 - 校验图表与分析数据一致
 - 解释图表表达范围并按分析问题调整展示层级
 - 生成可下载文件
 - 发现数据字段或结论不足时发起 Repair Request
 
-建议工具：
+执行能力：
 
-- `render_chart`
-- `build_report`
-- `return_file`
-- 文件读写工具
+- DeepAgents 内置 `execute`
+- DeepAgents 内置文件读取、写入、编辑和检索工具
 
-## 15. 确定性能力边界
+## 15. 执行能力与安全边界
 
-AI-native 编排负责决定分析路径。专业 Agent 选择数据、方法和参数，解释结果，执行下钻并决定是否发起 Repair Request。Tool、共享 Analysis Kernel 和 Sandbox Worker 分别承担适配、计算与容器执行职责。
+AI-native 编排负责决定分析路径。归因、异常检测和可视化 Agent 使用 DeepAgents 内置 Shell 与文件能力直接完成专业工作。自定义 Tool 只承载必须经过平台鉴权和审计的外部能力，例如语义检索与只读数据查询。
 
 ### 15.1 Meta Search Service
 
@@ -886,29 +879,22 @@ AI-native 编排负责决定分析路径。专业 Agent 选择数据、方法和
 - 查询记录生成
 - 数据 Schema 和预览生成
 
-### 15.4 Shared Analysis Kernel
+### 15.4 Professional Agent Execution
 
-`app/analysis` 是归因、异常检测和可视化算法的唯一实现位置：
+- Agent 使用 `execute` 编写和运行 Python、Shell 及沙盒内已有的分析程序
+- Agent 使用文件工具管理代码、中间数据、日志和最终产物
+- Agent 根据指标口径、数据分布、样本量和业务问题自主选择算法
+- 同一 Session 中可以多轮运行、检查结果、修正代码和重新验证
+- 代码、参数、输入引用和输出文件共同形成可追溯证据
 
-- `attribution.py` 提供加和型指标贡献分解、覆盖率和残差计算
-- `anomaly_detection.py` 提供时间序列质量校验、点异常和变化点检测
-- `visualization.py` 提供图表 Schema 校验、静态图表、交互表格数据和报告渲染
-- Kernel 使用纯函数和可序列化输入输出，不依赖 Agent Session、容器管理或工具协议
-- API 进程测试和容器执行复用同一套算法，避免 Service 与 Worker 产生重复实现
+### 15.5 Sandbox Boundary
 
-### 15.5 Specialist Tools
-
-- 使用类型化 Schema 校验 Agent 选择的数据、方法和参数
-- 绑定 `analysis_id`、`agent_type`、`session_id` 和 Session 产物目录
-- 调用统一沙盒分析入口并返回结构化结果和产物引用
-- 不包含归因公式、异常检测算法或图表渲染实现
-
-### 15.6 Sandbox Analysis Runtime
-
-- `app/agents/shared/analysis_runtime.py` 读取 Worker 与三个 Kernel 模块源码，并通过当前 runtime injection 注入容器
-- `app/agents/shared/sandbox_analysis_worker.py` 从注入的 `app/analysis` 模块导入纯函数
-- Worker 只负责受控 CSV I/O、产物写入、响应压缩和 operation dispatch
-- 新增或调整算法时只修改共享 Kernel，不在 Worker 中维护第二份实现
+- 每个专业 Agent Session 只能写入自己的工作目录
+- 授权输入和上游产物以只读方式提供
+- 容器不暴露业务数据库凭据，数据库访问统一经过只读查询工具
+- 容器禁止外网，并限制 CPU、内存、执行时间、进程数和输出大小
+- 同一 Session 在迭代期间可以修改自身文件，其他 Session 只能读取组内共享产物
+- 对外发布产物的不可变版本控制属于后续平台约束
 
 ## 16. 结构化结果协议
 
@@ -1006,8 +992,7 @@ app/agents/
 ├── planner/
 │   ├── agent.py
 │   ├── prompt.py
-│   ├── tools.py
-│   └── quickjs_worker.py
+│   └── tools.py
 ├── data_query/
 │   ├── agent.py
 │   ├── prompt.py
@@ -1018,25 +1003,15 @@ app/agents/
 │       └── run_readonly_sql.py
 ├── attribution/
 │   ├── agent.py
-│   ├── prompt.py
-│   └── tools.py
+│   └── prompt.py
 ├── anomaly_detection/
 │   ├── agent.py
-│   ├── prompt.py
-│   └── tools.py
+│   └── prompt.py
 ├── visualization/
 │   ├── agent.py
-│   ├── prompt.py
-│   └── tools.py
+│   └── prompt.py
 └── shared/
-    ├── specialist.py
-    ├── analysis_runtime.py
-    └── sandbox_analysis_worker.py
-
-app/analysis/
-├── attribution.py
-├── anomaly_detection.py
-└── visualization.py
+    └── specialist.py
 
 app/services/
 ├── meta_search_service.py
@@ -1056,13 +1031,9 @@ AgentSessionService / delegate_agent
    ↓
 Agent Registry / Specialist Agents
    ↓
-各 Agent 目录内的专属 Tools（类型化适配与 Session 绑定）
+DeepAgents 内置 Shell 与文件工具
    ↓
-shared/analysis_runtime（runtime injection）
-   ↓
-shared/sandbox_analysis_worker（容器 I/O 与 dispatch）
-   ↓
-app/analysis（Shared Deterministic Kernel）
+Session 级 Docker Sandbox
 ```
 
 ## 19. 与当前代码的衔接
@@ -1359,9 +1330,9 @@ analysis_failed
 ### 阶段六：完整数据分析能力
 
 - [ ] 完善只读查询安全层
-- [ ] 完善 `app/analysis` 共享确定性 Kernel
-- [ ] 完善 Kernel runtime injection 与 Worker 调度边界
-- [ ] 完善专业 Tool 的类型化适配和 Session 绑定
+- [ ] 完善专业 Agent 的 Session 级 Sandbox 隔离
+- [ ] 验证 Shell 与文件工具的权限、资源和网络边界
+- [ ] 建立代码、参数、输入引用和产物的审计链路
 - [ ] 建立端到端评测集
 
 ## 27. 验收标准
@@ -1387,7 +1358,8 @@ analysis_failed
 
 应对：
 
-- 将 CodeInterpreterMiddleware 初始化集中在单一模块
+- 在 Planner 构造器中直接使用上游 CodeInterpreterMiddleware
+- QuickJS 集成测试通过 `RUN_QUICKJS_INTEGRATION=1` 在允许跨线程事件循环唤醒的 CI 或容器中运行
 - 将 PTC Tool 协议保持最小化
 - 为模型生成的编排代码设置超时和并发限制
 - 为核心分析链路保留直接串行委派的降级能力
@@ -1425,9 +1397,9 @@ analysis_failed
 
 - 每个 Agent 使用明确的 System Prompt 和 Tool 白名单
 - 查询能力集中到 Data Query Agent
-- 归因、异常检测和可视化算法集中到 `app/analysis` 共享 Kernel
-- Tool 统一处理类型化适配和 Agent Session 绑定
-- Sandbox Worker 只处理容器 I/O 和 operation dispatch
+- 归因、异常检测和可视化 Agent 在各自 Session 中自主实现专业分析
+- Session Sandbox 统一限制文件、网络、资源和进程权限
+- 代码、参数和产物全部进入可追溯记录
 - Planner 只负责协调和汇总
 
 ## 29. 最终架构摘要
@@ -1458,4 +1430,4 @@ analysis_failed
             └── 图表与报告历史
 ```
 
-该架构以模型动态生成的编排代码驱动分析流程，以 Agent Session 提供并行和完整历史续接，以 Repair Request 建立跨 Agent 修补闭环，以 PostgreSQL 和 Docker 沙盒分别承载对话状态与数据产物。专业 Agent 负责选择数据、方法和参数以及解释、下钻与修补；Tool 负责类型化适配和 Session 绑定；运行时注入容器的 `app/analysis` 共享 Kernel 提供唯一算法实现；Sandbox Worker 负责受控 I/O 和操作分发。
+该架构以模型动态生成的编排代码驱动分析流程，以 Agent Session 提供并行和完整历史续接，以 Repair Request 建立跨 Agent 修补闭环，以 PostgreSQL 和 Docker 沙盒分别承载对话状态与数据产物。专业 Agent 使用 DeepAgents 内置 Shell 与文件能力自主选择方法、编写代码、验证结果、下钻和修补；平台 Tool 只承载需要统一鉴权和审计的外部能力；Session Sandbox 负责隔离文件、网络和计算资源。

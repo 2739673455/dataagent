@@ -13,21 +13,21 @@ doris_query:
   host: 127.0.0.1
   port: 9030
   user: dataagent_readonly
-  password: ${oc.env:DORIS_QUERY_PASSWORD}
+  password: ${oc.env:DORIS_QUERY_PASSWORD,123123}
   database: ecommerce
 
 meta_postgresql:
   host: 127.0.0.1
   port: 5432
   user: atguigu
-  password: ${oc.env:POSTGRES_PASSWORD}
+  password: ${oc.env:POSTGRES_PASSWORD,123123}
   database: meta
 
 langgraph_postgresql:
   host: 127.0.0.1
   port: 5432
   user: atguigu
-  password: ${oc.env:POSTGRES_PASSWORD}
+  password: ${oc.env:POSTGRES_PASSWORD,123123}
   database: langgraph
 
 elasticsearch:
@@ -40,12 +40,12 @@ elasticsearch:
 
 embedding:
   base_url: https://api.siliconflow.cn/v1
-  api_key: ${oc.env:SILICONFLOW_API_KEY}
+  api_key: ${oc.env:SILICONFLOW_API_KEY,""}
   model: BAAI/bge-m3
   timeout: 30.0
 
 auth:
-  jwt_secret: ${oc.env:JWT_SECRET}
+  jwt_secret: ${oc.env:JWT_SECRET,dataagent-dev-secret-key-change-in-production}
   jwt_algorithm: HS256
   issuer: dataagent
   access_token_minutes: 15
@@ -80,6 +80,7 @@ sandbox:
   nano_cpus: 2000000000 # 每个用户沙盒最多使用 2 个 CPU 核心
   pids_limit: 256
   network_mode: none # 运行时断网，依赖统一构建到沙盒镜像
+  execute_timeout_seconds: 120 # 单次 Shell 命令的硬超时上限
   max_output_bytes: 4194304 # 覆盖 DeepAgents 结构化读取的最坏 JSON 转义开销
   max_capture_bytes: 10485760
   max_file_bytes: 104857600

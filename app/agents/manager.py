@@ -23,14 +23,8 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph.state import CompiledStateGraph
 
 from app.agents.anomaly_detection.agent import create_anomaly_detection_agent
-from app.agents.anomaly_detection.tools import (
-    detect_point_anomalies,
-    validate_time_series,
-)
 from app.agents.attribution.agent import create_attribution_agent
-from app.agents.attribution.tools import calculate_contribution
 from app.agents.contracts import (
-    AGENT_TYPES,
     AgentSessionKey,
     AgentType,
     PlannerTurnContext,
@@ -52,11 +46,6 @@ from app.agents.planner.tools import create_delegate_agent_tool
 from app.agents.registry import AgentRegistry, build_agent_definitions
 from app.agents.session_service import AgentSessionService
 from app.agents.visualization.agent import create_visualization_agent
-from app.agents.visualization.tools import (
-    build_report,
-    render_chart,
-    render_interactive_table,
-)
 from app.clients.docker_sandbox_manager import (
     DockerSandboxBackend,
     docker_sandbox_manager,
@@ -71,7 +60,6 @@ type AgentKey = tuple[int, UUID]
 
 _DEFAULT_MAX_CACHED_AGENTS = 128
 _AGENT_LIFECYCLE_NAMESPACE = ("agent_lifecycle", "deleted_conversations")
-_EXCLUDED_DEEPAGENT_TOOLS = frozenset({"write_file", "edit_file", "delete", "execute"})
 
 
 def _conversation_lock_name(user_id: int, conversation_id: UUID) -> str:
@@ -89,7 +77,6 @@ class AnalysisAgentBundle:
     """一个用户会话内共享资源的 Planner 和专业 Agent 集合"""
 
     planner: CompiledStateGraph
-    specialists: dict[AgentType, CompiledStateGraph]
     registry: AgentRegistry
     session_service: AgentSessionService
     session_locks: Mapping[str, asyncio.Lock]
@@ -138,7 +125,6 @@ class AgentManager:
         register_harness_profile(
             f"{model_cfg.model_provider}:{model_cfg.model}",
             HarnessProfile(
-                excluded_tools=_EXCLUDED_DEEPAGENT_TOOLS,
                 general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
             ),
         )
@@ -181,12 +167,6 @@ class AgentManager:
                 delete_semantic_recalls,
                 check_sql_syntax,
                 run_readonly_sql,
-                calculate_contribution,
-                detect_point_anomalies,
-                validate_time_series,
-                render_chart,
-                render_interactive_table,
-                build_report,
                 *await get_mcp_tools(),
             ]
             self._models = models
@@ -223,20 +203,29 @@ class AgentManager:
         checkpointer = self._persistence_manager.get_checkpointer()
         store = self._persistence_manager.get_store()
         definitions = build_agent_definitions(self._tools)
-        specialists: dict[AgentType, CompiledStateGraph] = {}
-        for agent_type in AGENT_TYPES:
-            definition = definitions[agent_type]
-            builder = _SPECIALIST_BUILDERS[agent_type]
-            specialists[agent_type] = builder(
-                model=self._specialist_model(agent_type),
+
+        async def build_session_agent(
+            session_key: AgentSessionKey,
+        ) -> CompiledStateGraph:
+            session_backend = await docker_sandbox_manager.get_session_backend(
+                session_key.user_id,
+                session_key.conversation_id,
+                session_key.analysis_id,
+                session_key.agent_type,
+                session_key.session_id,
+            )
+            definition = definitions[session_key.agent_type]
+            builder = _SPECIALIST_BUILDERS[session_key.agent_type]
+            return builder(
+                model=self._specialist_model(session_key.agent_type),
                 tools=definition.tools,
-                backend=backend,
+                backend=session_backend,
                 checkpointer=checkpointer,
                 store=store,
                 skills=definition.skills,
             )
 
-        registry = AgentRegistry(definitions, specialists)
+        registry = AgentRegistry(definitions, build_session_agent)
         orchestration_cfg = app_config.cfg.agent.orchestration
         session_service = AgentSessionService(
             registry=registry,
@@ -280,7 +269,6 @@ class AgentManager:
         )
         return AnalysisAgentBundle(
             planner=planner,
-            specialists=specialists,
             registry=registry,
             session_service=session_service,
             session_locks=session_service.session_locks,
@@ -370,6 +358,7 @@ class AgentManager:
                             break
                         evicted = self._bundles.pop(evictable_key)
                         evicted.session_service.clear()
+                        evicted.registry.clear()
         return bundle
 
     async def get_agent_bundle(
@@ -424,6 +413,7 @@ class AgentManager:
             await asyncio.gather(*run_tasks, return_exceptions=True)
         if bundle is not None:
             bundle.session_service.clear()
+            bundle.registry.clear()
         async with self._persistence_manager.advisory_lock(
             _conversation_lock_name(user_id, conversation_id),
             timeout=app_config.cfg.agent.orchestration.session_lock_timeout,
@@ -518,6 +508,7 @@ class AgentManager:
             await asyncio.gather(*pending_tasks, return_exceptions=True)
         for bundle in bundles:
             bundle.session_service.clear()
+            bundle.registry.clear()
 
 
 agent_manager = AgentManager(langgraph_postgres_manager)

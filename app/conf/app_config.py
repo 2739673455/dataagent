@@ -69,6 +69,7 @@ class SandboxConfig(BaseModel):
     nano_cpus: int = Field(gt=0)
     pids_limit: int = Field(gt=0)
     network_mode: Literal["none", "bridge"]
+    execute_timeout_seconds: int = Field(default=120, gt=0, le=600)
     max_output_bytes: int = Field(ge=4 * 1024 * 1024)
     max_capture_bytes: int = Field(gt=0)
     max_file_bytes: int = Field(gt=0)

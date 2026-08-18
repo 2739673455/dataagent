@@ -13,8 +13,6 @@ from uuid import UUID
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
-from langgraph.graph.state import CompiledStateGraph
-from loguru import logger
 from pydantic import BaseModel, ValidationError
 
 from app.agents.contracts import (
@@ -25,9 +23,6 @@ from app.agents.contracts import (
     get_thread_id,
 )
 from app.agents.registry import AgentRegistry
-from app.services.checkpoint_recall_sanitizer import (
-    compact_semantic_recall_state,
-)
 
 _STRUCTURED_RETRY_MESSAGE = """
 上一条响应没有通过 SpecialistResult 协议校验。请根据当前 Session 已有工作重新输出结构化结果，不要重复执行工具。
@@ -211,7 +206,7 @@ class AgentSessionService:
             "checkpoint_ns": session_key.checkpoint_ns,
             "user_id": session_key.user_id,
             "conversation_id": str(session_key.conversation_id),
-            "workspace_dir": "/",
+            "workspace_dir": session_key.workspace_dir,
             "analysis_id": session_key.analysis_id,
             "agent_type": session_key.agent_type,
             "session_id": session_key.session_id,
@@ -305,11 +300,10 @@ class AgentSessionService:
         config: RunnableConfig,
     ) -> SpecialistResult:
         """调用专业 Agent 并允许一次纯结构化修正"""
-        agent = self._registry.get_agent(request.agent_type)
-        output = await self._invoke_with_sanitized_checkpoint(
-            agent,
+        agent = await self._registry.get_agent(session_key)
+        output = await agent.ainvoke(
             {"messages": [HumanMessage(content=request.message)]},
-            config,
+            config=config,
         )
         try:
             result = self._parse_specialist_result(output)
@@ -317,40 +311,21 @@ class AgentSessionService:
             await self._verify_result_artifacts(result, session_key)
             return result
         except (TypeError, ValueError, ValidationError):
-            retry_output = await self._invoke_with_sanitized_checkpoint(
-                agent,
-                {"messages": [HumanMessage(content=_STRUCTURED_RETRY_MESSAGE)]},
-                config,
+            retry_output = await agent.ainvoke(
+                {
+                    "messages": [
+                        HumanMessage(
+                            content=_STRUCTURED_RETRY_MESSAGE,
+                            additional_kwargs={"dataagent_internal_retry": True},
+                        )
+                    ]
+                },
+                config=config,
             )
             result = self._parse_specialist_result(retry_output)
             await self._validate_repair_targets(result, session_key)
             await self._verify_result_artifacts(result, session_key)
             return result
-
-    @staticmethod
-    async def _invoke_with_sanitized_checkpoint(
-        agent: CompiledStateGraph,
-        input_state: dict[str, list[HumanMessage]],
-        config: RunnableConfig,
-    ) -> object:
-        """在专业 Agent 调用前后清除完整召回工具载荷"""
-        try:
-            await compact_semantic_recall_state(agent, config)
-            return await agent.ainvoke(input_state, config=config)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.opt(exception=exc).error(
-                "Specialist invocation or checkpoint sanitization failed"
-            )
-            raise
-        finally:
-            try:
-                await compact_semantic_recall_state(agent, config)
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001
-                logger.exception("Specialist checkpoint sanitization failed")
 
     def _apply_repair_limits(
         self,

@@ -10,6 +10,9 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.store.base import BaseStore
 
 from app.agents.data_query.prompt import DATA_QUERY_SYSTEM_PROMPT
+from app.agents.data_query.semantic_recall_middleware import (
+    SemanticRecallExpansionMiddleware,
+)
 from app.agents.shared.specialist import create_specialist_agent
 
 
@@ -32,4 +35,5 @@ def create_data_query_agent(
         checkpointer=checkpointer,
         store=store,
         skills=skills,
+        middleware=[SemanticRecallExpansionMiddleware()],
     )

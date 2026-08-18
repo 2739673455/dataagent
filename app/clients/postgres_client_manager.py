@@ -83,28 +83,3 @@ class PostgresClientManager:
 
 
 meta_postgres_client_manager = PostgresClientManager(cfg.meta_postgresql)
-
-if __name__ == "__main__":
-    import asyncio
-
-    from sqlalchemy import text
-
-    meta_postgres_client_manager.init()
-
-    async def test() -> None:
-        await meta_postgres_client_manager.init_tables()
-
-        try:
-            async with meta_postgres_client_manager.session() as session:
-                result = await session.execute(
-                    text(
-                        "select tablename from pg_tables "
-                        "where schemaname = 'public' order by tablename"
-                    )
-                )
-                rows = result.fetchall()
-                print(rows)
-        finally:
-            await meta_postgres_client_manager.close()
-
-    asyncio.run(test())

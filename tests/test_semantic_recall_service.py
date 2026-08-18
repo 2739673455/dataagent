@@ -3,26 +3,32 @@
 import inspect
 import json
 import unittest
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from langchain.agents.middleware.types import ModelRequest, ModelResponse
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, MessagesState, StateGraph
-from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
+from langgraph.runtime import Runtime
 from langgraph.store.memory import InMemoryStore
 from pydantic import BaseModel
 
-from app.agents.contracts import PlannerTurnContext
+from app.agents.data_query.semantic_recall_middleware import (
+    SemanticRecallExpansionMiddleware,
+)
+from app.agents.data_query.semantic_recall_protocol import (
+    semantic_recall_reference,
+)
 from app.agents.data_query.tools import (
+    get_semantic_recall,
     list_semantic_recalls,
     search_semantic_resources,
 )
-from app.agents.session_service import AgentSessionService
 from app.entities.semantic_search import (
     SemanticColumnResult,
     SemanticMatchReason,
@@ -46,8 +52,6 @@ from app.routes.api.v1.chat.dependencies import (
 )
 from app.routes.api.v1.chat.router import router as chat_router
 from app.services.authorization_service import AssetAccessPolicy, AssetIdentity
-from app.services.chat_service import list_messages
-from app.services.checkpoint_recall_sanitizer import compact_semantic_recall_message
 from app.services.metadata_authorization_filter import MetadataAuthorizationFilter
 from app.services.semantic_recall_service import (
     SemanticRecallService,
@@ -150,71 +154,6 @@ def build_authorization_filter(
         "doris",
         "analytics",
     )
-
-
-class PlannerExecutionStub:
-    """测试用 Planner 执行上下文"""
-
-    async def __aenter__(self) -> PlannerTurnContext:
-        return PlannerTurnContext(
-            user_id=7,
-            conversation_id=uuid4(),
-            planner_run_id="planner-run",
-            max_continuations=3,
-        )
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        traceback: object,
-    ) -> None:
-        return None
-
-
-class SpecialistCheckpointStub:
-    """记录专业 Agent 调用前后检查点消息的测试图"""
-
-    def __init__(self, messages: list[ToolMessage]) -> None:
-        self.messages = messages
-        self.seen_at_invoke: list[str] = []
-
-    async def aget_state(self, config: RunnableConfig) -> MagicMock:
-        return MagicMock(values={"messages": self.messages})
-
-    async def aupdate_state(
-        self,
-        config: RunnableConfig,
-        values: dict[str, object],
-    ) -> None:
-        replacements = values["messages"]
-        assert isinstance(replacements, list)
-        by_id = {
-            message.id: message
-            for message in replacements
-            if isinstance(message, ToolMessage)
-        }
-        self.messages = [by_id.get(message.id, message) for message in self.messages]
-
-    async def ainvoke(
-        self,
-        input_state: object,
-        *,
-        config: RunnableConfig,
-    ) -> dict[str, str]:
-        self.seen_at_invoke = [str(message.content) for message in self.messages]
-        self.messages.append(
-            ToolMessage(
-                id="message_2",
-                tool_call_id="call_2",
-                name="search_semantic_resources",
-                content=(
-                    '{"status":"success","recall_id":"search_b",'
-                    '"columns":[{"name":"current_secret"}]}'
-                ),
-            )
-        )
-        return {"status": "completed"}
 
 
 class SemanticRecallServiceTest(unittest.IsolatedAsyncioTestCase):
@@ -442,98 +381,144 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("include_relations", search_properties)
         self.assertIn("resource_types", search_schema["required"])
 
-    def test_full_tool_result_is_compacted_to_recall_reference(self) -> None:
-        message = ToolMessage(
-            id="message_1",
-            tool_call_id="call_1",
-            name="search_semantic_resources",
-            content=(
-                '{"status":"success","recall_id":"search_a",'
-                '"metrics":[{"name":"revenue"}]}'
-            ),
+    async def test_tool_message_persists_reference_and_model_sees_authorized_record(
+        self,
+    ) -> None:
+        store = InMemoryStore()
+        repo = SemanticRecallPGRepo(store)
+        unrestricted_service = SemanticRecallService(
+            repo,
+            build_authorization_filter(unrestricted=True),
         )
-
-        compact = compact_semantic_recall_message(message)
-
-        assert compact is not None
-        self.assertEqual(compact.id, "message_1")
-        self.assertEqual(compact.tool_call_id, "call_1")
-        self.assertNotIn("revenue", str(compact.content))
-        self.assertEqual(
-            json.loads(str(compact.content))["recall_ids"],
-            ["search_a"],
-        )
-
-    async def test_checkpoint_read_compacts_full_payload_left_by_crash(self) -> None:
         conversation_id = uuid4()
-        full_message = ToolMessage(
-            id="message_1",
-            tool_call_id="call_1",
-            name="get_semantic_recall",
-            content=(
-                '{"status":"success","recall":{"recall_id":"search_a",'
-                '"response":{"columns":[{"name":"revoked_secret"}]}}}'
+        record = await unrestricted_service.record_search(
+            7,
+            conversation_id,
+            SemanticSearchRequest(query="revenue", resource_types=["column"]),
+            build_response("search_a", "revenue", score=0.8, reason="query"),
+        )
+        reference_content = json.dumps(
+            semantic_recall_reference(record, view="search_response"),
+            ensure_ascii=False,
+        )
+        old_reference = ToolMessage(
+            id="old_message",
+            tool_call_id="old_call",
+            name="search_semantic_resources",
+            content=reference_content,
+        )
+        current_reference = ToolMessage(
+            id="current_message",
+            tool_call_id="current_call",
+            name="search_semantic_resources",
+            content=reference_content,
+        )
+        messages = [
+            old_reference,
+            HumanMessage(content="continue"),
+            current_reference,
+        ]
+        request = ModelRequest(
+            model=GenericFakeChatModel(messages=iter([AIMessage(content="ok")])),
+            messages=messages,
+            runtime=Runtime(store=store),
+        )
+        restricted_service = SemanticRecallService(
+            repo,
+            build_authorization_filter(
+                AssetIdentity("doris", "analytics", "orders", "status")
             ),
         )
-        compact = compact_semantic_recall_message(full_message)
-        assert compact is not None
-        raw_state = MagicMock(values={"messages": [full_message]})
-        compact_state = MagicMock(values={"messages": [compact]})
-        planner = MagicMock()
-        planner.aget_state = AsyncMock(side_effect=[raw_state, compact_state])
-        planner.aupdate_state = AsyncMock()
-        bundle = MagicMock(planner=planner)
+        seen_messages: list[object] = []
+
+        async def handler(model_request: ModelRequest[Any]) -> ModelResponse[Any]:
+            seen_messages.extend(model_request.messages)
+            return ModelResponse(result=[AIMessage(content="ok")])
 
         with (
             patch(
-                "app.services.chat_service.agent_manager.get_agent_bundle",
-                new=AsyncMock(return_value=bundle),
+                "app.agents.data_query.semantic_recall_middleware.get_config",
+                return_value={
+                    "configurable": {
+                        "user_id": 7,
+                        "conversation_id": str(conversation_id),
+                    }
+                },
             ),
             patch(
-                "app.services.chat_service.agent_manager.execution",
-                return_value=PlannerExecutionStub(),
+                "app.agents.data_query.semantic_recall_middleware."
+                "create_authorized_semantic_recall_service",
+                new=AsyncMock(return_value=restricted_service),
             ),
         ):
-            await list_messages(7, conversation_id)
-
-        update = planner.aupdate_state.await_args.args[1]
-        stored_content = str(update["messages"][0].content)
-        self.assertNotIn("revoked_secret", stored_content)
-        self.assertIn("search_a", stored_content)
-
-    async def test_specialist_resume_compacts_crash_payload_before_and_after_run(
-        self,
-    ) -> None:
-        specialist = SpecialistCheckpointStub(
-            [
-                ToolMessage(
-                    id="message_1",
-                    tool_call_id="call_1",
-                    name="get_semantic_recall",
-                    content=(
-                        '{"status":"success","recall":{"recall_id":"search_a",'
-                        '"response":{"columns":[{"name":"revoked_secret"}]}}}'
-                    ),
-                )
-            ]
-        )
-
-        await AgentSessionService._invoke_with_sanitized_checkpoint(
-            cast(CompiledStateGraph, specialist),
-            {"messages": [HumanMessage(content="resume")]},
-            RunnableConfig(configurable={"thread_id": "test"}),
-        )
-
-        self.assertTrue(
-            all(
-                "revoked_secret" not in content for content in specialist.seen_at_invoke
+            await SemanticRecallExpansionMiddleware().awrap_model_call(
+                request,
+                handler,
             )
+
+        self.assertEqual(current_reference.content, reference_content)
+        self.assertNotIn("amount", reference_content)
+        self.assertEqual(getattr(seen_messages[0], "content", None), reference_content)
+        expanded_content = str(getattr(seen_messages[2], "content", ""))
+        self.assertNotIn("amount", expanded_content)
+        self.assertIn("paid", expanded_content)
+
+    async def test_get_tool_writes_only_recall_reference_to_state(self) -> None:
+        store = InMemoryStore()
+        repo = SemanticRecallPGRepo(store)
+        service = SemanticRecallService(
+            repo,
+            build_authorization_filter(unrestricted=True),
         )
-        persisted = [str(message.content) for message in specialist.messages]
-        self.assertTrue(all("revoked_secret" not in content for content in persisted))
-        self.assertTrue(all("current_secret" not in content for content in persisted))
-        self.assertTrue(any("search_a" in content for content in persisted))
-        self.assertTrue(any("search_b" in content for content in persisted))
+        conversation_id = uuid4()
+        await service.record_search(
+            1,
+            conversation_id,
+            SemanticSearchRequest(query="revenue", resource_types=["column"]),
+            build_response("search_a", "revenue", score=0.8, reason="query"),
+        )
+        builder = StateGraph(MessagesState)
+        builder.add_node("tools", ToolNode([get_semantic_recall]))
+        builder.add_edge(START, "tools")
+        builder.add_edge("tools", END)
+        graph = builder.compile(store=store)
+
+        with patch(
+            "app.agents.data_query.tools.semantic_recall."
+            "create_authorized_semantic_recall_service",
+            new=AsyncMock(return_value=service),
+        ):
+            result = await graph.ainvoke(
+                {
+                    "messages": [
+                        AIMessage(
+                            content="",
+                            tool_calls=[
+                                {
+                                    "name": "get_semantic_recall",
+                                    "args": {"recall_id": "search_a"},
+                                    "id": "call_1",
+                                    "type": "tool_call",
+                                }
+                            ],
+                        )
+                    ]
+                },
+                {
+                    "configurable": {
+                        "user_id": 1,
+                        "conversation_id": str(conversation_id),
+                    }
+                },
+            )
+
+        content = str(result["messages"][-1].content)
+        payload = json.loads(content)
+        self.assertEqual(payload["recall_id"], "search_a")
+        self.assertEqual(
+            payload["semantic_recall"]["type"], "semantic_recall_reference"
+        )
+        self.assertNotIn("amount", content)
 
     async def test_tool_node_injects_store_and_conversation_context(self) -> None:
         store = InMemoryStore()
@@ -550,8 +535,8 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         )
         with patch(
             "app.agents.data_query.tools.semantic_recall."
-            "_get_authorized_semantic_recall_context",
-            new=AsyncMock(return_value=(1, conversation_id, service)),
+            "create_authorized_semantic_recall_service",
+            new=AsyncMock(return_value=service),
         ):
             result = await graph.ainvoke(
                 {

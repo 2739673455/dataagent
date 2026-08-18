@@ -12,9 +12,6 @@ from app.clients.langgraph_postgres_manager import langgraph_postgres_manager
 from app.mappers import message_mapper
 from app.repositories.semantic_recall_pg_repo import SemanticRecallPGRepo
 from app.routes.api.v1.chat import schemas as chat_schema
-from app.services.checkpoint_recall_sanitizer import (
-    compact_semantic_recall_state,
-)
 
 
 async def list_messages(
@@ -22,7 +19,6 @@ async def list_messages(
     conversation_id: UUID,
 ) -> list[chat_schema.MessageSchema]:
     """从 LangGraph 最新线程状态读取消息"""
-    await compact_semantic_recall_context(user_id, conversation_id)
     bundle = await agent_manager.get_agent_bundle(user_id, conversation_id)
     state = await bundle.planner.aget_state(
         build_planner_config(user_id, conversation_id)
@@ -67,24 +63,6 @@ async def _execute_agent(
         yield chunk
 
 
-async def compact_semantic_recall_context(
-    user_id: int,
-    conversation_id: UUID,
-) -> None:
-    """在回合结束后从模型历史中移除完整召回载荷"""
-    bundle = await agent_manager.get_agent_bundle(user_id, conversation_id)
-    async with agent_manager.execution(
-        user_id,
-        conversation_id,
-        bundle=bundle,
-    ) as turn_context:
-        config = build_planner_config(user_id, conversation_id)
-        config.setdefault("configurable", {})["planner_run_id"] = (
-            turn_context.planner_run_id
-        )
-        await compact_semantic_recall_state(bundle.planner, config)
-
-
 async def run_agent_turn(
     user_id: int,
     conversation_id: UUID,
@@ -98,9 +76,6 @@ async def run_agent_turn(
         f"attachments={len(user_message.attachments or ())}"
     )
 
-    # 进程崩溃可能跳过回合末压缩，恢复前必须先清除完整召回载荷
-    await compact_semantic_recall_context(user_id, conversation_id)
-
     input_messages: list[BaseMessage] = [
         await message_mapper.schema_to_human_message(
             user_message,
@@ -109,58 +84,50 @@ async def run_agent_turn(
         )
     ]
 
-    try:
-        bundle = await agent_manager.get_agent_bundle(user_id, conversation_id)
-        async with agent_manager.execution(
-            user_id,
-            conversation_id,
-            bundle=bundle,
-        ) as turn_context:
-            continuation_count = 0
-            while True:
-                last_finish_reason: str | None = None
+    bundle = await agent_manager.get_agent_bundle(user_id, conversation_id)
+    async with agent_manager.execution(
+        user_id,
+        conversation_id,
+        bundle=bundle,
+    ) as turn_context:
+        continuation_count = 0
+        while True:
+            last_finish_reason: str | None = None
 
-                async for chunk in _execute_agent(
-                    input_messages,
-                    bundle,
-                    turn_context,
-                ):
-                    if cancel.is_set():
-                        logger.info(f"{conversation_id=}: agent cancelled")
-                        break
-
-                    responses = message_mapper.agent_chunk_to_schemas(chunk)
-                    logger.debug(
-                        f"agent stream update: user_id={user_id}, "
-                        f"conversation_id={conversation_id}, nodes={tuple(chunk)}, "
-                        f"messages={len(responses)}"
-                    )
-                    for response in responses:
-                        last_finish_reason = response.finish_reason
-                        yield response
-
-                if (
-                    cancel.is_set()
-                    or last_finish_reason is None
-                    or last_finish_reason == "stop"
-                ):
+            async for chunk in _execute_agent(
+                input_messages,
+                bundle,
+                turn_context,
+            ):
+                if cancel.is_set():
+                    logger.info(f"{conversation_id=}: agent cancelled")
                     break
-                if continuation_count >= turn_context.max_continuations:
-                    raise PlannerContinuationLimitError(
-                        turn_context.max_continuations,
-                        last_finish_reason,
-                    )
 
-                continuation_count += 1
-                # 空增量会保留 Checkpointer 中的已有状态并继续生成
-                input_messages = []
-    finally:
-        try:
-            await compact_semantic_recall_context(user_id, conversation_id)
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001
-            logger.exception(f"{conversation_id=}: compact semantic recalls failed")
+                responses = message_mapper.agent_chunk_to_schemas(chunk)
+                logger.debug(
+                    f"agent stream update: user_id={user_id}, "
+                    f"conversation_id={conversation_id}, nodes={tuple(chunk)}, "
+                    f"messages={len(responses)}"
+                )
+                for response in responses:
+                    last_finish_reason = response.finish_reason
+                    yield response
+
+            if (
+                cancel.is_set()
+                or last_finish_reason is None
+                or last_finish_reason == "stop"
+            ):
+                break
+            if continuation_count >= turn_context.max_continuations:
+                raise PlannerContinuationLimitError(
+                    turn_context.max_continuations,
+                    last_finish_reason,
+                )
+
+            continuation_count += 1
+            # 空增量会保留 Checkpointer 中的已有状态并继续生成
+            input_messages = []
 
     logger.info(
         f"agent turn finished: user_id={user_id}, conversation_id={conversation_id}"

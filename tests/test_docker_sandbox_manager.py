@@ -7,12 +7,13 @@ import unittest
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from pydantic import ValidationError
 
 from app.agents.manager import AgentManager
 from app.clients.docker_sandbox_manager import (
+    DockerSandboxBackend,
     DockerSandboxManager,
     SandboxCapacityCancelledError,
     SandboxCapacityQueueFullError,
@@ -20,6 +21,7 @@ from app.clients.docker_sandbox_manager import (
     SandboxDeletedError,
     SandboxFileTooLargeError,
     SandboxPathError,
+    SandboxSessionScope,
     _FairCapacityLimiter,
     _LifecycleGuard,
     normalize_attachment_path,
@@ -43,6 +45,7 @@ def build_sandbox_config(**updates: object) -> SandboxConfig:
         "nano_cpus": 1_000_000_000,
         "pids_limit": 64,
         "network_mode": "none",
+        "execute_timeout_seconds": 120,
         "max_output_bytes": 4 * 1024 * 1024,
         "max_capture_bytes": 5 * 1024 * 1024,
         "max_file_bytes": 6 * 1024 * 1024,
@@ -301,8 +304,99 @@ class LifecycleGuardTest(unittest.TestCase):
         with self.assertRaises(SandboxDeletedError), guard.operation():
             pass
 
+    def test_deleted_guard_allows_only_explicit_cleanup_maintenance(self) -> None:
+        guard = _LifecycleGuard()
+        guard.mark_deleted()
+
+        with self.assertRaises(SandboxDeletedError), guard.maintenance():
+            pass
+        with guard.maintenance(allow_deleted=True):
+            pass
+
 
 class DockerSandboxManagerPolicyTest(unittest.TestCase):
+    @staticmethod
+    def _session_backend(
+        config: SandboxConfig,
+        conversation_id: UUID,
+    ) -> DockerSandboxBackend:
+        scope = SandboxSessionScope(
+            analysis_id="sales-decline",
+            agent_type="attribution",
+            session_id="region",
+        )
+        conversation_guard = _LifecycleGuard()
+        return DockerSandboxBackend(
+            user_id=7,
+            conversation_id=conversation_id,
+            conversation_uid=100_001,
+            sandbox_config=config,
+            user_guard=_LifecycleGuard(),
+            conversation_guard=conversation_guard,
+            mutation_lock=threading.RLock(),
+            touch=lambda: None,
+            get_running_container=lambda _: MagicMock(),
+            notify_capacity_waiters=lambda: None,
+            session_scope=scope,
+            execution_uid=100_002,
+        )
+
+    def test_session_backend_maps_reads_and_scopes_mutations(self) -> None:
+        conversation_id = uuid4()
+        backend = self._session_backend(build_sandbox_config(), conversation_id)
+        own_virtual_path = (
+            "/analyses/sales-decline/sessions/attribution/region/result.json"
+        )
+        sibling_virtual_path = (
+            "/analyses/sales-decline/sessions/data_query/base/dataset.csv"
+        )
+        conversation_root = f"/workspace/conversations/{conversation_id}"
+
+        self.assertEqual(
+            backend._resolve_path("result.json"),
+            f"{conversation_root}{own_virtual_path}",
+        )
+        self.assertEqual(
+            backend._resolve_path(sibling_virtual_path),
+            f"{conversation_root}{sibling_virtual_path}",
+        )
+        self.assertEqual(
+            backend._resolve_mutation_path(own_virtual_path),
+            f"{conversation_root}{own_virtual_path}",
+        )
+        with self.assertRaises(SandboxPathError):
+            backend._resolve_mutation_path(sibling_virtual_path)
+        with self.assertRaises(SandboxPathError):
+            backend._resolve_mutation_path("/uploads/input.csv")
+
+        other_conversation_path = (
+            f"/workspace/conversations/{uuid4()}/analyses/private.json"
+        )
+        self.assertTrue(
+            backend._resolve_path(other_conversation_path).startswith(
+                f"{conversation_root}/"
+            )
+        )
+
+    def test_execute_timeout_is_clamped_to_sandbox_limit(self) -> None:
+        backend = self._session_backend(
+            build_sandbox_config(execute_timeout_seconds=7),
+            uuid4(),
+        )
+        api_client = MagicMock()
+        api_client.exec_create.return_value = {"Id": "exec-id"}
+        api_client.exec_start.return_value = iter(())
+        api_client.exec_inspect.return_value = {"ExitCode": 0}
+        container = MagicMock()
+        container.id = "container-id"
+        container.client.api = api_client
+        backend._operation_local.container = container
+
+        backend._execute_unlocked("printf done", timeout=999)
+
+        shell_command = api_client.exec_create.call_args.args[1]
+        self.assertEqual(shell_command[:3], ["timeout", "--signal=KILL", "7"])
+
     def test_resource_names_and_volume_options_are_namespaced(self) -> None:
         from app.clients.docker_sandbox_manager import DockerSandboxManager
 
@@ -581,8 +675,8 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         first_identity = first.execute("stat -c '%u %g %a' .").output.strip()
         second_identity = second.execute("stat -c '%u %g %a' .").output.strip()
         self.assertNotEqual(first_identity, second_identity)
-        self.assertTrue(first_identity.endswith(" 700"))
-        self.assertTrue(second_identity.endswith(" 700"))
+        self.assertTrue(first_identity.endswith(" 750"))
+        self.assertTrue(second_identity.endswith(" 750"))
         self.assertNotEqual(
             first.execute("cat /workspace/.dataagent-uids.json").exit_code,
             0,
@@ -635,6 +729,150 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
                 first_id,
                 "linked_directory/data.txt",
             )
+
+    async def test_sessions_share_reads_and_reject_sibling_mutations(self) -> None:
+        conversation_id = uuid4()
+        data_query = await self.manager.get_session_backend(
+            self.user_id,
+            conversation_id,
+            "sales-decline",
+            "data_query",
+            "base",
+        )
+        attribution = await self.manager.get_session_backend(
+            self.user_id,
+            conversation_id,
+            "sales-decline",
+            "attribution",
+            "region",
+        )
+        artifact_path = "/analyses/sales-decline/sessions/data_query/base/dataset.csv"
+
+        write_result = data_query.write("dataset.csv", "region,sales\neast,42\n")
+        self.assertIsNone(write_result.error)
+        self.assertEqual(write_result.path, artifact_path)
+        self.assertTrue(
+            await self.manager.is_file(
+                self.user_id,
+                conversation_id,
+                artifact_path.lstrip("/"),
+            )
+        )
+        self.assertEqual(
+            await self.manager.download_file(
+                self.user_id,
+                conversation_id,
+                artifact_path.lstrip("/"),
+            ),
+            b"region,sales\neast,42\n",
+        )
+        read_result = attribution.read(artifact_path)
+        self.assertIsNone(read_result.error)
+        self.assertIsNotNone(read_result.file_data)
+        assert read_result.file_data is not None
+        self.assertIn("east,42", read_result.file_data["content"])
+        shell_artifact_path = (
+            '"$DATAAGENT_CONVERSATION_ROOT/'
+            'analyses/sales-decline/sessions/data_query/base/dataset.csv"'
+        )
+        shell_read = attribution.execute(f"cat {shell_artifact_path}")
+        self.assertEqual(shell_read.exit_code, 0)
+        self.assertIn("east,42", shell_read.output)
+
+        self.assertIsNotNone(attribution.write(artifact_path, "tampered").error)
+        self.assertIsNotNone(attribution.edit(artifact_path, "east", "west").error)
+        self.assertIsNotNone(attribution.delete(artifact_path).error)
+
+        overwrite = attribution.execute(f"printf tampered > {shell_artifact_path}")
+        removal = attribution.execute(f"rm -f {shell_artifact_path}")
+        self.assertNotEqual(overwrite.exit_code, 0)
+        self.assertNotEqual(removal.exit_code, 0)
+        preserved = data_query.read("dataset.csv")
+        self.assertIsNone(preserved.error)
+        self.assertIsNotNone(preserved.file_data)
+        assert preserved.file_data is not None
+        self.assertIn("east,42", preserved.file_data["content"])
+
+    async def test_session_execute_reports_virtual_working_directory(self) -> None:
+        conversation_id = uuid4()
+        backend = await self.manager.get_session_backend(
+            self.user_id,
+            conversation_id,
+            "sales-decline",
+            "anomaly_detection",
+            "sales-trend",
+        )
+
+        response = backend.execute("pwd")
+
+        self.assertEqual(response.exit_code, 0)
+        self.assertEqual(
+            response.output.strip(),
+            "/analyses/sales-decline/sessions/anomaly_detection/sales-trend",
+        )
+        self.assertNotIn("/workspace/conversations", response.output)
+
+    async def test_session_cannot_read_another_conversation(self) -> None:
+        first_conversation_id = uuid4()
+        second_conversation_id = uuid4()
+        first = await self.manager.get_session_backend(
+            self.user_id,
+            first_conversation_id,
+            "sales-decline",
+            "data_query",
+            "base",
+        )
+        second = await self.manager.get_session_backend(
+            self.user_id,
+            second_conversation_id,
+            "sales-decline",
+            "attribution",
+            "region",
+        )
+        self.assertIsNone(first.write("secret.txt", "CONVERSATION_SECRET").error)
+
+        virtual_read = second.read(
+            "/analyses/sales-decline/sessions/data_query/base/secret.txt"
+        )
+        direct_read = second.execute(f"cat {first.workspace_dir}/secret.txt")
+
+        self.assertIsNotNone(virtual_read.error)
+        self.assertNotEqual(direct_read.exit_code, 0)
+        self.assertNotIn("CONVERSATION_SECRET", direct_read.output)
+
+    async def test_platform_query_artifact_is_readable_by_sessions(self) -> None:
+        conversation_id = uuid4()
+        data_query = await self.manager.get_session_backend(
+            self.user_id,
+            conversation_id,
+            "sales-decline",
+            "data_query",
+            "base",
+        )
+        attribution = await self.manager.get_session_backend(
+            self.user_id,
+            conversation_id,
+            "sales-decline",
+            "attribution",
+            "region",
+        )
+        relative_path = (
+            "analyses/sales-decline/sessions/data_query/base/query_result.csv"
+        )
+        await self.manager.write_artifact(
+            self.user_id,
+            conversation_id,
+            relative_path,
+            io.BytesIO(b"region,sales\neast,42\n"),
+        )
+
+        for backend in (data_query, attribution):
+            with self.subTest(backend=backend.id):
+                result = backend.read(f"/{relative_path}")
+                self.assertIsNone(result.error)
+                self.assertIsNotNone(result.file_data)
+                assert result.file_data is not None
+                self.assertIn("east,42", result.file_data["content"])
 
     async def test_deployment_namespaces_do_not_share_resources(self) -> None:
         from app.clients.docker_sandbox_manager import DockerSandboxManager

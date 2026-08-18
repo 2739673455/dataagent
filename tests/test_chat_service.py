@@ -114,7 +114,6 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         )
         manager = _TurnManagerStub(bundle, turn_context)
 
-        compact = AsyncMock()
         user_message = chat_schema.MessageSchema(
             message_id="user-message",
             role="user",
@@ -123,11 +122,6 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         responses: list[chat_schema.MessageSchema] = []
         with (
             patch.object(chat_service, "agent_manager", manager),
-            patch.object(
-                chat_service,
-                "compact_semantic_recall_context",
-                new=compact,
-            ),
             patch.object(
                 chat_service.message_mapper,
                 "schema_to_human_message",
@@ -157,7 +151,6 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(planner.input_sizes, [1, 0, 0])
         self.assertEqual(len(responses), 3)
-        self.assertEqual(compact.await_count, 2)
 
 
 if __name__ == "__main__":

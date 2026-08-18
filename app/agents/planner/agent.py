@@ -1,10 +1,11 @@
 """Planner Agent 构造器"""
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Any, Literal, cast
 
-from deepagents import create_deep_agent
+from deepagents import FilesystemMiddleware, create_deep_agent
 from deepagents.backends.protocol import BackendProtocol
+from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langchain_quickjs import CodeInterpreterMiddleware
@@ -13,11 +14,8 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.store.base import BaseStore
 
 from .prompt import build_planner_system_prompt
-from .quickjs_worker import install_responsive_quickjs_worker
 
 type InterpreterMode = Literal["thread", "turn", "call"]
-
-install_responsive_quickjs_worker()
 
 
 def create_planner_agent(
@@ -43,6 +41,10 @@ def create_planner_agent(
         memory_limit=interpreter_memory_limit_bytes,
         max_ptc_calls=max_delegations_per_run,
     )
+    filesystem = FilesystemMiddleware(
+        backend=backend,
+        tools=["ls", "read_file", "glob", "grep"],
+    )
     return create_deep_agent(
         model=model,
         tools=[delegate_agent],
@@ -51,7 +53,10 @@ def create_planner_agent(
             max_repair_rounds=max_repair_rounds,
             max_repair_depth=max_repair_depth,
         ),
-        middleware=[interpreter],
+        middleware=cast(
+            "Sequence[AgentMiddleware[Any, Any, Any]]",
+            [filesystem, interpreter],
+        ),
         subagents=[],
         backend=backend,
         checkpointer=checkpointer,

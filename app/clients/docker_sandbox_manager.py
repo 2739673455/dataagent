@@ -52,7 +52,6 @@ _USER_LABEL = "dataagent.sandbox.user_id"
 _QUOTA_MODE_LABEL = "dataagent.sandbox.quota_mode"
 _QUOTA_BYTES_LABEL = "dataagent.sandbox.quota_bytes"
 _SANDBOX_WORKSPACE_ROOT = "/workspace/conversations"
-_DEFAULT_EXECUTE_TIMEOUT = 120
 _MIN_CONVERSATION_UID = 100_000
 _MAX_CONVERSATION_UID = 2_147_483_646
 _CONTAINER_SPEC_LABEL = "dataagent.sandbox.spec"
@@ -61,7 +60,7 @@ _PATH_COMPONENT_MAX_BYTES = 255
 _SANDBOX_STAGING_ROOT = "/workspace/.dataagent-staging"
 _SANDBOX_UID_REGISTRY = "/workspace/.dataagent-uids.json"
 _SANDBOX_ACTIVITY_FILE = "/workspace/.dataagent-activity.json"
-_UID_REGISTRY_VERSION = 1
+_UID_REGISTRY_VERSION = 2
 _ACTIVITY_FILE_VERSION = 1
 _ARCHIVE_SPOOL_BYTES = 8 * 1024 * 1024
 _CAPACITY_WAIT_POLL_SECONDS = 0.25
@@ -79,24 +78,32 @@ payload = json.loads(base64.b64decode(sys.argv[1]).decode())
 root = payload["root"]
 source = payload["source"]
 owner_uid = int(payload["owner_uid"])
+owner_gid = int(payload["owner_gid"])
+file_mode = int(payload["file_mode"])
+directory_mode = int(payload["directory_mode"])
 parts = payload["relative_target"].split("/")
 source_fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
 try:
     if not stat.S_ISREG(os.fstat(source_fd).st_mode):
         raise OSError("invalid staged file")
-    os.fchown(source_fd, owner_uid, owner_uid)
-    os.fchmod(source_fd, 0o600)
+    os.fchown(source_fd, owner_uid, owner_gid)
+    os.fchmod(source_fd, file_mode)
 finally:
     os.close(source_fd)
 root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 directory_fd = os.dup(root_fd)
 try:
-    if not stat.S_ISDIR(os.fstat(root_fd).st_mode) or os.fstat(root_fd).st_uid != owner_uid:
+    root_stat = os.fstat(root_fd)
+    if (
+        not stat.S_ISDIR(root_stat.st_mode)
+        or root_stat.st_uid != owner_uid
+        or root_stat.st_gid != owner_gid
+    ):
         raise PermissionError("invalid workspace owner")
     for component in parts[:-1]:
         created = False
         try:
-            os.mkdir(component, mode=0o700, dir_fd=directory_fd)
+            os.mkdir(component, mode=directory_mode, dir_fd=directory_fd)
             created = True
         except FileExistsError:
             pass
@@ -106,8 +113,10 @@ try:
             dir_fd=directory_fd,
         )
         if created:
-            os.fchown(next_fd, owner_uid, owner_uid)
-        if os.fstat(next_fd).st_uid != owner_uid:
+            os.fchown(next_fd, owner_uid, owner_gid)
+            os.fchmod(next_fd, directory_mode)
+        next_stat = os.fstat(next_fd)
+        if next_stat.st_uid != owner_uid or next_stat.st_gid != owner_gid:
             raise PermissionError("invalid target directory owner")
         os.close(directory_fd)
         directory_fd = next_fd
@@ -238,6 +247,53 @@ class SandboxCapacityClosedError(SandboxCapacityError):
 
 class SandboxCapacityCancelledError(SandboxCapacityError):
     """沙盒容量等待已取消"""
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxSessionScope:
+    """定位一个专业 Agent Session 工作区"""
+
+    analysis_id: str
+    agent_type: str
+    session_id: str
+
+    def __post_init__(self) -> None:
+        for field_name, value in (
+            ("analysis_id", self.analysis_id),
+            ("agent_type", self.agent_type),
+            ("session_id", self.session_id),
+        ):
+            if (
+                not value
+                or len(value.encode("utf-8")) > 64
+                or not value[0].isalnum()
+                or any(
+                    not character.islower()
+                    and not character.isdigit()
+                    and character not in {"-", "_"}
+                    for character in value
+                )
+            ):
+                raise ValueError(f"invalid sandbox session {field_name}")
+
+    @property
+    def relative_workspace(self) -> str:
+        """生成 conversation 根目录下的 Session 路径"""
+        return (
+            f"analyses/{self.analysis_id}/sessions/{self.agent_type}/{self.session_id}"
+        )
+
+    def registry_key(self, conversation_id: UUID) -> str:
+        """生成 UID 注册表中的稳定 Session 键"""
+        return f"{conversation_id}/{self.relative_workspace}"
+
+
+@dataclass(slots=True)
+class _SandboxUidRegistry:
+    """持久化 conversation 和 Agent Session 的 Linux UID"""
+
+    conversations: dict[str, int]
+    sessions: dict[str, int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -524,13 +580,15 @@ class _LifecycleGuard:
                 self._condition.notify_all()
 
     @contextmanager
-    def maintenance(self) -> Iterator[None]:
+    def maintenance(self, *, allow_deleted: bool = False) -> Iterator[None]:
         """独占资源并等待现有操作完成"""
         if getattr(self._local, "operation_depth", 0):
             raise RuntimeError("maintenance cannot start inside an operation")
         with self._condition:
             while self._maintenance:
                 self._condition.wait()
+            if self._deleted and not allow_deleted:
+                raise SandboxDeletedError("sandbox resource has been deleted")
             self._maintenance = True
             while self._active_operations:
                 self._condition.wait()
@@ -622,12 +680,35 @@ class DockerSandboxBackend(BaseSandbox):
         touch: Callable[[], None],
         get_running_container: Callable[[threading.Event | None], Container],
         notify_capacity_waiters: Callable[[], None],
+        *,
+        session_scope: SandboxSessionScope | None = None,
+        execution_uid: int | None = None,
     ) -> None:
         """初始化会话级 Docker 沙盒后端"""
         self._user_id = user_id
         self._conversation_id = conversation_id
-        self._workspace_dir = f"{_SANDBOX_WORKSPACE_ROOT}/{conversation_id}"
+        self._conversation_dir = f"{_SANDBOX_WORKSPACE_ROOT}/{conversation_id}"
+        self._session_scope = session_scope
+        self._workspace_dir = (
+            posixpath.join(
+                self._conversation_dir,
+                session_scope.relative_workspace,
+            )
+            if session_scope is not None
+            else self._conversation_dir
+        )
         self._conversation_uid = conversation_uid
+        self._execution_uid = execution_uid or conversation_uid
+        self._execution_gid = conversation_uid
+        self._file_mode = 0o640 if session_scope is not None else 0o600
+        self._directory_mode = 0o750 if session_scope is not None else 0o700
+        self._umask = 0o027 if session_scope is not None else 0o077
+        self._execute_timeout_seconds = sandbox_config.execute_timeout_seconds
+        self._staging_dir = posixpath.join(
+            _SANDBOX_STAGING_ROOT,
+            str(conversation_id),
+            str(self._execution_uid),
+        )
         self._max_output_bytes = sandbox_config.max_output_bytes
         self._max_capture_bytes = sandbox_config.max_capture_bytes
         self._max_file_bytes = sandbox_config.max_file_bytes
@@ -651,7 +732,12 @@ class DockerSandboxBackend(BaseSandbox):
     @property
     def id(self) -> str:
         """获取沙盒后端唯一标识"""
-        return f"docker:{self._user_id}:{self._conversation_id}"
+        scope = (
+            f":{self._session_scope.relative_workspace}"
+            if self._session_scope is not None
+            else ""
+        )
+        return f"docker:{self._user_id}:{self._conversation_id}{scope}"
 
     @property
     def workspace_dir(self) -> str:
@@ -665,18 +751,33 @@ class DockerSandboxBackend(BaseSandbox):
 
         if path == self._workspace_dir or path.startswith(f"{self._workspace_dir}/"):
             return path
+        if path == self._conversation_dir or path.startswith(
+            f"{self._conversation_dir}/"
+        ):
+            return path
 
         parts = PurePosixPath(path).parts
         if any(part == ".." for part in parts):
             raise SandboxPathError(path)
-        relative_parts = parts[1:] if PurePosixPath(path).is_absolute() else parts
-        return posixpath.join(self._workspace_dir, *relative_parts)
+        if PurePosixPath(path).is_absolute():
+            return posixpath.join(self._conversation_dir, *parts[1:])
+        return posixpath.join(self._workspace_dir, *parts)
+
+    def _resolve_mutation_path(self, path: str) -> str:
+        """只允许修改当前 Agent Session 工作区"""
+        resolved_path = self._resolve_path(path)
+        if self._session_scope is not None and not (
+            resolved_path == self._workspace_dir
+            or resolved_path.startswith(f"{self._workspace_dir}/")
+        ):
+            raise SandboxPathError(path)
+        return resolved_path
 
     def _to_virtual_path(self, path: str) -> str:
         """将容器路径还原为 Agent 可见的虚拟路径"""
-        if path == self._workspace_dir:
+        if path == self._conversation_dir:
             return "/"
-        prefix = f"{self._workspace_dir}/"
+        prefix = f"{self._conversation_dir}/"
         if path.startswith(prefix):
             return f"/{path[len(prefix) :]}"
         if not path.startswith("/"):
@@ -688,7 +789,7 @@ class DockerSandboxBackend(BaseSandbox):
         """从错误信息中隐藏容器工作目录"""
         if message is None:
             return None
-        return message.replace(self._workspace_dir, "")
+        return message.replace(self._conversation_dir, "")
 
     def _map_file_info(self, info: FileInfo) -> FileInfo:
         """转换文件信息中的路径"""
@@ -747,10 +848,12 @@ class DockerSandboxBackend(BaseSandbox):
         timeout: int | None = None,
     ) -> ExecuteResponse:
         """流式执行命令并限制宿主机保留的输出"""
-        effective_timeout = _DEFAULT_EXECUTE_TIMEOUT if timeout is None else timeout
+        effective_timeout = self._execute_timeout_seconds
+        if timeout is not None and timeout > 0:
+            effective_timeout = min(timeout, self._execute_timeout_seconds)
         file_limit_blocks = max(1, self._max_file_bytes // 512)
         command_shell = (
-            f"umask 077; ulimit -f {file_limit_blocks}; "
+            f"umask {self._umask:03o}; ulimit -f {file_limit_blocks}; "
             f"exec /bin/sh -lc {shlex.quote(command)}"
         )
         shell_command = ["/bin/sh", "-lc", command_shell]
@@ -771,7 +874,7 @@ class DockerSandboxBackend(BaseSandbox):
             shell_command,
             stdout=True,
             stderr=True,
-            user=f"{self._conversation_uid}:{self._conversation_uid}",
+            user=f"{self._execution_uid}:{self._execution_gid}",
             environment={
                 "HOME": f"{self._workspace_dir}/.home",
                 "UV_CACHE_DIR": f"{self._workspace_dir}/.cache/uv",
@@ -779,6 +882,7 @@ class DockerSandboxBackend(BaseSandbox):
                 "TMPDIR": f"{self._workspace_dir}/.tmp",
                 "TMP": f"{self._workspace_dir}/.tmp",
                 "TEMP": f"{self._workspace_dir}/.tmp",
+                "DATAAGENT_CONVERSATION_ROOT": self._conversation_dir,
             },
             workdir=self._workspace_dir,
         )
@@ -807,19 +911,39 @@ class DockerSandboxBackend(BaseSandbox):
                 stream_response.close()
 
         inspected = api_client.exec_inspect(exec_id)
+        output = output_tail.decode("utf-8", errors="replace")
         return ExecuteResponse(
-            output=output_tail.decode("utf-8", errors="replace"),
+            output=self._hide_workspace(output) or "",
             exit_code=inspected.get("ExitCode"),
             truncated=output_size > self._max_output_bytes,
         )
 
     def _workspace_size_unlocked(self) -> int:
         """读取当前会话目录占用的字节数"""
-        result = self._execute_unlocked("du -sb . | cut -f1")
+        result = self._container.exec_run(
+            [
+                "timeout",
+                "--signal=KILL",
+                str(self._execute_timeout_seconds),
+                "du",
+                "-sb",
+                self._conversation_dir,
+            ],
+            user="0",
+            privileged=True,
+            workdir="/workspace",
+        )
+        raw_output = result.output or b""
+        output = (
+            raw_output.decode("utf-8", errors="replace")
+            if isinstance(raw_output, bytes)
+            else str(raw_output)
+        )
         if result.exit_code != 0:
-            raise OSError(result.output.strip() or "failed to inspect workspace size")
+            detail = self._hide_workspace(output.strip())
+            raise OSError(detail or "failed to inspect workspace size")
         try:
-            return int(result.output.strip())
+            return int(output.split(maxsplit=1)[0])
         except ValueError as exc:
             raise OSError("invalid workspace size response") from exc
 
@@ -881,7 +1005,7 @@ class DockerSandboxBackend(BaseSandbox):
         )
         return super().execute_with_offload(
             command,
-            self._resolve_path(capture_path),
+            self._resolve_mutation_path(capture_path),
             max_inline_bytes=max_inline_bytes,
             max_capture_bytes=capture_limit,
             timeout=timeout,
@@ -931,7 +1055,7 @@ class DockerSandboxBackend(BaseSandbox):
     def write(self, file_path: str, content: str) -> WriteResult:
         """写入当前会话文件"""
         try:
-            resolved_path = self._resolve_path(file_path)
+            resolved_path = self._resolve_mutation_path(file_path)
         except SandboxPathError:
             return WriteResult(error=INVALID_PATH)
         with self._operation():
@@ -954,7 +1078,7 @@ class DockerSandboxBackend(BaseSandbox):
     ) -> EditResult:
         """编辑当前会话文件"""
         try:
-            resolved_path = self._resolve_path(file_path)
+            resolved_path = self._resolve_mutation_path(file_path)
         except SandboxPathError:
             return EditResult(error=INVALID_PATH)
         with self._operation():
@@ -980,8 +1104,8 @@ class DockerSandboxBackend(BaseSandbox):
     ) -> EditResult:
         """通过会话目录内的临时文件安全编辑文本"""
         token = secrets.token_hex(10)
-        old_path = self._resolve_path(f"/.deepagents_tmp/{token}.old")
-        new_path = self._resolve_path(f"/.deepagents_tmp/{token}.new")
+        old_path = self._resolve_mutation_path(f".deepagents_tmp/{token}.old")
+        new_path = self._resolve_mutation_path(f".deepagents_tmp/{token}.new")
         responses = self.upload_files(
             [
                 (old_path, old_string.encode()),
@@ -1042,7 +1166,7 @@ class DockerSandboxBackend(BaseSandbox):
     def delete(self, file_path: str) -> DeleteResult:
         """删除当前会话文件或目录"""
         try:
-            resolved_path = self._resolve_path(file_path)
+            resolved_path = self._resolve_mutation_path(file_path)
         except SandboxPathError:
             return DeleteResult(error=INVALID_PATH)
         with self._operation():
@@ -1128,16 +1252,12 @@ class DockerSandboxBackend(BaseSandbox):
         return await self._run_async(lambda: self.glob(pattern, path))
 
     def _put_archive(self, path: str, content: BinaryIO, size: int) -> None:
-        """先写入受保护的暂存目录，再由会话 UID 安全提交文件"""
+        """先写入受保护的暂存目录，再提交到当前可写根"""
         relative_target = posixpath.relpath(path, self._workspace_dir)
         if relative_target == "." or relative_target.startswith("../"):
             raise SandboxPathError(path)
-        staging_dir = posixpath.join(
-            _SANDBOX_STAGING_ROOT,
-            PurePosixPath(self._workspace_dir).name,
-        )
         staging_name = f"upload-{secrets.token_hex(20)}"
-        staging_path = posixpath.join(staging_dir, staging_name)
+        staging_path = posixpath.join(self._staging_dir, staging_name)
         try:
             with io.BytesIO() as archive_buffer:
                 with tarfile.open(fileobj=archive_buffer, mode="w") as archive:
@@ -1148,7 +1268,7 @@ class DockerSandboxBackend(BaseSandbox):
                     info.gid = 0
                     archive.addfile(info, content)
                 archive_buffer.seek(0)
-                if not self._container.put_archive(staging_dir, archive_buffer):
+                if not self._container.put_archive(self._staging_dir, archive_buffer):
                     raise OSError(f"Failed to stage uploaded file: {path}")
 
             payload = base64.b64encode(
@@ -1156,7 +1276,10 @@ class DockerSandboxBackend(BaseSandbox):
                     {
                         "root": self._workspace_dir,
                         "source": staging_path,
-                        "owner_uid": self._conversation_uid,
+                        "owner_uid": self._execution_uid,
+                        "owner_gid": self._execution_gid,
+                        "file_mode": self._file_mode,
+                        "directory_mode": self._directory_mode,
                         "relative_target": relative_target,
                     }
                 ).encode()
@@ -1194,7 +1317,7 @@ class DockerSandboxBackend(BaseSandbox):
             [
                 "timeout",
                 "--signal=KILL",
-                str(_DEFAULT_EXECUTE_TIMEOUT),
+                str(self._execute_timeout_seconds),
                 "head",
                 "-c",
                 str(self._max_file_bytes + 1),
@@ -1203,7 +1326,7 @@ class DockerSandboxBackend(BaseSandbox):
             ],
             stdout=True,
             stderr=True,
-            user=f"{self._conversation_uid}:{self._conversation_uid}",
+            user=f"{self._execution_uid}:{self._execution_gid}",
             environment={"HOME": f"{self._workspace_dir}/.home"},
             workdir=self._workspace_dir,
         )
@@ -1247,7 +1370,7 @@ class DockerSandboxBackend(BaseSandbox):
     def upload_fileobj(self, path: str, content: BinaryIO) -> FileUploadResponse:
         """上传文件对象到当前会话"""
         try:
-            resolved_path = self._resolve_path(path)
+            resolved_path = self._resolve_mutation_path(path)
             with self._operation(), self._mutation_lock:
                 content.seek(0, io.SEEK_END)
                 size = content.tell()
@@ -1920,6 +2043,7 @@ class DockerSandboxManager:
                 (
                     PurePosixPath(_SANDBOX_ACTIVITY_FILE).name,
                     0,
+                    0,
                     0o600,
                     io.BytesIO(content),
                     len(content),
@@ -1933,25 +2057,25 @@ class DockerSandboxManager:
         self,
         container: Container,
         base_path: str,
-        directories: list[tuple[str, int, int]],
-        files: list[tuple[str, int, int, BinaryIO, int]],
+        directories: list[tuple[str, int, int, int]],
+        files: list[tuple[str, int, int, int, BinaryIO, int]],
     ) -> None:
         """构造受控 tar 并写入运行或停止容器"""
         with tempfile.SpooledTemporaryFile(max_size=_ARCHIVE_SPOOL_BYTES) as buffer:
             with tarfile.open(fileobj=buffer, mode="w") as archive:
-                for name, owner_uid, mode in directories:
+                for name, owner_uid, owner_gid, mode in directories:
                     info = tarfile.TarInfo(name=name.rstrip("/") + "/")
                     info.type = tarfile.DIRTYPE
                     info.mode = mode
                     info.uid = owner_uid
-                    info.gid = owner_uid
+                    info.gid = owner_gid
                     archive.addfile(info)
-                for name, owner_uid, mode, content, size in files:
+                for name, owner_uid, owner_gid, mode, content, size in files:
                     info = tarfile.TarInfo(name=name)
                     info.size = size
                     info.mode = mode
                     info.uid = owner_uid
-                    info.gid = owner_uid
+                    info.gid = owner_gid
                     archive.addfile(info, content)
             buffer.seek(0)
             if not container.put_archive(base_path, buffer):
@@ -1960,11 +2084,15 @@ class DockerSandboxManager:
     def _write_uid_registry_sync(
         self,
         container: Container,
-        mapping: dict[str, int],
+        registry: _SandboxUidRegistry,
     ) -> None:
-        """将会话 UID 注册表持久化到用户数据卷"""
+        """将 UID 注册表持久化到用户数据卷"""
         content = json.dumps(
-            {"version": _UID_REGISTRY_VERSION, "conversations": mapping},
+            {
+                "version": _UID_REGISTRY_VERSION,
+                "conversations": registry.conversations,
+                "sessions": registry.sessions,
+            },
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -1976,6 +2104,7 @@ class DockerSandboxManager:
                 (
                     PurePosixPath(_SANDBOX_UID_REGISTRY).name,
                     0,
+                    0,
                     0o600,
                     io.BytesIO(content),
                     len(content),
@@ -1983,7 +2112,10 @@ class DockerSandboxManager:
             ],
         )
 
-    def _scan_workspace_uids_sync(self, container: Container) -> dict[str, int]:
+    def _scan_workspace_uids_sync(
+        self,
+        container: Container,
+    ) -> _SandboxUidRegistry:
         """首次迁移时从目录属主构建完整会话 UID 注册表"""
         mapping: dict[str, int] = {}
         try:
@@ -2004,10 +2136,35 @@ class DockerSandboxManager:
                         mapping[conversation_id] = member.uid
         except NotFound:
             pass
-        return mapping
+        return _SandboxUidRegistry(conversations=mapping, sessions={})
 
-    def _load_uid_registry_sync(self, container: Container) -> dict[str, int]:
+    @staticmethod
+    def _validate_session_registry_key(key: str) -> str:
+        """校验并规范化 UID 注册表中的 Session 键"""
+        parts = PurePosixPath(key).parts
+        if len(parts) != 6 or parts[1] != "analyses" or parts[3] != "sessions":
+            raise ValueError("Invalid sandbox Session UID key")
+        conversation_id = str(UUID(parts[0]))
+        scope = SandboxSessionScope(parts[2], parts[4], parts[5])
+        return scope.registry_key(UUID(conversation_id))
+
+    @staticmethod
+    def _validate_uid_registry(registry: _SandboxUidRegistry) -> None:
+        """校验 conversation 和 Session UID 全局唯一"""
+        values = [*registry.conversations.values(), *registry.sessions.values()]
+        if len(values) != len(set(values)):
+            raise RuntimeError("Sandbox UID registry contains duplicate UIDs")
+        if any(
+            uid < _MIN_CONVERSATION_UID or uid > _MAX_CONVERSATION_UID for uid in values
+        ):
+            raise RuntimeError("Sandbox UID registry contains an invalid UID")
+
+    def _load_uid_registry_sync(
+        self,
+        container: Container,
+    ) -> _SandboxUidRegistry:
         """读取 UID 注册表，不存在时从已有工作区迁移"""
+        migrated = False
         try:
             content, member = self._read_archive_file_sync(
                 container,
@@ -2017,23 +2174,34 @@ class DockerSandboxManager:
             if member.uid != 0:
                 raise RuntimeError("Sandbox UID registry has an invalid owner")
             payload = json.loads(content)
-            if payload.get("version") != _UID_REGISTRY_VERSION:
+            version = payload.get("version")
+            if version not in {1, _UID_REGISTRY_VERSION}:
                 raise RuntimeError("Unsupported sandbox UID registry version")
-            raw_mapping = payload.get("conversations")
-            if not isinstance(raw_mapping, dict):
+            raw_conversations = payload.get("conversations")
+            raw_sessions = payload.get("sessions", {}) if version == 2 else {}
+            if not isinstance(raw_conversations, dict) or not isinstance(
+                raw_sessions,
+                dict,
+            ):
                 raise TypeError("Invalid sandbox UID registry")
-            mapping = {str(UUID(key)): int(value) for key, value in raw_mapping.items()}
+            registry = _SandboxUidRegistry(
+                conversations={
+                    str(UUID(key)): int(value)
+                    for key, value in raw_conversations.items()
+                },
+                sessions={
+                    self._validate_session_registry_key(key): int(value)
+                    for key, value in raw_sessions.items()
+                },
+            )
+            migrated = version == 1
         except (NotFound, FileNotFoundError):
-            mapping = self._scan_workspace_uids_sync(container)
-            self._write_uid_registry_sync(container, mapping)
-        if len(mapping.values()) != len(set(mapping.values())):
-            raise RuntimeError("Sandbox UID registry contains duplicate UIDs")
-        if any(
-            uid < _MIN_CONVERSATION_UID or uid > _MAX_CONVERSATION_UID
-            for uid in mapping.values()
-        ):
-            raise RuntimeError("Sandbox UID registry contains an invalid UID")
-        return mapping
+            registry = self._scan_workspace_uids_sync(container)
+            migrated = True
+        self._validate_uid_registry(registry)
+        if migrated:
+            self._write_uid_registry_sync(container, registry)
+        return registry
 
     def _allocate_conversation_uid(
         self,
@@ -2053,6 +2221,23 @@ class DockerSandboxManager:
                 return candidate
         raise RuntimeError("conversation uid range exhausted")
 
+    def _allocate_session_uid(
+        self,
+        registry_key: str,
+        used_uids: set[int],
+    ) -> int:
+        """为 Agent Session 确定性分配未使用的 Linux UID"""
+        uid_range = _MAX_CONVERSATION_UID - _MIN_CONVERSATION_UID + 1
+        seed = f"session:{registry_key}".encode()
+        for attempt in range(uid_range):
+            digest = hashlib.blake2s(seed + attempt.to_bytes(8, "big")).digest()
+            candidate = (
+                _MIN_CONVERSATION_UID + int.from_bytes(digest[:8], "big") % uid_range
+            )
+            if candidate not in used_uids:
+                return candidate
+        raise RuntimeError("sandbox uid range exhausted")
+
     def _ensure_workspace_archive_sync(
         self,
         container: Container,
@@ -2063,21 +2248,24 @@ class DockerSandboxManager:
             container,
             "/workspace",
             [
-                ("conversations", 0, 0o711),
-                (PurePosixPath(_SANDBOX_STAGING_ROOT).name, 0, 0o700),
+                ("conversations", 0, 0, 0o711),
+                (PurePosixPath(_SANDBOX_STAGING_ROOT).name, 0, 0, 0o700),
             ],
             [],
         )
-        mapping = self._load_uid_registry_sync(container)
+        registry = self._load_uid_registry_sync(container)
         key = str(conversation_id)
-        conversation_uid = mapping.get(key)
+        conversation_uid = registry.conversations.get(key)
         if conversation_uid is None:
             conversation_uid = self._allocate_conversation_uid(
                 conversation_id,
-                set(mapping.values()),
+                {
+                    *registry.conversations.values(),
+                    *registry.sessions.values(),
+                },
             )
-            mapping[key] = conversation_uid
-            self._write_uid_registry_sync(container, mapping)
+            registry.conversations[key] = conversation_uid
+            self._write_uid_registry_sync(container, registry)
 
         target_path = f"{_SANDBOX_WORKSPACE_ROOT}/{conversation_id}"
         existing = self._inspect_archive_path_sync(container, target_path)
@@ -2093,21 +2281,140 @@ class DockerSandboxManager:
             container,
             _SANDBOX_WORKSPACE_ROOT,
             [
-                (conversation_name, conversation_uid, 0o700),
-                (f"{conversation_name}/.home", conversation_uid, 0o700),
-                (f"{conversation_name}/.cache", conversation_uid, 0o700),
-                (f"{conversation_name}/.cache/uv", conversation_uid, 0o700),
-                (f"{conversation_name}/.tmp", conversation_uid, 0o700),
+                (conversation_name, conversation_uid, conversation_uid, 0o750),
+                (
+                    f"{conversation_name}/.home",
+                    conversation_uid,
+                    conversation_uid,
+                    0o700,
+                ),
+                (
+                    f"{conversation_name}/.cache",
+                    conversation_uid,
+                    conversation_uid,
+                    0o700,
+                ),
+                (
+                    f"{conversation_name}/.cache/uv",
+                    conversation_uid,
+                    conversation_uid,
+                    0o700,
+                ),
+                (
+                    f"{conversation_name}/.tmp",
+                    conversation_uid,
+                    conversation_uid,
+                    0o700,
+                ),
             ],
             [],
         )
         self._put_archive_sync(
             container,
             _SANDBOX_STAGING_ROOT,
-            [(conversation_name, 0, 0o700)],
+            [
+                (conversation_name, 0, 0, 0o700),
+                (f"{conversation_name}/{conversation_uid}", 0, 0, 0o700),
+            ],
             [],
         )
         return conversation_uid
+
+    def _ensure_session_workspace_archive_sync(
+        self,
+        container: Container,
+        conversation_id: UUID,
+        scope: SandboxSessionScope,
+    ) -> tuple[int, int]:
+        """创建 Agent Session 目录并返回 conversation/session UID"""
+        conversation_uid = self._ensure_workspace_archive_sync(
+            container,
+            conversation_id,
+        )
+        registry = self._load_uid_registry_sync(container)
+        registry_key = scope.registry_key(conversation_id)
+        session_uid = registry.sessions.get(registry_key)
+        if session_uid is None:
+            session_uid = self._allocate_session_uid(
+                registry_key,
+                {
+                    *registry.conversations.values(),
+                    *registry.sessions.values(),
+                },
+            )
+            registry.sessions[registry_key] = session_uid
+            self._write_uid_registry_sync(container, registry)
+
+        conversation_name = str(conversation_id)
+        session_relative = scope.relative_workspace
+        session_path = posixpath.join(
+            _SANDBOX_WORKSPACE_ROOT,
+            conversation_name,
+            session_relative,
+        )
+        existing = self._inspect_archive_path_sync(container, session_path)
+        if existing is not None and (
+            not existing.isdir()
+            or existing.uid not in {conversation_uid, session_uid}
+            or existing.gid != conversation_uid
+        ):
+            raise RuntimeError("Agent Session workspace owner is invalid")
+
+        analysis_root = f"analyses/{scope.analysis_id}"
+        sessions_root = f"{analysis_root}/sessions"
+        agent_root = f"{sessions_root}/{scope.agent_type}"
+        self._put_archive_sync(
+            container,
+            f"{_SANDBOX_WORKSPACE_ROOT}/{conversation_name}",
+            [
+                ("analyses", conversation_uid, conversation_uid, 0o750),
+                (analysis_root, conversation_uid, conversation_uid, 0o750),
+                (sessions_root, conversation_uid, conversation_uid, 0o750),
+                (agent_root, conversation_uid, conversation_uid, 0o750),
+                (session_relative, session_uid, conversation_uid, 0o750),
+                (
+                    f"{session_relative}/.home",
+                    session_uid,
+                    conversation_uid,
+                    0o700,
+                ),
+                (
+                    f"{session_relative}/.cache",
+                    session_uid,
+                    conversation_uid,
+                    0o700,
+                ),
+                (
+                    f"{session_relative}/.cache/uv",
+                    session_uid,
+                    conversation_uid,
+                    0o700,
+                ),
+                (
+                    f"{session_relative}/.tmp",
+                    session_uid,
+                    conversation_uid,
+                    0o700,
+                ),
+            ],
+            [],
+        )
+        self._put_archive_sync(
+            container,
+            posixpath.join(_SANDBOX_STAGING_ROOT, conversation_name),
+            [(str(session_uid), 0, 0, 0o700)],
+            [],
+        )
+        prepared = self._inspect_archive_path_sync(container, session_path)
+        if (
+            prepared is None
+            or not prepared.isdir()
+            or prepared.uid != session_uid
+            or prepared.gid != conversation_uid
+            or prepared.mode & 0o777 != 0o750
+        ):
+            raise RuntimeError("Agent Session workspace permission setup failed")
+        return conversation_uid, session_uid
 
     async def get_backend(
         self,
@@ -2155,40 +2462,167 @@ class DockerSandboxManager:
         )
         return backend
 
+    async def get_session_backend(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        analysis_id: str,
+        agent_type: str,
+        session_id: str,
+    ) -> DockerSandboxBackend:
+        """获取独立 Linux 身份的专业 Agent Session 后端"""
+        await self.init()
+        scope = SandboxSessionScope(analysis_id, agent_type, session_id)
+        (
+            user_lock,
+            user_guard,
+            start_lock,
+            conversation_guard,
+            mutation_lock,
+        ) = await self._get_resources(user_id, conversation_id)
+        if conversation_guard is None or mutation_lock is None:
+            raise RuntimeError("Conversation sandbox guard is unavailable")
+
+        def prepare() -> tuple[int, int]:
+            with user_guard.maintenance(), conversation_guard.maintenance():
+                container = self._get_or_create_storage_container_sync(user_id)
+                return self._ensure_session_workspace_archive_sync(
+                    container,
+                    conversation_id,
+                    scope,
+                )
+
+        async with user_lock:
+            conversation_uid, session_uid = await asyncio.to_thread(prepare)
+        self._touch_user(user_id)
+        return DockerSandboxBackend(
+            user_id,
+            conversation_id,
+            conversation_uid,
+            self._config,
+            user_guard,
+            conversation_guard,
+            mutation_lock,
+            lambda: self._touch_user(user_id),
+            lambda cancel_event: self._get_running_container_sync(
+                user_id,
+                start_lock,
+                cancel_event,
+            ),
+            self._capacity.notify_waiters,
+            session_scope=scope,
+            execution_uid=session_uid,
+        )
+
+    @staticmethod
+    def _registered_session_uid_for_path(
+        registry: _SandboxUidRegistry,
+        conversation_id: UUID,
+        relative_path: str,
+    ) -> int | None:
+        """返回与产物路径精确绑定的 Session UID"""
+        parts = PurePosixPath(relative_path).parts
+        if len(parts) < 3 or parts[0] != "analyses" or parts[2] != "sessions":
+            return None
+        if len(parts) < 6:
+            raise SandboxPathError(relative_path)
+        try:
+            scope = SandboxSessionScope(parts[1], parts[3], parts[4])
+        except ValueError as exc:
+            raise SandboxPathError(relative_path) from exc
+        session_uid = registry.sessions.get(scope.registry_key(conversation_id))
+        if session_uid is None:
+            raise SandboxPathError(relative_path)
+        return session_uid
+
+    @classmethod
+    def _allowed_file_uids_for_path(
+        cls,
+        registry: _SandboxUidRegistry,
+        conversation_id: UUID,
+        conversation_uid: int,
+        relative_path: str,
+    ) -> set[int]:
+        """返回给定会话文件路径允许使用的属主 UID"""
+        allowed = {conversation_uid}
+        session_uid = cls._registered_session_uid_for_path(
+            registry,
+            conversation_id,
+            relative_path,
+        )
+        if session_uid is not None:
+            allowed.add(session_uid)
+        return allowed
+
     def _validate_attachment_target_sync(
         self,
         container: Container,
         conversation_id: UUID,
         conversation_uid: int,
         relative_path: str,
-    ) -> tuple[list[tuple[str, int, int]], int]:
+    ) -> tuple[list[tuple[str, int, int, int]], int]:
         """校验附件路径中的每个组件并返回待创建目录和被替换大小"""
         workspace = f"{_SANDBOX_WORKSPACE_ROOT}/{conversation_id}"
+        registry = self._load_uid_registry_sync(container)
+        session_uid = self._registered_session_uid_for_path(
+            registry,
+            conversation_id,
+            relative_path,
+        )
         root_info = self._inspect_archive_path_sync(container, workspace)
         if (
             root_info is None
             or not root_info.isdir()
             or root_info.uid != conversation_uid
+            or root_info.gid != conversation_uid
         ):
             raise OSError("Invalid conversation workspace")
 
         parts = PurePosixPath(relative_path).parts
-        directories: list[tuple[str, int, int]] = []
+        directories: list[tuple[str, int, int, int]] = []
         current_path = workspace
         for index, component in enumerate(parts[:-1], start=1):
             current_path = posixpath.join(current_path, component)
             info = self._inspect_archive_path_sync(container, current_path)
+            directory_uid = (
+                session_uid
+                if session_uid is not None and index >= 5
+                else conversation_uid
+            )
             if info is None:
-                directories.append(("/".join(parts[:index]), conversation_uid, 0o700))
+                directories.append(
+                    (
+                        "/".join(parts[:index]),
+                        directory_uid,
+                        conversation_uid,
+                        0o750,
+                    )
+                )
                 continue
-            if not info.isdir() or info.uid != conversation_uid:
+            allowed_uids = (
+                {conversation_uid, session_uid}
+                if session_uid is not None and index >= 5
+                else {conversation_uid}
+            )
+            if (
+                not info.isdir()
+                or info.uid not in allowed_uids
+                or info.gid != conversation_uid
+            ):
                 raise SandboxPathError(relative_path)
 
         target_path = posixpath.join(workspace, relative_path)
         target_info = self._inspect_archive_path_sync(container, target_path)
         if target_info is None:
             return directories, 0
-        if not target_info.isreg() or target_info.uid != conversation_uid:
+        allowed_target_uids = {conversation_uid}
+        if session_uid is not None:
+            allowed_target_uids.add(session_uid)
+        if (
+            not target_info.isreg()
+            or target_info.uid not in allowed_target_uids
+            or target_info.gid != conversation_uid
+        ):
             raise SandboxPathError(relative_path)
         return directories, target_info.size
 
@@ -2200,11 +2634,21 @@ class DockerSandboxManager:
     ) -> int:
         """在停止状态下流式统计会话工作区普通文件大小"""
         workspace = f"{_SANDBOX_WORKSPACE_ROOT}/{conversation_id}"
+        registry = self._load_uid_registry_sync(container)
+        session_prefix = f"{conversation_id}/"
+        allowed_uids = {
+            conversation_uid,
+            *(
+                uid
+                for key, uid in registry.sessions.items()
+                if key.startswith(session_prefix)
+            ),
+        }
         total = 0
         with self._open_archive_sync(container, workspace) as archive:
             for member in archive:
                 if member.isreg():
-                    if member.uid != conversation_uid:
+                    if member.uid not in allowed_uids or member.gid != conversation_uid:
                         raise OSError("Conversation workspace contains invalid owner")
                     total += member.size
                     if total > self._config.max_workspace_bytes:
@@ -2265,7 +2709,8 @@ class DockerSandboxManager:
                     (
                         normalized_path,
                         conversation_uid,
-                        0o600,
+                        conversation_uid,
+                        0o640,
                         content,
                         size,
                     )
@@ -2310,7 +2755,14 @@ class DockerSandboxManager:
                 posixpath.join(workspace, normalized_path),
                 self._config.max_file_bytes,
             )
-            if member.uid != conversation_uid:
+            registry = self._load_uid_registry_sync(container)
+            allowed_uids = self._allowed_file_uids_for_path(
+                registry,
+                conversation_id,
+                conversation_uid,
+                normalized_path,
+            )
+            if member.uid not in allowed_uids or member.gid != conversation_uid:
                 raise FileNotFoundError(normalized_path)
             return content
 
@@ -2462,10 +2914,21 @@ class DockerSandboxManager:
                         normalized_path,
                     ),
                 )
+                registry = self._load_uid_registry_sync(container)
+                try:
+                    allowed_uids = self._allowed_file_uids_for_path(
+                        registry,
+                        conversation_id,
+                        conversation_uid,
+                        normalized_path,
+                    )
+                except SandboxPathError:
+                    return False
                 return bool(
                     target is not None
                     and target.isreg()
-                    and target.uid == conversation_uid
+                    and target.uid in allowed_uids
+                    and target.gid == conversation_uid
                 )
 
         async with user_lock:
@@ -2493,7 +2956,7 @@ class DockerSandboxManager:
         def delete() -> None:
             with (
                 user_guard.maintenance(),
-                conversation_guard.maintenance(),
+                conversation_guard.maintenance(allow_deleted=True),
                 mutation_lock,
             ):
                 container = self._get_running_container_sync(user_id, start_lock)
@@ -2521,9 +2984,15 @@ class DockerSandboxManager:
                         else str(raw_output)
                     ).strip()
                     raise OSError(detail or "failed to delete conversation sandbox")
-                mapping = self._load_uid_registry_sync(container)
-                mapping.pop(str(conversation_id), None)
-                self._write_uid_registry_sync(container, mapping)
+                registry = self._load_uid_registry_sync(container)
+                registry.conversations.pop(str(conversation_id), None)
+                session_prefix = f"{conversation_id}/"
+                registry.sessions = {
+                    key: value
+                    for key, value in registry.sessions.items()
+                    if not key.startswith(session_prefix)
+                }
+                self._write_uid_registry_sync(container, registry)
 
         async with user_lock:
             conversation_guard.mark_deleted()
@@ -2536,7 +3005,7 @@ class DockerSandboxManager:
         user_lock, user_guard, _, _, _ = await self._get_resources(user_id)
 
         def delete() -> None:
-            with user_guard.maintenance():
+            with user_guard.maintenance(allow_deleted=True):
                 client = self._get_client()
                 try:
                     client.containers.get(self._container_name(user_id)).remove(

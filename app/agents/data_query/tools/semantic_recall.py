@@ -1,12 +1,18 @@
 """语义资源召回与记录管理工具"""
 
 from typing import Annotated, Any, Literal
-from uuid import UUID
 
 from langchain.tools import ToolRuntime, tool
 from loguru import logger
 from pydantic import ValidationError
 
+from app.agents.data_query.recall_runtime import (
+    create_authorized_semantic_recall_service,
+    resolve_semantic_recall_context,
+)
+from app.agents.data_query.semantic_recall_protocol import (
+    semantic_recall_reference,
+)
 from app.clients.embedding_client_manager import embedding_client_manager
 from app.clients.es_client_manager import es_client_manager
 from app.clients.postgres_client_manager import meta_postgres_client_manager
@@ -16,7 +22,6 @@ from app.repositories.auth_pg_repo import AuthPGRepo
 from app.repositories.column_es_repo import ColumnESRepo
 from app.repositories.meta_pg_repo import MetaPGRepo
 from app.repositories.metric_es_repo import MetricESRepo
-from app.repositories.semantic_recall_pg_repo import SemanticRecallPGRepo
 from app.repositories.value_es_repo import ValueESRepo
 from app.services.authorization_service import AuthorizationService
 from app.services.meta_search_service import MetaSearchService
@@ -25,47 +30,6 @@ from app.services.semantic_recall_service import (
     SemanticRecallService,
     SemanticRecallsNotFoundError,
 )
-
-
-def get_semantic_recall_context(
-    runtime: ToolRuntime,
-) -> tuple[int, UUID, SemanticRecallPGRepo]:
-    """从工具运行时解析会话身份和召回存储"""
-    configurable = runtime.config.get("configurable", {})
-    user_id = configurable.get("user_id")
-    raw_conversation_id = configurable.get("conversation_id")
-    if not isinstance(user_id, int) or not isinstance(raw_conversation_id, str):
-        raise TypeError("semantic recall context not found in config")
-    if runtime.store is None:
-        raise ValueError("semantic recall store is unavailable")
-    return (
-        user_id,
-        UUID(raw_conversation_id),
-        SemanticRecallPGRepo(runtime.store),
-    )
-
-
-async def _get_authorized_semantic_recall_context(
-    runtime: ToolRuntime,
-) -> tuple[int, UUID, SemanticRecallService]:
-    """使用用户最新资产策略创建召回管理服务"""
-    user_id, conversation_id, repo = get_semantic_recall_context(runtime)
-    async with meta_postgres_client_manager.session() as meta_session:
-        policy = await AuthorizationService(AuthPGRepo(meta_session)).get_asset_policy(
-            user_id
-        )
-    return (
-        user_id,
-        conversation_id,
-        SemanticRecallService(
-            repo,
-            MetadataAuthorizationFilter(
-                policy,
-                cfg.query.data_source,
-                cfg.doris.database,
-            ),
-        ),
-    )
 
 
 @tool
@@ -102,7 +66,10 @@ async def search_semantic_resources(
         }
 
     try:
-        user_id, conversation_id, recall_repo = get_semantic_recall_context(runtime)
+        user_id, conversation_id, recall_repo = resolve_semantic_recall_context(
+            runtime.config,
+            runtime.store,
+        )
         async with meta_postgres_client_manager.session() as meta_session:
             asset_policy = await AuthorizationService(
                 AuthPGRepo(meta_session)
@@ -148,9 +115,7 @@ async def search_semantic_resources(
             "message": "Semantic recall could not be saved",
         }
 
-    result = response.model_dump(mode="json")
-    result["recall_id"] = record.recall_id
-    return result
+    return semantic_recall_reference(record, view="search_response")
 
 
 def _record_summary(record: Any) -> dict[str, Any]:
@@ -182,11 +147,11 @@ async def list_semantic_recalls(
     if not 1 <= limit <= 100:
         return {"status": "error", "message": "limit must be between 1 and 100"}
     try:
-        (
-            user_id,
-            conversation_id,
-            service,
-        ) = await _get_authorized_semantic_recall_context(runtime)
+        user_id, conversation_id, repo = resolve_semantic_recall_context(
+            runtime.config,
+            runtime.store,
+        )
+        service = await create_authorized_semantic_recall_service(user_id, repo)
         records = await service.list(user_id, conversation_id, limit=limit)
     except Exception:  # noqa: BLE001
         logger.exception("Semantic recall listing failed")
@@ -207,11 +172,11 @@ async def get_semantic_recall(
 ) -> dict[str, Any]:
     """读取当前会话某条语义召回记录的请求、结果和合并来源"""
     try:
-        (
-            user_id,
-            conversation_id,
-            service,
-        ) = await _get_authorized_semantic_recall_context(runtime)
+        user_id, conversation_id, repo = resolve_semantic_recall_context(
+            runtime.config,
+            runtime.store,
+        )
+        service = await create_authorized_semantic_recall_service(user_id, repo)
         record = await service.get(user_id, conversation_id, recall_id)
     except SemanticRecallsNotFoundError as exc:
         return {
@@ -225,7 +190,7 @@ async def get_semantic_recall(
             "status": "error",
             "message": "Semantic recall is temporarily unavailable",
         }
-    return {"status": "success", "recall": record.model_dump(mode="json")}
+    return semantic_recall_reference(record, view="record")
 
 
 @tool
@@ -238,11 +203,11 @@ async def merge_semantic_recalls(
 ) -> dict[str, Any]:
     """去重合并多条语义召回并保存新快照，源记录保持不变"""
     try:
-        (
-            user_id,
-            conversation_id,
-            service,
-        ) = await _get_authorized_semantic_recall_context(runtime)
+        user_id, conversation_id, repo = resolve_semantic_recall_context(
+            runtime.config,
+            runtime.store,
+        )
+        service = await create_authorized_semantic_recall_service(user_id, repo)
         record = await service.merge(user_id, conversation_id, recall_ids)
     except SemanticRecallsNotFoundError as exc:
         return {
@@ -256,7 +221,7 @@ async def merge_semantic_recalls(
             "status": "error",
             "message": "Semantic recalls could not be merged",
         }
-    return {"status": "success", "recall": record.model_dump(mode="json")}
+    return semantic_recall_reference(record, view="record")
 
 
 @tool
@@ -266,11 +231,11 @@ async def delete_semantic_recalls(
 ) -> dict[str, Any]:
     """删除当前会话指定的语义召回记录"""
     try:
-        (
-            user_id,
-            conversation_id,
-            service,
-        ) = await _get_authorized_semantic_recall_context(runtime)
+        user_id, conversation_id, repo = resolve_semantic_recall_context(
+            runtime.config,
+            runtime.store,
+        )
+        service = await create_authorized_semantic_recall_service(user_id, repo)
         deleted, missing = await service.delete(
             user_id,
             conversation_id,

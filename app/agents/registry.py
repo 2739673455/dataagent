@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+import asyncio
+from collections.abc import Callable, Coroutine, Iterable, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 
 from app.agents.anomaly_detection.prompt import ANOMALY_DETECTION_SYSTEM_PROMPT
 from app.agents.attribution.prompt import ATTRIBUTION_SYSTEM_PROMPT
-from app.agents.contracts import AGENT_TYPES, AgentType, validate_agent_type
+from app.agents.contracts import (
+    AGENT_TYPES,
+    AgentSessionKey,
+    AgentType,
+    validate_agent_type,
+)
 from app.agents.data_query.prompt import DATA_QUERY_SYSTEM_PROMPT
 from app.agents.visualization.prompt import VISUALIZATION_SYSTEM_PROMPT
 
@@ -24,30 +31,16 @@ _TOOL_ALLOWLISTS: dict[AgentType, frozenset[str]] = {
             "delete_semantic_recalls",
             "check_sql_syntax",
             "run_readonly_sql",
-            "run_analysis",
         }
     ),
-    "attribution": frozenset({"decompose_change", "calculate_contribution"}),
-    "anomaly_detection": frozenset(
-        {
-            "detect_point_anomalies",
-            "detect_change_points",
-            "validate_time_series",
-        }
-    ),
-    "visualization": frozenset(
-        {"render_chart", "render_interactive_table", "build_report"}
-    ),
+    "attribution": frozenset(),
+    "anomaly_detection": frozenset(),
+    "visualization": frozenset(),
 }
 
 _REQUIRED_TOOLS: dict[AgentType, frozenset[str]] = {
     "data_query": frozenset(
         {"search_semantic_resources", "check_sql_syntax", "run_readonly_sql"}
-    ),
-    "attribution": frozenset({"calculate_contribution"}),
-    "anomaly_detection": frozenset({"detect_point_anomalies", "validate_time_series"}),
-    "visualization": frozenset(
-        {"render_chart", "render_interactive_table", "build_report"}
     ),
 }
 
@@ -130,25 +123,28 @@ def build_agent_definitions(
 
 
 class AgentRegistry:
-    """集中保存专业 Agent 定义和已编译实例"""
+    """按 Agent Session 缓存绑定独立 Sandbox 的专业 Agent"""
 
     def __init__(
         self,
         definitions: Mapping[AgentType, AgentDefinition],
-        agents: Mapping[AgentType, CompiledStateGraph],
+        agent_factory: Callable[
+            [AgentSessionKey],
+            Coroutine[Any, Any, CompiledStateGraph],
+        ],
     ) -> None:
         definition_keys = set(definitions)
-        agent_keys = set(agents)
         expected_keys = set(AGENT_TYPES)
         if definition_keys != expected_keys:
             raise ValueError("registry must contain all specialist definitions")
-        if agent_keys != expected_keys:
-            raise ValueError("registry must contain all specialist agents")
         for agent_type, definition in definitions.items():
             if definition.agent_type != agent_type:
                 raise ValueError("agent definition key does not match its agent type")
         self._definitions = dict(definitions)
-        self._agents = dict(agents)
+        self._agent_factory = agent_factory
+        self._agents: dict[str, CompiledStateGraph] = {}
+        self._build_tasks: dict[str, asyncio.Task[CompiledStateGraph]] = {}
+        self._lock = asyncio.Lock()
 
     @property
     def agent_types(self) -> tuple[AgentType, ...]:
@@ -160,7 +156,35 @@ class AgentRegistry:
         validate_agent_type(agent_type)
         return self._definitions[agent_type]
 
-    def get_agent(self, agent_type: AgentType) -> CompiledStateGraph:
-        """读取已编译的专业 Agent"""
-        validate_agent_type(agent_type)
-        return self._agents[agent_type]
+    async def get_agent(self, session_key: AgentSessionKey) -> CompiledStateGraph:
+        """获取绑定当前 Session Sandbox 的专业 Agent"""
+        validate_agent_type(session_key.agent_type)
+        cache_key = session_key.checkpoint_ns
+        async with self._lock:
+            if agent := self._agents.get(cache_key):
+                return agent
+            build_task = self._build_tasks.get(cache_key)
+            if build_task is None:
+                build_task = asyncio.create_task(self._agent_factory(session_key))
+                self._build_tasks[cache_key] = build_task
+        try:
+            agent = await asyncio.shield(build_task)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            async with self._lock:
+                if self._build_tasks.get(cache_key) is build_task:
+                    self._build_tasks.pop(cache_key, None)
+            raise
+        async with self._lock:
+            if self._build_tasks.get(cache_key) is build_task:
+                self._build_tasks.pop(cache_key, None)
+                self._agents[cache_key] = agent
+        return agent
+
+    def clear(self) -> None:
+        """释放 Session Agent 缓存并取消未完成构建"""
+        for task in self._build_tasks.values():
+            task.cancel()
+        self._build_tasks.clear()
+        self._agents.clear()

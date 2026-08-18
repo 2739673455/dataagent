@@ -40,7 +40,7 @@
 - **动态 Agent 编排**：基于 `deepagents` 与 LangGraph 构建持久化 Planner 和专业 Agent，Planner 通过 `delegate_agent` 调度注册的专业 Agent，每类 Agent 使用独立工具白名单。
 - **会话状态持久化**：集成 LangGraph PostgreSQL Checkpointer 与 Store，实现对话消息、中间推理过程与状态的完整持久化和续接。
 - **流式对话接口（SSE）**：提供 Server-Sent Events 流式对话响应，支持模型 Token 增量输出与工具调用过程实时推送。
-- **多模态与消息处理**：支持图片等附件的解析和传递，提供语义召回等大型消息的紧凑化压缩处理。
+- **多模态与消息处理**：支持图片等附件的解析和传递；语义召回在 checkpoint 中只保留 `recall_id`，完整内容按最新权限仅在当前模型请求中临时展开。
 - **会话全生命周期管理**：支持会话创建、历史消息回溯、会话重命名、软删除及级联清理。
 
 ### 6. 附件与文件服务
@@ -72,9 +72,9 @@
 ### 11. Dynamic Subagents 与多 Agent 体系
 - **Planner 协调智能体**：Planner 通过结构化 `delegate_agent` 请求拆分任务、并行调度专业 Agent 并汇总可追溯结果；同一用户回合的所有自动续写共享委派预算，自动续写次数、委派次数、并行 Session、修补轮次、修补深度和 Session 续接次数均有服务端硬限制。
 - **结构化修补链路**：专业 Agent 可返回带产物证据的 `RepairRequest`，仅能指向同一 Analysis 内已存在的上游 Session；服务端检查目标、修补深度和实际产物后续接执行。
-- **专业 Agent 矩阵**：`data_query` 负责语义目录、SQL 检查与数据集；`attribution` 负责可加性变化贡献分解；`anomaly_detection` 负责时序质量、点异常与变化点检测；`visualization` 在 Docker 内生成自包含静态 SVG 图表、JSON 图表配置、交互表格数据与 HTML 报告，前端以可信 React 组件提供表格筛选、排序和分页，并在无脚本 sandbox 中预览经过清洗的 HTML。
-- **按 Agent 聚合代码**：`app/agents` 包含 Planner 和四个专业 Agent，每个 Agent 目录聚合自己的构造器、Prompt 与专属 Tools；跨 Agent 协议、注册表、Session 管理和沙盒执行能力位于公共层。
-- **Agent 与确定性计算分层**：专业 Agent 负责选择数据、方法和参数，并完成结果解释、下钻与 Repair Request；Tool 负责类型化参数适配和 Agent Session 绑定；`app/analysis` 提供归因、异常检测和可视化的唯一确定性算法实现。运行时将共享 Kernel 源码注入容器，`sandbox_analysis_worker.py` 仅负责受控 I/O、产物写入、响应压缩和操作分发。
+- **专业 Agent 矩阵**：`data_query` 负责语义目录、SQL 检查与数据集；`attribution` 自主编写和运行归因分析代码；`anomaly_detection` 自主选择检测方法并验证结果；`visualization` 自主生成图表、表格与报告。
+- **按 Agent 聚合代码**：`app/agents` 包含 Planner 和四个专业 Agent，每个 Agent 目录聚合自己的构造器与 Prompt；跨 Agent 协议、注册表和 Session 管理位于公共层，平台级数据查询工具归属于 `data_query` Agent。
+- **专业 Agent 通用执行能力**：归因、异常检测和可视化 Agent 使用 DeepAgents 内置的 Shell 与文件工具，在各自 Session 沙盒中编写、运行、修改和验证代码。算法由 Agent 根据数据与业务问题自主选择，代码、参数和结果作为产物保留。
 - **Session-aware 状态管理**：各 Session 使用 `subagents/{analysis_id}/{agent_type}/{session_id}` 作为 `checkpoint_ns`，状态保存在 PostgreSQL，支持并行分析、服务重启后续接和删除墓碑。
 - **产物边界**：Session 产物限定在 `/analyses/{analysis_id}/sessions/{agent_type}/{session_id}/`，共享证据可放入 `/analyses/{analysis_id}/shared/`；结构化结果返回前会校验路径和文件存在性，用户附件上传与删除不能改写该系统目录，会话整体删除仍会统一清理产物。
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
 import unittest
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -20,7 +22,6 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import Field, ValidationError
 
 from app.agents.contracts import (
-    AGENT_TYPES,
     AgentSessionKey,
     AgentType,
     ArtifactReference,
@@ -87,45 +88,9 @@ def check_sql_syntax(sql: str) -> str:
 
 
 @tool
-def calculate_contribution(path: str) -> str:
-    """计算测试贡献"""
-    return path
-
-
-@tool
-def render_chart(path: str) -> str:
-    """渲染测试图表"""
-    return path
-
-
-@tool
-def render_interactive_table(path: str) -> str:
-    """渲染测试交互表格"""
-    return path
-
-
-@tool
 def run_readonly_sql(sql: str) -> str:
     """执行测试 SQL"""
     return sql
-
-
-@tool
-def detect_point_anomalies(path: str) -> str:
-    """检测测试异常"""
-    return path
-
-
-@tool
-def validate_time_series(path: str) -> str:
-    """校验测试时序"""
-    return path
-
-
-@tool
-def build_report(path: str) -> str:
-    """生成测试报告"""
-    return path
 
 
 class _FakeAgent:
@@ -218,19 +183,15 @@ def _registry(fake: _FakeAgent) -> AgentRegistry:
             search_semantic_resources,
             check_sql_syntax,
             run_readonly_sql,
-            calculate_contribution,
-            detect_point_anomalies,
-            validate_time_series,
-            render_chart,
-            render_interactive_table,
-            build_report,
         ]
     )
     graph = cast(CompiledStateGraph, fake)
-    return AgentRegistry(
-        definitions,
-        {agent_type: graph for agent_type in AGENT_TYPES},
-    )
+
+    async def build_agent(session_key: AgentSessionKey) -> CompiledStateGraph:
+        del session_key
+        return graph
+
+    return AgentRegistry(definitions, build_agent)
 
 
 def _service(
@@ -303,6 +264,10 @@ class DynamicSubagentContractTest(unittest.TestCase):
             key.checkpoint_ns,
             "subagents/sales-decline_2026/attribution/product-category",
         )
+        self.assertEqual(
+            key.workspace_dir,
+            "/analyses/sales-decline_2026/sessions/attribution/product-category",
+        )
 
     def test_agent_session_key_rejects_unsafe_identifier(self) -> None:
         identifiers = (
@@ -367,12 +332,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
                 search_semantic_resources,
                 check_sql_syntax,
                 run_readonly_sql,
-                calculate_contribution,
-                detect_point_anomalies,
-                validate_time_series,
-                render_chart,
-                render_interactive_table,
-                build_report,
             ]
         )
 
@@ -386,57 +345,200 @@ class DynamicSubagentContractTest(unittest.TestCase):
         )
         self.assertEqual(
             definitions["attribution"].tool_names,
-            {"calculate_contribution"},
+            set(),
         )
         self.assertEqual(
             definitions["anomaly_detection"].tool_names,
-            {"detect_point_anomalies", "validate_time_series"},
+            set(),
         )
         self.assertEqual(
             definitions["visualization"].tool_names,
-            {"render_chart", "render_interactive_table", "build_report"},
+            set(),
         )
 
     def test_registry_fails_fast_when_required_tools_are_missing(self) -> None:
         with self.assertRaisesRegex(ValueError, "required specialist tools"):
             build_agent_definitions([search_semantic_resources])
 
-    def test_built_agents_expose_only_read_only_builtin_tools(self) -> None:
-        from deepagents import create_deep_agent, register_harness_profile
-        from deepagents.backends import StateBackend
+    def test_specialist_agents_expose_native_execution_and_file_tools(self) -> None:
+        from deepagents import (
+            GeneralPurposeSubagentProfile,
+            HarnessProfile,
+            register_harness_profile,
+        )
+        from deepagents.backends import LocalShellBackend
         from langchain_core.messages import HumanMessage
+        from langgraph.checkpoint.memory import InMemorySaver
+        from langgraph.store.memory import InMemoryStore
 
-        from app.conf import app_config
+        from app.agents.anomaly_detection.agent import (
+            create_anomaly_detection_agent,
+        )
+        from app.agents.attribution.agent import create_attribution_agent
+        from app.agents.data_query.agent import create_data_query_agent
+        from app.agents.visualization.agent import create_visualization_agent
 
+        register_harness_profile(
+            "recordingchatmodel",
+            HarnessProfile(
+                general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)
+            ),
+        )
+        builders = {
+            "data_query": create_data_query_agent,
+            "attribution": create_attribution_agent,
+            "anomaly_detection": create_anomaly_detection_agent,
+            "visualization": create_visualization_agent,
+        }
+        required_tools = {
+            "ls",
+            "read_file",
+            "write_file",
+            "edit_file",
+            "delete",
+            "glob",
+            "grep",
+            "execute",
+        }
+
+        with tempfile.TemporaryDirectory() as workspace:
+            for agent_type, builder in builders.items():
+                with self.subTest(agent_type=agent_type):
+                    model = RecordingChatModel()
+                    graph = builder(
+                        model=model,
+                        tools=[],
+                        backend=LocalShellBackend(root_dir=workspace),
+                        checkpointer=InMemorySaver(),
+                        store=InMemoryStore(),
+                    )
+
+                    graph.invoke(
+                        {"messages": [HumanMessage(content="inspect tools")]},
+                        {"configurable": {"thread_id": agent_type}},
+                    )
+
+                    self.assertTrue(required_tools.issubset(model.seen_tools))
+                    self.assertNotIn("task", model.seen_tools)
+
+    def test_planner_does_not_expose_mutating_file_or_shell_tools(self) -> None:
+        from deepagents import (
+            GeneralPurposeSubagentProfile,
+            HarnessProfile,
+            register_harness_profile,
+        )
+        from deepagents.backends import LocalShellBackend
+        from langchain.agents.middleware.types import AgentMiddleware
+        from langchain_core.messages import HumanMessage
+        from langgraph.checkpoint.memory import InMemorySaver
+        from langgraph.store.memory import InMemoryStore
+
+        from app.agents.planner.agent import create_planner_agent
+
+        @tool
+        def delegate_agent(message: str) -> str:
+            """委派测试专业 Agent"""
+            return message
+
+        @tool
+        def eval(code: str) -> str:
+            """模拟 Planner 解释器工具"""
+            return code
+
+        class InterpreterStub(AgentMiddleware):
+            """只用于验证 Planner 工具暴露边界"""
+
+            def __init__(self, **kwargs: object) -> None:
+                del kwargs
+                self.tools = [eval]
+
+        register_harness_profile(
+            "recordingchatmodel",
+            HarnessProfile(
+                general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)
+            ),
+        )
         model = RecordingChatModel()
-        with (
-            patch("app.agents.manager.init_chat_model", return_value=model),
-            patch("app.agents.manager.register_harness_profile") as register_profile,
-        ):
-            AgentManager._create_model(app_config.cfg.lm_config.active)
-        profile = register_profile.call_args.args[1]
-        self.assertEqual(
-            profile.excluded_tools,
-            frozenset({"write_file", "edit_file", "delete", "execute"}),
-        )
-        register_harness_profile("recordingchatmodel", profile)
-        graph = create_deep_agent(
-            model=model,
-            tools=[],
-            subagents=[],
-            backend=StateBackend(),
-        )
+        with tempfile.TemporaryDirectory() as workspace:
+            with patch(
+                "app.agents.planner.agent.CodeInterpreterMiddleware",
+                InterpreterStub,
+            ):
+                graph = create_planner_agent(
+                    model=model,
+                    delegate_agent=delegate_agent,
+                    backend=LocalShellBackend(root_dir=workspace),
+                    checkpointer=InMemorySaver(),
+                    store=InMemoryStore(),
+                    interpreter_mode="thread",
+                    interpreter_ptc=["delegate_agent"],
+                    interpreter_timeout_seconds=1,
+                    interpreter_memory_limit_bytes=2 * 1024 * 1024,
+                    max_delegations_per_run=2,
+                    max_repair_rounds=1,
+                    max_repair_depth=1,
+                )
 
-        graph.invoke({"messages": [HumanMessage(content="inspect tools")]})
+            graph.invoke(
+                {"messages": [HumanMessage(content="inspect tools")]},
+                {"configurable": {"thread_id": "planner-tools"}},
+            )
 
-        self.assertEqual(
-            set(model.seen_tools),
-            {"ls", "read_file", "glob", "grep"},
+        self.assertTrue({"ls", "read_file", "glob", "grep"}.issubset(model.seen_tools))
+        self.assertTrue(
+            {"write_file", "edit_file", "delete", "execute"}.isdisjoint(
+                model.seen_tools
+            )
         )
+        self.assertIn("delegate_agent", model.seen_tools)
 
 
 class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
     """验证 Session 隔离、并发和修补限制"""
+
+    async def test_registry_builds_and_caches_one_agent_per_session(self) -> None:
+        definitions = build_agent_definitions(
+            [
+                search_semantic_resources,
+                check_sql_syntax,
+                run_readonly_sql,
+            ]
+        )
+        build_counts: Counter[str] = Counter()
+
+        async def build_agent(
+            session_key: AgentSessionKey,
+        ) -> CompiledStateGraph:
+            build_counts[session_key.checkpoint_ns] += 1
+            await asyncio.sleep(0.01)
+            return cast(CompiledStateGraph, _FakeAgent())
+
+        registry = AgentRegistry(definitions, build_agent)
+        region = AgentSessionKey(
+            user_id=12,
+            conversation_id=_CONVERSATION_ID,
+            analysis_id="sales-decline",
+            agent_type="attribution",
+            session_id="region",
+        )
+        product = AgentSessionKey(
+            user_id=12,
+            conversation_id=_CONVERSATION_ID,
+            analysis_id="sales-decline",
+            agent_type="attribution",
+            session_id="product",
+        )
+
+        first_region, second_region, product_agent = await asyncio.gather(
+            registry.get_agent(region),
+            registry.get_agent(region),
+            registry.get_agent(product),
+        )
+
+        self.assertIs(first_region, second_region)
+        self.assertIsNot(first_region, product_agent)
+        self.assertEqual(build_counts[region.checkpoint_ns], 1)
+        self.assertEqual(build_counts[product.checkpoint_ns], 1)
 
     async def test_same_session_serializes_while_other_sessions_run_parallel(
         self,
@@ -845,7 +947,6 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         distributed_locks = _DistributedLockRegistry()
         first_bundle = AnalysisAgentBundle(
             planner=graph,
-            specialists={agent_type: graph for agent_type in AGENT_TYPES},
             registry=_registry(fake),
             session_service=first_service,
             session_locks=first_service.session_locks,
@@ -855,7 +956,6 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         second_bundle = AnalysisAgentBundle(
             planner=graph,
-            specialists={agent_type: graph for agent_type in AGENT_TYPES},
             registry=_registry(fake),
             session_service=second_service,
             session_locks=second_service.session_locks,
@@ -898,7 +998,6 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         bundle = AnalysisAgentBundle(
             planner=graph,
-            specialists={agent_type: graph for agent_type in AGENT_TYPES},
             registry=_registry(fake),
             session_service=service,
             session_locks=service.session_locks,
@@ -934,6 +1033,10 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 self.fail("deleted conversation entered execution")
         persistence.delete_thread.assert_awaited_once()
 
+    @unittest.skipUnless(
+        os.getenv("RUN_QUICKJS_INTEGRATION") == "1",
+        "requires QuickJS integration environment",
+    )
     async def test_quickjs_bridge_calls_delegate_with_shared_run_budget(self) -> None:
         from langchain.agents.middleware.types import ModelRequest
         from langchain.tools import ToolRuntime
