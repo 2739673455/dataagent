@@ -18,6 +18,7 @@ from app.entities.semantic_search import (
     SemanticValueResult,
 )
 from app.repositories.semantic_recall_pg_repo import SemanticRecallPGRepo
+from app.services.metadata_authorization_filter import MetadataAuthorizationFilter
 
 
 class SemanticRecallsNotFoundError(Exception):
@@ -187,9 +188,14 @@ def merge_semantic_search_responses(
 class SemanticRecallService:
     """记录、查询、合并和删除会话级语义召回"""
 
-    def __init__(self, repo: SemanticRecallPGRepo) -> None:
+    def __init__(
+        self,
+        repo: SemanticRecallPGRepo,
+        authorization_filter: MetadataAuthorizationFilter,
+    ) -> None:
         """初始化召回管理服务"""
         self._repo = repo
+        self._authorization_filter = authorization_filter
 
     async def record_search(
         self,
@@ -206,7 +212,7 @@ class SemanticRecallService:
             conversation_id=conversation_id,
             kind="search",
             request=request,
-            response=response,
+            response=self._authorization_filter.filter_semantic_response(response),
             source_recall_ids=[],
             created_at=now,
             updated_at=now,
@@ -224,7 +230,7 @@ class SemanticRecallService:
         record = await self._repo.get(user_id, conversation_id, recall_id)
         if record is None:
             raise SemanticRecallsNotFoundError([recall_id])
-        return record
+        return self._authorize_record(record)
 
     async def list(
         self,
@@ -239,12 +245,15 @@ class SemanticRecallService:
             raise ValueError("limit must be positive")
         if offset < 0:
             raise ValueError("offset cannot be negative")
-        return await self._repo.list(
-            user_id,
-            conversation_id,
-            limit=limit,
-            offset=offset,
-        )
+        return [
+            self._authorize_record(record)
+            for record in await self._repo.list(
+                user_id,
+                conversation_id,
+                limit=limit,
+                offset=offset,
+            )
+        ]
 
     async def merge(
         self,
@@ -264,7 +273,7 @@ class SemanticRecallService:
             if record is None:
                 missing.append(recall_id)
             else:
-                records.append(record)
+                records.append(self._authorize_record(record))
         if missing:
             raise SemanticRecallsNotFoundError(missing)
 
@@ -286,6 +295,18 @@ class SemanticRecallService:
         )
         await self._repo.save(merged)
         return merged
+
+    def _authorize_record(
+        self,
+        record: SemanticRecallRecord,
+    ) -> SemanticRecallRecord:
+        """按当前策略生成召回记录的安全读取副本"""
+        response = self._authorization_filter.filter_semantic_response(
+            record.response
+        )
+        if response is record.response:
+            return record
+        return record.model_copy(update={"response": response})
 
     async def delete(
         self,

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from app.entities.meta import ColumnInfo, MetricInfo, TableInfo, ValueInfo
 from app.entities.semantic_search import SearchHit, SemanticSearchRequest
+from app.services.authorization_service import AssetAccessPolicy, AssetIdentity
 from app.services.meta_search_service import MetaSearchService
 
 
@@ -90,7 +91,79 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
             metric_repo=self.metric_repo,
             value_repo=self.value_repo,
             meta_repo=self.meta_repo,
+            asset_policy=AssetAccessPolicy(user_id=1, unrestricted=True),
+            data_source="doris",
+            database_name="ecommerce",
         )
+
+    def build_restricted_service(
+        self,
+        *grants: AssetIdentity,
+    ) -> MetaSearchService:
+        """构造字段白名单受限的检索服务"""
+        return MetaSearchService(
+            embedding_client=self.embedding_client,
+            column_repo=self.column_repo,
+            metric_repo=self.metric_repo,
+            value_repo=self.value_repo,
+            meta_repo=self.meta_repo,
+            asset_policy=AssetAccessPolicy(user_id=2, grants=frozenset(grants)),
+            data_source="doris",
+            database_name="ecommerce",
+        )
+
+    async def test_asset_policy_filters_catalog_before_index_retrieval(self) -> None:
+        denied = build_column(name="secret")
+        self.meta_repo.list_column_infos.return_value = [self.column, denied]
+        self.embedding_client.aembed_documents.return_value = [[0.1]]
+        self.column_repo.search_text_hits.return_value = [
+            SearchHit(item=denied, score=1.0),
+            SearchHit(item=self.column, score=0.8),
+        ]
+        self.column_repo.search_vector_hits.return_value = []
+        service = self.build_restricted_service(
+            AssetIdentity(
+                data_source="doris",
+                database_name="ecommerce",
+                table_name="orders",
+                column_name="amount",
+            )
+        )
+
+        response = await service.search(
+            SemanticSearchRequest(query="金额", resource_types=["column"])
+        )
+
+        self.assertEqual([item.name for item in response.columns], ["amount"])
+        expected_filter = frozenset({("orders", "amount")})
+        self.column_repo.search_text_hits.assert_awaited_once_with(
+            "金额",
+            allowed_columns=expected_filter,
+            limit=15,
+        )
+        self.column_repo.search_vector_hits.assert_awaited_once_with(
+            [0.1],
+            allowed_columns=expected_filter,
+            limit=15,
+        )
+
+    async def test_empty_asset_policy_skips_all_backends(self) -> None:
+        service = self.build_restricted_service()
+
+        response = await service.search(
+            SemanticSearchRequest(
+                query="收入",
+                resource_types=["column", "metric", "value"],
+            )
+        )
+
+        self.assertEqual(response.columns, [])
+        self.assertEqual(response.metrics, [])
+        self.assertEqual(response.values, [])
+        self.embedding_client.aembed_documents.assert_not_awaited()
+        self.column_repo.search_text_hits.assert_not_awaited()
+        self.metric_repo.search_text_hits.assert_not_awaited()
+        self.value_repo.search_hits.assert_not_awaited()
 
     async def test_column_request_uses_text_and_vector_without_other_resources(
         self,
@@ -186,7 +259,7 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item.name for item in response.columns], ["amount"])
         self.assertEqual(
             response.warnings,
-            ["Column full-text retrieval unavailable: RuntimeError: text down"],
+            ["Column full-text retrieval unavailable"],
         )
 
     async def test_column_context_adds_primary_key_and_one_hop_relation(self) -> None:
@@ -278,6 +351,9 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
             metric_repo=self.metric_repo,
             value_repo=self.value_repo,
             meta_repo=self.meta_repo,
+            asset_policy=AssetAccessPolicy(user_id=1, unrestricted=True),
+            data_source="doris",
+            database_name="ecommerce",
             max_concurrent_index_queries=2,
         )
 

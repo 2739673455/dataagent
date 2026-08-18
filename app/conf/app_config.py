@@ -198,20 +198,112 @@ class LMConfigCfg(BaseModel):
     models: dict[str, ModelCfg]
 
 
+class AuthConfig(BaseModel):
+    """认证令牌与密码策略配置"""
+
+    jwt_secret: str = Field(min_length=32)
+    jwt_algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
+    issuer: str = Field(min_length=1)
+    access_token_minutes: int = Field(gt=0)
+    refresh_token_days: int = Field(gt=0)
+    password_min_length: int = Field(ge=8, le=128)
+
+
+class QueryConfig(BaseModel):
+    """只读分析查询资源限制"""
+
+    data_source: str = Field(min_length=1)
+    workload_group: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+    )
+    timeout_seconds: int = Field(gt=0)
+    memory_limit_bytes: int = Field(gt=0)
+    max_scan_rows: int = Field(gt=0)
+    max_scan_bytes: int = Field(gt=0)
+    max_cell_bytes: int = Field(gt=0)
+    max_rows: int = Field(gt=0)
+    max_output_bytes: int = Field(gt=0)
+    batch_size: int = Field(gt=0)
+    sample_rows: int = Field(ge=0, le=100)
+    output_format: Literal["csv"] = "csv"
+
+
+class OrchestrationConfig(BaseModel):
+    """动态专业 Agent 编排限制"""
+
+    mode: Literal["dynamic_subagents"]
+    max_parallel_sessions: int = Field(gt=0)
+    max_delegations_per_run: int = Field(gt=0)
+    max_continuations: int = Field(ge=0)
+    max_repair_rounds: int = Field(ge=0)
+    max_repair_depth: int = Field(ge=0)
+    max_session_resumes: int = Field(gt=0)
+    session_lock_timeout: float = Field(gt=0)
+
+
+class InterpreterConfig(BaseModel):
+    """Planner 内嵌解释器配置"""
+
+    mode: Literal["thread"]
+    ptc: list[Literal["delegate_agent"]]
+    timeout_seconds: float = Field(gt=0)
+    memory_limit_bytes: int = Field(gt=0)
+
+
+class SpecialistConfig(BaseModel):
+    """专业 Agent 模型选择"""
+
+    model: str = Field(min_length=1)
+
+
+class AgentConfig(BaseModel):
+    """多 Agent 运行时配置"""
+
+    orchestration: OrchestrationConfig
+    interpreter: InterpreterConfig
+    specialists: dict[
+        Literal["data_query", "attribution", "anomaly_detection", "visualization"],
+        SpecialistConfig,
+    ]
+
+
 class Cfg(BaseModel):
     """应用全局配置"""
 
     log: LogCfg
     doris: DBConfig
+    doris_query: DBConfig
     meta_postgresql: DBConfig
     langgraph_postgresql: DBConfig
     elasticsearch: ESConfig
     embedding: EmbeddingConfig
     sandbox: SandboxConfig
     lm_config: LMConfigCfg
+    auth: AuthConfig
+    query: QueryConfig
+    agent: AgentConfig
     mcp: dict[str, MCPCfg]
     cors_origins: list[str]
     port: int
+
+    @model_validator(mode="after")
+    def validate_cross_component_invariants(self) -> "Cfg":
+        """校验查询、沙盒、目录和数据连接之间的全局约束"""
+        if self.query.max_output_bytes > self.sandbox.max_file_bytes:
+            raise ValueError(
+                "query.max_output_bytes must not exceed sandbox.max_file_bytes"
+            )
+        if self.query.max_cell_bytes > self.query.max_output_bytes:
+            raise ValueError(
+                "query.max_cell_bytes must not exceed query.max_output_bytes"
+            )
+        if self.doris_query.database != self.doris.database:
+            raise ValueError(
+                "doris_query.database must match the metadata Doris database"
+            )
+        return self
 
 
 def _load_config() -> Cfg:

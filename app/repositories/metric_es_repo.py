@@ -108,20 +108,29 @@ class MetricESRepo:
     async def search_vector_hits(
         self,
         embedding: list[float],
+        *,
+        allowed_metrics: frozenset[str] | None,
         score_threshold: float = 0.6,
         limit: int = 5,
     ) -> list[SearchHit[MetricInfo]]:
         """根据向量检索指标并保留命中分数"""
-        result = await self._vector_search(embedding, score_threshold, limit)
+        result = await self._vector_search(
+            embedding,
+            score_threshold,
+            limit,
+            allowed_metrics,
+        )
         return self._hits(result)
 
     async def search_text_hits(
         self,
         query: str,
+        *,
+        allowed_metrics: frozenset[str] | None,
         limit: int = 5,
     ) -> list[SearchHit[MetricInfo]]:
         """根据关键词检索指标并保留命中分数"""
-        result = await self._text_search(query, limit)
+        result = await self._text_search(query, limit, allowed_metrics)
         return self._hits(result)
 
     async def _bulk_index(
@@ -162,6 +171,7 @@ class MetricESRepo:
         embedding: list[float],
         score_threshold: float,
         limit: int,
+        allowed_metrics: frozenset[str] | None,
     ) -> dict[str, Any]:
         """执行指标向量检索"""
         knn: dict[str, Any] = {
@@ -171,6 +181,8 @@ class MetricESRepo:
             "num_candidates": min(10_000, max(100, limit * 10)),
             "similarity": score_threshold,
         }
+        if allowed_metrics is not None:
+            knn["filter"] = self._metric_filter(allowed_metrics)
         result = await self._client.search(
             index=self._index_name,
             knn=knn,
@@ -183,6 +195,7 @@ class MetricESRepo:
         self,
         query: str,
         limit: int,
+        allowed_metrics: frozenset[str] | None,
     ) -> dict[str, Any]:
         """执行指标全文检索"""
         exact_queries = [
@@ -213,6 +226,13 @@ class MetricESRepo:
                 ]
             }
         }
+        if allowed_metrics is not None:
+            text_query = {
+                "bool": {
+                    "must": [text_query],
+                    "filter": [self._metric_filter(allowed_metrics)],
+                }
+            }
         result = await self._client.search(
             index=self._index_name,
             query=text_query,
@@ -220,6 +240,13 @@ class MetricESRepo:
         )
         body = result.body if hasattr(result, "body") else result
         return cast(dict[str, Any], body)
+
+    @staticmethod
+    def _metric_filter(allowed_metrics: frozenset[str]) -> dict[str, Any]:
+        """构造指标名称白名单过滤条件"""
+        if not allowed_metrics:
+            raise ValueError("allowed_metrics must not be empty")
+        return {"terms": {"name": sorted(allowed_metrics)}}
 
     @staticmethod
     def _validate_document_parts(

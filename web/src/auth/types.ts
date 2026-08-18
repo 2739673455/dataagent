@@ -1,25 +1,28 @@
 export interface UserResponse {
+  id: number;
   username: string;
   email: string;
   roles: string[];
+  is_active: boolean;
+  created_at: string;
 }
 
 export interface TokenResponse {
   access_token: string;
+  refresh_token: string;
   token_type: string;
+  expires_in: number;
+  refresh_expires_in: number;
+  user: UserResponse;
 }
 
-export interface IntrospectionResponse {
-  active: boolean;
-  sub?: number;
-  exp?: number;
-  scope?: string[];
+export interface LoginRequest {
+  identifier: string;
+  password: string;
 }
 
-export interface PendingAuthorizationRequest {
-  clientId: string;
-  redirectUri: string;
-  returnTo: string;
-  state: string;
-  codeVerifier: string;
+export interface RegisterRequest {
+  username: string;
+  email: string;
+  password: string;
 }

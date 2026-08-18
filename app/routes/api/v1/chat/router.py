@@ -3,7 +3,7 @@ import contextlib
 from collections.abc import AsyncIterator
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, Query, status
 from fastapi.responses import StreamingResponse
 from loguru import logger
 
@@ -11,16 +11,14 @@ from app.clients.docker_sandbox_manager import docker_sandbox_manager
 from app.core import context
 from app.entities.semantic_recall import SemanticRecallRecord
 from app.errors import chat_error
+from app.routes.api.v1.auth.dependencies import AnalysisUserDep, CurrentUserDep
 from app.routes.api.v1.chat import schemas as chat_schema
 from app.routes.api.v1.chat.dependencies import (
     ConversationPGRepoDep,
-    SemanticRecallPGRepoDep,
+    SemanticRecallServiceDep,
 )
 from app.services import chat_service
-from app.services.semantic_recall_service import (
-    SemanticRecallService,
-    SemanticRecallsNotFoundError,
-)
+from app.services.semantic_recall_service import SemanticRecallsNotFoundError
 
 router = APIRouter(tags=["chat"])
 _SSE_HEARTBEAT_SECONDS = 15
@@ -28,12 +26,12 @@ _SSE_HEARTBEAT_SECONDS = 15
 
 @router.post("/create", status_code=status.HTTP_201_CREATED)
 async def api_create_conversation(
-    request: Request,
     body: chat_schema.CreateConversationRequest,
     conversation_repo: ConversationPGRepoDep,
+    current_user: AnalysisUserDep,
 ) -> chat_schema.ConversationResponse:
     """创建新对话"""
-    user_id = request.state.payload.sub
+    user_id = current_user.id
     conversation = await conversation_repo.create(
         user_id,
         "新对话",
@@ -52,12 +50,12 @@ async def api_create_conversation(
 
 @router.post("/delete")
 async def api_delete_conversations(
-    request: Request,
     body: chat_schema.DeleteConversationRequest,
     conversation_repo: ConversationPGRepoDep,
+    current_user: AnalysisUserDep,
 ) -> None:
     """删除对话"""
-    user_id = request.state.payload.sub
+    user_id = current_user.id
 
     for conversation_id in body.conversation_ids:
         # 检查对话是否存在且属于当前用户
@@ -77,12 +75,12 @@ async def api_delete_conversations(
 
 @router.post("/update")
 async def api_update_conversation(
-    request: Request,
     body: chat_schema.UpdateConversationRequest,
     conversation_repo: ConversationPGRepoDep,
+    current_user: AnalysisUserDep,
 ) -> None:
     """修改对话信息"""
-    user_id = request.state.payload.sub
+    user_id = current_user.id
 
     # 检查对话是否存在且属于当前用户
     conversation = await conversation_repo.get(user_id, body.conversation_id)
@@ -95,11 +93,11 @@ async def api_update_conversation(
 
 @router.get("/ls")
 async def api_get_conversations(
-    request: Request,
     conversation_repo: ConversationPGRepoDep,
+    current_user: CurrentUserDep,
 ) -> chat_schema.ConversationListResponse:
     """获取所有对话"""
-    user_id = request.state.payload.sub
+    user_id = current_user.id
     conversations = await conversation_repo.list_by_user(user_id)
     logger.info(
         f"Get conversations: conversation_ids={[item.id for item in conversations]}"
@@ -119,11 +117,11 @@ async def api_get_conversations(
 @router.get("/ls/{conversation_id}")
 async def api_get_messages(
     conversation_id: UUID,
-    request: Request,
     conversation_repo: ConversationPGRepoDep,
+    current_user: CurrentUserDep,
 ) -> chat_schema.MessageListResponse:
     """从 LangGraph 状态获取某个对话的所有消息"""
-    user_id = request.state.payload.sub
+    user_id = current_user.id
     conversation = await conversation_repo.get(user_id, conversation_id)
     if conversation is None:
         raise chat_error.ConversationNotFoundError
@@ -151,17 +149,17 @@ def _semantic_recall_response(
 @router.get("/recalls/{conversation_id}")
 async def api_list_semantic_recalls(
     conversation_id: UUID,
-    request: Request,
     conversation_repo: ConversationPGRepoDep,
-    recall_repo: SemanticRecallPGRepoDep,
+    recall_service: SemanticRecallServiceDep,
+    current_user: CurrentUserDep,
     limit: int = Query(default=100, ge=1, le=1_000),
     offset: int = Query(default=0, ge=0),
 ) -> chat_schema.SemanticRecallListResponse:
     """列出会话下每次查询和合并产生的语义召回记录"""
-    user_id = request.state.payload.sub
+    user_id = current_user.id
     if await conversation_repo.get(user_id, conversation_id) is None:
         raise chat_error.ConversationNotFoundError
-    records = await SemanticRecallService(recall_repo).list(
+    records = await recall_service.list(
         user_id,
         conversation_id,
         limit=limit,
@@ -176,16 +174,16 @@ async def api_list_semantic_recalls(
 async def api_get_semantic_recall(
     conversation_id: UUID,
     recall_id: str,
-    request: Request,
     conversation_repo: ConversationPGRepoDep,
-    recall_repo: SemanticRecallPGRepoDep,
+    recall_service: SemanticRecallServiceDep,
+    current_user: CurrentUserDep,
 ) -> chat_schema.SemanticRecallResponse:
     """读取一条语义召回记录的查询、结果和合并来源"""
-    user_id = request.state.payload.sub
+    user_id = current_user.id
     if await conversation_repo.get(user_id, conversation_id) is None:
         raise chat_error.ConversationNotFoundError
     try:
-        record = await SemanticRecallService(recall_repo).get(
+        record = await recall_service.get(
             user_id,
             conversation_id,
             recall_id,
@@ -200,16 +198,16 @@ async def api_get_semantic_recall(
 @router.post("/recalls/merge")
 async def api_merge_semantic_recalls(
     body: chat_schema.MergeSemanticRecallsRequest,
-    request: Request,
     conversation_repo: ConversationPGRepoDep,
-    recall_repo: SemanticRecallPGRepoDep,
+    recall_service: SemanticRecallServiceDep,
+    current_user: AnalysisUserDep,
 ) -> chat_schema.SemanticRecallResponse:
     """去重合并多条召回记录并保存新快照"""
-    user_id = request.state.payload.sub
+    user_id = current_user.id
     if await conversation_repo.get(user_id, body.conversation_id) is None:
         raise chat_error.ConversationNotFoundError
     try:
-        record = await SemanticRecallService(recall_repo).merge(
+        record = await recall_service.merge(
             user_id,
             body.conversation_id,
             body.recall_ids,
@@ -224,15 +222,15 @@ async def api_merge_semantic_recalls(
 @router.post("/recalls/delete")
 async def api_delete_semantic_recalls(
     body: chat_schema.DeleteSemanticRecallsRequest,
-    request: Request,
     conversation_repo: ConversationPGRepoDep,
-    recall_repo: SemanticRecallPGRepoDep,
+    recall_service: SemanticRecallServiceDep,
+    current_user: AnalysisUserDep,
 ) -> chat_schema.DeleteSemanticRecallsResponse:
     """删除会话下指定的召回记录"""
-    user_id = request.state.payload.sub
+    user_id = current_user.id
     if await conversation_repo.get(user_id, body.conversation_id) is None:
         raise chat_error.ConversationNotFoundError
-    deleted, missing = await SemanticRecallService(recall_repo).delete(
+    deleted, missing = await recall_service.delete(
         user_id,
         body.conversation_id,
         body.recall_ids,
@@ -314,12 +312,12 @@ async def _stream_agent_response(
 
 @router.post("/stream", response_class=StreamingResponse)
 async def api_stream_chat(
-    request: Request,
     body: chat_schema.ChatStreamRequest,
     conversation_repo: ConversationPGRepoDep,
+    current_user: AnalysisUserDep,
 ) -> StreamingResponse:
     """通过 SSE 执行单轮对话并流式返回 Agent 事件"""
-    user_id = request.state.payload.sub
+    user_id = current_user.id
     conversation = await conversation_repo.get(user_id, body.conversation_id)
     if conversation is None:
         raise chat_error.ConversationNotFoundError

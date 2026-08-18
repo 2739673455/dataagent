@@ -6,6 +6,8 @@ from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from typing import Literal, TypeVar, cast
 
+from loguru import logger
+
 from app.clients.embedding_client_manager import EmbeddingClient
 from app.entities.meta import (
     ColumnInfo,
@@ -31,6 +33,8 @@ from app.repositories.column_es_repo import ColumnESRepo
 from app.repositories.meta_pg_repo import MetaPGRepo
 from app.repositories.metric_es_repo import MetricESRepo
 from app.repositories.value_es_repo import ValueESRepo
+from app.services.authorization_service import AssetAccessPolicy
+from app.services.metadata_authorization_filter import MetadataAuthorizationFilter
 
 _RRF_K = 60
 _INDEX_SEARCH_LIMIT_MULTIPLIER = 3
@@ -106,6 +110,8 @@ class _SearchContext:
     queries: list[str]
     resource_types: set[SemanticResourceType]
     catalog: _SemanticCatalog
+    allowed_columns: frozenset[ColumnKey] | None
+    allowed_metrics: frozenset[str] | None
     column_scores: dict[ColumnKey, _CandidateScore] = field(default_factory=dict)
     metric_scores: dict[str, _CandidateScore] = field(default_factory=dict)
     value_scores: dict[ValueKey, _CandidateScore] = field(default_factory=dict)
@@ -135,9 +141,10 @@ class _SearchContext:
         if not isinstance(error, Exception):
             raise error
         self.partial = True
-        warning = (
-            f"{backend_name} retrieval unavailable: {type(error).__name__}: {error}"
+        logger.opt(exception=error).warning(
+            f"Semantic backend unavailable: {backend_name}"
         )
+        warning = f"{backend_name} retrieval unavailable"
         if warning not in self.warnings:
             self.warnings.append(warning)
 
@@ -361,6 +368,9 @@ class MetaSearchService:
         metric_repo: MetricESRepo,
         value_repo: ValueESRepo,
         meta_repo: MetaPGRepo,
+        asset_policy: AssetAccessPolicy,
+        data_source: str,
+        database_name: str,
         max_concurrent_index_queries: int = _DEFAULT_INDEX_QUERY_CONCURRENCY,
     ) -> None:
         """初始化元数据语义搜索服务"""
@@ -371,6 +381,11 @@ class MetaSearchService:
         self._metric_repo = metric_repo
         self._value_repo = value_repo
         self._meta_repo = meta_repo
+        self._authorization_filter = MetadataAuthorizationFilter(
+            asset_policy,
+            data_source,
+            database_name,
+        )
         self._index_query_semaphore = asyncio.Semaphore(max_concurrent_index_queries)
 
     async def search(self, request: SemanticSearchRequest) -> SemanticSearchResponse:
@@ -386,23 +401,62 @@ class MetaSearchService:
             self._meta_repo.list_column_infos(),
             self._meta_repo.list_metric_infos(),
         )
+        allowed_column_keys = self._authorization_filter.allowed_column_keys(
+            column_infos
+        )
+        allowed_columns = {
+            (item.t_name, item.name): item
+            for item in self._authorization_filter.filter_columns(
+                column_infos,
+                allowed_column_keys,
+            )
+        }
+        visible_tables = {
+            item.name: item
+            for item in self._authorization_filter.filter_tables(
+                table_infos,
+                allowed_column_keys,
+            )
+        }
+        allowed_metrics = {
+            item.name: item
+            for item in self._authorization_filter.filter_metrics(
+                metric_infos,
+                allowed_column_keys,
+            )
+        }
         return _SearchContext(
             request=request,
             queries=list(dict.fromkeys([request.query, *request.terms])),
             resource_types=set(request.resource_types),
             catalog=_SemanticCatalog(
-                tables={item.name: item for item in table_infos},
-                columns={(item.t_name, item.name): item for item in column_infos},
-                metrics={item.name: item for item in metric_infos},
+                tables=visible_tables,
+                columns=allowed_columns,
+                metrics=allowed_metrics,
+            ),
+            allowed_columns=(
+                None
+                if self._authorization_filter.unrestricted
+                else frozenset(allowed_columns)
+            ),
+            allowed_metrics=(
+                None
+                if self._authorization_filter.unrestricted
+                else frozenset(allowed_metrics)
             ),
         )
 
     async def _retrieve(self, context: _SearchContext) -> None:
         """按请求类型执行确定顺序的多路召回"""
-        if context.selects_any("column", "metric"):
+        if (
+            context.selects_any("column")
+            and context.catalog.columns
+            or context.selects_any("metric")
+            and context.catalog.metrics
+        ):
             await self._collect_fulltext_matches(context)
             await self._collect_vector_matches(context)
-        if context.selects_any("value"):
+        if context.selects_any("value") and context.catalog.columns:
             await self._collect_value_matches(context)
 
     async def _collect_fulltext_matches(
@@ -410,12 +464,13 @@ class MetaSearchService:
         context: _SearchContext,
     ) -> None:
         """收集字段和指标全文命中"""
-        if context.selects_any("column"):
+        if context.selects_any("column") and context.catalog.columns:
             results = await asyncio.gather(
                 *(
                     self._run_index_query(
                         self._column_repo.search_text_hits(
                             query,
+                            allowed_columns=context.allowed_columns,
                             limit=context.search_limit,
                         )
                     )
@@ -430,12 +485,13 @@ class MetaSearchService:
                 match_type="fulltext",
             )
 
-        if context.selects_any("metric"):
+        if context.selects_any("metric") and context.catalog.metrics:
             results = await asyncio.gather(
                 *(
                     self._run_index_query(
                         self._metric_repo.search_text_hits(
                             query,
+                            allowed_metrics=context.allowed_metrics,
                             limit=context.search_limit,
                         )
                     )
@@ -463,12 +519,13 @@ class MetaSearchService:
             context.record_backend_failure("Embedding", exc)
             return
 
-        if context.selects_any("column"):
+        if context.selects_any("column") and context.catalog.columns:
             results = await asyncio.gather(
                 *(
                     self._run_index_query(
                         self._column_repo.search_vector_hits(
                             embedding,
+                            allowed_columns=context.allowed_columns,
                             limit=context.search_limit,
                         )
                     )
@@ -483,12 +540,13 @@ class MetaSearchService:
                 match_type="vector",
             )
 
-        if context.selects_any("metric"):
+        if context.selects_any("metric") and context.catalog.metrics:
             results = await asyncio.gather(
                 *(
                     self._run_index_query(
                         self._metric_repo.search_vector_hits(
                             embedding,
+                            allowed_metrics=context.allowed_metrics,
                             limit=context.search_limit,
                         )
                     )
@@ -575,6 +633,7 @@ class MetaSearchService:
                 self._run_index_query(
                     self._value_repo.search_hits(
                         query,
+                        allowed_columns=context.allowed_columns,
                         limit=context.search_limit,
                     )
                 )

@@ -4,13 +4,16 @@ import os
 import threading
 import time
 import unittest
-from unittest.mock import AsyncMock, patch
+from collections.abc import Callable
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from pydantic import ValidationError
 
-from app.agent.agent import AgentManager
+from app.agents.manager import AgentManager
 from app.clients.docker_sandbox_manager import (
+    DockerSandboxManager,
     SandboxCapacityCancelledError,
     SandboxCapacityQueueFullError,
     SandboxCapacityTimeoutError,
@@ -20,6 +23,7 @@ from app.clients.docker_sandbox_manager import (
     _FairCapacityLimiter,
     _LifecycleGuard,
     normalize_attachment_path,
+    normalize_user_attachment_path,
 )
 from app.conf.app_config import SandboxConfig
 
@@ -81,6 +85,70 @@ class NormalizeAttachmentPathTest(unittest.TestCase):
     def test_rejects_oversized_component(self) -> None:
         with self.assertRaises(SandboxPathError):
             normalize_attachment_path(f"{'x' * 256}.csv")
+
+    def test_user_attachment_rejects_system_analysis_root(self) -> None:
+        for path in ("analyses", "analyses/report.csv", "analyses/nested/report.csv"):
+            with self.subTest(path=path), self.assertRaises(SandboxPathError):
+                normalize_user_attachment_path(path)
+
+    def test_system_paths_and_nested_analysis_names_remain_valid(self) -> None:
+        self.assertEqual(
+            normalize_attachment_path("analyses/run/report.csv"),
+            "analyses/run/report.csv",
+        )
+        self.assertEqual(
+            normalize_user_attachment_path("uploads/analyses/report.csv"),
+            "uploads/analyses/report.csv",
+        )
+
+
+class AttachmentCapabilityTest(unittest.IsolatedAsyncioTestCase):
+    async def test_system_writer_allows_analysis_path(self) -> None:
+        manager = DockerSandboxManager(build_sandbox_config())
+        conversation_id = uuid4()
+        content = io.BytesIO(b"artifact")
+        writer = AsyncMock()
+
+        with patch.object(manager, "_upload_normalized_file", writer):
+            await manager.write_artifact(
+                7,
+                conversation_id,
+                "analyses/run/report.csv",
+                content,
+            )
+
+        writer.assert_awaited_once_with(
+            7,
+            conversation_id,
+            "analyses/run/report.csv",
+            content,
+        )
+
+    async def test_user_mutations_reject_analysis_path_before_io(self) -> None:
+        manager = DockerSandboxManager(build_sandbox_config())
+        conversation_id = uuid4()
+        writer = AsyncMock()
+
+        with (
+            patch.object(manager, "_upload_normalized_file", writer),
+            patch.object(manager, "get_backend", AsyncMock()) as get_backend,
+        ):
+            with self.assertRaises(SandboxPathError):
+                await manager.upload_user_attachment(
+                    7,
+                    conversation_id,
+                    "analyses/run/report.csv",
+                    io.BytesIO(b"overwrite"),
+                )
+            with self.assertRaises(SandboxPathError):
+                await manager.delete_user_attachment(
+                    7,
+                    conversation_id,
+                    "analyses/run/report.csv",
+                )
+
+        writer.assert_not_awaited()
+        get_backend.assert_not_awaited()
 
 
 class SandboxConfigTest(unittest.TestCase):
@@ -300,19 +368,31 @@ class DockerSandboxCleanupHealthTest(unittest.IsolatedAsyncioTestCase):
         from app.clients.docker_sandbox_manager import DockerSandboxManager
 
         manager = DockerSandboxManager(build_sandbox_config())
-        with (
-            patch.object(
-                manager,
-                "_managed_user_ids_sync",
-                side_effect=RuntimeError("docker unavailable"),
-            ),
-            patch("app.clients.docker_sandbox_manager.logger.exception"),
-        ):
-            await manager._run_cleanup_cycle()
-        self.assertEqual(manager.health().cleanup_consecutive_failures, 1)
 
-        with patch.object(manager, "_managed_user_ids_sync", return_value=set()):
-            await manager._run_cleanup_cycle()
+        async def run_inline(
+            function: Callable[..., object],
+            *args: object,
+            **kwargs: object,
+        ) -> object:
+            return function(*args, **kwargs)
+
+        with patch(
+            "app.clients.docker_sandbox_manager.asyncio.to_thread",
+            side_effect=run_inline,
+        ):
+            with (
+                patch.object(
+                    manager,
+                    "_managed_user_ids_sync",
+                    side_effect=RuntimeError("docker unavailable"),
+                ),
+                patch("app.clients.docker_sandbox_manager.logger.exception"),
+            ):
+                await manager._run_cleanup_cycle()
+            self.assertEqual(manager.health().cleanup_consecutive_failures, 1)
+
+            with patch.object(manager, "_managed_user_ids_sync", return_value=set()):
+                await manager._run_cleanup_cycle()
         health = manager.health()
         self.assertEqual(health.cleanup_consecutive_failures, 0)
         self.assertIsNone(health.cleanup_last_error)
@@ -320,14 +400,33 @@ class DockerSandboxCleanupHealthTest(unittest.IsolatedAsyncioTestCase):
 
 class AgentExecutionLifecycleTest(unittest.IsolatedAsyncioTestCase):
     async def test_delete_agent_cancels_active_execution(self) -> None:
-        persistence_manager = AsyncMock()
+        persistence_manager = MagicMock()
+        persistence_manager.delete_thread = AsyncMock()
+        store = MagicMock()
+        store.aput = AsyncMock()
+        persistence_manager.get_store.return_value = store
+
+        @asynccontextmanager
+        async def advisory_lock(*args: object, **kwargs: object):
+            del args, kwargs
+            yield
+
+        persistence_manager.advisory_lock = advisory_lock
         manager = AgentManager(persistence_manager)
+        bundle = MagicMock()
+        bundle.planner_lock = advisory_lock
+        bundle.session_service.planner_run = advisory_lock
+        bundle.conversation_deleted = AsyncMock(return_value=False)
         user_id = 7
         conversation_id = uuid4()
         started = asyncio.Event()
 
         async def run() -> None:
-            async with manager.execution(user_id, conversation_id):
+            async with manager.execution(
+                user_id,
+                conversation_id,
+                bundle=bundle,
+            ):
                 started.set()
                 await asyncio.Future()
 
@@ -396,7 +495,7 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
             volume.attrs["Labels"]["dataagent.sandbox.quota_mode"], "application"
         )
 
-        await self.manager.upload_file(
+        await self.manager.upload_user_attachment(
             self.user_id,
             conversation_id,
             "uploads/input.csv",
@@ -425,6 +524,46 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(backend.execute("printf started").output, "started")
         container.reload()
         self.assertEqual(container.status, "running")
+
+    async def test_user_mutations_cannot_change_analysis_artifact(self) -> None:
+        conversation_id = uuid4()
+        artifact_path = "analyses/run/report.csv"
+        await self.manager.write_artifact(
+            self.user_id,
+            conversation_id,
+            artifact_path,
+            io.BytesIO(b"verified artifact"),
+        )
+
+        with self.assertRaises(SandboxPathError):
+            await self.manager.upload_user_attachment(
+                self.user_id,
+                conversation_id,
+                artifact_path,
+                io.BytesIO(b"user overwrite"),
+            )
+        with self.assertRaises(SandboxPathError):
+            await self.manager.delete_user_attachment(
+                self.user_id,
+                conversation_id,
+                artifact_path,
+            )
+
+        self.assertEqual(
+            await self.manager.download_file(
+                self.user_id,
+                conversation_id,
+                artifact_path,
+            ),
+            b"verified artifact",
+        )
+        await self.manager.delete_conversation(self.user_id, conversation_id)
+        with self.assertRaises(SandboxDeletedError):
+            await self.manager.download_file(
+                self.user_id,
+                conversation_id,
+                artifact_path,
+            )
 
     async def test_conversations_use_os_permission_isolation(self) -> None:
         first_id = uuid4()
@@ -484,7 +623,7 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(linked_upload.error)
         self.assertIsNotNone(second.read("/injected.txt").error)
         with self.assertRaises(SandboxPathError):
-            await self.manager.upload_file(
+            await self.manager.upload_user_attachment(
                 self.user_id,
                 first_id,
                 "linked_directory/http-injected.txt",
@@ -578,7 +717,7 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(backend.read("/large_tool_results/result.txt").error)
 
         with self.assertRaises(SandboxFileTooLargeError):
-            await self.manager.upload_file(
+            await self.manager.upload_user_attachment(
                 self.user_id,
                 uuid4(),
                 "large.bin",

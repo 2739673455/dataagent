@@ -1,5 +1,5 @@
 export interface ConversationResponse {
-  conversation_id: number;
+  conversation_id: string;
   title: string;
   update_at: string;
 }
@@ -10,7 +10,18 @@ export interface ConversationListResponse {
 
 export interface Attachment {
   f_path: string;
+  media_type?: string;
+  description?: string;
   preview_url?: string;
+}
+
+export interface InteractiveTableArtifact {
+  format: "dataagent-interactive-table-v1";
+  source_path: string;
+  columns: string[];
+  rows: Record<string, unknown>[];
+  total_rows: number;
+  truncated: boolean;
 }
 
 export interface TextContent {
@@ -58,16 +69,23 @@ export interface UploadAttachmentResponse {
   attachment: Attachment;
 }
 
-export interface WebSocketChatRequest {
+export interface ChatStreamRequest {
+  conversation_id: string;
   message: MessageSchema;
 }
 
-export interface WebSocketMessageResponse {
+export interface ChatStreamMessageEvent {
   type: "message";
   message: MessageSchema;
 }
 
-export interface WebSocketErrorResponse {
+export interface ChatStreamErrorEvent {
   type: "error";
   content: string;
 }
+
+export interface ChatStreamDoneEvent {
+  type: "done";
+}
+
+export type ChatStreamEvent = ChatStreamMessageEvent | ChatStreamErrorEvent | ChatStreamDoneEvent;

@@ -56,3 +56,4 @@ class DorisClientManager:
 
 
 source_doris_client_manager = DorisClientManager(cfg.doris)
+query_doris_client_manager = DorisClientManager(cfg.doris_query)

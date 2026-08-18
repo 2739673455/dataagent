@@ -1,5 +1,5 @@
 """公开 API v1"""
 
-from . import attachment, chat, meta
+from . import admin, attachment, auth, chat, meta
 
-__all__ = ["attachment", "chat", "meta"]
+__all__ = ["admin", "attachment", "auth", "chat", "meta"]

@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
 import { lazy, Suspense } from "react";
 import { createBrowserRouter, Navigate } from "react-router-dom";
-import { AUTH_CALLBACK_ROUTE, AuthCallbackPage, AuthLoadingScreen, ProtectedRoute } from "@/auth";
+import { AuthLoadingScreen, ProtectedRoute } from "@/auth";
 import { ROUTES } from "@/config/settings";
 
 const ChatPage = lazy(() => import("@/pages/Chat"));
+const LoginPage = lazy(() => import("@/pages/Login"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 
 function SuspenseWrapper({ children }: { children: ReactNode }) {
@@ -17,8 +18,12 @@ export const router = createBrowserRouter([
     element: <Navigate to={ROUTES.chat} replace />,
   },
   {
-    path: AUTH_CALLBACK_ROUTE,
-    element: <AuthCallbackPage />,
+    path: ROUTES.login,
+    element: (
+      <SuspenseWrapper>
+        <LoginPage />
+      </SuspenseWrapper>
+    ),
   },
   {
     path: ROUTES.chat,

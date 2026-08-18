@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { RouterProvider } from "react-router-dom";
 import { Toaster } from "sonner";
-import { ACCESS_TOKEN_STORAGE_KEY, checkAuth, useAuthStore } from "@/auth";
+import { ACCESS_TOKEN_STORAGE_KEY, REFRESH_TOKEN_STORAGE_KEY, synchronizeSession } from "@/auth";
 import { router } from "./router";
 
 export default function App() {
@@ -9,15 +9,10 @@ export default function App() {
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (event.key !== ACCESS_TOKEN_STORAGE_KEY) return;
-      const authStore = useAuthStore.getState();
-
-      if (event.newValue === null) {
-        authStore.clearAuth();
+      if (![ACCESS_TOKEN_STORAGE_KEY, REFRESH_TOKEN_STORAGE_KEY].includes(event.key ?? "")) {
         return;
       }
-
-      void checkAuth();
+      void synchronizeSession();
     };
 
     window.addEventListener("storage", onStorage);

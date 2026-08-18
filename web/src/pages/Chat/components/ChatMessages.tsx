@@ -13,7 +13,7 @@ type MessageDisplayItem = {
   type: "message";
   message: {
     key: string;
-    conversationId?: number | null;
+    conversationId?: string | null;
     role: MessageSchema["role"];
     attachments?: Attachment[] | null;
     parts: Array<TextContent | ImageContent>;
@@ -24,7 +24,7 @@ type ToolRunDisplayItem = {
   key: string;
   type: "tool_run";
   toolCallId: string;
-  conversationId?: number | null;
+  conversationId?: string | null;
   name: string;
   args?: Record<string, unknown>;
   result?: string;
@@ -85,9 +85,16 @@ function isHtmlAttachment(name: string) {
   return /\.(html?)$/i.test(name);
 }
 
+function isInteractiveTableAttachment(attachment: Attachment) {
+  return (
+    attachment.media_type === "application/vnd.dataagent.table+json" ||
+    /\.table\.json$/i.test(attachment.f_path)
+  );
+}
+
 // 把后端原始消息流整理成适合渲染的普通消息和工具执行条目
 function buildDisplayItems(
-  conversationId: number | null,
+  conversationId: string | null,
   messages: MessageSchema[]
 ): DisplayItem[] {
   const items: DisplayItem[] = [];
@@ -321,10 +328,10 @@ function PartView({
 // 工具调用和工具结果合并成一条可折叠的执行记录
 function ToolRunBar({
   item,
-  onOpenHtmlAttachment,
+  onOpenPreviewAttachment,
 }: {
   item: ToolRunDisplayItem;
-  onOpenHtmlAttachment?: (attachment: Attachment) => void;
+  onOpenPreviewAttachment?: (attachment: Attachment) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const argsPreview = getToolArgsPreview(item.args);
@@ -442,7 +449,7 @@ function ToolRunBar({
                   attachment={attachment}
                   conversationId={item.conversationId}
                   isUser={false}
-                  onOpenHtmlAttachment={onOpenHtmlAttachment}
+                  onOpenPreviewAttachment={onOpenPreviewAttachment}
                 />
               ))}
             </div>
@@ -460,7 +467,7 @@ function AttachmentPreview({
   onPreview,
 }: {
   attachment: Attachment;
-  conversationId?: number | null;
+  conversationId?: string | null;
   onPreview?: (src: string, alt: string) => void;
 }) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -516,22 +523,23 @@ function AttachmentPreview({
   );
 }
 
-// 附件 chip 统一承载预览、下载和 HTML 打开动作
+// 附件 chip 统一承载预览、下载和可信产物打开动作
 function AttachmentChip({
   attachment,
   conversationId,
   isUser,
   onPreview,
-  onOpenHtmlAttachment,
+  onOpenPreviewAttachment,
 }: {
   attachment: Attachment;
-  conversationId?: number | null;
+  conversationId?: string | null;
   isUser: boolean;
   onPreview?: (src: string, alt: string) => void;
-  onOpenHtmlAttachment?: (attachment: Attachment) => void;
+  onOpenPreviewAttachment?: (attachment: Attachment) => void;
 }) {
   const [isDownloading, setIsDownloading] = useState(false);
   const isHtml = isHtmlAttachment(attachment.f_path);
+  const isPreviewable = isHtml || isInteractiveTableAttachment(attachment);
 
   // 下载走 blob 链接，避免直接暴露鉴权接口地址
   const handleDownload = async () => {
@@ -568,15 +576,15 @@ function AttachmentChip({
       <span className="truncate" title={getAttachmentName(attachment.f_path)}>
         {getAttachmentName(attachment.f_path)}
       </span>
-      {isHtml ? (
+      {isPreviewable ? (
         <button
           type="button"
-          onClick={() => onOpenHtmlAttachment?.(attachment)}
+          onClick={() => onOpenPreviewAttachment?.(attachment)}
           className={cn(
             "flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition",
             isUser ? "hover:bg-slate-800/10" : "hover:bg-slate-800/5"
           )}
-          title="预览 HTML"
+          title={isHtml ? "预览 HTML" : "预览交互表格"}
         >
           <Eye className="h-3.5 w-3.5" />
         </button>
@@ -607,10 +615,10 @@ function AttachmentChip({
 // 一条普通消息气泡内可以同时包含附件、文本和图片片段
 function MessageBubble({
   message,
-  onOpenHtmlAttachment,
+  onOpenPreviewAttachment,
 }: {
   message: MessageDisplayItem["message"];
-  onOpenHtmlAttachment?: (attachment: Attachment) => void;
+  onOpenPreviewAttachment?: (attachment: Attachment) => void;
 }) {
   const isUser = message.role === "user";
   const [previewImage, setPreviewImage] = useState<{
@@ -639,7 +647,7 @@ function MessageBubble({
                     conversationId={message.conversationId}
                     isUser={isUser}
                     onPreview={(src, alt) => setPreviewImage({ src, alt })}
-                    onOpenHtmlAttachment={onOpenHtmlAttachment}
+                    onOpenPreviewAttachment={onOpenPreviewAttachment}
                   />
                 ))}
               </div>
@@ -668,11 +676,11 @@ function MessageBubble({
 }
 
 interface ChatMessagesProps {
-  conversationId: number | null;
+  conversationId: string | null;
   conversationSelected: boolean;
   isLoading: boolean;
   messages: MessageSchema[];
-  onOpenHtmlAttachment?: (attachment: Attachment) => void;
+  onOpenPreviewAttachment?: (attachment: Attachment) => void;
   viewportRef: RefObject<HTMLDivElement | null>;
 }
 
@@ -681,7 +689,7 @@ export function ChatMessages({
   conversationSelected,
   isLoading,
   messages,
-  onOpenHtmlAttachment,
+  onOpenPreviewAttachment,
   viewportRef,
 }: ChatMessagesProps) {
   // 渲染前先把原始消息整理成适合 UI 的扁平列表
@@ -710,13 +718,13 @@ export function ChatMessages({
                 <MessageBubble
                   key={item.key}
                   message={item.message}
-                  onOpenHtmlAttachment={onOpenHtmlAttachment}
+                  onOpenPreviewAttachment={onOpenPreviewAttachment}
                 />
               ) : (
                 <ToolRunBar
                   key={item.key}
                   item={item}
-                  onOpenHtmlAttachment={onOpenHtmlAttachment}
+                  onOpenPreviewAttachment={onOpenPreviewAttachment}
                 />
               )
             )}

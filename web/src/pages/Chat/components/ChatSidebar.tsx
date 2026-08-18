@@ -1,6 +1,5 @@
 import { LogOut, MessageSquareMore, Plus, Trash2, User2 } from "lucide-react";
 import { Link } from "react-router-dom";
-import { buildAuthProfileRedirectUrl } from "@/auth";
 import type { UserResponse } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -10,10 +9,10 @@ import type { ConversationResponse } from "@/types";
 
 interface ChatSidebarProps {
   conversations: ConversationResponse[];
-  activeConversationId: number | null;
+  activeConversationId: string | null;
   user: UserResponse | null;
   onCreate: () => void;
-  onDelete: (conversationId: number) => void;
+  onDelete: (conversationId: string) => void;
   onLogout: () => void;
 }
 
@@ -25,9 +24,6 @@ export function ChatSidebar({
   onDelete,
   onLogout,
 }: ChatSidebarProps) {
-  // 用户信息按钮跳转到认证中心个人页，并把当前聊天页作为返回地址
-  const profileUrl = buildAuthProfileRedirectUrl(window.location.href);
-
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-none border-r border-[#e6dfd4] bg-[#fefdfa] shadow-none">
       <div className="px-4 pb-4 pt-5">
@@ -103,11 +99,8 @@ export function ChatSidebar({
       </div>
       <Separator />
       <div className="flex items-center gap-2 p-3">
-        {/* 左侧入口显示当前用户信息，并允许跳转到认证中心个人页 */}
-        <a
-          href={profileUrl}
-          className="group flex h-12 min-w-0 flex-1 items-center gap-3 rounded-full border border-transparent bg-transparent px-3 text-left transition-all duration-300 hover:border-stone-400 hover:bg-transparent hover:shadow-[8px_8px_16px_rgba(201,197,190,0.35),-8px_-8px_16px_rgba(255,255,255,0.65)]"
-        >
+        {/* 左侧区域展示当前用户和角色 */}
+        <div className="group flex h-12 min-w-0 flex-1 items-center gap-3 rounded-full border border-transparent bg-transparent px-3 text-left transition-all duration-300 hover:border-stone-400 hover:bg-transparent hover:shadow-[8px_8px_16px_rgba(201,197,190,0.35),-8px_-8px_16px_rgba(255,255,255,0.65)]">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-stone-600 text-white transition-colors group-hover:bg-stone-700">
             <User2 className="h-4 w-4" />
           </div>
@@ -116,10 +109,10 @@ export function ChatSidebar({
               {user?.username || "未登录"}
             </p>
             <p className="truncate text-xs text-muted-foreground">
-              {user?.email || "点击重新认证"}
+              {user ? `${user.email} · ${user.roles.join(" / ")}` : "未认证"}
             </p>
           </div>
-        </a>
+        </div>
         {/* 右侧按钮负责显式退出当前应用登录态 */}
         <Button
           variant="ghost"

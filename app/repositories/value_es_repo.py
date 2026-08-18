@@ -7,7 +7,7 @@ from typing import Any, ClassVar
 from elasticsearch import AsyncElasticsearch
 
 from app.conf.app_config import cfg
-from app.entities.meta import ValueInfo
+from app.entities.meta import ColumnKey, ValueInfo, column_resource_key
 from app.entities.semantic_search import SearchHit
 
 
@@ -18,6 +18,7 @@ class ValueESRepo:
     _index_mappings: ClassVar[dict[str, Any]] = {
         "dynamic": False,
         "properties": {
+            "resource_key": {"type": "keyword"},
             "value": {
                 "type": "text",
                 "analyzer": "ik_max_word",
@@ -34,7 +35,12 @@ class ValueESRepo:
 
     async def ensure_index(self) -> None:
         """确保字段取值索引存在"""
-        if not await self._client.indices.exists(index=self._index_name):
+        if await self._client.indices.exists(index=self._index_name):
+            await self._client.indices.put_mapping(
+                index=self._index_name,
+                properties={"resource_key": {"type": "keyword"}},
+            )
+        else:
             await self._client.indices.create(
                 index=self._index_name, mappings=self._index_mappings
             )
@@ -61,7 +67,15 @@ class ValueESRepo:
                         }
                     }
                 )
-                operations.append(asdict(value_info))
+                operations.append(
+                    {
+                        **asdict(value_info),
+                        "resource_key": column_resource_key(
+                            value_info.t_name,
+                            value_info.c_name,
+                        ),
+                    }
+                )
             result = await self._client.bulk(operations=operations, refresh=False)
             if result.get("errors"):
                 raise RuntimeError("Elasticsearch bulk indexing contains failed items")
@@ -78,10 +92,22 @@ class ValueESRepo:
             index=self._index_name,
             query={
                 "bool": {
-                    "filter": [
-                        {"term": {"t_name": t_name}},
-                        {"term": {"c_name": c_name}},
-                    ]
+                    "should": [
+                        {
+                            "term": {
+                                "resource_key": column_resource_key(t_name, c_name)
+                            }
+                        },
+                        {
+                            "bool": {
+                                "filter": [
+                                    {"term": {"t_name": t_name}},
+                                    {"term": {"c_name": c_name}},
+                                ]
+                            }
+                        },
+                    ],
+                    "minimum_should_match": 1,
                 }
             },
             conflicts="proceed",
@@ -91,11 +117,20 @@ class ValueESRepo:
     async def search_hits(
         self,
         keyword: str,
+        *,
+        allowed_columns: frozenset[ColumnKey] | None,
         score_threshold: float = 0.6,
         limit: int = 5,
     ) -> list[SearchHit[ValueInfo]]:
         """根据关键词检索字段取值并保留命中分数"""
         query: dict[str, Any] = {"match": {"value": keyword}}
+        if allowed_columns is not None:
+            query = {
+                "bool": {
+                    "must": [query],
+                    "filter": [self._column_filter(allowed_columns)],
+                }
+            }
         result = await self._client.search(
             index=self._index_name,
             query=query,
@@ -104,8 +139,26 @@ class ValueESRepo:
         )
         return [
             SearchHit(
-                item=ValueInfo(**hit["_source"]),
+                item=ValueInfo(
+                    value=hit["_source"]["value"],
+                    t_name=hit["_source"]["t_name"],
+                    c_name=hit["_source"]["c_name"],
+                ),
                 score=float(hit.get("_score") or 0.0),
             )
             for hit in result["hits"]["hits"]
         ]
+
+    @staticmethod
+    def _column_filter(allowed_columns: frozenset[ColumnKey]) -> dict[str, Any]:
+        """构造字段值所属表字段白名单"""
+        if not allowed_columns:
+            raise ValueError("allowed_columns must not be empty")
+        return {
+            "terms": {
+                "resource_key": [
+                    column_resource_key(t_name, c_name)
+                    for t_name, c_name in sorted(allowed_columns)
+                ]
+            }
+        }

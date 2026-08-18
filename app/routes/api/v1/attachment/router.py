@@ -3,7 +3,7 @@ from typing import Annotated
 from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import Response
 from loguru import logger
 
@@ -14,6 +14,7 @@ from app.clients.docker_sandbox_manager import (
     docker_sandbox_manager,
 )
 from app.errors import attachment_error, chat_error
+from app.routes.api.v1.auth.dependencies import AnalysisUserDep, CurrentUserDep
 from app.routes.api.v1.chat import schemas as chat_schema
 from app.routes.api.v1.chat.dependencies import ConversationPGRepoDep
 
@@ -22,13 +23,13 @@ router = APIRouter(tags=["attachment"])
 
 @router.post("/upload")
 async def api_upload_attachment(
-    request: Request,
     conversation_repo: ConversationPGRepoDep,
+    current_user: AnalysisUserDep,
     conversation_id: Annotated[UUID, Form()],
     file: Annotated[UploadFile, File()],
 ) -> chat_schema.UploadAttachmentResponse:
     """上传附件到当前会话工作区"""
-    user_id = request.state.payload.sub
+    user_id = current_user.id
     # 检查对话是否存在且属于当前用户
     conversation = await conversation_repo.get(user_id, conversation_id)
     if conversation is None:
@@ -37,7 +38,7 @@ async def api_upload_attachment(
     # 获取文件名
     f_path = file.filename or "upload"
     try:
-        await docker_sandbox_manager.upload_file(
+        f_path = await docker_sandbox_manager.upload_user_attachment(
             user_id,
             conversation_id,
             f_path,
@@ -58,19 +59,19 @@ async def api_upload_attachment(
 
 @router.post("/delete")
 async def api_delete_attachment(
-    request: Request,
     body: chat_schema.DeleteAttachmentRequest,
     conversation_repo: ConversationPGRepoDep,
+    current_user: AnalysisUserDep,
 ) -> None:
     """删除当前会话工作区中的附件"""
-    user_id = request.state.payload.sub
+    user_id = current_user.id
     # 检查对话是否存在且属于当前用户
     conversation = await conversation_repo.get(user_id, body.conversation_id)
     if conversation is None:
         raise chat_error.ConversationNotFoundError
 
     try:
-        await docker_sandbox_manager.delete_file(
+        await docker_sandbox_manager.delete_user_attachment(
             user_id,
             body.conversation_id,
             body.f_path,
@@ -85,13 +86,13 @@ async def api_delete_attachment(
 
 @router.get("/get")
 async def api_get_attachment(
-    request: Request,
     conversation_id: UUID,
     f_path: str,
     conversation_repo: ConversationPGRepoDep,
+    current_user: CurrentUserDep,
 ) -> Response:
     """获取当前会话工作区中的附件文件"""
-    user_id = request.state.payload.sub
+    user_id = current_user.id
     # 检查对话是否存在且属于当前用户
     conversation = await conversation_repo.get(user_id, conversation_id)
     if conversation is None:

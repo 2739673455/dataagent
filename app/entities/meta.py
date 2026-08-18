@@ -1,5 +1,6 @@
 """元数据实体"""
 
+import json
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -16,11 +17,9 @@ from sqlalchemy import (
     Text,
     text,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 
-
-class Base(DeclarativeBase):
-    """元数据 ORM 基类"""
+from app.entities.base import Base
 
 
 class ColumnReference(TypedDict):
@@ -33,6 +32,15 @@ class ColumnReference(TypedDict):
 type ColumnKey = tuple[str, str]
 
 COLUMN_EXAMPLE_LIMIT = 10
+
+
+def column_resource_key(t_name: str, c_name: str) -> str:
+    """生成无歧义的表字段联合资源键"""
+    return json.dumps(
+        [t_name, c_name],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def serialize_column_examples(examples: list[Any]) -> list[Any]:

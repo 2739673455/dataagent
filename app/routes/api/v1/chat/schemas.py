@@ -87,6 +87,8 @@ class Attachment(BaseModel):
     """附件"""
 
     f_path: str = Field(..., description="工作区内的文件路径")
+    media_type: str | None = Field(default=None, description="附件媒体类型")
+    description: str | None = Field(default=None, description="附件说明")
 
 
 class MessageSchema(BaseModel):

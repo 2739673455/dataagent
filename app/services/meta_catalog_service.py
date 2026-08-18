@@ -1,5 +1,6 @@
 """元数据目录管理服务"""
 
+import asyncio
 from typing import cast
 
 from app.conf.meta_config import (
@@ -18,10 +19,12 @@ from app.entities.meta import (
     TableInfo,
     serialize_column_examples,
 )
-from app.errors import meta_error
+from app.errors import auth_error, meta_error
 from app.repositories.meta_pg_repo import MetaPGRepo
 from app.repositories.source_doris_repo import SourceDorisRepo
+from app.services.authorization_service import AssetAccessPolicy
 from app.services.meta_index_service import MetaIndexService
+from app.services.metadata_authorization_filter import MetadataAuthorizationFilter
 
 
 class MetaCatalogService:
@@ -32,28 +35,59 @@ class MetaCatalogService:
         meta_repo: MetaPGRepo,
         source_repo: SourceDorisRepo,
         meta_index_service: MetaIndexService,
+        asset_policy: AssetAccessPolicy,
+        data_source: str,
+        database_name: str,
     ) -> None:
         """初始化元数据目录管理服务"""
         self._meta_repo = meta_repo
         self._source_repo = source_repo
         self._meta_index_service = meta_index_service
+        self._authorization_filter = MetadataAuthorizationFilter(
+            asset_policy,
+            data_source,
+            database_name,
+        )
 
     async def list_table_infos(self) -> list[TableInfo]:
         """查询全部表元数据"""
-        return await self._meta_repo.list_table_infos()
+        table_infos, column_infos = await asyncio.gather(
+            self._meta_repo.list_table_infos(),
+            self._meta_repo.list_column_infos(),
+        )
+        allowed_columns = self._authorization_filter.allowed_column_keys(column_infos)
+        return self._authorization_filter.filter_tables(
+            table_infos,
+            allowed_columns,
+        )
 
     async def list_column_infos(self, t_name: str) -> list[ColumnInfo]:
         """查询表下全部字段元数据"""
+        if not self._authorization_filter.table_is_visible(t_name):
+            raise auth_error.AssetAccessDeniedError
         await self._meta_repo.get_table_info(t_name)
+        column_infos = await self._meta_repo.list_column_infos()
+        allowed_columns = self._authorization_filter.allowed_column_keys(column_infos)
         return [
             column_info
-            for column_info in await self._meta_repo.list_column_infos()
+            for column_info in self._authorization_filter.filter_columns(
+                column_infos,
+                allowed_columns,
+            )
             if column_info.t_name == t_name
         ]
 
     async def list_metric_infos(self) -> list[MetricInfo]:
         """查询全部指标元数据"""
-        return await self._meta_repo.list_metric_infos()
+        metric_infos, column_infos = await asyncio.gather(
+            self._meta_repo.list_metric_infos(),
+            self._meta_repo.list_column_infos(),
+        )
+        allowed_columns = self._authorization_filter.allowed_column_keys(column_infos)
+        return self._authorization_filter.filter_metrics(
+            metric_infos,
+            allowed_columns,
+        )
 
     async def upsert_table_info(
         self,

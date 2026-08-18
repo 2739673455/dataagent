@@ -46,7 +46,15 @@ def _log_problem(exc: ProblemError, source: Exception) -> None:
 def problem_error_handler(request: Request, exc: ProblemError) -> JSONResponse:
     """处理应用预期异常"""
     _log_problem(exc, exc)
-    return _build_response(request, exc)
+    retry_after = exc.extensions.get("retry_after_seconds")
+    headers = (
+        {"Retry-After": str(retry_after)}
+        if exc.status == HTTPStatus.TOO_MANY_REQUESTS
+        and isinstance(retry_after, int)
+        and retry_after > 0
+        else None
+    )
+    return _build_response(request, exc, headers=headers)
 
 
 def validation_error_handler(

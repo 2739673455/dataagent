@@ -1,20 +1,23 @@
 import { useEffect } from "react";
+import { Navigate, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import { AuthLoadingScreen } from "@/auth/AuthLoadingScreen";
-import { buildAuthorizeUrl, checkAuth } from "@/auth/authorize";
+import { checkAuth } from "@/auth/session";
 import { useAuthStore } from "@/auth/store";
+import { ROUTES } from "@/config/settings";
 
 // 认证与权限校验的基础守卫
 function RequireAuth({
   children,
-  requiredScopes,
+  requiredRoles,
 }: {
   children: React.ReactNode;
-  requiredScopes?: string[];
+  requiredRoles?: string[];
 }) {
+  const location = useLocation();
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const isLoading = useAuthStore((state) => state.isLoading);
-  const hasScope = useAuthStore((state) => state.hasScope);
+  const hasRole = useAuthStore((state) => state.hasRole);
 
   useEffect(() => {
     if (isLoading) {
@@ -27,15 +30,15 @@ function RequireAuth({
   }
 
   if (!isAuthenticated) {
-    const from = `${window.location.pathname}${window.location.search}`;
-    void buildAuthorizeUrl(from).then((url) => window.location.replace(url));
-    return <AuthLoadingScreen />;
+    const returnTo = `${location.pathname}${location.search}`;
+    return (
+      <Navigate to={`${ROUTES.login}?${new URLSearchParams({ return_to: returnTo })}`} replace />
+    );
   }
 
-  if (requiredScopes && !hasScope(requiredScopes)) {
+  if (requiredRoles && !hasRole(requiredRoles)) {
     toast.error("无权限访问此页面");
-    window.location.replace("/");
-    return <AuthLoadingScreen />;
+    return <Navigate to={ROUTES.chat} replace />;
   }
 
   return <>{children}</>;

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.conf.app_config import DBConfig, cfg
-from app.entities.meta import Base
+from app.entities import Base
 
 
 class PostgresClientManager:
@@ -74,8 +74,8 @@ class PostgresClientManager:
         self._engine = None
         self._session_maker = None
 
-    async def init_meta_tables(self) -> None:
-        """初始化元数据表"""
+    async def init_tables(self) -> None:
+        """初始化认证、授权与元数据表"""
         if self._engine is None:
             raise RuntimeError("PostgreSQL client manager is not initialized")
         async with self._engine.begin() as connection:
@@ -92,7 +92,7 @@ if __name__ == "__main__":
     meta_postgres_client_manager.init()
 
     async def test() -> None:
-        await meta_postgres_client_manager.init_meta_tables()
+        await meta_postgres_client_manager.init_tables()
 
         try:
             async with meta_postgres_client_manager.session() as session:

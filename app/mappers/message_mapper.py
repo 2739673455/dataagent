@@ -1,4 +1,5 @@
 import base64
+import json
 import mimetypes
 import uuid
 from typing import Any, cast
@@ -15,6 +16,7 @@ from langchain_core.messages import (
 from loguru import logger
 from pydantic import ValidationError
 
+from app.agents.contracts import DelegateAgentResult
 from app.clients.docker_sandbox_manager import docker_sandbox_manager
 from app.routes.api.v1.chat import schemas as chat_schema
 
@@ -67,6 +69,7 @@ def _schema_from_metadata(
 
 def _tool_message_to_schema(message: ToolMessage) -> chat_schema.MessageSchema:
     """将工具结果转换为接口消息"""
+    attachments = _delegate_result_attachments(message)
     return chat_schema.MessageSchema(
         message_id=message.id,
         role="tool",
@@ -77,7 +80,42 @@ def _tool_message_to_schema(message: ToolMessage) -> chat_schema.MessageSchema:
                 content=str(message.content),
             )
         ],
+        attachments=attachments or None,
     )
+
+
+def _delegate_result_attachments(
+    message: ToolMessage,
+) -> list[chat_schema.Attachment]:
+    """从委派结果的稳定协议中提取可下载产物"""
+    if message.name != "delegate_agent":
+        return []
+    content = message.content
+    if isinstance(content, str):
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            return []
+    elif isinstance(content, dict):
+        payload = content
+    else:
+        return []
+    try:
+        result = DelegateAgentResult.model_validate(payload)
+    except ValidationError:
+        logger.warning(
+            f"Invalid delegate result payload: message_id={message.id}, "
+            f"tool_call_id={message.tool_call_id}"
+        )
+        return []
+    return [
+        chat_schema.Attachment(
+            f_path=artifact.path.removeprefix("/"),
+            media_type=artifact.media_type,
+            description=artifact.description,
+        )
+        for artifact in result.artifacts
+    ]
 
 
 def langchain_message_to_schema(

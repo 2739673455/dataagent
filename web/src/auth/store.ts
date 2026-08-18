@@ -3,27 +3,19 @@ import type { UserResponse } from "@/auth/types";
 
 export const useAuthStore = create<{
   user: UserResponse | null;
-  scopes: string[];
   isAuthenticated: boolean;
   isLoading: boolean;
-  setUser: (user: UserResponse | null) => void;
-  setAuth: (user: UserResponse, scope: string[]) => void;
+  setAuth: (user: UserResponse) => void;
   clearAuth: () => void;
-  hasScope: (requiredScopes: string[]) => boolean;
+  hasRole: (requiredRoles: string[]) => boolean;
 }>()((set, get) => ({
   user: null,
-  scopes: [],
   isAuthenticated: false,
   isLoading: true,
 
-  setUser: (user) => {
-    set({ user });
-  },
-
-  setAuth: (user, scope) => {
+  setAuth: (user) => {
     set({
       user,
-      scopes: scope,
       isAuthenticated: true,
       isLoading: false,
     });
@@ -32,17 +24,14 @@ export const useAuthStore = create<{
   clearAuth: () => {
     set({
       user: null,
-      scopes: [],
       isAuthenticated: false,
       isLoading: false,
     });
   },
 
-  hasScope: (requiredScopes) => {
-    const { scopes } = get();
-    if (scopes.includes("*")) return true;
-    if (requiredScopes.length === 0) return true;
-    const scopeSet = new Set(scopes);
-    return requiredScopes.every((scope) => scopeSet.has(scope));
+  hasRole: (requiredRoles) => {
+    if (requiredRoles.length === 0) return true;
+    const roles = new Set(get().user?.roles ?? []);
+    return requiredRoles.some((role) => roles.has(role));
   },
 }));

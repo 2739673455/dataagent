@@ -5,7 +5,12 @@ from typing import Any, ClassVar, cast
 from elasticsearch import AsyncElasticsearch
 
 from app.conf.app_config import cfg
-from app.entities.meta import ColumnInfo, serialize_column_examples
+from app.entities.meta import (
+    ColumnInfo,
+    ColumnKey,
+    column_resource_key,
+    serialize_column_examples,
+)
 from app.entities.semantic_search import SearchHit, SemanticTextType
 
 
@@ -21,6 +26,7 @@ class ColumnESRepo:
     _index_mappings: ClassVar[dict[str, Any]] = {
         "dynamic": False,
         "properties": {
+            "resource_key": {"type": "keyword"},
             "t_name": {"type": "keyword"},
             "name": {"type": "keyword"},
             "text": {
@@ -52,7 +58,12 @@ class ColumnESRepo:
 
     async def ensure_index(self) -> None:
         """确保字段语义索引存在"""
-        if not await self._client.indices.exists(index=self._index_name):
+        if await self._client.indices.exists(index=self._index_name):
+            await self._client.indices.put_mapping(
+                index=self._index_name,
+                properties={"resource_key": {"type": "keyword"}},
+            )
+        else:
             await self._client.indices.create(
                 index=self._index_name,
                 mappings=self._index_mappings,
@@ -88,6 +99,10 @@ class ColumnESRepo:
         payload = self._to_payload(column_info)
         documents = [
             {
+                "resource_key": column_resource_key(
+                    column_info.t_name,
+                    column_info.name,
+                ),
                 "t_name": column_info.t_name,
                 "name": column_info.name,
                 "text": text,
@@ -112,14 +127,34 @@ class ColumnESRepo:
         """删除字段对应的全部语义索引文档"""
         await self._delete_by_filter(
             [
-                {"term": {"t_name": t_name}},
-                {"term": {"name": c_name}},
+                {
+                    "bool": {
+                        "should": [
+                            {
+                                "term": {
+                                    "resource_key": column_resource_key(t_name, c_name)
+                                }
+                            },
+                            {
+                                "bool": {
+                                    "filter": [
+                                        {"term": {"t_name": t_name}},
+                                        {"term": {"name": c_name}},
+                                    ]
+                                }
+                            },
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                }
             ]
         )
 
     async def search_vector_hits(
         self,
         embedding: list[float],
+        *,
+        allowed_columns: frozenset[ColumnKey] | None,
         score_threshold: float = 0.6,
         limit: int = 5,
     ) -> list[SearchHit[ColumnInfo]]:
@@ -128,16 +163,19 @@ class ColumnESRepo:
             embedding,
             score_threshold,
             limit,
+            allowed_columns,
         )
         return self._hits(result)
 
     async def search_text_hits(
         self,
         query: str,
+        *,
+        allowed_columns: frozenset[ColumnKey] | None,
         limit: int = 5,
     ) -> list[SearchHit[ColumnInfo]]:
         """根据关键词检索字段并保留命中分数"""
-        result = await self._text_search(query, limit)
+        result = await self._text_search(query, limit, allowed_columns)
         return self._hits(result)
 
     async def _bulk_index(
@@ -178,6 +216,7 @@ class ColumnESRepo:
         embedding: list[float],
         score_threshold: float,
         limit: int,
+        allowed_columns: frozenset[ColumnKey] | None,
     ) -> dict[str, Any]:
         """执行字段向量检索"""
         knn: dict[str, Any] = {
@@ -187,6 +226,8 @@ class ColumnESRepo:
             "num_candidates": min(10_000, max(100, limit * 10)),
             "similarity": score_threshold,
         }
+        if allowed_columns is not None:
+            knn["filter"] = self._column_filter(allowed_columns)
         result = await self._client.search(
             index=self._index_name,
             knn=knn,
@@ -199,6 +240,7 @@ class ColumnESRepo:
         self,
         query: str,
         limit: int,
+        allowed_columns: frozenset[ColumnKey] | None,
     ) -> dict[str, Any]:
         """执行字段全文检索"""
         exact_queries = [
@@ -229,6 +271,13 @@ class ColumnESRepo:
                 ]
             }
         }
+        if allowed_columns is not None:
+            text_query = {
+                "bool": {
+                    "must": [text_query],
+                    "filter": [self._column_filter(allowed_columns)],
+                }
+            }
         result = await self._client.search(
             index=self._index_name,
             query=text_query,
@@ -236,6 +285,20 @@ class ColumnESRepo:
         )
         body = result.body if hasattr(result, "body") else result
         return cast(dict[str, Any], body)
+
+    @staticmethod
+    def _column_filter(allowed_columns: frozenset[ColumnKey]) -> dict[str, Any]:
+        """构造表字段联合白名单过滤条件"""
+        if not allowed_columns:
+            raise ValueError("allowed_columns must not be empty")
+        return {
+            "terms": {
+                "resource_key": [
+                    column_resource_key(t_name, c_name)
+                    for t_name, c_name in sorted(allowed_columns)
+                ]
+            }
+        }
 
     @staticmethod
     def _validate_document_parts(

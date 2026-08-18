@@ -1,47 +1,31 @@
 // localStorage 中访问令牌的 key
 export const ACCESS_TOKEN_STORAGE_KEY = "dataagent:access-token";
-// sessionStorage 中 PKCE 授权请求的 key 前缀
-export const AUTH_REQUEST_PREFIX = "auth-request:";
-// 在认证中心注册的 client_id
-export const CLIENT_ID = "dataagent";
-// 认证中心 API 基路径
-export const AUTH_API_BASE_URL = "/auth-api";
-// 认证中心页面基路径
-export const AUTH_WEB_BASE_URL = "http://localhost:7100";
-// 认证中心 API 路径
+export const REFRESH_TOKEN_STORAGE_KEY = "dataagent:refresh-token";
 export const AUTH_API_PATHS = {
-  authorize: "/api/authorize",
-  token: "/api/token",
-  introspection: "/api/introspection",
-  logout: "/api/logout",
-  me: "/api/userinfo",
+  register: "/api/v1/auth/register",
+  login: "/api/v1/auth/login",
+  refresh: "/api/v1/auth/refresh",
+  logout: "/api/v1/auth/logout",
+  me: "/api/v1/auth/me",
 } as const;
-
-// 前端基路径
-export const BASE_URL = "/";
-// 应用内用于接收授权回调的路由
-export const AUTH_CALLBACK_ROUTE = "/auth/callback";
 
 // 页面路由
 export const ROUTES = {
+  login: "/login",
   chat: "/chat",
-  chatConversation: (conversationId: number | string) => `/chat/${conversationId}`,
+  chatConversation: (conversationId: string) => `/chat/${conversationId}`,
 } as const;
 
 export const CHAT_API_ROUTES = {
-  createConversation: "/api/chat/create",
-  listConversations: "/api/chat/ls",
-  deleteConversations: "/api/chat/delete",
-  getMessages: (conversationId: number) => `/api/chat/ls/${conversationId}`,
-  uploadAttachment: "/api/chat/attachment/upload",
-  getAttachment: "/api/chat/attachment/get",
-  deleteAttachment: "/api/chat/attachment/delete",
-  chatWebSocket: "/api/chat/ws/chat",
+  createConversation: "/api/v1/chat/create",
+  listConversations: "/api/v1/chat/ls",
+  deleteConversations: "/api/v1/chat/delete",
+  getMessages: (conversationId: string) => `/api/v1/chat/ls/${conversationId}`,
+  uploadAttachment: "/api/v1/chat/attachment/upload",
+  getAttachment: "/api/v1/chat/attachment/get",
+  deleteAttachment: "/api/v1/chat/attachment/delete",
+  stream: "/api/v1/chat/stream",
 } as const;
 
 // 开发服务器端口
 export const VITE_SERVER_PORT = 7301;
-// 开发代理目标地址
-export const VITE_APP_PROXY = "http://localhost:7300";
-// 认证中心 API 代理目标地址
-export const VITE_AUTH_API_PROXY = "http://localhost:7100";

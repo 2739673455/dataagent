@@ -1,45 +1,51 @@
 import { create } from "zustand";
 import { chatApi } from "@/api/chat";
+import { sessionLifecycle } from "@/auth/sessionLifecycle";
 import type { ConversationResponse, MessageSchema } from "@/types";
 
-type MessageState = Record<number, MessageSchema[]>;
+type MessageState = Record<string, MessageSchema[]>;
 
 interface ChatState {
   conversations: ConversationResponse[];
   messagesByConversation: MessageState;
   isLoadingMessages: boolean;
-  connectionState: "idle" | "connecting" | "open" | "closed";
-  streamingConversations: Set<number>;
-  setConnectionState: (state: ChatState["connectionState"]) => void;
+  streamingConversations: Set<string>;
   loadConversations: () => Promise<ConversationResponse[]>;
-  createConversation: () => Promise<ConversationResponse>;
-  deleteConversation: (conversationId: number) => Promise<void>;
-  loadMessages: (conversationId: number) => Promise<MessageSchema[]>;
+  createConversation: () => Promise<ConversationResponse | null>;
+  deleteConversation: (conversationId: string) => Promise<boolean>;
+  loadMessages: (conversationId: string) => Promise<MessageSchema[]>;
   ensureConversation: (conversation: ConversationResponse) => void;
-  appendMessage: (conversationId: number, message: MessageSchema) => void;
-  markStreaming: (conversationId: number) => void;
-  unmarkStreaming: (conversationId: number) => void;
+  appendMessage: (conversationId: string, message: MessageSchema) => void;
+  markStreaming: (conversationId: string) => void;
+  unmarkStreaming: (conversationId: string) => void;
+  reset: () => void;
+}
+
+function emptyChatState() {
+  return {
+    conversations: [],
+    messagesByConversation: {},
+    isLoadingMessages: false,
+    streamingConversations: new Set<string>(),
+  };
 }
 
 export const useChatStore = create<ChatState>()((set, _get) => ({
-  conversations: [],
-  messagesByConversation: {},
-  isLoadingMessages: false,
-  connectionState: "idle",
-  streamingConversations: new Set<number>(),
-
-  setConnectionState: (connectionState) => set({ connectionState }),
+  ...emptyChatState(),
 
   loadConversations: async () => {
+    const generation = sessionLifecycle.current();
     const response = await chatApi.listConversations();
     const conversations = response.data.conversations;
-    set({ conversations });
+    if (sessionLifecycle.isCurrent(generation)) set({ conversations });
     return conversations;
   },
 
   createConversation: async () => {
+    const generation = sessionLifecycle.current();
     const response = await chatApi.createConversation();
     const conversation = response.data;
+    if (!sessionLifecycle.isCurrent(generation)) return null;
     set((state) => ({
       conversations: [conversation, ...state.conversations],
       messagesByConversation: {
@@ -51,7 +57,9 @@ export const useChatStore = create<ChatState>()((set, _get) => ({
   },
 
   deleteConversation: async (conversationId) => {
+    const generation = sessionLifecycle.current();
     await chatApi.deleteConversations([conversationId]);
+    if (!sessionLifecycle.isCurrent(generation)) return false;
     set((state) => {
       const nextMessages = { ...state.messagesByConversation };
       delete nextMessages[conversationId];
@@ -62,22 +70,26 @@ export const useChatStore = create<ChatState>()((set, _get) => ({
         messagesByConversation: nextMessages,
       };
     });
+    return true;
   },
 
   loadMessages: async (conversationId) => {
+    const generation = sessionLifecycle.current();
     set({ isLoadingMessages: true });
     try {
       const response = await chatApi.getMessages(conversationId);
       const messages = response.data.messages;
-      set((state) => ({
-        messagesByConversation: {
-          ...state.messagesByConversation,
-          [conversationId]: messages,
-        },
-      }));
+      if (sessionLifecycle.isCurrent(generation)) {
+        set((state) => ({
+          messagesByConversation: {
+            ...state.messagesByConversation,
+            [conversationId]: messages,
+          },
+        }));
+      }
       return messages;
     } finally {
-      set({ isLoadingMessages: false });
+      if (sessionLifecycle.isCurrent(generation)) set({ isLoadingMessages: false });
     }
   },
 
@@ -113,4 +125,12 @@ export const useChatStore = create<ChatState>()((set, _get) => ({
       next.delete(conversationId);
       return { streamingConversations: next };
     }),
+
+  reset: () => set(emptyChatState()),
 }));
+
+const unsubscribeSessionReset = sessionLifecycle.subscribeReset(() => {
+  useChatStore.getState().reset();
+});
+
+if (import.meta.hot) import.meta.hot.dispose(unsubscribeSessionReset);

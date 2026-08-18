@@ -597,6 +597,14 @@ def normalize_attachment_path(path: str) -> str:
     return PurePosixPath(*parts).as_posix()
 
 
+def normalize_user_attachment_path(path: str) -> str:
+    """校验用户可变附件路径并隔离系统分析产物目录"""
+    normalized_path = normalize_attachment_path(path)
+    if PurePosixPath(normalized_path).parts[0] == "analyses":
+        raise SandboxPathError(path)
+    return normalized_path
+
+
 class DockerSandboxBackend(BaseSandbox):
     """将一个用户容器中的会话目录暴露为虚拟文件系统"""
 
@@ -2306,15 +2314,14 @@ class DockerSandboxManager:
                 raise FileNotFoundError(normalized_path)
             return content
 
-    async def upload_file(
+    async def _upload_normalized_file(
         self,
         user_id: int,
         conversation_id: UUID,
-        path: str,
+        normalized_path: str,
         content: BinaryIO,
     ) -> None:
-        """上传文件对象到用户会话目录"""
-        normalized_path = normalize_attachment_path(path)
+        """将已校验路径的文件对象写入用户会话目录"""
         await self.init()
         (
             user_lock,
@@ -2337,6 +2344,38 @@ class DockerSandboxManager:
                 mutation_lock,
             )
         self._touch_user(user_id)
+
+    async def write_artifact(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        path: str,
+        content: BinaryIO,
+    ) -> None:
+        """写入可信系统分析产物"""
+        await self._upload_normalized_file(
+            user_id,
+            conversation_id,
+            normalize_attachment_path(path),
+            content,
+        )
+
+    async def upload_user_attachment(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        path: str,
+        content: BinaryIO,
+    ) -> str:
+        """上传用户可变附件并返回规范化路径"""
+        normalized_path = normalize_user_attachment_path(path)
+        await self._upload_normalized_file(
+            user_id,
+            conversation_id,
+            normalized_path,
+            content,
+        )
+        return normalized_path
 
     async def download_file(
         self,
@@ -2368,14 +2407,14 @@ class DockerSandboxManager:
         self._touch_user(user_id)
         return content
 
-    async def delete_file(
+    async def delete_user_attachment(
         self,
         user_id: int,
         conversation_id: UUID,
         path: str,
     ) -> None:
-        """删除用户会话目录中的文件"""
-        normalized_path = normalize_attachment_path(path)
+        """删除用户可变附件"""
+        normalized_path = normalize_user_attachment_path(path)
         backend = await self.get_backend(user_id, conversation_id)
         if not await asyncio.to_thread(backend.is_file, normalized_path):
             return

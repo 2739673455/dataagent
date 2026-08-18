@@ -9,6 +9,13 @@ doris:
   password: ${oc.env:DORIS_PASSWORD}
   database: ecommerce
 
+doris_query:
+  host: 127.0.0.1
+  port: 9030
+  user: dataagent_readonly
+  password: ${oc.env:DORIS_QUERY_PASSWORD}
+  database: ecommerce
+
 meta_postgresql:
   host: 127.0.0.1
   port: 5432
@@ -36,6 +43,28 @@ embedding:
   api_key: ${oc.env:SILICONFLOW_API_KEY}
   model: BAAI/bge-m3
   timeout: 30.0
+
+auth:
+  jwt_secret: ${oc.env:JWT_SECRET}
+  jwt_algorithm: HS256
+  issuer: dataagent
+  access_token_minutes: 15
+  refresh_token_days: 30
+  password_min_length: 10
+
+query:
+  data_source: doris
+  workload_group: dataagent_readonly
+  timeout_seconds: 60
+  memory_limit_bytes: 1073741824
+  max_scan_rows: 10000000
+  max_scan_bytes: 1073741824
+  max_cell_bytes: 1048576
+  max_rows: 100000
+  max_output_bytes: 33554432
+  batch_size: 100
+  sample_rows: 5
+  output_format: csv
 
 sandbox:
   deployment_namespace: local # 同一 Docker 主机上的部署实例必须使用不同命名空间
@@ -86,6 +115,32 @@ lm_config:
       params: {}
       profile:
         max_input_tokens: 1000000 # 模型上下文长度，用于计算对话压缩阈值
+
+agent:
+  orchestration:
+    mode: dynamic_subagents
+    max_parallel_sessions: 8
+    max_delegations_per_run: 20
+    max_continuations: 3
+    max_repair_rounds: 3
+    max_repair_depth: 5
+    max_session_resumes: 3
+    session_lock_timeout: 300
+  interpreter:
+    mode: thread
+    ptc:
+      - delegate_agent
+    timeout_seconds: 30
+    memory_limit_bytes: 67108864
+  specialists:
+    data_query:
+      model: default
+    attribution:
+      model: default
+    anomaly_detection:
+      model: default
+    visualization:
+      model: default
 
 mcp: # 格式参考：https://docs.langchain.com/oss/python/langchain/mcp#transports
   tavily:
