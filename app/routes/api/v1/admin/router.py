@@ -35,6 +35,100 @@ async def list_doris_roles(
     )
 
 
+@router.get(
+    "/doris-roles/discover",
+    response_model=schemas.DiscoveredDorisRoleListResponse,
+)
+async def discover_doris_roles(
+    _: AdminUserDep,
+    service: DorisRoleManagementServiceDep,
+) -> schemas.DiscoveredDorisRoleListResponse:
+    """扫描 Doris 集群原生角色及接入状态"""
+    roles = await service.discover_roles()
+    return schemas.DiscoveredDorisRoleListResponse(
+        roles=[
+            schemas.DiscoveredDorisRoleResponse(
+                name=role.name,
+                is_attached=role.is_attached,
+                description=role.description,
+                query_user=role.query_user,
+                workload_group=role.workload_group,
+            )
+            for role in roles
+        ]
+    )
+
+
+@router.post(
+    "/doris-roles",
+    response_model=schemas.DorisRoleResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_doris_role(
+    body: schemas.CreateDorisRoleRequest,
+    _: AdminUserDep,
+    service: DorisRoleManagementServiceDep,
+) -> schemas.DorisRoleResponse:
+    """创建 Doris 角色、查询用户和加密凭据"""
+    identity = await service.create_role(
+        role_name=body.role,
+        description=body.description,
+        query_user=body.query_user,
+        workload_group=body.workload_group,
+        is_default=body.is_default,
+    )
+    return schemas.DorisRoleResponse.from_entity(identity)
+
+
+@router.post(
+    "/doris-roles/attach",
+    response_model=schemas.DorisRoleResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def attach_doris_role(
+    body: schemas.AttachDorisRoleRequest,
+    _: AdminUserDep,
+    service: DorisRoleManagementServiceDep,
+) -> schemas.DorisRoleResponse:
+    """接入已有 Doris 角色并自动配置查询用户"""
+    identity = await service.attach_role(
+        role_name=body.role,
+        description=body.description,
+        workload_group=body.workload_group,
+        query_user=body.query_user,
+        is_default=body.is_default,
+    )
+    return schemas.DorisRoleResponse.from_entity(identity)
+
+
+@router.put(
+    "/doris-roles/{role}/default",
+    response_model=schemas.DorisRoleResponse,
+)
+async def set_default_doris_role(
+    role: RolePath,
+    _: AdminUserDep,
+    service: DorisRoleManagementServiceDep,
+) -> schemas.DorisRoleResponse:
+    """设置公开注册使用的缺省 Doris 角色"""
+    identity = await service.set_default_role(role)
+    return schemas.DorisRoleResponse.from_entity(identity)
+
+
+@router.delete(
+    "/doris-roles/{role}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_doris_role(
+    role: RolePath,
+    _: AdminUserDep,
+    service: DorisRoleManagementServiceDep,
+) -> Response:
+    """删除未使用的非缺省 Doris 角色和查询用户"""
+    await service.delete_role(role)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/users", response_model=schemas.UserListResponse)
 async def list_users(
     _: AdminUserDep,
@@ -140,9 +234,7 @@ async def list_row_policies(
     service: DorisPermissionServiceDep,
 ) -> schemas.RowPolicyListResponse:
     """直接读取 Doris 角色的全部行策略"""
-    return schemas.RowPolicyListResponse(
-        policies=await service.list_row_policies(role)
-    )
+    return schemas.RowPolicyListResponse(policies=await service.list_row_policies(role))
 
 
 @router.post(

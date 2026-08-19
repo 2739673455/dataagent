@@ -69,9 +69,10 @@ export const chatApi = {
     return appClient.get<ConversationListResponse>(CHAT_API_ROUTES.listConversations);
   },
 
-  createConversation(isDraft: 0 | 1 = 0) {
+  createConversation(isDraft: 0 | 1 = 0, initialMessage?: string) {
     return appClient.post<ConversationResponse>(CHAT_API_ROUTES.createConversation, {
       is_draft: isDraft,
+      initial_message: initialMessage,
     });
   },
 

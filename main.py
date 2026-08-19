@@ -7,20 +7,48 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.agents.manager import agent_manager
 from app.clients.docker_sandbox_manager import docker_sandbox_manager
 from app.clients.doris_client_manager import (
+    admin_doris_client_manager,
     query_doris_client_registry,
-    security_admin_doris_client_manager,
-    source_doris_client_manager,
 )
 from app.clients.embedding_client_manager import embedding_client_manager
 from app.clients.es_client_manager import es_client_manager
 from app.clients.langgraph_postgres_manager import langgraph_postgres_manager
-from app.clients.postgres_client_manager import meta_postgres_client_manager
+from app.clients.postgres_client_manager import (
+    auth_postgres_client_manager,
+    meta_postgres_client_manager,
+)
 from app.conf.app_config import cfg
 from app.core.middlewares import trace
 from app.errors.exc_handlers import register_exception_handlers
+from app.repositories.doris_query_identity_pg_repo import DorisQueryIdentityPGRepo
 from app.repositories.doris_query_repo import DorisQueryRepository
 from app.repositories.doris_role_repo import DorisRoleRepository
 from app.routes import api
+from app.services.conversation_title_service import conversation_title_service
+from app.services.doris_credential_service import DorisCredentialCipher
+
+
+async def verify_doris_query_identities() -> None:
+    """校验数据库中全部启用查询身份的 Doris 权限"""
+    cipher = DorisCredentialCipher(
+        cfg.doris_credentials.encryption_key.get_secret_value()
+    )
+    async with auth_postgres_client_manager.session() as session:
+        identities = await DorisQueryIdentityPGRepo(session).list_active()
+    await DorisRoleRepository(admin_doris_client_manager).verify_configured_roles(
+        tuple(identity.role_name for identity in identities)
+    )
+    for identity in identities:
+        manager = await query_doris_client_registry.get_or_create(
+            identity.role_name,
+            identity.query_user,
+            cipher.decrypt(identity.encrypted_password),
+        )
+        await DorisQueryRepository(manager).verify_readonly_access(
+            identity.workload_group,
+            cfg.doris.database,
+            identity.role_name,
+        )
 
 
 @asynccontextmanager
@@ -32,34 +60,25 @@ async def lifespan(app: FastAPI):
         await langgraph_postgres_manager.init()
         await docker_sandbox_manager.init()
         await agent_manager.init()
+        auth_postgres_client_manager.init()
+        await auth_postgres_client_manager.init_tables()
         meta_postgres_client_manager.init()
         await meta_postgres_client_manager.init_tables()
-        source_doris_client_manager.init()
-        security_admin_doris_client_manager.init()
-        query_doris_client_registry.init()
-        await DorisRoleRepository(
-            security_admin_doris_client_manager
-        ).verify_configured_roles(tuple(cfg.doris_roles))
-        for role_name, role in cfg.doris_roles.items():
-            await DorisQueryRepository(
-                query_doris_client_registry.get(role_name)
-            ).verify_readonly_access(
-                role.workload_group,
-                cfg.doris.database,
-                role_name,
-            )
+        admin_doris_client_manager.init()
+        await verify_doris_query_identities()
 
         yield
     finally:
         # FastAPI 应用结束前执行
+        await conversation_title_service.close()
         await agent_manager.close()
         await docker_sandbox_manager.close()
         await langgraph_postgres_manager.close()
         await embedding_client_manager.close()
         await es_client_manager.close()
         await meta_postgres_client_manager.close()
-        await source_doris_client_manager.close()
-        await security_admin_doris_client_manager.close()
+        await auth_postgres_client_manager.close()
+        await admin_doris_client_manager.close()
         await query_doris_client_registry.close()
 
 

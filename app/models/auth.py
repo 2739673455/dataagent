@@ -1,4 +1,4 @@
-"""认证身份与 Doris 权限投影实体"""
+"""认证身份与 Doris 权限投影模型"""
 
 import re
 from datetime import datetime
@@ -13,13 +13,14 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     func,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.entities.base import Base
+from app.models.base import AuthBase
 
 DORIS_ROLE_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
 
@@ -41,7 +42,7 @@ class AssetScope(StrEnum):
     COLUMN = "column"
 
 
-class User(Base):
+class User(AuthBase):
     """平台用户"""
 
     __tablename__ = "users"
@@ -62,7 +63,10 @@ class User(Base):
         default=False,
         server_default=text("false"),
     )
-    doris_role_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    doris_role_name: Mapped[str | None] = mapped_column(
+        ForeignKey("doris_query_identities.role_name", ondelete="RESTRICT"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -76,7 +80,7 @@ class User(Base):
     )
 
 
-class RefreshToken(Base):
+class RefreshToken(AuthBase):
     """可轮换的刷新令牌记录"""
 
     __tablename__ = "refresh_tokens"
@@ -108,13 +112,61 @@ class RefreshToken(Base):
     )
 
 
-class DorisRoleAssetGrant(Base):
+class DorisQueryIdentity(AuthBase):
+    """Doris 数据角色对应的稳定共享查询身份"""
+
+    __tablename__ = "doris_query_identities"
+
+    role_name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    description: Mapped[str] = mapped_column(String(256), nullable=False)
+    query_user: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    encrypted_password: Mapped[str] = mapped_column(Text, nullable=False)
+    workload_group: Mapped[str] = mapped_column(String(128), nullable=False)
+    is_default: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=text("true"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_doris_query_identity_default",
+            "is_default",
+            unique=True,
+            postgresql_where=text("is_default"),
+        ),
+    )
+
+
+class DorisRoleAssetGrant(AuthBase):
     """Doris 角色 SELECT 权限的应用侧可见性投影"""
 
     __tablename__ = "doris_role_asset_grants"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    role_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    role_name: Mapped[str] = mapped_column(
+        ForeignKey("doris_query_identities.role_name", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     scope: Mapped[str] = mapped_column(String(16), nullable=False)
     data_source: Mapped[str] = mapped_column(String(256), nullable=False)
     database_name: Mapped[str | None] = mapped_column(String(256))

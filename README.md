@@ -54,7 +54,7 @@
 
 ### 8. 用户认证、Doris RBAC 与多租户授权
 - **认证与令牌安全**：支持注册、用户名或邮箱登录、登出和当前用户查询；密码使用 Argon2id 哈希，JWT Access Token 与 Refresh Token 支持轮换、重放检测和令牌族吊销，注册、登录与刷新接口带有过载保护。
-- **单一 Doris 数据角色**：每个用户必须且只能绑定一个 `doris_role_name`，公开注册自动绑定唯一缺省角色；平台管理员身份使用独立的 `is_admin` 标志，不占用数据角色。
+- **单一 Doris 数据角色**：每个普通用户绑定一个 `doris_role_name`，多个平台用户可以共享同一 Doris 查询用户；每个查询用户只绑定一个同名权限角色。公开注册自动使用数据库中的唯一缺省角色。
 - **Doris 细粒度权限**：表级和列级 `SELECT_PRIV`、角色 Row Policy 由 Doris 执行；成功的 SELECT 授权同步到应用侧可见性投影，语义检索、召回快照和 SQL Guard 在连接 Doris 前按当前角色过滤。
 - **管理员边界**：只有平台管理员可以查看或修改元数据、用户角色绑定和 Doris 角色权限；最后一位平台管理员受防护。
 - **租户隔离**：会话、附件、语义召回、LangGraph 线程、Agent Session 和 Docker 工作区均绑定 `user_id` 与 `conversation_id`，越权访问在路由或服务层拦截。
@@ -62,7 +62,7 @@
 ### 9. SQL 只读查询工具（`execute_sql`）
 - **单一 SQL Tool**：数据查询 Agent 只暴露 `execute_sql`，不提供可绕过执行链的独立 SQL 校验 Tool。
 - **执行前完整校验**：工具首先使用 `sqlglot` 按 Doris / MySQL 方言检查语法、单条只读约束、资产权限、表、字段、别名、CTE、类型和 JOIN；失败时不连接 Doris，直接返回 `sql_validation_failed`、问题列表和修正提示。
-- **稳定查询身份**：`doris_roles` 为每个 Doris 数据角色配置一个稳定共享查询账号和独立连接池；服务端按 `users.doris_role_name` 精确选择，客户端不能指定或切换查询身份。
+- **稳定查询身份**：PostgreSQL 动态保存 Doris 角色、共享查询用户、加密密码和 Workload Group；服务端按 `users.doris_role_name` 解密凭据并按需创建独立连接池，客户端不能指定查询身份。
 - **数据库侧权限校验**：应用启动时逐一通过 `SHOW GRANTS` 检查查询账号只绑定预期角色、仅具备只读权限、可见目标数据库并可使用指定 Workload Group。
 - **查询前资源守卫**：在读取数据前执行 `EXPLAIN`，校验扫描行数和扫描字节估算，估算缺失或超限时拒绝执行；查询会话同时设置 workload group、超时、内存和单元格限制。
 - **有界流式输出**：服务端游标分批读取，强制最大行数与 UTF-8 输出字节数，并防护 CSV 公式注入；超时或取消时作废当前连接。
@@ -86,19 +86,37 @@
 复制 `conf/.env.example` 为 `conf/.env`，至少配置数据库密码、模型密钥和以下安全变量：
 
 - `JWT_SECRET`：至少 32 字符的高强度随机值，生产环境由密钥管理系统注入。
-- `DORIS_SECURITY_ADMIN_PASSWORD`：独立 Doris 权限管理账号密码，只用于管理员 API。
-- `DORIS_DEFAULT_QUERY_PASSWORD`、`DORIS_PRIVILEGED_QUERY_PASSWORD`：示例 Doris 角色对应的稳定共享只读查询账号密码；新增角色时同步增加独立环境变量。
-- `DATAAGENT_BOOTSTRAP_ADMIN_USERNAME`、`DATAAGENT_BOOTSTRAP_ADMIN_EMAIL`、`DATAAGENT_BOOTSTRAP_ADMIN_PASSWORD`：仅在执行管理员引导命令时提供。
+- `DORIS_ADMIN_PASSWORD`：平台内部 Doris 管理账号密码，用于元数据读取和管理员权限操作，不进入 Agent 查询路径。
+- `DORIS_CREDENTIAL_ENCRYPTION_KEY`：加密 PostgreSQL 中 Doris 查询用户密码的 Fernet 密钥。丢失该密钥后无法恢复已有查询身份凭据。
+- `ADMIN_USERNAME`、`ADMIN_EMAIL`、`ADMIN_PASSWORD`：管理员引导凭据（未通过 CLI 传入时读取）。
 
 ### 2. Doris 角色、稳定查询身份与 Workload Group
 
-- 在 `conf/app_config.yaml` 的 `doris_roles` 中维护可分配角色。每项包含角色说明、是否为缺省角色、独立共享查询账号和 Workload Group；配置必须且只能有一个缺省角色，查询账号不能复用。
-- DBA 先在 Doris 创建同名角色、对应查询账号和 Workload Group，再把每个查询账号只绑定到一个配置角色。查询账号不授予导入、建表、修改、删除、授权或节点管理权限。
-- `doris_security_admin` 是独立管理连接。它不进入 Agent 和 SQL 执行路径；管理 Row Policy 需要 Doris `ADMIN_PRIV`，部署时应限制来源地址并妥善托管密码。
-- 应用启动时确认全部配置角色存在，并逐个检查查询账号只绑定预期角色、有效权限只读、目标库可见和 Workload Group 可用。任一项不符合时拒绝启动。
-- 管理员 API 可直接操作 Doris：`GET /api/v1/admin/doris-roles` 查看实时角色授权，`POST|DELETE /api/v1/admin/doris-roles/{role}/select-grants` 管理库、表、列 SELECT 权限，`GET|POST|DELETE /api/v1/admin/doris-roles/{role}/row-policies` 管理行策略。
+- `doris` 配置使用平台内部管理账号。该账号读取元数据并执行 Doris 用户、角色、SELECT 权限和 Row Policy 管理；部署时限制来源地址并妥善托管 `DORIS_ADMIN_PASSWORD`。
+- 管理员通过 `POST /api/v1/admin/doris-roles` 创建角色。服务端生成随机查询密码，在 Doris 创建角色与唯一查询用户，把 Workload Group 的 `USAGE_PRIV` 授予角色，并只将密文保存到 `doris_query_identities`。API 不接收或返回查询密码。
+- 第一个查询身份自动成为缺省角色，后续可通过 `PUT /api/v1/admin/doris-roles/{role}/default` 替换缺省角色。缺省角色和仍被用户引用的角色不能删除。
+- 查询用户不授予导入、建表、修改、删除、授权或节点管理权限。应用启动时逐个检查启用身份只绑定预期角色、有效权限只读、目标库可见和 Workload Group 可用，任一项不符合时拒绝启动。
+- 管理员 API 可直接操作 Doris：`GET|POST|DELETE /api/v1/admin/doris-roles` 管理查询身份，`POST|DELETE /api/v1/admin/doris-roles/{role}/select-grants` 管理库、表、列 SELECT 权限，`GET|POST|DELETE /api/v1/admin/doris-roles/{role}/row-policies` 管理行策略。
 - 平台管理员登录后可从聊天侧栏进入 `/admin`，在同一页面调整用户唯一 Doris 角色、平台管理员身份、SELECT 权限和 Row Policy。
 - SELECT 授权必须通过管理员 API 修改，使 Doris 权限与应用侧语义检索投影同步。外部 DBA 修改后需要通过同一 API重放对应授权目标。
+
+- 管理员可通过后台直接接入已存在的 Doris 角色：`GET /api/v1/admin/doris-roles/discover` 扫描 Doris 集群中未接入的角色，`POST /api/v1/admin/doris-roles/attach` 一键接入并自动在 Doris 创建代理查询用户与高强度随机密码，全流程无需人工干预密码。
+
+旧 PostgreSQL 表不会被 SQLAlchemy `create_all` 自动改列或补外键。完成全部角色接入并确认现有用户、授权投影引用的角色都已存在后，执行一次结构收口：
+
+```sql
+ALTER TABLE users ALTER COLUMN doris_role_name DROP NOT NULL;
+ALTER TABLE users
+  ADD CONSTRAINT fk_users_doris_query_identity
+  FOREIGN KEY (doris_role_name)
+  REFERENCES doris_query_identities(role_name)
+  ON DELETE RESTRICT;
+ALTER TABLE doris_role_asset_grants
+  ADD CONSTRAINT fk_asset_grants_doris_query_identity
+  FOREIGN KEY (role_name)
+  REFERENCES doris_query_identities(role_name)
+  ON DELETE CASCADE;
+```
 
 ### 3. Elasticsearch 索引升级
 
@@ -106,18 +124,20 @@
 
 ### 4. 管理员引导
 
-公开注册不会产生平台管理员。完成 `conf/.env`、PostgreSQL 和缺省 Doris 角色配置后，显式执行幂等的管理员引导脚本：
+公开注册不会产生平台管理员。完成 `conf/.env` 和 PostgreSQL 配置后，显式执行幂等的管理员引导工具（优先读取命令行参数，未传入时回退读取环境变量）：
 
 ```bash
-DATAAGENT_BOOTSTRAP_ADMIN_USERNAME=admin \
-DATAAGENT_BOOTSTRAP_ADMIN_EMAIL=admin@example.com \
-DATAAGENT_BOOTSTRAP_ADMIN_PASSWORD='replace-with-a-strong-password' \
+# 通过命令行参数传入
+uv run python -m scripts.bootstrap_admin -u admin -e admin@example.com -p 'replace-with-a-strong-password'
+
+# 或通过环境变量传入
+ADMIN_USERNAME=admin \
+ADMIN_EMAIL=admin@example.com \
+ADMIN_PASSWORD='replace-with-a-strong-password' \
 uv run python -m scripts.bootstrap_admin
 ```
 
-引导完成后从运行环境移除三个 `DATAAGENT_BOOTSTRAP_ADMIN_*` 变量。
-
-公开注册用户自动绑定 `doris_roles` 中的唯一缺省角色。平台管理员通过 `PUT /api/v1/admin/users/{user_id}/doris-role` 替换用户唯一 Doris 角色，通过 `PUT /api/v1/admin/users/{user_id}/administrator` 管理平台管理员身份。元数据 REST 接口全部要求平台管理员身份。
+首次引导管理员可以暂时没有数据角色，平台管理员身份也不会映射成 Doris 管理角色。管理员登录 `/admin` 创建第一个 Doris 角色后，将其分配给需要查询数据的用户；第一个角色自动成为公开注册的缺省角色。缺省角色创建前，公开注册返回服务不可用。平台管理员通过 `PUT /api/v1/admin/users/{user_id}/doris-role` 替换用户唯一 Doris 角色，通过 `PUT /api/v1/admin/users/{user_id}/administrator` 管理平台管理员身份。元数据 REST 接口全部要求平台管理员身份。
 
 ### 5. 授权撤销与历史留存
 

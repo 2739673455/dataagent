@@ -64,6 +64,30 @@ class RoleNotFoundError(ProblemError):
     status = HTTPStatus.NOT_FOUND
 
 
+class DefaultDorisRoleUnavailableError(ProblemError):
+    type = "default-doris-role-unavailable"
+    title = "缺省 Doris 角色尚未配置"
+    status = HTTPStatus.SERVICE_UNAVAILABLE
+
+
+class RoleAlreadyExistsError(ProblemError):
+    type = "role-already-exists"
+    title = "角色已存在"
+    status = HTTPStatus.CONFLICT
+
+
+class RoleInUseError(ProblemError):
+    type = "role-in-use"
+    title = "角色仍被用户使用"
+    status = HTTPStatus.CONFLICT
+
+
+class DefaultRoleRequiredError(ProblemError):
+    type = "default-role-required"
+    title = "必须保留一个启用的缺省 Doris 角色"
+    status = HTTPStatus.CONFLICT
+
+
 class AssetGrantNotFoundError(ProblemError):
     type = "asset-grant-not-found"
     title = "资产授权不存在"

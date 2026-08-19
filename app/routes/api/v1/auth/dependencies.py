@@ -8,12 +8,16 @@ from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.clients.doris_client_manager import security_admin_doris_client_manager
-from app.clients.postgres_client_manager import meta_postgres_client_manager
+from app.clients.doris_client_manager import (
+    admin_doris_client_manager,
+    query_doris_client_registry,
+)
+from app.clients.postgres_client_manager import auth_postgres_client_manager
 from app.conf.app_config import cfg
-from app.entities.auth import User
 from app.errors import auth_error
+from app.models.auth import User
 from app.repositories.auth_pg_repo import AuthPGRepo
+from app.repositories.doris_query_identity_pg_repo import DorisQueryIdentityPGRepo
 from app.repositories.doris_role_repo import DorisRoleRepository
 from app.services.auth_rate_limit_service import AuthRateLimitService
 from app.services.auth_service import Argon2PasswordManager, AuthService
@@ -21,11 +25,12 @@ from app.services.authorization_service import (
     AuthorizationService,
     DorisRoleManagementService,
 )
+from app.services.doris_credential_service import DorisCredentialCipher
 from app.services.doris_permission_service import DorisPermissionService
 
 SessionDep = Annotated[
     AsyncSession,
-    Depends(meta_postgres_client_manager.get_session),
+    Depends(auth_postgres_client_manager.get_session),
 ]
 
 
@@ -37,6 +42,17 @@ def get_auth_repo(session: SessionDep) -> AuthPGRepo:
 AuthRepoDep = Annotated[AuthPGRepo, Depends(get_auth_repo)]
 
 
+def get_query_identity_repo(session: SessionDep) -> DorisQueryIdentityPGRepo:
+    """创建请求级 Doris 查询身份访问"""
+    return DorisQueryIdentityPGRepo(session)
+
+
+QueryIdentityRepoDep = Annotated[
+    DorisQueryIdentityPGRepo,
+    Depends(get_query_identity_repo),
+]
+
+
 @lru_cache(maxsize=1)
 def get_password_manager() -> Argon2PasswordManager:
     """创建进程级密码哈希器"""
@@ -45,6 +61,7 @@ def get_password_manager() -> Argon2PasswordManager:
 
 def get_auth_service(
     repo: AuthRepoDep,
+    identity_repo: QueryIdentityRepoDep,
     password_manager: Annotated[
         Argon2PasswordManager,
         Depends(get_password_manager),
@@ -53,9 +70,9 @@ def get_auth_service(
     """创建请求级认证服务"""
     return AuthService(
         repo,
+        identity_repo,
         cfg.auth,
         password_manager,
-        default_doris_role=cfg.default_doris_role,
     )
 
 
@@ -105,9 +122,17 @@ async def require_admin(current_user: CurrentUserDep) -> User:
 AdminUserDep = Annotated[User, Depends(require_admin)]
 
 
-async def require_analysis_access(current_user: CurrentUserDep) -> User:
+async def require_analysis_access(
+    current_user: CurrentUserDep,
+    identity_repo: QueryIdentityRepoDep,
+) -> User:
     """要求当前用户可创建和执行分析"""
-    AuthorizationService.require_analysis_access(current_user, cfg.doris_roles)
+    identity = (
+        await identity_repo.get(current_user.doris_role_name)
+        if current_user.doris_role_name is not None
+        else None
+    )
+    AuthorizationService.require_analysis_access(current_user, identity)
     return current_user
 
 
@@ -116,7 +141,7 @@ AnalysisUserDep = Annotated[User, Depends(require_analysis_access)]
 
 async def get_authorization_service() -> AsyncGenerator[AuthorizationService]:
     """创建独立会话的资产授权服务"""
-    async with meta_postgres_client_manager.session() as session:
+    async with auth_postgres_client_manager.session() as session:
         yield AuthorizationService(AuthPGRepo(session))
 
 
@@ -128,8 +153,14 @@ AuthorizationServiceDep = Annotated[
 
 async def get_role_management_service() -> AsyncGenerator[DorisRoleManagementService]:
     """创建独立会话的 Doris 角色管理服务"""
-    async with meta_postgres_client_manager.session() as session:
-        yield DorisRoleManagementService(AuthPGRepo(session), cfg.doris_roles)
+    async with auth_postgres_client_manager.session() as session:
+        yield DorisRoleManagementService(
+            AuthPGRepo(session),
+            DorisQueryIdentityPGRepo(session),
+            DorisRoleRepository(admin_doris_client_manager),
+            get_doris_credential_cipher(),
+            query_doris_client_registry,
+        )
 
 
 DorisRoleManagementServiceDep = Annotated[
@@ -140,11 +171,11 @@ DorisRoleManagementServiceDep = Annotated[
 
 async def get_doris_permission_service() -> AsyncGenerator[DorisPermissionService]:
     """创建 Doris 权限管理服务"""
-    async with meta_postgres_client_manager.session() as session:
+    async with auth_postgres_client_manager.session() as session:
         yield DorisPermissionService(
             AuthPGRepo(session),
-            DorisRoleRepository(security_admin_doris_client_manager),
-            cfg.doris_roles,
+            DorisQueryIdentityPGRepo(session),
+            DorisRoleRepository(admin_doris_client_manager),
             data_source=cfg.query.data_source,
             catalog="internal",
             database=cfg.doris.database,
@@ -155,3 +186,11 @@ DorisPermissionServiceDep = Annotated[
     DorisPermissionService,
     Depends(get_doris_permission_service),
 ]
+
+
+@lru_cache(maxsize=1)
+def get_doris_credential_cipher() -> DorisCredentialCipher:
+    """创建进程级 Doris 查询凭据加密器"""
+    return DorisCredentialCipher(
+        cfg.doris_credentials.encryption_key.get_secret_value()
+    )

@@ -11,7 +11,7 @@ interface ChatState {
   isLoadingMessages: boolean;
   streamingConversations: Set<string>;
   loadConversations: () => Promise<ConversationResponse[]>;
-  createConversation: () => Promise<ConversationResponse | null>;
+  createConversation: (initialMessage: string) => Promise<ConversationResponse | null>;
   deleteConversation: (conversationId: string) => Promise<boolean>;
   loadMessages: (conversationId: string) => Promise<MessageSchema[]>;
   ensureConversation: (conversation: ConversationResponse) => void;
@@ -41,9 +41,9 @@ export const useChatStore = create<ChatState>()((set, _get) => ({
     return conversations;
   },
 
-  createConversation: async () => {
+  createConversation: async (initialMessage) => {
     const generation = sessionLifecycle.current();
-    const response = await chatApi.createConversation();
+    const response = await chatApi.createConversation(0, initialMessage);
     const conversation = response.data;
     if (!sessionLifecycle.isCurrent(generation)) return null;
     set((state) => ({

@@ -5,7 +5,8 @@ from enum import StrEnum
 from typing import Any
 
 from app.conf.meta_config import MetaConfig
-from app.entities.meta import (
+from app.errors import meta_error
+from app.models.meta import (
     COLUMN_EXAMPLE_LIMIT,
     ColumnInfo,
     ColumnKey,
@@ -14,7 +15,6 @@ from app.entities.meta import (
     TableInfo,
     serialize_column_examples,
 )
-from app.errors import meta_error
 from app.repositories.meta_pg_repo import MetaPGRepo
 from app.repositories.source_doris_repo import SourceDorisRepo
 from app.services.meta_index_service import MetaIndexService

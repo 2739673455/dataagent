@@ -9,7 +9,7 @@ from typing import Protocol
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from app.entities.query import QueryBatch, QueryExecutionLimits
+from app.models.query import QueryBatch, QueryExecutionLimits
 
 _PRIVILEGE_PATTERN = re.compile(
     r"\b(?:node|admin|grant|select|load|alter|create|drop|usage|show_view)_priv\b"

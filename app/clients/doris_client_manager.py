@@ -1,9 +1,13 @@
 """Doris 客户端管理"""
 
+import asyncio
+import hashlib
+from dataclasses import dataclass
+
 from sqlalchemy import URL
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
-from app.conf.app_config import DBConfig, DorisRoleConfig, cfg
+from app.conf.app_config import DBConfig, cfg
 
 
 class DorisClientManager:
@@ -56,48 +60,66 @@ class DorisClientManager:
 
 
 class DorisQueryClientRegistry:
-    """管理稳定查询身份对应的 Doris 连接池"""
+    """按数据库中的稳定查询身份动态管理 Doris 连接池"""
 
-    def __init__(
+    def __init__(self, endpoint: DBConfig) -> None:
+        self._endpoint = endpoint
+        self._entries: dict[str, _QueryClientEntry] = {}
+        self._lock = asyncio.Lock()
+
+    async def get_or_create(
         self,
-        endpoint: DBConfig,
-        roles: dict[str, DorisRoleConfig],
-    ) -> None:
-        """按查询配置创建未初始化的连接池注册表"""
-        self._managers = {
-            name: DorisClientManager(
+        role_name: str,
+        query_user: str,
+        password: str,
+    ) -> DorisClientManager:
+        """读取或创建与当前查询凭据一致的连接池"""
+        fingerprint = hashlib.sha256(
+            f"{query_user}\0{password}".encode()
+        ).hexdigest()
+        stale: DorisClientManager | None = None
+        async with self._lock:
+            current = self._entries.get(role_name)
+            if current is not None and current.fingerprint == fingerprint:
+                return current.manager
+            if current is not None:
+                stale = current.manager
+            manager = DorisClientManager(
                 DBConfig(
-                    host=endpoint.host,
-                    port=endpoint.port,
-                    user=role.query_user,
-                    password=role.query_password,
-                    database=endpoint.database,
+                    host=self._endpoint.host,
+                    port=self._endpoint.port,
+                    user=query_user,
+                    password=password,
+                    database=self._endpoint.database,
                 )
             )
-            for name, role in roles.items()
-        }
-
-    def init(self) -> None:
-        """初始化全部稳定查询身份连接池"""
-        for manager in self._managers.values():
             manager.init()
+            self._entries[role_name] = _QueryClientEntry(fingerprint, manager)
+        if stale is not None:
+            await stale.close()
+        return manager
 
-    def get(self, role_name: str) -> DorisClientManager:
-        """读取服务端选定 Doris 角色的查询连接池"""
-        try:
-            return self._managers[role_name]
-        except KeyError as exc:
-            raise RuntimeError("Doris query profile is not configured") from exc
+    async def invalidate(self, role_name: str) -> None:
+        """关闭并移除指定角色的查询连接池"""
+        async with self._lock:
+            entry = self._entries.pop(role_name, None)
+        if entry is not None:
+            await entry.manager.close()
 
     async def close(self) -> None:
         """关闭全部查询身份连接池"""
-        for manager in self._managers.values():
-            await manager.close()
+        async with self._lock:
+            entries = tuple(self._entries.values())
+            self._entries.clear()
+        for entry in entries:
+            await entry.manager.close()
 
 
-source_doris_client_manager = DorisClientManager(cfg.doris)
-security_admin_doris_client_manager = DorisClientManager(cfg.doris_security_admin)
-query_doris_client_registry = DorisQueryClientRegistry(
-    cfg.doris,
-    cfg.doris_roles,
-)
+@dataclass(frozen=True, slots=True)
+class _QueryClientEntry:
+    fingerprint: str
+    manager: DorisClientManager
+
+
+admin_doris_client_manager = DorisClientManager(cfg.doris)
+query_doris_client_registry = DorisQueryClientRegistry(cfg.doris)

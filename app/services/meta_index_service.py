@@ -5,8 +5,8 @@ from datetime import date, datetime
 from typing import Any
 
 from app.clients.embedding_client_manager import EmbeddingClient
-from app.entities.meta import ColumnInfo, ColumnKey, MetricInfo, ValueInfo
-from app.entities.semantic_search import SemanticTextType
+from app.models.meta import ColumnInfo, ColumnKey, MetricInfo, ValueInfo
+from app.models.semantic_search import SemanticTextType
 from app.repositories.column_es_repo import ColumnESRepo
 from app.repositories.meta_pg_repo import MetaPGRepo
 from app.repositories.metric_es_repo import MetricESRepo

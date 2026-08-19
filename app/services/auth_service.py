@@ -16,8 +16,8 @@ from pwdlib import PasswordHash
 from sqlalchemy.exc import IntegrityError
 
 from app.conf.app_config import AuthConfig
-from app.entities.auth import RefreshToken, User, normalize_doris_role_name
 from app.errors import auth_error
+from app.models.auth import DorisQueryIdentity, RefreshToken, User
 from app.repositories.auth_pg_repo import AuthPGRepo
 
 ARGON2_MAX_CONCURRENCY = 4
@@ -33,6 +33,12 @@ class PasswordManager(Protocol):
     async def hash(self, password: str) -> str: ...
 
     async def verify(self, password: str, password_hash: str) -> bool: ...
+
+
+class DefaultQueryIdentityProvider(Protocol):
+    """注册所需的缺省 Doris 查询身份读取接口"""
+
+    async def get_default(self) -> DorisQueryIdentity | None: ...
 
 
 class Argon2PasswordManager:
@@ -227,16 +233,16 @@ class AuthService:
     def __init__(
         self,
         repo: AuthPGRepo,
+        identity_provider: DefaultQueryIdentityProvider,
         config: AuthConfig,
         password_manager: PasswordManager,
         *,
-        default_doris_role: str,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._repo = repo
+        self._identity_provider = identity_provider
         self._config = config
         self._password_manager = password_manager
-        self._default_doris_role = normalize_doris_role_name(default_doris_role)
         self._codec = JWTCodec(config)
         self._now = now or (lambda: datetime.now(UTC))
 
@@ -260,6 +266,9 @@ class AuthService:
                     normalized_username
                 ) or await self._repo.get_user_by_email(normalized_email):
                     raise auth_error.UserAlreadyExistsError
+                default_identity = await self._identity_provider.get_default()
+                if default_identity is None:
+                    raise auth_error.DefaultDorisRoleUnavailableError
                 user = await self._repo.add_user(
                     User(
                         username=normalized_username,
@@ -267,7 +276,7 @@ class AuthService:
                         password_hash=password_hash,
                         is_active=True,
                         is_admin=False,
-                        doris_role_name=self._default_doris_role,
+                        doris_role_name=default_identity.role_name,
                     )
                 )
                 loaded_user = await self._repo.get_user_by_id(user.id)
@@ -330,7 +339,7 @@ class AuthService:
                         password_hash=password_hash,
                         is_active=True,
                         is_admin=True,
-                        doris_role_name=self._default_doris_role,
+                        doris_role_name=None,
                     )
                 )
                 loaded = await self._repo.get_user_by_id(user.id)

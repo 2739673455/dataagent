@@ -7,8 +7,8 @@ from typing import Any, ClassVar
 from elasticsearch import AsyncElasticsearch
 
 from app.conf.app_config import cfg
-from app.entities.meta import ColumnKey, ValueInfo, column_resource_key
-from app.entities.semantic_search import SearchHit
+from app.models.meta import ColumnKey, ValueInfo, column_resource_key
+from app.models.semantic_search import SearchHit
 
 
 class ValueESRepo:

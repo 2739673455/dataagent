@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { chatApi } from "../src/api/chat";
 import { isRefreshSnapshotCurrent, sessionLifecycle } from "../src/auth/sessionLifecycle";
 import { useChatStore } from "../src/stores/chatStore";

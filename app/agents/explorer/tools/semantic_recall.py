@@ -15,9 +15,12 @@ from app.agents.explorer.semantic_recall_protocol import (
 )
 from app.clients.embedding_client_manager import embedding_client_manager
 from app.clients.es_client_manager import es_client_manager
-from app.clients.postgres_client_manager import meta_postgres_client_manager
+from app.clients.postgres_client_manager import (
+    auth_postgres_client_manager,
+    meta_postgres_client_manager,
+)
 from app.conf.app_config import cfg
-from app.entities.semantic_search import SemanticSearchRequest
+from app.models.semantic_search import SemanticSearchRequest
 from app.repositories.auth_pg_repo import AuthPGRepo
 from app.repositories.column_es_repo import ColumnESRepo
 from app.repositories.meta_pg_repo import MetaPGRepo
@@ -70,9 +73,12 @@ async def search_semantic_resources(
             runtime.config,
             runtime.store,
         )
-        async with meta_postgres_client_manager.session() as meta_session:
+        async with (
+            auth_postgres_client_manager.session() as auth_session,
+            meta_postgres_client_manager.session() as meta_session,
+        ):
             asset_policy = await AuthorizationService(
-                AuthPGRepo(meta_session)
+                AuthPGRepo(auth_session)
             ).get_asset_policy(user_id)
             authorization_filter = MetadataAuthorizationFilter(
                 asset_policy,
@@ -115,7 +121,7 @@ async def search_semantic_resources(
             "message": "Semantic recall could not be saved",
         }
 
-    return semantic_recall_reference(record, view="search_response")
+    return semantic_recall_reference(record)
 
 
 def _record_summary(record: Any) -> dict[str, Any]:
@@ -190,7 +196,7 @@ async def get_semantic_recall(
             "status": "error",
             "message": "Semantic recall is temporarily unavailable",
         }
-    return semantic_recall_reference(record, view="record")
+    return semantic_recall_reference(record)
 
 
 @tool
@@ -221,7 +227,7 @@ async def merge_semantic_recalls(
             "status": "error",
             "message": "Semantic recalls could not be merged",
         }
-    return semantic_recall_reference(record, view="record")
+    return semantic_recall_reference(record)
 
 
 @tool

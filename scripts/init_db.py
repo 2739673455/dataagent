@@ -117,6 +117,8 @@ if __name__ == "__main__":
         password=password,
     )
 
+    initializer.delete_db("auth")
+    initializer.create_db("auth")
     initializer.delete_db("meta")
     initializer.create_db("meta")
     initializer.delete_db("langgraph")

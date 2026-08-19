@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from app.entities.meta import ColumnInfo, ValueInfo, column_resource_key
+from app.models.meta import ColumnInfo, ValueInfo, column_resource_key
 from app.repositories.column_es_repo import ColumnESRepo
 from app.repositories.value_es_repo import ValueESRepo
 

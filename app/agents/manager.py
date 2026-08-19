@@ -178,6 +178,14 @@ class AgentManager:
             self._planner_model_name = active_model_name
             self._definitions = definitions
 
+    async def get_active_model(self) -> BaseChatModel:
+        """获取 Planner 使用的共享主模型"""
+        await self.init()
+        async with self._state_lock:
+            if self._models is None or self._planner_model_name is None:
+                raise RuntimeError("Agent manager is not initialized")
+            return self._models[self._planner_model_name]
+
     def _specialist_model(self, agent_type: AgentType) -> BaseChatModel:
         """解析专业 Agent 配置中的模型引用"""
         if self._models is None or self._planner_model_name is None:

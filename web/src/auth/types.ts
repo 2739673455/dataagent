@@ -3,7 +3,7 @@ export interface UserResponse {
   username: string;
   email: string;
   is_admin: boolean;
-  doris_role: string;
+  doris_role: string | null;
   is_active: boolean;
   created_at: string;
 }

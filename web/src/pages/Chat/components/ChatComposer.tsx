@@ -1,9 +1,8 @@
-import { ArrowUp, FileText, Plus, Square, X } from "lucide-react";
+import { ArrowUp, FileText, Paperclip, Square, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { cn, getAttachmentName } from "@/lib/utils";
+import { getAttachmentName } from "@/lib/utils";
 import type { Attachment } from "@/types";
 
 interface ChatComposerProps {
@@ -17,19 +16,24 @@ interface ChatComposerProps {
   onSubmit: (value: string) => Promise<void> | void;
 }
 
-// 图片附件使用全屏浮层预览，避免在输入区内受尺寸限制
 function ImagePreview({ alt, onClose, src }: { alt: string; onClose: () => void; src: string }) {
   return createPortal(
     <button
       type="button"
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-6"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 backdrop-blur-xs"
     >
-      <img
-        src={src}
-        alt={alt}
-        className="max-h-[88vh] max-w-[88vw] rounded-[1.25rem] object-contain shadow-2xl"
-      />
+      <div className="rounded border border-[#d4d4ce] bg-[#ffffff] p-3 shadow-xl">
+        <div className="mb-2 flex items-center justify-between border-b border-[#e5e5df] pb-1 text-xs text-[#71717a]">
+          <span>图片预览: {alt}</span>
+          <span className="text-[#27272a]">点击关闭</span>
+        </div>
+        <img
+          src={src}
+          alt={alt}
+          className="max-h-[80vh] max-w-[85vw] rounded object-contain"
+        />
+      </div>
     </button>,
     document.body
   );
@@ -53,16 +57,14 @@ export function ChatComposer({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // 输入框高度随内容增长，但限制在视口高度的一部分之内
   const resizeTextarea = () => {
     const textarea = textareaRef.current;
     if (!textarea) return;
 
     textarea.style.height = "0px";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, window.innerHeight * 0.3)}px`;
+    textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, 40), window.innerHeight * 0.35)}px`;
   };
 
-  // 发送时先清空输入框，再把修剪后的内容交给上层处理
   const handleSubmit = async () => {
     const next = value.trim();
     if ((!next && attachments.length === 0) || disabled || isUploading) return;
@@ -71,7 +73,6 @@ export function ChatComposer({
     await onSubmit(next);
   };
 
-  // 组件内只根据 preview_url 判断是否可直接显示图片缩略图
   const isImageAttachment = (attachment: Attachment) => Boolean(attachment.preview_url);
 
   const openPreview = (attachment: Attachment) => {
@@ -83,9 +84,8 @@ export function ChatComposer({
   };
 
   return (
-    <div className="relative">
-      <div className="overflow-hidden rounded-[2rem] border border-slate-300 bg-white shadow-[0_-18px_36px_-12px_rgba(255,255,255,0.92)] transition-all focus-within:border-slate-300 focus-within:shadow-[0_-18px_36px_-12px_rgba(255,255,255,0.92)]">
-        {/* 原生文件输入框隐藏，通过左下角按钮触发 */}
+    <div className="relative font-mono">
+      <div className="overflow-hidden rounded border border-[#d4d4ce] bg-[#ffffff] shadow-xs transition-colors focus-within:border-[#1e2024]">
         <input
           ref={fileInputRef}
           type="file"
@@ -97,105 +97,114 @@ export function ChatComposer({
             event.target.value = "";
           }}
         />
+
         {attachments.length > 0 ? (
-          /* 已选附件统一显示在输入框上方，可单独移除或预览 */
-          <div className="flex flex-wrap gap-2 px-4 pt-4">
+          <div className="flex flex-wrap gap-2 border-b border-[#e5e5df] bg-[#fafaf8] px-3.5 py-2">
             {attachments.map((attachment) => (
               <div
                 key={attachment.f_path}
-                className="flex max-w-full items-center gap-3 rounded-[1.1rem] bg-slate-100 px-3 py-2 text-sm text-slate-700"
+                className="flex items-center gap-2 rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 py-1 text-xs text-[#27272a]"
               >
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-200">
-                  {isImageAttachment(attachment) ? (
-                    <button
-                      type="button"
-                      onClick={() => openPreview(attachment)}
-                      className="h-full w-full"
-                    >
-                      <img
-                        src={attachment.preview_url}
-                        alt={getAttachmentName(attachment.f_path)}
-                        className="h-full w-full object-cover"
-                      />
-                    </button>
-                  ) : (
-                    <FileText className="h-[18px] w-[18px] text-slate-600" />
-                  )}
-                </div>
-                <span className="truncate">{getAttachmentName(attachment.f_path)}</span>
+                {isImageAttachment(attachment) ? (
+                  <button
+                    type="button"
+                    onClick={() => openPreview(attachment)}
+                    className="h-5 w-5 overflow-hidden rounded border border-[#d4d4ce]"
+                  >
+                    <img
+                      src={attachment.preview_url}
+                      alt={getAttachmentName(attachment.f_path)}
+                      className="h-full w-full object-cover"
+                    />
+                  </button>
+                ) : (
+                  <FileText className="h-3.5 w-3.5 text-[#52525b]" />
+                )}
+                <span className="max-w-[200px] truncate text-[11px]">
+                  {getAttachmentName(attachment.f_path)}
+                </span>
                 <button
                   type="button"
                   onClick={() => onRemoveAttachment(attachment.f_path)}
-                  className="rounded-full p-0.5 text-slate-400 transition hover:bg-slate-200 hover:text-slate-600"
+                  className="ml-1 text-[#71717a] hover:text-[#dc2626]"
                 >
-                  <X className="h-3.5 w-3.5" />
+                  <X className="h-3 w-3" />
                 </button>
               </div>
             ))}
           </div>
         ) : null}
-        <Textarea
-          ref={textareaRef}
-          rows={1}
-          placeholder=""
-          value={value}
-          onChange={(event) => {
-            setValue(event.target.value);
-            requestAnimationFrame(resizeTextarea);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              void handleSubmit();
-            }
-          }}
-          disabled={disabled || isUploading}
-          className="min-h-[52px] max-h-[30vh] flex-1 resize-none overflow-y-auto rounded-none border-none bg-white px-5 pb-2 pt-4 text-[15px] text-slate-800 shadow-none placeholder:text-slate-500 focus-visible:ring-0"
-        />
-        <div className="flex items-center justify-between bg-white px-3 pb-2 pt-0.5">
-          {/* 左侧按钮负责选择附件，流式输出时不允许继续追加上传 */}
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={disabled || isUploading || isStreaming}
-            onClick={() => fileInputRef.current?.click()}
-            className="h-9 w-9 rounded-full border-none bg-transparent p-0 text-slate-500 shadow-none transition-all hover:bg-slate-200/80 hover:text-slate-700 active:scale-95 disabled:text-slate-400"
-          >
-            <Plus className="h-5 w-5" />
-          </Button>
-          <Button
-            /* 右侧按钮在普通状态下发送，在流式状态下转成停止生成 */
-            onClick={() => {
-              if (isStreaming) {
-                onStop();
-                return;
-              }
-              void handleSubmit();
+
+        <div className="flex items-start gap-2 px-4 pt-3">
+          <textarea
+            ref={textareaRef}
+            rows={1}
+            placeholder="输入数据分析需求或指令（如：分析上周各渠道转化率）..."
+            value={value}
+            onChange={(event) => {
+              setValue(event.target.value);
+              requestAnimationFrame(resizeTextarea);
             }}
-            disabled={
-              isStreaming
-                ? false
-                : disabled || isUploading || (!value.trim() && attachments.length === 0)
-            }
-            variant="ghost"
-            className={cn(
-              "h-9 w-9 border-none p-0 shadow-none transition-all active:scale-95",
-              isStreaming
-                ? "rounded-full bg-transparent text-red-500 hover:bg-red-100 hover:text-red-600"
-                : "rounded-full bg-transparent text-slate-500 hover:bg-slate-200/80 hover:text-slate-700",
-              disabled && !isStreaming ? "text-slate-400" : ""
-            )}
-          >
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void handleSubmit();
+              }
+            }}
+            disabled={disabled || isUploading}
+            className="min-h-[44px] max-h-[35vh] flex-1 resize-none bg-transparent font-mono text-sm leading-relaxed text-[#1e2024] placeholder:text-[#a1a1aa] focus:outline-none focus:ring-0 disabled:opacity-40"
+          />
+        </div>
+
+        <div className="flex items-center justify-between border-t border-[#f0f0eb] bg-[#fafaf8] px-3.5 py-2 text-xs text-[#71717a]">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              disabled={disabled || isUploading || isStreaming}
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs text-[#52525b] transition hover:bg-[#ebebe6] hover:text-[#18181b] disabled:opacity-40"
+              title="添加附件"
+            >
+              <Paperclip className="h-4 w-4" />
+              <span>添加附件</span>
+            </button>
+            <span className="hidden text-xs text-[#a1a1aa] sm:inline">
+              回车发送 / Shift+回车换行
+            </span>
+          </div>
+
+          <div>
             {isStreaming ? (
-              <Square className="h-4 w-4 fill-none stroke-current stroke-[2.75]" />
+              <Button
+                size="sm"
+                variant="destructive"
+                className="gap-1.5 px-3.5 text-xs"
+                onClick={onStop}
+              >
+                <Square className="h-3.5 w-3.5 fill-current" />
+                <span>停止</span>
+              </Button>
             ) : (
-              <ArrowUp className="h-5 w-5" />
+              <Button
+                size="sm"
+                variant="default"
+                className="gap-1.5 px-3.5 text-xs"
+                disabled={
+                  disabled ||
+                  isUploading ||
+                  (!value.trim() && attachments.length === 0)
+                }
+                onClick={() => void handleSubmit()}
+              >
+                <ArrowUp className="h-4 w-4" />
+                <span>发送</span>
+              </Button>
             )}
-          </Button>
+          </div>
         </div>
       </div>
+
       {previewImage ? (
-        /* 图片预览浮层挂到 document.body，避免被父级 overflow 裁切 */
         <ImagePreview
           src={previewImage.src}
           alt={previewImage.alt}

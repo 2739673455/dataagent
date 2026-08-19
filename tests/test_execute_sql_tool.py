@@ -8,8 +8,7 @@ from uuid import UUID
 from langchain.tools import ToolRuntime
 
 from app.agents.explorer.tools.execute_sql import execute_sql
-from app.conf.app_config import DorisRoleConfig
-from app.entities.query import (
+from app.models.query import (
     AnalysisQueryResult,
     QueryValidationIssue,
     QueryValidationResult,
@@ -44,16 +43,11 @@ class ExecuteSqlToolTest(unittest.IsolatedAsyncioTestCase):
     async def test_server_selected_profile_controls_pool_and_workload_group(
         self,
     ) -> None:
-        profile = DorisRoleConfig(
-            description="标准角色",
-            is_default=True,
-            query_user="standard_readonly",
-            query_password="query_password",
-            workload_group="dataagent_standard",
-        )
         principal = ResolvedQueryPrincipal(
             role_name="dataagent_standard",
-            config=profile,
+            query_user="standard_readonly",
+            password="query_password",
+            workload_group="dataagent_standard",
         )
         query_result = AnalysisQueryResult(
             path="/analyses/a/sessions/explorer/s/query.csv",
@@ -74,6 +68,11 @@ class ExecuteSqlToolTest(unittest.IsolatedAsyncioTestCase):
         runtime = make_runtime()
         with (
             patch.object(
+                tool_module.auth_postgres_client_manager,
+                "session",
+                new=session_context,
+            ),
+            patch.object(
                 tool_module.meta_postgres_client_manager,
                 "session",
                 new=session_context,
@@ -85,12 +84,12 @@ class ExecuteSqlToolTest(unittest.IsolatedAsyncioTestCase):
             ) as resolve,
             patch.object(
                 tool_module.query_doris_client_registry,
-                "get",
-                return_value=provider,
+                "get_or_create",
+                new=AsyncMock(return_value=provider),
             ) as get_pool,
             patch.object(
                 tool_module,
-                "build_query_guard",
+                "_build_query_guard",
                 return_value=MagicMock(),
             ),
             patch.object(
@@ -103,7 +102,11 @@ class ExecuteSqlToolTest(unittest.IsolatedAsyncioTestCase):
             result = await coroutine(runtime=runtime, sql="SELECT 1")
 
         resolve.assert_awaited_once_with(7)
-        get_pool.assert_called_once_with("dataagent_standard")
+        get_pool.assert_awaited_once_with(
+            "dataagent_standard",
+            "standard_readonly",
+            "query_password",
+        )
         limits = service_type.call_args.args[3]
         self.assertEqual(limits.workload_group, "dataagent_standard")
         service.execute.assert_awaited_once()
@@ -120,13 +123,9 @@ class ExecuteSqlToolTest(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         principal = ResolvedQueryPrincipal(
             role_name="dataagent_standard",
-            config=DorisRoleConfig(
-                description="标准角色",
-                is_default=True,
-                query_user="standard_readonly",
-                query_password="query_password",
-                workload_group="dataagent_standard",
-            ),
+            query_user="standard_readonly",
+            password="query_password",
+            workload_group="dataagent_standard",
         )
         validation = QueryValidationResult(
             valid=False,
@@ -151,6 +150,11 @@ class ExecuteSqlToolTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
+                tool_module.auth_postgres_client_manager,
+                "session",
+                new=session_context,
+            ),
+            patch.object(
                 tool_module.meta_postgres_client_manager,
                 "session",
                 new=session_context,
@@ -160,8 +164,12 @@ class ExecuteSqlToolTest(unittest.IsolatedAsyncioTestCase):
                 "resolve",
                 new=AsyncMock(return_value=principal),
             ),
-            patch.object(tool_module.query_doris_client_registry, "get"),
-            patch.object(tool_module, "build_query_guard", return_value=MagicMock()),
+            patch.object(
+                tool_module.query_doris_client_registry,
+                "get_or_create",
+                new=AsyncMock(return_value=MagicMock()),
+            ),
+            patch.object(tool_module, "_build_query_guard", return_value=MagicMock()),
             patch.object(tool_module, "AnalysisQueryService", return_value=service),
         ):
             coroutine = cast(Any, execute_sql).coroutine

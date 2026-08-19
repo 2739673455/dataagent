@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 
 from langgraph.store.base import BaseStore
 
-from app.entities.conversation import ConversationInfo
+from app.models.conversation import ConversationInfo
 
 _CONVERSATION_NAMESPACE = "conversations"
 _MAX_CONVERSATIONS_PER_USER = 10_000
@@ -38,6 +38,7 @@ class ConversationPGRepo:
         title: str,
         *,
         is_draft: bool = False,
+        title_pending: bool = True,
     ) -> ConversationInfo:
         """创建会话目录信息"""
         now = datetime.now(UTC)
@@ -45,6 +46,7 @@ class ConversationPGRepo:
             id=uuid4(),
             user_id=user_id,
             title=title,
+            title_pending=title_pending,
             is_draft=is_draft,
             create_at=now,
             update_at=now,
@@ -67,12 +69,15 @@ class ConversationPGRepo:
         conversation: ConversationInfo,
         *,
         title: str | None = None,
+        title_pending: bool | None = None,
         is_draft: bool | None = None,
     ) -> ConversationInfo:
         """更新会话目录信息和最后活动时间"""
         changes: dict[str, object] = {"update_at": datetime.now(UTC)}
         if title is not None:
             changes["title"] = title
+        if title_pending is not None:
+            changes["title_pending"] = title_pending
         if is_draft is not None:
             changes["is_draft"] = is_draft
 

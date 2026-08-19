@@ -2,64 +2,67 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.clients.doris_client_manager import DorisQueryClientRegistry
-from app.conf.app_config import DBConfig, DorisRoleConfig
+from app.conf.app_config import DBConfig
 
 
 class DorisQueryClientRegistryTest(unittest.IsolatedAsyncioTestCase):
-    async def test_profile_reuses_data_endpoint_with_its_own_credentials(self) -> None:
-        endpoint = DBConfig(
+    def setUp(self) -> None:
+        self.endpoint = DBConfig(
             host="doris.internal",
             port=9030,
-            user="metadata_user",
-            password="metadata_password",
+            user="dataagent_admin",
+            password="admin_password",
             database="ecommerce",
         )
-        profile = DorisRoleConfig(
-            description="标准角色",
-            is_default=True,
-            query_user="standard_readonly",
-            query_password="query_password",
-            workload_group="dataagent_standard",
-        )
+
+    async def test_dynamic_identity_reuses_endpoint_with_query_credentials(
+        self,
+    ) -> None:
         manager = MagicMock()
         manager.close = AsyncMock()
         with patch(
             "app.clients.doris_client_manager.DorisClientManager",
             return_value=manager,
         ) as manager_type:
-            registry = DorisQueryClientRegistry(
-                endpoint,
-                {"standard_readonly": profile},
+            registry = DorisQueryClientRegistry(self.endpoint)
+            selected = await registry.get_or_create(
+                "sales",
+                "sales_query",
+                "query_password",
+            )
+            repeated = await registry.get_or_create(
+                "sales",
+                "sales_query",
+                "query_password",
             )
 
         connection_config = manager_type.call_args.args[0]
-        self.assertEqual(connection_config.host, endpoint.host)
-        self.assertEqual(connection_config.port, endpoint.port)
-        self.assertEqual(connection_config.database, endpoint.database)
-        self.assertEqual(connection_config.user, profile.query_user)
-        self.assertEqual(connection_config.password, profile.query_password)
-        self.assertIs(registry.get("standard_readonly"), manager)
-
-        registry.init()
-        await registry.close()
-
+        self.assertEqual(connection_config.host, self.endpoint.host)
+        self.assertEqual(connection_config.database, self.endpoint.database)
+        self.assertEqual(connection_config.user, "sales_query")
+        self.assertEqual(connection_config.password, "query_password")
+        self.assertIs(selected, manager)
+        self.assertIs(repeated, manager)
         manager.init.assert_called_once_with()
+
+        await registry.close()
         manager.close.assert_awaited_once_with()
 
-    def test_unknown_profile_is_rejected(self) -> None:
-        registry = DorisQueryClientRegistry(
-            DBConfig(
-                host="doris.internal",
-                port=9030,
-                user="metadata_user",
-                password="metadata_password",
-                database="ecommerce",
-            ),
-            {},
-        )
+    async def test_changed_credentials_replace_and_close_stale_pool(self) -> None:
+        first = MagicMock()
+        first.close = AsyncMock()
+        second = MagicMock()
+        second.close = AsyncMock()
+        with patch(
+            "app.clients.doris_client_manager.DorisClientManager",
+            side_effect=[first, second],
+        ):
+            registry = DorisQueryClientRegistry(self.endpoint)
+            await registry.get_or_create("sales", "sales_query", "old")
+            selected = await registry.get_or_create("sales", "sales_query", "new")
 
-        with self.assertRaisesRegex(RuntimeError, "not configured"):
-            registry.get("missing")
+        self.assertIs(selected, second)
+        first.close.assert_awaited_once_with()
 
 
 if __name__ == "__main__":

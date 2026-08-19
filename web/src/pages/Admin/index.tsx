@@ -1,4 +1,4 @@
-import { ArrowLeft, Database, RefreshCw, ShieldCheck, Users } from "lucide-react";
+import { ArrowLeft, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -26,6 +26,10 @@ export default function AdminPage() {
   const [users, setUsers] = useState<UserResponse[]>([]);
   const [selectedRole, setSelectedRole] = useState("");
   const [policies, setPolicies] = useState<Record<string, unknown>[]>([]);
+  const [newRole, setNewRole] = useState("");
+  const [newDescription, setNewDescription] = useState("");
+  const [newQueryUser, setNewQueryUser] = useState("");
+  const [newWorkloadGroup, setNewWorkloadGroup] = useState("normal");
   const [tableName, setTableName] = useState("");
   const [columns, setColumns] = useState("");
   const [policyName, setPolicyName] = useState("");
@@ -33,6 +37,14 @@ export default function AdminPage() {
   const [predicate, setPredicate] = useState("");
   const [policyType, setPolicyType] = useState<"RESTRICTIVE" | "PERMISSIVE">("RESTRICTIVE");
   const [busy, setBusy] = useState(false);
+
+  const [discoveredRoles, setDiscoveredRoles] = useState<
+    { name: string; is_attached: boolean; description: string | null; query_user: string | null; workload_group: string | null }[]
+  >([]);
+  const [discovering, setDiscovering] = useState(false);
+  const [attachRoleName, setAttachRoleName] = useState("");
+  const [attachDescription, setAttachDescription] = useState("");
+  const [attachWorkloadGroup, setAttachWorkloadGroup] = useState("normal");
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -43,13 +55,54 @@ export default function AdminPage() {
       ]);
       setRoles(loadedRoles);
       setUsers(loadedUsers);
-      setSelectedRole((current) => current || loadedRoles[0]?.name || "");
+      setSelectedRole((current) =>
+        loadedRoles.some((role) => role.name === current) ? current : loadedRoles[0]?.name || ""
+      );
     } catch (error) {
       toast.error(errorMessage(error));
     } finally {
       setBusy(false);
     }
   }, []);
+
+  const scanDorisRoles = async () => {
+    setDiscovering(true);
+    try {
+      const discovered = await adminApi.discoverRoles();
+      setDiscoveredRoles(discovered);
+      toast.success(`扫描完成，发现 ${discovered.length} 个 Doris 角色`);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  const attachRole = async () => {
+    if (!attachRoleName.trim() || !attachDescription.trim()) return;
+    setBusy(true);
+    try {
+      const attached = await adminApi.attachRole({
+        role: attachRoleName.trim(),
+        description: attachDescription.trim(),
+        workload_group: attachWorkloadGroup.trim() || "normal",
+        is_default: roles.length === 0,
+      });
+      const loadedRoles = await adminApi.listRoles();
+      setRoles(loadedRoles);
+      setSelectedRole(attached.name);
+      setAttachRoleName("");
+      setAttachDescription("");
+      setDiscoveredRoles((prev) =>
+        prev.map((r) => (r.name === attached.name ? { ...r, is_attached: true } : r))
+      );
+      toast.success(`Doris 角色 ${attached.name} 接入成功，已自动配置代理查询用户`);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -75,15 +128,47 @@ export default function AdminPage() {
     setUsers((current) => current.map((user) => (user.id === updated.id ? updated : user)));
   };
 
-  const mutate = async (operation: () => Promise<void>, message: string) => {
+  const mutate = async (
+    operation: () => Promise<void>,
+    message: string,
+    refreshPolicies = true
+  ) => {
     setBusy(true);
     try {
       await operation();
       toast.success(message);
-      if (selectedRole) {
+      if (refreshPolicies && selectedRole) {
         setPolicies(await adminApi.listRowPolicies(selectedRole));
       }
-      setRoles(await adminApi.listRoles());
+      const loadedRoles = await adminApi.listRoles();
+      setRoles(loadedRoles);
+      setSelectedRole((current) =>
+        loadedRoles.some((role) => role.name === current) ? current : loadedRoles[0]?.name || ""
+      );
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createRole = async () => {
+    setBusy(true);
+    try {
+      const created = await adminApi.createRole({
+        role: newRole.trim(),
+        description: newDescription.trim(),
+        query_user: newQueryUser.trim(),
+        workload_group: newWorkloadGroup.trim(),
+        is_default: roles.length === 0,
+      });
+      const loadedRoles = await adminApi.listRoles();
+      setRoles(loadedRoles);
+      setSelectedRole(created.name);
+      setNewRole("");
+      setNewDescription("");
+      setNewQueryUser("");
+      toast.success("Doris 角色和查询身份已创建");
     } catch (error) {
       toast.error(errorMessage(error));
     } finally {
@@ -92,50 +177,266 @@ export default function AdminPage() {
   };
 
   return (
-    <main className="min-h-screen px-5 py-8 lg:px-10">
+    <main className="min-h-screen bg-[#f4f4f0] p-4 font-mono text-[#1e2024] md:p-8">
       <div className="mx-auto max-w-7xl space-y-6">
-        <header className="flex flex-wrap items-center justify-between gap-4">
+        {/* 顶部控制台标题 */}
+        <header className="flex flex-wrap items-center justify-between gap-4 rounded border border-[#d4d4ce] bg-[#ffffff] p-5 shadow-xs">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.26em] text-cyan-800">
-              DataAgent Administration
-            </p>
-            <h1 className="mt-2 text-3xl font-semibold text-slate-900">Doris 权限管理</h1>
+            <span className="text-sm font-semibold text-[#71717a]">系统管理</span>
+            <h1 className="mt-1 text-xl font-bold text-[#18181b]">Doris 权限与用户策略控制中心</h1>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" disabled={busy} onClick={() => void load()}>
-              <RefreshCw className="h-4 w-4" /> 刷新
+          <div className="flex gap-2.5">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              onClick={() => void load()}
+              className="text-sm"
+            >
+              <RefreshCw className={`h-4 w-4 mr-1.5 ${busy ? "animate-spin" : ""}`} />
+              刷新
             </Button>
-            <Button asChild variant="outline">
+            <Button
+              asChild
+              variant="default"
+              size="sm"
+              className="text-sm"
+            >
               <Link to={ROUTES.chat}>
-                <ArrowLeft className="h-4 w-4" /> 返回分析
+                <ArrowLeft className="h-4 w-4 mr-1.5" />
+                返回对话
               </Link>
             </Button>
           </div>
         </header>
 
-        <section className="rounded-3xl border border-stone-200 bg-white/90 p-6 shadow-sm">
-          <h2 className="flex items-center gap-2 text-lg font-semibold">
-            <Users className="h-5 w-5 text-cyan-800" /> 用户绑定
-          </h2>
-          <div className="mt-5 overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-sm">
-              <thead className="border-b text-slate-500">
+        {/* Doris 角色与查询身份管理 */}
+        <section className="rounded border border-[#d4d4ce] bg-[#ffffff] p-5 shadow-xs">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#e5e5df] pb-3">
+            <h2 className="text-base font-bold text-[#18181b]">
+              Doris 角色与查询身份
+            </h2>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={discovering}
+              onClick={() => void scanDorisRoles()}
+              className="text-sm"
+            >
+              <RefreshCw className={`h-4 w-4 mr-1.5 ${discovering ? "animate-spin" : ""}`} />
+              扫描原生角色
+            </Button>
+          </div>
+
+          {discoveredRoles.length > 0 && (
+            <div className="mt-4 rounded border border-[#d4d4ce] bg-[#fafaf8] p-4 text-xs">
+              <h3 className="font-semibold text-[#18181b]">
+                扫描发现的原生角色（未托管角色可直接接入管理）：
+              </h3>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+                {discoveredRoles.map((role) => (
+                  <div
+                    key={role.name}
+                    className="flex flex-col justify-between rounded border border-[#d4d4ce] bg-[#ffffff] p-3 shadow-xs"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-[#18181b]">{role.name}</span>
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                            role.is_attached
+                              ? "bg-[#ebebe6] text-[#27272a]"
+                              : "bg-[#fef3c7] text-[#92400e]"
+                          }`}
+                        >
+                          {role.is_attached ? "已托管" : "未托管"}
+                        </span>
+                      </div>
+                      {role.description && (
+                        <p className="mt-1 text-xs text-[#71717a]">{role.description}</p>
+                      )}
+                    </div>
+                    {!role.is_attached && (
+                      <div className="mt-3 space-y-1.5">
+                        <input
+                          value={attachRoleName === role.name ? attachDescription : ""}
+                          onChange={(e) => {
+                            setAttachRoleName(role.name);
+                            setAttachDescription(e.target.value);
+                          }}
+                          placeholder="角色描述（必填）"
+                          className="h-8 w-full rounded border border-[#d4d4ce] bg-[#fafaf8] px-2 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+                        />
+                        <input
+                          value={attachRoleName === role.name ? attachWorkloadGroup : "normal"}
+                          onChange={(e) => {
+                            setAttachRoleName(role.name);
+                            setAttachWorkloadGroup(e.target.value);
+                          }}
+                          placeholder="Workload Group（默认：normal）"
+                          className="h-8 w-full rounded border border-[#d4d4ce] bg-[#fafaf8] px-2 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+                        />
+                        <Button
+                          size="sm"
+                          className="w-full text-xs"
+                          disabled={busy || attachRoleName !== role.name || !attachDescription.trim()}
+                          onClick={() => void attachRole()}
+                        >
+                          接入并管理
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 新增角色输入行 */}
+          <div className="mt-4 rounded border border-[#d4d4ce] bg-[#fafaf8] p-3 text-sm">
+            <p className="mb-2 font-medium text-[#71717a]">创建新 Doris 角色</p>
+            <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-4">
+              <input
+                value={newRole}
+                onChange={(event) => setNewRole(event.target.value)}
+                placeholder="角色名称（如：finance_analyst）"
+                className="h-9 rounded border border-[#d4d4ce] bg-[#ffffff] px-3 text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+              />
+              <input
+                value={newQueryUser}
+                onChange={(event) => setNewQueryUser(event.target.value)}
+                placeholder="查询用户名（如：finance_query_user）"
+                className="h-9 rounded border border-[#d4d4ce] bg-[#ffffff] px-3 text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+              />
+              <input
+                value={newWorkloadGroup}
+                onChange={(event) => setNewWorkloadGroup(event.target.value)}
+                placeholder="资源组（默认：normal）"
+                className="h-9 rounded border border-[#d4d4ce] bg-[#ffffff] px-3 text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+              />
+              <input
+                value={newDescription}
+                onChange={(event) => setNewDescription(event.target.value)}
+                placeholder="角色说明描述"
+                className="h-9 rounded border border-[#d4d4ce] bg-[#ffffff] px-3 text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+              />
+            </div>
+            <div className="mt-2.5 flex justify-end">
+              <Button
+                size="sm"
+                disabled={
+                  busy ||
+                  !newRole.trim() ||
+                  !newQueryUser.trim() ||
+                  !newWorkloadGroup.trim() ||
+                  !newDescription.trim()
+                }
+                onClick={() => void createRole()}
+              >
+                创建角色
+              </Button>
+            </div>
+          </div>
+
+          {/* 角色列表表格 */}
+          <div className="mt-4 overflow-x-auto rounded border border-[#d4d4ce]">
+            <table className="w-full min-w-[760px] text-left text-sm font-mono">
+              <thead className="border-b border-[#d4d4ce] bg-[#f4f4f0] text-[#52525b]">
                 <tr>
-                  <th className="px-3 py-3">用户</th>
-                  <th className="px-3 py-3">邮箱</th>
-                  <th className="px-3 py-3">唯一 Doris 角色</th>
-                  <th className="px-3 py-3">平台管理员</th>
+                  <th className="px-3.5 py-2.5">角色名称 / 描述</th>
+                  <th className="px-3.5 py-2.5">查询代理用户</th>
+                  <th className="px-3.5 py-2.5">资源组</th>
+                  <th className="px-3.5 py-2.5">状态</th>
+                  <th className="px-3.5 py-2.5 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {roles.map((role) => (
+                  <tr key={role.name} className="border-b border-[#f0f0eb] hover:bg-[#fafaf8]">
+                    <td className="px-3.5 py-2.5">
+                      <div className="font-semibold text-[#18181b]">{role.name}</div>
+                      <div className="text-xs text-[#71717a]">{role.description}</div>
+                    </td>
+                    <td className="px-3.5 py-2.5 font-mono text-[#27272a]">{role.query_user}</td>
+                    <td className="px-3.5 py-2.5 text-[#71717a]">{role.workload_group}</td>
+                    <td className="px-3.5 py-2.5">
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-xs font-medium ${
+                          role.is_default
+                            ? "bg-[#1e3a8a] text-[#ffffff]"
+                            : role.is_active
+                            ? "bg-[#ebebe6] text-[#27272a]"
+                            : "bg-[#fee2e2] text-[#991b1b]"
+                        }`}
+                      >
+                        {role.is_default ? "默认角色" : role.is_active ? "正常" : "禁用"}
+                      </span>
+                    </td>
+                    <td className="px-3.5 py-2.5 text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={busy || role.is_default || !role.is_active}
+                          onClick={() =>
+                            void mutate(
+                              () => adminApi.setDefaultRole(role.name).then(() => undefined),
+                              "默认角色已更新",
+                              false
+                            )
+                          }
+                          className="h-8 px-2.5 text-xs"
+                        >
+                          设为默认
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          disabled={busy || role.is_default}
+                          onClick={() =>
+                            void mutate(
+                              () => adminApi.deleteRole(role.name),
+                              "Doris 角色已删除",
+                              false
+                            )
+                          }
+                          className="h-8 px-2.5 text-xs"
+                        >
+                          删除
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {/* 用户角色绑定管理 */}
+        <section className="rounded border border-[#d4d4ce] bg-[#ffffff] p-5 shadow-xs">
+          <h2 className="border-b border-[#e5e5df] pb-3 text-base font-bold text-[#18181b]">
+            用户账号与角色绑定
+          </h2>
+          <div className="mt-4 overflow-x-auto rounded border border-[#d4d4ce]">
+            <table className="w-full min-w-[720px] text-left text-sm font-mono">
+              <thead className="border-b border-[#d4d4ce] bg-[#f4f4f0] text-[#52525b]">
+                <tr>
+                  <th className="px-3.5 py-2.5">用户名</th>
+                  <th className="px-3.5 py-2.5">邮箱地址</th>
+                  <th className="px-3.5 py-2.5">关联 Doris 角色</th>
+                  <th className="px-3.5 py-2.5">管理员权限</th>
                 </tr>
               </thead>
               <tbody>
                 {users.map((user) => (
-                  <tr key={user.id} className="border-b border-stone-100">
-                    <td className="px-3 py-3 font-medium">{user.username}</td>
-                    <td className="px-3 py-3 text-slate-500">{user.email}</td>
-                    <td className="px-3 py-3">
+                  <tr key={user.id} className="border-b border-[#f0f0eb] hover:bg-[#fafaf8]">
+                    <td className="px-3.5 py-2.5 font-semibold text-[#18181b]">{user.username}</td>
+                    <td className="px-3.5 py-2.5 text-[#71717a]">{user.email}</td>
+                    <td className="px-3.5 py-2.5">
                       <select
-                        className="h-10 rounded-xl border border-stone-300 bg-white px-3"
-                        value={user.doris_role}
+                        className="h-9 rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-sm text-[#1e2024] focus:border-[#1e2024] focus:outline-none"
+                        value={user.doris_role ?? ""}
                         disabled={busy}
                         onChange={(event) => {
                           const role = event.target.value;
@@ -145,27 +446,34 @@ export default function AdminPage() {
                             .catch((error) => toast.error(errorMessage(error)));
                         }}
                       >
-                        {roles.map((role) => (
-                          <option key={role.name} value={role.name}>
-                            {role.name}
-                            {role.is_default ? "（缺省）" : ""}
-                          </option>
-                        ))}
+                        {!user.doris_role && <option value="">[ 未分配 ]</option>}
+                        {roles
+                          .filter((role) => role.is_active)
+                          .map((role) => (
+                            <option key={role.name} value={role.name}>
+                              {role.name} {role.is_default ? "(默认)" : ""}
+                            </option>
+                          ))}
                       </select>
                     </td>
-                    <td className="px-3 py-3">
-                      <input
-                        type="checkbox"
-                        checked={user.is_admin}
-                        disabled={busy}
-                        onChange={(event) => {
-                          void adminApi
-                            .setAdministrator(user.id, event.target.checked)
-                            .then(updateUser)
-                            .catch((error) => toast.error(errorMessage(error)));
-                        }}
-                        className="h-5 w-5 accent-cyan-800"
-                      />
+                    <td className="px-3.5 py-2.5">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={user.is_admin}
+                          disabled={busy}
+                          onChange={(event) => {
+                            void adminApi
+                              .setAdministrator(user.id, event.target.checked)
+                              .then(updateUser)
+                              .catch((error) => toast.error(errorMessage(error)));
+                          }}
+                          className="h-4 w-4 rounded accent-[#1e2024]"
+                        />
+                        <span className="text-xs text-[#71717a]">
+                          {user.is_admin ? "管理员" : "标准用户"}
+                        </span>
+                      </label>
                     </td>
                   </tr>
                 ))}
@@ -174,156 +482,195 @@ export default function AdminPage() {
           </div>
         </section>
 
+        {/* 权限与行级策略配置分栏 */}
         <section className="grid gap-6 lg:grid-cols-2">
-          <div className="rounded-3xl border border-stone-200 bg-white/90 p-6 shadow-sm">
-            <h2 className="flex items-center gap-2 text-lg font-semibold">
-              <Database className="h-5 w-5 text-cyan-800" /> 表与列权限
+          {/* 表与列权限 */}
+          <div className="rounded border border-[#d4d4ce] bg-[#ffffff] p-5 shadow-xs">
+            <h2 className="border-b border-[#e5e5df] pb-3 text-base font-bold text-[#18181b]">
+              表与列数据权限 (SELECT)
             </h2>
-            <label className="mt-5 block text-sm font-medium">
-              Doris 角色
-              <select
-                value={selectedRole}
-                onChange={(event) => setSelectedRole(event.target.value)}
-                className="mt-2 h-11 w-full rounded-xl border border-stone-300 bg-white px-3"
-              >
-                {roles.map((role) => (
-                  <option key={role.name} value={role.name}>
-                    {role.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p className="mt-3 text-xs text-slate-500">
-              {selectedRoleStatus?.exists_in_doris ? "Doris 角色已就绪" : "Doris 中未找到该角色"}
-            </p>
-            <label className="mt-4 block text-sm font-medium">
-              表名
-              <input
-                value={tableName}
-                onChange={(event) => setTableName(event.target.value)}
-                placeholder="留空表示当前数据库"
-                className="mt-2 h-11 w-full rounded-xl border border-stone-300 px-3"
-              />
-            </label>
-            <label className="mt-4 block text-sm font-medium">
-              字段
-              <input
-                value={columns}
-                onChange={(event) => setColumns(event.target.value)}
-                placeholder="逗号分隔；留空表示整表"
-                className="mt-2 h-11 w-full rounded-xl border border-stone-300 px-3"
-              />
-            </label>
-            <div className="mt-5 flex gap-3">
-              <Button
-                disabled={busy || !selectedRole}
-                onClick={() =>
-                  void mutate(
-                    () =>
-                      adminApi.grantSelect(selectedRole, {
-                        table_name: tableName.trim() || null,
-                        columns: splitColumns(columns),
-                      }),
-                    "SELECT 权限已授予"
-                  )
-                }
-              >
-                授权
-              </Button>
-              <Button
-                variant="destructive"
-                disabled={busy || !selectedRole}
-                onClick={() =>
-                  void mutate(
-                    () =>
-                      adminApi.revokeSelect(selectedRole, {
-                        table_name: tableName.trim() || null,
-                        columns: splitColumns(columns),
-                      }),
-                    "SELECT 权限已回收"
-                  )
-                }
-              >
-                回收
-              </Button>
+
+            <div className="mt-4 space-y-3.5 text-sm">
+              <div>
+                <label className="block text-xs text-[#52525b] mb-1">目标 Doris 角色：</label>
+                <select
+                  value={selectedRole}
+                  onChange={(event) => setSelectedRole(event.target.value)}
+                  className="h-9 w-full rounded border border-[#d4d4ce] bg-[#fafaf8] px-3 text-sm text-[#1e2024] focus:border-[#1e2024] focus:outline-none"
+                >
+                  {roles.map((role) => (
+                    <option key={role.name} value={role.name}>
+                      {role.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-[#71717a]">
+                  {selectedRoleStatus?.exists_in_doris ? "✓ Doris 原生角色已生效" : "⚠ 角色未在 Doris 元数据中找到"}
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs text-[#52525b] mb-1">目标数据表（留空表示当前数据库全部表）：</label>
+                <input
+                  value={tableName}
+                  onChange={(event) => setTableName(event.target.value)}
+                  placeholder="如：ods_order_detail"
+                  className="h-9 w-full rounded border border-[#d4d4ce] bg-[#fafaf8] px-3 text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-[#52525b] mb-1">目标字段列（逗号分隔，留空表示全部列）：</label>
+                <input
+                  value={columns}
+                  onChange={(event) => setColumns(event.target.value)}
+                  placeholder="如：order_id, user_id, amount"
+                  className="h-9 w-full rounded border border-[#d4d4ce] bg-[#fafaf8] px-3 text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+                />
+              </div>
+
+              <div className="flex gap-2.5 pt-2">
+                <Button
+                  disabled={busy || !selectedRole}
+                  onClick={() =>
+                    void mutate(
+                      () =>
+                        adminApi.grantSelect(selectedRole, {
+                          table_name: tableName.trim() || null,
+                          columns: splitColumns(columns),
+                        }),
+                      "SELECT 权限已授予"
+                    )
+                  }
+                  className="flex-1 text-sm"
+                >
+                  授予 SELECT 权限
+                </Button>
+                <Button
+                  variant="destructive"
+                  disabled={busy || !selectedRole}
+                  onClick={() =>
+                    void mutate(
+                      () =>
+                        adminApi.revokeSelect(selectedRole, {
+                          table_name: tableName.trim() || null,
+                          columns: splitColumns(columns),
+                        }),
+                      "SELECT 权限已回收"
+                    )
+                  }
+                  className="flex-1 text-sm"
+                >
+                  回收 SELECT 权限
+                </Button>
+              </div>
             </div>
           </div>
 
-          <div className="rounded-3xl border border-stone-200 bg-white/90 p-6 shadow-sm">
-            <h2 className="flex items-center gap-2 text-lg font-semibold">
-              <ShieldCheck className="h-5 w-5 text-cyan-800" /> 行级策略
+          {/* 行级策略 */}
+          <div className="rounded border border-[#d4d4ce] bg-[#ffffff] p-5 shadow-xs">
+            <h2 className="border-b border-[#e5e5df] pb-3 text-base font-bold text-[#18181b]">
+              行级数据过滤策略 (RLS)
             </h2>
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              <input
-                value={policyName}
-                onChange={(event) => setPolicyName(event.target.value)}
-                placeholder="策略名"
-                className="h-11 rounded-xl border border-stone-300 px-3"
-              />
-              <input
-                value={policyTable}
-                onChange={(event) => setPolicyTable(event.target.value)}
-                placeholder="表名"
-                className="h-11 rounded-xl border border-stone-300 px-3"
-              />
-            </div>
-            <select
-              value={policyType}
-              onChange={(event) =>
-                setPolicyType(event.target.value as "RESTRICTIVE" | "PERMISSIVE")
-              }
-              className="mt-4 h-11 w-full rounded-xl border border-stone-300 bg-white px-3"
-            >
-              <option value="RESTRICTIVE">RESTRICTIVE</option>
-              <option value="PERMISSIVE">PERMISSIVE</option>
-            </select>
-            <textarea
-              value={predicate}
-              onChange={(event) => setPredicate(event.target.value)}
-              placeholder="例如 region = 'east' AND tenant_id = 42"
-              className="mt-4 min-h-28 w-full rounded-xl border border-stone-300 p-3 font-mono text-sm"
-            />
-            <div className="mt-4 flex gap-3">
-              <Button
-                disabled={busy || !selectedRole || !policyName || !policyTable || !predicate}
-                onClick={() =>
-                  void mutate(
-                    () =>
-                      adminApi.createRowPolicy(selectedRole, {
-                        policy_name: policyName,
-                        table_name: policyTable,
-                        policy_type: policyType,
-                        predicate,
-                      }),
-                    "行策略已创建"
-                  )
-                }
-              >
-                创建策略
-              </Button>
-              <Button
-                variant="destructive"
-                disabled={busy || !selectedRole || !policyName || !policyTable}
-                onClick={() =>
-                  void mutate(
-                    () => adminApi.dropRowPolicy(selectedRole, policyName, policyTable),
-                    "行策略已删除"
-                  )
-                }
-              >
-                删除策略
-              </Button>
-            </div>
-            <div className="mt-5 max-h-52 space-y-2 overflow-auto">
-              {policies.map((policy) => (
-                <pre
-                  key={`${selectedRole}-${JSON.stringify(policy)}`}
-                  className="overflow-auto rounded-xl bg-slate-950 p-3 text-xs text-slate-100"
+
+            <div className="mt-4 space-y-3.5 text-sm">
+              <div className="grid gap-2.5 sm:grid-cols-2">
+                <div>
+                  <label className="block text-xs text-[#52525b] mb-1">策略名称：</label>
+                  <input
+                    value={policyName}
+                    onChange={(event) => setPolicyName(event.target.value)}
+                    placeholder="如：region_east_filter"
+                    className="h-9 w-full rounded border border-[#d4d4ce] bg-[#fafaf8] px-3 text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-[#52525b] mb-1">目标数据表：</label>
+                  <input
+                    value={policyTable}
+                    onChange={(event) => setPolicyTable(event.target.value)}
+                    placeholder="如：ods_order_detail"
+                    className="h-9 w-full rounded border border-[#d4d4ce] bg-[#fafaf8] px-3 text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs text-[#52525b] mb-1">策略组合类型：</label>
+                <select
+                  value={policyType}
+                  onChange={(event) =>
+                    setPolicyType(event.target.value as "RESTRICTIVE" | "PERMISSIVE")
+                  }
+                  className="h-9 w-full rounded border border-[#d4d4ce] bg-[#fafaf8] px-3 text-sm text-[#1e2024] focus:border-[#1e2024] focus:outline-none"
                 >
-                  {JSON.stringify(policy, null, 2)}
-                </pre>
-              ))}
-              {!policies.length && <p className="text-sm text-slate-500">暂无行策略</p>}
+                  <option value="RESTRICTIVE">RESTRICTIVE (限制性 AND 组合)</option>
+                  <option value="PERMISSIVE">PERMISSIVE (兼容性 OR 组合)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs text-[#52525b] mb-1">过滤表达式 (SQL WHERE 条件)：</label>
+                <textarea
+                  value={predicate}
+                  onChange={(event) => setPredicate(event.target.value)}
+                  placeholder="如：region = 'east' AND tenant_id = 42"
+                  className="min-h-20 w-full rounded border border-[#d4d4ce] bg-[#fafaf8] p-3 font-mono text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+                />
+              </div>
+
+              <div className="flex gap-2.5">
+                <Button
+                  disabled={busy || !selectedRole || !policyName || !policyTable || !predicate}
+                  onClick={() =>
+                    void mutate(
+                      () =>
+                        adminApi.createRowPolicy(selectedRole, {
+                          policy_name: policyName,
+                          table_name: policyTable,
+                          policy_type: policyType,
+                          predicate,
+                        }),
+                      "行策略已创建"
+                    )
+                  }
+                  className="flex-1 text-sm"
+                >
+                  创建行策略
+                </Button>
+                <Button
+                  variant="destructive"
+                  disabled={busy || !selectedRole || !policyName || !policyTable}
+                  onClick={() =>
+                    void mutate(
+                      () => adminApi.dropRowPolicy(selectedRole, policyName, policyTable),
+                      "行策略已删除"
+                    )
+                  }
+                  className="flex-1 text-sm"
+                >
+                  删除行策略
+                </Button>
+              </div>
+
+              <div className="mt-4">
+                <p className="mb-1 text-xs font-semibold text-[#71717a]">当前角色生效的行策略：</p>
+                <div className="max-h-40 space-y-1.5 overflow-auto rounded border border-[#d4d4ce] bg-[#fafaf8] p-2">
+                  {policies.map((policy) => (
+                    <pre
+                      key={`${selectedRole}-${JSON.stringify(policy)}`}
+                      className="overflow-auto rounded bg-[#ffffff] border border-[#e5e5df] p-2 text-xs text-[#27272a]"
+                    >
+                      {JSON.stringify(policy, null, 2)}
+                    </pre>
+                  ))}
+                  {!policies.length && (
+                    <p className="py-2 text-center text-xs text-[#71717a]">
+                      暂无定义的行级安全策略
+                    </p>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         </section>

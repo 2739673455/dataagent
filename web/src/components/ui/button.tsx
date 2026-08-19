@@ -4,25 +4,30 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full text-sm font-medium transition-all disabled:pointer-events-none disabled:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background",
+  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded font-mono text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-40 outline-none focus-visible:ring-1 focus-visible:ring-[#1e2024] active:scale-[0.98]",
   {
     variants: {
       variant: {
         default:
-          "bg-primary text-primary-foreground shadow-lg shadow-cyan-950/15 hover:translate-y-[-1px] hover:bg-primary/95",
-        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        ghost: "hover:bg-secondary hover:text-secondary-foreground",
+          "bg-[#1e2024] text-[#f4f4f0] border border-[#1e2024] hover:bg-[#2d3139]",
+        secondary:
+          "bg-[#e8e8e4] text-[#1e2024] border border-[#d4d4ce] hover:bg-[#deded8]",
+        ghost:
+          "text-[#52525b] hover:bg-[#e8e8e4] hover:text-[#18181b]",
         outline:
-          "border border-border bg-background/80 hover:bg-secondary hover:text-secondary-foreground",
+          "border border-[#d4d4ce] bg-[#fafaf8] text-[#27272a] hover:bg-[#ededeb]",
         accent:
-          "bg-accent text-accent-foreground shadow-lg shadow-orange-500/20 hover:bg-accent/90",
-        destructive: "bg-red-700 text-white shadow-lg shadow-red-950/15 hover:bg-red-800",
+          "bg-[#2d3139] text-[#f4f4f0] border border-[#3f444e] hover:bg-[#3b404b]",
+        destructive:
+          "bg-[#dc2626] text-white border border-[#b91c1c] hover:bg-[#b91c1c]",
+        terminal:
+          "bg-[#f4f4f0] text-[#1e2024] border border-[#27272a] hover:bg-[#e8e8e4]",
       },
       size: {
-        default: "h-11 px-5 py-2",
-        sm: "h-9 px-4",
-        lg: "h-12 px-6",
-        icon: "h-11 w-11",
+        default: "h-9 px-3.5 py-1.5 text-sm",
+        sm: "h-8 px-2.5 text-xs",
+        lg: "h-11 px-5 text-base",
+        icon: "h-8 w-8 p-0",
       },
     },
     defaultVariants: {

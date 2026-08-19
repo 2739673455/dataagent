@@ -1,4 +1,4 @@
-"""PostgreSQL 元数据客户端管理"""
+"""PostgreSQL 客户端管理"""
 
 from collections.abc import AsyncIterator
 
@@ -9,17 +9,23 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.orm import DeclarativeBase
 
 from app.conf.app_config import DBConfig, cfg
-from app.entities import Base
+from app.models import AuthBase, MetaBase
 
 
 class PostgresClientManager:
-    """PostgreSQL 元数据客户端管理器"""
+    """PostgreSQL 客户端管理器"""
 
-    def __init__(self, db_config: DBConfig) -> None:
-        """初始化 PostgreSQL 元数据客户端管理器"""
+    def __init__(
+        self,
+        db_config: DBConfig,
+        base: type[DeclarativeBase],
+    ) -> None:
+        """初始化 PostgreSQL 客户端管理器"""
         self._db_config = db_config
+        self._base = base
         self._engine: AsyncEngine | None = None
         self._session_maker: async_sessionmaker[AsyncSession] | None = None
 
@@ -75,11 +81,18 @@ class PostgresClientManager:
         self._session_maker = None
 
     async def init_tables(self) -> None:
-        """初始化认证、授权与元数据表"""
+        """初始化数据表"""
         if self._engine is None:
             raise RuntimeError("PostgreSQL client manager is not initialized")
         async with self._engine.begin() as connection:
-            await connection.run_sync(Base.metadata.create_all)
+            await connection.run_sync(self._base.metadata.create_all)
 
 
-meta_postgres_client_manager = PostgresClientManager(cfg.meta_postgresql)
+auth_postgres_client_manager = PostgresClientManager(
+    cfg.auth_postgresql,
+    AuthBase,
+)
+meta_postgres_client_manager = PostgresClientManager(
+    cfg.meta_postgresql,
+    MetaBase,
+)

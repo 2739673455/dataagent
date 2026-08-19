@@ -781,7 +781,7 @@ Planner 不直接拥有：
 不同查询通过 `recall_id` 和原始请求区分。合并操作创建去重后的新快照并记录
 `source_recall_ids`，源记录保持不变；召回记录可以单独查询和删除。聊天接口提供
 分页列表、详情、合并和批量删除入口，删除会话时同步清理全部召回记录。
-语义工具从首次返回开始只向 `ToolMessage` 写入 `recall_id` 和引用类型。Explorer Agent 的
+语义工具从首次返回开始只向 `ToolMessage` 写入 `status="stored"` 和 `recall_id`。Explorer Agent 的
 Middleware 在每次模型调用前，对当前用户回合产生的引用按最新权限临时展开，展开内容只存在于
 `ModelRequest.messages`，不回写 Agent state 或 checkpoint。后续回合需要旧召回详情时，Agent 通过
 `get_semantic_recall` 重新读取；删除独立记录后，历史引用无法再展开内容。
@@ -998,7 +998,6 @@ app/agents/
 │   ├── prompt.py
 │   └── tools/
 │       ├── semantic_recall.py
-│       ├── query_support.py
 │       └── execute_sql.py
 ├── analyst/
 │   ├── agent.py
@@ -1130,11 +1129,11 @@ Chat 请求
 
 ### 21.2 数据库安全
 
-- 平台管理员身份与 Doris 数据角色分离，每个用户必须且只能绑定一个 Doris 角色
-- 公开注册绑定唯一缺省 Doris 角色，管理员可替换用户绑定并保护最后一位管理员
-- 每个配置 Doris 角色使用独立稳定共享查询账号、Workload Group 和连接池
-- 查询账号只绑定一个预期角色，服务端按持久化角色精确选择并在启动时校验
-- 表、列 SELECT 权限和 Row Policy 由独立 Doris 管理身份维护，查询执行仍由数据库授权兜底
+- 平台管理员身份与 Doris 数据角色分离，普通用户绑定一个 Doris 角色，引导管理员可在初始化期间暂不绑定
+- PostgreSQL 保存唯一缺省角色，公开注册自动绑定该角色，管理员可替换用户绑定并保护最后一位管理员
+- 每个 Doris 角色使用一个稳定共享查询账号和 Workload Group，查询密码由服务端生成并加密持久化
+- 查询连接池按数据库中的查询身份动态创建，查询账号只绑定一个预期角色，服务端在启动时逐个校验
+- 表、列 SELECT 权限和 Row Policy 由平台内部 Doris 管理身份维护，该身份也承担元数据读取且不进入 Agent 查询路径
 - SELECT 权限同步为应用可见性投影，语义检索和 SQL Guard 在连接 Doris 前过滤
 - 所有元数据和权限管理接口只允许平台管理员调用
 - 所有 SQL 经过 AST 校验

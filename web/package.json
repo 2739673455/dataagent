@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "bun test",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "format": "biome format --write",
     "format:check": "biome format",
     "lint": "biome lint",
@@ -30,6 +31,7 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.14",
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -40,6 +42,6 @@
     "tailwindcss-animate": "^1.0.7",
     "typescript": "~5.9.3",
     "vite": "^7.3.1",
-    "@biomejs/biome": "^2.4.14"
+    "vitest": "^3.0.7"
   }
 }

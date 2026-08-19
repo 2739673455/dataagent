@@ -17,18 +17,18 @@ from fastapi import (
 from pydantic import ValidationError as PydanticValidationError
 from yaml import YAMLError
 
-from app.clients.doris_client_manager import source_doris_client_manager
+from app.clients.doris_client_manager import admin_doris_client_manager
 from app.clients.embedding_client_manager import embedding_client_manager
 from app.clients.es_client_manager import es_client_manager
 from app.clients.postgres_client_manager import meta_postgres_client_manager
 from app.conf.app_config import cfg
 from app.conf.meta_config import MetaConfig, MetadataName
-from app.entities.meta import (
+from app.errors import meta_error
+from app.models.meta import (
     ColumnKey,
     ColumnReference,
     MetricInfo,
 )
-from app.errors import meta_error
 from app.repositories.column_es_repo import ColumnESRepo
 from app.repositories.meta_pg_repo import MetaPGRepo
 from app.repositories.metric_es_repo import MetricESRepo
@@ -72,7 +72,7 @@ async def get_meta_catalog_service(
     """为平台管理员创建完整元数据目录服务"""
     async with (
         meta_postgres_client_manager.session() as meta_session,
-        source_doris_client_manager.connection() as source_connection,
+        admin_doris_client_manager.connection() as source_connection,
     ):
         meta_repo = MetaPGRepo(meta_session)
         source_repo = SourceDorisRepo(source_connection)
@@ -93,7 +93,7 @@ async def get_meta_index_service() -> AsyncGenerator[MetaIndexService]:
     """创建请求级元数据索引同步服务"""
     async with (
         meta_postgres_client_manager.session() as meta_session,
-        source_doris_client_manager.connection() as source_connection,
+        admin_doris_client_manager.connection() as source_connection,
     ):
         yield _build_meta_index_service(
             MetaPGRepo(meta_session),
@@ -105,7 +105,7 @@ async def get_meta_import_service() -> AsyncGenerator[MetaImportService]:
     """创建请求级元数据导入服务"""
     async with (
         meta_postgres_client_manager.session() as meta_session,
-        source_doris_client_manager.connection() as source_connection,
+        admin_doris_client_manager.connection() as source_connection,
     ):
         meta_repo = MetaPGRepo(meta_session)
         source_repo = SourceDorisRepo(source_connection)

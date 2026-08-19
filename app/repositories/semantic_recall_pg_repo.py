@@ -4,7 +4,7 @@ from uuid import UUID
 
 from langgraph.store.base import BaseStore
 
-from app.entities.semantic_recall import SemanticRecallRecord
+from app.models.semantic_recall import SemanticRecallRecord
 
 _SEMANTIC_RECALL_NAMESPACE = "semantic_recalls"
 _DELETE_BATCH_SIZE = 1_000

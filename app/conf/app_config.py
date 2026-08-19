@@ -1,11 +1,10 @@
-import re
 from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 
 import dotenv
 from omegaconf import OmegaConf
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
 # 路径常量
 ROOT_DIR = Path(__file__).parents[2]
@@ -30,20 +29,10 @@ class DBConfig(BaseModel):
     database: str
 
 
-class DorisRoleConfig(BaseModel):
-    """Doris 数据角色及其稳定共享查询身份"""
+class DorisCredentialConfig(BaseModel):
+    """Doris 查询身份凭据加密配置"""
 
-    model_config = ConfigDict(extra="forbid")
-
-    description: str = Field(min_length=1, max_length=256)
-    is_default: bool = False
-    query_user: str = Field(min_length=1)
-    query_password: str = Field(min_length=1)
-    workload_group: str = Field(
-        min_length=1,
-        max_length=128,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
-    )
+    encryption_key: SecretStr = Field(min_length=44, max_length=44)
 
 
 class ESConfig(BaseModel):
@@ -224,7 +213,7 @@ class AuthConfig(BaseModel):
     issuer: str = Field(min_length=1)
     access_token_minutes: int = Field(gt=0)
     refresh_token_days: int = Field(gt=0)
-    password_min_length: int = Field(ge=8, le=128)
+    password_min_length: int = Field(ge=6, le=128)
 
 
 class QueryConfig(BaseModel):
@@ -287,8 +276,8 @@ class Cfg(BaseModel):
 
     log: LogCfg
     doris: DBConfig
-    doris_security_admin: DBConfig
-    doris_roles: dict[str, DorisRoleConfig]
+    doris_credentials: DorisCredentialConfig
+    auth_postgresql: DBConfig
     meta_postgresql: DBConfig
     langgraph_postgresql: DBConfig
     elasticsearch: ESConfig
@@ -313,36 +302,7 @@ class Cfg(BaseModel):
             raise ValueError(
                 "query.max_cell_bytes must not exceed query.max_output_bytes"
             )
-        if not self.doris_roles:
-            raise ValueError("at least one Doris role is required")
-        default_roles: list[str] = []
-        query_users: set[str] = set()
-        for role_name, role in self.doris_roles.items():
-            if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,63}", role_name) is None:
-                raise ValueError(f"invalid Doris role name: {role_name}")
-            if role.query_user in query_users:
-                raise ValueError("Doris role query users must be unique")
-            query_users.add(role.query_user)
-            if role.is_default:
-                default_roles.append(role_name)
-        if len(default_roles) != 1:
-            raise ValueError("exactly one default Doris role is required")
-        endpoints = (self.doris_security_admin,)
-        if any(
-            endpoint.host != self.doris.host
-            or endpoint.port != self.doris.port
-            or endpoint.database != self.doris.database
-            for endpoint in endpoints
-        ):
-            raise ValueError("Doris security admin must target the metadata database")
         return self
-
-    @property
-    def default_doris_role(self) -> str:
-        """返回注册用户使用的唯一缺省 Doris 角色"""
-        return next(
-            role_name for role_name, role in self.doris_roles.items() if role.is_default
-        )
 
 
 def _load_config() -> Cfg:

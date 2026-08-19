@@ -9,14 +9,14 @@ from typing import Literal, TypeVar, cast
 from loguru import logger
 
 from app.clients.embedding_client_manager import EmbeddingClient
-from app.entities.meta import (
+from app.models.meta import (
     ColumnInfo,
     ColumnKey,
     MetricInfo,
     TableInfo,
     serialize_column_examples,
 )
-from app.entities.semantic_search import (
+from app.models.semantic_search import (
     SearchHit,
     SemanticColumnResult,
     SemanticIndexStatus,

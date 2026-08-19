@@ -6,29 +6,18 @@ doris:
   host: 127.0.0.1
   port: 9030
   user: atguigu
-  password: ${oc.env:DORIS_PASSWORD}
+  password: ${oc.env:DORIS_ADMIN_PASSWORD}
   database: ecommerce
 
-doris_security_admin:
+doris_credentials:
+  encryption_key: ${oc.env:DORIS_CREDENTIAL_ENCRYPTION_KEY}
+
+auth_postgresql:
   host: 127.0.0.1
-  port: 9030
-  user: dataagent_security_admin
-  password: ${oc.env:DORIS_SECURITY_ADMIN_PASSWORD,123123}
-  database: ecommerce
-
-doris_roles:
-  dataagent_default:
-    description: 缺省数据访问角色
-    is_default: true
-    query_user: dataagent_default_query
-    query_password: ${oc.env:DORIS_DEFAULT_QUERY_PASSWORD,123123}
-    workload_group: dataagent_default
-  dataagent_privileged:
-    description: 扩展数据访问角色
-    is_default: false
-    query_user: dataagent_privileged_query
-    query_password: ${oc.env:DORIS_PRIVILEGED_QUERY_PASSWORD,123123}
-    workload_group: dataagent_privileged
+  port: 5432
+  user: atguigu
+  password: ${oc.env:POSTGRES_PASSWORD,123123}
+  database: auth
 
 meta_postgresql:
   host: 127.0.0.1
@@ -64,7 +53,7 @@ auth:
   issuer: dataagent
   access_token_minutes: 15
   refresh_token_days: 30
-  password_min_length: 10
+  password_min_length: 6
 
 query:
   data_source: doris

@@ -2,22 +2,40 @@
 
 import hashlib
 import json
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TypeVar
 
-from app.conf.app_config import DorisRoleConfig
-from app.entities.auth import (
+from loguru import logger
+from sqlalchemy.exc import IntegrityError
+
+from app.clients.doris_client_manager import DorisQueryClientRegistry
+from app.errors import auth_error
+from app.models.auth import (
     AssetScope,
+    DorisQueryIdentity,
     DorisRoleAssetGrant,
     User,
     normalize_doris_role_name,
 )
-from app.errors import auth_error
 from app.repositories.auth_pg_repo import AuthPGRepo
+from app.repositories.doris_query_identity_pg_repo import DorisQueryIdentityPGRepo
+from app.repositories.doris_role_repo import DorisRoleRepository, role_name_from_row
+from app.services.doris_credential_service import DorisCredentialCipher
 
 T = TypeVar("T")
+
+
+@dataclass(frozen=True, slots=True)
+class DorisDiscoveredRole:
+    """Doris 原生角色扫描结果"""
+
+    name: str
+    is_attached: bool
+    description: str | None = None
+    query_user: str | None = None
+    workload_group: str | None = None
 
 
 @dataclass(frozen=True)
@@ -162,6 +180,8 @@ class AuthorizationService:
             raise auth_error.UserNotFoundError
         if not user.is_active:
             raise auth_error.InactiveUserError
+        if user.doris_role_name is None:
+            return AssetAccessPolicy(user_id=user.id)
         grants = await self._repo.list_role_asset_grants(user.doris_role_name)
         return AssetAccessPolicy(
             user_id=user.id,
@@ -187,10 +207,14 @@ class AuthorizationService:
     @staticmethod
     def require_analysis_access(
         user: User,
-        roles: Mapping[str, DorisRoleConfig],
+        identity: DorisQueryIdentity | None,
     ) -> None:
-        """要求用户绑定了已配置的 Doris 数据角色"""
-        if user.doris_role_name not in roles:
+        """要求用户绑定了启用的 Doris 查询身份"""
+        if (
+            user.doris_role_name is None
+            or identity is None
+            or not identity.is_active
+        ):
             raise auth_error.PermissionDeniedError(
                 detail="The assigned Doris role is not available"
             )
@@ -216,7 +240,9 @@ class DorisRoleDescriptor:
     name: str
     description: str
     is_default: bool
+    is_active: bool
     query_user: str
+    workload_group: str
 
 
 class DorisRoleManagementService:
@@ -225,22 +251,216 @@ class DorisRoleManagementService:
     def __init__(
         self,
         repo: AuthPGRepo,
-        roles: Mapping[str, DorisRoleConfig],
+        identity_repo: DorisQueryIdentityPGRepo,
+        doris_repo: DorisRoleRepository,
+        cipher: DorisCredentialCipher,
+        client_registry: DorisQueryClientRegistry,
     ) -> None:
         self._repo = repo
-        self._roles = roles
+        self._identity_repo = identity_repo
+        self._doris_repo = doris_repo
+        self._cipher = cipher
+        self._client_registry = client_registry
 
     async def list_roles(self) -> list[DorisRoleDescriptor]:
         """列出全部可分配的 Doris 数据角色"""
+        identities = await self._identity_repo.list_all()
         return [
             DorisRoleDescriptor(
-                name=name,
-                description=config.description,
-                is_default=config.is_default,
-                query_user=config.query_user,
+                name=identity.role_name,
+                description=identity.description,
+                is_default=identity.is_default,
+                is_active=identity.is_active,
+                query_user=identity.query_user,
+                workload_group=identity.workload_group,
             )
-            for name, config in sorted(self._roles.items())
+            for identity in identities
         ]
+
+    async def discover_roles(self) -> list[DorisDiscoveredRole]:
+        """扫描 Doris 集群中的全部角色及其在平台的接入状态"""
+        rows = await self._doris_repo.list_roles()
+        identities = await self._identity_repo.list_all()
+        identity_map = {identity.role_name: identity for identity in identities}
+
+        discovered: list[DorisDiscoveredRole] = []
+        for row in rows:
+            role_name = role_name_from_row(row)
+            if not role_name or role_name in {"admin", "root"}:
+                continue
+            identity = identity_map.get(role_name)
+            discovered.append(
+                DorisDiscoveredRole(
+                    name=role_name,
+                    is_attached=identity is not None,
+                    description=identity.description if identity else None,
+                    query_user=identity.query_user if identity else None,
+                    workload_group=identity.workload_group if identity else None,
+                )
+            )
+        return sorted(discovered, key=lambda role: (role.is_attached, role.name))
+
+    async def attach_role(
+        self,
+        *,
+        role_name: str,
+        description: str,
+        workload_group: str = "normal",
+        query_user: str | None = None,
+        is_default: bool = False,
+    ) -> DorisQueryIdentity:
+        """为 Doris 已有角色自动创建并绑定查询用户"""
+        role = normalize_doris_role_name(role_name)
+        self._doris_repo.quote_identifier(workload_group)
+        actual_query_user = query_user.strip() if query_user else f"{role}_query_user"
+        self._doris_repo.quote_identifier(actual_query_user)
+        password = self._cipher.generate_password()
+        doris_user_created = False
+        try:
+            async with self._repo.transaction():
+                await self._repo.lock_security_mutation()
+                if await self._identity_repo.get(role) is not None:
+                    raise auth_error.RoleAlreadyExistsError(
+                        detail=f"Doris role {role} is already attached"
+                    )
+                if await self._identity_repo.get_by_query_user(actual_query_user) is not None:
+                    raise auth_error.RoleAlreadyExistsError(
+                        detail="Doris query user is already assigned"
+                    )
+                await self._doris_repo.verify_configured_roles((role,))
+                current_default = await self._identity_repo.get_default()
+                if current_default is None:
+                    is_default = True
+                await self._doris_repo.create_query_user_for_existing_role(
+                    role_name=role,
+                    query_user=actual_query_user,
+                    password=password,
+                    workload_group=workload_group,
+                )
+                doris_user_created = True
+                if is_default:
+                    await self._identity_repo.clear_default()
+                return await self._identity_repo.add(
+                    DorisQueryIdentity(
+                        role_name=role,
+                        description=description,
+                        query_user=actual_query_user,
+                        encrypted_password=self._cipher.encrypt(password),
+                        workload_group=workload_group,
+                        is_default=is_default,
+                        is_active=True,
+                    )
+                )
+        except BaseException as exc:
+            if doris_user_created:
+                try:
+                    await self._doris_repo.drop_query_user(actual_query_user)
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        f"Failed to compensate Doris query user creation: {actual_query_user}"
+                    )
+            if isinstance(exc, IntegrityError):
+                raise auth_error.RoleAlreadyExistsError from exc
+            raise
+
+    async def create_role(
+        self,
+        *,
+        role_name: str,
+        description: str,
+        query_user: str,
+        workload_group: str,
+        is_default: bool,
+    ) -> DorisQueryIdentity:
+        """创建 Doris 角色及唯一稳定查询身份"""
+        role = normalize_doris_role_name(role_name)
+        self._doris_repo.quote_identifier(query_user)
+        self._doris_repo.quote_identifier(workload_group)
+        password = self._cipher.generate_password()
+        doris_created = False
+        try:
+            async with self._repo.transaction():
+                await self._repo.lock_security_mutation()
+                if await self._identity_repo.get(role) is not None:
+                    raise auth_error.RoleAlreadyExistsError
+                if await self._identity_repo.get_by_query_user(query_user) is not None:
+                    raise auth_error.RoleAlreadyExistsError(
+                        detail="Doris query user is already assigned"
+                    )
+                current_default = await self._identity_repo.get_default()
+                if current_default is None:
+                    is_default = True
+                await self._doris_repo.create_role_identity(
+                    role_name=role,
+                    query_user=query_user,
+                    password=password,
+                    workload_group=workload_group,
+                )
+                doris_created = True
+                if is_default:
+                    await self._identity_repo.clear_default()
+                return await self._identity_repo.add(
+                    DorisQueryIdentity(
+                        role_name=role,
+                        description=description,
+                        query_user=query_user,
+                        encrypted_password=self._cipher.encrypt(password),
+                        workload_group=workload_group,
+                        is_default=is_default,
+                        is_active=True,
+                    )
+                )
+        except BaseException as exc:
+            if doris_created:
+                try:
+                    await self._doris_repo.drop_role_identity(
+                        role_name=role,
+                        query_user=query_user,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        f"Failed to compensate Doris role creation: {role}"
+                    )
+            if isinstance(exc, IntegrityError):
+                raise auth_error.RoleAlreadyExistsError from exc
+            raise
+
+    async def set_default_role(self, role_name: str) -> DorisQueryIdentity:
+        """替换新注册用户使用的缺省 Doris 角色"""
+        role = normalize_doris_role_name(role_name)
+        async with self._repo.transaction():
+            await self._repo.lock_security_mutation()
+            identity = await self._identity_repo.get(role)
+            if identity is None:
+                raise auth_error.RoleNotFoundError
+            if not identity.is_active:
+                raise auth_error.DefaultRoleRequiredError(
+                    detail="The default Doris role must be active"
+                )
+            await self._identity_repo.clear_default()
+            identity.is_default = True
+            await self._identity_repo.flush()
+            return identity
+
+    async def delete_role(self, role_name: str) -> None:
+        """删除未被用户使用的非缺省 Doris 查询身份和角色"""
+        role = normalize_doris_role_name(role_name)
+        async with self._repo.transaction():
+            await self._repo.lock_security_mutation()
+            identity = await self._identity_repo.get(role)
+            if identity is None:
+                raise auth_error.RoleNotFoundError
+            if identity.is_default:
+                raise auth_error.DefaultRoleRequiredError
+            if await self._identity_repo.count_assigned_users(role):
+                raise auth_error.RoleInUseError
+            await self._doris_repo.drop_role_identity(
+                role_name=identity.role_name,
+                query_user=identity.query_user,
+            )
+            await self._repo.delete_role_asset_grants(role)
+            await self._identity_repo.delete(identity)
+        await self._client_registry.invalidate(role)
 
     async def list_users(self, *, limit: int, offset: int) -> list[User]:
         """分页列出用户与角色"""
@@ -253,7 +473,8 @@ class DorisRoleManagementService:
     ) -> User:
         """替换用户唯一 Doris 角色并吊销已有刷新令牌"""
         normalized_role = normalize_doris_role_name(role_name)
-        if normalized_role not in self._roles:
+        identity = await self._identity_repo.get(normalized_role)
+        if identity is None or not identity.is_active:
             raise auth_error.RoleNotFoundError
         now = datetime.now(UTC)
         async with self._repo.transaction():
@@ -291,6 +512,6 @@ class DorisRoleManagementService:
     ) -> list[DorisRoleAssetGrant]:
         """列出 Doris 角色的 SELECT 权限投影"""
         normalized_name = normalize_doris_role_name(role_name)
-        if normalized_name not in self._roles:
+        if await self._identity_repo.get(normalized_name) is None:
             raise auth_error.RoleNotFoundError
         return await self._repo.list_role_asset_grants(normalized_name)

@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from app.entities.semantic_recall import SemanticRecallRecord
-from app.entities.semantic_search import (
+from app.models.semantic_recall import SemanticRecallRecord
+from app.models.semantic_search import (
     SemanticColumnResult,
     SemanticMetricResult,
     SemanticRelation,

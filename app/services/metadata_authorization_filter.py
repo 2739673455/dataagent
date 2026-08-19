@@ -1,7 +1,7 @@
 """元数据白名单过滤与引用脱敏"""
 
-from app.entities.meta import ColumnInfo, ColumnKey, MetricInfo, TableInfo
-from app.entities.semantic_search import SemanticSearchResponse
+from app.models.meta import ColumnInfo, ColumnKey, MetricInfo, TableInfo
+from app.models.semantic_search import SemanticSearchResponse
 from app.services.authorization_service import AssetAccessPolicy, AssetIdentity
 
 

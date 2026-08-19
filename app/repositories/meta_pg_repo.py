@@ -5,14 +5,14 @@ from datetime import UTC, datetime
 from sqlalchemy import delete, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
 
-from app.entities.meta import (
+from app.errors import meta_error
+from app.models.meta import (
     ColumnInfo,
     ColumnMetric,
     ColumnReference,
     MetricInfo,
     TableInfo,
 )
-from app.errors import meta_error
 
 
 class MetaPGRepo:

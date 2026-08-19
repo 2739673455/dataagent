@@ -38,24 +38,27 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-5 py-12">
-      <section className="w-full max-w-md rounded-[2rem] border border-stone-200 bg-white/90 p-8 shadow-[0_24px_80px_rgba(30,41,59,0.12)] backdrop-blur">
-        <div className="mb-8">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.28em] text-cyan-800">
-            DataAgent
-          </p>
-          <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
-            {mode === "login" ? "欢迎回来" : "创建账户"}
-          </h1>
-          <p className="mt-2 text-sm leading-6 text-slate-500">
-            登录后即可在独立沙盒中继续你的数据分析会话
+    <main className="flex min-h-screen items-center justify-center bg-[#f4f4f0] p-4 font-mono text-[#1e2024]">
+      <section className="w-full max-w-md rounded border border-[#d4d4ce] bg-[#ffffff] p-6 shadow-sm">
+        {/* 顶部标题栏 */}
+        <div className="mb-6 border-b border-[#e5e5df] pb-4">
+          <div className="flex items-center justify-between text-sm text-[#71717a]">
+            <span className="font-bold text-[#1e2024] text-base">DataAgent</span>
+            <span>{mode === "login" ? "账号登录" : "用户注册"}</span>
+          </div>
+          <p className="mt-2 text-sm text-[#52525b]">
+            {mode === "login"
+              ? "请输入账号凭据以进入数据分析工作台"
+              : "创建新操作员账号并分配数据角色"}
           </p>
         </div>
 
-        <form className="space-y-5" onSubmit={(event) => void submit(event)}>
+        <form className="space-y-4 text-sm" onSubmit={(event) => void submit(event)}>
           {mode === "register" && (
-            <label className="block text-sm font-medium text-slate-700">
-              用户名
+            <div className="space-y-1.5">
+              <label className="block font-medium text-[#27272a] text-sm">
+                用户名 (3-64 位字符)
+              </label>
               <input
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
@@ -63,45 +66,66 @@ export default function LoginPage() {
                 maxLength={64}
                 required
                 autoComplete="username"
-                className="mt-2 h-12 w-full rounded-xl border border-stone-300 bg-white px-4 outline-none transition focus:border-cyan-700 focus:ring-2 focus:ring-cyan-700/15"
+                placeholder="operator_name"
+                className="h-10 w-full rounded border border-[#d4d4ce] bg-[#fafaf8] px-3 font-mono text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none focus:ring-1 focus:ring-[#1e2024]"
               />
-            </label>
+            </div>
           )}
-          <label className="block text-sm font-medium text-slate-700">
-            邮箱{mode === "login" ? "或用户名" : ""}
+
+          <div className="space-y-1.5">
+            <label className="block font-medium text-[#27272a] text-sm">
+              {mode === "login" ? "邮箱或用户名" : "电子邮箱"}
+            </label>
             <input
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               type={mode === "login" ? "text" : "email"}
               required
               autoComplete={mode === "login" ? "username" : "email"}
-              className="mt-2 h-12 w-full rounded-xl border border-stone-300 bg-white px-4 outline-none transition focus:border-cyan-700 focus:ring-2 focus:ring-cyan-700/15"
+              placeholder={mode === "login" ? "admin@dataagent.io 或 admin" : "user@company.com"}
+              className="h-10 w-full rounded border border-[#d4d4ce] bg-[#fafaf8] px-3 font-mono text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none focus:ring-1 focus:ring-[#1e2024]"
             />
-          </label>
-          <label className="block text-sm font-medium text-slate-700">
-            密码
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="block font-medium text-[#27272a] text-sm">
+              密码 (最少 6 位)
+            </label>
             <input
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               type="password"
-              minLength={10}
+              minLength={6}
               required
               autoComplete={mode === "login" ? "current-password" : "new-password"}
-              className="mt-2 h-12 w-full rounded-xl border border-stone-300 bg-white px-4 outline-none transition focus:border-cyan-700 focus:ring-2 focus:ring-cyan-700/15"
+              placeholder="••••••"
+              className="h-10 w-full rounded border border-[#d4d4ce] bg-[#fafaf8] px-3 font-mono text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none focus:ring-1 focus:ring-[#1e2024]"
             />
-          </label>
-          <Button className="h-12 w-full rounded-xl" disabled={submitting} type="submit">
-            {submitting ? "处理中…" : mode === "login" ? "登录" : "注册并登录"}
-          </Button>
+          </div>
+
+          <div className="pt-2">
+            <Button
+              className="h-10 w-full text-sm font-medium"
+              disabled={submitting}
+              type="submit"
+            >
+              {submitting ? "正在验证..." : mode === "login" ? "登录" : "注册并登录"}
+            </Button>
+          </div>
         </form>
 
-        <button
-          type="button"
-          onClick={() => setMode((current) => (current === "login" ? "register" : "login"))}
-          className="mt-6 w-full text-center text-sm font-medium text-cyan-800 hover:text-cyan-950"
-        >
-          {mode === "login" ? "没有账户？立即注册" : "已有账户？返回登录"}
-        </button>
+        <div className="mt-5 flex items-center justify-between border-t border-[#e5e5df] pt-4 text-xs">
+          <button
+            type="button"
+            onClick={() => setMode((current) => (current === "login" ? "register" : "login"))}
+            className="text-xs text-[#27272a] hover:underline"
+          >
+            {mode === "login" ? "没有账户？立即注册" : "已有账户？返回登录"}
+          </button>
+          <span className="text-xs text-[#71717a]">
+            Doris RBAC 权限隔离
+          </span>
+        </div>
       </section>
     </main>
   );

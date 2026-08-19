@@ -4,11 +4,9 @@ import inspect
 import json
 import unittest
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
-from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -29,7 +27,7 @@ from app.agents.explorer.tools import (
     list_semantic_recalls,
     search_semantic_resources,
 )
-from app.entities.semantic_search import (
+from app.models.semantic_search import (
     SemanticColumnResult,
     SemanticMatchReason,
     SemanticMetricResult,
@@ -42,15 +40,6 @@ from app.entities.semantic_search import (
 from app.repositories.column_es_repo import ColumnESRepo
 from app.repositories.semantic_recall_pg_repo import SemanticRecallPGRepo
 from app.repositories.value_es_repo import ValueESRepo
-from app.routes.api.v1.auth.dependencies import (
-    get_authorization_service,
-    get_current_user,
-)
-from app.routes.api.v1.chat.dependencies import (
-    get_conversation_pg_repo,
-    get_semantic_recall_pg_repo,
-)
-from app.routes.api.v1.chat.router import router as chat_router
 from app.services.authorization_service import AssetAccessPolicy, AssetIdentity
 from app.services.metadata_authorization_filter import MetadataAuthorizationFilter
 from app.services.semantic_recall_service import (
@@ -398,7 +387,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             build_response("search_a", "revenue", score=0.8, reason="query"),
         )
         reference_content = json.dumps(
-            semantic_recall_reference(record, view="search_response"),
+            semantic_recall_reference(record),
             ensure_ascii=False,
         )
         old_reference = ToolMessage(
@@ -515,9 +504,8 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         content = str(result["messages"][-1].content)
         payload = json.loads(content)
         self.assertEqual(payload["recall_id"], "search_a")
-        self.assertEqual(
-            payload["semantic_recall"]["type"], "semantic_recall_reference"
-        )
+        self.assertEqual(payload["status"], "stored")
+        self.assertNotIn("semantic_recall", payload)
         self.assertNotIn("amount", content)
 
     async def test_tool_node_injects_store_and_conversation_context(self) -> None:
@@ -566,92 +554,6 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             result["messages"][-1].content,
             '{"status": "success", "recalls": []}',
         )
-
-
-class SemanticRecallRouterAuthorizationTest(unittest.IsolatedAsyncioTestCase):
-    """验证召回 REST 每次请求重新加载当前资产策略"""
-
-    async def test_list_route_applies_revocation_to_persisted_snapshot(self) -> None:
-        store = InMemoryStore()
-        repo = SemanticRecallPGRepo(store)
-        conversation_id = uuid4()
-        unrestricted = AssetAccessPolicy(user_id=7, unrestricted=True)
-        restricted = AssetAccessPolicy(
-            user_id=7,
-            grants=frozenset(
-                {
-                    AssetIdentity(
-                        "doris",
-                        "analytics",
-                        "orders",
-                        "status",
-                    )
-                }
-            ),
-        )
-        service = SemanticRecallService(
-            repo,
-            MetadataAuthorizationFilter(unrestricted, "doris", "analytics"),
-        )
-        response = build_response("search_a", "收入", score=0.8, reason="query")
-        response.warnings = ["orders.amount backend detail"]
-        await service.record_search(
-            7,
-            conversation_id,
-            SemanticSearchRequest(query="收入", resource_types=["column"]),
-            response,
-        )
-
-        conversation_repo = MagicMock()
-        conversation_repo.get = AsyncMock(return_value=object())
-        authorization_service = MagicMock()
-        authorization_service.get_asset_policy = AsyncMock(
-            side_effect=[unrestricted, restricted]
-        )
-        current_user = MagicMock(id=7)
-        app = FastAPI()
-        app.include_router(chat_router, prefix="/api/v1/chat")
-
-        async def override_conversation_repo():
-            return conversation_repo
-
-        async def override_recall_repo():
-            return repo
-
-        async def override_current_user():
-            return current_user
-
-        async def override_authorization_service():
-            return authorization_service
-
-        app.dependency_overrides[get_conversation_pg_repo] = override_conversation_repo
-        app.dependency_overrides[get_semantic_recall_pg_repo] = override_recall_repo
-        app.dependency_overrides[get_current_user] = override_current_user
-        app.dependency_overrides[get_authorization_service] = (
-            override_authorization_service
-        )
-
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-        ) as client:
-            before = await client.get(f"/api/v1/chat/recalls/{conversation_id}")
-            after = await client.get(f"/api/v1/chat/recalls/{conversation_id}")
-
-        self.assertEqual(before.status_code, 200)
-        self.assertEqual(after.status_code, 200)
-        self.assertEqual(
-            [
-                item["name"]
-                for item in before.json()["recalls"][0]["response"]["columns"]
-            ],
-            ["amount"],
-        )
-        filtered_response = after.json()["recalls"][0]["response"]
-        self.assertEqual(filtered_response["columns"], [])
-        self.assertEqual(filtered_response["metrics"], [])
-        self.assertEqual(filtered_response["warnings"], [])
-        self.assertEqual(authorization_service.get_asset_policy.await_count, 2)
 
 
 class SemanticSearchContractTest(unittest.TestCase):

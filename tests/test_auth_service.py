@@ -6,8 +6,8 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.conf.app_config import AuthConfig
-from app.entities.auth import RefreshToken, User
 from app.errors import auth_error
+from app.models.auth import DorisQueryIdentity, RefreshToken, User
 from app.repositories.auth_pg_repo import AuthPGRepo
 from app.services.auth_service import Argon2PasswordManager, AuthService, JWTCodec
 
@@ -37,7 +37,7 @@ def build_config() -> AuthConfig:
         issuer="dataagent-test",
         access_token_minutes=15,
         refresh_token_days=30,
-        password_min_length=10,
+        password_min_length=6,
     )
 
 
@@ -45,7 +45,7 @@ def build_user(
     user_id: int = 7,
     *,
     is_admin: bool = False,
-    doris_role: str = DEFAULT_ROLE,
+    doris_role: str | None = DEFAULT_ROLE,
 ) -> User:
     """构造用户实体"""
     return User(
@@ -149,12 +149,24 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
         self.password_manager = MagicMock()
         self.password_manager.hash = AsyncMock(return_value="hashed-password")
         self.password_manager.verify = AsyncMock(return_value=True)
+        self.identity_provider = MagicMock()
+        self.identity_provider.get_default = AsyncMock(
+            return_value=DorisQueryIdentity(
+                role_name=DEFAULT_ROLE,
+                description="default",
+                query_user="default_query",
+                encrypted_password="encrypted",
+                workload_group="normal",
+                is_default=True,
+                is_active=True,
+            )
+        )
         self.now = datetime.now(UTC).replace(microsecond=0)
         self.service = AuthService(
             self.repo,
+            self.identity_provider,
             build_config(),
             self.password_manager,
-            default_doris_role=DEFAULT_ROLE,
             now=lambda: self.now,
         )
 
@@ -180,7 +192,21 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(pair.access_token)
         self.repo.lock_security_mutation.assert_awaited_once()
 
-    async def test_bootstrap_creates_admin_with_default_doris_role(self) -> None:
+    async def test_registration_fails_until_default_doris_role_exists(self) -> None:
+        self.repo.get_user_by_username.return_value = None
+        self.repo.get_user_by_email.return_value = None
+        self.identity_provider.get_default.return_value = None
+
+        with self.assertRaises(auth_error.DefaultDorisRoleUnavailableError):
+            await self.service.register(
+                "New.Analyst",
+                "New@Example.com",
+                "long-enough-password",
+            )
+
+        self.repo.add_user.assert_not_awaited()
+
+    async def test_bootstrap_creates_admin_without_privileged_doris_role(self) -> None:
         self.repo.get_user_by_username.return_value = None
         self.repo.get_user_by_email.return_value = None
 
@@ -199,7 +225,7 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result.created)
         self.assertTrue(result.user.is_admin)
-        self.assertEqual(result.user.doris_role_name, DEFAULT_ROLE)
+        self.assertIsNone(result.user.doris_role_name)
         self.repo.add_refresh_token.assert_not_awaited()
 
     async def test_bootstrap_promotes_matching_existing_user(self) -> None:

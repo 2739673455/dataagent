@@ -5,9 +5,35 @@ export interface DorisRoleResponse {
   name: string;
   description: string;
   is_default: boolean;
+  is_active: boolean;
   query_user: string;
+  workload_group: string;
   exists_in_doris: boolean;
   doris_grants: Record<string, unknown> | null;
+}
+
+export interface DiscoveredDorisRoleResponse {
+  name: string;
+  is_attached: boolean;
+  description: string | null;
+  query_user: string | null;
+  workload_group: string | null;
+}
+
+export interface AttachDorisRoleRequest {
+  role: string;
+  description: string;
+  workload_group?: string;
+  query_user?: string;
+  is_default?: boolean;
+}
+
+export interface CreateDorisRoleRequest {
+  role: string;
+  description: string;
+  query_user: string;
+  workload_group: string;
+  is_default: boolean;
 }
 
 export interface SelectGrantRequest {
@@ -28,6 +54,37 @@ export const adminApi = {
       "/api/v1/admin/doris-roles"
     );
     return response.data.roles;
+  },
+
+  async discoverRoles(): Promise<DiscoveredDorisRoleResponse[]> {
+    const response = await appClient.get<{ roles: DiscoveredDorisRoleResponse[] }>(
+      "/api/v1/admin/doris-roles/discover"
+    );
+    return response.data.roles;
+  },
+
+  async attachRole(request: AttachDorisRoleRequest): Promise<DorisRoleResponse> {
+    const response = await appClient.post<DorisRoleResponse>(
+      "/api/v1/admin/doris-roles/attach",
+      request
+    );
+    return response.data;
+  },
+
+  async createRole(request: CreateDorisRoleRequest): Promise<DorisRoleResponse> {
+    const response = await appClient.post<DorisRoleResponse>("/api/v1/admin/doris-roles", request);
+    return response.data;
+  },
+
+  async setDefaultRole(role: string): Promise<DorisRoleResponse> {
+    const response = await appClient.put<DorisRoleResponse>(
+      `/api/v1/admin/doris-roles/${role}/default`
+    );
+    return response.data;
+  },
+
+  async deleteRole(role: string): Promise<void> {
+    await appClient.delete(`/api/v1/admin/doris-roles/${role}`);
   },
 
   async listUsers(): Promise<UserResponse[]> {

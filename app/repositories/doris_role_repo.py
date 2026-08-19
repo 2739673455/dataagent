@@ -4,6 +4,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal, Protocol
 
+from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -53,6 +54,90 @@ class DorisRoleRepository:
         async with self._provider.connection() as connection:
             result = await connection.execute(text("SHOW ROLES"))
             return [dict(row) for row in result.mappings().all()]
+
+    async def create_role_identity(
+        self,
+        *,
+        role_name: str,
+        query_user: str,
+        password: str,
+        workload_group: str,
+    ) -> None:
+        """创建 Doris 角色、查询用户及 Workload Group 授权"""
+        role = self.quote_role(role_name)
+        user = self.quote_role(query_user)
+        group = self.quote_role(workload_group)
+        if not password or not password.isascii() or "'" in password:
+            raise ValueError("invalid generated Doris password")
+        role_created = False
+        try:
+            await self._execute(f"CREATE ROLE {role}")
+            role_created = True
+            await self._execute(
+                f"GRANT USAGE_PRIV ON WORKLOAD GROUP {group} TO ROLE {role}"
+            )
+            await self._execute(
+                f"CREATE USER {user} IDENTIFIED BY '{password}' DEFAULT ROLE {role}"
+            )
+        except BaseException:
+            if role_created:
+                try:
+                    await self._execute(f"DROP ROLE IF EXISTS {role}")
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        f"Failed to compensate Doris role creation: {role_name}"
+                    )
+            raise
+
+    async def create_query_user_for_existing_role(
+        self,
+        *,
+        role_name: str,
+        query_user: str,
+        password: str,
+        workload_group: str,
+    ) -> None:
+        """为已存在的 Doris 角色创建代理查询用户并授予 Workload Group 权限"""
+        role = self.quote_role(role_name)
+        user = self.quote_role(query_user)
+        group = self.quote_role(workload_group)
+        if not password or not password.isascii() or "'" in password:
+            raise ValueError("invalid generated Doris password")
+        user_created = False
+        try:
+            await self._execute(
+                f"GRANT USAGE_PRIV ON WORKLOAD GROUP {group} TO ROLE {role}"
+            )
+            await self._execute(
+                f"CREATE USER {user} IDENTIFIED BY '{password}' DEFAULT ROLE {role}"
+            )
+            user_created = True
+        except BaseException:
+            if user_created:
+                try:
+                    await self._execute(f"DROP USER IF EXISTS {user}")
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        f"Failed to compensate Doris query user creation: {query_user}"
+                    )
+            raise
+
+    async def drop_query_user(self, query_user: str) -> None:
+        """删除 Doris 查询用户"""
+        user = self.quote_role(query_user)
+        await self._execute(f"DROP USER IF EXISTS {user}")
+
+    async def drop_role_identity(
+        self,
+        *,
+        role_name: str,
+        query_user: str,
+    ) -> None:
+        """删除 Doris 查询用户和角色"""
+        user = self.quote_role(query_user)
+        role = self.quote_role(role_name)
+        await self._execute(f"DROP USER IF EXISTS {user}")
+        await self._execute(f"DROP ROLE IF EXISTS {role}")
 
     async def verify_configured_roles(self, role_names: Sequence[str]) -> None:
         """确认管理账号可查看且 Doris 已创建全部配置角色"""

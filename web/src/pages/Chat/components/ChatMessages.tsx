@@ -1,4 +1,14 @@
-import { ChevronDown, Download, Eye, FileImage, FileText, Loader2, Wrench } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Copy,
+  Download,
+  Eye,
+  FileText,
+  Loader2,
+  Terminal,
+  Wrench,
+} from "lucide-react";
 import type { RefObject } from "react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
@@ -33,36 +43,38 @@ type ToolRunDisplayItem = {
 };
 
 type DisplayItem = MessageDisplayItem | ToolRunDisplayItem;
-const TOOL_ARGS_PREVIEW_MAX_LENGTH = 96;
+const TOOL_ARGS_PREVIEW_MAX_LENGTH = 120;
 
-// 消息中的图片资源使用全屏浮层预览
 function ImagePreview({ alt, onClose, src }: { alt: string; onClose: () => void; src: string }) {
   return createPortal(
     <button
       type="button"
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-6"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 backdrop-blur-xs"
     >
-      <img
-        src={src}
-        alt={alt}
-        className="max-h-[88vh] max-w-[88vw] rounded-[1.25rem] object-contain shadow-2xl"
-      />
+      <div className="rounded border border-[#d4d4ce] bg-[#ffffff] p-3 shadow-xl">
+        <div className="mb-2 flex items-center justify-between border-b border-[#e5e5df] pb-1 text-xs text-[#71717a]">
+          <span>图片预览: {alt}</span>
+          <span className="text-[#27272a]">点击关闭</span>
+        </div>
+        <img
+          src={src}
+          alt={alt}
+          className="max-h-[80vh] max-w-[85vw] rounded object-contain"
+        />
+      </div>
     </button>,
     document.body
   );
 }
 
-// 没有 LangGraph message_id 的本地消息使用内容级 key
 function getMessageKey(message: MessageSchema) {
   if (message.message_id != null) {
     return `message-${message.message_id}`;
   }
-
   return `message-draft-${message.role}-${JSON.stringify(message.parts)}`;
 }
 
-// 不同类型的消息片段要生成稳定 key，避免 React 反复重建节点
 function getMessagePartKey(part: MessagePart) {
   switch (part.type) {
     case "text":
@@ -76,7 +88,6 @@ function getMessagePartKey(part: MessagePart) {
   }
 }
 
-// 附件文件名仅用于区分图片和 HTML 两类特殊展示
 function isImageAttachment(name: string) {
   return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
 }
@@ -92,7 +103,6 @@ function isInteractiveTableAttachment(attachment: Attachment) {
   );
 }
 
-// 把后端原始消息流整理成适合渲染的普通消息和工具执行条目
 function buildDisplayItems(
   conversationId: string | null,
   messages: MessageSchema[]
@@ -179,7 +189,6 @@ function buildDisplayItems(
   return items;
 }
 
-// 工具参数预览只显示扁平摘要，避免标题区过长
 function formatToolArgValue(value: unknown): string {
   if (value === null) return "null";
   if (value === undefined) return "undefined";
@@ -199,40 +208,78 @@ function getToolArgsPreview(args?: Record<string, unknown>): string | null {
   if (entries.length === 0) return null;
 
   const preview = entries.map(([key, value]) => `${key}=${formatToolArgValue(value)}`).join(", ");
-
   if (preview.length <= TOOL_ARGS_PREVIEW_MAX_LENGTH) {
     return preview;
   }
-
   return `${preview.slice(0, TOOL_ARGS_PREVIEW_MAX_LENGTH).trimEnd()}...`;
 }
 
-// 助手文本支持 Markdown，用户文本保持原样展示
+function CodeBlock({ children, className }: { children: React.ReactNode; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  const text = String(children).replace(/\n$/, "");
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="group relative my-3 overflow-hidden rounded border border-[#d4d4ce] bg-[#fafaf8]">
+      <div className="flex items-center justify-between border-b border-[#e5e5df] bg-[#f4f4f0] px-3 py-1 text-xs text-[#71717a]">
+        <span>代码片段</span>
+        <button
+          type="button"
+          onClick={() => void handleCopy()}
+          className="flex items-center gap-1 text-[#52525b] transition hover:text-[#18181b]"
+        >
+          {copied ? (
+            <>
+              <Check className="h-3 w-3 text-[#16a34a]" />
+              <span className="text-[#16a34a]">已复制</span>
+            </>
+          ) : (
+            <>
+              <Copy className="h-3 w-3" />
+              <span>复制</span>
+            </>
+          )}
+        </button>
+      </div>
+      <pre className="overflow-x-auto p-3 text-xs leading-relaxed text-[#1e2024]">
+        <code className={className}>{children}</code>
+      </pre>
+    </div>
+  );
+}
+
 function MarkdownText({ text }: { text: string }) {
   return (
-    <div className="text-[15px] tracking-wide opacity-95">
+    <div className="font-mono text-sm leading-relaxed text-[#1e2024]">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
           h1: ({ children }) => (
-            <h1 className="mt-1 text-xl font-semibold text-slate-900">{children}</h1>
+            <h1 className="mb-2 mt-4 text-base font-bold text-[#18181b] border-b border-[#e5e5df] pb-1">
+              {children}
+            </h1>
           ),
           h2: ({ children }) => (
-            <h2 className="mt-1 text-lg font-semibold text-slate-900">{children}</h2>
+            <h2 className="mb-2 mt-3 text-sm font-bold text-[#18181b]">{children}</h2>
           ),
           h3: ({ children }) => (
-            <h3 className="mt-1 text-base font-semibold text-slate-900">{children}</h3>
+            <h3 className="mb-1.5 mt-2.5 text-sm font-semibold text-[#27272a]">{children}</h3>
           ),
-          p: ({ children }) => <p className="whitespace-pre-wrap leading-relaxed">{children}</p>,
-          ul: ({ children }) => <ul className="list-disc space-y-1 pl-5">{children}</ul>,
-          ol: ({ children }) => <ol className="list-decimal space-y-1 pl-5">{children}</ol>,
+          p: ({ children }) => <p className="mb-2.5 whitespace-pre-wrap">{children}</p>,
+          ul: ({ children }) => <ul className="mb-2.5 list-disc space-y-1 pl-4 text-[#3f3f46]">{children}</ul>,
+          ol: ({ children }) => <ol className="mb-2.5 list-decimal space-y-1 pl-4 text-[#3f3f46]">{children}</ol>,
           li: ({ children }) => <li>{children}</li>,
           a: ({ href, children }) => (
             <a
               href={href}
               target="_blank"
               rel="noreferrer"
-              className="text-sky-700 underline underline-offset-2"
+              className="text-[#18181b] underline underline-offset-2 hover:text-[#52525b]"
             >
               {children}
             </a>
@@ -240,45 +287,31 @@ function MarkdownText({ text }: { text: string }) {
           code: ({ className, children, ...props }) => {
             const isBlock = Boolean(className);
             if (isBlock) {
-              return (
-                <code className={className} {...props}>
-                  {children}
-                </code>
-              );
+              return <CodeBlock className={className}>{children}</CodeBlock>;
             }
-
             return (
               <code
-                className="rounded bg-slate-100 px-1.5 py-0.5 text-[0.95em] text-slate-800"
+                className="rounded border border-[#d4d4ce] bg-[#f0f0eb] px-1.5 py-0.5 text-xs text-[#18181b]"
                 {...props}
               >
                 {children}
               </code>
             );
           },
-          pre: ({ children }) => (
-            <pre className="overflow-x-auto rounded-[1rem] bg-slate-100 px-4 py-3 text-sm text-slate-700">
-              {children}
-            </pre>
-          ),
           table: ({ children }) => (
-            <div className="overflow-x-auto rounded-[1rem] border border-slate-200 bg-white">
-              <table className="min-w-full border-collapse text-left text-sm text-slate-700">
+            <div className="my-3 overflow-x-auto rounded border border-[#d4d4ce] bg-[#ffffff]">
+              <table className="min-w-full border-collapse text-left text-xs sm:text-sm text-[#27272a]">
                 {children}
               </table>
             </div>
           ),
-          thead: ({ children }) => <thead className="bg-slate-50">{children}</thead>,
-          th: ({ children }) => (
-            <th className="border-b border-slate-200 px-4 py-2.5 font-semibold text-slate-900">
-              {children}
-            </th>
-          ),
+          thead: ({ children }) => <thead className="border-b border-[#d4d4ce] bg-[#f4f4f0] text-[#52525b]">{children}</thead>,
+          th: ({ children }) => <th className="border-r border-[#e5e5df] px-3 py-1.5 font-medium last:border-r-0">{children}</th>,
           tbody: ({ children }) => <tbody>{children}</tbody>,
-          tr: ({ children }) => <tr className="border-t border-slate-200 align-top">{children}</tr>,
-          td: ({ children }) => <td className="px-4 py-2.5">{children}</td>,
+          tr: ({ children }) => <tr className="border-b border-[#f0f0eb] last:border-b-0 hover:bg-[#fafaf8]">{children}</tr>,
+          td: ({ children }) => <td className="border-r border-[#f0f0eb] px-3 py-1.5 last:border-r-0">{children}</td>,
           blockquote: ({ children }) => (
-            <blockquote className="border-l-4 border-slate-300 pl-4 italic text-slate-600">
+            <blockquote className="my-2 border-l-2 border-[#52525b] bg-[#fafaf8] pl-3 py-1 italic text-[#52525b]">
               {children}
             </blockquote>
           ),
@@ -290,7 +323,6 @@ function MarkdownText({ text }: { text: string }) {
   );
 }
 
-// 单个消息片段的渲染分为文本和图片两类
 function PartView({
   part,
   onPreview,
@@ -304,7 +336,7 @@ function PartView({
     return renderMarkdown ? (
       <MarkdownText text={part.text} />
     ) : (
-      <div className="text-[15px] tracking-wide opacity-95">
+      <div className="font-mono text-xs text-[#1e2024]">
         <p className="whitespace-pre-wrap leading-relaxed">{part.text}</p>
       </div>
     );
@@ -313,19 +345,18 @@ function PartView({
   return (
     <button
       type="button"
-      onClick={() => onPreview?.(part.image_url, "message asset")}
-      className="mt-2 overflow-hidden rounded-[1rem]"
+      onClick={() => onPreview?.(part.image_url, "asset")}
+      className="mt-2 overflow-hidden rounded border border-[#d4d4ce] bg-[#ffffff] p-1"
     >
       <img
         src={part.image_url}
-        alt="message asset"
-        className="max-h-80 rounded-[1rem] border border-white/80 object-cover shadow-[0_12px_30px_-10px_rgba(15,23,42,0.18)]"
+        alt="asset"
+        className="max-h-72 rounded object-cover"
       />
     </button>
   );
 }
 
-// 工具调用和工具结果合并成一条可折叠的执行记录
 function ToolRunBar({
   item,
   onOpenPreviewAttachment,
@@ -338,129 +369,86 @@ function ToolRunBar({
   const hasAttachments = item.completed && (item.attachments?.length ?? 0) > 0;
 
   return (
-    <div className={cn(hasAttachments ? "space-y-1.5" : "space-y-0")}>
-      <div className="flex w-full justify-start">
-        <div
-          className={cn(
-            "w-full max-w-[88%] overflow-hidden rounded-[1.25rem]",
-            item.completed ? "bg-indigo-200" : "bg-slate-200"
-          )}
+    <div className="my-2 font-mono text-xs">
+      <div className="rounded border border-[#d4d4ce] bg-[#ffffff] shadow-xs">
+        <button
+          type="button"
+          onClick={() => setIsOpen((value) => !value)}
+          className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition hover:bg-[#fafaf8]"
         >
-          <button
-            type="button"
-            onClick={() => setIsOpen((value) => !value)}
-            className={cn(
-              "flex w-full items-center gap-3 px-3.5 py-2 text-left text-sm",
-              "text-slate-700"
-            )}
-          >
-            <div
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-[#ebebe6]">
+              {item.completed ? (
+                <Wrench className="h-3 w-3 text-[#52525b]" />
+              ) : (
+                <Loader2 className="h-3 w-3 animate-spin text-[#1e2024]" />
+              )}
+            </div>
+            <span className="font-medium text-[#18181b]">{item.name}</span>
+            {argsPreview ? (
+              <span className="truncate text-[#71717a] text-[11px]">{argsPreview}</span>
+            ) : null}
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <span
               className={cn(
-                "relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
-                item.completed ? "bg-indigo-300 text-indigo-800" : "bg-transparent text-white"
+                "rounded px-1.5 py-0.5 text-[10px] font-medium",
+                item.completed
+                  ? "bg-[#ebebe6] text-[#3f3f46]"
+                  : "bg-[#deded8] text-[#18181b]"
               )}
             >
-              {item.completed ? (
-                <Wrench className="h-3.5 w-3.5" />
-              ) : (
-                <span className="h-5 w-5 rounded-full bg-indigo-300 animate-tool-dot-breathe" />
-              )}
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className={cn("truncate text-sm font-medium", "text-slate-800")}>
-                {item.name}
-                {argsPreview ? (
-                  <span className={cn("ml-2 font-normal", "text-slate-500")}>{argsPreview}</span>
-                ) : null}
-              </p>
-            </div>
+              {item.completed ? "已完成" : "执行中"}
+            </span>
             <ChevronDown
               className={cn(
-                "h-4 w-4 shrink-0 transition-transform",
-                isOpen ? "rotate-180" : "",
-                "text-slate-500"
+                "h-3.5 w-3.5 text-[#71717a] transition-transform",
+                isOpen && "rotate-180"
               )}
             />
-          </button>
-          {isOpen ? (
-            /* 展开后显示工具入参与执行结果，便于排查调用细节 */
-            <div
-              className={cn(
-                "space-y-3 px-3.5 pb-3.5 pt-2.5",
-                item.completed ? "bg-indigo-200" : "bg-slate-200"
-              )}
-            >
-              {item.args !== undefined ? (
-                <div className="space-y-2">
-                  <p
-                    className={cn(
-                      "text-xs font-medium uppercase tracking-[0.18em]",
-                      "text-slate-600"
-                    )}
-                  >
-                    参数
-                  </p>
-                  <pre
-                    className={cn(
-                      "overflow-x-auto whitespace-pre-wrap rounded-[1rem] px-3 py-2.5 text-xs",
-                      item.completed
-                        ? "bg-indigo-100 text-indigo-950"
-                        : "bg-white/80 text-slate-700"
-                    )}
-                  >
-                    {JSON.stringify(item.args, null, 2)}
-                  </pre>
-                </div>
-              ) : null}
-              {item.result !== undefined ? (
-                <div className="space-y-2">
-                  <p
-                    className={cn(
-                      "text-xs font-medium uppercase tracking-[0.18em]",
-                      "text-slate-600"
-                    )}
-                  >
-                    结果
-                  </p>
-                  <pre
-                    className={cn(
-                      "overflow-x-auto whitespace-pre-wrap rounded-[1rem] px-3 py-2.5 text-xs",
-                      item.completed
-                        ? "bg-indigo-100 text-indigo-950"
-                        : "bg-white/80 text-slate-700"
-                    )}
-                  >
-                    {item.result}
-                  </pre>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      </div>
-      {hasAttachments ? (
-        /* 某些工具会返回附件，这里复用消息附件的展示方式 */
-        <div className="flex w-full justify-start">
-          <div className="max-w-[88%] rounded-[1.5rem] bg-transparent px-4 py-0.5 text-slate-800">
-            <div className="flex flex-wrap gap-2">
-              {(item.attachments ?? []).map((attachment) => (
-                <AttachmentChip
-                  key={attachment.f_path}
-                  attachment={attachment}
-                  conversationId={item.conversationId}
-                  isUser={false}
-                  onOpenPreviewAttachment={onOpenPreviewAttachment}
-                />
-              ))}
-            </div>
           </div>
+        </button>
+
+        {isOpen && (
+          <div className="space-y-2 border-t border-[#e5e5df] bg-[#fafaf8] p-3 text-[11px]">
+            {item.args !== undefined ? (
+              <div className="space-y-1">
+                <p className="font-medium text-[#71717a]">入参参数</p>
+                <pre className="overflow-x-auto whitespace-pre-wrap rounded border border-[#e5e5df] bg-[#ffffff] p-2 text-[#3f3f46]">
+                  {JSON.stringify(item.args, null, 2)}
+                </pre>
+              </div>
+            ) : null}
+            {item.result !== undefined ? (
+              <div className="space-y-1">
+                <p className="font-medium text-[#71717a]">执行输出</p>
+                <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded border border-[#e5e5df] bg-[#ffffff] p-2 text-[#27272a]">
+                  {item.result}
+                </pre>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </div>
+
+      {hasAttachments && (
+        <div className="mt-2 flex flex-wrap gap-2 px-1">
+          {(item.attachments ?? []).map((attachment) => (
+            <AttachmentChip
+              key={attachment.f_path}
+              attachment={attachment}
+              conversationId={item.conversationId}
+              isUser={false}
+              onOpenPreviewAttachment={onOpenPreviewAttachment}
+            />
+          ))}
         </div>
-      ) : null}
+      )}
     </div>
   );
 }
 
-// 普通附件缩略图按需拉取真实文件内容，避免列表初始加载过重
 function AttachmentPreview({
   attachment,
   conversationId,
@@ -473,9 +461,7 @@ function AttachmentPreview({
   const [imageUrl, setImageUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!conversationId || !isImageAttachment(attachment.f_path)) {
-      return;
-    }
+    if (!conversationId || !isImageAttachment(attachment.f_path)) return;
 
     let objectUrl: string | null = null;
     let cancelled = false;
@@ -494,14 +480,12 @@ function AttachmentPreview({
 
     return () => {
       cancelled = true;
-      if (objectUrl) {
-        URL.revokeObjectURL(objectUrl);
-      }
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [attachment.f_path, conversationId]);
 
   return (
-    <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-slate-200">
+    <div className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded border border-[#d4d4ce] bg-[#ffffff]">
       {imageUrl ? (
         <button
           type="button"
@@ -514,16 +498,13 @@ function AttachmentPreview({
             className="h-full w-full object-cover"
           />
         </button>
-      ) : isImageAttachment(attachment.f_path) ? (
-        <FileImage className="h-4 w-4 text-slate-500" />
       ) : (
-        <FileText className="h-4 w-4 text-slate-600" />
+        <FileText className="h-3 w-3 text-[#71717a]" />
       )}
     </div>
   );
 }
 
-// 附件 chip 统一承载预览、下载和可信产物打开动作
 function AttachmentChip({
   attachment,
   conversationId,
@@ -541,10 +522,8 @@ function AttachmentChip({
   const isHtml = isHtmlAttachment(attachment.f_path);
   const isPreviewable = isHtml || isInteractiveTableAttachment(attachment);
 
-  // 下载走 blob 链接，避免直接暴露鉴权接口地址
   const handleDownload = async () => {
     if (!conversationId || isDownloading) return;
-
     try {
       setIsDownloading(true);
       const response = await chatApi.fetchAttachmentFile(conversationId, attachment.f_path);
@@ -564,8 +543,10 @@ function AttachmentChip({
   return (
     <div
       className={cn(
-        "flex items-center gap-2 rounded-[1rem] px-2.5 py-2 text-xs",
-        isUser ? "bg-white/60 text-slate-700" : "bg-slate-100 text-slate-600"
+        "flex items-center gap-1.5 rounded border px-2 py-1 font-mono text-[11px]",
+        isUser
+          ? "border-[#c4c4be] bg-[#f0f0eb] text-[#27272a]"
+          : "border-[#d4d4ce] bg-[#ffffff] text-[#27272a]"
       )}
     >
       <AttachmentPreview
@@ -573,46 +554,40 @@ function AttachmentChip({
         conversationId={conversationId}
         onPreview={onPreview}
       />
-      <span className="truncate" title={getAttachmentName(attachment.f_path)}>
+      <span className="max-w-[180px] truncate text-[11px]" title={getAttachmentName(attachment.f_path)}>
         {getAttachmentName(attachment.f_path)}
       </span>
-      {isPreviewable ? (
+
+      {isPreviewable && (
         <button
           type="button"
           onClick={() => onOpenPreviewAttachment?.(attachment)}
-          className={cn(
-            "flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition",
-            isUser ? "hover:bg-slate-800/10" : "hover:bg-slate-800/5"
-          )}
-          title={isHtml ? "预览 HTML" : "预览交互表格"}
+          className="ml-1 rounded p-0.5 text-[#52525b] hover:bg-[#deded8] hover:text-[#18181b]"
+          title={isHtml ? "预览 HTML 产物" : "预览交互表格"}
         >
-          <Eye className="h-3.5 w-3.5" />
+          <Eye className="h-3 w-3" />
         </button>
-      ) : null}
-      {conversationId ? (
+      )}
+
+      {conversationId && (
         <button
           type="button"
-          onClick={handleDownload}
+          onClick={() => void handleDownload()}
           disabled={isDownloading}
-          className={cn(
-            "flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition",
-            isUser ? "hover:bg-slate-800/10" : "hover:bg-slate-800/5",
-            isDownloading ? "cursor-wait opacity-60" : ""
-          )}
-          title="下载附件"
+          className="rounded p-0.5 text-[#71717a] hover:bg-[#deded8] hover:text-[#18181b]"
+          title="下载产物文件"
         >
           {isDownloading ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-700" />
+            <Loader2 className="h-3 w-3 animate-spin" />
           ) : (
-            <Download className="h-3.5 w-3.5" />
+            <Download className="h-3 w-3" />
           )}
         </button>
-      ) : null}
+      )}
     </div>
   );
 }
 
-// 一条普通消息气泡内可以同时包含附件、文本和图片片段
 function MessageBubble({
   message,
   onOpenPreviewAttachment,
@@ -628,16 +603,23 @@ function MessageBubble({
 
   return (
     <>
-      <div className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}>
+      <div className="my-3 font-mono">
         <div
           className={cn(
-            "relative max-w-[88%] transition-all duration-300",
+            "rounded border p-3.5 shadow-xs",
             isUser
-              ? "rounded-[1.75rem] bg-[#dde3ec] px-4 py-3 text-slate-800"
-              : "rounded-[1.75rem] bg-transparent px-4 py-3 text-slate-800"
+              ? "border-[#d4d4ce] bg-[#eaeae5]"
+              : "border-[#d4d4ce] bg-[#ffffff]"
           )}
         >
-          <div className="space-y-3">
+          {/* 消息来源标识 */}
+          <div className="mb-2 flex items-center justify-between border-b border-[#e5e5df] pb-1.5 text-xs">
+            <span className="font-semibold text-[#18181b]">
+              {isUser ? "用户" : "DataAgent"}
+            </span>
+          </div>
+
+          <div className="space-y-2">
             {message.attachments?.length ? (
               <div className="flex flex-wrap gap-2">
                 {message.attachments.map((attachment) => (
@@ -652,6 +634,7 @@ function MessageBubble({
                 ))}
               </div>
             ) : null}
+
             {message.parts.map((part) => (
               <PartView
                 key={getMessagePartKey(part)}
@@ -663,14 +646,14 @@ function MessageBubble({
           </div>
         </div>
       </div>
-      {previewImage ? (
-        /* 消息内图片的预览能力和输入区附件预览保持一致 */
+
+      {previewImage && (
         <ImagePreview
           src={previewImage.src}
           alt={previewImage.alt}
           onClose={() => setPreviewImage(null)}
         />
-      ) : null}
+      )}
     </>
   );
 }
@@ -692,27 +675,48 @@ export function ChatMessages({
   onOpenPreviewAttachment,
   viewportRef,
 }: ChatMessagesProps) {
-  // 渲染前先把原始消息整理成适合 UI 的扁平列表
   const displayItems = buildDisplayItems(conversationId, messages);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-none border-0 bg-[#fefdfa] shadow-none">
-      <div ref={viewportRef} className="min-h-0 flex-1 overflow-y-auto bg-[#fefdfa] pb-10 pt-6">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#f4f4f0] font-mono text-[#1e2024]">
+      <div ref={viewportRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         {!conversationSelected ? (
-          /* 未选择会话时显示空状态 */
-          <div className="flex h-full items-center justify-center">
-            <p className="text-base font-medium tracking-[0.18em] text-slate-400">创建新对话</p>
+          <div className="flex h-full flex-col items-center justify-center p-6 text-center">
+            <div className="w-full max-w-lg rounded border border-[#d4d4ce] bg-[#ffffff] p-6 text-left shadow-sm">
+              <div className="mb-4 flex items-center justify-between border-b border-[#e5e5df] pb-2 text-sm text-[#71717a]">
+                <div className="flex items-center gap-2">
+                  <Terminal className="h-4 w-4 text-[#27272a]" />
+                  <span className="font-bold text-[#18181b]">DataAgent</span>
+                </div>
+                <span>就绪</span>
+              </div>
+
+              <div className="space-y-2 text-sm text-[#52525b]">
+                <p className="text-[#18181b] font-medium text-base">
+                  欢迎使用 DataAgent 自主数据分析平台
+                </p>
+                <p className="text-[#71717a]">
+                  已连接 Doris 分析引擎与隔离沙箱运行环境
+                </p>
+
+                <div className="mt-4 space-y-2 border-t border-[#e5e5df] pt-3 text-sm">
+                  <p className="text-[#18181b] font-medium">分析示例：</p>
+                  <p className="text-[#52525b]">· 统计分析最近 30 天各个类目的 GMV 增长走势</p>
+                  <p className="text-[#52525b]">· 按渠道拆解本月新客次日留存与客单价分布</p>
+                  <p className="text-[#52525b]">· 查询订单退款率最高的 Top 10 商品与核心原因</p>
+                </div>
+              </div>
+            </div>
           </div>
         ) : isLoading ? (
-          /* 历史消息加载时保持主区域占位不抖动 */
           <div className="flex h-full items-center justify-center">
-            <div className="flex h-16 w-16 items-center justify-center">
-              <Loader2 className="h-7 w-7 animate-spin text-slate-700" />
+            <div className="flex items-center gap-2 rounded border border-[#d4d4ce] bg-[#ffffff] px-4 py-2 text-xs text-[#52525b] shadow-xs">
+              <Loader2 className="h-4 w-4 animate-spin text-[#18181b]" />
+              <span>正在获取会话消息...</span>
             </div>
           </div>
         ) : (
-          /* 渲染顺序与消息数组一致，工具调用会穿插在普通消息之间 */
-          <div className="mx-auto w-[60%] min-w-[320px] max-w-[960px] space-y-2">
+          <div className="mx-auto w-full max-w-4xl space-y-1">
             {displayItems.map((item) =>
               item.type === "message" ? (
                 <MessageBubble

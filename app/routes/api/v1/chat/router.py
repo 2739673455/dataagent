@@ -1,24 +1,27 @@
+"""对话管理、语义召回与 Agent SSE 流式交互路由"""
+
 import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 from uuid import UUID
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, status
 from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from app.clients.docker_sandbox_manager import docker_sandbox_manager
 from app.core import context
-from app.entities.semantic_recall import SemanticRecallRecord
 from app.errors import chat_error
 from app.routes.api.v1.auth.dependencies import AnalysisUserDep, CurrentUserDep
 from app.routes.api.v1.chat import schemas as chat_schema
 from app.routes.api.v1.chat.dependencies import (
     ConversationPGRepoDep,
-    SemanticRecallServiceDep,
 )
 from app.services import chat_service
-from app.services.semantic_recall_service import SemanticRecallsNotFoundError
+from app.services.conversation_title_service import (
+    conversation_title_service,
+    initial_conversation_title,
+)
 
 router = APIRouter(tags=["chat"])
 _SSE_HEARTBEAT_SECONDS = 15
@@ -34,7 +37,7 @@ async def api_create_conversation(
     user_id = current_user.id
     conversation = await conversation_repo.create(
         user_id,
-        "新对话",
+        initial_conversation_title(body.initial_message),
         is_draft=body.is_draft,
     )
 
@@ -87,7 +90,11 @@ async def api_update_conversation(
     if conversation is None:
         raise chat_error.ConversationNotFoundError
 
-    await conversation_repo.update(conversation, title=body.title)
+    await conversation_repo.update(
+        conversation,
+        title=body.title,
+        title_pending=False,
+    )
     logger.info(f"conversation_id={body.conversation_id}: Update conversation")
 
 
@@ -129,116 +136,6 @@ async def api_get_messages(
     messages = await chat_service.list_messages(user_id, conversation_id)
     logger.info(f"{conversation_id=}: Get messages(count={len(messages)})")
     return chat_schema.MessageListResponse(messages=messages)
-
-
-def _semantic_recall_response(
-    record: SemanticRecallRecord,
-) -> chat_schema.SemanticRecallResponse:
-    """将领域召回记录转换为接口响应"""
-    return chat_schema.SemanticRecallResponse(
-        recall_id=record.recall_id,
-        kind=record.kind,
-        request=record.request,
-        response=record.response,
-        source_recall_ids=record.source_recall_ids,
-        created_at=record.created_at,
-        updated_at=record.updated_at,
-    )
-
-
-@router.get("/recalls/{conversation_id}")
-async def api_list_semantic_recalls(
-    conversation_id: UUID,
-    conversation_repo: ConversationPGRepoDep,
-    recall_service: SemanticRecallServiceDep,
-    current_user: CurrentUserDep,
-    limit: int = Query(default=100, ge=1, le=1_000),
-    offset: int = Query(default=0, ge=0),
-) -> chat_schema.SemanticRecallListResponse:
-    """列出会话下每次查询和合并产生的语义召回记录"""
-    user_id = current_user.id
-    if await conversation_repo.get(user_id, conversation_id) is None:
-        raise chat_error.ConversationNotFoundError
-    records = await recall_service.list(
-        user_id,
-        conversation_id,
-        limit=limit,
-        offset=offset,
-    )
-    return chat_schema.SemanticRecallListResponse(
-        recalls=[_semantic_recall_response(record) for record in records]
-    )
-
-
-@router.get("/recalls/{conversation_id}/{recall_id}")
-async def api_get_semantic_recall(
-    conversation_id: UUID,
-    recall_id: str,
-    conversation_repo: ConversationPGRepoDep,
-    recall_service: SemanticRecallServiceDep,
-    current_user: CurrentUserDep,
-) -> chat_schema.SemanticRecallResponse:
-    """读取一条语义召回记录的查询、结果和合并来源"""
-    user_id = current_user.id
-    if await conversation_repo.get(user_id, conversation_id) is None:
-        raise chat_error.ConversationNotFoundError
-    try:
-        record = await recall_service.get(
-            user_id,
-            conversation_id,
-            recall_id,
-        )
-    except SemanticRecallsNotFoundError as exc:
-        raise chat_error.SemanticRecallNotFoundError(
-            extensions={"recall_ids": exc.recall_ids}
-        ) from exc
-    return _semantic_recall_response(record)
-
-
-@router.post("/recalls/merge")
-async def api_merge_semantic_recalls(
-    body: chat_schema.MergeSemanticRecallsRequest,
-    conversation_repo: ConversationPGRepoDep,
-    recall_service: SemanticRecallServiceDep,
-    current_user: AnalysisUserDep,
-) -> chat_schema.SemanticRecallResponse:
-    """去重合并多条召回记录并保存新快照"""
-    user_id = current_user.id
-    if await conversation_repo.get(user_id, body.conversation_id) is None:
-        raise chat_error.ConversationNotFoundError
-    try:
-        record = await recall_service.merge(
-            user_id,
-            body.conversation_id,
-            body.recall_ids,
-        )
-    except SemanticRecallsNotFoundError as exc:
-        raise chat_error.SemanticRecallNotFoundError(
-            extensions={"recall_ids": exc.recall_ids}
-        ) from exc
-    return _semantic_recall_response(record)
-
-
-@router.post("/recalls/delete")
-async def api_delete_semantic_recalls(
-    body: chat_schema.DeleteSemanticRecallsRequest,
-    conversation_repo: ConversationPGRepoDep,
-    recall_service: SemanticRecallServiceDep,
-    current_user: AnalysisUserDep,
-) -> chat_schema.DeleteSemanticRecallsResponse:
-    """删除会话下指定的召回记录"""
-    user_id = current_user.id
-    if await conversation_repo.get(user_id, body.conversation_id) is None:
-        raise chat_error.ConversationNotFoundError
-    deleted, missing = await recall_service.delete(
-        user_id,
-        body.conversation_id,
-        body.recall_ids,
-    )
-    return chat_schema.DeleteSemanticRecallsResponse(
-        deleted_recall_ids=deleted,
-        missing_recall_ids=missing,
-    )
 
 
 ChatStreamEvent = (
@@ -318,7 +215,26 @@ async def api_stream_chat(
     if conversation is None:
         raise chat_error.ConversationNotFoundError
 
-    if conversation.is_draft:
+    user_text = "\n".join(
+        part.text
+        for part in body.message.parts
+        if isinstance(part, chat_schema.TextContent)
+    ).strip()
+    if conversation.title_pending and user_text:
+        conversation = await conversation_repo.update(
+            conversation,
+            title=initial_conversation_title(user_text),
+            title_pending=False,
+            is_draft=False,
+        )
+        conversation_title_service.schedule(
+            conversation_repo,
+            user_id,
+            conversation.id,
+            conversation.title,
+            user_text,
+        )
+    elif conversation.is_draft:
         await conversation_repo.update(conversation, is_draft=False)
     else:
         await conversation_repo.update(conversation)

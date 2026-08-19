@@ -19,7 +19,7 @@ from typing import Any, BinaryIO, Protocol
 from uuid import UUID, uuid4
 
 from app.agents.contracts import AgentSessionKey
-from app.entities.query import (
+from app.models.query import (
     AnalysisQueryResult,
     QueryBatch,
     QueryDialect,

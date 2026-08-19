@@ -29,4 +29,4 @@ export const CHAT_API_ROUTES = {
 } as const;
 
 // 开发服务器端口
-export const VITE_SERVER_PORT = 7301;
+export const VITE_SERVER_PORT = 7001;

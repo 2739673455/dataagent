@@ -1,4 +1,4 @@
-"""元数据实体"""
+"""元数据模型"""
 
 import json
 from dataclasses import dataclass
@@ -19,7 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.entities.base import Base
+from app.models.base import MetaBase
 
 
 class ColumnReference(TypedDict):
@@ -67,7 +67,7 @@ def _version_column(default: int, comment: str) -> Mapped[int]:
     )
 
 
-class TableInfo(Base):
+class TableInfo(MetaBase):
     """表信息"""
 
     __tablename__ = "table_info"
@@ -87,7 +87,7 @@ class TableInfo(Base):
         return self.role, self.primary_key_columns, self.description
 
 
-class ColumnInfo(Base):
+class ColumnInfo(MetaBase):
     """字段信息"""
 
     __tablename__ = "column_info"
@@ -159,7 +159,7 @@ class ValueInfo:
     c_name: str
 
 
-class MetricInfo(Base):
+class MetricInfo(MetaBase):
     """指标信息"""
 
     __tablename__ = "metric_info"
@@ -203,7 +203,7 @@ class MetricInfo(Base):
         )
 
 
-class ColumnMetric(Base):
+class ColumnMetric(MetaBase):
     """字段与指标关联"""
 
     __tablename__ = "column_metric"

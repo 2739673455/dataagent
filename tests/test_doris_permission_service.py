@@ -3,22 +3,24 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from app.conf.app_config import DorisRoleConfig
-from app.entities.auth import DorisRoleAssetGrant
 from app.errors import auth_error
+from app.models.auth import DorisQueryIdentity, DorisRoleAssetGrant
 from app.repositories.auth_pg_repo import AuthPGRepo
+from app.repositories.doris_query_identity_pg_repo import DorisQueryIdentityPGRepo
 from app.repositories.doris_role_repo import DorisRoleRepository
 from app.services.doris_permission_service import DorisPermissionService
 from tests.test_auth_service import AsyncTransactionStub
 
 
-def role_config() -> DorisRoleConfig:
-    """构造稳定 Doris 角色配置"""
-    return DorisRoleConfig(
+def query_identity() -> DorisQueryIdentity:
+    """构造稳定 Doris 查询身份"""
+    return DorisQueryIdentity(
+        role_name="sales",
         description="销售角色",
         is_default=True,
+        is_active=True,
         query_user="sales_query",
-        query_password="secret",
+        encrypted_password="encrypted",
         workload_group="sales",
     )
 
@@ -32,6 +34,8 @@ class DorisPermissionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.auth_repo.find_asset_grant = AsyncMock(return_value=None)
         self.auth_repo.add_asset_grant = AsyncMock(side_effect=lambda grant: grant)
         self.auth_repo.delete_asset_grant = AsyncMock()
+        self.identity_repo = MagicMock(spec=DorisQueryIdentityPGRepo)
+        self.identity_repo.get = AsyncMock(return_value=query_identity())
         self.doris_repo = MagicMock(spec=DorisRoleRepository)
         self.doris_repo.list_table_columns = AsyncMock(
             return_value=("id", "region", "amount")
@@ -42,8 +46,8 @@ class DorisPermissionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.doris_repo.drop_row_policy = AsyncMock()
         self.service = DorisPermissionService(
             self.auth_repo,
+            self.identity_repo,
             self.doris_repo,
-            {"sales": role_config()},
             data_source="doris",
             catalog="internal",
             database="ecommerce",
@@ -160,3 +164,27 @@ class DorisRoleRepositoryIdentifierTest(unittest.TestCase):
             DorisRoleRepository.quote_identifier("orders`; DROP ROLE admin")
         with self.assertRaises(ValueError):
             DorisRoleRepository.quote_role("sales' OR '1'='1")
+
+
+class DorisRoleRepositoryIdentityTest(unittest.IsolatedAsyncioTestCase):
+    """验证 Doris 查询身份创建的补偿边界"""
+
+    async def test_existing_query_user_is_not_deleted_when_creation_fails(
+        self,
+    ) -> None:
+        repo = DorisRoleRepository(MagicMock())
+        repo._execute = AsyncMock(  # pyright: ignore[reportPrivateUsage]
+            side_effect=[None, None, RuntimeError("user exists"), None]
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "user exists"):
+            await repo.create_role_identity(
+                role_name="sales",
+                query_user="sales_query",
+                password="generated-password",
+                workload_group="normal",
+            )
+
+        statements = [call.args[0] for call in repo._execute.await_args_list]  # pyright: ignore[reportPrivateUsage]
+        self.assertEqual(statements[-1], "DROP ROLE IF EXISTS 'sales'")
+        self.assertFalse(any(statement.startswith("DROP USER") for statement in statements))

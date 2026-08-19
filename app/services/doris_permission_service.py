@@ -1,6 +1,6 @@
 """Doris 数据角色权限管理服务"""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -10,10 +10,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlglot import exp
 from sqlglot.errors import ParseError
 
-from app.conf.app_config import DorisRoleConfig
-from app.entities.auth import DorisRoleAssetGrant, normalize_doris_role_name
 from app.errors import auth_error
+from app.models.auth import DorisRoleAssetGrant, normalize_doris_role_name
 from app.repositories.auth_pg_repo import AuthPGRepo
+from app.repositories.doris_query_identity_pg_repo import DorisQueryIdentityPGRepo
 from app.repositories.doris_role_repo import DorisRoleRepository, role_name_from_row
 from app.services.authorization_service import AssetIdentity
 
@@ -25,7 +25,9 @@ class DorisRoleStatus:
     name: str
     description: str
     is_default: bool
+    is_active: bool
     query_user: str
+    workload_group: str
     exists_in_doris: bool
     doris_grants: dict[str, Any] | None
 
@@ -36,16 +38,16 @@ class DorisPermissionService:
     def __init__(
         self,
         auth_repo: AuthPGRepo,
+        identity_repo: DorisQueryIdentityPGRepo,
         doris_repo: DorisRoleRepository,
-        roles: Mapping[str, DorisRoleConfig],
         *,
         data_source: str,
         catalog: str,
         database: str,
     ) -> None:
         self._auth_repo = auth_repo
+        self._identity_repo = identity_repo
         self._doris_repo = doris_repo
-        self._roles = roles
         self._data_source = data_source
         self._catalog = catalog
         self._database = database
@@ -58,16 +60,19 @@ class DorisPermissionService:
             for row in live_rows
             if (role_name := role_name_from_row(row)) is not None
         }
+        identities = await self._identity_repo.list_all()
         return [
             DorisRoleStatus(
-                name=name,
-                description=config.description,
-                is_default=config.is_default,
-                query_user=config.query_user,
-                exists_in_doris=name in live_by_name,
-                doris_grants=live_by_name.get(name),
+                name=identity.role_name,
+                description=identity.description,
+                is_default=identity.is_default,
+                is_active=identity.is_active,
+                query_user=identity.query_user,
+                workload_group=identity.workload_group,
+                exists_in_doris=identity.role_name in live_by_name,
+                doris_grants=live_by_name.get(identity.role_name),
             )
-            for name, config in sorted(self._roles.items())
+            for identity in identities
         ]
 
     async def grant_select(
@@ -78,7 +83,7 @@ class DorisPermissionService:
         columns: Sequence[str],
     ) -> list[DorisRoleAssetGrant]:
         """授予角色库、表或列 SELECT 权限并更新可见性投影"""
-        role = self._require_role(role_name)
+        role = await self._require_role(role_name)
         normalized_columns = self._normalize_columns(columns)
         await self._validate_target(table_name, normalized_columns)
         assets = self._assets(table_name, normalized_columns)
@@ -158,7 +163,7 @@ class DorisPermissionService:
         columns: Sequence[str],
     ) -> None:
         """回收角色库、表或列 SELECT 权限并删除可见性投影"""
-        role = self._require_role(role_name)
+        role = await self._require_role(role_name)
         normalized_columns = self._normalize_columns(columns)
         await self._validate_target(table_name, normalized_columns)
         assets = self._assets(table_name, normalized_columns)
@@ -199,7 +204,7 @@ class DorisPermissionService:
 
     async def list_row_policies(self, role_name: str) -> list[dict[str, Any]]:
         """读取角色在 Doris 中的实时行策略"""
-        role = self._require_role(role_name)
+        role = await self._require_role(role_name)
         return await self._doris_repo.list_role_row_policies(role)
 
     async def create_row_policy(
@@ -212,7 +217,7 @@ class DorisPermissionService:
         predicate: str,
     ) -> None:
         """校验并创建绑定到角色的 Doris 行策略"""
-        role = self._require_role(role_name)
+        role = await self._require_role(role_name)
         columns = await self._doris_repo.list_table_columns(
             self._database,
             table_name,
@@ -240,7 +245,7 @@ class DorisPermissionService:
         table_name: str,
     ) -> None:
         """删除绑定到角色的 Doris 行策略"""
-        role = self._require_role(role_name)
+        role = await self._require_role(role_name)
         await self._doris_repo.drop_row_policy(
             policy_name=policy_name,
             role_name=role,
@@ -249,7 +254,7 @@ class DorisPermissionService:
             table=table_name,
         )
 
-    def _require_role(self, role_name: str) -> str:
+    async def _require_role(self, role_name: str) -> str:
         """要求角色存在于稳定查询身份配置"""
         try:
             normalized = normalize_doris_role_name(role_name)
@@ -257,7 +262,8 @@ class DorisPermissionService:
             raise auth_error.InvalidDorisPermissionError(
                 detail="Invalid Doris role name"
             ) from exc
-        if normalized not in self._roles:
+        identity = await self._identity_repo.get(normalized)
+        if identity is None or not identity.is_active:
             raise auth_error.RoleNotFoundError
         return normalized
 

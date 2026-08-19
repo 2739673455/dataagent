@@ -1,4 +1,4 @@
-"""会话实体"""
+"""会话模型"""
 
 from datetime import datetime
 from uuid import UUID
@@ -12,6 +12,7 @@ class ConversationInfo(BaseModel):
     id: UUID
     user_id: int
     title: str
+    title_pending: bool = False
     is_draft: bool
     create_at: datetime
     update_at: datetime

@@ -1,31 +1,29 @@
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap");
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    --background: 32 33% 97%;
-    --foreground: 210 26% 13%;
+    --background: 60 5% 96%;
+    --foreground: 240 10% 12%;
     --card: 0 0% 100%;
-    --card-foreground: 210 26% 13%;
+    --card-foreground: 240 10% 12%;
     --popover: 0 0% 100%;
-    --popover-foreground: 210 26% 13%;
-    --primary: 205 82% 24%;
-    --primary-foreground: 42 90% 97%;
-    --secondary: 42 42% 92%;
-    --secondary-foreground: 210 26% 13%;
-    --muted: 38 25% 93%;
-    --muted-foreground: 210 14% 38%;
-    --accent: 22 88% 58%;
-    --accent-foreground: 42 90% 97%;
-    --destructive: 0 72% 52%;
-    --destructive-foreground: 42 90% 97%;
-    --border: 30 20% 86%;
-    --input: 30 20% 86%;
-    --ring: 205 82% 24%;
-    --radius: 1rem;
+    --popover-foreground: 240 10% 12%;
+    --primary: 240 6% 15%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 60 5% 90%;
+    --secondary-foreground: 240 6% 15%;
+    --muted: 60 5% 92%;
+    --muted-foreground: 240 4% 45%;
+    --accent: 240 5% 88%;
+    --accent-foreground: 240 6% 15%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 6% 84%;
+    --input: 240 6% 84%;
+    --ring: 240 6% 25%;
+    --radius: 0.25rem;
   }
 
   * {
@@ -35,15 +33,39 @@
   html,
   body,
   #root {
-    @apply min-h-screen;
+    @apply min-h-screen font-mono;
   }
 
   body {
-    @apply bg-background text-foreground antialiased;
-    background-image:
-      radial-gradient(circle at top left, rgba(251, 146, 60, 0.14), transparent 24%),
-      radial-gradient(circle at right, rgba(14, 116, 144, 0.14), transparent 28%),
-      linear-gradient(180deg, rgba(251, 249, 244, 0.95), rgba(239, 244, 242, 0.92));
+    @apply bg-[#f4f4f0] text-[#1e2024] antialiased;
+  }
+
+  /* 全局文本选中高亮样式 */
+  *::selection,
+  ::selection {
+    background-color: #d4d4ce !important;
+    color: #18181b !important;
+  }
+  *::-moz-selection,
+  ::-moz-selection {
+    background-color: #d4d4ce !important;
+    color: #18181b !important;
+  }
+
+  /* 极简等宽滚动条样式 */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #f4f4f0;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #d4d4d0;
+    border-radius: 2px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #a1a19a;
   }
 }
 
@@ -52,42 +74,6 @@
     grid-template-columns: 280px minmax(0, 1fr);
     padding: 0;
     gap: 0;
-  }
-
-  .bg-noise {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.15' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.16'/%3E%3C/svg%3E");
-    opacity: 0.18;
-    mix-blend-mode: soft-light;
-  }
-
-  .animate-float {
-    animation: float-soft 6s ease-in-out infinite;
-  }
-
-  .animate-tool-dot-breathe {
-    animation: tool-dot-breathe 1.45s ease-in-out infinite;
-  }
-}
-
-@keyframes float-soft {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-
-  50% {
-    transform: translateY(-6px);
-  }
-}
-
-@keyframes tool-dot-breathe {
-  0%,
-  100% {
-    transform: scale(0.84);
-  }
-
-  50% {
-    transform: scale(1.08);
   }
 }
 
@@ -99,6 +85,12 @@
   translate: -50% 0;
   display: flex !important;
   justify-content: center;
+  background-color: #1e2024 !important;
+  border: 1px solid #3f3f46 !important;
+  color: #f4f4f0 !important;
+  font-family: var(--font-mono, monospace) !important;
+  border-radius: 4px !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15) !important;
 }
 
 [data-sonner-toast] [data-content] {

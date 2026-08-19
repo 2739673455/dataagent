@@ -433,14 +433,14 @@ export default function ChatPage() {
 
     let conversationId = routeConversationId ?? draftConversationId;
     if (!conversationId) {
-      const conversation = await createConversation();
+      const conversation = await createConversation(value);
       if (!conversation || !sessionLifecycle.isCurrent(generation)) return;
       conversationId = conversation.conversation_id;
     } else if (!routeConversationId) {
       setDraftConversationId(null);
       ensureConversation({
         conversation_id: conversationId,
-        title: "新对话",
+        title: value.trim().slice(0, 64) || "新对话",
         update_at: new Date().toISOString(),
       });
     }
@@ -480,119 +480,144 @@ export default function ChatPage() {
   }, []);
 
   return (
-    <div
-      className="min-h-screen h-[100dvh] overflow-hidden bg-[#fefdfa]"
-      style={{ fontFeatureSettings: '"cv11", "ss01"' }}
-    >
-      {/* 左侧为会话列表，右侧为聊天主区域；返回展示产物时展开预览栏 */}
-      <div className="grid h-full min-h-0 chat-grid">
-        <ChatSidebar
-          conversations={conversations}
-          activeConversationId={routeConversationId}
-          user={user}
-          onCreate={handleCreateConversation}
-          onDelete={(conversationId) => void handleDeleteConversation(conversationId)}
-          onLogout={() => {
-            void logoutUser().finally(() => redirectToAuth(ROUTES.chat));
-          }}
-        />
+    <div className="flex h-[100dvh] min-h-screen flex-col overflow-hidden bg-[#f4f4f0] font-mono text-[#1e2024]">
+      {/* 顶部全局标题栏 */}
+      <header className="flex h-11 shrink-0 select-none items-center justify-between border-b border-[#d4d4ce] bg-[#ffffff] px-4 text-sm">
+        <div className="flex items-center gap-3">
+          <span className="font-bold text-[#18181b] text-base">
+            DataAgent
+          </span>
+          <span className="text-[#d4d4ce]">|</span>
+          <span className="text-xs text-[#71717a]">
+            {routeConversationId ? `会话: ${routeConversationId.slice(0, 8)}` : "工作台"}
+          </span>
+        </div>
 
-        <div className="flex h-full min-h-0 bg-[#fefdfa]">
-          <div className="flex min-w-0 flex-1 flex-col bg-[#fefdfa]">
-            <ChatMessages
-              conversationId={routeConversationId}
-              conversationSelected={Boolean(routeConversationId)}
-              isLoading={isLoadingMessages}
-              messages={currentMessages}
-              onOpenPreviewAttachment={handleOpenPreviewAttachment}
-              viewportRef={messageViewportRef}
-            />
-            <div className="sticky bottom-0 z-10 w-full shrink-0 bg-[#fefdfa] pb-6 pt-0">
-              <div className="mx-auto w-[70%] min-w-[320px] max-w-[1120px]">
-                <ChatComposer
-                  attachments={attachments}
-                  isStreaming={isStreaming}
-                  isUploading={isUploadingAttachments}
-                  onAttachmentsSelected={handleAttachmentsSelected}
-                  onRemoveAttachment={handleRemoveAttachment}
-                  onStop={handleStop}
-                  onSubmit={handleSend}
-                />
-              </div>
+        <div className="flex items-center gap-3 text-xs">
+          {isStreaming ? (
+            <span className="rounded bg-[#deded8] px-2.5 py-0.5 font-medium text-[#18181b]">
+              正在生成...
+            </span>
+          ) : (
+            <span className="text-[#71717a]">
+              就绪
+            </span>
+          )}
+        </div>
+      </header>
+
+      {/* 主工作区分栏 */}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        {/* 左侧会话管理器 */}
+        <div className="w-64 shrink-0 overflow-hidden hidden md:block">
+          <ChatSidebar
+            conversations={conversations}
+            activeConversationId={routeConversationId}
+            user={user}
+            onCreate={handleCreateConversation}
+            onDelete={(conversationId) => void handleDeleteConversation(conversationId)}
+            onLogout={() => {
+              void logoutUser().finally(() => redirectToAuth(ROUTES.chat));
+            }}
+          />
+        </div>
+
+        {/* 中间聊天主执行区 */}
+        <div className="flex min-w-0 flex-1 flex-col bg-[#f4f4f0]">
+          <ChatMessages
+            conversationId={routeConversationId}
+            conversationSelected={Boolean(routeConversationId)}
+            isLoading={isLoadingMessages}
+            messages={currentMessages}
+            onOpenPreviewAttachment={handleOpenPreviewAttachment}
+            viewportRef={messageViewportRef}
+          />
+          <div className="sticky bottom-0 z-10 w-full shrink-0 border-t border-[#d4d4ce] bg-[#f4f4f0] p-3">
+            <div className="mx-auto w-full max-w-4xl">
+              <ChatComposer
+                attachments={attachments}
+                isStreaming={isStreaming}
+                isUploading={isUploadingAttachments}
+                onAttachmentsSelected={handleAttachmentsSelected}
+                onRemoveAttachment={handleRemoveAttachment}
+                onStop={handleStop}
+                onSubmit={handleSend}
+              />
             </div>
           </div>
-          {returnedPreviewAttachments.length > 0 ? (
-            <div
-              className={`border-l border-slate-200 bg-white/80 backdrop-blur transition-all duration-300 ${
-                isPreviewSidebarOpen ? "w-[min(50vw,760px)]" : "w-10"
-              }`}
-            >
-              <div className="flex h-full min-h-0">
-                {/* 侧栏折叠按钮始终保留，方便快速收起预览区 */}
-                <button
-                  type="button"
-                  onClick={() => setIsPreviewSidebarOpen((value) => !value)}
-                  className="flex w-10 shrink-0 items-center justify-center border-r border-slate-200 bg-white/90 text-slate-500 transition hover:bg-slate-50 hover:text-slate-800"
-                  title={isPreviewSidebarOpen ? "收起预览侧栏" : "展开预览侧栏"}
-                >
-                  <ChevronLeft
-                    className={`h-6 w-6 transition-transform duration-300 ${
-                      isPreviewSidebarOpen ? "rotate-180" : "rotate-0"
-                    }`}
-                  />
-                </button>
-                <div
-                  className={`flex min-w-0 flex-1 min-h-0 flex-col overflow-hidden transition-opacity duration-200 ${
-                    isPreviewSidebarOpen
-                      ? "delay-150 opacity-100"
-                      : "pointer-events-none delay-0 opacity-0"
+        </div>
+
+        {/* 右侧产物预览分栏 */}
+        {returnedPreviewAttachments.length > 0 ? (
+          <div
+            className={`border-l border-[#d4d4ce] bg-[#ffffff] transition-all duration-200 ${
+              isPreviewSidebarOpen ? "w-[min(50vw,760px)]" : "w-8"
+            }`}
+          >
+            <div className="flex h-full min-h-0">
+              <button
+                type="button"
+                onClick={() => setIsPreviewSidebarOpen((value) => !value)}
+                className="flex w-8 shrink-0 items-center justify-center border-r border-[#d4d4ce] bg-[#fafaf8] text-[#71717a] transition hover:bg-[#ebebe6] hover:text-[#18181b]"
+                title={isPreviewSidebarOpen ? "收起预览" : "展开预览"}
+              >
+                <ChevronLeft
+                  className={`h-4 w-4 transition-transform duration-200 ${
+                    isPreviewSidebarOpen ? "rotate-180" : "rotate-0"
                   }`}
-                >
-                  {/* 顶部 tab 按返回顺序展示所有可预览附件 */}
-                  <div className="flex gap-2 overflow-x-auto border-b border-slate-200 px-3 py-2">
-                    {returnedPreviewAttachments.map((attachment) => (
-                      <button
-                        key={attachment.f_path}
-                        type="button"
-                        onClick={() => setActivePreviewPath(attachment.f_path)}
-                        className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                          activePreviewAttachment?.f_path === attachment.f_path
-                            ? "bg-slate-900 text-white"
-                            : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                        }`}
-                      >
-                        {getAttachmentName(attachment.f_path)}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="min-h-0 flex-1 bg-slate-50">
-                    {activePreviewAttachment ? (
-                      activeHtmlPreviewUrl ? (
-                        <iframe
-                          title={getAttachmentName(activePreviewAttachment.f_path)}
-                          src={activeHtmlPreviewUrl}
-                          sandbox=""
-                          referrerPolicy="no-referrer"
-                          className="h-full w-full border-0 bg-white"
-                        />
-                      ) : activeTableArtifact ? (
-                        <InteractiveTablePreview artifact={activeTableArtifact} />
-                      ) : (
-                        <div className="flex h-full items-center justify-center text-sm text-slate-500">
-                          正在加载预览...
-                        </div>
-                      )
+                />
+              </button>
+              <div
+                className={`flex min-w-0 flex-1 min-h-0 flex-col overflow-hidden transition-opacity duration-150 ${
+                  isPreviewSidebarOpen
+                    ? "opacity-100"
+                    : "pointer-events-none opacity-0"
+                }`}
+              >
+                {/* 产物选项卡 */}
+                <div className="flex gap-1.5 overflow-x-auto border-b border-[#d4d4ce] bg-[#fafaf8] px-2.5 py-1.5">
+                  {returnedPreviewAttachments.map((attachment) => (
+                    <button
+                      key={attachment.f_path}
+                      type="button"
+                      onClick={() => setActivePreviewPath(attachment.f_path)}
+                      className={`shrink-0 rounded border px-2.5 py-1 text-xs transition ${
+                        activePreviewAttachment?.f_path === attachment.f_path
+                          ? "border-[#1e3a8a] bg-[#1e3a8a] text-[#ffffff]"
+                          : "border-[#d4d4ce] bg-[#ffffff] text-[#52525b] hover:bg-[#deded8] hover:text-[#18181b]"
+                      }`}
+                    >
+                      {getAttachmentName(attachment.f_path)}
+                    </button>
+                  ))}
+                </div>
+                <div className="min-h-0 flex-1 bg-[#ffffff]">
+                  {activePreviewAttachment ? (
+                    activeHtmlPreviewUrl ? (
+                      <iframe
+                        title={getAttachmentName(activePreviewAttachment.f_path)}
+                        src={activeHtmlPreviewUrl}
+                        sandbox=""
+                        referrerPolicy="no-referrer"
+                        className="h-full w-full border-0 bg-white"
+                      />
+                    ) : activeTableArtifact ? (
+                      <InteractiveTablePreview artifact={activeTableArtifact} />
                     ) : (
-                      <div className="flex h-full items-center justify-center text-sm text-slate-500">
-                        暂无可预览文件
+                      <div className="flex h-full items-center justify-center text-xs text-[#71717a]">
+                        正在加载产物...
                       </div>
-                    )}
-                  </div>
+                    )
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-xs text-[#71717a]">
+                      未选择产物
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

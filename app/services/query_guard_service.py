@@ -11,8 +11,8 @@ from sqlglot.optimizer.annotate_types import annotate_types
 from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.scope import Scope, traverse_scope
 
-from app.entities.meta import ColumnInfo, TableInfo
-from app.entities.query import (
+from app.models.meta import ColumnInfo, TableInfo
+from app.models.query import (
     QueryColumnRef,
     QueryDialect,
     QueryTableRef,

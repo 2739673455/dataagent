@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock
 
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from app.entities.query import QueryExecutionLimits
+from app.models.query import QueryExecutionLimits
 from app.repositories.doris_query_repo import (
     DorisConnectionProvider,
     DorisQueryRepository,

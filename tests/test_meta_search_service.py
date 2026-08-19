@@ -4,8 +4,8 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from app.entities.meta import ColumnInfo, MetricInfo, TableInfo, ValueInfo
-from app.entities.semantic_search import SearchHit, SemanticSearchRequest
+from app.models.meta import ColumnInfo, MetricInfo, TableInfo, ValueInfo
+from app.models.semantic_search import SearchHit, SemanticSearchRequest
 from app.services.authorization_service import AssetAccessPolicy, AssetIdentity
 from app.services.meta_search_service import MetaSearchService
 

@@ -5,8 +5,8 @@ from typing import Any, ClassVar, cast
 from elasticsearch import AsyncElasticsearch
 
 from app.conf.app_config import cfg
-from app.entities.meta import MetricInfo
-from app.entities.semantic_search import SearchHit, SemanticTextType
+from app.models.meta import MetricInfo
+from app.models.semantic_search import SearchHit, SemanticTextType
 
 
 class MetricESRepo:

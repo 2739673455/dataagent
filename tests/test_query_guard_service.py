@@ -1,6 +1,6 @@
 import unittest
 
-from app.entities.meta import ColumnInfo, TableInfo
+from app.models.meta import ColumnInfo, TableInfo
 from app.services.authorization_service import AssetAccessPolicy, AssetIdentity
 from app.services.query_guard_service import QueryGuardService, QueryRejectedError
 

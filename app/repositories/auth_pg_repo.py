@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
 
-from app.entities.auth import DorisRoleAssetGrant, RefreshToken, User
+from app.models.auth import DorisRoleAssetGrant, RefreshToken, User
 
 _SECURITY_MUTATION_LOCK_KEY = 0x444154414147454E
 

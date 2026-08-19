@@ -1,3 +1,5 @@
+"""会话附件上传、下载与删除路由"""
+
 import mimetypes
 from typing import Annotated
 from urllib.parse import quote

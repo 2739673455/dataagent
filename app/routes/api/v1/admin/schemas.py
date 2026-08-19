@@ -6,7 +6,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.entities.auth import DorisRoleAssetGrant, normalize_doris_role_name
+from app.models.auth import (
+    DorisQueryIdentity,
+    DorisRoleAssetGrant,
+    normalize_doris_role_name,
+)
 from app.routes.api.v1.auth.schemas import UserResponse
 from app.services.doris_permission_service import DorisRoleStatus
 
@@ -19,7 +23,9 @@ class DorisRoleResponse(BaseModel):
     name: str
     description: str
     is_default: bool
+    is_active: bool
     query_user: str
+    workload_group: str
     exists_in_doris: bool
     doris_grants: dict[str, Any] | None
 
@@ -30,9 +36,25 @@ class DorisRoleResponse(BaseModel):
             name=role.name,
             description=role.description,
             is_default=role.is_default,
+            is_active=role.is_active,
             query_user=role.query_user,
+            workload_group=role.workload_group,
             exists_in_doris=role.exists_in_doris,
             doris_grants=role.doris_grants,
+        )
+
+    @classmethod
+    def from_entity(cls, identity: DorisQueryIdentity) -> Self:
+        """从持久化查询身份构造响应"""
+        return cls(
+            name=identity.role_name,
+            description=identity.description,
+            is_default=identity.is_default,
+            is_active=identity.is_active,
+            query_user=identity.query_user,
+            workload_group=identity.workload_group,
+            exists_in_doris=True,
+            doris_grants=None,
         )
 
 
@@ -40,6 +62,89 @@ class DorisRoleListResponse(BaseModel):
     """Doris 数据角色列表"""
 
     roles: list[DorisRoleResponse]
+
+
+class DiscoveredDorisRoleResponse(BaseModel):
+    """Doris 原生角色发现响应"""
+
+    name: str
+    is_attached: bool
+    description: str | None = None
+    query_user: str | None = None
+    workload_group: str | None = None
+
+
+class DiscoveredDorisRoleListResponse(BaseModel):
+    """Doris 原生角色发现列表响应"""
+
+    roles: list[DiscoveredDorisRoleResponse]
+
+
+class AttachDorisRoleRequest(BaseModel):
+    """接入已有 Doris 角色请求"""
+
+    role: str = Field(min_length=1, max_length=64)
+    description: str = Field(min_length=1, max_length=256)
+    workload_group: str = Field(
+        default="normal",
+        min_length=1,
+        max_length=128,
+        pattern=_IDENTIFIER_PATTERN,
+    )
+    query_user: str | None = Field(
+        default=None,
+        max_length=128,
+        pattern=_IDENTIFIER_PATTERN,
+    )
+    is_default: bool = False
+
+    @field_validator("role")
+    @classmethod
+    def normalize_role(cls, role: str) -> str:
+        """校验 Doris 角色名"""
+        return normalize_doris_role_name(role)
+
+    @field_validator("description")
+    @classmethod
+    def normalize_description(cls, description: str) -> str:
+        """规范化角色说明"""
+        normalized = description.strip()
+        if not normalized:
+            raise ValueError("description must not be blank")
+        return normalized
+
+
+class CreateDorisRoleRequest(BaseModel):
+    """创建 Doris 角色及稳定查询身份请求"""
+
+    role: str = Field(min_length=1, max_length=64)
+    description: str = Field(min_length=1, max_length=256)
+    query_user: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=_IDENTIFIER_PATTERN,
+    )
+    workload_group: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=_IDENTIFIER_PATTERN,
+    )
+    is_default: bool = False
+
+    @field_validator("role")
+    @classmethod
+    def normalize_role(cls, role: str) -> str:
+        """校验 Doris 角色名"""
+        return normalize_doris_role_name(role)
+
+    @field_validator("description")
+    @classmethod
+    def normalize_description(cls, description: str) -> str:
+        """规范化角色说明"""
+        normalized = description.strip()
+        if not normalized:
+            raise ValueError("description must not be blank")
+        return normalized
 
 
 class UserListResponse(BaseModel):

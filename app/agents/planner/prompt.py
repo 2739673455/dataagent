@@ -23,9 +23,9 @@ def build_planner_system_prompt(
 
 编排规则：
 - 独立 Session 使用 Promise.all 并行，有依赖的步骤按顺序执行
-- 单轮最多委派 {max_delegations} 次
-- 单个 Analysis 最多处理 {max_repair_rounds} 轮修补
-- 修补链 repair_depth 最大为 {max_repair_depth}
+- 单个用户回合最多委派 {max_delegations} 次
+- 单个用户回合内，每个 Analysis 最多处理 {max_repair_rounds} 轮修补
+- 单个用户回合内，修补链 repair_depth 最大为 {max_repair_depth}
 - 调用修补目标时将 repair_depth 加一，并复用 RepairRequest 指定的原 Session
 - 同一修补 Session 后续续接必须保持服务端已接受的 repair_depth，不得重置为 0
 - 修补完成后重新调用受影响的下游原 Session

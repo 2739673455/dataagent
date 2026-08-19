@@ -11,7 +11,8 @@ from app.conf.meta_config import (
     TableConfig,
     TableRole,
 )
-from app.entities.meta import (
+from app.errors import auth_error, meta_error
+from app.models.meta import (
     COLUMN_EXAMPLE_LIMIT,
     ColumnInfo,
     ColumnReference,
@@ -19,7 +20,6 @@ from app.entities.meta import (
     TableInfo,
     serialize_column_examples,
 )
-from app.errors import auth_error, meta_error
 from app.repositories.meta_pg_repo import MetaPGRepo
 from app.repositories.source_doris_repo import SourceDorisRepo
 from app.services.authorization_service import AssetAccessPolicy
