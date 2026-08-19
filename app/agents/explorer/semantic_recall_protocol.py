@@ -1,4 +1,4 @@
-"""语义召回的持久化消息协议"""
+"""Explorer 语义召回的持久化消息协议"""
 
 import json
 from dataclasses import dataclass

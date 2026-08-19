@@ -147,13 +147,13 @@ agent:
     timeout_seconds: 30
     memory_limit_bytes: 67108864
   specialists:
-    data_query:
+    explorer:
       model: default
-    attribution:
+    analyst:
       model: default
-    anomaly_detection:
+    reviewer:
       model: default
-    visualization:
+    visualizer:
       model: default
 
 mcp: # 格式参考：https://docs.langchain.com/oss/python/langchain/mcp#transports

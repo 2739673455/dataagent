@@ -13,11 +13,11 @@ from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.config import get_config
 from loguru import logger
 
-from app.agents.data_query.recall_runtime import (
+from app.agents.explorer.recall_runtime import (
     create_authorized_semantic_recall_service,
     resolve_semantic_recall_context,
 )
-from app.agents.data_query.semantic_recall_protocol import (
+from app.agents.explorer.semantic_recall_protocol import (
     SemanticRecallReference,
     SemanticRecallView,
     parse_semantic_recall_reference,

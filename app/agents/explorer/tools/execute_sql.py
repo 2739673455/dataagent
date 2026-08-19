@@ -1,11 +1,11 @@
-"""受控只读 SQL 执行工具"""
+"""Explorer 受控只读 SQL 执行工具"""
 
 from typing import Annotated, Any
 
 from langchain.tools import ToolRuntime, tool
 from loguru import logger
 
-from app.agents.data_query.tools.query_support import (
+from app.agents.explorer.tools.query_support import (
     build_query_guard,
     get_query_session,
 )
@@ -30,7 +30,7 @@ from app.services.query_principal_service import QueryPrincipalService
 
 
 @tool
-async def run_readonly_sql(
+async def execute_sql(
     runtime: ToolRuntime,
     sql: Annotated[str, "需要执行的单条 Doris/MySQL 只读 SQL"],
     dialect: Annotated[QueryDialect, "SQL 输入方言"] = "doris",
@@ -78,7 +78,12 @@ async def run_readonly_sql(
     except QueryRejectedError as exc:
         return {
             "status": "error",
-            "message": "SQL did not pass the readonly query guard",
+            "code": "sql_validation_failed",
+            "message": "SQL validation failed before Doris execution",
+            "hint": (
+                "Revise the SQL according to validation.issues, then call "
+                "execute_sql again"
+            ),
             "validation": exc.result.model_dump(mode="json"),
         }
     except (

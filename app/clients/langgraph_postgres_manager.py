@@ -2,7 +2,7 @@
 
 import asyncio
 import hashlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -112,7 +112,7 @@ class LangGraphPostgresManager:
         name: str,
         *,
         timeout: float,
-    ) -> AsyncIterator[None]:
+    ) -> AsyncGenerator[None, None]:
         """在连接级 PostgreSQL advisory lock 下执行临界区"""
         if not name:
             raise ValueError("advisory lock name must not be empty")

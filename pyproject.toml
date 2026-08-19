@@ -41,3 +41,4 @@ dev = [
 [tool.pyright]
 venv = ".venv"
 venvPath = "."
+reportDeprecated = "warning"

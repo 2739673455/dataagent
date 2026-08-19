@@ -14,15 +14,14 @@ def _delegate_payload() -> dict[str, object]:
     return {
         "status": "completed",
         "analysis_id": "sales-review",
-        "agent_type": "visualization",
+        "agent_type": "visualizer",
         "session_id": "chart-1",
         "summary": "Chart generated",
         "findings": ["Revenue increased"],
         "artifacts": [
             {
                 "path": (
-                    "/analyses/sales-review/sessions/visualization/"
-                    "chart-1/report.html"
+                    "/analyses/sales-review/sessions/visualizer/chart-1/report.html"
                 ),
                 "media_type": "text/html",
                 "description": "Interactive report",
@@ -52,7 +51,7 @@ class MessageMapperArtifactTest(unittest.TestCase):
         attachment = (schema.attachments or [])[0]
         self.assertEqual(
             attachment.f_path,
-            "analyses/sales-review/sessions/visualization/chart-1/report.html",
+            "analyses/sales-review/sessions/visualizer/chart-1/report.html",
         )
         self.assertEqual(attachment.media_type, "text/html")
         self.assertEqual(attachment.description, "Interactive report")

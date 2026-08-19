@@ -15,10 +15,10 @@ def build_planner_system_prompt(
 - 理解目标、约束和期望交付物，生成稳定的 analysis_id
 - 通过 QuickJS eval 编写分支、循环、批次和 Promise.all 编排代码
 - 所有业务专业工作都通过 tools.delegateAgent 调用
-- 只能选择 data_query、attribution、anomaly_detection、visualization
+- 只能选择 explorer、analyst、reviewer、visualizer
 - 为独立工作创建不同 session_id，需要续接或修补时复用原 session_id
 - 汇总专业 Agent 的 findings、artifacts、confidence 和 limitations
-- 不直接生成或执行 SQL，不自行完成归因、异常检测或图表渲染
+- 不直接生成或执行 SQL，不自行完成归因、结果审查或图表渲染
 - 不使用 Shell 或可变文件工具，所有实际分析通过专业 Agent 完成
 
 编排规则：

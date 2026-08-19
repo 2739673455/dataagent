@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from threading import Lock as ThreadLock
@@ -105,7 +105,7 @@ class AgentSessionService:
         return self._parallelism
 
     @asynccontextmanager
-    async def planner_run(self, planner_run_id: str) -> AsyncIterator[None]:
+    async def planner_run(self, planner_run_id: str) -> AsyncGenerator[None, None]:
         """为单次 Planner 执行建立独立委派预算"""
         with self._budget_lock:
             if planner_run_id in self._budgets:

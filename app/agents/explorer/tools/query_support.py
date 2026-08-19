@@ -14,7 +14,7 @@ from app.services.query_guard_service import QueryGuardService
 
 
 def get_query_session(runtime: ToolRuntime) -> AgentSessionKey:
-    """从工具运行配置中读取并校验数据查询 Session"""
+    """从工具运行配置中读取并校验数据探索 Session"""
     configurable = runtime.config.get("configurable", {})
     user_id = configurable.get("user_id")
     raw_conversation_id = configurable.get("conversation_id")
@@ -28,8 +28,8 @@ def get_query_session(runtime: ToolRuntime) -> AgentSessionKey:
     if not isinstance(raw_agent_type, str):
         raise TypeError("query agent type not found in config")
     agent_type = validate_agent_type(raw_agent_type)
-    if agent_type != "data_query":
-        raise ValueError("SQL tools require a data_query session")
+    if agent_type != "explorer":
+        raise ValueError("SQL tools require an explorer session")
     return AgentSessionKey(
         user_id=user_id,
         conversation_id=UUID(raw_conversation_id),

@@ -322,7 +322,7 @@ class DockerSandboxManagerPolicyTest(unittest.TestCase):
     ) -> DockerSandboxBackend:
         scope = SandboxSessionScope(
             analysis_id="sales-decline",
-            agent_type="attribution",
+            agent_type="analyst",
             session_id="region",
         )
         conversation_guard = _LifecycleGuard()
@@ -344,11 +344,9 @@ class DockerSandboxManagerPolicyTest(unittest.TestCase):
     def test_session_backend_maps_reads_and_scopes_mutations(self) -> None:
         conversation_id = uuid4()
         backend = self._session_backend(build_sandbox_config(), conversation_id)
-        own_virtual_path = (
-            "/analyses/sales-decline/sessions/attribution/region/result.json"
-        )
+        own_virtual_path = "/analyses/sales-decline/sessions/analyst/region/result.json"
         sibling_virtual_path = (
-            "/analyses/sales-decline/sessions/data_query/base/dataset.csv"
+            "/analyses/sales-decline/sessions/explorer/base/dataset.csv"
         )
         conversation_root = f"/workspace/conversations/{conversation_id}"
 
@@ -507,10 +505,10 @@ class AgentExecutionLifecycleTest(unittest.IsolatedAsyncioTestCase):
 
         persistence_manager.advisory_lock = advisory_lock
         manager = AgentManager(persistence_manager)
-        bundle = MagicMock()
-        bundle.planner_lock = advisory_lock
-        bundle.session_service.planner_run = advisory_lock
-        bundle.conversation_deleted = AsyncMock(return_value=False)
+        runtime = MagicMock()
+        runtime.planner_lock = advisory_lock
+        runtime.session_service.planner_run = advisory_lock
+        runtime.conversation_deleted = AsyncMock(return_value=False)
         user_id = 7
         conversation_id = uuid4()
         started = asyncio.Event()
@@ -519,7 +517,7 @@ class AgentExecutionLifecycleTest(unittest.IsolatedAsyncioTestCase):
             async with manager.execution(
                 user_id,
                 conversation_id,
-                bundle=bundle,
+                runtime=runtime,
             ):
                 started.set()
                 await asyncio.Future()
@@ -732,23 +730,23 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_sessions_share_reads_and_reject_sibling_mutations(self) -> None:
         conversation_id = uuid4()
-        data_query = await self.manager.get_session_backend(
+        explorer = await self.manager.get_session_backend(
             self.user_id,
             conversation_id,
             "sales-decline",
-            "data_query",
+            "explorer",
             "base",
         )
-        attribution = await self.manager.get_session_backend(
+        analyst = await self.manager.get_session_backend(
             self.user_id,
             conversation_id,
             "sales-decline",
-            "attribution",
+            "analyst",
             "region",
         )
-        artifact_path = "/analyses/sales-decline/sessions/data_query/base/dataset.csv"
+        artifact_path = "/analyses/sales-decline/sessions/explorer/base/dataset.csv"
 
-        write_result = data_query.write("dataset.csv", "region,sales\neast,42\n")
+        write_result = explorer.write("dataset.csv", "region,sales\neast,42\n")
         self.assertIsNone(write_result.error)
         self.assertEqual(write_result.path, artifact_path)
         self.assertTrue(
@@ -766,28 +764,28 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
             ),
             b"region,sales\neast,42\n",
         )
-        read_result = attribution.read(artifact_path)
+        read_result = analyst.read(artifact_path)
         self.assertIsNone(read_result.error)
         self.assertIsNotNone(read_result.file_data)
         assert read_result.file_data is not None
         self.assertIn("east,42", read_result.file_data["content"])
         shell_artifact_path = (
             '"$DATAAGENT_CONVERSATION_ROOT/'
-            'analyses/sales-decline/sessions/data_query/base/dataset.csv"'
+            'analyses/sales-decline/sessions/explorer/base/dataset.csv"'
         )
-        shell_read = attribution.execute(f"cat {shell_artifact_path}")
+        shell_read = analyst.execute(f"cat {shell_artifact_path}")
         self.assertEqual(shell_read.exit_code, 0)
         self.assertIn("east,42", shell_read.output)
 
-        self.assertIsNotNone(attribution.write(artifact_path, "tampered").error)
-        self.assertIsNotNone(attribution.edit(artifact_path, "east", "west").error)
-        self.assertIsNotNone(attribution.delete(artifact_path).error)
+        self.assertIsNotNone(analyst.write(artifact_path, "tampered").error)
+        self.assertIsNotNone(analyst.edit(artifact_path, "east", "west").error)
+        self.assertIsNotNone(analyst.delete(artifact_path).error)
 
-        overwrite = attribution.execute(f"printf tampered > {shell_artifact_path}")
-        removal = attribution.execute(f"rm -f {shell_artifact_path}")
+        overwrite = analyst.execute(f"printf tampered > {shell_artifact_path}")
+        removal = analyst.execute(f"rm -f {shell_artifact_path}")
         self.assertNotEqual(overwrite.exit_code, 0)
         self.assertNotEqual(removal.exit_code, 0)
-        preserved = data_query.read("dataset.csv")
+        preserved = explorer.read("dataset.csv")
         self.assertIsNone(preserved.error)
         self.assertIsNotNone(preserved.file_data)
         assert preserved.file_data is not None
@@ -799,7 +797,7 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
             self.user_id,
             conversation_id,
             "sales-decline",
-            "anomaly_detection",
+            "reviewer",
             "sales-trend",
         )
 
@@ -808,7 +806,7 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.exit_code, 0)
         self.assertEqual(
             response.output.strip(),
-            "/analyses/sales-decline/sessions/anomaly_detection/sales-trend",
+            "/analyses/sales-decline/sessions/reviewer/sales-trend",
         )
         self.assertNotIn("/workspace/conversations", response.output)
 
@@ -819,20 +817,20 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
             self.user_id,
             first_conversation_id,
             "sales-decline",
-            "data_query",
+            "explorer",
             "base",
         )
         second = await self.manager.get_session_backend(
             self.user_id,
             second_conversation_id,
             "sales-decline",
-            "attribution",
+            "analyst",
             "region",
         )
         self.assertIsNone(first.write("secret.txt", "CONVERSATION_SECRET").error)
 
         virtual_read = second.read(
-            "/analyses/sales-decline/sessions/data_query/base/secret.txt"
+            "/analyses/sales-decline/sessions/explorer/base/secret.txt"
         )
         direct_read = second.execute(f"cat {first.workspace_dir}/secret.txt")
 
@@ -842,23 +840,21 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_platform_query_artifact_is_readable_by_sessions(self) -> None:
         conversation_id = uuid4()
-        data_query = await self.manager.get_session_backend(
+        explorer = await self.manager.get_session_backend(
             self.user_id,
             conversation_id,
             "sales-decline",
-            "data_query",
+            "explorer",
             "base",
         )
-        attribution = await self.manager.get_session_backend(
+        analyst = await self.manager.get_session_backend(
             self.user_id,
             conversation_id,
             "sales-decline",
-            "attribution",
+            "analyst",
             "region",
         )
-        relative_path = (
-            "analyses/sales-decline/sessions/data_query/base/query_result.csv"
-        )
+        relative_path = "analyses/sales-decline/sessions/explorer/base/query_result.csv"
         await self.manager.write_artifact(
             self.user_id,
             conversation_id,
@@ -866,7 +862,7 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
             io.BytesIO(b"region,sales\neast,42\n"),
         )
 
-        for backend in (data_query, attribution):
+        for backend in (explorer, analyst):
             with self.subTest(backend=backend.id):
                 result = backend.read(f"/{relative_path}")
                 self.assertIsNone(result.error)

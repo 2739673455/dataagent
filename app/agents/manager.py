@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import shlex
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from uuid import UUID, uuid4
@@ -22,30 +22,29 @@ from langchain_core.tools import BaseTool
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph.state import CompiledStateGraph
 
-from app.agents.anomaly_detection.agent import create_anomaly_detection_agent
-from app.agents.attribution.agent import create_attribution_agent
+from app.agents.analyst.agent import create_analyst_agent
 from app.agents.contracts import (
     AgentSessionKey,
     AgentType,
     PlannerTurnContext,
     get_thread_id,
 )
-from app.agents.data_query.agent import create_data_query_agent
-from app.agents.data_query.tools import (
-    check_sql_syntax,
+from app.agents.explorer.agent import create_explorer_agent
+from app.agents.explorer.tools import (
     delete_semantic_recalls,
+    execute_sql,
     get_semantic_recall,
     list_semantic_recalls,
     merge_semantic_recalls,
-    run_readonly_sql,
     search_semantic_resources,
 )
 from app.agents.mcp import get_mcp_tools
 from app.agents.planner.agent import create_planner_agent
 from app.agents.planner.tools import create_delegate_agent_tool
-from app.agents.registry import AgentRegistry, build_agent_definitions
+from app.agents.registry import AgentDefinition, AgentRegistry, build_agent_definitions
+from app.agents.reviewer.agent import create_reviewer_agent
 from app.agents.session_service import AgentSessionService
-from app.agents.visualization.agent import create_visualization_agent
+from app.agents.visualizer.agent import create_visualizer_agent
 from app.clients.docker_sandbox_manager import (
     DockerSandboxBackend,
     docker_sandbox_manager,
@@ -56,9 +55,9 @@ from app.clients.langgraph_postgres_manager import (
 )
 from app.conf import app_config
 
-type AgentKey = tuple[int, UUID]
+type ConversationKey = tuple[int, UUID]
 
-_DEFAULT_MAX_CACHED_AGENTS = 128
+_DEFAULT_MAX_CACHED_RUNTIMES = 128
 _AGENT_LIFECYCLE_NAMESPACE = ("agent_lifecycle", "deleted_conversations")
 
 
@@ -73,8 +72,8 @@ def _conversation_tombstone_key(user_id: int, conversation_id: UUID) -> str:
 
 
 @dataclass(slots=True)
-class AnalysisAgentBundle:
-    """一个用户会话内共享资源的 Planner 和专业 Agent 集合"""
+class ConversationAgentRuntime:
+    """一个用户会话内的 Agent 运行时资源"""
 
     planner: CompiledStateGraph
     registry: AgentRegistry
@@ -86,34 +85,40 @@ class AnalysisAgentBundle:
 
 
 _SPECIALIST_BUILDERS = {
-    "data_query": create_data_query_agent,
-    "attribution": create_attribution_agent,
-    "anomaly_detection": create_anomaly_detection_agent,
-    "visualization": create_visualization_agent,
+    "explorer": create_explorer_agent,
+    "analyst": create_analyst_agent,
+    "reviewer": create_reviewer_agent,
+    "visualizer": create_visualizer_agent,
 }
 
 
 class AgentManager:
-    """管理共享模型资源和会话级 AnalysisAgentBundle"""
+    """管理共享模型资源和会话级 Agent 运行时"""
 
     def __init__(
         self,
         persistence_manager: LangGraphPostgresManager,
-        max_cached_agents: int = _DEFAULT_MAX_CACHED_AGENTS,
+        max_cached_runtimes: int = _DEFAULT_MAX_CACHED_RUNTIMES,
     ) -> None:
         """初始化 Agent 管理器"""
-        if max_cached_agents <= 0:
-            raise ValueError("max_cached_agents must be positive")
+        if max_cached_runtimes <= 0:
+            raise ValueError("max_cached_runtimes must be positive")
         self._persistence_manager = persistence_manager
-        self._max_cached_agents = max_cached_agents
-        self._bundles: OrderedDict[AgentKey, AnalysisAgentBundle] = OrderedDict()
-        self._build_tasks: dict[AgentKey, asyncio.Task[AnalysisAgentBundle]] = {}
-        self._run_tasks: dict[AgentKey, set[asyncio.Task[object]]] = {}
-        self._deleted_agent_keys: set[AgentKey] = set()
+        self._max_cached_runtimes = max_cached_runtimes
+        self._conversation_runtimes: OrderedDict[
+            ConversationKey, ConversationAgentRuntime
+        ] = OrderedDict()
+        self._runtime_build_tasks: dict[
+            ConversationKey, asyncio.Task[ConversationAgentRuntime]
+        ] = {}
+        self._conversation_run_tasks: dict[
+            ConversationKey, set[asyncio.Task[object]]
+        ] = {}
+        self._deleted_conversation_keys: set[ConversationKey] = set()
         self._state_lock = asyncio.Lock()
         self._models: dict[str, BaseChatModel] | None = None
         self._planner_model_name: str | None = None
-        self._tools: list[BaseTool] | None = None
+        self._definitions: dict[AgentType, AgentDefinition] | None = None
 
     @staticmethod
     def _create_model(model_name: str) -> BaseChatModel:
@@ -142,7 +147,7 @@ class AgentManager:
     async def init(self) -> None:
         """初始化所有 Agent 共享的模型和工具"""
         async with self._state_lock:
-            if self._models is not None and self._tools is not None:
+            if self._models is not None and self._definitions is not None:
                 return
 
             active_model_name = app_config.cfg.lm_config.active
@@ -159,19 +164,19 @@ class AgentManager:
                 model_name: self._create_model(model_name)
                 for model_name in configured_names
             }
-            tools: list[BaseTool] = [
+            platform_tools: list[BaseTool] = [
                 search_semantic_resources,
                 list_semantic_recalls,
                 get_semantic_recall,
                 merge_semantic_recalls,
                 delete_semantic_recalls,
-                check_sql_syntax,
-                run_readonly_sql,
-                *await get_mcp_tools(),
+                execute_sql,
             ]
+            mcp_tools = await get_mcp_tools()
+            definitions = build_agent_definitions(platform_tools, mcp_tools)
             self._models = models
             self._planner_model_name = active_model_name
-            self._tools = tools
+            self._definitions = definitions
 
     def _specialist_model(self, agent_type: AgentType) -> BaseChatModel:
         """解析专业 Agent 配置中的模型引用"""
@@ -185,24 +190,24 @@ class AgentManager:
         )
         return self._models[model_name]
 
-    def _build_bundle(
+    def _build_conversation_runtime(
         self,
         sandbox_backend: DockerSandboxBackend,
         user_id: int,
         conversation_id: UUID,
-    ) -> AnalysisAgentBundle:
-        """构建共享 Backend 和持久化组件的会话级 Agent 集合"""
+    ) -> ConversationAgentRuntime:
+        """构建共享 Backend 和持久化组件的会话级 Agent 运行时"""
         if (
             self._models is None
             or self._planner_model_name is None
-            or self._tools is None
+            or self._definitions is None
         ):
             raise RuntimeError("Agent manager is not initialized")
 
         backend = sandbox_backend
         checkpointer = self._persistence_manager.get_checkpointer()
         store = self._persistence_manager.get_store()
-        definitions = build_agent_definitions(self._tools)
+        definitions = self._definitions
 
         async def build_session_agent(
             session_key: AgentSessionKey,
@@ -267,7 +272,7 @@ class AgentManager:
             max_repair_rounds=orchestration_cfg.max_repair_rounds,
             max_repair_depth=orchestration_cfg.max_repair_depth,
         )
-        return AnalysisAgentBundle(
+        return ConversationAgentRuntime(
             planner=planner,
             registry=registry,
             session_service=session_service,
@@ -315,80 +320,81 @@ class AgentManager:
         )
         return result.exit_code == 0
 
-    async def _build_and_cache_bundle(
+    async def _build_and_cache_conversation_runtime(
         self,
-        agent_key: AgentKey,
+        conversation_key: ConversationKey,
         user_id: int,
         conversation_id: UUID,
-    ) -> AnalysisAgentBundle:
-        """构建 AnalysisAgentBundle 并写入会话缓存"""
+    ) -> ConversationAgentRuntime:
+        """构建会话级 Agent 运行时并写入缓存"""
         current_task = asyncio.current_task()
         try:
             sandbox_backend = await docker_sandbox_manager.get_backend(
                 user_id,
                 conversation_id,
             )
-            bundle = self._build_bundle(
+            runtime = self._build_conversation_runtime(
                 sandbox_backend,
                 user_id,
                 conversation_id,
             )
         except (Exception, asyncio.CancelledError):
             async with self._state_lock:
-                if self._build_tasks.get(agent_key) is current_task:
-                    self._build_tasks.pop(agent_key, None)
+                if self._runtime_build_tasks.get(conversation_key) is current_task:
+                    self._runtime_build_tasks.pop(conversation_key, None)
             raise
 
         async with self._state_lock:
-            if self._build_tasks.get(agent_key) is current_task:
-                self._build_tasks.pop(agent_key, None)
-                if agent_key not in self._deleted_agent_keys:
-                    self._bundles[agent_key] = bundle
-                    self._bundles.move_to_end(agent_key)
-                    while len(self._bundles) > self._max_cached_agents:
+            if self._runtime_build_tasks.get(conversation_key) is current_task:
+                self._runtime_build_tasks.pop(conversation_key, None)
+                if conversation_key not in self._deleted_conversation_keys:
+                    self._conversation_runtimes[conversation_key] = runtime
+                    self._conversation_runtimes.move_to_end(conversation_key)
+                    while len(self._conversation_runtimes) > self._max_cached_runtimes:
                         evictable_key = next(
                             (
                                 key
-                                for key in self._bundles
-                                if key != agent_key and not self._run_tasks.get(key)
+                                for key in self._conversation_runtimes
+                                if key != conversation_key
+                                and not self._conversation_run_tasks.get(key)
                             ),
                             None,
                         )
                         if evictable_key is None:
                             break
-                        evicted = self._bundles.pop(evictable_key)
+                        evicted = self._conversation_runtimes.pop(evictable_key)
                         evicted.session_service.clear()
                         evicted.registry.clear()
-        return bundle
+        return runtime
 
-    async def get_agent_bundle(
+    async def get_conversation_runtime(
         self,
         user_id: int,
         conversation_id: UUID,
-    ) -> AnalysisAgentBundle:
-        """获取会话级 AnalysisAgentBundle，不存在时按需创建"""
+    ) -> ConversationAgentRuntime:
+        """获取会话级 Agent 运行时，不存在时按需创建"""
         await self.init()
-        agent_key = (user_id, conversation_id)
+        conversation_key = (user_id, conversation_id)
         if await self._conversation_is_deleted(user_id, conversation_id):
             async with self._state_lock:
-                self._deleted_agent_keys.add(agent_key)
+                self._deleted_conversation_keys.add(conversation_key)
             raise RuntimeError("Agent conversation has been deleted")
         async with self._state_lock:
-            if agent_key in self._deleted_agent_keys:
+            if conversation_key in self._deleted_conversation_keys:
                 raise RuntimeError("Agent conversation has been deleted")
-            if bundle := self._bundles.get(agent_key):
-                self._bundles.move_to_end(agent_key)
-                return bundle
-            build_task = self._build_tasks.get(agent_key)
+            if runtime := self._conversation_runtimes.get(conversation_key):
+                self._conversation_runtimes.move_to_end(conversation_key)
+                return runtime
+            build_task = self._runtime_build_tasks.get(conversation_key)
             if build_task is None:
                 build_task = asyncio.create_task(
-                    self._build_and_cache_bundle(
-                        agent_key,
+                    self._build_and_cache_conversation_runtime(
+                        conversation_key,
                         user_id,
                         conversation_id,
                     )
                 )
-                self._build_tasks[agent_key] = build_task
+                self._runtime_build_tasks[conversation_key] = build_task
         return await asyncio.shield(build_task)
 
     async def reset(self) -> None:
@@ -398,12 +404,12 @@ class AgentManager:
 
     async def delete_agent(self, user_id: int, conversation_id: UUID) -> None:
         """删除会话 Agent 集合及 Planner 和全部 SubAgent namespace"""
-        agent_key = (user_id, conversation_id)
+        conversation_key = (user_id, conversation_id)
         async with self._state_lock:
-            self._deleted_agent_keys.add(agent_key)
-            bundle = self._bundles.pop(agent_key, None)
-            build_task = self._build_tasks.pop(agent_key, None)
-            run_tasks = list(self._run_tasks.pop(agent_key, ()))
+            self._deleted_conversation_keys.add(conversation_key)
+            runtime = self._conversation_runtimes.pop(conversation_key, None)
+            build_task = self._runtime_build_tasks.pop(conversation_key, None)
+            run_tasks = list(self._conversation_run_tasks.pop(conversation_key, ()))
         if build_task is not None:
             build_task.cancel()
             await asyncio.gather(build_task, return_exceptions=True)
@@ -411,9 +417,9 @@ class AgentManager:
             run_task.cancel()
         if run_tasks:
             await asyncio.gather(*run_tasks, return_exceptions=True)
-        if bundle is not None:
-            bundle.session_service.clear()
-            bundle.registry.clear()
+        if runtime is not None:
+            runtime.session_service.clear()
+            runtime.registry.clear()
         async with self._persistence_manager.advisory_lock(
             _conversation_lock_name(user_id, conversation_id),
             timeout=app_config.cfg.agent.orchestration.session_lock_timeout,
@@ -454,17 +460,19 @@ class AgentManager:
         user_id: int,
         conversation_id: UUID,
         *,
-        bundle: AnalysisAgentBundle,
-    ) -> AsyncIterator[PlannerTurnContext]:
+        runtime: ConversationAgentRuntime,
+    ) -> AsyncGenerator[PlannerTurnContext, None]:
         """登记完整用户回合并建立共享委派预算"""
         current_task = asyncio.current_task()
         if current_task is None:
             raise RuntimeError("Agent execution requires an asyncio task")
-        agent_key = (user_id, conversation_id)
+        conversation_key = (user_id, conversation_id)
         async with self._state_lock:
-            if agent_key in self._deleted_agent_keys:
+            if conversation_key in self._deleted_conversation_keys:
                 raise RuntimeError("Agent conversation has been deleted")
-            self._run_tasks.setdefault(agent_key, set()).add(current_task)
+            self._conversation_run_tasks.setdefault(conversation_key, set()).add(
+                current_task
+            )
         turn_context = PlannerTurnContext(
             user_id=user_id,
             conversation_id=conversation_id,
@@ -473,32 +481,36 @@ class AgentManager:
         )
         try:
             async with (
-                bundle.planner_lock(),
-                bundle.session_service.planner_run(turn_context.planner_run_id),
+                runtime.planner_lock(),
+                runtime.session_service.planner_run(turn_context.planner_run_id),
             ):
-                if await bundle.conversation_deleted():
+                if await runtime.conversation_deleted():
                     raise RuntimeError("Agent conversation has been deleted")
                 yield turn_context
         finally:
             async with self._state_lock:
-                tasks = self._run_tasks.get(agent_key)
+                tasks = self._conversation_run_tasks.get(conversation_key)
                 if tasks is not None:
                     tasks.discard(current_task)
                     if not tasks:
-                        self._run_tasks.pop(agent_key, None)
+                        self._conversation_run_tasks.pop(conversation_key, None)
 
     async def close(self) -> None:
         """释放 Agent 集合和未完成任务"""
         async with self._state_lock:
-            build_tasks = list(self._build_tasks.values())
-            run_tasks = [task for tasks in self._run_tasks.values() for task in tasks]
-            bundles = list(self._bundles.values())
-            self._build_tasks.clear()
-            self._run_tasks.clear()
-            self._bundles.clear()
+            build_tasks = list(self._runtime_build_tasks.values())
+            run_tasks = [
+                task
+                for tasks in self._conversation_run_tasks.values()
+                for task in tasks
+            ]
+            runtimes = list(self._conversation_runtimes.values())
+            self._runtime_build_tasks.clear()
+            self._conversation_run_tasks.clear()
+            self._conversation_runtimes.clear()
             self._models = None
             self._planner_model_name = None
-            self._tools = None
+            self._definitions = None
         for build_task in build_tasks:
             build_task.cancel()
         for run_task in run_tasks:
@@ -506,9 +518,9 @@ class AgentManager:
         pending_tasks = [*build_tasks, *run_tasks]
         if pending_tasks:
             await asyncio.gather(*pending_tasks, return_exceptions=True)
-        for bundle in bundles:
-            bundle.session_service.clear()
-            bundle.registry.clear()
+        for runtime in runtimes:
+            runtime.session_service.clear()
+            runtime.registry.clear()
 
 
 agent_manager = AgentManager(langgraph_postgres_manager)

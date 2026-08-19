@@ -7,7 +7,7 @@ import os
 import tempfile
 import unittest
 from collections import Counter
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -30,7 +30,7 @@ from app.agents.contracts import (
     SpecialistResult,
     build_planner_config,
 )
-from app.agents.manager import AgentManager, AnalysisAgentBundle
+from app.agents.manager import AgentManager, ConversationAgentRuntime
 from app.agents.registry import AgentRegistry, build_agent_definitions
 from app.agents.session_service import AgentSessionService
 
@@ -82,15 +82,15 @@ def search_semantic_resources(query: str) -> str:
 
 
 @tool
-def check_sql_syntax(sql: str) -> str:
-    """检查测试 SQL"""
+def execute_sql(sql: str) -> str:
+    """执行测试 SQL"""
     return sql
 
 
 @tool
-def run_readonly_sql(sql: str) -> str:
-    """执行测试 SQL"""
-    return sql
+def mcp_web_search(query: str) -> str:
+    """模拟 MCP 搜索工具"""
+    return query
 
 
 class _FakeAgent:
@@ -154,7 +154,7 @@ class _DistributedLockRegistry:
         self._locks: dict[str, asyncio.Lock] = {}
 
     @asynccontextmanager
-    async def acquire(self, name: str) -> AsyncIterator[None]:
+    async def acquire(self, name: str) -> AsyncGenerator[None, None]:
         async with self._locks.setdefault(name, asyncio.Lock()):
             yield
 
@@ -168,7 +168,7 @@ class _DistributedLockRegistry:
 @asynccontextmanager
 async def _unlocked_session(
     session_key: AgentSessionKey,
-) -> AsyncIterator[None]:
+) -> AsyncGenerator[None, None]:
     del session_key
     yield
 
@@ -181,9 +181,9 @@ def _registry(fake: _FakeAgent) -> AgentRegistry:
     definitions = build_agent_definitions(
         [
             search_semantic_resources,
-            check_sql_syntax,
-            run_readonly_sql,
-        ]
+            execute_sql,
+        ],
+        [],
     )
     graph = cast(CompiledStateGraph, fake)
 
@@ -236,7 +236,7 @@ def _service(
 def _request(
     session_id: str,
     *,
-    agent_type: AgentType = "attribution",
+    agent_type: AgentType = "analyst",
     repair_depth: int = 0,
 ) -> DelegateAgentRequest:
     return DelegateAgentRequest(
@@ -256,17 +256,17 @@ class DynamicSubagentContractTest(unittest.TestCase):
             user_id=12,
             conversation_id=uuid4(),
             analysis_id="sales-decline_2026",
-            agent_type="attribution",
+            agent_type="analyst",
             session_id="product-category",
         )
 
         self.assertEqual(
             key.checkpoint_ns,
-            "subagents/sales-decline_2026/attribution/product-category",
+            "subagents/sales-decline_2026/analyst/product-category",
         )
         self.assertEqual(
             key.workspace_dir,
-            "/analyses/sales-decline_2026/sessions/attribution/product-category",
+            "/analyses/sales-decline_2026/sessions/analyst/product-category",
         )
 
     def test_agent_session_key_rejects_unsafe_identifier(self) -> None:
@@ -284,7 +284,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
                     user_id=12,
                     conversation_id=uuid4(),
                     analysis_id=identifier,
-                    agent_type="data_query",
+                    agent_type="explorer",
                     session_id="base",
                 )
 
@@ -292,7 +292,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             RepairRequest.model_validate(
                 {
-                    "target_agent_type": "data_query",
+                    "target_agent_type": "explorer",
                     "target_session_id": "base",
                     "reason": "region field is missing",
                     "evidence": [],
@@ -304,7 +304,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
             DelegateAgentRequest.model_validate(
                 {
                     "analysis_id": "sales",
-                    "agent_type": "data_query",
+                    "agent_type": "explorer",
                     "session_id": "base",
                     "message": "query data",
                     "checkpoint_ns": "attacker-controlled",
@@ -330,35 +330,47 @@ class DynamicSubagentContractTest(unittest.TestCase):
         definitions = build_agent_definitions(
             [
                 search_semantic_resources,
-                check_sql_syntax,
-                run_readonly_sql,
-            ]
+                execute_sql,
+            ],
+            [mcp_web_search],
         )
 
         self.assertEqual(
-            definitions["data_query"].tool_names,
+            definitions["explorer"].tool_names,
             {
                 "search_semantic_resources",
-                "check_sql_syntax",
-                "run_readonly_sql",
+                "execute_sql",
+                "mcp_web_search",
             },
         )
         self.assertEqual(
-            definitions["attribution"].tool_names,
+            definitions["analyst"].tool_names,
             set(),
         )
         self.assertEqual(
-            definitions["anomaly_detection"].tool_names,
+            definitions["reviewer"].tool_names,
             set(),
         )
         self.assertEqual(
-            definitions["visualization"].tool_names,
+            definitions["visualizer"].tool_names,
             set(),
         )
 
     def test_registry_fails_fast_when_required_tools_are_missing(self) -> None:
         with self.assertRaisesRegex(ValueError, "required specialist tools"):
-            build_agent_definitions([search_semantic_resources])
+            build_agent_definitions([search_semantic_resources], [])
+
+    def test_registry_rejects_mcp_tool_names_reserved_by_runtime(self) -> None:
+        @tool("execute")
+        def conflicting_mcp_tool(command: str) -> str:
+            """模拟与 Shell 工具冲突的 MCP 工具"""
+            return command
+
+        with self.assertRaisesRegex(ValueError, "conflict"):
+            build_agent_definitions(
+                [search_semantic_resources, execute_sql],
+                [conflicting_mcp_tool],
+            )
 
     def test_specialist_agents_expose_native_execution_and_file_tools(self) -> None:
         from deepagents import (
@@ -371,12 +383,10 @@ class DynamicSubagentContractTest(unittest.TestCase):
         from langgraph.checkpoint.memory import InMemorySaver
         from langgraph.store.memory import InMemoryStore
 
-        from app.agents.anomaly_detection.agent import (
-            create_anomaly_detection_agent,
-        )
-        from app.agents.attribution.agent import create_attribution_agent
-        from app.agents.data_query.agent import create_data_query_agent
-        from app.agents.visualization.agent import create_visualization_agent
+        from app.agents.analyst.agent import create_analyst_agent
+        from app.agents.explorer.agent import create_explorer_agent
+        from app.agents.reviewer.agent import create_reviewer_agent
+        from app.agents.visualizer.agent import create_visualizer_agent
 
         register_harness_profile(
             "recordingchatmodel",
@@ -385,10 +395,10 @@ class DynamicSubagentContractTest(unittest.TestCase):
             ),
         )
         builders = {
-            "data_query": create_data_query_agent,
-            "attribution": create_attribution_agent,
-            "anomaly_detection": create_anomaly_detection_agent,
-            "visualization": create_visualization_agent,
+            "explorer": create_explorer_agent,
+            "analyst": create_analyst_agent,
+            "reviewer": create_reviewer_agent,
+            "visualizer": create_visualizer_agent,
         }
         required_tools = {
             "ls",
@@ -500,9 +510,9 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         definitions = build_agent_definitions(
             [
                 search_semantic_resources,
-                check_sql_syntax,
-                run_readonly_sql,
-            ]
+                execute_sql,
+            ],
+            [],
         )
         build_counts: Counter[str] = Counter()
 
@@ -518,14 +528,14 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             user_id=12,
             conversation_id=_CONVERSATION_ID,
             analysis_id="sales-decline",
-            agent_type="attribution",
+            agent_type="analyst",
             session_id="region",
         )
         product = AgentSessionKey(
             user_id=12,
             conversation_id=_CONVERSATION_ID,
             analysis_id="sales-decline",
-            agent_type="attribution",
+            agent_type="analyst",
             session_id="product",
         )
 
@@ -556,7 +566,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(all(result.status == "completed" for result in results))
-        region_ns = "subagents/sales-decline/attribution/region"
+        region_ns = "subagents/sales-decline/analyst/region"
         self.assertEqual(fake.max_active_by_namespace[region_ns], 1)
         self.assertGreaterEqual(fake.max_active, 2)
 
@@ -600,7 +610,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 second_service.delegate(_request("region"), second_config),
             )
 
-        namespace = "subagents/sales-decline/attribution/region"
+        namespace = "subagents/sales-decline/analyst/region"
         self.assertEqual(fake.max_active_by_namespace[namespace], 1)
 
     async def test_delegate_builds_controlled_subagent_config(self) -> None:
@@ -622,7 +632,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         parent_configurable = parent.get("configurable", {})
         self.assertEqual(
             invoked_configurable.get("checkpoint_ns"),
-            "subagents/sales-decline/attribution/region",
+            "subagents/sales-decline/analyst/region",
         )
         self.assertEqual(
             invoked_configurable.get("thread_id"),
@@ -664,7 +674,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_self_repair_is_rejected_after_structured_retry(self) -> None:
         repair = RepairRequest(
-            target_agent_type="attribution",
+            target_agent_type="analyst",
             target_session_id="region",
             reason="retry the same calculation",
             evidence=[
@@ -709,7 +719,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         artifacts = [
             ArtifactReference(
                 path=(
-                    "/analyses/sales-decline/sessions/attribution/region/"
+                    "/analyses/sales-decline/sessions/analyst/region/"
                     f"result_{index}.json"
                 )
             )
@@ -775,7 +785,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_unknown_repair_target_is_rejected(self) -> None:
         repair = RepairRequest(
-            target_agent_type="data_query",
+            target_agent_type="explorer",
             target_session_id="unknown",
             reason="missing dimension",
             evidence=[
@@ -810,14 +820,14 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         first_config.setdefault("configurable", {})["planner_run_id"] = "create-target"
         async with first_service.planner_run("create-target"):
             created = await first_service.delegate(
-                _request("base", agent_type="data_query"),
+                _request("base", agent_type="explorer"),
                 first_config,
             )
         self.assertEqual(created.status, "completed")
         first_service.clear()
 
         repair = RepairRequest(
-            target_agent_type="data_query",
+            target_agent_type="explorer",
             target_session_id="base",
             reason="missing dimension",
             evidence=[
@@ -848,7 +858,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_repair_depth_requires_server_issued_value(self) -> None:
         repair = RepairRequest(
-            target_agent_type="data_query",
+            target_agent_type="explorer",
             target_session_id="base",
             reason="missing dimension",
             evidence=[
@@ -865,7 +875,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 )
             }
         )
-        fake.persisted_sessions.add("subagents/sales-decline/data_query/base")
+        fake.persisted_sessions.add("subagents/sales-decline/explorer/base")
         service = _service(fake)
         config = build_planner_config(12, _CONVERSATION_ID)
         config.setdefault("configurable", {})["planner_run_id"] = "signed-depth"
@@ -873,20 +883,20 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         async with service.planner_run("signed-depth"):
             repair_result = await service.delegate(_request("region"), config)
             wrong_depth = await service.delegate(
-                _request("base", agent_type="data_query"),
+                _request("base", agent_type="explorer"),
                 config,
             )
             fake.output = None
             repaired = await service.delegate(
-                _request("base", agent_type="data_query", repair_depth=1),
+                _request("base", agent_type="explorer", repair_depth=1),
                 config,
             )
             reset_depth = await service.delegate(
-                _request("base", agent_type="data_query"),
+                _request("base", agent_type="explorer"),
                 config,
             )
             continued_repair = await service.delegate(
-                _request("base", agent_type="data_query", repair_depth=1),
+                _request("base", agent_type="explorer", repair_depth=1),
                 config,
             )
 
@@ -898,7 +908,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_repair_depth_limit_stops_new_repair_request(self) -> None:
         repair = RepairRequest(
-            target_agent_type="data_query",
+            target_agent_type="explorer",
             target_session_id="base",
             reason="missing dimension",
             evidence=[
@@ -915,7 +925,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 )
             }
         )
-        fake.persisted_sessions.add("subagents/sales-decline/data_query/base")
+        fake.persisted_sessions.add("subagents/sales-decline/explorer/base")
         service = _service(fake, max_repair_depth=0)
         config = build_planner_config(12, _CONVERSATION_ID)
         config.setdefault("configurable", {})["planner_run_id"] = "repair-depth-run"
@@ -945,7 +955,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         second_service = _service(fake)
         graph = cast(CompiledStateGraph, fake)
         distributed_locks = _DistributedLockRegistry()
-        first_bundle = AnalysisAgentBundle(
+        first_runtime = ConversationAgentRuntime(
             planner=graph,
             registry=_registry(fake),
             session_service=first_service,
@@ -954,7 +964,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             planner_lock=lambda: distributed_locks.acquire("planner"),
             conversation_deleted=_conversation_not_deleted,
         )
-        second_bundle = AnalysisAgentBundle(
+        second_runtime = ConversationAgentRuntime(
             planner=graph,
             registry=_registry(fake),
             session_service=second_service,
@@ -970,18 +980,18 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         async def run(
             manager: AgentManager,
-            bundle: AnalysisAgentBundle,
+            runtime: ConversationAgentRuntime,
         ) -> None:
             nonlocal active, max_active
-            async with manager.execution(12, _CONVERSATION_ID, bundle=bundle):
+            async with manager.execution(12, _CONVERSATION_ID, runtime=runtime):
                 active += 1
                 max_active = max(max_active, active)
                 await asyncio.sleep(0.01)
                 active -= 1
 
         await asyncio.gather(
-            run(first_manager, first_bundle),
-            run(second_manager, second_bundle),
+            run(first_manager, first_runtime),
+            run(second_manager, second_runtime),
         )
 
         self.assertEqual(max_active, 1)
@@ -996,7 +1006,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         async def conversation_deleted() -> bool:
             return tombstone
 
-        bundle = AnalysisAgentBundle(
+        runtime = ConversationAgentRuntime(
             planner=graph,
             registry=_registry(fake),
             session_service=service,
@@ -1028,7 +1038,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             async with serving_worker.execution(
                 12,
                 _CONVERSATION_ID,
-                bundle=bundle,
+                runtime=runtime,
             ):
                 self.fail("deleted conversation entered execution")
         persistence.delete_thread.assert_awaited_once()
@@ -1078,7 +1088,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                     code="""
 await tools.delegateAgent({
   analysis_id: "sales-decline",
-  agent_type: "attribution",
+  agent_type: "analyst",
   session_id: "region",
   message: "analyze source",
   repair_depth: 0,

@@ -7,7 +7,7 @@ from langchain_core.messages import BaseMessage
 from loguru import logger
 
 from app.agents.contracts import PlannerTurnContext, build_planner_config
-from app.agents.manager import AnalysisAgentBundle, agent_manager
+from app.agents.manager import ConversationAgentRuntime, agent_manager
 from app.clients.langgraph_postgres_manager import langgraph_postgres_manager
 from app.mappers import message_mapper
 from app.repositories.semantic_recall_pg_repo import SemanticRecallPGRepo
@@ -19,8 +19,8 @@ async def list_messages(
     conversation_id: UUID,
 ) -> list[chat_schema.MessageSchema]:
     """从 LangGraph 最新线程状态读取消息"""
-    bundle = await agent_manager.get_agent_bundle(user_id, conversation_id)
-    state = await bundle.planner.aget_state(
+    runtime = await agent_manager.get_conversation_runtime(user_id, conversation_id)
+    state = await runtime.planner.aget_state(
         build_planner_config(user_id, conversation_id)
     )
     messages = state.values.get("messages", [])
@@ -45,7 +45,7 @@ async def delete_conversation_data(user_id: int, conversation_id: UUID) -> None:
 
 async def _execute_agent(
     input_messages: list[BaseMessage],
-    bundle: AnalysisAgentBundle,
+    runtime: ConversationAgentRuntime,
     turn_context: PlannerTurnContext,
 ) -> AsyncGenerator[dict[str, Any]]:
     """执行 Agent 并流式返回原始更新"""
@@ -56,7 +56,7 @@ async def _execute_agent(
     config.setdefault("configurable", {})["planner_run_id"] = (
         turn_context.planner_run_id
     )
-    async for chunk in bundle.planner.astream(
+    async for chunk in runtime.planner.astream(
         input={"messages": input_messages},
         config=config,
     ):
@@ -84,11 +84,11 @@ async def run_agent_turn(
         )
     ]
 
-    bundle = await agent_manager.get_agent_bundle(user_id, conversation_id)
+    runtime = await agent_manager.get_conversation_runtime(user_id, conversation_id)
     async with agent_manager.execution(
         user_id,
         conversation_id,
-        bundle=bundle,
+        runtime=runtime,
     ) as turn_context:
         continuation_count = 0
         while True:
@@ -96,7 +96,7 @@ async def run_agent_turn(
 
             async for chunk in _execute_agent(
                 input_messages,
-                bundle,
+                runtime,
                 turn_context,
             ):
                 if cancel.is_set():

@@ -1,4 +1,4 @@
-"""Data Query Agent 语义召回运行时上下文"""
+"""Explorer Agent 语义召回运行时上下文"""
 
 from uuid import UUID
 

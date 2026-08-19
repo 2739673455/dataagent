@@ -45,6 +45,7 @@ class DorisRoleConfig(BaseModel):
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
     )
 
+
 class ESConfig(BaseModel):
     """Elasticsearch 连接与索引配置"""
 
@@ -276,7 +277,7 @@ class AgentConfig(BaseModel):
     orchestration: OrchestrationConfig
     interpreter: InterpreterConfig
     specialists: dict[
-        Literal["data_query", "attribution", "anomaly_detection", "visualization"],
+        Literal["explorer", "analyst", "reviewer", "visualizer"],
         SpecialistConfig,
     ]
 
@@ -340,9 +341,7 @@ class Cfg(BaseModel):
     def default_doris_role(self) -> str:
         """返回注册用户使用的唯一缺省 Doris 角色"""
         return next(
-            role_name
-            for role_name, role in self.doris_roles.items()
-            if role.is_default
+            role_name for role_name, role in self.doris_roles.items() if role.is_default
         )
 
 

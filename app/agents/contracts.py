@@ -18,17 +18,17 @@ from pydantic import (
 )
 
 type AgentType = Literal[
-    "data_query",
-    "attribution",
-    "anomaly_detection",
-    "visualization",
+    "explorer",
+    "analyst",
+    "reviewer",
+    "visualizer",
 ]
 
 AGENT_TYPES: tuple[AgentType, ...] = (
-    "data_query",
-    "attribution",
-    "anomaly_detection",
-    "visualization",
+    "explorer",
+    "analyst",
+    "reviewer",
+    "visualizer",
 )
 
 _IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")

@@ -10,52 +10,65 @@ from typing import Any
 from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 
-from app.agents.anomaly_detection.prompt import ANOMALY_DETECTION_SYSTEM_PROMPT
-from app.agents.attribution.prompt import ATTRIBUTION_SYSTEM_PROMPT
+from app.agents.analyst.prompt import ANALYST_SYSTEM_PROMPT
 from app.agents.contracts import (
     AGENT_TYPES,
     AgentSessionKey,
     AgentType,
     validate_agent_type,
 )
-from app.agents.data_query.prompt import DATA_QUERY_SYSTEM_PROMPT
-from app.agents.visualization.prompt import VISUALIZATION_SYSTEM_PROMPT
+from app.agents.explorer.prompt import EXPLORER_SYSTEM_PROMPT
+from app.agents.reviewer.prompt import REVIEWER_SYSTEM_PROMPT
+from app.agents.visualizer.prompt import VISUALIZER_SYSTEM_PROMPT
 
-_TOOL_ALLOWLISTS: dict[AgentType, frozenset[str]] = {
-    "data_query": frozenset(
+_PLATFORM_TOOL_ALLOWLISTS: dict[AgentType, frozenset[str]] = {
+    "explorer": frozenset(
         {
             "search_semantic_resources",
             "list_semantic_recalls",
             "get_semantic_recall",
             "merge_semantic_recalls",
             "delete_semantic_recalls",
-            "check_sql_syntax",
-            "run_readonly_sql",
+            "execute_sql",
         }
     ),
-    "attribution": frozenset(),
-    "anomaly_detection": frozenset(),
-    "visualization": frozenset(),
+    "analyst": frozenset(),
+    "reviewer": frozenset(),
+    "visualizer": frozenset(),
 }
 
 _REQUIRED_TOOLS: dict[AgentType, frozenset[str]] = {
-    "data_query": frozenset(
-        {"search_semantic_resources", "check_sql_syntax", "run_readonly_sql"}
-    ),
+    "explorer": frozenset({"search_semantic_resources", "execute_sql"}),
 }
 
+_RESERVED_MCP_TOOL_NAMES = frozenset(
+    {
+        "delegate_agent",
+        "task",
+        "eval",
+        "ls",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "delete",
+        "glob",
+        "grep",
+        "execute",
+    }
+)
+
 _SYSTEM_PROMPTS: dict[AgentType, str] = {
-    "data_query": DATA_QUERY_SYSTEM_PROMPT,
-    "attribution": ATTRIBUTION_SYSTEM_PROMPT,
-    "anomaly_detection": ANOMALY_DETECTION_SYSTEM_PROMPT,
-    "visualization": VISUALIZATION_SYSTEM_PROMPT,
+    "explorer": EXPLORER_SYSTEM_PROMPT,
+    "analyst": ANALYST_SYSTEM_PROMPT,
+    "reviewer": REVIEWER_SYSTEM_PROMPT,
+    "visualizer": VISUALIZER_SYSTEM_PROMPT,
 }
 
 _DESCRIPTIONS: dict[AgentType, str] = {
-    "data_query": "检索语义目录并生成、检查、执行只读数据查询",
-    "attribution": "对指标变化执行贡献分解、维度下钻和根因候选分析",
-    "anomaly_detection": "检测时序异常、结构突变和数据质量问题",
-    "visualization": "生成可追溯的图表、表格和下载报告",
+    "explorer": "检索语义目录并生成、检查、执行只读数据查询",
+    "analyst": "对指标变化执行贡献分解、维度下钻和根因候选分析",
+    "reviewer": "审查上游数据、分析结论和产物，发现问题时发起修补",
+    "visualizer": "生成可追溯的图表、表格和下载报告",
 }
 
 
@@ -86,14 +99,25 @@ class AgentDefinition:
 
 
 def build_agent_definitions(
-    tools: Iterable[BaseTool],
+    platform_tools: Iterable[BaseTool],
+    mcp_tools: Iterable[BaseTool],
 ) -> dict[AgentType, AgentDefinition]:
-    """按工具名称白名单构造四类专业 Agent 定义"""
+    """构造专业 Agent 定义并只向数据查询 Agent 分配 MCP 工具"""
+    platform_tools = tuple(platform_tools)
+    mcp_tools = tuple(mcp_tools)
     tools_by_name: dict[str, BaseTool] = {}
-    for tool in tools:
+    for tool in (*platform_tools, *mcp_tools):
         if tool.name in tools_by_name:
             raise ValueError(f"duplicate tool name: {tool.name}")
         tools_by_name[tool.name] = tool
+
+    mcp_tool_names = frozenset(tool.name for tool in mcp_tools)
+    reserved_mcp_names = sorted(mcp_tool_names & _RESERVED_MCP_TOOL_NAMES)
+    if reserved_mcp_names:
+        raise ValueError(
+            "MCP tool names conflict with Agent runtime tools: "
+            + ", ".join(reserved_mcp_names)
+        )
 
     missing_by_agent = {
         agent_type: sorted(required - tools_by_name.keys())
@@ -107,6 +131,11 @@ def build_agent_definitions(
         )
         raise ValueError(f"required specialist tools are missing: {details}")
 
+    tool_allowlists = {
+        **_PLATFORM_TOOL_ALLOWLISTS,
+        "explorer": _PLATFORM_TOOL_ALLOWLISTS["explorer"] | mcp_tool_names,
+    }
+
     return {
         agent_type: AgentDefinition(
             agent_type=agent_type,
@@ -114,7 +143,7 @@ def build_agent_definitions(
             system_prompt=_SYSTEM_PROMPTS[agent_type],
             tools=tuple(
                 tools_by_name[name]
-                for name in sorted(_TOOL_ALLOWLISTS[agent_type])
+                for name in sorted(tool_allowlists[agent_type])
                 if name in tools_by_name
             ),
         )

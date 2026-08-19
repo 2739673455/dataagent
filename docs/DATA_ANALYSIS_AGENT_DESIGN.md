@@ -3,7 +3,7 @@
 ## 1. 文档信息
 
 - 状态：设计方案
-- 目标：设计由 Planner、数据查询 Agent、归因 Agent、异常检测 Agent 和可视化 Agent 组成的数据分析系统
+- 目标：设计由 Planner、数据查询 Agent、归因 Agent、审查 Agent 和可视化 Agent 组成的数据分析系统
 - 编排方式：DeepAgents Dynamic Subagents
 - 状态存储：LangGraph PostgreSQL Checkpointer
 - 文件环境：本地 Docker 沙盒
@@ -24,7 +24,7 @@
 核心决策：
 
 1. Planner 是用户会话的唯一协调者，负责理解目标、动态拆分任务、并行调度、处理修补请求和汇总结果
-2. 专业 Agent 按逻辑类型注册，包括数据查询、归因、异常检测和可视化
+2. 专业 Agent 按逻辑类型注册，包括数据查询、归因、审查和可视化
 3. Agent Definition 与 Agent Session 分离，同一个 Agent Definition 可以创建多个并行 Session
 4. 每个 Session 使用独立的 `checkpoint_ns`，完整消息历史保存到 PostgreSQL
 5. 不同 Session 可以并行执行，同一 Session 串行续接
@@ -32,7 +32,7 @@
 7. 大型数据集、SQL、图表和报告保存在 Docker 沙盒，Agent 消息中只传递摘要和文件引用
 8. Dynamic Interpreter 在运行时生成循环、分支和并行代码，不使用显式 LangGraph 业务工作流
 9. 业务专业 Agent 的持久化委派统一经过 `delegate_agent`，避免直接使用无 Session 标识的临时 `task()`
-10. 查询安全由确定性 Service 执行，归因、异常检测和可视化 Agent 在各自 Session 沙盒中自主编写并运行分析代码
+10. 查询安全由确定性 Service 执行，归因、审查和可视化 Agent 在各自 Session 沙盒中自主编写并运行分析或核验代码
 
 ## 3. 设计目标
 
@@ -82,12 +82,12 @@ Agent Definition 描述一种专业能力，由以下内容组成：
 
 系统第一阶段包含：
 
-| `agent_type` | 职责 |
-| --- | --- |
-| `data_query` | 理解数据需求、检索语义目录、生成并执行只读查询、输出数据集 |
-| `attribution` | 基于目标指标和数据集进行变化贡献分析、维度下钻和根因候选判断 |
-| `anomaly_detection` | 检测异常点、异常区间、结构突变和数据质量问题 |
-| `visualization` | 根据分析产物生成图表、表格和可下载报告 |
+| `agent_type` | 职责                                                                        |
+| ------------ | --------------------------------------------------------------------------- |
+| `explorer`   | 理解数据需求、检索语义目录、生成并执行只读查询、输出数据集                  |
+| `analyst`    | 基于目标指标和数据集进行变化贡献分析、维度下钻和根因候选判断                |
+| `reviewer`   | 独立审查数据查询、分析过程、结论、图表和报告，发现问题时请求原 Session 修补 |
+| `visualizer` | 根据分析产物生成图表、表格和可下载报告                                      |
 
 同一个 Agent Definition 在一个会话中只需要构建一次，可以被多个 Session 复用。
 
@@ -106,7 +106,7 @@ Agent Session 是一次可续接的专业分析上下文。它拥有独立的：
 例如，同一个归因 Agent 可以创建三个 Session：
 
 ```text
-attribution
+analyst
 ├── session: region
 ├── session: product
 └── session: channel
@@ -147,10 +147,10 @@ flowchart TD
     P --> I[QuickJS Dynamic Interpreter]
     I --> D[Session-aware delegate_agent]
     D --> R[Agent Registry]
-    R --> Q[Data Query Agent Sessions]
-    R --> A[Attribution Agent Sessions]
+    R --> Q[Explorer Agent Sessions]
+    R --> A[Analyst Agent Sessions]
     R --> N[Anomaly Agent Sessions]
-    R --> V[Visualization Agent Sessions]
+    R --> V[Visualizer Agent Sessions]
     Q --> CP[(PostgreSQL Checkpoints)]
     A --> CP
     N --> CP
@@ -169,14 +169,14 @@ flowchart TD
 
 职责边界：
 
-| 组件 | 负责 | 不负责 |
-| --- | --- | --- |
-| Planner | 目标理解、动态拆分、委派、修补控制、结果汇总 | 直接编写复杂 SQL、执行统计算法 |
-| Dynamic Interpreter | 运行模型生成的循环、分支和并行调度代码 | 保存专业 Agent 消息历史 |
-| Delegate Service | Session 定位、配置构造、并发控制、Agent 调用 | 决定业务分析流程 |
-| Specialist Agent | 选择输入数据与方法，编写并运行代码，验证结果，执行下钻并提交修补请求 | 绕过 Sandbox 或平台数据权限 |
-| PostgreSQL Checkpointer | Planner 和各 Session 的消息及图状态 | 大数据文件存储 |
-| Docker Sandbox | 专业 Agent 的 Shell 执行、Session 文件、数据集、代码、证据、图表和报告 | Agent 对话状态和业务数据库直连 |
+| 组件                    | 负责                                                                   | 不负责                         |
+| ----------------------- | ---------------------------------------------------------------------- | ------------------------------ |
+| Planner                 | 目标理解、动态拆分、委派、修补控制、结果汇总                           | 直接编写复杂 SQL、执行统计算法 |
+| Dynamic Interpreter     | 运行模型生成的循环、分支和并行调度代码                                 | 保存专业 Agent 消息历史        |
+| Delegate Service        | Session 定位、配置构造、并发控制、Agent 调用                           | 决定业务分析流程               |
+| Specialist Agent        | 选择输入数据与方法，编写并运行代码，验证结果，执行下钻并提交修补请求   | 绕过 Sandbox 或平台数据权限    |
+| PostgreSQL Checkpointer | Planner 和各 Session 的消息及图状态                                    | 大数据文件存储                 |
+| Docker Sandbox          | 专业 Agent 的 Shell 执行、Session 文件、数据集、代码、证据、图表和报告 | Agent 对话状态和业务数据库直连 |
 
 ## 6. 为什么需要 Session-aware Delegation
 
@@ -203,12 +203,12 @@ thread_id:
 user_12:conversation_550e8400-e29b-41d4-a716-446655440000
 
 checkpoint_ns:
-subagents/sales-decline/data_query/base
-subagents/sales-decline/attribution/region
-subagents/sales-decline/attribution/product
-subagents/sales-decline/attribution/channel
-subagents/sales-decline/anomaly_detection/sales-trend
-subagents/sales-decline/visualization/summary
+subagents/sales-decline/explorer/base
+subagents/sales-decline/analyst/region
+subagents/sales-decline/analyst/product
+subagents/sales-decline/analyst/channel
+subagents/sales-decline/reviewer/final-review
+subagents/sales-decline/visualizer/summary
 ```
 
 PostgreSQL Checkpointer 使用二者共同定位状态，不同 namespace 之间不会混合消息。
@@ -255,7 +255,7 @@ const attributionResults = await Promise.all(
   factors.map((factor) =>
     tools.delegate_agent({
       analysis_id: "sales-decline",
-      agent_type: "attribution",
+      agent_type: "analyst",
       session_id: factor.key,
       message: factor.instruction,
     }),
@@ -361,10 +361,10 @@ from dataclasses import dataclass
 from typing import Literal
 
 type AgentType = Literal[
-    "data_query",
-    "attribution",
-    "anomaly_detection",
-    "visualization",
+    "explorer",
+    "analyst",
+    "reviewer",
+    "visualizer",
 ]
 
 
@@ -427,7 +427,7 @@ class AgentRegistry:
 
 ```python
 @dataclass
-class AnalysisAgentBundle:
+class ConversationAgentRuntime:
     planner: CompiledStateGraph
     specialists: dict[AgentType, CompiledStateGraph]
     session_locks: dict[str, asyncio.Lock]
@@ -442,7 +442,7 @@ class AnalysisAgentBundle:
 4. 使用同一个 PostgreSQL Checkpointer 编译四个专业 Agent
 5. 创建 `delegate_agent` Tool，并绑定 Registry、Backend 和并发控制器
 6. 创建带 CodeInterpreterMiddleware 的 Planner
-7. 将 Bundle 缓存到 AgentManager
+7. 将会话运行时缓存到 AgentManager
 
 会话级缓存可以保证所有 Agent 使用同一个沙盒会话目录。
 
@@ -535,13 +535,13 @@ def build_subagent_config(
 例如：
 
 ```text
-attribution/region   ─┐
-attribution/product  ─┼─ 并行
-attribution/channel  ─┘
+analyst/region   ─┐
+analyst/product  ─┼─ 并行
+analyst/channel  ─┘
 
-attribution/region 初次执行
+analyst/region 初次执行
         ↓
-attribution/region 修补
+analyst/region 修补
         ↓
 同一个 Session 串行
 ```
@@ -569,8 +569,8 @@ attribution/region 修补
 ```mermaid
 sequenceDiagram
     participant P as Planner
-    participant Q as Data Query Session
-    participant A as Attribution Session
+    participant Q as Explorer Session
+    participant A as Analyst Session
     participant C as PostgreSQL Checkpointer
     participant S as Docker Sandbox
 
@@ -596,14 +596,14 @@ sequenceDiagram
 ```javascript
 let queryResult = await tools.delegate_agent({
   analysis_id: "sales-decline",
-  agent_type: "data_query",
+  agent_type: "explorer",
   session_id: "base",
   message: "生成用于销售额下降分析的基础数据集",
 });
 
 let regionResult = await tools.delegate_agent({
   analysis_id: "sales-decline",
-  agent_type: "attribution",
+  agent_type: "analyst",
   session_id: "region",
   message: `从地区维度分析 ${queryResult.artifacts[0].path}`,
 });
@@ -621,7 +621,7 @@ while (regionResult.status === "needs_repair" && repairRound < 3) {
 
   regionResult = await tools.delegate_agent({
     analysis_id: "sales-decline",
-    agent_type: "attribution",
+    agent_type: "analyst",
     session_id: "region",
     message: `上游已经修补，请读取新产物并重新分析：${queryResult.artifacts[0].path}`,
   });
@@ -665,15 +665,15 @@ Agent Session 在会话目录内继续隔离：
 │   └── sales-decline/
 │       ├── shared/
 │       └── sessions/
-│           ├── data_query/
+│           ├── explorer/
 │           │   └── base/
-│           ├── attribution/
+│           ├── analyst/
 │           │   ├── region/
 │           │   ├── product/
 │           │   └── channel/
-│           ├── anomaly_detection/
-│           │   └── sales-trend/
-│           └── visualization/
+│           ├── reviewer/
+│           │   └── final-review/
+│           └── visualizer/
 │               └── summary/
 └── downloads/
 ```
@@ -750,7 +750,7 @@ Planner 不直接拥有：
 - SQL 执行工具
 - 专业 Agent 的 Shell 执行能力
 
-### 14.2 Data Query Agent
+### 14.2 Explorer Agent
 
 职责：
 
@@ -770,15 +770,18 @@ Planner 不直接拥有：
 - `get_semantic_recall`
 - `merge_semantic_recalls`
 - `delete_semantic_recalls`
-- `run_readonly_sql`
+- `execute_sql`
+- 配置的全部 MCP 工具
 - 文件读写工具
+
+`execute_sql` 是唯一暴露给 Explorer Agent 的 SQL Tool。语法、只读边界、资产权限、字段、类型和 JOIN 校验在工具执行链前部完成；校验失败直接返回结构化问题和修正提示，不连接 Doris。
 
 每次 `search_semantic_resources` 成功召回后，使用 `search_id` 作为独立的
 `recall_id`，在会话级 Store 命名空间中保存检索请求、完整结果和创建时间。
 不同查询通过 `recall_id` 和原始请求区分。合并操作创建去重后的新快照并记录
 `source_recall_ids`，源记录保持不变；召回记录可以单独查询和删除。聊天接口提供
 分页列表、详情、合并和批量删除入口，删除会话时同步清理全部召回记录。
-语义工具从首次返回开始只向 `ToolMessage` 写入 `recall_id` 和引用类型。Data Query Agent 的
+语义工具从首次返回开始只向 `ToolMessage` 写入 `recall_id` 和引用类型。Explorer Agent 的
 Middleware 在每次模型调用前，对当前用户回合产生的引用按最新权限临时展开，展开内容只存在于
 `ModelRequest.messages`，不回写 Agent state 或 checkpoint。后续回合需要旧召回详情时，Agent 通过
 `get_semantic_recall` 重新读取；删除独立记录后，历史引用无法再展开内容。
@@ -794,7 +797,7 @@ Middleware 在每次模型调用前，对当前用户回合产生的引用按最
 - 指标口径
 - 数据质量提示
 
-### 14.3 Attribution Agent
+### 14.3 Analyst Agent
 
 职责：
 
@@ -815,26 +818,23 @@ Middleware 在每次模型调用前，对当前用户回合产生的引用按最
 
 归因结论默认属于变化贡献分析，不直接表述为严格因果关系。
 
-### 14.4 Anomaly Detection Agent
+### 14.4 Reviewer Agent
 
 职责：
 
-- 选择输入数据、时间字段、检测方法和阈值参数
-- 检查输入数据质量
-- 编写并运行适合当前数据特征的检测代码
-- 检测点异常、区间异常和趋势突变
-- 比较多个检测方法结果
-- 识别缺失值、重复值和时间断层
-- 解释异常结果并判断异常来源于业务变化还是数据质量
-- 按时间区间或业务维度继续下钻
-- 对不完整输入发起 Repair Request
+- 独立检查数据来源、SQL、分析代码、结论和交付产物
+- 复算关键结果并识别遗漏条件、错误聚合和样本偏差
+- 区分事实、推断和不确定性
+- 检查图表、表格和报告是否与底层数据一致
+- 保存审查代码、验证记录和反例证据
+- 对可修复的上游问题发起 Repair Request
 
 执行能力：
 
 - DeepAgents 内置 `execute`
 - DeepAgents 内置文件读取、写入、编辑和检索工具
 
-### 14.5 Visualization Agent
+### 14.5 Visualizer Agent
 
 职责：
 
@@ -853,7 +853,7 @@ Middleware 在每次模型调用前，对当前用户回合产生的引用按最
 
 ## 15. 执行能力与安全边界
 
-AI-native 编排负责决定分析路径。归因、异常检测和可视化 Agent 使用 DeepAgents 内置 Shell 与文件能力直接完成专业工作。自定义 Tool 只承载必须经过平台鉴权和审计的外部能力，例如语义检索与只读数据查询。
+AI-native 编排负责决定分析路径。归因、审查和可视化 Agent 使用 DeepAgents 内置 Shell 与文件能力直接完成专业工作。审查 Agent 可以核验数据查询结果，也可以核验归因、统计分析、图表和最终报告。自定义 Tool 只承载必须经过平台鉴权和审计的外部能力，例如语义检索与只读数据查询。
 
 ### 15.1 Meta Search Service
 
@@ -941,13 +941,13 @@ agent:
       - delegate_agent
 
   specialists:
-    data_query:
+    explorer:
       model: default
-    attribution:
+    analyst:
       model: default
-    anomaly_detection:
+    reviewer:
       model: default
-    visualization:
+    visualizer:
       model: default
 ```
 
@@ -993,25 +993,22 @@ app/agents/
 │   ├── agent.py
 │   ├── prompt.py
 │   └── tools.py
-├── data_query/
+├── explorer/
 │   ├── agent.py
 │   ├── prompt.py
 │   └── tools/
 │       ├── semantic_recall.py
 │       ├── query_support.py
-│       ├── check_sql_syntax.py
-│       └── run_readonly_sql.py
-├── attribution/
+│       └── execute_sql.py
+├── analyst/
 │   ├── agent.py
 │   └── prompt.py
-├── anomaly_detection/
+├── reviewer/
 │   ├── agent.py
 │   └── prompt.py
-├── visualization/
-│   ├── agent.py
-│   └── prompt.py
-└── shared/
-    └── specialist.py
+└── visualizer/
+    ├── agent.py
+    └── prompt.py
 
 app/services/
 ├── meta_search_service.py
@@ -1050,12 +1047,12 @@ Session 级 Docker Sandbox
 
 改造方向：
 
-- 缓存对象从单个 Planner 改为 `AnalysisAgentBundle`
+- 缓存对象从单个 Planner 改为 `ConversationAgentRuntime`
 - 为专业 Agent 按职责分配 Tool
 - 创建 Session-aware Delegate Service
 - Planner 加入 CodeInterpreterMiddleware
 - 增加 Session 锁和全局并发 Semaphore
-- `delete_agent` 同时清理 Bundle 的锁和 Agent 实例
+- `delete_agent` 同时清理会话运行时的锁和 Agent 实例
 
 ### 19.2 PostgreSQL Manager
 
@@ -1080,12 +1077,12 @@ Session 级 Docker Sandbox
 
 ```text
 Chat 请求
-  → AgentManager.get_agent_bundle
+  → AgentManager.get_conversation_runtime
   → 获取 DockerSandboxBackend
   → 构建 Specialist Agents
   → 构建 Delegate Service
   → 构建 Planner
-  → 缓存 Bundle
+  → 缓存 ConversationAgentRuntime
 ```
 
 ### 20.2 执行分析
@@ -1201,18 +1198,18 @@ analysis_failed
 
 ## 23. 异常处理
 
-| 异常 | 处理方式 |
-| --- | --- |
-| 未知 Agent 类型 | Delegate Service 直接拒绝 |
-| 非法 Session ID | 参数校验失败，不创建 checkpoint |
-| Session 正在执行 | 等待 Session 锁或超时返回 |
-| 不同 Session 并发超限 | 等待 Semaphore |
-| 专业 Agent 输出不符合 Schema | 允许一次结构化重试 |
-| 查询失败 | Data Query Agent 基于同一 Session 修正 |
-| Repair Loop 达到上限 | Planner 输出限制和未解决问题 |
-| Docker 容器异常 | Manager 恢复容器后使用 checkpoint 继续 |
-| 服务进程重启 | 从 PostgreSQL 和 Docker Volume 恢复 |
-| Interpreter Beta API 变化 | 将 Interpreter 构造集中封装，避免扩散调用 |
+| 异常                         | 处理方式                                  |
+| ---------------------------- | ----------------------------------------- |
+| 未知 Agent 类型              | Delegate Service 直接拒绝                 |
+| 非法 Session ID              | 参数校验失败，不创建 checkpoint           |
+| Session 正在执行             | 等待 Session 锁或超时返回                 |
+| 不同 Session 并发超限        | 等待 Semaphore                            |
+| 专业 Agent 输出不符合 Schema | 允许一次结构化重试                        |
+| 查询失败                     | Explorer Agent 基于同一 Session 修正      |
+| Repair Loop 达到上限         | Planner 输出限制和未解决问题              |
+| Docker 容器异常              | Manager 恢复容器后使用 checkpoint 继续    |
+| 服务进程重启                 | 从 PostgreSQL 和 Docker Volume 恢复       |
+| Interpreter Beta API 变化    | 将 Interpreter 构造集中封装，避免扩散调用 |
 
 ## 24. 测试方案
 
@@ -1246,8 +1243,8 @@ analysis_failed
 ### 24.4 修补测试
 
 - 归因 Agent 发现查询字段缺失
-- Planner 恢复原 Data Query Session
-- Data Query Agent 能看到此前 SQL 和 Tool 历史
+- Planner 恢复原 Explorer Session
+- Explorer Agent 能看到此前 SQL 和 Tool 历史
 - 修补后生成新版本数据集
 - 原归因 Session 能恢复历史并重新分析
 - 超过修补上限后停止
@@ -1257,7 +1254,7 @@ analysis_failed
 - PostgreSQL checkpoint 实际写入和恢复
 - Docker 沙盒文件跨 Agent 可见
 - Dynamic Interpreter 并行委派
-- Data Query、Attribution、Anomaly 和 Visualization 完整链路
+- Explorer、Analyst、Reviewer 和 Visualizer 完整链路
 - 会话删除同时清理数据库状态和沙盒目录
 
 ## 25. 评测指标
@@ -1292,53 +1289,55 @@ analysis_failed
 
 ## 26. 实施阶段
 
+状态说明：`[x]` 表示当前仓库已有实现和对应测试，`[ ]` 表示仍需完成。
+
 ### 阶段一：基础依赖与协议
 
-- [ ] 安装 `deepagents[quickjs]`
-- [ ] 增加 Agent 编排配置
-- [ ] 定义 AgentType、SessionKey 和结构化结果协议
-- [ ] 定义 RepairRequest
-- [ ] 编写 Session namespace 测试
+- [x] 安装 `deepagents[quickjs]`
+- [x] 增加 Agent 编排配置
+- [x] 定义 AgentType、SessionKey 和结构化结果协议
+- [x] 定义 RepairRequest
+- [x] 编写 Session namespace 测试
 
 ### 阶段二：专业 Agent 注册
 
-- [ ] 实现 Agent Registry
-- [ ] 拆分 Planner 和专业 Agent Prompt
-- [ ] 为每个专业 Agent 配置 Tool 白名单
-- [ ] 构建共享 Backend、Checkpointer 和 Store
-- [ ] 将 AgentManager 缓存升级为 AnalysisAgentBundle
+- [x] 实现 Agent Registry
+- [x] 拆分 Planner 和专业 Agent Prompt
+- [x] 为每个专业 Agent 配置 Tool 白名单
+- [x] 构建会话与 Session 级 Backend，共享 Checkpointer 和 Store
+- [x] 将 AgentManager 缓存升级为 ConversationAgentRuntime
 
 ### 阶段三：持久化委派
 
-- [ ] 实现 AgentSessionService
-- [ ] 实现 `delegate_agent`
-- [ ] 实现 Session 锁和并发 Semaphore
-- [ ] 使用 `checkpoint_ns` 隔离并行 Session
-- [ ] 验证相同 Session 消息续接
-- [ ] 验证同类型 Agent 多 Session 并行
+- [x] 实现 AgentSessionService
+- [x] 实现 `delegate_agent`
+- [x] 实现 Session 锁和并发 Semaphore
+- [x] 使用 `checkpoint_ns` 隔离并行 Session
+- [x] 验证相同 Session 消息续接
+- [x] 验证同类型 Agent 多 Session 并行
 
 ### 阶段四：Dynamic Interpreter
 
-- [ ] 接入 CodeInterpreterMiddleware
-- [ ] 配置 `mode="thread"`
-- [ ] 配置 PTC 白名单
-- [ ] 编写 Planner 动态编排 Prompt
-- [ ] 验证循环、分支和 `Promise.all`
+- [x] 接入 CodeInterpreterMiddleware
+- [x] 配置 `mode="thread"`
+- [x] 配置 PTC 白名单
+- [x] 编写 Planner 动态编排 Prompt
+- [ ] 增加真实 Planner 模型生成循环、分支和 `Promise.all` 的端到端验证
 
 ### 阶段五：修补闭环
 
-- [ ] 实现 Repair Request 解析
-- [ ] 实现修补轮次和深度限制
-- [ ] 实现原 Session 恢复
-- [ ] 实现下游 Session 重新分析
-- [ ] 记录修补事件和产物版本
+- [x] 实现 Repair Request 解析
+- [x] 实现修补轮次和深度限制
+- [x] 实现原 Session 恢复
+- [x] 实现下游原 Session 恢复与重新分析
+- [ ] 建立独立修补事件记录和平台级产物版本索引
 
 ### 阶段六：完整数据分析能力
 
-- [ ] 完善只读查询安全层
-- [ ] 完善专业 Agent 的 Session 级 Sandbox 隔离
-- [ ] 验证 Shell 与文件工具的权限、资源和网络边界
-- [ ] 建立代码、参数、输入引用和产物的审计链路
+- [x] 完善只读查询安全层
+- [x] 完善专业 Agent 的 Session 级 Sandbox 隔离
+- [x] 验证 Shell 与文件工具的权限、资源和网络边界
+- [ ] 建立代码、参数、输入引用和产物的完整审计链路
 - [ ] 建立端到端评测集
 
 ## 27. 验收标准
@@ -1402,8 +1401,8 @@ analysis_failed
 应对：
 
 - 每个 Agent 使用明确的 System Prompt 和 Tool 白名单
-- 查询能力集中到 Data Query Agent
-- 归因、异常检测和可视化 Agent 在各自 Session 中自主实现专业分析
+- 查询能力集中到 Explorer Agent
+- 归因、审查和可视化 Agent 在各自 Session 中自主实现专业分析或独立核验
 - Session Sandbox 统一限制文件、网络、资源和进程权限
 - 代码、参数和产物全部进入可追溯记录
 - Planner 只负责协调和汇总
@@ -1416,22 +1415,22 @@ analysis_failed
     ├── PostgreSQL 根线程消息历史
     ├── QuickJS Dynamic Interpreter
     └── delegate_agent
-        ├── data_query/base
+        ├── explorer/base
         │   ├── 独立 checkpoint namespace
         │   └── SQL 与数据集
-        ├── attribution/region
+        ├── analyst/region
         │   ├── 独立 checkpoint namespace
         │   └── 地区归因历史
-        ├── attribution/product
+        ├── analyst/product
         │   ├── 独立 checkpoint namespace
         │   └── 商品归因历史
-        ├── attribution/channel
+        ├── analyst/channel
         │   ├── 独立 checkpoint namespace
         │   └── 渠道归因历史
-        ├── anomaly_detection/sales-trend
+        ├── reviewer/final-review
         │   ├── 独立 checkpoint namespace
-        │   └── 异常检测历史
-        └── visualization/summary
+        │   └── 数据查询与分析结果审查历史
+        └── visualizer/summary
             ├── 独立 checkpoint namespace
             └── 图表与报告历史
 ```

@@ -1,4 +1,4 @@
-"""语义资源召回与记录管理工具"""
+"""Explorer 语义资源召回与记录管理工具"""
 
 from typing import Annotated, Any, Literal
 
@@ -6,11 +6,11 @@ from langchain.tools import ToolRuntime, tool
 from loguru import logger
 from pydantic import ValidationError
 
-from app.agents.data_query.recall_runtime import (
+from app.agents.explorer.recall_runtime import (
     create_authorized_semantic_recall_service,
     resolve_semantic_recall_context,
 )
-from app.agents.data_query.semantic_recall_protocol import (
+from app.agents.explorer.semantic_recall_protocol import (
     semantic_recall_reference,
 )
 from app.clients.embedding_client_manager import embedding_client_manager

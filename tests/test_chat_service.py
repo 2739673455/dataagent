@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 
 from app.agents.contracts import PlannerTurnContext
-from app.agents.manager import AnalysisAgentBundle
+from app.agents.manager import ConversationAgentRuntime
 from app.routes.api.v1.chat import schemas as chat_schema
 from app.services import chat_service
 
@@ -54,23 +54,23 @@ class _TurnManagerStub:
 
     def __init__(
         self,
-        bundle: AnalysisAgentBundle,
+        runtime: ConversationAgentRuntime,
         turn_context: PlannerTurnContext,
     ) -> None:
-        self.bundle = bundle
+        self.runtime = runtime
         self.turn_context = turn_context
         self.execution_count = 0
 
-    async def get_agent_bundle(
+    async def get_conversation_runtime(
         self,
         user_id: int,
         conversation_id: UUID,
-    ) -> AnalysisAgentBundle:
+    ) -> ConversationAgentRuntime:
         if user_id != self.turn_context.user_id:
             raise AssertionError("unexpected user_id")
         if conversation_id != self.turn_context.conversation_id:
             raise AssertionError("unexpected conversation_id")
-        return self.bundle
+        return self.runtime
 
     @asynccontextmanager
     async def execution(
@@ -78,14 +78,14 @@ class _TurnManagerStub:
         user_id: int,
         conversation_id: UUID,
         *,
-        bundle: AnalysisAgentBundle,
-    ) -> AsyncIterator[PlannerTurnContext]:
+        runtime: ConversationAgentRuntime,
+    ) -> AsyncGenerator[PlannerTurnContext, None]:
         if user_id != self.turn_context.user_id:
             raise AssertionError("unexpected user_id")
         if conversation_id != self.turn_context.conversation_id:
             raise AssertionError("unexpected conversation_id")
-        if bundle is not self.bundle:
-            raise AssertionError("unexpected bundle")
+        if runtime is not self.runtime:
+            raise AssertionError("unexpected runtime")
         self.execution_count += 1
         yield self.turn_context
 
@@ -103,16 +103,16 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         finish_reason: str,
     ) -> None:
         planner = _RepeatingPlanner(finish_reason)
-        bundle_mock = MagicMock()
-        bundle_mock.planner = planner
-        bundle = cast(AnalysisAgentBundle, bundle_mock)
+        runtime_mock = MagicMock()
+        runtime_mock.planner = planner
+        runtime = cast(ConversationAgentRuntime, runtime_mock)
         turn_context = PlannerTurnContext(
             user_id=7,
             conversation_id=_CONVERSATION_ID,
             planner_run_id=f"{finish_reason}-turn",
             max_continuations=2,
         )
-        manager = _TurnManagerStub(bundle, turn_context)
+        manager = _TurnManagerStub(runtime, turn_context)
 
         user_message = chat_schema.MessageSchema(
             message_id="user-message",

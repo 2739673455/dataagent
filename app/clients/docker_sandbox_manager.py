@@ -13,7 +13,7 @@ import tempfile
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -552,7 +552,7 @@ class _LifecycleGuard:
         self._local = threading.local()
 
     @contextmanager
-    def operation(self) -> Iterator[None]:
+    def operation(self) -> Generator[None, None, None]:
         """进入可并发执行的资源操作"""
         operation_depth = getattr(self._local, "operation_depth", 0)
         maintenance_depth = getattr(self._local, "maintenance_depth", 0)
@@ -580,7 +580,11 @@ class _LifecycleGuard:
                 self._condition.notify_all()
 
     @contextmanager
-    def maintenance(self, *, allow_deleted: bool = False) -> Iterator[None]:
+    def maintenance(
+        self,
+        *,
+        allow_deleted: bool = False,
+    ) -> Generator[None, None, None]:
         """独占资源并等待现有操作完成"""
         if getattr(self._local, "operation_depth", 0):
             raise RuntimeError("maintenance cannot start inside an operation")
@@ -602,7 +606,7 @@ class _LifecycleGuard:
                 self._condition.notify_all()
 
     @contextmanager
-    def try_maintenance(self) -> Iterator[bool]:
+    def try_maintenance(self) -> Generator[bool, None, None]:
         """仅在当前没有操作时尝试获取独占维护权"""
         if getattr(self._local, "operation_depth", 0):
             yield False
@@ -800,7 +804,7 @@ class DockerSandboxBackend(BaseSandbox):
         return GrepMatch(**{**match, "path": self._to_virtual_path(match["path"])})
 
     @contextmanager
-    def _operation(self) -> Iterator[None]:
+    def _operation(self) -> Generator[None, None, None]:
         """在资源生命周期保护下执行沙盒操作"""
         self._touch()
         existing_container = getattr(self._operation_local, "container", None)
@@ -1922,7 +1926,7 @@ class DockerSandboxManager:
         self,
         container: Container,
         path: str,
-    ) -> Iterator[tarfile.TarFile]:
+    ) -> Generator[tarfile.TarFile, None, None]:
         """流式打开容器中的 archive，适用于运行或停止状态"""
         chunks, _ = container.get_archive(path)
         raw_reader = _IteratorReader(iter(chunks))

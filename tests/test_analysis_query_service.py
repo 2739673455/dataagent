@@ -169,7 +169,7 @@ def make_session_key(conversation_id: UUID | None = None) -> AgentSessionKey:
         user_id=9,
         conversation_id=conversation_id or uuid4(),
         analysis_id="sales-drop-2026",
-        agent_type="data_query",
+        agent_type="explorer",
         session_id="orders-v1",
     )
 
@@ -336,7 +336,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.path, f"/{path}")
         self.assertTrue(
             result.path.startswith(
-                "/analyses/sales-drop-2026/sessions/data_query/orders-v1/query_"
+                "/analyses/sales-drop-2026/sessions/explorer/orders-v1/query_"
             )
         )
         rows = list(csv.reader(io.StringIO(content.decode())))

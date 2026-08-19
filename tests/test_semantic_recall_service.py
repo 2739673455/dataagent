@@ -18,13 +18,13 @@ from langgraph.runtime import Runtime
 from langgraph.store.memory import InMemoryStore
 from pydantic import BaseModel
 
-from app.agents.data_query.semantic_recall_middleware import (
+from app.agents.explorer.semantic_recall_middleware import (
     SemanticRecallExpansionMiddleware,
 )
-from app.agents.data_query.semantic_recall_protocol import (
+from app.agents.explorer.semantic_recall_protocol import (
     semantic_recall_reference,
 )
-from app.agents.data_query.tools import (
+from app.agents.explorer.tools import (
     get_semantic_recall,
     list_semantic_recalls,
     search_semantic_resources,
@@ -437,7 +437,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.agents.data_query.semantic_recall_middleware.get_config",
+                "app.agents.explorer.semantic_recall_middleware.get_config",
                 return_value={
                     "configurable": {
                         "user_id": 7,
@@ -446,7 +446,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
                 },
             ),
             patch(
-                "app.agents.data_query.semantic_recall_middleware."
+                "app.agents.explorer.semantic_recall_middleware."
                 "create_authorized_semantic_recall_service",
                 new=AsyncMock(return_value=restricted_service),
             ),
@@ -484,7 +484,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         graph = builder.compile(store=store)
 
         with patch(
-            "app.agents.data_query.tools.semantic_recall."
+            "app.agents.explorer.tools.semantic_recall."
             "create_authorized_semantic_recall_service",
             new=AsyncMock(return_value=service),
         ):
@@ -534,7 +534,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             build_authorization_filter(unrestricted=True),
         )
         with patch(
-            "app.agents.data_query.tools.semantic_recall."
+            "app.agents.explorer.tools.semantic_recall."
             "create_authorized_semantic_recall_service",
             new=AsyncMock(return_value=service),
         ):
