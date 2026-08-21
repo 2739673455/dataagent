@@ -18,6 +18,7 @@ from app.models.meta import (
 from app.repositories.meta_pg_repo import MetaPGRepo
 from app.repositories.source_doris_repo import SourceDorisRepo
 from app.services.meta_index_service import MetaIndexService
+from app.services.query_experience_service import QueryExperienceService
 
 
 class ImportMode(StrEnum):
@@ -55,11 +56,13 @@ class MetaImportService:
         meta_repo: MetaPGRepo,
         source_repo: SourceDorisRepo,
         meta_index_service: MetaIndexService,
+        query_experience_service: QueryExperienceService,
     ) -> None:
         """初始化元数据批量导入服务"""
         self._meta_repo = meta_repo
         self._source_repo = source_repo
         self._meta_index_service = meta_index_service
+        self._query_experience_service = query_experience_service
 
     async def import_metadata(
         self,
@@ -130,12 +133,8 @@ class MetaImportService:
             return result
 
         if mode is ImportMode.REPLACE:
-            await self._meta_index_service.delete_metric_indexes(
-                metric_changes.deleted
-            )
-            await self._meta_index_service.delete_column_indexes(
-                column_changes.deleted
-            )
+            await self._meta_index_service.delete_metric_indexes(metric_changes.deleted)
+            await self._meta_index_service.delete_column_indexes(column_changes.deleted)
 
         async with self._meta_repo.transaction():
             if mode is ImportMode.REPLACE:
@@ -161,6 +160,11 @@ class MetaImportService:
                     imported_metrics[metric_name],
                     force_version_increment=metric_name in metric_changes.updated,
                 )
+
+        await self._query_experience_service.invalidate_assets(
+            table_names=set(table_changes.updated + table_changes.deleted),
+            column_keys=set(column_changes.updated + column_changes.deleted),
+        )
 
         return result
 

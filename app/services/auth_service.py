@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.conf.app_config import AuthConfig
 from app.errors import auth_error
-from app.models.auth import DorisQueryIdentity, RefreshToken, User
+from app.models.auth import RefreshToken, User
 from app.repositories.auth_pg_repo import AuthPGRepo
 
 ARGON2_MAX_CONCURRENCY = 4
@@ -33,12 +33,6 @@ class PasswordManager(Protocol):
     async def hash(self, password: str) -> str: ...
 
     async def verify(self, password: str, password_hash: str) -> bool: ...
-
-
-class DefaultQueryIdentityProvider(Protocol):
-    """注册所需的缺省 Doris 查询身份读取接口"""
-
-    async def get_default(self) -> DorisQueryIdentity | None: ...
 
 
 class Argon2PasswordManager:
@@ -228,64 +222,21 @@ class JWTCodec:
 
 
 class AuthService:
-    """注册、登录与令牌生命周期服务"""
+    """管理员引导、登录与令牌生命周期服务"""
 
     def __init__(
         self,
         repo: AuthPGRepo,
-        identity_provider: DefaultQueryIdentityProvider,
         config: AuthConfig,
         password_manager: PasswordManager,
         *,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self._repo = repo
-        self._identity_provider = identity_provider
         self._config = config
         self._password_manager = password_manager
         self._codec = JWTCodec(config)
         self._now = now or (lambda: datetime.now(UTC))
-
-    async def register(
-        self,
-        username: str,
-        email: str,
-        password: str,
-    ) -> tuple[User, TokenPair]:
-        """注册用户并签发首个令牌对"""
-        normalized_username = self.normalize_username(username)
-        normalized_email = self.normalize_email(email)
-        self._validate_new_identity(normalized_username, normalized_email)
-        self._validate_password(password)
-        password_hash = await self._password_manager.hash(password)
-
-        try:
-            async with self._repo.transaction():
-                await self._repo.lock_security_mutation()
-                if await self._repo.get_user_by_username(
-                    normalized_username
-                ) or await self._repo.get_user_by_email(normalized_email):
-                    raise auth_error.UserAlreadyExistsError
-                default_identity = await self._identity_provider.get_default()
-                if default_identity is None:
-                    raise auth_error.DefaultDorisRoleUnavailableError
-                user = await self._repo.add_user(
-                    User(
-                        username=normalized_username,
-                        email=normalized_email,
-                        password_hash=password_hash,
-                        is_active=True,
-                        is_admin=False,
-                        doris_role_name=default_identity.role_name,
-                    )
-                )
-                loaded_user = await self._repo.get_user_by_id(user.id)
-                if loaded_user is None:
-                    raise RuntimeError("Registered user could not be reloaded")
-                token_pair = await self._issue_token_pair(loaded_user, uuid4())
-        except IntegrityError as exc:
-            raise auth_error.UserAlreadyExistsError from exc
-        return loaded_user, token_pair
 
     async def bootstrap_admin(
         self,

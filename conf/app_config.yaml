@@ -39,6 +39,7 @@ elasticsearch:
   column_index: data-agent-column
   metric_index: data-agent-metric
   value_index: data-agent-value
+  query_experience_index: data-agent-query-experience
   embedding_size: 1024
 
 embedding:

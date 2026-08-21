@@ -27,6 +27,7 @@ from app.agents.contracts import (
     AgentSessionKey,
     AgentType,
     PlannerTurnContext,
+    SpecialistResult,
     get_thread_id,
 )
 from app.agents.explorer.agent import create_explorer_agent
@@ -36,6 +37,7 @@ from app.agents.explorer.tools import (
     get_semantic_recall,
     list_semantic_recalls,
     merge_semantic_recalls,
+    search_query_experiences,
     search_semantic_resources,
 )
 from app.agents.mcp import get_mcp_tools
@@ -49,11 +51,17 @@ from app.clients.docker_sandbox_manager import (
     DockerSandboxBackend,
     docker_sandbox_manager,
 )
+from app.clients.embedding_client_manager import embedding_client_manager
+from app.clients.es_client_manager import es_client_manager
 from app.clients.langgraph_postgres_manager import (
     LangGraphPostgresManager,
     langgraph_postgres_manager,
 )
+from app.clients.postgres_client_manager import meta_postgres_client_manager
 from app.conf import app_config
+from app.repositories.query_experience_es_repo import QueryExperienceESRepo
+from app.repositories.query_experience_pg_repo import QueryExperiencePGRepo
+from app.services.query_experience_service import QueryExperienceService
 
 type ConversationKey = tuple[int, UUID]
 
@@ -170,6 +178,7 @@ class AgentManager:
                 get_semantic_recall,
                 merge_semantic_recalls,
                 delete_semantic_recalls,
+                search_query_experiences,
                 execute_sql,
             ]
             mcp_tools = await get_mcp_tools()
@@ -240,6 +249,30 @@ class AgentManager:
 
         registry = AgentRegistry(definitions, build_session_agent)
         orchestration_cfg = app_config.cfg.agent.orchestration
+
+        async def observe_specialist_result(
+            session_key: AgentSessionKey,
+            result: SpecialistResult,
+        ) -> None:
+            if session_key.agent_type != "explorer":
+                return
+            artifact_paths = {artifact.path for artifact in result.artifacts}
+            async with meta_postgres_client_manager.session() as meta_session:
+                service = QueryExperienceService(
+                    QueryExperiencePGRepo(meta_session),
+                    QueryExperienceESRepo(es_client_manager.get_client()),
+                    embedding_client_manager.get_client(),
+                    data_source=app_config.cfg.query.data_source,
+                    database_name=app_config.cfg.doris.database,
+                )
+                await service.promote_by_artifacts(
+                    user_id=session_key.user_id,
+                    conversation_id=session_key.conversation_id,
+                    analysis_id=session_key.analysis_id,
+                    session_id=session_key.session_id,
+                    artifact_paths=artifact_paths,
+                )
+
         session_service = AgentSessionService(
             registry=registry,
             user_id=user_id,
@@ -263,6 +296,7 @@ class AgentManager:
                 f"{key.checkpoint_ns}",
                 timeout=orchestration_cfg.session_lock_timeout,
             ),
+            result_observer=observe_specialist_result,
         )
         delegate_agent = create_delegate_agent_tool(session_service)
         interpreter_cfg = app_config.cfg.agent.interpreter

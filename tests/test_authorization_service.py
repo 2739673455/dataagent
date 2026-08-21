@@ -246,3 +246,56 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
             password="gen-pwd",
             workload_group="normal",
         )
+
+    async def test_create_user_persists_user_with_assigned_role(self) -> None:
+        self.repo.get_user_by_username = AsyncMock(return_value=None)
+        self.repo.get_user_by_email = AsyncMock(return_value=None)
+        self.repo.add_user = AsyncMock(side_effect=lambda u: u)
+        self.identity_repo.get = AsyncMock(return_value=query_identity(role="sales"))
+
+        user = await self.service().create_user(
+            username="new_operator",
+            email="operator@example.com",
+            password="password123",
+            doris_role="sales",
+            is_admin=False,
+        )
+
+        self.assertEqual(user.username, "new_operator")
+        self.assertEqual(user.email, "operator@example.com")
+        self.assertEqual(user.doris_role_name, "sales")
+        self.assertFalse(user.is_admin)
+        self.repo.add_user.assert_awaited_once()
+
+    async def test_create_user_rejects_duplicate_username(self) -> None:
+        self.repo.get_user_by_username = AsyncMock(return_value=build_user())
+        service = self.service()
+
+        with self.assertRaises(auth_error.UsernameAlreadyExistsError):
+            await service.create_user(
+                username="analyst",
+                email="diff@example.com",
+                password="password123",
+            )
+
+    async def test_delete_user_removes_user_and_revokes_tokens(self) -> None:
+        target = build_user(user_id=10, is_admin=False)
+        self.repo.get_user_by_id = AsyncMock(return_value=target)
+        self.repo.delete_user = AsyncMock()
+
+        await self.service().delete_user(10, operator_id=1)
+
+        self.repo.revoke_user_refresh_tokens.assert_awaited_once()
+        self.repo.delete_user.assert_awaited_once_with(target)
+
+    async def test_delete_self_is_rejected(self) -> None:
+        with self.assertRaises(auth_error.InvalidUserMutationError):
+            await self.service().delete_user(1, operator_id=1)
+
+    async def test_delete_last_administrator_is_rejected(self) -> None:
+        admin = build_user(user_id=2, is_admin=True)
+        self.repo.get_user_by_id = AsyncMock(return_value=admin)
+        self.repo.count_admins = AsyncMock(return_value=1)
+
+        with self.assertRaises(auth_error.LastAdministratorError):
+            await self.service().delete_user(2, operator_id=1)

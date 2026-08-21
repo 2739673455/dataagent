@@ -109,20 +109,6 @@ class AuthRateLimitServiceTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(auth_error.RateLimitExceededError):
             await service.check_login("192.0.2.2", " user@example.COM ")
 
-    async def test_register_and_refresh_have_independent_ip_buckets(self) -> None:
-        service = AuthRateLimitService(
-            register_ip=build_limiter(1),
-            refresh_ip=build_limiter(1),
-        )
-        await service.check_register("192.0.2.1")
-        await service.check_refresh("192.0.2.1")
-
-        with self.assertRaises(auth_error.RateLimitExceededError):
-            await service.check_register("192.0.2.1")
-        with self.assertRaises(auth_error.RateLimitExceededError):
-            await service.check_refresh("192.0.2.1")
-
-
 class AuthRateLimitRouterTest(unittest.IsolatedAsyncioTestCase):
     """验证认证路由返回 RFC Problem 429 响应"""
 
@@ -184,27 +170,9 @@ class AuthRateLimitRouterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second.json()["retry_after_seconds"], 60)
         service.login.assert_awaited_once()
 
-    async def test_register_is_rate_limited_by_client_ip(self) -> None:
-        service = MagicMock()
-        service.register = AsyncMock(side_effect=auth_error.UserAlreadyExistsError())
-        limiter = AuthRateLimitService(register_ip=build_limiter(1))
-        app = self.build_app(service, limiter)
-        body = {
-            "username": "new-user",
-            "email": "new@example.com",
-            "password": "long-enough-password",
-        }
-
-        async with AsyncClient(
-            transport=ASGITransport(app=app, client=("192.0.2.20", 1234)),
-            base_url="http://test",
-        ) as client:
-            first = await client.post("/api/v1/auth/register", json=body)
-            second = await client.post("/api/v1/auth/register", json=body)
-
-        self.assertEqual(first.status_code, 409)
-        self.assertEqual(second.status_code, 429)
-        service.register.assert_awaited_once()
+    def test_public_auth_router_has_no_register_endpoint(self) -> None:
+        paths = {route.path for route in router.routes if isinstance(route, APIRoute)}
+        self.assertNotIn("/register", paths)
 
     async def test_refresh_is_rate_limited_by_client_ip(self) -> None:
         service = MagicMock()

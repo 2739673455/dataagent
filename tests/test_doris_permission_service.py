@@ -163,7 +163,11 @@ class DorisRoleRepositoryIdentifierTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             DorisRoleRepository.quote_identifier("orders`; DROP ROLE admin")
         with self.assertRaises(ValueError):
-            DorisRoleRepository.quote_role("sales' OR '1'='1")
+            DorisRoleRepository.quote_role("sales` OR `1`=`1")
+        with self.assertRaises(ValueError):
+            DorisRoleRepository.quote_user("sales' OR '1'='1")
+        self.assertEqual(DorisRoleRepository.quote_role("sales"), "`sales`")
+        self.assertEqual(DorisRoleRepository.quote_user("sales"), "'sales'")
 
 
 class DorisRoleRepositoryIdentityTest(unittest.IsolatedAsyncioTestCase):
@@ -186,5 +190,5 @@ class DorisRoleRepositoryIdentityTest(unittest.IsolatedAsyncioTestCase):
             )
 
         statements = [call.args[0] for call in repo._execute.await_args_list]  # pyright: ignore[reportPrivateUsage]
-        self.assertEqual(statements[-1], "DROP ROLE IF EXISTS 'sales'")
+        self.assertEqual(statements[-1], "DROP ROLE IF EXISTS `sales`")
         self.assertFalse(any(statement.startswith("DROP USER") for statement in statements))

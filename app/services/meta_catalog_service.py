@@ -1,6 +1,5 @@
 """元数据目录管理服务"""
 
-import asyncio
 from typing import cast
 
 from app.conf.meta_config import (
@@ -25,6 +24,7 @@ from app.repositories.source_doris_repo import SourceDorisRepo
 from app.services.authorization_service import AssetAccessPolicy
 from app.services.meta_index_service import MetaIndexService
 from app.services.metadata_authorization_filter import MetadataAuthorizationFilter
+from app.services.query_experience_service import QueryExperienceService
 
 
 class MetaCatalogService:
@@ -35,6 +35,7 @@ class MetaCatalogService:
         meta_repo: MetaPGRepo,
         source_repo: SourceDorisRepo,
         meta_index_service: MetaIndexService,
+        query_experience_service: QueryExperienceService,
         asset_policy: AssetAccessPolicy,
         data_source: str,
         database_name: str,
@@ -43,6 +44,7 @@ class MetaCatalogService:
         self._meta_repo = meta_repo
         self._source_repo = source_repo
         self._meta_index_service = meta_index_service
+        self._query_experience_service = query_experience_service
         self._authorization_filter = MetadataAuthorizationFilter(
             asset_policy,
             data_source,
@@ -51,10 +53,8 @@ class MetaCatalogService:
 
     async def list_table_infos(self) -> list[TableInfo]:
         """查询全部表元数据"""
-        table_infos, column_infos = await asyncio.gather(
-            self._meta_repo.list_table_infos(),
-            self._meta_repo.list_column_infos(),
-        )
+        table_infos = await self._meta_repo.list_table_infos()
+        column_infos = await self._meta_repo.list_column_infos()
         allowed_columns = self._authorization_filter.allowed_column_keys(column_infos)
         return self._authorization_filter.filter_tables(
             table_infos,
@@ -79,10 +79,8 @@ class MetaCatalogService:
 
     async def list_metric_infos(self) -> list[MetricInfo]:
         """查询全部指标元数据"""
-        metric_infos, column_infos = await asyncio.gather(
-            self._meta_repo.list_metric_infos(),
-            self._meta_repo.list_column_infos(),
-        )
+        metric_infos = await self._meta_repo.list_metric_infos()
+        column_infos = await self._meta_repo.list_column_infos()
         allowed_columns = self._authorization_filter.allowed_column_keys(column_infos)
         return self._authorization_filter.filter_metrics(
             metric_infos,
@@ -102,13 +100,18 @@ class MetaCatalogService:
             )
         primary_key_columns = await self._source_repo.get_primary_key_columns(t_name)
         async with self._meta_repo.transaction():
-            await self._meta_repo.upsert_table_info(
+            changed = await self._meta_repo.upsert_table_info(
                 TableInfo(
                     name=t_name,
                     role=role,
                     primary_key_columns=primary_key_columns,
                     description=description,
                 )
+            )
+        if changed:
+            await self._query_experience_service.invalidate_assets(
+                table_names={t_name},
+                column_keys=set(),
             )
 
     async def upsert_column_info(
@@ -170,7 +173,7 @@ class MetaCatalogService:
                             f"{reference_t_name}.{reference_c_name}"
                         )
                     ) from exc
-            await self._meta_repo.upsert_column_info(
+            changed = await self._meta_repo.upsert_column_info(
                 ColumnInfo(
                     t_name=t_name,
                     name=c_name,
@@ -182,6 +185,11 @@ class MetaCatalogService:
                     reference_t_name=reference_t_name,
                     reference_c_name=reference_c_name,
                 )
+            )
+        if changed:
+            await self._query_experience_service.invalidate_assets(
+                table_names=set(),
+                column_keys={(t_name, c_name)},
             )
 
     async def upsert_metric_info(self, metric_info: MetricInfo) -> None:
@@ -225,6 +233,10 @@ class MetaCatalogService:
         async with self._meta_repo.transaction():
             await self._meta_repo.delete_column_infos(column_keys)
             await self._meta_repo.delete_table_infos([t_name])
+        await self._query_experience_service.invalidate_assets(
+            table_names={t_name},
+            column_keys=set(),
+        )
 
     async def delete_column_info(self, t_name: str, c_name: str) -> None:
         """删除字段元数据和索引"""
@@ -236,6 +248,10 @@ class MetaCatalogService:
         await self._meta_index_service.delete_column_indexes(column_keys)
         async with self._meta_repo.transaction():
             await self._meta_repo.delete_column_infos(column_keys)
+        await self._query_experience_service.invalidate_assets(
+            table_names=set(),
+            column_keys={(t_name, c_name)},
+        )
 
     async def delete_metric_info(self, metric_name: str) -> None:
         """删除指标元数据和索引"""

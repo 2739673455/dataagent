@@ -1,23 +1,301 @@
 import asyncio
+import base64
+import json
+import mimetypes
+import uuid
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    ChatMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from loguru import logger
+from pydantic import ValidationError
 
-from app.agents.contracts import PlannerTurnContext, build_planner_config
+from app.agents.contracts import (
+    DelegateAgentResult,
+    PlannerTurnContext,
+    build_planner_config,
+)
 from app.agents.manager import ConversationAgentRuntime, agent_manager
+from app.clients.docker_sandbox_manager import docker_sandbox_manager
 from app.clients.langgraph_postgres_manager import langgraph_postgres_manager
-from app.mappers import message_mapper
 from app.repositories.semantic_recall_pg_repo import SemanticRecallPGRepo
 from app.routes.api.v1.chat import schemas as chat_schema
+
+_MESSAGE_METADATA_KEY = "dataagent_message"
+_IMAGE_SUFFIXES = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
+
+
+def _content_to_parts(content: Any) -> list[chat_schema.MessagePart]:
+    """将 LangChain 消息内容转换为接口消息片段"""
+    if isinstance(content, str):
+        return [chat_schema.TextContent(text=content)]
+    if not isinstance(content, list):
+        return [chat_schema.TextContent(text=str(content))]
+
+    parts: list[chat_schema.MessagePart] = []
+    for item in content:
+        if isinstance(item, str):
+            parts.append(chat_schema.TextContent(text=item))
+            continue
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") in {"text", "input_text", "output_text"} and isinstance(
+            item.get("text"), str
+        ):
+            parts.append(chat_schema.TextContent(text=item["text"]))
+            continue
+        if item.get("type") != "image_url":
+            continue
+        image_url = item.get("image_url")
+        if isinstance(image_url, dict):
+            image_url = image_url.get("url")
+        if isinstance(image_url, str):
+            parts.append(chat_schema.ImageContent(image_url=image_url))
+    return parts
+
+
+def _schema_from_metadata(
+    message: BaseMessage,
+) -> chat_schema.MessageResponse | None:
+    """从 LangGraph 消息元数据恢复用户原始消息"""
+    payload = message.additional_kwargs.get(_MESSAGE_METADATA_KEY)
+    if not isinstance(payload, dict):
+        return None
+    try:
+        schema = chat_schema.MessageResponse.model_validate(payload)
+    except ValidationError:
+        logger.warning(f"Invalid persisted message metadata: message_id={message.id}")
+        return None
+    return schema.model_copy(update={"message_id": message.id})
+
+
+def _delegate_result_attachments(
+    message: ToolMessage,
+) -> list[chat_schema.Attachment]:
+    """从委派结果的稳定协议中提取可下载产物"""
+    if message.name != "delegate_agent":
+        return []
+    content = message.content
+    if isinstance(content, str):
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            return []
+    elif isinstance(content, dict):
+        payload = content
+    else:
+        return []
+    try:
+        result = DelegateAgentResult.model_validate(payload)
+    except ValidationError:
+        logger.warning(
+            f"Invalid delegate result payload: message_id={message.id}, "
+            f"tool_call_id={message.tool_call_id}"
+        )
+        return []
+    return [
+        chat_schema.Attachment(
+            f_path=artifact.path.removeprefix("/"),
+            media_type=artifact.media_type,
+            description=artifact.description,
+        )
+        for artifact in result.artifacts
+    ]
+
+
+def _langchain_message_to_schema(
+    message: BaseMessage,
+) -> chat_schema.MessageResponse | None:
+    """将 LangChain 消息转换为接口消息"""
+    if stored_schema := _schema_from_metadata(message):
+        return stored_schema
+    if isinstance(message, ToolMessage):
+        return chat_schema.MessageResponse(
+            message_id=message.id,
+            role="tool",
+            parts=[
+                chat_schema.ToolResultPart(
+                    tool_call_id=message.tool_call_id,
+                    name=message.name or "",
+                    content=str(message.content),
+                )
+            ],
+            attachments=_delegate_result_attachments(message) or None,
+        )
+
+    if isinstance(message, AIMessage):
+        role: chat_schema.MessageRole = "assistant"
+    elif isinstance(message, HumanMessage):
+        role = "user"
+    elif isinstance(message, SystemMessage):
+        role = "system"
+    elif isinstance(message, ChatMessage) and message.role in {
+        "user",
+        "assistant",
+        "tool",
+        "system",
+    }:
+        role = cast(chat_schema.MessageRole, message.role)
+    else:
+        return None
+
+    parts = _content_to_parts(message.content)
+    if isinstance(message, AIMessage):
+        parts.extend(
+            chat_schema.ToolCallPart(
+                tool_call_id=tool_call.get("id") or "",
+                name=tool_call.get("name") or "",
+                args=tool_call.get("args", {}),
+            )
+            for tool_call in message.tool_calls
+        )
+
+    return chat_schema.MessageResponse(
+        message_id=message.id,
+        role=role,
+        parts=parts,
+        finish_reason=cast(
+            chat_schema.FinishReason | None,
+            message.response_metadata.get("finish_reason"),
+        ),
+    )
+
+
+async def _build_image_data_url(
+    user_id: int,
+    conversation_id: UUID,
+    attachment: chat_schema.AttachmentReference,
+) -> str:
+    """读取沙盒中的图片附件，并转换为 data URL"""
+    mime_type, _ = mimetypes.guess_type(attachment.f_path)
+    if not mime_type:
+        mime_type = "application/octet-stream"
+
+    content = await docker_sandbox_manager.download_file(
+        user_id,
+        conversation_id,
+        attachment.f_path,
+    )
+    encoded = base64.b64encode(content).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def _append_prompt(
+    content_parts: list[dict[str, Any]],
+    header: str,
+    lines: list[str],
+) -> None:
+    """向 content_parts 追加提示文本，与已有内容间用换行符分隔"""
+    prefix = "\n\n" if content_parts else ""
+    content_parts.append(
+        chat_schema.TextContent(
+            text=prefix + header + "\n" + "\n".join(lines)
+        ).model_dump()
+    )
+
+
+async def _process_attachments(
+    content_parts: list[dict[str, Any]],
+    attachments: list[chat_schema.AttachmentReference],
+    user_id: int,
+    conversation_id: UUID,
+) -> None:
+    """处理附件：文件追加提示文本，图片转换为 base64 data URL"""
+    images: list[chat_schema.AttachmentReference] = []
+    documents: list[chat_schema.AttachmentReference] = []
+
+    for attachment in attachments:
+        suffix = (
+            attachment.f_path.rsplit(".", 1)[-1].lower()
+            if "." in attachment.f_path
+            else ""
+        )
+        (images if suffix in _IMAGE_SUFFIXES else documents).append(attachment)
+
+    if documents:
+        _append_prompt(
+            content_parts,
+            "用户上传的以下文件已保存到当前工作区，可直接读取：",
+            [f"- 文件：`{attachment.f_path}`" for attachment in documents],
+        )
+
+    if not images:
+        return
+
+    lost: list[str] = []
+    for attachment in images:
+        try:
+            content_parts.append(
+                chat_schema.ImageContent(
+                    image_url=await _build_image_data_url(
+                        user_id,
+                        conversation_id,
+                        attachment,
+                    )
+                ).model_dump()
+            )
+        except OSError:
+            logger.warning(
+                "Attachment image is unavailable: "
+                f"conversation_id={conversation_id}, file={attachment.f_path}"
+            )
+            lost.append(f"- 图片：`{attachment.f_path}`")
+    if lost:
+        _append_prompt(
+            content_parts,
+            "用户之前上传了一些图片，但图片当前已不存在：",
+            lost,
+        )
+
+
+async def _schema_to_human_message(
+    message: chat_schema.UserMessageRequest,
+    user_id: int,
+    conversation_id: UUID,
+) -> HumanMessage:
+    """将用户消息转换为 LangChain 消息"""
+    content_parts = [part.model_dump() for part in message.parts]
+
+    if message.attachments:
+        await _process_attachments(
+            content_parts,
+            message.attachments,
+            user_id,
+            conversation_id,
+        )
+
+    stored_parts: list[chat_schema.MessagePart] = [*message.parts]
+    metadata = chat_schema.MessageResponse(
+        role="user",
+        parts=stored_parts,
+        attachments=(
+            [
+                chat_schema.Attachment(f_path=attachment.f_path)
+                for attachment in message.attachments
+            ]
+            if message.attachments
+            else None
+        ),
+    ).model_dump(mode="json", exclude={"message_id"})
+    return HumanMessage(
+        id=str(uuid.uuid4()),
+        content=cast(list[str | dict[Any, Any]], content_parts),
+        additional_kwargs={_MESSAGE_METADATA_KEY: metadata},
+    )
 
 
 async def list_messages(
     user_id: int,
     conversation_id: UUID,
-) -> list[chat_schema.MessageSchema]:
+) -> list[chat_schema.MessageResponse]:
     """从 LangGraph 最新线程状态读取消息"""
     runtime = await agent_manager.get_conversation_runtime(user_id, conversation_id)
     state = await runtime.planner.aget_state(
@@ -27,11 +305,11 @@ async def list_messages(
     if not isinstance(messages, list):
         return []
 
-    result: list[chat_schema.MessageSchema] = []
+    result: list[chat_schema.MessageResponse] = []
     for message in messages:
         if not isinstance(message, BaseMessage):
             continue
-        if schema := message_mapper.langchain_message_to_schema(message):
+        if schema := _langchain_message_to_schema(message):
             result.append(schema)
     return result
 
@@ -66,18 +344,18 @@ async def _execute_agent(
 async def run_agent_turn(
     user_id: int,
     conversation_id: UUID,
-    user_message: chat_schema.MessageSchema,
+    user_message: chat_schema.UserMessageRequest,
     cancel: asyncio.Event,
-) -> AsyncGenerator[chat_schema.MessageSchema]:
+) -> AsyncGenerator[chat_schema.MessageResponse]:
     """执行一轮 Agent 对话并流式返回响应"""
     logger.info(
         f"agent turn started: user_id={user_id}, conversation_id={conversation_id}, "
-        f"message_id={user_message.message_id}, parts={len(user_message.parts)}, "
+        f"parts={len(user_message.parts)}, "
         f"attachments={len(user_message.attachments or ())}"
     )
 
     input_messages: list[BaseMessage] = [
-        await message_mapper.schema_to_human_message(
+        await _schema_to_human_message(
             user_message,
             user_id,
             conversation_id,
@@ -103,7 +381,14 @@ async def run_agent_turn(
                     logger.info(f"{conversation_id=}: agent cancelled")
                     break
 
-                responses = message_mapper.agent_chunk_to_schemas(chunk)
+                responses: list[chat_schema.MessageResponse] = []
+                for node in ("model", "tools"):
+                    messages = chunk.get(node, {}).get("messages")
+                    if not isinstance(messages, list):
+                        continue
+                    for message in messages:
+                        if response := _langchain_message_to_schema(message):
+                            responses.append(response)
                 logger.debug(
                     f"agent stream update: user_id={user_id}, "
                     f"conversation_id={conversation_id}, nodes={tuple(chunk)}, "

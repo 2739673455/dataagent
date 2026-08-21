@@ -15,6 +15,10 @@ export interface Attachment {
   preview_url?: string;
 }
 
+export interface AttachmentReference {
+  f_path: string;
+}
+
 export interface InteractiveTableArtifact {
   format: "dataagent-interactive-table-v1";
   source_path: string;
@@ -34,26 +38,32 @@ export interface ImageContent {
   image_url: string;
 }
 
-export interface ToolCallPart {
+interface ToolCallPart {
   type: "tool_call";
   tool_call_id: string;
   name: string;
   args: Record<string, unknown>;
 }
 
-export interface ToolResultPart {
+interface ToolResultPart {
   type: "tool_result";
   tool_call_id: string;
   name: string;
   content: string;
 }
 
-export type MessagePart = TextContent | ImageContent | ToolCallPart | ToolResultPart;
+export type UserMessagePart = TextContent | ImageContent;
+export type MessagePart = UserMessagePart | ToolCallPart | ToolResultPart;
 
-export type MessageRole = "user" | "assistant" | "tool" | "system";
-export type FinishReason = string;
+type MessageRole = "user" | "assistant" | "tool" | "system";
+type FinishReason = string;
 
-export interface MessageSchema {
+export interface UserMessageRequest {
+  parts: UserMessagePart[];
+  attachments?: AttachmentReference[] | null;
+}
+
+export interface MessageResponse {
   message_id?: string | null;
   role: MessageRole;
   parts: MessagePart[];
@@ -62,7 +72,7 @@ export interface MessageSchema {
 }
 
 export interface MessageListResponse {
-  messages: MessageSchema[];
+  messages: MessageResponse[];
 }
 
 export interface UploadAttachmentResponse {
@@ -71,20 +81,20 @@ export interface UploadAttachmentResponse {
 
 export interface ChatStreamRequest {
   conversation_id: string;
-  message: MessageSchema;
+  message: UserMessageRequest;
 }
 
-export interface ChatStreamMessageEvent {
+interface ChatStreamMessageEvent {
   type: "message";
-  message: MessageSchema;
+  message: MessageResponse;
 }
 
-export interface ChatStreamErrorEvent {
+interface ChatStreamErrorEvent {
   type: "error";
   content: string;
 }
 
-export interface ChatStreamDoneEvent {
+interface ChatStreamDoneEvent {
   type: "done";
 }
 

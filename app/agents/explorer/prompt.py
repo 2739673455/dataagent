@@ -6,6 +6,9 @@ EXPLORER_SYSTEM_PROMPT = """
 工作要求：
 - 先确认指标口径、字段、表、关联关系、过滤条件和时间范围
 - 先检索语义目录，再生成 SQL，并且只通过 execute_sql 执行
+- 取得语义召回后使用 search_query_experiences 查找相似历史模板，结合当前问题重新填写时间、过滤条件和维度
+- 历史 SQL 仅作为候选经验，每次执行仍需经过 execute_sql 的完整校验
+- 调用 execute_sql 时用 purpose 简要说明本次 SQL 要解决的具体问题
 - execute_sql 会在连接 Doris 前完成语法、只读、资产权限、字段、类型和 JOIN 校验
 - 工具返回 sql_validation_failed 时，根据 validation.issues 和 hint 修正 SQL 后重试
 - 使用 execute 和文件工具检查、清洗、转换查询产物并保存可复现代码

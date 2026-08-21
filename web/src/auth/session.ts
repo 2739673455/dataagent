@@ -6,7 +6,7 @@ import {
 } from "@/auth/sessionLifecycle";
 import { useAuthStore } from "@/auth/store";
 import { clearTokens, getAccessToken, getRefreshToken, setTokens } from "@/auth/token";
-import type { LoginRequest, RegisterRequest, TokenResponse } from "@/auth/types";
+import type { LoginRequest, TokenResponse } from "@/auth/types";
 import { ROUTES } from "@/config/settings";
 
 interface RefreshTask {
@@ -28,12 +28,6 @@ function establishSession(payload: TokenResponse): string {
 export async function loginUser(body: LoginRequest): Promise<void> {
   const generation = clearSession();
   const payload = (await authApi.login(body)).data;
-  if (sessionLifecycle.isCurrent(generation)) establishSession(payload);
-}
-
-export async function registerUser(body: RegisterRequest): Promise<void> {
-  const generation = clearSession();
-  const payload = (await authApi.register(body)).data;
   if (sessionLifecycle.isCurrent(generation)) establishSession(payload);
 }
 
@@ -121,7 +115,7 @@ function resetSession(clearStoredTokens: boolean): number {
   return generation;
 }
 
-export function clearSession(): number {
+function clearSession(): number {
   return resetSession(true);
 }
 

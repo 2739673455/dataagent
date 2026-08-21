@@ -16,7 +16,13 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { chatApi } from "@/api/chat";
 import { cn, getAttachmentName } from "@/lib/utils";
-import type { Attachment, ImageContent, MessagePart, MessageSchema, TextContent } from "@/types";
+import type {
+  Attachment,
+  ImageContent,
+  MessagePart,
+  MessageResponse,
+  TextContent,
+} from "@/types";
 
 type MessageDisplayItem = {
   key: string;
@@ -24,7 +30,7 @@ type MessageDisplayItem = {
   message: {
     key: string;
     conversationId?: string | null;
-    role: MessageSchema["role"];
+    role: MessageResponse["role"];
     attachments?: Attachment[] | null;
     parts: Array<TextContent | ImageContent>;
   };
@@ -68,7 +74,7 @@ function ImagePreview({ alt, onClose, src }: { alt: string; onClose: () => void;
   );
 }
 
-function getMessageKey(message: MessageSchema) {
+function getMessageKey(message: MessageResponse) {
   if (message.message_id != null) {
     return `message-${message.message_id}`;
   }
@@ -105,7 +111,7 @@ function isInteractiveTableAttachment(attachment: Attachment) {
 
 function buildDisplayItems(
   conversationId: string | null,
-  messages: MessageSchema[]
+  messages: MessageResponse[]
 ): DisplayItem[] {
   const items: DisplayItem[] = [];
   const toolRuns = new Map<string, ToolRunDisplayItem>();
@@ -662,7 +668,7 @@ interface ChatMessagesProps {
   conversationId: string | null;
   conversationSelected: boolean;
   isLoading: boolean;
-  messages: MessageSchema[];
+  messages: MessageResponse[];
   onOpenPreviewAttachment?: (attachment: Attachment) => void;
   viewportRef: RefObject<HTMLDivElement | null>;
 }

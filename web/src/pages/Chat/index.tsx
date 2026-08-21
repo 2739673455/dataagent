@@ -9,7 +9,13 @@ import { ROUTES } from "@/config/settings";
 import { getAttachmentName } from "@/lib/utils";
 import { sanitizeHtmlForPreview } from "@/lib/htmlPreview";
 import { useChatStore } from "@/stores/chatStore";
-import type { Attachment, ChatStreamEvent, InteractiveTableArtifact, MessageSchema } from "@/types";
+import type {
+  Attachment,
+  ChatStreamEvent,
+  InteractiveTableArtifact,
+  MessageResponse,
+  UserMessageRequest,
+} from "@/types";
 import { ChatComposer } from "./components/ChatComposer";
 import { ChatMessages } from "./components/ChatMessages";
 import { ChatSidebar } from "./components/ChatSidebar";
@@ -36,7 +42,7 @@ function isInteractiveTableAttachment(attachment: Attachment) {
 }
 
 // 从助手消息里收集可信预览附件，并按路径去重
-function collectReturnedPreviewAttachments(messages: MessageSchema[]): Attachment[] {
+function collectReturnedPreviewAttachments(messages: MessageResponse[]): Attachment[] {
   const unique = new Map<string, Attachment>();
 
   for (const message of messages) {
@@ -282,7 +288,7 @@ export default function ChatPage() {
   }, [currentMessageCount, isLoadingMessages, routeConversationId, scrollToBottom]);
 
   const runStream = useCallback(
-    (conversationId: string, message: MessageSchema) => {
+    (conversationId: string, message: UserMessageRequest) => {
       const generation = sessionLifecycle.current();
       streamControllersRef.current.get(conversationId)?.abort();
       const controller = new AbortController();
@@ -424,10 +430,17 @@ export default function ChatPage() {
       return;
     }
 
-    const userMessage: MessageSchema = {
+    const requestMessage: UserMessageRequest = {
+      parts: value ? [{ type: "text", text: value }] : [],
+      attachments:
+        attachments.length > 0
+          ? attachments.map((attachment) => ({ f_path: attachment.f_path }))
+          : undefined,
+    };
+    const userMessage: MessageResponse = {
       message_id: crypto.randomUUID(),
       role: "user",
-      parts: value ? [{ type: "text", text: value }] : [],
+      parts: requestMessage.parts,
       attachments: attachments.length > 0 ? attachments : undefined,
     };
 
@@ -456,7 +469,7 @@ export default function ChatPage() {
     if (routeConversationId !== conversationId) {
       navigate(ROUTES.chatConversation(conversationId));
     }
-    runStream(conversationId, userMessage);
+    runStream(conversationId, requestMessage);
   };
 
   // 页面卸载时统一回收所有图片和 HTML 预览用的 object URL

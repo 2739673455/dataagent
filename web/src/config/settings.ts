@@ -2,7 +2,6 @@
 export const ACCESS_TOKEN_STORAGE_KEY = "dataagent:access-token";
 export const REFRESH_TOKEN_STORAGE_KEY = "dataagent:refresh-token";
 export const AUTH_API_PATHS = {
-  register: "/api/v1/auth/register",
   login: "/api/v1/auth/login",
   refresh: "/api/v1/auth/refresh",
   logout: "/api/v1/auth/logout",

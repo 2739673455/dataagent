@@ -43,6 +43,7 @@ class ESConfig(BaseModel):
     column_index: str
     metric_index: str
     value_index: str
+    query_experience_index: str
     embedding_size: int
 
 

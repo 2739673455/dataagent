@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, or_, select, tuple_
+from sqlalchemy import delete, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
 
 from app.errors import meta_error
@@ -31,30 +31,35 @@ class MetaPGRepo:
         table_info: TableInfo,
         *,
         force_version_increment: bool = False,
-    ) -> None:
+    ) -> bool:
         """新增或更新表信息"""
         existing = await self._session.get(TableInfo, table_info.name)
+        changed = force_version_increment or (
+            table_info.metadata_snapshot() != existing.metadata_snapshot()
+            if existing
+            else True
+        )
         self._set_versions(
             table_info,
             existing,
-            force_version_increment
-            or (
-                table_info.metadata_snapshot() != existing.metadata_snapshot()
-                if existing
-                else True
-            ),
+            changed,
         )
         await self._session.merge(table_info)
+        return existing is not None and changed
 
     async def upsert_column_info(
         self,
         column_info: ColumnInfo,
         *,
         force_version_increment: bool = False,
-    ) -> None:
+    ) -> bool:
         """新增或更新字段信息"""
-        await self._prepare_column_versions(column_info, force_version_increment)
+        changed = await self._prepare_column_versions(
+            column_info,
+            force_version_increment,
+        )
         await self._session.merge(column_info)
+        return changed
 
     async def upsert_column_infos(
         self,
@@ -256,40 +261,27 @@ class MetaPGRepo:
             detail=f"Metric info not found: {metric_name}"
         )
 
-    async def get_key_columns_by_table_name(self, t_name: str) -> list[ColumnInfo]:
-        """获取表的主键和外键字段"""
-        table_info = await self.get_table_info(t_name)
-        result = await self._session.scalars(
-            select(ColumnInfo).where(
-                ColumnInfo.t_name == t_name,
-                or_(
-                    ColumnInfo.name.in_(table_info.primary_key_columns),
-                    ColumnInfo.reference_t_name.is_not(None),
-                ),
-            )
-        )
-        return list(result.all())
-
     async def _prepare_column_versions(
         self,
         column_info: ColumnInfo,
         force_version_increment: bool,
-    ) -> None:
+    ) -> bool:
         """根据字段元数据变化设置版本"""
         existing = await self._session.get(
             ColumnInfo,
             (column_info.t_name, column_info.name),
         )
+        changed = force_version_increment or (
+            column_info.metadata_snapshot() != existing.metadata_snapshot()
+            if existing
+            else True
+        )
         self._set_versions(
             column_info,
             existing,
-            force_version_increment
-            or (
-                column_info.metadata_snapshot() != existing.metadata_snapshot()
-                if existing
-                else True
-            ),
+            changed,
         )
+        return existing is not None and changed
 
     @staticmethod
     def _set_versions(

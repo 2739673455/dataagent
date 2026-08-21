@@ -1,9 +1,9 @@
 import { create } from "zustand";
 import { chatApi } from "@/api/chat";
 import { sessionLifecycle } from "@/auth/sessionLifecycle";
-import type { ConversationResponse, MessageSchema } from "@/types";
+import type { ConversationResponse, MessageResponse } from "@/types";
 
-type MessageState = Record<string, MessageSchema[]>;
+type MessageState = Record<string, MessageResponse[]>;
 
 interface ChatState {
   conversations: ConversationResponse[];
@@ -13,9 +13,9 @@ interface ChatState {
   loadConversations: () => Promise<ConversationResponse[]>;
   createConversation: (initialMessage: string) => Promise<ConversationResponse | null>;
   deleteConversation: (conversationId: string) => Promise<boolean>;
-  loadMessages: (conversationId: string) => Promise<MessageSchema[]>;
+  loadMessages: (conversationId: string) => Promise<MessageResponse[]>;
   ensureConversation: (conversation: ConversationResponse) => void;
-  appendMessage: (conversationId: string, message: MessageSchema) => void;
+  appendMessage: (conversationId: string, message: MessageResponse) => void;
   markStreaming: (conversationId: string) => void;
   unmarkStreaming: (conversationId: string) => void;
   reset: () => void;

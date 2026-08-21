@@ -1,6 +1,6 @@
 type SessionResetListener = () => void;
 
-export function createSessionLifecycle() {
+function createSessionLifecycle() {
   let generation = 0;
   const resetListeners = new Set<SessionResetListener>();
 

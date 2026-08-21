@@ -396,11 +396,9 @@ class MetaSearchService:
 
     async def _create_context(self, request: SemanticSearchRequest) -> _SearchContext:
         """加载完整元数据并创建单次检索上下文"""
-        table_infos, column_infos, metric_infos = await asyncio.gather(
-            self._meta_repo.list_table_infos(),
-            self._meta_repo.list_column_infos(),
-            self._meta_repo.list_metric_infos(),
-        )
+        table_infos = await self._meta_repo.list_table_infos()
+        column_infos = await self._meta_repo.list_column_infos()
+        metric_infos = await self._meta_repo.list_metric_infos()
         allowed_column_keys = self._authorization_filter.allowed_column_keys(
             column_infos
         )

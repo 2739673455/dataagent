@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import unittest
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
@@ -10,15 +11,72 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
+from pydantic import ValidationError
 
 from app.agents.contracts import PlannerTurnContext
 from app.agents.manager import ConversationAgentRuntime
+from app.clients.docker_sandbox_manager import normalize_attachment_path
 from app.routes.api.v1.chat import schemas as chat_schema
 from app.services import chat_service
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
+
+
+class UserMessageRequestTest(unittest.TestCase):
+    def test_rejects_response_only_fields(self) -> None:
+        for field, value in (
+            ("message_id", "client-message"),
+            ("role", "user"),
+            ("finish_reason", "stop"),
+        ):
+            with self.subTest(field=field), self.assertRaises(ValidationError):
+                chat_schema.UserMessageRequest.model_validate(
+                    {
+                        "parts": [{"type": "text", "text": "analyze"}],
+                        field: value,
+                    }
+                )
+
+    def test_rejects_tool_parts_and_empty_messages(self) -> None:
+        with self.assertRaises(ValidationError):
+            chat_schema.UserMessageRequest.model_validate(
+                {
+                    "parts": [
+                        {
+                            "type": "tool_call",
+                            "tool_call_id": "call-1",
+                            "name": "search",
+                            "args": {},
+                        }
+                    ]
+                }
+            )
+        with self.assertRaises(ValidationError):
+            chat_schema.UserMessageRequest(parts=[])
+        with self.assertRaises(ValidationError):
+            chat_schema.UserMessageRequest.model_validate(
+                {
+                    "parts": [],
+                    "attachments": [
+                        {
+                            "f_path": "uploads/report.csv",
+                            "media_type": "text/csv",
+                        }
+                    ],
+                }
+            )
+
+    def test_accepts_uploaded_attachment_references(self) -> None:
+        message = chat_schema.UserMessageRequest(
+            parts=[],
+            attachments=[chat_schema.AttachmentReference(f_path="uploads/report.csv")],
+        )
+
+        self.assertIsNotNone(message.attachments)
+        assert message.attachments is not None
+        self.assertEqual(message.attachments[0].f_path, "uploads/report.csv")
 
 
 class _RepeatingPlanner:
@@ -114,17 +172,15 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         )
         manager = _TurnManagerStub(runtime, turn_context)
 
-        user_message = chat_schema.MessageSchema(
-            message_id="user-message",
-            role="user",
+        user_message = chat_schema.UserMessageRequest(
             parts=[chat_schema.TextContent(text="analyze")],
         )
-        responses: list[chat_schema.MessageSchema] = []
+        responses: list[chat_schema.MessageResponse] = []
         with (
             patch.object(chat_service, "agent_manager", manager),
             patch.object(
-                chat_service.message_mapper,
-                "schema_to_human_message",
+                chat_service,
+                "_schema_to_human_message",
                 new=AsyncMock(return_value=HumanMessage(content="analyze")),
             ),
             self.assertRaisesRegex(
@@ -151,6 +207,120 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(planner.input_sizes, [1, 0, 0])
         self.assertEqual(len(responses), 3)
+
+
+def _delegate_payload() -> dict[str, object]:
+    return {
+        "status": "completed",
+        "analysis_id": "sales-review",
+        "agent_type": "visualizer",
+        "session_id": "chart-1",
+        "summary": "Chart generated",
+        "findings": ["Revenue increased"],
+        "artifacts": [
+            {
+                "path": (
+                    "/analyses/sales-review/sessions/visualizer/chart-1/report.html"
+                ),
+                "media_type": "text/html",
+                "description": "Interactive report",
+            }
+        ],
+        "repair_requests": [],
+        "confidence": "high",
+        "limitations": [],
+    }
+
+
+class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
+    def test_delegate_artifacts_are_restored_from_history(self) -> None:
+        message = ToolMessage(
+            id="message-1",
+            name="delegate_agent",
+            tool_call_id="call-1",
+            content=json.dumps(_delegate_payload()),
+        )
+
+        schema = chat_service._langchain_message_to_schema(message)
+
+        self.assertIsNotNone(schema)
+        assert schema is not None
+        self.assertEqual(schema.role, "tool")
+        self.assertEqual(len(schema.attachments or []), 1)
+        attachment = (schema.attachments or [])[0]
+        self.assertEqual(
+            attachment.f_path,
+            "analyses/sales-review/sessions/visualizer/chart-1/report.html",
+        )
+        self.assertEqual(attachment.media_type, "text/html")
+        self.assertEqual(attachment.description, "Interactive report")
+        self.assertEqual(
+            normalize_attachment_path(attachment.f_path),
+            attachment.f_path,
+        )
+
+    async def test_delegate_artifacts_are_in_stream_updates(self) -> None:
+        message = ToolMessage(
+            id="message-1",
+            name="delegate_agent",
+            tool_call_id="call-1",
+            content=json.dumps(_delegate_payload()),
+        )
+        planner = MagicMock()
+
+        async def stream_tool_message(*args: Any, **kwargs: Any) -> AsyncIterator[dict]:
+            yield {"tools": {"messages": [message]}}
+
+        planner.astream = stream_tool_message
+        runtime_mock = MagicMock()
+        runtime_mock.planner = planner
+        runtime = cast(ConversationAgentRuntime, runtime_mock)
+        turn_context = PlannerTurnContext(
+            user_id=7,
+            conversation_id=_CONVERSATION_ID,
+            planner_run_id="artifact-turn",
+            max_continuations=0,
+        )
+        manager = _TurnManagerStub(runtime, turn_context)
+        user_message = chat_schema.UserMessageRequest(
+            parts=[chat_schema.TextContent(text="analyze")],
+        )
+        responses: list[chat_schema.MessageResponse] = []
+
+        with (
+            patch.object(chat_service, "agent_manager", manager),
+            patch.object(
+                chat_service,
+                "_schema_to_human_message",
+                new=AsyncMock(return_value=HumanMessage(content="analyze")),
+            ),
+        ):
+            async for response in chat_service.run_agent_turn(
+                7,
+                _CONVERSATION_ID,
+                user_message,
+                asyncio.Event(),
+            ):
+                responses.append(response)
+
+        self.assertEqual(len(responses), 1)
+        self.assertEqual(len(responses[0].attachments or []), 1)
+
+    def test_invalid_delegate_artifact_payload_is_not_exposed(self) -> None:
+        payload = _delegate_payload()
+        payload["artifacts"] = [{"path": "/analyses/../secret"}]
+        message = ToolMessage(
+            id="message-1",
+            name="delegate_agent",
+            tool_call_id="call-1",
+            content=json.dumps(payload),
+        )
+
+        schema = chat_service._langchain_message_to_schema(message)
+
+        self.assertIsNotNone(schema)
+        assert schema is not None
+        self.assertIsNone(schema.attachments)
 
 
 if __name__ == "__main__":

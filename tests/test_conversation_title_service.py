@@ -138,8 +138,7 @@ class ConversationTitleTest(unittest.IsolatedAsyncioTestCase):
         repository.update = AsyncMock(return_value=claimed)
         request = chat_schema.ChatStreamRequest(
             conversation_id=_CONVERSATION_ID,
-            message=chat_schema.MessageSchema(
-                role="user",
+            message=chat_schema.UserMessageRequest(
                 parts=[chat_schema.TextContent(text="分析华北区域销售额")],
             ),
         )

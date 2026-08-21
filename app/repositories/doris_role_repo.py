@@ -30,12 +30,17 @@ class DorisRoleRepository:
             raise ValueError("invalid Doris identifier")
         return f"`{identifier}`"
 
-    @staticmethod
-    def quote_role(role_name: str) -> str:
+    @classmethod
+    def quote_role(cls, role_name: str) -> str:
         """校验并引用 Doris 角色名"""
-        if _IDENTIFIER_PATTERN.fullmatch(role_name) is None:
-            raise ValueError("invalid Doris role name")
-        return f"'{role_name}'"
+        return cls.quote_identifier(role_name)
+
+    @staticmethod
+    def quote_user(user_name: str) -> str:
+        """校验并引用 Doris 用户名"""
+        if _IDENTIFIER_PATTERN.fullmatch(user_name) is None:
+            raise ValueError("invalid Doris user name")
+        return f"'{user_name}'"
 
     @classmethod
     def qualified_table(
@@ -65,8 +70,8 @@ class DorisRoleRepository:
     ) -> None:
         """创建 Doris 角色、查询用户及 Workload Group 授权"""
         role = self.quote_role(role_name)
-        user = self.quote_role(query_user)
-        group = self.quote_role(workload_group)
+        user = self.quote_user(query_user)
+        group = self.quote_identifier(workload_group)
         if not password or not password.isascii() or "'" in password:
             raise ValueError("invalid generated Doris password")
         role_created = False
@@ -99,8 +104,8 @@ class DorisRoleRepository:
     ) -> None:
         """为已存在的 Doris 角色创建代理查询用户并授予 Workload Group 权限"""
         role = self.quote_role(role_name)
-        user = self.quote_role(query_user)
-        group = self.quote_role(workload_group)
+        user = self.quote_user(query_user)
+        group = self.quote_identifier(workload_group)
         if not password or not password.isascii() or "'" in password:
             raise ValueError("invalid generated Doris password")
         user_created = False
@@ -124,7 +129,7 @@ class DorisRoleRepository:
 
     async def drop_query_user(self, query_user: str) -> None:
         """删除 Doris 查询用户"""
-        user = self.quote_role(query_user)
+        user = self.quote_user(query_user)
         await self._execute(f"DROP USER IF EXISTS {user}")
 
     async def drop_role_identity(
@@ -134,7 +139,7 @@ class DorisRoleRepository:
         query_user: str,
     ) -> None:
         """删除 Doris 查询用户和角色"""
-        user = self.quote_role(query_user)
+        user = self.quote_user(query_user)
         role = self.quote_role(role_name)
         await self._execute(f"DROP USER IF EXISTS {user}")
         await self._execute(f"DROP ROLE IF EXISTS {role}")

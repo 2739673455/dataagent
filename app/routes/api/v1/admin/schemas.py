@@ -1,10 +1,11 @@
 """管理员接口请求与响应模型"""
 
+import re
 from datetime import datetime
 from typing import Any, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 from app.models.auth import (
     DorisQueryIdentity,
@@ -15,6 +16,42 @@ from app.routes.api.v1.auth.schemas import UserResponse
 from app.services.doris_permission_service import DorisRoleStatus
 
 _IDENTIFIER_PATTERN = r"^[A-Za-z_][A-Za-z0-9_$.-]{0,127}$"
+_USERNAME_PATTERN = r"^[a-z0-9_.-]{3,64}$"
+_EMAIL_PATTERN = r"^[^\s@]+@[^\s@]+\.[^\s@]+$"
+
+
+class CreateUserRequest(BaseModel):
+    """管理员创建用户请求"""
+
+    username: str = Field(min_length=3, max_length=64)
+    email: str = Field(min_length=3, max_length=320)
+    password: SecretStr = Field(min_length=6, max_length=128)
+    doris_role: str | None = Field(default=None, max_length=64)
+    is_admin: bool = False
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, username: str) -> str:
+        """规范化并校验用户名"""
+        normalized = username.strip().casefold()
+        if not re.match(_USERNAME_PATTERN, normalized):
+            raise ValueError("Username must contain only letters, numbers, dots, hyphens, and underscores")
+        return normalized
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, email: str) -> str:
+        """规范化并校验邮箱"""
+        normalized = email.strip().casefold()
+        if not re.match(_EMAIL_PATTERN, normalized):
+            raise ValueError("Invalid email address format")
+        return normalized
+
+    @field_validator("doris_role")
+    @classmethod
+    def normalize_role(cls, role: str | None) -> str | None:
+        """校验 Doris 角色名"""
+        return normalize_doris_role_name(role) if role else None
 
 
 class DorisRoleResponse(BaseModel):

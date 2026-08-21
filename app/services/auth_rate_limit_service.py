@@ -10,8 +10,6 @@ from dataclasses import dataclass, field
 
 from app.errors import auth_error
 
-REGISTER_RATE_LIMIT = 5
-REGISTER_RATE_WINDOW_SECONDS = 10 * 60
 LOGIN_IP_RATE_LIMIT = 30
 LOGIN_IDENTIFIER_RATE_LIMIT = 10
 LOGIN_RATE_WINDOW_SECONDS = 60
@@ -129,15 +127,10 @@ class AuthRateLimitService:
     def __init__(
         self,
         *,
-        register_ip: BoundedRateLimiter | None = None,
         login_ip: BoundedRateLimiter | None = None,
         login_identifier: BoundedRateLimiter | None = None,
         refresh_ip: BoundedRateLimiter | None = None,
     ) -> None:
-        self._register_ip = register_ip or BoundedRateLimiter(
-            RateLimitRule(REGISTER_RATE_LIMIT, REGISTER_RATE_WINDOW_SECONDS),
-            max_keys=IP_RATE_LIMIT_MAX_KEYS,
-        )
         self._login_ip = login_ip or BoundedRateLimiter(
             RateLimitRule(LOGIN_IP_RATE_LIMIT, LOGIN_RATE_WINDOW_SECONDS),
             max_keys=IP_RATE_LIMIT_MAX_KEYS,
@@ -150,10 +143,6 @@ class AuthRateLimitService:
             RateLimitRule(REFRESH_RATE_LIMIT, REFRESH_RATE_WINDOW_SECONDS),
             max_keys=IP_RATE_LIMIT_MAX_KEYS,
         )
-
-    async def check_register(self, client_ip: str) -> None:
-        """限制单个来源 IP 的注册频率"""
-        await self._register_ip.consume(self._normalize_ip(client_ip))
 
     async def check_login(self, client_ip: str, identifier: str) -> None:
         """同时限制登录来源 IP 与账号标识"""

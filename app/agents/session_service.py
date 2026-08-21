@@ -13,6 +13,7 @@ from uuid import UUID
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
+from loguru import logger
 from pydantic import BaseModel, ValidationError
 
 from app.agents.contracts import (
@@ -29,6 +30,11 @@ _STRUCTURED_RETRY_MESSAGE = """
 completed 必须包含 findings 和 artifacts；needs_repair 必须包含有 evidence 的 repair_requests；failed 必须包含 limitations。
 """.strip()
 _MAX_PARALLEL_ARTIFACT_VERIFICATIONS = 8
+
+type SpecialistResultObserver = Callable[
+    [AgentSessionKey, SpecialistResult],
+    Awaitable[None],
+]
 
 
 @dataclass(slots=True)
@@ -62,6 +68,7 @@ class AgentSessionService:
             [AgentSessionKey],
             AbstractAsyncContextManager[None],
         ],
+        result_observer: SpecialistResultObserver | None = None,
     ) -> None:
         if max_parallel_sessions <= 0:
             raise ValueError("max_parallel_sessions must be positive")
@@ -88,6 +95,7 @@ class AgentSessionService:
         )
         self._session_exists = session_exists
         self._session_lock_factory = session_lock_factory
+        self._result_observer = result_observer
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._parallelism = asyncio.Semaphore(max_parallel_sessions)
         self._known_sessions: set[str] = set()
@@ -508,6 +516,15 @@ class AgentSessionService:
                     "Specialist session failed",
                     f"{type(exc).__name__}: {exc}",
                 )
+
+            if self._result_observer is not None and result.status == "completed":
+                try:
+                    await self._result_observer(session_key, result)
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "Specialist result observer failed: "
+                        f"checkpoint_ns={session_key.checkpoint_ns}"
+                    )
 
             with self._budget_lock:
                 limited_result = self._apply_repair_limits(

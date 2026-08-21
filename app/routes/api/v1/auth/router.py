@@ -1,4 +1,4 @@
-"""用户注册登录与令牌管理路由"""
+"""用户认证与令牌管理路由"""
 
 from fastapi import APIRouter, Request, Response, status
 
@@ -11,27 +11,6 @@ from app.routes.api.v1.auth.dependencies import (
 )
 
 router = APIRouter(tags=["auth"])
-
-
-@router.post(
-    "/register",
-    response_model=schemas.TokenResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def register(
-    body: schemas.RegisterRequest,
-    service: AuthServiceDep,
-    rate_limit: AuthRateLimitServiceDep,
-    request: Request,
-) -> schemas.TokenResponse:
-    """注册新用户并返回令牌对"""
-    await rate_limit.check_register(get_client_ip(request))
-    user, token_pair = await service.register(
-        body.username,
-        body.email,
-        body.password.get_secret_value(),
-    )
-    return schemas.TokenResponse.from_result(user, token_pair)
 
 
 @router.post("/login", response_model=schemas.TokenResponse)

@@ -8,6 +8,8 @@ from app.routes.api.v1.admin import schemas
 from app.routes.api.v1.admin.router import (
     attach_doris_role,
     create_doris_role,
+    create_user,
+    delete_user,
     discover_doris_roles,
     list_doris_roles,
     set_user_administrator,
@@ -149,6 +151,47 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
             schemas.SetUserDorisRoleRequest.model_validate(
                 {"role": ["sales", "finance"]}
             )
+
+    async def test_create_user_endpoint(self) -> None:
+        service = MagicMock()
+        user = build_user(user_id=12, doris_role="sales")
+        service.create_user = AsyncMock(return_value=user)
+
+        response = await create_user(
+            schemas.CreateUserRequest(
+                username="new_user",
+                email="new@example.com",
+                password="password123",
+                doris_role="sales",
+                is_admin=False,
+            ),
+            MagicMock(),
+            service,
+        )
+
+        self.assertEqual(response.username, "analyst")
+        self.assertEqual(response.doris_role, "sales")
+        service.create_user.assert_awaited_once_with(
+            username="new_user",
+            email="new@example.com",
+            password="password123",
+            doris_role="sales",
+            is_admin=False,
+        )
+
+    async def test_delete_user_endpoint(self) -> None:
+        service = MagicMock()
+        service.delete_user = AsyncMock()
+        admin_user = build_user(user_id=1, is_admin=True)
+
+        response = await delete_user(
+            12,
+            admin_user,
+            service,
+        )
+
+        self.assertEqual(response.status_code, 204)
+        service.delete_user.assert_awaited_once_with(12, operator_id=1)
 
 
 if __name__ == "__main__":

@@ -43,7 +43,6 @@ async def bootstrap_admin() -> None:
     from app.clients.postgres_client_manager import auth_postgres_client_manager
     from app.conf.app_config import cfg
     from app.repositories.auth_pg_repo import AuthPGRepo
-    from app.repositories.doris_query_identity_pg_repo import DorisQueryIdentityPGRepo
     from app.services.auth_service import Argon2PasswordManager, AuthService
 
     auth_postgres_client_manager.init()
@@ -52,7 +51,6 @@ async def bootstrap_admin() -> None:
         async with auth_postgres_client_manager.session() as session:
             result = await AuthService(
                 AuthPGRepo(session),
-                DorisQueryIdentityPGRepo(session),
                 cfg.auth,
                 Argon2PasswordManager(),
             ).bootstrap_admin(username, email, password)

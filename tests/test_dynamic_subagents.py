@@ -88,6 +88,12 @@ def execute_sql(sql: str) -> str:
 
 
 @tool
+def search_query_experiences(query: str) -> str:
+    """检索测试查询经验"""
+    return query
+
+
+@tool
 def mcp_web_search(query: str) -> str:
     """模拟 MCP 搜索工具"""
     return query
@@ -181,6 +187,7 @@ def _registry(fake: _FakeAgent) -> AgentRegistry:
     definitions = build_agent_definitions(
         [
             search_semantic_resources,
+            search_query_experiences,
             execute_sql,
         ],
         [],
@@ -209,6 +216,9 @@ def _service(
         [AgentSessionKey],
         AbstractAsyncContextManager[None],
     ] = _unlocked_session,
+    result_observer: (
+        Callable[[AgentSessionKey, SpecialistResult], Awaitable[None]] | None
+    ) = None,
 ) -> AgentSessionService:
     async def artifact_exists(path: str) -> bool:
         del path
@@ -230,6 +240,7 @@ def _service(
         artifact_verifier=artifact_verifier or artifact_exists,
         session_exists=session_exists,
         session_lock_factory=session_lock_factory,
+        result_observer=result_observer,
     )
 
 
@@ -330,6 +341,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
         definitions = build_agent_definitions(
             [
                 search_semantic_resources,
+                search_query_experiences,
                 execute_sql,
             ],
             [mcp_web_search],
@@ -339,6 +351,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
             definitions["explorer"].tool_names,
             {
                 "search_semantic_resources",
+                "search_query_experiences",
                 "execute_sql",
                 "mcp_web_search",
             },
@@ -368,7 +381,11 @@ class DynamicSubagentContractTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "conflict"):
             build_agent_definitions(
-                [search_semantic_resources, execute_sql],
+                [
+                    search_semantic_resources,
+                    search_query_experiences,
+                    execute_sql,
+                ],
                 [conflicting_mcp_tool],
             )
 
@@ -510,6 +527,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         definitions = build_agent_definitions(
             [
                 search_semantic_resources,
+                search_query_experiences,
                 execute_sql,
             ],
             [],
@@ -549,6 +567,30 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNot(first_region, product_agent)
         self.assertEqual(build_counts[region.checkpoint_ns], 1)
         self.assertEqual(build_counts[product.checkpoint_ns], 1)
+
+    async def test_completed_result_is_sent_to_result_observer(self) -> None:
+        observed: list[tuple[AgentSessionKey, SpecialistResult]] = []
+
+        async def observe(
+            session_key: AgentSessionKey,
+            result: SpecialistResult,
+        ) -> None:
+            observed.append((session_key, result))
+
+        service = _service(_FakeAgent(), result_observer=observe)
+        config = build_planner_config(12, _CONVERSATION_ID)
+        config.setdefault("configurable", {})["planner_run_id"] = "observer-run"
+
+        async with service.planner_run("observer-run"):
+            result = await service.delegate(
+                _request("base", agent_type="explorer"),
+                config,
+            )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0][0].agent_type, "explorer")
+        self.assertEqual(observed[0][1].artifacts, result.artifacts)
 
     async def test_same_session_serializes_while_other_sessions_run_parallel(
         self,

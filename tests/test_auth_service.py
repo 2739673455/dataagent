@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.conf.app_config import AuthConfig
 from app.errors import auth_error
-from app.models.auth import DorisQueryIdentity, RefreshToken, User
+from app.models.auth import RefreshToken, User
 from app.repositories.auth_pg_repo import AuthPGRepo
 from app.services.auth_service import Argon2PasswordManager, AuthService, JWTCodec
 
@@ -142,69 +142,20 @@ class Argon2PasswordManagerTest(unittest.IsolatedAsyncioTestCase):
 
 
 class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
-    """验证缺省 Doris 角色、管理员引导与刷新令牌轮换"""
+    """验证管理员引导与刷新令牌轮换"""
 
     async def asyncSetUp(self) -> None:
         self.repo = build_repo()
         self.password_manager = MagicMock()
         self.password_manager.hash = AsyncMock(return_value="hashed-password")
         self.password_manager.verify = AsyncMock(return_value=True)
-        self.identity_provider = MagicMock()
-        self.identity_provider.get_default = AsyncMock(
-            return_value=DorisQueryIdentity(
-                role_name=DEFAULT_ROLE,
-                description="default",
-                query_user="default_query",
-                encrypted_password="encrypted",
-                workload_group="normal",
-                is_default=True,
-                is_active=True,
-            )
-        )
         self.now = datetime.now(UTC).replace(microsecond=0)
         self.service = AuthService(
             self.repo,
-            self.identity_provider,
             build_config(),
             self.password_manager,
             now=lambda: self.now,
         )
-
-    async def test_registration_assigns_exactly_default_doris_role(self) -> None:
-        self.repo.get_user_by_username.return_value = None
-        self.repo.get_user_by_email.return_value = None
-
-        async def add_user(user: User) -> User:
-            user.id = 7
-            return user
-
-        self.repo.add_user.side_effect = add_user
-        self.repo.get_user_by_id.side_effect = lambda user_id: self.repo.add_user.await_args.args[0]
-
-        user, pair = await self.service.register(
-            "New.Analyst",
-            "New@Example.com",
-            "long-enough-password",
-        )
-
-        self.assertFalse(user.is_admin)
-        self.assertEqual(user.doris_role_name, DEFAULT_ROLE)
-        self.assertTrue(pair.access_token)
-        self.repo.lock_security_mutation.assert_awaited_once()
-
-    async def test_registration_fails_until_default_doris_role_exists(self) -> None:
-        self.repo.get_user_by_username.return_value = None
-        self.repo.get_user_by_email.return_value = None
-        self.identity_provider.get_default.return_value = None
-
-        with self.assertRaises(auth_error.DefaultDorisRoleUnavailableError):
-            await self.service.register(
-                "New.Analyst",
-                "New@Example.com",
-                "long-enough-password",
-            )
-
-        self.repo.add_user.assert_not_awaited()
 
     async def test_bootstrap_creates_admin_without_privileged_doris_role(self) -> None:
         self.repo.get_user_by_username.return_value = None

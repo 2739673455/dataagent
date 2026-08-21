@@ -15,6 +15,7 @@ from fastapi import (
     status,
 )
 from pydantic import ValidationError as PydanticValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 from yaml import YAMLError
 
 from app.clients.doris_client_manager import admin_doris_client_manager
@@ -32,6 +33,8 @@ from app.models.meta import (
 from app.repositories.column_es_repo import ColumnESRepo
 from app.repositories.meta_pg_repo import MetaPGRepo
 from app.repositories.metric_es_repo import MetricESRepo
+from app.repositories.query_experience_es_repo import QueryExperienceESRepo
+from app.repositories.query_experience_pg_repo import QueryExperiencePGRepo
 from app.repositories.source_doris_repo import SourceDorisRepo
 from app.repositories.value_es_repo import ValueESRepo
 from app.routes.api.v1.auth.dependencies import (
@@ -46,6 +49,7 @@ from app.services.meta_import_service import (
     ResourceChanges,
 )
 from app.services.meta_index_service import MetaIndexService
+from app.services.query_experience_service import QueryExperienceService
 
 router = APIRouter(tags=["meta"])
 MetadataPath = Annotated[MetadataName, Path()]
@@ -66,6 +70,19 @@ def _build_meta_index_service(
     )
 
 
+def _build_query_experience_service(
+    meta_session: AsyncSession,
+) -> QueryExperienceService:
+    """创建查询经验服务"""
+    return QueryExperienceService(
+        QueryExperiencePGRepo(meta_session),
+        QueryExperienceESRepo(es_client_manager.get_client()),
+        embedding_client_manager.get_client(),
+        data_source=cfg.query.data_source,
+        database_name=cfg.doris.database,
+    )
+
+
 async def get_meta_catalog_service(
     current_user: AdminUserDep,
 ) -> AsyncGenerator[MetaCatalogService]:
@@ -80,6 +97,7 @@ async def get_meta_catalog_service(
             meta_repo=meta_repo,
             source_repo=source_repo,
             meta_index_service=_build_meta_index_service(meta_repo, source_repo),
+            query_experience_service=_build_query_experience_service(meta_session),
             asset_policy=AssetAccessPolicy(
                 user_id=current_user.id,
                 unrestricted=True,
@@ -113,6 +131,7 @@ async def get_meta_import_service() -> AsyncGenerator[MetaImportService]:
             meta_repo=meta_repo,
             source_repo=source_repo,
             meta_index_service=_build_meta_index_service(meta_repo, source_repo),
+            query_experience_service=_build_query_experience_service(meta_session),
         )
 
 

@@ -14,10 +14,6 @@ class EmbeddingClient(Protocol):
         """生成多个文本的向量"""
         ...
 
-    async def aembed_query(self, text: str) -> list[float]:
-        """生成单个文本的向量"""
-        ...
-
     async def aclose(self) -> None:
         """关闭 Embedding 客户端"""
         ...
@@ -54,11 +50,6 @@ class RemoteEmbeddingClient:
         response = await self._client.post("/embeddings", json=payload)
         response.raise_for_status()
         return self._parse_embeddings(response.json(), expected_count=len(texts))
-
-    async def aembed_query(self, text: str) -> list[float]:
-        """生成单个文本的向量"""
-        embeddings = await self.aembed_documents([text])
-        return embeddings[0]
 
     async def aclose(self) -> None:
         """关闭远程 Embedding 客户端"""

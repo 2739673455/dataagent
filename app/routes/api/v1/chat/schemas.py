@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class CreateConversationRequest(BaseModel):
@@ -48,12 +48,16 @@ class ConversationListResponse(BaseModel):
 class TextContent(BaseModel):
     """消息中的文本内容"""
 
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["text"] = "text"
     text: str = Field(..., description="文本内容")
 
 
 class ImageContent(BaseModel):
     """消息中的图片内容"""
+
+    model_config = ConfigDict(extra="forbid")
 
     type: Literal["image_url"] = "image_url"
     image_url: str = Field(..., description="图片链接")
@@ -79,6 +83,10 @@ class ToolResultPart(BaseModel):
 
 MessageRole = Literal["user", "assistant", "tool", "system"]
 FinishReason = str
+UserMessagePart = Annotated[
+    TextContent | ImageContent,
+    Field(discriminator="type"),
+]
 MessagePart = Annotated[
     TextContent | ImageContent | ToolCallPart | ToolResultPart,
     Field(discriminator="type"),
@@ -93,8 +101,35 @@ class Attachment(BaseModel):
     description: str | None = Field(default=None, description="附件说明")
 
 
-class MessageSchema(BaseModel):
-    """消息"""
+class AttachmentReference(BaseModel):
+    """用户消息引用的已上传附件"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    f_path: str = Field(..., description="工作区内的文件路径")
+
+
+class UserMessageRequest(BaseModel):
+    """用户提交给 Agent 的消息"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    parts: list[UserMessagePart] = Field(..., description="文本和图片片段")
+    attachments: list[AttachmentReference] | None = Field(
+        default=None,
+        description="已上传附件引用",
+    )
+
+    @model_validator(mode="after")
+    def validate_content(self) -> Self:
+        """校验消息至少包含一个片段或附件"""
+        if not self.parts and not self.attachments:
+            raise ValueError("message must contain at least one part or attachment")
+        return self
+
+
+class MessageResponse(BaseModel):
+    """返回给客户端的消息"""
 
     message_id: str | None = Field(default=None, description="LangGraph 消息ID")
     role: MessageRole = Field(..., description="发送者")
@@ -106,15 +141,10 @@ class MessageSchema(BaseModel):
 class ChatStreamRequest(BaseModel):
     """SSE 聊天请求"""
 
-    conversation_id: UUID = Field(..., description="对话ID")
-    message: MessageSchema = Field(..., description="用户消息")
+    model_config = ConfigDict(extra="forbid")
 
-    @model_validator(mode="after")
-    def validate_user_message(self) -> Self:
-        """校验聊天请求只包含用户消息"""
-        if self.message.role != "user":
-            raise ValueError("message.role must be 'user'")
-        return self
+    conversation_id: UUID = Field(..., description="对话ID")
+    message: UserMessageRequest = Field(..., description="用户消息")
 
 
 class DeleteAttachmentRequest(BaseModel):
@@ -127,14 +157,14 @@ class DeleteAttachmentRequest(BaseModel):
 class MessageListResponse(BaseModel):
     """消息列表响应"""
 
-    messages: list[MessageSchema]
+    messages: list[MessageResponse]
 
 
 class ChatStreamMessageEvent(BaseModel):
     """SSE 消息事件"""
 
     type: Literal["message"] = "message"
-    message: MessageSchema = Field(..., description="消息内容")
+    message: MessageResponse = Field(..., description="消息内容")
 
 
 class ChatStreamErrorEvent(BaseModel):

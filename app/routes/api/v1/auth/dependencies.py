@@ -61,7 +61,6 @@ def get_password_manager() -> Argon2PasswordManager:
 
 def get_auth_service(
     repo: AuthRepoDep,
-    identity_repo: QueryIdentityRepoDep,
     password_manager: Annotated[
         Argon2PasswordManager,
         Depends(get_password_manager),
@@ -70,7 +69,6 @@ def get_auth_service(
     """创建请求级认证服务"""
     return AuthService(
         repo,
-        identity_repo,
         cfg.auth,
         password_manager,
     )
@@ -139,18 +137,6 @@ async def require_analysis_access(
 AnalysisUserDep = Annotated[User, Depends(require_analysis_access)]
 
 
-async def get_authorization_service() -> AsyncGenerator[AuthorizationService]:
-    """创建独立会话的资产授权服务"""
-    async with auth_postgres_client_manager.session() as session:
-        yield AuthorizationService(AuthPGRepo(session))
-
-
-AuthorizationServiceDep = Annotated[
-    AuthorizationService,
-    Depends(get_authorization_service),
-]
-
-
 async def get_role_management_service() -> AsyncGenerator[DorisRoleManagementService]:
     """创建独立会话的 Doris 角色管理服务"""
     async with auth_postgres_client_manager.session() as session:
@@ -160,6 +146,8 @@ async def get_role_management_service() -> AsyncGenerator[DorisRoleManagementSer
             DorisRoleRepository(admin_doris_client_manager),
             get_doris_credential_cipher(),
             query_doris_client_registry,
+            get_password_manager(),
+            cfg.auth,
         )
 
 

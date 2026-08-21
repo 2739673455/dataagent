@@ -367,25 +367,20 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(max_active, 2)
 
-    async def test_metadata_catalog_is_loaded_concurrently(self) -> None:
-        started: set[str] = set()
-        all_started = asyncio.Event()
-
-        async def load(name: str, result: list[object]) -> list[object]:
-            started.add(name)
-            if len(started) == 3:
-                all_started.set()
-            await asyncio.wait_for(all_started.wait(), timeout=1)
-            return result
+    async def test_metadata_catalog_is_loaded_sequentially(self) -> None:
+        calls: list[str] = []
 
         async def load_tables() -> list[object]:
-            return await load("tables", [self.table])
+            calls.append("tables")
+            return [self.table]
 
         async def load_columns() -> list[object]:
-            return await load("columns", [self.column])
+            calls.append("columns")
+            return [self.column]
 
         async def load_metrics() -> list[object]:
-            return await load("metrics", [self.metric])
+            calls.append("metrics")
+            return [self.metric]
 
         self.meta_repo.list_table_infos.side_effect = load_tables
         self.meta_repo.list_column_infos.side_effect = load_columns
@@ -396,7 +391,7 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
             SemanticSearchRequest(query="100", resource_types=["value"])
         )
 
-        self.assertEqual(started, {"tables", "columns", "metrics"})
+        self.assertEqual(calls, ["tables", "columns", "metrics"])
 
     async def test_structural_columns_are_complete_after_ranked_context_limit(
         self,

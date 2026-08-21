@@ -153,7 +153,7 @@ def _serialize_sse_event(event: ChatStreamEvent) -> str:
 async def _stream_agent_response(
     user_id: int,
     conversation_id: UUID,
-    user_message: chat_schema.MessageSchema,
+    user_message: chat_schema.UserMessageRequest,
 ) -> AsyncIterator[str]:
     """流式执行单轮 Agent 对话"""
     cancel = asyncio.Event()
@@ -163,7 +163,7 @@ async def _stream_agent_response(
         user_message,
         cancel,
     )
-    next_message_task: asyncio.Task[chat_schema.MessageSchema] | None = None
+    next_message_task: asyncio.Task[chat_schema.MessageResponse] | None = None
     try:
         next_message_task = asyncio.create_task(anext(responses))
         while True:

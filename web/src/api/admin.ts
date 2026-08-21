@@ -36,6 +36,14 @@ export interface CreateDorisRoleRequest {
   is_default: boolean;
 }
 
+export interface CreateUserRequest {
+  username: string;
+  email: string;
+  password: string;
+  doris_role?: string;
+  is_admin?: boolean;
+}
+
 export interface SelectGrantRequest {
   table_name: string | null;
   columns: string[];
@@ -90,6 +98,15 @@ export const adminApi = {
   async listUsers(): Promise<UserResponse[]> {
     const response = await appClient.get<{ users: UserResponse[] }>("/api/v1/admin/users");
     return response.data.users;
+  },
+
+  async createUser(request: CreateUserRequest): Promise<UserResponse> {
+    const response = await appClient.post<UserResponse>("/api/v1/admin/users", request);
+    return response.data;
+  },
+
+  async deleteUser(userId: number): Promise<void> {
+    await appClient.delete(`/api/v1/admin/users/${userId}`);
   },
 
   async setUserRole(userId: number, role: string): Promise<UserResponse> {

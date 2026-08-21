@@ -43,6 +43,11 @@ class AuthPGRepo:
         await self._session.flush()
         return user
 
+    async def delete_user(self, user: User) -> None:
+        """删除用户记录"""
+        await self._session.delete(user)
+        await self._session.flush()
+
     async def get_user_by_id(self, user_id: int) -> User | None:
         """按主键读取用户"""
         return await self._session.scalar(

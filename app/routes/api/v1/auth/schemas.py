@@ -1,46 +1,12 @@
 """认证接口请求与响应模型"""
 
-import re
 from datetime import datetime
 from typing import Self
 
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr
 
-from app.conf.app_config import cfg
 from app.models.auth import User
 from app.services.auth_service import TokenPair
-
-_EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
-
-
-class RegisterRequest(BaseModel):
-    """用户注册请求"""
-
-    username: str = Field(
-        min_length=3,
-        max_length=64,
-        pattern=r"^[A-Za-z0-9_.-]+$",
-    )
-    email: str = Field(min_length=3, max_length=320)
-    password: SecretStr = Field(
-        min_length=cfg.auth.password_min_length,
-        max_length=128,
-    )
-
-    @field_validator("email")
-    @classmethod
-    def validate_email(cls, value: str) -> str:
-        """校验并规范化邮箱"""
-        normalized = value.strip().casefold()
-        if not _EMAIL_PATTERN.fullmatch(normalized):
-            raise ValueError("invalid email address")
-        return normalized
-
-    @field_validator("username")
-    @classmethod
-    def normalize_username(cls, value: str) -> str:
-        """规范化用户名"""
-        return value.strip().casefold()
 
 
 class LoginRequest(BaseModel):

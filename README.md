@@ -53,8 +53,8 @@
 - **代码质量与测试**：核心应用通过 Pyright 严格类型检查与 Ruff 代码规范校验，配备单元测试与沙盒集成测试套件。
 
 ### 8. 用户认证、Doris RBAC 与多租户授权
-- **认证与令牌安全**：支持注册、用户名或邮箱登录、登出和当前用户查询；密码使用 Argon2id 哈希，JWT Access Token 与 Refresh Token 支持轮换、重放检测和令牌族吊销，注册、登录与刷新接口带有过载保护。
-- **单一 Doris 数据角色**：每个普通用户绑定一个 `doris_role_name`，多个平台用户可以共享同一 Doris 查询用户；每个查询用户只绑定一个同名权限角色。公开注册自动使用数据库中的唯一缺省角色。
+- **认证与令牌安全**：支持用户名或邮箱登录、登出和当前用户查询；密码使用 Argon2id 哈希，JWT Access Token 与 Refresh Token 支持轮换、重放检测和令牌族吊销，登录与刷新接口带有过载保护。
+- **单一 Doris 数据角色**：每个普通用户绑定一个 `doris_role_name`，多个平台用户可以共享同一 Doris 查询用户；每个查询用户只绑定一个同名权限角色。管理员创建用户时自动使用数据库中的唯一缺省角色。
 - **Doris 细粒度权限**：表级和列级 `SELECT_PRIV`、角色 Row Policy 由 Doris 执行；成功的 SELECT 授权同步到应用侧可见性投影，语义检索、召回快照和 SQL Guard 在连接 Doris 前按当前角色过滤。
 - **管理员边界**：只有平台管理员可以查看或修改元数据、用户角色绑定和 Doris 角色权限；最后一位平台管理员受防护。
 - **租户隔离**：会话、附件、语义召回、LangGraph 线程、Agent Session 和 Docker 工作区均绑定 `user_id` 与 `conversation_id`，越权访问在路由或服务层拦截。
@@ -124,7 +124,7 @@ ALTER TABLE doris_role_asset_grants
 
 ### 4. 管理员引导
 
-公开注册不会产生平台管理员。完成 `conf/.env` 和 PostgreSQL 配置后，显式执行幂等的管理员引导工具（优先读取命令行参数，未传入时回退读取环境变量）：
+完成 `conf/.env` 和 PostgreSQL 配置后，显式执行幂等的管理员引导工具（优先读取命令行参数，未传入时回退读取环境变量）：
 
 ```bash
 # 通过命令行参数传入
@@ -137,7 +137,7 @@ ADMIN_PASSWORD='replace-with-a-strong-password' \
 uv run python -m scripts.bootstrap_admin
 ```
 
-首次引导管理员可以暂时没有数据角色，平台管理员身份也不会映射成 Doris 管理角色。管理员登录 `/admin` 创建第一个 Doris 角色后，将其分配给需要查询数据的用户；第一个角色自动成为公开注册的缺省角色。缺省角色创建前，公开注册返回服务不可用。平台管理员通过 `PUT /api/v1/admin/users/{user_id}/doris-role` 替换用户唯一 Doris 角色，通过 `PUT /api/v1/admin/users/{user_id}/administrator` 管理平台管理员身份。元数据 REST 接口全部要求平台管理员身份。
+首次引导管理员可以暂时没有数据角色，平台管理员身份也不会映射成 Doris 管理角色。管理员登录 `/admin` 创建第一个 Doris 角色后，将其分配给需要查询数据的用户；第一个角色自动成为缺省角色。平台管理员通过 `POST /api/v1/admin/users` 创建用户，通过 `PUT /api/v1/admin/users/{user_id}/doris-role` 替换用户唯一 Doris 角色，通过 `PUT /api/v1/admin/users/{user_id}/administrator` 管理平台管理员身份。元数据 REST 接口全部要求平台管理员身份。
 
 ### 5. 授权撤销与历史留存
 

@@ -18,6 +18,7 @@ from app.clients.postgres_client_manager import (
     meta_postgres_client_manager,
 )
 from app.conf.app_config import cfg
+from app.core.log import setup_logger
 from app.core.middlewares import trace
 from app.errors.exc_handlers import register_exception_handlers
 from app.repositories.doris_query_identity_pg_repo import DorisQueryIdentityPGRepo
@@ -108,6 +109,7 @@ def register_middlewares(app: FastAPI) -> None:
 
 def create_app() -> FastAPI:
     """创建并组装 FastAPI 应用"""
+    setup_logger()
     app = FastAPI(lifespan=lifespan)
     register_middlewares(app)
     register_exception_handlers(app)

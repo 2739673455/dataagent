@@ -1,10 +1,8 @@
 import axios from "axios";
-import type { LoginRequest, RegisterRequest, TokenResponse, UserResponse } from "@/auth/types";
+import type { LoginRequest, TokenResponse, UserResponse } from "@/auth/types";
 import { AUTH_API_PATHS } from "@/config/settings";
 
 export const authApi = {
-  register: (body: RegisterRequest) => axios.post<TokenResponse>(AUTH_API_PATHS.register, body),
-
   login: (body: LoginRequest) => axios.post<TokenResponse>(AUTH_API_PATHS.login, body),
 
   refresh: (refreshToken: string) =>

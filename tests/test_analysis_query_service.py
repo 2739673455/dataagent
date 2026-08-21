@@ -24,6 +24,7 @@ from app.services.analysis_query_service import (
     QueryPlanUnavailableError,
     QueryResultLimitExceededError,
     QueryScanLimitExceededError,
+    SuccessfulQueryExecution,
     estimate_doris_query_plan,
 )
 from app.services.query_guard_service import (
@@ -342,6 +343,56 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         rows = list(csv.reader(io.StringIO(content.decode())))
         self.assertEqual(rows[0], ["id", "amount", "created_at"])
         self.assertEqual(rows[1][1], "12.50")
+
+    async def test_success_observer_receives_lineage_after_artifact_commit(
+        self,
+    ) -> None:
+        observed: list[SuccessfulQueryExecution] = []
+
+        async def observe(details: SuccessfulQueryExecution) -> None:
+            self.assertEqual(len(store.uploads), 1)
+            observed.append(details)
+
+        guard = RecordingGuard(physical_table=True)
+        repo = FakeQueryRepo(
+            [QueryBatch(column_names=("id",), rows=((1,),))],
+            plan=("0:VOlapScanNode", "cardinality=1, avgRowSize=8"),
+        )
+        store = RecordingArtifactStore()
+        session_key = make_session_key()
+        service = AnalysisQueryService(
+            cast(QueryGuardService, guard),
+            repo,
+            store,
+            make_limits(),
+            success_observer=observe,
+        )
+
+        result = await service.execute(session_key, "SELECT raw")
+
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0].session_key, session_key)
+        self.assertEqual(observed[0].raw_sql, "SELECT raw")
+        self.assertEqual(observed[0].normalized_sql, "SELECT normalized")
+        self.assertEqual(observed[0].validation.tables[0].name, "orders")
+        self.assertEqual(observed[0].result, result)
+
+    async def test_success_observer_failure_keeps_completed_query_result(self) -> None:
+        async def observe(details: SuccessfulQueryExecution) -> None:
+            del details
+            raise RuntimeError("history store unavailable")
+
+        service = AnalysisQueryService(
+            cast(QueryGuardService, RecordingGuard()),
+            FakeQueryRepo([QueryBatch(column_names=("id",), rows=((1,),))]),
+            RecordingArtifactStore(),
+            make_limits(),
+            success_observer=observe,
+        )
+
+        result = await service.execute(make_session_key(), "SELECT raw")
+
+        self.assertEqual(result.row_count, 1)
 
     async def test_row_limit_discards_temporary_artifact(self) -> None:
         guard = RecordingGuard()

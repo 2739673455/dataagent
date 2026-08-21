@@ -8,7 +8,7 @@ import math
 import re
 import tempfile
 import unicodedata
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
@@ -18,6 +18,8 @@ from pathlib import PurePosixPath
 from typing import Any, BinaryIO, Protocol
 from uuid import UUID, uuid4
 
+from loguru import logger
+
 from app.agents.contracts import AgentSessionKey
 from app.models.query import (
     AnalysisQueryResult,
@@ -26,6 +28,7 @@ from app.models.query import (
     QueryExecutionLimits,
     QueryResultColumn,
     QueryTimeRange,
+    QueryValidationResult,
 )
 from app.services.query_guard_service import QueryGuardService
 
@@ -123,6 +126,22 @@ class QueryPlanEstimate:
     scan_bytes: int
 
 
+@dataclass(frozen=True, slots=True)
+class SuccessfulQueryExecution:
+    """成功查询的规范化 SQL、资产血缘和结果摘要"""
+
+    session_key: AgentSessionKey
+    raw_sql: str
+    dialect: QueryDialect
+    normalized_sql: str
+    validation: QueryValidationResult
+    plan_estimate: QueryPlanEstimate
+    result: AnalysisQueryResult
+
+
+type QuerySuccessObserver = Callable[[SuccessfulQueryExecution], Awaitable[None]]
+
+
 @dataclass(slots=True)
 class _ScanNodeEstimate:
     """一个 ScanNode 的未完成估算"""
@@ -186,12 +205,14 @@ class AnalysisQueryService:
         query_repo: ReadonlyQueryRepository,
         artifact_store: QueryArtifactStore,
         limits: QueryExecutionLimits,
+        success_observer: QuerySuccessObserver | None = None,
     ) -> None:
         """初始化分析查询服务"""
         self._guard = guard
         self._query_repo = query_repo
         self._artifact_store = artifact_store
         self._limits = limits
+        self._success_observer = success_observer
 
     async def execute(
         self,
@@ -202,18 +223,24 @@ class AnalysisQueryService:
         """校验、执行并返回查询产物的紧凑摘要"""
         try:
             async with asyncio.timeout(self._limits.timeout_seconds):
-                return await self._execute_with_deadline(session_key, sql, dialect)
+                details = await self._execute_with_deadline(session_key, sql, dialect)
         except TimeoutError:
             raise QueryExecutionTimeoutError(
                 f"Readonly query exceeded {self._limits.timeout_seconds} seconds"
             ) from None
+        if self._success_observer is not None:
+            try:
+                await self._success_observer(details)
+            except Exception:  # noqa: BLE001
+                logger.exception("Successful query observer failed")
+        return details.result
 
     async def _execute_with_deadline(
         self,
         session_key: AgentSessionKey,
         sql: str,
         dialect: QueryDialect,
-    ) -> AnalysisQueryResult:
+    ) -> SuccessfulQueryExecution:
         """在调用方建立的硬时限内完成整个查询生命周期"""
         guarded = await self._guard.require_safe(session_key.user_id, sql, dialect)
         plan = await self._query_repo.explain(guarded.sql, self._limits)
@@ -243,12 +270,21 @@ class AnalysisQueryService:
                 relative_path,
                 temporary_file,
             )
-        return AnalysisQueryResult(
+        result = AnalysisQueryResult(
             path=f"/{PurePosixPath(relative_path)}",
             schema=summary.schema,
             row_count=summary.row_count,
             time_range=summary.time_range,
             sample=summary.sample,
+        )
+        return SuccessfulQueryExecution(
+            session_key=session_key,
+            raw_sql=sql,
+            dialect=dialect,
+            normalized_sql=guarded.sql,
+            validation=guarded.validation,
+            plan_estimate=estimate,
+            result=result,
         )
 
     async def _write_csv(

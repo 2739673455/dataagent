@@ -1,14 +1,11 @@
-.PHONY: help run test clean
+.PHONY: help run clean
 
 help:
+	@echo "make run         - 启动后端服务"
 	@echo "make clean       - 清理临时文件"
-	@echo "make test        - 运行全部测试，包括真实 Docker 沙盒测试"
 
 run:
 	uv run main.py
-
-test:
-	RUN_DOCKER_SANDBOX_TESTS=1 uv run python -m unittest discover -s tests
 
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true

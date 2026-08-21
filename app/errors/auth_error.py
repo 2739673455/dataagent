@@ -11,6 +11,28 @@ class UserAlreadyExistsError(ProblemError):
     status = HTTPStatus.CONFLICT
 
 
+class UsernameAlreadyExistsError(UserAlreadyExistsError):
+    type = "username-already-exists"
+    title = "用户名已存在"
+
+
+class EmailAlreadyExistsError(UserAlreadyExistsError):
+    type = "email-already-exists"
+    title = "邮箱已注册"
+
+
+class WeakPasswordError(ProblemError):
+    type = "weak-password"
+    title = "密码强度不足"
+    status = HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+class InvalidUserMutationError(ProblemError):
+    type = "invalid-user-mutation"
+    title = "用户操作无效"
+    status = HTTPStatus.UNPROCESSABLE_ENTITY
+
+
 class InvalidCredentialsError(ProblemError):
     type = "invalid-credentials"
     title = "用户名或密码错误"
@@ -62,12 +84,6 @@ class RoleNotFoundError(ProblemError):
     type = "role-not-found"
     title = "角色不存在"
     status = HTTPStatus.NOT_FOUND
-
-
-class DefaultDorisRoleUnavailableError(ProblemError):
-    type = "default-doris-role-unavailable"
-    title = "缺省 Doris 角色尚未配置"
-    status = HTTPStatus.SERVICE_UNAVAILABLE
 
 
 class RoleAlreadyExistsError(ProblemError):

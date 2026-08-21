@@ -110,7 +110,7 @@ async def set_default_doris_role(
     _: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> schemas.DorisRoleResponse:
-    """设置公开注册使用的缺省 Doris 角色"""
+    """设置新用户使用的缺省 Doris 角色"""
     identity = await service.set_default_role(role)
     return schemas.DorisRoleResponse.from_entity(identity)
 
@@ -141,6 +141,41 @@ async def list_users(
     return schemas.UserListResponse(
         users=[schemas.UserResponse.from_entity(user) for user in users]
     )
+
+
+@router.post(
+    "/users",
+    response_model=schemas.UserResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_user(
+    body: schemas.CreateUserRequest,
+    _: AdminUserDep,
+    service: DorisRoleManagementServiceDep,
+) -> schemas.UserResponse:
+    """平台管理员创建新用户"""
+    user = await service.create_user(
+        username=body.username,
+        email=body.email,
+        password=body.password.get_secret_value(),
+        doris_role=body.doris_role,
+        is_admin=body.is_admin,
+    )
+    return schemas.UserResponse.from_entity(user)
+
+
+@router.delete(
+    "/users/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_user(
+    user_id: int,
+    current_admin: AdminUserDep,
+    service: DorisRoleManagementServiceDep,
+) -> Response:
+    """平台管理员删除指定用户"""
+    await service.delete_user(user_id, operator_id=current_admin.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.put("/users/{user_id}/doris-role", response_model=schemas.UserResponse)

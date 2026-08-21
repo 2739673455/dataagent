@@ -29,6 +29,7 @@ _PLATFORM_TOOL_ALLOWLISTS: dict[AgentType, frozenset[str]] = {
             "get_semantic_recall",
             "merge_semantic_recalls",
             "delete_semantic_recalls",
+            "search_query_experiences",
             "execute_sql",
         }
     ),
@@ -38,7 +39,13 @@ _PLATFORM_TOOL_ALLOWLISTS: dict[AgentType, frozenset[str]] = {
 }
 
 _REQUIRED_TOOLS: dict[AgentType, frozenset[str]] = {
-    "explorer": frozenset({"search_semantic_resources", "execute_sql"}),
+    "explorer": frozenset(
+        {
+            "search_semantic_resources",
+            "search_query_experiences",
+            "execute_sql",
+        }
+    ),
 }
 
 _RESERVED_MCP_TOOL_NAMES = frozenset(
@@ -169,21 +176,10 @@ class AgentRegistry:
         for agent_type, definition in definitions.items():
             if definition.agent_type != agent_type:
                 raise ValueError("agent definition key does not match its agent type")
-        self._definitions = dict(definitions)
         self._agent_factory = agent_factory
         self._agents: dict[str, CompiledStateGraph] = {}
         self._build_tasks: dict[str, asyncio.Task[CompiledStateGraph]] = {}
         self._lock = asyncio.Lock()
-
-    @property
-    def agent_types(self) -> tuple[AgentType, ...]:
-        """返回固定顺序的已注册 Agent 类型"""
-        return AGENT_TYPES
-
-    def get_definition(self, agent_type: AgentType) -> AgentDefinition:
-        """读取专业 Agent 静态定义"""
-        validate_agent_type(agent_type)
-        return self._definitions[agent_type]
 
     async def get_agent(self, session_key: AgentSessionKey) -> CompiledStateGraph:
         """获取绑定当前 Session Sandbox 的专业 Agent"""
