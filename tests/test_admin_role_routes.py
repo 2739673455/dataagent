@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from app.models.auth import DorisQueryIdentity
 from app.routes.api.v1.admin import schemas
@@ -12,6 +12,7 @@ from app.routes.api.v1.admin.router import (
     delete_user,
     discover_doris_roles,
     list_doris_roles,
+    list_users,
     set_user_administrator,
     set_user_doris_role,
 )
@@ -161,7 +162,7 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
             schemas.CreateUserRequest(
                 username="new_user",
                 email="new@example.com",
-                password="password123",
+                password=SecretStr("password123"),
                 doris_role="sales",
                 is_admin=False,
             ),
@@ -181,7 +182,7 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_delete_user_endpoint(self) -> None:
         service = MagicMock()
-        service.delete_user = AsyncMock()
+        service.request_deletion = AsyncMock()
         admin_user = build_user(user_id=1, is_admin=True)
 
         response = await delete_user(
@@ -191,7 +192,25 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(response.status_code, 204)
-        service.delete_user.assert_awaited_once_with(12, operator_id=1)
+        service.request_deletion.assert_awaited_once_with(12, operator_id=1)
+
+    async def test_list_users_returns_page_metadata(self) -> None:
+        service = MagicMock()
+        service.list_users = AsyncMock(return_value=([build_user(user_id=51)], 101))
+
+        response = await list_users(
+            MagicMock(),
+            service,
+            limit=50,
+            offset=50,
+        )
+
+        self.assertEqual(len(response.users), 1)
+        self.assertEqual(response.total, 101)
+        self.assertEqual(response.limit, 50)
+        self.assertEqual(response.offset, 50)
+        self.assertTrue(response.has_more)
+        service.list_users.assert_awaited_once_with(limit=50, offset=50)
 
 
 if __name__ == "__main__":

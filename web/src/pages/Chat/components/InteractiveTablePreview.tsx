@@ -115,8 +115,7 @@ export function InteractiveTablePreview({ artifact }: { artifact: InteractiveTab
             <span>数据表格</span>
           </span>
           <span className="rounded bg-[#deded8] px-2 py-0.5 text-xs text-[#52525b]">
-            共 {artifact.total_rows} 行
-            {artifact.truncated ? " (已截断)" : ""}
+            共 {artifact.total_rows} 行{artifact.truncated ? " (已截断)" : ""}
           </span>
         </div>
 
@@ -156,7 +155,10 @@ export function InteractiveTablePreview({ artifact }: { artifact: InteractiveTab
                 序号
               </th>
               {artifact.columns.map((column) => (
-                <th key={column} className="whitespace-nowrap border-r border-[#e5e5df] last:border-r-0">
+                <th
+                  key={column}
+                  className="whitespace-nowrap border-r border-[#e5e5df] last:border-r-0"
+                >
                   <button
                     type="button"
                     onClick={() => handleSort(column)}
@@ -183,9 +185,7 @@ export function InteractiveTablePreview({ artifact }: { artifact: InteractiveTab
                     className="max-w-xs border-r border-[#f0f0eb] px-3.5 py-1.5 align-top text-[#27272a] last:border-r-0"
                     title={displayValue(row[column])}
                   >
-                    <span className="block truncate text-sm">
-                      {displayValue(row[column])}
-                    </span>
+                    <span className="block truncate text-sm">{displayValue(row[column])}</span>
                   </td>
                 ))}
               </tr>

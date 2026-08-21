@@ -94,3 +94,13 @@ class SemanticRecallPGRepo:
         ):
             for item in items:
                 await self._store.adelete(namespace, item.key)
+
+    async def delete_all_by_user(self, user_id: int) -> None:
+        """删除用户全部会话下的召回记录"""
+        namespace_prefix = (_SEMANTIC_RECALL_NAMESPACE, str(user_id))
+        while items := await self._store.asearch(
+            namespace_prefix,
+            limit=_DELETE_BATCH_SIZE,
+        ):
+            for item in items:
+                await self._store.adelete(item.namespace, item.key)

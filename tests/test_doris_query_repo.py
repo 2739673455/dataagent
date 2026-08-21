@@ -70,7 +70,7 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(
             DorisReadonlyPrivilegeError,
-            "exactly the configured role",
+            "预期的唯一角色",
         ):
             DorisQueryRepository.require_readonly_grants(
                 [
@@ -100,7 +100,7 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(
             DorisReadonlyPrivilegeError,
-            "configured database",
+            "目标数据库",
         ):
             await repo.verify_readonly_access(
                 "dataagent_readonly",

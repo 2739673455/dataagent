@@ -73,7 +73,7 @@ class MetaImportService:
         """校验并批量导入元数据"""
         if not meta_config.tables and not meta_config.metrics:
             raise meta_error.InvalidMetadataError(
-                detail="Metadata import document cannot be empty"
+                detail="元数据导入文档不能为空"
             )
 
         async with self._meta_repo.transaction():
@@ -179,7 +179,7 @@ class MetaImportService:
         for table_config in meta_config.tables:
             if not await self._source_repo.table_exists(table_config.name):
                 raise meta_error.InvalidMetadataError(
-                    detail=f"Source table not found: {table_config.name}"
+                    detail=f"数仓源表不存在: {table_config.name}"
                 )
 
             primary_key_columns = await self._source_repo.get_primary_key_columns(
@@ -199,7 +199,7 @@ class MetaImportService:
                 if column_config.name not in column_types:
                     raise meta_error.InvalidMetadataError(
                         detail=(
-                            "Column not found in source table: "
+                            "源表中未找到指定字段: "
                             f"{table_config.name}.{column_config.name}"
                         )
                     )
@@ -248,7 +248,7 @@ class MetaImportService:
         for item in items:
             if item.name in indexed:
                 raise meta_error.InvalidMetadataError(
-                    detail=f"Duplicate table name in metadata import: {item.name}"
+                    detail=f"元数据导入文档中存在重复表名: {item.name}"
                 )
             indexed[item.name] = item
         return indexed
@@ -262,7 +262,7 @@ class MetaImportService:
             if key in indexed:
                 raise meta_error.InvalidMetadataError(
                     detail=(
-                        "Duplicate column name in metadata import: "
+                        "元数据导入文档中存在重复字段: "
                         f"{item.t_name}.{item.name}"
                     )
                 )
@@ -276,7 +276,7 @@ class MetaImportService:
         for item in items:
             if item.name in indexed:
                 raise meta_error.InvalidMetadataError(
-                    detail=f"Duplicate metric name in metadata import: {item.name}"
+                    detail=f"元数据导入文档中存在重复指标名: {item.name}"
                 )
             indexed[item.name] = item
         return indexed
@@ -298,15 +298,15 @@ class MetaImportService:
             if reference_key == column_key:
                 raise meta_error.InvalidMetadataError(
                     detail=(
-                        "Column cannot reference itself: "
+                        "字段不能引用自身: "
                         f"{column_info.t_name}.{column_info.name}"
                     )
                 )
             if reference_key not in available_columns:
                 raise meta_error.InvalidMetadataError(
                     detail=(
-                        f"Column {column_info.t_name}.{column_info.name} "
-                        "references missing column: "
+                        f"字段 {column_info.t_name}.{column_info.name} "
+                        "引用的目标字段不存在: "
                         f"{reference_key[0]}.{reference_key[1]}"
                     )
                 )
@@ -326,7 +326,7 @@ class MetaImportService:
             if missing_columns:
                 raise meta_error.InvalidMetadataError(
                     detail=(
-                        f"Metric {metric_info.name} references missing columns: "
+                        f"指标 {metric_info.name} 关联的字段不存在: "
                         f"{', '.join(f'{table}.{column}' for table, column in missing_columns)}"
                     )
                 )

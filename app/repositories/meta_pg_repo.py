@@ -241,7 +241,7 @@ class MetaPGRepo:
         if result:
             return result
         raise meta_error.MetadataNotFoundError(
-            detail=f"Column info not found: {t_name}.{c_name}"
+            detail=f"未找到字段元数据: {t_name}.{c_name}"
         )
 
     async def get_table_info(self, t_name: str) -> TableInfo:
@@ -249,7 +249,7 @@ class MetaPGRepo:
         result = await self._session.get(TableInfo, t_name)
         if result:
             return result
-        raise meta_error.MetadataNotFoundError(detail=f"Table info not found: {t_name}")
+        raise meta_error.MetadataNotFoundError(detail=f"未找到表元数据: {t_name}")
 
     async def get_metric_info(self, metric_name: str) -> MetricInfo:
         """根据指标名获取指标信息"""
@@ -258,7 +258,7 @@ class MetaPGRepo:
             await self._load_metric_references([result])
             return result
         raise meta_error.MetadataNotFoundError(
-            detail=f"Metric info not found: {metric_name}"
+            detail=f"未找到指标元数据: {metric_name}"
         )
 
     async def _prepare_column_versions(

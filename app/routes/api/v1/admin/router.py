@@ -9,6 +9,7 @@ from app.routes.api.v1.auth.dependencies import (
     AdminUserDep,
     DorisPermissionServiceDep,
     DorisRoleManagementServiceDep,
+    UserDeletionServiceDep,
 )
 
 router = APIRouter(tags=["admin"])
@@ -137,9 +138,13 @@ async def list_users(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> schemas.UserListResponse:
     """分页列出用户、管理员标志与唯一 Doris 角色"""
-    users = await service.list_users(limit=limit, offset=offset)
+    users, total = await service.list_users(limit=limit, offset=offset)
     return schemas.UserListResponse(
-        users=[schemas.UserResponse.from_entity(user) for user in users]
+        users=[schemas.UserResponse.from_entity(user) for user in users],
+        total=total,
+        limit=limit,
+        offset=offset,
+        has_more=offset + len(users) < total,
     )
 
 
@@ -171,10 +176,10 @@ async def create_user(
 async def delete_user(
     user_id: int,
     current_admin: AdminUserDep,
-    service: DorisRoleManagementServiceDep,
+    service: UserDeletionServiceDep,
 ) -> Response:
     """平台管理员删除指定用户"""
-    await service.delete_user(user_id, operator_id=current_admin.id)
+    await service.request_deletion(user_id, operator_id=current_admin.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

@@ -4,6 +4,20 @@ from collections.abc import Mapping
 from http import HTTPStatus
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict
+
+
+class ProblemDetails(BaseModel):
+    """RFC 9457 错误响应协议"""
+
+    model_config = ConfigDict(extra="allow")
+
+    type: str
+    title: str
+    status: int
+    detail: str | None = None
+    instance: str | None = None
+
 
 class ProblemError(Exception):
     """可由全局处理器转换为 Problem Details 响应的应用异常"""

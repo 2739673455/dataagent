@@ -173,7 +173,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         manager = _TurnManagerStub(runtime, turn_context)
 
         user_message = chat_schema.UserMessageRequest(
-            parts=[chat_schema.TextContent(text="analyze")],
+            parts=[chat_schema.TextContent(type="text", text="analyze")],
         )
         responses: list[chat_schema.MessageResponse] = []
         with (
@@ -283,7 +283,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         )
         manager = _TurnManagerStub(runtime, turn_context)
         user_message = chat_schema.UserMessageRequest(
-            parts=[chat_schema.TextContent(text="analyze")],
+            parts=[chat_schema.TextContent(type="text", text="analyze")],
         )
         responses: list[chat_schema.MessageResponse] = []
 

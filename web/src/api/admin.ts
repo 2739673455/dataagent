@@ -1,71 +1,36 @@
 import type { UserResponse } from "@/auth";
 import appClient from "@/api/appClient";
+import type { components } from "@/api/generated";
 
-export interface DorisRoleResponse {
-  name: string;
-  description: string;
-  is_default: boolean;
-  is_active: boolean;
-  query_user: string;
-  workload_group: string;
-  exists_in_doris: boolean;
-  doris_grants: Record<string, unknown> | null;
-}
+type ApiSchemas = components["schemas"];
 
-export interface DiscoveredDorisRoleResponse {
-  name: string;
-  is_attached: boolean;
-  description: string | null;
-  query_user: string | null;
-  workload_group: string | null;
-}
+export type AssetGrantListResponse = ApiSchemas["AssetGrantListResponse"];
+export type AssetGrantResponse = ApiSchemas["AssetGrantResponse"];
+export type AttachDorisRoleRequest = ApiSchemas["AttachDorisRoleRequest"];
+export type CreateDorisRoleRequest = ApiSchemas["CreateDorisRoleRequest"];
+export type CreateUserRequest = ApiSchemas["CreateUserRequest"];
+export type DiscoveredDorisRoleResponse = ApiSchemas["DiscoveredDorisRoleResponse"];
+export type DorisRoleResponse = ApiSchemas["DorisRoleResponse"];
+export type RowPolicyRequest = ApiSchemas["RowPolicyRequest"];
+export type SelectGrantRequest = ApiSchemas["SelectGrantRequest"];
+export type UserListResponse = ApiSchemas["UserListResponse"];
 
-export interface AttachDorisRoleRequest {
-  role: string;
-  description: string;
-  workload_group?: string;
-  query_user?: string;
-  is_default?: boolean;
-}
-
-export interface CreateDorisRoleRequest {
-  role: string;
-  description: string;
-  query_user: string;
-  workload_group: string;
-  is_default: boolean;
-}
-
-export interface CreateUserRequest {
-  username: string;
-  email: string;
-  password: string;
-  doris_role?: string;
-  is_admin?: boolean;
-}
-
-export interface SelectGrantRequest {
-  table_name: string | null;
-  columns: string[];
-}
-
-export interface RowPolicyRequest {
-  policy_name: string;
-  table_name: string;
-  policy_type: "RESTRICTIVE" | "PERMISSIVE";
-  predicate: string;
-}
+type DorisRoleListResponse = ApiSchemas["DorisRoleListResponse"];
+type DiscoveredDorisRoleListResponse = ApiSchemas["DiscoveredDorisRoleListResponse"];
+type DropRowPolicyRequest = ApiSchemas["DropRowPolicyRequest"];
+type RowPolicy = ApiSchemas["RowPolicyListResponse"]["policies"][number];
+type RowPolicyListResponse = ApiSchemas["RowPolicyListResponse"];
+type SetUserAdministratorRequest = ApiSchemas["SetUserAdministratorRequest"];
+type SetUserDorisRoleRequest = ApiSchemas["SetUserDorisRoleRequest"];
 
 export const adminApi = {
   async listRoles(): Promise<DorisRoleResponse[]> {
-    const response = await appClient.get<{ roles: DorisRoleResponse[] }>(
-      "/api/v1/admin/doris-roles"
-    );
+    const response = await appClient.get<DorisRoleListResponse>("/api/v1/admin/doris-roles");
     return response.data.roles;
   },
 
   async discoverRoles(): Promise<DiscoveredDorisRoleResponse[]> {
-    const response = await appClient.get<{ roles: DiscoveredDorisRoleResponse[] }>(
+    const response = await appClient.get<DiscoveredDorisRoleListResponse>(
       "/api/v1/admin/doris-roles/discover"
     );
     return response.data.roles;
@@ -95,9 +60,11 @@ export const adminApi = {
     await appClient.delete(`/api/v1/admin/doris-roles/${role}`);
   },
 
-  async listUsers(): Promise<UserResponse[]> {
-    const response = await appClient.get<{ users: UserResponse[] }>("/api/v1/admin/users");
-    return response.data.users;
+  async listUsers(limit: number, offset: number): Promise<UserListResponse> {
+    const response = await appClient.get<UserListResponse>("/api/v1/admin/users", {
+      params: { limit, offset },
+    });
+    return response.data;
   },
 
   async createUser(request: CreateUserRequest): Promise<UserResponse> {
@@ -112,14 +79,14 @@ export const adminApi = {
   async setUserRole(userId: number, role: string): Promise<UserResponse> {
     const response = await appClient.put<UserResponse>(`/api/v1/admin/users/${userId}/doris-role`, {
       role,
-    });
+    } satisfies SetUserDorisRoleRequest);
     return response.data;
   },
 
   async setAdministrator(userId: number, isAdmin: boolean): Promise<UserResponse> {
     const response = await appClient.put<UserResponse>(
       `/api/v1/admin/users/${userId}/administrator`,
-      { is_admin: isAdmin }
+      { is_admin: isAdmin } satisfies SetUserAdministratorRequest
     );
     return response.data;
   },
@@ -134,8 +101,15 @@ export const adminApi = {
     });
   },
 
-  async listRowPolicies(role: string): Promise<Record<string, unknown>[]> {
-    const response = await appClient.get<{ policies: Record<string, unknown>[] }>(
+  async listSelectGrants(role: string): Promise<AssetGrantResponse[]> {
+    const response = await appClient.get<AssetGrantListResponse>(
+      `/api/v1/admin/doris-roles/${role}/select-grants`
+    );
+    return response.data.grants;
+  },
+
+  async listRowPolicies(role: string): Promise<RowPolicy[]> {
+    const response = await appClient.get<RowPolicyListResponse>(
       `/api/v1/admin/doris-roles/${role}/row-policies`
     );
     return response.data.policies;
@@ -147,7 +121,10 @@ export const adminApi = {
 
   async dropRowPolicy(role: string, policyName: string, tableName: string): Promise<void> {
     await appClient.delete(`/api/v1/admin/doris-roles/${role}/row-policies`, {
-      data: { policy_name: policyName, table_name: tableName },
+      data: {
+        policy_name: policyName,
+        table_name: tableName,
+      } satisfies DropRowPolicyRequest,
     });
   },
 };

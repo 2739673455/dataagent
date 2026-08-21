@@ -96,7 +96,7 @@
 - 管理员通过 `POST /api/v1/admin/doris-roles` 创建角色。服务端生成随机查询密码，在 Doris 创建角色与唯一查询用户，把 Workload Group 的 `USAGE_PRIV` 授予角色，并只将密文保存到 `doris_query_identities`。API 不接收或返回查询密码。
 - 第一个查询身份自动成为缺省角色，后续可通过 `PUT /api/v1/admin/doris-roles/{role}/default` 替换缺省角色。缺省角色和仍被用户引用的角色不能删除。
 - 查询用户不授予导入、建表、修改、删除、授权或节点管理权限。应用启动时逐个检查启用身份只绑定预期角色、有效权限只读、目标库可见和 Workload Group 可用，任一项不符合时拒绝启动。
-- 管理员 API 可直接操作 Doris：`GET|POST|DELETE /api/v1/admin/doris-roles` 管理查询身份，`POST|DELETE /api/v1/admin/doris-roles/{role}/select-grants` 管理库、表、列 SELECT 权限，`GET|POST|DELETE /api/v1/admin/doris-roles/{role}/row-policies` 管理行策略。
+- 管理员 API 可直接操作 Doris：`GET|POST /api/v1/admin/doris-roles` 与 `DELETE /api/v1/admin/doris-roles/{role}` 管理查询身份，`GET|POST|DELETE /api/v1/admin/doris-roles/{role}/select-grants` 管理库、表、列 SELECT 权限，`GET|POST|DELETE /api/v1/admin/doris-roles/{role}/row-policies` 管理行策略。
 - 平台管理员登录后可从聊天侧栏进入 `/admin`，在同一页面调整用户唯一 Doris 角色、平台管理员身份、SELECT 权限和 Row Policy。
 - SELECT 授权必须通过管理员 API 修改，使 Doris 权限与应用侧语义检索投影同步。外部 DBA 修改后需要通过同一 API重放对应授权目标。
 
@@ -153,3 +153,31 @@ uv run main.py
 - 后端默认监听 `7000` 端口。Vite 开发代理的 `VITE_APP_PROXY` 默认为 `http://localhost:7000`，可复制 `web/.env.example` 并在非默认部署中覆盖。
 - 同一 Docker 主机上的不同部署必须使用唯一的 `sandbox.deployment_namespace`，避免容器和数据卷名称冲突。
 - 当前 Docker 会话 UID 注册表更新和文件 mutation lock 使用进程内锁，同一 `deployment_namespace` 只运行一个 API worker；不要为该 namespace 启动多个 Uvicorn/Gunicorn worker。
+
+---
+
+## 前后端协议与文档检查
+
+后端 FastAPI OpenAPI 是 HTTP 请求、响应和错误结构的协议源。`scripts/generate_openapi_types.py` 将组件 Schema、路由参数和响应生成到 `web/src/api/generated.ts`，前端业务类型直接引用该文件。生成文件不手工修改。
+
+```bash
+# 后端 Schema 变化后重新生成
+uv run python scripts/generate_openapi_types.py
+
+# 提交前检查协议和文档链接
+uv run python scripts/generate_openapi_types.py --check
+uv run python scripts/check_doc_links.py
+
+# 也可从前端目录运行协议检查
+cd web
+npm run contract:check
+```
+
+CI 会独立运行协议差异检查、API 契约测试和文档本地链接检查。
+
+---
+
+## 后续规划与待办 (TODO)
+
+- [ ] **Token 消耗记录与成本监控**：接入 Langfuse，实现全链路 Trace 追踪与细粒度 Token 消耗统计
+- [ ] **评估与测试体系**：构建面向 Agent 数据分析问答与 SQL 生成效果的端到端 Benchmark 评测基准

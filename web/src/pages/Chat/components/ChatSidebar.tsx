@@ -1,5 +1,18 @@
-import { LogOut, MessageSquare, Plus, Settings, Trash2, User } from "lucide-react";
+import {
+  Check,
+  KeyRound,
+  LogOut,
+  MessageSquare,
+  Pencil,
+  Plus,
+  Settings,
+  Trash2,
+  User,
+  X,
+} from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 import type { UserResponse } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -13,6 +26,8 @@ interface ChatSidebarProps {
   user: UserResponse | null;
   onCreate: () => void;
   onDelete: (conversationId: string) => void;
+  onRename: (conversationId: string, title: string) => Promise<void>;
+  onChangePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   onLogout: () => void;
 }
 
@@ -35,8 +50,66 @@ export function ChatSidebar({
   user,
   onCreate,
   onDelete,
+  onRename,
+  onChangePassword,
   onLogout,
 }: ChatSidebarProps) {
+  const [isPasswordOpen, setIsPasswordOpen] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
+  const [isRenaming, setIsRenaming] = useState(false);
+
+  const submitPasswordChange = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (newPassword.length < 6) {
+      toast.error("新密码至少需要 6 个字符");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error("两次输入的新密码不一致");
+      return;
+    }
+    setIsChangingPassword(true);
+    try {
+      await onChangePassword(currentPassword, newPassword);
+    } catch (error) {
+      const payload = (error as { response?: { data?: { detail?: string; title?: string } } })
+        .response?.data;
+      toast.error(payload?.detail ?? payload?.title ?? "密码修改失败");
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
+  const submitRename = async (event: React.FormEvent, conversationId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const title = editingTitle.trim();
+    if (!title) {
+      toast.error("会话标题不能为空");
+      return;
+    }
+    if (title.length > 64) {
+      toast.error("会话标题不能超过 64 个字符");
+      return;
+    }
+    setIsRenaming(true);
+    try {
+      await onRename(conversationId, title);
+      setEditingConversationId(null);
+      toast.success("会话标题已更新");
+    } catch (error) {
+      const payload = (error as { response?: { data?: { detail?: string; title?: string } } })
+        .response?.data;
+      toast.error(payload?.detail ?? payload?.title ?? "会话重命名失败");
+    } finally {
+      setIsRenaming(false);
+    }
+  };
   return (
     <div className="flex h-full flex-col overflow-hidden border-r border-[#d4d4ce] bg-[#ebebe6] font-mono text-[#27272a]">
       {/* 顶部会话控制栏 */}
@@ -72,59 +145,102 @@ export function ChatSidebar({
                 className={cn(
                   "group relative flex items-center justify-between rounded border px-3 py-2 transition-colors",
                   isActive
-                    ? "border-[#1e3a8a] bg-[#1e3a8a] text-[#ffffff] shadow-xs"
+                    ? "border-[#1e2024] bg-[#1e2024] text-[#ffffff] shadow-xs"
                     : "border-transparent text-[#52525b] hover:bg-[#dfdfda] hover:text-[#18181b]"
                 )}
               >
-                <Link
-                  to={ROUTES.chatConversation(conversation.conversation_id)}
-                  className="flex min-w-0 flex-1 items-center gap-2.5"
-                >
-                  <MessageSquare
-                    className={cn(
-                      "h-4 w-4 shrink-0",
-                      isActive ? "text-[#93c5fd]" : "text-[#71717a]"
-                    )}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p
+                {editingConversationId === conversation.conversation_id ? (
+                  <form
+                    className="flex min-w-0 flex-1 items-center gap-1"
+                    onSubmit={(event) => void submitRename(event, conversation.conversation_id)}
+                  >
+                    <input
+                      maxLength={64}
+                      value={editingTitle}
+                      disabled={isRenaming}
+                      onChange={(event) => setEditingTitle(event.target.value)}
                       className={cn(
-                        "truncate text-sm",
-                        isActive ? "font-medium text-[#ffffff]" : "font-normal"
+                        "h-7 min-w-0 flex-1 rounded border px-2 text-xs outline-none",
+                        isActive
+                          ? "border-[#52525b] bg-[#2d3139] text-white"
+                          : "border-[#d4d4ce] bg-white text-[#18181b]"
                       )}
+                    />
+                    <button
+                      type="submit"
+                      disabled={isRenaming || !editingTitle.trim()}
+                      className="rounded p-1 text-emerald-400 hover:bg-[#2d3139] disabled:opacity-40"
                     >
-                      {conversation.title || "新会话"}
-                    </p>
-                    {timeStr && (
-                      <p
+                      <Check className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isRenaming}
+                      onClick={() => setEditingConversationId(null)}
+                      className="rounded p-1 text-rose-400 hover:bg-[#2d3139] disabled:opacity-40"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </form>
+                ) : (
+                  <>
+                    <Link
+                      to={ROUTES.chatConversation(conversation.conversation_id)}
+                      className="flex min-w-0 flex-1 items-center gap-2.5"
+                    >
+                      <MessageSquare
                         className={cn(
-                          "text-xs",
-                          isActive ? "text-[#bfdbfe]" : "text-[#8e8e93]"
+                          "h-4 w-4 shrink-0",
+                          isActive ? "text-[#d4d4ce]" : "text-[#71717a]"
                         )}
-                      >
-                        {timeStr}
-                      </p>
-                    )}
-                  </div>
-                </Link>
-
-                <button
-                  type="button"
-                  title="删除会话"
-                  className={cn(
-                    "ml-1 shrink-0 rounded p-1 opacity-0 transition group-hover:opacity-100",
-                    isActive
-                      ? "text-[#bfdbfe] hover:bg-[#1e40af] hover:text-[#ffffff]"
-                      : "text-[#8e8e93] hover:bg-[#deded8] hover:text-[#dc2626]"
-                  )}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onDelete(conversation.conversation_id);
-                  }}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p
+                          className={cn(
+                            "truncate text-sm",
+                            isActive ? "font-medium text-[#ffffff]" : "font-normal"
+                          )}
+                        >
+                          {conversation.title || "新会话"}
+                        </p>
+                        {timeStr && (
+                          <p
+                            className={cn(
+                              "text-xs",
+                              isActive ? "text-[#a1a1aa]" : "text-[#8e8e93]"
+                            )}
+                          >
+                            {timeStr}
+                          </p>
+                        )}
+                      </div>
+                    </Link>
+                    <button
+                      type="button"
+                      title="重命名会话"
+                      className="ml-1 shrink-0 rounded p-1 opacity-0 transition group-hover:opacity-100"
+                      onClick={() => {
+                        setEditingConversationId(conversation.conversation_id);
+                        setEditingTitle(conversation.title);
+                      }}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      title="删除会话"
+                      className={cn(
+                        "shrink-0 rounded p-1 opacity-0 transition group-hover:opacity-100",
+                        isActive
+                          ? "text-[#d4d4ce] hover:bg-[#2d3139] hover:text-[#ffffff]"
+                          : "text-[#8e8e93] hover:bg-[#deded8] hover:text-[#dc2626]"
+                      )}
+                      onClick={() => onDelete(conversation.conversation_id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </>
+                )}
               </div>
             );
           })}
@@ -162,35 +278,106 @@ export function ChatSidebar({
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5">
+        <div className={cn("grid gap-1.5", user?.is_admin ? "grid-cols-3" : "grid-cols-2")}>
           {user?.is_admin && (
             <Button
               asChild
               variant="outline"
               size="sm"
-              className="flex-1 border-[#d4d4ce] bg-[#ffffff] text-xs text-[#27272a] hover:bg-[#deded8]"
+              className="w-full border-[#d4d4ce] bg-[#ffffff] px-1.5 text-xs text-[#27272a] hover:bg-[#deded8]"
             >
               <Link to={ROUTES.admin} title="管理后台">
-                <Settings className="h-3.5 w-3.5 mr-1" />
-                管理后台
+                <Settings className="h-3.5 w-3.5 shrink-0" />
+                <span>后台</span>
               </Link>
             </Button>
           )}
           <Button
             variant="outline"
             size="sm"
-            className={cn(
-              "border-[#d4d4ce] bg-[#ffffff] text-xs text-[#71717a] hover:bg-[#deded8] hover:text-[#dc2626]",
-              !user?.is_admin && "w-full"
-            )}
+            className="w-full border-[#d4d4ce] bg-[#ffffff] px-1.5 text-xs text-[#27272a] hover:bg-[#deded8]"
+            onClick={() => setIsPasswordOpen(true)}
+            title="修改密码"
+          >
+            <KeyRound className="h-3.5 w-3.5 shrink-0" />
+            <span>密码</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full border-[#d4d4ce] bg-[#ffffff] px-1.5 text-xs text-[#71717a] hover:bg-[#deded8] hover:text-[#dc2626]"
             onClick={onLogout}
             title="退出登录"
           >
-            <LogOut className="h-3 w-3 mr-1" />
-            退出
+            <LogOut className="h-3.5 w-3.5 shrink-0" />
+            <span>退出</span>
           </Button>
         </div>
       </div>
+
+      {isPasswordOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="change-password-title"
+        >
+          <form
+            className="w-full max-w-sm rounded border border-[#d4d4ce] bg-white p-5 shadow-xl"
+            onSubmit={(event) => void submitPasswordChange(event)}
+          >
+            <h2 id="change-password-title" className="mb-4 text-base font-bold text-[#18181b]">
+              修改密码
+            </h2>
+            <label className="mb-3 block text-xs text-[#52525b]">
+              当前密码
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={(event) => setCurrentPassword(event.target.value)}
+                className="mt-1 h-9 w-full rounded border border-[#d4d4ce] px-3 text-sm"
+                required
+              />
+            </label>
+            <label className="mb-3 block text-xs text-[#52525b]">
+              新密码
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={newPassword}
+                onChange={(event) => setNewPassword(event.target.value)}
+                className="mt-1 h-9 w-full rounded border border-[#d4d4ce] px-3 text-sm"
+                required
+              />
+            </label>
+            <label className="mb-5 block text-xs text-[#52525b]">
+              确认新密码
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                className="mt-1 h-9 w-full rounded border border-[#d4d4ce] px-3 text-sm"
+                required
+              />
+            </label>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isChangingPassword}
+                onClick={() => setIsPasswordOpen(false)}
+              >
+                取消
+              </Button>
+              <Button type="submit" disabled={isChangingPassword}>
+                {isChangingPassword ? "提交中..." : "确认修改"}
+              </Button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

@@ -39,6 +39,12 @@ class InvalidCredentialsError(ProblemError):
     status = HTTPStatus.UNAUTHORIZED
 
 
+class InvalidCurrentPasswordError(ProblemError):
+    type = "invalid-current-password"
+    title = "当前密码错误"
+    status = HTTPStatus.UNAUTHORIZED
+
+
 class AuthenticationRequiredError(ProblemError):
     type = "authentication-required"
     title = "需要登录"
@@ -122,6 +128,12 @@ class LastAdministratorError(ProblemError):
     status = HTTPStatus.CONFLICT
 
 
+class UserDeletionPendingError(ProblemError):
+    type = "user-deletion-pending"
+    title = "用户注销已进入重试队列"
+    status = HTTPStatus.SERVICE_UNAVAILABLE
+
+
 class InvalidDorisPermissionError(ProblemError):
     type = "invalid-doris-permission"
     title = "Doris 权限配置无效"
@@ -140,6 +152,6 @@ class RateLimitExceededError(ProblemError):
         detail: str | None = None,
     ) -> None:
         super().__init__(
-            detail=detail or "Too many authentication attempts",
+            detail=detail or "认证请求过于频繁，请稍后重试",
             extensions={"retry_after_seconds": retry_after_seconds},
         )

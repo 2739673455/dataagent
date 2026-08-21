@@ -53,6 +53,7 @@ def build_user(
         username="analyst",
         email="analyst@example.com",
         password_hash="hashed-password",
+        auth_version=0,
         is_active=True,
         is_admin=is_admin,
         doris_role_name=doris_role,
@@ -68,12 +69,17 @@ def build_repo() -> MagicMock:
     repo.lock_security_mutation = AsyncMock()
     repo.get_user_by_username = AsyncMock()
     repo.get_user_by_email = AsyncMock()
+    repo.get_user_by_username_for_update = AsyncMock()
+    repo.get_user_by_email_for_update = AsyncMock()
     repo.add_user = AsyncMock()
     repo.set_user_admin = AsyncMock()
     repo.get_user_by_id = AsyncMock()
+    repo.get_user_by_id_for_update = AsyncMock()
+    repo.set_user_password = AsyncMock()
     repo.add_refresh_token = AsyncMock()
     repo.get_refresh_token_for_update = AsyncMock()
     repo.revoke_refresh_family = AsyncMock()
+    repo.revoke_user_refresh_tokens = AsyncMock()
     repo.rotate_refresh_token.side_effect = AuthPGRepo.rotate_refresh_token
     return repo
 
@@ -196,12 +202,12 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_refresh_rotates_token_and_replay_revokes_family(self) -> None:
         user = build_user()
-        self.repo.get_user_by_username.return_value = user
+        self.repo.get_user_by_username_for_update.return_value = user
         _, initial_pair = await self.service.login(user.username, "password")
         current = self.repo.add_refresh_token.await_args.args[0]
         self.assertIsInstance(current, RefreshToken)
         self.repo.get_refresh_token_for_update.return_value = current
-        self.repo.get_user_by_id.return_value = user
+        self.repo.get_user_by_id_for_update.return_value = user
         self.repo.add_refresh_token.reset_mock()
 
         await self.service.refresh(initial_pair.refresh_token)
@@ -213,10 +219,53 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
         self.repo.revoke_refresh_family.assert_awaited_with(current.family_id, self.now)
 
     async def test_wrong_password_does_not_issue_tokens(self) -> None:
-        self.repo.get_user_by_email.return_value = build_user()
+        self.repo.get_user_by_email_for_update.return_value = build_user()
         self.password_manager.verify.return_value = False
 
         with self.assertRaises(auth_error.InvalidCredentialsError):
             await self.service.login("analyst@example.com", "wrong")
 
         self.repo.add_refresh_token.assert_not_awaited()
+
+    async def test_change_password_updates_hash_and_revokes_refresh_tokens(self) -> None:
+        user = build_user()
+        self.repo.get_user_by_id_for_update.return_value = user
+        self.password_manager.verify.return_value = True
+        self.password_manager.hash.return_value = "new-hash"
+
+        await self.service.change_password(
+            user.id,
+            "current-password",
+            "new-password",
+        )
+
+        self.repo.set_user_password.assert_awaited_once_with(user, "new-hash")
+        self.repo.revoke_user_refresh_tokens.assert_awaited_once_with(
+            user.id,
+            self.now,
+        )
+
+    async def test_change_password_rejects_wrong_current_password(self) -> None:
+        user = build_user()
+        self.repo.get_user_by_id_for_update.return_value = user
+        self.password_manager.verify.return_value = False
+
+        with self.assertRaises(auth_error.InvalidCurrentPasswordError):
+            await self.service.change_password(
+                user.id,
+                "wrong-password",
+                "new-password",
+            )
+
+        self.repo.set_user_password.assert_not_awaited()
+        self.repo.revoke_user_refresh_tokens.assert_not_awaited()
+
+    async def test_auth_version_change_invalidates_existing_access_token(self) -> None:
+        user = build_user()
+        self.repo.get_user_by_username_for_update.return_value = user
+        _, token_pair = await self.service.login(user.username, "password")
+        user.auth_version += 1
+        self.repo.get_user_by_id.return_value = user
+
+        with self.assertRaises(auth_error.InvalidTokenError):
+            await self.service.authenticate_access_token(token_pair.access_token)

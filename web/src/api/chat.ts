@@ -1,4 +1,5 @@
 import { getAccessToken, refreshAccessToken } from "@/auth";
+import type { components } from "@/api/generated";
 import { CHAT_API_ROUTES } from "@/config/settings";
 import type {
   ChatStreamEvent,
@@ -9,6 +10,12 @@ import type {
   UploadAttachmentResponse,
 } from "@/types";
 import appClient from "./appClient";
+
+type ApiSchemas = components["schemas"];
+type CreateConversationRequest = ApiSchemas["CreateConversationRequest"];
+type DeleteAttachmentRequest = ApiSchemas["DeleteAttachmentRequest"];
+type DeleteConversationRequest = ApiSchemas["DeleteConversationRequest"];
+type UpdateConversationRequest = ApiSchemas["UpdateConversationRequest"];
 
 function parseStreamEvent(frame: string): ChatStreamEvent | null {
   const payload = frame
@@ -69,11 +76,11 @@ export const chatApi = {
     return appClient.get<ConversationListResponse>(CHAT_API_ROUTES.listConversations);
   },
 
-  createConversation(isDraft: 0 | 1 = 0, initialMessage?: string) {
+  createConversation(isDraft = false, initialMessage?: string) {
     return appClient.post<ConversationResponse>(CHAT_API_ROUTES.createConversation, {
       is_draft: isDraft,
       initial_message: initialMessage,
-    });
+    } satisfies CreateConversationRequest);
   },
 
   getMessages(conversationId: string) {
@@ -91,7 +98,7 @@ export const chatApi = {
     return appClient.post(CHAT_API_ROUTES.deleteAttachment, {
       conversation_id: conversationId,
       f_path,
-    });
+    } satisfies DeleteAttachmentRequest);
   },
 
   fetchAttachmentFile(conversationId: string, f_path: string) {
@@ -104,10 +111,21 @@ export const chatApi = {
     });
   },
 
+  updateConversation(conversationId: string, title: string) {
+    return appClient.post(CHAT_API_ROUTES.updateConversation, {
+      conversation_id: conversationId,
+      title,
+    } satisfies UpdateConversationRequest);
+  },
+
   deleteConversations(conversationIds: string[]) {
     return appClient.post(CHAT_API_ROUTES.deleteConversations, {
       conversation_ids: conversationIds,
-    });
+    } satisfies DeleteConversationRequest);
+  },
+
+  deleteDraftConversation(conversationId: string) {
+    return appClient.delete(CHAT_API_ROUTES.deleteDraftConversation(conversationId));
   },
 
   streamChat(

@@ -1,74 +1,32 @@
 import appClient from "@/api/appClient";
+import type { components } from "@/api/generated";
 
-export interface ColumnReference {
-  t_name: string;
-  c_name: string;
-}
+type ApiSchemas = components["schemas"];
 
-export interface TableInfo {
-  name: string;
-  role: string;
-  primary_key_columns: string[];
-  description: string;
-  meta_version: number;
-}
+export type ColumnIndexSyncResponse = ApiSchemas["ColumnIndexSyncResponse"];
+export type ColumnInfo = ApiSchemas["ColumnInfoResponse"];
+export type ColumnReference = ApiSchemas["ColumnReference"];
+export type ImportMode = ApiSchemas["ImportMode"];
+export type MetaImportResponse = ApiSchemas["MetaImportResponse"];
+export type MetricIndexSyncResponse = ApiSchemas["MetricIndexSyncResponse"];
+export type MetricInfo = ApiSchemas["MetricInfoResponse"];
+export type TableInfo = ApiSchemas["TableInfoResponse"];
+export type TableRole = ApiSchemas["TableInfoRequest"]["role"];
 
-export interface ColumnInfo {
-  t_name: string;
-  name: string;
-  type: string;
-  examples: unknown[];
-  description: string;
-  alias: string[];
-  index_values: boolean;
-  reference_t_name: string | null;
-  reference_c_name: string | null;
-  meta_version: number;
-  index_version: number;
-  value_index_synced_at: string | null;
-  value_index_sync_status: "syncing" | "succeeded" | "failed" | null;
-}
-
-export interface MetricInfo {
-  name: string;
-  description: string;
-  relevant_columns: ColumnReference[];
-  alias: string[];
-  meta_version: number;
-  index_version: number;
-}
-
-interface ResourceImportChanges {
-  created_count: number;
-  updated_count: number;
-  deleted_count: number;
-  created_keys: string[];
-  updated_keys: string[];
-  deleted_keys: string[];
-}
-
-export interface MetaImportResponse {
-  mode: string;
-  dry_run: boolean;
-  tables: ResourceImportChanges;
-  columns: ResourceImportChanges;
-  metrics: ResourceImportChanges;
-}
-
-export interface ColumnIndexSyncResponse {
-  t_name: string;
-  c_name: string;
-  indexed_count: number;
-}
-
-export interface MetricIndexSyncResponse {
-  metric_name: string;
-  indexed_count: number;
-}
+type BatchIndexSyncResponse = ApiSchemas["BatchIndexSyncResponse"];
+type BatchMetricIndexSyncResponse = ApiSchemas["BatchMetricIndexSyncResponse"];
+type ColumnInfoRequest = ApiSchemas["ColumnInfoRequest"];
+type MetricInfoRequest = ApiSchemas["MetricInfoRequest"];
+type TableInfoRequest = ApiSchemas["TableInfoRequest"];
 
 export const metaApi = {
   async listTables(): Promise<TableInfo[]> {
     const response = await appClient.get<TableInfo[]>("/api/v1/meta/tables");
+    return response.data;
+  },
+
+  async listSourceTables(): Promise<string[]> {
+    const response = await appClient.get<string[]>("/api/v1/meta/source-tables");
     return response.data;
   },
 
@@ -82,32 +40,19 @@ export const metaApi = {
     return response.data;
   },
 
-  async upsertTable(tableName: string, data: { role: string; description: string }): Promise<void> {
+  async upsertTable(tableName: string, data: TableInfoRequest): Promise<void> {
     await appClient.put(`/api/v1/meta/tables/${tableName}`, data);
   },
 
   async upsertColumn(
     tableName: string,
     columnName: string,
-    data: {
-      description: string;
-      alias: string[];
-      index_values: boolean;
-      reference_t_name?: string | null;
-      reference_c_name?: string | null;
-    }
+    data: ColumnInfoRequest
   ): Promise<void> {
     await appClient.put(`/api/v1/meta/tables/${tableName}/columns/${columnName}`, data);
   },
 
-  async upsertMetric(
-    metricName: string,
-    data: {
-      description: string;
-      relevant_columns: ColumnReference[];
-      alias: string[];
-    }
-  ): Promise<void> {
+  async upsertMetric(metricName: string, data: MetricInfoRequest): Promise<void> {
     await appClient.put(`/api/v1/meta/metrics/${metricName}`, data);
   },
 
@@ -132,7 +77,7 @@ export const metaApi = {
 
   async importMetadata(
     file: File,
-    mode: "merge" | "overwrite" = "merge",
+    mode: ImportMode = "merge",
     dryRun = false
   ): Promise<MetaImportResponse> {
     const formData = new FormData();
@@ -150,15 +95,14 @@ export const metaApi = {
   },
 
   async syncColumnIndexes(columns: ColumnReference[]): Promise<ColumnIndexSyncResponse[]> {
-    const response = await appClient.post<{ results: ColumnIndexSyncResponse[] }>(
-      "/api/v1/meta/columns/sync",
-      { columns }
-    );
+    const response = await appClient.post<BatchIndexSyncResponse>("/api/v1/meta/columns/sync", {
+      columns,
+    });
     return response.data.results;
   },
 
   async syncColumnValues(columns: ColumnReference[]): Promise<ColumnIndexSyncResponse[]> {
-    const response = await appClient.post<{ results: ColumnIndexSyncResponse[] }>(
+    const response = await appClient.post<BatchIndexSyncResponse>(
       "/api/v1/meta/columns/sync-values",
       { columns }
     );
@@ -166,7 +110,7 @@ export const metaApi = {
   },
 
   async syncMetricIndexes(metrics: string[]): Promise<MetricIndexSyncResponse[]> {
-    const response = await appClient.post<{ results: MetricIndexSyncResponse[] }>(
+    const response = await appClient.post<BatchMetricIndexSyncResponse>(
       "/api/v1/meta/metrics/sync",
       { metrics }
     );

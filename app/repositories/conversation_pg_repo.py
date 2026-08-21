@@ -8,7 +8,7 @@ from langgraph.store.base import BaseStore
 from app.models.conversation import ConversationInfo
 
 _CONVERSATION_NAMESPACE = "conversations"
-_MAX_CONVERSATIONS_PER_USER = 10_000
+_SEARCH_BATCH_SIZE = 1_000
 
 
 class ConversationPGRepo:
@@ -85,22 +85,64 @@ class ConversationPGRepo:
         await self._save(updated)
         return updated
 
-    async def list_by_user(self, user_id: int) -> list[ConversationInfo]:
-        """按最后活动时间倒序获取用户的正式会话"""
-        items = await self._store.asearch(
+    async def list_all_by_user(self, user_id: int) -> list[ConversationInfo]:
+        """按最后活动时间倒序获取用户的全部会话"""
+        conversations: list[ConversationInfo] = []
+        offset = 0
+        while items := await self._store.asearch(
             self._namespace(user_id),
-            limit=_MAX_CONVERSATIONS_PER_USER,
-        )
-        conversations = [
-            ConversationInfo.model_validate(item.value)
-            for item in items
-            if not item.value.get("is_draft", False)
-        ]
+            limit=_SEARCH_BATCH_SIZE,
+            offset=offset,
+        ):
+            conversations.extend(
+                ConversationInfo.model_validate(item.value) for item in items
+            )
+            offset += len(items)
         return sorted(
             conversations,
             key=lambda conversation: (conversation.update_at, str(conversation.id)),
             reverse=True,
         )
+
+    async def list_by_user(self, user_id: int) -> list[ConversationInfo]:
+        """按最后活动时间倒序获取用户的正式会话"""
+        return [
+            conversation
+            for conversation in await self.list_all_by_user(user_id)
+            if not conversation.is_draft
+        ]
+
+    async def list_expired_drafts(
+        self,
+        cutoff: datetime,
+        *,
+        limit: int,
+    ) -> list[ConversationInfo]:
+        """跨用户列出最后活动时间已过期的草稿"""
+        conversations: list[ConversationInfo] = []
+        offset = 0
+        while len(conversations) < limit:
+            items = await self._store.asearch(
+                (_CONVERSATION_NAMESPACE,),
+                filter={"is_draft": True},
+                limit=_SEARCH_BATCH_SIZE,
+                offset=offset,
+            )
+            if not items:
+                break
+            for item in items:
+                conversation = ConversationInfo.model_validate(item.value)
+                if conversation.update_at <= cutoff:
+                    conversations.append(conversation)
+            offset += len(items)
+        return sorted(
+            (
+                conversation
+                for conversation in conversations
+                if conversation.is_draft
+            ),
+            key=lambda conversation: (conversation.update_at, str(conversation.id)),
+        )[:limit]
 
     async def delete(self, user_id: int, conversation_id: UUID) -> None:
         """删除会话目录信息"""

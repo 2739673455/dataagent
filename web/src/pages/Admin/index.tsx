@@ -2,7 +2,12 @@ import { ArrowLeft, RefreshCw, Shield, Users, Database } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { adminApi, type DorisRoleResponse } from "@/api/admin";
+import {
+  adminApi,
+  type AssetGrantResponse,
+  type DorisRoleResponse,
+  type UserListResponse,
+} from "@/api/admin";
 import { useAuthStore, type UserResponse } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { ROUTES } from "@/config/settings";
@@ -22,13 +27,19 @@ function splitColumns(value: string): string[] {
     .filter(Boolean);
 }
 
+const USER_PAGE_SIZE = 50;
+
 export default function AdminPage() {
   const currentUser = useAuthStore((state) => state.user);
-  const [activeTab, setActiveTab] = useState<"roles" | "users" | "metadata">("roles");
+  const [activeTab, setActiveTab] = useState<"metadata" | "users" | "roles">("metadata");
   const [roles, setRoles] = useState<DorisRoleResponse[]>([]);
   const [users, setUsers] = useState<UserResponse[]>([]);
   const [selectedRole, setSelectedRole] = useState("");
   const [policies, setPolicies] = useState<Record<string, unknown>[]>([]);
+  const [grants, setGrants] = useState<AssetGrantResponse[]>([]);
+  const [userOffset, setUserOffset] = useState(0);
+  const [userTotal, setUserTotal] = useState(0);
+  const [userHasMore, setUserHasMore] = useState(false);
   const [newRole, setNewRole] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [newQueryUser, setNewQueryUser] = useState("");
@@ -61,15 +72,21 @@ export default function AdminPage() {
   const [attachDescription, setAttachDescription] = useState("");
   const [attachWorkloadGroup, setAttachWorkloadGroup] = useState("normal");
 
+  const applyUserPage = useCallback((page: UserListResponse) => {
+    setUsers(page.users);
+    setUserTotal(page.total);
+    setUserHasMore(page.has_more);
+  }, []);
+
   const load = useCallback(async () => {
     setBusy(true);
     try {
-      const [loadedRoles, loadedUsers] = await Promise.all([
+      const [loadedRoles, userPage] = await Promise.all([
         adminApi.listRoles(),
-        adminApi.listUsers(),
+        adminApi.listUsers(USER_PAGE_SIZE, userOffset),
       ]);
       setRoles(loadedRoles);
-      setUsers(loadedUsers);
+      applyUserPage(userPage);
       setSelectedRole((current) =>
         loadedRoles.some((role) => role.name === current) ? current : loadedRoles[0]?.name || ""
       );
@@ -78,7 +95,7 @@ export default function AdminPage() {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [applyUserPage, userOffset]);
 
   const scanDorisRoles = async () => {
     setDiscovering(true);
@@ -126,11 +143,17 @@ export default function AdminPage() {
   useEffect(() => {
     if (!selectedRole) {
       setPolicies([]);
+      setGrants([]);
       return;
     }
-    void adminApi
-      .listRowPolicies(selectedRole)
-      .then(setPolicies)
+    void Promise.all([
+      adminApi.listRowPolicies(selectedRole),
+      adminApi.listSelectGrants(selectedRole),
+    ])
+      .then(([loadedPolicies, loadedGrants]) => {
+        setPolicies(loadedPolicies);
+        setGrants(loadedGrants);
+      })
       .catch((error) => toast.error(errorMessage(error)));
   }, [selectedRole]);
 
@@ -138,6 +161,27 @@ export default function AdminPage() {
     () => roles.find((role) => role.name === selectedRole),
     [roles, selectedRole]
   );
+
+  const grantTables = useMemo(() => {
+    const grouped = new Map<string, { allColumns: boolean; columns: string[] }>();
+    for (const grant of grants) {
+      if (!grant.table_name) continue;
+      const entry = grouped.get(grant.table_name) ?? { allColumns: false, columns: [] };
+      if (grant.scope === "table") entry.allColumns = true;
+      if (grant.column_name) entry.columns.push(grant.column_name);
+      grouped.set(grant.table_name, entry);
+    }
+    return [...grouped.entries()]
+      .map(([name, entry]) => ({
+        name,
+        allColumns: entry.allColumns,
+        columns: [...new Set(entry.columns)].sort(),
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }, [grants]);
+  const databaseGrant = grants.find((grant) => grant.scope === "database");
+  const grantDatabase = grants[0]?.database_name;
+  const grantDataSource = grants[0]?.data_source;
 
   const updateUser = (updated: UserResponse) => {
     setUsers((current) => current.map((user) => (user.id === updated.id ? updated : user)));
@@ -160,8 +204,9 @@ export default function AdminPage() {
       setNewPassword("");
       setNewUserRole("");
       setNewUserIsAdmin(false);
-      const loadedUsers = await adminApi.listUsers();
-      setUsers(loadedUsers);
+      const page = await adminApi.listUsers(USER_PAGE_SIZE, 0);
+      setUserOffset(0);
+      applyUserPage(page);
     } catch (error) {
       toast.error(errorMessage(error));
     } finally {
@@ -175,8 +220,10 @@ export default function AdminPage() {
     try {
       await adminApi.deleteUser(user.id);
       toast.success(`用户 ${user.username} 已删除`);
-      const loadedUsers = await adminApi.listUsers();
-      setUsers(loadedUsers);
+      const nextOffset = users.length === 1 ? Math.max(0, userOffset - USER_PAGE_SIZE) : userOffset;
+      const page = await adminApi.listUsers(USER_PAGE_SIZE, nextOffset);
+      setUserOffset(nextOffset);
+      applyUserPage(page);
     } catch (error) {
       toast.error(errorMessage(error));
     } finally {
@@ -194,7 +241,12 @@ export default function AdminPage() {
       await operation();
       toast.success(message);
       if (refreshPolicies && selectedRole) {
-        setPolicies(await adminApi.listRowPolicies(selectedRole));
+        const [loadedPolicies, loadedGrants] = await Promise.all([
+          adminApi.listRowPolicies(selectedRole),
+          adminApi.listSelectGrants(selectedRole),
+        ]);
+        setPolicies(loadedPolicies);
+        setGrants(loadedGrants);
       }
       const loadedRoles = await adminApi.listRoles();
       setRoles(loadedRoles);
@@ -238,20 +290,9 @@ export default function AdminPage() {
         {/* 顶部控制台标题 */}
         <header className="flex flex-wrap items-center justify-between gap-4 rounded border border-[#d4d4ce] bg-[#ffffff] p-5 shadow-xs">
           <div>
-            <span className="text-sm font-semibold text-[#71717a]">系统管理</span>
-            <h1 className="mt-1 text-xl font-bold text-[#18181b]">平台管理控制中心</h1>
+            <h1 className="text-xl font-bold text-[#18181b]">管理中心</h1>
           </div>
           <div className="flex gap-2.5">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy}
-              onClick={() => void load()}
-              className="text-sm"
-            >
-              <RefreshCw className={`h-4 w-4 mr-1.5 ${busy ? "animate-spin" : ""}`} />
-              刷新
-            </Button>
             <Button asChild variant="default" size="sm" className="text-sm">
               <Link to={ROUTES.chat}>
                 <ArrowLeft className="h-4 w-4 mr-1.5" />
@@ -265,22 +306,22 @@ export default function AdminPage() {
         <div className="flex border-b border-[#d4d4ce] bg-[#ffffff] rounded p-1.5 gap-2 text-sm shadow-xs">
           <button
             type="button"
-            onClick={() => setActiveTab("roles")}
+            onClick={() => setActiveTab("metadata")}
             className={`flex items-center gap-1.5 px-4 py-2 rounded text-sm font-medium transition-colors ${
-              activeTab === "roles"
-                ? "bg-[#1e3a8a] text-[#ffffff]"
+              activeTab === "metadata"
+                ? "bg-[#1e2024] text-[#ffffff]"
                 : "text-[#52525b] hover:bg-[#ebebe6] hover:text-[#18181b]"
             }`}
           >
-            <Shield className="h-4 w-4" />
-            <span>Doris 角色管理</span>
+            <Database className="h-4 w-4" />
+            <span>元数据管理</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("users")}
             className={`flex items-center gap-1.5 px-4 py-2 rounded text-sm font-medium transition-colors ${
               activeTab === "users"
-                ? "bg-[#1e3a8a] text-[#ffffff]"
+                ? "bg-[#1e2024] text-[#ffffff]"
                 : "text-[#52525b] hover:bg-[#ebebe6] hover:text-[#18181b]"
             }`}
           >
@@ -289,15 +330,15 @@ export default function AdminPage() {
           </button>
           <button
             type="button"
-            onClick={() => setActiveTab("metadata")}
+            onClick={() => setActiveTab("roles")}
             className={`flex items-center gap-1.5 px-4 py-2 rounded text-sm font-medium transition-colors ${
-              activeTab === "metadata"
-                ? "bg-[#1e3a8a] text-[#ffffff]"
+              activeTab === "roles"
+                ? "bg-[#1e2024] text-[#ffffff]"
                 : "text-[#52525b] hover:bg-[#ebebe6] hover:text-[#18181b]"
             }`}
           >
-            <Database className="h-4 w-4" />
-            <span>元数据管理</span>
+            <Shield className="h-4 w-4" />
+            <span>Doris 角色管理</span>
           </button>
         </div>
 
@@ -459,7 +500,7 @@ export default function AdminPage() {
                           <span
                             className={`rounded px-1.5 py-0.5 text-xs font-medium ${
                               role.is_default
-                                ? "bg-[#1e3a8a] text-[#ffffff]"
+                                ? "bg-[#1e2024] text-[#ffffff]"
                                 : role.is_active
                                   ? "bg-[#ebebe6] text-[#27272a]"
                                   : "bg-[#fee2e2] text-[#991b1b]"
@@ -539,6 +580,51 @@ export default function AdminPage() {
                         ? "✓ Doris 原生角色已生效"
                         : "⚠ 角色未在 Doris 元数据中找到"}
                     </p>
+                  </div>
+
+                  <div className="rounded border border-[#d4d4ce] bg-[#fafaf8] p-3">
+                    <div className="flex items-center justify-between text-xs font-semibold text-[#18181b]">
+                      <span>当前 SELECT 授权</span>
+                      <span className="font-normal text-[#71717a]">{grants.length} 条投影</span>
+                    </div>
+                    {grants.length ? (
+                      <div className="mt-2 border-l-2 border-[#1e2024] pl-3 text-xs">
+                        <div className="font-semibold text-[#18181b]">
+                          数据库 {grantDataSource}.{grantDatabase}
+                          {databaseGrant && (
+                            <span className="ml-2 rounded bg-[#e8e8e4] px-1.5 py-0.5 text-[10px] text-[#1e2024]">
+                              全库 SELECT
+                            </span>
+                          )}
+                        </div>
+                        {grantTables.map((table) => (
+                          <div key={table.name} className="mt-2 border-l border-[#d4d4ce] pl-3">
+                            <div className="font-medium text-[#27272a]">
+                              表 {table.name}
+                              {table.allColumns && (
+                                <span className="ml-2 rounded bg-[#e5e5df] px-1.5 py-0.5 text-[10px]">
+                                  全部列
+                                </span>
+                              )}
+                            </div>
+                            {table.columns.length > 0 && (
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                {table.columns.map((column) => (
+                                  <span
+                                    key={column}
+                                    className="rounded border border-[#d4d4ce] bg-white px-1.5 py-0.5 text-[10px] text-[#52525b]"
+                                  >
+                                    列 {column}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-xs text-[#71717a]">当前角色没有 SELECT 授权</p>
+                    )}
                   </div>
 
                   <div>
@@ -897,6 +983,36 @@ export default function AdminPage() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-[#71717a]">
+                <span>
+                  共 {userTotal} 位用户，当前显示 {userTotal ? userOffset + 1 : 0}–
+                  {Math.min(userOffset + users.length, userTotal)}
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy || userOffset === 0}
+                    onClick={() => setUserOffset(Math.max(0, userOffset - USER_PAGE_SIZE))}
+                    className="h-8 text-xs"
+                  >
+                    上一页
+                  </Button>
+                  <span className="min-w-20 text-center text-[#52525b]">
+                    第 {Math.floor(userOffset / USER_PAGE_SIZE) + 1} /{" "}
+                    {Math.max(1, Math.ceil(userTotal / USER_PAGE_SIZE))} 页
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy || !userHasMore}
+                    onClick={() => setUserOffset(userOffset + USER_PAGE_SIZE)}
+                    className="h-8 text-xs"
+                  >
+                    下一页
+                  </Button>
+                </div>
               </div>
             </section>
           </div>

@@ -16,13 +16,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { chatApi } from "@/api/chat";
 import { cn, getAttachmentName } from "@/lib/utils";
-import type {
-  Attachment,
-  ImageContent,
-  MessagePart,
-  MessageResponse,
-  TextContent,
-} from "@/types";
+import type { Attachment, ImageContent, MessagePart, MessageResponse, TextContent } from "@/types";
 
 type MessageDisplayItem = {
   key: string;
@@ -63,11 +57,7 @@ function ImagePreview({ alt, onClose, src }: { alt: string; onClose: () => void;
           <span>图片预览: {alt}</span>
           <span className="text-[#27272a]">点击关闭</span>
         </div>
-        <img
-          src={src}
-          alt={alt}
-          className="max-h-[80vh] max-w-[85vw] rounded object-contain"
-        />
+        <img src={src} alt={alt} className="max-h-[80vh] max-w-[85vw] rounded object-contain" />
       </div>
     </button>,
     document.body
@@ -277,8 +267,12 @@ function MarkdownText({ text }: { text: string }) {
             <h3 className="mb-1.5 mt-2.5 text-sm font-semibold text-[#27272a]">{children}</h3>
           ),
           p: ({ children }) => <p className="mb-2.5 whitespace-pre-wrap">{children}</p>,
-          ul: ({ children }) => <ul className="mb-2.5 list-disc space-y-1 pl-4 text-[#3f3f46]">{children}</ul>,
-          ol: ({ children }) => <ol className="mb-2.5 list-decimal space-y-1 pl-4 text-[#3f3f46]">{children}</ol>,
+          ul: ({ children }) => (
+            <ul className="mb-2.5 list-disc space-y-1 pl-4 text-[#3f3f46]">{children}</ul>
+          ),
+          ol: ({ children }) => (
+            <ol className="mb-2.5 list-decimal space-y-1 pl-4 text-[#3f3f46]">{children}</ol>
+          ),
           li: ({ children }) => <li>{children}</li>,
           a: ({ href, children }) => (
             <a
@@ -311,11 +305,25 @@ function MarkdownText({ text }: { text: string }) {
               </table>
             </div>
           ),
-          thead: ({ children }) => <thead className="border-b border-[#d4d4ce] bg-[#f4f4f0] text-[#52525b]">{children}</thead>,
-          th: ({ children }) => <th className="border-r border-[#e5e5df] px-3 py-1.5 font-medium last:border-r-0">{children}</th>,
+          thead: ({ children }) => (
+            <thead className="border-b border-[#d4d4ce] bg-[#f4f4f0] text-[#52525b]">
+              {children}
+            </thead>
+          ),
+          th: ({ children }) => (
+            <th className="border-r border-[#e5e5df] px-3 py-1.5 font-medium last:border-r-0">
+              {children}
+            </th>
+          ),
           tbody: ({ children }) => <tbody>{children}</tbody>,
-          tr: ({ children }) => <tr className="border-b border-[#f0f0eb] last:border-b-0 hover:bg-[#fafaf8]">{children}</tr>,
-          td: ({ children }) => <td className="border-r border-[#f0f0eb] px-3 py-1.5 last:border-r-0">{children}</td>,
+          tr: ({ children }) => (
+            <tr className="border-b border-[#f0f0eb] last:border-b-0 hover:bg-[#fafaf8]">
+              {children}
+            </tr>
+          ),
+          td: ({ children }) => (
+            <td className="border-r border-[#f0f0eb] px-3 py-1.5 last:border-r-0">{children}</td>
+          ),
           blockquote: ({ children }) => (
             <blockquote className="my-2 border-l-2 border-[#52525b] bg-[#fafaf8] pl-3 py-1 italic text-[#52525b]">
               {children}
@@ -354,11 +362,7 @@ function PartView({
       onClick={() => onPreview?.(part.image_url, "asset")}
       className="mt-2 overflow-hidden rounded border border-[#d4d4ce] bg-[#ffffff] p-1"
     >
-      <img
-        src={part.image_url}
-        alt="asset"
-        className="max-h-72 rounded object-cover"
-      />
+      <img src={part.image_url} alt="asset" className="max-h-72 rounded object-cover" />
     </button>
   );
 }
@@ -400,9 +404,7 @@ function ToolRunBar({
             <span
               className={cn(
                 "rounded px-1.5 py-0.5 text-[10px] font-medium",
-                item.completed
-                  ? "bg-[#ebebe6] text-[#3f3f46]"
-                  : "bg-[#deded8] text-[#18181b]"
+                item.completed ? "bg-[#ebebe6] text-[#3f3f46]" : "bg-[#deded8] text-[#18181b]"
               )}
             >
               {item.completed ? "已完成" : "执行中"}
@@ -560,7 +562,10 @@ function AttachmentChip({
         conversationId={conversationId}
         onPreview={onPreview}
       />
-      <span className="max-w-[180px] truncate text-[11px]" title={getAttachmentName(attachment.f_path)}>
+      <span
+        className="max-w-[180px] truncate text-[11px]"
+        title={getAttachmentName(attachment.f_path)}
+      >
         {getAttachmentName(attachment.f_path)}
       </span>
 
@@ -613,16 +618,12 @@ function MessageBubble({
         <div
           className={cn(
             "rounded border p-3.5 shadow-xs",
-            isUser
-              ? "border-[#d4d4ce] bg-[#eaeae5]"
-              : "border-[#d4d4ce] bg-[#ffffff]"
+            isUser ? "border-[#d4d4ce] bg-[#eaeae5]" : "border-[#d4d4ce] bg-[#ffffff]"
           )}
         >
           {/* 消息来源标识 */}
           <div className="mb-2 flex items-center justify-between border-b border-[#e5e5df] pb-1.5 text-xs">
-            <span className="font-semibold text-[#18181b]">
-              {isUser ? "用户" : "DataAgent"}
-            </span>
+            <span className="font-semibold text-[#18181b]">{isUser ? "用户" : "DataAgent"}</span>
           </div>
 
           <div className="space-y-2">
@@ -701,9 +702,7 @@ export function ChatMessages({
                 <p className="text-[#18181b] font-medium text-base">
                   欢迎使用 DataAgent 自主数据分析平台
                 </p>
-                <p className="text-[#71717a]">
-                  已连接 Doris 分析引擎与隔离沙箱运行环境
-                </p>
+                <p className="text-[#71717a]">已连接 Doris 分析引擎与隔离沙箱运行环境</p>
 
                 <div className="mt-4 space-y-2 border-t border-[#e5e5df] pt-3 text-sm">
                   <p className="text-[#18181b] font-medium">分析示例：</p>

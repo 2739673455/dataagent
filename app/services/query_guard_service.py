@@ -249,7 +249,7 @@ class QueryGuardService:
                 QueryValidationIssue(
                     code="duplicate_output_column",
                     message=(
-                        "Query output column names must be unique: "
+                        "查询输出列名不能重复: "
                         + ", ".join(duplicate_outputs)
                     ),
                 )
@@ -322,7 +322,7 @@ class QueryGuardService:
         """解析且限制输入中只有一条有效语句"""
         if not sql.strip():
             return None, [
-                QueryValidationIssue(code="empty_sql", message="SQL cannot be empty")
+                QueryValidationIssue(code="empty_sql", message="SQL 语句不能为空")
             ]
         try:
             parsed = sqlglot.parse(sql, read=dialect)
@@ -330,7 +330,7 @@ class QueryGuardService:
             return None, [
                 QueryValidationIssue(
                     code="syntax_error",
-                    message=f"SQL syntax error: {exc}",
+                    message=f"SQL 语法解析失败: {exc}",
                 )
             ]
         statements = [
@@ -342,7 +342,7 @@ class QueryGuardService:
             return None, [
                 QueryValidationIssue(
                     code="multiple_statements",
-                    message="Exactly one SQL statement is allowed",
+                    message="仅允许执行单条 SQL 语句",
                 )
             ]
         return cast(Expr, statements[0]), []
@@ -355,7 +355,7 @@ class QueryGuardService:
             issues.append(
                 QueryValidationIssue(
                     code="readonly_query_required",
-                    message="Only SELECT and WITH queries are allowed",
+                    message="仅允许执行 SELECT 或 WITH 只读查询语句",
                 )
             )
             return issues
@@ -367,7 +367,7 @@ class QueryGuardService:
                 QueryValidationIssue(
                     code="forbidden_operation",
                     message=(
-                        "Query contains forbidden operations: "
+                        "查询包含禁止的操作: "
                         + ", ".join(forbidden_keys)
                     ),
                 )
@@ -384,7 +384,7 @@ class QueryGuardService:
                 QueryValidationIssue(
                     code="forbidden_function",
                     message=(
-                        "Query contains forbidden functions: "
+                        "查询包含禁止的函数: "
                         + ", ".join(forbidden_functions)
                     ),
                 )
@@ -399,7 +399,7 @@ class QueryGuardService:
                 QueryValidationIssue(
                     code="unapproved_function",
                     message=(
-                        "Query contains functions outside the approved built-in set: "
+                        "查询包含未经授权的非白名单函数: "
                         + ", ".join(unapproved_functions)
                     ),
                 )
@@ -435,7 +435,7 @@ class QueryGuardService:
             QueryValidationIssue(
                 code="value_expansion_too_large",
                 message=(
-                    "Query contains a string expansion above the per-cell limit: "
+                    "查询包含超出单单元格上限的字符串扩展操作: "
                     + ", ".join(sorted(oversized))
                 ),
             )
@@ -519,7 +519,7 @@ class QueryGuardService:
                 QueryValidationIssue(
                     code="column_access_denied",
                     message=(
-                        "Wildcard access requires permission for every column in: "
+                        "使用通配符 '*' 需要对该表的所有字段均具备访问权限: "
                         f"{table.qualified_name}"
                     ),
                     table=table.qualified_name,
@@ -582,7 +582,7 @@ class QueryGuardService:
                     issues.append(
                         QueryValidationIssue(
                             code="catalog_not_allowed",
-                            message=f"External catalog is not allowed: {catalog_name}",
+                            message=f"不允许访问外部 Catalog: {catalog_name}",
                             table=table_ref.qualified_name,
                         )
                     )
@@ -590,7 +590,7 @@ class QueryGuardService:
                     issues.append(
                         QueryValidationIssue(
                             code="unknown_database",
-                            message=f"Database is outside the metadata catalog: {database}",
+                            message=f"数据库不在元数据目录管理范围内: {database}",
                             table=table_ref.qualified_name,
                         )
                     )
@@ -598,7 +598,7 @@ class QueryGuardService:
                     issues.append(
                         QueryValidationIssue(
                             code="unknown_table",
-                            message=f"Table not found in metadata catalog: {table_ref.qualified_name}",
+                            message=f"元数据目录中未找到指定表: {table_ref.qualified_name}",
                             table=table_ref.qualified_name,
                         )
                     )
@@ -644,7 +644,7 @@ class QueryGuardService:
         if column_name and self._is_ambiguous_column(expression, catalog, column_name):
             return QueryValidationIssue(
                 code="ambiguous_column",
-                message=f"Column reference is ambiguous: {column_name}",
+                message=f"存在歧义的列引用: {column_name}",
                 column=column_name,
             )
         code = (
@@ -652,7 +652,7 @@ class QueryGuardService:
         )
         return QueryValidationIssue(
             code=code,
-            message=f"SQL reference validation failed: {message}",
+            message=f"SQL 引用校验失败: {message}",
             column=column_name,
         )
 
@@ -735,7 +735,7 @@ class QueryGuardService:
                     issues.append(
                         QueryValidationIssue(
                             code="cross_join_forbidden",
-                            message=f"CROSS JOIN is not allowed: {right_alias}",
+                            message=f"不允许使用笛卡尔积 CROSS JOIN: {right_alias}",
                             table=right_alias,
                         )
                     )
@@ -745,7 +745,7 @@ class QueryGuardService:
                     issues.append(
                         QueryValidationIssue(
                             code="join_condition_required",
-                            message=f"JOIN requires an ON or USING condition: {right_alias}",
+                            message=f"JOIN 连接必须提供 ON 或 USING 关联条件: {right_alias}",
                             table=right_alias,
                         )
                     )
@@ -766,8 +766,8 @@ class QueryGuardService:
                         QueryValidationIssue(
                             code="invalid_join_condition",
                             message=(
-                                "JOIN condition must reference both the joined source "
-                                f"and a preceding source: {right_alias}"
+                                "JOIN 条件必须同时关联当前连接源与前置数据源: "
+                                f"{right_alias}"
                             ),
                             table=right_alias,
                         )
@@ -861,8 +861,8 @@ class QueryGuardService:
                     QueryValidationIssue(
                         code="incompatible_types",
                         message=(
-                            "Incompatible comparison types "
-                            f"{left_category} and {right_category}: {comparison.sql(dialect=dialect)}"
+                            f"比较操作两端数据类型不兼容 ({left_category} 与 {right_category}): "
+                            f"{comparison.sql(dialect=dialect)}"
                         ),
                     )
                 )
@@ -876,8 +876,7 @@ class QueryGuardService:
                     QueryValidationIssue(
                         code="incompatible_types",
                         message=(
-                            "Incompatible IN predicate types "
-                            f"{left_category} and {right_category}: "
+                            f"IN 谓词数据类型不兼容 ({left_category} 与 {right_category}): "
                             f"{predicate.sql(dialect=dialect)}"
                         ),
                     )
@@ -898,8 +897,7 @@ class QueryGuardService:
                 QueryValidationIssue(
                     code="incompatible_types",
                     message=(
-                        "Incompatible BETWEEN predicate types: "
-                        f"{predicate.sql(dialect=dialect)}"
+                        f"BETWEEN 谓词数据类型不兼容: {predicate.sql(dialect=dialect)}"
                     ),
                 )
             )
@@ -918,7 +916,7 @@ class QueryGuardService:
                 QueryValidationIssue(
                     code="incompatible_types",
                     message=(
-                        "Arithmetic expression requires compatible numeric types: "
+                        "算术运算要求两侧为兼容的数值类型: "
                         f"{arithmetic.sql(dialect=dialect)}"
                     ),
                 )
@@ -994,7 +992,7 @@ class QueryGuardService:
                     issues.append(
                         QueryValidationIssue(
                             code="table_access_denied",
-                            message=f"Table access denied: {table.qualified_name}",
+                            message=f"无权访问表: {table.qualified_name}",
                             table=table.qualified_name,
                         )
                     )
@@ -1011,7 +1009,7 @@ class QueryGuardService:
                     issues.append(
                         QueryValidationIssue(
                             code="column_access_denied",
-                            message=f"Column access denied: {column.qualified_name}",
+                            message=f"无权访问字段: {column.qualified_name}",
                             table=table.qualified_name,
                             column=column.qualified_name,
                         )

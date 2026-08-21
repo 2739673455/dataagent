@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { chatApi } from "@/api/chat";
-import { getAccessToken, logoutUser, redirectToLogin, useAuthStore } from "@/auth";
+import { changePassword, getAccessToken, logoutUser, redirectToLogin, useAuthStore } from "@/auth";
 import { sessionLifecycle } from "@/auth/sessionLifecycle";
 import { ROUTES } from "@/config/settings";
 import { getAttachmentName } from "@/lib/utils";
@@ -80,6 +80,7 @@ export default function ChatPage() {
   const loadConversations = useChatStore((state) => state.loadConversations);
   const createConversation = useChatStore((state) => state.createConversation);
   const deleteConversation = useChatStore((state) => state.deleteConversation);
+  const renameConversation = useChatStore((state) => state.renameConversation);
   const loadMessages = useChatStore((state) => state.loadMessages);
   const streamingConversations = useChatStore((state) => state.streamingConversations);
   const markStreaming = useChatStore((state) => state.markStreaming);
@@ -93,6 +94,7 @@ export default function ChatPage() {
   const messageViewportRef = useRef<HTMLDivElement | null>(null);
   const attachmentsRef = useRef<Attachment[]>([]);
   const htmlPreviewUrlsRef = useRef<Record<string, string>>({});
+  const draftConversationIdRef = useRef<string | null>(null);
 
   // draftConversationId 用于“尚未进入正式路由但已提前上传附件”的草稿会话
   const [draftConversationId, setDraftConversationId] = useState<string | null>(null);
@@ -104,6 +106,16 @@ export default function ChatPage() {
   const [tableArtifacts, setTableArtifacts] = useState<Record<string, InteractiveTableArtifact>>(
     {}
   );
+
+  const abandonDraftConversation = useCallback(() => {
+    const conversationId = draftConversationIdRef.current;
+    if (!conversationId) return;
+    draftConversationIdRef.current = null;
+    setDraftConversationId(null);
+    void chatApi.deleteDraftConversation(conversationId).catch(() => {
+      // 服务端 TTL 会回收网络异常时遗留的草稿
+    });
+  }, []);
 
   // URL 中的 conversationId 非法时按未选中会话处理
   const routeConversationId = (() => {
@@ -164,12 +176,12 @@ export default function ChatPage() {
     }
   }, [loadMessages, messagesByConversation, routeConversationId]);
 
-  // 路由切到正式会话后，草稿态附件不再保留在页面级状态里
+  // 路由切到正式会话后，回收尚未发送的旧草稿
   useEffect(() => {
     if (!routeConversationId) return;
-    setDraftConversationId(null);
+    abandonDraftConversation();
     setAttachments([]);
-  }, [routeConversationId]);
+  }, [abandonDraftConversation, routeConversationId]);
 
   // 当前消息里一旦出现可预览结果，自动展开侧栏并选中文件
   useEffect(() => {
@@ -329,18 +341,19 @@ export default function ChatPage() {
     return () => {
       for (const controller of controllers.values()) controller.abort();
       controllers.clear();
+      abandonDraftConversation();
     };
-  }, []);
+  }, [abandonDraftConversation]);
 
   // 新建对话按钮只重置当前页面态，不直接向后端发消息
   const handleCreateConversation = () => {
+    abandonDraftConversation();
     for (const attachment of attachments) {
       if (attachment.preview_url) {
         URL.revokeObjectURL(attachment.preview_url);
       }
     }
     setAttachments([]);
-    setDraftConversationId(null);
     navigate(ROUTES.chat);
   };
 
@@ -373,9 +386,10 @@ export default function ChatPage() {
     try {
       let nextConversationId = routeConversationId ?? draftConversationId;
       if (!nextConversationId) {
-        const response = await chatApi.createConversation(1);
+        const response = await chatApi.createConversation(true);
         if (!sessionLifecycle.isCurrent(generation)) return;
         nextConversationId = response.data.conversation_id;
+        draftConversationIdRef.current = nextConversationId;
         setDraftConversationId(nextConversationId);
         void loadConversations();
       }
@@ -450,6 +464,7 @@ export default function ChatPage() {
       if (!conversation || !sessionLifecycle.isCurrent(generation)) return;
       conversationId = conversation.conversation_id;
     } else if (!routeConversationId) {
+      draftConversationIdRef.current = null;
       setDraftConversationId(null);
       ensureConversation({
         conversation_id: conversationId,
@@ -497,9 +512,7 @@ export default function ChatPage() {
       {/* 顶部全局标题栏 */}
       <header className="flex h-11 shrink-0 select-none items-center justify-between border-b border-[#d4d4ce] bg-[#ffffff] px-4 text-sm">
         <div className="flex items-center gap-3">
-          <span className="font-bold text-[#18181b] text-base">
-            DataAgent
-          </span>
+          <span className="font-bold text-[#18181b] text-base">DataAgent</span>
           <span className="text-[#d4d4ce]">|</span>
           <span className="text-xs text-[#71717a]">
             {routeConversationId ? `会话: ${routeConversationId.slice(0, 8)}` : "工作台"}
@@ -512,9 +525,7 @@ export default function ChatPage() {
               正在生成...
             </span>
           ) : (
-            <span className="text-[#71717a]">
-              就绪
-            </span>
+            <span className="text-[#71717a]">就绪</span>
           )}
         </div>
       </header>
@@ -529,6 +540,12 @@ export default function ChatPage() {
             user={user}
             onCreate={handleCreateConversation}
             onDelete={(conversationId) => void handleDeleteConversation(conversationId)}
+            onRename={renameConversation}
+            onChangePassword={async (currentPassword, newPassword) => {
+              await changePassword(currentPassword, newPassword);
+              toast.success("密码已修改，请重新登录");
+              redirectToAuth(ROUTES.chat);
+            }}
             onLogout={() => {
               void logoutUser().finally(() => redirectToAuth(ROUTES.chat));
             }}
@@ -582,9 +599,7 @@ export default function ChatPage() {
               </button>
               <div
                 className={`flex min-w-0 flex-1 min-h-0 flex-col overflow-hidden transition-opacity duration-150 ${
-                  isPreviewSidebarOpen
-                    ? "opacity-100"
-                    : "pointer-events-none opacity-0"
+                  isPreviewSidebarOpen ? "opacity-100" : "pointer-events-none opacity-0"
                 }`}
               >
                 {/* 产物选项卡 */}
@@ -596,7 +611,7 @@ export default function ChatPage() {
                       onClick={() => setActivePreviewPath(attachment.f_path)}
                       className={`shrink-0 rounded border px-2.5 py-1 text-xs transition ${
                         activePreviewAttachment?.f_path === attachment.f_path
-                          ? "border-[#1e3a8a] bg-[#1e3a8a] text-[#ffffff]"
+                          ? "border-[#1e2024] bg-[#1e2024] text-[#ffffff]"
                           : "border-[#d4d4ce] bg-[#ffffff] text-[#52525b] hover:bg-[#deded8] hover:text-[#18181b]"
                       }`}
                     >

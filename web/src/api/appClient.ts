@@ -1,6 +1,9 @@
 import axios, { type AxiosError } from "axios";
 import { toast } from "sonner";
+import type { components } from "@/api/generated";
 import { getAccessToken, redirectToLogin, refreshAccessToken } from "@/auth";
+
+type ProblemDetails = components["schemas"]["ProblemDetails"];
 
 const appClient = axios.create({
   timeout: 15000,
@@ -25,7 +28,7 @@ appClient.interceptors.request.use((config) => {
 
 appClient.interceptors.response.use(
   (response) => response,
-  async (error: AxiosError) => {
+  async (error: AxiosError<ProblemDetails>) => {
     const status = error.response?.status;
     const request = error.config as (typeof error.config & { _retry?: boolean }) | undefined;
 

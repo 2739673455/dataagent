@@ -2,7 +2,7 @@
 
 ## 1. 架构定位与业务目标
 
-DataAgent 是面向企业数据分析场景的多 Agent 协同系统。系统通过持久化规划器（Planner）、专业子 Agent（探查、分析、审查、可视化）、多租户安全沙盒以及端到端数据权限管控体系，实现从自然语言提问到受控取数、深度归因、代码复核及交互式可视化的闭环数据分析。
+DataAgent 是面向企业数据分析场景的多 Agent 协同系统。系统通过持久化规划器（Planner）、专业子 Agent（探查、分析、审查、可视化）、多租户安全沙盒以及端到端数据权限管控体系，实现从自然语言提问到受控取数、深度归因、代码复核及分析产物交付的闭环数据分析。
 
 ```mermaid
 flowchart TD
@@ -54,11 +54,11 @@ flowchart TD
 
 | 模块文档 | 模块名称 | 核心职责 | 核心组件 / 服务 |
 | :--- | :--- | :--- | :--- |
-| [`01_AUTH_AND_SECURITY.md`](file:///home/kodey/dataagent/docs/01_AUTH_AND_SECURITY.md) | 认证授权与数据安全 | 用户认证、令牌黑名单、限流防爆破、平台管理员管控、Doris 动态查询身份加密存储、Doris 库表列 SELECT 权限授权与回收、Doris 行级过滤策略管理（`SHOW/CREATE/DROP ROW POLICY`）、数据资产白名单投影 | [`AuthService`](file:///home/kodey/dataagent/app/services/auth_service.py#L38)<br>[`AuthorizationService`](file:///home/kodey/dataagent/app/services/authorization_service.py#L39)<br>[`DorisPermissionService`](file:///home/kodey/dataagent/app/services/doris_permission_service.py#L32)<br>[`DorisCredentialCipher`](file:///home/kodey/dataagent/app/services/doris_credential_service.py#L11) |
-| [`02_METADATA_AND_SEARCH.md`](file:///home/kodey/dataagent/docs/02_METADATA_AND_SEARCH.md) | 元数据资产与语义检索 | 表/字段/指标元数据全生命周期管理、YAML 格式导入导出与冲突校验、ES 全文/向量/字段值多索引版本同步、多阶段语义召回、拓扑关系补全与召回历史沉淀 | [`MetaCatalogService`](file:///home/kodey/dataagent/app/services/meta_catalog_service.py#L29)<br>[`MetaImportService`](file:///home/kodey/dataagent/app/services/meta_import_service.py#L20)<br>[`MetaIndexService`](file:///home/kodey/dataagent/app/services/meta_index_service.py#L21)<br>[`MetaSearchService`](file:///home/kodey/dataagent/app/services/meta_search_service.py#L361) |
-| [`03_QUERY_ENGINE_AND_GUARD.md`](file:///home/kodey/dataagent/docs/03_QUERY_ENGINE_AND_GUARD.md) | 安全查询引擎与执行守卫 | 基于用户绑定的 Doris 隔离查询身份受控执行、连接级资源限制（`workload_group`、内存、超时、包大小）、服务端游标流式拉取、基于 AST 语法树的严格只读与越权拦截校验 | [`DorisQueryRepository`](file:///home/kodey/dataagent/app/repositories/doris_query_repo.py#L37)<br>[`QueryGuardService`](file:///home/kodey/dataagent/app/services/query_guard_service.py#L35)<br>[`AnalysisQueryService`](file:///home/kodey/dataagent/app/services/analysis_query_service.py#L30) |
-| [`04_MULTI_AGENT_ANALYTICS.md`](file:///home/kodey/dataagent/docs/04_MULTI_AGENT_ANALYTICS.md) | 多 Agent 协同与数据分析 | 基于 DeepAgents 与 LangGraph Checkpoint 的动态子 Agent 架构；Planner 动态调度；Explorer、Analyst、Reviewer、Visualizer 专业分工；基于 `thread_id + checkpoint_ns` 的多维并行与状态持久化；跨 Agent 审查与 `RepairRequest` 回退修补；SSE 实时流式响应 | [`AgentManager`](file:///home/kodey/dataagent/app/agents/manager.py#L54)<br>[`AgentRegistry`](file:///home/kodey/dataagent/app/agents/registry.py#L25)<br>[`AgentSessionService`](file:///home/kodey/dataagent/app/agents/session_service.py#L35)<br>[`ChatService`](file:///home/kodey/dataagent/app/services/chat_service.py#L32) |
-| [`05_DOCKER_SANDBOX_RUNTIME.md`](file:///home/kodey/dataagent/docs/05_DOCKER_SANDBOX_RUNTIME.md) | Docker 多租户沙盒运行环境 | 一用户一容器 + 一用户一持久化 Named Volume；会话级 UID/GID 权限隔离（`0700`）；按需启动与空闲超时自动回收；全局并发限制与 FIFO 容量队列；沙盒内代码执行与容量配额管理；附件与分析产物安全传输 | [`DockerSandboxManager`](file:///home/kodey/dataagent/app/clients/docker_sandbox_manager.py#L289)<br>[`AttachmentRouter`](file:///home/kodey/dataagent/app/routes/api/v1/attachment/router.py#L42) |
+| [`01_AUTH_AND_SECURITY.md`](../docs/01_AUTH_AND_SECURITY.md) | 认证授权与数据安全 | 用户认证、Refresh Token 轮换与撤销、限流防爆破、平台管理员管控、Doris 动态查询身份加密存储、Doris 库表列 SELECT 权限授权与回收、Doris 行级过滤策略管理（`SHOW/CREATE/DROP ROW POLICY`）、数据资产白名单投影 | [`AuthService`](../app/services/auth_service.py)<br>[`AuthorizationService`](../app/services/authorization_service.py)<br>[`DorisPermissionService`](../app/services/doris_permission_service.py)<br>[`DorisCredentialCipher`](../app/services/doris_credential_service.py) |
+| [`02_METADATA_AND_SEARCH.md`](../docs/02_METADATA_AND_SEARCH.md) | 元数据资产与语义检索 | 表/字段/指标元数据全生命周期管理、YAML 格式导入导出与冲突校验、ES 全文/向量/字段值多索引版本同步、多阶段语义召回、拓扑关系补全与召回历史沉淀 | [`MetaCatalogService`](../app/services/meta_catalog_service.py)<br>[`MetaImportService`](../app/services/meta_import_service.py)<br>[`MetaIndexService`](../app/services/meta_index_service.py)<br>[`MetaSearchService`](../app/services/meta_search_service.py) |
+| [`03_QUERY_ENGINE_AND_GUARD.md`](../docs/03_QUERY_ENGINE_AND_GUARD.md) | 安全查询引擎与执行守卫 | 基于用户绑定的 Doris 隔离查询身份受控执行、连接级资源限制（`workload_group`、内存、超时、包大小）、服务端游标流式拉取、基于 AST 语法树的严格只读与越权拦截校验 | [`DorisQueryRepository`](../app/repositories/doris_query_repo.py)<br>[`QueryGuardService`](../app/services/query_guard_service.py)<br>[`AnalysisQueryService`](../app/services/analysis_query_service.py) |
+| [`04_MULTI_AGENT_ANALYTICS.md`](../docs/04_MULTI_AGENT_ANALYTICS.md) | 多 Agent 协同与数据分析 | 基于 DeepAgents 与 LangGraph Checkpoint 的动态子 Agent 架构；Planner 动态调度；Explorer、Analyst、Reviewer、Visualizer 专业分工；基于 `thread_id + checkpoint_ns` 的多维并行与状态持久化；跨 Agent 审查与 `RepairRequest` 回退修补；SSE 实时流式响应 | [`AgentManager`](../app/agents/manager.py)<br>[`AgentRegistry`](../app/agents/registry.py)<br>[`AgentSessionService`](../app/agents/session_service.py)<br>[`ChatService`](../app/services/chat_service.py) |
+| [`05_DOCKER_SANDBOX_RUNTIME.md`](../docs/05_DOCKER_SANDBOX_RUNTIME.md) | Docker 多租户沙盒运行环境 | 一用户一容器 + 一用户一持久化 Named Volume；会话级 UID/GID 权限隔离（`0700`）；按需启动与空闲超时自动回收；全局并发限制与 FIFO 容量队列；沙盒内代码执行与容量配额管理；附件与分析产物安全传输 | [`DockerSandboxManager`](../app/clients/docker_sandbox_manager.py)<br>[`AttachmentRouter`](../app/routes/api/v1/attachment/router.py) |
 
 ---
 
@@ -80,7 +80,7 @@ sequenceDiagram
     participant Visualizer as 可视化 (Visualizer Agent)
     participant Sandbox as Docker 沙盒 (SandboxManager)
 
-    User->>Gateway: POST /api/v1/chat/conversations/{id}/messages (自然语言提问)
+    User->>Gateway: POST /api/v1/chat/stream（自然语言提问）
     Gateway->>AuthSvc: 校验 JWT Token 并提取用户所属 Doris 角色
     Gateway->>Planner: 启动分析会话 (SSE Stream)
     
@@ -122,8 +122,8 @@ sequenceDiagram
     rect rgb(240, 255, 240)
         note over Planner, Visualizer: 阶段四：产物渲染与汇总响应
         Planner->>Visualizer: 委派图表生成与报告排版
-        Visualizer->>Sandbox: 读取分析产物，生成 ECharts 配置与报告文件
-        Visualizer-->>Planner: 返回图表渲染结构体与报告下载链接
+        Visualizer->>Sandbox: 读取分析产物，生成静态图表与报告文件
+        Visualizer-->>Planner: 返回图表、数据文件与报告附件引用
         Planner-->>Gateway: 汇总多 Agent 产物并完成最终回答
         Gateway-->>User: SSE 持续输出完整分析报告、图表及附件引用
     end

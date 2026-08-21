@@ -2,7 +2,7 @@
 
 from collections.abc import AsyncIterator
 
-from sqlalchemy import URL
+from sqlalchemy import URL, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -86,6 +86,13 @@ class PostgresClientManager:
             raise RuntimeError("PostgreSQL client manager is not initialized")
         async with self._engine.begin() as connection:
             await connection.run_sync(self._base.metadata.create_all)
+            if self._base is AuthBase:
+                await connection.execute(
+                    text(
+                        "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                        "auth_version INTEGER NOT NULL DEFAULT 0"
+                    )
+                )
 
 
 auth_postgres_client_manager = PostgresClientManager(

@@ -61,6 +61,10 @@ class MetaCatalogService:
             allowed_columns,
         )
 
+    async def list_source_tables(self) -> list[str]:
+        """查询底层 Doris 数据库物理表清单"""
+        return await self._source_repo.list_tables()
+
     async def list_column_infos(self, t_name: str) -> list[ColumnInfo]:
         """查询表下全部字段元数据"""
         if not self._authorization_filter.table_is_visible(t_name):
@@ -96,7 +100,7 @@ class MetaCatalogService:
         """新增或更新表元数据"""
         if not await self._source_repo.table_exists(t_name):
             raise meta_error.InvalidMetadataError(
-                detail=f"Source table not found: {t_name}"
+                detail=f"源表不存在: {t_name}"
             )
         primary_key_columns = await self._source_repo.get_primary_key_columns(t_name)
         async with self._meta_repo.transaction():
@@ -127,12 +131,12 @@ class MetaCatalogService:
         """新增或更新字段元数据"""
         if not await self._source_repo.table_exists(t_name):
             raise meta_error.InvalidMetadataError(
-                detail=f"Source table not found: {t_name}"
+                detail=f"源表不存在: {t_name}"
             )
         column_types = await self._source_repo.get_column_types(t_name)
         if c_name not in column_types:
             raise meta_error.InvalidMetadataError(
-                detail=f"Column not found in source table: {t_name}.{c_name}"
+                detail=f"源表中未找到指定字段: {t_name}.{c_name}"
             )
         column_values = await self._source_repo.get_column_values(
             t_name,
@@ -145,12 +149,12 @@ class MetaCatalogService:
                 await self._meta_repo.get_table_info(t_name)
             except meta_error.MetadataNotFoundError as exc:
                 raise meta_error.InvalidMetadataError(
-                    detail=f"Table info not found for column: {t_name}.{c_name}"
+                    detail=f"未找到字段所属表的元数据: {t_name}.{c_name}"
                 ) from exc
             if (reference_t_name is None) != (reference_c_name is None):
                 raise meta_error.InvalidMetadataError(
                     detail=(
-                        "Reference table name and column name must be provided together"
+                        "引用表名和引用列名必须同时提供"
                     )
                 )
             if reference_t_name and reference_c_name:
@@ -159,7 +163,7 @@ class MetaCatalogService:
                     c_name,
                 ):
                     raise meta_error.InvalidMetadataError(
-                        detail=(f"Column cannot reference itself: {t_name}.{c_name}")
+                        detail=(f"字段不能引用自身: {t_name}.{c_name}")
                     )
                 try:
                     await self._meta_repo.get_column_info(
@@ -169,7 +173,7 @@ class MetaCatalogService:
                 except meta_error.MetadataNotFoundError as exc:
                     raise meta_error.InvalidMetadataError(
                         detail=(
-                            "Reference column not found: "
+                            "未找到引用的目标字段: "
                             f"{reference_t_name}.{reference_c_name}"
                         )
                     ) from exc
@@ -209,7 +213,7 @@ class MetaCatalogService:
                     await self._meta_repo.get_column_info(t_name, c_name)
                 except meta_error.MetadataNotFoundError as exc:
                     raise meta_error.InvalidMetadataError(
-                        detail=f"Relevant column not found: {t_name}.{c_name}"
+                        detail=f"未找到相关字段: {t_name}.{c_name}"
                     ) from exc
             metric_info.relevant_columns = [
                 ColumnReference(t_name=t_name, c_name=c_name)
@@ -289,16 +293,16 @@ class MetaCatalogService:
         conflicts: list[str] = []
         if dependent_columns:
             conflicts.append(
-                "referenced by columns: "
+                "被其他字段引用: "
                 + ", ".join(
                     f"{t_name}.{c_name}" for t_name, c_name in dependent_columns
                 )
             )
         if dependent_metrics:
-            conflicts.append("used by metrics: " + ", ".join(dependent_metrics))
+            conflicts.append("被指标使用: " + ", ".join(dependent_metrics))
         if conflicts:
             raise meta_error.MetadataConflictError(
-                detail="Cannot delete metadata columns; " + "; ".join(conflicts)
+                detail="无法删除元数据字段，存在冲突引用: " + "; ".join(conflicts)
             )
 
     async def export_metadata(self) -> MetaConfig:

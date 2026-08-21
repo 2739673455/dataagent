@@ -20,19 +20,11 @@ export default function NotFound() {
         </div>
 
         <div className="mt-6 flex items-center gap-3 border-t border-[#e5e5df] pt-4">
-          <Button
-            variant="default"
-            className="flex-1"
-            onClick={() => navigate(ROUTES.chat)}
-          >
+          <Button variant="default" className="flex-1" onClick={() => navigate(ROUTES.chat)}>
             <MessageSquare className="h-3.5 w-3.5 mr-1" />
             返回对话
           </Button>
-          <Button
-            variant="secondary"
-            className="flex-1"
-            onClick={() => navigate(-1)}
-          >
+          <Button variant="secondary" className="flex-1" onClick={() => navigate(-1)}>
             <ArrowLeft className="h-3.5 w-3.5 mr-1" />
             返回上一页
           </Button>

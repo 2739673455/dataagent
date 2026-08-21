@@ -66,9 +66,9 @@ class DorisQueryRepository:
     ) -> None:
         """启动前确认查询账号仅绑定预期角色且可见目标数据库"""
         if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", workload_group) is None:
-            raise ValueError("invalid Doris workload group")
+            raise ValueError("Doris Workload Group 标识无效")
         if not database.strip():
-            raise ValueError("Doris query database must not be empty")
+            raise ValueError("Doris 查询数据库名不能为空")
         async with self._connection_provider.connection() as connection:
             result = await connection.execute(text("SHOW GRANTS"))
             rows = [dict(row) for row in result.mappings().all()]
@@ -85,7 +85,7 @@ class DorisQueryRepository:
         self.require_readonly_grants(rows, expected_role)
         if database not in visible_databases:
             raise DorisReadonlyPrivilegeError(
-                "Doris query account cannot access the configured database"
+                "Doris 查询账号无权访问所配置的目标数据库"
             )
 
     @staticmethod
@@ -96,7 +96,7 @@ class DorisQueryRepository:
         """校验 SHOW GRANTS 返回的当前账号合并权限"""
         if not rows:
             raise DorisReadonlyPrivilegeError(
-                "Doris query account returned no effective grants"
+                "Doris 查询账号未返回有效的授权信息"
             )
         tokens: set[str] = set()
         for row in rows:
@@ -116,12 +116,12 @@ class DorisQueryRepository:
         forbidden = sorted(tokens - _ALLOWED_READONLY_PRIVILEGES)
         if forbidden:
             raise DorisReadonlyPrivilegeError(
-                "Doris query account has forbidden privileges: "
+                "Doris 查询账号包含禁止的非只读权限: "
                 + ", ".join(forbidden)
             )
         if "select_priv" not in tokens and "read_only" not in tokens:
             raise DorisReadonlyPrivilegeError(
-                "Doris query account requires SELECT_PRIV"
+                "Doris 查询账号缺少 SELECT_PRIV 只读权限"
             )
         roles: set[str] = set()
         for row in rows:
@@ -135,7 +135,7 @@ class DorisQueryRepository:
                 )
         if roles != {expected_role}:
             raise DorisReadonlyPrivilegeError(
-                "Doris query account must be bound to exactly the configured role"
+                "Doris 查询账号必须精确绑定到预期的唯一角色"
             )
 
     @staticmethod

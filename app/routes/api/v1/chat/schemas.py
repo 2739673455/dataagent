@@ -4,7 +4,14 @@ from datetime import datetime
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    RootModel,
+    StringConstraints,
+    model_validator,
+)
 
 
 class CreateConversationRequest(BaseModel):
@@ -28,7 +35,10 @@ class UpdateConversationRequest(BaseModel):
     """更新对话请求"""
 
     conversation_id: UUID = Field(..., description="对话ID")
-    title: str = Field(..., description="对话标题")
+    title: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=64),
+    ] = Field(description="对话标题")
 
 
 class ConversationResponse(BaseModel):
@@ -50,7 +60,7 @@ class TextContent(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["text"] = "text"
+    type: Literal["text"]
     text: str = Field(..., description="文本内容")
 
 
@@ -59,14 +69,14 @@ class ImageContent(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["image_url"] = "image_url"
+    type: Literal["image_url"]
     image_url: str = Field(..., description="图片链接")
 
 
 class ToolCallPart(BaseModel):
     """消息中的工具调用内容"""
 
-    type: Literal["tool_call"] = "tool_call"
+    type: Literal["tool_call"]
     tool_call_id: str = Field(..., description="工具调用ID")
     name: str = Field(..., description="工具名称")
     args: dict = Field(default_factory=dict, description="工具参数")
@@ -75,7 +85,7 @@ class ToolCallPart(BaseModel):
 class ToolResultPart(BaseModel):
     """消息中的工具结果内容"""
 
-    type: Literal["tool_result"] = "tool_result"
+    type: Literal["tool_result"]
     tool_call_id: str = Field(..., description="工具调用ID")
     name: str = Field(..., description="工具名称")
     content: str = Field(..., description="工具执行结果")
@@ -124,7 +134,7 @@ class UserMessageRequest(BaseModel):
     def validate_content(self) -> Self:
         """校验消息至少包含一个片段或附件"""
         if not self.parts and not self.attachments:
-            raise ValueError("message must contain at least one part or attachment")
+            raise ValueError("消息内容或附件不能为空")
         return self
 
 
@@ -163,21 +173,31 @@ class MessageListResponse(BaseModel):
 class ChatStreamMessageEvent(BaseModel):
     """SSE 消息事件"""
 
-    type: Literal["message"] = "message"
+    type: Literal["message"]
     message: MessageResponse = Field(..., description="消息内容")
 
 
 class ChatStreamErrorEvent(BaseModel):
     """SSE 错误事件"""
 
-    type: Literal["error"] = "error"
+    type: Literal["error"]
     content: str = Field(..., description="错误信息")
 
 
 class ChatStreamDoneEvent(BaseModel):
     """SSE 完成事件"""
 
-    type: Literal["done"] = "done"
+    type: Literal["done"]
+
+
+ChatStreamEventPayload = Annotated[
+    ChatStreamMessageEvent | ChatStreamErrorEvent | ChatStreamDoneEvent,
+    Field(discriminator="type"),
+]
+
+
+class ChatStreamEvent(RootModel[ChatStreamEventPayload]):
+    """单个 SSE data 帧的 JSON 事件"""
 
 
 class UploadAttachmentResponse(BaseModel):

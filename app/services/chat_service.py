@@ -25,8 +25,6 @@ from app.agents.contracts import (
 )
 from app.agents.manager import ConversationAgentRuntime, agent_manager
 from app.clients.docker_sandbox_manager import docker_sandbox_manager
-from app.clients.langgraph_postgres_manager import langgraph_postgres_manager
-from app.repositories.semantic_recall_pg_repo import SemanticRecallPGRepo
 from app.routes.api.v1.chat import schemas as chat_schema
 
 _MESSAGE_METADATA_KEY = "dataagent_message"
@@ -36,21 +34,21 @@ _IMAGE_SUFFIXES = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 def _content_to_parts(content: Any) -> list[chat_schema.MessagePart]:
     """将 LangChain 消息内容转换为接口消息片段"""
     if isinstance(content, str):
-        return [chat_schema.TextContent(text=content)]
+        return [chat_schema.TextContent(type="text", text=content)]
     if not isinstance(content, list):
-        return [chat_schema.TextContent(text=str(content))]
+        return [chat_schema.TextContent(type="text", text=str(content))]
 
     parts: list[chat_schema.MessagePart] = []
     for item in content:
         if isinstance(item, str):
-            parts.append(chat_schema.TextContent(text=item))
+            parts.append(chat_schema.TextContent(type="text", text=item))
             continue
         if not isinstance(item, dict):
             continue
         if item.get("type") in {"text", "input_text", "output_text"} and isinstance(
             item.get("text"), str
         ):
-            parts.append(chat_schema.TextContent(text=item["text"]))
+            parts.append(chat_schema.TextContent(type="text", text=item["text"]))
             continue
         if item.get("type") != "image_url":
             continue
@@ -58,7 +56,9 @@ def _content_to_parts(content: Any) -> list[chat_schema.MessagePart]:
         if isinstance(image_url, dict):
             image_url = image_url.get("url")
         if isinstance(image_url, str):
-            parts.append(chat_schema.ImageContent(image_url=image_url))
+            parts.append(
+                chat_schema.ImageContent(type="image_url", image_url=image_url)
+            )
     return parts
 
 
@@ -123,6 +123,7 @@ def _langchain_message_to_schema(
             role="tool",
             parts=[
                 chat_schema.ToolResultPart(
+                    type="tool_result",
                     tool_call_id=message.tool_call_id,
                     name=message.name or "",
                     content=str(message.content),
@@ -151,6 +152,7 @@ def _langchain_message_to_schema(
     if isinstance(message, AIMessage):
         parts.extend(
             chat_schema.ToolCallPart(
+                type="tool_call",
                 tool_call_id=tool_call.get("id") or "",
                 name=tool_call.get("name") or "",
                 args=tool_call.get("args", {}),
@@ -197,7 +199,7 @@ def _append_prompt(
     prefix = "\n\n" if content_parts else ""
     content_parts.append(
         chat_schema.TextContent(
-            text=prefix + header + "\n" + "\n".join(lines)
+            type="text", text=prefix + header + "\n" + "\n".join(lines)
         ).model_dump()
     )
 
@@ -235,11 +237,12 @@ async def _process_attachments(
         try:
             content_parts.append(
                 chat_schema.ImageContent(
+                    type="image_url",
                     image_url=await _build_image_data_url(
                         user_id,
                         conversation_id,
                         attachment,
-                    )
+                    ),
                 ).model_dump()
             )
         except OSError:
@@ -312,13 +315,6 @@ async def list_messages(
         if schema := _langchain_message_to_schema(message):
             result.append(schema)
     return result
-
-
-async def delete_conversation_data(user_id: int, conversation_id: UUID) -> None:
-    """删除会话的 Agent 状态和独立语义召回记录"""
-    recall_repo = SemanticRecallPGRepo(langgraph_postgres_manager.get_store())
-    await recall_repo.delete_all(user_id, conversation_id)
-    await agent_manager.delete_agent(user_id, conversation_id)
 
 
 async def _execute_agent(

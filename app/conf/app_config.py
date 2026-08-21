@@ -217,6 +217,15 @@ class AuthConfig(BaseModel):
     password_min_length: int = Field(ge=6, le=128)
 
 
+class LifecycleConfig(BaseModel):
+    """跨存储资源生命周期配置"""
+
+    draft_ttl_minutes: int = Field(gt=0)
+    cleanup_interval_seconds: int = Field(gt=0)
+    cleanup_batch_size: int = Field(gt=0, le=1000)
+    user_deletion_retry_seconds: int = Field(gt=0)
+
+
 class QueryConfig(BaseModel):
     """只读分析查询资源限制"""
 
@@ -286,6 +295,7 @@ class Cfg(BaseModel):
     sandbox: SandboxConfig
     lm_config: LMConfigCfg
     auth: AuthConfig
+    lifecycle: LifecycleConfig
     query: QueryConfig
     agent: AgentConfig
     mcp: dict[str, MCPCfg]

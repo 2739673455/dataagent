@@ -89,7 +89,7 @@ def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse
     try:
         title = HTTPStatus(exc.status_code).phrase
     except ValueError:
-        title = "HTTP Error"
+        title = "HTTP 请求错误"
     problem = ProblemError(
         title=title,
         detail=detail,

@@ -90,7 +90,7 @@ class QueryResultLimitExceededError(RuntimeError):
 
     def __init__(self, max_rows: int) -> None:
         self.max_rows = max_rows
-        super().__init__(f"Query result exceeds {max_rows} rows")
+        super().__init__(f"查询结果行数超出限制，最大允许 {max_rows} 行")
 
 
 class QueryOutputLimitExceededError(RuntimeError):
@@ -98,7 +98,7 @@ class QueryOutputLimitExceededError(RuntimeError):
 
     def __init__(self, max_output_bytes: int) -> None:
         self.max_output_bytes = max_output_bytes
-        super().__init__(f"Query output exceeds {max_output_bytes} bytes")
+        super().__init__(f"查询输出 CSV 超出限制，最大允许 {max_output_bytes} 字节")
 
 
 class QueryResultShapeError(RuntimeError):
@@ -191,7 +191,7 @@ class _Utf8LimitedWriter:
             raise QueryOutputLimitExceededError(self.max_bytes)
         written = self.destination.write(encoded)
         if written != len(encoded):
-            raise OSError("Incomplete temporary query output write")
+            raise OSError("临时查询输出写入不完整")
         self.bytes_written = projected_bytes
         return len(value)
 
@@ -226,7 +226,7 @@ class AnalysisQueryService:
                 details = await self._execute_with_deadline(session_key, sql, dialect)
         except TimeoutError:
             raise QueryExecutionTimeoutError(
-                f"Readonly query exceeded {self._limits.timeout_seconds} seconds"
+                f"查询执行超时，最大允许 {self._limits.timeout_seconds} 秒"
             ) from None
         if self._success_observer is not None:
             try:
@@ -250,11 +250,11 @@ class AnalysisQueryService:
         )
         if estimate.scan_rows > self._limits.max_scan_rows:
             raise QueryScanLimitExceededError(
-                f"Estimated scan rows exceed {self._limits.max_scan_rows}"
+                f"Doris 估算扫描行数超出限制，最大允许 {self._limits.max_scan_rows} 行"
             )
         if estimate.scan_bytes > self._limits.max_scan_bytes:
             raise QueryScanLimitExceededError(
-                f"Estimated scan bytes exceed {self._limits.max_scan_bytes}"
+                f"Doris 估算扫描字节数超出限制，最大允许 {self._limits.max_scan_bytes} 字节"
             )
         relative_path = (
             f"analyses/{session_key.analysis_id}/sessions/"
@@ -311,14 +311,14 @@ class AnalysisQueryService:
                     writer.writerow(_csv_value(name) for name in column_names)
                 elif batch.column_names != column_names:
                     raise QueryResultShapeError(
-                        "Query result columns changed between streamed batches"
+                        "流式查询各批次返回的列结构不一致"
                     )
                 if row_count + len(batch.rows) > self._limits.max_rows:
                     raise QueryResultLimitExceededError(self._limits.max_rows)
                 for row in batch.rows:
                     if len(row) != len(column_names):
                         raise QueryResultShapeError(
-                            "Query result row length does not match its columns"
+                            "查询结果行的列数与元数据声明不一致"
                         )
                     for stats, value in zip(column_stats, row, strict=True):
                         stats.observe(value)
@@ -332,7 +332,7 @@ class AnalysisQueryService:
                         )
                     row_count += 1
         if column_names is None:
-            raise QueryResultShapeError("Query repository returned no result metadata")
+            raise QueryResultShapeError("数据库未返回有效的结果元数据")
         temporary_file.flush()
         return _QuerySummary(
             schema=[
@@ -356,10 +356,10 @@ class AnalysisQueryService:
     def _validate_column_names(column_names: tuple[str, ...]) -> None:
         """要求数据库返回非空且唯一的字段名"""
         if not column_names or any(not name for name in column_names):
-            raise QueryResultShapeError("Query result requires named columns")
+            raise QueryResultShapeError("查询结果列名不能为空")
         normalized = [name.casefold() for name in column_names]
         if len(normalized) != len(set(normalized)):
-            raise QueryResultShapeError("Query result column names must be unique")
+            raise QueryResultShapeError("查询结果列名不能重复")
 
 
 @dataclass(frozen=True, slots=True)
@@ -420,7 +420,7 @@ def estimate_doris_query_plan(
 
     if require_scan and not completed:
         raise QueryPlanUnavailableError(
-            "Doris EXPLAIN did not expose physical scan estimates"
+            "Doris EXPLAIN 未包含物理扫描节点估算信息"
         )
     if any(
         node.cardinality is None
@@ -431,7 +431,7 @@ def estimate_doris_query_plan(
         for node in completed
     ):
         raise QueryPlanUnavailableError(
-            "Doris EXPLAIN contains incomplete physical scan estimates"
+            "Doris EXPLAIN 物理扫描节点估算信息不完整"
         )
     scan_rows = sum(math.ceil(node.cardinality or 0) for node in completed)
     scan_bytes = sum(

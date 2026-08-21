@@ -16,21 +16,21 @@ auth_postgresql:
   host: 127.0.0.1
   port: 5432
   user: atguigu
-  password: ${oc.env:POSTGRES_PASSWORD,123123}
+  password: ${oc.env:POSTGRES_PASSWORD}
   database: auth
 
 meta_postgresql:
   host: 127.0.0.1
   port: 5432
   user: atguigu
-  password: ${oc.env:POSTGRES_PASSWORD,123123}
+  password: ${oc.env:POSTGRES_PASSWORD}
   database: meta
 
 langgraph_postgresql:
   host: 127.0.0.1
   port: 5432
   user: atguigu
-  password: ${oc.env:POSTGRES_PASSWORD,123123}
+  password: ${oc.env:POSTGRES_PASSWORD}
   database: langgraph
 
 elasticsearch:
@@ -44,7 +44,7 @@ elasticsearch:
 
 embedding:
   base_url: https://api.siliconflow.cn/v1
-  api_key: ${oc.env:SILICONFLOW_API_KEY,""}
+  api_key: ${oc.env:SILICONFLOW_API_KEY}
   model: BAAI/bge-m3
   timeout: 30.0
 
@@ -55,6 +55,12 @@ auth:
   access_token_minutes: 15
   refresh_token_days: 30
   password_min_length: 6
+
+lifecycle:
+  draft_ttl_minutes: 1440
+  cleanup_interval_seconds: 300
+  cleanup_batch_size: 100
+  user_deletion_retry_seconds: 60
 
 query:
   data_source: doris

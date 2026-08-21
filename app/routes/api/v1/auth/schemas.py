@@ -26,6 +26,13 @@ class LogoutRequest(RefreshRequest):
     """退出登录请求"""
 
 
+class ChangePasswordRequest(BaseModel):
+    """修改当前用户密码请求"""
+
+    current_password: SecretStr = Field(min_length=1, max_length=128)
+    new_password: SecretStr = Field(min_length=1, max_length=128)
+
+
 class UserResponse(BaseModel):
     """用户公开信息"""
 

@@ -19,6 +19,9 @@ from app.errors import attachment_error, chat_error
 from app.routes.api.v1.auth.dependencies import AnalysisUserDep, CurrentUserDep
 from app.routes.api.v1.chat import schemas as chat_schema
 from app.routes.api.v1.chat.dependencies import ConversationPGRepoDep
+from app.services.conversation_lifecycle_service import (
+    conversation_lifecycle_service,
+)
 
 router = APIRouter(tags=["attachment"])
 
@@ -32,26 +35,28 @@ async def api_upload_attachment(
 ) -> chat_schema.UploadAttachmentResponse:
     """上传附件到当前会话工作区"""
     user_id = current_user.id
-    # 检查对话是否存在且属于当前用户
-    conversation = await conversation_repo.get(user_id, conversation_id)
-    if conversation is None:
-        raise chat_error.ConversationNotFoundError
+    async with conversation_lifecycle_service.lock(user_id, conversation_id):
+        # 检查对话是否存在且属于当前用户
+        conversation = await conversation_repo.get(user_id, conversation_id)
+        if conversation is None:
+            raise chat_error.ConversationNotFoundError
 
-    # 获取文件名
-    f_path = file.filename or "upload"
-    try:
-        f_path = await docker_sandbox_manager.upload_user_attachment(
-            user_id,
-            conversation_id,
-            f_path,
-            file.file,
-        )
-    except SandboxPathError:
-        raise attachment_error.PathTraversalError from None
-    except SandboxFileTooLargeError:
-        raise attachment_error.AttachmentTooLargeError from None
-    except SandboxStorageLimitError:
-        raise attachment_error.SandboxStorageLimitError from None
+        # 获取文件名
+        f_path = file.filename or "upload"
+        try:
+            f_path = await docker_sandbox_manager.upload_user_attachment(
+                user_id,
+                conversation_id,
+                f_path,
+                file.file,
+            )
+        except SandboxPathError:
+            raise attachment_error.PathTraversalError from None
+        except SandboxFileTooLargeError:
+            raise attachment_error.AttachmentTooLargeError from None
+        except SandboxStorageLimitError:
+            raise attachment_error.SandboxStorageLimitError from None
+        await conversation_repo.update(conversation)
 
     logger.info(f"Upload attachment: {conversation_id=}, file={f_path}")
     return chat_schema.UploadAttachmentResponse(
@@ -63,23 +68,24 @@ async def api_upload_attachment(
 async def api_delete_attachment(
     body: chat_schema.DeleteAttachmentRequest,
     conversation_repo: ConversationPGRepoDep,
-    current_user: AnalysisUserDep,
+    current_user: CurrentUserDep,
 ) -> None:
     """删除当前会话工作区中的附件"""
     user_id = current_user.id
-    # 检查对话是否存在且属于当前用户
-    conversation = await conversation_repo.get(user_id, body.conversation_id)
-    if conversation is None:
-        raise chat_error.ConversationNotFoundError
+    async with conversation_lifecycle_service.lock(user_id, body.conversation_id):
+        conversation = await conversation_repo.get(user_id, body.conversation_id)
+        if conversation is None:
+            raise chat_error.ConversationNotFoundError
 
-    try:
-        await docker_sandbox_manager.delete_user_attachment(
-            user_id,
-            body.conversation_id,
-            body.f_path,
-        )
-    except SandboxPathError:
-        raise attachment_error.PathTraversalError from None
+        try:
+            await docker_sandbox_manager.delete_user_attachment(
+                user_id,
+                body.conversation_id,
+                body.f_path,
+            )
+        except SandboxPathError:
+            raise attachment_error.PathTraversalError from None
+        await conversation_repo.update(conversation)
 
     logger.info(
         f"Delete attachment: conversation_id={body.conversation_id}, file={body.f_path}"
@@ -95,23 +101,23 @@ async def api_get_attachment(
 ) -> Response:
     """获取当前会话工作区中的附件文件"""
     user_id = current_user.id
-    # 检查对话是否存在且属于当前用户
-    conversation = await conversation_repo.get(user_id, conversation_id)
-    if conversation is None:
-        raise chat_error.ConversationNotFoundError
+    async with conversation_lifecycle_service.lock(user_id, conversation_id):
+        conversation = await conversation_repo.get(user_id, conversation_id)
+        if conversation is None:
+            raise chat_error.ConversationNotFoundError
 
-    try:
-        content = await docker_sandbox_manager.download_file(
-            user_id,
-            conversation_id,
-            f_path,
-        )
-    except SandboxPathError:
-        raise attachment_error.PathTraversalError from None
-    except FileNotFoundError:
-        raise attachment_error.AttachmentNotFoundError(detail=f_path)
-    except SandboxFileTooLargeError:
-        raise attachment_error.AttachmentTooLargeError from None
+        try:
+            content = await docker_sandbox_manager.download_file(
+                user_id,
+                conversation_id,
+                f_path,
+            )
+        except SandboxPathError:
+            raise attachment_error.PathTraversalError from None
+        except FileNotFoundError:
+            raise attachment_error.AttachmentNotFoundError(detail=f_path)
+        except SandboxFileTooLargeError:
+            raise attachment_error.AttachmentTooLargeError from None
 
     # 获取文件 MIME 类型
     media_type, _ = mimetypes.guess_type(f_path)

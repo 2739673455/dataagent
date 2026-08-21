@@ -125,6 +125,15 @@ export async function logoutUser(): Promise<void> {
   if (refreshToken) await authApi.logout(refreshToken);
 }
 
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  const accessToken = getAccessToken() ?? (await refreshAccessToken());
+  await authApi.changePassword(accessToken, {
+    current_password: currentPassword,
+    new_password: newPassword,
+  });
+  clearSession();
+}
+
 export async function synchronizeSession(): Promise<void> {
   resetSession(false);
   await checkAuth();

@@ -66,10 +66,11 @@ from app.services.query_experience_service import QueryExperienceService
 type ConversationKey = tuple[int, UUID]
 
 _DEFAULT_MAX_CACHED_RUNTIMES = 128
+_STORE_SCAN_BATCH_SIZE = 1_000
 _AGENT_LIFECYCLE_NAMESPACE = ("agent_lifecycle", "deleted_conversations")
 
 
-def _conversation_lock_name(user_id: int, conversation_id: UUID) -> str:
+def conversation_lifecycle_lock_name(user_id: int, conversation_id: UUID) -> str:
     """构造跨进程会话生命周期锁名称"""
     return f"conversation:{get_thread_id(user_id, conversation_id)}"
 
@@ -321,7 +322,7 @@ class AgentManager:
             session_locks=session_service.session_locks,
             parallelism=session_service.parallelism,
             planner_lock=lambda: self._persistence_manager.advisory_lock(
-                _conversation_lock_name(user_id, conversation_id),
+                conversation_lifecycle_lock_name(user_id, conversation_id),
                 timeout=orchestration_cfg.session_lock_timeout,
             ),
             conversation_deleted=lambda: self._conversation_is_deleted(
@@ -444,12 +445,15 @@ class AgentManager:
         await self.close()
         await self.init()
 
-    async def delete_agent(self, user_id: int, conversation_id: UUID) -> None:
-        """删除会话 Agent 集合及 Planner 和全部 SubAgent namespace"""
+    async def cancel_agent_execution(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+    ) -> None:
+        """阻止新回合并取消当前进程中的会话任务"""
         conversation_key = (user_id, conversation_id)
         async with self._state_lock:
             self._deleted_conversation_keys.add(conversation_key)
-            runtime = self._conversation_runtimes.pop(conversation_key, None)
             build_task = self._runtime_build_tasks.pop(conversation_key, None)
             run_tasks = list(self._conversation_run_tasks.pop(conversation_key, ()))
         if build_task is not None:
@@ -459,17 +463,73 @@ class AgentManager:
             run_task.cancel()
         if run_tasks:
             await asyncio.gather(*run_tasks, return_exceptions=True)
+
+    async def delete_agent(self, user_id: int, conversation_id: UUID) -> None:
+        """删除会话 Agent 集合及 Planner 和全部 SubAgent namespace"""
+        await self.cancel_agent_execution(user_id, conversation_id)
+        async with self._persistence_manager.advisory_lock(
+            conversation_lifecycle_lock_name(user_id, conversation_id),
+            timeout=app_config.cfg.agent.orchestration.session_lock_timeout,
+        ):
+            await self.delete_agent_under_lifecycle_lock(user_id, conversation_id)
+
+    async def delete_agent_under_lifecycle_lock(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+    ) -> None:
+        """在调用方持有会话生命周期锁时删除 Agent 和持久化状态"""
+        conversation_key = (user_id, conversation_id)
+        await self.cancel_agent_execution(user_id, conversation_id)
+        async with self._state_lock:
+            runtime = self._conversation_runtimes.pop(conversation_key, None)
         if runtime is not None:
             runtime.session_service.clear()
             runtime.registry.clear()
-        async with self._persistence_manager.advisory_lock(
-            _conversation_lock_name(user_id, conversation_id),
-            timeout=app_config.cfg.agent.orchestration.session_lock_timeout,
+        await self._mark_conversation_deleted(user_id, conversation_id)
+        await self._persistence_manager.delete_thread(
+            get_thread_id(user_id, conversation_id)
+        )
+
+    async def delete_user_agents(self, user_id: int) -> None:
+        """取消用户全部 Agent 并清理孤立线程和删除墓碑"""
+        async with self._state_lock:
+            conversation_keys = {
+                key
+                for key in (
+                    set(self._conversation_runtimes)
+                    | set(self._runtime_build_tasks)
+                    | set(self._conversation_run_tasks)
+                )
+                if key[0] == user_id
+            }
+        for _, conversation_id in sorted(
+            conversation_keys,
+            key=lambda item: str(item[1]),
         ):
-            await self._mark_conversation_deleted(user_id, conversation_id)
-            await self._persistence_manager.delete_thread(
-                get_thread_id(user_id, conversation_id)
+            await self.delete_agent(user_id, conversation_id)
+
+        await self._persistence_manager.delete_user_threads(user_id)
+        store = self._persistence_manager.get_store()
+        tombstone_keys: list[str] = []
+        offset = 0
+        while items := await store.asearch(
+            _AGENT_LIFECYCLE_NAMESPACE,
+            limit=_STORE_SCAN_BATCH_SIZE,
+            offset=offset,
+        ):
+            tombstone_keys.extend(
+                item.key
+                for item in items
+                if item.key.startswith(f"{user_id}:")
             )
+            offset += len(items)
+        for key in tombstone_keys:
+            await store.adelete(_AGENT_LIFECYCLE_NAMESPACE, key)
+        async with self._state_lock:
+            self._deleted_conversation_keys = {
+                key for key in self._deleted_conversation_keys if key[0] != user_id
+            }
 
     async def _conversation_is_deleted(
         self,

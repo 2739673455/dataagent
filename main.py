@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from loguru import logger
 
 from app.agents.manager import agent_manager
 from app.clients.docker_sandbox_manager import docker_sandbox_manager
@@ -20,13 +21,37 @@ from app.clients.postgres_client_manager import (
 from app.conf.app_config import cfg
 from app.core.log import setup_logger
 from app.core.middlewares import trace
+from app.errors.base import ProblemDetails
 from app.errors.exc_handlers import register_exception_handlers
 from app.repositories.doris_query_identity_pg_repo import DorisQueryIdentityPGRepo
 from app.repositories.doris_query_repo import DorisQueryRepository
 from app.repositories.doris_role_repo import DorisRoleRepository
 from app.routes import api
+from app.services.conversation_lifecycle_service import (
+    conversation_lifecycle_service,
+)
 from app.services.conversation_title_service import conversation_title_service
 from app.services.doris_credential_service import DorisCredentialCipher
+from app.services.user_deletion_service import user_deletion_service
+
+_PROBLEM_RESPONSE = {
+    "model": ProblemDetails,
+    "content": {
+        "application/problem+json": {
+            "schema": {"$ref": "#/components/schemas/ProblemDetails"}
+        }
+    },
+}
+_ERROR_RESPONSES = {
+    422: {
+        **_PROBLEM_RESPONSE,
+        "description": "参数校验失败",
+    },
+    "default": {
+        **_PROBLEM_RESPONSE,
+        "description": "Problem Details 错误响应",
+    },
+}
 
 
 async def verify_doris_query_identities() -> None:
@@ -40,16 +65,21 @@ async def verify_doris_query_identities() -> None:
         tuple(identity.role_name for identity in identities)
     )
     for identity in identities:
-        manager = await query_doris_client_registry.get_or_create(
-            identity.role_name,
-            identity.query_user,
-            cipher.decrypt(identity.encrypted_password),
-        )
-        await DorisQueryRepository(manager).verify_readonly_access(
-            identity.workload_group,
-            cfg.doris.database,
-            identity.role_name,
-        )
+        try:
+            manager = await query_doris_client_registry.get_or_create(
+                identity.role_name,
+                identity.query_user,
+                cipher.decrypt(identity.encrypted_password),
+            )
+            await DorisQueryRepository(manager).verify_readonly_access(
+                identity.workload_group,
+                cfg.doris.database,
+                identity.role_name,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                f"Doris 角色 '{identity.role_name}' 未完成目标库表授权或校验未通过: {exc}"
+            )
 
 
 @asynccontextmanager
@@ -67,10 +97,14 @@ async def lifespan(app: FastAPI):
         await meta_postgres_client_manager.init_tables()
         admin_doris_client_manager.init()
         await verify_doris_query_identities()
+        await conversation_lifecycle_service.start()
+        await user_deletion_service.start()
 
         yield
     finally:
         # FastAPI 应用结束前执行
+        await user_deletion_service.close()
+        await conversation_lifecycle_service.close()
         await conversation_title_service.close()
         await agent_manager.close()
         await docker_sandbox_manager.close()
@@ -110,7 +144,7 @@ def register_middlewares(app: FastAPI) -> None:
 def create_app() -> FastAPI:
     """创建并组装 FastAPI 应用"""
     setup_logger()
-    app = FastAPI(lifespan=lifespan)
+    app = FastAPI(lifespan=lifespan, responses=_ERROR_RESPONSES)
     register_middlewares(app)
     register_exception_handlers(app)
     register_routes(app)

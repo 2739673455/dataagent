@@ -4,9 +4,10 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import delete, func, select, text, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
 
-from app.models.auth import DorisRoleAssetGrant, RefreshToken, User
+from app.models.auth import DorisRoleAssetGrant, RefreshToken, User, UserDeletionTask
 
 _SECURITY_MUTATION_LOCK_KEY = 0x444154414147454E
 
@@ -32,7 +33,10 @@ class AuthPGRepo:
         """统计当前平台管理员数量"""
         return int(
             await self._session.scalar(
-                select(func.count(User.id)).where(User.is_admin.is_(True))
+                select(func.count(User.id)).where(
+                    User.is_admin.is_(True),
+                    User.is_active.is_(True),
+                )
             )
             or 0
         )
@@ -56,6 +60,24 @@ class AuthPGRepo:
             .execution_options(populate_existing=True)
         )
 
+    async def get_user_by_id_for_update(self, user_id: int) -> User | None:
+        """锁定并按主键读取用户"""
+        return await self._session.scalar(
+            select(User).where(User.id == user_id).with_for_update()
+        )
+
+    async def get_user_by_email_for_update(self, email: str) -> User | None:
+        """锁定并按规范化邮箱读取用户"""
+        return await self._session.scalar(
+            select(User).where(User.email == email).with_for_update()
+        )
+
+    async def get_user_by_username_for_update(self, username: str) -> User | None:
+        """锁定并按规范化用户名读取用户"""
+        return await self._session.scalar(
+            select(User).where(User.username == username).with_for_update()
+        )
+
     async def get_user_by_email(self, email: str) -> User | None:
         """按规范化邮箱读取用户"""
         return await self._session.scalar(select(User).where(User.email == email))
@@ -72,6 +94,21 @@ class AuthPGRepo:
             select(User).order_by(User.id).limit(limit).offset(offset)
         )
         return list(result)
+
+    async def count_users(self) -> int:
+        """统计用户总量"""
+        return int(await self._session.scalar(select(func.count(User.id))) or 0)
+
+    async def set_user_active(self, user: User, is_active: bool) -> None:
+        """设置用户启用状态"""
+        user.is_active = is_active
+        await self._session.flush()
+
+    async def set_user_password(self, user: User, password_hash: str) -> None:
+        """更新密码哈希并推进认证版本"""
+        user.password_hash = password_hash
+        user.auth_version += 1
+        await self._session.flush()
 
     async def set_user_doris_role(self, user: User, role_name: str) -> None:
         """替换用户唯一 Doris 角色"""
@@ -142,6 +179,82 @@ class AuthPGRepo:
             )
             .values(revoked_at=revoked_at)
         )
+
+    async def get_user_deletion_task(
+        self,
+        user_id: int,
+    ) -> UserDeletionTask | None:
+        """按用户读取注销任务"""
+        return await self._session.get(UserDeletionTask, user_id)
+
+    async def enqueue_user_deletion(
+        self,
+        user_id: int,
+        now: datetime,
+    ) -> None:
+        """新增或重新调度用户注销任务"""
+        await self._session.execute(
+            insert(UserDeletionTask)
+            .values(
+                user_id=user_id,
+                status="pending",
+                attempt_count=0,
+                next_attempt_at=now,
+                last_error=None,
+            )
+            .on_conflict_do_update(
+                index_elements=[UserDeletionTask.user_id],
+                set_={
+                    "status": "pending",
+                    "next_attempt_at": now,
+                    "last_error": None,
+                    "updated_at": now,
+                },
+                where=UserDeletionTask.status != "completed",
+            )
+        )
+
+    async def list_due_user_deletions(
+        self,
+        now: datetime,
+        *,
+        limit: int,
+    ) -> list[UserDeletionTask]:
+        """列出到期且未完成的用户注销任务"""
+        result = await self._session.scalars(
+            select(UserDeletionTask)
+            .where(
+                UserDeletionTask.status == "pending",
+                UserDeletionTask.next_attempt_at <= now,
+            )
+            .order_by(UserDeletionTask.next_attempt_at, UserDeletionTask.user_id)
+            .limit(limit)
+        )
+        return list(result)
+
+    async def record_user_deletion_failure(
+        self,
+        task: UserDeletionTask,
+        *,
+        error: str,
+        next_attempt_at: datetime,
+    ) -> None:
+        """记录注销失败并安排下一次重试"""
+        task.attempt_count += 1
+        task.last_error = error[:4000]
+        task.next_attempt_at = next_attempt_at
+        await self._session.flush()
+
+    async def complete_user_deletion(
+        self,
+        task: UserDeletionTask,
+        now: datetime,
+    ) -> None:
+        """标记用户注销任务完成"""
+        task.status = "completed"
+        task.last_error = None
+        task.updated_at = now
+        await self._session.flush()
 
     async def list_role_asset_grants(
         self,

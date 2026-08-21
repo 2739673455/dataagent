@@ -5,6 +5,7 @@ export const AUTH_API_PATHS = {
   login: "/api/v1/auth/login",
   refresh: "/api/v1/auth/refresh",
   logout: "/api/v1/auth/logout",
+  changePassword: "/api/v1/auth/change-password",
   me: "/api/v1/auth/me",
 } as const;
 
@@ -20,6 +21,8 @@ export const CHAT_API_ROUTES = {
   createConversation: "/api/v1/chat/create",
   listConversations: "/api/v1/chat/ls",
   deleteConversations: "/api/v1/chat/delete",
+  updateConversation: "/api/v1/chat/update",
+  deleteDraftConversation: (conversationId: string) => `/api/v1/chat/draft/${conversationId}`,
   getMessages: (conversationId: string) => `/api/v1/chat/ls/${conversationId}`,
   uploadAttachment: "/api/v1/chat/attachment/upload",
   getAttachment: "/api/v1/chat/attachment/get",

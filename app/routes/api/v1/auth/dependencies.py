@@ -27,6 +27,10 @@ from app.services.authorization_service import (
 )
 from app.services.doris_credential_service import DorisCredentialCipher
 from app.services.doris_permission_service import DorisPermissionService
+from app.services.user_deletion_service import (
+    UserDeletionService,
+    user_deletion_service,
+)
 
 SessionDep = Annotated[
     AsyncSession,
@@ -154,6 +158,17 @@ async def get_role_management_service() -> AsyncGenerator[DorisRoleManagementSer
 DorisRoleManagementServiceDep = Annotated[
     DorisRoleManagementService,
     Depends(get_role_management_service),
+]
+
+
+def get_user_deletion_service() -> UserDeletionService:
+    """获取进程级跨存储用户注销服务"""
+    return user_deletion_service
+
+
+UserDeletionServiceDep = Annotated[
+    UserDeletionService,
+    Depends(get_user_deletion_service),
 ]
 
 

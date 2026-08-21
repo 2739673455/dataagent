@@ -16,12 +16,12 @@ class DorisCredentialCipher:
         try:
             self._fernet = Fernet(encryption_key.encode("ascii"))
         except (ValueError, UnicodeEncodeError) as exc:
-            raise ValueError("invalid Doris credential encryption key") from exc
+            raise ValueError("Doris 凭据加密主密钥格式无效") from exc
 
     def encrypt(self, password: str) -> str:
         """加密 Doris 查询密码"""
         if not password:
-            raise ValueError("Doris query password must not be empty")
+            raise ValueError("Doris 查询密码不能为空")
         return self._fernet.encrypt(password.encode("utf-8")).decode("ascii")
 
     def decrypt(self, encrypted_password: str) -> str:
@@ -31,7 +31,7 @@ class DorisCredentialCipher:
                 encrypted_password.encode("ascii")
             ).decode("utf-8")
         except (InvalidToken, UnicodeDecodeError, UnicodeEncodeError) as exc:
-            raise DorisCredentialError("Doris query credential is invalid") from exc
+            raise DorisCredentialError("Doris 查询凭据解密失败") from exc
 
     @staticmethod
     def generate_password() -> str:

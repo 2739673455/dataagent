@@ -224,7 +224,7 @@ class DorisPermissionService:
         )
         if not columns:
             raise auth_error.InvalidDorisPermissionError(
-                detail="Target table does not exist"
+                detail="目标表不存在"
             )
         predicate_sql = self._validate_predicate(predicate, table_name, columns)
         await self._doris_repo.create_row_policy(
@@ -260,7 +260,7 @@ class DorisPermissionService:
             normalized = normalize_doris_role_name(role_name)
         except ValueError as exc:
             raise auth_error.InvalidDorisPermissionError(
-                detail="Invalid Doris role name"
+                detail="Doris 角色名无效"
             ) from exc
         identity = await self._identity_repo.get(normalized)
         if identity is None or not identity.is_active:
@@ -304,7 +304,7 @@ class DorisPermissionService:
         if table_name is None:
             if columns:
                 raise auth_error.InvalidDorisPermissionError(
-                    detail="Columns require a target table"
+                    detail="指定列权限时必须提供目标表"
                 )
             return
         actual_columns = await self._doris_repo.list_table_columns(
@@ -313,12 +313,12 @@ class DorisPermissionService:
         )
         if not actual_columns:
             raise auth_error.InvalidDorisPermissionError(
-                detail="Target table does not exist"
+                detail="目标表不存在"
             )
         unknown = sorted(set(columns) - set(actual_columns))
         if unknown:
             raise auth_error.InvalidDorisPermissionError(
-                detail="Unknown target columns: " + ", ".join(unknown)
+                detail="存在未知的目标列: " + ", ".join(unknown)
             )
 
     def _assets(
@@ -349,11 +349,11 @@ class DorisPermissionService:
         normalized = tuple(column.strip() for column in columns)
         if any(not column for column in normalized):
             raise auth_error.InvalidDorisPermissionError(
-                detail="Column names must not be empty"
+                detail="列名不能为空"
             )
         if len(set(normalized)) != len(normalized):
             raise auth_error.InvalidDorisPermissionError(
-                detail="Column names must be distinct"
+                detail="列名不能重复"
             )
         return normalized
 
@@ -367,7 +367,7 @@ class DorisPermissionService:
         normalized = predicate.strip()
         if not normalized:
             raise auth_error.InvalidDorisPermissionError(
-                detail="Row policy predicate must not be empty"
+                detail="行级策略谓词表达式不能为空"
             )
         try:
             statements = sqlglot.parse(
@@ -376,16 +376,16 @@ class DorisPermissionService:
             )
         except ParseError as exc:
             raise auth_error.InvalidDorisPermissionError(
-                detail="Invalid row policy predicate"
+                detail="行级策略谓词表达式语法无效"
             ) from exc
         if len(statements) != 1 or not isinstance(statements[0], exp.Select):
             raise auth_error.InvalidDorisPermissionError(
-                detail="Row policy predicate must be one expression"
+                detail="行级策略谓词必须为单个布尔表达式"
             )
         where = statements[0].args.get("where")
         if not isinstance(where, exp.Where):
             raise auth_error.InvalidDorisPermissionError(
-                detail="Row policy predicate is missing"
+                detail="缺少行级策略谓词表达式"
             )
         expression = where.this
         forbidden = (
@@ -397,16 +397,16 @@ class DorisPermissionService:
         )
         if any(isinstance(node, forbidden) for node in expression.walk()):
             raise auth_error.InvalidDorisPermissionError(
-                detail="Row policy predicate contains a forbidden construct"
+                detail="行级策略谓词包含禁止的语法结构"
             )
         allowed = set(allowed_columns)
         for column in expression.find_all(exp.Column):
             if column.name not in allowed:
                 raise auth_error.InvalidDorisPermissionError(
-                    detail=f"Unknown row policy column: {column.name}"
+                    detail=f"行级策略引用了未知的列: {column.name}"
                 )
             if column.table and column.table != table_name:
                 raise auth_error.InvalidDorisPermissionError(
-                    detail="Row policy cannot reference another table"
+                    detail="行级策略不能跨表引用其他表"
                 )
         return expression.sql(dialect="doris")

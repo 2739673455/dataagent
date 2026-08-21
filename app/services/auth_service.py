@@ -70,6 +70,7 @@ class AccessTokenClaims:
 
     user_id: int
     token_id: UUID
+    auth_version: int
     issued_at: datetime
     expires_at: datetime
 
@@ -117,6 +118,7 @@ class JWTCodec:
         payload: dict[str, Any] = {
             "sub": str(user.id),
             "jti": str(token_id),
+            "auth_version": user.auth_version,
             "token_type": "access",
             "is_admin": user.is_admin,
             "doris_role": user.doris_role_name,
@@ -161,6 +163,7 @@ class JWTCodec:
         return AccessTokenClaims(
             user_id=self._parse_user_id(payload),
             token_id=self._parse_uuid(payload, "jti"),
+            auth_version=self._parse_auth_version(payload),
             issued_at=self._parse_timestamp(payload, "iat"),
             expires_at=self._parse_timestamp(payload, "exp"),
         )
@@ -190,7 +193,7 @@ class JWTCodec:
         except jwt.PyJWTError as exc:
             raise auth_error.InvalidTokenError from exc
         if payload.get("token_type") != expected_type:
-            raise auth_error.InvalidTokenError(detail="Unexpected token type")
+            raise auth_error.InvalidTokenError(detail="非预期的令牌类型")
         return cast(dict[str, Any], payload)
 
     @staticmethod
@@ -199,10 +202,26 @@ class JWTCodec:
         try:
             user_id = int(payload["sub"])
         except (KeyError, TypeError, ValueError) as exc:
-            raise auth_error.InvalidTokenError(detail="Invalid subject claim") from exc
+            raise auth_error.InvalidTokenError(detail="令牌主体标识无效") from exc
         if user_id <= 0:
-            raise auth_error.InvalidTokenError(detail="Invalid subject claim")
+            raise auth_error.InvalidTokenError(detail="令牌主体标识无效")
         return user_id
+
+    @staticmethod
+    def _parse_auth_version(payload: dict[str, Any]) -> int:
+        """解析认证版本声明"""
+        value = payload.get("auth_version")
+        if isinstance(value, bool) or not isinstance(value, (int, str)):
+            raise auth_error.InvalidTokenError(detail="令牌鉴权版本无效")
+        try:
+            auth_version = int(value)
+        except (TypeError, ValueError) as exc:
+            raise auth_error.InvalidTokenError(
+                detail="令牌鉴权版本无效"
+            ) from exc
+        if auth_version < 0:
+            raise auth_error.InvalidTokenError(detail="令牌鉴权版本无效")
+        return auth_version
 
     @staticmethod
     def _parse_uuid(payload: dict[str, Any], key: str) -> UUID:
@@ -210,14 +229,14 @@ class JWTCodec:
         try:
             return UUID(str(payload[key]))
         except (KeyError, TypeError, ValueError) as exc:
-            raise auth_error.InvalidTokenError(detail=f"Invalid {key} claim") from exc
+            raise auth_error.InvalidTokenError(detail=f"令牌 {key} 声明无效") from exc
 
     @staticmethod
     def _parse_timestamp(payload: dict[str, Any], key: str) -> datetime:
         """解析时间戳声明"""
         value = payload.get(key)
         if not isinstance(value, (int, float)):
-            raise auth_error.InvalidTokenError(detail=f"Invalid {key} claim")
+            raise auth_error.InvalidTokenError(detail=f"令牌 {key} 声明无效")
         return datetime.fromtimestamp(value, UTC)
 
 
@@ -268,7 +287,7 @@ class AuthService:
                         )
                     ):
                         raise auth_error.UserAlreadyExistsError(
-                            detail="Bootstrap identity conflicts with an existing account"
+                            detail="初始化账号与现有账号冲突"
                         )
                     self._ensure_active(existing)
                     admin_granted = not existing.is_admin
@@ -276,7 +295,7 @@ class AuthService:
                         await self._repo.set_user_admin(existing, True)
                     loaded = await self._repo.get_user_by_id(existing.id)
                     if loaded is None:
-                        raise RuntimeError("Bootstrap user could not be reloaded")
+                        raise RuntimeError("初始化管理员账号加载失败")
                     return BootstrapAdminResult(
                         user=loaded,
                         created=False,
@@ -295,7 +314,7 @@ class AuthService:
                 )
                 loaded = await self._repo.get_user_by_id(user.id)
                 if loaded is None:
-                    raise RuntimeError("Bootstrap user could not be reloaded")
+                    raise RuntimeError("初始化管理员账号加载失败")
                 return BootstrapAdminResult(
                     user=loaded,
                     created=True,
@@ -303,7 +322,7 @@ class AuthService:
                 )
         except IntegrityError as exc:
             raise auth_error.UserAlreadyExistsError(
-                detail="Bootstrap identity conflicts with an existing account"
+                detail="初始化账号与现有账号冲突"
             ) from exc
 
     async def login(self, identifier: str, password: str) -> tuple[User, TokenPair]:
@@ -311,9 +330,9 @@ class AuthService:
         normalized = identifier.strip().casefold()
         async with self._repo.transaction():
             user = (
-                await self._repo.get_user_by_email(normalized)
+                await self._repo.get_user_by_email_for_update(normalized)
                 if "@" in normalized
-                else await self._repo.get_user_by_username(normalized)
+                else await self._repo.get_user_by_username_for_update(normalized)
             )
             if user is None:
                 consume_dummy = getattr(
@@ -340,9 +359,13 @@ class AuthService:
         token_pair: TokenPair | None = None
 
         async with self._repo.transaction():
+            loaded_user = await self._repo.get_user_by_id_for_update(
+                claims.user_id
+            )
             current = await self._repo.get_refresh_token_for_update(claims.token_id)
             if (
-                current is None
+                loaded_user is None
+                or current is None
                 or current.user_id != claims.user_id
                 or current.family_id != claims.family_id
                 or not hmac.compare_digest(current.token_hash, token_digest)
@@ -352,9 +375,6 @@ class AuthService:
                 await self._repo.revoke_refresh_family(current.family_id, now)
                 reuse_detected = True
             else:
-                loaded_user = await self._repo.get_user_by_id(current.user_id)
-                if loaded_user is None:
-                    raise auth_error.InvalidTokenError
                 self._ensure_active(loaded_user)
                 replacement_id = uuid4()
                 token_pair = await self._issue_token_pair(
@@ -366,10 +386,10 @@ class AuthService:
 
         if reuse_detected:
             raise auth_error.RefreshTokenReuseError(
-                detail="The refresh token family has been revoked"
+                detail="该刷新令牌已被注销"
             )
         if loaded_user is None or token_pair is None:
-            raise RuntimeError("Refresh token rotation did not produce a token pair")
+            raise RuntimeError("刷新令牌轮换未生成有效令牌对")
         return loaded_user, token_pair
 
     async def logout(self, refresh_token: str) -> None:
@@ -387,6 +407,36 @@ class AuthService:
                 raise auth_error.InvalidTokenError
             await self._repo.revoke_refresh_family(current.family_id, self._now())
 
+    async def change_password(
+        self,
+        user_id: int,
+        current_password: str,
+        new_password: str,
+    ) -> None:
+        """验证当前密码、更新哈希并吊销全部既有令牌"""
+        try:
+            self._validate_password(new_password)
+        except ValueError as exc:
+            raise auth_error.WeakPasswordError(detail=str(exc)) from exc
+        if hmac.compare_digest(current_password, new_password):
+            raise auth_error.InvalidUserMutationError(
+                detail="新密码不能与当前密码相同"
+            )
+        password_hash = await self._password_manager.hash(new_password)
+
+        async with self._repo.transaction():
+            user = await self._repo.get_user_by_id_for_update(user_id)
+            if user is None:
+                raise auth_error.InvalidTokenError
+            self._ensure_active(user)
+            if not await self._password_manager.verify(
+                current_password,
+                user.password_hash,
+            ):
+                raise auth_error.InvalidCurrentPasswordError
+            await self._repo.set_user_password(user, password_hash)
+            await self._repo.revoke_user_refresh_tokens(user.id, self._now())
+
     async def authenticate_access_token(self, access_token: str) -> User:
         """校验访问令牌并加载当前用户权限"""
         claims = self._codec.decode_access_token(access_token)
@@ -394,6 +444,8 @@ class AuthService:
         if user is None:
             raise auth_error.InvalidTokenError
         self._ensure_active(user)
+        if user.auth_version != claims.auth_version:
+            raise auth_error.InvalidTokenError
         return user
 
     async def _issue_token_pair(

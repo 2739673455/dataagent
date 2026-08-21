@@ -77,7 +77,7 @@ class BoundedRateLimiter:
                     retry_after = self._capacity_retry_after(now)
                     raise auth_error.RateLimitExceededError(
                         retry_after_seconds=retry_after,
-                        detail="Rate limit key capacity is temporarily exhausted",
+                        detail="限流计数槽位已耗尽，请稍后重试",
                     )
                 bucket = _RateBucket(last_seen=now)
                 self._buckets[key_digest] = bucket

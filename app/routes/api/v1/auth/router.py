@@ -49,6 +49,21 @@ async def logout(body: schemas.LogoutRequest, service: AuthServiceDep) -> Respon
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
+async def change_password(
+    body: schemas.ChangePasswordRequest,
+    current_user: CurrentUserDep,
+    service: AuthServiceDep,
+) -> Response:
+    """修改当前用户密码并使既有令牌立即失效"""
+    await service.change_password(
+        current_user.id,
+        body.current_password.get_secret_value(),
+        body.new_password.get_secret_value(),
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/me", response_model=schemas.UserResponse)
 async def me(current_user: CurrentUserDep) -> schemas.UserResponse:
     """读取当前用户信息"""

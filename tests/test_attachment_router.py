@@ -10,17 +10,40 @@ from app.routes.api.v1.attachment.router import (
     api_delete_attachment,
     api_get_attachment,
     api_upload_attachment,
+    conversation_lifecycle_service,
     docker_sandbox_manager,
 )
 from app.routes.api.v1.chat.schemas import DeleteAttachmentRequest
+
+
+class AsyncContextStub:
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object,
+    ) -> None:
+        return None
 
 
 class AttachmentRouterTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.user = MagicMock(id=7)
         self.conversation_id = uuid4()
+        self.conversation = object()
         self.conversation_repo = MagicMock()
-        self.conversation_repo.get = AsyncMock(return_value=object())
+        self.conversation_repo.get = AsyncMock(return_value=self.conversation)
+        self.conversation_repo.update = AsyncMock()
+        lock_patcher = patch.object(
+            conversation_lifecycle_service,
+            "lock",
+            return_value=AsyncContextStub(),
+        )
+        lock_patcher.start()
+        self.addCleanup(lock_patcher.stop)
 
     async def test_upload_uses_user_attachment_capability_and_normalized_path(
         self,
@@ -50,6 +73,7 @@ class AttachmentRouterTest(unittest.IsolatedAsyncioTestCase):
             file.file,
         )
         self.assertEqual(response.attachment.f_path, "uploads/report.csv")
+        self.conversation_repo.update.assert_awaited_once_with(self.conversation)
 
     async def test_upload_and_delete_reject_analysis_artifact_path(self) -> None:
         file = UploadFile(
@@ -95,6 +119,7 @@ class AttachmentRouterTest(unittest.IsolatedAsyncioTestCase):
             self.conversation_id,
             "uploads/report.csv",
         )
+        self.conversation_repo.update.assert_awaited_once_with(self.conversation)
 
     async def test_analysis_artifact_remains_downloadable(self) -> None:
         download = AsyncMock(return_value=b"verified artifact")

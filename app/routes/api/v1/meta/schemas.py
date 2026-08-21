@@ -40,7 +40,7 @@ class ColumnInfoRequest(MetaRequestModel):
         """校验字段引用必须同时包含表名和字段名"""
         if (self.reference_t_name is None) != (self.reference_c_name is None):
             raise ValueError(
-                "Reference table name and column name must be provided together"
+                "引用表名和引用列名必须同时提供"
             )
         return self
 
@@ -69,7 +69,7 @@ class TableInfoResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     name: str
-    role: str
+    role: TableRole
     primary_key_columns: list[str]
     description: str
     meta_version: int

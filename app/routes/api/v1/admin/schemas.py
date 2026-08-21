@@ -35,7 +35,7 @@ class CreateUserRequest(BaseModel):
         """规范化并校验用户名"""
         normalized = username.strip().casefold()
         if not re.match(_USERNAME_PATTERN, normalized):
-            raise ValueError("Username must contain only letters, numbers, dots, hyphens, and underscores")
+            raise ValueError("用户名只能包含小写字母、数字、点、下划线和连字符")
         return normalized
 
     @field_validator("email")
@@ -44,7 +44,7 @@ class CreateUserRequest(BaseModel):
         """规范化并校验邮箱"""
         normalized = email.strip().casefold()
         if not re.match(_EMAIL_PATTERN, normalized):
-            raise ValueError("Invalid email address format")
+            raise ValueError("邮箱地址格式无效")
         return normalized
 
     @field_validator("doris_role")
@@ -106,9 +106,9 @@ class DiscoveredDorisRoleResponse(BaseModel):
 
     name: str
     is_attached: bool
-    description: str | None = None
-    query_user: str | None = None
-    workload_group: str | None = None
+    description: str | None
+    query_user: str | None
+    workload_group: str | None
 
 
 class DiscoveredDorisRoleListResponse(BaseModel):
@@ -147,7 +147,7 @@ class AttachDorisRoleRequest(BaseModel):
         """规范化角色说明"""
         normalized = description.strip()
         if not normalized:
-            raise ValueError("description must not be blank")
+            raise ValueError("角色描述不能为空")
         return normalized
 
 
@@ -180,7 +180,7 @@ class CreateDorisRoleRequest(BaseModel):
         """规范化角色说明"""
         normalized = description.strip()
         if not normalized:
-            raise ValueError("description must not be blank")
+            raise ValueError("角色描述不能为空")
         return normalized
 
 
@@ -188,6 +188,10 @@ class UserListResponse(BaseModel):
     """用户列表响应"""
 
     users: list[UserResponse]
+    total: int = Field(ge=0)
+    limit: int = Field(ge=1)
+    offset: int = Field(ge=0)
+    has_more: bool
 
 
 class SetUserDorisRoleRequest(BaseModel):
@@ -224,17 +228,17 @@ class SelectGrantRequest(BaseModel):
     def validate_columns(cls, columns: list[str]) -> list[str]:
         """校验列名且拒绝重复"""
         if len(set(columns)) != len(columns):
-            raise ValueError("columns must be distinct")
+            raise ValueError("列名不能重复")
         for column in columns:
             if not column or len(column) > 128:
-                raise ValueError("invalid column name")
+                raise ValueError("列名格式无效")
         return columns
 
     @model_validator(mode="after")
     def validate_scope(self) -> Self:
         """校验库、表和列授权层级"""
         if self.table_name is None and self.columns:
-            raise ValueError("columns require table_name")
+            raise ValueError("指定列权限时必须提供表名")
         return self
 
 

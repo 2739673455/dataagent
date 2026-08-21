@@ -8,20 +8,13 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default:
-          "bg-[#1e2024] text-[#f4f4f0] border border-[#1e2024] hover:bg-[#2d3139]",
-        secondary:
-          "bg-[#e8e8e4] text-[#1e2024] border border-[#d4d4ce] hover:bg-[#deded8]",
-        ghost:
-          "text-[#52525b] hover:bg-[#e8e8e4] hover:text-[#18181b]",
-        outline:
-          "border border-[#d4d4ce] bg-[#fafaf8] text-[#27272a] hover:bg-[#ededeb]",
-        accent:
-          "bg-[#2d3139] text-[#f4f4f0] border border-[#3f444e] hover:bg-[#3b404b]",
-        destructive:
-          "bg-[#dc2626] text-white border border-[#b91c1c] hover:bg-[#b91c1c]",
-        terminal:
-          "bg-[#f4f4f0] text-[#1e2024] border border-[#27272a] hover:bg-[#e8e8e4]",
+        default: "bg-[#1e2024] text-[#f4f4f0] border border-[#1e2024] hover:bg-[#2d3139]",
+        secondary: "bg-[#e8e8e4] text-[#1e2024] border border-[#d4d4ce] hover:bg-[#deded8]",
+        ghost: "text-[#52525b] hover:bg-[#e8e8e4] hover:text-[#18181b]",
+        outline: "border border-[#d4d4ce] bg-[#fafaf8] text-[#27272a] hover:bg-[#ededeb]",
+        accent: "bg-[#2d3139] text-[#f4f4f0] border border-[#3f444e] hover:bg-[#3b404b]",
+        destructive: "bg-[#dc2626] text-white border border-[#b91c1c] hover:bg-[#b91c1c]",
+        terminal: "bg-[#f4f4f0] text-[#1e2024] border border-[#27272a] hover:bg-[#e8e8e4]",
       },
       size: {
         default: "h-9 px-3.5 py-1.5 text-sm",

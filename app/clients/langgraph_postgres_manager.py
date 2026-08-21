@@ -157,6 +157,20 @@ class LangGraphPostgresManager:
         """删除会话线程的全部 Checkpoint"""
         await self.get_checkpointer().adelete_thread(thread_id)
 
+    async def delete_user_threads(self, user_id: int) -> None:
+        """删除用户全部 LangGraph Checkpoint 线程"""
+        thread_prefix = f"user_{user_id}:conversation_"
+        thread_ids: set[str] = set()
+        async for checkpoint in self.get_checkpointer().alist(None):
+            configurable = checkpoint.config.get("configurable")
+            if not isinstance(configurable, dict):
+                continue
+            thread_id = configurable.get("thread_id")
+            if isinstance(thread_id, str) and thread_id.startswith(thread_prefix):
+                thread_ids.add(thread_id)
+        for thread_id in thread_ids:
+            await self.delete_thread(thread_id)
+
     async def close(self) -> None:
         """关闭连接池并释放持久化组件"""
         if self._advisory_pool is not None:

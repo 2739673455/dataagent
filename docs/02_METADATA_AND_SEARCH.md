@@ -26,37 +26,37 @@ flowchart TD
 ## 2. 核心架构与功能特性
 
 ### 2.1 元数据目录管理模型
-- **表元数据（[`TableInfo`](file:///home/kodey/dataagent/app/models/meta.py#L22-L35)）**：
+- **表元数据（[`TableInfo`](../app/models/meta.py)）**：
   - 支持区分表角色（`fact` 事实表 / `dimension` 维度表）。
   - 维护主键列（`primary_key_columns`）与业务描述。
   - 包含 `meta_version` 变更版本号。
-- **字段元数据（[`ColumnInfo`](file:///home/kodey/dataagent/app/models/meta.py#L38-L67)）**：
+- **字段元数据（[`ColumnInfo`](../app/models/meta.py)）**：
   - 记录数据类型、业务别名列表（`alias`）、示例值（`examples`）。
   - 支持外键与关联引用（`reference_t_name`、`reference_c_name`）。
   - `index_values` 标记：控制是否对该字段枚举值进行向量/文本建索引。
   - `meta_version` 与 `index_version`：比对元数据与索引版本，支持增量精准同步。
-- **指标元数据（[`MetricInfo`](file:///home/kodey/dataagent/app/models/meta.py#L70-L86)）**：
-  - 记录业务指标口径、别名及计算所需的关联字段集合（[`ColumnReference`](file:///home/kodey/dataagent/app/models/meta.py#L12-L19)）。
+- **指标元数据（[`MetricInfo`](../app/models/meta.py)）**：
+  - 记录业务指标口径、别名及计算所需的关联字段集合（[`ColumnReference`](../app/models/meta.py)）。
 
 ### 2.2 YAML 元数据导入导出与冲突校验
-- [`MetaImportService`](file:///home/kodey/dataagent/app/services/meta_import_service.py#L20) 支持通过标准 YAML 配置文件批量定义数仓元数据。
+- [`MetaImportService`](../app/services/meta_import_service.py) 支持通过标准 YAML 配置文件批量定义数仓元数据。
 - **校验与冲突阻断**：
   - 校验目标表与字段在实际 Doris 物理库中是否存在。
   - 校验主键列有效性及外键引用的字段是否存在。
   - 防止删除仍被指标或外键引用的字段元数据。
 - **全量/增量导入**：支持增量覆盖与全量同步模式。
-- **配置导出**：[`MetaCatalogService.export_metadata`](file:///home/kodey/dataagent/app/services/meta_catalog_service.py#L282-L325) 可随时将当前全部元数据导出为可复用的标准 YAML 格式。
+- **配置导出**：[`MetaCatalogService.export_metadata`](../app/services/meta_catalog_service.py) 可随时将当前全部元数据导出为可复用的标准 YAML 格式。
 
 ### 2.3 多索引版本同步与向量化体系
-- [`MetaIndexService`](file:///home/kodey/dataagent/app/services/meta_index_service.py#L21) 负责将元数据增量推送到 Elasticsearch：
-  - **字段索引（[`ColumnESRepo`](file:///home/kodey/dataagent/app/repositories/column_es_repo.py#L22)）**：同步字段名、别名、描述文本，并结合 Embedding 模型生成 1024 维稠密向量。
-  - **指标索引（[`MetricESRepo`](file:///home/kodey/dataagent/app/repositories/metric_es_repo.py#L19)）**：同步指标名、口径、别名与指标语义向量。
-  - **枚举值索引（[`ValueESRepo`](file:///home/kodey/dataagent/app/repositories/value_es_repo.py#L18)）**：对于启用 `index_values` 的维度字段，自动从 Doris 读取去重样本值并建立文本索引，使 Agent 能识别“华东”、“退款成功”等具体维度字面量。
+- [`MetaIndexService`](../app/services/meta_index_service.py) 负责将元数据增量推送到 Elasticsearch：
+  - **字段索引（[`ColumnESRepo`](../app/repositories/column_es_repo.py)）**：同步字段名、别名、描述文本，并结合 Embedding 模型生成 1024 维稠密向量。
+  - **指标索引（[`MetricESRepo`](../app/repositories/metric_es_repo.py)）**：同步指标名、口径、别名与指标语义向量。
+  - **枚举值索引（[`ValueESRepo`](../app/repositories/value_es_repo.py)）**：对于启用 `index_values` 的维度字段，自动从 Doris 读取去重样本值并建立文本索引，使 Agent 能识别“华东”、“退款成功”等具体维度字面量。
 - **增量比对机制**：只有当 `meta_version > index_version` 或强制触发时才执行远程 ES 更新与 Embedding 计算，节约模型 Token 与网络开销。
 
 ### 2.4 多阶段混合语义检索与拓扑补全
-- [`MetaSearchService`](file:///home/kodey/dataagent/app/services/meta_search_service.py#L361) 执行三阶段语义召回：
-  1. **构建检索上下文**：加载元数据并依据用户权限策略（[`MetadataAuthorizationFilter`](file:///home/kodey/dataagent/app/services/metadata_authorization_filter.py#L18)）剔除无权访问的资产。
+- [`MetaSearchService`](../app/services/meta_search_service.py) 执行三阶段语义召回：
+  1. **构建检索上下文**：加载元数据并依据用户权限策略（[`MetadataAuthorizationFilter`](../app/services/metadata_authorization_filter.py)）剔除无权访问的资产。
   2. **多路召回与融合打分**：
      - 全文检索：基于 BM25 的多字段匹配（权重：名称 > 别名 > 描述）。
      - 向量检索：基于 Cosine / DotProduct 的 KNN 稠密向量语义相似度召回。
@@ -64,7 +64,19 @@ flowchart TD
   3. **拓扑闭包与依赖补全**：
      - 当召回某些字段时，自动补全所属表的主键与必要外键。
      - 当召回指标时，自动补全该指标依赖的全部维度字段与关联表，保证 Explorer Agent 编写 SQL 时拥有完整的 Join 关系链。
-- **语义召回沉淀**：[`SemanticRecallService`](file:///home/kodey/dataagent/app/services/semantic_recall_service.py#L18) 记录每次 Agent 检索的命中记录与有效反馈，沉淀召回样本。
+### 2.5 历史查询经验沉淀与检索 (Query Experience)
+- **SQL 指纹与结构模板提取**：
+  - 基于 `sqlglot` 对执行成功的 SQL 进行字面量脱敏与结构归一化，提取稳定的 SQL 模板与 64 位 SHA-256 结构指纹。
+  - 按 `(owner_user_id, role_name, fingerprint)` 聚合为私有查询经验（[`QueryExperience`](../app/models/meta.py)）。
+- **元数据版本联动与自动失效**：
+  - 经验关联引用的表与字段记录了创建时的 `meta_version`（[`QueryExperienceAsset`](../app/models/meta.py)）。
+  - 当管理员修改或删除底层表/字段元数据时，[`QueryExperienceService.invalidate_assets`](../app/services/query_experience_service.py) 自动将受影响的历史经验置为 `disabled` 并下线其 ES 检索索引。
+- **双路索引与 Explorer 召回**：
+  - 同步至 Elasticsearch 索引（`data-agent-query-experience`，[`QueryExperienceESRepo`](../app/repositories/query_experience_es_repo.py)）。
+  - Explorer Agent 通过 [`search_query_experiences`](../app/agents/explorer/tools/query_experience.py) 工具按自然语言意图和当前权限召回高分历史模板，加速 SQL 编写并提升准确率。
+- **执行流水审计与采纳提升**：
+  - 记录每次执行流水（[`QueryExecution`](../app/models/meta.py)）。
+  - 当最终产物被分析采纳时，自动将经验晋升为 `promoted` 优质候选。
 
 ---
 
@@ -87,10 +99,11 @@ flowchart TD
 
 ## 4. 关键代码映射
 
-- 元数据目录服务：[`app/services/meta_catalog_service.py`](file:///home/kodey/dataagent/app/services/meta_catalog_service.py)
-- 元数据导入导出服务：[`app/services/meta_import_service.py`](file:///home/kodey/dataagent/app/services/meta_import_service.py)
-- 元数据索引同步服务：[`app/services/meta_index_service.py`](file:///home/kodey/dataagent/app/services/meta_index_service.py)
-- 语义检索与多路召回：[`app/services/meta_search_service.py`](file:///home/kodey/dataagent/app/services/meta_search_service.py)
-- 语义召回记录服务：[`app/services/semantic_recall_service.py`](file:///home/kodey/dataagent/app/services/semantic_recall_service.py)
-- PostgreSQL 元数据仓储：[`app/repositories/meta_pg_repo.py`](file:///home/kodey/dataagent/app/repositories/meta_pg_repo.py)
-- ES 字段 / 指标 / 枚举值仓储：[`app/repositories/column_es_repo.py`](file:///home/kodey/dataagent/app/repositories/column_es_repo.py)、[`app/repositories/metric_es_repo.py`](file:///home/kodey/dataagent/app/repositories/metric_es_repo.py)、[`app/repositories/value_es_repo.py`](file:///home/kodey/dataagent/app/repositories/value_es_repo.py)
+- 元数据目录服务：[`app/services/meta_catalog_service.py`](../app/services/meta_catalog_service.py)
+- 元数据导入导出服务：[`app/services/meta_import_service.py`](../app/services/meta_import_service.py)
+- 元数据索引同步服务：[`app/services/meta_index_service.py`](../app/services/meta_index_service.py)
+- 语义检索与多路召回：[`app/services/meta_search_service.py`](../app/services/meta_search_service.py)
+- 历史查询经验服务：[`app/services/query_experience_service.py`](../app/services/query_experience_service.py)
+- 语义召回记录服务：[`app/services/semantic_recall_service.py`](../app/services/semantic_recall_service.py)
+- PostgreSQL 元数据仓储：[`app/repositories/meta_pg_repo.py`](../app/repositories/meta_pg_repo.py)、[`app/repositories/query_experience_pg_repo.py`](../app/repositories/query_experience_pg_repo.py)
+- ES 字段 / 指标 / 枚举值 / 经验仓储：[`app/repositories/column_es_repo.py`](../app/repositories/column_es_repo.py)、[`app/repositories/metric_es_repo.py`](../app/repositories/metric_es_repo.py)、[`app/repositories/value_es_repo.py`](../app/repositories/value_es_repo.py)、[`app/repositories/query_experience_es_repo.py`](../app/repositories/query_experience_es_repo.py)

@@ -176,7 +176,7 @@ async def _load_yaml(file: UploadFile) -> MetaConfig:
         await file.close()
     if not content:
         raise meta_error.InvalidMetadataError(
-            detail="Metadata YAML file cannot be empty"
+            detail="元数据 YAML 文件不能为空"
         )
 
     try:
@@ -184,11 +184,11 @@ async def _load_yaml(file: UploadFile) -> MetaConfig:
         return MetaConfig.model_validate(raw_config)
     except UnicodeDecodeError as exc:
         raise meta_error.InvalidMetadataError(
-            detail="Metadata YAML file must use UTF-8 encoding",
+            detail="元数据 YAML 文件必须使用 UTF-8 编码",
         ) from exc
     except YAMLError as exc:
         raise meta_error.InvalidMetadataError(
-            detail=f"Invalid metadata YAML: {exc}",
+            detail=f"元数据 YAML 格式解析失败: {exc}",
         ) from exc
     except PydanticValidationError as exc:
         errors = exc.errors(
@@ -197,7 +197,7 @@ async def _load_yaml(file: UploadFile) -> MetaConfig:
             include_input=False,
         )
         raise meta_error.InvalidMetadataError(
-            detail="Metadata YAML does not match the required schema",
+            detail="元数据 YAML 结构不符合规范要求",
             extensions={"errors": errors},
         ) from exc
 
@@ -252,6 +252,15 @@ async def list_table_infos(
         schemas.TableInfoResponse.model_validate(table_info)
         for table_info in await service.list_table_infos()
     ]
+
+
+@router.get("/source-tables", response_model=list[str])
+async def list_source_tables(
+    service: MetaCatalogServiceDep,
+    _: AdminUserDep,
+) -> list[str]:
+    """查询底层 Doris 数据源中的所有物理表名"""
+    return await service.list_source_tables()
 
 
 @router.get(

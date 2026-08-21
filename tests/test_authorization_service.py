@@ -123,6 +123,18 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
             self.registry,
         )
 
+    async def test_list_users_returns_rows_and_total(self) -> None:
+        users = [build_user(user_id=51)]
+        self.repo.list_users = AsyncMock(return_value=users)
+        self.repo.count_users = AsyncMock(return_value=101)
+
+        page_users, total = await self.service().list_users(limit=50, offset=50)
+
+        self.assertEqual(page_users, users)
+        self.assertEqual(total, 101)
+        self.repo.list_users.assert_awaited_once_with(limit=50, offset=50)
+        self.repo.count_users.assert_awaited_once_with()
+
     async def test_user_role_is_replaced_with_one_configured_role(self) -> None:
         user = build_user(doris_role="dataagent_default")
         self.repo.get_user_by_id = AsyncMock(return_value=user)
@@ -277,25 +289,3 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
                 email="diff@example.com",
                 password="password123",
             )
-
-    async def test_delete_user_removes_user_and_revokes_tokens(self) -> None:
-        target = build_user(user_id=10, is_admin=False)
-        self.repo.get_user_by_id = AsyncMock(return_value=target)
-        self.repo.delete_user = AsyncMock()
-
-        await self.service().delete_user(10, operator_id=1)
-
-        self.repo.revoke_user_refresh_tokens.assert_awaited_once()
-        self.repo.delete_user.assert_awaited_once_with(target)
-
-    async def test_delete_self_is_rejected(self) -> None:
-        with self.assertRaises(auth_error.InvalidUserMutationError):
-            await self.service().delete_user(1, operator_id=1)
-
-    async def test_delete_last_administrator_is_rejected(self) -> None:
-        admin = build_user(user_id=2, is_admin=True)
-        self.repo.get_user_by_id = AsyncMock(return_value=admin)
-        self.repo.count_admins = AsyncMock(return_value=1)
-
-        with self.assertRaises(auth_error.LastAdministratorError):
-            await self.service().delete_user(2, operator_id=1)

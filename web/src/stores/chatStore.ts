@@ -13,6 +13,7 @@ interface ChatState {
   loadConversations: () => Promise<ConversationResponse[]>;
   createConversation: (initialMessage: string) => Promise<ConversationResponse | null>;
   deleteConversation: (conversationId: string) => Promise<boolean>;
+  renameConversation: (conversationId: string, title: string) => Promise<void>;
   loadMessages: (conversationId: string) => Promise<MessageResponse[]>;
   ensureConversation: (conversation: ConversationResponse) => void;
   appendMessage: (conversationId: string, message: MessageResponse) => void;
@@ -43,7 +44,7 @@ export const useChatStore = create<ChatState>()((set, _get) => ({
 
   createConversation: async (initialMessage) => {
     const generation = sessionLifecycle.current();
-    const response = await chatApi.createConversation(0, initialMessage);
+    const response = await chatApi.createConversation(false, initialMessage);
     const conversation = response.data;
     if (!sessionLifecycle.isCurrent(generation)) return null;
     set((state) => ({
@@ -71,6 +72,33 @@ export const useChatStore = create<ChatState>()((set, _get) => ({
       };
     });
     return true;
+  },
+
+  renameConversation: async (conversationId, title) => {
+    const generation = sessionLifecycle.current();
+    const normalizedTitle = title.trim();
+    const previous = useChatStore
+      .getState()
+      .conversations.find((conversation) => conversation.conversation_id === conversationId);
+    set((state) => ({
+      conversations: state.conversations.map((conversation) =>
+        conversation.conversation_id === conversationId
+          ? { ...conversation, title: normalizedTitle }
+          : conversation
+      ),
+    }));
+    try {
+      await chatApi.updateConversation(conversationId, normalizedTitle);
+    } catch (error) {
+      if (previous && sessionLifecycle.isCurrent(generation)) {
+        set((state) => ({
+          conversations: state.conversations.map((conversation) =>
+            conversation.conversation_id === conversationId ? previous : conversation
+          ),
+        }));
+      }
+      throw error;
+    }
   },
 
   loadMessages: async (conversationId) => {

@@ -77,21 +77,21 @@ flowchart TD
 | 接口 | 方法 | 描述 |
 | :--- | :--- | :--- |
 | `/upload` | `POST` | 上传文件（CSV、Excel、图片等）至指定会话工作区的 `uploads/` 目录 |
-| `/download` | `GET` | 安全下载会话工作区中的文件（支持相对路径校验与 Content-Type 推导） |
-| `/delete` | `DELETE` | 删除指定会话工作区内的文件 |
+| `/get` | `GET` | 安全获取会话工作区中的文件（支持相对路径校验与 Content-Type 推导） |
+| `/delete` | `POST` | 删除指定会话工作区内的用户附件 |
 
-### 沙盒管理器核心方法
+### 会话沙盒后端核心方法
 | 方法 | 描述 |
 | :--- | :--- |
-| `execute_command(user_id, conv_id, command, ...)` | 在用户容器指定会话环境下安全执行 Shell/Python 命令 |
-| `write_file(user_id, conv_id, file_path, content)` | 向指定会话工作区写入文件 |
-| `read_file(user_id, conv_id, file_path)` | 读取指定会话工作区内的文件内容 |
-| `list_files(user_id, conv_id, subpath)` | 列出会话工作区内的目录与文件信息 |
+| `execute(command, timeout=...)` / `aexecute(...)` | 在当前 Agent Session 目录安全执行 Shell/Python 命令 |
+| `write(file_path, content)` / `awrite(...)` | 向当前 Session 工作区写入文件 |
+| `read(file_path, offset, limit)` / `aread(...)` | 分页读取当前 Session 文件内容 |
+| `ls(path)` / `als(path)` | 列出当前 Session 目录内容 |
 
 ---
 
 ## 4. 关键代码映射
 
-- Docker 沙盒管理器：[`app/clients/docker_sandbox_manager.py`](file:///home/kodey/dataagent/app/clients/docker_sandbox_manager.py)
-- 附件路由与文件管理：[`app/routes/api/v1/attachment/router.py`](file:///home/kodey/dataagent/app/routes/api/v1/attachment/router.py)
-- 沙盒配置模型：[`app/conf/app_config.py`](file:///home/kodey/dataagent/app/conf/app_config.py#L58-L85)
+- Docker 沙盒管理器：[`app/clients/docker_sandbox_manager.py`](../app/clients/docker_sandbox_manager.py)
+- 附件路由与文件管理：[`app/routes/api/v1/attachment/router.py`](../app/routes/api/v1/attachment/router.py)
+- 沙盒配置模型：[`app/conf/app_config.py`](../app/conf/app_config.py)

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import unittest
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -14,6 +16,7 @@ from app.routes.api.v1.chat import schemas as chat_schema
 from app.routes.api.v1.chat.router import (
     api_create_conversation,
     api_stream_chat,
+    conversation_lifecycle_service,
     conversation_title_service,
 )
 from app.services.conversation_title_service import (
@@ -23,6 +26,11 @@ from app.services.conversation_title_service import (
 )
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
+
+
+@asynccontextmanager
+async def _unlocked(*_: object) -> AsyncGenerator[None]:
+    yield
 
 
 def _conversation(
@@ -139,15 +147,22 @@ class ConversationTitleTest(unittest.IsolatedAsyncioTestCase):
         request = chat_schema.ChatStreamRequest(
             conversation_id=_CONVERSATION_ID,
             message=chat_schema.UserMessageRequest(
-                parts=[chat_schema.TextContent(text="分析华北区域销售额")],
+                parts=[chat_schema.TextContent(type="text", text="分析华北区域销售额")],
             ),
         )
         current_user = MagicMock(id=7)
 
-        with patch.object(
-            conversation_title_service,
-            "schedule",
-        ) as schedule:
+        with (
+            patch.object(
+                conversation_title_service,
+                "schedule",
+            ) as schedule,
+            patch.object(
+                conversation_lifecycle_service,
+                "lock",
+                side_effect=_unlocked,
+            ),
+        ):
             await api_stream_chat(
                 request,
                 repository,

@@ -28,11 +28,7 @@ function ImagePreview({ alt, onClose, src }: { alt: string; onClose: () => void;
           <span>图片预览: {alt}</span>
           <span className="text-[#27272a]">点击关闭</span>
         </div>
-        <img
-          src={src}
-          alt={alt}
-          className="max-h-[80vh] max-w-[85vw] rounded object-contain"
-        />
+        <img src={src} alt={alt} className="max-h-[80vh] max-w-[85vw] rounded object-contain" />
       </div>
     </button>,
     document.body
@@ -189,11 +185,7 @@ export function ChatComposer({
                 size="sm"
                 variant="default"
                 className="gap-1.5 px-3.5 text-xs"
-                disabled={
-                  disabled ||
-                  isUploading ||
-                  (!value.trim() && attachments.length === 0)
-                }
+                disabled={disabled || isUploading || (!value.trim() && attachments.length === 0)}
                 onClick={() => void handleSubmit()}
               >
                 <ArrowUp className="h-4 w-4" />

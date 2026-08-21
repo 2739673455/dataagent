@@ -145,7 +145,7 @@ class AssetAccessPolicy:
         """要求目标资产具备完整访问权"""
         if not self.allows(asset):
             raise auth_error.AssetAccessDeniedError(
-                detail="Asset is outside the user's whitelist",
+                detail="该数据资产不在用户授权白名单范围内",
                 extensions={"asset": asset.as_dict()},
             )
 
@@ -176,7 +176,7 @@ class AuthorizationService:
         """要求用户是平台管理员"""
         if not user.is_admin:
             raise auth_error.PermissionDeniedError(
-                detail="Platform administrator access is required"
+                detail="需要平台管理员权限"
             )
 
     @staticmethod
@@ -187,7 +187,7 @@ class AuthorizationService:
         """要求用户绑定了启用的 Doris 查询身份"""
         if user.doris_role_name is None or identity is None or not identity.is_active:
             raise auth_error.PermissionDeniedError(
-                detail="The assigned Doris role is not available"
+                detail="分配的 Doris 角色不可用"
             )
 
     @staticmethod
@@ -296,14 +296,14 @@ class DorisRoleManagementService:
                 await self._repo.lock_security_mutation()
                 if await self._identity_repo.get(role) is not None:
                     raise auth_error.RoleAlreadyExistsError(
-                        detail=f"Doris role {role} is already attached"
+                        detail=f"Doris 角色 {role} 已存在"
                     )
                 if (
                     await self._identity_repo.get_by_query_user(actual_query_user)
                     is not None
                 ):
                     raise auth_error.RoleAlreadyExistsError(
-                        detail="Doris query user is already assigned"
+                        detail="Doris 查询用户已被占用"
                     )
                 await self._doris_repo.verify_configured_roles((role,))
                 current_default = await self._identity_repo.get_default()
@@ -363,7 +363,7 @@ class DorisRoleManagementService:
                     raise auth_error.RoleAlreadyExistsError
                 if await self._identity_repo.get_by_query_user(query_user) is not None:
                     raise auth_error.RoleAlreadyExistsError(
-                        detail="Doris query user is already assigned"
+                        detail="Doris 查询用户已被占用"
                     )
                 current_default = await self._identity_repo.get_default()
                 if current_default is None:
@@ -413,7 +413,7 @@ class DorisRoleManagementService:
                 raise auth_error.RoleNotFoundError
             if not identity.is_active:
                 raise auth_error.DefaultRoleRequiredError(
-                    detail="The default Doris role must be active"
+                    detail="默认 Doris 角色必须处于启用状态"
                 )
             await self._identity_repo.clear_default()
             identity.is_default = True
@@ -440,9 +440,11 @@ class DorisRoleManagementService:
             await self._identity_repo.delete(identity)
         await self._client_registry.invalidate(role)
 
-    async def list_users(self, *, limit: int, offset: int) -> list[User]:
-        """分页列出用户与角色"""
-        return await self._repo.list_users(limit=limit, offset=offset)
+    async def list_users(self, *, limit: int, offset: int) -> tuple[list[User], int]:
+        """分页列出用户与角色并返回总量"""
+        users = await self._repo.list_users(limit=limit, offset=offset)
+        total = await self._repo.count_users()
+        return users, total
 
     async def create_user(
         self,
@@ -457,7 +459,7 @@ class DorisRoleManagementService:
         normalized_username = username.strip().casefold()
         if not _USERNAME_PATTERN.match(normalized_username):
             raise auth_error.InvalidUserMutationError(
-                detail="Username must contain only letters, numbers, dots, hyphens, and underscores"
+                detail="用户名只能包含小写字母、数字、点、下划线和连字符"
             )
         normalized_email = email.strip().casefold()
         if (
@@ -465,13 +467,13 @@ class DorisRoleManagementService:
             or len(normalized_email) > _MAX_EMAIL_LENGTH
         ):
             raise auth_error.InvalidUserMutationError(
-                detail="Invalid email address format"
+                detail="邮箱地址格式无效"
             )
         if len(password) < self._auth_config.password_min_length:
             raise auth_error.WeakPasswordError
         if len(password) > _MAX_PASSWORD_LENGTH:
             raise auth_error.InvalidUserMutationError(
-                detail="Password exceeds maximum length"
+                detail="密码超出最大长度限制"
             )
 
         assigned_role: str | None = None
@@ -511,23 +513,6 @@ class DorisRoleManagementService:
                 return await self._repo.add_user(user)
         except IntegrityError as exc:
             raise auth_error.UserAlreadyExistsError from exc
-
-    async def delete_user(self, user_id: int, *, operator_id: int) -> None:
-        """平台管理员删除指定用户"""
-        if user_id == operator_id:
-            raise auth_error.InvalidUserMutationError(
-                detail="Cannot delete current operating administrator"
-            )
-        now = datetime.now(UTC)
-        async with self._repo.transaction():
-            await self._repo.lock_security_mutation()
-            user = await self._repo.get_user_by_id(user_id)
-            if user is None:
-                raise auth_error.UserNotFoundError
-            if user.is_admin and await self._repo.count_admins() <= 1:
-                raise auth_error.LastAdministratorError
-            await self._repo.revoke_user_refresh_tokens(user.id, now)
-            await self._repo.delete_user(user)
 
     async def set_user_doris_role(
         self,
