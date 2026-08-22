@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, select, tuple_
-from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import meta_error
 from app.models.meta import (
@@ -22,9 +22,10 @@ class MetaPGRepo:
         """初始化元数据存储"""
         self._session = session
 
-    def transaction(self) -> AsyncSessionTransaction:
-        """创建事务上下文"""
-        return self._session.begin()
+    @property
+    def session(self) -> AsyncSession:
+        """返回当前存储绑定的数据库会话"""
+        return self._session
 
     async def upsert_table_info(
         self,
@@ -306,4 +307,4 @@ class MetaPGRepo:
                 item.value_index_synced_at = existing.value_index_synced_at
                 item.value_index_sync_status = existing.value_index_sync_status
         else:
-            raise TypeError("Metadata entity type mismatch")
+            raise TypeError("元数据实体类型不匹配")

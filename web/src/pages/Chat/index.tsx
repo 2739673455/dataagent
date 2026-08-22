@@ -18,7 +18,7 @@ import type {
 } from "@/types";
 import { ChatComposer } from "./components/ChatComposer";
 import { ChatMessages } from "./components/ChatMessages";
-import { ChatSidebar } from "./components/ChatSidebar";
+import { ChatSidebar, ChatUserFooter } from "./components/ChatSidebar";
 import {
   InteractiveTablePreview,
   parseInteractiveTableArtifact,
@@ -513,10 +513,6 @@ export default function ChatPage() {
       <header className="flex h-11 shrink-0 select-none items-center justify-between border-b border-[#d4d4ce] bg-[#ffffff] px-4 text-sm">
         <div className="flex items-center gap-3">
           <span className="font-bold text-[#18181b] text-base">DataAgent</span>
-          <span className="text-[#d4d4ce]">|</span>
-          <span className="text-xs text-[#71717a]">
-            {routeConversationId ? `会话: ${routeConversationId.slice(0, 8)}` : "工作台"}
-          </span>
         </div>
 
         <div className="flex items-center gap-3 text-xs">
@@ -537,18 +533,9 @@ export default function ChatPage() {
           <ChatSidebar
             conversations={conversations}
             activeConversationId={routeConversationId}
-            user={user}
             onCreate={handleCreateConversation}
             onDelete={(conversationId) => void handleDeleteConversation(conversationId)}
             onRename={renameConversation}
-            onChangePassword={async (currentPassword, newPassword) => {
-              await changePassword(currentPassword, newPassword);
-              toast.success("密码已修改，请重新登录");
-              redirectToAuth(ROUTES.chat);
-            }}
-            onLogout={() => {
-              void logoutUser().finally(() => redirectToAuth(ROUTES.chat));
-            }}
           />
         </div>
 
@@ -562,19 +549,6 @@ export default function ChatPage() {
             onOpenPreviewAttachment={handleOpenPreviewAttachment}
             viewportRef={messageViewportRef}
           />
-          <div className="sticky bottom-0 z-10 w-full shrink-0 border-t border-[#d4d4ce] bg-[#f4f4f0] p-3">
-            <div className="mx-auto w-full max-w-4xl">
-              <ChatComposer
-                attachments={attachments}
-                isStreaming={isStreaming}
-                isUploading={isUploadingAttachments}
-                onAttachmentsSelected={handleAttachmentsSelected}
-                onRemoveAttachment={handleRemoveAttachment}
-                onStop={handleStop}
-                onSubmit={handleSend}
-              />
-            </div>
-          </div>
         </div>
 
         {/* 右侧产物预览分栏 */}
@@ -646,6 +620,37 @@ export default function ChatPage() {
             </div>
           </div>
         ) : null}
+      </div>
+
+      {/* 底部统一操作栏（水平分割线完全对齐） */}
+      <div className="flex shrink-0 border-t border-[#d4d4ce]">
+        <div className="w-64 shrink-0 border-r border-[#d4d4ce] hidden md:block">
+          <ChatUserFooter
+            user={user}
+            onChangePassword={async (currentPassword, newPassword) => {
+              await changePassword(currentPassword, newPassword);
+              toast.success("密码已修改，请重新登录");
+              redirectToAuth(ROUTES.chat);
+            }}
+            onLogout={() => {
+              void logoutUser().finally(() => redirectToAuth(ROUTES.chat));
+            }}
+          />
+        </div>
+
+        <div className="flex min-w-0 flex-1 items-center bg-[#f4f4f0] p-3">
+          <div className="mx-auto w-full max-w-4xl">
+            <ChatComposer
+              attachments={attachments}
+              isStreaming={isStreaming}
+              isUploading={isUploadingAttachments}
+              onAttachmentsSelected={handleAttachmentsSelected}
+              onRemoveAttachment={handleRemoveAttachment}
+              onStop={handleStop}
+              onSubmit={handleSend}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );

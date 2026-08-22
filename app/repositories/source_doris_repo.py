@@ -19,7 +19,7 @@ class SourceDorisRepo:
     def _quote_identifier(identifier: str) -> str:
         """校验并引用数据库标识符"""
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", identifier):
-            raise ValueError(f"Invalid database identifier: {identifier}")
+            raise ValueError(f"数据库标识符无效: {identifier}")
         return f"`{identifier}`"
 
     async def list_tables(self) -> list[str]:
@@ -93,6 +93,28 @@ class SourceDorisRepo:
             sql = f"{sql} limit {limit}"
         result = await self._connection.execute(text(sql))
         return list(result.scalars().fetchall())
+
+    async def get_table_columns_sample_values(
+        self,
+        table_name: str,
+        column_names: list[str],
+        limit: int = 5,
+    ) -> dict[str, list[Any]]:
+        """批量获取指定表中多个字段的样例取值"""
+        if not column_names:
+            return {}
+        table_identifier = self._quote_identifier(table_name)
+        quoted_cols = [self._quote_identifier(c) for c in column_names]
+        sql = f"select {', '.join(quoted_cols)} from {table_identifier} limit {limit}"
+        result = await self._connection.execute(text(sql))
+        rows = result.fetchall()
+        column_values: dict[str, list[Any]] = {c: [] for c in column_names}
+        for row in rows:
+            for c in column_names:
+                val = getattr(row, c, None)
+                if val is not None and val not in column_values[c]:
+                    column_values[c].append(val)
+        return column_values
 
     async def iter_column_value_batches(
         self,

@@ -44,7 +44,7 @@ async def api_create_conversation(
     )
 
     logger.info(
-        f"conversation_id={conversation.id}: Create conversation(is_draft={conversation.is_draft})"
+        f"创建对话: conversation_id={conversation.id}, is_draft={conversation.is_draft}"
     )
     return chat_schema.ConversationResponse(
         conversation_id=conversation.id,
@@ -68,7 +68,7 @@ async def api_delete_conversations(
         ):
             raise chat_error.ConversationNotFoundError
 
-    logger.info(f"Delete conversations: conversation_ids={body.conversation_ids}")
+    logger.info(f"删除对话: conversation_ids={body.conversation_ids}")
 
 
 @router.delete(
@@ -107,7 +107,7 @@ async def api_update_conversation(
         title=body.title,
         title_pending=False,
     )
-    logger.info(f"conversation_id={body.conversation_id}: Update conversation")
+    logger.info(f"更新对话: conversation_id={body.conversation_id}")
 
 
 @router.get("/ls")
@@ -119,7 +119,7 @@ async def api_get_conversations(
     user_id = current_user.id
     conversations = await conversation_repo.list_by_user(user_id)
     logger.info(
-        f"Get conversations: conversation_ids={[item.id for item in conversations]}"
+        f"获取对话列表: conversation_ids={[item.id for item in conversations]}"
     )
     return chat_schema.ConversationListResponse(
         conversations=[
@@ -146,7 +146,7 @@ async def api_get_messages(
         raise chat_error.ConversationNotFoundError
 
     messages = await chat_service.list_messages(user_id, conversation_id)
-    logger.info(f"{conversation_id=}: Get messages(count={len(messages)})")
+    logger.info(f"获取消息列表: conversation_id={conversation_id}, count={len(messages)}")
     return chat_schema.MessageListResponse(messages=messages)
 
 
@@ -190,10 +190,10 @@ async def _stream_agent_response(
             )
             next_message_task = asyncio.create_task(anext(responses))
     except asyncio.CancelledError:
-        logger.info(f"{conversation_id=}: SSE stream disconnected")
+        logger.info(f"SSE 连接断开: conversation_id={conversation_id}")
         raise
     except Exception:  # noqa: BLE001
-        logger.exception(f"{conversation_id=}: agent failed")
+        logger.exception(f"智能体执行异常: conversation_id={conversation_id}")
         yield _serialize_sse_event(
             chat_schema.ChatStreamErrorEvent(
                 type="error", content="模型调用失败，请稍后重试。"

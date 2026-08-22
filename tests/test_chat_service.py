@@ -185,7 +185,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
             ),
             self.assertRaisesRegex(
                 chat_service.PlannerContinuationLimitError,
-                "exceeded 2 continuations",
+                "连续续写次数超过上限",
             ),
         ):
             async for response in chat_service.run_agent_turn(

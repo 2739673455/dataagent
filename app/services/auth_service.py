@@ -40,7 +40,7 @@ class Argon2PasswordManager:
 
     def __init__(self, *, max_concurrency: int = ARGON2_MAX_CONCURRENCY) -> None:
         if max_concurrency <= 0:
-            raise ValueError("max_concurrency must be positive")
+            raise ValueError("max_concurrency 必须为正整数")
         self._password_hash = PasswordHash.recommended()
         self._dummy_hash = self._password_hash.hash("dataagent-dummy-password")
         self._semaphore = asyncio.Semaphore(max_concurrency)
@@ -103,6 +103,40 @@ class BootstrapAdminResult:
     user: User
     created: bool
     admin_granted: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AuthenticatedUser:
+    """脱离数据库会话的认证用户快照"""
+
+    id: int
+    username: str
+    email: str
+    auth_version: int
+    is_active: bool
+    is_admin: bool
+    doris_role_name: str | None
+    created_at: datetime
+
+    @classmethod
+    def from_user(cls, user: User) -> "AuthenticatedUser":
+        """从持久化用户创建不可变快照"""
+        return cls(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            auth_version=user.auth_version,
+            is_active=user.is_active,
+            is_admin=user.is_admin,
+            doris_role_name=user.doris_role_name,
+            created_at=user.created_at,
+        )
+
+
+def _ensure_active_user(user: User) -> None:
+    """确保用户仍可登录"""
+    if not user.is_active:
+        raise auth_error.InactiveUserError
 
 
 class JWTCodec:
@@ -240,6 +274,25 @@ class JWTCodec:
         return datetime.fromtimestamp(value, UTC)
 
 
+class AccessTokenAuthenticator:
+    """使用独立只读会话认证访问令牌"""
+
+    def __init__(self, repo: AuthPGRepo, config: AuthConfig) -> None:
+        self._repo = repo
+        self._codec = JWTCodec(config)
+
+    async def authenticate(self, access_token: str) -> AuthenticatedUser:
+        """校验访问令牌并返回脱离会话的用户快照"""
+        claims = self._codec.decode_access_token(access_token)
+        user = await self._repo.get_user_by_id(claims.user_id)
+        if user is None:
+            raise auth_error.InvalidTokenError
+        _ensure_active_user(user)
+        if user.auth_version != claims.auth_version:
+            raise auth_error.InvalidTokenError
+        return AuthenticatedUser.from_user(user)
+
+
 class AuthService:
     """管理员引导、登录与令牌生命周期服务"""
 
@@ -271,7 +324,7 @@ class AuthService:
         password_hash = await self._password_manager.hash(password)
 
         try:
-            async with self._repo.transaction():
+            async with self._repo.session.begin():
                 await self._repo.lock_security_mutation()
                 by_username = await self._repo.get_user_by_username(normalized_username)
                 by_email = await self._repo.get_user_by_email(normalized_email)
@@ -289,7 +342,7 @@ class AuthService:
                         raise auth_error.UserAlreadyExistsError(
                             detail="初始化账号与现有账号冲突"
                         )
-                    self._ensure_active(existing)
+                    _ensure_active_user(existing)
                     admin_granted = not existing.is_admin
                     if admin_granted:
                         await self._repo.set_user_admin(existing, True)
@@ -328,7 +381,7 @@ class AuthService:
     async def login(self, identifier: str, password: str) -> tuple[User, TokenPair]:
         """校验账号密码并签发令牌对"""
         normalized = identifier.strip().casefold()
-        async with self._repo.transaction():
+        async with self._repo.session.begin():
             user = (
                 await self._repo.get_user_by_email_for_update(normalized)
                 if "@" in normalized
@@ -345,7 +398,7 @@ class AuthService:
                 raise auth_error.InvalidCredentialsError
             if not await self._password_manager.verify(password, user.password_hash):
                 raise auth_error.InvalidCredentialsError
-            self._ensure_active(user)
+            _ensure_active_user(user)
             token_pair = await self._issue_token_pair(user, uuid4())
         return user, token_pair
 
@@ -358,7 +411,7 @@ class AuthService:
         loaded_user: User | None = None
         token_pair: TokenPair | None = None
 
-        async with self._repo.transaction():
+        async with self._repo.session.begin():
             loaded_user = await self._repo.get_user_by_id_for_update(
                 claims.user_id
             )
@@ -375,7 +428,7 @@ class AuthService:
                 await self._repo.revoke_refresh_family(current.family_id, now)
                 reuse_detected = True
             else:
-                self._ensure_active(loaded_user)
+                _ensure_active_user(loaded_user)
                 replacement_id = uuid4()
                 token_pair = await self._issue_token_pair(
                     loaded_user,
@@ -396,7 +449,7 @@ class AuthService:
         """吊销刷新令牌所属的完整令牌族"""
         claims = self._codec.decode_refresh_token(refresh_token)
         token_digest = self.digest_token(refresh_token)
-        async with self._repo.transaction():
+        async with self._repo.session.begin():
             current = await self._repo.get_refresh_token_for_update(claims.token_id)
             if (
                 current is None
@@ -424,11 +477,11 @@ class AuthService:
             )
         password_hash = await self._password_manager.hash(new_password)
 
-        async with self._repo.transaction():
+        async with self._repo.session.begin():
             user = await self._repo.get_user_by_id_for_update(user_id)
             if user is None:
                 raise auth_error.InvalidTokenError
-            self._ensure_active(user)
+            _ensure_active_user(user)
             if not await self._password_manager.verify(
                 current_password,
                 user.password_hash,
@@ -436,17 +489,6 @@ class AuthService:
                 raise auth_error.InvalidCurrentPasswordError
             await self._repo.set_user_password(user, password_hash)
             await self._repo.revoke_user_refresh_tokens(user.id, self._now())
-
-    async def authenticate_access_token(self, access_token: str) -> User:
-        """校验访问令牌并加载当前用户权限"""
-        claims = self._codec.decode_access_token(access_token)
-        user = await self._repo.get_user_by_id(claims.user_id)
-        if user is None:
-            raise auth_error.InvalidTokenError
-        self._ensure_active(user)
-        if user.auth_version != claims.auth_version:
-            raise auth_error.InvalidTokenError
-        return user
 
     async def _issue_token_pair(
         self,
@@ -501,23 +543,17 @@ class AuthService:
         """校验新密码长度边界"""
         if len(password) < self._config.password_min_length:
             raise ValueError(
-                f"password must contain at least {self._config.password_min_length} characters"
+                f"密码长度不能少于 {self._config.password_min_length} 位"
             )
         if len(password) > _MAX_PASSWORD_LENGTH:
             raise ValueError(
-                f"password must contain at most {_MAX_PASSWORD_LENGTH} characters"
+                f"密码长度不能超过 {_MAX_PASSWORD_LENGTH} 位"
             )
 
     @staticmethod
     def _validate_new_identity(username: str, email: str) -> None:
         """校验注册与管理员引导使用的规范化身份"""
         if _USERNAME_PATTERN.fullmatch(username) is None:
-            raise ValueError("username format is invalid")
+            raise ValueError("用户名格式无效")
         if len(email) > _MAX_EMAIL_LENGTH or _EMAIL_PATTERN.fullmatch(email) is None:
-            raise ValueError("email format is invalid")
-
-    @staticmethod
-    def _ensure_active(user: User) -> None:
-        """确保用户仍可登录"""
-        if not user.is_active:
-            raise auth_error.InactiveUserError
+            raise ValueError("邮箱格式无效")

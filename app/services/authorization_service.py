@@ -26,6 +26,7 @@ from app.services.auth_service import (
     _MAX_PASSWORD_LENGTH,
     _USERNAME_PATTERN,
     Argon2PasswordManager,
+    AuthenticatedUser,
     PasswordManager,
 )
 from app.services.doris_credential_service import DorisCredentialCipher
@@ -62,13 +63,13 @@ class AssetIdentity:
             value is not None and (not value or value != value.strip())
             for value in values
         ):
-            raise ValueError("asset identifiers must be non-empty and trimmed")
+            raise ValueError("资产标识符不能为空且不能包含前后空白字符")
         if not self.data_source:
-            raise ValueError("data_source is required")
+            raise ValueError("data_source 不能为空")
         if self.column_name is not None and self.table_name is None:
-            raise ValueError("column_name requires table_name")
+            raise ValueError("指定 column_name 时必须同时指定 table_name")
         if self.table_name is not None and self.database_name is None:
-            raise ValueError("table_name requires database_name")
+            raise ValueError("指定 table_name 时必须同时指定 database_name")
 
     @property
     def scope(self) -> AssetScope:
@@ -172,7 +173,7 @@ class AuthorizationService:
         )
 
     @staticmethod
-    def require_admin(user: User) -> None:
+    def require_admin(user: AuthenticatedUser) -> None:
         """要求用户是平台管理员"""
         if not user.is_admin:
             raise auth_error.PermissionDeniedError(
@@ -181,7 +182,7 @@ class AuthorizationService:
 
     @staticmethod
     def require_analysis_access(
-        user: User,
+        user: AuthenticatedUser,
         identity: DorisQueryIdentity | None,
     ) -> None:
         """要求用户绑定了启用的 Doris 查询身份"""
@@ -229,6 +230,8 @@ class DorisRoleManagementService:
         password_manager: PasswordManager | None = None,
         auth_config: AuthConfig | None = None,
     ) -> None:
+        if repo.session is not identity_repo.session:
+            raise ValueError("认证存储与查询身份存储必须共享同一数据库会话")
         self._repo = repo
         self._identity_repo = identity_repo
         self._doris_repo = doris_repo
@@ -292,7 +295,7 @@ class DorisRoleManagementService:
         password = self._cipher.generate_password()
         doris_user_created = False
         try:
-            async with self._repo.transaction():
+            async with self._repo.session.begin():
                 await self._repo.lock_security_mutation()
                 if await self._identity_repo.get(role) is not None:
                     raise auth_error.RoleAlreadyExistsError(
@@ -335,7 +338,7 @@ class DorisRoleManagementService:
                     await self._doris_repo.drop_query_user(actual_query_user)
                 except Exception:  # noqa: BLE001
                     logger.exception(
-                        f"Failed to compensate Doris query user creation: {actual_query_user}"
+                        f"补偿删除 Doris 查询用户失败: {actual_query_user}"
                     )
             if isinstance(exc, IntegrityError):
                 raise auth_error.RoleAlreadyExistsError from exc
@@ -357,7 +360,7 @@ class DorisRoleManagementService:
         password = self._cipher.generate_password()
         doris_created = False
         try:
-            async with self._repo.transaction():
+            async with self._repo.session.begin():
                 await self._repo.lock_security_mutation()
                 if await self._identity_repo.get(role) is not None:
                     raise auth_error.RoleAlreadyExistsError
@@ -397,7 +400,7 @@ class DorisRoleManagementService:
                     )
                 except Exception:  # noqa: BLE001
                     logger.exception(
-                        f"Failed to compensate Doris role creation: {role}"
+                        f"补偿删除 Doris 角色及用户失败: {role}"
                     )
             if isinstance(exc, IntegrityError):
                 raise auth_error.RoleAlreadyExistsError from exc
@@ -406,7 +409,7 @@ class DorisRoleManagementService:
     async def set_default_role(self, role_name: str) -> DorisQueryIdentity:
         """替换新用户使用的缺省 Doris 角色"""
         role = normalize_doris_role_name(role_name)
-        async with self._repo.transaction():
+        async with self._repo.session.begin():
             await self._repo.lock_security_mutation()
             identity = await self._identity_repo.get(role)
             if identity is None:
@@ -423,7 +426,7 @@ class DorisRoleManagementService:
     async def delete_role(self, role_name: str) -> None:
         """删除未被用户使用的非缺省 Doris 查询身份和角色"""
         role = normalize_doris_role_name(role_name)
-        async with self._repo.transaction():
+        async with self._repo.session.begin():
             await self._repo.lock_security_mutation()
             identity = await self._identity_repo.get(role)
             if identity is None:
@@ -476,23 +479,24 @@ class DorisRoleManagementService:
                 detail="密码超出最大长度限制"
             )
 
-        assigned_role: str | None = None
-        if doris_role:
-            normalized_role = normalize_doris_role_name(doris_role)
-            identity = await self._identity_repo.get(normalized_role)
-            if identity is None or not identity.is_active:
-                raise auth_error.RoleNotFoundError
-            assigned_role = normalized_role
-        else:
-            default_identity = await self._identity_repo.get_default()
-            if default_identity is not None and default_identity.is_active:
-                assigned_role = default_identity.role_name
-
+        normalized_role = (
+            normalize_doris_role_name(doris_role) if doris_role else None
+        )
         password_hash = await self._password_manager.hash(password)
         now = datetime.now(UTC)
         try:
-            async with self._repo.transaction():
+            async with self._repo.session.begin():
                 await self._repo.lock_security_mutation()
+                assigned_role: str | None = None
+                if normalized_role is not None:
+                    identity = await self._identity_repo.get(normalized_role)
+                    if identity is None or not identity.is_active:
+                        raise auth_error.RoleNotFoundError
+                    assigned_role = normalized_role
+                else:
+                    default_identity = await self._identity_repo.get_default()
+                    if default_identity is not None and default_identity.is_active:
+                        assigned_role = default_identity.role_name
                 if (
                     await self._repo.get_user_by_username(normalized_username)
                     is not None
@@ -521,12 +525,12 @@ class DorisRoleManagementService:
     ) -> User:
         """替换用户唯一 Doris 角色并吊销已有刷新令牌"""
         normalized_role = normalize_doris_role_name(role_name)
-        identity = await self._identity_repo.get(normalized_role)
-        if identity is None or not identity.is_active:
-            raise auth_error.RoleNotFoundError
         now = datetime.now(UTC)
-        async with self._repo.transaction():
+        async with self._repo.session.begin():
             await self._repo.lock_security_mutation()
+            identity = await self._identity_repo.get(normalized_role)
+            if identity is None or not identity.is_active:
+                raise auth_error.RoleNotFoundError
             user = await self._repo.get_user_by_id(user_id)
             if user is None:
                 raise auth_error.UserNotFoundError
@@ -540,7 +544,7 @@ class DorisRoleManagementService:
     async def set_user_admin(self, user_id: int, is_admin: bool) -> User:
         """设置平台管理员标志并保护最后一位管理员"""
         now = datetime.now(UTC)
-        async with self._repo.transaction():
+        async with self._repo.session.begin():
             await self._repo.lock_security_mutation()
             user = await self._repo.get_user_by_id(user_id)
             if user is None:

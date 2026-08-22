@@ -27,7 +27,7 @@ class DorisRoleRepository:
     def quote_identifier(identifier: str) -> str:
         """校验并引用 Doris 标识符"""
         if _IDENTIFIER_PATTERN.fullmatch(identifier) is None:
-            raise ValueError("invalid Doris identifier")
+            raise ValueError("Doris 标识符无效")
         return f"`{identifier}`"
 
     @classmethod
@@ -39,7 +39,7 @@ class DorisRoleRepository:
     def quote_user(user_name: str) -> str:
         """校验并引用 Doris 用户名"""
         if _IDENTIFIER_PATTERN.fullmatch(user_name) is None:
-            raise ValueError("invalid Doris user name")
+            raise ValueError("Doris 用户名格式无效")
         return f"'{user_name}'"
 
     @classmethod
@@ -49,9 +49,11 @@ class DorisRoleRepository:
         database: str,
         table: str,
     ) -> str:
-        """构造完整表标识"""
-        return ".".join(
-            cls.quote_identifier(part) for part in (catalog, database, table)
+        """构造引用后的 catalog.database.table"""
+        return (
+            f"{cls.quote_identifier(catalog)}."
+            f"{cls.quote_identifier(database)}."
+            f"{cls.quote_identifier(table)}"
         )
 
     async def list_roles(self) -> list[dict[str, Any]]:
@@ -73,7 +75,7 @@ class DorisRoleRepository:
         user = self.quote_user(query_user)
         group = self.quote_identifier(workload_group)
         if not password or not password.isascii() or "'" in password:
-            raise ValueError("invalid generated Doris password")
+            raise ValueError("生成的 Doris 密码格式无效")
         role_created = False
         try:
             await self._execute(f"CREATE ROLE {role}")
@@ -90,7 +92,7 @@ class DorisRoleRepository:
                     await self._execute(f"DROP ROLE IF EXISTS {role}")
                 except Exception:  # noqa: BLE001
                     logger.exception(
-                        f"Failed to compensate Doris role creation: {role_name}"
+                        f"补偿删除 Doris 角色失败: {role_name}"
                     )
             raise
 
@@ -107,7 +109,7 @@ class DorisRoleRepository:
         user = self.quote_user(query_user)
         group = self.quote_identifier(workload_group)
         if not password or not password.isascii() or "'" in password:
-            raise ValueError("invalid generated Doris password")
+            raise ValueError("生成的 Doris 密码格式无效")
         user_created = False
         try:
             await self._execute(
@@ -123,7 +125,7 @@ class DorisRoleRepository:
                     await self._execute(f"DROP USER IF EXISTS {user}")
                 except Exception:  # noqa: BLE001
                     logger.exception(
-                        f"Failed to compensate Doris query user creation: {query_user}"
+                        f"补偿删除 Doris 查询用户失败: {query_user}"
                     )
             raise
 
@@ -155,7 +157,7 @@ class DorisRoleRepository:
         missing = sorted(set(role_names) - existing)
         if missing:
             raise RuntimeError(
-                "Configured Doris roles do not exist: " + ", ".join(missing)
+                f"配置的 Doris 角色不存在: {', '.join(missing)}"
             )
 
     async def list_role_row_policies(self, role_name: str) -> list[dict[str, Any]]:
@@ -197,7 +199,7 @@ class DorisRoleRepository:
         role = self.quote_role(role_name)
         if table is None:
             if columns:
-                raise ValueError("column grants require a table")
+                raise ValueError("列级授权必须指定对应的数据表")
             target = (
                 f"{self.quote_identifier(catalog)}."
                 f"{self.quote_identifier(database)}.*"
@@ -223,7 +225,7 @@ class DorisRoleRepository:
         role = self.quote_role(role_name)
         if table is None:
             if columns:
-                raise ValueError("column grants require a table")
+                raise ValueError("列级授权必须指定对应的数据表")
             target = (
                 f"{self.quote_identifier(catalog)}."
                 f"{self.quote_identifier(database)}.*"

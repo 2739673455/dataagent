@@ -9,7 +9,7 @@ from app.repositories.auth_pg_repo import AuthPGRepo
 from app.repositories.doris_query_identity_pg_repo import DorisQueryIdentityPGRepo
 from app.repositories.doris_role_repo import DorisRoleRepository
 from app.services.doris_permission_service import DorisPermissionService
-from tests.test_auth_service import AsyncTransactionStub
+from tests.test_auth_service import AsyncSessionStub
 
 
 def query_identity() -> DorisQueryIdentity:
@@ -30,11 +30,13 @@ class DorisPermissionServiceTest(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.auth_repo = MagicMock(spec=AuthPGRepo)
-        self.auth_repo.transaction.return_value = AsyncTransactionStub()
+        self.session = AsyncSessionStub()
+        self.auth_repo.session = self.session
         self.auth_repo.find_asset_grant = AsyncMock(return_value=None)
         self.auth_repo.add_asset_grant = AsyncMock(side_effect=lambda grant: grant)
         self.auth_repo.delete_asset_grant = AsyncMock()
         self.identity_repo = MagicMock(spec=DorisQueryIdentityPGRepo)
+        self.identity_repo.session = self.session
         self.identity_repo.get = AsyncMock(return_value=query_identity())
         self.doris_repo = MagicMock(spec=DorisRoleRepository)
         self.doris_repo.list_table_columns = AsyncMock(
@@ -53,7 +55,23 @@ class DorisPermissionServiceTest(unittest.IsolatedAsyncioTestCase):
             database="ecommerce",
         )
 
+    def test_rejects_postgres_repositories_from_different_sessions(self) -> None:
+        self.identity_repo.session = AsyncSessionStub()
+
+        with self.assertRaisesRegex(ValueError, "必须共享同一数据库会话"):
+            DorisPermissionService(
+                self.auth_repo,
+                self.identity_repo,
+                self.doris_repo,
+                data_source="doris",
+                catalog="internal",
+                database="ecommerce",
+            )
+
     async def test_column_grant_updates_doris_and_each_column_projection(self) -> None:
+        self.identity_repo.get = AsyncMock(
+            side_effect=self._load_identity_in_transaction
+        )
         grants = await self.service.grant_select(
             "sales",
             table_name="orders",
@@ -100,6 +118,9 @@ class DorisPermissionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.doris_repo.grant_select.assert_not_awaited()
 
     async def test_revoke_removes_exact_projection(self) -> None:
+        self.identity_repo.get = AsyncMock(
+            side_effect=self._load_identity_in_transaction
+        )
         persisted = DorisRoleAssetGrant(
             role_name="sales",
             scope="column",
@@ -119,6 +140,13 @@ class DorisPermissionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.doris_repo.revoke_select.assert_awaited_once()
         self.auth_repo.delete_asset_grant.assert_awaited_once_with(persisted)
+
+    async def _load_identity_in_transaction(
+        self,
+        _: str,
+    ) -> DorisQueryIdentity:
+        self.assertTrue(self.session.active)
+        return query_identity()
 
     async def test_row_policy_accepts_target_columns(self) -> None:
         await self.service.create_row_policy(

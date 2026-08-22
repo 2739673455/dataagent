@@ -24,6 +24,11 @@ class QueryExperiencePGRepo:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    @property
+    def session(self) -> AsyncSession:
+        """返回当前存储绑定的数据库会话"""
+        return self._session
+
     async def record_success(
         self,
         execution: QueryExecution,
@@ -71,7 +76,7 @@ class QueryExperiencePGRepo:
                 .with_for_update()
             )
             if existing is None:
-                raise RuntimeError("query experience upsert did not return a row")
+                raise RuntimeError("查询经验写入未返回记录行")
             experience_id = existing.id
             existing.refresh_from_success(
                 purpose=experience.purposes[0],
@@ -92,16 +97,16 @@ class QueryExperiencePGRepo:
         self._session.add_all(assets)
         execution.experience_id = experience_id
         self._session.add(execution)
-        await self._session.commit()
+        await self._session.flush()
         stored = await self.get(experience_id)
         if stored is None:
-            raise RuntimeError("recorded query experience is unavailable")
+            raise RuntimeError("已记录的查询经验不可用")
         return stored
 
     async def record_failure(self, execution: QueryExecution) -> None:
         """写入拒绝或失败的 SQL 尝试"""
         self._session.add(execution)
-        await self._session.commit()
+        await self._session.flush()
 
     async def get(self, experience_id: UUID) -> QueryExperience | None:
         """读取一条经验及其资产"""
@@ -260,7 +265,7 @@ class QueryExperiencePGRepo:
                     updated_at=now,
                 )
             )
-        await self._session.commit()
+        await self._session.flush()
         return await self.get_many(
             user_id,
             list(counts),
@@ -308,7 +313,7 @@ class QueryExperiencePGRepo:
             )
             .returning(QueryExperience.id, QueryExperience.revision)
         )
-        await self._session.commit()
+        await self._session.flush()
         return {experience_id: revision for experience_id, revision in result.tuples()}
 
     async def mark_indexes_synced(self, revisions: dict[UUID, int]) -> None:
@@ -322,7 +327,7 @@ class QueryExperiencePGRepo:
                 )
                 .values(indexed_revision=revision)
             )
-        await self._session.commit()
+        await self._session.flush()
 
     async def list_pending_index_deletions(
         self,

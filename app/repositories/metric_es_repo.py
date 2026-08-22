@@ -153,7 +153,7 @@ class MetricESRepo:
                 operations.append(document)
             result = await self._client.bulk(operations=operations, refresh=False)
             if result.get("errors"):
-                raise RuntimeError("Elasticsearch bulk indexing contains failed items")
+                raise RuntimeError("Elasticsearch 批量写入存在失败项")
 
     async def _delete_by_filter(self, filters: list[dict[str, Any]]) -> None:
         """按过滤条件删除指标语义索引文档"""
@@ -245,7 +245,7 @@ class MetricESRepo:
     def _metric_filter(allowed_metrics: frozenset[str]) -> dict[str, Any]:
         """构造指标名称白名单过滤条件"""
         if not allowed_metrics:
-            raise ValueError("allowed_metrics must not be empty")
+            raise ValueError("allowed_metrics 列表不能为空")
         return {"terms": {"name": sorted(allowed_metrics)}}
 
     @staticmethod
@@ -258,7 +258,7 @@ class MetricESRepo:
         """校验指标索引文档组成部分数量一致"""
         lengths = {len(ids), len(texts), len(text_types), len(embeddings)}
         if len(lengths) != 1:
-            raise ValueError("Metric index document parts have different lengths")
+            raise ValueError("指标索引文档各组成部分长度不一致")
 
     @staticmethod
     def _hits(result: dict[str, Any]) -> list[SearchHit[MetricInfo]]:

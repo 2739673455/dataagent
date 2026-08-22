@@ -47,6 +47,7 @@ describe("metadata enum contract", () => {
         headers: {
           "Content-Type": "multipart/form-data",
         },
+        timeout: 180000,
       }
     );
   });

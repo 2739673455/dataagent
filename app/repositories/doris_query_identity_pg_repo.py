@@ -12,6 +12,11 @@ class DorisQueryIdentityPGRepo:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    @property
+    def session(self) -> AsyncSession:
+        """返回当前存储绑定的数据库会话"""
+        return self._session
+
     async def add(self, identity: DorisQueryIdentity) -> DorisQueryIdentity:
         """新增查询身份"""
         self._session.add(identity)

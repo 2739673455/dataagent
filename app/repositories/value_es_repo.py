@@ -78,7 +78,7 @@ class ValueESRepo:
                 )
             result = await self._client.bulk(operations=operations, refresh=False)
             if result.get("errors"):
-                raise RuntimeError("Elasticsearch bulk indexing contains failed items")
+                raise RuntimeError("Elasticsearch 批量写入存在失败项")
 
     async def refresh(self) -> None:
         """刷新字段取值索引"""
@@ -153,7 +153,7 @@ class ValueESRepo:
     def _column_filter(allowed_columns: frozenset[ColumnKey]) -> dict[str, Any]:
         """构造字段值所属表字段白名单"""
         if not allowed_columns:
-            raise ValueError("allowed_columns must not be empty")
+            raise ValueError("allowed_columns 列表不能为空")
         return {
             "terms": {
                 "resource_key": [

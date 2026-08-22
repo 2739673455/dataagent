@@ -56,14 +56,14 @@ def _get_query_session(runtime: ToolRuntime) -> AgentSessionKey:
     raw_agent_type = configurable.get("agent_type")
     session_id = configurable.get("session_id")
     if not isinstance(user_id, int) or not isinstance(raw_conversation_id, str):
-        raise TypeError("query context not found in config")
+        raise TypeError("配置中未找到查询上下文")
     if not isinstance(analysis_id, str) or not isinstance(session_id, str):
-        raise TypeError("query specialist session not found in config")
+        raise TypeError("配置中未找到专家会话上下文")
     if not isinstance(raw_agent_type, str):
-        raise TypeError("query agent type not found in config")
+        raise TypeError("配置中未找到智能体类型")
     agent_type = validate_agent_type(raw_agent_type)
     if agent_type != "explorer":
-        raise ValueError("SQL tools require an explorer session")
+        raise ValueError("SQL 工具仅支持在 explorer 会话中运行")
     return AgentSessionKey(
         user_id=user_id,
         conversation_id=UUID(raw_conversation_id),
@@ -126,7 +126,7 @@ async def _record_success_safely(
         async with meta_postgres_client_manager.session() as session:
             await _query_experience_service(session).record_success(context, details)
     except Exception:  # noqa: BLE001
-        logger.exception("Successful query history persistence failed")
+        logger.exception("记录成功查询历史失败")
 
 
 async def _record_failure_safely(
@@ -156,7 +156,7 @@ async def _record_failure_safely(
                 validation=validation,
             )
     except Exception:  # noqa: BLE001
-        logger.exception("Failed query history persistence failed")
+        logger.exception("记录失败查询历史失败")
 
 
 @tool
@@ -190,8 +190,7 @@ async def execute_sql(
             )
             execution_context = context
             logger.info(
-                "Readonly query principal selected: "
-                f"user_id={session_key.user_id}, "
+                f"已选择只读查询主体: user_id={session_key.user_id}, "
                 f"doris_role={principal.role_name}, "
                 f"doris_user={principal.query_user}"
             )
@@ -267,14 +266,14 @@ async def execute_sql(
             error_code="query_result_rejected",
             error_detail=str(exc),
         )
-        logger.warning(f"Readonly query result rejected: {type(exc).__name__}")
+        logger.warning(f"只读查询结果校验未通过: {type(exc).__name__}")
         return {
             "status": "error",
             "code": "query_result_rejected",
             "message": str(exc),
         }
     except Exception:  # noqa: BLE001
-        logger.exception("Readonly query tool failed")
+        logger.exception("只读查询工具执行失败")
         await _record_failure_safely(
             execution_context,
             session_key,
@@ -282,11 +281,11 @@ async def execute_sql(
             dialect=dialect,
             status="failed",
             error_code="readonly_query_failed",
-            error_detail="Readonly query execution failed",
+            error_detail="只读查询执行失败",
         )
         return {
             "status": "error",
             "code": "readonly_query_failed",
-            "message": "Readonly query execution failed",
+            "message": "只读查询执行失败",
         }
     return {"status": "success", **result.model_dump(mode="json")}

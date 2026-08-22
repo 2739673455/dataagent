@@ -142,9 +142,9 @@ class _SearchContext:
             raise error
         self.partial = True
         logger.opt(exception=error).warning(
-            f"Semantic backend unavailable: {backend_name}"
+            f"语义检索后端不可用: {backend_name}"
         )
-        warning = f"{backend_name} retrieval unavailable"
+        warning = f"{backend_name} 检索服务暂不可用"
         if warning not in self.warnings:
             self.warnings.append(warning)
 

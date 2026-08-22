@@ -96,8 +96,13 @@ async def get_meta_catalog_service(
         yield MetaCatalogService(
             meta_repo=meta_repo,
             source_repo=source_repo,
-            meta_index_service=_build_meta_index_service(meta_repo, source_repo),
-            query_experience_service=_build_query_experience_service(meta_session),
+            meta_index_service=_build_meta_index_service(
+                meta_repo,
+                source_repo,
+            ),
+            query_experience_service=_build_query_experience_service(
+                meta_session,
+            ),
             asset_policy=AssetAccessPolicy(
                 user_id=current_user.id,
                 unrestricted=True,
@@ -113,8 +118,9 @@ async def get_meta_index_service() -> AsyncGenerator[MetaIndexService]:
         meta_postgres_client_manager.session() as meta_session,
         admin_doris_client_manager.connection() as source_connection,
     ):
+        meta_repo = MetaPGRepo(meta_session)
         yield _build_meta_index_service(
-            MetaPGRepo(meta_session),
+            meta_repo,
             SourceDorisRepo(source_connection),
         )
 
@@ -130,8 +136,13 @@ async def get_meta_import_service() -> AsyncGenerator[MetaImportService]:
         yield MetaImportService(
             meta_repo=meta_repo,
             source_repo=source_repo,
-            meta_index_service=_build_meta_index_service(meta_repo, source_repo),
-            query_experience_service=_build_query_experience_service(meta_session),
+            meta_index_service=_build_meta_index_service(
+                meta_repo,
+                source_repo,
+            ),
+            query_experience_service=_build_query_experience_service(
+                meta_session,
+            ),
         )
 
 

@@ -101,10 +101,10 @@ async def search_semantic_resources(
                 authorization_filter,
             )
     except Exception:  # noqa: BLE001
-        logger.exception("Metadata semantic search failed")
+        logger.exception("元数据语义检索失败")
         return {
             "status": "error",
-            "message": "Metadata search is temporarily unavailable",
+            "message": "元数据检索服务暂不可用",
         }
 
     try:
@@ -115,10 +115,10 @@ async def search_semantic_resources(
             response,
         )
     except Exception:  # noqa: BLE001
-        logger.exception("Semantic recall persistence failed")
+        logger.exception("语义召回快照持久化失败")
         return {
             "status": "error",
-            "message": "Semantic recall could not be saved",
+            "message": "无法保存语义召回快照",
         }
 
     return semantic_recall_reference(record)
@@ -151,7 +151,7 @@ async def list_semantic_recalls(
 ) -> dict[str, Any]:
     """列出当前会话已保存的语义召回记录及其查询和来源"""
     if not 1 <= limit <= 100:
-        return {"status": "error", "message": "limit must be between 1 and 100"}
+        return {"status": "error", "message": "limit 参数必须在 1 到 100 之间"}
     try:
         user_id, conversation_id, repo = resolve_semantic_recall_context(
             runtime.config,
@@ -160,10 +160,10 @@ async def list_semantic_recalls(
         service = await create_authorized_semantic_recall_service(user_id, repo)
         records = await service.list(user_id, conversation_id, limit=limit)
     except Exception:  # noqa: BLE001
-        logger.exception("Semantic recall listing failed")
+        logger.exception("获取语义召回列表失败")
         return {
             "status": "error",
-            "message": "Semantic recalls are temporarily unavailable",
+            "message": "语义召回列表暂不可用",
         }
     return {
         "status": "success",
@@ -187,14 +187,14 @@ async def get_semantic_recall(
     except SemanticRecallsNotFoundError as exc:
         return {
             "status": "error",
-            "message": "semantic recall not found",
+            "message": "未找到指定的语义召回记录",
             "recall_ids": exc.recall_ids,
         }
     except Exception:  # noqa: BLE001
-        logger.exception("Semantic recall loading failed")
+        logger.exception("加载语义召回记录失败")
         return {
             "status": "error",
-            "message": "Semantic recall is temporarily unavailable",
+            "message": "语义召回记录暂不可用",
         }
     return semantic_recall_reference(record)
 
@@ -218,14 +218,14 @@ async def merge_semantic_recalls(
     except SemanticRecallsNotFoundError as exc:
         return {
             "status": "error",
-            "message": "semantic recalls not found",
+            "message": "未找到待合并的语义召回记录",
             "recall_ids": exc.recall_ids,
         }
     except Exception:  # noqa: BLE001
-        logger.exception("Semantic recall merge failed")
+        logger.exception("合并语义召回记录失败")
         return {
             "status": "error",
-            "message": "Semantic recalls could not be merged",
+            "message": "无法合并语义召回记录",
         }
     return semantic_recall_reference(record)
 
@@ -248,10 +248,10 @@ async def delete_semantic_recalls(
             recall_ids,
         )
     except Exception:  # noqa: BLE001
-        logger.exception("Semantic recall deletion failed")
+        logger.exception("删除语义召回记录失败")
         return {
             "status": "error",
-            "message": "Semantic recalls could not be deleted",
+            "message": "无法删除语义召回记录",
         }
     return {
         "status": "success",

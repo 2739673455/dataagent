@@ -76,7 +76,7 @@ class MetaImportService:
                 detail="元数据导入文档不能为空"
             )
 
-        async with self._meta_repo.transaction():
+        async with self._meta_repo.session.begin():
             existing_tables = {
                 table_info.name: table_info
                 for table_info in await self._meta_repo.list_table_infos()
@@ -136,7 +136,7 @@ class MetaImportService:
             await self._meta_index_service.delete_metric_indexes(metric_changes.deleted)
             await self._meta_index_service.delete_column_indexes(column_changes.deleted)
 
-        async with self._meta_repo.transaction():
+        async with self._meta_repo.session.begin():
             if mode is ImportMode.REPLACE:
                 await self._meta_repo.delete_metric_infos(metric_changes.deleted)
                 await self._meta_repo.delete_column_infos(column_changes.deleted)
@@ -203,11 +203,18 @@ class MetaImportService:
                             f"{table_config.name}.{column_config.name}"
                         )
                     )
-                column_values = await self._source_repo.get_column_values(
+
+            target_column_names = [col.name for col in table_config.columns]
+            table_column_samples = (
+                await self._source_repo.get_table_columns_sample_values(
                     table_config.name,
-                    column_config.name,
+                    target_column_names,
                     COLUMN_EXAMPLE_LIMIT,
                 )
+            )
+
+            for column_config in table_config.columns:
+                column_values = table_column_samples.get(column_config.name, [])
                 column_infos.append(
                     ColumnInfo(
                         t_name=table_config.name,

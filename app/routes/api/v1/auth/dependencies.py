@@ -15,12 +15,16 @@ from app.clients.doris_client_manager import (
 from app.clients.postgres_client_manager import auth_postgres_client_manager
 from app.conf.app_config import cfg
 from app.errors import auth_error
-from app.models.auth import User
 from app.repositories.auth_pg_repo import AuthPGRepo
 from app.repositories.doris_query_identity_pg_repo import DorisQueryIdentityPGRepo
 from app.repositories.doris_role_repo import DorisRoleRepository
 from app.services.auth_rate_limit_service import AuthRateLimitService
-from app.services.auth_service import Argon2PasswordManager, AuthService
+from app.services.auth_service import (
+    AccessTokenAuthenticator,
+    Argon2PasswordManager,
+    AuthenticatedUser,
+    AuthService,
+)
 from app.services.authorization_service import (
     AuthorizationService,
     DorisRoleManagementService,
@@ -36,14 +40,6 @@ SessionDep = Annotated[
     AsyncSession,
     Depends(auth_postgres_client_manager.get_session),
 ]
-
-
-def get_auth_repo(session: SessionDep) -> AuthPGRepo:
-    """创建请求级认证数据访问"""
-    return AuthPGRepo(session)
-
-
-AuthRepoDep = Annotated[AuthPGRepo, Depends(get_auth_repo)]
 
 
 def get_query_identity_repo(session: SessionDep) -> DorisQueryIdentityPGRepo:
@@ -64,7 +60,7 @@ def get_password_manager() -> Argon2PasswordManager:
 
 
 def get_auth_service(
-    repo: AuthRepoDep,
+    session: SessionDep,
     password_manager: Annotated[
         Argon2PasswordManager,
         Depends(get_password_manager),
@@ -72,7 +68,7 @@ def get_auth_service(
 ) -> AuthService:
     """创建请求级认证服务"""
     return AuthService(
-        repo,
+        AuthPGRepo(session),
         cfg.auth,
         password_manager,
     )
@@ -100,34 +96,37 @@ def get_client_ip(request: Request) -> str:
 
 
 async def get_current_user(
-    service: AuthServiceDep,
     credentials: Annotated[
         HTTPAuthorizationCredentials | None,
         Depends(_bearer),
     ],
-) -> User:
+) -> AuthenticatedUser:
     """解析 Bearer Token 并加载当前用户"""
     if credentials is None or credentials.scheme.casefold() != "bearer":
         raise auth_error.AuthenticationRequiredError
-    return await service.authenticate_access_token(credentials.credentials)
+    async with auth_postgres_client_manager.session() as session:
+        return await AccessTokenAuthenticator(
+            AuthPGRepo(session),
+            cfg.auth,
+        ).authenticate(credentials.credentials)
 
 
-CurrentUserDep = Annotated[User, Depends(get_current_user)]
+CurrentUserDep = Annotated[AuthenticatedUser, Depends(get_current_user)]
 
 
-async def require_admin(current_user: CurrentUserDep) -> User:
+async def require_admin(current_user: CurrentUserDep) -> AuthenticatedUser:
     """要求当前用户是平台管理员"""
     AuthorizationService.require_admin(current_user)
     return current_user
 
 
-AdminUserDep = Annotated[User, Depends(require_admin)]
+AdminUserDep = Annotated[AuthenticatedUser, Depends(require_admin)]
 
 
 async def require_analysis_access(
     current_user: CurrentUserDep,
     identity_repo: QueryIdentityRepoDep,
-) -> User:
+) -> AuthenticatedUser:
     """要求当前用户可创建和执行分析"""
     identity = (
         await identity_repo.get(current_user.doris_role_name)
@@ -138,7 +137,7 @@ async def require_analysis_access(
     return current_user
 
 
-AnalysisUserDep = Annotated[User, Depends(require_analysis_access)]
+AnalysisUserDep = Annotated[AuthenticatedUser, Depends(require_analysis_access)]
 
 
 async def get_role_management_service() -> AsyncGenerator[DorisRoleManagementService]:

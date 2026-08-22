@@ -23,10 +23,13 @@ import type { ConversationResponse } from "@/types";
 interface ChatSidebarProps {
   conversations: ConversationResponse[];
   activeConversationId: string | null;
-  user: UserResponse | null;
   onCreate: () => void;
   onDelete: (conversationId: string) => void;
   onRename: (conversationId: string, title: string) => Promise<void>;
+}
+
+interface ChatUserFooterProps {
+  user: UserResponse | null;
   onChangePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   onLogout: () => void;
 }
@@ -47,43 +50,13 @@ function formatCliTime(isoString: string): string {
 export function ChatSidebar({
   conversations,
   activeConversationId,
-  user,
   onCreate,
   onDelete,
   onRename,
-  onChangePassword,
-  onLogout,
 }: ChatSidebarProps) {
-  const [isPasswordOpen, setIsPasswordOpen] = useState(false);
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [isRenaming, setIsRenaming] = useState(false);
-
-  const submitPasswordChange = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (newPassword.length < 6) {
-      toast.error("新密码至少需要 6 个字符");
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      toast.error("两次输入的新密码不一致");
-      return;
-    }
-    setIsChangingPassword(true);
-    try {
-      await onChangePassword(currentPassword, newPassword);
-    } catch (error) {
-      const payload = (error as { response?: { data?: { detail?: string; title?: string } } })
-        .response?.data;
-      toast.error(payload?.detail ?? payload?.title ?? "密码修改失败");
-    } finally {
-      setIsChangingPassword(false);
-    }
-  };
 
   const submitRename = async (event: React.FormEvent, conversationId: string) => {
     event.preventDefault();
@@ -110,6 +83,7 @@ export function ChatSidebar({
       setIsRenaming(false);
     }
   };
+
   return (
     <div className="flex h-full flex-col overflow-hidden border-r border-[#d4d4ce] bg-[#ebebe6] font-mono text-[#27272a]">
       {/* 顶部会话控制栏 */}
@@ -252,67 +226,96 @@ export function ChatSidebar({
           )}
         </div>
       </div>
+    </div>
+  );
+}
 
-      <Separator className="bg-[#d4d4ce]" />
+export function ChatUserFooter({ user, onChangePassword, onLogout }: ChatUserFooterProps) {
+  const [isPasswordOpen, setIsPasswordOpen] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
 
-      {/* 底部当前登录操作员状态 */}
-      <div className="p-3 bg-[#e4e4df]">
-        <div className="mb-2.5 flex items-start gap-2.5 rounded border border-[#d4d4ce] bg-[#ffffff] p-2.5 text-xs">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-[#ebebe6] text-[#27272a]">
-            <User className="h-4 w-4" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between">
-              <p className="truncate font-semibold text-sm text-[#18181b]">
-                {user?.username || "访客"}
-              </p>
-              {user?.is_admin && (
-                <span className="rounded bg-[#27272a] px-1.5 py-0.5 text-[10px] font-bold text-[#ffffff]">
-                  管理员
-                </span>
-              )}
-            </div>
-            <p className="truncate text-xs text-[#71717a]">
-              {user?.doris_role ? `Doris: ${user.doris_role}` : "未分配数据角色"}
-            </p>
-          </div>
+  const submitPasswordChange = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (newPassword.length < 6) {
+      toast.error("新密码至少需要 6 个字符");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast.error("两次输入的新密码不一致");
+      return;
+    }
+    setIsChangingPassword(true);
+    try {
+      await onChangePassword(currentPassword, newPassword);
+    } catch (error) {
+      const payload = (error as { response?: { data?: { detail?: string; title?: string } } })
+        .response?.data;
+      toast.error(payload?.detail ?? payload?.title ?? "密码修改失败");
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
+  return (
+    <div className="p-3 bg-[#e4e4df] h-full flex flex-col justify-center">
+      <div className="mb-2.5 flex items-start gap-2.5 rounded border border-[#d4d4ce] bg-[#ffffff] p-2.5 text-xs">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-[#ebebe6] text-[#27272a]">
+          <User className="h-4 w-4" />
         </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between">
+            <p className="truncate font-semibold text-sm text-[#18181b]">
+              {user?.username || "访客"}
+            </p>
+            {user?.is_admin && (
+              <span className="rounded bg-[#27272a] px-1.5 py-0.5 text-[10px] font-bold text-[#ffffff]">
+                管理员
+              </span>
+            )}
+          </div>
+          <p className="truncate text-xs text-[#71717a]">
+            {user?.doris_role ? `Doris: ${user.doris_role}` : "未分配数据角色"}
+          </p>
+        </div>
+      </div>
 
-        <div className={cn("grid gap-1.5", user?.is_admin ? "grid-cols-3" : "grid-cols-2")}>
-          {user?.is_admin && (
-            <Button
-              asChild
-              variant="outline"
-              size="sm"
-              className="w-full border-[#d4d4ce] bg-[#ffffff] px-1.5 text-xs text-[#27272a] hover:bg-[#deded8]"
-            >
-              <Link to={ROUTES.admin} title="管理后台">
-                <Settings className="h-3.5 w-3.5 shrink-0" />
-                <span>后台</span>
-              </Link>
-            </Button>
-          )}
+      <div className={cn("grid gap-1.5", user?.is_admin ? "grid-cols-3" : "grid-cols-2")}>
+        {user?.is_admin && (
           <Button
+            asChild
             variant="outline"
             size="sm"
             className="w-full border-[#d4d4ce] bg-[#ffffff] px-1.5 text-xs text-[#27272a] hover:bg-[#deded8]"
-            onClick={() => setIsPasswordOpen(true)}
-            title="修改密码"
           >
-            <KeyRound className="h-3.5 w-3.5 shrink-0" />
-            <span>密码</span>
+            <Link to={ROUTES.admin} title="管理后台">
+              <Settings className="h-3.5 w-3.5 shrink-0" />
+              <span>后台</span>
+            </Link>
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full border-[#d4d4ce] bg-[#ffffff] px-1.5 text-xs text-[#71717a] hover:bg-[#deded8] hover:text-[#dc2626]"
-            onClick={onLogout}
-            title="退出登录"
-          >
-            <LogOut className="h-3.5 w-3.5 shrink-0" />
-            <span>退出</span>
-          </Button>
-        </div>
+        )}
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full border-[#d4d4ce] bg-[#ffffff] px-1.5 text-xs text-[#27272a] hover:bg-[#deded8]"
+          onClick={() => setIsPasswordOpen(true)}
+          title="修改密码"
+        >
+          <KeyRound className="h-3.5 w-3.5 shrink-0" />
+          <span>密码</span>
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full border-[#d4d4ce] bg-[#ffffff] px-1.5 text-xs text-[#71717a] hover:bg-[#deded8] hover:text-[#dc2626]"
+          onClick={onLogout}
+          title="退出登录"
+        >
+          <LogOut className="h-3.5 w-3.5 shrink-0" />
+          <span>退出</span>
+        </Button>
       </div>
 
       {isPasswordOpen && (

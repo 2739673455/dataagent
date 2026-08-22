@@ -111,7 +111,7 @@ class AgentManager:
     ) -> None:
         """初始化 Agent 管理器"""
         if max_cached_runtimes <= 0:
-            raise ValueError("max_cached_runtimes must be positive")
+            raise ValueError("max_cached_runtimes 必须为正整数")
         self._persistence_manager = persistence_manager
         self._max_cached_runtimes = max_cached_runtimes
         self._conversation_runtimes: OrderedDict[
@@ -135,7 +135,7 @@ class AgentManager:
         try:
             model_cfg = app_config.cfg.lm_config.models[model_name]
         except KeyError as exc:
-            raise ValueError(f"unknown language model config: {model_name}") from exc
+            raise ValueError(f"未知的语言模型配置: {model_name}") from exc
         register_harness_profile(
             f"{model_cfg.model_provider}:{model_cfg.model}",
             HarnessProfile(
@@ -193,13 +193,13 @@ class AgentManager:
         await self.init()
         async with self._state_lock:
             if self._models is None or self._planner_model_name is None:
-                raise RuntimeError("Agent manager is not initialized")
+                raise RuntimeError("Agent 管理器尚未初始化")
             return self._models[self._planner_model_name]
 
     def _specialist_model(self, agent_type: AgentType) -> BaseChatModel:
         """解析专业 Agent 配置中的模型引用"""
         if self._models is None or self._planner_model_name is None:
-            raise RuntimeError("Agent manager is not initialized")
+            raise RuntimeError("Agent 管理器尚未初始化")
         configured_name = app_config.cfg.agent.specialists[agent_type].model
         model_name = (
             self._planner_model_name
@@ -220,7 +220,7 @@ class AgentManager:
             or self._planner_model_name is None
             or self._definitions is None
         ):
-            raise RuntimeError("Agent manager is not initialized")
+            raise RuntimeError("Agent 管理器尚未初始化")
 
         backend = sandbox_backend
         checkpointer = self._persistence_manager.get_checkpointer()
@@ -421,10 +421,10 @@ class AgentManager:
         if await self._conversation_is_deleted(user_id, conversation_id):
             async with self._state_lock:
                 self._deleted_conversation_keys.add(conversation_key)
-            raise RuntimeError("Agent conversation has been deleted")
+            raise RuntimeError("该会话已被删除")
         async with self._state_lock:
             if conversation_key in self._deleted_conversation_keys:
-                raise RuntimeError("Agent conversation has been deleted")
+                raise RuntimeError("该会话已被删除")
             if runtime := self._conversation_runtimes.get(conversation_key):
                 self._conversation_runtimes.move_to_end(conversation_key)
                 return runtime
@@ -567,11 +567,11 @@ class AgentManager:
         """登记完整用户回合并建立共享委派预算"""
         current_task = asyncio.current_task()
         if current_task is None:
-            raise RuntimeError("Agent execution requires an asyncio task")
+            raise RuntimeError("Agent 执行必须在 asyncio 任务上下文中进行")
         conversation_key = (user_id, conversation_id)
         async with self._state_lock:
             if conversation_key in self._deleted_conversation_keys:
-                raise RuntimeError("Agent conversation has been deleted")
+                raise RuntimeError("该会话已被删除")
             self._conversation_run_tasks.setdefault(conversation_key, set()).add(
                 current_task
             )
@@ -587,7 +587,7 @@ class AgentManager:
                 runtime.session_service.planner_run(turn_context.planner_run_id),
             ):
                 if await runtime.conversation_deleted():
-                    raise RuntimeError("Agent conversation has been deleted")
+                    raise RuntimeError("该会话已被删除")
                 yield turn_context
         finally:
             async with self._state_lock:

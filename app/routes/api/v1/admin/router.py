@@ -140,7 +140,7 @@ async def list_users(
     """分页列出用户、管理员标志与唯一 Doris 角色"""
     users, total = await service.list_users(limit=limit, offset=offset)
     return schemas.UserListResponse(
-        users=[schemas.UserResponse.from_entity(user) for user in users],
+        users=[schemas.UserResponse.from_user(user) for user in users],
         total=total,
         limit=limit,
         offset=offset,
@@ -166,7 +166,7 @@ async def create_user(
         doris_role=body.doris_role,
         is_admin=body.is_admin,
     )
-    return schemas.UserResponse.from_entity(user)
+    return schemas.UserResponse.from_user(user)
 
 
 @router.delete(
@@ -192,7 +192,7 @@ async def set_user_doris_role(
 ) -> schemas.UserResponse:
     """替换指定用户唯一 Doris 数据角色"""
     user = await service.set_user_doris_role(user_id, body.role)
-    return schemas.UserResponse.from_entity(user)
+    return schemas.UserResponse.from_user(user)
 
 
 @router.put("/users/{user_id}/administrator", response_model=schemas.UserResponse)
@@ -204,7 +204,7 @@ async def set_user_administrator(
 ) -> schemas.UserResponse:
     """设置或撤销平台管理员身份"""
     user = await service.set_user_admin(user_id, body.is_admin)
-    return schemas.UserResponse.from_entity(user)
+    return schemas.UserResponse.from_user(user)
 
 
 @router.get(

@@ -92,12 +92,12 @@ class AgentDefinition:
     def __post_init__(self) -> None:
         validate_agent_type(self.agent_type)
         if not self.description.strip() or not self.system_prompt.strip():
-            raise ValueError("agent definition text must not be empty")
+            raise ValueError("智能体描述与 system_prompt 均不能为空")
         tool_names = [tool.name for tool in self.tools]
         if len(tool_names) != len(set(tool_names)):
-            raise ValueError(f"duplicate tools for agent type {self.agent_type}")
+            raise ValueError(f"智能体类型 {self.agent_type} 包含重复工具")
         if "delegate_agent" in tool_names or "task" in tool_names:
-            raise ValueError("specialist agents cannot delegate other agents")
+            raise ValueError("专家智能体不能拥有委派工具")
 
     @property
     def tool_names(self) -> frozenset[str]:
@@ -115,15 +115,14 @@ def build_agent_definitions(
     tools_by_name: dict[str, BaseTool] = {}
     for tool in (*platform_tools, *mcp_tools):
         if tool.name in tools_by_name:
-            raise ValueError(f"duplicate tool name: {tool.name}")
+            raise ValueError(f"存在重名工具: {tool.name}")
         tools_by_name[tool.name] = tool
 
     mcp_tool_names = frozenset(tool.name for tool in mcp_tools)
     reserved_mcp_names = sorted(mcp_tool_names & _RESERVED_MCP_TOOL_NAMES)
     if reserved_mcp_names:
         raise ValueError(
-            "MCP tool names conflict with Agent runtime tools: "
-            + ", ".join(reserved_mcp_names)
+            f"MCP 工具名称与平台内置工具冲突: {', '.join(reserved_mcp_names)}"
         )
 
     missing_by_agent = {
@@ -136,7 +135,7 @@ def build_agent_definitions(
             f"{agent_type}: {', '.join(names)}"
             for agent_type, names in missing_by_agent.items()
         )
-        raise ValueError(f"required specialist tools are missing: {details}")
+        raise ValueError(f"缺少必需的专家工具: {details}")
 
     tool_allowlists = {
         **_PLATFORM_TOOL_ALLOWLISTS,
@@ -172,10 +171,10 @@ class AgentRegistry:
         definition_keys = set(definitions)
         expected_keys = set(AGENT_TYPES)
         if definition_keys != expected_keys:
-            raise ValueError("registry must contain all specialist definitions")
+            raise ValueError("智能体注册表必须包含所有专家类型的定义")
         for agent_type, definition in definitions.items():
             if definition.agent_type != agent_type:
-                raise ValueError("agent definition key does not match its agent type")
+                raise ValueError("智能体定义键与其实际 agent_type 不匹配")
         self._agent_factory = agent_factory
         self._agents: dict[str, CompiledStateGraph] = {}
         self._build_tasks: dict[str, asyncio.Task[CompiledStateGraph]] = {}

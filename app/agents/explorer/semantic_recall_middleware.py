@@ -68,7 +68,7 @@ class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
         handler: Callable[[ModelRequest[Any]], ModelResponse[Any]],
     ) -> ModelResponse[Any]:
         if _current_turn_references(request.messages):
-            raise RuntimeError("semantic recall expansion requires async execution")
+            raise RuntimeError("语义召回展开需要异步执行")
         return handler(request)
 
     async def awrap_model_call(
@@ -99,7 +99,7 @@ class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
             expanded_error = json.dumps(
                 {
                     "status": "error",
-                    "message": "semantic recall not found",
+                    "message": "未找到指定的语义召回记录",
                     "recall_ids": exc.recall_ids,
                 },
                 ensure_ascii=False,
@@ -112,11 +112,11 @@ class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
                     )
             return await handler(request.override(messages=messages))
         except Exception:  # noqa: BLE001
-            logger.exception("Semantic recall expansion failed")
+            logger.exception("语义召回展开失败")
             expanded_error = json.dumps(
                 {
                     "status": "error",
-                    "message": "Semantic recall is temporarily unavailable",
+                    "message": "语义召回记录暂不可用",
                 },
                 ensure_ascii=False,
             )

@@ -51,7 +51,7 @@ NonEmptyText = Annotated[
 def get_thread_id(user_id: int, conversation_id: UUID) -> str:
     """构造全局唯一的 LangGraph 会话线程 ID"""
     if isinstance(user_id, bool) or user_id <= 0:
-        raise ValueError("user_id must be a positive integer")
+        raise ValueError("user_id 必须为正整数")
     return f"user_{user_id}:conversation_{conversation_id}"
 
 
@@ -79,17 +79,17 @@ class PlannerTurnContext:
 
     def __post_init__(self) -> None:
         if isinstance(self.user_id, bool) or self.user_id <= 0:
-            raise ValueError("user_id must be a positive integer")
+            raise ValueError("user_id 必须为正整数")
         if not self.planner_run_id.strip():
-            raise ValueError("planner_run_id must not be empty")
+            raise ValueError("planner_run_id 不能为空")
         if self.max_continuations < 0:
-            raise ValueError("max_continuations must not be negative")
+            raise ValueError("max_continuations 不能为负数")
 
 
 def validate_agent_type(value: str) -> AgentType:
     """校验并收窄专业 Agent 类型"""
     if value not in AGENT_TYPES:
-        raise ValueError(f"unknown agent type: {value}")
+        raise ValueError(f"未知的智能体类型: {value}")
     return value
 
 
@@ -97,8 +97,7 @@ def validate_identifier(value: str, field_name: str) -> str:
     """校验 Analysis 和 Session 标识"""
     if not isinstance(value, str) or _IDENTIFIER_PATTERN.fullmatch(value) is None:
         raise ValueError(
-            f"{field_name} must contain 1-64 lowercase letters, digits, hyphens, "
-            "or underscores and start with a letter or digit"
+            f"{field_name} 必须以字母或数字开头，且仅包含 1-64 位小写字母、数字、下划线或连字符"
         )
     return value
 
@@ -115,7 +114,7 @@ class AgentSessionKey:
 
     def __post_init__(self) -> None:
         if isinstance(self.user_id, bool) or self.user_id <= 0:
-            raise ValueError("user_id must be a positive integer")
+            raise ValueError("user_id 必须为正整数")
         validate_identifier(self.analysis_id, "analysis_id")
         validate_agent_type(self.agent_type)
         validate_identifier(self.session_id, "session_id")
@@ -176,12 +175,12 @@ class ArtifactReference(StrictProtocolModel):
     def validate_sandbox_path(cls, value: str) -> str:
         """只接受规范化的沙盒绝对路径"""
         if not value.startswith("/"):
-            raise ValueError("artifact path must be an absolute sandbox path")
+            raise ValueError("产物路径必须是绝对沙盒路径")
         segments = value.split("/")
         if any(segment in {".", ".."} for segment in segments):
-            raise ValueError("artifact path must not contain dot segments")
+            raise ValueError("产物路径不能包含相对路径点段")
         if "//" in value or "\x00" in value:
-            raise ValueError("artifact path must be normalized")
+            raise ValueError("产物路径必须是规范化路径")
         return value
 
 
@@ -218,15 +217,15 @@ class SpecialistResult(StrictProtocolModel):
     def validate_status_payload(self) -> Self:
         """校验状态与证据载荷的一致性"""
         if self.status == "needs_repair" and not self.repair_requests:
-            raise ValueError("needs_repair requires at least one repair request")
+            raise ValueError("needs_repair 状态必须包含至少一个修补请求")
         if self.status != "needs_repair" and self.repair_requests:
-            raise ValueError("repair requests are only valid for needs_repair")
+            raise ValueError("修补请求仅在 needs_repair 状态下有效")
         if self.status == "completed" and not self.findings:
-            raise ValueError("completed requires at least one finding")
+            raise ValueError("completed 状态必须包含至少一个分析结论 (findings)")
         if self.status == "completed" and not self.artifacts:
-            raise ValueError("completed requires at least one artifact")
+            raise ValueError("completed 状态必须包含至少一个分析产物 (artifacts)")
         if self.status == "failed" and not self.limitations:
-            raise ValueError("failed requires at least one limitation")
+            raise ValueError("failed 状态必须包含至少一个局限性说明 (limitations)")
         return self
 
 
@@ -256,13 +255,13 @@ class DelegateAgentResult(StrictProtocolModel):
     def validate_status_payload(self) -> Self:
         """校验委派结果状态与载荷的一致性"""
         if self.status == "needs_repair" and not self.repair_requests:
-            raise ValueError("needs_repair requires at least one repair request")
+            raise ValueError("needs_repair 状态必须包含至少一个修补请求")
         if self.status != "needs_repair" and self.repair_requests:
-            raise ValueError("repair requests are only valid for needs_repair")
+            raise ValueError("修补请求仅在 needs_repair 状态下有效")
         if self.status == "completed" and not self.findings:
-            raise ValueError("completed requires at least one finding")
+            raise ValueError("completed 状态必须包含至少一个分析结论 (findings)")
         if self.status == "completed" and not self.artifacts:
-            raise ValueError("completed requires at least one artifact")
+            raise ValueError("completed 状态必须包含至少一个分析产物 (artifacts)")
         if self.status == "failed" and not self.limitations:
-            raise ValueError("failed requires at least one limitation")
+            raise ValueError("failed 状态必须包含至少一个局限性说明 (limitations)")
         return self

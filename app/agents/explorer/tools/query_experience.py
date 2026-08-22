@@ -40,10 +40,10 @@ async def search_query_experiences(
     if not query or len(query) > 1000:
         return {
             "status": "error",
-            "message": "query length must be between 1 and 1000 characters",
+            "message": "查询文本长度必须在 1 到 1000 个字符之间",
         }
     if not 1 <= limit <= 10:
-        return {"status": "error", "message": "limit must be between 1 and 10"}
+        return {"status": "error", "message": "limit 参数必须在 1 到 10 之间"}
 
     try:
         user_id, conversation_id, recall_repo = resolve_semantic_recall_context(
@@ -96,14 +96,14 @@ async def search_query_experiences(
     except SemanticRecallsNotFoundError as exc:
         return {
             "status": "error",
-            "message": "semantic recalls not found",
+            "message": "未找到指定的语义召回记录",
             "recall_ids": exc.recall_ids,
         }
     except Exception:  # noqa: BLE001
-        logger.exception("Query experience retrieval failed")
+        logger.exception("查询经验检索失败")
         return {
             "status": "error",
-            "message": "Query experiences are temporarily unavailable",
+            "message": "查询经验检索暂不可用",
         }
     return {
         "status": "success",

@@ -71,15 +71,15 @@ class AgentSessionService:
         result_observer: SpecialistResultObserver | None = None,
     ) -> None:
         if max_parallel_sessions <= 0:
-            raise ValueError("max_parallel_sessions must be positive")
+            raise ValueError("max_parallel_sessions 必须为正整数")
         if max_delegations_per_run <= 0:
-            raise ValueError("max_delegations_per_run must be positive")
+            raise ValueError("max_delegations_per_run 必须为正整数")
         if max_repair_rounds < 0 or max_repair_depth < 0:
-            raise ValueError("repair limits must not be negative")
+            raise ValueError("修补限制参数不能为负数")
         if max_session_resumes <= 0:
-            raise ValueError("max_session_resumes must be positive")
+            raise ValueError("max_session_resumes 必须为正整数")
         if session_lock_timeout <= 0:
-            raise ValueError("session_lock_timeout must be positive")
+            raise ValueError("session_lock_timeout 必须为正数")
 
         self._registry = registry
         self._user_id = user_id
@@ -505,15 +505,15 @@ class AgentSessionService:
             except TimeoutError:
                 return self._failed_result(
                     request,
-                    "Specialist session timed out",
-                    f"timeout is {self._session_lock_timeout} seconds",
+                    "专家智能体会话超时",
+                    f"超时时间为 {self._session_lock_timeout} 秒",
                 )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
                 return self._failed_result(
                     request,
-                    "Specialist session failed",
+                    "专家智能体会话执行失败",
                     f"{type(exc).__name__}: {exc}",
                 )
 
@@ -522,8 +522,7 @@ class AgentSessionService:
                     await self._result_observer(session_key, result)
                 except Exception:  # noqa: BLE001
                     logger.exception(
-                        "Specialist result observer failed: "
-                        f"checkpoint_ns={session_key.checkpoint_ns}"
+                        f"专家执行结果观察器处理失败: checkpoint_ns={session_key.checkpoint_ns}"
                     )
 
             with self._budget_lock:
@@ -539,7 +538,7 @@ class AgentSessionService:
         except (RuntimeError, TypeError) as exc:
             return self._failed_result(
                 request,
-                "Delegation rejected by planner run state",
+                "规划器运行状态拒绝了委派请求",
                 str(exc),
             )
 

@@ -90,57 +90,58 @@ class QueryExperienceService:
         )
         tables = {item.name for item in details.validation.tables}
         columns = {(item.table, item.name) for item in details.validation.columns}
-        table_versions, column_versions = await self._repo.metadata_versions(
-            tables,
-            columns,
-        )
-        experience_id = uuid4()
-        experience = QueryExperience(
-            id=experience_id,
-            owner_user_id=context.user_id,
-            role_name=context.role_name,
-            fingerprint=fingerprint,
-            dialect=details.dialect,
-            purposes=[context.purpose],
-            representative_sql=details.normalized_sql,
-            sql_template=sql_template,
-        )
-        assets = self._build_assets(
-            experience_id,
-            details.validation,
-            table_versions,
-            column_versions,
-        )
-        execution = QueryExecution(
-            user_id=context.user_id,
-            role_name=context.role_name,
-            conversation_id=details.session_key.conversation_id,
-            analysis_id=details.session_key.analysis_id,
-            session_id=details.session_key.session_id,
-            tool_call_id=context.tool_call_id,
-            purpose=context.purpose,
-            raw_sql=details.raw_sql,
-            normalized_sql=details.normalized_sql,
-            sql_template=sql_template,
-            fingerprint=fingerprint,
-            dialect=details.dialect,
-            status="succeeded",
-            validation=details.validation.model_dump(mode="json"),
-            plan_estimate=asdict(details.plan_estimate),
-            result_summary={
-                "path": details.result.path,
-                "schema": [
-                    item.model_dump(mode="json") for item in details.result.schema
-                ],
-                "row_count": details.result.row_count,
-                "time_range": {
-                    key: value.model_dump(mode="json")
-                    for key, value in details.result.time_range.items()
+        async with self._repo.session.begin():
+            table_versions, column_versions = await self._repo.metadata_versions(
+                tables,
+                columns,
+            )
+            experience_id = uuid4()
+            experience = QueryExperience(
+                id=experience_id,
+                owner_user_id=context.user_id,
+                role_name=context.role_name,
+                fingerprint=fingerprint,
+                dialect=details.dialect,
+                purposes=[context.purpose],
+                representative_sql=details.normalized_sql,
+                sql_template=sql_template,
+            )
+            assets = self._build_assets(
+                experience_id,
+                details.validation,
+                table_versions,
+                column_versions,
+            )
+            execution = QueryExecution(
+                user_id=context.user_id,
+                role_name=context.role_name,
+                conversation_id=details.session_key.conversation_id,
+                analysis_id=details.session_key.analysis_id,
+                session_id=details.session_key.session_id,
+                tool_call_id=context.tool_call_id,
+                purpose=context.purpose,
+                raw_sql=details.raw_sql,
+                normalized_sql=details.normalized_sql,
+                sql_template=sql_template,
+                fingerprint=fingerprint,
+                dialect=details.dialect,
+                status="succeeded",
+                validation=details.validation.model_dump(mode="json"),
+                plan_estimate=asdict(details.plan_estimate),
+                result_summary={
+                    "path": details.result.path,
+                    "schema": [
+                        item.model_dump(mode="json") for item in details.result.schema
+                    ],
+                    "row_count": details.result.row_count,
+                    "time_range": {
+                        key: value.model_dump(mode="json")
+                        for key, value in details.result.time_range.items()
+                    },
                 },
-            },
-            artifact_path=details.result.path,
-        )
-        stored = await self._repo.record_success(execution, experience, assets)
+                artifact_path=details.result.path,
+            )
+            stored = await self._repo.record_success(execution, experience, assets)
         await self._sync_index_safely(stored)
         return stored.id
 
@@ -174,7 +175,8 @@ class QueryExperienceService:
                 validation.model_dump(mode="json") if validation is not None else None
             ),
         )
-        await self._repo.record_failure(execution)
+        async with self._repo.session.begin():
+            await self._repo.record_failure(execution)
 
     async def promote_by_artifacts(
         self,
@@ -186,13 +188,14 @@ class QueryExperienceService:
         artifact_paths: set[str],
     ) -> list[UUID]:
         """把最终 Explorer 结果直接采用的查询提升为正式经验"""
-        experiences = await self._repo.promote_by_artifacts(
-            user_id,
-            conversation_id,
-            analysis_id,
-            session_id,
-            artifact_paths,
-        )
+        async with self._repo.session.begin():
+            experiences = await self._repo.promote_by_artifacts(
+                user_id,
+                conversation_id,
+                analysis_id,
+                session_id,
+                artifact_paths,
+            )
         for experience in experiences:
             await self._sync_index_safely(experience)
         return [experience.id for experience in experiences]
@@ -221,7 +224,8 @@ class QueryExperienceService:
             )
             for table_name, column_name in column_keys
         )
-        revisions = await self._repo.disable_by_resource_keys(resource_keys)
+        async with self._repo.session.begin():
+            revisions = await self._repo.disable_by_resource_keys(resource_keys)
         await self._delete_indexes_safely(revisions)
         return list(revisions)
 
@@ -237,13 +241,13 @@ class QueryExperienceService:
         limit: int,
     ) -> list[QueryExperienceSearchResult]:
         """融合语义、资产、质量和新鲜度检索查询经验"""
-        await self._delete_indexes_safely(
-            await self._repo.list_pending_index_deletions(
+        async with self._repo.session.begin():
+            pending_deletions = await self._repo.list_pending_index_deletions(
                 user_id,
                 role_name,
                 limit=_SEARCH_POOL_SIZE,
             )
-        )
+        await self._delete_indexes_safely(pending_deletions)
         semantic_ranks = await self._semantic_ranks(
             query,
             user_id=user_id,
@@ -266,52 +270,53 @@ class QueryExperienceService:
             )
             for table_name, column_name in column_keys
         )
-        semantic_ids = list(semantic_ranks)
-        candidates = [
-            *await self._repo.get_many(
-                user_id,
-                semantic_ids,
-                role_name=role_name,
-            ),
-            *await self._repo.find_by_assets(
-                user_id,
-                role_name,
-                resource_keys,
-                limit=_SEARCH_POOL_SIZE,
-            ),
-        ]
-        if len(candidates) < limit:
-            candidates.extend(
-                await self._repo.list_recent(
+        async with self._repo.session.begin():
+            semantic_ids = list(semantic_ranks)
+            candidates = [
+                *await self._repo.get_many(
+                    user_id,
+                    semantic_ids,
+                    role_name=role_name,
+                ),
+                *await self._repo.find_by_assets(
                     user_id,
                     role_name,
+                    resource_keys,
                     limit=_SEARCH_POOL_SIZE,
+                ),
+            ]
+            if len(candidates) < limit:
+                candidates.extend(
+                    await self._repo.list_recent(
+                        user_id,
+                        role_name,
+                        limit=_SEARCH_POOL_SIZE,
+                    )
                 )
-            )
-        distinct = {item.id: item for item in candidates}
-        experiences = list(distinct.values())
-        current_versions = await self._repo.current_asset_versions(experiences)
-        invalid_revisions = {
-            experience.id: experience.revision
-            for experience in experiences
-            if experience.quality == "disabled"
-        }
-        stale_ids = {
-            experience.id
-            for experience in experiences
-            if experience.quality != "disabled"
-            and any(
-                current_versions.get(asset.resource_key) != asset.meta_version
-                for asset in experience.assets
-            )
-        }
-        invalid_revisions.update(await self._repo.disable(stale_ids))
+            distinct = {item.id: item for item in candidates}
+            experiences = list(distinct.values())
+            current_versions = await self._repo.current_asset_versions(experiences)
+            invalid_revisions = {
+                experience.id: experience.revision
+                for experience in experiences
+                if experience.quality == "disabled"
+            }
+            stale_ids = {
+                experience.id
+                for experience in experiences
+                if experience.quality != "disabled"
+                and any(
+                    current_versions.get(asset.resource_key) != asset.meta_version
+                    for asset in experience.assets
+                )
+            }
+            invalid_revisions.update(await self._repo.disable(stale_ids))
+            experiences = [
+                experience
+                for experience in experiences
+                if experience.id not in invalid_revisions
+            ]
         await self._delete_indexes_safely(invalid_revisions)
-        experiences = [
-            experience
-            for experience in experiences
-            if experience.id not in invalid_revisions
-        ]
         authorization_filter = MetadataAuthorizationFilter(
             policy,
             self._data_source,
@@ -385,7 +390,7 @@ class QueryExperienceService:
             text = self._experience_text(experience)
             embeddings = await self._embedding_client.aembed_documents([text])
             if len(embeddings) != 1:
-                raise ValueError("query experience embedding count mismatch")
+                raise ValueError("查询经验向量生成数量不匹配")
             await self._index_repo.index(
                 experience.id,
                 owner_user_id=experience.owner_user_id,
@@ -394,10 +399,13 @@ class QueryExperienceService:
                 text=text,
                 embedding=embeddings[0],
             )
-            await self._repo.mark_indexes_synced({experience.id: experience.revision})
+            async with self._repo.session.begin():
+                await self._repo.mark_indexes_synced(
+                    {experience.id: experience.revision}
+                )
         except Exception:  # noqa: BLE001
             logger.exception(
-                f"Query experience indexing failed: experience_id={experience.id}"
+                f"查询经验构建索引失败: experience_id={experience.id}"
             )
 
     async def _delete_indexes_safely(self, revisions: dict[UUID, int]) -> None:
@@ -405,10 +413,11 @@ class QueryExperienceService:
             return
         try:
             await self._index_repo.delete_many(list(revisions))
-            await self._repo.mark_indexes_synced(revisions)
+            async with self._repo.session.begin():
+                await self._repo.mark_indexes_synced(revisions)
         except Exception:  # noqa: BLE001
             logger.exception(
-                "Query experience index deletion failed: "
+                "删除查询经验索引失败: "
                 f"experience_ids={','.join(str(item) for item in revisions)}"
             )
 
@@ -422,7 +431,7 @@ class QueryExperienceService:
         try:
             embeddings = await self._embedding_client.aembed_documents([query])
             if len(embeddings) != 1:
-                raise ValueError("query experience search embedding count mismatch")
+                raise ValueError("查询经验检索向量生成数量不匹配")
             text_hits, vector_hits = await asyncio.gather(
                 self._index_repo.search_text(
                     query,

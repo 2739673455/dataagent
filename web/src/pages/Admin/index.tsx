@@ -303,11 +303,11 @@ export default function AdminPage() {
         </header>
 
         {/* 模块 Tab 切换导航 */}
-        <div className="flex border-b border-[#d4d4ce] bg-[#ffffff] rounded p-1.5 gap-2 text-sm shadow-xs">
+        <div className="flex gap-2 overflow-x-auto rounded border-b border-[#d4d4ce] bg-[#ffffff] p-1.5 text-sm shadow-xs">
           <button
             type="button"
             onClick={() => setActiveTab("metadata")}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded text-sm font-medium transition-colors ${
+            className={`flex shrink-0 items-center gap-1.5 rounded px-4 py-2 text-sm font-medium transition-colors ${
               activeTab === "metadata"
                 ? "bg-[#1e2024] text-[#ffffff]"
                 : "text-[#52525b] hover:bg-[#ebebe6] hover:text-[#18181b]"
@@ -319,7 +319,7 @@ export default function AdminPage() {
           <button
             type="button"
             onClick={() => setActiveTab("users")}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded text-sm font-medium transition-colors ${
+            className={`flex shrink-0 items-center gap-1.5 rounded px-4 py-2 text-sm font-medium transition-colors ${
               activeTab === "users"
                 ? "bg-[#1e2024] text-[#ffffff]"
                 : "text-[#52525b] hover:bg-[#ebebe6] hover:text-[#18181b]"
@@ -331,7 +331,7 @@ export default function AdminPage() {
           <button
             type="button"
             onClick={() => setActiveTab("roles")}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded text-sm font-medium transition-colors ${
+            className={`flex shrink-0 items-center gap-1.5 rounded px-4 py-2 text-sm font-medium transition-colors ${
               activeTab === "roles"
                 ? "bg-[#1e2024] text-[#ffffff]"
                 : "text-[#52525b] hover:bg-[#ebebe6] hover:text-[#18181b]"
@@ -474,7 +474,7 @@ export default function AdminPage() {
               </div>
 
               {/* 角色列表表格 */}
-              <div className="mt-4 overflow-x-auto rounded border border-[#d4d4ce]">
+              <div className="mt-4 overflow-x-auto overflow-y-hidden rounded border border-[#d4d4ce]">
                 <table className="w-full min-w-[760px] text-left text-sm font-mono">
                   <thead className="border-b border-[#d4d4ce] bg-[#f4f4f0] text-[#52525b]">
                     <tr>
@@ -903,7 +903,7 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              <div className="mt-4 overflow-x-auto rounded border border-[#d4d4ce]">
+              <div className="mt-4 overflow-x-auto overflow-y-hidden rounded border border-[#d4d4ce]">
                 <table className="w-full min-w-[760px] text-left text-sm font-mono">
                   <thead className="border-b border-[#d4d4ce] bg-[#f4f4f0] text-[#52525b]">
                     <tr>

@@ -56,13 +56,13 @@ class UserDeletionService:
         """禁用目标用户并立即尝试执行持久化注销任务"""
         if user_id == operator_id:
             raise auth_error.InvalidUserMutationError(
-                detail="Cannot delete current operating administrator"
+                detail="不能注销当前操作的管理员账号"
             )
 
         now = datetime.now(UTC)
         async with self._auth_postgres.session() as session:
             repo = AuthPGRepo(session)
-            async with repo.transaction():
+            async with session.begin():
                 await repo.lock_security_mutation()
                 user = await repo.get_user_by_id_for_update(user_id)
                 task = await repo.get_user_deletion_task(user_id)
@@ -85,7 +85,7 @@ class UserDeletionService:
             await self._process(user_id)
         except Exception as exc:
             raise auth_error.UserDeletionPendingError(
-                detail="User cleanup is queued for automatic retry"
+                detail="用户注销清理已加入自动重试队列"
             ) from exc
 
     async def start(self) -> None:
@@ -159,11 +159,11 @@ class UserDeletionService:
         now = datetime.now(UTC)
         async with self._auth_postgres.session() as session:
             repo = AuthPGRepo(session)
-            async with repo.transaction():
+            async with session.begin():
                 await repo.lock_security_mutation()
                 task = await repo.get_user_deletion_task(user_id)
                 if task is None:
-                    raise RuntimeError("user deletion task is missing")
+                    raise RuntimeError("用户注销任务记录不存在")
                 user = await repo.get_user_by_id_for_update(user_id)
                 if user is not None:
                     await repo.delete_user(user)
@@ -176,7 +176,7 @@ class UserDeletionService:
         )
         async with self._auth_postgres.session() as session:
             repo = AuthPGRepo(session)
-            async with repo.transaction():
+            async with session.begin():
                 task = await repo.get_user_deletion_task(user_id)
                 if task is not None and task.status != "completed":
                     await repo.record_user_deletion_failure(
@@ -201,12 +201,12 @@ class UserDeletionService:
                         await self._process(user_id)
                     except Exception:  # noqa: BLE001
                         logger.exception(
-                            f"user_id={user_id}: user deletion retry failed"
+                            f"用户注销重试执行失败: user_id={user_id}"
                         )
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
-                logger.exception("user deletion retry batch failed")
+                logger.exception("批量重试用户注销任务失败")
 
             self._wake_event.clear()
             with contextlib.suppress(TimeoutError):

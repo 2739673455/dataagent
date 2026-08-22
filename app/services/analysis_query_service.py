@@ -232,7 +232,7 @@ class AnalysisQueryService:
             try:
                 await self._success_observer(details)
             except Exception:  # noqa: BLE001
-                logger.exception("Successful query observer failed")
+                logger.exception("成功查询观察器执行失败")
         return details.result
 
     async def _execute_with_deadline(

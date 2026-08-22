@@ -3,22 +3,39 @@
 import asyncio
 import unittest
 from datetime import UTC, datetime, timedelta
+from typing import Self
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.conf.app_config import AuthConfig
 from app.errors import auth_error
 from app.models.auth import RefreshToken, User
 from app.repositories.auth_pg_repo import AuthPGRepo
-from app.services.auth_service import Argon2PasswordManager, AuthService, JWTCodec
+from app.services.auth_service import (
+    AccessTokenAuthenticator,
+    Argon2PasswordManager,
+    AuthService,
+    JWTCodec,
+)
 
 DEFAULT_ROLE = "dataagent_default"
 
 
-class AsyncTransactionStub:
-    """测试用异步事务上下文"""
+class AsyncSessionStub:
+    """测试用异步会话"""
 
-    async def __aenter__(self) -> None:
-        return None
+    def __init__(self) -> None:
+        self.active = False
+        self.entries = 0
+
+    def begin(self) -> Self:
+        return self
+
+    async def __aenter__(self) -> Self:
+        if self.active:
+            raise RuntimeError("测试事务不支持嵌套")
+        self.active = True
+        self.entries += 1
+        return self
 
     async def __aexit__(
         self,
@@ -26,7 +43,7 @@ class AsyncTransactionStub:
         exc: BaseException | None,
         traceback: object,
     ) -> None:
-        return None
+        self.active = False
 
 
 def build_config() -> AuthConfig:
@@ -65,7 +82,6 @@ def build_user(
 def build_repo() -> MagicMock:
     """构造认证存储测试替身"""
     repo = MagicMock(spec=AuthPGRepo)
-    repo.transaction.return_value = AsyncTransactionStub()
     repo.lock_security_mutation = AsyncMock()
     repo.get_user_by_username = AsyncMock()
     repo.get_user_by_email = AsyncMock()
@@ -152,6 +168,8 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self) -> None:
         self.repo = build_repo()
+        self.session = AsyncSessionStub()
+        self.repo.session = self.session
         self.password_manager = MagicMock()
         self.password_manager.hash = AsyncMock(return_value="hashed-password")
         self.password_manager.verify = AsyncMock(return_value=True)
@@ -229,7 +247,12 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_change_password_updates_hash_and_revokes_refresh_tokens(self) -> None:
         user = build_user()
-        self.repo.get_user_by_id_for_update.return_value = user
+
+        async def load_user_in_transaction(_: int) -> User:
+            self.assertTrue(self.session.active)
+            return user
+
+        self.repo.get_user_by_id_for_update.side_effect = load_user_in_transaction
         self.password_manager.verify.return_value = True
         self.password_manager.hash.return_value = "new-hash"
 
@@ -244,6 +267,20 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
             user.id,
             self.now,
         )
+
+    async def test_authenticate_access_token_returns_immutable_snapshot(self) -> None:
+        user = build_user()
+        self.repo.get_user_by_id.return_value = user
+        token, _ = JWTCodec(build_config()).issue_access_token(user, self.now)
+
+        principal = await AccessTokenAuthenticator(
+            self.repo,
+            build_config(),
+        ).authenticate(token)
+
+        self.assertEqual(principal.id, user.id)
+        with self.assertRaises(AttributeError):
+            principal.is_admin = True  # pyright: ignore[reportAttributeAccessIssue]
 
     async def test_change_password_rejects_wrong_current_password(self) -> None:
         user = build_user()
@@ -268,4 +305,7 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
         self.repo.get_user_by_id.return_value = user
 
         with self.assertRaises(auth_error.InvalidTokenError):
-            await self.service.authenticate_access_token(token_pair.access_token)
+            await AccessTokenAuthenticator(
+                self.repo,
+                build_config(),
+            ).authenticate(token_pair.access_token)

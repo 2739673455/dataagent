@@ -372,7 +372,7 @@ class _FairCapacityLimiter:
                 with self._condition:
                     if self._closed:
                         raise SandboxCapacityClosedError(
-                            "Docker sandbox capacity limiter is closed"
+                            "Docker 沙箱容量限制器已关闭"
                         )
                     if (
                         waiter is not None
@@ -381,7 +381,7 @@ class _FairCapacityLimiter:
                         and cancel_event.is_set()
                     ):
                         raise SandboxCapacityCancelledError(
-                            "Docker sandbox capacity wait was cancelled"
+                            "Docker 沙箱容量排队等待已取消"
                         )
                     if user_id in self._running_users:
                         return False
@@ -392,7 +392,7 @@ class _FairCapacityLimiter:
                             return True
                         if len(self._waiters) >= self._max_waiting:
                             raise SandboxCapacityQueueFullError(
-                                "Docker sandbox capacity queue is full"
+                                "Docker 沙箱容量等待队列已满"
                             )
                         waiter = _CapacityWaiter(
                             user_id=user_id,
@@ -404,7 +404,7 @@ class _FairCapacityLimiter:
                     remaining = waiter.deadline - time.monotonic()
                     if remaining <= 0:
                         raise SandboxCapacityTimeoutError(
-                            "Timed out waiting for Docker sandbox capacity"
+                            "等待 Docker 沙箱运行容量超时"
                         )
                     is_head = bool(self._waiters and self._waiters[0] is waiter)
                     occupied = len(self._running_users) + len(self._reserved_users)
@@ -568,7 +568,7 @@ class _LifecycleGuard:
             while self._maintenance:
                 self._condition.wait()
             if self._deleted:
-                raise SandboxDeletedError("sandbox resource has been deleted")
+                raise SandboxDeletedError("沙箱资源已被删除")
             self._active_operations += 1
         self._local.operation_depth = 1
         try:
@@ -587,12 +587,12 @@ class _LifecycleGuard:
     ) -> Generator[None, None, None]:
         """独占资源并等待现有操作完成"""
         if getattr(self._local, "operation_depth", 0):
-            raise RuntimeError("maintenance cannot start inside an operation")
+            raise RuntimeError("无法在活跃操作期间启动维护流程")
         with self._condition:
             while self._maintenance:
                 self._condition.wait()
             if self._deleted and not allow_deleted:
-                raise SandboxDeletedError("sandbox resource has been deleted")
+                raise SandboxDeletedError("沙箱资源已被删除")
             self._maintenance = True
             while self._active_operations:
                 self._condition.wait()
@@ -730,7 +730,7 @@ class DockerSandboxBackend(BaseSandbox):
         """获取当前操作持有的容器实例"""
         container = getattr(self._operation_local, "container", None)
         if container is None:
-            raise RuntimeError("Docker container is only available during an operation")
+            raise RuntimeError("Docker 容器仅在操作期间可用")
         return container
 
     @property
@@ -871,7 +871,7 @@ class DockerSandboxBackend(BaseSandbox):
 
         docker_client = self._container.client
         if docker_client is None:
-            raise RuntimeError("Docker container client is unavailable")
+            raise RuntimeError("Docker 容器客户端不可用")
         api_client = docker_client.api
         created = api_client.exec_create(
             self._container.id,
@@ -945,11 +945,11 @@ class DockerSandboxBackend(BaseSandbox):
         )
         if result.exit_code != 0:
             detail = self._hide_workspace(output.strip())
-            raise OSError(detail or "failed to inspect workspace size")
+            raise OSError(detail or "查询工作区大小失败")
         try:
             return int(output.split(maxsplit=1)[0])
         except ValueError as exc:
-            raise OSError("invalid workspace size response") from exc
+            raise OSError("工作区大小响应格式无效") from exc
 
     def _validate_workspace_capacity_unlocked(
         self,
@@ -962,7 +962,7 @@ class DockerSandboxBackend(BaseSandbox):
         )
         if projected_size > self._max_workspace_bytes:
             raise SandboxStorageLimitError(
-                f"workspace limit exceeded: {projected_size} > {self._max_workspace_bytes}"
+                f"工作区存储空间超出限制: {projected_size} > {self._max_workspace_bytes}"
             )
 
     def execute(
@@ -1273,7 +1273,7 @@ class DockerSandboxBackend(BaseSandbox):
                     archive.addfile(info, content)
                 archive_buffer.seek(0)
                 if not self._container.put_archive(self._staging_dir, archive_buffer):
-                    raise OSError(f"Failed to stage uploaded file: {path}")
+                    raise OSError(f"暂存上传文件失败: {path}")
 
             payload = base64.b64encode(
                 json.dumps(
@@ -1301,7 +1301,7 @@ class DockerSandboxBackend(BaseSandbox):
                     if isinstance(raw_output, bytes)
                     else str(raw_output)
                 ).strip()
-                raise OSError(f"Failed to commit uploaded file: {detail}")
+                raise OSError(f"提交上传文件失败: {detail}")
         finally:
             self._container.exec_run(
                 ["rm", "-f", "--", staging_path],
@@ -1314,7 +1314,7 @@ class DockerSandboxBackend(BaseSandbox):
         """以会话 UID 限长读取文件，避免 Docker 守护进程绕过权限"""
         docker_client = self._container.client
         if docker_client is None:
-            raise RuntimeError("Docker container client is unavailable")
+            raise RuntimeError("Docker 容器客户端不可用")
         api_client = docker_client.api
         created = api_client.exec_create(
             self._container.id,
@@ -1365,11 +1365,11 @@ class DockerSandboxBackend(BaseSandbox):
             f"if [ -f {shlex.quote(path)} ]; then stat -c %s -- {shlex.quote(path)}; else printf 0; fi"
         )
         if result.exit_code != 0:
-            raise OSError(result.output.strip() or f"Failed to inspect file: {path}")
+            raise OSError(result.output.strip() or f"读取文件元数据失败: {path}")
         try:
             return int(result.output.strip())
         except ValueError as exc:
-            raise OSError(f"Invalid file size response: {path}") from exc
+            raise OSError(f"文件大小响应格式无效: {path}") from exc
 
     def upload_fileobj(self, path: str, content: BinaryIO) -> FileUploadResponse:
         """上传文件对象到当前会话"""
@@ -1539,7 +1539,7 @@ class DockerSandboxManager:
     def _get_client(self) -> docker.DockerClient:
         """获取已初始化的 Docker 客户端"""
         if self._client is None:
-            raise RuntimeError("Docker sandbox manager is not initialized")
+            raise RuntimeError("Docker 沙箱管理器尚未初始化")
         return self._client
 
     def _init_sync(self) -> None:
@@ -1551,7 +1551,7 @@ class DockerSandboxManager:
             if not build_context.is_absolute():
                 build_context = ROOT_DIR / build_context
             if self._config.rebuild_image:
-                logger.info(f"Build Docker sandbox image: image={self._config.image}")
+                logger.info(f"构建 Docker 沙箱镜像: image={self._config.image}")
                 build_args = {
                     "NODE_VERSION": self._config.node_version,
                     "NODE_DOWNLOAD_BASE": self._config.node_download_base,
@@ -1569,11 +1569,10 @@ class DockerSandboxManager:
                 image = client.images.get(self._config.image)
             if self._config.workspace_quota_mode == "application":
                 logger.warning(
-                    "Docker sandbox uses application-enforced workspace quotas; "
-                    "host disk usage can temporarily exceed the configured limit"
+                    "Docker 沙箱使用应用层强制的工作区配额；宿主机磁盘占用可能临时超过设定限制"
                 )
             if image.id is None:
-                raise RuntimeError("Docker sandbox image has no immutable ID")
+                raise RuntimeError("Docker 沙箱镜像缺少不可变 ID")
             self._container_spec = self._container_spec_digest(image.id)
         except Exception:
             client.close()
@@ -1741,7 +1740,7 @@ class DockerSandboxManager:
         if any(
             actual_labels.get(key) != value for key, value in expected_labels.items()
         ):
-            raise RuntimeError(f"Docker volume name is already in use: {volume_name}")
+            raise RuntimeError(f"Docker 数据卷名称已被占用: {volume_name}")
         actual_driver = volume.attrs.get("Driver")
         actual_options = volume.attrs.get("Options") or {}
         expected_options = self._volume_driver_options(user_id)
@@ -1750,7 +1749,7 @@ class DockerSandboxManager:
             or actual_options != expected_options
         ):
             raise RuntimeError(
-                f"Docker volume storage policy changed and requires migration: {volume_name}"
+                f"Docker 数据卷存储策略发生变更，需要迁移: {volume_name}"
             )
         return volume
 
@@ -1759,7 +1758,7 @@ class DockerSandboxManager:
         client = self._get_client()
         volume = self._get_or_create_volume(user_id)
         if self._container_spec is None:
-            raise RuntimeError("Docker sandbox container spec is unavailable")
+            raise RuntimeError("Docker 沙箱容器配置不可用")
 
         container = client.containers.create(
             self._config.image,
@@ -1771,19 +1770,19 @@ class DockerSandboxManager:
             },
             **self._runtime_container_spec(),
         )
-        logger.info(f"Create stopped user Docker sandbox: user_id={user_id}")
+        logger.info(f"创建已停止的用户 Docker 沙箱: user_id={user_id}")
         return container
 
     def _get_or_create_storage_container_sync(self, user_id: int) -> Container:
         """获取或创建容器，但不启动容器"""
         if user_id < 0:
-            raise ValueError("user_id must be non-negative")
+            raise ValueError("user_id 不能为负数")
         name = self._container_name(user_id)
         container = self._get_existing_container_sync(user_id)
         if container is not None:
             if container.labels.get(_CONTAINER_SPEC_LABEL) == self._container_spec:
                 return container
-            logger.info(f"Recreate outdated Docker sandbox: user_id={user_id}")
+            logger.info(f"重建过期的 Docker 沙箱: user_id={user_id}")
             container.remove(force=True)
             self._mark_user_not_running(user_id)
         try:
@@ -1837,7 +1836,7 @@ class DockerSandboxManager:
                 if container is not None and container.status == "running":
                     container.stop(timeout=10)
                     logger.info(
-                        f"Stop LRU Docker sandbox for capacity: user_id={user_id}"
+                        f"因容量限制停止最久未使用的 Docker 沙箱: user_id={user_id}"
                     )
                 self._mark_user_not_running(user_id)
                 return True
@@ -1869,12 +1868,12 @@ class DockerSandboxManager:
             try:
                 if cancel_event is not None and cancel_event.is_set():
                     raise SandboxCapacityCancelledError(
-                        "Docker sandbox start was cancelled"
+                        "Docker 沙箱启动已取消"
                     )
                 if container.status != "running":
                     container.start()
                     container.reload()
-                    logger.info(f"Start Docker sandbox: user_id={user_id}")
+                    logger.info(f"启动 Docker 沙箱: user_id={user_id}")
             except Exception:
                 if reserved:
                     self._complete_running_reservation(user_id, running=False)
@@ -1919,7 +1918,7 @@ class DockerSandboxManager:
             if user_id not in overflow_user_ids:
                 continue
             container.stop(timeout=10)
-            logger.info(f"Stop excess Docker sandbox during startup: user_id={user_id}")
+            logger.info(f"启动时停止超出上限的 Docker 沙箱: user_id={user_id}")
 
     @contextmanager
     def _open_archive_sync(
@@ -1965,14 +1964,14 @@ class DockerSandboxManager:
                 raise FileNotFoundError(path)
             if member.size > max_bytes:
                 raise SandboxFileTooLargeError(
-                    f"file too large: {member.size} > {max_bytes}"
+                    f"文件大小超出限制: {member.size} > {max_bytes}"
                 )
             extracted = archive.extractfile(member)
             if extracted is None:
                 raise FileNotFoundError(path)
             content = extracted.read(max_bytes + 1)
             if len(content) > max_bytes:
-                raise SandboxFileTooLargeError(f"file too large: > {max_bytes}")
+                raise SandboxFileTooLargeError(f"文件大小超出限制: > {max_bytes}")
             return content, member
 
     @staticmethod
@@ -1998,14 +1997,14 @@ class DockerSandboxManager:
                 16 * 1024,
             )
             if member.uid != 0:
-                raise RuntimeError("Sandbox activity file has an invalid owner")
+                raise RuntimeError("沙箱活动记录文件拥有者无效")
             payload = json.loads(content)
             if payload.get("version") != _ACTIVITY_FILE_VERSION:
-                raise RuntimeError("Unsupported sandbox activity file version")
+                raise RuntimeError("不支持的沙箱活动记录文件版本")
             activity_at = float(payload["last_activity_at"])
             if 0 < activity_at <= now + 300:
                 return activity_at
-            raise RuntimeError("Sandbox activity file has an invalid timestamp")
+            raise RuntimeError("沙箱活动记录文件包含无效的时间戳")
         except (NotFound, FileNotFoundError):
             pass
 
@@ -2157,11 +2156,11 @@ class DockerSandboxManager:
         """校验 conversation 和 Session UID 全局唯一"""
         values = [*registry.conversations.values(), *registry.sessions.values()]
         if len(values) != len(set(values)):
-            raise RuntimeError("Sandbox UID registry contains duplicate UIDs")
+            raise RuntimeError("沙箱 UID 注册表包含重复的 UID")
         if any(
             uid < _MIN_CONVERSATION_UID or uid > _MAX_CONVERSATION_UID for uid in values
         ):
-            raise RuntimeError("Sandbox UID registry contains an invalid UID")
+            raise RuntimeError("沙箱 UID 注册表包含无效的 UID")
 
     def _load_uid_registry_sync(
         self,
@@ -2176,18 +2175,18 @@ class DockerSandboxManager:
                 4 * 1024 * 1024,
             )
             if member.uid != 0:
-                raise RuntimeError("Sandbox UID registry has an invalid owner")
+                raise RuntimeError("沙箱 UID 注册表文件拥有者无效")
             payload = json.loads(content)
             version = payload.get("version")
             if version not in {1, _UID_REGISTRY_VERSION}:
-                raise RuntimeError("Unsupported sandbox UID registry version")
+                raise RuntimeError("不支持的沙箱 UID 注册表版本")
             raw_conversations = payload.get("conversations")
             raw_sessions = payload.get("sessions", {}) if version == 2 else {}
             if not isinstance(raw_conversations, dict) or not isinstance(
                 raw_sessions,
                 dict,
             ):
-                raise TypeError("Invalid sandbox UID registry")
+                raise TypeError("沙箱 UID 注册表格式无效")
             registry = _SandboxUidRegistry(
                 conversations={
                     str(UUID(key)): int(value)
@@ -3073,8 +3072,7 @@ class DockerSandboxManager:
                 failures = 0
         if failures >= self._config.cleanup_failure_alert_threshold:
             logger.error(
-                "Docker sandbox cleanup repeatedly failed: "
-                f"consecutive_failures={failures}, last_error={errors[-1]}"
+                f"Docker 沙箱清理连续失败: consecutive_failures={failures}, last_error={errors[-1]}"
             )
 
     async def _run_cleanup_cycle(self) -> None:
@@ -3089,7 +3087,7 @@ class DockerSandboxManager:
             raise
         except Exception as exc:  # noqa: BLE001
             errors.append(f"resource discovery failed: {exc}")
-            logger.exception("Discover Docker sandbox resources failed")
+            logger.exception("发现 Docker 沙箱资源失败")
             self._record_cleanup_result(started_at, errors)
             return
 
@@ -3113,7 +3111,7 @@ class DockerSandboxManager:
                 raise
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"user_id={user_id}: {exc}")
-                logger.exception(f"Cleanup Docker sandbox failed: user_id={user_id}")
+                logger.exception(f"清理 Docker 沙箱失败: user_id={user_id}")
         self._record_cleanup_result(started_at, errors)
 
     async def _cleanup_idle_containers(self) -> None:
@@ -3127,7 +3125,7 @@ class DockerSandboxManager:
             except Exception as exc:  # noqa: BLE001
                 started_at = time.time()
                 error = f"cleanup loop failed: {exc}"
-                logger.exception("Docker sandbox cleanup loop failed")
+                logger.exception("Docker 沙箱清理循环异常")
                 self._record_cleanup_result(started_at, [error])
 
     def _managed_user_ids_sync(self) -> set[int]:
@@ -3143,7 +3141,7 @@ class DockerSandboxManager:
                 user_ids.add(int(raw_user_id))
             except (TypeError, ValueError):
                 logger.warning(
-                    f"Ignore Docker sandbox with invalid user label: container={container.name}"
+                    f"忽略包含无效用户标签的 Docker 沙箱: container={container.name}"
                 )
         return user_ids
 
@@ -3172,14 +3170,13 @@ class DockerSandboxManager:
                         self._last_activity.pop(user_id, None)
                         self._last_persisted_activity.pop(user_id, None)
                     logger.info(
-                        "Remove idle Docker sandbox and preserve volume: "
-                        f"user_id={user_id}"
+                        f"删除空闲 Docker 沙箱并保留持久化数据卷: user_id={user_id}"
                     )
                     return
                 if container.status == "running":
                     container.stop(timeout=10)
                     self._mark_user_not_running(user_id)
-                    logger.info(f"Stop idle Docker sandbox: user_id={user_id}")
+                    logger.info(f"停止空闲 Docker 沙箱: user_id={user_id}")
 
     def _finalize_containers_sync(self) -> None:
         """持久化活动时间并按配置停止运行中容器"""
@@ -3197,7 +3194,7 @@ class DockerSandboxManager:
                 except Exception:  # noqa: BLE001
                     user_id = None
                     logger.exception(
-                        f"Persist Docker sandbox activity failed: container={container.name}"
+                        f"持久化 Docker 沙箱活跃时间失败: container={container.name}"
                     )
                 container.reload()
                 if (

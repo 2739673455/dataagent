@@ -25,7 +25,7 @@ class ESClientManager:
     def get_client(self) -> AsyncElasticsearch:
         """获取 Elasticsearch 客户端"""
         if self._client is None:
-            raise RuntimeError("Elasticsearch client manager is not initialized")
+            raise RuntimeError("Elasticsearch 客户端管理器尚未初始化")
         return self._client
 
     async def close(self) -> None:

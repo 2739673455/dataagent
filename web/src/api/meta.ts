@@ -89,22 +89,26 @@ export const metaApi = {
         headers: {
           "Content-Type": "multipart/form-data",
         },
+        timeout: 180000,
       }
     );
     return response.data;
   },
 
   async syncColumnIndexes(columns: ColumnReference[]): Promise<ColumnIndexSyncResponse[]> {
-    const response = await appClient.post<BatchIndexSyncResponse>("/api/v1/meta/columns/sync", {
-      columns,
-    });
+    const response = await appClient.post<BatchIndexSyncResponse>(
+      "/api/v1/meta/columns/sync",
+      { columns },
+      { timeout: 180000 }
+    );
     return response.data.results;
   },
 
   async syncColumnValues(columns: ColumnReference[]): Promise<ColumnIndexSyncResponse[]> {
     const response = await appClient.post<BatchIndexSyncResponse>(
       "/api/v1/meta/columns/sync-values",
-      { columns }
+      { columns },
+      { timeout: 180000 }
     );
     return response.data.results;
   },
@@ -112,7 +116,8 @@ export const metaApi = {
   async syncMetricIndexes(metrics: string[]): Promise<MetricIndexSyncResponse[]> {
     const response = await appClient.post<BatchMetricIndexSyncResponse>(
       "/api/v1/meta/metrics/sync",
-      { metrics }
+      { metrics },
+      { timeout: 180000 }
     );
     return response.data.results;
   },

@@ -40,7 +40,7 @@ class MetaIndexService:
         self, column_keys: list[ColumnKey]
     ) -> dict[ColumnKey, int]:
         """同步多个字段的语义索引"""
-        async with self._meta_repo.transaction():
+        async with self._meta_repo.session.begin():
             unique_column_keys = list(dict.fromkeys(column_keys))
             column_infos = [
                 await self._meta_repo.get_column_info(*column_key)
@@ -50,7 +50,7 @@ class MetaIndexService:
         for column_info in column_infos:
             column_key = (column_info.t_name, column_info.name)
             results[column_key] = await self._sync_column_index(column_info)
-            async with self._meta_repo.transaction():
+            async with self._meta_repo.session.begin():
                 self._meta_repo.mark_column_indexed(column_info)
         return results
 
@@ -58,7 +58,7 @@ class MetaIndexService:
         self, column_keys: list[ColumnKey]
     ) -> dict[ColumnKey, int]:
         """同步多个字段的取值索引"""
-        async with self._meta_repo.transaction():
+        async with self._meta_repo.session.begin():
             unique_column_keys = list(dict.fromkeys(column_keys))
             column_infos = [
                 await self._meta_repo.get_column_info(*column_key)
@@ -67,7 +67,7 @@ class MetaIndexService:
         results: dict[ColumnKey, int] = {}
         for column_info in column_infos:
             column_key = (column_info.t_name, column_info.name)
-            async with self._meta_repo.transaction():
+            async with self._meta_repo.session.begin():
                 self._meta_repo.mark_column_values_syncing(column_info)
             try:
                 if column_info.index_values:
@@ -76,16 +76,16 @@ class MetaIndexService:
                     await self._clear_column_values(*column_key)
                     results[column_key] = 0
             except Exception:
-                async with self._meta_repo.transaction():
+                async with self._meta_repo.session.begin():
                     self._meta_repo.mark_column_values_failed(column_info)
                 raise
-            async with self._meta_repo.transaction():
+            async with self._meta_repo.session.begin():
                 self._meta_repo.mark_column_values_succeeded(column_info)
         return results
 
     async def sync_metric_indexes(self, metric_names: list[str]) -> dict[str, int]:
         """同步多个指标的语义索引"""
-        async with self._meta_repo.transaction():
+        async with self._meta_repo.session.begin():
             unique_metric_names = list(dict.fromkeys(metric_names))
             metric_infos = [
                 await self._meta_repo.get_metric_info(metric_name)
@@ -94,7 +94,7 @@ class MetaIndexService:
         results: dict[str, int] = {}
         for metric_info in metric_infos:
             results[metric_info.name] = await self._sync_metric_index(metric_info)
-            async with self._meta_repo.transaction():
+            async with self._meta_repo.session.begin():
                 self._meta_repo.mark_metric_indexed(metric_info)
         return results
 

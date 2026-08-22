@@ -23,9 +23,9 @@ def resolve_semantic_recall_context(
     user_id = configurable.get("user_id")
     raw_conversation_id = configurable.get("conversation_id")
     if not isinstance(user_id, int) or not isinstance(raw_conversation_id, str):
-        raise TypeError("semantic recall context not found in config")
+        raise TypeError("配置中未找到语义召回上下文")
     if store is None:
-        raise ValueError("semantic recall store is unavailable")
+        raise ValueError("语义召回存储服务不可用")
     return (
         user_id,
         UUID(raw_conversation_id),

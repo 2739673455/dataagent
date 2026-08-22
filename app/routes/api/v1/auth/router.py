@@ -67,4 +67,4 @@ async def change_password(
 @router.get("/me", response_model=schemas.UserResponse)
 async def me(current_user: CurrentUserDep) -> schemas.UserResponse:
     """读取当前用户信息"""
-    return schemas.UserResponse.from_entity(current_user)
+    return schemas.UserResponse.from_user(current_user)

@@ -34,6 +34,7 @@ from app.services.query_experience_service import (
     QueryExperienceService,
     build_sql_template,
 )
+from tests.test_auth_service import AsyncSessionStub
 
 
 class FakeEmbeddingClient:
@@ -107,6 +108,7 @@ class FakeIndexRepo:
 
 class FakePGRepo:
     def __init__(self) -> None:
+        self.session = AsyncSessionStub()
         self.executions: list[QueryExecution] = []
         self.experiences: list[QueryExperience] = []
         self.marked: list[tuple[UUID, int]] = []

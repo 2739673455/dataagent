@@ -198,7 +198,7 @@ class ColumnESRepo:
                 operations.append(document)
             result = await self._client.bulk(operations=operations, refresh=False)
             if result.get("errors"):
-                raise RuntimeError("Elasticsearch bulk indexing contains failed items")
+                raise RuntimeError("Elasticsearch 批量写入存在失败项")
 
     async def _delete_by_filter(self, filters: list[dict[str, Any]]) -> None:
         """按过滤条件删除字段语义索引文档"""
@@ -290,7 +290,7 @@ class ColumnESRepo:
     def _column_filter(allowed_columns: frozenset[ColumnKey]) -> dict[str, Any]:
         """构造表字段联合白名单过滤条件"""
         if not allowed_columns:
-            raise ValueError("allowed_columns must not be empty")
+            raise ValueError("allowed_columns 列表不能为空")
         return {
             "terms": {
                 "resource_key": [
@@ -310,7 +310,7 @@ class ColumnESRepo:
         """校验字段索引文档组成部分数量一致"""
         lengths = {len(ids), len(texts), len(text_types), len(embeddings)}
         if len(lengths) != 1:
-            raise ValueError("Column index document parts have different lengths")
+            raise ValueError("字段索引文档各组成部分长度不一致")
 
     @staticmethod
     def _hits(result: dict[str, Any]) -> list[SearchHit[ColumnInfo]]:

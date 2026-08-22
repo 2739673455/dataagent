@@ -11,8 +11,11 @@ from tests.test_auth_service import build_user
 
 
 class AsyncContextStub:
-    async def __aenter__(self) -> None:
-        return None
+    def __init__(self, value: object | None = None) -> None:
+        self.value = value
+
+    async def __aenter__(self) -> object | None:
+        return self.value
 
     async def __aexit__(
         self,
@@ -56,9 +59,10 @@ class UserDeletionServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_request_disables_user_revokes_tokens_and_enqueues_task(self) -> None:
         service, auth_postgres, _, _ = self.build_service()
         user = build_user(user_id=8)
-        auth_postgres.session.return_value = AsyncContextStub()
+        session = MagicMock()
+        session.begin.return_value = AsyncContextStub()
+        auth_postgres.session.return_value = AsyncContextStub(session)
         repo = MagicMock(spec=AuthPGRepo)
-        repo.transaction.return_value = AsyncContextStub()
         repo.lock_security_mutation = AsyncMock()
         repo.get_user_by_id_for_update = AsyncMock(return_value=user)
         repo.get_user_deletion_task = AsyncMock(return_value=None)
@@ -96,9 +100,10 @@ class UserDeletionServiceTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_completed_deletion_can_be_submitted_again(self) -> None:
         service, auth_postgres, _, _ = self.build_service()
-        auth_postgres.session.return_value = AsyncContextStub()
+        session = MagicMock()
+        session.begin.return_value = AsyncContextStub()
+        auth_postgres.session.return_value = AsyncContextStub(session)
         repo = MagicMock(spec=AuthPGRepo)
-        repo.transaction.return_value = AsyncContextStub()
         repo.lock_security_mutation = AsyncMock()
         repo.get_user_by_id_for_update = AsyncMock(return_value=None)
         repo.get_user_deletion_task = AsyncMock(

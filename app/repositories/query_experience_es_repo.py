@@ -93,7 +93,7 @@ class QueryExperienceESRepo:
             body = result.body if hasattr(result, "body") else result
             if isinstance(body, dict) and body.get("failures"):
                 raise RuntimeError(
-                    "Elasticsearch query experience deletion contains failures"
+                    "Elasticsearch 删除查询经验存在失败项"
                 )
 
     async def search_text(

@@ -16,6 +16,7 @@ from app.routes.api.v1.admin.router import (
     set_user_administrator,
     set_user_doris_role,
 )
+from app.services.auth_service import AuthenticatedUser
 from app.services.authorization_service import DorisDiscoveredRole
 from app.services.doris_permission_service import DorisRoleStatus
 from tests.test_auth_service import build_user
@@ -187,7 +188,7 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
 
         response = await delete_user(
             12,
-            admin_user,
+            AuthenticatedUser.from_user(admin_user),
             service,
         )
 

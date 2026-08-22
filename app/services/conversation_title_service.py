@@ -96,14 +96,14 @@ class ConversationTitleService:
                 title_pending=False,
             )
             logger.info(
-                f"conversation title generated: user_id={user_id}, "
+                f"会话标题生成成功: user_id={user_id}, "
                 f"conversation_id={conversation_id}"
             )
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001
             logger.exception(
-                f"conversation title generation failed: user_id={user_id}, "
+                f"会话标题生成失败: user_id={user_id}, "
                 f"conversation_id={conversation_id}"
             )
 

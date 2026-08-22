@@ -9,13 +9,14 @@ from app.models.auth import DorisQueryIdentity, DorisRoleAssetGrant
 from app.repositories.auth_pg_repo import AuthPGRepo
 from app.repositories.doris_query_identity_pg_repo import DorisQueryIdentityPGRepo
 from app.repositories.doris_role_repo import DorisRoleRepository
+from app.services.auth_service import AuthenticatedUser
 from app.services.authorization_service import (
     AssetAccessPolicy,
     AssetIdentity,
     AuthorizationService,
     DorisRoleManagementService,
 )
-from tests.test_auth_service import AsyncTransactionStub, build_user
+from tests.test_auth_service import AsyncSessionStub, build_user
 
 
 def query_identity(
@@ -90,12 +91,16 @@ class AuthorizationServiceTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_non_admin_is_rejected_from_admin_operations(self) -> None:
         with self.assertRaises(auth_error.PermissionDeniedError):
-            AuthorizationService.require_admin(build_user())
+            AuthorizationService.require_admin(
+                AuthenticatedUser.from_user(build_user())
+            )
 
     async def test_platform_admin_without_data_role_cannot_run_analysis(self) -> None:
         with self.assertRaises(auth_error.PermissionDeniedError):
             AuthorizationService.require_analysis_access(
-                build_user(is_admin=True, doris_role=None),
+                AuthenticatedUser.from_user(
+                    build_user(is_admin=True, doris_role=None)
+                ),
                 None,
             )
 
@@ -105,14 +110,18 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.repo = MagicMock(spec=AuthPGRepo)
-        self.repo.transaction.return_value = AsyncTransactionStub()
+        self.session = AsyncSessionStub()
+        self.repo.session = self.session
         self.repo.lock_security_mutation = AsyncMock()
         self.repo.revoke_user_refresh_tokens = AsyncMock()
         self.identity_repo = MagicMock(spec=DorisQueryIdentityPGRepo)
+        self.identity_repo.session = self.session
         self.identity_repo.get = AsyncMock(return_value=query_identity())
         self.doris_repo = MagicMock(spec=DorisRoleRepository)
         self.cipher = MagicMock()
         self.registry = MagicMock(spec=DorisQueryClientRegistry)
+        self.password_manager = MagicMock()
+        self.password_manager.hash = AsyncMock(return_value="hashed-password")
 
     def service(self) -> DorisRoleManagementService:
         return DorisRoleManagementService(
@@ -121,7 +130,14 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
             self.doris_repo,
             self.cipher,
             self.registry,
+            self.password_manager,
         )
+
+    def test_rejects_postgres_repositories_from_different_sessions(self) -> None:
+        self.identity_repo.session = AsyncSessionStub()
+
+        with self.assertRaisesRegex(ValueError, "必须共享同一数据库会话"):
+            self.service()
 
     async def test_list_users_returns_rows_and_total(self) -> None:
         users = [build_user(user_id=51)]
@@ -138,6 +154,9 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_user_role_is_replaced_with_one_configured_role(self) -> None:
         user = build_user(doris_role="dataagent_default")
         self.repo.get_user_by_id = AsyncMock(return_value=user)
+        self.identity_repo.get = AsyncMock(
+            side_effect=self._load_identity_in_transaction
+        )
         self.repo.set_user_doris_role = AsyncMock(
             side_effect=lambda target, role: setattr(target, "doris_role_name", role)
         )
@@ -263,7 +282,9 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
         self.repo.get_user_by_username = AsyncMock(return_value=None)
         self.repo.get_user_by_email = AsyncMock(return_value=None)
         self.repo.add_user = AsyncMock(side_effect=lambda u: u)
-        self.identity_repo.get = AsyncMock(return_value=query_identity(role="sales"))
+        self.identity_repo.get = AsyncMock(
+            side_effect=self._load_identity_in_transaction
+        )
 
         user = await self.service().create_user(
             username="new_operator",
@@ -278,6 +299,13 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(user.doris_role_name, "sales")
         self.assertFalse(user.is_admin)
         self.repo.add_user.assert_awaited_once()
+
+    async def _load_identity_in_transaction(
+        self,
+        role_name: str,
+    ) -> DorisQueryIdentity:
+        self.assertTrue(self.session.active)
+        return query_identity(role=role_name)
 
     async def test_create_user_rejects_duplicate_username(self) -> None:
         self.repo.get_user_by_username = AsyncMock(return_value=build_user())

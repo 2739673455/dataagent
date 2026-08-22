@@ -1,8 +1,6 @@
 """元数据变更触发查询经验失效测试"""
 
 import unittest
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,11 +13,7 @@ from app.services.meta_catalog_service import MetaCatalogService
 from app.services.meta_import_service import ImportMode, MetaImportService
 from app.services.meta_index_service import MetaIndexService
 from app.services.query_experience_service import QueryExperienceService
-
-
-@asynccontextmanager
-async def transaction() -> AsyncGenerator[None]:
-    yield
+from tests.test_auth_service import AsyncSessionStub
 
 
 def build_catalog_service(
@@ -27,6 +21,7 @@ def build_catalog_service(
     source_repo: MagicMock,
     invalidator: MagicMock,
 ) -> MetaCatalogService:
+    meta_repo.session = AsyncSessionStub()
     return MetaCatalogService(
         meta_repo=cast(MetaPGRepo, meta_repo),
         source_repo=cast(SourceDorisRepo, source_repo),
@@ -41,7 +36,6 @@ def build_catalog_service(
 class MetaQueryExperienceInvalidationTest(unittest.IsolatedAsyncioTestCase):
     async def test_catalog_invalidates_only_when_table_metadata_changes(self) -> None:
         meta_repo = MagicMock(spec=MetaPGRepo)
-        meta_repo.transaction.side_effect = transaction
         meta_repo.upsert_table_info = AsyncMock(side_effect=[True, False])
         source_repo = MagicMock(spec=SourceDorisRepo)
         source_repo.table_exists = AsyncMock(return_value=True)
@@ -73,12 +67,12 @@ class MetaQueryExperienceInvalidationTest(unittest.IsolatedAsyncioTestCase):
             description="新描述",
         )
         meta_repo = MagicMock(spec=MetaPGRepo)
-        meta_repo.transaction.side_effect = transaction
         meta_repo.list_table_infos = AsyncMock(return_value=[existing])
         meta_repo.list_column_infos = AsyncMock(return_value=[])
         meta_repo.list_metric_infos = AsyncMock(return_value=[])
         meta_repo.upsert_table_info = AsyncMock()
         meta_repo.upsert_column_infos = AsyncMock()
+        meta_repo.session = AsyncSessionStub()
         source_repo = MagicMock(spec=SourceDorisRepo)
         meta_index_service = MagicMock(spec=MetaIndexService)
         invalidator = MagicMock(spec=QueryExperienceService)

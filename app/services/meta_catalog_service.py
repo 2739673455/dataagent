@@ -103,7 +103,7 @@ class MetaCatalogService:
                 detail=f"源表不存在: {t_name}"
             )
         primary_key_columns = await self._source_repo.get_primary_key_columns(t_name)
-        async with self._meta_repo.transaction():
+        async with self._meta_repo.session.begin():
             changed = await self._meta_repo.upsert_table_info(
                 TableInfo(
                     name=t_name,
@@ -144,7 +144,7 @@ class MetaCatalogService:
             COLUMN_EXAMPLE_LIMIT,
         )
 
-        async with self._meta_repo.transaction():
+        async with self._meta_repo.session.begin():
             try:
                 await self._meta_repo.get_table_info(t_name)
             except meta_error.MetadataNotFoundError as exc:
@@ -198,7 +198,7 @@ class MetaCatalogService:
 
     async def upsert_metric_info(self, metric_info: MetricInfo) -> None:
         """新增或更新指标元数据"""
-        async with self._meta_repo.transaction():
+        async with self._meta_repo.session.begin():
             relevant_column_keys = sorted(
                 dict.fromkeys(
                     (
@@ -224,7 +224,7 @@ class MetaCatalogService:
 
     async def delete_table_info(self, t_name: str) -> None:
         """删除表及其字段元数据和索引"""
-        async with self._meta_repo.transaction():
+        async with self._meta_repo.session.begin():
             await self._meta_repo.get_table_info(t_name)
             column_infos = await self._meta_repo.list_column_infos()
             column_keys = [
@@ -234,7 +234,7 @@ class MetaCatalogService:
             ]
             await self._validate_column_deletion(column_keys, column_infos)
         await self._meta_index_service.delete_column_indexes(column_keys)
-        async with self._meta_repo.transaction():
+        async with self._meta_repo.session.begin():
             await self._meta_repo.delete_column_infos(column_keys)
             await self._meta_repo.delete_table_infos([t_name])
         await self._query_experience_service.invalidate_assets(
@@ -244,13 +244,13 @@ class MetaCatalogService:
 
     async def delete_column_info(self, t_name: str, c_name: str) -> None:
         """删除字段元数据和索引"""
-        async with self._meta_repo.transaction():
+        async with self._meta_repo.session.begin():
             await self._meta_repo.get_column_info(t_name, c_name)
             column_infos = await self._meta_repo.list_column_infos()
             column_keys = [(t_name, c_name)]
             await self._validate_column_deletion(column_keys, column_infos)
         await self._meta_index_service.delete_column_indexes(column_keys)
-        async with self._meta_repo.transaction():
+        async with self._meta_repo.session.begin():
             await self._meta_repo.delete_column_infos(column_keys)
         await self._query_experience_service.invalidate_assets(
             table_names=set(),
@@ -259,10 +259,10 @@ class MetaCatalogService:
 
     async def delete_metric_info(self, metric_name: str) -> None:
         """删除指标元数据和索引"""
-        async with self._meta_repo.transaction():
+        async with self._meta_repo.session.begin():
             await self._meta_repo.get_metric_info(metric_name)
         await self._meta_index_service.delete_metric_indexes([metric_name])
-        async with self._meta_repo.transaction():
+        async with self._meta_repo.session.begin():
             await self._meta_repo.delete_metric_infos([metric_name])
 
     async def _validate_column_deletion(

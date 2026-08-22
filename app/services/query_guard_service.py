@@ -51,7 +51,7 @@ class QueryRejectedError(ValueError):
     def __init__(self, result: QueryValidationResult) -> None:
         self.result = result
         message = "; ".join(issue.message for issue in result.issues)
-        super().__init__(message or "Query rejected")
+        super().__init__(message or "SQL 查询已被拒绝")
 
 
 @dataclass(frozen=True, slots=True)

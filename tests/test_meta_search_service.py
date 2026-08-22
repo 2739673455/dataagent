@@ -259,7 +259,7 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item.name for item in response.columns], ["amount"])
         self.assertEqual(
             response.warnings,
-            ["Column full-text retrieval unavailable"],
+            ["Column full-text 检索服务暂不可用"],
         )
 
     async def test_column_context_adds_primary_key_and_one_hop_relation(self) -> None:

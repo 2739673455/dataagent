@@ -6,7 +6,7 @@ from typing import Self
 from pydantic import BaseModel, Field, SecretStr
 
 from app.models.auth import User
-from app.services.auth_service import TokenPair
+from app.services.auth_service import AuthenticatedUser, TokenPair
 
 
 class LoginRequest(BaseModel):
@@ -45,8 +45,8 @@ class UserResponse(BaseModel):
     created_at: datetime
 
     @classmethod
-    def from_entity(cls, user: User) -> Self:
-        """从用户实体构造响应"""
+    def from_user(cls, user: User | AuthenticatedUser) -> Self:
+        """从用户实体或认证快照构造响应"""
         return cls(
             id=user.id,
             username=user.username,
@@ -76,5 +76,5 @@ class TokenResponse(BaseModel):
             refresh_token=token_pair.refresh_token,
             expires_in=token_pair.access_expires_in,
             refresh_expires_in=token_pair.refresh_expires_in,
-            user=UserResponse.from_entity(user),
+            user=UserResponse.from_user(user),
         )

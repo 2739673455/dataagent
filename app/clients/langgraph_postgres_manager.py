@@ -97,13 +97,13 @@ class LangGraphPostgresManager:
     def get_checkpointer(self) -> AsyncPostgresSaver:
         """获取已初始化的 Checkpointer"""
         if self._checkpointer is None:
-            raise RuntimeError("LangGraph PostgreSQL manager is not initialized")
+            raise RuntimeError("LangGraph PostgreSQL 管理器尚未初始化")
         return self._checkpointer
 
     def get_store(self) -> AsyncPostgresStore:
         """获取已初始化的 Store"""
         if self._store is None:
-            raise RuntimeError("LangGraph PostgreSQL manager is not initialized")
+            raise RuntimeError("LangGraph PostgreSQL 管理器尚未初始化")
         return self._store
 
     @asynccontextmanager
@@ -115,11 +115,11 @@ class LangGraphPostgresManager:
     ) -> AsyncGenerator[None, None]:
         """在连接级 PostgreSQL advisory lock 下执行临界区"""
         if not name:
-            raise ValueError("advisory lock name must not be empty")
+            raise ValueError("咨询锁名称不能为空")
         if timeout <= 0:
-            raise ValueError("advisory lock timeout must be positive")
+            raise ValueError("咨询锁超时时间必须为正数")
         if self._advisory_pool is None:
-            raise RuntimeError("LangGraph PostgreSQL manager is not initialized")
+            raise RuntimeError("LangGraph PostgreSQL 管理器尚未初始化")
 
         lock_key = _advisory_lock_key(name)
         advisory_pool = self._advisory_pool
@@ -128,7 +128,7 @@ class LangGraphPostgresManager:
         try:
             await asyncio.wait_for(local_lock.acquire(), timeout=timeout)
         except TimeoutError as exc:
-            raise TimeoutError(f"advisory lock timed out: {name}") from exc
+            raise TimeoutError(f"获取咨询锁超时: {name}") from exc
         try:
             while True:
                 async with advisory_pool.connection() as connection:
@@ -148,7 +148,7 @@ class LangGraphPostgresManager:
                         return
                 remaining = deadline - asyncio.get_running_loop().time()
                 if remaining <= 0:
-                    raise TimeoutError(f"advisory lock timed out: {name}")
+                    raise TimeoutError(f"获取咨询锁超时: {name}")
                 await asyncio.sleep(min(_ADVISORY_LOCK_POLL_SECONDS, remaining))
         finally:
             local_lock.release()

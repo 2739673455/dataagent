@@ -130,7 +130,7 @@ class ConversationLifecycleService:
                     deleted += 1
             except Exception:  # noqa: BLE001
                 logger.exception(
-                    f"conversation_id={draft.id}: expired draft cleanup failed"
+                    f"清理过期草稿会话失败: conversation_id={draft.id}"
                 )
         return deleted
 
@@ -155,11 +155,11 @@ class ConversationLifecycleService:
             try:
                 deleted = await self.cleanup_expired_drafts()
                 if deleted:
-                    logger.info(f"Cleaned up {deleted} expired draft conversations")
+                    logger.info(f"已清理 {deleted} 个过期草稿会话")
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
-                logger.exception("expired draft cleanup batch failed")
+                logger.exception("批量清理过期草稿会话失败")
 
             self._wake_event.clear()
             with contextlib.suppress(TimeoutError):

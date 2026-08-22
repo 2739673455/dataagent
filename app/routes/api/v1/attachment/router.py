@@ -58,7 +58,7 @@ async def api_upload_attachment(
             raise attachment_error.SandboxStorageLimitError from None
         await conversation_repo.update(conversation)
 
-    logger.info(f"Upload attachment: {conversation_id=}, file={f_path}")
+    logger.info(f"上传附件: conversation_id={conversation_id}, file={f_path}")
     return chat_schema.UploadAttachmentResponse(
         attachment=chat_schema.Attachment(f_path=f_path)
     )
@@ -88,7 +88,7 @@ async def api_delete_attachment(
         await conversation_repo.update(conversation)
 
     logger.info(
-        f"Delete attachment: conversation_id={body.conversation_id}, file={body.f_path}"
+        f"删除附件: conversation_id={body.conversation_id}, file={body.f_path}"
     )
 
 
@@ -122,7 +122,7 @@ async def api_get_attachment(
     # 获取文件 MIME 类型
     media_type, _ = mimetypes.guess_type(f_path)
 
-    logger.info(f"Get attachment: {conversation_id=}, file={f_path}")
+    logger.info(f"获取附件: conversation_id={conversation_id}, file={f_path}")
     return Response(
         content=content,
         media_type=media_type or "application/octet-stream",

@@ -370,7 +370,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
         )
 
     def test_registry_fails_fast_when_required_tools_are_missing(self) -> None:
-        with self.assertRaisesRegex(ValueError, "required specialist tools"):
+        with self.assertRaisesRegex(ValueError, "缺少必需的专家工具"):
             build_agent_definitions([search_semantic_resources], [])
 
     def test_registry_rejects_mcp_tool_names_reserved_by_runtime(self) -> None:
@@ -379,7 +379,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
             """模拟与 Shell 工具冲突的 MCP 工具"""
             return command
 
-        with self.assertRaisesRegex(ValueError, "conflict"):
+        with self.assertRaisesRegex(ValueError, "冲突"):
             build_agent_definitions(
                 [
                     search_semantic_resources,
@@ -712,7 +712,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             result = await service.delegate(_request("region"), config)
 
         self.assertEqual(result.status, "failed")
-        self.assertIn("timeout", result.limitations[0])
+        self.assertIn("超时", result.limitations[0])
 
     async def test_self_repair_is_rejected_after_structured_retry(self) -> None:
         repair = RepairRequest(
@@ -1076,7 +1076,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         await deleting_worker.delete_agent(12, _CONVERSATION_ID)
 
-        with self.assertRaisesRegex(RuntimeError, "deleted"):
+        with self.assertRaisesRegex(RuntimeError, "已被删除"):
             async with serving_worker.execution(
                 12,
                 _CONVERSATION_ID,

@@ -61,7 +61,7 @@ class PostgresClientManager:
     def _get_session_maker(self) -> async_sessionmaker[AsyncSession]:
         """获取数据库会话工厂"""
         if self._session_maker is None:
-            raise RuntimeError("PostgreSQL client manager is not initialized")
+            raise RuntimeError("PostgreSQL 客户端管理器尚未初始化")
         return self._session_maker
 
     def session(self) -> AsyncSession:
@@ -83,7 +83,7 @@ class PostgresClientManager:
     async def init_tables(self) -> None:
         """初始化数据表"""
         if self._engine is None:
-            raise RuntimeError("PostgreSQL client manager is not initialized")
+            raise RuntimeError("PostgreSQL 客户端管理器尚未初始化")
         async with self._engine.begin() as connection:
             await connection.run_sync(self._base.metadata.create_all)
             if self._base is AuthBase:

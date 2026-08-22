@@ -45,7 +45,7 @@ class DorisClientManager:
     def _get_engine(self) -> AsyncEngine:
         """获取 Doris 数据库引擎"""
         if self._engine is None:
-            raise RuntimeError("Doris client manager is not initialized")
+            raise RuntimeError("Doris 客户端管理器尚未初始化")
         return self._engine
 
     def connection(self) -> AsyncConnection:

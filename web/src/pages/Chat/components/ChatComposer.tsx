@@ -135,7 +135,6 @@ export function ChatComposer({
           <textarea
             ref={textareaRef}
             rows={1}
-            placeholder="输入数据分析需求或指令（如：分析上周各渠道转化率）..."
             value={value}
             onChange={(event) => {
               setValue(event.target.value);

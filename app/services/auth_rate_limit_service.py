@@ -28,9 +28,9 @@ class RateLimitRule:
 
     def __post_init__(self) -> None:
         if self.limit <= 0:
-            raise ValueError("rate limit must be positive")
+            raise ValueError("限流阈值必须为正整数")
         if self.window_seconds <= 0:
-            raise ValueError("rate limit window must be positive")
+            raise ValueError("限流窗口时间必须为正数")
 
 
 @dataclass
@@ -52,7 +52,7 @@ class BoundedRateLimiter:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if max_keys <= 0:
-            raise ValueError("max_keys must be positive")
+            raise ValueError("max_keys 必须为正整数")
         self._rule = rule
         self._max_keys = max_keys
         self._clock = clock

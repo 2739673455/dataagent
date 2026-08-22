@@ -5,7 +5,7 @@ from uuid import UUID
 
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.auth import DorisRoleAssetGrant, RefreshToken, User, UserDeletionTask
 
@@ -18,9 +18,10 @@ class AuthPGRepo:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    def transaction(self) -> AsyncSessionTransaction:
-        """创建事务上下文"""
-        return self._session.begin()
+    @property
+    def session(self) -> AsyncSession:
+        """返回当前存储绑定的数据库会话"""
+        return self._session
 
     async def lock_security_mutation(self) -> None:
         """串行化用户身份与跨数据库权限变更"""

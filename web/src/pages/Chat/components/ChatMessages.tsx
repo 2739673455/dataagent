@@ -1,14 +1,4 @@
-import {
-  Check,
-  ChevronDown,
-  Copy,
-  Download,
-  Eye,
-  FileText,
-  Loader2,
-  Terminal,
-  Wrench,
-} from "lucide-react";
+import { Check, ChevronDown, Copy, Download, Eye, FileText, Loader2, Wrench } from "lucide-react";
 import type { RefObject } from "react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
@@ -689,27 +679,21 @@ export function ChatMessages({
       <div ref={viewportRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         {!conversationSelected ? (
           <div className="flex h-full flex-col items-center justify-center p-6 text-center">
-            <div className="w-full max-w-lg rounded border border-[#d4d4ce] bg-[#ffffff] p-6 text-left shadow-sm">
-              <div className="mb-4 flex items-center justify-between border-b border-[#e5e5df] pb-2 text-sm text-[#71717a]">
-                <div className="flex items-center gap-2">
-                  <Terminal className="h-4 w-4 text-[#27272a]" />
-                  <span className="font-bold text-[#18181b]">DataAgent</span>
-                </div>
-                <span>就绪</span>
-              </div>
-
-              <div className="space-y-2 text-sm text-[#52525b]">
-                <p className="text-[#18181b] font-medium text-base">
-                  欢迎使用 DataAgent 自主数据分析平台
-                </p>
-                <p className="text-[#71717a]">已连接 Doris 分析引擎与隔离沙箱运行环境</p>
-
-                <div className="mt-4 space-y-2 border-t border-[#e5e5df] pt-3 text-sm">
-                  <p className="text-[#18181b] font-medium">分析示例：</p>
-                  <p className="text-[#52525b]">· 统计分析最近 30 天各个类目的 GMV 增长走势</p>
-                  <p className="text-[#52525b]">· 按渠道拆解本月新客次日留存与客单价分布</p>
-                  <p className="text-[#52525b]">· 查询订单退款率最高的 Top 10 商品与核心原因</p>
-                </div>
+            <div className="w-full max-w-lg space-y-2 text-left">
+              <p className="text-xs font-medium text-[#71717a]">分析示例：</p>
+              <div className="space-y-1.5">
+                {[
+                  "统计分析最近 30 天各个类目的 GMV 增长走势",
+                  "按渠道拆解本月新客次日留存与客单价分布",
+                  "查询订单退款率最高的 Top 10 商品与核心原因",
+                ].map((example) => (
+                  <div
+                    key={example}
+                    className="rounded border border-[#d4d4ce] bg-[#ffffff] px-3.5 py-2.5 text-xs text-[#52525b] shadow-xs"
+                  >
+                    {example}
+                  </div>
+                ))}
               </div>
             </div>
           </div>

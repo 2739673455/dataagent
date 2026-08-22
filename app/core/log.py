@@ -1,97 +1,125 @@
+from __future__ import annotations
+
 import json
 import sys
 import traceback
+from functools import cache
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from app.conf.app_config import LogCfg, cfg
+from app.conf.app_config import cfg
 from app.core import context
 
-# 路径常量
-CURRENT_DIR = Path(__file__).parent
-ROOT_DIR = CURRENT_DIR.parent.parent  # 项目根目录
+if TYPE_CHECKING:
+    from loguru import Record
 
-LOGGER_CONFIGURED = False  # 日志是否已初始化
-LOG_DIR = ROOT_DIR / "logs"  # 日志文件目录
+LOG_DIR = Path(__file__).parents[2] / "logs"
+_JSON_LINE_KEY = "_json_line"
 
 
-def _build_log_json(record):
-    """格式化为 JSON"""
-    log_json = {
-        "time": record["time"].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
-        "level": record["level"].name,
-        "method": context.method_ctx.get(),
-        "path": context.path_ctx.get(),
-        "user_id": context.user_id_ctx.get(),
-        "message": record["message"],
-        "request_id": context.request_id_ctx.get(),
-        "trace_id": context.trace_id_ctx.get(),
-        "client_ip": context.client_ip_ctx.get(),
+def _build_log_payload(record: Record) -> dict[str, Any]:
+    """构造结构化日志载荷"""
+    name = record.get("name") or ""
+    function = record.get("function") or ""
+    line = record.get("line") or ""
+    location = f"{name}:{function}:{line}" if name or function or line else ""
+
+    payload = {
+        key: value for key, value in record["extra"].items() if key != _JSON_LINE_KEY
+    }
+    payload.update(
+        {
+            "time": record["time"].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+            "level": record["level"].name,
+            "location": location,
+            "method": context.method_ctx.get(),
+            "path": context.path_ctx.get(),
+            "user_id": context.user_id_ctx.get(),
+            "message": record["message"],
+            "request_id": context.request_id_ctx.get(),
+            "trace_id": context.trace_id_ctx.get(),
+            "client_ip": context.client_ip_ctx.get(),
+        }
+    )
+
+    exc_info = record.get("exception")
+    if exc_info and exc_info.value is not None:
+        payload["exception"] = "".join(
+            traceback.format_exception(
+                exc_info.type,
+                exc_info.value,
+                exc_info.traceback,
+            )
+        )
+
+    return {
+        key: value
+        for key, value in payload.items()
+        if value is not None and value != ""
     }
 
-    # 将 extra 中的信息添加到输出
-    extra = {k: v for k, v in record.get("extra", {}).items() if k != "json"}
-    log_json.update(extra)
 
-    # 捕获异常信息（如果有），格式化为字符串
-    exc_info = record.get("exception")
-    if exc_info:
-        if exc_info.value is not None:
-            log_json["exception"] = "".join(
-                traceback.format_exception(
-                    exc_info.type, exc_info.value, exc_info.traceback
-                )
-            )
-        # 清除 exception，阻止 loguru 默认格式化
-        record["exception"] = None
-
-    log_json = {k: v for k, v in log_json.items() if v}  # 滤空
-    record["extra"]["json"] = json.dumps(log_json, ensure_ascii=False)
-
-
-def _setup_console_logger(cfg: LogCfg):
-    """配置控制台日志输出"""
-    logger.add(
-        sink=sys.stdout,
-        level=cfg.level,
-        format=(
-            "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-            "<level>{level:^8}</level> | "
-            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-            "<level>{message}</level>"
-        ),
-        colorize=True,
-        catch=True,
-        enqueue=True,
+def _json_formatter(record: Record) -> str:
+    """序列化单行 JSON 且不追加 Loguru 异常文本"""
+    record["extra"][_JSON_LINE_KEY] = json.dumps(
+        _build_log_payload(record),
+        ensure_ascii=False,
+        default=str,
     )
+    return f"{{extra[{_JSON_LINE_KEY}]}}\n"
 
 
-def _setup_file_logger(cfg: LogCfg):
-    """配置文件日志输出（JSON 格式）"""
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    logger.add(
-        sink=str(LOG_DIR / "{time:YYYY-MM-DD}.jsonl"),
-        level=cfg.level,
-        format="{extra[json]}",
-        rotation=cfg.rotation,
-        encoding="utf-8",
-        catch=True,
-        enqueue=True,
+def _console_formatter(record: Record) -> str:
+    """按白名单渲染控制台上下文与原生异常"""
+    template = (
+        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+        "<level>{level:^8}</level> | "
+        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+        "<level>{message}</level>"
     )
+    extra = record["extra"]
+
+    context_fields = [
+        f"{key}={{extra[{key}]}}"
+        for key in ("status", "problem_type", "exc_type")
+        if extra.get(key) is not None and extra.get(key) != ""
+    ]
+    if context_fields:
+        template += "\n  <cyan>context:</cyan> " + " ".join(context_fields)
+    if extra.get("detail") is not None and extra.get("detail") != "":
+        template += "\n  <yellow>detail:</yellow> <level>{extra[detail]}</level>"
+
+    return template + "\n{exception}"
 
 
-def _setup_logger(cfg: LogCfg):
-    """配置日志输出"""
-    _setup_console_logger(cfg)
-    _setup_file_logger(cfg)
-
-
-def setup_logger():
+@cache
+def setup_logger() -> None:
     """初始化日志配置"""
-    global LOGGER_CONFIGURED
-    if not LOGGER_CONFIGURED:
-        logger.remove()  # 移除默认的日志输出
-        logger.configure(patcher=_build_log_json)
-        _setup_logger(cfg.log)
-        LOGGER_CONFIGURED = True
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    logger.configure(
+        handlers=[
+            {
+                "sink": sys.stdout,
+                "level": cfg.log.level,
+                "format": _console_formatter,
+                "colorize": True,
+                "backtrace": False,
+                "diagnose": False,
+                "catch": True,
+                "enqueue": True,
+            },
+            {
+                "sink": str(LOG_DIR / "{time:YYYY-MM-DD}.jsonl"),
+                "level": cfg.log.level,
+                "format": _json_formatter,
+                "rotation": cfg.log.rotation,
+                "encoding": "utf-8",
+                "backtrace": False,
+                "diagnose": False,
+                "catch": True,
+                "enqueue": True,
+            },
+        ],
+    )

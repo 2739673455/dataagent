@@ -72,7 +72,7 @@ def _schema_from_metadata(
     try:
         schema = chat_schema.MessageResponse.model_validate(payload)
     except ValidationError:
-        logger.warning(f"Invalid persisted message metadata: message_id={message.id}")
+        logger.warning(f"持久化消息元数据无效: message_id={message.id}")
         return None
     return schema.model_copy(update={"message_id": message.id})
 
@@ -97,7 +97,7 @@ def _delegate_result_attachments(
         result = DelegateAgentResult.model_validate(payload)
     except ValidationError:
         logger.warning(
-            f"Invalid delegate result payload: message_id={message.id}, "
+            f"委派结果载荷无效: message_id={message.id}, "
             f"tool_call_id={message.tool_call_id}"
         )
         return []
@@ -345,7 +345,7 @@ async def run_agent_turn(
 ) -> AsyncGenerator[chat_schema.MessageResponse]:
     """执行一轮 Agent 对话并流式返回响应"""
     logger.info(
-        f"agent turn started: user_id={user_id}, conversation_id={conversation_id}, "
+        f"智能体回合开始: user_id={user_id}, conversation_id={conversation_id}, "
         f"parts={len(user_message.parts)}, "
         f"attachments={len(user_message.attachments or ())}"
     )
@@ -374,7 +374,7 @@ async def run_agent_turn(
                 turn_context,
             ):
                 if cancel.is_set():
-                    logger.info(f"{conversation_id=}: agent cancelled")
+                    logger.info(f"智能体执行已取消: conversation_id={conversation_id}")
                     break
 
                 responses: list[chat_schema.MessageResponse] = []
@@ -386,7 +386,7 @@ async def run_agent_turn(
                         if response := _langchain_message_to_schema(message):
                             responses.append(response)
                 logger.debug(
-                    f"agent stream update: user_id={user_id}, "
+                    f"智能体流式更新: user_id={user_id}, "
                     f"conversation_id={conversation_id}, nodes={tuple(chunk)}, "
                     f"messages={len(responses)}"
                 )
@@ -411,7 +411,7 @@ async def run_agent_turn(
             input_messages = []
 
     logger.info(
-        f"agent turn finished: user_id={user_id}, conversation_id={conversation_id}"
+        f"智能体回合结束: user_id={user_id}, conversation_id={conversation_id}"
     )
 
 
@@ -422,6 +422,5 @@ class PlannerContinuationLimitError(RuntimeError):
         self.max_continuations = max_continuations
         self.finish_reason = finish_reason
         super().__init__(
-            f"Planner exceeded {max_continuations} continuations "
-            f"after finish reason {finish_reason!r}"
+            f"规划器在结束原因 {finish_reason!r} 下连续续写次数超过上限 ({max_continuations} 次)"
         )

@@ -45,6 +45,8 @@ class DorisPermissionService:
         catalog: str,
         database: str,
     ) -> None:
+        if auth_repo.session is not identity_repo.session:
+            raise ValueError("认证存储与查询身份存储必须共享同一数据库会话")
         self._auth_repo = auth_repo
         self._identity_repo = identity_repo
         self._doris_repo = doris_repo
@@ -83,15 +85,16 @@ class DorisPermissionService:
         columns: Sequence[str],
     ) -> list[DorisRoleAssetGrant]:
         """授予角色库、表或列 SELECT 权限并更新可见性投影"""
-        role = await self._require_role(role_name)
+        role = self._normalize_role(role_name)
         normalized_columns = self._normalize_columns(columns)
-        await self._validate_target(table_name, normalized_columns)
         assets = self._assets(table_name, normalized_columns)
         granted_columns: tuple[str, ...] = ()
         doris_changed = False
         try:
-            async with self._auth_repo.transaction():
+            async with self._auth_repo.session.begin():
                 await self._auth_repo.lock_security_mutation()
+                await self._require_active_role(role)
+                await self._validate_target(table_name, normalized_columns)
                 existing = [
                     await self._auth_repo.find_asset_grant(
                         role,
@@ -163,14 +166,15 @@ class DorisPermissionService:
         columns: Sequence[str],
     ) -> None:
         """回收角色库、表或列 SELECT 权限并删除可见性投影"""
-        role = await self._require_role(role_name)
+        role = self._normalize_role(role_name)
         normalized_columns = self._normalize_columns(columns)
-        await self._validate_target(table_name, normalized_columns)
         assets = self._assets(table_name, normalized_columns)
         doris_changed = False
         try:
-            async with self._auth_repo.transaction():
+            async with self._auth_repo.session.begin():
                 await self._auth_repo.lock_security_mutation()
+                await self._require_active_role(role)
+                await self._validate_target(table_name, normalized_columns)
                 grants = [
                     await self._auth_repo.find_asset_grant(
                         role,
@@ -256,16 +260,25 @@ class DorisPermissionService:
 
     async def _require_role(self, role_name: str) -> str:
         """要求角色存在于稳定查询身份配置"""
+        normalized = self._normalize_role(role_name)
+        await self._require_active_role(normalized)
+        return normalized
+
+    @staticmethod
+    def _normalize_role(role_name: str) -> str:
+        """规范化 Doris 角色名"""
         try:
-            normalized = normalize_doris_role_name(role_name)
+            return normalize_doris_role_name(role_name)
         except ValueError as exc:
             raise auth_error.InvalidDorisPermissionError(
                 detail="Doris 角色名无效"
             ) from exc
-        identity = await self._identity_repo.get(normalized)
+
+    async def _require_active_role(self, role_name: str) -> None:
+        """要求规范化角色已配置并启用"""
+        identity = await self._identity_repo.get(role_name)
         if identity is None or not identity.is_active:
             raise auth_error.RoleNotFoundError
-        return normalized
 
     async def _compensate_select(
         self,
@@ -291,8 +304,7 @@ class DorisPermissionService:
             )
         except Exception:  # noqa: BLE001
             logger.exception(
-                "Doris permission compensation failed: "
-                f"role={role_name}, table={table_name}"
+                f"Doris 权限补偿操作失败: role={role_name}, table={table_name}"
             )
 
     async def _validate_target(
