@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -94,16 +94,38 @@ class AuthPGRepo:
         """按规范化用户名读取用户"""
         return await self._session.scalar(select(User).where(User.username == username))
 
-    async def list_users(self, *, limit: int, offset: int) -> list[User]:
-        """分页读取用户"""
+    async def list_users(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        query: str | None = None,
+    ) -> list[User]:
+        """分页读取用户，支持用户名与邮箱搜索"""
+        stmt = select(User)
+        if query:
+            stmt = stmt.where(
+                or_(
+                    User.username.icontains(query, autoescape=True),
+                    User.email.icontains(query, autoescape=True),
+                )
+            )
         result = await self._session.scalars(
-            select(User).order_by(User.id).limit(limit).offset(offset)
+            stmt.order_by(User.id).limit(limit).offset(offset)
         )
         return list(result)
 
-    async def count_users(self) -> int:
-        """统计用户总量"""
-        return int(await self._session.scalar(select(func.count(User.id))) or 0)
+    async def count_users(self, *, query: str | None = None) -> int:
+        """统计用户总量，支持用户名与邮箱搜索"""
+        stmt = select(func.count(User.id))
+        if query:
+            stmt = stmt.where(
+                or_(
+                    User.username.icontains(query, autoescape=True),
+                    User.email.icontains(query, autoescape=True),
+                )
+            )
+        return int(await self._session.scalar(stmt) or 0)
 
     async def set_user_active(self, user: User, is_active: bool) -> None:
         """设置用户启用状态"""

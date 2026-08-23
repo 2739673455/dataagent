@@ -205,6 +205,7 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
             service,
             limit=50,
             offset=50,
+            query="test_query",
         )
 
         self.assertEqual(len(response.users), 1)
@@ -212,7 +213,7 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.limit, 50)
         self.assertEqual(response.offset, 50)
         self.assertTrue(response.has_more)
-        service.list_users.assert_awaited_once_with(limit=50, offset=50)
+        service.list_users.assert_awaited_once_with(limit=50, offset=50, query="test_query")
 
     async def test_update_user_endpoint(self) -> None:
         service = MagicMock()

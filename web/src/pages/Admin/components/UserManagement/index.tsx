@@ -1,4 +1,4 @@
-import { Edit2, Plus, RefreshCw, Trash2, Users } from "lucide-react";
+import { Edit2, Plus, RefreshCw, Search, Trash2, Users, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { adminApi, type DorisRoleResponse, type UserListResponse } from "@/api/admin";
@@ -22,6 +22,7 @@ export function UserManagement() {
   const [userOffset, setUserOffset] = useState(0);
   const [userTotal, setUserTotal] = useState(0);
   const [userHasMore, setUserHasMore] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [editingUser, setEditingUser] = useState<UserResponse | null>(null);
@@ -44,7 +45,7 @@ export function UserManagement() {
     try {
       const [loadedRoles, userPage] = await Promise.all([
         adminApi.listRoles(),
-        adminApi.listUsers(USER_PAGE_SIZE, userOffset),
+        adminApi.listUsers(USER_PAGE_SIZE, userOffset, searchQuery),
       ]);
       setRoles(loadedRoles);
       applyUserPage(userPage);
@@ -53,7 +54,7 @@ export function UserManagement() {
     } finally {
       setBusy(false);
     }
-  }, [applyUserPage, userOffset]);
+  }, [applyUserPage, searchQuery, userOffset]);
 
   useEffect(() => {
     void loadData();
@@ -115,6 +116,11 @@ export function UserManagement() {
     }
   };
 
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value);
+    setUserOffset(0);
+  };
+
   const handleDeleteUser = async (user: UserResponse) => {
     if (!window.confirm(`确定要删除用户 "${user.username}" 吗？此操作不可恢复。`)) return;
     setBusy(true);
@@ -122,7 +128,7 @@ export function UserManagement() {
       await adminApi.deleteUser(user.id);
       toast.success(`用户 ${user.username} 已删除`);
       const nextOffset = users.length === 1 ? Math.max(0, userOffset - USER_PAGE_SIZE) : userOffset;
-      const page = await adminApi.listUsers(USER_PAGE_SIZE, nextOffset);
+      const page = await adminApi.listUsers(USER_PAGE_SIZE, nextOffset, searchQuery);
       setUserOffset(nextOffset);
       applyUserPage(page);
     } catch (error) {
@@ -133,7 +139,7 @@ export function UserManagement() {
   };
 
   const reloadFirstPage = async () => {
-    const page = await adminApi.listUsers(USER_PAGE_SIZE, 0);
+    const page = await adminApi.listUsers(USER_PAGE_SIZE, 0, searchQuery);
     setUserOffset(0);
     applyUserPage(page);
   };
@@ -151,6 +157,27 @@ export function UserManagement() {
             </h2>
           </div>
           <div className="flex items-center gap-2">
+            <div className="relative w-56 sm:w-64">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#a1a1aa] pointer-events-none" />
+              <input
+                id="user-search-query"
+                type="text"
+                value={searchQuery}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                placeholder="搜索用户名或邮箱"
+                className="h-7 w-full rounded border border-[#d4d4ce] bg-[#ffffff] pl-8 pr-7 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => handleSearchChange("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[#a1a1aa] hover:text-[#1e2024]"
+                  title="清空搜索"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
             <Button
               size="sm"
               onClick={() => setIsCreatingUser((prev) => !prev)}
@@ -177,7 +204,7 @@ export function UserManagement() {
 
         {users.length === 0 ? (
           <div className="mt-4 rounded border border-[#d4d4ce] bg-[#ffffff] py-12 text-center text-sm text-[#71717a]">
-            暂无用户账号
+            {searchQuery.trim() ? `未找到与 "${searchQuery.trim()}" 匹配的用户` : "暂无用户账号"}
           </div>
         ) : (
           <div className="mt-4 overflow-x-auto overflow-y-hidden rounded border border-[#d4d4ce]">

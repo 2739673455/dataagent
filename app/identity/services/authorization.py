@@ -438,10 +438,23 @@ class DorisRoleManagementService:
             await self._identity_repo.delete(identity)
         await self._client_registry.invalidate(role)
 
-    async def list_users(self, *, limit: int, offset: int) -> tuple[list[User], int]:
+    async def list_users(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        query: str | None = None,
+    ) -> tuple[list[User], int]:
         """分页列出用户与角色并返回总量"""
-        users = await self._repo.list_users(limit=limit, offset=offset)
-        total = await self._repo.count_users()
+        normalized_query = query.strip() if query is not None else None
+        if normalized_query == "":
+            normalized_query = None
+        users = await self._repo.list_users(
+            limit=limit,
+            offset=offset,
+            query=normalized_query,
+        )
+        total = await self._repo.count_users(query=normalized_query)
         return users, total
 
     async def create_user(

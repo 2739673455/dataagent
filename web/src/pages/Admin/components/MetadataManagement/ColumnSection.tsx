@@ -56,7 +56,10 @@ export function ColumnSection({
     setIsBatchDeleting(true);
     try {
       await metaApi.deleteColumns(
-        selectedColumnNames.map((cName) => ({ t_name: selectedTable, c_name: cName }))
+        selectedColumnNames.map((cName) => ({
+          t_name: selectedTable,
+          c_name: cName,
+        }))
       );
       toast.success(`已成功删除 ${selectedColumnNames.length} 个字段`);
       onSelectAllColumns([]);
@@ -485,10 +488,10 @@ export function ColumnSection({
               <colgroup>
                 <col className="w-[44px]" />
                 <col className="w-[20%]" />
-                <col className="w-[32%]" />
-                <col className="w-[20%]" />
-                <col className="w-[125px]" />
-                <col className="w-[155px]" />
+                <col className="w-[25%]" />
+                <col className="w-[25%]" />
+                <col className="w-[120px]" />
+                <col className="w-[140px]" />
                 <col className="w-[84px]" />
               </colgroup>
               <thead className="sticky top-0 z-10 border-b border-[#d4d4ce] bg-[#f4f4f0] text-[#52525b]">

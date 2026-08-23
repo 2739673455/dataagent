@@ -136,9 +136,10 @@ async def list_users(
     service: DorisRoleManagementServiceDep,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
+    query: Annotated[str | None, Query(max_length=128)] = None,
 ) -> schemas.UserListResponse:
     """分页列出用户、管理员标志与唯一 Doris 角色"""
-    users, total = await service.list_users(limit=limit, offset=offset)
+    users, total = await service.list_users(limit=limit, offset=offset, query=query)
     return schemas.UserListResponse(
         users=[schemas.UserResponse.from_user(user) for user in users],
         total=total,

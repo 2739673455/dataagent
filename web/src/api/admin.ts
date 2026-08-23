@@ -61,9 +61,14 @@ export const adminApi = {
     await appClient.delete(`/api/v1/admin/doris-roles/${role}`);
   },
 
-  async listUsers(limit: number, offset: number): Promise<UserListResponse> {
+  async listUsers(limit: number, offset: number, query?: string): Promise<UserListResponse> {
+    const trimmed = query?.trim();
     const response = await appClient.get<UserListResponse>("/api/v1/admin/users", {
-      params: { limit, offset },
+      params: {
+        limit,
+        offset,
+        ...(trimmed ? { query: trimmed } : {}),
+      },
     });
     return response.data;
   },

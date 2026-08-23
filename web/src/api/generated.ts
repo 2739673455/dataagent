@@ -1281,6 +1281,7 @@ export interface operations {
       "query": {
         "limit"?: number;
         "offset"?: number;
+        "query"?: (string | null);
       };
       "header"?: never;
       "cookie"?: never;

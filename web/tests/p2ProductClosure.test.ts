@@ -23,10 +23,10 @@ describe("P2 product closure contracts", () => {
       },
     });
 
-    const page = await adminApi.listUsers(50, 100);
+    const page = await adminApi.listUsers(50, 100, "alice");
 
     expect(get).toHaveBeenCalledWith("/api/v1/admin/users", {
-      params: { limit: 50, offset: 100 },
+      params: { limit: 50, offset: 100, query: "alice" },
     });
     expect(page.total).toBe(151);
     expect(page.has_more).toBe(true);

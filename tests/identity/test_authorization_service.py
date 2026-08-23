@@ -142,12 +142,12 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
         self.repo.list_users = AsyncMock(return_value=users)
         self.repo.count_users = AsyncMock(return_value=101)
 
-        page_users, total = await self.service().list_users(limit=50, offset=50)
+        page_users, total = await self.service().list_users(limit=50, offset=50, query=" alice ")
 
         self.assertEqual(page_users, users)
         self.assertEqual(total, 101)
-        self.repo.list_users.assert_awaited_once_with(limit=50, offset=50)
-        self.repo.count_users.assert_awaited_once_with()
+        self.repo.list_users.assert_awaited_once_with(limit=50, offset=50, query="alice")
+        self.repo.count_users.assert_awaited_once_with(query="alice")
 
     async def test_user_role_is_replaced_with_one_configured_role(self) -> None:
         user = build_user(doris_role="dataagent_default")
