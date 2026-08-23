@@ -85,7 +85,7 @@ parts = payload["relative_target"].split("/")
 source_fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
 try:
     if not stat.S_ISREG(os.fstat(source_fd).st_mode):
-        raise OSError("invalid staged file")
+        raise OSError("暂存文件无效")
     os.fchown(source_fd, owner_uid, owner_gid)
     os.fchmod(source_fd, file_mode)
 finally:
@@ -99,7 +99,7 @@ try:
         or root_stat.st_uid != owner_uid
         or root_stat.st_gid != owner_gid
     ):
-        raise PermissionError("invalid workspace owner")
+        raise PermissionError("工作区所有者无效")
     for component in parts[:-1]:
         created = False
         try:
@@ -117,7 +117,7 @@ try:
             os.fchmod(next_fd, directory_mode)
         next_stat = os.fstat(next_fd)
         if next_stat.st_uid != owner_uid or next_stat.st_gid != owner_gid:
-            raise PermissionError("invalid target directory owner")
+            raise PermissionError("目标目录所有者无效")
         os.close(directory_fd)
         directory_fd = next_fd
     os.replace(
@@ -274,7 +274,7 @@ class SandboxSessionScope:
                     for character in value
                 )
             ):
-                raise ValueError(f"invalid sandbox session {field_name}")
+                raise ValueError(f"沙盒 Session 字段无效: {field_name}")
 
     @property
     def relative_workspace(self) -> str:
@@ -1120,7 +1120,7 @@ class DockerSandboxBackend(BaseSandbox):
             self._execute_unlocked(
                 f"rm -f {shlex.quote(old_path)} {shlex.quote(new_path)}"
             )
-            return EditResult(error=f"Error editing file '{file_path}': {error}")
+            return EditResult(error=f"编辑文件 '{file_path}' 失败: {error}")
 
         payload = base64.b64encode(
             json.dumps(
@@ -1144,10 +1144,10 @@ class DockerSandboxBackend(BaseSandbox):
             self._execute_unlocked(
                 f"rm -f {shlex.quote(old_path)} {shlex.quote(new_path)}"
             )
-            detail = result.output.strip() or "unknown error"
-            return EditResult(error=f"Error editing file '{file_path}': {detail}")
+            detail = result.output.strip() or "未知错误"
+            return EditResult(error=f"编辑文件 '{file_path}' 失败: {detail}")
         if error := response.get("error"):
-            return EditResult(error=f"Error editing file '{file_path}': {error}")
+            return EditResult(error=f"编辑文件 '{file_path}' 失败: {error}")
         return EditResult(path=file_path, occurrences=response.get("count", 1))
 
     async def aedit(
@@ -1792,7 +1792,7 @@ class DockerSandboxManager:
                 raise
             existing_container = self._get_existing_container_sync(user_id)
             if existing_container is None:
-                raise RuntimeError(f"Docker container creation raced: {name}") from exc
+                raise RuntimeError(f"Docker 容器创建发生并发冲突: {name}") from exc
             return existing_container
 
     def _get_existing_container_sync(self, user_id: int) -> Container | None:
@@ -1807,7 +1807,7 @@ class DockerSandboxManager:
         if any(
             container.labels.get(key) != value for key, value in expected_labels.items()
         ):
-            raise RuntimeError(f"Docker container name is already in use: {name}")
+            raise RuntimeError(f"Docker 容器名称已被占用: {name}")
         return container
 
     def _mark_user_not_running(self, user_id: int) -> None:
@@ -2082,7 +2082,7 @@ class DockerSandboxManager:
                     archive.addfile(info, content)
             buffer.seek(0)
             if not container.put_archive(base_path, buffer):
-                raise OSError(f"Failed to write Docker archive: {base_path}")
+                raise OSError(f"写入 Docker 归档失败: {base_path}")
 
     def _write_uid_registry_sync(
         self,
@@ -2146,7 +2146,7 @@ class DockerSandboxManager:
         """校验并规范化 UID 注册表中的 Session 键"""
         parts = PurePosixPath(key).parts
         if len(parts) != 6 or parts[1] != "analyses" or parts[3] != "sessions":
-            raise ValueError("Invalid sandbox Session UID key")
+            raise ValueError("沙盒 Session UID 键无效")
         conversation_id = str(UUID(parts[0]))
         scope = SandboxSessionScope(parts[2], parts[4], parts[5])
         return scope.registry_key(UUID(conversation_id))
@@ -2222,7 +2222,7 @@ class DockerSandboxManager:
             )
             if candidate not in used_uids:
                 return candidate
-        raise RuntimeError("conversation uid range exhausted")
+        raise RuntimeError("会话 UID 分配范围已耗尽")
 
     def _allocate_session_uid(
         self,
@@ -2239,7 +2239,7 @@ class DockerSandboxManager:
             )
             if candidate not in used_uids:
                 return candidate
-        raise RuntimeError("sandbox uid range exhausted")
+        raise RuntimeError("沙盒 UID 分配范围已耗尽")
 
     def _ensure_workspace_archive_sync(
         self,
@@ -2275,9 +2275,7 @@ class DockerSandboxManager:
         if existing is not None and (
             not existing.isdir() or existing.uid != conversation_uid
         ):
-            raise RuntimeError(
-                "Conversation workspace owner does not match UID registry"
-            )
+            raise RuntimeError("对话工作区所有者与 UID 注册表不一致")
 
         conversation_name = str(conversation_id)
         self._put_archive_sync(
@@ -2361,7 +2359,7 @@ class DockerSandboxManager:
             or existing.uid not in {conversation_uid, session_uid}
             or existing.gid != conversation_uid
         ):
-            raise RuntimeError("Agent Session workspace owner is invalid")
+            raise RuntimeError("Agent Session 工作区所有者无效")
 
         analysis_root = f"analyses/{scope.analysis_id}"
         sessions_root = f"{analysis_root}/sessions"
@@ -2416,7 +2414,7 @@ class DockerSandboxManager:
             or prepared.gid != conversation_uid
             or prepared.mode & 0o777 != 0o750
         ):
-            raise RuntimeError("Agent Session workspace permission setup failed")
+            raise RuntimeError("Agent Session 工作区权限设置失败")
         return conversation_uid, session_uid
 
     async def get_backend(
@@ -2434,7 +2432,7 @@ class DockerSandboxManager:
             mutation_lock,
         ) = await self._get_resources(user_id, conversation_id)
         if conversation_guard is None or mutation_lock is None:
-            raise RuntimeError("Conversation sandbox guard is unavailable")
+            raise RuntimeError("会话沙盒守卫不可用")
 
         def prepare() -> int:
             with user_guard.maintenance(), conversation_guard.maintenance():
@@ -2484,7 +2482,7 @@ class DockerSandboxManager:
             mutation_lock,
         ) = await self._get_resources(user_id, conversation_id)
         if conversation_guard is None or mutation_lock is None:
-            raise RuntimeError("Conversation sandbox guard is unavailable")
+            raise RuntimeError("会话沙盒守卫不可用")
 
         def prepare() -> tuple[int, int]:
             with user_guard.maintenance(), conversation_guard.maintenance():
@@ -2579,7 +2577,7 @@ class DockerSandboxManager:
             or root_info.uid != conversation_uid
             or root_info.gid != conversation_uid
         ):
-            raise OSError("Invalid conversation workspace")
+            raise OSError("对话工作区无效")
 
         parts = PurePosixPath(relative_path).parts
         directories: list[tuple[str, int, int, int]] = []
@@ -2652,7 +2650,7 @@ class DockerSandboxManager:
             for member in archive:
                 if member.isreg():
                     if member.uid not in allowed_uids or member.gid != conversation_uid:
-                        raise OSError("Conversation workspace contains invalid owner")
+                        raise OSError("对话工作区包含无效的所有者")
                     total += member.size
                     if total > self._config.max_workspace_bytes:
                         break
@@ -2684,7 +2682,7 @@ class DockerSandboxManager:
             content.seek(0)
             if size > self._config.max_file_bytes:
                 raise SandboxFileTooLargeError(
-                    f"file too large: {size} > {self._config.max_file_bytes}"
+                    f"文件大小超出限制: {size} > {self._config.max_file_bytes}"
                 )
             directories, replaced_size = self._validate_attachment_target_sync(
                 container,
@@ -2700,7 +2698,7 @@ class DockerSandboxManager:
             projected_size = current_size - replaced_size + size
             if projected_size > self._config.max_workspace_bytes:
                 raise SandboxStorageLimitError(
-                    "workspace limit exceeded: "
+                    "工作区容量超出限制: "
                     f"{projected_size} > {self._config.max_workspace_bytes}"
                 )
             workspace = f"{_SANDBOX_WORKSPACE_ROOT}/{conversation_id}"
@@ -2729,7 +2727,7 @@ class DockerSandboxManager:
                 or written.uid != conversation_uid
                 or written.size != size
             ):
-                raise OSError("Uploaded attachment failed validation")
+                raise OSError("上传附件未通过校验")
 
     def _download_attachment_sync(
         self,
@@ -2786,7 +2784,7 @@ class DockerSandboxManager:
             mutation_lock,
         ) = await self._get_resources(user_id, conversation_id)
         if conversation_guard is None or mutation_lock is None:
-            raise RuntimeError("Conversation sandbox guard is unavailable")
+            raise RuntimeError("会话沙盒守卫不可用")
         async with user_lock:
             await asyncio.to_thread(
                 self._upload_attachment_sync,
@@ -2846,7 +2844,7 @@ class DockerSandboxManager:
             conversation_id,
         )
         if conversation_guard is None:
-            raise RuntimeError("Conversation sandbox guard is unavailable")
+            raise RuntimeError("会话沙盒守卫不可用")
         async with user_lock:
             try:
                 content = await asyncio.to_thread(
@@ -2986,7 +2984,7 @@ class DockerSandboxManager:
                         if isinstance(raw_output, bytes)
                         else str(raw_output)
                     ).strip()
-                    raise OSError(detail or "failed to delete conversation sandbox")
+                    raise OSError(detail or "删除对话沙盒失败")
                 registry = self._load_uid_registry_sync(container)
                 registry.conversations.pop(str(conversation_id), None)
                 session_prefix = f"{conversation_id}/"
@@ -3086,7 +3084,7 @@ class DockerSandboxManager:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"resource discovery failed: {exc}")
+            errors.append(f"资源发现失败: {exc}")
             logger.exception("发现 Docker 沙箱资源失败")
             self._record_cleanup_result(started_at, errors)
             return
@@ -3124,7 +3122,7 @@ class DockerSandboxManager:
                 raise
             except Exception as exc:  # noqa: BLE001
                 started_at = time.time()
-                error = f"cleanup loop failed: {exc}"
+                error = f"清理循环失败: {exc}"
                 logger.exception("Docker 沙箱清理循环异常")
                 self._record_cleanup_result(started_at, [error])
 

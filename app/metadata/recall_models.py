@@ -30,15 +30,15 @@ class SemanticRecallRecord(BaseModel):
     def validate_kind_payload(self) -> Self:
         """校验原始召回和合并召回的数据约束"""
         if self.response.search_id != self.recall_id:
-            raise ValueError("response.search_id must equal recall_id")
+            raise ValueError("response.search_id 必须与 recall_id 一致")
         if self.kind == "search":
             if self.request is None:
-                raise ValueError("search recall requires request")
+                raise ValueError("原始检索召回必须包含 request")
             if self.source_recall_ids:
-                raise ValueError("search recall cannot have source recalls")
+                raise ValueError("原始检索召回不能包含来源召回")
         else:
             if self.request is not None:
-                raise ValueError("merged recall cannot have request")
+                raise ValueError("合并召回不能包含 request")
             if len(self.source_recall_ids) < 2:
-                raise ValueError("merged recall requires at least two sources")
+                raise ValueError("合并召回至少需要两个来源召回")
         return self

@@ -699,7 +699,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.status, "completed")
         self.assertEqual(second.status, "completed")
         self.assertEqual(third.status, "failed")
-        self.assertIn("delegation limit", third.limitations[0])
+        self.assertIn("委派次数上限", third.limitations[0])
 
     async def test_session_timeout_returns_failed_protocol_result(self) -> None:
         fake = _FakeAgent(delay=0.05)
@@ -740,7 +740,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             result = await service.delegate(_request("region"), config)
 
         self.assertEqual(result.status, "failed")
-        self.assertIn("self repair", result.limitations[0])
+        self.assertIn("修补自身", result.limitations[0])
         self.assertEqual(len(fake.configs), 2)
 
     async def test_missing_artifact_is_rejected_after_structured_retry(self) -> None:
@@ -753,7 +753,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             result = await service.delegate(_request("region"), config)
 
         self.assertEqual(result.status, "failed")
-        self.assertIn("artifact does not exist", result.limitations[0])
+        self.assertIn("产物不存在", result.limitations[0])
         self.assertEqual(len(fake.configs), 2)
 
     async def test_artifact_verification_has_bounded_fan_out(self) -> None:
@@ -821,7 +821,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             result = await service.delegate(_request("region"), config)
 
         self.assertEqual(result.status, "failed")
-        self.assertIn("outside current analysis", result.limitations[0])
+        self.assertIn("超出当前分析范围", result.limitations[0])
         self.assertEqual(len(fake.configs), 2)
 
     async def test_unknown_repair_target_is_rejected(self) -> None:
@@ -851,7 +851,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             result = await service.delegate(_request("region"), config)
 
         self.assertEqual(result.status, "failed")
-        self.assertIn("existing session", result.limitations[0])
+        self.assertIn("已存在的 Session", result.limitations[0])
         self.assertEqual(len(fake.configs), 2)
 
     async def test_repair_target_survives_service_restart(self) -> None:
@@ -942,9 +942,9 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(repair_result.status, "needs_repair")
-        self.assertIn("repair depth must be 1", wrong_depth.limitations[0])
+        self.assertIn("修补深度必须为 1", wrong_depth.limitations[0])
         self.assertEqual(repaired.status, "completed")
-        self.assertIn("repair depth must be 1", reset_depth.limitations[0])
+        self.assertIn("修补深度必须为 1", reset_depth.limitations[0])
         self.assertEqual(continued_repair.status, "completed")
 
     async def test_repair_depth_limit_stops_new_repair_request(self) -> None:
@@ -987,7 +987,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.status, "failed")
-        self.assertIn("planner_run_id is missing", result.limitations[0])
+        self.assertIn("缺少 planner_run_id", result.limitations[0])
         self.assertEqual(fake.configs, [])
 
     async def test_agent_manager_serializes_same_planner_across_workers(self) -> None:

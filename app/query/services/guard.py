@@ -198,7 +198,7 @@ class QueryGuardService:
         self._data_source = data_source
         self._current_database = current_database
         if max_cell_bytes <= 0:
-            raise ValueError("max_cell_bytes must be positive")
+            raise ValueError("max_cell_bytes 必须为正整数")
         self._max_cell_bytes = max_cell_bytes
         self._policy_provider = policy_provider
 

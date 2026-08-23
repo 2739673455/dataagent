@@ -448,7 +448,7 @@ class QueryExperienceService:
                 ),
             )
         except Exception:  # noqa: BLE001
-            logger.exception("Query experience semantic retrieval failed")
+            logger.exception("查询经验语义检索失败")
             return {}
         ranks: dict[UUID, dict[str, float]] = {}
         for channel, hits in (("text", text_hits), ("vector", vector_hits)):

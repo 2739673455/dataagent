@@ -201,7 +201,7 @@ class AuthorizationService:
             column_name=grant.column_name,
         )
         if identity.scope.value != grant.scope:
-            raise RuntimeError(f"Invalid persisted asset grant: {grant.id}")
+            raise RuntimeError(f"持久化资产授权记录无效: {grant.id}")
         return identity
 
 
@@ -538,7 +538,7 @@ class DorisRoleManagementService:
             await self._repo.revoke_user_refresh_tokens(user.id, now)
             updated = await self._repo.get_user_by_id(user.id)
             if updated is None:
-                raise RuntimeError("Updated user could not be reloaded")
+                raise RuntimeError("更新后的用户记录无法重新加载")
             return updated
 
     async def set_user_admin(self, user_id: int, is_admin: bool) -> User:
@@ -555,7 +555,7 @@ class DorisRoleManagementService:
             await self._repo.revoke_user_refresh_tokens(user.id, now)
             updated = await self._repo.get_user_by_id(user.id)
             if updated is None:
-                raise RuntimeError("Updated user could not be reloaded")
+                raise RuntimeError("更新后的用户记录无法重新加载")
             return updated
 
     async def list_asset_grants(

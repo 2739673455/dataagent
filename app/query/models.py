@@ -86,9 +86,9 @@ class QueryValidationResult(BaseModel):
     def validate_status(self) -> "QueryValidationResult":
         """保证校验状态和问题列表一致"""
         if self.valid == bool(self.issues):
-            raise ValueError("valid must be the inverse of issues")
+            raise ValueError("valid 必须与 issues 是否为空保持相反状态")
         if self.valid and self.normalized_sql is None:
-            raise ValueError("valid query requires normalized_sql")
+            raise ValueError("有效查询必须包含 normalized_sql")
         return self
 
 

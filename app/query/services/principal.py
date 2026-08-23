@@ -55,13 +55,11 @@ class QueryPrincipalService:
         if not user.is_active:
             raise auth_error.InactiveUserError
         if user.doris_role_name is None:
-            raise QueryPrincipalNotConfiguredError(
-                "The user has no Doris role"
-            )
+            raise QueryPrincipalNotConfiguredError("用户尚未配置 Doris 角色")
         identity = await self._identity_provider.get(user.doris_role_name)
         if identity is None or not identity.is_active:
             raise QueryPrincipalNotConfiguredError(
-                "The user's Doris role has no query identity"
+                "用户的 Doris 角色尚未配置可用的查询身份"
             )
         return ResolvedQueryPrincipal(
             role_name=user.doris_role_name,

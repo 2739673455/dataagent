@@ -607,7 +607,7 @@ def build_config(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]:
     if set(schema) != set(TABLE_ORDER):
         missing = sorted(set(TABLE_ORDER) - set(schema))
         unexpected = sorted(set(schema) - set(TABLE_ORDER))
-        raise ValueError(f"DDL 表清单变化 missing={missing} unexpected={unexpected}")
+        raise ValueError(f"DDL 表清单变化，缺失={missing}，意外出现={unexpected}")
     column_keys = {
         (table_name, column["name"])
         for table_name, table in schema.items()

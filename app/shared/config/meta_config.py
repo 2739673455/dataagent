@@ -39,9 +39,7 @@ class ColumnConfig(MetaConfigModel):
     def validate_reference(self) -> "ColumnConfig":
         """校验字段引用必须同时包含表名和字段名"""
         if (self.reference_t_name is None) != (self.reference_c_name is None):
-            raise ValueError(
-                "Reference table name and column name must be provided together"
-            )
+            raise ValueError("引用表名和引用字段名必须同时提供")
         return self
 
 

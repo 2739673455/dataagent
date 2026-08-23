@@ -188,8 +188,8 @@ class _ColumnContextBuilder:
         self._add_primary_keys()
         if self._truncated:
             self._warnings.append(
-                "Ranked column context truncated at "
-                f"{_MAX_RANKED_CONTEXT_COLUMNS} resources"
+                "排序后的字段上下文已截断，最多保留 "
+                f"{_MAX_RANKED_CONTEXT_COLUMNS} 个资源"
             )
         return (
             self._build_column_results(),
@@ -314,7 +314,7 @@ class _ColumnContextBuilder:
                 context.match_reasons
             ):
                 self._warnings.append(
-                    "Column semantic index is "
+                    "字段语义索引状态为 "
                     f"{index_status}: {column_info.t_name}.{column_info.name}"
                 )
             results.append(
@@ -375,7 +375,7 @@ class MetaSearchService:
     ) -> None:
         """初始化元数据语义搜索服务"""
         if max_concurrent_index_queries <= 0:
-            raise ValueError("max_concurrent_index_queries must be positive")
+            raise ValueError("max_concurrent_index_queries 必须为正整数")
         self._embedding_client = embedding_client
         self._column_repo = column_repo
         self._metric_repo = metric_repo
@@ -479,7 +479,7 @@ class MetaSearchService:
             self._merge_column_hits(
                 context,
                 results,
-                backend_name="Column full-text",
+                backend_name="字段全文",
                 match_type="fulltext",
             )
 
@@ -500,7 +500,7 @@ class MetaSearchService:
             self._merge_metric_hits(
                 context,
                 results,
-                backend_name="Metric full-text",
+                backend_name="指标全文",
                 match_type="fulltext",
             )
 
@@ -514,7 +514,7 @@ class MetaSearchService:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
-            context.record_backend_failure("Embedding", exc)
+            context.record_backend_failure("向量生成", exc)
             return
 
         if context.selects_any("column") and context.catalog.columns:
@@ -534,7 +534,7 @@ class MetaSearchService:
             self._merge_column_hits(
                 context,
                 results,
-                backend_name="Column vector",
+                backend_name="字段向量",
                 match_type="vector",
             )
 
@@ -555,7 +555,7 @@ class MetaSearchService:
             self._merge_metric_hits(
                 context,
                 results,
-                backend_name="Metric vector",
+                backend_name="指标向量",
                 match_type="vector",
             )
 
@@ -641,7 +641,7 @@ class MetaSearchService:
         )
         for query, result in zip(context.queries, results, strict=True):
             if isinstance(result, BaseException):
-                context.record_backend_failure("Value full-text", result)
+                context.record_backend_failure("字段取值全文", result)
                 continue
             for rank, hit in enumerate(result, start=1):
                 column_key = (hit.item.t_name, hit.item.c_name)
@@ -756,7 +756,7 @@ class MetaSearchService:
             index_status = _index_status(metric_info)
             if index_status != "current" and _has_semantic_index_match(match_reasons):
                 context.warnings.append(
-                    f"Metric semantic index is {index_status}: {name}"
+                    f"指标语义索引状态为 {index_status}: {name}"
                 )
             results.append(
                 SemanticMetricResult(
@@ -792,7 +792,7 @@ class MetaSearchService:
             sync_status = self._value_sync_status(column_info.value_index_sync_status)
             if sync_status != "succeeded" and (t_name, c_name) not in warned_columns:
                 context.warnings.append(
-                    f"Value index status is {sync_status or 'unknown'}: "
+                    f"字段取值索引状态为 {sync_status or '未知'}: "
                     f"{t_name}.{c_name}"
                 )
                 warned_columns.add((t_name, c_name))

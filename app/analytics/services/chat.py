@@ -247,7 +247,7 @@ async def _process_attachments(
             )
         except OSError:
             logger.warning(
-                "Attachment image is unavailable: "
+                "附件图片不可用: "
                 f"conversation_id={conversation_id}, file={attachment.f_path}"
             )
             lost.append(f"- 图片：`{attachment.f_path}`")

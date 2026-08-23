@@ -64,7 +64,7 @@ async def search_semantic_resources(
     except ValidationError as exc:
         return {
             "status": "error",
-            "message": "Invalid semantic search request",
+            "message": "语义检索请求无效",
             "details": exc.errors(include_url=False),
         }
 

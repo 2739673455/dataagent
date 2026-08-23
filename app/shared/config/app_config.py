@@ -97,13 +97,13 @@ class SandboxConfig(BaseModel):
     def validate_size_limits(self) -> "SandboxConfig":
         """校验沙盒容量限制之间的关系"""
         if self.max_output_bytes > self.max_capture_bytes:
-            raise ValueError("max_output_bytes must not exceed max_capture_bytes")
+            raise ValueError("max_output_bytes 不能大于 max_capture_bytes")
         if self.max_capture_bytes > self.max_file_bytes:
-            raise ValueError("max_capture_bytes must not exceed max_file_bytes")
+            raise ValueError("max_capture_bytes 不能大于 max_file_bytes")
         if self.max_file_bytes > self.max_workspace_bytes:
-            raise ValueError("max_file_bytes must not exceed max_workspace_bytes")
+            raise ValueError("max_file_bytes 不能大于 max_workspace_bytes")
         if self.idle_stop_seconds >= self.idle_remove_seconds:
-            raise ValueError("idle_stop_seconds must be less than idle_remove_seconds")
+            raise ValueError("idle_stop_seconds 必须小于 idle_remove_seconds")
         option_fields = {
             "deployment_namespace": self.deployment_namespace,
             "user_id": 1,
@@ -115,25 +115,25 @@ class SandboxConfig(BaseModel):
                 for key, value in self.volume_driver_options.items()
             }
         except (KeyError, ValueError) as exc:
-            placeholder = exc.args[0] if exc.args else "invalid format"
+            placeholder = exc.args[0] if exc.args else "格式无效"
             raise ValueError(
-                f"invalid volume driver option template: {placeholder}"
+                f"数据卷驱动选项模板无效: {placeholder}"
             ) from exc
         if any(not key or not value for key, value in rendered_options.items()):
-            raise ValueError("volume driver options must not contain empty values")
+            raise ValueError("数据卷驱动选项不能包含空键或空值")
         if self.workspace_quota_mode == "volume_driver" and not any(
             "{max_workspace_bytes}" in value
             for value in self.volume_driver_options.values()
         ):
             raise ValueError(
-                "volume_driver quota mode requires a max_workspace_bytes placeholder"
+                "volume_driver 配额模式要求选项中包含 max_workspace_bytes 占位符"
             )
         if (
             self.workspace_quota_mode == "volume_driver"
             and self.volume_driver == "local"
         ):
             raise ValueError(
-                "volume_driver quota mode requires a quota-capable external driver"
+                "volume_driver 配额模式要求使用支持配额的外部驱动"
             )
         return self
 
@@ -307,11 +307,11 @@ class Cfg(BaseModel):
         """校验查询、沙盒、目录和数据连接之间的全局约束"""
         if self.query.max_output_bytes > self.sandbox.max_file_bytes:
             raise ValueError(
-                "query.max_output_bytes must not exceed sandbox.max_file_bytes"
+                "query.max_output_bytes 不能大于 sandbox.max_file_bytes"
             )
         if self.query.max_cell_bytes > self.query.max_output_bytes:
             raise ValueError(
-                "query.max_cell_bytes must not exceed query.max_output_bytes"
+                "query.max_cell_bytes 不能大于 query.max_output_bytes"
             )
         return self
 

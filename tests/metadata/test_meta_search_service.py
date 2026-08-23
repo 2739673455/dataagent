@@ -259,7 +259,7 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item.name for item in response.columns], ["amount"])
         self.assertEqual(
             response.warnings,
-            ["Column full-text 检索服务暂不可用"],
+            ["字段全文 检索服务暂不可用"],
         )
 
     async def test_column_context_adds_primary_key_and_one_hop_relation(self) -> None:
@@ -450,7 +450,7 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(("customers", "id"), returned_columns)
         self.assertEqual(len(response.relations), 1)
         self.assertIn(
-            "Ranked column context truncated at 30 resources",
+            "排序后的字段上下文已截断，最多保留 30 个资源",
             response.warnings,
         )
 

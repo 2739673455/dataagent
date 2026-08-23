@@ -117,7 +117,7 @@ class AgentSessionService:
         """为单次 Planner 执行建立独立委派预算"""
         with self._budget_lock:
             if planner_run_id in self._budgets:
-                raise RuntimeError("planner run budget already exists")
+                raise RuntimeError("Planner 执行预算已存在")
             self._budgets[planner_run_id] = _ExecutionBudget()
         try:
             yield
@@ -129,11 +129,11 @@ class AgentSessionService:
         """通过显式 Planner run ID 读取跨 PTC 边界的共享预算"""
         planner_run_id = parent_config.get("configurable", {}).get("planner_run_id")
         if not isinstance(planner_run_id, str):
-            raise TypeError("planner_run_id is missing from delegation config")
+            raise TypeError("委派配置中缺少 planner_run_id")
         with self._budget_lock:
             budget = self._budgets.get(planner_run_id)
         if budget is None:
-            raise RuntimeError("planner run budget is unavailable")
+            raise RuntimeError("Planner 执行预算不可用")
         return budget
 
     def _consume_delegation(
@@ -145,13 +145,13 @@ class AgentSessionService:
         """原子检查委派和 Session 恢复次数"""
         budget.delegations += 1
         if budget.delegations > self._max_delegations_per_run:
-            return "delegation limit reached for this planner run"
+            return "本次 Planner 执行已达到委派次数上限"
 
         checkpoint_ns = session_key.checkpoint_ns
         if persisted_session_exists or checkpoint_ns in self._known_sessions:
             budget.session_resumes[checkpoint_ns] += 1
             if budget.session_resumes[checkpoint_ns] > self._max_session_resumes:
-                return "session resume limit reached for this planner run"
+                return "本次 Planner 执行已达到 Session 续接次数上限"
         else:
             self._known_sessions.add(checkpoint_ns)
         return None
@@ -248,10 +248,10 @@ class AgentSessionService:
                 session_id=request.target_session_id,
             )
             if target_key.checkpoint_ns == session_key.checkpoint_ns:
-                raise ValueError("a specialist session cannot request self repair")
+                raise ValueError("专业 Agent Session 不能请求修补自身")
             if not await self._is_existing_session(target_key):
                 raise ValueError(
-                    "repair target must be an existing session in the same analysis: "
+                    "修补目标必须是同一分析中已存在的 Session: "
                     f"{request.target_agent_type}/{request.target_session_id}"
                 )
 
@@ -283,9 +283,7 @@ class AgentSessionService:
         )
         if invalid_artifacts or invalid_evidence:
             invalid = [*invalid_artifacts, *invalid_evidence]
-            raise ValueError(
-                f"artifact path is outside current analysis: {', '.join(invalid)}"
-            )
+            raise ValueError(f"产物路径超出当前分析范围: {', '.join(invalid)}")
         paths = artifact_paths | evidence_paths
 
         async def verify(path: str) -> bool:
@@ -299,7 +297,7 @@ class AgentSessionService:
             if not exists
         ]
         if missing:
-            raise ValueError(f"artifact does not exist: {', '.join(missing)}")
+            raise ValueError(f"产物不存在: {', '.join(missing)}")
 
     async def _invoke_specialist(
         self,
@@ -416,7 +414,7 @@ class AgentSessionService:
             budget.session_repair_depths.get(checkpoint_ns, 0),
         )
         if request.repair_depth != expected_depth:
-            return f"repair depth must be {expected_depth} for this session"
+            return f"当前 Session 的修补深度必须为 {expected_depth}"
         return None
 
     @staticmethod

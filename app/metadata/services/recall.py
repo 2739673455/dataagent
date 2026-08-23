@@ -166,7 +166,7 @@ def merge_semantic_search_responses(
 ) -> SemanticSearchResponse:
     """生成多个召回结果的去重合并快照"""
     if len(responses) < 2:
-        raise ValueError("at least two recall responses are required")
+        raise ValueError("至少需要两个召回响应")
     return SemanticSearchResponse(
         status=(
             "partial"
@@ -242,9 +242,9 @@ class SemanticRecallService:
     ) -> list[SemanticRecallRecord]:
         """列出会话召回记录"""
         if limit <= 0:
-            raise ValueError("limit must be positive")
+            raise ValueError("limit 必须为正整数")
         if offset < 0:
-            raise ValueError("offset cannot be negative")
+            raise ValueError("offset 不能为负数")
         return [
             self._authorize_record(record)
             for record in await self._repo.list(
@@ -264,7 +264,7 @@ class SemanticRecallService:
         """创建保留源记录的去重合并快照"""
         source_ids = list(dict.fromkeys(recall_ids))
         if len(source_ids) < 2:
-            raise ValueError("at least two distinct recall IDs are required")
+            raise ValueError("至少需要两个不同的召回 ID")
 
         records: list[SemanticRecallRecord] = []
         missing: list[str] = []

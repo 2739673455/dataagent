@@ -31,7 +31,7 @@ def normalize_doris_role_name(value: str) -> str:
     """校验并规范化 Doris 角色名"""
     normalized = value.strip()
     if DORIS_ROLE_NAME_PATTERN.fullmatch(normalized) is None:
-        raise ValueError("invalid Doris role name")
+        raise ValueError("Doris 角色名称格式无效")
     return normalized
 
 

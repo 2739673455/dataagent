@@ -246,11 +246,8 @@ async def execute_sql(
         return {
             "status": "error",
             "code": "sql_validation_failed",
-            "message": "SQL validation failed before Doris execution",
-            "hint": (
-                "Revise the SQL according to validation.issues, then call "
-                "execute_sql again"
-            ),
+            "message": "SQL 在提交 Doris 执行前未通过校验",
+            "hint": "请根据 validation.issues 修正 SQL，然后再次调用 execute_sql",
             "validation": exc.result.model_dump(mode="json"),
         }
     except (
