@@ -91,9 +91,7 @@ class DorisRoleRepository:
                 try:
                     await self._execute(f"DROP ROLE IF EXISTS {role}")
                 except Exception:  # noqa: BLE001
-                    logger.exception(
-                        f"补偿删除 Doris 角色失败: {role_name}"
-                    )
+                    logger.exception(f"补偿删除 Doris 角色失败: {role_name}")
             raise
 
     async def create_query_user_for_existing_role(
@@ -124,9 +122,7 @@ class DorisRoleRepository:
                 try:
                     await self._execute(f"DROP USER IF EXISTS {user}")
                 except Exception:  # noqa: BLE001
-                    logger.exception(
-                        f"补偿删除 Doris 查询用户失败: {query_user}"
-                    )
+                    logger.exception(f"补偿删除 Doris 查询用户失败: {query_user}")
             raise
 
     async def drop_query_user(self, query_user: str) -> None:
@@ -156,9 +152,7 @@ class DorisRoleRepository:
         }
         missing = sorted(set(role_names) - existing)
         if missing:
-            raise RuntimeError(
-                f"配置的 Doris 角色不存在: {', '.join(missing)}"
-            )
+            raise RuntimeError(f"配置的 Doris 角色不存在: {', '.join(missing)}")
 
     async def list_role_row_policies(self, role_name: str) -> list[dict[str, Any]]:
         """读取指定角色的全部行策略"""
@@ -201,16 +195,13 @@ class DorisRoleRepository:
             if columns:
                 raise ValueError("列级授权必须指定对应的数据表")
             target = (
-                f"{self.quote_identifier(catalog)}."
-                f"{self.quote_identifier(database)}.*"
+                f"{self.quote_identifier(catalog)}.{self.quote_identifier(database)}.*"
             )
             privilege = "SELECT_PRIV"
         else:
             target = self.qualified_table(catalog, database, table)
             privilege = self._select_privilege(columns)
-        await self._execute(
-            f"GRANT {privilege} ON {target} TO ROLE {role}"
-        )
+        await self._execute(f"GRANT {privilege} ON {target} TO ROLE {role}")
 
     async def revoke_select(
         self,
@@ -227,16 +218,13 @@ class DorisRoleRepository:
             if columns:
                 raise ValueError("列级授权必须指定对应的数据表")
             target = (
-                f"{self.quote_identifier(catalog)}."
-                f"{self.quote_identifier(database)}.*"
+                f"{self.quote_identifier(catalog)}.{self.quote_identifier(database)}.*"
             )
             privilege = "SELECT_PRIV"
         else:
             target = self.qualified_table(catalog, database, table)
             privilege = self._select_privilege(columns)
-        await self._execute(
-            f"REVOKE {privilege} ON {target} FROM ROLE {role}"
-        )
+        await self._execute(f"REVOKE {privilege} ON {target} FROM ROLE {role}")
 
     async def create_row_policy(
         self,
@@ -271,9 +259,7 @@ class DorisRoleRepository:
         policy = self.quote_identifier(policy_name)
         role = self.quote_role(role_name)
         target = self.qualified_table(catalog, database, table)
-        await self._execute(
-            f"DROP ROW POLICY {policy} ON {target} FOR ROLE {role}"
-        )
+        await self._execute(f"DROP ROW POLICY {policy} ON {target} FOR ROLE {role}")
 
     async def _execute(self, sql: str) -> None:
         """执行完全由已校验结构组成的 Doris 管理语句"""

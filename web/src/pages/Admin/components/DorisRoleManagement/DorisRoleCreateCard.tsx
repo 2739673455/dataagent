@@ -1,3 +1,4 @@
+import { X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { adminApi, type DorisRoleResponse } from "@/api/admin";
@@ -13,10 +14,16 @@ function errorMessage(error: unknown): string {
 interface DorisRoleCreateCardProps {
   rolesCount: number;
   busy: boolean;
+  onCancel: () => void;
   onRoleCreated: (role: DorisRoleResponse) => void;
 }
 
-export function DorisRoleCreateCard({ rolesCount, busy, onRoleCreated }: DorisRoleCreateCardProps) {
+export function DorisRoleCreateCard({
+  rolesCount,
+  busy,
+  onCancel,
+  onRoleCreated,
+}: DorisRoleCreateCardProps) {
   const [newRole, setNewRole] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [newQueryUser, setNewQueryUser] = useState("");
@@ -48,43 +55,91 @@ export function DorisRoleCreateCard({ rolesCount, busy, onRoleCreated }: DorisRo
   };
 
   return (
-    <div className="mt-4 rounded border border-[#d4d4ce] bg-[#fafaf8] p-3 text-sm">
-      <p className="mb-2 font-medium text-[#71717a]">创建新 Doris 角色与查询身份</p>
-      <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-4">
-        <input
-          value={newRole}
-          onChange={(event) => setNewRole(event.target.value)}
-          placeholder="角色标识 (如 data_analyst)"
-          className="h-9 rounded border border-[#d4d4ce] bg-[#ffffff] px-3 text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-        />
-        <input
-          value={newQueryUser}
-          onChange={(event) => setNewQueryUser(event.target.value)}
-          placeholder="查询用户 (如 q_analyst)"
-          className="h-9 rounded border border-[#d4d4ce] bg-[#ffffff] px-3 text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-        />
-        <input
-          value={newDescription}
-          onChange={(event) => setNewDescription(event.target.value)}
-          placeholder="角色业务描述"
-          className="h-9 rounded border border-[#d4d4ce] bg-[#ffffff] px-3 text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-        />
-        <input
-          value={newWorkloadGroup}
-          onChange={(event) => setNewWorkloadGroup(event.target.value)}
-          placeholder="资源工作组 (默认 normal)"
-          className="h-9 rounded border border-[#d4d4ce] bg-[#ffffff] px-3 text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-        />
+    <div className="mt-3 rounded border border-[#1e2024] bg-[#fafaf8] p-4 text-xs shadow-sm shrink-0 mb-1">
+      <div className="flex items-center justify-between font-semibold text-[#18181b] border-b border-[#e5e5df] pb-1.5 mb-3">
+        <span>创建新 Doris 角色与查询身份</span>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="text-[#71717a] hover:text-[#18181b] cursor-pointer"
+        >
+          <X className="h-4 w-4" />
+        </button>
       </div>
-      <div className="mt-2.5 flex justify-end">
+
+      <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+        <div>
+          <label htmlFor="role-new-name" className="block text-xs font-medium text-[#71717a] mb-1">
+            角色标识 *
+          </label>
+          <input
+            id="role-new-name"
+            value={newRole}
+            onChange={(event) => setNewRole(event.target.value)}
+            placeholder="如 data_analyst"
+            className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+          />
+        </div>
+
+        <div>
+          <label
+            htmlFor="role-new-query-user"
+            className="block text-xs font-medium text-[#71717a] mb-1"
+          >
+            查询用户 *
+          </label>
+          <input
+            id="role-new-query-user"
+            value={newQueryUser}
+            onChange={(event) => setNewQueryUser(event.target.value)}
+            placeholder="如 q_analyst"
+            className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="role-new-desc" className="block text-xs font-medium text-[#71717a] mb-1">
+            角色业务描述 *
+          </label>
+          <input
+            id="role-new-desc"
+            value={newDescription}
+            onChange={(event) => setNewDescription(event.target.value)}
+            placeholder="角色业务描述"
+            className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+          />
+        </div>
+
+        <div>
+          <label
+            htmlFor="role-new-workload"
+            className="block text-xs font-medium text-[#71717a] mb-1"
+          >
+            资源工作组
+          </label>
+          <input
+            id="role-new-workload"
+            value={newWorkloadGroup}
+            onChange={(event) => setNewWorkloadGroup(event.target.value)}
+            placeholder="默认 normal"
+            className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+          />
+        </div>
+      </div>
+
+      <div className="mt-3 flex justify-end gap-2">
+        <Button variant="outline" size="sm" onClick={onCancel} className="h-7 px-2 text-xs">
+          取消
+        </Button>
         <Button
           size="sm"
           disabled={
             busy || submitting || !newRole.trim() || !newDescription.trim() || !newQueryUser.trim()
           }
           onClick={() => void handleCreateRole()}
+          className="h-7 px-2 text-xs bg-[#1e2024] text-white hover:bg-[#2d3139]"
         >
-          {submitting ? "创建中..." : "创建角色与身份"}
+          {submitting ? "创建中..." : "确认创建"}
         </Button>
       </div>
     </div>

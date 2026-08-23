@@ -248,10 +248,7 @@ class QueryGuardService:
             issues.append(
                 QueryValidationIssue(
                     code="duplicate_output_column",
-                    message=(
-                        "查询输出列名不能重复: "
-                        + ", ".join(duplicate_outputs)
-                    ),
+                    message=("查询输出列名不能重复: " + ", ".join(duplicate_outputs)),
                 )
             )
 
@@ -366,33 +363,22 @@ class QueryGuardService:
             issues.append(
                 QueryValidationIssue(
                     code="forbidden_operation",
-                    message=(
-                        "查询包含禁止的操作: "
-                        + ", ".join(forbidden_keys)
-                    ),
+                    message=("查询包含禁止的操作: " + ", ".join(forbidden_keys)),
                 )
             )
         anonymous_functions = {
-            function.name.casefold()
-            for function in expression.find_all(exp.Anonymous)
+            function.name.casefold() for function in expression.find_all(exp.Anonymous)
         }
-        forbidden_functions = sorted(
-            anonymous_functions & _SIDE_EFFECT_FUNCTIONS
-        )
+        forbidden_functions = sorted(anonymous_functions & _SIDE_EFFECT_FUNCTIONS)
         if forbidden_functions:
             issues.append(
                 QueryValidationIssue(
                     code="forbidden_function",
-                    message=(
-                        "查询包含禁止的函数: "
-                        + ", ".join(forbidden_functions)
-                    ),
+                    message=("查询包含禁止的函数: " + ", ".join(forbidden_functions)),
                 )
             )
         unapproved_functions = sorted(
-            anonymous_functions
-            - _SIDE_EFFECT_FUNCTIONS
-            - _SAFE_ANONYMOUS_FUNCTIONS
+            anonymous_functions - _SIDE_EFFECT_FUNCTIONS - _SAFE_ANONYMOUS_FUNCTIONS
         )
         if unapproved_functions:
             issues.append(
@@ -506,14 +492,14 @@ class QueryGuardService:
         star_tables: set[str],
     ) -> list[QueryValidationIssue]:
         """字段级授权不允许通过星号扩展隐藏字段"""
-        table_refs = {
-            table.qualified_name.casefold(): table
-            for table in tables
-        }
+        table_refs = {table.qualified_name.casefold(): table for table in tables}
         issues: list[QueryValidationIssue] = []
         for table_key in sorted(star_tables):
             table = table_refs.get(table_key)
-            if table is None or table.name.casefold() not in catalog.restricted_star_tables:
+            if (
+                table is None
+                or table.name.casefold() not in catalog.restricted_star_tables
+            ):
                 continue
             issues.append(
                 QueryValidationIssue(

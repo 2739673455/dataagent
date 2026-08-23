@@ -74,9 +74,7 @@ class DorisQueryClientRegistry:
         password: str,
     ) -> DorisClientManager:
         """读取或创建与当前查询凭据一致的连接池"""
-        fingerprint = hashlib.sha256(
-            f"{query_user}\0{password}".encode()
-        ).hexdigest()
+        fingerprint = hashlib.sha256(f"{query_user}\0{password}".encode()).hexdigest()
         stale: DorisClientManager | None = None
         async with self._lock:
             current = self._entries.get(role_name)

@@ -93,11 +93,7 @@ class ValueESRepo:
             query={
                 "bool": {
                     "should": [
-                        {
-                            "term": {
-                                "resource_key": column_resource_key(t_name, c_name)
-                            }
-                        },
+                        {"term": {"resource_key": column_resource_key(t_name, c_name)}},
                         {
                             "bool": {
                                 "filter": [

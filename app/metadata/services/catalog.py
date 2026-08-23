@@ -2,8 +2,6 @@
 
 from typing import cast
 
-from app.identity import errors as auth_error
-from app.identity.services.authorization import AssetAccessPolicy
 from app.metadata import errors as meta_error
 from app.metadata.models import (
     COLUMN_EXAMPLE_LIMIT,
@@ -15,7 +13,6 @@ from app.metadata.models import (
 )
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
-from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
 from app.metadata.services.contracts import MetadataAssetInvalidator
 from app.metadata.services.index import MetaIndexService
 from app.shared.config.meta_config import (
@@ -37,30 +34,16 @@ class MetaCatalogService:
         source_repo: SourceDorisRepo,
         meta_index_service: MetaIndexService,
         asset_invalidator: MetadataAssetInvalidator,
-        asset_policy: AssetAccessPolicy,
-        data_source: str,
-        database_name: str,
     ) -> None:
         """初始化元数据目录管理服务"""
         self._meta_repo = meta_repo
         self._source_repo = source_repo
         self._meta_index_service = meta_index_service
         self._asset_invalidator = asset_invalidator
-        self._authorization_filter = MetadataAuthorizationFilter(
-            asset_policy,
-            data_source,
-            database_name,
-        )
 
     async def list_table_infos(self) -> list[TableInfo]:
         """查询全部表元数据"""
-        table_infos = await self._meta_repo.list_table_infos()
-        column_infos = await self._meta_repo.list_column_infos()
-        allowed_columns = self._authorization_filter.allowed_column_keys(column_infos)
-        return self._authorization_filter.filter_tables(
-            table_infos,
-            allowed_columns,
-        )
+        return await self._meta_repo.list_table_infos()
 
     async def list_source_tables(self) -> list[str]:
         """查询底层 Doris 数据库物理表清单"""
@@ -68,29 +51,14 @@ class MetaCatalogService:
 
     async def list_column_infos(self, t_name: str) -> list[ColumnInfo]:
         """查询表下全部字段元数据"""
-        if not self._authorization_filter.table_is_visible(t_name):
-            raise auth_error.AssetAccessDeniedError
         await self._meta_repo.get_table_info(t_name)
-        column_infos = await self._meta_repo.list_column_infos()
-        allowed_columns = self._authorization_filter.allowed_column_keys(column_infos)
-        return [
-            column_info
-            for column_info in self._authorization_filter.filter_columns(
-                column_infos,
-                allowed_columns,
-            )
-            if column_info.t_name == t_name
-        ]
+        return await self._meta_repo.list_column_infos_by_table_names(
+            table_names=[t_name]
+        )
 
     async def list_metric_infos(self) -> list[MetricInfo]:
         """查询全部指标元数据"""
-        metric_infos = await self._meta_repo.list_metric_infos()
-        column_infos = await self._meta_repo.list_column_infos()
-        allowed_columns = self._authorization_filter.allowed_column_keys(column_infos)
-        return self._authorization_filter.filter_metrics(
-            metric_infos,
-            allowed_columns,
-        )
+        return await self._meta_repo.list_metric_infos()
 
     async def upsert_table_info(
         self,
@@ -100,9 +68,7 @@ class MetaCatalogService:
     ) -> None:
         """新增或更新表元数据"""
         if not await self._source_repo.table_exists(t_name):
-            raise meta_error.InvalidMetadataError(
-                detail=f"源表不存在: {t_name}"
-            )
+            raise meta_error.InvalidMetadataError(detail=f"源表不存在: {t_name}")
         primary_key_columns = await self._source_repo.get_primary_key_columns(t_name)
         async with self._meta_repo.session.begin():
             changed = await self._meta_repo.upsert_table_info(
@@ -131,9 +97,7 @@ class MetaCatalogService:
     ) -> None:
         """新增或更新字段元数据"""
         if not await self._source_repo.table_exists(t_name):
-            raise meta_error.InvalidMetadataError(
-                detail=f"源表不存在: {t_name}"
-            )
+            raise meta_error.InvalidMetadataError(detail=f"源表不存在: {t_name}")
         column_types = await self._source_repo.get_column_types(t_name)
         if c_name not in column_types:
             raise meta_error.InvalidMetadataError(
@@ -154,9 +118,7 @@ class MetaCatalogService:
                 ) from exc
             if (reference_t_name is None) != (reference_c_name is None):
                 raise meta_error.InvalidMetadataError(
-                    detail=(
-                        "引用表名和引用列名必须同时提供"
-                    )
+                    detail=("引用表名和引用列名必须同时提供")
                 )
             if reference_t_name and reference_c_name:
                 if (reference_t_name, reference_c_name) == (

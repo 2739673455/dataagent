@@ -263,9 +263,11 @@ class AgentManager:
             artifact_paths = {artifact.path for artifact in result.artifacts}
             async with meta_postgres_client_manager.session() as meta_session:
                 service = QueryExperienceService(
-                    QueryExperiencePGRepo(meta_session),
-                    QueryExperienceESRepo(es_client_manager.get_client()),
-                    embedding_client_manager.get_client(),
+                    repo=QueryExperiencePGRepo(session=meta_session),
+                    index_repo=QueryExperienceESRepo(
+                        client=es_client_manager.get_client()
+                    ),
+                    embedding_client=embedding_client_manager.get_client(),
                     data_source=app_config.cfg.query.data_source,
                     database_name=app_config.cfg.doris.database,
                 )
@@ -522,9 +524,7 @@ class AgentManager:
             offset=offset,
         ):
             tombstone_keys.extend(
-                item.key
-                for item in items
-                if item.key.startswith(f"{user_id}:")
+                item.key for item in items if item.key.startswith(f"{user_id}:")
             )
             offset += len(items)
         for key in tombstone_keys:

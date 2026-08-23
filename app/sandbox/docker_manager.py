@@ -371,9 +371,7 @@ class _FairCapacityLimiter:
                 candidates: list[int] = []
                 with self._condition:
                     if self._closed:
-                        raise SandboxCapacityClosedError(
-                            "Docker 沙箱容量限制器已关闭"
-                        )
+                        raise SandboxCapacityClosedError("Docker 沙箱容量限制器已关闭")
                     if (
                         waiter is not None
                         and waiter.cancelled
@@ -1867,9 +1865,7 @@ class DockerSandboxManager:
             reserved = self._reserve_running_slot_sync(user_id, cancel_event)
             try:
                 if cancel_event is not None and cancel_event.is_set():
-                    raise SandboxCapacityCancelledError(
-                        "Docker 沙箱启动已取消"
-                    )
+                    raise SandboxCapacityCancelledError("Docker 沙箱启动已取消")
                 if container.status != "running":
                     container.start()
                     container.reload()

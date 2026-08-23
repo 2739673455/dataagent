@@ -27,9 +27,9 @@ class DorisCredentialCipher:
     def decrypt(self, encrypted_password: str) -> str:
         """解密 Doris 查询密码"""
         try:
-            return self._fernet.decrypt(
-                encrypted_password.encode("ascii")
-            ).decode("utf-8")
+            return self._fernet.decrypt(encrypted_password.encode("ascii")).decode(
+                "utf-8"
+            )
         except (InvalidToken, UnicodeDecodeError, UnicodeEncodeError) as exc:
             raise DorisCredentialError("Doris 查询凭据解密失败") from exc
 

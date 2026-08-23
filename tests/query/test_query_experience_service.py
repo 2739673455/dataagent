@@ -268,9 +268,9 @@ def build_service(
     embedding_client: FakeEmbeddingClient,
 ) -> QueryExperienceService:
     return QueryExperienceService(
-        cast(QueryExperiencePGRepo, repo),
-        cast(QueryExperienceESRepo, index_repo),
-        cast(EmbeddingClient, embedding_client),
+        repo=cast(QueryExperiencePGRepo, repo),
+        index_repo=cast(QueryExperienceESRepo, index_repo),
+        embedding_client=cast(EmbeddingClient, embedding_client),
         data_source="doris",
         database_name="analytics",
     )

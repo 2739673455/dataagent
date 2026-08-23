@@ -98,9 +98,7 @@ class AuthorizationServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_platform_admin_without_data_role_cannot_run_analysis(self) -> None:
         with self.assertRaises(auth_error.PermissionDeniedError):
             AuthorizationService.require_analysis_access(
-                AuthenticatedUser.from_user(
-                    build_user(is_admin=True, doris_role=None)
-                ),
+                AuthenticatedUser.from_user(build_user(is_admin=True, doris_role=None)),
                 None,
             )
 
@@ -251,7 +249,9 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_attach_role_creates_query_user_and_persists_identity(self) -> None:
         self.identity_repo.get = AsyncMock(return_value=None)
         self.identity_repo.get_by_query_user = AsyncMock(return_value=None)
-        self.identity_repo.get_default = AsyncMock(return_value=query_identity(default=True))
+        self.identity_repo.get_default = AsyncMock(
+            return_value=query_identity(default=True)
+        )
         self.identity_repo.add = AsyncMock(side_effect=lambda identity: identity)
         self.doris_repo.quote_identifier.return_value = "quoted"
         self.doris_repo.verify_configured_roles = AsyncMock()
@@ -317,3 +317,24 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
                 email="diff@example.com",
                 password="password123",
             )
+
+    async def test_update_user_updates_profile_and_password_and_revokes_tokens(
+        self,
+    ) -> None:
+        user = build_user(user_id=15)
+        self.repo.get_user_by_id = AsyncMock(return_value=user)
+        self.repo.get_user_by_username = AsyncMock(return_value=None)
+        self.repo.get_user_by_email = AsyncMock(return_value=None)
+        self.repo.update_user = AsyncMock()
+        self.repo.revoke_user_refresh_tokens = AsyncMock()
+
+        updated = await self.service().update_user(
+            user_id=15,
+            username="updated_user",
+            email="updated@example.com",
+            password="new_secret_password",
+        )
+
+        self.assertEqual(updated.id, 15)
+        self.repo.update_user.assert_awaited_once()
+        self.repo.revoke_user_refresh_tokens.assert_awaited_once()

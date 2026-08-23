@@ -54,6 +54,44 @@ class CreateUserRequest(BaseModel):
         return normalize_doris_role_name(role) if role else None
 
 
+class UpdateUserRequest(BaseModel):
+    """管理员更新用户信息请求"""
+
+    username: str | None = Field(default=None, min_length=3, max_length=64)
+    email: str | None = Field(default=None, min_length=3, max_length=320)
+    password: SecretStr | None = Field(default=None, min_length=6, max_length=128)
+    doris_role: str | None = Field(default=None)
+    is_admin: bool | None = Field(default=None)
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, username: str | None) -> str | None:
+        """规范化并校验用户名"""
+        if username is None:
+            return None
+        normalized = username.strip().casefold()
+        if not re.match(_USERNAME_PATTERN, normalized):
+            raise ValueError("用户名只能包含小写字母、数字、点、下划线和连字符")
+        return normalized
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, email: str | None) -> str | None:
+        """规范化并校验邮箱"""
+        if email is None:
+            return None
+        normalized = email.strip().casefold()
+        if not re.match(_EMAIL_PATTERN, normalized):
+            raise ValueError("邮箱地址格式无效")
+        return normalized
+
+    @field_validator("doris_role")
+    @classmethod
+    def normalize_role(cls, role: str | None) -> str | None:
+        """校验 Doris 角色名"""
+        return normalize_doris_role_name(role) if role else None
+
+
 class DorisRoleResponse(BaseModel):
     """Doris 数据角色响应"""
 

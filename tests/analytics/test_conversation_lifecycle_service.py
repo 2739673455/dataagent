@@ -183,9 +183,7 @@ class ConversationLifecycleServiceTest(unittest.IsolatedAsyncioTestCase):
             updated_at=datetime.now(UTC),
         )
         conversation_repo = MagicMock()
-        conversation_repo.list_all_by_user = AsyncMock(
-            side_effect=[[conversation], []]
-        )
+        conversation_repo.list_all_by_user = AsyncMock(side_effect=[[conversation], []])
         recall_repo = MagicMock()
         recall_repo.delete_all_by_user = AsyncMock()
 
@@ -211,9 +209,7 @@ class ConversationLifecycleServiceTest(unittest.IsolatedAsyncioTestCase):
             conversation.id,
         )
         agents.delete_user_agents.assert_awaited_once_with(conversation.user_id)
-        recall_repo.delete_all_by_user.assert_awaited_once_with(
-            conversation.user_id
-        )
+        recall_repo.delete_all_by_user.assert_awaited_once_with(conversation.user_id)
 
 
 if __name__ == "__main__":

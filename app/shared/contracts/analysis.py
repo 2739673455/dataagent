@@ -64,6 +64,5 @@ class AgentSessionKey:
     def workspace_dir(self) -> str:
         """生成专业 Agent Session 的虚拟工作目录"""
         return (
-            f"/analyses/{self.analysis_id}/sessions/"
-            f"{self.agent_type}/{self.session_id}"
+            f"/analyses/{self.analysis_id}/sessions/{self.agent_type}/{self.session_id}"
         )

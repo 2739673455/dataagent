@@ -117,9 +117,7 @@ class QueryExperiencePGRepo:
     async def list_ids_by_user(self, user_id: int) -> list[UUID]:
         """列出用户全部查询经验主键"""
         result = await self._session.scalars(
-            select(QueryExperience.id).where(
-                QueryExperience.owner_user_id == user_id
-            )
+            select(QueryExperience.id).where(QueryExperience.owner_user_id == user_id)
         )
         return list(result)
 
@@ -129,9 +127,7 @@ class QueryExperiencePGRepo:
             delete(QueryExecution).where(QueryExecution.user_id == user_id)
         )
         await self._session.execute(
-            delete(QueryExperience).where(
-                QueryExperience.owner_user_id == user_id
-            )
+            delete(QueryExperience).where(QueryExperience.owner_user_id == user_id)
         )
         await self._session.flush()
 

@@ -111,9 +111,7 @@ class ConversationLifecycleService:
 
     async def cleanup_expired_drafts(self) -> int:
         """执行一批过期草稿回收"""
-        cutoff = datetime.now(UTC) - timedelta(
-            minutes=self._config.draft_ttl_minutes
-        )
+        cutoff = datetime.now(UTC) - timedelta(minutes=self._config.draft_ttl_minutes)
         repository = ConversationPGRepo(self._persistence_manager.get_store())
         drafts = await repository.list_expired_drafts(
             cutoff,
@@ -129,9 +127,7 @@ class ConversationLifecycleService:
                 ):
                     deleted += 1
             except Exception:  # noqa: BLE001
-                logger.exception(
-                    f"清理过期草稿会话失败: conversation_id={draft.id}"
-                )
+                logger.exception(f"清理过期草稿会话失败: conversation_id={draft.id}")
         return deleted
 
     async def start(self) -> None:

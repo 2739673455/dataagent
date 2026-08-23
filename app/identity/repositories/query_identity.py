@@ -26,9 +26,7 @@ class DorisQueryIdentityPGRepo:
     async def get(self, role_name: str) -> DorisQueryIdentity | None:
         """按 Doris 角色读取查询身份"""
         return await self._session.scalar(
-            select(DorisQueryIdentity).where(
-                DorisQueryIdentity.role_name == role_name
-            )
+            select(DorisQueryIdentity).where(DorisQueryIdentity.role_name == role_name)
         )
 
     async def get_by_query_user(self, query_user: str) -> DorisQueryIdentity | None:

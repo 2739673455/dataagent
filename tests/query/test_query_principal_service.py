@@ -32,9 +32,7 @@ class QueryPrincipalServiceTest(unittest.IsolatedAsyncioTestCase):
         user_provider = MagicMock()
         user_provider.get_user_by_id = AsyncMock(return_value=user)
         identity_provider = MagicMock()
-        identity_provider.get = AsyncMock(
-            return_value=identity("sales", "sales_query")
-        )
+        identity_provider.get = AsyncMock(return_value=identity("sales", "sales_query"))
         cipher = MagicMock()
         cipher.decrypt.return_value = "query_password"
         service = QueryPrincipalService(user_provider, identity_provider, cipher)

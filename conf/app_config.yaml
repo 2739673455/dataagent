@@ -1,16 +1,19 @@
+# 应用基础配置
+port: 7000
+
+cors_origins: []
+
 log:
   level: INFO # 日志级别 (DEBUG, INFO, WARNING, ERROR, CRITICAL)
   rotation: 10MB # 日志文件滚动大小
 
+# 数据连接与检索配置
 doris:
   host: 127.0.0.1
   port: 9030
   user: atguigu
   password: ${oc.env:DORIS_ADMIN_PASSWORD}
   database: ecommerce
-
-doris_credentials:
-  encryption_key: ${oc.env:DORIS_CREDENTIAL_ENCRYPTION_KEY}
 
 auth_postgresql:
   host: 127.0.0.1
@@ -33,6 +36,9 @@ langgraph_postgresql:
   password: ${oc.env:POSTGRES_PASSWORD}
   database: langgraph
 
+doris_credentials:
+  encryption_key: ${oc.env:DORIS_CREDENTIAL_ENCRYPTION_KEY}
+
 elasticsearch:
   host: 127.0.0.1
   port: 9200
@@ -48,6 +54,7 @@ embedding:
   model: BAAI/bge-m3
   timeout: 30.0
 
+# 身份与生命周期配置
 auth:
   jwt_secret: ${oc.env:JWT_SECRET}
   jwt_algorithm: HS256
@@ -62,14 +69,15 @@ lifecycle:
   cleanup_batch_size: 100
   user_deletion_retry_seconds: 60
 
+# 查询与沙盒配置
 query:
   data_source: doris
   timeout_seconds: 60
   memory_limit_bytes: 1073741824
   max_scan_rows: 10000000
   max_scan_bytes: 1073741824
-  max_cell_bytes: 1048576
   max_rows: 100000
+  max_cell_bytes: 1048576
   max_output_bytes: 33554432
   batch_size: 100
   sample_rows: 5
@@ -85,10 +93,10 @@ sandbox:
   node_download_base: https://npmmirror.com/mirrors/node
   pypi_index_url: https://mirrors.aliyun.com/pypi/simple
   npm_registry: https://registry.npmmirror.com
+  network_mode: none # 运行时断网，依赖统一构建到沙盒镜像
   memory_limit: 2g
   nano_cpus: 2000000000 # 每个用户沙盒最多使用 2 个 CPU 核心
   pids_limit: 256
-  network_mode: none # 运行时断网，依赖统一构建到沙盒镜像
   execute_timeout_seconds: 120 # 单次 Shell 命令的硬超时上限
   max_output_bytes: 4194304 # 覆盖 DeepAgents 结构化读取的最坏 JSON 转义开销
   max_capture_bytes: 10485760
@@ -97,15 +105,16 @@ sandbox:
   workspace_quota_mode: application # 生产环境应改为 volume_driver 并使用支持硬配额的卷驱动
   volume_driver: local
   volume_driver_options: {}
+  max_running_containers: 8 # 按部署机器容量调整，超出后等待或回收空闲容器
+  max_capacity_waiters: 2048
+  capacity_wait_timeout_seconds: 300
   idle_stop_seconds: 600 # 空闲 10 分钟后停止容器
   idle_remove_seconds: 3600 # 空闲 1 小时后删除容器，但保留用户数据卷
   cleanup_interval_seconds: 60
   cleanup_failure_alert_threshold: 3
-  max_running_containers: 8 # 按部署机器容量调整，超出后等待或回收空闲容器
-  max_capacity_waiters: 2048
-  capacity_wait_timeout_seconds: 300
   stop_containers_on_shutdown: true
 
+# 模型与智能体配置
 lm_config:
   active: deepseek-v4-flash-openrouter
   models:
@@ -132,9 +141,9 @@ agent:
     max_parallel_sessions: 8
     max_delegations_per_run: 20
     max_continuations: 3
+    max_session_resumes: 3
     max_repair_rounds: 3
     max_repair_depth: 5
-    max_session_resumes: 3
     session_lock_timeout: 300
   interpreter:
     mode: thread
@@ -152,11 +161,8 @@ agent:
     visualizer:
       model: default
 
+# 外部工具配置
 mcp: # 格式参考：https://docs.langchain.com/oss/python/langchain/mcp#transports
   tavily:
     transport: streamable_http
     url: https://mcp.tavily.com/mcp/?tavilyApiKey=${oc.env:TAVILY_API_KEY}
-
-cors_origins: []
-
-port: 7000

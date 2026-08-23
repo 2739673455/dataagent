@@ -57,9 +57,7 @@ class ApiContractTests(unittest.TestCase):
         ]
         self.assertEqual(
             {"$ref": "#/components/schemas/ProblemDetails"},
-            login_responses["default"]["content"]["application/problem+json"][
-                "schema"
-            ],
+            login_responses["default"]["content"]["application/problem+json"]["schema"],
         )
         self.assertEqual(
             {"$ref": "#/components/schemas/ProblemDetails"},

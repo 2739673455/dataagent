@@ -1,6 +1,6 @@
 """平台管理员、用户 Doris 角色与细粒度权限路由"""
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Path, Query, Response, status
 
@@ -204,6 +204,30 @@ async def set_user_administrator(
 ) -> schemas.UserResponse:
     """设置或撤销平台管理员身份"""
     user = await service.set_user_admin(user_id, body.is_admin)
+    return schemas.UserResponse.from_user(user)
+
+
+@router.put("/users/{user_id}", response_model=schemas.UserResponse)
+async def update_user(
+    user_id: int,
+    body: schemas.UpdateUserRequest,
+    _: AdminUserDep,
+    service: DorisRoleManagementServiceDep,
+) -> schemas.UserResponse:
+    """平台管理员修改指定用户信息、角色、权限或密码"""
+    kwargs: dict[str, Any] = {}
+    if "username" in body.model_fields_set:
+        kwargs["username"] = body.username
+    if "email" in body.model_fields_set:
+        kwargs["email"] = body.email
+    if "password" in body.model_fields_set:
+        kwargs["password"] = body.password.get_secret_value() if body.password else None
+    if "doris_role" in body.model_fields_set:
+        kwargs["doris_role"] = body.doris_role
+    if "is_admin" in body.model_fields_set:
+        kwargs["is_admin"] = body.is_admin
+
+    user = await service.update_user(user_id, **kwargs)
     return schemas.UserResponse.from_user(user)
 
 

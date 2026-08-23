@@ -410,9 +410,7 @@ async def run_agent_turn(
             # 空增量会保留 Checkpointer 中的已有状态并继续生成
             input_messages = []
 
-    logger.info(
-        f"智能体回合结束: user_id={user_id}, conversation_id={conversation_id}"
-    )
+    logger.info(f"智能体回合结束: user_id={user_id}, conversation_id={conversation_id}")
 
 
 class PlannerContinuationLimitError(RuntimeError):

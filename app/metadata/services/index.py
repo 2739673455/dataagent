@@ -82,16 +82,12 @@ class MetaIndexService:
                 self._meta_repo.mark_column_values_succeeded(column_info)
         return results
 
-    async def sync_table_indexes(
-        self, table_names: list[str]
-    ) -> dict[ColumnKey, int]:
+    async def sync_table_indexes(self, table_names: list[str]) -> dict[ColumnKey, int]:
         """同步多个表下全部字段的语义索引"""
         column_keys = await self._get_column_keys_by_table_names(table_names)
         return await self.sync_column_indexes(column_keys)
 
-    async def sync_table_values(
-        self, table_names: list[str]
-    ) -> dict[ColumnKey, int]:
+    async def sync_table_values(self, table_names: list[str]) -> dict[ColumnKey, int]:
         """同步多个表下已开启字段的取值索引"""
         column_keys = await self._get_column_keys_by_table_names(
             table_names,

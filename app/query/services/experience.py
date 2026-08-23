@@ -405,9 +405,7 @@ class QueryExperienceService:
                     {experience.id: experience.revision}
                 )
         except Exception:  # noqa: BLE001
-            logger.exception(
-                f"查询经验构建索引失败: experience_id={experience.id}"
-            )
+            logger.exception(f"查询经验构建索引失败: experience_id={experience.id}")
 
     async def _delete_indexes_safely(self, revisions: dict[UUID, int]) -> None:
         if not revisions:

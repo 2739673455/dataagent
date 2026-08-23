@@ -21,7 +21,6 @@ from yaml import YAMLError
 from app.identity.api.auth.dependencies import (
     AdminUserDep,
 )
-from app.identity.services.authorization import AssetAccessPolicy
 from app.metadata import errors as meta_error
 from app.metadata.api.meta import schemas
 from app.metadata.models import (
@@ -63,10 +62,10 @@ def _build_meta_index_service(
     return MetaIndexService(
         meta_repo=meta_repo,
         source_repo=source_repo,
-        column_repo=ColumnESRepo(es_client_manager.get_client()),
-        metric_repo=MetricESRepo(es_client_manager.get_client()),
+        column_repo=ColumnESRepo(client=es_client_manager.get_client()),
+        metric_repo=MetricESRepo(client=es_client_manager.get_client()),
         embedding_client=embedding_client_manager.get_client(),
-        value_repo=ValueESRepo(es_client_manager.get_client()),
+        value_repo=ValueESRepo(client=es_client_manager.get_client()),
     )
 
 
@@ -75,40 +74,34 @@ def _build_query_experience_service(
 ) -> QueryExperienceService:
     """创建查询经验服务"""
     return QueryExperienceService(
-        QueryExperiencePGRepo(meta_session),
-        QueryExperienceESRepo(es_client_manager.get_client()),
-        embedding_client_manager.get_client(),
+        repo=QueryExperiencePGRepo(session=meta_session),
+        index_repo=QueryExperienceESRepo(client=es_client_manager.get_client()),
+        embedding_client=embedding_client_manager.get_client(),
         data_source=cfg.query.data_source,
         database_name=cfg.doris.database,
     )
 
 
 async def get_meta_catalog_service(
-    current_user: AdminUserDep,
+    _: AdminUserDep,
 ) -> AsyncGenerator[MetaCatalogService]:
     """为平台管理员创建完整元数据目录服务"""
     async with (
         meta_postgres_client_manager.session() as meta_session,
         admin_doris_client_manager.connection() as source_connection,
     ):
-        meta_repo = MetaPGRepo(meta_session)
-        source_repo = SourceDorisRepo(source_connection)
+        meta_repo = MetaPGRepo(session=meta_session)
+        source_repo = SourceDorisRepo(connection=source_connection)
         yield MetaCatalogService(
             meta_repo=meta_repo,
             source_repo=source_repo,
             meta_index_service=_build_meta_index_service(
-                meta_repo,
-                source_repo,
+                meta_repo=meta_repo,
+                source_repo=source_repo,
             ),
             asset_invalidator=_build_query_experience_service(
-                meta_session,
+                meta_session=meta_session,
             ),
-            asset_policy=AssetAccessPolicy(
-                user_id=current_user.id,
-                unrestricted=True,
-            ),
-            data_source=cfg.query.data_source,
-            database_name=cfg.doris.database,
         )
 
 
@@ -118,10 +111,10 @@ async def get_meta_index_service() -> AsyncGenerator[MetaIndexService]:
         meta_postgres_client_manager.session() as meta_session,
         admin_doris_client_manager.connection() as source_connection,
     ):
-        meta_repo = MetaPGRepo(meta_session)
+        meta_repo = MetaPGRepo(session=meta_session)
         yield _build_meta_index_service(
-            meta_repo,
-            SourceDorisRepo(source_connection),
+            meta_repo=meta_repo,
+            source_repo=SourceDorisRepo(connection=source_connection),
         )
 
 
@@ -131,17 +124,17 @@ async def get_meta_import_service() -> AsyncGenerator[MetaImportService]:
         meta_postgres_client_manager.session() as meta_session,
         admin_doris_client_manager.connection() as source_connection,
     ):
-        meta_repo = MetaPGRepo(meta_session)
-        source_repo = SourceDorisRepo(source_connection)
+        meta_repo = MetaPGRepo(session=meta_session)
+        source_repo = SourceDorisRepo(connection=source_connection)
         yield MetaImportService(
             meta_repo=meta_repo,
             source_repo=source_repo,
             meta_index_service=_build_meta_index_service(
-                meta_repo,
-                source_repo,
+                meta_repo=meta_repo,
+                source_repo=source_repo,
             ),
             asset_invalidator=_build_query_experience_service(
-                meta_session,
+                meta_session=meta_session,
             ),
         )
 
@@ -186,9 +179,7 @@ async def _load_yaml(file: UploadFile) -> MetaConfig:
     finally:
         await file.close()
     if not content:
-        raise meta_error.InvalidMetadataError(
-            detail="元数据 YAML 文件不能为空"
-        )
+        raise meta_error.InvalidMetadataError(detail="元数据 YAML 文件不能为空")
 
     try:
         raw_config = yaml.safe_load(content.decode("utf-8"))
@@ -222,15 +213,19 @@ async def import_metadata(
     dry_run: Annotated[bool, Query(description="仅预览变更")] = False,
 ) -> schemas.MetaImportResponse:
     """从 YAML 文件批量导入元数据"""
-    meta_config = await _load_yaml(file)
-    result = await service.import_metadata(meta_config, mode, dry_run)
+    meta_config = await _load_yaml(file=file)
+    result = await service.import_metadata(
+        meta_config=meta_config,
+        mode=mode,
+        dry_run=dry_run,
+    )
 
     return schemas.MetaImportResponse(
         mode=result.mode,
         dry_run=result.dry_run,
-        tables=_to_import_changes(result.tables),
-        columns=_to_import_changes(result.columns),
-        metrics=_to_import_changes(result.metrics),
+        tables=_to_import_changes(changes=result.tables),
+        columns=_to_import_changes(changes=result.columns),
+        metrics=_to_import_changes(changes=result.metrics),
     )
 
 
@@ -286,7 +281,7 @@ async def list_column_infos(
     """查询表下全部字段元数据"""
     return [
         schemas.ColumnInfoResponse.model_validate(column_info)
-        for column_info in await service.list_column_infos(t_name)
+        for column_info in await service.list_column_infos(t_name=t_name)
     ]
 
 
@@ -311,9 +306,9 @@ async def upsert_table_info(
 ) -> None:
     """新增或更新表元数据"""
     await service.upsert_table_info(
-        t_name,
-        body.role,
-        body.description,
+        t_name=t_name,
+        role=body.role,
+        description=body.description,
     )
 
 
@@ -349,7 +344,7 @@ async def upsert_metric_info(
 ) -> None:
     """新增或更新指标元数据"""
     await service.upsert_metric_info(
-        MetricInfo(
+        metric_info=MetricInfo(
             name=metric_name,
             description=body.description,
             relevant_columns=[
@@ -371,7 +366,7 @@ async def delete_tables(
     _: AdminUserDep,
 ) -> None:
     """批量删除表及其字段元数据和索引"""
-    await service.delete_tables(body.tables)
+    await service.delete_tables(table_names=body.tables)
 
 
 @router.post("/columns/batch-delete", status_code=status.HTTP_204_NO_CONTENT)
@@ -382,7 +377,7 @@ async def delete_columns(
 ) -> None:
     """批量删除字段元数据和索引"""
     await service.delete_columns(
-        [(column.t_name, column.c_name) for column in body.columns]
+        column_keys=[(column.t_name, column.c_name) for column in body.columns]
     )
 
 
@@ -393,7 +388,7 @@ async def delete_metrics(
     _: AdminUserDep,
 ) -> None:
     """批量删除指标元数据和索引"""
-    await service.delete_metrics(body.metrics)
+    await service.delete_metrics(metric_names=body.metrics)
 
 
 @router.post("/tables/sync", response_model=schemas.BatchIndexSyncResponse)
@@ -403,7 +398,7 @@ async def sync_table_indexes(
     _: AdminUserDep,
 ) -> schemas.BatchIndexSyncResponse:
     """同步多个表的全部字段语义索引"""
-    results = await service.sync_table_indexes(body.tables)
+    results = await service.sync_table_indexes(table_names=body.tables)
     return schemas.BatchIndexSyncResponse(
         results=[
             schemas.ColumnIndexSyncResponse(
@@ -423,7 +418,7 @@ async def sync_table_values(
     _: AdminUserDep,
 ) -> schemas.BatchIndexSyncResponse:
     """同步多个表中已开启字段的取值索引"""
-    results = await service.sync_table_values(body.tables)
+    results = await service.sync_table_values(table_names=body.tables)
     return schemas.BatchIndexSyncResponse(
         results=[
             schemas.ColumnIndexSyncResponse(
@@ -444,7 +439,7 @@ async def sync_column_indexes(
 ) -> schemas.BatchIndexSyncResponse:
     """同步多个字段的语义索引"""
     results = await service.sync_column_indexes(
-        [(column.t_name, column.c_name) for column in body.columns]
+        column_keys=[(column.t_name, column.c_name) for column in body.columns]
     )
     return schemas.BatchIndexSyncResponse(
         results=[
@@ -466,7 +461,7 @@ async def sync_column_values(
 ) -> schemas.BatchIndexSyncResponse:
     """同步多个已开启字段的取值索引"""
     results = await service.sync_column_values(
-        [(column.t_name, column.c_name) for column in body.columns]
+        column_keys=[(column.t_name, column.c_name) for column in body.columns]
     )
     return schemas.BatchIndexSyncResponse(
         results=[
@@ -487,7 +482,7 @@ async def sync_metric_indexes(
     _: AdminUserDep,
 ) -> schemas.BatchMetricIndexSyncResponse:
     """同步多个指标的语义索引"""
-    results = await service.sync_metric_indexes(body.metrics)
+    results = await service.sync_metric_indexes(metric_names=body.metrics)
     return schemas.BatchMetricIndexSyncResponse(
         results=[
             schemas.MetricIndexSyncResponse(

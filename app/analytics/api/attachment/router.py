@@ -88,9 +88,7 @@ async def api_delete_attachment(
             raise attachment_error.PathTraversalError from None
         await conversation_repo.update(conversation)
 
-    logger.info(
-        f"删除附件: conversation_id={body.conversation_id}, file={body.f_path}"
-    )
+    logger.info(f"删除附件: conversation_id={body.conversation_id}, file={body.f_path}")
 
 
 @router.get("/get")

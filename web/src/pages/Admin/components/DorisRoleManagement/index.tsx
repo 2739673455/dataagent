@@ -1,4 +1,4 @@
-import { RefreshCw } from "lucide-react";
+import { Plus, RefreshCw, Shield, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { adminApi, type AssetGrantResponse, type DorisRoleResponse } from "@/api/admin";
@@ -20,6 +20,7 @@ export function DorisRoleManagement() {
   const [policies, setPolicies] = useState<Record<string, unknown>[]>([]);
   const [grants, setGrants] = useState<AssetGrantResponse[]>([]);
   const [busy, setBusy] = useState(false);
+  const [isCreatingRole, setIsCreatingRole] = useState(false);
 
   const [discoveredRoles, setDiscoveredRoles] = useState<
     {
@@ -143,18 +144,36 @@ export function DorisRoleManagement() {
     <div className="space-y-6">
       {/* Doris 角色与查询身份管理 */}
       <section className="rounded border border-[#d4d4ce] bg-[#ffffff] p-5 shadow-xs">
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#e5e5df] pb-3">
-          <h2 className="text-base font-bold text-[#18181b]">Doris 角色与查询身份</h2>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={discovering}
-            onClick={() => void scanDorisRoles()}
-            className="text-sm"
-          >
-            <RefreshCw className={`h-4 w-4 mr-1.5 ${discovering ? "animate-spin" : ""}`} />
-            扫描原生角色
-          </Button>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e5e5df] pb-3 shrink-0">
+          <div className="flex items-center gap-2">
+            <h2 className="flex items-center gap-1.5 text-base font-bold text-[#18181b]">
+              <Shield className="h-4 w-4 text-[#52525b]" />
+              <span>Doris 角色与查询身份 ({roles.length})</span>
+              {busy && <RefreshCw className="h-3 w-3 animate-spin text-[#71717a] ml-1" />}
+            </h2>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={discovering}
+              onClick={() => void scanDorisRoles()}
+              className="h-7 px-2 text-xs"
+              title="扫描原生角色"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 mr-1 ${discovering ? "animate-spin" : ""}`} />
+              扫描原生角色
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => setIsCreatingRole((prev) => !prev)}
+              className="h-7 px-2 text-xs"
+              title="添加 Doris 角色"
+            >
+              <Plus className="h-3 w-3 mr-1" />
+              添加角色
+            </Button>
+          </div>
         </div>
 
         {discoveredRoles.length > 0 && (
@@ -209,7 +228,7 @@ export function DorisRoleManagement() {
         )}
 
         {attachRoleName && (
-          <div className="mt-4 rounded border border-[#1e2024] bg-[#fafaf8] p-4 text-xs">
+          <div className="mt-4 rounded border border-[#1e2024] bg-[#fafaf8] p-4 text-xs shadow-sm">
             <h3 className="font-semibold text-[#18181b]">
               快速接入原生 Doris 角色：{attachRoleName}
             </h3>
@@ -234,7 +253,7 @@ export function DorisRoleManagement() {
                   size="sm"
                   disabled={busy || !attachDescription.trim()}
                   onClick={() => void attachRole()}
-                  className="h-8 flex-1 text-xs"
+                  className="h-8 flex-1 text-xs bg-[#1e2024] text-white"
                 >
                   确认接入
                 </Button>
@@ -251,123 +270,135 @@ export function DorisRoleManagement() {
           </div>
         )}
 
-        <DorisRoleCreateCard
-          rolesCount={roles.length}
-          busy={busy}
-          onRoleCreated={(createdRole) => {
-            setRoles((prev) => [...prev, createdRole]);
-            setSelectedRole(createdRole.name);
-          }}
-        />
+        {isCreatingRole && (
+          <DorisRoleCreateCard
+            rolesCount={roles.length}
+            busy={busy}
+            onCancel={() => setIsCreatingRole(false)}
+            onRoleCreated={(createdRole) => {
+              setIsCreatingRole(false);
+              setRoles((prev) => [...prev, createdRole]);
+              setSelectedRole(createdRole.name);
+            }}
+          />
+        )}
 
-        <div className="mt-4 overflow-x-auto overflow-y-hidden rounded border border-[#d4d4ce]">
-          <table className="w-full min-w-[760px] text-left text-sm font-mono">
-            <thead className="border-b border-[#d4d4ce] bg-[#f4f4f0] text-[#52525b]">
-              <tr>
-                <th className="px-3.5 py-2.5">角色名称</th>
-                <th className="px-3.5 py-2.5">对应查询用户</th>
-                <th className="px-3.5 py-2.5">工作组</th>
-                <th className="px-3.5 py-2.5">状态</th>
-                <th className="px-3.5 py-2.5 text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {roles.map((role) => (
-                <tr
-                  key={role.name}
-                  onClick={() => setSelectedRole(role.name)}
-                  className={`border-b border-[#f0f0eb] transition-colors cursor-pointer ${
-                    role.name === selectedRole
-                      ? "bg-[#1e2024] text-[#ffffff]"
-                      : "hover:bg-[#fafaf8]"
-                  }`}
-                >
-                  <td className="px-3.5 py-2.5 font-semibold">
-                    {role.name}
-                    {role.is_default && (
-                      <span
-                        className={`ml-2 rounded px-1.5 py-0.5 text-[10px] ${
-                          role.name === selectedRole
-                            ? "bg-[#ffffff] text-[#1e2024]"
-                            : "bg-[#1e2024] text-[#ffffff]"
-                        }`}
-                      >
-                        默认角色
-                      </span>
-                    )}
-                  </td>
-                  <td
-                    className={`px-3.5 py-2.5 ${
-                      role.name === selectedRole ? "text-[#deded8]" : "text-[#71717a]"
+        {roles.length === 0 ? (
+          <div className="mt-4 rounded border border-[#d4d4ce] bg-[#ffffff] py-12 text-center text-sm text-[#71717a]">
+            暂无 Doris 角色
+          </div>
+        ) : (
+          <div className="mt-4 overflow-x-auto overflow-y-hidden rounded border border-[#d4d4ce]">
+            <table className="w-full min-w-[760px] text-left text-sm font-mono">
+              <thead className="border-b border-[#d4d4ce] bg-[#f4f4f0] text-[#52525b]">
+                <tr>
+                  <th className="px-3.5 py-2.5">角色名称</th>
+                  <th className="px-3.5 py-2.5">对应查询用户</th>
+                  <th className="px-3.5 py-2.5">工作组</th>
+                  <th className="px-3.5 py-2.5">状态</th>
+                  <th className="px-3.5 py-2.5 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {roles.map((role) => (
+                  <tr
+                    key={role.name}
+                    onClick={() => setSelectedRole(role.name)}
+                    className={`border-b border-[#f0f0eb] transition-colors cursor-pointer ${
+                      role.name === selectedRole
+                        ? "bg-[#1e2024] text-[#ffffff]"
+                        : "hover:bg-[#fafaf8]"
                     }`}
                   >
-                    {role.query_user}
-                  </td>
-                  <td
-                    className={`px-3.5 py-2.5 ${
-                      role.name === selectedRole ? "text-[#deded8]" : "text-[#71717a]"
-                    }`}
-                  >
-                    {role.workload_group}
-                  </td>
-                  <td className="px-3.5 py-2.5">
-                    <span
-                      className={`rounded px-1.5 py-0.5 text-[10px] ${
-                        role.is_active
-                          ? role.name === selectedRole
-                            ? "bg-[#ffffff] text-[#1e2024]"
-                            : "bg-[#1e2024] text-[#ffffff]"
-                          : "bg-[#e5e5df] text-[#71717a]"
+                    <td className="px-3.5 py-2.5 font-semibold">
+                      {role.name}
+                      {role.is_default && (
+                        <span
+                          className={`ml-2 rounded px-1.5 py-0.5 text-[10px] ${
+                            role.name === selectedRole
+                              ? "bg-[#ffffff] text-[#1e2024]"
+                              : "bg-[#1e2024] text-[#ffffff]"
+                          }`}
+                        >
+                          默认角色
+                        </span>
+                      )}
+                    </td>
+                    <td
+                      className={`px-3.5 py-2.5 ${
+                        role.name === selectedRole ? "text-[#deded8]" : "text-[#71717a]"
                       }`}
                     >
-                      {role.is_active ? "已开启" : "未开启"}
-                    </span>
-                  </td>
-                  <td className="px-3.5 py-2.5 text-right">
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={busy || role.is_default || !role.is_active}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void mutate(
-                            () => adminApi.setDefaultRole(role.name).then(() => undefined),
-                            "默认角色已更新",
-                            false
-                          );
-                        }}
-                        className={`h-8 px-2.5 text-xs ${
-                          role.name === selectedRole
-                            ? "bg-transparent text-white border-white/40 hover:bg-white/15 hover:text-white"
-                            : ""
+                      {role.query_user}
+                    </td>
+                    <td
+                      className={`px-3.5 py-2.5 ${
+                        role.name === selectedRole ? "text-[#deded8]" : "text-[#71717a]"
+                      }`}
+                    >
+                      {role.workload_group}
+                    </td>
+                    <td className="px-3.5 py-2.5">
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-[10px] ${
+                          role.is_active
+                            ? role.name === selectedRole
+                              ? "bg-[#ffffff] text-[#1e2024]"
+                              : "bg-[#1e2024] text-[#ffffff]"
+                            : "bg-[#e5e5df] text-[#71717a]"
                         }`}
                       >
-                        设为默认
-                      </Button>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        disabled={busy || role.is_default}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void mutate(
-                            () => adminApi.deleteRole(role.name),
-                            "Doris 角色已删除",
-                            false
-                          );
-                        }}
-                        className="h-8 px-2.5 text-xs"
-                      >
-                        删除
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                        {role.is_active ? "已开启" : "未开启"}
+                      </span>
+                    </td>
+                    <td className="px-3.5 py-2.5 text-right whitespace-nowrap">
+                      <div className="inline-flex items-center justify-end gap-1.5 whitespace-nowrap">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={busy || role.is_default || !role.is_active}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void mutate(
+                              () => adminApi.setDefaultRole(role.name).then(() => undefined),
+                              "默认角色已更新",
+                              false
+                            );
+                          }}
+                          className={`h-7 px-2 text-xs ${
+                            role.name === selectedRole
+                              ? "bg-transparent text-white border-white/40 hover:bg-white/15 hover:text-white"
+                              : ""
+                          }`}
+                        >
+                          设为默认
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          disabled={busy || role.is_default}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void mutate(
+                              () => adminApi.deleteRole(role.name),
+                              "Doris 角色已删除",
+                              false
+                            );
+                          }}
+                          className="h-7 px-2 text-xs"
+                          title={`删除角色 ${role.name}`}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          <span className="sr-only">删除角色 {role.name}</span>
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       {/* 权限与行级策略配置分栏 */}

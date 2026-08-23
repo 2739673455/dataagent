@@ -13,6 +13,7 @@ export type DiscoveredDorisRoleResponse = ApiSchemas["DiscoveredDorisRoleRespons
 export type DorisRoleResponse = ApiSchemas["DorisRoleResponse"];
 export type RowPolicyRequest = ApiSchemas["RowPolicyRequest"];
 export type SelectGrantRequest = ApiSchemas["SelectGrantRequest"];
+export type UpdateUserRequest = ApiSchemas["UpdateUserRequest"];
 export type UserListResponse = ApiSchemas["UserListResponse"];
 
 type DorisRoleListResponse = ApiSchemas["DorisRoleListResponse"];
@@ -87,6 +88,14 @@ export const adminApi = {
     const response = await appClient.put<UserResponse>(
       `/api/v1/admin/users/${userId}/administrator`,
       { is_admin: isAdmin } satisfies SetUserAdministratorRequest
+    );
+    return response.data;
+  },
+
+  async updateUser(userId: number, request: UpdateUserRequest): Promise<UserResponse> {
+    const response = await appClient.put<UserResponse>(
+      `/api/v1/admin/users/${userId}`,
+      request satisfies UpdateUserRequest
     );
     return response.data;
   },

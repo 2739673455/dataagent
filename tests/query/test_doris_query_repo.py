@@ -60,9 +60,7 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
                 [
                     {
                         "Roles": "dataagent_default",
-                        "DatabasePrivs": (
-                            "internal.analytics: Select_priv,Load_priv"
-                        )
+                        "DatabasePrivs": ("internal.analytics: Select_priv,Load_priv"),
                     }
                 ],
                 "dataagent_default",

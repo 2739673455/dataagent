@@ -39,9 +39,7 @@ class ColumnInfoRequest(MetaRequestModel):
     def validate_reference(self) -> "ColumnInfoRequest":
         """校验字段引用必须同时包含表名和字段名"""
         if (self.reference_t_name is None) != (self.reference_c_name is None):
-            raise ValueError(
-                "引用表名和引用列名必须同时提供"
-            )
+            raise ValueError("引用表名和引用列名必须同时提供")
         return self
 
 

@@ -190,7 +190,9 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
             return user
 
         self.repo.add_user.side_effect = add_user
-        self.repo.get_user_by_id.side_effect = lambda user_id: self.repo.add_user.await_args.args[0]
+        self.repo.get_user_by_id.side_effect = lambda user_id: (
+            self.repo.add_user.await_args.args[0]
+        )
 
         result = await self.service.bootstrap_admin(
             "Platform.Admin",
@@ -245,7 +247,9 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.repo.add_refresh_token.assert_not_awaited()
 
-    async def test_change_password_updates_hash_and_revokes_refresh_tokens(self) -> None:
+    async def test_change_password_updates_hash_and_revokes_refresh_tokens(
+        self,
+    ) -> None:
         user = build_user()
 
         async def load_user_in_transaction(_: int) -> User:

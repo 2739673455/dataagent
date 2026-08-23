@@ -141,9 +141,7 @@ class _SearchContext:
         if not isinstance(error, Exception):
             raise error
         self.partial = True
-        logger.opt(exception=error).warning(
-            f"语义检索后端不可用: {backend_name}"
-        )
+        logger.opt(exception=error).warning(f"语义检索后端不可用: {backend_name}")
         warning = f"{backend_name} 检索服务暂不可用"
         if warning not in self.warnings:
             self.warnings.append(warning)
@@ -755,9 +753,7 @@ class MetaSearchService:
             metric_info = context.catalog.metrics[name]
             index_status = _index_status(metric_info)
             if index_status != "current" and _has_semantic_index_match(match_reasons):
-                context.warnings.append(
-                    f"指标语义索引状态为 {index_status}: {name}"
-                )
+                context.warnings.append(f"指标语义索引状态为 {index_status}: {name}")
             results.append(
                 SemanticMetricResult(
                     name=metric_info.name,
@@ -792,8 +788,7 @@ class MetaSearchService:
             sync_status = self._value_sync_status(column_info.value_index_sync_status)
             if sync_status != "succeeded" and (t_name, c_name) not in warned_columns:
                 context.warnings.append(
-                    f"字段取值索引状态为 {sync_status or '未知'}: "
-                    f"{t_name}.{c_name}"
+                    f"字段取值索引状态为 {sync_status or '未知'}: {t_name}.{c_name}"
                 )
                 warned_columns.add((t_name, c_name))
             results.append(

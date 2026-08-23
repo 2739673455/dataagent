@@ -79,9 +79,7 @@ class DorisQueryRepository:
             visible_databases = {
                 str(row[0]) for row in database_result.fetchall() if row
             }
-            await connection.execute(
-                text(f"SET workload_group = '{workload_group}'")
-            )
+            await connection.execute(text(f"SET workload_group = '{workload_group}'"))
         self.require_readonly_grants(rows, expected_role)
         if database not in visible_databases:
             raise DorisReadonlyPrivilegeError(
@@ -95,16 +93,13 @@ class DorisQueryRepository:
     ) -> None:
         """校验 SHOW GRANTS 返回的当前账号合并权限"""
         if not rows:
-            raise DorisReadonlyPrivilegeError(
-                "Doris 查询账号未返回有效的授权信息"
-            )
+            raise DorisReadonlyPrivilegeError("Doris 查询账号未返回有效的授权信息")
         tokens: set[str] = set()
         for row in rows:
             privilege_values = [
                 value
                 for key, value in row.items()
-                if key.casefold().endswith("privs")
-                or "grant" in key.casefold()
+                if key.casefold().endswith("privs") or "grant" in key.casefold()
             ]
             for value in privilege_values:
                 if value is None:
@@ -116,13 +111,10 @@ class DorisQueryRepository:
         forbidden = sorted(tokens - _ALLOWED_READONLY_PRIVILEGES)
         if forbidden:
             raise DorisReadonlyPrivilegeError(
-                "Doris 查询账号包含禁止的非只读权限: "
-                + ", ".join(forbidden)
+                "Doris 查询账号包含禁止的非只读权限: " + ", ".join(forbidden)
             )
         if "select_priv" not in tokens and "read_only" not in tokens:
-            raise DorisReadonlyPrivilegeError(
-                "Doris 查询账号缺少 SELECT_PRIV 只读权限"
-            )
+            raise DorisReadonlyPrivilegeError("Doris 查询账号缺少 SELECT_PRIV 只读权限")
         roles: set[str] = set()
         for row in rows:
             for key, value in row.items():
@@ -159,12 +151,9 @@ class DorisQueryRepository:
         async with self._connection_provider.connection() as connection:
             try:
                 await self._apply_session_limits(connection, limits)
-                result = await connection.execute(
-                    self._literal_sql(f"EXPLAIN {sql}")
-                )
+                result = await connection.execute(self._literal_sql(f"EXPLAIN {sql}"))
                 return tuple(
-                    " | ".join(str(value) for value in row)
-                    for row in result.fetchall()
+                    " | ".join(str(value) for value in row) for row in result.fetchall()
                 )
             except asyncio.CancelledError:
                 await connection.invalidate()

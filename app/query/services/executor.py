@@ -310,9 +310,7 @@ class AnalysisQueryService:
                     column_stats = [_ColumnStats() for _ in column_names]
                     writer.writerow(_csv_value(name) for name in column_names)
                 elif batch.column_names != column_names:
-                    raise QueryResultShapeError(
-                        "流式查询各批次返回的列结构不一致"
-                    )
+                    raise QueryResultShapeError("流式查询各批次返回的列结构不一致")
                 if row_count + len(batch.rows) > self._limits.max_rows:
                     raise QueryResultLimitExceededError(self._limits.max_rows)
                 for row in batch.rows:
@@ -419,9 +417,7 @@ def estimate_doris_query_plan(
     finish_current()
 
     if require_scan and not completed:
-        raise QueryPlanUnavailableError(
-            "Doris EXPLAIN 未包含物理扫描节点估算信息"
-        )
+        raise QueryPlanUnavailableError("Doris EXPLAIN 未包含物理扫描节点估算信息")
     if any(
         node.cardinality is None
         or node.cardinality < 0
@@ -430,9 +426,7 @@ def estimate_doris_query_plan(
         or (node.cardinality > 0 and node.avg_row_size == 0)
         for node in completed
     ):
-        raise QueryPlanUnavailableError(
-            "Doris EXPLAIN 物理扫描节点估算信息不完整"
-        )
+        raise QueryPlanUnavailableError("Doris EXPLAIN 物理扫描节点估算信息不完整")
     scan_rows = sum(math.ceil(node.cardinality or 0) for node in completed)
     scan_bytes = sum(
         math.ceil((node.cardinality or 0) * (node.avg_row_size or 0))

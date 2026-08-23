@@ -118,9 +118,7 @@ async def api_get_conversations(
     """获取所有对话"""
     user_id = current_user.id
     conversations = await conversation_repo.list_by_user(user_id)
-    logger.info(
-        f"获取对话列表: conversation_ids={[item.id for item in conversations]}"
-    )
+    logger.info(f"获取对话列表: conversation_ids={[item.id for item in conversations]}")
     return chat_schema.ConversationListResponse(
         conversations=[
             chat_schema.ConversationResponse(
@@ -146,7 +144,9 @@ async def api_get_messages(
         raise chat_error.ConversationNotFoundError
 
     messages = await chat_service.list_messages(user_id, conversation_id)
-    logger.info(f"获取消息列表: conversation_id={conversation_id}, count={len(messages)}")
+    logger.info(
+        f"获取消息列表: conversation_id={conversation_id}, count={len(messages)}"
+    )
     return chat_schema.MessageListResponse(messages=messages)
 
 

@@ -1,12 +1,19 @@
 import { ArrowLeft, Database, Shield, Users } from "lucide-react";
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ROUTES } from "@/config/settings";
 import { DorisRoleManagement, MetadataManagement, UserManagement } from "./components";
 
 export default function AdminPage() {
-  const [activeTab, setActiveTab] = useState<"metadata" | "users" | "roles">("metadata");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const activeTab = (tabParam === "users" || tabParam === "roles" ? tabParam : "metadata") as
+    | "metadata"
+    | "users"
+    | "roles";
+  const setActiveTab = (tab: "metadata" | "users" | "roles") => {
+    setSearchParams(tab === "metadata" ? {} : { tab });
+  };
 
   return (
     <main className="min-h-screen bg-[#f4f4f0] p-4 font-mono text-[#1e2024] md:p-8">

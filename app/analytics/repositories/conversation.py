@@ -136,11 +136,7 @@ class ConversationPGRepo:
                     conversations.append(conversation)
             offset += len(items)
         return sorted(
-            (
-                conversation
-                for conversation in conversations
-                if conversation.is_draft
-            ),
+            (conversation for conversation in conversations if conversation.is_draft),
             key=lambda conversation: (conversation.update_at, str(conversation.id)),
         )[:limit]
 

@@ -4,7 +4,6 @@ import unittest
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.identity.services.authorization import AssetAccessPolicy
 from app.metadata.models import TableInfo
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
@@ -27,9 +26,6 @@ def build_catalog_service(
         source_repo=cast(SourceDorisRepo, source_repo),
         meta_index_service=cast(MetaIndexService, MagicMock()),
         asset_invalidator=cast(MetadataAssetInvalidator, invalidator),
-        asset_policy=AssetAccessPolicy(user_id=1, unrestricted=True),
-        data_source="doris",
-        database_name="analytics",
     )
 
 
@@ -44,8 +40,16 @@ class MetaQueryExperienceInvalidationTest(unittest.IsolatedAsyncioTestCase):
         invalidator.invalidate_assets = AsyncMock()
         service = build_catalog_service(meta_repo, source_repo, invalidator)
 
-        await service.upsert_table_info("orders", "fact", "订单事实表")
-        await service.upsert_table_info("orders", "fact", "订单事实表")
+        await service.upsert_table_info(
+            t_name="orders",
+            role="fact",
+            description="订单事实表",
+        )
+        await service.upsert_table_info(
+            t_name="orders",
+            role="fact",
+            description="订单事实表",
+        )
 
         invalidator.invalidate_assets.assert_awaited_once_with(
             table_names={"orders"},
@@ -100,8 +104,8 @@ class MetaQueryExperienceInvalidationTest(unittest.IsolatedAsyncioTestCase):
             AsyncMock(return_value=([imported], [], [])),
         ):
             result = await service.import_metadata(
-                config,
-                ImportMode.MERGE,
+                meta_config=config,
+                mode=ImportMode.MERGE,
                 dry_run=False,
             )
 

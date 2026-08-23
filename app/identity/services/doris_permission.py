@@ -227,9 +227,7 @@ class DorisPermissionService:
             table_name,
         )
         if not columns:
-            raise auth_error.InvalidDorisPermissionError(
-                detail="目标表不存在"
-            )
+            raise auth_error.InvalidDorisPermissionError(detail="目标表不存在")
         predicate_sql = self._validate_predicate(predicate, table_name, columns)
         await self._doris_repo.create_row_policy(
             policy_name=policy_name,
@@ -290,9 +288,7 @@ class DorisPermissionService:
     ) -> None:
         """在 PostgreSQL 投影失败时尽力恢复 Doris 权限"""
         operation = (
-            self._doris_repo.grant_select
-            if grant
-            else self._doris_repo.revoke_select
+            self._doris_repo.grant_select if grant else self._doris_repo.revoke_select
         )
         try:
             await operation(
@@ -324,9 +320,7 @@ class DorisPermissionService:
             table_name,
         )
         if not actual_columns:
-            raise auth_error.InvalidDorisPermissionError(
-                detail="目标表不存在"
-            )
+            raise auth_error.InvalidDorisPermissionError(detail="目标表不存在")
         unknown = sorted(set(columns) - set(actual_columns))
         if unknown:
             raise auth_error.InvalidDorisPermissionError(
@@ -342,9 +336,7 @@ class DorisPermissionService:
         if table_name is None:
             return (AssetIdentity(self._data_source, self._database),)
         if not columns:
-            return (
-                AssetIdentity(self._data_source, self._database, table_name),
-            )
+            return (AssetIdentity(self._data_source, self._database, table_name),)
         return tuple(
             AssetIdentity(
                 self._data_source,
@@ -360,13 +352,9 @@ class DorisPermissionService:
         """校验字段列表无重复"""
         normalized = tuple(column.strip() for column in columns)
         if any(not column for column in normalized):
-            raise auth_error.InvalidDorisPermissionError(
-                detail="列名不能为空"
-            )
+            raise auth_error.InvalidDorisPermissionError(detail="列名不能为空")
         if len(set(normalized)) != len(normalized):
-            raise auth_error.InvalidDorisPermissionError(
-                detail="列名不能重复"
-            )
+            raise auth_error.InvalidDorisPermissionError(detail="列名不能重复")
         return normalized
 
     @staticmethod

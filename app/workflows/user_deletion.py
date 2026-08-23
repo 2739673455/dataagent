@@ -70,11 +70,7 @@ class UserDeletionService:
                     if task is not None and task.status == "completed":
                         return
                     raise auth_error.UserNotFoundError
-                if (
-                    user.is_active
-                    and user.is_admin
-                    and await repo.count_admins() <= 1
-                ):
+                if user.is_active and user.is_admin and await repo.count_admins() <= 1:
                     raise auth_error.LastAdministratorError
                 await repo.set_user_active(user, False)
                 await repo.revoke_user_refresh_tokens(user.id, now)
@@ -107,9 +103,7 @@ class UserDeletionService:
     async def _user_lock(self, user_id: int) -> AsyncGenerator[None]:
         async with self._locks_guard:
             lock = self._locks.setdefault(user_id, asyncio.Lock())
-            self._lock_ref_counts[user_id] = (
-                self._lock_ref_counts.get(user_id, 0) + 1
-            )
+            self._lock_ref_counts[user_id] = self._lock_ref_counts.get(user_id, 0) + 1
         try:
             async with lock:
                 yield
@@ -146,9 +140,7 @@ class UserDeletionService:
             async with session.begin():
                 experience_ids = await repo.list_ids_by_user(user_id)
 
-        await QueryExperienceESRepo(
-            self._es.get_client()
-        ).delete_many(experience_ids)
+        await QueryExperienceESRepo(self._es.get_client()).delete_many(experience_ids)
 
         async with self._meta_postgres.session() as session:
             repo = QueryExperiencePGRepo(session)
@@ -200,9 +192,7 @@ class UserDeletionService:
                     try:
                         await self._process(user_id)
                     except Exception:  # noqa: BLE001
-                        logger.exception(
-                            f"用户注销重试执行失败: user_id={user_id}"
-                        )
+                        logger.exception(f"用户注销重试执行失败: user_id={user_id}")
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001

@@ -1,3 +1,4 @@
+import { Shield } from "lucide-react";
 import { useState } from "react";
 import { adminApi } from "@/api/admin";
 import { Button } from "@/components/ui/button";
@@ -17,9 +18,15 @@ export function RowPolicyPanel({ selectedRole, policies, busy, onMutate }: RowPo
 
   return (
     <div className="rounded border border-[#d4d4ce] bg-[#ffffff] p-5 shadow-xs">
-      <h2 className="border-b border-[#e5e5df] pb-3 text-base font-bold text-[#18181b]">
-        行级数据过滤策略 (RLS)
-      </h2>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e5e5df] pb-3 shrink-0">
+        <h2 className="flex items-center gap-1.5 text-base font-bold text-[#18181b]">
+          <Shield className="h-4 w-4 text-[#52525b]" />
+          <span>
+            行级数据过滤策略 (RLS)
+            {selectedRole ? ` [${selectedRole}]` : ""} ({policies.length})
+          </span>
+        </h2>
+      </div>
 
       <div className="mt-4 space-y-3.5 text-sm">
         <div className="grid gap-2.5 sm:grid-cols-2">

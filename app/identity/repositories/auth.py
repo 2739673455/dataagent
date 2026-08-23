@@ -1,6 +1,7 @@
 """PostgreSQL 认证身份与 Doris 权限投影访问"""
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import delete, func, select, text, update
@@ -15,6 +16,7 @@ from app.identity.models import (
 )
 
 _SECURITY_MUTATION_LOCK_KEY = 0x444154414147454E
+_UNSET = object()
 
 
 class AuthPGRepo:
@@ -90,9 +92,7 @@ class AuthPGRepo:
 
     async def get_user_by_username(self, username: str) -> User | None:
         """按规范化用户名读取用户"""
-        return await self._session.scalar(
-            select(User).where(User.username == username)
-        )
+        return await self._session.scalar(select(User).where(User.username == username))
 
     async def list_users(self, *, limit: int, offset: int) -> list[User]:
         """分页读取用户"""
@@ -113,6 +113,30 @@ class AuthPGRepo:
     async def set_user_password(self, user: User, password_hash: str) -> None:
         """更新密码哈希并推进认证版本"""
         user.password_hash = password_hash
+        user.auth_version += 1
+        await self._session.flush()
+
+    async def update_user(
+        self,
+        user: User,
+        *,
+        username: str | None = None,
+        email: str | None = None,
+        password_hash: str | None = None,
+        doris_role: Any = _UNSET,
+        is_admin: bool | None = None,
+    ) -> None:
+        """更新用户基础信息、角色与凭据"""
+        if username is not None:
+            user.username = username
+        if email is not None:
+            user.email = email
+        if password_hash is not None:
+            user.password_hash = password_hash
+        if doris_role is not _UNSET:
+            user.doris_role_name = doris_role
+        if is_admin is not None:
+            user.is_admin = is_admin
         user.auth_version += 1
         await self._session.flush()
 

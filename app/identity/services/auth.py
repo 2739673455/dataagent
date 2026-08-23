@@ -250,9 +250,7 @@ class JWTCodec:
         try:
             auth_version = int(value)
         except (TypeError, ValueError) as exc:
-            raise auth_error.InvalidTokenError(
-                detail="令牌鉴权版本无效"
-            ) from exc
+            raise auth_error.InvalidTokenError(detail="令牌鉴权版本无效") from exc
         if auth_version < 0:
             raise auth_error.InvalidTokenError(detail="令牌鉴权版本无效")
         return auth_version
@@ -412,9 +410,7 @@ class AuthService:
         token_pair: TokenPair | None = None
 
         async with self._repo.session.begin():
-            loaded_user = await self._repo.get_user_by_id_for_update(
-                claims.user_id
-            )
+            loaded_user = await self._repo.get_user_by_id_for_update(claims.user_id)
             current = await self._repo.get_refresh_token_for_update(claims.token_id)
             if (
                 loaded_user is None
@@ -438,9 +434,7 @@ class AuthService:
                 self._repo.rotate_refresh_token(current, replacement_id, now)
 
         if reuse_detected:
-            raise auth_error.RefreshTokenReuseError(
-                detail="该刷新令牌已被注销"
-            )
+            raise auth_error.RefreshTokenReuseError(detail="该刷新令牌已被注销")
         if loaded_user is None or token_pair is None:
             raise RuntimeError("刷新令牌轮换未生成有效令牌对")
         return loaded_user, token_pair
@@ -472,9 +466,7 @@ class AuthService:
         except ValueError as exc:
             raise auth_error.WeakPasswordError(detail=str(exc)) from exc
         if hmac.compare_digest(current_password, new_password):
-            raise auth_error.InvalidUserMutationError(
-                detail="新密码不能与当前密码相同"
-            )
+            raise auth_error.InvalidUserMutationError(detail="新密码不能与当前密码相同")
         password_hash = await self._password_manager.hash(new_password)
 
         async with self._repo.session.begin():
@@ -542,13 +534,9 @@ class AuthService:
     def _validate_password(self, password: str) -> None:
         """校验新密码长度边界"""
         if len(password) < self._config.password_min_length:
-            raise ValueError(
-                f"密码长度不能少于 {self._config.password_min_length} 位"
-            )
+            raise ValueError(f"密码长度不能少于 {self._config.password_min_length} 位")
         if len(password) > _MAX_PASSWORD_LENGTH:
-            raise ValueError(
-                f"密码长度不能超过 {_MAX_PASSWORD_LENGTH} 位"
-            )
+            raise ValueError(f"密码长度不能超过 {_MAX_PASSWORD_LENGTH} 位")
 
     @staticmethod
     def _validate_new_identity(username: str, email: str) -> None:

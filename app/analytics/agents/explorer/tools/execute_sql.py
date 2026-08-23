@@ -113,9 +113,9 @@ def _query_purpose(runtime: ToolRuntime, purpose: str | None) -> str:
 def _query_experience_service(meta_session: AsyncSession) -> QueryExperienceService:
     """构造查询经验记录与检索服务"""
     return QueryExperienceService(
-        QueryExperiencePGRepo(meta_session),
-        QueryExperienceESRepo(es_client_manager.get_client()),
-        embedding_client_manager.get_client(),
+        repo=QueryExperiencePGRepo(session=meta_session),
+        index_repo=QueryExperienceESRepo(client=es_client_manager.get_client()),
+        embedding_client=embedding_client_manager.get_client(),
         data_source=cfg.query.data_source,
         database_name=cfg.doris.database,
     )

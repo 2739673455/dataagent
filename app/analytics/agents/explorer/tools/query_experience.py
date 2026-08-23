@@ -78,9 +78,9 @@ async def search_query_experiences(
                     (item.t_name, item.name) for item in record.response.columns
                 )
             service = QueryExperienceService(
-                QueryExperiencePGRepo(meta_session),
-                QueryExperienceESRepo(es_client_manager.get_client()),
-                embedding_client_manager.get_client(),
+                repo=QueryExperiencePGRepo(session=meta_session),
+                index_repo=QueryExperienceESRepo(client=es_client_manager.get_client()),
+                embedding_client=embedding_client_manager.get_client(),
                 data_source=cfg.query.data_source,
                 database_name=cfg.doris.database,
             )

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
@@ -15,7 +16,7 @@ from app.identity.models import (
     asset_resource_key,
     normalize_doris_role_name,
 )
-from app.identity.repositories.auth import AuthPGRepo
+from app.identity.repositories.auth import _UNSET, AuthPGRepo
 from app.identity.repositories.doris_role import DorisRoleRepository, role_name_from_row
 from app.identity.repositories.query_identity import DorisQueryIdentityPGRepo
 from app.identity.services.auth import (
@@ -176,9 +177,7 @@ class AuthorizationService:
     def require_admin(user: AuthenticatedUser) -> None:
         """要求用户是平台管理员"""
         if not user.is_admin:
-            raise auth_error.PermissionDeniedError(
-                detail="需要平台管理员权限"
-            )
+            raise auth_error.PermissionDeniedError(detail="需要平台管理员权限")
 
     @staticmethod
     def require_analysis_access(
@@ -187,9 +186,7 @@ class AuthorizationService:
     ) -> None:
         """要求用户绑定了启用的 Doris 查询身份"""
         if user.doris_role_name is None or identity is None or not identity.is_active:
-            raise auth_error.PermissionDeniedError(
-                detail="分配的 Doris 角色不可用"
-            )
+            raise auth_error.PermissionDeniedError(detail="分配的 Doris 角色不可用")
 
     @staticmethod
     def _grant_identity(grant: DorisRoleAssetGrant) -> AssetIdentity:
@@ -399,9 +396,7 @@ class DorisRoleManagementService:
                         query_user=query_user,
                     )
                 except Exception:  # noqa: BLE001
-                    logger.exception(
-                        f"补偿删除 Doris 角色及用户失败: {role}"
-                    )
+                    logger.exception(f"补偿删除 Doris 角色及用户失败: {role}")
             if isinstance(exc, IntegrityError):
                 raise auth_error.RoleAlreadyExistsError from exc
             raise
@@ -469,19 +464,13 @@ class DorisRoleManagementService:
             not _EMAIL_PATTERN.match(normalized_email)
             or len(normalized_email) > _MAX_EMAIL_LENGTH
         ):
-            raise auth_error.InvalidUserMutationError(
-                detail="邮箱地址格式无效"
-            )
+            raise auth_error.InvalidUserMutationError(detail="邮箱地址格式无效")
         if len(password) < self._auth_config.password_min_length:
             raise auth_error.WeakPasswordError
         if len(password) > _MAX_PASSWORD_LENGTH:
-            raise auth_error.InvalidUserMutationError(
-                detail="密码超出最大长度限制"
-            )
+            raise auth_error.InvalidUserMutationError(detail="密码超出最大长度限制")
 
-        normalized_role = (
-            normalize_doris_role_name(doris_role) if doris_role else None
-        )
+        normalized_role = normalize_doris_role_name(doris_role) if doris_role else None
         password_hash = await self._password_manager.hash(password)
         now = datetime.now(UTC)
         try:
@@ -557,6 +546,101 @@ class DorisRoleManagementService:
             if updated is None:
                 raise RuntimeError("更新后的用户记录无法重新加载")
             return updated
+
+    async def update_user(
+        self,
+        user_id: int,
+        *,
+        username: str | None = None,
+        email: str | None = None,
+        password: str | None = None,
+        doris_role: Any = _UNSET,
+        is_admin: bool | None = None,
+    ) -> User:
+        """管理员更新指定用户的基础信息、角色、权限或密码并吊销已有令牌"""
+        normalized_username: str | None = None
+        if username is not None:
+            normalized_username = username.strip().casefold()
+            if not _USERNAME_PATTERN.match(normalized_username):
+                raise auth_error.InvalidUserMutationError(
+                    detail="用户名只能包含小写字母、数字、点、下划线和连字符"
+                )
+
+        normalized_email: str | None = None
+        if email is not None:
+            normalized_email = email.strip().casefold()
+            if (
+                not _EMAIL_PATTERN.match(normalized_email)
+                or len(normalized_email) > _MAX_EMAIL_LENGTH
+            ):
+                raise auth_error.InvalidUserMutationError(detail="邮箱地址格式无效")
+
+        password_hash: str | None = None
+        if password is not None:
+            if len(password) < self._auth_config.password_min_length:
+                raise auth_error.WeakPasswordError
+            if len(password) > _MAX_PASSWORD_LENGTH:
+                raise auth_error.InvalidUserMutationError(detail="密码超出最大长度限制")
+            password_hash = await self._password_manager.hash(password)
+
+        normalized_doris_role: str | None = None
+        if doris_role is not _UNSET and doris_role:
+            normalized_doris_role = normalize_doris_role_name(doris_role)
+            identity_role = await self._identity_repo.get(normalized_doris_role)
+            if identity_role is None or not identity_role.is_active:
+                raise auth_error.RoleNotFoundError
+
+        now = datetime.now(UTC)
+        try:
+            async with self._repo.session.begin():
+                await self._repo.lock_security_mutation()
+                user = await self._repo.get_user_by_id(user_id)
+                if user is None:
+                    raise auth_error.UserNotFoundError
+
+                if (
+                    is_admin is not None
+                    and user.is_admin
+                    and not is_admin
+                    and await self._repo.count_admins() <= 1
+                ):
+                    raise auth_error.LastAdministratorError
+
+                if (
+                    normalized_username is not None
+                    and normalized_username != user.username
+                ):
+                    existing = await self._repo.get_user_by_username(
+                        normalized_username
+                    )
+                    if existing is not None and existing.id != user.id:
+                        raise auth_error.UsernameAlreadyExistsError
+
+                if normalized_email is not None and normalized_email != user.email:
+                    existing_email = await self._repo.get_user_by_email(
+                        normalized_email
+                    )
+                    if existing_email is not None and existing_email.id != user.id:
+                        raise auth_error.EmailAlreadyExistsError
+
+                target_doris_role = (
+                    normalized_doris_role if doris_role is not _UNSET else _UNSET
+                )
+                await self._repo.update_user(
+                    user,
+                    username=normalized_username,
+                    email=normalized_email,
+                    password_hash=password_hash,
+                    doris_role=target_doris_role,
+                    is_admin=is_admin,
+                )
+                await self._repo.revoke_user_refresh_tokens(user.id, now)
+                updated = await self._repo.get_user_by_id(user.id)
+                if updated is None:
+                    raise RuntimeError("更新后的用户记录无法重新加载")
+                return updated
+        except IntegrityError as exc:
+            raise auth_error.UserAlreadyExistsError from exc
 
     async def list_asset_grants(
         self,

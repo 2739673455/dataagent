@@ -14,6 +14,7 @@ from app.identity.api.admin.router import (
     list_users,
     set_user_administrator,
     set_user_doris_role,
+    update_user,
 )
 from app.identity.models import DorisQueryIdentity
 from app.identity.services.auth import AuthenticatedUser
@@ -212,6 +213,30 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.offset, 50)
         self.assertTrue(response.has_more)
         service.list_users.assert_awaited_once_with(limit=50, offset=50)
+
+    async def test_update_user_endpoint(self) -> None:
+        service = MagicMock()
+        user = build_user(user_id=12)
+        service.update_user = AsyncMock(return_value=user)
+
+        response = await update_user(
+            12,
+            schemas.UpdateUserRequest(
+                username="new_name",
+                email="new_email@example.com",
+                password=SecretStr("new_password_123"),
+            ),
+            MagicMock(),
+            service,
+        )
+
+        self.assertEqual(response.id, 12)
+        service.update_user.assert_awaited_once_with(
+            12,
+            username="new_name",
+            email="new_email@example.com",
+            password="new_password_123",
+        )
 
 
 if __name__ == "__main__":

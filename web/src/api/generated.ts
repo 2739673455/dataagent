@@ -302,6 +302,13 @@ export interface components {
       "conversation_id": string;
       "title": string;
     };
+    "UpdateUserRequest": {
+      "doris_role"?: (string | null);
+      "email"?: (string | null);
+      "is_admin"?: (boolean | null);
+      "password"?: (string | null);
+      "username"?: (string | null);
+    };
     "UploadAttachmentResponse": {
       "attachment": components["schemas"]["Attachment"];
     };
@@ -1689,6 +1696,38 @@ export interface operations {
       };
     };
   };
+  "update_user_api_v1_admin_users__user_id__put": {
+    "parameters": {
+      "path": {
+        "user_id": number;
+      };
+      "query"?: never;
+      "header"?: never;
+      "cookie"?: never;
+    };
+    "requestBody": {
+      "application/json": components["schemas"]["UpdateUserRequest"];
+    };
+    "responses": {
+      "200": {
+        "content": {
+        "application/json": components["schemas"]["UserResponse"];
+      };
+      };
+      "422": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+      "default": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+    };
+  };
   "upsert_column_info_api_v1_meta_tables__t_name__columns__c_name__put": {
     "parameters": {
       "path": {
@@ -1814,6 +1853,7 @@ export interface paths {
     "post": operations["create_user_api_v1_admin_users_post"];
   };
   "/api/v1/admin/users/{user_id}": {
+    "put": operations["update_user_api_v1_admin_users__user_id__put"];
     "delete": operations["delete_user_api_v1_admin_users__user_id__delete"];
   };
   "/api/v1/admin/users/{user_id}/administrator": {

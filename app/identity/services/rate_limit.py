@@ -89,13 +89,9 @@ class BoundedRateLimiter:
             if len(bucket.timestamps) >= self._rule.limit:
                 retry_after = max(
                     1,
-                    math.ceil(
-                        bucket.timestamps[0] + self._rule.window_seconds - now
-                    ),
+                    math.ceil(bucket.timestamps[0] + self._rule.window_seconds - now),
                 )
-                raise auth_error.RateLimitExceededError(
-                    retry_after_seconds=retry_after
-                )
+                raise auth_error.RateLimitExceededError(retry_after_seconds=retry_after)
             bucket.timestamps.append(now)
 
     def _remove_expired_buckets(self, cutoff: float) -> None:

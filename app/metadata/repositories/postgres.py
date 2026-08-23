@@ -179,9 +179,7 @@ class MetaPGRepo:
         unique_table_names = list(dict.fromkeys(table_names))
         if not unique_table_names:
             return []
-        statement = select(ColumnInfo).where(
-            ColumnInfo.t_name.in_(unique_table_names)
-        )
+        statement = select(ColumnInfo).where(ColumnInfo.t_name.in_(unique_table_names))
         if index_values is not None:
             statement = statement.where(ColumnInfo.index_values.is_(index_values))
         result = await self._session.scalars(

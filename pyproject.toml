@@ -42,3 +42,12 @@ dev = [
 venv = ".venv"
 venvPath = "."
 reportDeprecated = "warning"
+include = ["app", "tests"]
+exclude = [
+  "**/.*",
+  "**/__pycache__",
+  "**/node_modules",
+  ".venv",
+  "dbmock",
+  "web",
+]

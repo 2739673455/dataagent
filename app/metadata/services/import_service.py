@@ -72,9 +72,7 @@ class MetaImportService:
     ) -> MetaImportResult:
         """校验并批量导入元数据"""
         if not meta_config.tables and not meta_config.metrics:
-            raise meta_error.InvalidMetadataError(
-                detail="元数据导入文档不能为空"
-            )
+            raise meta_error.InvalidMetadataError(detail="元数据导入文档不能为空")
 
         async with self._meta_repo.session.begin():
             existing_tables = {
@@ -268,10 +266,7 @@ class MetaImportService:
             key = (item.t_name, item.name)
             if key in indexed:
                 raise meta_error.InvalidMetadataError(
-                    detail=(
-                        "元数据导入文档中存在重复字段: "
-                        f"{item.t_name}.{item.name}"
-                    )
+                    detail=(f"元数据导入文档中存在重复字段: {item.t_name}.{item.name}")
                 )
             indexed[key] = item
         return indexed
@@ -305,8 +300,7 @@ class MetaImportService:
             if reference_key == column_key:
                 raise meta_error.InvalidMetadataError(
                     detail=(
-                        "字段不能引用自身: "
-                        f"{column_info.t_name}.{column_info.name}"
+                        f"字段不能引用自身: {column_info.t_name}.{column_info.name}"
                     )
                 )
             if reference_key not in available_columns:

@@ -77,8 +77,7 @@ class ElasticsearchResourceKeyFilterTest(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         allowed = frozenset(
-            (f"table_{index // 100}", f"column_{index}")
-            for index in range(10_000)
+            (f"table_{index // 100}", f"column_{index}") for index in range(10_000)
         )
 
         await ColumnESRepo(self.client).search_text_hits(

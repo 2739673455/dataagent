@@ -1,3 +1,4 @@
+import { Database } from "lucide-react";
 import { useMemo, useState } from "react";
 import { adminApi, type AssetGrantResponse, type DorisRoleResponse } from "@/api/admin";
 import { Button } from "@/components/ui/button";
@@ -58,9 +59,15 @@ export function AssetPermissionPanel({
 
   return (
     <div className="rounded border border-[#d4d4ce] bg-[#ffffff] p-5 shadow-xs">
-      <h2 className="border-b border-[#e5e5df] pb-3 text-base font-bold text-[#18181b]">
-        表与列数据权限 (SELECT)
-      </h2>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e5e5df] pb-3 shrink-0">
+        <h2 className="flex items-center gap-1.5 text-base font-bold text-[#18181b]">
+          <Database className="h-4 w-4 text-[#52525b]" />
+          <span>
+            表与列数据权限 (SELECT)
+            {selectedRole ? ` [${selectedRole}]` : ""} ({grants.length})
+          </span>
+        </h2>
+      </div>
 
       <div className="mt-4 space-y-3.5 text-sm">
         <div>

@@ -67,7 +67,10 @@ class BoundedRateLimiterTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(sum(result is None for result in results), 5)
         self.assertEqual(
-            sum(isinstance(result, auth_error.RateLimitExceededError) for result in results),
+            sum(
+                isinstance(result, auth_error.RateLimitExceededError)
+                for result in results
+            ),
             5,
         )
 
@@ -111,6 +114,7 @@ class AuthRateLimitServiceTest(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(auth_error.RateLimitExceededError):
             await service.check_login("192.0.2.2", " user@example.COM ")
+
 
 class AuthRateLimitRouterTest(unittest.IsolatedAsyncioTestCase):
     """验证认证路由返回 RFC Problem 429 响应"""

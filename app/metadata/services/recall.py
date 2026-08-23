@@ -301,9 +301,7 @@ class SemanticRecallService:
         record: SemanticRecallRecord,
     ) -> SemanticRecallRecord:
         """按当前策略生成召回记录的安全读取副本"""
-        response = self._authorization_filter.filter_semantic_response(
-            record.response
-        )
+        response = self._authorization_filter.filter_semantic_response(record.response)
         if response is record.response:
             return record
         return record.model_copy(update={"response": response})

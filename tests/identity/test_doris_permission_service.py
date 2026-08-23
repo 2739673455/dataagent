@@ -166,8 +166,9 @@ class DorisPermissionServiceTest(unittest.IsolatedAsyncioTestCase):
             "id IN (SELECT id FROM users)",
             "secret = 1",
         ):
-            with self.subTest(predicate=predicate), self.assertRaises(
-                auth_error.InvalidDorisPermissionError
+            with (
+                self.subTest(predicate=predicate),
+                self.assertRaises(auth_error.InvalidDorisPermissionError),
             ):
                 await self.service.create_row_policy(
                     "sales",
@@ -219,4 +220,6 @@ class DorisRoleRepositoryIdentityTest(unittest.IsolatedAsyncioTestCase):
 
         statements = [call.args[0] for call in repo._execute.await_args_list]  # pyright: ignore[reportPrivateUsage]
         self.assertEqual(statements[-1], "DROP ROLE IF EXISTS `sales`")
-        self.assertFalse(any(statement.startswith("DROP USER") for statement in statements))
+        self.assertFalse(
+            any(statement.startswith("DROP USER") for statement in statements)
+        )
