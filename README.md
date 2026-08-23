@@ -2,6 +2,8 @@
 
 基于多 Agent 协作、Docker 容器隔离沙盒与语义知识检索的智能数据分析平台。
 
+后端采用模块化单体结构，代码按 `identity`、`metadata`、`query`、`analytics`、`sandbox` 业务能力聚合，各模块内部保留 `api → services → repositories / models` 分层。跨模块流程集中在 `app/workflows`，配置、错误协议、可观测性、数据库基础设施、外部客户端和共享协议集中在 `app/shared`。完整目录和依赖约束见[架构总览](docs/00_ARCHITECTURE_OVERVIEW.md#21-模块化单体目录)。
+
 ---
 
 ## 已实现功能需求
@@ -72,7 +74,7 @@
 - **Planner 协调智能体**：Planner 通过结构化 `delegate_agent` 请求拆分任务、并行调度专业 Agent 并汇总可追溯结果；同一用户回合的所有自动续写共享委派预算，自动续写次数、委派次数、并行 Session、修补轮次、修补深度和 Session 续接次数均有服务端硬限制。
 - **结构化修补链路**：专业 Agent 可返回带产物证据的 `RepairRequest`，仅能指向同一 Analysis 内已存在的上游 Session；服务端检查目标、修补深度和实际产物后续接执行。
 - **专业 Agent 矩阵**：`explorer` 负责语义目录、MCP 外部能力和受控 SQL 数据集；`analyst` 自主编写和运行归因分析代码；`reviewer` 独立审查数据、分析结论与产物并发起修补；`visualizer` 自主生成图表、表格与报告。
-- **按 Agent 聚合代码**：`app/agents` 包含 Planner 和四个专业 Agent，每个 Agent 目录聚合自己的构造器与 Prompt；跨 Agent 协议、注册表和 Session 管理位于公共层，平台级数据查询工具归属于 `explorer` Agent。
+- **按 Agent 聚合代码**：`app/analytics/agents` 包含 Planner 和四个专业 Agent，每个 Agent 目录聚合自己的构造器与 Prompt；跨 Agent 协议、注册表和 Session 管理位于公共层，平台级数据查询工具归属于 `explorer` Agent。
 - **专业 Agent 通用执行能力**：归因、审查和可视化 Agent 使用 DeepAgents 内置的 Shell 与文件工具，在各自 Session 沙盒中编写、运行、修改和验证代码。算法与核验方法由 Agent 根据数据和业务问题自主选择，代码、参数和结果作为产物保留。
 - **Session-aware 状态管理**：各 Session 使用 `subagents/{analysis_id}/{agent_type}/{session_id}` 作为 `checkpoint_ns`，状态保存在 PostgreSQL，支持并行分析、服务重启后续接和删除墓碑。
 - **产物边界**：Session 产物限定在 `/analyses/{analysis_id}/sessions/{agent_type}/{session_id}/`，共享证据可放入 `/analyses/{analysis_id}/shared/`；结构化结果返回前会校验路径和文件存在性，用户附件上传与删除不能改写该系统目录，会话整体删除仍会统一清理产物。

@@ -50,7 +50,7 @@ flowchart TD
 - Agent 间消息交互仅传递数据摘要、统计指标、字段列表与沙盒文件路径（如 `analyses/sales/report.csv`），杜绝大文本爆 Token 与上下文超限。
 
 ### 2.4 审查与回退修补闭环（Repair Loop）
-- 下游 Agent（如 `Reviewer`）在审查数据口径、计算公式或可视化产物时，若发现异常，不直接抛弃结果，而是输出结构化的 [`RepairRequest`](../app/agents/contracts.py)（包含目标 Agent 类型、原 Session ID、问题描述与证据）。
+- 下游 Agent（如 `Reviewer`）在审查数据口径、计算公式或可视化产物时，若发现异常，不直接抛弃结果，而是输出结构化的 [`RepairRequest`](../app/analytics/agents/contracts.py)（包含目标 Agent 类型、原 Session ID、问题描述与证据）。
 - Planner 捕获修补请求后，精准唤醒对应的原 Session（如 `Explorer` 取数 Session）进行针对性修正，修正后由 Planner 触发下游受影响的分析步骤重新执行。
 
 ---
@@ -59,31 +59,31 @@ flowchart TD
 
 | Agent 类型 | 核心职责 | 挂载工具与能力 | 交付产物 |
 | :--- | :--- | :--- | :--- |
-| [`Planner`](../app/agents/planner/agent.py) | 用户目标理解、任务动态拆分、委派调度、修补决策、结果汇总 | `delegate_agent`、`read_file`、`list_dir` | 最终自然语言回答与报告汇总 |
-| [`Explorer`](../app/agents/explorer/agent.py) | 语义目录检索、历史查询经验复用、只读 SQL 生成、执行与数据探查 | [`semantic_recall`](../app/agents/explorer/tools/semantic_recall.py)、[`search_query_experiences`](../app/agents/explorer/tools/query_experience.py)、[`execute_sql`](../app/agents/explorer/tools/execute_sql.py)、沙盒文件工具 | CSV 数据集、字段画像与数据特征摘要 |
-| [`Analyst`](../app/agents/analyst/agent.py) | 指标变化贡献率拆解、维度下钻、因果/相关性统计分析 | 沙盒 Shell 命令执行（运行 Python/Pandas/Scipy 分析脚本）、沙盒文件读写 | 归因分析结论、维度贡献率计算结果、统计衍生表 |
-| [`Reviewer`](../app/agents/reviewer/agent.py) | 独立核验 SQL 取数口径、复核计算脚本逻辑、审查最终结论 | 沙盒 Shell 命令执行（运行校验脚本）、文件读取 | 审查通过确认 或 `RepairRequest` 结构化修补请求 |
-| [`Visualizer`](../app/agents/visualizer/agent.py) | 静态图表生成、展示表格格式化与自包含 HTML 报告排版（消费 Analyst 汇总结果） | 沙盒 Shell 与文件工具（运行 Matplotlib / Seaborn 渲染静态图表，生成自包含 HTML 报告） | PNG / SVG 静态图表、自包含 HTML 分析报告（.html）和格式化数据文件 |
+| [`Planner`](../app/analytics/agents/planner/agent.py) | 用户目标理解、任务动态拆分、委派调度、修补决策、结果汇总 | `delegate_agent`、`read_file`、`list_dir` | 最终自然语言回答与报告汇总 |
+| [`Explorer`](../app/analytics/agents/explorer/agent.py) | 语义目录检索、历史查询经验复用、只读 SQL 生成、执行与数据探查 | [`semantic_recall`](../app/analytics/agents/explorer/tools/semantic_recall.py)、[`search_query_experiences`](../app/analytics/agents/explorer/tools/query_experience.py)、[`execute_sql`](../app/analytics/agents/explorer/tools/execute_sql.py)、沙盒文件工具 | CSV 数据集、字段画像与数据特征摘要 |
+| [`Analyst`](../app/analytics/agents/analyst/agent.py) | 指标变化贡献率拆解、维度下钻、因果/相关性统计分析 | 沙盒 Shell 命令执行（运行 Python/Pandas/Scipy 分析脚本）、沙盒文件读写 | 归因分析结论、维度贡献率计算结果、统计衍生表 |
+| [`Reviewer`](../app/analytics/agents/reviewer/agent.py) | 独立核验 SQL 取数口径、复核计算脚本逻辑、审查最终结论 | 沙盒 Shell 命令执行（运行校验脚本）、文件读取 | 审查通过确认 或 `RepairRequest` 结构化修补请求 |
+| [`Visualizer`](../app/analytics/agents/visualizer/agent.py) | 静态图表生成、展示表格格式化与自包含 HTML 报告排版（消费 Analyst 汇总结果） | 沙盒 Shell 与文件工具（运行 Matplotlib / Seaborn 渲染静态图表，生成自包含 HTML 报告） | PNG / SVG 静态图表、自包含 HTML 分析报告（.html）和格式化数据文件 |
 
 ---
 
 ## 4. 对话服务与流式交互（Chat Runtime）
 
-- **SSE 实时事件流**：[`AgentManager.run_agent_turn`](../app/agents/manager.py) 将 Planner 及各子 Agent 的执行节点状态、消息增量、工具调用参数与返回结果，实时转换为标准化 SSE 事件推送到前端。
-- **对话标题智能生成**：[`ConversationTitleService`](../app/services/conversation_title_service.py) 在首轮对话完成时，异步调用轻量模型提取会话核心议题并自动命名。
-- **会话历史管理**：基于 [`ConversationPGRepo`](../app/repositories/conversation_pg_repo.py) 维护用户全部对话生命周期。
+- **SSE 实时事件流**：[`AgentManager.run_agent_turn`](../app/analytics/agents/manager.py) 将 Planner 及各子 Agent 的执行节点状态、消息增量、工具调用参数与返回结果，实时转换为标准化 SSE 事件推送到前端。
+- **对话标题智能生成**：[`ConversationTitleService`](../app/analytics/services/conversation_title.py) 在首轮对话完成时，异步调用轻量模型提取会话核心议题并自动命名。
+- **会话历史管理**：基于 [`ConversationPGRepo`](../app/analytics/repositories/conversation.py) 维护用户全部对话生命周期。
 
 ---
 
 ## 5. 关键代码映射
 
-- Agent 统一管理器：[`app/agents/manager.py`](../app/agents/manager.py)
-- Agent 注册中心：[`app/agents/registry.py`](../app/agents/registry.py)
-- Agent 会话与状态持久化：[`app/agents/session_service.py`](../app/agents/session_service.py)
-- Agent 交互协议与修补契约：[`app/agents/contracts.py`](../app/agents/contracts.py)
-- 对话服务层：[`app/services/chat_service.py`](../app/services/chat_service.py)
-- 规划器实现：[`app/agents/planner/agent.py`](../app/agents/planner/agent.py)
-- 探查器实现：[`app/agents/explorer/agent.py`](../app/agents/explorer/agent.py)
-- 归因器实现：[`app/agents/analyst/agent.py`](../app/agents/analyst/agent.py)
-- 审查器实现：[`app/agents/reviewer/agent.py`](../app/agents/reviewer/agent.py)
-- 可视化器实现：[`app/agents/visualizer/agent.py`](../app/agents/visualizer/agent.py)
+- Agent 统一管理器：[`app/analytics/agents/manager.py`](../app/analytics/agents/manager.py)
+- Agent 注册中心：[`app/analytics/agents/registry.py`](../app/analytics/agents/registry.py)
+- Agent 会话与状态持久化：[`app/analytics/agents/session_service.py`](../app/analytics/agents/session_service.py)
+- Agent 交互协议与修补契约：[`app/analytics/agents/contracts.py`](../app/analytics/agents/contracts.py)
+- 对话服务层：[`app/analytics/services/chat.py`](../app/analytics/services/chat.py)
+- 规划器实现：[`app/analytics/agents/planner/agent.py`](../app/analytics/agents/planner/agent.py)
+- 探查器实现：[`app/analytics/agents/explorer/agent.py`](../app/analytics/agents/explorer/agent.py)
+- 归因器实现：[`app/analytics/agents/analyst/agent.py`](../app/analytics/agents/analyst/agent.py)
+- 审查器实现：[`app/analytics/agents/reviewer/agent.py`](../app/analytics/agents/reviewer/agent.py)
+- 可视化器实现：[`app/analytics/agents/visualizer/agent.py`](../app/analytics/agents/visualizer/agent.py)

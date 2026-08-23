@@ -57,13 +57,17 @@ describe("P2 product closure contracts", () => {
   });
 
   test("submits metadata table and column deletion", async () => {
-    const remove = vi.spyOn(appClient, "delete").mockResolvedValue({ data: undefined });
+    const post = vi.spyOn(appClient, "post").mockResolvedValue({ data: undefined });
 
-    await metaApi.deleteTable("orders");
-    await metaApi.deleteColumn("orders", "amount");
+    await metaApi.deleteTables(["orders"]);
+    await metaApi.deleteColumns([{ t_name: "orders", c_name: "amount" }]);
 
-    expect(remove).toHaveBeenNthCalledWith(1, "/api/v1/meta/tables/orders");
-    expect(remove).toHaveBeenNthCalledWith(2, "/api/v1/meta/tables/orders/columns/amount");
+    expect(post).toHaveBeenNthCalledWith(1, "/api/v1/meta/tables/batch-delete", {
+      tables: ["orders"],
+    });
+    expect(post).toHaveBeenNthCalledWith(2, "/api/v1/meta/columns/batch-delete", {
+      columns: [{ t_name: "orders", c_name: "amount" }],
+    });
   });
 
   test("submits a conversation title", async () => {

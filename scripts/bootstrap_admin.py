@@ -40,10 +40,10 @@ async def bootstrap_admin() -> None:
     email = _resolve_value(args.email, _EMAIL_ENV)
     password = _resolve_value(args.password, _PASSWORD_ENV)
 
-    from app.clients.postgres_client_manager import auth_postgres_client_manager
-    from app.conf.app_config import cfg
-    from app.repositories.auth_pg_repo import AuthPGRepo
-    from app.services.auth_service import Argon2PasswordManager, AuthService
+    from app.identity.repositories.auth import AuthPGRepo
+    from app.identity.services.auth import Argon2PasswordManager, AuthService
+    from app.shared.clients.postgres_client_manager import auth_postgres_client_manager
+    from app.shared.config.app_config import cfg
 
     auth_postgres_client_manager.init()
     try:

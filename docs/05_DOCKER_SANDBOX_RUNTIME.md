@@ -92,6 +92,6 @@ flowchart TD
 
 ## 4. 关键代码映射
 
-- Docker 沙盒管理器：[`app/clients/docker_sandbox_manager.py`](../app/clients/docker_sandbox_manager.py)
-- 附件路由与文件管理：[`app/routes/api/v1/attachment/router.py`](../app/routes/api/v1/attachment/router.py)
-- 沙盒配置模型：[`app/conf/app_config.py`](../app/conf/app_config.py)
+- Docker 沙盒管理器：[`app/sandbox/docker_manager.py`](../app/sandbox/docker_manager.py)
+- 附件路由与文件管理：[`app/analytics/api/attachment/router.py`](../app/analytics/api/attachment/router.py)
+- 沙盒配置模型：[`app/shared/config/app_config.py`](../app/shared/config/app_config.py)

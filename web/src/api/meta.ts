@@ -56,18 +56,6 @@ export const metaApi = {
     await appClient.put(`/api/v1/meta/metrics/${metricName}`, data);
   },
 
-  async deleteTable(tableName: string): Promise<void> {
-    await appClient.delete(`/api/v1/meta/tables/${tableName}`);
-  },
-
-  async deleteColumn(tableName: string, columnName: string): Promise<void> {
-    await appClient.delete(`/api/v1/meta/tables/${tableName}/columns/${columnName}`);
-  },
-
-  async deleteMetric(metricName: string): Promise<void> {
-    await appClient.delete(`/api/v1/meta/metrics/${metricName}`);
-  },
-
   async exportMetadata(): Promise<Blob> {
     const response = await appClient.get("/api/v1/meta/export", {
       responseType: "blob",
@@ -95,6 +83,24 @@ export const metaApi = {
     return response.data;
   },
 
+  async syncTableIndexes(tables: string[]): Promise<ColumnIndexSyncResponse[]> {
+    const response = await appClient.post<BatchIndexSyncResponse>(
+      "/api/v1/meta/tables/sync",
+      { tables },
+      { timeout: 180000 }
+    );
+    return response.data.results;
+  },
+
+  async syncTableValues(tables: string[]): Promise<ColumnIndexSyncResponse[]> {
+    const response = await appClient.post<BatchIndexSyncResponse>(
+      "/api/v1/meta/tables/sync-values",
+      { tables },
+      { timeout: 180000 }
+    );
+    return response.data.results;
+  },
+
   async syncColumnIndexes(columns: ColumnReference[]): Promise<ColumnIndexSyncResponse[]> {
     const response = await appClient.post<BatchIndexSyncResponse>(
       "/api/v1/meta/columns/sync",
@@ -120,5 +126,17 @@ export const metaApi = {
       { timeout: 180000 }
     );
     return response.data.results;
+  },
+
+  async deleteTables(tables: string[]): Promise<void> {
+    await appClient.post("/api/v1/meta/tables/batch-delete", { tables });
+  },
+
+  async deleteColumns(columns: ColumnReference[]): Promise<void> {
+    await appClient.post("/api/v1/meta/columns/batch-delete", { columns });
+  },
+
+  async deleteMetrics(metrics: string[]): Promise<void> {
+    await appClient.post("/api/v1/meta/metrics/batch-delete", { metrics });
   },
 };

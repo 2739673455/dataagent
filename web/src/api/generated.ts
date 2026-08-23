@@ -64,6 +64,9 @@ export interface components {
       "conversation_id": string;
       "message": components["schemas"]["UserMessageRequest"];
     };
+    "ColumnBatchDeleteRequest": {
+      "columns": Array<components["schemas"]["ColumnReference"]>;
+    };
     "ColumnIndexSyncRequest": {
       "columns": Array<components["schemas"]["ColumnReference"]>;
     };
@@ -189,6 +192,9 @@ export interface components {
       "mode": string;
       "tables": components["schemas"]["ResourceImportChanges"];
     };
+    "MetricBatchDeleteRequest": {
+      "metrics": Array<string>;
+    };
     "MetricIndexSyncRequest": {
       "metrics": Array<string>;
     };
@@ -248,6 +254,12 @@ export interface components {
     };
     "SetUserDorisRoleRequest": {
       "role": string;
+    };
+    "TableBatchDeleteRequest": {
+      "tables": Array<string>;
+    };
+    "TableIndexSyncRequest": {
+      "tables": Array<string>;
     };
     "TableInfoRequest": {
       "description": string;
@@ -765,17 +777,16 @@ export interface operations {
       };
     };
   };
-  "delete_column_info_api_v1_meta_tables__t_name__columns__c_name__delete": {
+  "delete_columns_api_v1_meta_columns_batch_delete_post": {
     "parameters": {
-      "path": {
-        "c_name": string;
-        "t_name": string;
-      };
+      "path"?: never;
       "query"?: never;
       "header"?: never;
       "cookie"?: never;
     };
-    "requestBody"?: never;
+    "requestBody": {
+      "application/json": components["schemas"]["ColumnBatchDeleteRequest"];
+    };
     "responses": {
       "204": {
         "content": never;
@@ -822,16 +833,16 @@ export interface operations {
       };
     };
   };
-  "delete_metric_info_api_v1_meta_metrics__metric_name__delete": {
+  "delete_metrics_api_v1_meta_metrics_batch_delete_post": {
     "parameters": {
-      "path": {
-        "metric_name": string;
-      };
+      "path"?: never;
       "query"?: never;
       "header"?: never;
       "cookie"?: never;
     };
-    "requestBody"?: never;
+    "requestBody": {
+      "application/json": components["schemas"]["MetricBatchDeleteRequest"];
+    };
     "responses": {
       "204": {
         "content": never;
@@ -850,16 +861,16 @@ export interface operations {
       };
     };
   };
-  "delete_table_info_api_v1_meta_tables__t_name__delete": {
+  "delete_tables_api_v1_meta_tables_batch_delete_post": {
     "parameters": {
-      "path": {
-        "t_name": string;
-      };
+      "path"?: never;
       "query"?: never;
       "header"?: never;
       "cookie"?: never;
     };
-    "requestBody"?: never;
+    "requestBody": {
+      "application/json": components["schemas"]["TableBatchDeleteRequest"];
+    };
     "responses": {
       "204": {
         "content": never;
@@ -1618,6 +1629,66 @@ export interface operations {
       };
     };
   };
+  "sync_table_indexes_api_v1_meta_tables_sync_post": {
+    "parameters": {
+      "path"?: never;
+      "query"?: never;
+      "header"?: never;
+      "cookie"?: never;
+    };
+    "requestBody": {
+      "application/json": components["schemas"]["TableIndexSyncRequest"];
+    };
+    "responses": {
+      "200": {
+        "content": {
+        "application/json": components["schemas"]["BatchIndexSyncResponse"];
+      };
+      };
+      "422": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+      "default": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+    };
+  };
+  "sync_table_values_api_v1_meta_tables_sync_values_post": {
+    "parameters": {
+      "path"?: never;
+      "query"?: never;
+      "header"?: never;
+      "cookie"?: never;
+    };
+    "requestBody": {
+      "application/json": components["schemas"]["TableIndexSyncRequest"];
+    };
+    "responses": {
+      "200": {
+        "content": {
+        "application/json": components["schemas"]["BatchIndexSyncResponse"];
+      };
+      };
+      "422": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+      "default": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+    };
+  };
   "upsert_column_info_api_v1_meta_tables__t_name__columns__c_name__put": {
     "parameters": {
       "path": {
@@ -1796,6 +1867,9 @@ export interface paths {
   "/api/v1/chat/update": {
     "post": operations["api_update_conversation_api_v1_chat_update_post"];
   };
+  "/api/v1/meta/columns/batch-delete": {
+    "post": operations["delete_columns_api_v1_meta_columns_batch_delete_post"];
+  };
   "/api/v1/meta/columns/sync": {
     "post": operations["sync_column_indexes_api_v1_meta_columns_sync_post"];
   };
@@ -1811,12 +1885,14 @@ export interface paths {
   "/api/v1/meta/metrics": {
     "get": operations["list_metric_infos_api_v1_meta_metrics_get"];
   };
+  "/api/v1/meta/metrics/batch-delete": {
+    "post": operations["delete_metrics_api_v1_meta_metrics_batch_delete_post"];
+  };
   "/api/v1/meta/metrics/sync": {
     "post": operations["sync_metric_indexes_api_v1_meta_metrics_sync_post"];
   };
   "/api/v1/meta/metrics/{metric_name}": {
     "put": operations["upsert_metric_info_api_v1_meta_metrics__metric_name__put"];
-    "delete": operations["delete_metric_info_api_v1_meta_metrics__metric_name__delete"];
   };
   "/api/v1/meta/source-tables": {
     "get": operations["list_source_tables_api_v1_meta_source_tables_get"];
@@ -1824,15 +1900,22 @@ export interface paths {
   "/api/v1/meta/tables": {
     "get": operations["list_table_infos_api_v1_meta_tables_get"];
   };
+  "/api/v1/meta/tables/batch-delete": {
+    "post": operations["delete_tables_api_v1_meta_tables_batch_delete_post"];
+  };
+  "/api/v1/meta/tables/sync": {
+    "post": operations["sync_table_indexes_api_v1_meta_tables_sync_post"];
+  };
+  "/api/v1/meta/tables/sync-values": {
+    "post": operations["sync_table_values_api_v1_meta_tables_sync_values_post"];
+  };
   "/api/v1/meta/tables/{t_name}": {
     "put": operations["upsert_table_info_api_v1_meta_tables__t_name__put"];
-    "delete": operations["delete_table_info_api_v1_meta_tables__t_name__delete"];
   };
   "/api/v1/meta/tables/{t_name}/columns": {
     "get": operations["list_column_infos_api_v1_meta_tables__t_name__columns_get"];
   };
   "/api/v1/meta/tables/{t_name}/columns/{c_name}": {
     "put": operations["upsert_column_info_api_v1_meta_tables__t_name__columns__c_name__put"];
-    "delete": operations["delete_column_info_api_v1_meta_tables__t_name__columns__c_name__delete"];
   };
 }

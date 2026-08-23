@@ -5,34 +5,38 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from app.agents.manager import agent_manager
-from app.clients.docker_sandbox_manager import docker_sandbox_manager
-from app.clients.doris_client_manager import (
+from app.analytics.agents.manager import agent_manager
+from app.analytics.api.attachment.router import router as attachment_router
+from app.analytics.api.chat.router import router as chat_router
+from app.analytics.services.conversation_lifecycle import (
+    conversation_lifecycle_service,
+)
+from app.analytics.services.conversation_title import conversation_title_service
+from app.identity.api.admin.router import router as admin_router
+from app.identity.api.auth.router import router as auth_router
+from app.identity.repositories.doris_role import DorisRoleRepository
+from app.identity.repositories.query_identity import DorisQueryIdentityPGRepo
+from app.identity.services.credential import DorisCredentialCipher
+from app.metadata.api.meta.router import router as meta_router
+from app.query.repositories.doris import DorisQueryRepository
+from app.sandbox.docker_manager import docker_sandbox_manager
+from app.shared.clients.doris_client_manager import (
     admin_doris_client_manager,
     query_doris_client_registry,
 )
-from app.clients.embedding_client_manager import embedding_client_manager
-from app.clients.es_client_manager import es_client_manager
-from app.clients.langgraph_postgres_manager import langgraph_postgres_manager
-from app.clients.postgres_client_manager import (
+from app.shared.clients.embedding_client_manager import embedding_client_manager
+from app.shared.clients.es_client_manager import es_client_manager
+from app.shared.clients.langgraph_postgres_manager import langgraph_postgres_manager
+from app.shared.clients.postgres_client_manager import (
     auth_postgres_client_manager,
     meta_postgres_client_manager,
 )
-from app.conf.app_config import cfg
-from app.core.log import setup_logger
-from app.core.middlewares import trace
-from app.errors.base import ProblemDetails
-from app.errors.exc_handlers import register_exception_handlers
-from app.repositories.doris_query_identity_pg_repo import DorisQueryIdentityPGRepo
-from app.repositories.doris_query_repo import DorisQueryRepository
-from app.repositories.doris_role_repo import DorisRoleRepository
-from app.routes import api
-from app.services.conversation_lifecycle_service import (
-    conversation_lifecycle_service,
-)
-from app.services.conversation_title_service import conversation_title_service
-from app.services.doris_credential_service import DorisCredentialCipher
-from app.services.user_deletion_service import user_deletion_service
+from app.shared.config.app_config import cfg
+from app.shared.errors.base import ProblemDetails
+from app.shared.errors.exc_handlers import register_exception_handlers
+from app.shared.observability import trace
+from app.shared.observability.log import setup_logger
+from app.workflows.user_deletion import user_deletion_service
 
 _PROBLEM_RESPONSE = {
     "model": ProblemDetails,
@@ -119,14 +123,14 @@ async def lifespan(app: FastAPI):
 
 def register_routes(app: FastAPI) -> None:
     """注册接口"""
-    app.include_router(api.v1.auth.router, prefix="/api/v1/auth")
-    app.include_router(api.v1.admin.router, prefix="/api/v1/admin")
-    app.include_router(api.v1.chat.router, prefix="/api/v1/chat")
+    app.include_router(auth_router, prefix="/api/v1/auth")
+    app.include_router(admin_router, prefix="/api/v1/admin")
+    app.include_router(chat_router, prefix="/api/v1/chat")
     app.include_router(
-        api.v1.attachment.router,
+        attachment_router,
         prefix="/api/v1/chat/attachment",
     )
-    app.include_router(api.v1.meta.router, prefix="/api/v1/meta")
+    app.include_router(meta_router, prefix="/api/v1/meta")
 
 
 def register_middlewares(app: FastAPI) -> None:
