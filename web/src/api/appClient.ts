@@ -1,5 +1,4 @@
 import axios, { type AxiosError } from "axios";
-import { toast } from "sonner";
 import type { components } from "@/api/generated";
 import { getAccessToken, redirectToLogin, refreshAccessToken } from "@/auth";
 
@@ -41,8 +40,6 @@ appClient.interceptors.response.use(
       } catch {
         redirectToLogin();
       }
-    } else if (status === 403) {
-      toast.error("无权限执行此操作");
     }
 
     return Promise.reject(error);

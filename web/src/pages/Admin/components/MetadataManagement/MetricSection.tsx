@@ -1,9 +1,10 @@
 import { BarChart3, Check, Edit2, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { getApiErrorMessage } from "@/api/errors";
 import { type MetricInfo, metaApi } from "@/api/meta";
 import { Button } from "@/components/ui/button";
-import { extractErrorMessage, splitCsv } from "./utils";
+import { splitCsv } from "./utils";
 
 interface MetricSectionProps {
   metrics: MetricInfo[];
@@ -50,7 +51,7 @@ export function MetricSection({
       onSelectAllMetrics([]);
       await onReloadCatalog();
     } catch (error) {
-      toast.error(extractErrorMessage(error, "批量删除指标失败"));
+      toast.error(getApiErrorMessage(error, "批量删除指标失败"));
     } finally {
       setIsBatchDeleting(false);
     }
@@ -82,7 +83,7 @@ export function MetricSection({
       setIsCreatingMetric(false);
       await onReloadCatalog();
     } catch (error) {
-      toast.error(extractErrorMessage(error, "添加指标失败"));
+      toast.error(getApiErrorMessage(error, "添加指标失败"));
     } finally {
       setSavingMetric(false);
     }
@@ -101,7 +102,7 @@ export function MetricSection({
       setEditingMetric(null);
       await onReloadCatalog();
     } catch (error) {
-      toast.error(extractErrorMessage(error, "更新指标失败"));
+      toast.error(getApiErrorMessage(error, "更新指标失败"));
     } finally {
       setSavingMetric(false);
     }
@@ -115,7 +116,7 @@ export function MetricSection({
       toast.success(`业务指标 ${metricName} 已删除`);
       await onReloadCatalog();
     } catch (error) {
-      toast.error(extractErrorMessage(error, "删除指标失败"));
+      toast.error(getApiErrorMessage(error, "删除指标失败"));
     } finally {
       setDeletingMetric(null);
     }

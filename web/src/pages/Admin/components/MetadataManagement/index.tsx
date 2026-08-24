@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { getApiErrorMessage } from "@/api/errors";
 import { type ColumnInfo, type MetricInfo, type TableInfo, metaApi } from "@/api/meta";
 import { ColumnSection } from "./ColumnSection";
 import { MetricSection } from "./MetricSection";
 import { TableSection } from "./TableSection";
 import { YamlSection } from "./YamlSection";
-import { extractErrorMessage } from "./utils";
 
 export function MetadataManagement() {
   const [tables, setTables] = useState<TableInfo[]>([]);
@@ -39,7 +39,7 @@ export function MetadataManagement() {
         prev.filter((name) => tableList.some((t) => t.name === name))
       );
     } catch (error) {
-      toast.error(extractErrorMessage(error, "获取元数据目录失败"));
+      toast.error(getApiErrorMessage(error, "获取元数据目录失败"));
     } finally {
       setLoadingCatalog(false);
     }
@@ -62,7 +62,7 @@ export function MetadataManagement() {
     } catch (error) {
       setColumns([]);
       setSelectedColumnNames([]);
-      toast.error(extractErrorMessage(error, "获取字段元数据失败"));
+      toast.error(getApiErrorMessage(error, "获取字段元数据失败"));
     } finally {
       setLoadingColumns(false);
     }
@@ -140,7 +140,7 @@ export function MetadataManagement() {
       toast.success(`所选数据表字段语义索引同步完成，更新 ${res.length} 个字段`);
       if (selectedTable) await loadColumns(selectedTable);
     } catch (error) {
-      toast.error(extractErrorMessage(error, "同步表字段语义索引失败"));
+      toast.error(getApiErrorMessage(error, "同步表字段语义索引失败"));
     } finally {
       setSyncing(null);
     }
@@ -158,7 +158,7 @@ export function MetadataManagement() {
       toast.success(`所选数据表枚举取值同步完成，更新 ${res.length} 个字段`);
       if (selectedTable) await loadColumns(selectedTable);
     } catch (error) {
-      toast.error(extractErrorMessage(error, "同步表取值索引失败"));
+      toast.error(getApiErrorMessage(error, "同步表取值索引失败"));
     } finally {
       setSyncing(null);
     }
@@ -177,7 +177,7 @@ export function MetadataManagement() {
       toast.success(`字段语义索引同步完成，更新 ${res.length} 个字段`);
       await loadColumns(selectedTable);
     } catch (error) {
-      toast.error(extractErrorMessage(error, "同步字段语义索引失败"));
+      toast.error(getApiErrorMessage(error, "同步字段语义索引失败"));
     } finally {
       setSyncing(null);
     }
@@ -196,7 +196,7 @@ export function MetadataManagement() {
       toast.success(`字段枚举取值同步完成，更新 ${res.length} 个字段`);
       await loadColumns(selectedTable);
     } catch (error) {
-      toast.error(extractErrorMessage(error, "同步字段取值失败"));
+      toast.error(getApiErrorMessage(error, "同步字段取值失败"));
     } finally {
       setSyncing(null);
     }
@@ -214,7 +214,7 @@ export function MetadataManagement() {
       toast.success(`指标语义索引同步完成，更新 ${res.length} 个指标`);
       await loadData();
     } catch (error) {
-      toast.error(extractErrorMessage(error, "同步指标语义索引失败"));
+      toast.error(getApiErrorMessage(error, "同步指标语义索引失败"));
     } finally {
       setSyncing(null);
     }

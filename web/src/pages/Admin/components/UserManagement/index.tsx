@@ -2,16 +2,10 @@ import { Edit2, Plus, RefreshCw, Search, Trash2, Users, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { adminApi, type DorisRoleResponse, type UserListResponse } from "@/api/admin";
+import { getApiErrorMessage } from "@/api/errors";
 import { useAuthStore, type UserResponse } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { UserCreateCard } from "./UserCreateCard";
-
-function errorMessage(error: unknown): string {
-  return (
-    (error as { response?: { data?: { detail?: string; title?: string } } }).response?.data
-      ?.detail ?? "操作失败，请检查用户管理配置"
-  );
-}
 
 const USER_PAGE_SIZE = 50;
 
@@ -50,7 +44,7 @@ export function UserManagement() {
       setRoles(loadedRoles);
       applyUserPage(userPage);
     } catch (error) {
-      toast.error(errorMessage(error));
+      toast.error(getApiErrorMessage(error, "加载用户管理数据失败"));
     } finally {
       setBusy(false);
     }
@@ -110,7 +104,7 @@ export function UserManagement() {
       toast.success(`用户 "${updated.username}" 信息已更新`);
       setEditingUser(null);
     } catch (error) {
-      toast.error(errorMessage(error));
+      toast.error(getApiErrorMessage(error, "更新用户信息失败"));
     } finally {
       setSavingUser(false);
     }
@@ -132,7 +126,7 @@ export function UserManagement() {
       setUserOffset(nextOffset);
       applyUserPage(page);
     } catch (error) {
-      toast.error(errorMessage(error));
+      toast.error(getApiErrorMessage(error, "删除用户失败"));
     } finally {
       setBusy(false);
     }

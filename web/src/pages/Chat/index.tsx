@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { chatApi } from "@/api/chat";
+import { getApiErrorMessage } from "@/api/errors";
 import { changePassword, getAccessToken, logoutUser, redirectToLogin, useAuthStore } from "@/auth";
 import { sessionLifecycle } from "@/auth/sessionLifecycle";
 import { ROUTES } from "@/config/settings";
@@ -165,14 +166,18 @@ export default function ChatPage() {
 
   // 页面初始化时加载会话列表
   useEffect(() => {
-    void loadConversations();
+    void loadConversations().catch((error) => {
+      toast.error(getApiErrorMessage(error, "加载会话列表失败"));
+    });
   }, [loadConversations]);
 
   // 切换到具体会话时按需加载历史消息
   useEffect(() => {
     if (!routeConversationId) return;
     if (messagesByConversation[routeConversationId] === undefined) {
-      void loadMessages(routeConversationId);
+      void loadMessages(routeConversationId).catch((error) => {
+        toast.error(getApiErrorMessage(error, "加载历史消息失败"));
+      });
     }
   }, [loadMessages, messagesByConversation, routeConversationId]);
 
@@ -231,9 +236,14 @@ export default function ChatPage() {
           [previewCacheKey]: objectUrl as string,
         }));
       })
-      .catch(() => {
+      .catch((error) => {
         if (cancelled) return;
-        toast.error(`HTML 预览加载失败：${getAttachmentName(activePreviewAttachment.f_path)}`);
+        toast.error(
+          getApiErrorMessage(
+            error,
+            `HTML 预览加载失败：${getAttachmentName(activePreviewAttachment.f_path)}`
+          )
+        );
       });
 
     return () => {
@@ -266,9 +276,14 @@ export default function ChatPage() {
           [previewCacheKey]: artifact,
         }));
       })
-      .catch(() => {
+      .catch((error) => {
         if (cancelled) return;
-        toast.error(`表格预览加载失败：${getAttachmentName(activePreviewAttachment.f_path)}`);
+        toast.error(
+          getApiErrorMessage(
+            error,
+            `表格预览加载失败：${getAttachmentName(activePreviewAttachment.f_path)}`
+          )
+        );
       });
 
     return () => {
@@ -320,7 +335,7 @@ export default function ChatPage() {
         .catch((error: unknown) => {
           if (error instanceof DOMException && error.name === "AbortError") return;
           if (!sessionLifecycle.isCurrent(generation)) return;
-          toast.error(error instanceof Error ? error.message : "聊天连接异常");
+          toast.error(getApiErrorMessage(error, "聊天连接异常"));
         })
         .finally(() => {
           if (streamControllersRef.current.get(conversationId) === controller) {
@@ -360,11 +375,15 @@ export default function ChatPage() {
   // 删除当前会话后，如果用户正停留在该会话页，则回到空白聊天页
   const handleDeleteConversation = async (conversationId: string) => {
     streamControllersRef.current.get(conversationId)?.abort();
-    if (!(await deleteConversation(conversationId))) return;
-    if (routeConversationId === conversationId) {
-      navigate(ROUTES.chat);
+    try {
+      if (!(await deleteConversation(conversationId))) return;
+      if (routeConversationId === conversationId) {
+        navigate(ROUTES.chat);
+      }
+      toast.success("对话已删除");
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "删除对话失败"));
     }
-    toast.success("对话已删除");
   };
 
   // 停止生成会取消当前会话的 SSE 请求
@@ -406,8 +425,8 @@ export default function ChatPage() {
       if (nextAttachments.length > 0) {
         setAttachments((current) => [...current, ...nextAttachments]);
       }
-    } catch {
-      toast.error("附件上传失败");
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "附件上传失败"));
     } finally {
       // 无论成功失败都结束上传态，避免输入区一直被锁住
       setIsUploadingAttachments(false);
@@ -430,61 +449,70 @@ export default function ChatPage() {
         }
         return current.filter((attachment) => attachment.f_path !== attachmentName);
       });
-    } catch {
-      toast.error("附件删除失败");
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "附件删除失败"));
     }
   };
 
   // 发送消息时统一创建带 Bearer Token 的 SSE 请求
-  const handleSend = async (value: string) => {
+  const handleSend = async (value: string): Promise<boolean> => {
     const generation = sessionLifecycle.current();
     const token = getAccessToken();
     if (!token) {
       redirectToAuth();
-      return;
+      return false;
     }
 
-    const requestMessage: UserMessageRequest = {
-      parts: value ? [{ type: "text", text: value }] : [],
-      attachments:
-        attachments.length > 0
-          ? attachments.map((attachment) => ({ f_path: attachment.f_path }))
-          : undefined,
-    };
-    const userMessage: MessageResponse = {
-      message_id: crypto.randomUUID(),
-      role: "user",
-      parts: requestMessage.parts,
-      attachments: attachments.length > 0 ? attachments : undefined,
-    };
+    try {
+      const requestMessage: UserMessageRequest = {
+        parts: value ? [{ type: "text", text: value }] : [],
+        attachments:
+          attachments.length > 0
+            ? attachments.map((attachment) => ({ f_path: attachment.f_path }))
+            : undefined,
+      };
+      const userMessage: MessageResponse = {
+        message_id: crypto.randomUUID(),
+        created_at: new Date().toISOString(),
+        role: "user",
+        parts: requestMessage.parts,
+        attachments: attachments.length > 0 ? attachments : undefined,
+      };
 
-    let conversationId = routeConversationId ?? draftConversationId;
-    if (!conversationId) {
-      const conversation = await createConversation(value);
-      if (!conversation || !sessionLifecycle.isCurrent(generation)) return;
-      conversationId = conversation.conversation_id;
-    } else if (!routeConversationId) {
-      draftConversationIdRef.current = null;
-      setDraftConversationId(null);
-      ensureConversation({
-        conversation_id: conversationId,
-        title: value.trim().slice(0, 64) || "新对话",
-        update_at: new Date().toISOString(),
-      });
-    }
-
-    appendMessage(conversationId, userMessage);
-    markStreaming(conversationId);
-    for (const attachment of attachments) {
-      if (attachment.preview_url) {
-        URL.revokeObjectURL(attachment.preview_url);
+      let conversationId = routeConversationId ?? draftConversationId;
+      if (!conversationId) {
+        const conversation = await createConversation(value);
+        if (!conversation || !sessionLifecycle.isCurrent(generation)) return false;
+        conversationId = conversation.conversation_id;
+      } else if (!routeConversationId) {
+        draftConversationIdRef.current = null;
+        setDraftConversationId(null);
+        ensureConversation({
+          conversation_id: conversationId,
+          title: value.trim().slice(0, 64) || "新对话",
+          update_at: new Date().toISOString(),
+        });
       }
+
+      appendMessage(conversationId, userMessage);
+      markStreaming(conversationId);
+      for (const attachment of attachments) {
+        if (attachment.preview_url) {
+          URL.revokeObjectURL(attachment.preview_url);
+        }
+      }
+      setAttachments([]);
+      if (routeConversationId !== conversationId) {
+        navigate(ROUTES.chatConversation(conversationId));
+      }
+      runStream(conversationId, requestMessage);
+      return true;
+    } catch (error) {
+      if (sessionLifecycle.isCurrent(generation)) {
+        toast.error(getApiErrorMessage(error, "发送消息失败"));
+      }
+      return false;
     }
-    setAttachments([]);
-    if (routeConversationId !== conversationId) {
-      navigate(ROUTES.chatConversation(conversationId));
-    }
-    runStream(conversationId, requestMessage);
   };
 
   // 页面卸载时统一回收所有图片和 HTML 预览用的 object URL
@@ -547,6 +575,7 @@ export default function ChatPage() {
             isLoading={isLoadingMessages}
             messages={currentMessages}
             onOpenPreviewAttachment={handleOpenPreviewAttachment}
+            username={user?.username ?? "用户"}
             viewportRef={messageViewportRef}
           />
         </div>

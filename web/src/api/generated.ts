@@ -159,6 +159,9 @@ export interface components {
       "query_user": string;
       "workload_group": string;
     };
+    "DorisWorkloadGroupListResponse": {
+      "workload_groups": Array<string>;
+    };
     "DropRowPolicyRequest": {
       "policy_name": string;
       "table_name": string;
@@ -180,6 +183,7 @@ export interface components {
     };
     "MessageResponse": {
       "attachments"?: (Array<components["schemas"]["Attachment"]> | null);
+      "created_at"?: (string | null);
       "finish_reason"?: (string | null);
       "message_id"?: (string | null);
       "parts": Array<(components["schemas"]["TextContent"] | components["schemas"]["ImageContent"] | components["schemas"]["ToolCallPart"] | components["schemas"]["ToolResultPart"])>;
@@ -1131,6 +1135,34 @@ export interface operations {
       };
     };
   };
+  "list_doris_workload_groups_api_v1_admin_doris_roles_workload_groups_get": {
+    "parameters": {
+      "path"?: never;
+      "query"?: never;
+      "header"?: never;
+      "cookie"?: never;
+    };
+    "requestBody"?: never;
+    "responses": {
+      "200": {
+        "content": {
+        "application/json": components["schemas"]["DorisWorkloadGroupListResponse"];
+      };
+      };
+      "422": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+      "default": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+    };
+  };
   "list_metric_infos_api_v1_meta_metrics_get": {
     "parameters": {
       "path"?: never;
@@ -1832,6 +1864,9 @@ export interface paths {
   };
   "/api/v1/admin/doris-roles/discover": {
     "get": operations["discover_doris_roles_api_v1_admin_doris_roles_discover_get"];
+  };
+  "/api/v1/admin/doris-roles/workload-groups": {
+    "get": operations["list_doris_workload_groups_api_v1_admin_doris_roles_workload_groups_get"];
   };
   "/api/v1/admin/doris-roles/{role}": {
     "delete": operations["delete_doris_role_api_v1_admin_doris_roles__role__delete"];

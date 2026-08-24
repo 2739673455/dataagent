@@ -1,9 +1,10 @@
 import { Check, Edit2, Layers, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { getApiErrorMessage } from "@/api/errors";
 import { type ColumnInfo, metaApi } from "@/api/meta";
 import { Button } from "@/components/ui/button";
-import { extractErrorMessage, formatDateTime, splitCsv } from "./utils";
+import { formatDateTime, splitCsv } from "./utils";
 
 interface ColumnSectionProps {
   selectedTable: string | null;
@@ -65,7 +66,7 @@ export function ColumnSection({
       onSelectAllColumns([]);
       await onReloadColumns(selectedTable);
     } catch (error) {
-      toast.error(extractErrorMessage(error, "批量删除字段失败"));
+      toast.error(getApiErrorMessage(error, "批量删除字段失败"));
     } finally {
       setIsBatchDeleting(false);
     }
@@ -89,7 +90,7 @@ export function ColumnSection({
       setIsCreatingColumn(false);
       await onReloadColumns(selectedTable);
     } catch (error) {
-      toast.error(extractErrorMessage(error, "添加字段失败"));
+      toast.error(getApiErrorMessage(error, "添加字段失败"));
     } finally {
       setSavingColumn(false);
     }
@@ -110,7 +111,7 @@ export function ColumnSection({
       setEditingColumn(null);
       await onReloadColumns(selectedTable);
     } catch (error) {
-      toast.error(extractErrorMessage(error, "更新字段失败"));
+      toast.error(getApiErrorMessage(error, "更新字段失败"));
     } finally {
       setSavingColumn(false);
     }
@@ -125,7 +126,7 @@ export function ColumnSection({
       toast.success(`字段 ${colName} 已删除`);
       await onReloadColumns(selectedTable);
     } catch (error) {
-      toast.error(extractErrorMessage(error, "删除字段失败"));
+      toast.error(getApiErrorMessage(error, "删除字段失败"));
     } finally {
       setDeletingColumn(null);
     }

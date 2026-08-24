@@ -4,6 +4,7 @@ import json
 import mimetypes
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID
 
@@ -25,9 +26,12 @@ from app.analytics.agents.contracts import (
 )
 from app.analytics.agents.manager import ConversationAgentRuntime, agent_manager
 from app.analytics.api.chat import schemas as chat_schema
+from app.analytics.message_metadata import (
+    MESSAGE_PAYLOAD_KEY,
+    get_message_created_at,
+)
 from app.sandbox.docker_manager import docker_sandbox_manager
 
-_MESSAGE_METADATA_KEY = "dataagent_message"
 _IMAGE_SUFFIXES = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 
 
@@ -66,7 +70,7 @@ def _schema_from_metadata(
     message: BaseMessage,
 ) -> chat_schema.MessageResponse | None:
     """从 LangGraph 消息元数据恢复用户原始消息"""
-    payload = message.additional_kwargs.get(_MESSAGE_METADATA_KEY)
+    payload = message.additional_kwargs.get(MESSAGE_PAYLOAD_KEY)
     if not isinstance(payload, dict):
         return None
     try:
@@ -120,6 +124,7 @@ def _langchain_message_to_schema(
     if isinstance(message, ToolMessage):
         return chat_schema.MessageResponse(
             message_id=message.id,
+            created_at=get_message_created_at(message),
             role="tool",
             parts=[
                 chat_schema.ToolResultPart(
@@ -162,6 +167,7 @@ def _langchain_message_to_schema(
 
     return chat_schema.MessageResponse(
         message_id=message.id,
+        created_at=get_message_created_at(message),
         role=role,
         parts=parts,
         finish_reason=cast(
@@ -277,6 +283,7 @@ async def _schema_to_human_message(
 
     stored_parts: list[chat_schema.MessagePart] = [*message.parts]
     metadata = chat_schema.MessageResponse(
+        created_at=datetime.now(UTC),
         role="user",
         parts=stored_parts,
         attachments=(
@@ -291,7 +298,7 @@ async def _schema_to_human_message(
     return HumanMessage(
         id=str(uuid.uuid4()),
         content=cast(list[str | dict[Any, Any]], content_parts),
-        additional_kwargs={_MESSAGE_METADATA_KEY: metadata},
+        additional_kwargs={MESSAGE_PAYLOAD_KEY: metadata},
     )
 
 

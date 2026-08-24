@@ -17,12 +17,6 @@ export function formatDateTime(isoString?: string | null): string {
   }
 }
 
-// 提取通用错误消息文本
-export function extractErrorMessage(error: unknown, fallback: string): string {
-  const err = error as { response?: { data?: { detail?: string; title?: string } } };
-  return err.response?.data?.detail ?? err.response?.data?.title ?? fallback;
-}
-
 // 拆分逗号分隔字符串为干净数组
 export function splitCsv(value: string): string[] {
   return value

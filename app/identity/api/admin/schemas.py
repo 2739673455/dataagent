@@ -155,6 +155,12 @@ class DiscoveredDorisRoleListResponse(BaseModel):
     roles: list[DiscoveredDorisRoleResponse]
 
 
+class DorisWorkloadGroupListResponse(BaseModel):
+    """Doris 工作组列表响应"""
+
+    workload_groups: list[str]
+
+
 class AttachDorisRoleRequest(BaseModel):
     """接入已有 Doris 角色请求"""
 

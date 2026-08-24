@@ -2,17 +2,11 @@ import { Plus, RefreshCw, Shield, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { adminApi, type AssetGrantResponse, type DorisRoleResponse } from "@/api/admin";
+import { getApiErrorMessage } from "@/api/errors";
 import { Button } from "@/components/ui/button";
 import { AssetPermissionPanel } from "./AssetPermissionPanel";
 import { DorisRoleCreateCard } from "./DorisRoleCreateCard";
 import { RowPolicyPanel } from "./RowPolicyPanel";
-
-function errorMessage(error: unknown): string {
-  return (
-    (error as { response?: { data?: { detail?: string; title?: string } } }).response?.data
-      ?.detail ?? "操作失败，请检查 Doris 权限配置"
-  );
-}
 
 export function DorisRoleManagement() {
   const [roles, setRoles] = useState<DorisRoleResponse[]>([]);
@@ -21,6 +15,7 @@ export function DorisRoleManagement() {
   const [grants, setGrants] = useState<AssetGrantResponse[]>([]);
   const [busy, setBusy] = useState(false);
   const [isCreatingRole, setIsCreatingRole] = useState(false);
+  const [workloadGroups, setWorkloadGroups] = useState<string[]>([]);
 
   const [discoveredRoles, setDiscoveredRoles] = useState<
     {
@@ -34,18 +29,33 @@ export function DorisRoleManagement() {
   const [discovering, setDiscovering] = useState(false);
   const [attachRoleName, setAttachRoleName] = useState("");
   const [attachDescription, setAttachDescription] = useState("");
-  const [attachWorkloadGroup, setAttachWorkloadGroup] = useState("normal");
+  const [attachWorkloadGroup, setAttachWorkloadGroup] = useState("");
+
+  const defaultWorkloadGroup = workloadGroups.includes("normal")
+    ? "normal"
+    : workloadGroups[0] || "";
 
   const loadRoles = useCallback(async () => {
     setBusy(true);
     try {
-      const loadedRoles = await adminApi.listRoles();
+      const [loadedRoles, loadedWorkloadGroups] = await Promise.all([
+        adminApi.listRoles(),
+        adminApi.listWorkloadGroups(),
+      ]);
       setRoles(loadedRoles);
+      setWorkloadGroups(loadedWorkloadGroups);
+      setAttachWorkloadGroup((current) =>
+        loadedWorkloadGroups.includes(current)
+          ? current
+          : loadedWorkloadGroups.includes("normal")
+            ? "normal"
+            : loadedWorkloadGroups[0] || ""
+      );
       setSelectedRole((current) =>
         loadedRoles.some((role) => role.name === current) ? current : loadedRoles[0]?.name || ""
       );
     } catch (error) {
-      toast.error(errorMessage(error));
+      toast.error(getApiErrorMessage(error, "加载 Doris 角色失败"));
     } finally {
       setBusy(false);
     }
@@ -69,7 +79,7 @@ export function DorisRoleManagement() {
         setPolicies(loadedPolicies);
         setGrants(loadedGrants);
       })
-      .catch((error) => toast.error(errorMessage(error)));
+      .catch((error) => toast.error(getApiErrorMessage(error, "加载角色权限失败")));
   }, [selectedRole]);
 
   const scanDorisRoles = async () => {
@@ -79,20 +89,20 @@ export function DorisRoleManagement() {
       setDiscoveredRoles(discovered);
       toast.success(`扫描完成，发现 ${discovered.length} 个 Doris 角色`);
     } catch (error) {
-      toast.error(errorMessage(error));
+      toast.error(getApiErrorMessage(error, "扫描 Doris 角色失败"));
     } finally {
       setDiscovering(false);
     }
   };
 
   const attachRole = async () => {
-    if (!attachRoleName.trim() || !attachDescription.trim()) return;
+    if (!attachRoleName.trim() || !attachDescription.trim() || !attachWorkloadGroup) return;
     setBusy(true);
     try {
       const attached = await adminApi.attachRole({
         role: attachRoleName.trim(),
         description: attachDescription.trim(),
-        workload_group: attachWorkloadGroup.trim() || "normal",
+        workload_group: attachWorkloadGroup,
         is_default: roles.length === 0,
       });
       const loadedRoles = await adminApi.listRoles();
@@ -105,7 +115,7 @@ export function DorisRoleManagement() {
       );
       toast.success(`Doris 角色 ${attached.name} 接入成功，已自动配置代理查询用户`);
     } catch (error) {
-      toast.error(errorMessage(error));
+      toast.error(getApiErrorMessage(error, "接入 Doris 角色失败"));
     } finally {
       setBusy(false);
     }
@@ -134,7 +144,7 @@ export function DorisRoleManagement() {
         loadedRoles.some((role) => role.name === current) ? current : loadedRoles[0]?.name || ""
       );
     } catch (error) {
-      toast.error(errorMessage(error));
+      toast.error(getApiErrorMessage(error, "更新 Doris 权限失败"));
     } finally {
       setBusy(false);
     }
@@ -166,6 +176,7 @@ export function DorisRoleManagement() {
             </Button>
             <Button
               size="sm"
+              disabled={busy || workloadGroups.length === 0}
               onClick={() => setIsCreatingRole((prev) => !prev)}
               className="h-7 px-2 text-xs"
               title="添加 Doris 角色"
@@ -215,7 +226,11 @@ export function DorisRoleManagement() {
                       onClick={() => {
                         setAttachRoleName(role.name);
                         setAttachDescription(role.description || `原生 Doris 角色 ${role.name}`);
-                        setAttachWorkloadGroup(role.workload_group || "normal");
+                        setAttachWorkloadGroup(
+                          role.workload_group && workloadGroups.includes(role.workload_group)
+                            ? role.workload_group
+                            : defaultWorkloadGroup
+                        );
                       }}
                     >
                       选择并接入
@@ -242,16 +257,22 @@ export function DorisRoleManagement() {
                 placeholder="角色业务描述 *"
                 className="h-8 rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
               />
-              <input
+              <select
                 value={attachWorkloadGroup}
                 onChange={(event) => setAttachWorkloadGroup(event.target.value)}
-                placeholder="资源工作组 (默认 normal)"
                 className="h-8 rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-              />
+              >
+                {workloadGroups.length === 0 && <option value="">暂无可用工作组</option>}
+                {workloadGroups.map((workloadGroup) => (
+                  <option key={workloadGroup} value={workloadGroup}>
+                    {workloadGroup}
+                  </option>
+                ))}
+              </select>
               <div className="flex gap-2">
                 <Button
                   size="sm"
-                  disabled={busy || !attachDescription.trim()}
+                  disabled={busy || !attachDescription.trim() || !attachWorkloadGroup}
                   onClick={() => void attachRole()}
                   className="h-8 flex-1 text-xs bg-[#1e2024] text-white"
                 >
@@ -274,6 +295,8 @@ export function DorisRoleManagement() {
           <DorisRoleCreateCard
             rolesCount={roles.length}
             busy={busy}
+            workloadGroups={workloadGroups}
+            defaultWorkloadGroup={defaultWorkloadGroup}
             onCancel={() => setIsCreatingRole(false)}
             onRoleCreated={(createdRole) => {
               setIsCreatingRole(false);

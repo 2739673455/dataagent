@@ -19,6 +19,7 @@ export type UserListResponse = ApiSchemas["UserListResponse"];
 type DorisRoleListResponse = ApiSchemas["DorisRoleListResponse"];
 type DiscoveredDorisRoleListResponse = ApiSchemas["DiscoveredDorisRoleListResponse"];
 type DropRowPolicyRequest = ApiSchemas["DropRowPolicyRequest"];
+type DorisWorkloadGroupListResponse = ApiSchemas["DorisWorkloadGroupListResponse"];
 type RowPolicy = ApiSchemas["RowPolicyListResponse"]["policies"][number];
 type RowPolicyListResponse = ApiSchemas["RowPolicyListResponse"];
 type SetUserAdministratorRequest = ApiSchemas["SetUserAdministratorRequest"];
@@ -35,6 +36,13 @@ export const adminApi = {
       "/api/v1/admin/doris-roles/discover"
     );
     return response.data.roles;
+  },
+
+  async listWorkloadGroups(): Promise<string[]> {
+    const response = await appClient.get<DorisWorkloadGroupListResponse>(
+      "/api/v1/admin/doris-roles/workload-groups"
+    );
+    return response.data.workload_groups;
   },
 
   async attachRole(request: AttachDorisRoleRequest): Promise<DorisRoleResponse> {

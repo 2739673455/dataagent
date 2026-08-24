@@ -1,9 +1,9 @@
 import { Check, Database, Edit2, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { getApiErrorMessage } from "@/api/errors";
 import { type TableInfo, type TableRole, metaApi } from "@/api/meta";
 import { Button } from "@/components/ui/button";
-import { extractErrorMessage } from "./utils";
 
 interface TableSectionProps {
   tables: TableInfo[];
@@ -59,7 +59,7 @@ export function TableSection({
       onSelectAllTables([]);
       await onReloadCatalog();
     } catch (error) {
-      toast.error(extractErrorMessage(error, "批量删除数据表失败"));
+      toast.error(getApiErrorMessage(error, "批量删除数据表失败"));
     } finally {
       setIsBatchDeleting(false);
     }
@@ -87,7 +87,7 @@ export function TableSection({
         const rawTables = await metaApi.listSourceTables();
         setSourceTables(rawTables);
       } catch (error) {
-        toast.error(extractErrorMessage(error, "获取 Doris 物理表列表失败"));
+        toast.error(getApiErrorMessage(error, "获取 Doris 物理表列表失败"));
       } finally {
         setLoadingSourceTables(false);
       }
@@ -110,7 +110,7 @@ export function TableSection({
       await onReloadCatalog();
       onSelectTable(newTableName.trim());
     } catch (error) {
-      toast.error(extractErrorMessage(error, "添加数据表失败"));
+      toast.error(getApiErrorMessage(error, "添加数据表失败"));
     } finally {
       setSavingTable(false);
     }
@@ -128,7 +128,7 @@ export function TableSection({
       setEditingTable(null);
       await onReloadCatalog();
     } catch (error) {
-      toast.error(extractErrorMessage(error, "更新数据表失败"));
+      toast.error(getApiErrorMessage(error, "更新数据表失败"));
     } finally {
       setSavingTable(false);
     }
@@ -142,7 +142,7 @@ export function TableSection({
       toast.success(`数据表 ${table.name} 已删除`);
       await onReloadCatalog();
     } catch (error) {
-      toast.error(extractErrorMessage(error, "删除数据表失败"));
+      toast.error(getApiErrorMessage(error, "删除数据表失败"));
     } finally {
       setDeletingTable(null);
     }

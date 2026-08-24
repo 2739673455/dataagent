@@ -3,10 +3,15 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
+from sqlalchemy.exc import OperationalError
+
 from app.identity import errors as auth_error
 from app.identity.models import DorisQueryIdentity, DorisRoleAssetGrant
 from app.identity.repositories.auth import AuthPGRepo
-from app.identity.repositories.doris_role import DorisRoleRepository
+from app.identity.repositories.doris_role import (
+    DorisRoleRepository,
+    DorisWorkloadGroupNotFoundError,
+)
 from app.identity.repositories.query_identity import DorisQueryIdentityPGRepo
 from app.identity.services.doris_permission import DorisPermissionService
 from tests.identity.test_auth_service import AsyncSessionStub
@@ -194,13 +199,92 @@ class DorisRoleRepositoryIdentifierTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             DorisRoleRepository.quote_role("sales` OR `1`=`1")
         with self.assertRaises(ValueError):
+            DorisRoleRepository.quote_role_literal("sales' OR '1'='1")
+        with self.assertRaises(ValueError):
             DorisRoleRepository.quote_user("sales' OR '1'='1")
         self.assertEqual(DorisRoleRepository.quote_role("sales"), "`sales`")
+        self.assertEqual(DorisRoleRepository.quote_role_literal("sales"), "'sales'")
         self.assertEqual(DorisRoleRepository.quote_user("sales"), "'sales'")
 
 
+class DorisRoleRepositoryWorkloadGroupTest(unittest.IsolatedAsyncioTestCase):
+    """验证 Doris 工作组查询边界"""
+
+    async def test_lists_and_checks_workload_groups_with_parameterized_sql(
+        self,
+    ) -> None:
+        provider = MagicMock()
+        connection = MagicMock()
+        list_result = MagicMock()
+        list_result.scalars.return_value.all.return_value = ["batch", "normal"]
+        existing_result = MagicMock()
+        existing_result.scalar_one_or_none.return_value = 1
+        connection.execute = AsyncMock(side_effect=[list_result, existing_result])
+        provider.connection.return_value.__aenter__ = AsyncMock(return_value=connection)
+        provider.connection.return_value.__aexit__ = AsyncMock(return_value=False)
+        repo = DorisRoleRepository(provider)
+
+        workload_groups = await repo.list_workload_groups()
+        exists = await repo.workload_group_exists("normal")
+
+        self.assertEqual(workload_groups, ("batch", "normal"))
+        self.assertTrue(exists)
+        existence_call = connection.execute.await_args_list[1]
+        self.assertIn(":workload_group", str(existence_call.args[0]))
+        self.assertEqual(existence_call.args[1], {"workload_group": "normal"})
+
+
 class DorisRoleRepositoryIdentityTest(unittest.IsolatedAsyncioTestCase):
-    """验证 Doris 查询身份创建的补偿边界"""
+    """验证 Doris 查询身份创建 SQL 与补偿边界"""
+
+    async def test_create_role_identity_uses_role_literal_for_default_role(
+        self,
+    ) -> None:
+        repo = DorisRoleRepository(MagicMock())
+        repo._execute = AsyncMock()  # pyright: ignore[reportPrivateUsage]
+
+        await repo.create_role_identity(
+            role_name="sales",
+            query_user="sales_query",
+            password="generated-password",
+            workload_group="normal",
+        )
+
+        statements = [call.args[0] for call in repo._execute.await_args_list]  # pyright: ignore[reportPrivateUsage]
+        self.assertEqual(
+            statements,
+            [
+                "CREATE ROLE `sales`",
+                "GRANT USAGE_PRIV ON WORKLOAD GROUP `normal` TO ROLE `sales`",
+                (
+                    "CREATE USER 'sales_query' IDENTIFIED BY 'generated-password' "
+                    "DEFAULT ROLE 'sales'"
+                ),
+            ],
+        )
+
+    async def test_existing_role_uses_role_literal_for_default_role(self) -> None:
+        repo = DorisRoleRepository(MagicMock())
+        repo._execute = AsyncMock()  # pyright: ignore[reportPrivateUsage]
+
+        await repo.create_query_user_for_existing_role(
+            role_name="sales",
+            query_user="sales_query",
+            password="generated-password",
+            workload_group="normal",
+        )
+
+        statements = [call.args[0] for call in repo._execute.await_args_list]  # pyright: ignore[reportPrivateUsage]
+        self.assertEqual(
+            statements,
+            [
+                "GRANT USAGE_PRIV ON WORKLOAD GROUP `normal` TO ROLE `sales`",
+                (
+                    "CREATE USER 'sales_query' IDENTIFIED BY 'generated-password' "
+                    "DEFAULT ROLE 'sales'"
+                ),
+            ],
+        )
 
     async def test_existing_query_user_is_not_deleted_when_creation_fails(
         self,
@@ -223,3 +307,30 @@ class DorisRoleRepositoryIdentityTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(
             any(statement.startswith("DROP USER") for statement in statements)
         )
+
+    async def test_missing_workload_group_is_classified_after_compensation(
+        self,
+    ) -> None:
+        repo = DorisRoleRepository(MagicMock())
+        missing_group = OperationalError(
+            "GRANT",
+            {},
+            RuntimeError(
+                "errCode = 2, detailMessage = Can not find workload group batch"
+            ),
+        )
+        repo._execute = AsyncMock(  # pyright: ignore[reportPrivateUsage]
+            side_effect=[None, missing_group, None]
+        )
+
+        with self.assertRaises(DorisWorkloadGroupNotFoundError) as context:
+            await repo.create_role_identity(
+                role_name="sales",
+                query_user="sales_query",
+                password="generated-password",
+                workload_group="batch",
+            )
+
+        self.assertEqual(context.exception.workload_group, "batch")
+        statements = [call.args[0] for call in repo._execute.await_args_list]  # pyright: ignore[reportPrivateUsage]
+        self.assertEqual(statements[-1], "DROP ROLE IF EXISTS `sales`")

@@ -13,6 +13,7 @@ import {
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
+import { getApiErrorMessage } from "@/api/errors";
 import type { UserResponse } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -76,9 +77,7 @@ export function ChatSidebar({
       setEditingConversationId(null);
       toast.success("会话标题已更新");
     } catch (error) {
-      const payload = (error as { response?: { data?: { detail?: string; title?: string } } })
-        .response?.data;
-      toast.error(payload?.detail ?? payload?.title ?? "会话重命名失败");
+      toast.error(getApiErrorMessage(error, "会话重命名失败"));
     } finally {
       setIsRenaming(false);
     }
@@ -192,7 +191,7 @@ export function ChatSidebar({
                     <button
                       type="button"
                       title="重命名会话"
-                      className="ml-1 shrink-0 rounded p-1 opacity-0 transition group-hover:opacity-100"
+                      className="ml-1 shrink-0 rounded p-1 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
                       onClick={() => {
                         setEditingConversationId(conversation.conversation_id);
                         setEditingTitle(conversation.title);
@@ -203,12 +202,7 @@ export function ChatSidebar({
                     <button
                       type="button"
                       title="删除会话"
-                      className={cn(
-                        "shrink-0 rounded p-1 opacity-0 transition group-hover:opacity-100",
-                        isActive
-                          ? "text-[#d4d4ce] hover:bg-[#2d3139] hover:text-[#ffffff]"
-                          : "text-[#8e8e93] hover:bg-[#deded8] hover:text-[#dc2626]"
-                      )}
+                      className="ml-1 shrink-0 p-1 text-[#dc2626] opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
                       onClick={() => onDelete(conversation.conversation_id)}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -251,9 +245,7 @@ export function ChatUserFooter({ user, onChangePassword, onLogout }: ChatUserFoo
     try {
       await onChangePassword(currentPassword, newPassword);
     } catch (error) {
-      const payload = (error as { response?: { data?: { detail?: string; title?: string } } })
-        .response?.data;
-      toast.error(payload?.detail ?? payload?.title ?? "密码修改失败");
+      toast.error(getApiErrorMessage(error, "密码修改失败"));
     } finally {
       setIsChangingPassword(false);
     }

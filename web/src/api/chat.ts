@@ -1,4 +1,5 @@
 import { getAccessToken, refreshAccessToken } from "@/auth";
+import { getProblemDetailsMessage } from "@/api/errors";
 import type { components } from "@/api/generated";
 import { CHAT_API_ROUTES } from "@/config/settings";
 import type {
@@ -26,6 +27,16 @@ function parseStreamEvent(frame: string): ChatStreamEvent | null {
   return payload ? (JSON.parse(payload) as ChatStreamEvent) : null;
 }
 
+async function streamErrorMessage(response: Response): Promise<string> {
+  try {
+    const problem = getProblemDetailsMessage(await response.json());
+    if (problem) return problem;
+  } catch {
+    // 响应体无法解析时使用状态码兜底
+  }
+  return `聊天请求失败（${response.status}）`;
+}
+
 async function consumeChatStream(
   body: ChatStreamRequest,
   signal: AbortSignal,
@@ -49,8 +60,11 @@ async function consumeChatStream(
     await refreshAccessToken();
     return consumeChatStream(body, signal, onEvent, true);
   }
-  if (!response.ok || !response.body) {
-    throw new Error(`聊天请求失败（${response.status}）`);
+  if (!response.ok) {
+    throw new Error(await streamErrorMessage(response));
+  }
+  if (!response.body) {
+    throw new Error("聊天响应缺少流式内容");
   }
 
   const reader = response.body.getReader();

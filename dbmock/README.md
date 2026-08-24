@@ -45,7 +45,7 @@ DB_NAME="ecommerce"
 ### 1. 初始化 Doris
 
 ```bash
-make init_db
+uv run scripts/init_db.py
 ```
 
 该命令会删除并重建 `.env` 中 `DB_NAME` 指定的数据库，然后执行全部业务表 DDL。请勿将其指向需要保留的数据库
@@ -53,7 +53,7 @@ make init_db
 ### 2. 验证完整链路
 
 ```bash
-make smoke
+uv run main.py --smoke
 ```
 
 smoke 模式生成最近七天的小规模数据，并执行与全量任务相同的业务链路和质量校验
@@ -61,8 +61,8 @@ smoke 模式生成最近七天的小规模数据，并执行与全量任务相�
 ### 3. 生成两年全量数据
 
 ```bash
-make init_db
-make generate
+uv run scripts/init_db.py
+uv run main.py
 ```
 
 smoke 数据不能与全量数据共存，因此正式生成前需要重新初始化数据库。生成任务要求全部业务表为空。默认规模在本地 Docker Doris 环境中通常需要十几分钟，实际耗时取决于 CPU、内存、磁盘和 Doris 负载

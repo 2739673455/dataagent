@@ -142,6 +142,7 @@ class MessageResponse(BaseModel):
     """返回给客户端的消息"""
 
     message_id: str | None = Field(default=None, description="LangGraph 消息ID")
+    created_at: datetime | None = Field(default=None, description="消息创建时间")
     role: MessageRole = Field(..., description="发送者")
     parts: list[MessagePart] = Field(..., description="消息片段")
     attachments: list[Attachment] | None = Field(default=None, description="附件列表")

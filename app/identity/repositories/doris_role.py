@@ -6,9 +6,18 @@ from typing import Any, Literal, Protocol
 
 from loguru import logger
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 _IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_$.-]{0,127}$")
+
+
+class DorisWorkloadGroupNotFoundError(RuntimeError):
+    """Doris 工作组不存在"""
+
+    def __init__(self, workload_group: str) -> None:
+        self.workload_group = workload_group
+        super().__init__(f"Doris 工作组不存在: {workload_group}")
 
 
 class DorisAdminConnectionProvider(Protocol):
@@ -34,6 +43,12 @@ class DorisRoleRepository:
     def quote_role(cls, role_name: str) -> str:
         """校验并引用 Doris 角色名"""
         return cls.quote_identifier(role_name)
+
+    @classmethod
+    def quote_role_literal(cls, role_name: str) -> str:
+        """校验 Doris 角色名并构造字符串字面量"""
+        cls.quote_role(role_name)
+        return f"'{role_name}'"
 
     @staticmethod
     def quote_user(user_name: str) -> str:
@@ -62,6 +77,29 @@ class DorisRoleRepository:
             result = await connection.execute(text("SHOW ROLES"))
             return [dict(row) for row in result.mappings().all()]
 
+    async def list_workload_groups(self) -> tuple[str, ...]:
+        """读取管理账号可见的 Doris 工作组"""
+        async with self._provider.connection() as connection:
+            result = await connection.execute(
+                text(
+                    "SELECT name FROM information_schema.workload_groups ORDER BY name"
+                )
+            )
+            return tuple(map(str, result.scalars().all()))
+
+    async def workload_group_exists(self, workload_group: str) -> bool:
+        """确认 Doris 工作组是否存在"""
+        self.quote_identifier(workload_group)
+        async with self._provider.connection() as connection:
+            result = await connection.execute(
+                text(
+                    "SELECT 1 FROM information_schema.workload_groups "
+                    "WHERE name = :workload_group LIMIT 1"
+                ),
+                {"workload_group": workload_group},
+            )
+            return result.scalar_one_or_none() is not None
+
     async def create_role_identity(
         self,
         *,
@@ -72,19 +110,21 @@ class DorisRoleRepository:
     ) -> None:
         """创建 Doris 角色、查询用户及 Workload Group 授权"""
         role = self.quote_role(role_name)
+        role_literal = self.quote_role_literal(role_name)
         user = self.quote_user(query_user)
-        group = self.quote_identifier(workload_group)
         if not password or not password.isascii() or "'" in password:
             raise ValueError("生成的 Doris 密码格式无效")
         role_created = False
         try:
             await self._execute(f"CREATE ROLE {role}")
             role_created = True
-            await self._execute(
-                f"GRANT USAGE_PRIV ON WORKLOAD GROUP {group} TO ROLE {role}"
+            await self._grant_workload_group_usage(
+                role=role,
+                workload_group=workload_group,
             )
             await self._execute(
-                f"CREATE USER {user} IDENTIFIED BY '{password}' DEFAULT ROLE {role}"
+                f"CREATE USER {user} IDENTIFIED BY '{password}' "
+                f"DEFAULT ROLE {role_literal}"
             )
         except BaseException:
             if role_created:
@@ -104,17 +144,19 @@ class DorisRoleRepository:
     ) -> None:
         """为已存在的 Doris 角色创建代理查询用户并授予 Workload Group 权限"""
         role = self.quote_role(role_name)
+        role_literal = self.quote_role_literal(role_name)
         user = self.quote_user(query_user)
-        group = self.quote_identifier(workload_group)
         if not password or not password.isascii() or "'" in password:
             raise ValueError("生成的 Doris 密码格式无效")
         user_created = False
         try:
-            await self._execute(
-                f"GRANT USAGE_PRIV ON WORKLOAD GROUP {group} TO ROLE {role}"
+            await self._grant_workload_group_usage(
+                role=role,
+                workload_group=workload_group,
             )
             await self._execute(
-                f"CREATE USER {user} IDENTIFIED BY '{password}' DEFAULT ROLE {role}"
+                f"CREATE USER {user} IDENTIFIED BY '{password}' "
+                f"DEFAULT ROLE {role_literal}"
             )
             user_created = True
         except BaseException:
@@ -265,6 +307,24 @@ class DorisRoleRepository:
         """执行完全由已校验结构组成的 Doris 管理语句"""
         async with self._provider.connection() as connection:
             await connection.exec_driver_sql(sql)
+
+    async def _grant_workload_group_usage(
+        self,
+        *,
+        role: str,
+        workload_group: str,
+    ) -> None:
+        """向角色授予工作组使用权限并识别工作组删除竞争"""
+        group = self.quote_identifier(workload_group)
+        try:
+            await self._execute(
+                f"GRANT USAGE_PRIV ON WORKLOAD GROUP {group} TO ROLE {role}"
+            )
+        except OperationalError as exc:
+            message = str(exc.orig).casefold()
+            if re.search(r"\bcan\s*not find workload group\b", message):
+                raise DorisWorkloadGroupNotFoundError(workload_group) from exc
+            raise
 
     @classmethod
     def _select_privilege(cls, columns: Sequence[str]) -> str:

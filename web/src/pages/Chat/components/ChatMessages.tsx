@@ -14,6 +14,7 @@ type MessageDisplayItem = {
   message: {
     key: string;
     conversationId?: string | null;
+    createdAt?: string | null;
     role: MessageResponse["role"];
     attachments?: Attachment[] | null;
     parts: Array<TextContent | ImageContent>;
@@ -74,6 +75,25 @@ function getMessagePartKey(part: MessagePart) {
   }
 }
 
+const messageTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+function formatMessageTime(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = Object.fromEntries(
+    messageTimeFormatter.formatToParts(date).map((part) => [part.type, part.value])
+  );
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+}
+
 function isImageAttachment(name: string) {
   return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
 }
@@ -127,6 +147,7 @@ function buildDisplayItems(
         message: {
           key: getMessageKey(message),
           conversationId,
+          createdAt: message.created_at,
           role: message.role,
           attachments: message.attachments,
           parts: regularParts,
@@ -592,11 +613,14 @@ function AttachmentChip({
 function MessageBubble({
   message,
   onOpenPreviewAttachment,
+  username,
 }: {
   message: MessageDisplayItem["message"];
   onOpenPreviewAttachment?: (attachment: Attachment) => void;
+  username: string;
 }) {
   const isUser = message.role === "user";
+  const createdAt = formatMessageTime(message.createdAt);
   const [previewImage, setPreviewImage] = useState<{
     src: string;
     alt: string;
@@ -613,7 +637,8 @@ function MessageBubble({
         >
           {/* 消息来源标识 */}
           <div className="mb-2 flex items-center justify-between border-b border-[#e5e5df] pb-1.5 text-xs">
-            <span className="font-semibold text-[#18181b]">{isUser ? "用户" : "DataAgent"}</span>
+            <span className="font-semibold text-[#18181b]">{isUser ? username : "DataAgent"}</span>
+            {createdAt ? <time className="text-[#71717a]">{createdAt}</time> : null}
           </div>
 
           <div className="space-y-2">
@@ -661,6 +686,7 @@ interface ChatMessagesProps {
   isLoading: boolean;
   messages: MessageResponse[];
   onOpenPreviewAttachment?: (attachment: Attachment) => void;
+  username: string;
   viewportRef: RefObject<HTMLDivElement | null>;
 }
 
@@ -670,6 +696,7 @@ export function ChatMessages({
   isLoading,
   messages,
   onOpenPreviewAttachment,
+  username,
   viewportRef,
 }: ChatMessagesProps) {
   const displayItems = buildDisplayItems(conversationId, messages);
@@ -712,6 +739,7 @@ export function ChatMessages({
                   key={item.key}
                   message={item.message}
                   onOpenPreviewAttachment={onOpenPreviewAttachment}
+                  username={username}
                 />
               ) : (
                 <ToolRunBar

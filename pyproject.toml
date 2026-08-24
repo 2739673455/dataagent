@@ -35,8 +35,12 @@ version = "0.1.0"
 [dependency-groups]
 dev = [
   "pyright>=1.1.410",
+  "pytest>=9.1.1",
   "ruff>=0.15.16",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.pyright]
 venv = ".venv"

@@ -11,13 +11,21 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
+from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from pydantic import ValidationError
 
 from app.analytics.agents.contracts import PlannerTurnContext
 from app.analytics.agents.manager import ConversationAgentRuntime
+from app.analytics.agents.planner.message_timestamp_middleware import (
+    MessageTimestampMiddleware,
+)
 from app.analytics.api.chat import schemas as chat_schema
+from app.analytics.message_metadata import (
+    MESSAGE_PAYLOAD_KEY,
+    get_message_created_at,
+)
 from app.analytics.services import chat as chat_service
 from app.sandbox.docker_manager import normalize_attachment_path
 
@@ -77,6 +85,33 @@ class UserMessageRequestTest(unittest.TestCase):
         self.assertIsNotNone(message.attachments)
         assert message.attachments is not None
         self.assertEqual(message.attachments[0].f_path, "uploads/report.csv")
+
+
+class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
+    async def test_user_message_creation_time_is_persisted(self) -> None:
+        message = await chat_service._schema_to_human_message(
+            chat_schema.UserMessageRequest(
+                parts=[chat_schema.TextContent(type="text", text="analyze")]
+            ),
+            7,
+            _CONVERSATION_ID,
+        )
+
+        metadata = chat_schema.MessageResponse.model_validate(
+            message.additional_kwargs[MESSAGE_PAYLOAD_KEY]
+        )
+        self.assertIsNotNone(metadata.created_at)
+
+    async def test_model_response_creation_time_is_persisted(self) -> None:
+        middleware = MessageTimestampMiddleware()
+        response_message = AIMessage(content="result")
+
+        async def handler(_: Any) -> ModelResponse[Any]:
+            return ModelResponse(result=[response_message])
+
+        await middleware.awrap_model_call(MagicMock(), handler)
+
+        self.assertIsNotNone(get_message_created_at(response_message))
 
 
 class _RepeatingPlanner:

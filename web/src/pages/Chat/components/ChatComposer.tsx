@@ -13,7 +13,7 @@ interface ChatComposerProps {
   onAttachmentsSelected: (files: File[]) => Promise<void> | void;
   onRemoveAttachment: (attachmentName: string) => void;
   onStop: () => void;
-  onSubmit: (value: string) => Promise<void> | void;
+  onSubmit: (value: string) => Promise<boolean>;
 }
 
 function ImagePreview({ alt, onClose, src }: { alt: string; onClose: () => void; src: string }) {
@@ -50,6 +50,7 @@ export function ChatComposer({
     src: string;
     alt: string;
   } | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -63,10 +64,15 @@ export function ChatComposer({
 
   const handleSubmit = async () => {
     const next = value.trim();
-    if ((!next && attachments.length === 0) || disabled || isUploading) return;
-    setValue("");
-    requestAnimationFrame(resizeTextarea);
-    await onSubmit(next);
+    if ((!next && attachments.length === 0) || disabled || isUploading || isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      if (!(await onSubmit(next))) return;
+      setValue("");
+      requestAnimationFrame(resizeTextarea);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const isImageAttachment = (attachment: Attachment) => Boolean(attachment.preview_url);
@@ -146,7 +152,7 @@ export function ChatComposer({
                 void handleSubmit();
               }
             }}
-            disabled={disabled || isUploading}
+            disabled={disabled || isUploading || isSubmitting}
             className="min-h-[44px] max-h-[35vh] flex-1 resize-none bg-transparent font-mono text-sm leading-relaxed text-[#1e2024] placeholder:text-[#a1a1aa] focus:outline-none focus:ring-0 disabled:opacity-40"
           />
         </div>
@@ -155,7 +161,7 @@ export function ChatComposer({
           <div className="flex items-center gap-3">
             <button
               type="button"
-              disabled={disabled || isUploading || isStreaming}
+              disabled={disabled || isUploading || isStreaming || isSubmitting}
               onClick={() => fileInputRef.current?.click()}
               className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs text-[#52525b] transition hover:bg-[#ebebe6] hover:text-[#18181b] disabled:opacity-40"
               title="添加附件"
@@ -184,11 +190,16 @@ export function ChatComposer({
                 size="sm"
                 variant="default"
                 className="gap-1.5 px-3.5 text-xs"
-                disabled={disabled || isUploading || (!value.trim() && attachments.length === 0)}
+                disabled={
+                  disabled ||
+                  isUploading ||
+                  isSubmitting ||
+                  (!value.trim() && attachments.length === 0)
+                }
                 onClick={() => void handleSubmit()}
               >
                 <ArrowUp className="h-4 w-4" />
-                <span>发送</span>
+                <span>{isSubmitting ? "发送中" : "发送"}</span>
               </Button>
             )}
           </div>

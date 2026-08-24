@@ -13,6 +13,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.store.base import BaseStore
 
+from .message_timestamp_middleware import MessageTimestampMiddleware
 from .prompt import build_planner_system_prompt
 
 type InterpreterMode = Literal["thread", "turn", "call"]
@@ -55,7 +56,7 @@ def create_planner_agent(
         ),
         middleware=cast(
             "Sequence[AgentMiddleware[Any, Any, Any]]",
-            [filesystem, interpreter],
+            [filesystem, interpreter, MessageTimestampMiddleware()],
         ),
         subagents=[],
         backend=backend,

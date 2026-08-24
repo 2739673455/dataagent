@@ -1,9 +1,9 @@
 import { Download, Eye, Loader2, Search, Upload, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { getApiErrorMessage } from "@/api/errors";
 import { type ImportMode, type MetaImportResponse, metaApi } from "@/api/meta";
 import { Button } from "@/components/ui/button";
-import { extractErrorMessage } from "./utils";
 
 interface YamlSectionProps {
   onDataReload: () => Promise<void>;
@@ -38,7 +38,7 @@ export function YamlSection({ onDataReload }: YamlSectionProps) {
       URL.revokeObjectURL(url);
       toast.success("元数据 YAML 已导出并下载");
     } catch (error) {
-      toast.error(extractErrorMessage(error, "导出 YAML 失败"));
+      toast.error(getApiErrorMessage(error, "导出 YAML 失败"));
     } finally {
       setExporting(false);
     }
@@ -66,7 +66,7 @@ export function YamlSection({ onDataReload }: YamlSectionProps) {
         await onDataReload();
       }
     } catch (error) {
-      toast.error(extractErrorMessage(error, "导入 YAML 失败"));
+      toast.error(getApiErrorMessage(error, "导入 YAML 失败"));
     } finally {
       setImportingStage(null);
     }

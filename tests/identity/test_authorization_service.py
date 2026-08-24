@@ -6,7 +6,10 @@ from unittest.mock import AsyncMock, MagicMock
 from app.identity import errors as auth_error
 from app.identity.models import DorisQueryIdentity, DorisRoleAssetGrant
 from app.identity.repositories.auth import AuthPGRepo
-from app.identity.repositories.doris_role import DorisRoleRepository
+from app.identity.repositories.doris_role import (
+    DorisRoleRepository,
+    DorisWorkloadGroupNotFoundError,
+)
 from app.identity.repositories.query_identity import DorisQueryIdentityPGRepo
 from app.identity.services.auth import AuthenticatedUser
 from app.identity.services.authorization import (
@@ -116,6 +119,8 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
         self.identity_repo.session = self.session
         self.identity_repo.get = AsyncMock(return_value=query_identity())
         self.doris_repo = MagicMock(spec=DorisRoleRepository)
+        self.doris_repo.list_workload_groups = AsyncMock(return_value=("normal",))
+        self.doris_repo.workload_group_exists = AsyncMock(return_value=True)
         self.cipher = MagicMock()
         self.registry = MagicMock(spec=DorisQueryClientRegistry)
         self.password_manager = MagicMock()
@@ -137,16 +142,26 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "必须共享同一数据库会话"):
             self.service()
 
+    async def test_lists_workload_groups_from_doris(self) -> None:
+        workload_groups = await self.service().list_workload_groups()
+
+        self.assertEqual(workload_groups, ("normal",))
+        self.doris_repo.list_workload_groups.assert_awaited_once_with()
+
     async def test_list_users_returns_rows_and_total(self) -> None:
         users = [build_user(user_id=51)]
         self.repo.list_users = AsyncMock(return_value=users)
         self.repo.count_users = AsyncMock(return_value=101)
 
-        page_users, total = await self.service().list_users(limit=50, offset=50, query=" alice ")
+        page_users, total = await self.service().list_users(
+            limit=50, offset=50, query=" alice "
+        )
 
         self.assertEqual(page_users, users)
         self.assertEqual(total, 101)
-        self.repo.list_users.assert_awaited_once_with(limit=50, offset=50, query="alice")
+        self.repo.list_users.assert_awaited_once_with(
+            limit=50, offset=50, query="alice"
+        )
         self.repo.count_users.assert_awaited_once_with(query="alice")
 
     async def test_user_role_is_replaced_with_one_configured_role(self) -> None:
@@ -214,6 +229,52 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
             password="generated-password",
             workload_group="normal",
         )
+        self.doris_repo.workload_group_exists.assert_awaited_once_with("normal")
+
+    async def test_missing_workload_group_is_rejected_before_role_creation(
+        self,
+    ) -> None:
+        self.doris_repo.workload_group_exists.return_value = False
+
+        with self.assertRaises(auth_error.WorkloadGroupNotFoundError) as context:
+            await self.service().create_role(
+                role_name="sales",
+                description="Sales analysts",
+                query_user="sales_query",
+                workload_group="missing",
+                is_default=False,
+            )
+
+        self.assertEqual(
+            context.exception.detail,
+            "Doris 工作组 missing 不存在，请选择已创建的工作组",
+        )
+        self.doris_repo.create_role_identity.assert_not_awaited()
+
+    async def test_workload_group_deleted_during_creation_is_mapped(self) -> None:
+        self.identity_repo.get.return_value = None
+        self.identity_repo.get_by_query_user = AsyncMock(return_value=None)
+        self.identity_repo.get_default = AsyncMock(
+            return_value=query_identity(default=True)
+        )
+        self.doris_repo.create_role_identity = AsyncMock(
+            side_effect=DorisWorkloadGroupNotFoundError("batch")
+        )
+        self.cipher.generate_password.return_value = "generated-password"
+
+        with self.assertRaises(auth_error.WorkloadGroupNotFoundError) as context:
+            await self.service().create_role(
+                role_name="sales",
+                description="Sales analysts",
+                query_user="sales_query",
+                workload_group="batch",
+                is_default=False,
+            )
+
+        self.assertEqual(
+            context.exception.detail,
+            "Doris 工作组 batch 不存在，请选择已创建的工作组",
+        )
 
     async def test_default_or_assigned_role_cannot_be_deleted(self) -> None:
         self.identity_repo.get.return_value = query_identity(default=True)
@@ -271,6 +332,7 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(identity.query_user, "finance_custom_query")
         self.assertEqual(identity.encrypted_password, "enc-pwd")
         self.doris_repo.verify_configured_roles.assert_awaited_once_with(("finance",))
+        self.doris_repo.workload_group_exists.assert_awaited_once_with("normal")
         self.doris_repo.create_query_user_for_existing_role.assert_awaited_once_with(
             role_name="finance",
             query_user="finance_custom_query",
@@ -338,3 +400,27 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated.id, 15)
         self.repo.update_user.assert_awaited_once()
         self.repo.revoke_user_refresh_tokens.assert_awaited_once()
+
+    async def test_update_user_validates_doris_role_inside_transaction(self) -> None:
+        user = build_user(user_id=15, doris_role="dataagent_default")
+        self.repo.get_user_by_id = AsyncMock(return_value=user)
+        self.repo.update_user = AsyncMock()
+        self.identity_repo.get = AsyncMock(
+            side_effect=self._load_identity_in_transaction
+        )
+
+        updated = await self.service().update_user(
+            user_id=user.id,
+            doris_role="sales",
+        )
+
+        self.assertEqual(updated.id, user.id)
+        self.identity_repo.get.assert_awaited_once_with("sales")
+        self.repo.update_user.assert_awaited_once_with(
+            user,
+            username=None,
+            email=None,
+            password_hash=None,
+            doris_role="sales",
+            is_admin=None,
+        )

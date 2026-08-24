@@ -2,6 +2,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
+import { getApiErrorMessage } from "@/api/errors";
 import { loginUser } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { ROUTES } from "@/config/settings";
@@ -25,9 +26,7 @@ export default function LoginPage() {
       await loginUser({ identifier, password });
       navigate(safeReturnTo(searchParams.get("return_to")), { replace: true });
     } catch (error) {
-      const payload = (error as { response?: { data?: { detail?: string; title?: string } } })
-        .response?.data;
-      toast.error(payload?.detail ?? payload?.title ?? "认证失败，请检查输入后重试");
+      toast.error(getApiErrorMessage(error, "认证失败，请检查输入后重试"));
     } finally {
       setSubmitting(false);
     }

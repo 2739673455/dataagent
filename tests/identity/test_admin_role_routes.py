@@ -11,6 +11,7 @@ from app.identity.api.admin.router import (
     delete_user,
     discover_doris_roles,
     list_doris_roles,
+    list_doris_workload_groups,
     list_users,
     set_user_administrator,
     set_user_doris_role,
@@ -69,6 +70,14 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(response.roles), 1)
         self.assertEqual(response.roles[0].name, "finance")
         self.assertFalse(response.roles[0].is_attached)
+
+    async def test_list_workload_groups_endpoint(self) -> None:
+        service = MagicMock()
+        service.list_workload_groups = AsyncMock(return_value=("batch", "normal"))
+
+        response = await list_doris_workload_groups(MagicMock(), service)
+
+        self.assertEqual(response.workload_groups, ["batch", "normal"])
 
     async def test_attach_role_endpoint(self) -> None:
         service = MagicMock()
@@ -213,7 +222,9 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.limit, 50)
         self.assertEqual(response.offset, 50)
         self.assertTrue(response.has_more)
-        service.list_users.assert_awaited_once_with(limit=50, offset=50, query="test_query")
+        service.list_users.assert_awaited_once_with(
+            limit=50, offset=50, query="test_query"
+        )
 
     async def test_update_user_endpoint(self) -> None:
         service = MagicMock()

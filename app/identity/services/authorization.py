@@ -17,7 +17,11 @@ from app.identity.models import (
     normalize_doris_role_name,
 )
 from app.identity.repositories.auth import _UNSET, AuthPGRepo
-from app.identity.repositories.doris_role import DorisRoleRepository, role_name_from_row
+from app.identity.repositories.doris_role import (
+    DorisRoleRepository,
+    DorisWorkloadGroupNotFoundError,
+    role_name_from_row,
+)
 from app.identity.repositories.query_identity import DorisQueryIdentityPGRepo
 from app.identity.services.auth import (
     _EMAIL_PATTERN,
@@ -275,6 +279,10 @@ class DorisRoleManagementService:
             )
         return sorted(discovered, key=lambda role: (role.is_attached, role.name))
 
+    async def list_workload_groups(self) -> tuple[str, ...]:
+        """列出创建查询身份时可选择的 Doris 工作组"""
+        return await self._doris_repo.list_workload_groups()
+
     async def attach_role(
         self,
         *,
@@ -287,6 +295,7 @@ class DorisRoleManagementService:
         """为 Doris 已有角色自动创建并绑定查询用户"""
         role = normalize_doris_role_name(role_name)
         self._doris_repo.quote_identifier(workload_group)
+        await self._require_workload_group(workload_group)
         actual_query_user = query_user.strip() if query_user else f"{role}_query_user"
         self._doris_repo.quote_identifier(actual_query_user)
         password = self._cipher.generate_password()
@@ -339,6 +348,8 @@ class DorisRoleManagementService:
                     )
             if isinstance(exc, IntegrityError):
                 raise auth_error.RoleAlreadyExistsError from exc
+            if isinstance(exc, DorisWorkloadGroupNotFoundError):
+                raise self._workload_group_not_found(workload_group) from exc
             raise
 
     async def create_role(
@@ -354,6 +365,7 @@ class DorisRoleManagementService:
         role = normalize_doris_role_name(role_name)
         self._doris_repo.quote_identifier(query_user)
         self._doris_repo.quote_identifier(workload_group)
+        await self._require_workload_group(workload_group)
         password = self._cipher.generate_password()
         doris_created = False
         try:
@@ -399,7 +411,23 @@ class DorisRoleManagementService:
                     logger.exception(f"补偿删除 Doris 角色及用户失败: {role}")
             if isinstance(exc, IntegrityError):
                 raise auth_error.RoleAlreadyExistsError from exc
+            if isinstance(exc, DorisWorkloadGroupNotFoundError):
+                raise self._workload_group_not_found(workload_group) from exc
             raise
+
+    async def _require_workload_group(self, workload_group: str) -> None:
+        """要求 Doris 工作组存在"""
+        if not await self._doris_repo.workload_group_exists(workload_group):
+            raise self._workload_group_not_found(workload_group)
+
+    @staticmethod
+    def _workload_group_not_found(
+        workload_group: str,
+    ) -> auth_error.WorkloadGroupNotFoundError:
+        """构造可返回客户端的工作组不存在异常"""
+        return auth_error.WorkloadGroupNotFoundError(
+            detail=f"Doris 工作组 {workload_group} 不存在，请选择已创建的工作组"
+        )
 
     async def set_default_role(self, role_name: str) -> DorisQueryIdentity:
         """替换新用户使用的缺省 Doris 角色"""
@@ -599,14 +627,16 @@ class DorisRoleManagementService:
         normalized_doris_role: str | None = None
         if doris_role is not _UNSET and doris_role:
             normalized_doris_role = normalize_doris_role_name(doris_role)
-            identity_role = await self._identity_repo.get(normalized_doris_role)
-            if identity_role is None or not identity_role.is_active:
-                raise auth_error.RoleNotFoundError
 
         now = datetime.now(UTC)
         try:
             async with self._repo.session.begin():
                 await self._repo.lock_security_mutation()
+                if normalized_doris_role is not None:
+                    identity_role = await self._identity_repo.get(normalized_doris_role)
+                    if identity_role is None or not identity_role.is_active:
+                        raise auth_error.RoleNotFoundError
+
                 user = await self._repo.get_user_by_id(user_id)
                 if user is None:
                     raise auth_error.UserNotFoundError

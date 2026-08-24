@@ -2,14 +2,8 @@ import { X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { adminApi, type DorisRoleResponse } from "@/api/admin";
+import { getApiErrorMessage } from "@/api/errors";
 import { Button } from "@/components/ui/button";
-
-function errorMessage(error: unknown): string {
-  return (
-    (error as { response?: { data?: { detail?: string; title?: string } } }).response?.data
-      ?.detail ?? "创建用户失败"
-  );
-}
 
 interface UserCreateCardProps {
   roles: DorisRoleResponse[];
@@ -45,7 +39,7 @@ export function UserCreateCard({ roles, busy, onCancel, onUserCreated }: UserCre
       setNewUserIsAdmin(false);
       onUserCreated();
     } catch (error) {
-      toast.error(errorMessage(error));
+      toast.error(getApiErrorMessage(error, "创建用户失败"));
     } finally {
       setSubmitting(false);
     }

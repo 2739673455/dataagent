@@ -43,6 +43,7 @@ class ApiContractTests(unittest.TestCase):
             "ChatStreamDoneEvent",
         ):
             self.assertIn("type", schemas[event_name]["required"])
+        self.assertIn("created_at", schemas["MessageResponse"]["properties"])
         doris_role = schemas["UserResponse"]["properties"]["doris_role"]
         self.assertIn({"type": "null"}, doris_role["anyOf"])
 

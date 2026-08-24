@@ -98,6 +98,12 @@ class RoleAlreadyExistsError(ProblemError):
     status = HTTPStatus.CONFLICT
 
 
+class WorkloadGroupNotFoundError(ProblemError):
+    type = "workload-group-not-found"
+    title = "Doris 工作组不存在"
+    status = HTTPStatus.UNPROCESSABLE_ENTITY
+
+
 class RoleInUseError(ProblemError):
     type = "role-in-use"
     title = "角色仍被用户使用"

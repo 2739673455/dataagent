@@ -60,6 +60,19 @@ async def discover_doris_roles(
     )
 
 
+@router.get(
+    "/doris-roles/workload-groups",
+    response_model=schemas.DorisWorkloadGroupListResponse,
+)
+async def list_doris_workload_groups(
+    _: AdminUserDep,
+    service: DorisRoleManagementServiceDep,
+) -> schemas.DorisWorkloadGroupListResponse:
+    """列出创建和接入角色时可使用的 Doris 工作组"""
+    workload_groups = await service.list_workload_groups()
+    return schemas.DorisWorkloadGroupListResponse(workload_groups=list(workload_groups))
+
+
 @router.post(
     "/doris-roles",
     response_model=schemas.DorisRoleResponse,
