@@ -573,6 +573,7 @@ export default function ChatPage() {
             conversationId={routeConversationId}
             conversationSelected={Boolean(routeConversationId)}
             isLoading={isLoadingMessages}
+            isStreaming={isStreaming}
             messages={currentMessages}
             onOpenPreviewAttachment={handleOpenPreviewAttachment}
             username={user?.username ?? "用户"}

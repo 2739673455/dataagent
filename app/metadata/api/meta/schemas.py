@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -10,6 +11,7 @@ from app.shared.config.meta_config import (
     MetadataDescription,
     MetadataName,
     TableRole,
+    ValueIndexSyncConfig,
 )
 
 
@@ -24,6 +26,7 @@ class TableInfoRequest(MetaRequestModel):
 
     role: TableRole
     description: MetadataDescription
+    value_index_sync: ValueIndexSyncConfig | None = None
 
 
 class ColumnInfoRequest(MetaRequestModel):
@@ -70,7 +73,23 @@ class TableInfoResponse(BaseModel):
     role: TableRole
     primary_key_columns: list[str]
     description: str
+    value_index_sync: ValueIndexSyncConfig
     meta_version: int
+
+
+class ValueIndexSyncStateResponse(BaseModel):
+    """字段取值索引同步状态响应"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    cursor_value: dict[str, Any] | None
+    status: Literal["syncing", "succeeded", "failed"]
+    current_generation: UUID | None
+    last_incremental_synced_at: datetime | None
+    last_full_synced_at: datetime | None
+    last_synced_at: datetime | None
+    last_error: str | None
+    updated_at: datetime
 
 
 class ColumnInfoResponse(BaseModel):
@@ -89,8 +108,7 @@ class ColumnInfoResponse(BaseModel):
     reference_c_name: str | None
     meta_version: int
     index_version: int
-    value_index_synced_at: datetime | None
-    value_index_sync_status: Literal["syncing", "succeeded", "failed"] | None
+    value_index_state: ValueIndexSyncStateResponse | None
 
 
 class MetricInfoResponse(BaseModel):
@@ -140,33 +158,6 @@ class MetricBatchDeleteRequest(MetaRequestModel):
     """批量删除指标元数据请求"""
 
     metrics: list[MetadataName] = Field(min_length=1, max_length=10000)
-
-
-class ColumnIndexSyncResponse(BaseModel):
-    """字段索引同步响应"""
-
-    t_name: str
-    c_name: str
-    indexed_count: int
-
-
-class MetricIndexSyncResponse(BaseModel):
-    """指标索引同步响应"""
-
-    metric_name: str
-    indexed_count: int
-
-
-class BatchIndexSyncResponse(BaseModel):
-    """批量索引同步响应"""
-
-    results: list[ColumnIndexSyncResponse]
-
-
-class BatchMetricIndexSyncResponse(BaseModel):
-    """批量指标索引同步响应"""
-
-    results: list[MetricIndexSyncResponse]
 
 
 class ResourceImportChanges(BaseModel):

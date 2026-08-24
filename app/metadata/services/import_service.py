@@ -16,7 +16,10 @@ from app.metadata.models import (
 )
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
-from app.metadata.services.contracts import MetadataAssetInvalidator
+from app.metadata.services.contracts import (
+    MetadataAssetInvalidator,
+    MetadataSemanticIndexScheduler,
+)
 from app.metadata.services.index import MetaIndexService
 from app.shared.config.meta_config import MetaConfig
 
@@ -57,12 +60,14 @@ class MetaImportService:
         source_repo: SourceDorisRepo,
         meta_index_service: MetaIndexService,
         asset_invalidator: MetadataAssetInvalidator,
+        semantic_index_scheduler: MetadataSemanticIndexScheduler,
     ) -> None:
         """初始化元数据批量导入服务"""
         self._meta_repo = meta_repo
         self._source_repo = source_repo
         self._meta_index_service = meta_index_service
         self._asset_invalidator = asset_invalidator
+        self._semantic_index_scheduler = semantic_index_scheduler
 
     async def import_metadata(
         self,
@@ -163,6 +168,12 @@ class MetaImportService:
             table_names=set(table_changes.updated + table_changes.deleted),
             column_keys=set(column_changes.updated + column_changes.deleted),
         )
+        changed_column_keys = column_changes.created + column_changes.updated
+        changed_metric_names = metric_changes.created + metric_changes.updated
+        if changed_column_keys:
+            self._semantic_index_scheduler.enqueue_columns(changed_column_keys)
+        if changed_metric_names:
+            self._semantic_index_scheduler.enqueue_metrics(changed_metric_names)
 
         return result
 
@@ -189,10 +200,21 @@ class MetaImportService:
                     role=table_config.role,
                     primary_key_columns=primary_key_columns,
                     description=table_config.description,
+                    value_index_sync=table_config.value_index_sync.model_dump(
+                        mode="json"
+                    ),
                 )
             )
 
             column_types = await self._source_repo.get_column_types(table_config.name)
+            cursor_column = table_config.value_index_sync.cursor_column
+            if cursor_column is not None and cursor_column not in column_types:
+                raise meta_error.InvalidMetadataError(
+                    detail=(
+                        "源表中未找到取值索引游标字段: "
+                        f"{table_config.name}.{cursor_column}"
+                    )
+                )
             for column_config in table_config.columns:
                 if column_config.name not in column_types:
                     raise meta_error.InvalidMetadataError(

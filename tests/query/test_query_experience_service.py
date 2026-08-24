@@ -104,6 +104,14 @@ class FakeIndexRepo:
         return self.vector_hits
 
 
+class FakeIndexScheduler:
+    def __init__(self) -> None:
+        self.enqueued: list[tuple[UUID, int]] = []
+
+    def enqueue(self, experience_id: UUID, revision: int) -> None:
+        self.enqueued.append((experience_id, revision))
+
+
 class FakePGRepo:
     def __init__(self) -> None:
         self.session = AsyncSessionStub()
@@ -142,6 +150,12 @@ class FakePGRepo:
 
     async def record_failure(self, execution: QueryExecution) -> None:
         self.executions.append(execution)
+
+    async def get(self, experience_id: UUID) -> QueryExperience | None:
+        return next(
+            (item for item in self.experiences if item.id == experience_id),
+            None,
+        )
 
     async def mark_indexes_synced(self, revisions: dict[UUID, int]) -> None:
         self.marked.extend(revisions.items())
@@ -266,11 +280,13 @@ def build_service(
     repo: FakePGRepo,
     index_repo: FakeIndexRepo,
     embedding_client: FakeEmbeddingClient,
+    scheduler: FakeIndexScheduler | None = None,
 ) -> QueryExperienceService:
     return QueryExperienceService(
         repo=cast(QueryExperiencePGRepo, repo),
         index_repo=cast(QueryExperienceESRepo, index_repo),
         embedding_client=cast(EmbeddingClient, embedding_client),
+        index_scheduler=scheduler or FakeIndexScheduler(),
         data_source="doris",
         database_name="analytics",
     )
@@ -394,7 +410,8 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         repo = FakePGRepo()
         index_repo = FakeIndexRepo()
         embedding_client = FakeEmbeddingClient()
-        service = build_service(repo, index_repo, embedding_client)
+        scheduler = FakeIndexScheduler()
+        service = build_service(repo, index_repo, embedding_client, scheduler)
         session_key = AgentSessionKey(
             user_id=7,
             conversation_id=uuid4(),
@@ -474,11 +491,9 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             {(item.kind, item.meta_version) for item in assets},
             {("table", 3), ("column", 5)},
         )
-        indexed_text = str(index_repo.indexed[0]["text"])
-        self.assertIn("统计华东订单金额", indexed_text)
-        self.assertNotIn("SELECT", indexed_text)
-        self.assertNotIn("LIMIT 100", indexed_text)
-        self.assertEqual(repo.marked, [(experience_id, 1)])
+        self.assertEqual(scheduler.enqueued, [(experience_id, 1)])
+        self.assertEqual(index_repo.indexed, [])
+        self.assertEqual(embedding_client.texts, [])
 
     async def test_search_disables_changed_assets_and_filters_latest_permissions(
         self,
@@ -524,7 +539,8 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             SearchHit(item=allowed.id, score=5),
         ]
         index_repo.vector_hits = [SearchHit(item=allowed.id, score=0.9)]
-        service = build_service(repo, index_repo, embedding_client)
+        scheduler = FakeIndexScheduler()
+        service = build_service(repo, index_repo, embedding_client, scheduler)
         policy = AssetAccessPolicy(
             user_id=7,
             grants=frozenset(
@@ -553,8 +569,7 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("column_overlap", results[0].match_reasons)
         self.assertEqual(stale.quality, "disabled")
         self.assertIsNotNone(stale.invalidated_at)
-        self.assertEqual(index_repo.deleted, [stale.id])
-        self.assertEqual(repo.marked[-1], (stale.id, stale.revision))
+        self.assertEqual(scheduler.enqueued, [(stale.id, stale.revision)])
 
     async def test_failure_records_error_without_creating_experience(self) -> None:
         repo = FakePGRepo()
@@ -596,7 +611,13 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         repo.experiences = [promoted]
         index_repo = FakeIndexRepo()
-        service = build_service(repo, index_repo, FakeEmbeddingClient())
+        scheduler = FakeIndexScheduler()
+        service = build_service(
+            repo,
+            index_repo,
+            FakeEmbeddingClient(),
+            scheduler,
+        )
 
         promoted_ids = await service.promote_by_artifacts(
             user_id=7,
@@ -607,8 +628,7 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(promoted_ids, [promoted.id])
-        self.assertEqual(index_repo.indexed[0]["quality"], "promoted")
-        self.assertEqual(repo.marked, [(promoted.id, promoted.revision)])
+        self.assertEqual(scheduler.enqueued, [(promoted.id, promoted.revision)])
 
     async def test_metadata_change_proactively_disables_matching_experiences(
         self,
@@ -627,7 +647,13 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         repo.experiences = [invalid, retained]
         index_repo = FakeIndexRepo()
-        service = build_service(repo, index_repo, FakeEmbeddingClient())
+        scheduler = FakeIndexScheduler()
+        service = build_service(
+            repo,
+            index_repo,
+            FakeEmbeddingClient(),
+            scheduler,
+        )
 
         invalidated_ids = await service.invalidate_assets(
             table_names={"orders"},
@@ -637,9 +663,9 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(invalidated_ids, [invalid.id])
         self.assertEqual(invalid.quality, "disabled")
         self.assertEqual(retained.quality, "candidate")
-        self.assertEqual(index_repo.deleted, [invalid.id])
+        self.assertEqual(scheduler.enqueued, [(invalid.id, invalid.revision)])
 
-    async def test_search_retries_pending_index_deletion(self) -> None:
+    async def test_sync_index_deletes_disabled_experience(self) -> None:
         repo = FakePGRepo()
         invalid = build_experience(
             table_name="orders",
@@ -648,7 +674,6 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         repo.experiences = [invalid]
         index_repo = FakeIndexRepo()
-        index_repo.delete_error = RuntimeError("index unavailable")
         service = build_service(repo, index_repo, FakeEmbeddingClient())
 
         await service.invalidate_assets(
@@ -657,18 +682,8 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertLess(invalid.indexed_revision, invalid.revision)
 
-        index_repo.delete_error = None
-        results = await service.search(
-            user_id=7,
-            role_name="analyst",
-            policy=AssetAccessPolicy(user_id=7, unrestricted=True),
-            query="订单",
-            table_names=set(),
-            column_keys=set(),
-            limit=5,
-        )
+        await service.sync_index(invalid.id, invalid.revision)
 
-        self.assertEqual(results, [])
         self.assertEqual(index_repo.deleted, [invalid.id])
         self.assertEqual(invalid.indexed_revision, invalid.revision)
 

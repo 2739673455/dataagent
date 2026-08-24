@@ -16,3 +16,15 @@ class MetadataAssetInvalidator(Protocol):
     ) -> object:
         """使引用指定表或字段的派生资产失效"""
         ...
+
+
+class MetadataSemanticIndexScheduler(Protocol):
+    """提交元数据语义索引同步任务"""
+
+    def enqueue_columns(self, column_keys: list[ColumnKey]) -> object:
+        """提交字段语义索引同步任务"""
+        ...
+
+    def enqueue_metrics(self, metric_names: list[str]) -> object:
+        """提交指标语义索引同步任务"""
+        ...

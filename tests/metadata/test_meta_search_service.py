@@ -2,10 +2,18 @@
 
 import asyncio
 import unittest
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
-from app.metadata.models import ColumnInfo, MetricInfo, TableInfo, ValueInfo
+from app.metadata.models import (
+    ColumnInfo,
+    MetricInfo,
+    TableInfo,
+    ValueIndexSyncState,
+    ValueInfo,
+)
 from app.metadata.search_models import SearchHit, SemanticSearchRequest
 from app.metadata.services.search import MetaSearchService
 
@@ -33,7 +41,7 @@ def build_column(
     reference_c_name: str | None = None,
 ) -> ColumnInfo:
     """构造测试字段元数据"""
-    return ColumnInfo(
+    column_info = ColumnInfo(
         t_name=t_name,
         name=name,
         type="decimal",
@@ -45,9 +53,22 @@ def build_column(
         reference_c_name=reference_c_name,
         meta_version=1,
         index_version=1,
-        value_index_synced_at=None,
-        value_index_sync_status="succeeded",
     )
+    now = datetime.now(UTC)
+    column_info.value_index_state = ValueIndexSyncState(
+        t_name=t_name,
+        c_name=name,
+        cursor_value=None,
+        status="succeeded",
+        active_run_id=None,
+        current_generation=uuid4(),
+        active_generation=None,
+        last_incremental_synced_at=None,
+        last_full_synced_at=now,
+        last_error=None,
+        updated_at=now,
+    )
+    return column_info
 
 
 def build_metric() -> MetricInfo:

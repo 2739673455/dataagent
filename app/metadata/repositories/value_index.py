@@ -1,7 +1,7 @@
 """字段值索引访问"""
 
+import json
 import uuid
-from dataclasses import asdict
 from typing import Any, ClassVar
 
 from elasticsearch import AsyncElasticsearch
@@ -9,6 +9,16 @@ from elasticsearch import AsyncElasticsearch
 from app.metadata.models import ColumnKey, ValueInfo, column_resource_key
 from app.metadata.search_models import SearchHit
 from app.shared.config.app_config import cfg
+
+
+def value_document_id(value_info: ValueInfo) -> str:
+    """生成无歧义且稳定的字段取值文档编号"""
+    identity = json.dumps(
+        ["value", value_info.t_name, value_info.c_name, value_info.value],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, identity))
 
 
 class ValueESRepo:
@@ -26,6 +36,7 @@ class ValueESRepo:
             },
             "t_name": {"type": "keyword"},
             "c_name": {"type": "keyword"},
+            "sync_generation": {"type": "keyword"},
         },
     }
 
@@ -38,15 +49,23 @@ class ValueESRepo:
         if await self._client.indices.exists(index=self._index_name):
             await self._client.indices.put_mapping(
                 index=self._index_name,
-                properties={"resource_key": {"type": "keyword"}},
+                properties={
+                    "resource_key": {"type": "keyword"},
+                    "sync_generation": {"type": "keyword"},
+                },
             )
         else:
             await self._client.indices.create(
                 index=self._index_name, mappings=self._index_mappings
             )
 
-    async def index(self, value_infos: list[ValueInfo], batch_size: int = 500) -> None:
-        """批量写入字段取值索引"""
+    async def upsert(
+        self,
+        value_infos: list[ValueInfo],
+        generation: str,
+        batch_size: int = 500,
+    ) -> None:
+        """按稳定编号批量覆盖字段取值索引"""
         for i in range(0, len(value_infos), batch_size):
             batch = value_infos[i : i + batch_size]
             operations = []
@@ -55,60 +74,66 @@ class ValueESRepo:
                     {
                         "index": {
                             "_index": self._index_name,
-                            "_id": str(
-                                uuid.uuid5(
-                                    uuid.NAMESPACE_URL,
-                                    "value:"
-                                    f"{value_info.t_name}:"
-                                    f"{value_info.c_name}:"
-                                    f"{value_info.value}",
-                                )
-                            ),
+                            "_id": value_document_id(value_info),
                         }
                     }
                 )
                 operations.append(
                     {
-                        **asdict(value_info),
+                        "value": value_info.value,
+                        "t_name": value_info.t_name,
+                        "c_name": value_info.c_name,
                         "resource_key": column_resource_key(
                             value_info.t_name,
                             value_info.c_name,
                         ),
+                        "sync_generation": generation,
                     }
                 )
             result = await self._client.bulk(operations=operations, refresh=False)
-            if result.get("errors"):
+            body = result.body if hasattr(result, "body") else result
+            if body.get("errors"):
                 raise RuntimeError("Elasticsearch 批量写入存在失败项")
 
     async def refresh(self) -> None:
         """刷新字段取值索引"""
         await self._client.indices.refresh(index=self._index_name)
 
-    async def delete_by_column(self, t_name: str, c_name: str) -> None:
+    async def delete_by_column(self, t_name: str, c_name: str) -> int:
         """删除字段对应的全部取值"""
         if not await self._client.indices.exists(index=self._index_name):
-            return
-        await self._client.delete_by_query(
+            return 0
+        result = await self._client.delete_by_query(
+            index=self._index_name,
+            query=self._resource_query(t_name, c_name),
+            conflicts="proceed",
+            refresh=True,
+        )
+        return self._deleted_count(result)
+
+    async def delete_other_generations(
+        self,
+        t_name: str,
+        c_name: str,
+        generation: str,
+    ) -> int:
+        """删除字段下未进入当前全量同步代次的取值"""
+        if not await self._client.indices.exists(index=self._index_name):
+            return 0
+        result = await self._client.delete_by_query(
             index=self._index_name,
             query={
                 "bool": {
-                    "should": [
-                        {"term": {"resource_key": column_resource_key(t_name, c_name)}},
-                        {
-                            "bool": {
-                                "filter": [
-                                    {"term": {"t_name": t_name}},
-                                    {"term": {"c_name": c_name}},
-                                ]
-                            }
-                        },
+                    "filter": [self._resource_query(t_name, c_name)],
+                    "must_not": [
+                        {"term": {"sync_generation": generation}},
                     ],
-                    "minimum_should_match": 1,
                 }
             },
             conflicts="proceed",
             refresh=True,
         )
+        return self._deleted_count(result)
 
     async def search_hits(
         self,
@@ -158,3 +183,31 @@ class ValueESRepo:
                 ]
             }
         }
+
+    @staticmethod
+    def _resource_query(t_name: str, c_name: str) -> dict[str, Any]:
+        """构造字段资源过滤并覆盖旧索引文档"""
+        return {
+            "bool": {
+                "should": [
+                    {"term": {"resource_key": column_resource_key(t_name, c_name)}},
+                    {
+                        "bool": {
+                            "filter": [
+                                {"term": {"t_name": t_name}},
+                                {"term": {"c_name": c_name}},
+                            ]
+                        }
+                    },
+                ],
+                "minimum_should_match": 1,
+            }
+        }
+
+    @staticmethod
+    def _deleted_count(result: Any) -> int:
+        """校验按查询删除结果并返回删除数量"""
+        body = result.body if hasattr(result, "body") else result
+        if body.get("failures"):
+            raise RuntimeError("Elasticsearch 批量删除取值索引存在失败项")
+        return int(body.get("deleted") or 0)

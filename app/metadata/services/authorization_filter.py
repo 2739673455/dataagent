@@ -75,6 +75,7 @@ class MetadataAuthorizationFilter:
                     if (item.name, name) in allowed_columns
                 ],
                 description=item.description,
+                value_index_sync=item.value_index_sync,
                 meta_version=item.meta_version,
             )
             for item in table_infos
@@ -98,27 +99,21 @@ class MetadataAuthorizationFilter:
                 and item.reference_c_name is not None
                 and (item.reference_t_name, item.reference_c_name) in allowed_columns
             )
-            filtered.append(
-                ColumnInfo(
-                    t_name=item.t_name,
-                    name=item.name,
-                    type=item.type,
-                    description=item.description,
-                    examples=item.examples,
-                    alias=item.alias,
-                    index_values=item.index_values,
-                    reference_t_name=(
-                        item.reference_t_name if target_allowed else None
-                    ),
-                    reference_c_name=(
-                        item.reference_c_name if target_allowed else None
-                    ),
-                    meta_version=item.meta_version,
-                    index_version=item.index_version,
-                    value_index_synced_at=item.value_index_synced_at,
-                    value_index_sync_status=item.value_index_sync_status,
-                )
+            filtered_item = ColumnInfo(
+                t_name=item.t_name,
+                name=item.name,
+                type=item.type,
+                description=item.description,
+                examples=item.examples,
+                alias=item.alias,
+                index_values=item.index_values,
+                reference_t_name=item.reference_t_name if target_allowed else None,
+                reference_c_name=item.reference_c_name if target_allowed else None,
+                meta_version=item.meta_version,
+                index_version=item.index_version,
             )
+            filtered_item.value_index_state = item.value_index_state
+            filtered.append(filtered_item)
         return filtered
 
     def filter_metrics(

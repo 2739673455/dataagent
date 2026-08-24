@@ -785,7 +785,10 @@ class MetaSearchService:
         warned_columns: set[ColumnKey] = set()
         for (t_name, c_name, value), rank_score, match_reasons in ranked_values:
             column_info = context.catalog.columns[(t_name, c_name)]
-            sync_status = self._value_sync_status(column_info.value_index_sync_status)
+            state = column_info.value_index_state
+            sync_status = self._value_sync_status(
+                state.status if state is not None else None
+            )
             if sync_status != "succeeded" and (t_name, c_name) not in warned_columns:
                 context.warnings.append(
                     f"字段取值索引状态为 {sync_status or '未知'}: {t_name}.{c_name}"
@@ -799,7 +802,7 @@ class MetaSearchService:
                     rank_score=rank_score,
                     match_reasons=match_reasons,
                     sync_status=sync_status,
-                    synced_at=column_info.value_index_synced_at,
+                    synced_at=state.last_synced_at if state is not None else None,
                 )
             )
         return results

@@ -28,6 +28,7 @@ from app.query.models import (
 )
 from app.query.repositories.experience_index import QueryExperienceESRepo
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
+from app.query.services.contracts import QueryExperienceIndexScheduler
 from app.query.services.executor import SuccessfulQueryExecution
 from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.contracts.analysis import AgentSessionKey
@@ -69,6 +70,7 @@ class QueryExperienceService:
         repo: QueryExperiencePGRepo,
         index_repo: QueryExperienceESRepo,
         embedding_client: EmbeddingClient,
+        index_scheduler: QueryExperienceIndexScheduler,
         *,
         data_source: str,
         database_name: str,
@@ -76,6 +78,7 @@ class QueryExperienceService:
         self._repo = repo
         self._index_repo = index_repo
         self._embedding_client = embedding_client
+        self._index_scheduler = index_scheduler
         self._data_source = data_source
         self._database_name = database_name
 
@@ -143,7 +146,7 @@ class QueryExperienceService:
                 artifact_path=details.result.path,
             )
             stored = await self._repo.record_success(execution, experience, assets)
-        await self._sync_index_safely(stored)
+        self._index_scheduler.enqueue(stored.id, stored.revision)
         return stored.id
 
     async def record_failure(
@@ -198,7 +201,7 @@ class QueryExperienceService:
                 artifact_paths,
             )
         for experience in experiences:
-            await self._sync_index_safely(experience)
+            self._index_scheduler.enqueue(experience.id, experience.revision)
         return [experience.id for experience in experiences]
 
     async def invalidate_assets(
@@ -227,7 +230,8 @@ class QueryExperienceService:
         )
         async with self._repo.session.begin():
             revisions = await self._repo.disable_by_resource_keys(resource_keys)
-        await self._delete_indexes_safely(revisions)
+        for experience_id, revision in revisions.items():
+            self._index_scheduler.enqueue(experience_id, revision)
         return list(revisions)
 
     async def search(
@@ -242,13 +246,6 @@ class QueryExperienceService:
         limit: int,
     ) -> list[QueryExperienceSearchResult]:
         """融合语义、资产、质量和新鲜度检索查询经验"""
-        async with self._repo.session.begin():
-            pending_deletions = await self._repo.list_pending_index_deletions(
-                user_id,
-                role_name,
-                limit=_SEARCH_POOL_SIZE,
-            )
-        await self._delete_indexes_safely(pending_deletions)
         semantic_ranks = await self._semantic_ranks(
             query,
             user_id=user_id,
@@ -317,7 +314,8 @@ class QueryExperienceService:
                 for experience in experiences
                 if experience.id not in invalid_revisions
             ]
-        await self._delete_indexes_safely(invalid_revisions)
+        for experience_id, revision in invalid_revisions.items():
+            self._index_scheduler.enqueue(experience_id, revision)
         authorization_filter = MetadataAuthorizationFilter(
             policy,
             self._data_source,
@@ -386,8 +384,20 @@ class QueryExperienceService:
         )
         return assets
 
-    async def _sync_index_safely(self, experience: QueryExperience) -> None:
-        try:
+    async def sync_index(self, experience_id: UUID, requested_revision: int) -> int:
+        """幂等同步一条查询经验的当前索引投影"""
+        async with self._repo.session.begin():
+            experience = await self._repo.get(experience_id)
+        if experience is None:
+            await self._index_repo.delete_many([experience_id])
+            return requested_revision
+        if experience.indexed_revision >= experience.revision:
+            return experience.indexed_revision
+
+        revision = experience.revision
+        if experience.quality == "disabled":
+            await self._index_repo.delete_many([experience.id])
+        else:
             text = self._experience_text(experience)
             embeddings = await self._embedding_client.aembed_documents([text])
             if len(embeddings) != 1:
@@ -400,25 +410,15 @@ class QueryExperienceService:
                 text=text,
                 embedding=embeddings[0],
             )
-            async with self._repo.session.begin():
-                await self._repo.mark_indexes_synced(
-                    {experience.id: experience.revision}
-                )
-        except Exception:  # noqa: BLE001
-            logger.exception(f"查询经验构建索引失败: experience_id={experience.id}")
 
-    async def _delete_indexes_safely(self, revisions: dict[UUID, int]) -> None:
-        if not revisions:
-            return
-        try:
-            await self._index_repo.delete_many(list(revisions))
-            async with self._repo.session.begin():
-                await self._repo.mark_indexes_synced(revisions)
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "删除查询经验索引失败: "
-                f"experience_ids={','.join(str(item) for item in revisions)}"
-            )
+        async with self._repo.session.begin():
+            await self._repo.mark_indexes_synced({experience.id: revision})
+        return revision
+
+    async def pending_index_repairs(self, *, limit: int) -> dict[UUID, int]:
+        """读取待补偿的查询经验索引版本"""
+        async with self._repo.session.begin():
+            return await self._repo.list_pending_index_repairs(limit=limit)
 
     async def _semantic_ranks(
         self,

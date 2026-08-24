@@ -4,7 +4,8 @@ import json
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
+from uuid import UUID
 
 from sqlalchemy import (
     JSON,
@@ -15,8 +16,10 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    Uuid,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.shared.database.base import MetaBase
@@ -30,8 +33,16 @@ class ColumnReference(TypedDict):
 
 
 type ColumnKey = tuple[str, str]
+type ValueIndexSyncStatus = Literal["syncing", "succeeded", "failed"]
 
 COLUMN_EXAMPLE_LIMIT = 10
+
+
+def default_value_index_sync_config() -> dict[str, Any]:
+    """生成安全的表级取值索引默认配置"""
+    return {
+        "cursor_column": None,
+    }
 
 
 def column_resource_key(t_name: str, c_name: str) -> str:
@@ -80,17 +91,36 @@ class TableInfo(MetaBase):
         JSON, nullable=False, comment="主键字段"
     )
     description: Mapped[str] = mapped_column(Text, nullable=False, comment="表描述")
+    value_index_sync: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=default_value_index_sync_config,
+        server_default='{"cursor_column":null}',
+        comment="字段取值索引同步配置",
+    )
     meta_version: Mapped[int] = _version_column(1, "元数据版本")
 
     def metadata_snapshot(self) -> tuple[Any, ...]:
         """生成元数据内容快照"""
-        return self.role, self.primary_key_columns, self.description
+        value_index_sync = self.value_index_sync or default_value_index_sync_config()
+        return (
+            self.role,
+            self.primary_key_columns,
+            self.description,
+            json.dumps(
+                value_index_sync,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
 
 
 class ColumnInfo(MetaBase):
     """字段信息"""
 
     __tablename__ = "column_info"
+    __allow_unmapped__ = True
 
     __table_args__ = (
         ForeignKeyConstraint(
@@ -128,14 +158,7 @@ class ColumnInfo(MetaBase):
     )
     meta_version: Mapped[int] = _version_column(1, "元数据版本")
     index_version: Mapped[int] = _version_column(0, "语义索引版本")
-    value_index_synced_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        comment="字段值索引最近同步成功时间",
-    )
-    value_index_sync_status: Mapped[str | None] = mapped_column(
-        String(16),
-        comment="字段值索引最近同步状态",
-    )
+    value_index_state: "ValueIndexSyncState | None" = None
 
     def metadata_snapshot(self) -> tuple[Any, ...]:
         """生成元数据内容快照"""
@@ -148,6 +171,52 @@ class ColumnInfo(MetaBase):
             self.reference_t_name,
             self.reference_c_name,
         )
+
+
+class ValueIndexSyncState(MetaBase):
+    """字段取值索引增量同步状态"""
+
+    __tablename__ = "value_index_sync_state"
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["t_name", "c_name"],
+            ["column_info.t_name", "column_info.name"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    t_name: Mapped[str] = mapped_column(String(256), primary_key=True)
+    c_name: Mapped[str] = mapped_column(String(256), primary_key=True)
+    cursor_value: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    active_run_id: Mapped[UUID | None] = mapped_column(Uuid)
+    current_generation: Mapped[UUID | None] = mapped_column(Uuid)
+    active_generation: Mapped[UUID | None] = mapped_column(Uuid)
+    last_incremental_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    last_full_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    last_error: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    @property
+    def last_synced_at(self) -> datetime | None:
+        """返回最近一次成功的增量或全量同步时间"""
+        timestamps = [
+            timestamp
+            for timestamp in (
+                self.last_incremental_synced_at,
+                self.last_full_synced_at,
+            )
+            if timestamp is not None
+        ]
+        return max(timestamps, default=None)
 
 
 @dataclass

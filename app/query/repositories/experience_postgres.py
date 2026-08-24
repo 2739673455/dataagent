@@ -344,6 +344,20 @@ class QueryExperiencePGRepo:
         )
         return {experience_id: revision for experience_id, revision in result.tuples()}
 
+    async def list_pending_index_repairs(
+        self,
+        *,
+        limit: int,
+    ) -> dict[UUID, int]:
+        """列出全部尚未同步到当前版本的查询经验"""
+        result = await self._session.execute(
+            select(QueryExperience.id, QueryExperience.revision)
+            .where(QueryExperience.indexed_revision < QueryExperience.revision)
+            .order_by(QueryExperience.updated_at)
+            .limit(limit)
+        )
+        return {experience_id: revision for experience_id, revision in result.tuples()}
+
     async def current_asset_versions(
         self,
         experiences: list[QueryExperience],

@@ -5,7 +5,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 from app.metadata.models import ColumnInfo, ValueInfo, column_resource_key
 from app.metadata.repositories.column_index import ColumnESRepo
-from app.metadata.repositories.value_index import ValueESRepo
+from app.metadata.repositories.value_index import (
+    ValueESRepo,
+    value_document_id,
+)
+from app.metadata.search_models import SemanticIndexDelta, SemanticIndexDocument
 
 
 def build_column() -> ColumnInfo:
@@ -22,8 +26,6 @@ def build_column() -> ColumnInfo:
         reference_c_name=None,
         meta_version=1,
         index_version=0,
-        value_index_synced_at=None,
-        value_index_sync_status=None,
     )
 
 
@@ -33,45 +35,119 @@ class ElasticsearchResourceKeyFilterTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.client = MagicMock()
         self.client.bulk = AsyncMock(return_value={"errors": False})
-        self.client.delete_by_query = AsyncMock()
+        self.client.delete_by_query = AsyncMock(
+            return_value={"deleted": 0, "failures": []}
+        )
         self.client.search = AsyncMock(return_value={"hits": {"hits": []}})
         self.client.indices = MagicMock()
         self.client.indices.exists = AsyncMock(return_value=True)
         self.client.indices.put_mapping = AsyncMock()
         self.client.indices.create = AsyncMock()
+        self.client.indices.refresh = AsyncMock()
 
     async def test_existing_indexes_receive_resource_key_keyword_mapping(self) -> None:
         await ColumnESRepo(self.client).ensure_index()
         await ValueESRepo(self.client).ensure_index()
 
         self.assertEqual(self.client.indices.put_mapping.await_count, 2)
-        for call in self.client.indices.put_mapping.await_args_list:
-            self.assertEqual(
-                call.kwargs["properties"],
-                {"resource_key": {"type": "keyword"}},
-            )
+        column_properties = self.client.indices.put_mapping.await_args_list[0].kwargs[
+            "properties"
+        ]
+        value_properties = self.client.indices.put_mapping.await_args_list[1].kwargs[
+            "properties"
+        ]
+        self.assertEqual(column_properties["resource_key"], {"type": "keyword"})
+        self.assertEqual(
+            column_properties["embedding_revision"],
+            {"type": "keyword"},
+        )
+        self.assertEqual(value_properties["resource_key"], {"type": "keyword"})
+        self.assertEqual(
+            value_properties["sync_generation"],
+            {"type": "keyword"},
+        )
         self.client.indices.create.assert_not_awaited()
 
     async def test_column_and_value_documents_write_same_composite_key(self) -> None:
         column = build_column()
         expected_key = column_resource_key(column.t_name, column.name)
 
-        await ColumnESRepo(self.client).index(
-            ["column-document"],
-            ["订单金额"],
-            ["name"],
-            [[0.1, 0.2]],
-            column,
+        await ColumnESRepo(self.client).apply_delta(
+            SemanticIndexDelta(
+                create=[
+                    SemanticIndexDocument(
+                        id="column-document",
+                        resource_key=expected_key,
+                        text="订单金额",
+                        text_type="name",
+                        embedding=[0.1, 0.2],
+                        embedding_revision="test:model:2:v1",
+                        meta_version=1,
+                        payload_hash="payload-hash",
+                        payload={"t_name": column.t_name, "name": column.name},
+                    )
+                ],
+                update=[],
+                delete_ids=[],
+                unchanged_count=0,
+            )
         )
         column_operations = self.client.bulk.await_args.kwargs["operations"]
         self.assertEqual(column_operations[1]["resource_key"], expected_key)
 
         self.client.bulk.reset_mock()
-        await ValueESRepo(self.client).index(
-            [ValueInfo(value="10", t_name=column.t_name, c_name=column.name)]
+        await ValueESRepo(self.client).upsert(
+            [ValueInfo(value="10", t_name=column.t_name, c_name=column.name)],
+            "generation-1",
         )
         value_operations = self.client.bulk.await_args.kwargs["operations"]
         self.assertEqual(value_operations[1]["resource_key"], expected_key)
+
+    async def test_payload_only_update_does_not_overwrite_embedding(self) -> None:
+        await ColumnESRepo(self.client).apply_delta(
+            SemanticIndexDelta(
+                create=[],
+                update=[
+                    SemanticIndexDocument(
+                        id="column-document",
+                        resource_key='["orders","amount"]',
+                        text="订单金额",
+                        text_type="description",
+                        embedding=None,
+                        embedding_revision="test:model:2:v1",
+                        meta_version=2,
+                        payload_hash="new-payload-hash",
+                        payload={"type": "DECIMAL"},
+                    )
+                ],
+                delete_ids=[],
+                unchanged_count=0,
+            )
+        )
+
+        operations = self.client.bulk.await_args.kwargs["operations"]
+        self.assertIn("update", operations[0])
+        self.assertNotIn("embedding", operations[1]["doc"])
+        self.assertEqual(operations[1]["doc"]["payload"], {"type": "DECIMAL"})
+
+    async def test_reconcile_deletes_only_other_value_generations(self) -> None:
+        self.client.delete_by_query.return_value = {
+            "deleted": 4,
+            "failures": [],
+        }
+
+        deleted_count = await ValueESRepo(self.client).delete_other_generations(
+            "orders",
+            "status",
+            "generation-2",
+        )
+
+        query = self.client.delete_by_query.await_args.kwargs["query"]
+        self.assertEqual(
+            query["bool"]["must_not"],
+            [{"term": {"sync_generation": "generation-2"}}],
+        )
+        self.assertEqual(deleted_count, 4)
 
     async def test_large_whitelist_uses_one_terms_filter_without_bool_clauses(
         self,
@@ -139,4 +215,15 @@ class ElasticsearchResourceKeyFilterTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(
             column_resource_key("sales.eu", "orders"),
             column_resource_key("sales", "eu.orders"),
+        )
+
+    def test_value_document_id_is_stable_and_unambiguous(self) -> None:
+        first = ValueInfo(value="c", t_name="a", c_name="b")
+        same = ValueInfo(value="c", t_name="a", c_name="b")
+        different_boundary = ValueInfo(value="bc", t_name="a", c_name="")
+
+        self.assertEqual(value_document_id(first), value_document_id(same))
+        self.assertNotEqual(
+            value_document_id(first),
+            value_document_id(different_boundary),
         )

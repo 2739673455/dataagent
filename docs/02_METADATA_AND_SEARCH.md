@@ -9,7 +9,7 @@ flowchart TD
     Admin[管理员 / 业务专家] -->|维护 / 导入 YAML| MetaCatalog[MetaCatalogService\n元数据目录管理]
     MetaCatalog --> PG[(PostgreSQL\n元数据实体)]
     
-    MetaCatalog --> MetaIndex[MetaIndexService\n增量索引同步]
+    MetaCatalog --> MetaIndex[MetaIndexService\n索引同步与版本管理]
     MetaIndex --> Embedding[Embedding Client\n文本向量化]
     MetaIndex --> Doris[(Doris 数仓\n抽取枚举值)]
     MetaIndex --> ES[(Elasticsearch\n全文 / 向量 / 枚举值索引)]
@@ -17,7 +17,7 @@ flowchart TD
     Agent[Explorer Agent] -->|语义提问 / 找数| MetaSearch[MetaSearchService\n多路混合检索]
     MetaSearch --> ES
     MetaSearch --> PG
-    MetaSearch --> Topology[拓扑拓扑关系补全]
+    MetaSearch --> Topology[拓扑关系补全]
     Topology --> Result[结构化元数据上下文]
 ```
 
@@ -29,12 +29,13 @@ flowchart TD
 - **表元数据（[`TableInfo`](../app/metadata/models.py)）**：
   - 支持区分表角色（`fact` 事实表 / `dimension` 维度表）。
   - 维护主键列（`primary_key_columns`）与业务描述。
+  - 维护字段取值索引的表级游标配置，回看窗口由应用级配置统一管理。
   - 包含 `meta_version` 变更版本号。
 - **字段元数据（[`ColumnInfo`](../app/metadata/models.py)）**：
   - 记录数据类型、业务别名列表（`alias`）、示例值（`examples`）。
   - 支持外键与关联引用（`reference_t_name`、`reference_c_name`）。
-  - `index_values` 标记：控制是否对该字段枚举值进行向量/文本建索引。
-  - `meta_version` 与 `index_version`：比对元数据与索引版本，支持增量精准同步。
+  - `index_values` 标记：控制是否对该字段枚举值建立全文索引。
+  - `meta_version` 与 `index_version`：记录元数据版本与语义索引版本，用于判断同步状态。
 - **指标元数据（[`MetricInfo`](../app/metadata/models.py)）**：
   - 记录业务指标口径、别名及计算所需的关联字段集合（[`ColumnReference`](../app/metadata/models.py)）。
 
@@ -48,11 +49,13 @@ flowchart TD
 - **配置导出**：[`MetaCatalogService.export_metadata`](../app/metadata/services/catalog.py) 可随时将当前全部元数据导出为可复用的标准 YAML 格式。
 
 ### 2.3 多索引版本同步与向量化体系
-- [`MetaIndexService`](../app/metadata/services/index.py) 负责将元数据增量推送到 Elasticsearch：
+- [`MetaIndexService`](../app/metadata/services/index.py) 负责将元数据同步到 Elasticsearch：
   - **字段索引（[`ColumnESRepo`](../app/metadata/repositories/column_index.py)）**：同步字段名、别名、描述文本，并结合 Embedding 模型生成 1024 维稠密向量。
   - **指标索引（[`MetricESRepo`](../app/metadata/repositories/metric_index.py)）**：同步指标名、口径、别名与指标语义向量。
   - **枚举值索引（[`ValueESRepo`](../app/metadata/repositories/value_index.py)）**：对于启用 `index_values` 的维度字段，自动从 Doris 读取去重样本值并建立文本索引，使 Agent 能识别“华东”、“退款成功”等具体维度字面量。
-- **增量比对机制**：只有当 `meta_version > index_version` 或强制触发时才执行远程 ES 更新与 Embedding 计算，节约模型 Token 与网络开销。
+- **语义差量同步**：管理员修改字段、指标或通过 YAML 导入元数据后自动提交同步任务，不进行 Beat 定期扫描。`meta_version` 与 `index_version` 用于展示同步状态，字段和指标按稳定文档编号计算差异，只为新增文本或 Embedding 版本变化生成向量，载荷变化复用已有向量。
+- **取值水位同步**：开启 `index_values` 的字段通过 `value_index_sync_state` 持久化水位和代次。具备可靠游标和成功水位的字段每天在配置时间执行一次重叠窗口增量读取；首次构建和全量校准只接受管理员手动触发。
+- **实现细节**：参见[语义索引增量同步设计](06_SEMANTIC_INDEX_INCREMENTAL_SYNC_DESIGN.md)和[取值索引增量同步设计](07_VALUE_INDEX_INCREMENTAL_SYNC_DESIGN.md)。
 
 ### 2.4 多阶段混合语义检索与拓扑补全
 - [`MetaSearchService`](../app/metadata/services/search.py) 执行三阶段语义召回：
@@ -107,3 +110,5 @@ flowchart TD
 - 语义召回记录服务：[`app/metadata/services/recall.py`](../app/metadata/services/recall.py)
 - PostgreSQL 元数据仓储：[`app/metadata/repositories/postgres.py`](../app/metadata/repositories/postgres.py)、[`app/query/repositories/experience_postgres.py`](../app/query/repositories/experience_postgres.py)
 - ES 字段 / 指标 / 枚举值 / 经验仓储：[`app/metadata/repositories/column_index.py`](../app/metadata/repositories/column_index.py)、[`app/metadata/repositories/metric_index.py`](../app/metadata/repositories/metric_index.py)、[`app/metadata/repositories/value_index.py`](../app/metadata/repositories/value_index.py)、[`app/query/repositories/experience_index.py`](../app/query/repositories/experience_index.py)
+- 语义索引增量同步设计：[`docs/06_SEMANTIC_INDEX_INCREMENTAL_SYNC_DESIGN.md`](06_SEMANTIC_INDEX_INCREMENTAL_SYNC_DESIGN.md)
+- 取值索引增量同步设计：[`docs/07_VALUE_INDEX_INCREMENTAL_SYNC_DESIGN.md`](07_VALUE_INDEX_INCREMENTAL_SYNC_DESIGN.md)

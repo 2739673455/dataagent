@@ -627,30 +627,33 @@ export function ColumnSection({
                             {col.index_values ? "已开启" : "未开启"}
                           </span>
                           {col.index_values &&
-                            (col.value_index_sync_status === "syncing" ? (
+                            (col.value_index_state?.status === "syncing" ? (
                               <span className="text-[10px] text-[#71717a] font-mono whitespace-nowrap animate-pulse">
                                 正在同步...
                               </span>
-                            ) : col.value_index_sync_status === "failed" ? (
+                            ) : col.value_index_state?.status === "failed" ? (
                               <div className="flex flex-col items-start">
-                                <span className="text-[10px] text-[#71717a] font-mono whitespace-nowrap font-medium">
+                                <span
+                                  className="text-[10px] text-[#71717a] font-mono whitespace-nowrap font-medium"
+                                  title={col.value_index_state.last_error || "取值索引同步失败"}
+                                >
                                   同步失败
                                 </span>
-                                {col.value_index_synced_at && (
+                                {col.value_index_state.last_synced_at && (
                                   <span
                                     className="text-[9px] text-[#a1a1aa] font-mono whitespace-nowrap"
-                                    title={`上次成功同步时刻: ${formatDateTime(col.value_index_synced_at)}`}
+                                    title="上次成功同步时刻"
                                   >
-                                    {formatDateTime(col.value_index_synced_at)}
+                                    {formatDateTime(col.value_index_state.last_synced_at)}
                                   </span>
                                 )}
                               </div>
-                            ) : col.value_index_synced_at ? (
+                            ) : col.value_index_state?.status === "succeeded" ? (
                               <span
                                 className="text-[10px] text-[#71717a] font-mono whitespace-nowrap leading-tight"
-                                title={`上次同步时刻: ${formatDateTime(col.value_index_synced_at)}`}
+                                title={`同步代次: ${col.value_index_state.current_generation || "无"}`}
                               >
-                                {formatDateTime(col.value_index_synced_at)}
+                                {formatDateTime(col.value_index_state.last_synced_at)}
                               </span>
                             ) : (
                               <span className="text-[10px] text-[#a1a1aa] font-mono whitespace-nowrap">

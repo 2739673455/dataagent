@@ -5,7 +5,13 @@ from typing import Any, ClassVar, cast
 from elasticsearch import AsyncElasticsearch
 
 from app.metadata.models import MetricInfo
-from app.metadata.search_models import SearchHit, SemanticTextType
+from app.metadata.repositories.semantic_index import SemanticIndexDeltaRepo
+from app.metadata.search_models import (
+    SearchHit,
+    SemanticIndexDelta,
+    SemanticIndexDocument,
+    SemanticTextType,
+)
 from app.shared.config.app_config import cfg
 
 
@@ -21,6 +27,7 @@ class MetricESRepo:
     _index_mappings: ClassVar[dict[str, Any]] = {
         "dynamic": False,
         "properties": {
+            "resource_key": {"type": "keyword"},
             "name": {"type": "keyword"},
             "text": {
                 "type": "text",
@@ -34,6 +41,9 @@ class MetricESRepo:
                 },
             },
             "text_type": {"type": "keyword"},
+            "meta_version": {"type": "long"},
+            "embedding_revision": {"type": "keyword"},
+            "payload_hash": {"type": "keyword"},
             "embedding": {
                 "type": "dense_vector",
                 "dims": cfg.elasticsearch.embedding_size,
@@ -48,62 +58,66 @@ class MetricESRepo:
     def __init__(self, client: AsyncElasticsearch) -> None:
         """初始化指标语义索引存储"""
         self._client = client
+        self._delta_repo = SemanticIndexDeltaRepo(
+            client,
+            self._index_name,
+            "指标语义索引",
+        )
 
     async def ensure_index(self) -> None:
         """确保指标语义索引存在"""
-        if not await self._client.indices.exists(index=self._index_name):
+        if await self._client.indices.exists(index=self._index_name):
+            await self._client.indices.put_mapping(
+                index=self._index_name,
+                properties={
+                    "resource_key": {"type": "keyword"},
+                    "meta_version": {"type": "long"},
+                    "embedding_revision": {"type": "keyword"},
+                    "payload_hash": {"type": "keyword"},
+                },
+            )
+        else:
             await self._client.indices.create(
                 index=self._index_name,
                 mappings=self._index_mappings,
             )
 
-    @staticmethod
-    def _to_payload(metric_info: MetricInfo) -> dict[str, Any]:
-        """将指标 ORM 转换为索引载荷"""
-        return {
-            "name": metric_info.name,
-            "description": metric_info.description,
-            "relevant_columns": metric_info.relevant_columns,
-            "alias": metric_info.alias,
-            "meta_version": metric_info.meta_version,
-            "index_version": metric_info.meta_version,
-        }
-
-    async def index(
+    async def list_resource_documents(
         self,
-        ids: list[str],
-        texts: list[str],
-        text_types: list[SemanticTextType],
-        embeddings: list[list[float]],
-        metric_info: MetricInfo,
-    ) -> None:
-        """写入指标全文与向量索引"""
-        self._validate_document_parts(ids, texts, text_types, embeddings)
-        payload = self._to_payload(metric_info)
-        documents = [
+        resource_key: str,
+    ) -> list[SemanticIndexDocument]:
+        """读取指标当前语义索引文档并兼容识别旧文档"""
+        return await self._delta_repo.list_documents(
             {
-                "name": metric_info.name,
-                "text": text,
-                "text_type": text_type,
-                "embedding": embedding,
-                "payload": payload,
+                "bool": {
+                    "should": [
+                        {"term": {"resource_key": resource_key}},
+                        {"term": {"name": resource_key}},
+                    ],
+                    "minimum_should_match": 1,
+                }
             }
-            for text, text_type, embedding in zip(
-                texts,
-                text_types,
-                embeddings,
-                strict=True,
-            )
-        ]
-        await self._bulk_index(ids, documents)
+        )
 
-    async def refresh(self) -> None:
-        """刷新指标语义索引"""
-        await self._client.indices.refresh(index=self._index_name)
+    async def apply_delta(self, delta: SemanticIndexDelta) -> None:
+        """应用指标语义索引差量"""
+        await self._delta_repo.apply_delta(delta)
 
     async def delete(self, metric_name: str) -> None:
         """删除指标对应的全部语义索引文档"""
-        await self._delete_by_filter([{"term": {"name": metric_name}}])
+        await self._delete_by_filter(
+            [
+                {
+                    "bool": {
+                        "should": [
+                            {"term": {"resource_key": metric_name}},
+                            {"term": {"name": metric_name}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                }
+            ]
+        )
 
     async def search_vector_hits(
         self,
@@ -132,28 +146,6 @@ class MetricESRepo:
         """根据关键词检索指标并保留命中分数"""
         result = await self._text_search(query, limit, allowed_metrics)
         return self._hits(result)
-
-    async def _bulk_index(
-        self,
-        ids: list[str],
-        documents: list[dict[str, Any]],
-        batch_size: int = 100,
-    ) -> None:
-        """批量写入指标语义索引文档"""
-        for index in range(0, len(documents), batch_size):
-            operations: list[dict[str, Any]] = []
-            for document_id, document in zip(
-                ids[index : index + batch_size],
-                documents[index : index + batch_size],
-                strict=True,
-            ):
-                operations.append(
-                    {"index": {"_index": self._index_name, "_id": document_id}}
-                )
-                operations.append(document)
-            result = await self._client.bulk(operations=operations, refresh=False)
-            if result.get("errors"):
-                raise RuntimeError("Elasticsearch 批量写入存在失败项")
 
     async def _delete_by_filter(self, filters: list[dict[str, Any]]) -> None:
         """按过滤条件删除指标语义索引文档"""
@@ -246,19 +238,16 @@ class MetricESRepo:
         """构造指标名称白名单过滤条件"""
         if not allowed_metrics:
             raise ValueError("allowed_metrics 列表不能为空")
-        return {"terms": {"name": sorted(allowed_metrics)}}
-
-    @staticmethod
-    def _validate_document_parts(
-        ids: list[str],
-        texts: list[str],
-        text_types: list[SemanticTextType],
-        embeddings: list[list[float]],
-    ) -> None:
-        """校验指标索引文档组成部分数量一致"""
-        lengths = {len(ids), len(texts), len(text_types), len(embeddings)}
-        if len(lengths) != 1:
-            raise ValueError("指标索引文档各组成部分长度不一致")
+        names = sorted(allowed_metrics)
+        return {
+            "bool": {
+                "should": [
+                    {"terms": {"resource_key": names}},
+                    {"terms": {"name": names}},
+                ],
+                "minimum_should_match": 1,
+            }
+        }
 
     @staticmethod
     def _hits(result: dict[str, Any]) -> list[SearchHit[MetricInfo]]:

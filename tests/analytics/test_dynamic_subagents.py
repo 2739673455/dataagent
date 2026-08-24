@@ -1014,8 +1014,8 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             planner_lock=lambda: distributed_locks.acquire("planner"),
             conversation_deleted=_conversation_not_deleted,
         )
-        first_manager = AgentManager(MagicMock())
-        second_manager = AgentManager(MagicMock())
+        first_manager = AgentManager(MagicMock(), MagicMock())
+        second_manager = AgentManager(MagicMock(), MagicMock())
         active = 0
         max_active = 0
 
@@ -1070,8 +1070,8 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         persistence.advisory_lock = lambda *args, **kwargs: distributed_locks.acquire(
             "conversation"
         )
-        deleting_worker = AgentManager(persistence)
-        serving_worker = AgentManager(MagicMock())
+        deleting_worker = AgentManager(persistence, MagicMock())
+        serving_worker = AgentManager(MagicMock(), MagicMock())
 
         await deleting_worker.delete_agent(12, _CONVERSATION_ID)
 

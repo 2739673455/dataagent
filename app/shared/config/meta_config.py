@@ -43,12 +43,21 @@ class ColumnConfig(MetaConfigModel):
         return self
 
 
+class ValueIndexSyncConfig(MetaConfigModel):
+    """表级字段取值索引同步配置"""
+
+    cursor_column: MetadataName | None = None
+
+
 class TableConfig(MetaConfigModel):
     """表元数据配置"""
 
     name: MetadataName
     role: TableRole
     description: MetadataDescription
+    value_index_sync: ValueIndexSyncConfig = Field(
+        default_factory=ValueIndexSyncConfig
+    )
     columns: list[ColumnConfig] = Field(default_factory=list)
 
 

@@ -1,5 +1,6 @@
 """PostgreSQL 会话目录数据访问"""
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -54,7 +55,13 @@ class ConversationPGRepo:
         await self._save(conversation)
         return conversation
 
-    async def get(self, user_id: int, conversation_id: UUID) -> ConversationInfo | None:
+    async def get(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        *,
+        include_deleting: bool = False,
+    ) -> ConversationInfo | None:
         """获取当前用户的会话目录信息"""
         item = await self._store.aget(
             self._namespace(user_id),
@@ -62,7 +69,10 @@ class ConversationPGRepo:
         )
         if item is None:
             return None
-        return ConversationInfo.model_validate(item.value)
+        conversation = ConversationInfo.model_validate(item.value)
+        if conversation.deletion_requested_at is not None and not include_deleting:
+            return None
+        return conversation
 
     async def update(
         self,
@@ -71,6 +81,7 @@ class ConversationPGRepo:
         title: str | None = None,
         title_pending: bool | None = None,
         is_draft: bool | None = None,
+        deletion_requested_at: datetime | None = None,
     ) -> ConversationInfo:
         """更新会话目录信息和最后活动时间"""
         changes: dict[str, object] = {"update_at": datetime.now(UTC)}
@@ -80,12 +91,60 @@ class ConversationPGRepo:
             changes["title_pending"] = title_pending
         if is_draft is not None:
             changes["is_draft"] = is_draft
+        if deletion_requested_at is not None:
+            changes["deletion_requested_at"] = deletion_requested_at
 
         updated = conversation.model_copy(update=changes)
         await self._save(updated)
         return updated
 
-    async def list_all_by_user(self, user_id: int) -> list[ConversationInfo]:
+    async def claim_title_generation(
+        self,
+        conversation: ConversationInfo,
+        *,
+        title: str,
+        source: str,
+    ) -> ConversationInfo:
+        """记录首次标题生成输入并占用生成状态"""
+        now = datetime.now(UTC)
+        updated = conversation.model_copy(
+            update={
+                "title": title,
+                "title_pending": True,
+                "title_source": source,
+                "title_generation_requested_at": now,
+                "is_draft": False,
+                "update_at": now,
+            }
+        )
+        await self._save(updated)
+        return updated
+
+    async def complete_title_generation(
+        self,
+        conversation: ConversationInfo,
+        *,
+        title: str,
+    ) -> ConversationInfo:
+        """完成标题生成并清理补偿输入"""
+        updated = conversation.model_copy(
+            update={
+                "title": title,
+                "title_pending": False,
+                "title_source": None,
+                "title_generation_requested_at": None,
+                "update_at": datetime.now(UTC),
+            }
+        )
+        await self._save(updated)
+        return updated
+
+    async def list_all_by_user(
+        self,
+        user_id: int,
+        *,
+        include_deleting: bool = False,
+    ) -> list[ConversationInfo]:
         """按最后活动时间倒序获取用户的全部会话"""
         conversations: list[ConversationInfo] = []
         offset = 0
@@ -98,8 +157,15 @@ class ConversationPGRepo:
                 ConversationInfo.model_validate(item.value) for item in items
             )
             offset += len(items)
+        visible = (
+            conversations
+            if include_deleting
+            else [
+                item for item in conversations if item.deletion_requested_at is None
+            ]
+        )
         return sorted(
-            conversations,
+            visible,
             key=lambda conversation: (conversation.update_at, str(conversation.id)),
             reverse=True,
         )
@@ -132,13 +198,69 @@ class ConversationPGRepo:
                 break
             for item in items:
                 conversation = ConversationInfo.model_validate(item.value)
-                if conversation.update_at <= cutoff:
+                if (
+                    conversation.deletion_requested_at is None
+                    and conversation.update_at <= cutoff
+                ):
                     conversations.append(conversation)
             offset += len(items)
         return sorted(
             (conversation for conversation in conversations if conversation.is_draft),
             key=lambda conversation: (conversation.update_at, str(conversation.id)),
         )[:limit]
+
+    async def list_pending_deletions(self, *, limit: int) -> list[ConversationInfo]:
+        """跨用户列出已写入墓碑且待物理清理的会话"""
+        conversations = await self._scan_all(
+            limit=limit,
+            predicate=lambda item: item.deletion_requested_at is not None,
+        )
+        return sorted(
+            conversations,
+            key=lambda item: (item.deletion_requested_at or item.update_at, str(item.id)),
+        )[:limit]
+
+    async def list_pending_title_generations(
+        self,
+        cutoff: datetime,
+        *,
+        limit: int,
+    ) -> list[ConversationInfo]:
+        """跨用户列出需要重新提交的标题生成任务"""
+        return await self._scan_all(
+            limit=limit,
+            predicate=lambda item: (
+                item.deletion_requested_at is None
+                and item.title_pending
+                and item.title_source is not None
+                and item.title_generation_requested_at is not None
+                and item.title_generation_requested_at <= cutoff
+            ),
+        )
+
+    async def _scan_all(
+        self,
+        *,
+        limit: int,
+        predicate: Callable[[ConversationInfo], bool],
+    ) -> list[ConversationInfo]:
+        """按状态扫描跨用户会话目录"""
+        conversations: list[ConversationInfo] = []
+        offset = 0
+        while len(conversations) < limit:
+            items = await self._store.asearch(
+                (_CONVERSATION_NAMESPACE,),
+                limit=_SEARCH_BATCH_SIZE,
+                offset=offset,
+            )
+            if not items:
+                break
+            for item in items:
+                conversation = ConversationInfo.model_validate(item.value)
+                if predicate(conversation):
+                    conversations.append(conversation)
+            offset += len(items)
+        return conversations
 
     async def delete(self, user_id: int, conversation_id: UUID) -> None:
         """删除会话目录信息"""

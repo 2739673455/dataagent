@@ -3,21 +3,90 @@ import type { components } from "@/api/generated";
 
 type ApiSchemas = components["schemas"];
 
-export type ColumnIndexSyncResponse = ApiSchemas["ColumnIndexSyncResponse"];
+interface SemanticIndexSyncStats {
+  created_count: number;
+  updated_count: number;
+  deleted_count: number;
+  embedded_count: number;
+  unchanged_count: number;
+  target_version: number;
+  version_committed: boolean;
+}
+
+export interface ColumnSemanticIndexSyncResponse extends SemanticIndexSyncStats {
+  t_name: string;
+  c_name: string;
+}
 export type ColumnInfo = ApiSchemas["ColumnInfoResponse"];
 export type ColumnReference = ApiSchemas["ColumnReference"];
 export type ImportMode = ApiSchemas["ImportMode"];
 export type MetaImportResponse = ApiSchemas["MetaImportResponse"];
-export type MetricIndexSyncResponse = ApiSchemas["MetricIndexSyncResponse"];
+export interface ColumnValueIndexSyncResponse {
+  t_name: string;
+  c_name: string;
+  mode: "bootstrap" | "incremental" | "reconcile" | "clear";
+  read_value_count: number;
+  upserted_count: number;
+  removed_count: number;
+  cursor_value: unknown | null;
+  sync_generation: string | null;
+}
+
+export interface MetricSemanticIndexSyncResponse extends SemanticIndexSyncStats {
+  metric_name: string;
+}
 export type MetricInfo = ApiSchemas["MetricInfoResponse"];
 export type TableInfo = ApiSchemas["TableInfoResponse"];
 export type TableRole = ApiSchemas["TableInfoRequest"]["role"];
 
-type BatchIndexSyncResponse = ApiSchemas["BatchIndexSyncResponse"];
-type BatchMetricIndexSyncResponse = ApiSchemas["BatchMetricIndexSyncResponse"];
+interface BatchColumnSemanticIndexSyncResponse {
+  results: ColumnSemanticIndexSyncResponse[];
+}
+
+interface BatchColumnValueIndexSyncResponse {
+  results: ColumnValueIndexSyncResponse[];
+}
+
+interface BatchMetricSemanticIndexSyncResponse {
+  results: MetricSemanticIndexSyncResponse[];
+}
 type ColumnInfoRequest = ApiSchemas["ColumnInfoRequest"];
 type MetricInfoRequest = ApiSchemas["MetricInfoRequest"];
 type TableInfoRequest = ApiSchemas["TableInfoRequest"];
+
+interface TaskAcceptedResponse {
+  task_id: string;
+}
+
+interface TaskStatusResponse<T> {
+  state: string;
+  ready: boolean;
+  successful: boolean | null;
+  result: T | null;
+  error: string | null;
+}
+
+const TASK_POLL_INTERVAL_MS = 1000;
+const TASK_TIMEOUT_MS = 60 * 60 * 1000;
+
+async function waitForTask<T>(taskId: string): Promise<T> {
+  const deadline = Date.now() + TASK_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const response = await appClient.get<TaskStatusResponse<T>>(`/api/v1/tasks/${taskId}`);
+    const task = response.data;
+    if (task.ready) {
+      if (task.successful && task.result !== null) return task.result;
+      throw new Error(task.error || `后台任务执行失败：${task.state}`);
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, TASK_POLL_INTERVAL_MS));
+  }
+  throw new Error("后台任务执行超时，请稍后在任务状态中查看结果");
+}
+
+async function submitTask<T>(url: string, data: unknown): Promise<T> {
+  const response = await appClient.post<TaskAcceptedResponse>(url, data);
+  return waitForTask<T>(response.data.task_id);
+}
 
 export const metaApi = {
   async listTables(): Promise<TableInfo[]> {
@@ -70,7 +139,7 @@ export const metaApi = {
   ): Promise<MetaImportResponse> {
     const formData = new FormData();
     formData.append("file", file);
-    const response = await appClient.post<MetaImportResponse>(
+    const response = await appClient.post<MetaImportResponse | TaskAcceptedResponse>(
       `/api/v1/meta/import?mode=${mode}&dry_run=${dryRun}`,
       formData,
       {
@@ -80,52 +149,54 @@ export const metaApi = {
         timeout: 180000,
       }
     );
+    if ("task_id" in response.data) {
+      return waitForTask<MetaImportResponse>(response.data.task_id);
+    }
     return response.data;
   },
 
-  async syncTableIndexes(tables: string[]): Promise<ColumnIndexSyncResponse[]> {
-    const response = await appClient.post<BatchIndexSyncResponse>(
+  async syncTableIndexes(tables: string[]): Promise<ColumnSemanticIndexSyncResponse[]> {
+    const response = await submitTask<BatchColumnSemanticIndexSyncResponse>(
       "/api/v1/meta/tables/sync",
-      { tables },
-      { timeout: 180000 }
+      { tables }
     );
-    return response.data.results;
+    return response.results;
   },
 
-  async syncTableValues(tables: string[]): Promise<ColumnIndexSyncResponse[]> {
-    const response = await appClient.post<BatchIndexSyncResponse>(
+  async syncTableValues(tables: string[]): Promise<ColumnValueIndexSyncResponse[]> {
+    const response = await submitTask<BatchColumnValueIndexSyncResponse>(
       "/api/v1/meta/tables/sync-values",
-      { tables },
-      { timeout: 180000 }
+      { tables }
     );
-    return response.data.results;
+    return response.results;
   },
 
-  async syncColumnIndexes(columns: ColumnReference[]): Promise<ColumnIndexSyncResponse[]> {
-    const response = await appClient.post<BatchIndexSyncResponse>(
+  async syncColumnIndexes(
+    columns: ColumnReference[]
+  ): Promise<ColumnSemanticIndexSyncResponse[]> {
+    const response = await submitTask<BatchColumnSemanticIndexSyncResponse>(
       "/api/v1/meta/columns/sync",
-      { columns },
-      { timeout: 180000 }
+      { columns }
     );
-    return response.data.results;
+    return response.results;
   },
 
-  async syncColumnValues(columns: ColumnReference[]): Promise<ColumnIndexSyncResponse[]> {
-    const response = await appClient.post<BatchIndexSyncResponse>(
+  async syncColumnValues(
+    columns: ColumnReference[]
+  ): Promise<ColumnValueIndexSyncResponse[]> {
+    const response = await submitTask<BatchColumnValueIndexSyncResponse>(
       "/api/v1/meta/columns/sync-values",
-      { columns },
-      { timeout: 180000 }
+      { columns }
     );
-    return response.data.results;
+    return response.results;
   },
 
-  async syncMetricIndexes(metrics: string[]): Promise<MetricIndexSyncResponse[]> {
-    const response = await appClient.post<BatchMetricIndexSyncResponse>(
+  async syncMetricIndexes(metrics: string[]): Promise<MetricSemanticIndexSyncResponse[]> {
+    const response = await submitTask<BatchMetricSemanticIndexSyncResponse>(
       "/api/v1/meta/metrics/sync",
-      { metrics },
-      { timeout: 180000 }
+      { metrics }
     );
-    return response.data.results;
+    return response.results;
   },
 
   async deleteTables(tables: string[]): Promise<void> {

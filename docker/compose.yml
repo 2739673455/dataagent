@@ -33,6 +33,22 @@ services:
     volumes:
       - es-data:/usr/share/elasticsearch/data
 
+  redis:
+    image: redis:8.10.0-alpine
+    container_name: redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
   doris-fe:
     image: apache/doris:fe-4.0.7
     container_name: doris-fe
@@ -115,6 +131,7 @@ services:
 volumes:
   postgres-data:
   es-data:
+  redis-data:
   doris-fe-meta:
   doris-be-storage:
 

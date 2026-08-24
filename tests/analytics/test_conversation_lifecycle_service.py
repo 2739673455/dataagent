@@ -74,6 +74,7 @@ class ConversationLifecycleServiceTest(unittest.IsolatedAsyncioTestCase):
                 agents,
                 sandbox,
                 build_config(),
+                session_lock_timeout=1,
             ),
             agents,
             sandbox,
@@ -103,7 +104,7 @@ class ConversationLifecycleServiceTest(unittest.IsolatedAsyncioTestCase):
                 return_value=recall_repo,
             ),
         ):
-            deleted = await service.delete_conversation(
+            deleted = await service.delete_conversation_resources(
                 conversation.user_id,
                 conversation.id,
                 draft_expired_before=cutoff,
@@ -141,7 +142,7 @@ class ConversationLifecycleServiceTest(unittest.IsolatedAsyncioTestCase):
             "app.analytics.services.conversation_lifecycle.ConversationPGRepo",
             return_value=conversation_repo,
         ):
-            deleted = await service.delete_conversation(
+            deleted = await service.delete_conversation_resources(
                 conversation.user_id,
                 conversation.id,
                 draft_expired_before=cutoff,
@@ -166,7 +167,7 @@ class ConversationLifecycleServiceTest(unittest.IsolatedAsyncioTestCase):
             "app.analytics.services.conversation_lifecycle.ConversationPGRepo",
             return_value=conversation_repo,
         ):
-            deleted = await service.delete_conversation(
+            deleted = await service.delete_conversation_resources(
                 conversation.user_id,
                 conversation.id,
                 draft_only=True,
@@ -198,13 +199,13 @@ class ConversationLifecycleServiceTest(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(
                 service,
-                "delete_conversation",
+                "delete_conversation_resources",
                 new=AsyncMock(return_value=True),
-            ) as delete_conversation,
+            ) as delete_conversation_resources,
         ):
             await service.delete_user_conversations(conversation.user_id)
 
-        delete_conversation.assert_awaited_once_with(
+        delete_conversation_resources.assert_awaited_once_with(
             conversation.user_id,
             conversation.id,
         )

@@ -24,13 +24,14 @@ from app.analytics.agents.contracts import (
     PlannerTurnContext,
     build_planner_config,
 )
-from app.analytics.agents.manager import ConversationAgentRuntime, agent_manager
+from app.analytics.agents.manager import ConversationAgentRuntime
 from app.analytics.api.chat import schemas as chat_schema
 from app.analytics.message_metadata import (
     MESSAGE_PAYLOAD_KEY,
     get_message_created_at,
 )
-from app.sandbox.docker_manager import docker_sandbox_manager
+from app.analytics.services.contracts import AgentRuntimeManager
+from app.sandbox.manager import DockerSandboxManager
 
 _IMAGE_SUFFIXES = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 
@@ -178,6 +179,7 @@ def _langchain_message_to_schema(
 
 
 async def _build_image_data_url(
+    sandbox: DockerSandboxManager,
     user_id: int,
     conversation_id: UUID,
     attachment: chat_schema.AttachmentReference,
@@ -187,7 +189,7 @@ async def _build_image_data_url(
     if not mime_type:
         mime_type = "application/octet-stream"
 
-    content = await docker_sandbox_manager.download_file(
+    content = await sandbox.download_file(
         user_id,
         conversation_id,
         attachment.f_path,
@@ -211,6 +213,7 @@ def _append_prompt(
 
 
 async def _process_attachments(
+    sandbox: DockerSandboxManager,
     content_parts: list[dict[str, Any]],
     attachments: list[chat_schema.AttachmentReference],
     user_id: int,
@@ -245,6 +248,7 @@ async def _process_attachments(
                 chat_schema.ImageContent(
                     type="image_url",
                     image_url=await _build_image_data_url(
+                        sandbox,
                         user_id,
                         conversation_id,
                         attachment,
@@ -266,6 +270,7 @@ async def _process_attachments(
 
 
 async def _schema_to_human_message(
+    sandbox: DockerSandboxManager,
     message: chat_schema.UserMessageRequest,
     user_id: int,
     conversation_id: UUID,
@@ -275,6 +280,7 @@ async def _schema_to_human_message(
 
     if message.attachments:
         await _process_attachments(
+            sandbox,
             content_parts,
             message.attachments,
             user_id,
@@ -303,11 +309,12 @@ async def _schema_to_human_message(
 
 
 async def list_messages(
+    agents: AgentRuntimeManager,
     user_id: int,
     conversation_id: UUID,
 ) -> list[chat_schema.MessageResponse]:
     """从 LangGraph 最新线程状态读取消息"""
-    runtime = await agent_manager.get_conversation_runtime(user_id, conversation_id)
+    runtime = await agents.get_conversation_runtime(user_id, conversation_id)
     state = await runtime.planner.aget_state(
         build_planner_config(user_id, conversation_id)
     )
@@ -345,6 +352,8 @@ async def _execute_agent(
 
 
 async def run_agent_turn(
+    agents: AgentRuntimeManager,
+    sandbox: DockerSandboxManager,
     user_id: int,
     conversation_id: UUID,
     user_message: chat_schema.UserMessageRequest,
@@ -359,14 +368,15 @@ async def run_agent_turn(
 
     input_messages: list[BaseMessage] = [
         await _schema_to_human_message(
+            sandbox,
             user_message,
             user_id,
             conversation_id,
         )
     ]
 
-    runtime = await agent_manager.get_conversation_runtime(user_id, conversation_id)
-    async with agent_manager.execution(
+    runtime = await agents.get_conversation_runtime(user_id, conversation_id)
+    async with agents.execution(
         user_id,
         conversation_id,
         runtime=runtime,

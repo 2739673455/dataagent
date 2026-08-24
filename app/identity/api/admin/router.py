@@ -3,6 +3,7 @@
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Path, Query, Response, status
+from loguru import logger
 
 from app.identity.api.admin import schemas
 from app.identity.api.auth.dependencies import (
@@ -11,6 +12,7 @@ from app.identity.api.auth.dependencies import (
     DorisRoleManagementServiceDep,
     UserDeletionServiceDep,
 )
+from app.workflows.tasks import enqueue_user_deletion
 
 router = APIRouter(tags=["admin"])
 RolePath = Annotated[
@@ -193,7 +195,11 @@ async def delete_user(
     service: UserDeletionServiceDep,
 ) -> Response:
     """平台管理员删除指定用户"""
-    await service.request_deletion(user_id, operator_id=current_admin.id)
+    if await service.request_deletion(user_id, operator_id=current_admin.id):
+        try:
+            enqueue_user_deletion(user_id)
+        except Exception:  # noqa: BLE001
+            logger.exception(f"提交用户注销任务失败，等待定时补偿: user_id={user_id}")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

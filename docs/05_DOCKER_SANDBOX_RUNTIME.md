@@ -1,97 +1,126 @@
 # 模块五：Docker 多租户沙盒运行环境
 
-## 1. 模块定位与职责
+## 1. 模块定位
 
-Docker 多租户沙盒运行环境是 DataAgent 专业 Agent 执行代码、处理大型数据集与持久化分析产物的安全隔离执行层。该模块通过 Docker 容器与 Named Volume，为每个用户提供独立、持久、可回收且受配额限制的 Linux 工作空间，确保多用户、多会话并发执行互不干扰。
+Docker 沙箱为专业 Agent 提供隔离的代码执行和持久化文件工作区。运行时采用一用户一容器、一用户一 Named Volume、会话与 Agent Session 独立 Linux UID 的资源模型。API 与 Celery Worker 可以共享同一组沙箱资源，跨进程所有权由 Redis 协调。
 
 ```mermaid
-flowchart TD
-    subgraph Host [FastAPI 应用宿主]
-        Manager[DockerSandboxManager\n生命周期 / 并发调度 / 配额控制]
-        Attachment[AttachmentRouter\n附件上传 / 下载]
-    end
-
-    subgraph FIFO [容器容量调度]
-        Queue[有界 FIFO 任务队列\n支持超时 / 取消]
-    end
-
-    subgraph UserSandbox [用户级 Docker 隔离环境]
-        Container[User Container（按需启动 / 自动回收）\n执行 Agent 统计分析脚本]
-        Volume[(Named Volume 持久卷\n数据长期保留)]
-    end
-
-    Manager --> FIFO
-    FIFO --> UserSandbox
-    Attachment -->|直接操作卷/工作区| Manager
-    Container -->|挂载 /workspace| Volume
-
-    subgraph VolumeDir [Volume 内部目录划分]
-        Conv1[/workspace/conversations/conv-1\nUID 10001 / 0700 权限]
-        Conv2[/workspace/conversations/conv-2\nUID 10002 / 0700 权限]
-    end
-
-    Volume --> VolumeDir
+flowchart LR
+    API[FastAPI API] --> Provider[providers
+依赖组装]
+    Worker[Celery Worker] --> Provider
+    Provider --> Manager[manager
+资源与生命周期编排]
+    Manager --> Backend[backend
+Agent 文件与执行协议]
+    Manager --> Capacity[capacity
+进程内 FIFO 等待]
+    Manager --> Ownership[ownership
+跨进程租约与互斥]
+    Backend --> Ownership
+    Ownership --> Redis[(Redis DB 2)]
+    Manager --> Docker[Docker Engine]
+    Backend --> Docker
+    Docker --> Container[用户容器]
+    Container --> Volume[(用户 Named Volume)]
 ```
 
----
+## 2. 职责拆分
 
-## 2. 核心架构与设计机制
+| 文件 | 职责 |
+| :--- | :--- |
+| [`manager.py`](../app/sandbox/manager.py) | Docker 容器与数据卷生命周期、工作区准备、附件归档传输、空闲回收和关闭收尾 |
+| [`backend.py`](../app/sandbox/backend.py) | 实现 DeepAgents 沙箱协议，负责会话内文件操作、命令执行、输出截断和工作区容量校验 |
+| [`ownership.py`](../app/sandbox/ownership.py) | Redis 跨进程运行实例租约、操作租约、维护闸门、容量锁和用户变更锁 |
+| [`capacity.py`](../app/sandbox/capacity.py) | 单进程有界 FIFO 等待、超时、取消和本地容量快照 |
+| [`concurrency.py`](../app/sandbox/concurrency.py) | 单进程生命周期快速守卫，避免同一进程内删除与操作交叉 |
+| [`paths.py`](../app/sandbox/paths.py) | 会话、Agent Session 与附件路径的规范化和边界校验 |
+| [`scripts.py`](../app/sandbox/scripts.py) | 沙箱内受控文件提交和大文件编辑脚本 |
+| [`sandbox/providers.py`](../app/sandbox/providers.py) | 根据显式配置创建所有权协调器和沙箱管理器 |
+| [`app/providers.py`](../app/providers.py) | 组装 API 进程共享的 Agent、沙箱、会话生命周期和用户注销服务 |
 
-### 2.1 一用户一容器与一用户一持久卷
-- **存储载体（Named Volume）**：
-  - 命名格式：`dataagent-{deployment_namespace}-sandbox-user-{user_id}-data`。
-  - 用户的全部会话文件、生成的数据集、Python 脚本和可视化产物统一保存在该持久卷中。
-  - **容器与卷解耦**：容器是可随时销毁重建的无状态计算资源，Named Volume 才是持久化载体；销毁容器不会导致用户文件丢失。
-- **计算容器（Container）**：
-  - 命名格式：`dataagent-{deployment_namespace}-sandbox-user-{user_id}`。
-  - 仅挂载当前用户自身的 Named Volume，从根本上杜绝跨用户文件访问。
+业务层通过构造函数或 FastAPI Depends 接收 `DockerSandboxManager`。`AgentManager`、聊天服务、附件路由和 Celery 任务均不读取沙箱全局单例。应用入口中的 `providers.py` 是统一组装位置。
 
-### 2.2 会话级 UID/GID 权限隔离
-在单个用户的 Volume 内部，不同会话之间采用 Linux 权限隔离：
-- `/workspace/conversations` 归属于 `root:root`，权限为 `0711`。
-- 每个会话分配独立的非特权 UID/GID（如 `10001:10001`），会话子目录权限设定为 `0700`。
-- 会话内的 `HOME`、`.cache` 和 `.tmp` 均置于本会话子目录下，阻断不同会话间的缓存共享。
+## 3. 资源与权限模型
 
-### 2.3 容器生命周期管理与自动回收策略
-- **按需启动**：仅当 Agent 需要执行 Shell 命令或运行 Python 脚本时才拉起容器；纯 HTTP 附件读写通过文件流直接处理，不唤醒容器。
-- **空闲停止与销毁（TTL）**：
-  - 用户连续空闲 **10 分钟** 后，后台任务自动停止容器释放内存与 CPU。
-  - 用户连续空闲 **1 小时** 后，自动删除容器实例（保留 Volume）。
-  - 活动时间记录在持久卷中的 `.dataagent-activity.json`，服务重启后继续沿用原 TTL。
+### 3.1 用户容器和持久卷
 
-### 2.4 全局并发控制与有界 FIFO 队列
-- **最大运行容器上限**：通过配置限制宿主机上同时处于 `running` 状态的沙盒容器数量。
-- **自动腾挪与排队**：
-  - 当达到上限且有新任务到达时，优先停止最久未使用且当前无任务的容器。
-  - 若所有运行中容器都在执行任务，新任务进入有界 FIFO 队列排队，支持超时退出、任务取消和优雅停机。
+- 容器名称：`dataagent-{deployment_namespace}-sandbox-user-{user_id}`
+- 数据卷名称：`dataagent-{deployment_namespace}-sandbox-user-{user_id}-data`
+- 容器可以停止或重建，Named Volume 持续保存会话文件和分析产物
+- 容器只挂载当前用户的数据卷，用户之间没有共享文件系统
 
-### 2.5 工作区容量配额模式
-- **`application` 模式**：应用层预检模式。上传、写入和执行前后计算工作区总占用量，配合 `ulimit` 控制单文件大小，适合可信内部部署。
-- **`volume_driver` 模式**：在创建 Volume 时将 `max_workspace_bytes` 传递给底层支持硬配额的 Docker Volume Driver，由存储驱动层实施硬隔离。
+### 3.2 会话与 Agent Session 隔离
 
----
+- `/workspace/conversations` 属于 `root:root`，权限为 `0711`
+- 会话目录使用稳定的独立 UID/GID，权限为 `0750`
+- 会话内 `.home`、`.cache` 和 `.tmp` 权限为 `0700`
+- 每个 Agent Session 再分配独立 UID，Session 目录权限为 `0750`，GID 继承会话 GID
+- UID 注册表保存在 `/workspace/.dataagent-uids.json`，用户级变更锁保证多个进程不会重复分配 UID
 
-## 3. 核心接口与协议
+会话目录使用 `0750`，使同一会话内不同 Agent Session 可以按组权限读取允许共享的分析产物。Session UID 和路径校验继续限制跨 Session 写入。
 
-### 附件与产物接口 (`/api/v1/chat/attachment`)
+## 4. 跨进程所有权
+
+同一 `deployment_namespace` 的所有 API 和 Celery 进程必须连接相同的 `sandbox.ownership.redis_url`。
+
+### 4.1 运行实例租约
+
+每个沙箱管理器初始化时注册一个带过期时间的运行实例租约，并由后台线程续期。关闭时先注销租约，只有最后一个运行实例会执行“停止运行中容器”的收尾配置。新进程注册与最后实例收尾使用同一把 Redis 锁，避免进程交接期间误停容器。异常退出后，租约会在 `lease_seconds` 后自动失效。
+
+### 4.2 操作租约与维护闸门
+
+- 每次 Backend 操作注册用户级和会话级租约，并持续续期
+- 会话删除等待目标会话全部操作结束，并阻止新操作进入
+- 用户删除、附件归档、工作区准备、空闲回收和容器收尾等待该用户全部操作结束
+- 维护闸门的加锁顺序统一为用户、会话、用户变更，避免交叉死锁
+- 进程内 `LifecycleGuard` 保留为低开销快速守卫，Redis 租约负责进程之间的正确性
+- 用户或会话删除时写入持久删除墓碑，其他进程中已缓存的 Backend 在维护锁释放后仍会拒绝操作，避免重新创建已删除资源
+
+### 4.3 全局运行容量
+
+`capacity.py` 维护当前进程的有界 FIFO 等待队列。真正启动、停止或回收容器时，管理器持有 Redis 容量锁，并重新读取 Docker 的实际运行容器数量。因此 `max_running_containers` 对同一部署命名空间全局生效，各进程的等待顺序在进程内保持 FIFO。
+
+## 5. 生命周期和活动水位
+
+- 需要执行命令时按需启动容器，纯附件归档读写可以操作停止状态的容器
+- 达到 `idle_stop_seconds` 后停止空闲容器并保留数据卷
+- 达到 `idle_remove_seconds` 后删除空闲容器并保留数据卷
+- 最近活动时间同时写入 Redis 和数据卷中的 `.dataagent-activity.json`
+- 回收和收尾先取得用户维护租约，再取得容量锁，避免停止其他进程正在使用的容器
+- 用户注销删除容器、数据卷和 Redis 活动水位
+
+## 6. 容量与执行限制
+
+- `application` 配额模式在上传、写入和执行前后检查工作区占用量
+- `volume_driver` 模式把容量参数交给支持硬配额的 Docker Volume Driver
+- 容器根文件系统只读，默认无网络，移除 capabilities，并启用 `no-new-privileges`
+- 内存、CPU、进程数、执行时间、文件大小、工作区大小和输出大小均由 `sandbox` 配置限制
+
+## 7. 关键配置
+
+```yaml
+sandbox:
+  deployment_namespace: local
+  ownership:
+    redis_url: redis://127.0.0.1:6379/2
+    lock_timeout_seconds: 60
+    wait_timeout_seconds: 300
+    lease_seconds: 30
+```
+
+| 配置 | 含义 |
+| :--- | :--- |
+| `deployment_namespace` | Docker 资源名称与 Redis Key 的部署隔离命名空间 |
+| `redis_url` | 所有沙箱进程共享的 Redis 数据库 |
+| `lock_timeout_seconds` | Redis 互斥锁租期，持有期间自动续期 |
+| `wait_timeout_seconds` | 等待互斥锁或活跃操作结束的最长时间 |
+| `lease_seconds` | 运行实例和沙箱操作租约的有效期，持有期间自动续期 |
+
+## 8. 附件接口
+
 | 接口 | 方法 | 描述 |
 | :--- | :--- | :--- |
-| `/upload` | `POST` | 上传文件（CSV、Excel、图片等）至指定会话工作区的 `uploads/` 目录 |
-| `/get` | `GET` | 安全获取会话工作区中的文件（支持相对路径校验与 Content-Type 推导） |
-| `/delete` | `POST` | 删除指定会话工作区内的用户附件 |
-
-### 会话沙盒后端核心方法
-| 方法 | 描述 |
-| :--- | :--- |
-| `execute(command, timeout=...)` / `aexecute(...)` | 在当前 Agent Session 目录安全执行 Shell/Python 命令 |
-| `write(file_path, content)` / `awrite(...)` | 向当前 Session 工作区写入文件 |
-| `read(file_path, offset, limit)` / `aread(...)` | 分页读取当前 Session 文件内容 |
-| `ls(path)` / `als(path)` | 列出当前 Session 目录内容 |
-
----
-
-## 4. 关键代码映射
-
-- Docker 沙盒管理器：[`app/sandbox/docker_manager.py`](../app/sandbox/docker_manager.py)
-- 附件路由与文件管理：[`app/analytics/api/attachment/router.py`](../app/analytics/api/attachment/router.py)
-- 沙盒配置模型：[`app/shared/config/app_config.py`](../app/shared/config/app_config.py)
+| `/api/v1/chat/attachment/upload` | `POST` | 上传用户附件并返回规范化路径 |
+| `/api/v1/chat/attachment/get` | `GET` | 校验路径和文件属主后下载文件 |
+| `/api/v1/chat/attachment/delete` | `POST` | 删除用户可变附件，禁止修改系统分析产物目录 |

@@ -54,6 +54,22 @@ embedding:
   model: BAAI/bge-m3
   timeout: 30.0
 
+# 元数据索引配置
+metadata_index:
+  value_lookback_seconds: 300
+
+# 后台任务配置
+task_queue:
+  broker_url: redis://127.0.0.1:6379/0
+  result_backend: redis://127.0.0.1:6379/1
+  result_expires_seconds: 86400
+  task_time_limit_seconds: 3600
+  task_soft_time_limit_seconds: 3300
+  worker_prefetch_multiplier: 1
+  value_index_sync_time: "08:00"
+  lifecycle_schedule_seconds: 300
+  query_experience_repair_seconds: 300
+
 # 身份与生命周期配置
 auth:
   jwt_secret: ${oc.env:JWT_SECRET}
@@ -85,6 +101,11 @@ query:
 
 sandbox:
   deployment_namespace: local # 同一 Docker 主机上的部署实例必须使用不同命名空间
+  ownership:
+    redis_url: redis://127.0.0.1:6379/2
+    lock_timeout_seconds: 60
+    wait_timeout_seconds: 300
+    lease_seconds: 30
   image: dataagent-sandbox:latest
   build_context: docker/sandbox
   build_network_mode: host

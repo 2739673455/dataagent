@@ -13,6 +13,9 @@ class ConversationInfo(BaseModel):
     user_id: int
     title: str
     title_pending: bool = False
+    title_source: str | None = None
+    title_generation_requested_at: datetime | None = None
     is_draft: bool
+    deletion_requested_at: datetime | None = None
     create_at: datetime
     update_at: datetime

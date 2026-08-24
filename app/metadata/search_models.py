@@ -10,6 +10,7 @@ SemanticResourceType = Literal["column", "metric", "value"]
 SemanticIndexStatus = Literal["current", "stale", "missing"]
 SemanticTextType = Literal["name", "description", "alias"]
 SemanticMatchType = Literal["fulltext", "vector"]
+ValueIndexSyncMode = Literal["bootstrap", "incremental", "reconcile", "clear"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,6 +19,56 @@ class SearchHit[SearchItemT]:
 
     item: SearchItemT
     score: float
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticIndexDocument:
+    """一条可差量比较的语义索引文档"""
+
+    id: str
+    resource_key: str
+    text: str
+    text_type: SemanticTextType
+    embedding: list[float] | None
+    embedding_revision: str
+    meta_version: int
+    payload_hash: str
+    payload: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticIndexDelta:
+    """一个元数据资源的语义索引变更集"""
+
+    create: list[SemanticIndexDocument]
+    update: list[SemanticIndexDocument]
+    delete_ids: list[str]
+    unchanged_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticIndexSyncResult:
+    """语义索引差量同步统计"""
+
+    created_count: int
+    updated_count: int
+    deleted_count: int
+    embedded_count: int
+    unchanged_count: int
+    target_version: int
+    version_committed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ValueIndexSyncResult:
+    """取值索引水位同步统计"""
+
+    mode: ValueIndexSyncMode
+    read_value_count: int
+    upserted_count: int
+    removed_count: int
+    cursor_value: Any | None
+    sync_generation: str | None
 
 
 class SemanticSearchRequest(BaseModel):

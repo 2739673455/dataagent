@@ -27,7 +27,7 @@ from app.analytics.message_metadata import (
     get_message_created_at,
 )
 from app.analytics.services import chat as chat_service
-from app.sandbox.docker_manager import normalize_attachment_path
+from app.sandbox.paths import normalize_attachment_path
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
 
@@ -90,6 +90,7 @@ class UserMessageRequestTest(unittest.TestCase):
 class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
     async def test_user_message_creation_time_is_persisted(self) -> None:
         message = await chat_service._schema_to_human_message(
+            MagicMock(),
             chat_schema.UserMessageRequest(
                 parts=[chat_schema.TextContent(type="text", text="analyze")]
             ),
@@ -212,7 +213,6 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         )
         responses: list[chat_schema.MessageResponse] = []
         with (
-            patch.object(chat_service, "agent_manager", manager),
             patch.object(
                 chat_service,
                 "_schema_to_human_message",
@@ -224,6 +224,8 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             async for response in chat_service.run_agent_turn(
+                manager,
+                MagicMock(),
                 7,
                 _CONVERSATION_ID,
                 user_message,
@@ -323,7 +325,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         responses: list[chat_schema.MessageResponse] = []
 
         with (
-            patch.object(chat_service, "agent_manager", manager),
             patch.object(
                 chat_service,
                 "_schema_to_human_message",
@@ -331,6 +332,8 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             async for response in chat_service.run_agent_turn(
+                manager,
+                MagicMock(),
                 7,
                 _CONVERSATION_ID,
                 user_message,

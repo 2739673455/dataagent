@@ -7,7 +7,7 @@ from uuid import UUID
 
 from langchain.tools import ToolRuntime
 
-from app.analytics.agents.explorer.tools.execute_sql import execute_sql
+from app.analytics.agents.explorer.tools.execute_sql import create_execute_sql_tool
 from app.query.models import (
     AnalysisQueryResult,
     QueryValidationIssue,
@@ -98,7 +98,9 @@ class ExecuteSqlToolTest(unittest.IsolatedAsyncioTestCase):
                 return_value=service,
             ) as service_type,
         ):
-            coroutine = cast(Any, execute_sql).coroutine
+            artifact_store = MagicMock()
+            tool = create_execute_sql_tool(artifact_store)
+            coroutine = cast(Any, tool).coroutine
             result = await coroutine(runtime=runtime, sql="SELECT 1")
 
         resolve.assert_awaited_once_with(7)
@@ -172,7 +174,9 @@ class ExecuteSqlToolTest(unittest.IsolatedAsyncioTestCase):
             patch.object(tool_module, "_build_query_guard", return_value=MagicMock()),
             patch.object(tool_module, "AnalysisQueryService", return_value=service),
         ):
-            coroutine = cast(Any, execute_sql).coroutine
+            artifact_store = MagicMock()
+            tool = create_execute_sql_tool(artifact_store)
+            coroutine = cast(Any, tool).coroutine
             result = await coroutine(
                 runtime=make_runtime(),
                 sql="SELECT missing_amount FROM orders",

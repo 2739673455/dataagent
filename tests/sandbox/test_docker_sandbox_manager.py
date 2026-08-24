@@ -12,18 +12,21 @@ from uuid import UUID, uuid4
 from pydantic import ValidationError
 
 from app.analytics.agents.manager import AgentManager
-from app.sandbox.docker_manager import (
-    DockerSandboxBackend,
-    DockerSandboxManager,
+from app.sandbox.backend import DockerSandboxBackend
+from app.sandbox.capacity import FairCapacityLimiter
+from app.sandbox.concurrency import LifecycleGuard
+from app.sandbox.exceptions import (
     SandboxCapacityCancelledError,
     SandboxCapacityQueueFullError,
     SandboxCapacityTimeoutError,
     SandboxDeletedError,
     SandboxFileTooLargeError,
     SandboxPathError,
+)
+from app.sandbox.manager import DockerSandboxManager
+from app.sandbox.ownership import LocalSandboxOwnership
+from app.sandbox.paths import (
     SandboxSessionScope,
-    _FairCapacityLimiter,
-    _LifecycleGuard,
     normalize_attachment_path,
     normalize_user_attachment_path,
 )
@@ -33,6 +36,12 @@ from app.shared.config.app_config import SandboxConfig
 def build_sandbox_config(**updates: object) -> SandboxConfig:
     values = {
         "deployment_namespace": "test",
+        "ownership": {
+            "redis_url": "redis://127.0.0.1:6379/15",
+            "lock_timeout_seconds": 60,
+            "wait_timeout_seconds": 2,
+            "lease_seconds": 10,
+        },
         "image": "dataagent-sandbox:latest",
         "build_context": "docker/sandbox",
         "build_network_mode": "host",
@@ -64,6 +73,11 @@ def build_sandbox_config(**updates: object) -> SandboxConfig:
     }
     values.update(updates)
     return SandboxConfig.model_validate(values)
+
+
+def build_sandbox_manager(config: SandboxConfig) -> DockerSandboxManager:
+    """构造使用进程内协调器的测试沙箱管理器"""
+    return DockerSandboxManager(config, LocalSandboxOwnership())
 
 
 class NormalizeAttachmentPathTest(unittest.TestCase):
@@ -107,7 +121,7 @@ class NormalizeAttachmentPathTest(unittest.TestCase):
 
 class AttachmentCapabilityTest(unittest.IsolatedAsyncioTestCase):
     async def test_system_writer_allows_analysis_path(self) -> None:
-        manager = DockerSandboxManager(build_sandbox_config())
+        manager = build_sandbox_manager(build_sandbox_config())
         conversation_id = uuid4()
         content = io.BytesIO(b"artifact")
         writer = AsyncMock()
@@ -128,7 +142,7 @@ class AttachmentCapabilityTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_user_mutations_reject_analysis_path_before_io(self) -> None:
-        manager = DockerSandboxManager(build_sandbox_config())
+        manager = build_sandbox_manager(build_sandbox_config())
         conversation_id = uuid4()
         writer = AsyncMock()
 
@@ -198,7 +212,7 @@ class SandboxConfigTest(unittest.TestCase):
 
 class FairCapacityLimiterTest(unittest.TestCase):
     def test_queue_is_bounded_and_wait_can_be_cancelled(self) -> None:
-        limiter = _FairCapacityLimiter(1, 1, 1)
+        limiter = FairCapacityLimiter(1, 1, 1)
         self.assertTrue(limiter.acquire(1, lambda _: 0, lambda _: False))
         limiter.complete_reservation(1, running=True)
         waiter_error: list[Exception] = []
@@ -224,7 +238,7 @@ class FairCapacityLimiterTest(unittest.TestCase):
         self.assertIsInstance(waiter_error[0], SandboxCapacityCancelledError)
 
     def test_waiters_receive_capacity_in_fifo_order(self) -> None:
-        limiter = _FairCapacityLimiter(1, 4, 2)
+        limiter = FairCapacityLimiter(1, 4, 2)
         self.assertTrue(limiter.acquire(1, lambda _: 0, lambda _: False))
         limiter.complete_reservation(1, running=True)
         acquired: list[int] = []
@@ -263,7 +277,7 @@ class FairCapacityLimiterTest(unittest.TestCase):
         self.assertEqual(acquired, [2, 3])
 
     def test_capacity_wait_times_out(self) -> None:
-        limiter = _FairCapacityLimiter(1, 1, 0.05)
+        limiter = FairCapacityLimiter(1, 1, 0.05)
         self.assertTrue(limiter.acquire(1, lambda _: 0, lambda _: False))
         limiter.complete_reservation(1, running=True)
         with self.assertRaises(SandboxCapacityTimeoutError):
@@ -272,7 +286,7 @@ class FairCapacityLimiterTest(unittest.TestCase):
 
 class LifecycleGuardTest(unittest.TestCase):
     def test_maintenance_waits_for_active_operation(self) -> None:
-        guard = _LifecycleGuard()
+        guard = LifecycleGuard()
         operation_started = threading.Event()
         release_operation = threading.Event()
         maintenance_started = threading.Event()
@@ -298,14 +312,14 @@ class LifecycleGuardTest(unittest.TestCase):
         maintenance_thread.join(timeout=1)
 
     def test_deleted_guard_rejects_new_operations(self) -> None:
-        guard = _LifecycleGuard()
+        guard = LifecycleGuard()
         with guard.maintenance():
             guard.mark_deleted()
         with self.assertRaises(SandboxDeletedError), guard.operation():
             pass
 
     def test_deleted_guard_allows_only_explicit_cleanup_maintenance(self) -> None:
-        guard = _LifecycleGuard()
+        guard = LifecycleGuard()
         guard.mark_deleted()
 
         with self.assertRaises(SandboxDeletedError), guard.maintenance():
@@ -325,13 +339,14 @@ class DockerSandboxManagerPolicyTest(unittest.TestCase):
             agent_type="analyst",
             session_id="region",
         )
-        conversation_guard = _LifecycleGuard()
+        conversation_guard = LifecycleGuard()
         return DockerSandboxBackend(
             user_id=7,
             conversation_id=conversation_id,
             conversation_uid=100_001,
             sandbox_config=config,
-            user_guard=_LifecycleGuard(),
+            ownership=LocalSandboxOwnership(),
+            user_guard=LifecycleGuard(),
             conversation_guard=conversation_guard,
             mutation_lock=threading.RLock(),
             touch=lambda: None,
@@ -396,9 +411,8 @@ class DockerSandboxManagerPolicyTest(unittest.TestCase):
         self.assertEqual(shell_command[:3], ["timeout", "--signal=KILL", "7"])
 
     def test_resource_names_and_volume_options_are_namespaced(self) -> None:
-        from app.sandbox.docker_manager import DockerSandboxManager
 
-        manager = DockerSandboxManager(
+        manager = build_sandbox_manager(
             build_sandbox_config(
                 deployment_namespace="production",
                 workspace_quota_mode="volume_driver",
@@ -423,9 +437,8 @@ class DockerSandboxManagerPolicyTest(unittest.TestCase):
         )
 
     def test_runtime_spec_contains_security_boundaries(self) -> None:
-        from app.sandbox.docker_manager import DockerSandboxManager
 
-        manager = DockerSandboxManager(build_sandbox_config())
+        manager = build_sandbox_manager(build_sandbox_config())
         spec = manager._runtime_container_spec()
         self.assertTrue(spec["read_only"])
         self.assertEqual(spec["cap_drop"], ["ALL"])
@@ -444,9 +457,8 @@ class DockerSandboxManagerPolicyTest(unittest.TestCase):
         self.assertNotEqual(original_digest, changed_digest)
 
     def test_health_exposes_cleanup_and_capacity_state(self) -> None:
-        from app.sandbox.docker_manager import DockerSandboxManager
 
-        manager = DockerSandboxManager(build_sandbox_config())
+        manager = build_sandbox_manager(build_sandbox_config())
         manager._record_cleanup_result(time.time(), ["docker unavailable"])
         health = manager.health()
         self.assertEqual(health.cleanup_consecutive_failures, 1)
@@ -457,9 +469,8 @@ class DockerSandboxManagerPolicyTest(unittest.TestCase):
 
 class DockerSandboxCleanupHealthTest(unittest.IsolatedAsyncioTestCase):
     async def test_discovery_failure_is_recorded_and_next_cycle_recovers(self) -> None:
-        from app.sandbox.docker_manager import DockerSandboxManager
 
-        manager = DockerSandboxManager(build_sandbox_config())
+        manager = build_sandbox_manager(build_sandbox_config())
 
         async def run_inline(
             function: Callable[..., object],
@@ -469,7 +480,7 @@ class DockerSandboxCleanupHealthTest(unittest.IsolatedAsyncioTestCase):
             return function(*args, **kwargs)
 
         with patch(
-            "app.sandbox.docker_manager.asyncio.to_thread",
+            "app.sandbox.manager.asyncio.to_thread",
             side_effect=run_inline,
         ):
             with (
@@ -478,7 +489,7 @@ class DockerSandboxCleanupHealthTest(unittest.IsolatedAsyncioTestCase):
                     "_managed_user_ids_sync",
                     side_effect=RuntimeError("docker unavailable"),
                 ),
-                patch("app.sandbox.docker_manager.logger.exception"),
+                patch("app.sandbox.manager.logger.exception"),
             ):
                 await manager._run_cleanup_cycle()
             self.assertEqual(manager.health().cleanup_consecutive_failures, 1)
@@ -504,7 +515,7 @@ class AgentExecutionLifecycleTest(unittest.IsolatedAsyncioTestCase):
             yield
 
         persistence_manager.advisory_lock = advisory_lock
-        manager = AgentManager(persistence_manager)
+        manager = AgentManager(persistence_manager, MagicMock())
         runtime = MagicMock()
         runtime.planner_lock = advisory_lock
         runtime.session_service.planner_run = advisory_lock
@@ -559,17 +570,21 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
             client.close()
 
     async def asyncSetUp(self) -> None:
-        from app.sandbox.docker_manager import DockerSandboxManager
 
         self.user_id = 2_000_000_000 + os.getpid()
         self.extra_user_ids: set[int] = set()
-        self.manager = DockerSandboxManager(build_sandbox_config())
+        self.manager = build_sandbox_manager(build_sandbox_config())
         await self.manager.init()
 
     async def asyncTearDown(self) -> None:
         for user_id in {self.user_id, *self.extra_user_ids}:
             await self.manager.delete_user_sandbox(user_id)
         await self.manager.close()
+
+    def _set_last_activity(self, activity_at: float) -> None:
+        with self.manager._activity_lock:
+            self.manager._last_activity[self.user_id] = activity_at
+        self.manager._ownership.touch(self.user_id, activity_at)
 
     async def test_backend_and_attachment_transfer_keep_container_stopped(self) -> None:
         conversation_id = uuid4()
@@ -871,13 +886,12 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("east,42", result.file_data["content"])
 
     async def test_deployment_namespaces_do_not_share_resources(self) -> None:
-        from app.sandbox.docker_manager import DockerSandboxManager
 
         conversation_id = uuid4()
         first = await self.manager.get_backend(self.user_id, conversation_id)
         self.assertIsNone(first.write("/private.txt", "first-deployment").error)
 
-        other_manager = DockerSandboxManager(
+        other_manager = build_sandbox_manager(
             build_sandbox_config(deployment_namespace="test-other")
         )
         await other_manager.init()
@@ -991,9 +1005,7 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         old_container_id = old_container.id
         await self.manager.close()
 
-        from app.sandbox.docker_manager import DockerSandboxManager
-
-        self.manager = DockerSandboxManager(build_sandbox_config(memory_limit="640m"))
+        self.manager = build_sandbox_manager(build_sandbox_config(memory_limit="640m"))
         await self.manager.init()
         recreated = await self.manager.get_backend(self.user_id, conversation_id)
 
@@ -1011,10 +1023,9 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         _, user_guard, start_lock, _, _ = await self.manager._get_resources(
             self.user_id
         )
-        with self.manager._activity_lock:
-            self.manager._last_activity[self.user_id] = (
-                time.time() - self.manager._config.idle_stop_seconds - 1
-            )
+        self._set_last_activity(
+            time.time() - self.manager._config.idle_stop_seconds - 1
+        )
         await asyncio.to_thread(
             self.manager._cleanup_idle_container_sync,
             self.user_id,
@@ -1035,13 +1046,10 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         conversation_id = uuid4()
         await self.manager.get_backend(self.user_id, conversation_id)
         persisted_at = time.time() - 30
-        with self.manager._activity_lock:
-            self.manager._last_activity[self.user_id] = persisted_at
+        self._set_last_activity(persisted_at)
         await self.manager.close()
 
-        from app.sandbox.docker_manager import DockerSandboxManager
-
-        self.manager = DockerSandboxManager(build_sandbox_config())
+        self.manager = build_sandbox_manager(build_sandbox_config())
         await self.manager.init()
         recovered_at = self.manager._last_activity_timestamp(self.user_id)
         self.assertAlmostEqual(recovered_at, persisted_at, delta=1)
@@ -1057,10 +1065,9 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         _, user_guard, start_lock, _, _ = await self.manager._get_resources(
             self.user_id
         )
-        with self.manager._activity_lock:
-            self.manager._last_activity[self.user_id] = (
-                time.time() - self.manager._config.idle_remove_seconds - 1
-            )
+        self._set_last_activity(
+            time.time() - self.manager._config.idle_remove_seconds - 1
+        )
 
         await asyncio.to_thread(
             self.manager._cleanup_idle_container_sync,
@@ -1100,10 +1107,9 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
             ):
                 break
             await asyncio.sleep(0.05)
-        with self.manager._activity_lock:
-            self.manager._last_activity[self.user_id] = (
-                time.time() - self.manager._config.idle_remove_seconds - 1
-            )
+        self._set_last_activity(
+            time.time() - self.manager._config.idle_remove_seconds - 1
+        )
 
         await asyncio.to_thread(
             self.manager._cleanup_idle_container_sync,
@@ -1122,9 +1128,7 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         await self.manager.delete_user_sandbox(self.user_id)
         await self.manager.close()
 
-        from app.sandbox.docker_manager import DockerSandboxManager
-
-        self.manager = DockerSandboxManager(
+        self.manager = build_sandbox_manager(
             build_sandbox_config(max_running_containers=1)
         )
         await self.manager.init()
@@ -1151,9 +1155,7 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         await self.manager.delete_user_sandbox(self.user_id)
         await self.manager.close()
 
-        from app.sandbox.docker_manager import DockerSandboxManager
-
-        self.manager = DockerSandboxManager(
+        self.manager = build_sandbox_manager(
             build_sandbox_config(max_running_containers=1)
         )
         await self.manager.init()

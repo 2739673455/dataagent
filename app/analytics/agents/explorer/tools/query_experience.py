@@ -13,11 +13,7 @@ from app.metadata.services.recall import (
     SemanticRecallService,
     SemanticRecallsNotFoundError,
 )
-from app.query.repositories.experience_index import QueryExperienceESRepo
-from app.query.repositories.experience_postgres import QueryExperiencePGRepo
-from app.query.services.experience import QueryExperienceService
-from app.shared.clients.embedding_client_manager import embedding_client_manager
-from app.shared.clients.es_client_manager import es_client_manager
+from app.query.providers import build_query_experience_service
 from app.shared.clients.postgres_client_manager import (
     auth_postgres_client_manager,
     meta_postgres_client_manager,
@@ -77,13 +73,7 @@ async def search_query_experiences(
                 column_keys.update(
                     (item.t_name, item.name) for item in record.response.columns
                 )
-            service = QueryExperienceService(
-                repo=QueryExperiencePGRepo(session=meta_session),
-                index_repo=QueryExperienceESRepo(client=es_client_manager.get_client()),
-                embedding_client=embedding_client_manager.get_client(),
-                data_source=cfg.query.data_source,
-                database_name=cfg.doris.database,
-            )
+            service = build_query_experience_service(meta_session)
             experiences = await service.search(
                 user_id=user_id,
                 role_name=user.doris_role_name,

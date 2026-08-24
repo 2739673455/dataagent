@@ -148,13 +148,19 @@ Doris 角色或 SELECT 权限变更会立即作用于新的目录读取、语义
 ### 6. 启动、前端代理与 Docker 部署边界
 
 ```bash
-uv sync
-uv run main.py
+docker compose -f docker/compose.yml up -d redis
+uv sync --group dev
+make run
+make worker
+make beat
 ```
 
 - 后端默认监听 `7000` 端口。Vite 开发代理的 `VITE_APP_PROXY` 默认为 `http://localhost:7000`，可复制 `web/.env.example` 并在非默认部署中覆盖。
+- Redis 默认监听 `6379` 端口：DB 0 作为 Celery Broker，DB 1 保存 24 小时任务结果，DB 2 协调 Docker 沙箱跨进程所有权。API 和 Worker 必须连接同一 Redis 实例。
+- 使用 `make worker` 启动消费全部队列的 Celery Worker。详细说明见[后台任务设计](docs/08_BACKGROUND_TASKS.md)。
+- `lifecycle` Worker 必须能够访问 Docker Engine，Celery Beat 只运行一个实例。
 - 同一 Docker 主机上的不同部署必须使用唯一的 `sandbox.deployment_namespace`，避免容器和数据卷名称冲突。
-- 当前 Docker 会话 UID 注册表更新和文件 mutation lock 使用进程内锁，同一 `deployment_namespace` 只运行一个 API worker；不要为该 namespace 启动多个 Uvicorn/Gunicorn worker。
+- 同一 `deployment_namespace` 的 API 与 Celery Worker 必须共享 `sandbox.ownership.redis_url`。Redis 租约负责 UID 注册表、工作区维护、全局容器容量和关闭收尾协调，可以运行多个 Uvicorn/Gunicorn Worker。
 
 ---
 

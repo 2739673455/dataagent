@@ -10,19 +10,26 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from app.analytics import errors as chat_error
+from app.analytics.agents.manager import AgentManager
 from app.analytics.api.chat import schemas as chat_schema
 from app.analytics.api.chat.dependencies import (
     ConversationPGRepoDep,
 )
-from app.analytics.services import chat as chat_service
-from app.analytics.services.conversation_lifecycle import (
-    conversation_lifecycle_service,
+from app.analytics.api.dependencies import (
+    AgentManagerDep,
+    ConversationLifecycleServiceDep,
+    SandboxManagerDep,
 )
+from app.analytics.services import chat as chat_service
 from app.analytics.services.conversation_title import (
-    conversation_title_service,
     initial_conversation_title,
 )
+from app.analytics.tasks import (
+    enqueue_conversation_deletion,
+    enqueue_conversation_title,
+)
 from app.identity.api.auth.dependencies import AnalysisUserDep, CurrentUserDep
+from app.sandbox.manager import DockerSandboxManager
 from app.shared.observability import context
 
 router = APIRouter(tags=["chat"])
@@ -57,16 +64,23 @@ async def api_create_conversation(
 async def api_delete_conversations(
     body: chat_schema.DeleteConversationRequest,
     current_user: CurrentUserDep,
+    lifecycle: ConversationLifecycleServiceDep,
 ) -> None:
     """删除对话"""
     user_id = current_user.id
 
     for conversation_id in body.conversation_ids:
-        if not await conversation_lifecycle_service.delete_conversation(
+        if not await lifecycle.request_conversation_deletion(
             user_id,
             conversation_id,
         ):
             raise chat_error.ConversationNotFoundError
+        try:
+            enqueue_conversation_deletion(user_id, conversation_id)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                f"提交会话删除任务失败，等待定时补偿: conversation_id={conversation_id}"
+            )
 
     logger.info(f"删除对话: conversation_ids={body.conversation_ids}")
 
@@ -78,13 +92,21 @@ async def api_delete_conversations(
 async def api_delete_draft_conversation(
     conversation_id: UUID,
     current_user: CurrentUserDep,
+    lifecycle: ConversationLifecycleServiceDep,
 ) -> Response:
     """幂等删除当前用户主动放弃的草稿会话"""
-    await conversation_lifecycle_service.delete_conversation(
+    requested = await lifecycle.request_conversation_deletion(
         current_user.id,
         conversation_id,
         draft_only=True,
     )
+    if requested:
+        try:
+            enqueue_conversation_deletion(current_user.id, conversation_id)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                f"提交草稿删除任务失败，等待定时补偿: conversation_id={conversation_id}"
+            )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -136,6 +158,7 @@ async def api_get_messages(
     conversation_id: UUID,
     conversation_repo: ConversationPGRepoDep,
     current_user: CurrentUserDep,
+    agents: AgentManagerDep,
 ) -> chat_schema.MessageListResponse:
     """从 LangGraph 状态获取某个对话的所有消息"""
     user_id = current_user.id
@@ -143,7 +166,11 @@ async def api_get_messages(
     if conversation is None:
         raise chat_error.ConversationNotFoundError
 
-    messages = await chat_service.list_messages(user_id, conversation_id)
+    messages = await chat_service.list_messages(
+        agents,
+        user_id,
+        conversation_id,
+    )
     logger.info(
         f"获取消息列表: conversation_id={conversation_id}, count={len(messages)}"
     )
@@ -156,6 +183,8 @@ def _serialize_sse_event(event: chat_schema.ChatStreamEventPayload) -> str:
 
 
 async def _stream_agent_response(
+    agents: AgentManager,
+    sandbox: DockerSandboxManager,
     user_id: int,
     conversation_id: UUID,
     user_message: chat_schema.UserMessageRequest,
@@ -163,6 +192,8 @@ async def _stream_agent_response(
     """流式执行单轮 Agent 对话"""
     cancel = asyncio.Event()
     responses = chat_service.run_agent_turn(
+        agents,
+        sandbox,
         user_id,
         conversation_id,
         user_message,
@@ -229,10 +260,13 @@ async def api_stream_chat(
     body: chat_schema.ChatStreamRequest,
     conversation_repo: ConversationPGRepoDep,
     current_user: AnalysisUserDep,
+    lifecycle: ConversationLifecycleServiceDep,
+    agents: AgentManagerDep,
+    sandbox: SandboxManagerDep,
 ) -> StreamingResponse:
     """通过 SSE 执行单轮对话并流式返回 Agent 事件"""
     user_id = current_user.id
-    async with conversation_lifecycle_service.lock(user_id, body.conversation_id):
+    async with lifecycle.lock(user_id, body.conversation_id):
         conversation = await conversation_repo.get(user_id, body.conversation_id)
         if conversation is None:
             raise chat_error.ConversationNotFoundError
@@ -242,20 +276,28 @@ async def api_stream_chat(
             for part in body.message.parts
             if isinstance(part, chat_schema.TextContent)
         ).strip()
-        if conversation.title_pending and user_text:
-            conversation = await conversation_repo.update(
+        if (
+            conversation.title_pending
+            and conversation.title_source is None
+            and user_text
+        ):
+            conversation = await conversation_repo.claim_title_generation(
                 conversation,
                 title=initial_conversation_title(user_text),
-                title_pending=False,
-                is_draft=False,
+                source=user_text,
             )
-            conversation_title_service.schedule(
-                conversation_repo,
-                user_id,
-                conversation.id,
-                conversation.title,
-                user_text,
-            )
+            try:
+                enqueue_conversation_title(
+                    user_id,
+                    conversation.id,
+                    conversation.title,
+                    user_text,
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "提交会话标题任务失败，等待定时补偿: "
+                    f"conversation_id={conversation.id}"
+                )
         elif conversation.is_draft:
             await conversation_repo.update(conversation, is_draft=False)
         else:
@@ -264,6 +306,8 @@ async def api_stream_chat(
     context.user_id_ctx.set(str(user_id))
     return StreamingResponse(
         _stream_agent_response(
+            agents,
+            sandbox,
             user_id,
             body.conversation_id,
             body.message,

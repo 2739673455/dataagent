@@ -25,16 +25,14 @@ from app.identity.services.authorization import (
 from app.identity.services.credential import DorisCredentialCipher
 from app.identity.services.doris_permission import DorisPermissionService
 from app.identity.services.rate_limit import AuthRateLimitService
+from app.providers import user_deletion_service
 from app.shared.clients.doris_client_manager import (
     admin_doris_client_manager,
     query_doris_client_registry,
 )
 from app.shared.clients.postgres_client_manager import auth_postgres_client_manager
 from app.shared.config.app_config import cfg
-from app.workflows.user_deletion import (
-    UserDeletionService,
-    user_deletion_service,
-)
+from app.workflows.user_deletion import UserDeletionService
 
 SessionDep = Annotated[
     AsyncSession,

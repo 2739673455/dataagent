@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import time, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 
@@ -58,6 +58,43 @@ class EmbeddingConfig(BaseModel):
     timeout: float
 
 
+# 元数据索引配置
+class MetadataIndexConfig(BaseModel):
+    """元数据索引同步策略配置"""
+
+    value_lookback_seconds: int = Field(gt=0)
+
+
+# 后台任务配置
+class TaskQueueConfig(BaseModel):
+    """Celery 任务队列配置"""
+
+    broker_url: str = Field(min_length=1)
+    result_backend: str = Field(min_length=1)
+    result_expires_seconds: int = Field(gt=0)
+    task_time_limit_seconds: int = Field(gt=0)
+    task_soft_time_limit_seconds: int = Field(gt=0)
+    worker_prefetch_multiplier: int = Field(gt=0)
+    value_index_sync_time: time
+    lifecycle_schedule_seconds: int = Field(gt=0)
+    query_experience_repair_seconds: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_time_limits(self) -> "TaskQueueConfig":
+        """校验后台任务软硬超时关系"""
+        if self.task_soft_time_limit_seconds >= self.task_time_limit_seconds:
+            raise ValueError(
+                "task_soft_time_limit_seconds 必须小于 task_time_limit_seconds"
+            )
+        if (
+            self.value_index_sync_time.second != 0
+            or self.value_index_sync_time.microsecond != 0
+            or self.value_index_sync_time.tzinfo is not None
+        ):
+            raise ValueError("value_index_sync_time 必须是 HH:MM 格式的本地时间")
+        return self
+
+
 # 身份与生命周期配置
 class AuthConfig(BaseModel):
     """认证令牌与密码策略配置"""
@@ -96,6 +133,15 @@ class QueryConfig(BaseModel):
     output_format: Literal["csv"] = "csv"
 
 
+class SandboxOwnershipConfig(BaseModel):
+    """沙箱跨进程所有权配置"""
+
+    redis_url: str = Field(min_length=1)
+    lock_timeout_seconds: float = Field(gt=0)
+    wait_timeout_seconds: float = Field(gt=0)
+    lease_seconds: float = Field(gt=0)
+
+
 class SandboxConfig(BaseModel):
     """本地 Docker 沙盒配置"""
 
@@ -104,6 +150,7 @@ class SandboxConfig(BaseModel):
         max_length=32,
         pattern=r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
     )
+    ownership: SandboxOwnershipConfig
     image: str
     build_context: str
     build_network_mode: str
@@ -299,6 +346,12 @@ class Cfg(BaseModel):
     doris_credentials: DorisCredentialConfig
     elasticsearch: ESConfig
     embedding: EmbeddingConfig
+
+    # 元数据索引配置
+    metadata_index: MetadataIndexConfig
+
+    # 后台任务配置
+    task_queue: TaskQueueConfig
 
     # 身份与生命周期配置
     auth: AuthConfig

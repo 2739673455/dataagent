@@ -23,8 +23,6 @@ def make_column(
         reference_c_name=reference[1] if reference else None,
         meta_version=1,
         index_version=1,
-        value_index_synced_at=None,
-        value_index_sync_status=None,
     )
 
 

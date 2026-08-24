@@ -10,12 +10,6 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
-from deepagents import (
-    GeneralPurposeSubagentProfile,
-    HarnessProfile,
-    register_harness_profile,
-)
-from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
@@ -30,8 +24,8 @@ from app.analytics.agents.contracts import (
 )
 from app.analytics.agents.explorer.agent import create_explorer_agent
 from app.analytics.agents.explorer.tools import (
+    create_execute_sql_tool,
     delete_semantic_recalls,
-    execute_sql,
     get_semantic_recall,
     list_semantic_recalls,
     merge_semantic_recalls,
@@ -49,18 +43,12 @@ from app.analytics.agents.registry import (
 from app.analytics.agents.reviewer.agent import create_reviewer_agent
 from app.analytics.agents.session_service import AgentSessionService
 from app.analytics.agents.visualizer.agent import create_visualizer_agent
-from app.query.repositories.experience_index import QueryExperienceESRepo
-from app.query.repositories.experience_postgres import QueryExperiencePGRepo
-from app.query.services.experience import QueryExperienceService
-from app.sandbox.docker_manager import (
-    DockerSandboxBackend,
-    docker_sandbox_manager,
-)
-from app.shared.clients.embedding_client_manager import embedding_client_manager
-from app.shared.clients.es_client_manager import es_client_manager
+from app.analytics.model_factory import create_configured_model
+from app.query.providers import build_query_experience_service
+from app.sandbox.backend import DockerSandboxBackend
+from app.sandbox.manager import DockerSandboxManager
 from app.shared.clients.langgraph_postgres_manager import (
     LangGraphPostgresManager,
-    langgraph_postgres_manager,
 )
 from app.shared.clients.postgres_client_manager import meta_postgres_client_manager
 from app.shared.config import app_config
@@ -110,12 +98,14 @@ class AgentManager:
     def __init__(
         self,
         persistence_manager: LangGraphPostgresManager,
+        sandbox: DockerSandboxManager,
         max_cached_runtimes: int = _DEFAULT_MAX_CACHED_RUNTIMES,
     ) -> None:
         """初始化 Agent 管理器"""
         if max_cached_runtimes <= 0:
             raise ValueError("max_cached_runtimes 必须为正整数")
         self._persistence_manager = persistence_manager
+        self._sandbox = sandbox
         self._max_cached_runtimes = max_cached_runtimes
         self._conversation_runtimes: OrderedDict[
             ConversationKey, ConversationAgentRuntime
@@ -131,30 +121,6 @@ class AgentManager:
         self._models: dict[str, BaseChatModel] | None = None
         self._planner_model_name: str | None = None
         self._definitions: dict[AgentType, AgentDefinition] | None = None
-
-    @staticmethod
-    def _create_model(model_name: str) -> BaseChatModel:
-        """按配置名称初始化一个共享聊天模型"""
-        try:
-            model_cfg = app_config.cfg.lm_config.models[model_name]
-        except KeyError as exc:
-            raise ValueError(f"未知的语言模型配置: {model_name}") from exc
-        register_harness_profile(
-            f"{model_cfg.model_provider}:{model_cfg.model}",
-            HarnessProfile(
-                general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
-            ),
-        )
-        return init_chat_model(
-            model_provider=model_cfg.model_provider,
-            model=model_cfg.model,
-            base_url=model_cfg.base_url,
-            api_key=model_cfg.api_key,
-            profile=model_cfg.profile,
-            request_timeout=30,
-            max_retries=2,
-            **model_cfg.params,
-        )
 
     async def init(self) -> None:
         """初始化所有 Agent 共享的模型和工具"""
@@ -173,7 +139,7 @@ class AgentManager:
                 ),
             }
             models = {
-                model_name: self._create_model(model_name)
+                model_name: create_configured_model(model_name)
                 for model_name in configured_names
             }
             platform_tools: list[BaseTool] = [
@@ -183,7 +149,7 @@ class AgentManager:
                 merge_semantic_recalls,
                 delete_semantic_recalls,
                 search_query_experiences,
-                execute_sql,
+                create_execute_sql_tool(self._sandbox),
             ]
             mcp_tools = await get_mcp_tools()
             definitions = build_agent_definitions(platform_tools, mcp_tools)
@@ -233,7 +199,7 @@ class AgentManager:
         async def build_session_agent(
             session_key: AgentSessionKey,
         ) -> CompiledStateGraph:
-            session_backend = await docker_sandbox_manager.get_session_backend(
+            session_backend = await self._sandbox.get_session_backend(
                 session_key.user_id,
                 session_key.conversation_id,
                 session_key.analysis_id,
@@ -262,15 +228,7 @@ class AgentManager:
                 return
             artifact_paths = {artifact.path for artifact in result.artifacts}
             async with meta_postgres_client_manager.session() as meta_session:
-                service = QueryExperienceService(
-                    repo=QueryExperiencePGRepo(session=meta_session),
-                    index_repo=QueryExperienceESRepo(
-                        client=es_client_manager.get_client()
-                    ),
-                    embedding_client=embedding_client_manager.get_client(),
-                    data_source=app_config.cfg.query.data_source,
-                    database_name=app_config.cfg.doris.database,
-                )
+                service = build_query_experience_service(meta_session)
                 await service.promote_by_artifacts(
                     user_id=session_key.user_id,
                     conversation_id=session_key.conversation_id,
@@ -377,7 +335,7 @@ class AgentManager:
         """构建会话级 Agent 运行时并写入缓存"""
         current_task = asyncio.current_task()
         try:
-            sandbox_backend = await docker_sandbox_manager.get_backend(
+            sandbox_backend = await self._sandbox.get_backend(
                 user_id,
                 conversation_id,
             )
@@ -626,6 +584,3 @@ class AgentManager:
         for runtime in runtimes:
             runtime.session_service.clear()
             runtime.registry.clear()
-
-
-agent_manager = AgentManager(langgraph_postgres_manager)

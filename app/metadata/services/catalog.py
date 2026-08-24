@@ -13,7 +13,10 @@ from app.metadata.models import (
 )
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
-from app.metadata.services.contracts import MetadataAssetInvalidator
+from app.metadata.services.contracts import (
+    MetadataAssetInvalidator,
+    MetadataSemanticIndexScheduler,
+)
 from app.metadata.services.index import MetaIndexService
 from app.shared.config.meta_config import (
     ColumnConfig,
@@ -22,6 +25,7 @@ from app.shared.config.meta_config import (
     MetricConfig,
     TableConfig,
     TableRole,
+    ValueIndexSyncConfig,
 )
 
 
@@ -34,12 +38,14 @@ class MetaCatalogService:
         source_repo: SourceDorisRepo,
         meta_index_service: MetaIndexService,
         asset_invalidator: MetadataAssetInvalidator,
+        semantic_index_scheduler: MetadataSemanticIndexScheduler,
     ) -> None:
         """初始化元数据目录管理服务"""
         self._meta_repo = meta_repo
         self._source_repo = source_repo
         self._meta_index_service = meta_index_service
         self._asset_invalidator = asset_invalidator
+        self._semantic_index_scheduler = semantic_index_scheduler
 
     async def list_table_infos(self) -> list[TableInfo]:
         """查询全部表元数据"""
@@ -65,18 +71,42 @@ class MetaCatalogService:
         t_name: str,
         role: TableRole,
         description: str,
+        value_index_sync: ValueIndexSyncConfig | None = None,
     ) -> None:
         """新增或更新表元数据"""
         if not await self._source_repo.table_exists(t_name):
             raise meta_error.InvalidMetadataError(detail=f"源表不存在: {t_name}")
         primary_key_columns = await self._source_repo.get_primary_key_columns(t_name)
+        column_types = await self._source_repo.get_column_types(t_name)
+        if (
+            value_index_sync is not None
+            and value_index_sync.cursor_column is not None
+            and value_index_sync.cursor_column not in column_types
+        ):
+            raise meta_error.InvalidMetadataError(
+                detail=(
+                    "源表中未找到取值索引游标字段: "
+                    f"{t_name}.{value_index_sync.cursor_column}"
+                )
+            )
         async with self._meta_repo.session.begin():
+            try:
+                existing = await self._meta_repo.get_table_info(t_name)
+            except meta_error.MetadataNotFoundError:
+                existing = None
             changed = await self._meta_repo.upsert_table_info(
                 TableInfo(
                     name=t_name,
                     role=role,
                     primary_key_columns=primary_key_columns,
                     description=description,
+                    value_index_sync=(
+                        value_index_sync.model_dump(mode="json")
+                        if value_index_sync is not None
+                        else existing.value_index_sync
+                        if existing is not None
+                        else ValueIndexSyncConfig().model_dump(mode="json")
+                    ),
                 )
             )
         if changed:
@@ -158,6 +188,7 @@ class MetaCatalogService:
                 table_names=set(),
                 column_keys={(t_name, c_name)},
             )
+            self._semantic_index_scheduler.enqueue_columns([(t_name, c_name)])
 
     async def upsert_metric_info(self, metric_info: MetricInfo) -> None:
         """新增或更新指标元数据"""
@@ -183,7 +214,9 @@ class MetaCatalogService:
                 for t_name, c_name in relevant_column_keys
             ]
             metric_info.alias = list(dict.fromkeys(metric_info.alias))
-            await self._meta_repo.upsert_metric_info(metric_info)
+            changed = await self._meta_repo.upsert_metric_info(metric_info)
+        if changed:
+            self._semantic_index_scheduler.enqueue_metrics([metric_info.name])
 
     async def delete_tables(self, table_names: list[str]) -> None:
         """删除多个表及其字段元数据和索引"""
@@ -297,6 +330,9 @@ class MetaCatalogService:
                     name=table_info.name,
                     role=cast(TableRole, table_info.role),
                     description=table_info.description,
+                    value_index_sync=ValueIndexSyncConfig.model_validate(
+                        table_info.value_index_sync
+                    ),
                     columns=[
                         ColumnConfig(
                             name=column_info.name,

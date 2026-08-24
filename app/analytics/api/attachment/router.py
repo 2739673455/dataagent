@@ -12,16 +12,16 @@ from loguru import logger
 from app.analytics import errors as chat_error
 from app.analytics.api.chat import schemas as chat_schema
 from app.analytics.api.chat.dependencies import ConversationPGRepoDep
-from app.analytics.services.conversation_lifecycle import (
-    conversation_lifecycle_service,
+from app.analytics.api.dependencies import (
+    ConversationLifecycleServiceDep,
+    SandboxManagerDep,
 )
 from app.identity.api.auth.dependencies import AnalysisUserDep, CurrentUserDep
 from app.sandbox import errors as attachment_error
-from app.sandbox.docker_manager import (
+from app.sandbox.exceptions import (
     SandboxFileTooLargeError,
     SandboxPathError,
     SandboxStorageLimitError,
-    docker_sandbox_manager,
 )
 
 router = APIRouter(tags=["attachment"])
@@ -31,12 +31,14 @@ router = APIRouter(tags=["attachment"])
 async def api_upload_attachment(
     conversation_repo: ConversationPGRepoDep,
     current_user: AnalysisUserDep,
+    lifecycle: ConversationLifecycleServiceDep,
+    sandbox: SandboxManagerDep,
     conversation_id: Annotated[UUID, Form()],
     file: Annotated[UploadFile, File()],
 ) -> chat_schema.UploadAttachmentResponse:
     """上传附件到当前会话工作区"""
     user_id = current_user.id
-    async with conversation_lifecycle_service.lock(user_id, conversation_id):
+    async with lifecycle.lock(user_id, conversation_id):
         # 检查对话是否存在且属于当前用户
         conversation = await conversation_repo.get(user_id, conversation_id)
         if conversation is None:
@@ -45,7 +47,7 @@ async def api_upload_attachment(
         # 获取文件名
         f_path = file.filename or "upload"
         try:
-            f_path = await docker_sandbox_manager.upload_user_attachment(
+            f_path = await sandbox.upload_user_attachment(
                 user_id,
                 conversation_id,
                 f_path,
@@ -70,16 +72,18 @@ async def api_delete_attachment(
     body: chat_schema.DeleteAttachmentRequest,
     conversation_repo: ConversationPGRepoDep,
     current_user: CurrentUserDep,
+    lifecycle: ConversationLifecycleServiceDep,
+    sandbox: SandboxManagerDep,
 ) -> None:
     """删除当前会话工作区中的附件"""
     user_id = current_user.id
-    async with conversation_lifecycle_service.lock(user_id, body.conversation_id):
+    async with lifecycle.lock(user_id, body.conversation_id):
         conversation = await conversation_repo.get(user_id, body.conversation_id)
         if conversation is None:
             raise chat_error.ConversationNotFoundError
 
         try:
-            await docker_sandbox_manager.delete_user_attachment(
+            await sandbox.delete_user_attachment(
                 user_id,
                 body.conversation_id,
                 body.f_path,
@@ -97,16 +101,18 @@ async def api_get_attachment(
     f_path: str,
     conversation_repo: ConversationPGRepoDep,
     current_user: CurrentUserDep,
+    lifecycle: ConversationLifecycleServiceDep,
+    sandbox: SandboxManagerDep,
 ) -> Response:
     """获取当前会话工作区中的附件文件"""
     user_id = current_user.id
-    async with conversation_lifecycle_service.lock(user_id, conversation_id):
+    async with lifecycle.lock(user_id, conversation_id):
         conversation = await conversation_repo.get(user_id, conversation_id)
         if conversation is None:
             raise chat_error.ConversationNotFoundError
 
         try:
-            content = await docker_sandbox_manager.download_file(
+            content = await sandbox.download_file(
                 user_id,
                 conversation_id,
                 f_path,

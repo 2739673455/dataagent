@@ -31,12 +31,6 @@ export interface components {
     "AttachmentReference": {
       "f_path": string;
     };
-    "BatchIndexSyncResponse": {
-      "results": Array<components["schemas"]["ColumnIndexSyncResponse"]>;
-    };
-    "BatchMetricIndexSyncResponse": {
-      "results": Array<components["schemas"]["MetricIndexSyncResponse"]>;
-    };
     "Body_api_upload_attachment_api_v1_chat_attachment_upload_post": {
       "conversation_id": string;
       "file": string;
@@ -70,11 +64,6 @@ export interface components {
     "ColumnIndexSyncRequest": {
       "columns": Array<components["schemas"]["ColumnReference"]>;
     };
-    "ColumnIndexSyncResponse": {
-      "c_name": string;
-      "indexed_count": number;
-      "t_name": string;
-    };
     "ColumnInfoRequest": {
       "alias"?: Array<string>;
       "description": string;
@@ -94,8 +83,7 @@ export interface components {
       "reference_t_name": (string | null);
       "t_name": string;
       "type": string;
-      "value_index_sync_status": ("syncing" | "succeeded" | "failed" | null);
-      "value_index_synced_at": (string | null);
+      "value_index_state": (components["schemas"]["ValueIndexSyncStateResponse"] | null);
     };
     "ColumnReference": {
       "c_name": string;
@@ -202,10 +190,6 @@ export interface components {
     "MetricIndexSyncRequest": {
       "metrics": Array<string>;
     };
-    "MetricIndexSyncResponse": {
-      "indexed_count": number;
-      "metric_name": string;
-    };
     "MetricInfoRequest": {
       "alias"?: Array<string>;
       "description": string;
@@ -268,6 +252,7 @@ export interface components {
     "TableInfoRequest": {
       "description": string;
       "role": "fact" | "dim";
+      "value_index_sync"?: (components["schemas"]["ValueIndexSyncConfig"] | null);
     };
     "TableInfoResponse": {
       "description": string;
@@ -275,6 +260,18 @@ export interface components {
       "name": string;
       "primary_key_columns": Array<string>;
       "role": "fact" | "dim";
+      "value_index_sync": components["schemas"]["ValueIndexSyncConfig"];
+    };
+    "TaskAcceptedResponse": {
+      "task_id": string;
+    };
+    "TaskStatusResponse": {
+      "error"?: (string | null);
+      "ready": boolean;
+      "result"?: (unknown | null);
+      "state": string;
+      "successful": (boolean | null);
+      "task_id": string;
     };
     "TextContent": {
       "text": string;
@@ -335,6 +332,21 @@ export interface components {
       "is_active": boolean;
       "is_admin": boolean;
       "username": string;
+    };
+    "ValueIndexSyncConfig": {
+      "cursor_column"?: (string | null);
+    };
+    "ValueIndexSyncStateResponse": {
+      "current_generation": (string | null);
+      "cursor_value": ({
+        [key: string]: unknown;
+      } | null);
+      "last_error": (string | null);
+      "last_full_synced_at": (string | null);
+      "last_incremental_synced_at": (string | null);
+      "last_synced_at": (string | null);
+      "status": "syncing" | "succeeded" | "failed";
+      "updated_at": string;
     };
   };
 }
@@ -1012,6 +1024,36 @@ export interface operations {
       };
     };
   };
+  "get_task_status_api_v1_tasks__task_id__get": {
+    "parameters": {
+      "path": {
+        "task_id": string;
+      };
+      "query"?: never;
+      "header"?: never;
+      "cookie"?: never;
+    };
+    "requestBody"?: never;
+    "responses": {
+      "200": {
+        "content": {
+        "application/json": components["schemas"]["TaskStatusResponse"];
+      };
+      };
+      "422": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+      "default": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+    };
+  };
   "grant_select_api_v1_admin_doris_roles__role__select_grants_post": {
     "parameters": {
       "path": {
@@ -1060,7 +1102,7 @@ export interface operations {
     "responses": {
       "200": {
         "content": {
-        "application/json": components["schemas"]["MetaImportResponse"];
+        "application/json": (components["schemas"]["MetaImportResponse"] | components["schemas"]["TaskAcceptedResponse"]);
       };
       };
       "422": {
@@ -1592,7 +1634,7 @@ export interface operations {
     "responses": {
       "200": {
         "content": {
-        "application/json": components["schemas"]["BatchIndexSyncResponse"];
+        "application/json": components["schemas"]["TaskAcceptedResponse"];
       };
       };
       "422": {
@@ -1622,7 +1664,7 @@ export interface operations {
     "responses": {
       "200": {
         "content": {
-        "application/json": components["schemas"]["BatchIndexSyncResponse"];
+        "application/json": components["schemas"]["TaskAcceptedResponse"];
       };
       };
       "422": {
@@ -1652,7 +1694,7 @@ export interface operations {
     "responses": {
       "200": {
         "content": {
-        "application/json": components["schemas"]["BatchMetricIndexSyncResponse"];
+        "application/json": components["schemas"]["TaskAcceptedResponse"];
       };
       };
       "422": {
@@ -1682,7 +1724,7 @@ export interface operations {
     "responses": {
       "200": {
         "content": {
-        "application/json": components["schemas"]["BatchIndexSyncResponse"];
+        "application/json": components["schemas"]["TaskAcceptedResponse"];
       };
       };
       "422": {
@@ -1712,7 +1754,7 @@ export interface operations {
     "responses": {
       "200": {
         "content": {
-        "application/json": components["schemas"]["BatchIndexSyncResponse"];
+        "application/json": components["schemas"]["TaskAcceptedResponse"];
       };
       };
       "422": {
@@ -1993,5 +2035,8 @@ export interface paths {
   };
   "/api/v1/meta/tables/{t_name}/columns/{c_name}": {
     "put": operations["upsert_column_info_api_v1_meta_tables__t_name__columns__c_name__put"];
+  };
+  "/api/v1/tasks/{task_id}": {
+    "get": operations["get_task_status_api_v1_tasks__task_id__get"];
   };
 }

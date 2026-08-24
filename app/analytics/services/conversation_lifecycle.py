@@ -1,30 +1,21 @@
 """会话资源生命周期编排"""
 
-import asyncio
-import contextlib
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from loguru import logger
-
 from app.analytics.agents.manager import (
     AgentManager,
-    agent_manager,
     conversation_lifecycle_lock_name,
 )
 from app.analytics.repositories.conversation import ConversationPGRepo
 from app.metadata.repositories.recall import SemanticRecallPGRepo
-from app.sandbox.docker_manager import (
-    DockerSandboxManager,
-    docker_sandbox_manager,
-)
+from app.sandbox.manager import DockerSandboxManager
 from app.shared.clients.langgraph_postgres_manager import (
     LangGraphPostgresManager,
-    langgraph_postgres_manager,
 )
-from app.shared.config.app_config import LifecycleConfig, cfg
+from app.shared.config.app_config import LifecycleConfig
 
 
 class ConversationLifecycleService:
@@ -36,13 +27,14 @@ class ConversationLifecycleService:
         agents: AgentManager,
         sandbox: DockerSandboxManager,
         config: LifecycleConfig,
+        *,
+        session_lock_timeout: float,
     ) -> None:
         self._persistence_manager = persistence_manager
         self._agents = agents
         self._sandbox = sandbox
         self._config = config
-        self._cleanup_task: asyncio.Task[None] | None = None
-        self._wake_event = asyncio.Event()
+        self._session_lock_timeout = session_lock_timeout
 
     @asynccontextmanager
     async def lock(
@@ -53,11 +45,38 @@ class ConversationLifecycleService:
         """获取跨进程会话生命周期锁"""
         async with self._persistence_manager.advisory_lock(
             conversation_lifecycle_lock_name(user_id, conversation_id),
-            timeout=cfg.agent.orchestration.session_lock_timeout,
+            timeout=self._session_lock_timeout,
         ):
             yield
 
-    async def delete_conversation(
+    async def request_conversation_deletion(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        *,
+        draft_only: bool = False,
+    ) -> bool:
+        """写入删除墓碑并使会话立即从接口中消失"""
+        await self._agents.cancel_agent_execution(user_id, conversation_id)
+        conversation_repo = ConversationPGRepo(self._persistence_manager.get_store())
+        async with self.lock(user_id, conversation_id):
+            conversation = await conversation_repo.get(
+                user_id,
+                conversation_id,
+                include_deleting=True,
+            )
+            if conversation is None:
+                return False
+            if draft_only and not conversation.is_draft:
+                return False
+            if conversation.deletion_requested_at is None:
+                await conversation_repo.update(
+                    conversation,
+                    deletion_requested_at=datetime.now(UTC),
+                )
+            return True
+
+    async def delete_conversation_resources(
         self,
         user_id: int,
         conversation_id: UUID,
@@ -68,17 +87,12 @@ class ConversationLifecycleService:
         """幂等删除一个会话的全部跨存储资源"""
         conversation_repo = ConversationPGRepo(self._persistence_manager.get_store())
         recall_repo = SemanticRecallPGRepo(self._persistence_manager.get_store())
-        if draft_expired_before is None and not draft_only:
-            conversation = await conversation_repo.get(user_id, conversation_id)
-            if conversation is None:
-                return False
-            await self._agents.cancel_agent_execution(
+        async with self.lock(user_id, conversation_id):
+            conversation = await conversation_repo.get(
                 user_id,
                 conversation_id,
+                include_deleting=True,
             )
-
-        async with self.lock(user_id, conversation_id):
-            conversation = await conversation_repo.get(user_id, conversation_id)
             if conversation is None:
                 return False
             if draft_only and not conversation.is_draft:
@@ -101,9 +115,12 @@ class ConversationLifecycleService:
     async def delete_user_conversations(self, user_id: int) -> None:
         """删除用户全部会话及残留召回记录"""
         conversation_repo = ConversationPGRepo(self._persistence_manager.get_store())
-        while conversations := await conversation_repo.list_all_by_user(user_id):
+        while conversations := await conversation_repo.list_all_by_user(
+            user_id,
+            include_deleting=True,
+        ):
             for conversation in conversations:
-                await self.delete_conversation(user_id, conversation.id)
+                await self.delete_conversation_resources(user_id, conversation.id)
         await self._agents.delete_user_agents(user_id)
         await SemanticRecallPGRepo(
             self._persistence_manager.get_store()
@@ -119,55 +136,25 @@ class ConversationLifecycleService:
         )
         deleted = 0
         for draft in drafts:
-            try:
-                if await self.delete_conversation(
-                    draft.user_id,
-                    draft.id,
-                    draft_expired_before=cutoff,
-                ):
-                    deleted += 1
-            except Exception:  # noqa: BLE001
-                logger.exception(f"清理过期草稿会话失败: conversation_id={draft.id}")
+            if await self.delete_conversation_resources(
+                draft.user_id,
+                draft.id,
+                draft_expired_before=cutoff,
+            ):
+                deleted += 1
         return deleted
 
-    async def start(self) -> None:
-        """启动草稿定期回收任务"""
-        if self._cleanup_task is None or self._cleanup_task.done():
-            self._cleanup_task = asyncio.create_task(self._cleanup_loop())
-
-    async def close(self) -> None:
-        """停止草稿定期回收任务"""
-        task = self._cleanup_task
-        self._cleanup_task = None
-        if task is None:
-            return
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-
-    async def _cleanup_loop(self) -> None:
-        """持续回收已过期草稿"""
-        while True:
-            try:
-                deleted = await self.cleanup_expired_drafts()
-                if deleted:
-                    logger.info(f"已清理 {deleted} 个过期草稿会话")
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001
-                logger.exception("批量清理过期草稿会话失败")
-
-            self._wake_event.clear()
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(
-                    self._wake_event.wait(),
-                    timeout=self._config.cleanup_interval_seconds,
-                )
-
-
-conversation_lifecycle_service = ConversationLifecycleService(
-    langgraph_postgres_manager,
-    agent_manager,
-    docker_sandbox_manager,
-    cfg.lifecycle,
-)
+    async def cleanup_pending_deletions(self) -> int:
+        """执行一批已有删除墓碑的物理资源清理"""
+        repository = ConversationPGRepo(self._persistence_manager.get_store())
+        conversations = await repository.list_pending_deletions(
+            limit=self._config.cleanup_batch_size
+        )
+        deleted = 0
+        for conversation in conversations:
+            if await self.delete_conversation_resources(
+                conversation.user_id,
+                conversation.id,
+            ):
+                deleted += 1
+        return deleted

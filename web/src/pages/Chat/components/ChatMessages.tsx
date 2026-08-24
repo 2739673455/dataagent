@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Copy, Download, Eye, FileText, Loader2, Wrench } from "lucide-react";
+import { Check, ChevronDown, Copy, Download, Eye, FileText, Loader2, Square, Wrench } from "lucide-react";
 import type { RefObject } from "react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
@@ -31,6 +31,7 @@ type ToolRunDisplayItem = {
   result?: string;
   attachments?: Attachment[] | null;
   completed: boolean;
+  interrupted?: boolean;
 };
 
 type DisplayItem = MessageDisplayItem | ToolRunDisplayItem;
@@ -111,7 +112,8 @@ function isInteractiveTableAttachment(attachment: Attachment) {
 
 function buildDisplayItems(
   conversationId: string | null,
-  messages: MessageResponse[]
+  messages: MessageResponse[],
+  isStreaming: boolean
 ): DisplayItem[] {
   const items: DisplayItem[] = [];
   const toolRuns = new Map<string, ToolRunDisplayItem>();
@@ -190,6 +192,15 @@ function buildDisplayItems(
         attachments: message.attachments,
         completed: true,
       });
+    }
+  }
+
+  // 会话不再生成时，将未配对的 tool_call 标记为已中断
+  if (!isStreaming) {
+    for (const run of toolRuns.values()) {
+      if (!run.completed) {
+        run.interrupted = true;
+      }
     }
   }
 
@@ -401,6 +412,8 @@ function ToolRunBar({
             <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-[#ebebe6]">
               {item.completed ? (
                 <Wrench className="h-3 w-3 text-[#52525b]" />
+              ) : item.interrupted ? (
+                <Square className="h-3 w-3 text-[#a1a1aa]" />
               ) : (
                 <Loader2 className="h-3 w-3 animate-spin text-[#1e2024]" />
               )}
@@ -415,10 +428,14 @@ function ToolRunBar({
             <span
               className={cn(
                 "rounded px-1.5 py-0.5 text-[10px] font-medium",
-                item.completed ? "bg-[#ebebe6] text-[#3f3f46]" : "bg-[#deded8] text-[#18181b]"
+                item.completed
+                  ? "bg-[#ebebe6] text-[#3f3f46]"
+                  : item.interrupted
+                    ? "bg-[#f0f0ec] text-[#a1a1aa]"
+                    : "bg-[#deded8] text-[#18181b]"
               )}
             >
-              {item.completed ? "已完成" : "执行中"}
+              {item.completed ? "已完成" : item.interrupted ? "已中断" : "执行中"}
             </span>
             <ChevronDown
               className={cn(
@@ -433,7 +450,7 @@ function ToolRunBar({
           <div className="space-y-2 border-t border-[#e5e5df] bg-[#fafaf8] p-3 text-[11px]">
             {item.args !== undefined ? (
               <div className="space-y-1">
-                <p className="font-medium text-[#71717a]">入参参数</p>
+                <p className="font-medium text-[#71717a]">参数</p>
                 <pre className="overflow-x-auto whitespace-pre-wrap rounded border border-[#e5e5df] bg-[#ffffff] p-2 text-[#3f3f46]">
                   {JSON.stringify(item.args, null, 2)}
                 </pre>
@@ -441,7 +458,7 @@ function ToolRunBar({
             ) : null}
             {item.result !== undefined ? (
               <div className="space-y-1">
-                <p className="font-medium text-[#71717a]">执行输出</p>
+                <p className="font-medium text-[#71717a]">输出</p>
                 <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded border border-[#e5e5df] bg-[#ffffff] p-2 text-[#27272a]">
                   {item.result}
                 </pre>
@@ -684,6 +701,7 @@ interface ChatMessagesProps {
   conversationId: string | null;
   conversationSelected: boolean;
   isLoading: boolean;
+  isStreaming: boolean;
   messages: MessageResponse[];
   onOpenPreviewAttachment?: (attachment: Attachment) => void;
   username: string;
@@ -694,16 +712,20 @@ export function ChatMessages({
   conversationId,
   conversationSelected,
   isLoading,
+  isStreaming,
   messages,
   onOpenPreviewAttachment,
   username,
   viewportRef,
 }: ChatMessagesProps) {
-  const displayItems = buildDisplayItems(conversationId, messages);
+  const displayItems = buildDisplayItems(conversationId, messages, isStreaming);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#f4f4f0] font-mono text-[#1e2024]">
-      <div ref={viewportRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+      <div
+        ref={viewportRef}
+        className="min-h-0 flex-1 overflow-y-auto px-4 py-4 [scrollbar-gutter:stable_both-edges]"
+      >
         {!conversationSelected ? (
           <div className="flex h-full flex-col items-center justify-center p-6 text-center">
             <div className="w-full max-w-lg space-y-2 text-left">

@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from pydantic import SecretStr, ValidationError
 
@@ -193,17 +193,21 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_delete_user_endpoint(self) -> None:
         service = MagicMock()
-        service.request_deletion = AsyncMock()
+        service.request_deletion = AsyncMock(return_value=True)
         admin_user = build_user(user_id=1, is_admin=True)
 
-        response = await delete_user(
-            12,
-            AuthenticatedUser.from_user(admin_user),
-            service,
-        )
+        with patch(
+            "app.identity.api.admin.router.enqueue_user_deletion"
+        ) as enqueue_deletion:
+            response = await delete_user(
+                12,
+                AuthenticatedUser.from_user(admin_user),
+                service,
+            )
 
         self.assertEqual(response.status_code, 204)
         service.request_deletion.assert_awaited_once_with(12, operator_id=1)
+        enqueue_deletion.assert_called_once_with(12)
 
     async def test_list_users_returns_page_metadata(self) -> None:
         service = MagicMock()

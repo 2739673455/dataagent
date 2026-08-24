@@ -70,14 +70,11 @@ class UserDeletionServiceTest(unittest.IsolatedAsyncioTestCase):
         repo.revoke_user_refresh_tokens = AsyncMock()
         repo.enqueue_user_deletion = AsyncMock()
 
-        with (
-            patch(
-                "app.workflows.user_deletion.AuthPGRepo",
-                return_value=repo,
-            ),
-            patch.object(service, "_process", new=AsyncMock()) as process,
+        with patch(
+            "app.workflows.user_deletion.AuthPGRepo",
+            return_value=repo,
         ):
-            await service.request_deletion(user.id, operator_id=1)
+            submitted = await service.request_deletion(user.id, operator_id=1)
 
         repo.set_user_active.assert_awaited_once_with(user, False)
         repo.revoke_user_refresh_tokens.assert_awaited_once_with(
@@ -88,7 +85,7 @@ class UserDeletionServiceTest(unittest.IsolatedAsyncioTestCase):
             user.id,
             ANY,
         )
-        process.assert_awaited_once_with(user.id)
+        self.assertTrue(submitted)
 
     async def test_delete_self_is_rejected_before_any_storage_access(self) -> None:
         service, auth_postgres, _, _ = self.build_service()
@@ -110,16 +107,13 @@ class UserDeletionServiceTest(unittest.IsolatedAsyncioTestCase):
             return_value=MagicMock(status="completed")
         )
 
-        with (
-            patch(
-                "app.workflows.user_deletion.AuthPGRepo",
-                return_value=repo,
-            ),
-            patch.object(service, "_process", new=AsyncMock()) as process,
+        with patch(
+            "app.workflows.user_deletion.AuthPGRepo",
+            return_value=repo,
         ):
-            await service.request_deletion(8, operator_id=1)
+            submitted = await service.request_deletion(8, operator_id=1)
 
-        process.assert_not_awaited()
+        self.assertFalse(submitted)
 
     async def test_process_cleans_each_storage_then_completes_task(self) -> None:
         service, _, conversations, sandbox = self.build_service()
@@ -146,14 +140,13 @@ class UserDeletionServiceTest(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(),
             ) as record_failure,
         ):
-            await service._process(8)
+            await service.process(8)
 
         conversations.delete_user_conversations.assert_awaited_once_with(8)
         sandbox.delete_user_sandbox.assert_awaited_once_with(8)
         delete_query_history.assert_awaited_once_with(8)
         complete.assert_awaited_once_with(8)
         record_failure.assert_not_awaited()
-        self.assertNotIn(8, service._locks)
 
     async def test_process_records_failure_for_automatic_retry(self) -> None:
         service, _, conversations, sandbox = self.build_service()
@@ -173,7 +166,7 @@ class UserDeletionServiceTest(unittest.IsolatedAsyncioTestCase):
             ) as record_failure,
             self.assertRaisesRegex(RuntimeError, "sandbox unavailable"),
         ):
-            await service._process(8)
+            await service.process(8)
 
         record_failure.assert_awaited_once_with(8, failure)
         sandbox.delete_user_sandbox.assert_not_awaited()

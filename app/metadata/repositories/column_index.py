@@ -8,9 +8,14 @@ from app.metadata.models import (
     ColumnInfo,
     ColumnKey,
     column_resource_key,
-    serialize_column_examples,
 )
-from app.metadata.search_models import SearchHit, SemanticTextType
+from app.metadata.repositories.semantic_index import SemanticIndexDeltaRepo
+from app.metadata.search_models import (
+    SearchHit,
+    SemanticIndexDelta,
+    SemanticIndexDocument,
+    SemanticTextType,
+)
 from app.shared.config.app_config import cfg
 
 
@@ -41,6 +46,9 @@ class ColumnESRepo:
                 },
             },
             "text_type": {"type": "keyword"},
+            "meta_version": {"type": "long"},
+            "embedding_revision": {"type": "keyword"},
+            "payload_hash": {"type": "keyword"},
             "embedding": {
                 "type": "dense_vector",
                 "dims": cfg.elasticsearch.embedding_size,
@@ -55,13 +63,23 @@ class ColumnESRepo:
     def __init__(self, client: AsyncElasticsearch) -> None:
         """初始化字段语义索引存储"""
         self._client = client
+        self._delta_repo = SemanticIndexDeltaRepo(
+            client,
+            self._index_name,
+            "字段语义索引",
+        )
 
     async def ensure_index(self) -> None:
         """确保字段语义索引存在"""
         if await self._client.indices.exists(index=self._index_name):
             await self._client.indices.put_mapping(
                 index=self._index_name,
-                properties={"resource_key": {"type": "keyword"}},
+                properties={
+                    "resource_key": {"type": "keyword"},
+                    "meta_version": {"type": "long"},
+                    "embedding_revision": {"type": "keyword"},
+                    "payload_hash": {"type": "keyword"},
+                },
             )
         else:
             await self._client.indices.create(
@@ -69,59 +87,36 @@ class ColumnESRepo:
                 mappings=self._index_mappings,
             )
 
-    @staticmethod
-    def _to_payload(column_info: ColumnInfo) -> dict[str, Any]:
-        """将字段 ORM 转换为索引载荷"""
-        return {
-            "t_name": column_info.t_name,
-            "name": column_info.name,
-            "type": column_info.type,
-            "examples": serialize_column_examples(column_info.examples),
-            "description": column_info.description,
-            "alias": column_info.alias,
-            "index_values": column_info.index_values,
-            "reference_t_name": column_info.reference_t_name,
-            "reference_c_name": column_info.reference_c_name,
-            "meta_version": column_info.meta_version,
-            "index_version": column_info.meta_version,
-        }
-
-    async def index(
+    async def list_resource_documents(
         self,
-        ids: list[str],
-        texts: list[str],
-        text_types: list[SemanticTextType],
-        embeddings: list[list[float]],
-        column_info: ColumnInfo,
-    ) -> None:
-        """写入字段全文与向量索引"""
-        self._validate_document_parts(ids, texts, text_types, embeddings)
-        payload = self._to_payload(column_info)
-        documents = [
+        resource_key: str,
+        *,
+        t_name: str,
+        c_name: str,
+    ) -> list[SemanticIndexDocument]:
+        """读取字段当前语义索引文档并兼容识别旧文档"""
+        return await self._delta_repo.list_documents(
             {
-                "resource_key": column_resource_key(
-                    column_info.t_name,
-                    column_info.name,
-                ),
-                "t_name": column_info.t_name,
-                "name": column_info.name,
-                "text": text,
-                "text_type": text_type,
-                "embedding": embedding,
-                "payload": payload,
+                "bool": {
+                    "should": [
+                        {"term": {"resource_key": resource_key}},
+                        {
+                            "bool": {
+                                "filter": [
+                                    {"term": {"t_name": t_name}},
+                                    {"term": {"name": c_name}},
+                                ]
+                            }
+                        },
+                    ],
+                    "minimum_should_match": 1,
+                }
             }
-            for text, text_type, embedding in zip(
-                texts,
-                text_types,
-                embeddings,
-                strict=True,
-            )
-        ]
-        await self._bulk_index(ids, documents)
+        )
 
-    async def refresh(self) -> None:
-        """刷新字段语义索引"""
-        await self._client.indices.refresh(index=self._index_name)
+    async def apply_delta(self, delta: SemanticIndexDelta) -> None:
+        """应用字段语义索引差量"""
+        await self._delta_repo.apply_delta(delta)
 
     async def delete(self, t_name: str, c_name: str) -> None:
         """删除字段对应的全部语义索引文档"""
@@ -177,28 +172,6 @@ class ColumnESRepo:
         """根据关键词检索字段并保留命中分数"""
         result = await self._text_search(query, limit, allowed_columns)
         return self._hits(result)
-
-    async def _bulk_index(
-        self,
-        ids: list[str],
-        documents: list[dict[str, Any]],
-        batch_size: int = 100,
-    ) -> None:
-        """批量写入字段语义索引文档"""
-        for index in range(0, len(documents), batch_size):
-            operations: list[dict[str, Any]] = []
-            for document_id, document in zip(
-                ids[index : index + batch_size],
-                documents[index : index + batch_size],
-                strict=True,
-            ):
-                operations.append(
-                    {"index": {"_index": self._index_name, "_id": document_id}}
-                )
-                operations.append(document)
-            result = await self._client.bulk(operations=operations, refresh=False)
-            if result.get("errors"):
-                raise RuntimeError("Elasticsearch 批量写入存在失败项")
 
     async def _delete_by_filter(self, filters: list[dict[str, Any]]) -> None:
         """按过滤条件删除字段语义索引文档"""
@@ -299,18 +272,6 @@ class ColumnESRepo:
                 ]
             }
         }
-
-    @staticmethod
-    def _validate_document_parts(
-        ids: list[str],
-        texts: list[str],
-        text_types: list[SemanticTextType],
-        embeddings: list[list[float]],
-    ) -> None:
-        """校验字段索引文档组成部分数量一致"""
-        lengths = {len(ids), len(texts), len(text_types), len(embeddings)}
-        if len(lengths) != 1:
-            raise ValueError("字段索引文档各组成部分长度不一致")
 
     @staticmethod
     def _hits(result: dict[str, Any]) -> list[SearchHit[ColumnInfo]]:

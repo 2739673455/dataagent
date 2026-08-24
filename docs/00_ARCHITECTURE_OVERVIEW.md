@@ -28,6 +28,7 @@ flowchart TD
         ES[(Elasticsearch\n全文 / 向量 / 字段值索引)]
         Doris[(Apache Doris\n分析型数据库)]
         Docker[(Docker Runtime\n多用户隔离容器 & Named Volume)]
+        Redis[(Redis\nCelery Broker / Result Backend)]
     end
 
     Gateway --> Auth
@@ -44,6 +45,8 @@ flowchart TD
     Query --> Doris
     SandboxMgr --> Docker
     AgentLayer --> PG
+    Gateway --> Redis
+    Redis --> Meta & Query & AgentLayer
 ```
 
 ---
@@ -58,7 +61,8 @@ flowchart TD
 | [`02_METADATA_AND_SEARCH.md`](../docs/02_METADATA_AND_SEARCH.md) | 元数据资产与语义检索 | 表/字段/指标元数据全生命周期管理、YAML 格式导入导出与冲突校验、ES 全文/向量/字段值多索引版本同步、多阶段语义召回、拓扑关系补全与召回历史沉淀 | [`MetaCatalogService`](../app/metadata/services/catalog.py)<br>[`MetaImportService`](../app/metadata/services/import_service.py)<br>[`MetaIndexService`](../app/metadata/services/index.py)<br>[`MetaSearchService`](../app/metadata/services/search.py) |
 | [`03_QUERY_ENGINE_AND_GUARD.md`](../docs/03_QUERY_ENGINE_AND_GUARD.md) | 安全查询引擎与执行守卫 | 基于用户绑定的 Doris 隔离查询身份受控执行、连接级资源限制（`workload_group`、内存、超时、包大小）、服务端游标流式拉取、基于 AST 语法树的严格只读与越权拦截校验 | [`DorisQueryRepository`](../app/query/repositories/doris.py)<br>[`QueryGuardService`](../app/query/services/guard.py)<br>[`AnalysisQueryService`](../app/query/services/executor.py) |
 | [`04_MULTI_AGENT_ANALYTICS.md`](../docs/04_MULTI_AGENT_ANALYTICS.md) | 多 Agent 协同与数据分析 | 基于 DeepAgents 与 LangGraph Checkpoint 的动态子 Agent 架构；Planner 动态调度；Explorer、Analyst、Reviewer、Visualizer 专业分工；基于 `thread_id + checkpoint_ns` 的多维并行与状态持久化；跨 Agent 审查与 `RepairRequest` 回退修补；SSE 实时流式响应 | [`AgentManager`](../app/analytics/agents/manager.py)<br>[`AgentRegistry`](../app/analytics/agents/registry.py)<br>[`AgentSessionService`](../app/analytics/agents/session_service.py)<br>[`ChatService`](../app/analytics/services/chat.py) |
-| [`05_DOCKER_SANDBOX_RUNTIME.md`](../docs/05_DOCKER_SANDBOX_RUNTIME.md) | Docker 多租户沙盒运行环境 | 一用户一容器 + 一用户一持久化 Named Volume；会话级 UID/GID 权限隔离（`0700`）；按需启动与空闲超时自动回收；全局并发限制与 FIFO 容量队列；沙盒内代码执行与容量配额管理；附件与分析产物安全传输 | [`DockerSandboxManager`](../app/sandbox/docker_manager.py)<br>[`AttachmentRouter`](../app/analytics/api/attachment/router.py) |
+| [`05_DOCKER_SANDBOX_RUNTIME.md`](../docs/05_DOCKER_SANDBOX_RUNTIME.md) | Docker 多租户沙盒运行环境 | 一用户一容器 + 一用户一持久化 Named Volume；会话与 Agent Session UID/GID 隔离；Redis 跨进程运行实例、操作和维护租约；全局容器容量控制与进程内 FIFO 等待；附件与分析产物安全传输 | [`DockerSandboxManager`](../app/sandbox/manager.py)<br>[`DockerSandboxBackend`](../app/sandbox/backend.py)<br>[`RedisSandboxOwnership`](../app/sandbox/ownership.py) |
+| [`08_BACKGROUND_TASKS.md`](../docs/08_BACKGROUND_TASKS.md) | Celery 后台任务与可靠性 | Redis 队列、Worker 与 Beat 部署、索引和跨存储生命周期任务、任务状态查询、重试与持久化补偿 | [`celery_app`](../app/shared/tasks/celery_app.py)<br>[`metadata.tasks`](../app/metadata/tasks.py)<br>[`analytics.tasks`](../app/analytics/tasks.py)<br>[`workflows.tasks`](../app/workflows/tasks.py) |
 
 ### 2.1 模块化单体目录
 
@@ -78,7 +82,8 @@ app/
     ├── observability/  # 结构化日志、请求上下文与链路追踪
     ├── database/       # SQLAlchemy 声明基类
     ├── clients/        # PostgreSQL、Doris、ES 等外部资源客户端
-    └── contracts/      # 跨模块共享的稳定协议
+    ├── contracts/      # 跨模块共享的稳定协议
+    └── tasks/          # Celery 应用、队列、运行辅助和共享任务协议
 ```
 
 模块内依赖方向统一为 `api → services → repositories / models`。`metadata` 服务通过端口接收查询经验失效能力，避免依赖 `query` 的具体实现；跨多个业务模块的持久化操作由 `workflows` 统一编排。`shared` 不依赖业务模块。
@@ -161,3 +166,4 @@ sequenceDiagram
 - **数据源与执行引擎**：Apache Doris（分析型数仓，只读代理身份隔离 + Workload Group 配额）
 - **搜索引擎**：Elasticsearch 8.x（文本 BM25 检索 + 稠密向量 KNN 检索 + 字段值模糊检索）
 - **环境隔离沙盒**：Docker Engine + Docker SDK + Named Volumes（会话 UID/GID 权限隔离 + FIFO 并发队列）
+- **后台任务**：Celery 5.6 + Redis（索引构建、跨存储生命周期、定时补偿和短期任务结果）

@@ -1,6 +1,6 @@
 import io
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from fastapi import UploadFile
@@ -9,11 +9,10 @@ from app.analytics.api.attachment.router import (
     api_delete_attachment,
     api_get_attachment,
     api_upload_attachment,
-    conversation_lifecycle_service,
-    docker_sandbox_manager,
 )
 from app.analytics.api.chat.schemas import DeleteAttachmentRequest
 from app.sandbox import errors as attachment_error
+from app.sandbox.exceptions import SandboxPathError
 
 
 class AsyncContextStub:
@@ -37,13 +36,12 @@ class AttachmentRouterTest(unittest.IsolatedAsyncioTestCase):
         self.conversation_repo = MagicMock()
         self.conversation_repo.get = AsyncMock(return_value=self.conversation)
         self.conversation_repo.update = AsyncMock()
-        lock_patcher = patch.object(
-            conversation_lifecycle_service,
-            "lock",
-            return_value=AsyncContextStub(),
-        )
-        lock_patcher.start()
-        self.addCleanup(lock_patcher.stop)
+        self.sandbox = MagicMock()
+        self.sandbox.upload_user_attachment = AsyncMock()
+        self.sandbox.delete_user_attachment = AsyncMock()
+        self.sandbox.download_file = AsyncMock()
+        self.lifecycle = MagicMock()
+        self.lifecycle.lock.return_value = AsyncContextStub()
 
     async def test_upload_uses_user_attachment_capability_and_normalized_path(
         self,
@@ -54,17 +52,15 @@ class AttachmentRouterTest(unittest.IsolatedAsyncioTestCase):
             filename="uploads//report.csv",
         )
 
-        with patch.object(
-            docker_sandbox_manager,
-            "upload_user_attachment",
-            upload,
-        ):
-            response = await api_upload_attachment(
-                conversation_repo=self.conversation_repo,
-                current_user=self.user,
-                conversation_id=self.conversation_id,
-                file=file,
-            )
+        self.sandbox.upload_user_attachment = upload
+        response = await api_upload_attachment(
+            conversation_repo=self.conversation_repo,
+            current_user=self.user,
+            lifecycle=self.lifecycle,
+            sandbox=self.sandbox,
+            conversation_id=self.conversation_id,
+            file=file,
+        )
 
         upload.assert_awaited_once_with(
             7,
@@ -81,13 +77,21 @@ class AttachmentRouterTest(unittest.IsolatedAsyncioTestCase):
             filename="analyses/run/report.csv",
         )
 
+        self.sandbox.upload_user_attachment.side_effect = SandboxPathError(
+            "analyses/run/report.csv"
+        )
         with self.assertRaises(attachment_error.PathTraversalError):
             await api_upload_attachment(
                 conversation_repo=self.conversation_repo,
                 current_user=self.user,
+                lifecycle=self.lifecycle,
+                sandbox=self.sandbox,
                 conversation_id=self.conversation_id,
                 file=file,
             )
+        self.sandbox.delete_user_attachment.side_effect = SandboxPathError(
+            "analyses/run/report.csv"
+        )
         with self.assertRaises(attachment_error.PathTraversalError):
             await api_delete_attachment(
                 body=DeleteAttachmentRequest(
@@ -96,23 +100,23 @@ class AttachmentRouterTest(unittest.IsolatedAsyncioTestCase):
                 ),
                 conversation_repo=self.conversation_repo,
                 current_user=self.user,
+                lifecycle=self.lifecycle,
+                sandbox=self.sandbox,
             )
 
     async def test_delete_uses_user_attachment_capability(self) -> None:
         delete = AsyncMock()
-        with patch.object(
-            docker_sandbox_manager,
-            "delete_user_attachment",
-            delete,
-        ):
-            await api_delete_attachment(
-                body=DeleteAttachmentRequest(
-                    conversation_id=self.conversation_id,
-                    f_path="uploads/report.csv",
-                ),
-                conversation_repo=self.conversation_repo,
-                current_user=self.user,
-            )
+        self.sandbox.delete_user_attachment = delete
+        await api_delete_attachment(
+            body=DeleteAttachmentRequest(
+                conversation_id=self.conversation_id,
+                f_path="uploads/report.csv",
+            ),
+            conversation_repo=self.conversation_repo,
+            current_user=self.user,
+            lifecycle=self.lifecycle,
+            sandbox=self.sandbox,
+        )
 
         delete.assert_awaited_once_with(
             7,
@@ -123,17 +127,15 @@ class AttachmentRouterTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_analysis_artifact_remains_downloadable(self) -> None:
         download = AsyncMock(return_value=b"verified artifact")
-        with patch.object(
-            docker_sandbox_manager,
-            "download_file",
-            download,
-        ):
-            response = await api_get_attachment(
-                conversation_id=self.conversation_id,
-                f_path="analyses/run/report.csv",
-                conversation_repo=self.conversation_repo,
-                current_user=self.user,
-            )
+        self.sandbox.download_file = download
+        response = await api_get_attachment(
+            conversation_id=self.conversation_id,
+            f_path="analyses/run/report.csv",
+            conversation_repo=self.conversation_repo,
+            current_user=self.user,
+            lifecycle=self.lifecycle,
+            sandbox=self.sandbox,
+        )
 
         download.assert_awaited_once_with(
             7,

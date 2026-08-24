@@ -6,6 +6,7 @@ from uuid import UUID
 
 from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import HumanMessage
+from langchain_core.tools import BaseTool
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,11 +21,11 @@ from app.query.models import (
     QueryExecutionStatus,
     QueryValidationResult,
 )
+from app.query.providers import build_query_experience_service
 from app.query.repositories.doris import DorisQueryRepository
-from app.query.repositories.experience_index import QueryExperienceESRepo
-from app.query.repositories.experience_postgres import QueryExperiencePGRepo
 from app.query.services.executor import (
     AnalysisQueryService,
+    QueryArtifactStore,
     QueryExecutionTimeoutError,
     QueryOutputLimitExceededError,
     QueryPlanUnavailableError,
@@ -39,10 +40,7 @@ from app.query.services.experience import (
 )
 from app.query.services.guard import QueryGuardService, QueryRejectedError
 from app.query.services.principal import QueryPrincipalService
-from app.sandbox.docker_manager import docker_sandbox_manager
 from app.shared.clients.doris_client_manager import query_doris_client_registry
-from app.shared.clients.embedding_client_manager import embedding_client_manager
-from app.shared.clients.es_client_manager import es_client_manager
 from app.shared.clients.postgres_client_manager import (
     auth_postgres_client_manager,
     meta_postgres_client_manager,
@@ -112,13 +110,7 @@ def _query_purpose(runtime: ToolRuntime, purpose: str | None) -> str:
 
 def _query_experience_service(meta_session: AsyncSession) -> QueryExperienceService:
     """构造查询经验记录与检索服务"""
-    return QueryExperienceService(
-        repo=QueryExperiencePGRepo(session=meta_session),
-        index_repo=QueryExperienceESRepo(client=es_client_manager.get_client()),
-        embedding_client=embedding_client_manager.get_client(),
-        data_source=cfg.query.data_source,
-        database_name=cfg.doris.database,
-    )
+    return build_query_experience_service(meta_session)
 
 
 async def _record_success_safely(
@@ -163,8 +155,8 @@ async def _record_failure_safely(
         logger.exception("记录失败查询历史失败")
 
 
-@tool
-async def execute_sql(
+async def _execute_sql(
+    artifact_store: QueryArtifactStore,
     runtime: ToolRuntime,
     sql: Annotated[str, "需要执行的单条 Doris/MySQL 只读 SQL"],
     purpose: Annotated[str | None, "本次 SQL 要解决的具体数据问题"] = None,
@@ -220,7 +212,7 @@ async def execute_sql(
                         principal.password,
                     )
                 ),
-                docker_sandbox_manager,
+                artifact_store,
                 limits,
                 success_observer=lambda details: _record_success_safely(
                     context,
@@ -290,3 +282,25 @@ async def execute_sql(
             "message": "只读查询执行失败",
         }
     return {"status": "success", **result.model_dump(mode="json")}
+
+
+def create_execute_sql_tool(artifact_store: QueryArtifactStore) -> BaseTool:
+    """使用显式产物存储构建只读 SQL 工具"""
+
+    @tool("execute_sql")
+    async def execute_sql_tool(
+        runtime: ToolRuntime,
+        sql: Annotated[str, "需要执行的单条 Doris/MySQL 只读 SQL"],
+        purpose: Annotated[str | None, "本次 SQL 要解决的具体数据问题"] = None,
+        dialect: Annotated[QueryDialect, "SQL 输入方言"] = "doris",
+    ) -> dict[str, Any]:
+        """安全执行只读 SQL 并写入会话产物"""
+        return await _execute_sql(
+            artifact_store,
+            runtime,
+            sql,
+            purpose,
+            dialect,
+        )
+
+    return execute_sql_tool

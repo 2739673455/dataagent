@@ -5,21 +5,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from app.analytics.agents.manager import agent_manager
 from app.analytics.api.attachment.router import router as attachment_router
 from app.analytics.api.chat.router import router as chat_router
-from app.analytics.services.conversation_lifecycle import (
-    conversation_lifecycle_service,
-)
-from app.analytics.services.conversation_title import conversation_title_service
 from app.identity.api.admin.router import router as admin_router
+from app.identity.api.admin.task_router import router as task_router
 from app.identity.api.auth.router import router as auth_router
 from app.identity.repositories.doris_role import DorisRoleRepository
 from app.identity.repositories.query_identity import DorisQueryIdentityPGRepo
 from app.identity.services.credential import DorisCredentialCipher
 from app.metadata.api.meta.router import router as meta_router
+from app.providers import agent_manager, sandbox_manager
 from app.query.repositories.doris import DorisQueryRepository
-from app.sandbox.docker_manager import docker_sandbox_manager
 from app.shared.clients.doris_client_manager import (
     admin_doris_client_manager,
     query_doris_client_registry,
@@ -36,7 +32,6 @@ from app.shared.errors.base import ProblemDetails
 from app.shared.errors.exc_handlers import register_exception_handlers
 from app.shared.observability import trace
 from app.shared.observability.log import setup_logger
-from app.workflows.user_deletion import user_deletion_service
 
 _PROBLEM_RESPONSE = {
     "model": ProblemDetails,
@@ -93,7 +88,7 @@ async def lifespan(app: FastAPI):
         embedding_client_manager.init()
         es_client_manager.init()
         await langgraph_postgres_manager.init()
-        await docker_sandbox_manager.init()
+        await sandbox_manager.init()
         await agent_manager.init()
         auth_postgres_client_manager.init()
         await auth_postgres_client_manager.init_tables()
@@ -101,17 +96,12 @@ async def lifespan(app: FastAPI):
         await meta_postgres_client_manager.init_tables()
         admin_doris_client_manager.init()
         await verify_doris_query_identities()
-        await conversation_lifecycle_service.start()
-        await user_deletion_service.start()
 
         yield
     finally:
         # FastAPI 应用结束前执行
-        await user_deletion_service.close()
-        await conversation_lifecycle_service.close()
-        await conversation_title_service.close()
         await agent_manager.close()
-        await docker_sandbox_manager.close()
+        await sandbox_manager.close()
         await langgraph_postgres_manager.close()
         await embedding_client_manager.close()
         await es_client_manager.close()
@@ -131,6 +121,7 @@ def register_routes(app: FastAPI) -> None:
         prefix="/api/v1/chat/attachment",
     )
     app.include_router(meta_router, prefix="/api/v1/meta")
+    app.include_router(task_router, prefix="/api/v1/tasks")
 
 
 def register_middlewares(app: FastAPI) -> None:

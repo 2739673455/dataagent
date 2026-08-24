@@ -15,8 +15,6 @@ from app.analytics.api.chat import schemas as chat_schema
 from app.analytics.api.chat.router import (
     api_create_conversation,
     api_stream_chat,
-    conversation_lifecycle_service,
-    conversation_title_service,
 )
 from app.analytics.models import ConversationInfo
 from app.analytics.services.conversation_title import (
@@ -65,53 +63,48 @@ class ConversationTitleTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(normalize_generated_title("题" * 80)), 64)
 
     async def test_model_title_updates_unchanged_initial_title(self) -> None:
-        service = ConversationTitleService()
         repository = MagicMock()
         repository.get = AsyncMock(
             return_value=_conversation("查看华东销售趋势", title_pending=False)
         )
-        repository.update = AsyncMock()
+        repository.complete_title_generation = AsyncMock()
         model = MagicMock()
         model.ainvoke = AsyncMock(return_value=AIMessage(content="华东销售趋势"))
+        service = ConversationTitleService(model)
 
-        with patch(
-            "app.analytics.services.conversation_title.agent_manager.get_active_model",
-            new=AsyncMock(return_value=model),
-        ):
-            await service.generate_and_update(
-                repository,
-                7,
-                _CONVERSATION_ID,
-                "查看华东销售趋势",
-                "查看华东销售趋势",
-            )
+        await service.generate_and_update(
+            repository,
+            7,
+            _CONVERSATION_ID,
+            "查看华东销售趋势",
+            "查看华东销售趋势",
+        )
 
-        repository.update.assert_awaited_once()
-        self.assertEqual(repository.update.await_args.kwargs["title"], "华东销售趋势")
+        repository.complete_title_generation.assert_awaited_once()
+        self.assertEqual(
+            repository.complete_title_generation.await_args.kwargs["title"],
+            "华东销售趋势",
+        )
 
     async def test_model_title_does_not_overwrite_manual_title(self) -> None:
-        service = ConversationTitleService()
         repository = MagicMock()
         repository.get = AsyncMock(
             return_value=_conversation("用户手动标题", title_pending=False)
         )
-        repository.update = AsyncMock()
+        repository.complete_title_generation = AsyncMock()
         model = MagicMock()
         model.ainvoke = AsyncMock(return_value=AIMessage(content="模型标题"))
+        service = ConversationTitleService(model)
 
-        with patch(
-            "app.analytics.services.conversation_title.agent_manager.get_active_model",
-            new=AsyncMock(return_value=model),
-        ):
-            await service.generate_and_update(
-                repository,
-                7,
-                _CONVERSATION_ID,
-                "初始标题",
-                "原始消息",
-            )
+        await service.generate_and_update(
+            repository,
+            7,
+            _CONVERSATION_ID,
+            "初始标题",
+            "原始消息",
+        )
 
-        repository.update.assert_not_awaited()
+        repository.complete_title_generation.assert_not_awaited()
 
     async def test_create_uses_initial_message_title(self) -> None:
         repository = MagicMock()
@@ -138,12 +131,12 @@ class ConversationTitleTest(unittest.IsolatedAsyncioTestCase):
         claimed = pending.model_copy(
             update={
                 "title": "分析华北区域销售额",
-                "title_pending": False,
+                "title_source": "分析华北区域销售额",
                 "is_draft": False,
             }
         )
         repository.get = AsyncMock(return_value=pending)
-        repository.update = AsyncMock(return_value=claimed)
+        repository.claim_title_generation = AsyncMock(return_value=claimed)
         request = chat_schema.ChatStreamRequest(
             conversation_id=_CONVERSATION_ID,
             message=chat_schema.UserMessageRequest(
@@ -152,31 +145,26 @@ class ConversationTitleTest(unittest.IsolatedAsyncioTestCase):
         )
         current_user = MagicMock(id=7)
 
-        with (
-            patch.object(
-                conversation_title_service,
-                "schedule",
-            ) as schedule,
-            patch.object(
-                conversation_lifecycle_service,
-                "lock",
-                side_effect=_unlocked,
-            ),
-        ):
+        lifecycle = MagicMock()
+        lifecycle.lock.side_effect = _unlocked
+        with patch(
+            "app.analytics.api.chat.router.enqueue_conversation_title",
+        ) as enqueue_title:
             await api_stream_chat(
                 request,
                 repository,
                 current_user,
+                lifecycle,
+                MagicMock(),
+                MagicMock(),
             )
 
-        repository.update.assert_awaited_once_with(
+        repository.claim_title_generation.assert_awaited_once_with(
             pending,
             title="分析华北区域销售额",
-            title_pending=False,
-            is_draft=False,
+            source="分析华北区域销售额",
         )
-        schedule.assert_called_once_with(
-            repository,
+        enqueue_title.assert_called_once_with(
             7,
             _CONVERSATION_ID,
             "分析华北区域销售额",

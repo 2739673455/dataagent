@@ -15,7 +15,6 @@ from fastapi import (
     status,
 )
 from pydantic import ValidationError as PydanticValidationError
-from sqlalchemy.ext.asyncio import AsyncSession
 from yaml import YAMLError
 
 from app.identity.api.auth.dependencies import (
@@ -28,58 +27,35 @@ from app.metadata.models import (
     ColumnReference,
     MetricInfo,
 )
-from app.metadata.repositories.column_index import ColumnESRepo
-from app.metadata.repositories.metric_index import MetricESRepo
+from app.metadata.providers import (
+    build_meta_import_service,
+    build_meta_index_service,
+)
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
-from app.metadata.repositories.value_index import ValueESRepo
 from app.metadata.services.catalog import MetaCatalogService
 from app.metadata.services.import_service import (
     ImportMode,
     MetaImportService,
     ResourceChanges,
 )
-from app.metadata.services.index import MetaIndexService
-from app.query.repositories.experience_index import QueryExperienceESRepo
-from app.query.repositories.experience_postgres import QueryExperiencePGRepo
-from app.query.services.experience import QueryExperienceService
+from app.metadata.task_scheduler import CeleryMetadataSemanticIndexScheduler
+from app.metadata.tasks import (
+    enqueue_column_indexes,
+    enqueue_column_values,
+    enqueue_import,
+    enqueue_metric_indexes,
+    enqueue_table_indexes,
+    enqueue_table_values,
+)
+from app.query.providers import build_query_experience_service
 from app.shared.clients.doris_client_manager import admin_doris_client_manager
-from app.shared.clients.embedding_client_manager import embedding_client_manager
-from app.shared.clients.es_client_manager import es_client_manager
 from app.shared.clients.postgres_client_manager import meta_postgres_client_manager
-from app.shared.config.app_config import cfg
 from app.shared.config.meta_config import MetaConfig, MetadataName
+from app.shared.tasks.schemas import TaskAcceptedResponse
 
 router = APIRouter(tags=["meta"])
 MetadataPath = Annotated[MetadataName, Path()]
-
-
-def _build_meta_index_service(
-    meta_repo: MetaPGRepo,
-    source_repo: SourceDorisRepo,
-) -> MetaIndexService:
-    """创建元数据索引同步服务"""
-    return MetaIndexService(
-        meta_repo=meta_repo,
-        source_repo=source_repo,
-        column_repo=ColumnESRepo(client=es_client_manager.get_client()),
-        metric_repo=MetricESRepo(client=es_client_manager.get_client()),
-        embedding_client=embedding_client_manager.get_client(),
-        value_repo=ValueESRepo(client=es_client_manager.get_client()),
-    )
-
-
-def _build_query_experience_service(
-    meta_session: AsyncSession,
-) -> QueryExperienceService:
-    """创建查询经验服务"""
-    return QueryExperienceService(
-        repo=QueryExperiencePGRepo(session=meta_session),
-        index_repo=QueryExperienceESRepo(client=es_client_manager.get_client()),
-        embedding_client=embedding_client_manager.get_client(),
-        data_source=cfg.query.data_source,
-        database_name=cfg.doris.database,
-    )
 
 
 async def get_meta_catalog_service(
@@ -95,26 +71,12 @@ async def get_meta_catalog_service(
         yield MetaCatalogService(
             meta_repo=meta_repo,
             source_repo=source_repo,
-            meta_index_service=_build_meta_index_service(
+            meta_index_service=build_meta_index_service(
                 meta_repo=meta_repo,
                 source_repo=source_repo,
             ),
-            asset_invalidator=_build_query_experience_service(
-                meta_session=meta_session,
-            ),
-        )
-
-
-async def get_meta_index_service() -> AsyncGenerator[MetaIndexService]:
-    """创建请求级元数据索引同步服务"""
-    async with (
-        meta_postgres_client_manager.session() as meta_session,
-        admin_doris_client_manager.connection() as source_connection,
-    ):
-        meta_repo = MetaPGRepo(session=meta_session)
-        yield _build_meta_index_service(
-            meta_repo=meta_repo,
-            source_repo=SourceDorisRepo(connection=source_connection),
+            asset_invalidator=build_query_experience_service(meta_session),
+            semantic_index_scheduler=CeleryMetadataSemanticIndexScheduler(),
         )
 
 
@@ -126,26 +88,12 @@ async def get_meta_import_service() -> AsyncGenerator[MetaImportService]:
     ):
         meta_repo = MetaPGRepo(session=meta_session)
         source_repo = SourceDorisRepo(connection=source_connection)
-        yield MetaImportService(
-            meta_repo=meta_repo,
-            source_repo=source_repo,
-            meta_index_service=_build_meta_index_service(
-                meta_repo=meta_repo,
-                source_repo=source_repo,
-            ),
-            asset_invalidator=_build_query_experience_service(
-                meta_session=meta_session,
-            ),
-        )
+        yield build_meta_import_service(meta_repo, source_repo)
 
 
 MetaCatalogServiceDep = Annotated[
     MetaCatalogService,
     Depends(get_meta_catalog_service),
-]
-MetaIndexServiceDep = Annotated[
-    MetaIndexService,
-    Depends(get_meta_index_service),
 ]
 MetaImportServiceDep = Annotated[
     MetaImportService,
@@ -204,21 +152,24 @@ async def _load_yaml(file: UploadFile) -> MetaConfig:
         ) from exc
 
 
-@router.post("/import", response_model=schemas.MetaImportResponse)
+@router.post(
+    "/import",
+    response_model=schemas.MetaImportResponse | TaskAcceptedResponse,
+)
 async def import_metadata(
     file: Annotated[UploadFile, File(description="元数据 YAML 文件")],
     service: MetaImportServiceDep,
     _: AdminUserDep,
     mode: Annotated[ImportMode, Query(description="导入模式")] = ImportMode.MERGE,
     dry_run: Annotated[bool, Query(description="仅预览变更")] = False,
-) -> schemas.MetaImportResponse:
+) -> schemas.MetaImportResponse | TaskAcceptedResponse:
     """从 YAML 文件批量导入元数据"""
     meta_config = await _load_yaml(file=file)
-    result = await service.import_metadata(
-        meta_config=meta_config,
-        mode=mode,
-        dry_run=dry_run,
-    )
+    if not dry_run:
+        submission = enqueue_import(meta_config, mode)
+        return TaskAcceptedResponse(task_id=submission.task_id)
+
+    result = await service.import_metadata(meta_config, mode, True)
 
     return schemas.MetaImportResponse(
         mode=result.mode,
@@ -309,6 +260,7 @@ async def upsert_table_info(
         t_name=t_name,
         role=body.role,
         description=body.description,
+        value_index_sync=body.value_index_sync,
     )
 
 
@@ -391,104 +343,55 @@ async def delete_metrics(
     await service.delete_metrics(metric_names=body.metrics)
 
 
-@router.post("/tables/sync", response_model=schemas.BatchIndexSyncResponse)
+@router.post("/tables/sync", response_model=TaskAcceptedResponse)
 async def sync_table_indexes(
     body: schemas.TableIndexSyncRequest,
-    service: MetaIndexServiceDep,
     _: AdminUserDep,
-) -> schemas.BatchIndexSyncResponse:
+) -> TaskAcceptedResponse:
     """同步多个表的全部字段语义索引"""
-    results = await service.sync_table_indexes(table_names=body.tables)
-    return schemas.BatchIndexSyncResponse(
-        results=[
-            schemas.ColumnIndexSyncResponse(
-                t_name=t_name,
-                c_name=c_name,
-                indexed_count=indexed_count,
-            )
-            for (t_name, c_name), indexed_count in results.items()
-        ]
-    )
+    submission = enqueue_table_indexes(body.tables)
+    return TaskAcceptedResponse(task_id=submission.task_id)
 
 
-@router.post("/tables/sync-values", response_model=schemas.BatchIndexSyncResponse)
+@router.post("/tables/sync-values", response_model=TaskAcceptedResponse)
 async def sync_table_values(
     body: schemas.TableIndexSyncRequest,
-    service: MetaIndexServiceDep,
     _: AdminUserDep,
-) -> schemas.BatchIndexSyncResponse:
+) -> TaskAcceptedResponse:
     """同步多个表中已开启字段的取值索引"""
-    results = await service.sync_table_values(table_names=body.tables)
-    return schemas.BatchIndexSyncResponse(
-        results=[
-            schemas.ColumnIndexSyncResponse(
-                t_name=t_name,
-                c_name=c_name,
-                indexed_count=indexed_count,
-            )
-            for (t_name, c_name), indexed_count in results.items()
-        ]
-    )
+    submission = enqueue_table_values(body.tables)
+    return TaskAcceptedResponse(task_id=submission.task_id)
 
 
-@router.post("/columns/sync", response_model=schemas.BatchIndexSyncResponse)
+@router.post("/columns/sync", response_model=TaskAcceptedResponse)
 async def sync_column_indexes(
     body: schemas.ColumnIndexSyncRequest,
-    service: MetaIndexServiceDep,
     _: AdminUserDep,
-) -> schemas.BatchIndexSyncResponse:
+) -> TaskAcceptedResponse:
     """同步多个字段的语义索引"""
-    results = await service.sync_column_indexes(
-        column_keys=[(column.t_name, column.c_name) for column in body.columns]
+    submission = enqueue_column_indexes(
+        [(column.t_name, column.c_name) for column in body.columns]
     )
-    return schemas.BatchIndexSyncResponse(
-        results=[
-            schemas.ColumnIndexSyncResponse(
-                t_name=t_name,
-                c_name=c_name,
-                indexed_count=indexed_count,
-            )
-            for (t_name, c_name), indexed_count in results.items()
-        ]
-    )
+    return TaskAcceptedResponse(task_id=submission.task_id)
 
 
-@router.post("/columns/sync-values", response_model=schemas.BatchIndexSyncResponse)
+@router.post("/columns/sync-values", response_model=TaskAcceptedResponse)
 async def sync_column_values(
     body: schemas.ColumnIndexSyncRequest,
-    service: MetaIndexServiceDep,
     _: AdminUserDep,
-) -> schemas.BatchIndexSyncResponse:
+) -> TaskAcceptedResponse:
     """同步多个已开启字段的取值索引"""
-    results = await service.sync_column_values(
-        column_keys=[(column.t_name, column.c_name) for column in body.columns]
+    submission = enqueue_column_values(
+        [(column.t_name, column.c_name) for column in body.columns]
     )
-    return schemas.BatchIndexSyncResponse(
-        results=[
-            schemas.ColumnIndexSyncResponse(
-                t_name=t_name,
-                c_name=c_name,
-                indexed_count=indexed_count,
-            )
-            for (t_name, c_name), indexed_count in results.items()
-        ]
-    )
+    return TaskAcceptedResponse(task_id=submission.task_id)
 
 
-@router.post("/metrics/sync", response_model=schemas.BatchMetricIndexSyncResponse)
+@router.post("/metrics/sync", response_model=TaskAcceptedResponse)
 async def sync_metric_indexes(
     body: schemas.MetricIndexSyncRequest,
-    service: MetaIndexServiceDep,
     _: AdminUserDep,
-) -> schemas.BatchMetricIndexSyncResponse:
+) -> TaskAcceptedResponse:
     """同步多个指标的语义索引"""
-    results = await service.sync_metric_indexes(metric_names=body.metrics)
-    return schemas.BatchMetricIndexSyncResponse(
-        results=[
-            schemas.MetricIndexSyncResponse(
-                metric_name=metric_name,
-                indexed_count=indexed_count,
-            )
-            for metric_name, indexed_count in results.items()
-        ]
-    )
+    submission = enqueue_metric_indexes(body.metrics)
+    return TaskAcceptedResponse(task_id=submission.task_id)
