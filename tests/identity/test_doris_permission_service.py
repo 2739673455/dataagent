@@ -1,7 +1,7 @@
 """Doris 角色权限管理服务测试"""
 
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 from sqlalchemy.exc import OperationalError
 
@@ -9,8 +9,10 @@ from app.identity import errors as auth_error
 from app.identity.models import DorisQueryIdentity, DorisRoleAssetGrant
 from app.identity.repositories.auth import AuthPGRepo
 from app.identity.repositories.doris_role import (
+    DorisQueryUserAlreadyExistsError,
     DorisRoleRepository,
     DorisWorkloadGroupNotFoundError,
+    row_policy_from_row,
 )
 from app.identity.repositories.query_identity import DorisQueryIdentityPGRepo
 from app.identity.services.doris_permission import DorisPermissionService
@@ -23,7 +25,6 @@ def query_identity() -> DorisQueryIdentity:
         role_name="sales",
         description="销售角色",
         is_default=True,
-        is_active=True,
         query_user="sales_query",
         encrypted_password="encrypted",
         workload_group="sales",
@@ -40,6 +41,8 @@ class DorisPermissionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.auth_repo.find_asset_grant = AsyncMock(return_value=None)
         self.auth_repo.add_asset_grant = AsyncMock(side_effect=lambda grant: grant)
         self.auth_repo.delete_asset_grant = AsyncMock()
+        self.auth_repo.list_role_asset_grants = AsyncMock(return_value=[])
+        self.auth_repo.delete_role_asset_grants = AsyncMock()
         self.identity_repo = MagicMock(spec=DorisQueryIdentityPGRepo)
         self.identity_repo.session = self.session
         self.identity_repo.get = AsyncMock(return_value=query_identity())
@@ -72,6 +75,29 @@ class DorisPermissionServiceTest(unittest.IsolatedAsyncioTestCase):
                 catalog="internal",
                 database="ecommerce",
             )
+
+    def test_show_row_policy_result_is_converted_to_stable_model(self) -> None:
+        policy = row_policy_from_row(
+            {
+                "PolicyName": "region_east_filter",
+                "CatalogName": "internal",
+                "DbName": "ecommerce",
+                "TableName": "orders",
+                "Type": "ROW",
+                "FilterType": "PERMISSIVE",
+                "WherePredicate": "region = 'east'",
+                "User": None,
+                "Role": "sales",
+                "OriginStmt": "CREATE ROW POLICY ...",
+            }
+        )
+
+        self.assertEqual(policy.policy_name, "region_east_filter")
+        self.assertEqual(policy.catalog_name, "internal")
+        self.assertEqual(policy.database_name, "ecommerce")
+        self.assertEqual(policy.table_name, "orders")
+        self.assertEqual(policy.policy_type, "PERMISSIVE")
+        self.assertEqual(policy.predicate, "region = 'east'")
 
     async def test_column_grant_updates_doris_and_each_column_projection(self) -> None:
         self.identity_repo.get = AsyncMock(
@@ -145,6 +171,91 @@ class DorisPermissionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.doris_repo.revoke_select.assert_awaited_once()
         self.auth_repo.delete_asset_grant.assert_awaited_once_with(persisted)
+
+    async def test_revoke_all_groups_database_table_and_column_grants(self) -> None:
+        self.identity_repo.get = AsyncMock(
+            side_effect=self._load_identity_in_transaction
+        )
+        grants = [
+            DorisRoleAssetGrant(
+                role_name="sales",
+                scope="database",
+                data_source="doris",
+                database_name="ecommerce",
+                table_name=None,
+                column_name=None,
+                resource_key="database-key",
+            ),
+            DorisRoleAssetGrant(
+                role_name="sales",
+                scope="table",
+                data_source="doris",
+                database_name="ecommerce",
+                table_name="customers",
+                column_name=None,
+                resource_key="table-key",
+            ),
+            DorisRoleAssetGrant(
+                role_name="sales",
+                scope="column",
+                data_source="doris",
+                database_name="ecommerce",
+                table_name="orders",
+                column_name="region",
+                resource_key="region-key",
+            ),
+            DorisRoleAssetGrant(
+                role_name="sales",
+                scope="column",
+                data_source="doris",
+                database_name="ecommerce",
+                table_name="orders",
+                column_name="amount",
+                resource_key="amount-key",
+            ),
+        ]
+        self.auth_repo.list_role_asset_grants.return_value = grants
+
+        revoked_count = await self.service.revoke_all_select("sales")
+
+        self.assertEqual(revoked_count, 4)
+        self.doris_repo.revoke_select.assert_has_awaits(
+            [
+                call(
+                    role_name="sales",
+                    catalog="internal",
+                    database="ecommerce",
+                    table=None,
+                    columns=(),
+                ),
+                call(
+                    role_name="sales",
+                    catalog="internal",
+                    database="ecommerce",
+                    table="customers",
+                    columns=(),
+                ),
+                call(
+                    role_name="sales",
+                    catalog="internal",
+                    database="ecommerce",
+                    table="orders",
+                    columns=("amount", "region"),
+                ),
+            ]
+        )
+        self.auth_repo.delete_role_asset_grants.assert_awaited_once_with("sales")
+
+    async def test_revoke_all_with_no_grants_is_idempotent(self) -> None:
+        self.identity_repo.get = AsyncMock(
+            side_effect=self._load_identity_in_transaction
+        )
+
+        revoked_count = await self.service.revoke_all_select("sales")
+
+        self.assertEqual(revoked_count, 0)
+        self.doris_repo.revoke_select.assert_not_awaited()
+        self.auth_repo.delete_role_asset_grants.assert_not_awaited()
 
     async def _load_identity_in_transaction(
         self,
@@ -263,29 +374,6 @@ class DorisRoleRepositoryIdentityTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_existing_role_uses_role_literal_for_default_role(self) -> None:
-        repo = DorisRoleRepository(MagicMock())
-        repo._execute = AsyncMock()  # pyright: ignore[reportPrivateUsage]
-
-        await repo.create_query_user_for_existing_role(
-            role_name="sales",
-            query_user="sales_query",
-            password="generated-password",
-            workload_group="normal",
-        )
-
-        statements = [call.args[0] for call in repo._execute.await_args_list]  # pyright: ignore[reportPrivateUsage]
-        self.assertEqual(
-            statements,
-            [
-                "GRANT USAGE_PRIV ON WORKLOAD GROUP `normal` TO ROLE `sales`",
-                (
-                    "CREATE USER 'sales_query' IDENTIFIED BY 'generated-password' "
-                    "DEFAULT ROLE 'sales'"
-                ),
-            ],
-        )
-
     async def test_existing_query_user_is_not_deleted_when_creation_fails(
         self,
     ) -> None:
@@ -307,6 +395,27 @@ class DorisRoleRepositoryIdentityTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(
             any(statement.startswith("DROP USER") for statement in statements)
         )
+
+    async def test_existing_query_user_conflict_is_classified(self) -> None:
+        repo = DorisRoleRepository(MagicMock())
+        conflict = OperationalError(
+            "CREATE USER",
+            {},
+            RuntimeError("User 'sales_query'@'%' already exist"),
+        )
+        repo._execute = AsyncMock(  # pyright: ignore[reportPrivateUsage]
+            side_effect=[None, None, conflict, None]
+        )
+
+        with self.assertRaises(DorisQueryUserAlreadyExistsError) as context:
+            await repo.create_role_identity(
+                role_name="sales",
+                query_user="sales_query",
+                password="generated-password",
+                workload_group="normal",
+            )
+
+        self.assertEqual(context.exception.query_user, "sales_query")
 
     async def test_missing_workload_group_is_classified_after_compensation(
         self,

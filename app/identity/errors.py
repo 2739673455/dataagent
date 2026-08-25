@@ -146,14 +146,6 @@ class RoleInUseError(ProblemError):
     status = HTTPStatus.CONFLICT
 
 
-class DefaultRoleRequiredError(ProblemError):
-    """表示操作会导致缺省 Doris 角色缺失"""
-
-    type = "default-role-required"
-    title = "必须保留一个启用的缺省 Doris 角色"
-    status = HTTPStatus.CONFLICT
-
-
 class AssetGrantNotFoundError(ProblemError):
     """表示目标数据资产授权不存在"""
 

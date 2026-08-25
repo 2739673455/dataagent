@@ -1,13 +1,13 @@
-import { Shield } from "lucide-react";
+import { Shield, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { adminApi } from "@/api/admin";
+import { adminApi, type RowPolicyResponse } from "@/api/admin";
 import { Button } from "@/components/ui/button";
 
 interface RowPolicyPanelProps {
   selectedRole: string;
-  policies: Record<string, unknown>[];
+  policies: RowPolicyResponse[];
   busy: boolean;
-  onMutate: (operation: () => Promise<void>, message: string) => Promise<void>;
+  onMutate: (operation: () => Promise<void>, message: string) => Promise<boolean>;
 }
 
 export function RowPolicyPanel({ selectedRole, policies, busy, onMutate }: RowPolicyPanelProps) {
@@ -15,6 +15,26 @@ export function RowPolicyPanel({ selectedRole, policies, busy, onMutate }: RowPo
   const [policyTable, setPolicyTable] = useState("");
   const [predicate, setPredicate] = useState("");
   const [policyType, setPolicyType] = useState<"RESTRICTIVE" | "PERMISSIVE">("RESTRICTIVE");
+
+  const createPolicy = async () => {
+    const created = await onMutate(
+      () =>
+        adminApi.createRowPolicy(selectedRole, {
+          policy_name: policyName,
+          table_name: policyTable,
+          policy_type: policyType,
+          predicate,
+        }),
+      "行策略已创建"
+    );
+    if (!created) {
+      return;
+    }
+    setPolicyName("");
+    setPolicyTable("");
+    setPredicate("");
+    setPolicyType("RESTRICTIVE");
+  };
 
   return (
     <div className="rounded border border-[#d4d4ce] bg-[#ffffff] p-5 shadow-xs">
@@ -67,7 +87,7 @@ export function RowPolicyPanel({ selectedRole, policies, busy, onMutate }: RowPo
             className="h-9 w-full rounded border border-[#d4d4ce] bg-[#fafaf8] px-3 text-sm text-[#1e2024] focus:border-[#1e2024] focus:outline-none"
           >
             <option value="RESTRICTIVE">RESTRICTIVE (限制性 AND 组合)</option>
-            <option value="PERMISSIVE">PERMISSIVE (兼容性 OR 组合)</option>
+            <option value="PERMISSIVE">PERMISSIVE (许可性 OR 组合)</option>
           </select>
         </div>
 
@@ -84,55 +104,70 @@ export function RowPolicyPanel({ selectedRole, policies, busy, onMutate }: RowPo
           />
         </div>
 
-        <div className="flex gap-2.5">
-          <Button
-            disabled={busy || !selectedRole || !policyName || !policyTable || !predicate}
-            onClick={() =>
-              void onMutate(
-                () =>
-                  adminApi.createRowPolicy(selectedRole, {
-                    policy_name: policyName,
-                    table_name: policyTable,
-                    policy_type: policyType,
-                    predicate,
-                  }),
-                "行策略已创建"
-              )
-            }
-            className="flex-1 text-sm"
-          >
-            创建行策略
-          </Button>
-          <Button
-            variant="destructive"
-            disabled={busy || !selectedRole || !policyName || !policyTable}
-            onClick={() =>
-              void onMutate(
-                () => adminApi.dropRowPolicy(selectedRole, policyName, policyTable),
-                "行策略已删除"
-              )
-            }
-            className="flex-1 text-sm"
-          >
-            删除行策略
-          </Button>
-        </div>
+        <Button
+          disabled={busy || !selectedRole || !policyName || !policyTable || !predicate}
+          onClick={() => void createPolicy()}
+          className="w-full text-sm"
+        >
+          创建行策略
+        </Button>
 
-        <div className="mt-4">
-          <p className="mb-1 text-xs font-semibold text-[#71717a]">当前角色生效的行策略：</p>
-          <div className="max-h-40 space-y-1.5 overflow-auto rounded border border-[#d4d4ce] bg-[#fafaf8] p-2">
-            {policies.map((policy) => (
-              <pre
-                key={`${selectedRole}-${JSON.stringify(policy)}`}
-                className="overflow-auto rounded bg-[#ffffff] border border-[#e5e5df] p-2 text-xs text-[#27272a]"
-              >
-                {JSON.stringify(policy, null, 2)}
-              </pre>
-            ))}
-            {!policies.length && (
-              <p className="py-2 text-center text-xs text-[#71717a]">暂无定义的行级安全策略</p>
-            )}
+        <div className="rounded border border-[#d4d4ce] bg-[#fafaf8] p-3">
+          <div className="flex items-center justify-between text-xs font-semibold text-[#18181b]">
+            <span>当前行策略</span>
+            <span className="font-normal text-[#71717a]">{policies.length} 条策略</span>
           </div>
+          {policies.length ? (
+            <div className="mt-2 max-h-64 space-y-1.5 overflow-auto">
+              {policies.map((policy) => (
+                <div
+                  key={`${selectedRole}-${policy.catalog_name}-${policy.database_name}-${policy.table_name}-${policy.policy_name}`}
+                  className="flex items-start justify-between gap-3 rounded border border-[#e5e5df] bg-[#ffffff] p-2.5 text-xs text-[#27272a]"
+                >
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-semibold">{policy.policy_name}</span>
+                      <span className="rounded bg-[#ecece7] px-1.5 py-0.5 text-[11px] text-[#52525b]">
+                        {policy.policy_type}
+                      </span>
+                    </div>
+                    <p
+                      className="truncate text-[#71717a]"
+                      title={`${policy.catalog_name}.${policy.database_name}.${policy.table_name}`}
+                    >
+                      {policy.catalog_name}.{policy.database_name}.{policy.table_name}
+                    </p>
+                    <code className="block whitespace-pre-wrap break-words rounded bg-[#f4f4f0] px-2 py-1 text-[#3f3f46]">
+                      {policy.predicate}
+                    </code>
+                  </div>
+                  <Button
+                    variant="destructive"
+                    size="icon"
+                    disabled={busy || !selectedRole}
+                    onClick={() =>
+                      void onMutate(
+                        () =>
+                          adminApi.dropRowPolicy(
+                            selectedRole,
+                            policy.policy_name,
+                            policy.table_name
+                          ),
+                        "行策略已删除"
+                      )
+                    }
+                    className="h-7 w-7 shrink-0"
+                    title={`删除行策略 ${policy.policy_name}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span className="sr-only">删除行策略 {policy.policy_name}</span>
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-[#71717a]">当前角色没有行策略</p>
+          )}
         </div>
       </div>
     </div>

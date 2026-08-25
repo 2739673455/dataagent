@@ -32,7 +32,6 @@ def query_identity(
         role_name=role,
         description="测试角色",
         is_default=default,
-        is_active=True,
         query_user=f"{role}_query",
         encrypted_password="encrypted",
         workload_group="normal",
@@ -200,13 +199,11 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.repo.set_user_admin.assert_not_awaited()
 
-    async def test_first_dynamic_role_becomes_default_and_password_is_encrypted(
+    async def test_created_role_stays_non_default_and_password_is_encrypted(
         self,
     ) -> None:
         self.identity_repo.get.return_value = None
         self.identity_repo.get_by_query_user = AsyncMock(return_value=None)
-        self.identity_repo.get_default = AsyncMock(return_value=None)
-        self.identity_repo.clear_default = AsyncMock()
         self.identity_repo.add = AsyncMock(side_effect=lambda identity: identity)
         self.doris_repo.quote_identifier.return_value = "quoted"
         self.doris_repo.create_role_identity = AsyncMock()
@@ -218,10 +215,9 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
             description="Sales analysts",
             query_user="sales_query",
             workload_group="normal",
-            is_default=False,
         )
 
-        self.assertTrue(identity.is_default)
+        self.assertFalse(identity.is_default)
         self.assertEqual(identity.encrypted_password, "encrypted-password")
         self.doris_repo.create_role_identity.assert_awaited_once_with(
             role_name="sales",
@@ -242,7 +238,6 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
                 description="Sales analysts",
                 query_user="sales_query",
                 workload_group="missing",
-                is_default=False,
             )
 
         self.assertEqual(
@@ -254,9 +249,6 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_workload_group_deleted_during_creation_is_mapped(self) -> None:
         self.identity_repo.get.return_value = None
         self.identity_repo.get_by_query_user = AsyncMock(return_value=None)
-        self.identity_repo.get_default = AsyncMock(
-            return_value=query_identity(default=True)
-        )
         self.doris_repo.create_role_identity = AsyncMock(
             side_effect=DorisWorkloadGroupNotFoundError("batch")
         )
@@ -268,7 +260,6 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
                 description="Sales analysts",
                 query_user="sales_query",
                 workload_group="batch",
-                is_default=False,
             )
 
         self.assertEqual(
@@ -276,69 +267,35 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
             "Doris 工作组 batch 不存在，请选择已创建的工作组",
         )
 
-    async def test_default_or_assigned_role_cannot_be_deleted(self) -> None:
+    async def test_default_role_can_be_deleted_when_unassigned(self) -> None:
         self.identity_repo.get.return_value = query_identity(default=True)
+        self.identity_repo.count_assigned_users = AsyncMock(return_value=0)
+        self.identity_repo.delete = AsyncMock()
+        self.repo.delete_role_asset_grants = AsyncMock()
+        self.doris_repo.drop_role_identity = AsyncMock()
+        self.registry.invalidate = AsyncMock()
 
-        with self.assertRaises(auth_error.DefaultRoleRequiredError):
-            await self.service().delete_role("sales")
+        await self.service().delete_role("sales")
 
-        self.identity_repo.get.return_value = query_identity(default=False)
+        self.doris_repo.drop_role_identity.assert_awaited_once_with(
+            role_name="sales",
+            query_user="sales_query",
+        )
+        self.identity_repo.delete.assert_awaited_once()
+
+    async def test_assigned_role_cannot_be_deleted(self) -> None:
+        self.identity_repo.get.return_value = query_identity(default=True)
         self.identity_repo.count_assigned_users = AsyncMock(return_value=1)
+
         with self.assertRaises(auth_error.RoleInUseError):
             await self.service().delete_role("sales")
 
-    async def test_discover_roles_distinguishes_attached_roles(self) -> None:
-        self.doris_repo.list_roles = AsyncMock(
-            return_value=[
-                {"Role": "sales"},
-                {"Role": "finance"},
-                {"Role": "admin"},
-            ]
-        )
-        self.identity_repo.list_all = AsyncMock(
-            return_value=[query_identity(role="sales")]
-        )
+    async def test_default_role_can_be_cleared(self) -> None:
+        self.identity_repo.clear_default = AsyncMock()
 
-        discovered = await self.service().discover_roles()
+        await self.service().clear_default_role()
 
-        self.assertEqual(len(discovered), 2)
-        sales = next(d for d in discovered if d.name == "sales")
-        finance = next(d for d in discovered if d.name == "finance")
-        self.assertTrue(sales.is_attached)
-        self.assertFalse(finance.is_attached)
-
-    async def test_attach_role_creates_query_user_and_persists_identity(self) -> None:
-        self.identity_repo.get = AsyncMock(return_value=None)
-        self.identity_repo.get_by_query_user = AsyncMock(return_value=None)
-        self.identity_repo.get_default = AsyncMock(
-            return_value=query_identity(default=True)
-        )
-        self.identity_repo.add = AsyncMock(side_effect=lambda identity: identity)
-        self.doris_repo.quote_identifier.return_value = "quoted"
-        self.doris_repo.verify_configured_roles = AsyncMock()
-        self.doris_repo.create_query_user_for_existing_role = AsyncMock()
-        self.cipher.generate_password.return_value = "gen-pwd"
-        self.cipher.encrypt.return_value = "enc-pwd"
-
-        identity = await self.service().attach_role(
-            role_name="finance",
-            description="Finance Role",
-            workload_group="normal",
-            query_user="finance_custom_query",
-            is_default=False,
-        )
-
-        self.assertEqual(identity.role_name, "finance")
-        self.assertEqual(identity.query_user, "finance_custom_query")
-        self.assertEqual(identity.encrypted_password, "enc-pwd")
-        self.doris_repo.verify_configured_roles.assert_awaited_once_with(("finance",))
-        self.doris_repo.workload_group_exists.assert_awaited_once_with("normal")
-        self.doris_repo.create_query_user_for_existing_role.assert_awaited_once_with(
-            role_name="finance",
-            query_user="finance_custom_query",
-            password="gen-pwd",
-            workload_group="normal",
-        )
+        self.identity_repo.clear_default.assert_awaited_once_with()
 
     async def test_create_user_persists_user_with_assigned_role(self) -> None:
         self.repo.get_user_by_username = AsyncMock(return_value=None)
@@ -361,6 +318,20 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(user.doris_role_name, "sales")
         self.assertFalse(user.is_admin)
         self.repo.add_user.assert_awaited_once()
+
+    async def test_create_user_stays_unassigned_without_default_role(self) -> None:
+        self.repo.get_user_by_username = AsyncMock(return_value=None)
+        self.repo.get_user_by_email = AsyncMock(return_value=None)
+        self.repo.add_user = AsyncMock(side_effect=lambda user: user)
+        self.identity_repo.get_default = AsyncMock(return_value=None)
+
+        user = await self.service().create_user(
+            username="new_operator",
+            email="operator@example.com",
+            password="password123",
+        )
+
+        self.assertIsNone(user.doris_role_name)
 
     async def _load_identity_in_transaction(
         self,

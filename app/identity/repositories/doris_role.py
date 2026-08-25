@@ -2,12 +2,14 @@
 
 import re
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection
+
+from app.identity.models import DorisRowPolicy
 
 _IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_$.-]{0,127}$")
 
@@ -19,6 +21,15 @@ class DorisWorkloadGroupNotFoundError(RuntimeError):
         """初始化缺失的 Doris 工作组名称"""
         self.workload_group = workload_group
         super().__init__(f"Doris 工作组不存在: {workload_group}")
+
+
+class DorisQueryUserAlreadyExistsError(RuntimeError):
+    """Doris 查询用户已存在"""
+
+    def __init__(self, query_user: str) -> None:
+        """记录发生冲突的 Doris 查询用户名"""
+        self.query_user = query_user
+        super().__init__(f"Doris 查询用户已存在: {query_user}")
 
 
 class DorisAdminConnectionProvider(Protocol):
@@ -115,7 +126,7 @@ class DorisRoleRepository:
         """创建 Doris 角色、查询用户及 Workload Group 授权"""
         role = self.quote_role(role_name)
         role_literal = self.quote_role_literal(role_name)
-        user = self.quote_user(query_user)
+        self.quote_user(query_user)
         if not password or not password.isascii() or "'" in password:
             raise ValueError("生成的 Doris 密码格式无效")
         role_created = False
@@ -126,9 +137,10 @@ class DorisRoleRepository:
                 role=role,
                 workload_group=workload_group,
             )
-            await self._execute(
-                f"CREATE USER {user} IDENTIFIED BY '{password}' "
-                f"DEFAULT ROLE {role_literal}"
+            await self._create_query_user(
+                query_user=query_user,
+                password=password,
+                role_literal=role_literal,
             )
         except BaseException:
             if role_created:
@@ -137,44 +149,6 @@ class DorisRoleRepository:
                 except Exception:  # noqa: BLE001
                     logger.exception(f"补偿删除 Doris 角色失败: {role_name}")
             raise
-
-    async def create_query_user_for_existing_role(
-        self,
-        *,
-        role_name: str,
-        query_user: str,
-        password: str,
-        workload_group: str,
-    ) -> None:
-        """为已存在的 Doris 角色创建代理查询用户并授予 Workload Group 权限"""
-        role = self.quote_role(role_name)
-        role_literal = self.quote_role_literal(role_name)
-        user = self.quote_user(query_user)
-        if not password or not password.isascii() or "'" in password:
-            raise ValueError("生成的 Doris 密码格式无效")
-        user_created = False
-        try:
-            await self._grant_workload_group_usage(
-                role=role,
-                workload_group=workload_group,
-            )
-            await self._execute(
-                f"CREATE USER {user} IDENTIFIED BY '{password}' "
-                f"DEFAULT ROLE {role_literal}"
-            )
-            user_created = True
-        except BaseException:
-            if user_created:
-                try:
-                    await self._execute(f"DROP USER IF EXISTS {user}")
-                except Exception:  # noqa: BLE001
-                    logger.exception(f"补偿删除 Doris 查询用户失败: {query_user}")
-            raise
-
-    async def drop_query_user(self, query_user: str) -> None:
-        """删除 Doris 查询用户"""
-        user = self.quote_user(query_user)
-        await self._execute(f"DROP USER IF EXISTS {user}")
 
     async def drop_role_identity(
         self,
@@ -200,14 +174,17 @@ class DorisRoleRepository:
         if missing:
             raise RuntimeError(f"配置的 Doris 角色不存在: {', '.join(missing)}")
 
-    async def list_role_row_policies(self, role_name: str) -> list[dict[str, Any]]:
+    async def list_role_row_policies(self, role_name: str) -> list[DorisRowPolicy]:
         """读取指定角色的全部行策略"""
         role = self.quote_role(role_name)
         async with self._provider.connection() as connection:
             result = await connection.exec_driver_sql(
                 f"SHOW ROW POLICY FOR ROLE {role}"
             )
-            return [dict(row) for row in result.mappings().all()]
+            return [
+                row_policy_from_row(cast(Mapping[str, object], row))
+                for row in result.mappings().all()
+            ]
 
     async def list_table_columns(
         self,
@@ -330,6 +307,26 @@ class DorisRoleRepository:
                 raise DorisWorkloadGroupNotFoundError(workload_group) from exc
             raise
 
+    async def _create_query_user(
+        self,
+        *,
+        query_user: str,
+        password: str,
+        role_literal: str,
+    ) -> None:
+        """创建查询用户并识别用户名冲突"""
+        user = self.quote_user(query_user)
+        try:
+            await self._execute(
+                f"CREATE USER {user} IDENTIFIED BY '{password}' "
+                f"DEFAULT ROLE {role_literal}"
+            )
+        except OperationalError as exc:
+            message = str(exc.orig).casefold()
+            if re.search(r"\buser\b.+\balready exists?\b", message):
+                raise DorisQueryUserAlreadyExistsError(query_user) from exc
+            raise
+
     @classmethod
     def _select_privilege(cls, columns: Sequence[str]) -> str:
         """构造表级或列级 SELECT 权限表达式"""
@@ -337,6 +334,24 @@ class DorisRoleRepository:
             return "SELECT_PRIV"
         quoted_columns = ",".join(cls.quote_identifier(column) for column in columns)
         return f"SELECT_PRIV({quoted_columns})"
+
+
+def row_policy_from_row(row: Mapping[str, object]) -> DorisRowPolicy:
+    """将 Doris SHOW ROW POLICY 结果转换为稳定模型"""
+    raw_policy_type = str(row["FilterType"]).upper()
+    if raw_policy_type not in {"RESTRICTIVE", "PERMISSIVE"}:
+        raise ValueError(f"Doris 行策略组合类型无效: {raw_policy_type}")
+    return DorisRowPolicy(
+        policy_name=str(row["PolicyName"]),
+        catalog_name=str(row["CatalogName"]),
+        database_name=str(row["DbName"]),
+        table_name=str(row["TableName"]),
+        policy_type=cast(
+            Literal["RESTRICTIVE", "PERMISSIVE"],
+            raw_policy_type,
+        ),
+        predicate=str(row["WherePredicate"]),
+    )
 
 
 def role_name_from_row(row: Mapping[str, object]) -> str | None:

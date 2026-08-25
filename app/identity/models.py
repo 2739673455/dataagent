@@ -3,8 +3,10 @@
 import hashlib
 import json
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -57,6 +59,18 @@ class AssetScope(StrEnum):
     DATABASE = "database"
     TABLE = "table"
     COLUMN = "column"
+
+
+@dataclass(frozen=True, slots=True)
+class DorisRowPolicy:
+    """Doris 角色当前生效的行级过滤策略"""
+
+    policy_name: str
+    catalog_name: str
+    database_name: str
+    table_name: str
+    policy_type: Literal["RESTRICTIVE", "PERMISSIVE"]
+    predicate: str
 
 
 class User(AuthBase):
@@ -195,12 +209,6 @@ class DorisQueryIdentity(AuthBase):
         nullable=False,
         default=False,
         server_default=text("false"),
-    )
-    is_active: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        default=True,
-        server_default=text("true"),
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

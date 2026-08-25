@@ -54,12 +54,12 @@ _ERROR_RESPONSES = {
 
 
 async def verify_doris_query_identities() -> None:
-    """校验数据库中全部启用查询身份的 Doris 权限"""
+    """校验数据库中全部查询身份的 Doris 权限"""
     cipher = DorisCredentialCipher(
         cfg.doris_credentials.encryption_key.get_secret_value()
     )
     async with auth_postgres_client_manager.session() as session:
-        identities = await DorisQueryIdentityPGRepo(session).list_active()
+        identities = await DorisQueryIdentityPGRepo(session).list_all()
     await DorisRoleRepository(admin_doris_client_manager).verify_configured_roles(
         tuple(identity.role_name for identity in identities)
     )

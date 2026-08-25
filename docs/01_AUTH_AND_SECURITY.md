@@ -72,11 +72,10 @@ flowchart LR
 | `/users/{id}` | `DELETE` | 删除指定用户（含最后管理员校验） |
 | `/users/{id}/administrator` | `PUT` | 提升或取消用户管理员权限 |
 | `/users/{id}/doris-role` | `PUT` | 变更用户绑定的 Doris 分析角色 |
-| `/doris-roles` | `GET` / `POST` | 获取已纳管 Doris 角色 / 创建新角色 |
-| `/doris-roles/discover` | `GET` | 发现数仓未纳管角色 |
-| `/doris-roles/attach` | `POST` | 接入已存在的数仓角色 |
+| `/doris-roles` | `GET` / `POST` | 获取平台创建的 Doris 角色 / 创建新角色 |
 | `/doris-roles/{role}/default` | `PUT` | 设置新用户默认 Doris 角色 |
-| `/doris-roles/{role}` | `DELETE` | 删除未使用的非默认 Doris 角色 |
+| `/doris-roles/default` | `DELETE` | 清除新用户默认 Doris 角色 |
+| `/doris-roles/{role}` | `DELETE` | 删除未被用户使用的 Doris 角色 |
 | `/doris-roles/{role}/select-grants` | `GET` / `POST` / `DELETE` | 查看 / 授予 / 回收库、表、列 SELECT 权限 |
 | `/doris-roles/{role}/row-policies` | `GET` / `POST` / `DELETE` | 查看 / 创建 / 删除 Doris 行级过滤策略 |
 

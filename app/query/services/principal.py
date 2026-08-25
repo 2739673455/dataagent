@@ -62,7 +62,7 @@ class QueryPrincipalService:
         if user.doris_role_name is None:
             raise QueryPrincipalNotConfiguredError("用户尚未配置 Doris 角色")
         identity = await self._identity_provider.get(user.doris_role_name)
-        if identity is None or not identity.is_active:
+        if identity is None:
             raise QueryPrincipalNotConfiguredError(
                 "用户的 Doris 角色尚未配置可用的查询身份"
             )

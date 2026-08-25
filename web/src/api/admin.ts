@@ -6,21 +6,18 @@ type ApiSchemas = components["schemas"];
 
 export type AssetGrantListResponse = ApiSchemas["AssetGrantListResponse"];
 export type AssetGrantResponse = ApiSchemas["AssetGrantResponse"];
-export type AttachDorisRoleRequest = ApiSchemas["AttachDorisRoleRequest"];
 export type CreateDorisRoleRequest = ApiSchemas["CreateDorisRoleRequest"];
 export type CreateUserRequest = ApiSchemas["CreateUserRequest"];
-export type DiscoveredDorisRoleResponse = ApiSchemas["DiscoveredDorisRoleResponse"];
 export type DorisRoleResponse = ApiSchemas["DorisRoleResponse"];
+export type RowPolicyResponse = ApiSchemas["RowPolicyResponse"];
 export type RowPolicyRequest = ApiSchemas["RowPolicyRequest"];
 export type SelectGrantRequest = ApiSchemas["SelectGrantRequest"];
 export type UpdateUserRequest = ApiSchemas["UpdateUserRequest"];
 export type UserListResponse = ApiSchemas["UserListResponse"];
 
 type DorisRoleListResponse = ApiSchemas["DorisRoleListResponse"];
-type DiscoveredDorisRoleListResponse = ApiSchemas["DiscoveredDorisRoleListResponse"];
 type DropRowPolicyRequest = ApiSchemas["DropRowPolicyRequest"];
 type DorisWorkloadGroupListResponse = ApiSchemas["DorisWorkloadGroupListResponse"];
-type RowPolicy = ApiSchemas["RowPolicyListResponse"]["policies"][number];
 type RowPolicyListResponse = ApiSchemas["RowPolicyListResponse"];
 type SetUserAdministratorRequest = ApiSchemas["SetUserAdministratorRequest"];
 type SetUserDorisRoleRequest = ApiSchemas["SetUserDorisRoleRequest"];
@@ -31,26 +28,11 @@ export const adminApi = {
     return response.data.roles;
   },
 
-  async discoverRoles(): Promise<DiscoveredDorisRoleResponse[]> {
-    const response = await appClient.get<DiscoveredDorisRoleListResponse>(
-      "/api/v1/admin/doris-roles/discover"
-    );
-    return response.data.roles;
-  },
-
   async listWorkloadGroups(): Promise<string[]> {
     const response = await appClient.get<DorisWorkloadGroupListResponse>(
       "/api/v1/admin/doris-roles/workload-groups"
     );
     return response.data.workload_groups;
-  },
-
-  async attachRole(request: AttachDorisRoleRequest): Promise<DorisRoleResponse> {
-    const response = await appClient.post<DorisRoleResponse>(
-      "/api/v1/admin/doris-roles/attach",
-      request
-    );
-    return response.data;
   },
 
   async createRole(request: CreateDorisRoleRequest): Promise<DorisRoleResponse> {
@@ -63,6 +45,10 @@ export const adminApi = {
       `/api/v1/admin/doris-roles/${role}/default`
     );
     return response.data;
+  },
+
+  async clearDefaultRole(): Promise<void> {
+    await appClient.delete("/api/v1/admin/doris-roles/default");
   },
 
   async deleteRole(role: string): Promise<void> {
@@ -123,6 +109,10 @@ export const adminApi = {
     });
   },
 
+  async revokeAllSelect(role: string): Promise<void> {
+    await appClient.delete(`/api/v1/admin/doris-roles/${role}/select-grants/all`);
+  },
+
   async listSelectGrants(role: string): Promise<AssetGrantResponse[]> {
     const response = await appClient.get<AssetGrantListResponse>(
       `/api/v1/admin/doris-roles/${role}/select-grants`
@@ -130,7 +120,7 @@ export const adminApi = {
     return response.data.grants;
   },
 
-  async listRowPolicies(role: string): Promise<RowPolicy[]> {
+  async listRowPolicies(role: string): Promise<RowPolicyResponse[]> {
     const response = await appClient.get<RowPolicyListResponse>(
       `/api/v1/admin/doris-roles/${role}/row-policies`
     );

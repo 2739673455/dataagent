@@ -11,7 +11,7 @@ from app.query.services.principal import (
 from tests.identity.test_auth_service import build_user
 
 
-def identity(role: str, user: str, *, active: bool = True) -> DorisQueryIdentity:
+def identity(role: str, user: str) -> DorisQueryIdentity:
     """构造持久化查询身份"""
     return DorisQueryIdentity(
         role_name=role,
@@ -20,7 +20,6 @@ def identity(role: str, user: str, *, active: bool = True) -> DorisQueryIdentity
         encrypted_password="encrypted",
         workload_group="normal",
         is_default=False,
-        is_active=active,
     )
 
 
@@ -45,7 +44,7 @@ class QueryPrincipalServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("query_password", repr(resolved))
         cipher.decrypt.assert_called_once_with("encrypted")
 
-    async def test_missing_or_inactive_identity_fails_closed(self) -> None:
+    async def test_missing_identity_fails_closed(self) -> None:
         user = build_user(doris_role="unknown")
         user_provider = MagicMock()
         user_provider.get_user_by_id = AsyncMock(return_value=user)

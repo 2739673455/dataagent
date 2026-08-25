@@ -16,13 +16,6 @@ export interface components {
       "scope": string;
       "table_name": (string | null);
     };
-    "AttachDorisRoleRequest": {
-      "description": string;
-      "is_default"?: boolean;
-      "query_user"?: (string | null);
-      "role": string;
-      "workload_group"?: string;
-    };
     "Attachment": {
       "description"?: (string | null);
       "f_path": string;
@@ -107,7 +100,6 @@ export interface components {
     };
     "CreateDorisRoleRequest": {
       "description": string;
-      "is_default"?: boolean;
       "query_user": string;
       "role": string;
       "workload_group": string;
@@ -126,16 +118,6 @@ export interface components {
     "DeleteConversationRequest": {
       "conversation_ids": Array<string>;
     };
-    "DiscoveredDorisRoleListResponse": {
-      "roles": Array<components["schemas"]["DiscoveredDorisRoleResponse"]>;
-    };
-    "DiscoveredDorisRoleResponse": {
-      "description": (string | null);
-      "is_attached": boolean;
-      "name": string;
-      "query_user": (string | null);
-      "workload_group": (string | null);
-    };
     "DorisRoleListResponse": {
       "roles": Array<components["schemas"]["DorisRoleResponse"]>;
     };
@@ -145,7 +127,6 @@ export interface components {
         [key: string]: unknown;
       } | null);
       "exists_in_doris": boolean;
-      "is_active": boolean;
       "is_default": boolean;
       "name": string;
       "query_user": string;
@@ -227,13 +208,19 @@ export interface components {
       "updated_keys": Array<string>;
     };
     "RowPolicyListResponse": {
-      "policies": Array<{
-        [key: string]: unknown;
-      }>;
+      "policies": Array<components["schemas"]["RowPolicyResponse"]>;
     };
     "RowPolicyRequest": {
       "policy_name": string;
       "policy_type"?: "RESTRICTIVE" | "PERMISSIVE";
+      "predicate": string;
+      "table_name": string;
+    };
+    "RowPolicyResponse": {
+      "catalog_name": string;
+      "database_name": string;
+      "policy_name": string;
+      "policy_type": "RESTRICTIVE" | "PERMISSIVE";
       "predicate": string;
       "table_name": string;
     };
@@ -659,7 +646,7 @@ export interface operations {
       };
     };
   };
-  "attach_doris_role_api_v1_admin_doris_roles_attach_post": {
+  "change_password_api_v1_auth_change_password_post": {
     "parameters": {
       "path"?: never;
       "query"?: never;
@@ -667,13 +654,11 @@ export interface operations {
       "cookie"?: never;
     };
     "requestBody": {
-      "application/json": components["schemas"]["AttachDorisRoleRequest"];
+      "application/json": components["schemas"]["ChangePasswordRequest"];
     };
     "responses": {
-      "201": {
-        "content": {
-        "application/json": components["schemas"]["DorisRoleResponse"];
-      };
+      "204": {
+        "content": never;
       };
       "422": {
         "content": {
@@ -689,16 +674,14 @@ export interface operations {
       };
     };
   };
-  "change_password_api_v1_auth_change_password_post": {
+  "clear_default_doris_role_api_v1_admin_doris_roles_default_delete": {
     "parameters": {
       "path"?: never;
       "query"?: never;
       "header"?: never;
       "cookie"?: never;
     };
-    "requestBody": {
-      "application/json": components["schemas"]["ChangePasswordRequest"];
-    };
+    "requestBody"?: never;
     "responses": {
       "204": {
         "content": never;
@@ -934,34 +917,6 @@ export interface operations {
     "responses": {
       "204": {
         "content": never;
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "discover_doris_roles_api_v1_admin_doris_roles_discover_get": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": components["schemas"]["DiscoveredDorisRoleListResponse"];
-      };
       };
       "422": {
         "content": {
@@ -1506,6 +1461,34 @@ export interface operations {
       };
     };
   };
+  "revoke_all_select_api_v1_admin_doris_roles__role__select_grants_all_delete": {
+    "parameters": {
+      "path": {
+        "role": string;
+      };
+      "query"?: never;
+      "header"?: never;
+      "cookie"?: never;
+    };
+    "requestBody"?: never;
+    "responses": {
+      "204": {
+        "content": never;
+      };
+      "422": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+      "default": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+    };
+  };
   "revoke_select_api_v1_admin_doris_roles__role__select_grants_delete": {
     "parameters": {
       "path": {
@@ -1914,11 +1897,8 @@ export interface paths {
     "get": operations["list_doris_roles_api_v1_admin_doris_roles_get"];
     "post": operations["create_doris_role_api_v1_admin_doris_roles_post"];
   };
-  "/api/v1/admin/doris-roles/attach": {
-    "post": operations["attach_doris_role_api_v1_admin_doris_roles_attach_post"];
-  };
-  "/api/v1/admin/doris-roles/discover": {
-    "get": operations["discover_doris_roles_api_v1_admin_doris_roles_discover_get"];
+  "/api/v1/admin/doris-roles/default": {
+    "delete": operations["clear_default_doris_role_api_v1_admin_doris_roles_default_delete"];
   };
   "/api/v1/admin/doris-roles/workload-groups": {
     "get": operations["list_doris_workload_groups_api_v1_admin_doris_roles_workload_groups_get"];
@@ -1938,6 +1918,9 @@ export interface paths {
     "get": operations["list_select_grants_api_v1_admin_doris_roles__role__select_grants_get"];
     "post": operations["grant_select_api_v1_admin_doris_roles__role__select_grants_post"];
     "delete": operations["revoke_select_api_v1_admin_doris_roles__role__select_grants_delete"];
+  };
+  "/api/v1/admin/doris-roles/{role}/select-grants/all": {
+    "delete": operations["revoke_all_select_api_v1_admin_doris_roles__role__select_grants_all_delete"];
   };
   "/api/v1/admin/users": {
     "get": operations["list_users_api_v1_admin_users_get"];

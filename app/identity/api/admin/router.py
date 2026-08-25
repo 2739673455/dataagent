@@ -39,30 +39,6 @@ async def list_doris_roles(
 
 
 @router.get(
-    "/doris-roles/discover",
-    response_model=schemas.DiscoveredDorisRoleListResponse,
-)
-async def discover_doris_roles(
-    _: AdminUserDep,
-    service: DorisRoleManagementServiceDep,
-) -> schemas.DiscoveredDorisRoleListResponse:
-    """扫描 Doris 集群原生角色及接入状态"""
-    roles = await service.discover_roles()
-    return schemas.DiscoveredDorisRoleListResponse(
-        roles=[
-            schemas.DiscoveredDorisRoleResponse(
-                name=role.name,
-                is_attached=role.is_attached,
-                description=role.description,
-                query_user=role.query_user,
-                workload_group=role.workload_group,
-            )
-            for role in roles
-        ]
-    )
-
-
-@router.get(
     "/doris-roles/workload-groups",
     response_model=schemas.DorisWorkloadGroupListResponse,
 )
@@ -70,7 +46,7 @@ async def list_doris_workload_groups(
     _: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> schemas.DorisWorkloadGroupListResponse:
-    """列出创建和接入角色时可使用的 Doris 工作组"""
+    """列出创建角色时可使用的 Doris 工作组"""
     workload_groups = await service.list_workload_groups()
     return schemas.DorisWorkloadGroupListResponse(workload_groups=list(workload_groups))
 
@@ -91,38 +67,11 @@ async def create_doris_role(
         description=body.description,
         query_user=body.query_user,
         workload_group=body.workload_group,
-        is_default=body.is_default,
     )
     logger.info(
         f"管理员创建 Doris 角色: operator_id={current_admin.id}, "
         f"role={identity.role_name}, query_user={identity.query_user}, "
-        f"workload_group={identity.workload_group}, is_default={identity.is_default}"
-    )
-    return schemas.DorisRoleResponse.from_entity(identity)
-
-
-@router.post(
-    "/doris-roles/attach",
-    response_model=schemas.DorisRoleResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def attach_doris_role(
-    body: schemas.AttachDorisRoleRequest,
-    current_admin: AdminUserDep,
-    service: DorisRoleManagementServiceDep,
-) -> schemas.DorisRoleResponse:
-    """接入已有 Doris 角色并自动配置查询用户"""
-    identity = await service.attach_role(
-        role_name=body.role,
-        description=body.description,
-        workload_group=body.workload_group,
-        query_user=body.query_user,
-        is_default=body.is_default,
-    )
-    logger.info(
-        f"管理员接入 Doris 角色: operator_id={current_admin.id}, "
-        f"role={identity.role_name}, query_user={identity.query_user}, "
-        f"workload_group={identity.workload_group}, is_default={identity.is_default}"
+        f"workload_group={identity.workload_group}"
     )
     return schemas.DorisRoleResponse.from_entity(identity)
 
@@ -145,6 +94,20 @@ async def set_default_doris_role(
 
 
 @router.delete(
+    "/doris-roles/default",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def clear_default_doris_role(
+    current_admin: AdminUserDep,
+    service: DorisRoleManagementServiceDep,
+) -> Response:
+    """清除新用户使用的缺省 Doris 角色"""
+    await service.clear_default_role()
+    logger.info(f"管理员清除默认 Doris 角色: operator_id={current_admin.id}")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete(
     "/doris-roles/{role}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
@@ -153,7 +116,7 @@ async def delete_doris_role(
     current_admin: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> Response:
-    """删除未使用的非缺省 Doris 角色和查询用户"""
+    """删除未使用的 Doris 角色和查询用户"""
     await service.delete_role(role)
     logger.info(f"管理员删除 Doris 角色: operator_id={current_admin.id}, role={role}")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -352,6 +315,24 @@ async def revoke_select(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.delete(
+    "/doris-roles/{role}/select-grants/all",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def revoke_all_select(
+    role: RolePath,
+    current_admin: AdminUserDep,
+    service: DorisPermissionServiceDep,
+) -> Response:
+    """回收角色在当前数据库中的全部 SELECT 权限"""
+    revoked_count = await service.revoke_all_select(role)
+    logger.info(
+        f"管理员清空 Doris SELECT 权限: operator_id={current_admin.id}, "
+        f"role={role}, revoked_count={revoked_count}"
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get(
     "/doris-roles/{role}/row-policies",
     response_model=schemas.RowPolicyListResponse,
@@ -362,7 +343,10 @@ async def list_row_policies(
     service: DorisPermissionServiceDep,
 ) -> schemas.RowPolicyListResponse:
     """直接读取 Doris 角色的全部行策略"""
-    return schemas.RowPolicyListResponse(policies=await service.list_row_policies(role))
+    policies = await service.list_row_policies(role)
+    return schemas.RowPolicyListResponse(
+        policies=[schemas.RowPolicyResponse.from_model(policy) for policy in policies]
+    )
 
 
 @router.post(

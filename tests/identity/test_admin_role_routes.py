@@ -5,26 +5,54 @@ from pydantic import SecretStr, ValidationError
 
 from app.identity.api.admin import schemas
 from app.identity.api.admin.router import (
-    attach_doris_role,
+    clear_default_doris_role,
     create_doris_role,
     create_user,
     delete_user,
-    discover_doris_roles,
     list_doris_roles,
     list_doris_workload_groups,
+    list_row_policies,
     list_users,
     set_user_administrator,
     set_user_doris_role,
     update_user,
 )
-from app.identity.models import DorisQueryIdentity
+from app.identity.models import DorisQueryIdentity, DorisRowPolicy
 from app.identity.services.auth import AuthenticatedUser
-from app.identity.services.authorization import DorisDiscoveredRole
 from app.identity.services.doris_permission import DorisRoleStatus
 from tests.identity.test_auth_service import build_user
 
 
 class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
+    async def test_list_row_policies_returns_structured_response(self) -> None:
+        service = MagicMock()
+        service.list_row_policies = AsyncMock(
+            return_value=[
+                DorisRowPolicy(
+                    policy_name="region_east_filter",
+                    catalog_name="internal",
+                    database_name="ecommerce",
+                    table_name="orders",
+                    policy_type="RESTRICTIVE",
+                    predicate="region = 'east'",
+                )
+            ]
+        )
+
+        response = await list_row_policies("sales", MagicMock(), service)
+
+        self.assertEqual(
+            response.policies[0].model_dump(),
+            {
+                "policy_name": "region_east_filter",
+                "catalog_name": "internal",
+                "database_name": "ecommerce",
+                "table_name": "orders",
+                "policy_type": "RESTRICTIVE",
+                "predicate": "region = 'east'",
+            },
+        )
+
     async def test_create_role_never_returns_generated_password(self) -> None:
         service = MagicMock()
         service.create_role = AsyncMock(
@@ -35,7 +63,6 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
                 encrypted_password="secret-ciphertext",
                 workload_group="normal",
                 is_default=True,
-                is_active=True,
             )
         )
 
@@ -45,7 +72,6 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
                 description="Sales",
                 query_user="sales_query",
                 workload_group="normal",
-                is_default=True,
             ),
             MagicMock(),
             service,
@@ -53,23 +79,6 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.query_user, "sales_query")
         self.assertNotIn("password", response.model_dump())
-
-    async def test_discover_roles_endpoint(self) -> None:
-        service = MagicMock()
-        service.discover_roles = AsyncMock(
-            return_value=[
-                DorisDiscoveredRole(
-                    name="finance",
-                    is_attached=False,
-                )
-            ]
-        )
-
-        response = await discover_doris_roles(MagicMock(), service)
-
-        self.assertEqual(len(response.roles), 1)
-        self.assertEqual(response.roles[0].name, "finance")
-        self.assertFalse(response.roles[0].is_attached)
 
     async def test_list_workload_groups_endpoint(self) -> None:
         service = MagicMock()
@@ -79,32 +88,17 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.workload_groups, ["batch", "normal"])
 
-    async def test_attach_role_endpoint(self) -> None:
+    async def test_clear_default_role_endpoint(self) -> None:
         service = MagicMock()
-        service.attach_role = AsyncMock(
-            return_value=DorisQueryIdentity(
-                role_name="finance",
-                description="Finance Role",
-                query_user="finance_query_user",
-                encrypted_password="enc-pwd",
-                workload_group="normal",
-                is_default=False,
-                is_active=True,
-            )
-        )
+        service.clear_default_role = AsyncMock()
 
-        response = await attach_doris_role(
-            schemas.AttachDorisRoleRequest(
-                role="finance",
-                description="Finance Role",
-            ),
+        response = await clear_default_doris_role(
             MagicMock(),
             service,
         )
 
-        self.assertEqual(response.name, "finance")
-        self.assertEqual(response.query_user, "finance_query_user")
-        self.assertNotIn("password", response.model_dump())
+        self.assertEqual(response.status_code, 204)
+        service.clear_default_role.assert_awaited_once_with()
 
     async def test_roles_are_read_from_doris_status(self) -> None:
         service = MagicMock()
@@ -114,7 +108,6 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
                     name="dataagent_default",
                     description="缺省角色",
                     is_default=True,
-                    is_active=True,
                     query_user="default_query",
                     workload_group="normal",
                     exists_in_doris=True,

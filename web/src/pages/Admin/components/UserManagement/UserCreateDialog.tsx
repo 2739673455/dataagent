@@ -23,6 +23,7 @@ export function UserCreateDialog({ roles, busy, onCancel, onUserCreated }: UserC
   const [newUserRole, setNewUserRole] = useState("");
   const [newUserIsAdmin, setNewUserIsAdmin] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const defaultRole = roles.find((role) => role.is_default);
 
   const handleCreateUser = async () => {
     if (!newUsername.trim() || !newEmail.trim() || !newPassword.trim()) return;
@@ -109,14 +110,14 @@ export function UserCreateDialog({ roles, busy, onCancel, onUserCreated }: UserC
             onChange={(event) => setNewUserRole(event.target.value)}
             className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2 text-xs text-[#1e2024] focus:border-[#1e2024] focus:outline-none"
           >
-            <option value="">[ 默认角色 ]</option>
-            {roles
-              .filter((role) => role.is_active)
-              .map((role) => (
-                <option key={role.name} value={role.name}>
-                  {role.name} {role.is_default ? "(默认)" : ""}
-                </option>
-              ))}
+            <option value="">
+              {defaultRole ? `[ 默认角色：${defaultRole.name} ]` : "[ 未分配 ]"}
+            </option>
+            {roles.map((role) => (
+              <option key={role.name} value={role.name}>
+                {role.name} {role.is_default ? "(默认)" : ""}
+              </option>
+            ))}
           </select>
         </div>
 

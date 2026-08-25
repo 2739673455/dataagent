@@ -1,6 +1,6 @@
-import { Database } from "lucide-react";
+import { Database, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import { adminApi, type AssetGrantResponse, type DorisRoleResponse } from "@/api/admin";
+import { adminApi, type AssetGrantResponse } from "@/api/admin";
 import { Button } from "@/components/ui/button";
 
 function splitColumns(value: string): string[] {
@@ -11,29 +11,20 @@ function splitColumns(value: string): string[] {
 }
 
 interface AssetPermissionPanelProps {
-  roles: DorisRoleResponse[];
   selectedRole: string;
-  onSelectRole: (role: string) => void;
   grants: AssetGrantResponse[];
   busy: boolean;
-  onMutate: (operation: () => Promise<void>, message: string) => Promise<void>;
+  onMutate: (operation: () => Promise<void>, message: string) => Promise<boolean>;
 }
 
 export function AssetPermissionPanel({
-  roles,
   selectedRole,
-  onSelectRole,
   grants,
   busy,
   onMutate,
 }: AssetPermissionPanelProps) {
   const [tableName, setTableName] = useState("");
   const [columns, setColumns] = useState("");
-
-  const selectedRoleStatus = useMemo(
-    () => roles.find((role) => role.name === selectedRole),
-    [roles, selectedRole]
-  );
 
   const grantTables = useMemo(() => {
     const grouped = new Map<string, { allColumns: boolean; columns: string[] }>();
@@ -57,6 +48,42 @@ export function AssetPermissionPanel({
   const grantDatabase = grants[0]?.database_name;
   const grantDataSource = grants[0]?.data_source;
 
+  const revokeGrant = (targetTable: string | null, targetColumns: string[], label: string) => {
+    if (!selectedRole) return;
+    void onMutate(
+      () =>
+        adminApi.revokeSelect(selectedRole, {
+          table_name: targetTable,
+          columns: targetColumns,
+        }),
+      `${label}已回收`
+    );
+  };
+
+  const revokeAllGrants = () => {
+    if (!selectedRole || grants.length === 0) return;
+    void onMutate(
+      () => adminApi.revokeAllSelect(selectedRole),
+      `角色 ${selectedRole} 的全部 SELECT 权限已回收`
+    );
+  };
+
+  const grantSelect = async () => {
+    const granted = await onMutate(
+      () =>
+        adminApi.grantSelect(selectedRole, {
+          table_name: tableName.trim() || null,
+          columns: splitColumns(columns),
+        }),
+      "SELECT 权限已授予"
+    );
+    if (!granted) {
+      return;
+    }
+    setTableName("");
+    setColumns("");
+  };
+
   return (
     <div className="rounded border border-[#d4d4ce] bg-[#ffffff] p-5 shadow-xs">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e5e5df] pb-3 shrink-0">
@@ -70,74 +97,6 @@ export function AssetPermissionPanel({
       </div>
 
       <div className="mt-4 space-y-3.5 text-sm">
-        <div>
-          <label htmlFor="permission-role" className="block text-xs text-[#52525b] mb-1">
-            目标 Doris 角色：
-          </label>
-          <select
-            id="permission-role"
-            value={selectedRole}
-            onChange={(event) => onSelectRole(event.target.value)}
-            className="h-9 w-full rounded border border-[#d4d4ce] bg-[#fafaf8] px-3 text-sm text-[#1e2024] focus:border-[#1e2024] focus:outline-none"
-          >
-            {roles.map((role) => (
-              <option key={role.name} value={role.name}>
-                {role.name}
-              </option>
-            ))}
-          </select>
-          <p className="mt-1 text-xs text-[#71717a]">
-            {selectedRoleStatus?.exists_in_doris
-              ? "✓ Doris 原生角色已生效"
-              : "⚠ 角色未在 Doris 元数据中找到"}
-          </p>
-        </div>
-
-        <div className="rounded border border-[#d4d4ce] bg-[#fafaf8] p-3">
-          <div className="flex items-center justify-between text-xs font-semibold text-[#18181b]">
-            <span>当前 SELECT 授权</span>
-            <span className="font-normal text-[#71717a]">{grants.length} 条投影</span>
-          </div>
-          {grants.length ? (
-            <div className="mt-2 border-l-2 border-[#1e2024] pl-3 text-xs">
-              <div className="font-semibold text-[#18181b]">
-                数据库 {grantDataSource}.{grantDatabase}
-                {databaseGrant && (
-                  <span className="ml-2 rounded bg-[#e8e8e4] px-1.5 py-0.5 text-[10px] text-[#1e2024]">
-                    全库 SELECT
-                  </span>
-                )}
-              </div>
-              {grantTables.map((table) => (
-                <div key={table.name} className="mt-2 border-l border-[#d4d4ce] pl-3">
-                  <div className="font-medium text-[#27272a]">
-                    表 {table.name}
-                    {table.allColumns && (
-                      <span className="ml-2 rounded bg-[#e5e5df] px-1.5 py-0.5 text-[10px]">
-                        全部列
-                      </span>
-                    )}
-                  </div>
-                  {table.columns.length > 0 && (
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {table.columns.map((column) => (
-                        <span
-                          key={column}
-                          className="rounded border border-[#d4d4ce] bg-white px-1.5 py-0.5 text-[10px] text-[#52525b]"
-                        >
-                          列 {column}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="mt-2 text-xs text-[#71717a]">当前角色没有 SELECT 授权</p>
-          )}
-        </div>
-
         <div>
           <label htmlFor="permission-table" className="block text-xs text-[#52525b] mb-1">
             目标数据表（留空表示当前数据库全部表）：
@@ -164,40 +123,118 @@ export function AssetPermissionPanel({
           />
         </div>
 
-        <div className="flex gap-2.5 pt-2">
+        <div className="pt-2">
           <Button
             disabled={busy || !selectedRole}
-            onClick={() =>
-              void onMutate(
-                () =>
-                  adminApi.grantSelect(selectedRole, {
-                    table_name: tableName.trim() || null,
-                    columns: splitColumns(columns),
-                  }),
-                "SELECT 权限已授予"
-              )
-            }
-            className="flex-1 text-sm"
+            onClick={() => void grantSelect()}
+            className="w-full text-sm"
           >
             授予 SELECT 权限
           </Button>
-          <Button
-            variant="destructive"
-            disabled={busy || !selectedRole}
-            onClick={() =>
-              void onMutate(
-                () =>
-                  adminApi.revokeSelect(selectedRole, {
-                    table_name: tableName.trim() || null,
-                    columns: splitColumns(columns),
-                  }),
-                "SELECT 权限已回收"
-              )
-            }
-            className="flex-1 text-sm"
-          >
-            回收 SELECT 权限
-          </Button>
+        </div>
+
+        <div className="rounded border border-[#d4d4ce] bg-[#fafaf8] p-3">
+          <div className="flex items-center justify-between text-xs font-semibold text-[#18181b]">
+            <span>当前 SELECT 授权</span>
+            <div className="flex items-center gap-2">
+              <span className="font-normal text-[#71717a]">{grants.length} 条投影</span>
+              {grants.length > 0 && (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  disabled={busy || !selectedRole}
+                  onClick={revokeAllGrants}
+                  className="h-6 px-2 text-[10px]"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  清空全部
+                </Button>
+              )}
+            </div>
+          </div>
+          {grants.length ? (
+            <div className="mt-2 border-l-2 border-[#1e2024] pl-3 text-xs">
+              <div className="flex items-center justify-between gap-2 font-semibold text-[#18181b]">
+                <div>
+                  数据库 {grantDataSource}.{grantDatabase}
+                  {databaseGrant && (
+                    <span className="ml-2 rounded bg-[#e8e8e4] px-1.5 py-0.5 text-[10px] text-[#1e2024]">
+                      全库 SELECT
+                    </span>
+                  )}
+                </div>
+                {databaseGrant && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => revokeGrant(null, [], "整库 SELECT 权限")}
+                    className="cursor-pointer text-[10px] font-normal text-[#dc2626] hover:text-[#991b1b] disabled:cursor-not-allowed disabled:opacity-40"
+                    title="回收整库 SELECT 权限"
+                  >
+                    回收整库
+                  </button>
+                )}
+              </div>
+              {grantTables.map((table) => (
+                <div key={table.name} className="mt-2 border-l border-[#d4d4ce] pl-3">
+                  <div className="flex items-center justify-between gap-2 font-medium text-[#27272a]">
+                    <div>
+                      表 {table.name}
+                      {table.allColumns && (
+                        <span className="ml-2 rounded bg-[#e5e5df] px-1.5 py-0.5 text-[10px]">
+                          全部列
+                        </span>
+                      )}
+                    </div>
+                    {table.allColumns && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() =>
+                          revokeGrant(table.name, [], `表 ${table.name} 的 SELECT 权限`)
+                        }
+                        className="cursor-pointer text-[10px] font-normal text-[#dc2626] hover:text-[#991b1b] disabled:cursor-not-allowed disabled:opacity-40"
+                        title={`回收表 ${table.name} 的全部列权限`}
+                      >
+                        回收整表
+                      </button>
+                    )}
+                  </div>
+                  {table.columns.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {table.columns.map((column) => (
+                        <span
+                          key={column}
+                          className="inline-flex items-center gap-1 rounded border border-[#d4d4ce] bg-white py-0.5 pr-1 pl-1.5 text-[10px] text-[#52525b]"
+                        >
+                          列 {column}
+                          <button
+                            type="button"
+                            aria-label={`回收字段 ${table.name}.${column} 的 SELECT 权限`}
+                            disabled={busy}
+                            onClick={() =>
+                              revokeGrant(
+                                table.name,
+                                [column],
+                                `字段 ${table.name}.${column} 的 SELECT 权限`
+                              )
+                            }
+                            className="cursor-pointer text-[#dc2626] hover:text-[#991b1b] disabled:cursor-not-allowed disabled:opacity-40"
+                            title="回收该字段权限"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-[#71717a]">当前角色没有 SELECT 授权</p>
+          )}
         </div>
       </div>
     </div>

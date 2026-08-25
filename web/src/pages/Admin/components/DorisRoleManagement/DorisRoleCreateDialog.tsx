@@ -10,7 +10,6 @@ import {
 } from "../AdminEditorDialog";
 
 interface DorisRoleCreateDialogProps {
-  rolesCount: number;
   busy: boolean;
   workloadGroups: string[];
   defaultWorkloadGroup: string;
@@ -19,7 +18,6 @@ interface DorisRoleCreateDialogProps {
 }
 
 export function DorisRoleCreateDialog({
-  rolesCount,
   busy,
   workloadGroups,
   defaultWorkloadGroup,
@@ -49,7 +47,6 @@ export function DorisRoleCreateDialog({
         description: newDescription.trim(),
         query_user: newQueryUser.trim(),
         workload_group: newWorkloadGroup,
-        is_default: rolesCount === 0,
       });
       setNewRole("");
       setNewDescription("");

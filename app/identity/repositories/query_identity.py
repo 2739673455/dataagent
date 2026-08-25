@@ -43,7 +43,6 @@ class DorisQueryIdentityPGRepo:
         return await self._session.scalar(
             select(DorisQueryIdentity).where(
                 DorisQueryIdentity.is_default.is_(True),
-                DorisQueryIdentity.is_active.is_(True),
             )
         )
 
@@ -51,15 +50,6 @@ class DorisQueryIdentityPGRepo:
         """列出全部查询身份"""
         result = await self._session.scalars(
             select(DorisQueryIdentity).order_by(DorisQueryIdentity.role_name)
-        )
-        return list(result)
-
-    async def list_active(self) -> list[DorisQueryIdentity]:
-        """列出全部启用的查询身份"""
-        result = await self._session.scalars(
-            select(DorisQueryIdentity)
-            .where(DorisQueryIdentity.is_active.is_(True))
-            .order_by(DorisQueryIdentity.role_name)
         )
         return list(result)
 

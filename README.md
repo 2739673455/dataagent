@@ -96,13 +96,13 @@
 
 - `doris` 配置使用平台内部管理账号。该账号读取元数据并执行 Doris 用户、角色、SELECT 权限和 Row Policy 管理；部署时限制来源地址并妥善托管 `DORIS_ADMIN_PASSWORD`。
 - 管理员通过 `POST /api/v1/admin/doris-roles` 创建角色。服务端生成随机查询密码，在 Doris 创建角色与唯一查询用户，把 Workload Group 的 `USAGE_PRIV` 授予角色，并只将密文保存到 `doris_query_identities`。API 不接收或返回查询密码。
-- 第一个查询身份自动成为缺省角色，后续可通过 `PUT /api/v1/admin/doris-roles/{role}/default` 替换缺省角色。缺省角色和仍被用户引用的角色不能删除。
-- 查询用户不授予导入、建表、修改、删除、授权或节点管理权限。应用启动时逐个检查启用身份只绑定预期角色、有效权限只读、目标库可见和 Workload Group 可用，任一项不符合时拒绝启动。
+- 新角色创建后保持普通状态。管理员可通过 `PUT /api/v1/admin/doris-roles/{role}/default` 设置新用户默认角色，通过 `DELETE /api/v1/admin/doris-roles/default` 恢复为“未分配”。默认角色可以删除，仍被用户引用的角色不能删除。
+- 查询用户不授予导入、建表、修改、删除、授权或节点管理权限。应用启动时逐个检查已登记身份只绑定预期角色、有效权限只读、目标库可见和 Workload Group 可用，任一项不符合时拒绝启动。
 - 管理员 API 可直接操作 Doris：`GET|POST /api/v1/admin/doris-roles` 与 `DELETE /api/v1/admin/doris-roles/{role}` 管理查询身份，`GET|POST|DELETE /api/v1/admin/doris-roles/{role}/select-grants` 管理库、表、列 SELECT 权限，`GET|POST|DELETE /api/v1/admin/doris-roles/{role}/row-policies` 管理行策略。
 - 平台管理员登录后可从聊天侧栏进入 `/admin`，在同一页面调整用户唯一 Doris 角色、平台管理员身份、SELECT 权限和 Row Policy。
 - SELECT 授权必须通过管理员 API 修改，使 Doris 权限与应用侧语义检索投影同步。外部 DBA 修改后需要通过同一 API重放对应授权目标。
 
-- 管理员可通过后台直接接入已存在的 Doris 角色：`GET /api/v1/admin/doris-roles/discover` 扫描 Doris 集群中未接入的角色，`POST /api/v1/admin/doris-roles/attach` 一键接入并自动在 Doris 创建代理查询用户与高强度随机密码，全流程无需人工干预密码。
+- 平台只管理自身创建的 Doris 角色和查询身份，已有 Doris 原生角色保持在平台管理边界之外。
 
 旧 PostgreSQL 表不会被 SQLAlchemy `create_all` 自动改列或补外键。完成全部角色接入并确认现有用户、授权投影引用的角色都已存在后，执行一次结构收口：
 

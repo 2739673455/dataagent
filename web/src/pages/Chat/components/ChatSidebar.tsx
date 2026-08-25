@@ -316,6 +316,11 @@ export function ChatUserFooter({ user, onChangePassword, onLogout }: ChatUserFoo
           role="dialog"
           aria-modal="true"
           aria-labelledby="change-password-title"
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target && !isChangingPassword) {
+              setIsPasswordOpen(false);
+            }
+          }}
         >
           <form
             className="w-full max-w-sm rounded border border-[#d4d4ce] bg-white p-5 shadow-xl"

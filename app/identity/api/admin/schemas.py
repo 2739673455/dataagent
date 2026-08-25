@@ -11,6 +11,7 @@ from app.identity.api.auth.schemas import UserResponse
 from app.identity.models import (
     DorisQueryIdentity,
     DorisRoleAssetGrant,
+    DorisRowPolicy,
     normalize_doris_role_name,
 )
 from app.identity.services.doris_permission import DorisRoleStatus
@@ -98,7 +99,6 @@ class DorisRoleResponse(BaseModel):
     name: str
     description: str
     is_default: bool
-    is_active: bool
     query_user: str
     workload_group: str
     exists_in_doris: bool
@@ -111,7 +111,6 @@ class DorisRoleResponse(BaseModel):
             name=role.name,
             description=role.description,
             is_default=role.is_default,
-            is_active=role.is_active,
             query_user=role.query_user,
             workload_group=role.workload_group,
             exists_in_doris=role.exists_in_doris,
@@ -125,7 +124,6 @@ class DorisRoleResponse(BaseModel):
             name=identity.role_name,
             description=identity.description,
             is_default=identity.is_default,
-            is_active=identity.is_active,
             query_user=identity.query_user,
             workload_group=identity.workload_group,
             exists_in_doris=True,
@@ -139,60 +137,10 @@ class DorisRoleListResponse(BaseModel):
     roles: list[DorisRoleResponse]
 
 
-class DiscoveredDorisRoleResponse(BaseModel):
-    """Doris 原生角色发现响应"""
-
-    name: str
-    is_attached: bool
-    description: str | None
-    query_user: str | None
-    workload_group: str | None
-
-
-class DiscoveredDorisRoleListResponse(BaseModel):
-    """Doris 原生角色发现列表响应"""
-
-    roles: list[DiscoveredDorisRoleResponse]
-
-
 class DorisWorkloadGroupListResponse(BaseModel):
     """Doris 工作组列表响应"""
 
     workload_groups: list[str]
-
-
-class AttachDorisRoleRequest(BaseModel):
-    """接入已有 Doris 角色请求"""
-
-    role: str = Field(min_length=1, max_length=64)
-    description: str = Field(min_length=1, max_length=256)
-    workload_group: str = Field(
-        default="normal",
-        min_length=1,
-        max_length=128,
-        pattern=_IDENTIFIER_PATTERN,
-    )
-    query_user: str | None = Field(
-        default=None,
-        max_length=128,
-        pattern=_IDENTIFIER_PATTERN,
-    )
-    is_default: bool = False
-
-    @field_validator("role")
-    @classmethod
-    def normalize_role(cls, role: str) -> str:
-        """校验 Doris 角色名"""
-        return normalize_doris_role_name(role)
-
-    @field_validator("description")
-    @classmethod
-    def normalize_description(cls, description: str) -> str:
-        """规范化角色说明"""
-        normalized = description.strip()
-        if not normalized:
-            raise ValueError("角色描述不能为空")
-        return normalized
 
 
 class CreateDorisRoleRequest(BaseModel):
@@ -210,8 +158,6 @@ class CreateDorisRoleRequest(BaseModel):
         max_length=128,
         pattern=_IDENTIFIER_PATTERN,
     )
-    is_default: bool = False
-
     @field_validator("role")
     @classmethod
     def normalize_role(cls, role: str) -> str:
@@ -351,7 +297,30 @@ class DropRowPolicyRequest(BaseModel):
     )
 
 
+class RowPolicyResponse(BaseModel):
+    """Doris 实时行策略"""
+
+    policy_name: str
+    catalog_name: str
+    database_name: str
+    table_name: str
+    policy_type: Literal["RESTRICTIVE", "PERMISSIVE"]
+    predicate: str
+
+    @classmethod
+    def from_model(cls, policy: DorisRowPolicy) -> Self:
+        """从行策略模型构造响应"""
+        return cls(
+            policy_name=policy.policy_name,
+            catalog_name=policy.catalog_name,
+            database_name=policy.database_name,
+            table_name=policy.table_name,
+            policy_type=policy.policy_type,
+            predicate=policy.predicate,
+        )
+
+
 class RowPolicyListResponse(BaseModel):
     """Doris 实时行策略列表"""
 
-    policies: list[dict[str, Any]]
+    policies: list[RowPolicyResponse]

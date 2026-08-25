@@ -371,13 +371,11 @@ export function UserManagement() {
                 className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2 text-xs text-[#1e2024] focus:border-[#1e2024] focus:outline-none"
               >
                 <option value="">[ 未分配 ]</option>
-                {roles
-                  .filter((role) => role.is_active)
-                  .map((role) => (
-                    <option key={role.name} value={role.name}>
-                      {role.name} {role.is_default ? "(默认)" : ""}
-                    </option>
-                  ))}
+                {roles.map((role) => (
+                  <option key={role.name} value={role.name}>
+                    {role.name} {role.is_default ? "(默认)" : ""}
+                  </option>
+                ))}
               </select>
             </div>
             <div className="flex items-center">
