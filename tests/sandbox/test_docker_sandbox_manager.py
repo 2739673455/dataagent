@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
+from docker.errors import ImageNotFound
 from pydantic import ValidationError
 
 from app.analytics.agents.manager import AgentManager
@@ -43,13 +44,6 @@ def build_sandbox_config(**updates: object) -> SandboxConfig:
             "lease_seconds": 10,
         },
         "image": "dataagent-sandbox:latest",
-        "build_context": "docker/sandbox",
-        "build_network_mode": "host",
-        "rebuild_image": False,
-        "node_version": "20.19.2",
-        "node_download_base": "https://npmmirror.com/mirrors/node",
-        "pypi_index_url": "https://mirrors.aliyun.com/pypi/simple",
-        "npm_registry": "https://registry.npmmirror.com",
         "memory_limit": "512m",
         "nano_cpus": 1_000_000_000,
         "pids_limit": 64,
@@ -208,6 +202,34 @@ class SandboxConfigTest(unittest.TestCase):
             volume_driver_options={"size": "{max_workspace_bytes}"},
         )
         self.assertEqual(config.volume_driver, "quota-driver")
+
+
+class DockerSandboxInitializationTest(unittest.TestCase):
+    def test_loads_existing_image_without_building(self) -> None:
+        manager = build_sandbox_manager(build_sandbox_config())
+        client = MagicMock()
+        client.images.get.return_value.id = "sha256:test-image"
+
+        with patch("app.sandbox.manager.docker.from_env", return_value=client):
+            manager._init_sync()
+
+        client.ping.assert_called_once_with()
+        client.images.get.assert_called_once_with("dataagent-sandbox:latest")
+        client.images.build.assert_not_called()
+        self.assertIs(manager._client, client)
+
+    def test_missing_image_reports_explicit_build_command(self) -> None:
+        manager = build_sandbox_manager(build_sandbox_config())
+        client = MagicMock()
+        client.images.get.side_effect = ImageNotFound("missing image")
+
+        with (
+            patch("app.sandbox.manager.docker.from_env", return_value=client),
+            self.assertRaisesRegex(RuntimeError, "docker compose"),
+        ):
+            manager._init_sync()
+
+        client.close.assert_called_once_with()
 
 
 class FairCapacityLimiterTest(unittest.TestCase):
@@ -549,23 +571,17 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls) -> None:
         import docker
-        from app.shared.config.app_config import ROOT_DIR
 
         config = build_sandbox_config()
         client = docker.from_env()
         try:
-            client.images.build(
-                path=str(ROOT_DIR / config.build_context),
-                tag=config.image,
-                rm=True,
-                network_mode=config.build_network_mode,
-                buildargs={
-                    "NODE_VERSION": config.node_version,
-                    "NODE_DOWNLOAD_BASE": config.node_download_base,
-                    "PYPI_INDEX_URL": config.pypi_index_url,
-                    "NPM_REGISTRY": config.npm_registry,
-                },
-            )
+            try:
+                client.images.get(config.image)
+            except ImageNotFound as exc:
+                raise RuntimeError(
+                    f"Docker 沙箱镜像不存在: {config.image}，"
+                    "请先执行 docker compose -f docker/compose.yml up -d"
+                ) from exc
         finally:
             client.close()
 

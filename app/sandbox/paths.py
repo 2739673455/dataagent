@@ -21,6 +21,7 @@ class SandboxSessionScope:
     session_id: str
 
     def __post_init__(self) -> None:
+        """校验 Agent Session 路径字段可安全用于工作区"""
         for field_name, value in (
             ("analysis_id", self.analysis_id),
             ("agent_type", self.agent_type),

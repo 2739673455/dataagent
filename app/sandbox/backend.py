@@ -225,6 +225,7 @@ class DockerSandboxBackend(BaseSandbox):
         cancel_event = threading.Event()
 
         def run() -> _ResultT:
+            """在线程本地上下文中执行可取消操作"""
             self._operation_local.cancel_event = cancel_event
             try:
                 return operation()

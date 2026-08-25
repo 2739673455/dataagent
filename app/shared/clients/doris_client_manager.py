@@ -63,6 +63,7 @@ class DorisQueryClientRegistry:
     """按数据库中的稳定查询身份动态管理 Doris 连接池"""
 
     def __init__(self, endpoint: DBConfig) -> None:
+        """初始化查询端点和按角色隔离的连接池注册表"""
         self._endpoint = endpoint
         self._entries: dict[str, _QueryClientEntry] = {}
         self._lock = asyncio.Lock()
@@ -115,6 +116,8 @@ class DorisQueryClientRegistry:
 
 @dataclass(frozen=True, slots=True)
 class _QueryClientEntry:
+    """记录查询连接池的凭据指纹和客户端实例"""
+
     fingerprint: str
     manager: DorisClientManager
 

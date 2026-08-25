@@ -1,3 +1,5 @@
+import type { ColumnInfo } from "@/api/meta";
+
 // 格式化 ISO 时间字符串为 YYYY-MM-DD HH:mm:ss
 export function formatDateTime(isoString?: string | null): string {
   if (!isoString) return "";
@@ -15,6 +17,32 @@ export function formatDateTime(isoString?: string | null): string {
   } catch {
     return isoString;
   }
+}
+
+// 格式化取值索引同步模式
+export function formatValueIndexSyncMode(mode?: "full" | "incremental" | null): string {
+  if (mode === "full") return "全量";
+  if (mode === "incremental") return "增量";
+  return "未知";
+}
+
+// 构造取值索引同步状态悬停详情
+export function formatValueIndexSyncDetails(
+  state: NonNullable<ColumnInfo["value_index_state"]>
+): string {
+  const statusLabel =
+    state.status === "syncing" ? "同步中" : state.status === "failed" ? "同步失败" : "同步成功";
+  const lines = [`当前状态：${statusLabel}`];
+  if (state.last_synced_at) {
+    lines.push(
+      `最近成功：${formatValueIndexSyncMode(state.last_sync_mode)} ${formatDateTime(state.last_synced_at)}`
+    );
+  }
+  lines.push(`最近全量：${formatDateTime(state.last_full_synced_at) || "无"}`);
+  lines.push(`最近增量：${formatDateTime(state.last_incremental_synced_at) || "无"}`);
+  lines.push(`同步代次：${state.current_generation || "无"}`);
+  if (state.last_error) lines.push(`失败原因：${state.last_error}`);
+  return lines.join("\n");
 }
 
 // 拆分逗号分隔字符串为干净数组

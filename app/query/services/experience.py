@@ -75,6 +75,7 @@ class QueryExperienceService:
         data_source: str,
         database_name: str,
     ) -> None:
+        """绑定查询经验存储、检索和索引调度依赖"""
         self._repo = repo
         self._index_repo = index_repo
         self._embedding_client = embedding_client
@@ -347,6 +348,7 @@ class QueryExperienceService:
         table_versions: dict[str, int],
         column_versions: dict[tuple[str, str], int],
     ) -> list[QueryExperienceAsset]:
+        """按校验血缘构造带元数据版本的经验资产快照"""
         assets = [
             QueryExperienceAsset(
                 experience_id=experience_id,
@@ -427,6 +429,7 @@ class QueryExperienceService:
         user_id: int,
         role_name: str,
     ) -> dict[UUID, dict[str, float]]:
+        """获取查询经验的文本和向量倒数排名分数"""
         try:
             embeddings = await self._embedding_client.aembed_documents([query])
             if len(embeddings) != 1:
@@ -462,6 +465,7 @@ class QueryExperienceService:
         query_columns: set[tuple[str, str]],
         authorization_filter: MetadataAuthorizationFilter,
     ) -> QueryExperienceSearchResult | None:
+        """按资产权限、语义得分和血缘重叠度评估单条经验"""
         if experience.quality == "disabled":
             return None
         experience_tables = {

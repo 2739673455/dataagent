@@ -39,6 +39,8 @@ type SpecialistResultObserver = Callable[
 
 @dataclass(slots=True)
 class _ExecutionBudget:
+    """记录单次 Planner 执行的委派与修补预算"""
+
     delegations: int = 0
     session_resumes: Counter[str] = field(default_factory=Counter)
     repair_rounds: Counter[str] = field(default_factory=Counter)
@@ -70,6 +72,7 @@ class AgentSessionService:
         ],
         result_observer: SpecialistResultObserver | None = None,
     ) -> None:
+        """初始化会话身份、并发控制和委派预算限制"""
         if max_parallel_sessions <= 0:
             raise ValueError("max_parallel_sessions 必须为正整数")
         if max_delegations_per_run <= 0:
@@ -287,6 +290,7 @@ class AgentSessionService:
         paths = artifact_paths | evidence_paths
 
         async def verify(path: str) -> bool:
+            """在受控并发范围内验证单个产物路径"""
             async with self._artifact_verification_parallelism:
                 return await self._artifact_verifier(path)
 

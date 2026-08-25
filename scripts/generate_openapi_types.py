@@ -26,10 +26,12 @@ def load_openapi() -> dict[str, Any]:
 
 
 def _quote(value: str) -> str:
+    """生成可用于 TypeScript 字面量的 JSON 字符串"""
     return json.dumps(value, ensure_ascii=False)
 
 
 def _literal(value: Any) -> str:
+    """将简单 JSON 值渲染为 TypeScript 字面量"""
     if value is None:
         return "null"
     if value is True:
@@ -44,10 +46,12 @@ def _literal(value: Any) -> str:
 
 
 def _unique(items: Sequence[str]) -> list[str]:
+    """按原有顺序移除重复类型表达式"""
     return list(dict.fromkeys(items))
 
 
 def _render_ref(ref: str) -> str:
+    """将 OpenAPI Schema 引用渲染为组件类型索引"""
     prefix = "#/components/schemas/"
     if not ref.startswith(prefix):
         return "unknown"
@@ -114,6 +118,7 @@ def render_schema(schema: Any, indent: int = 0) -> str:
 
 
 def _resolve(document: Mapping[str, Any], value: Any) -> Any:
+    """解析 OpenAPI 文档内的本地 JSON 引用"""
     if not isinstance(value, Mapping) or "$ref" not in value:
         return value
     ref = str(value["$ref"])
@@ -132,6 +137,7 @@ def _render_parameters(
     parameters: Sequence[Any],
     indent: int,
 ) -> str:
+    """按来源分组并渲染接口参数类型"""
     groups: dict[str, list[Mapping[str, Any]]] = {
         location: [] for location in PARAMETER_LOCATIONS
     }
@@ -163,6 +169,7 @@ def _render_parameters(
 
 
 def _render_content(content: Any, indent: int) -> str:
+    """按媒体类型渲染请求或响应内容类型"""
     if not isinstance(content, Mapping) or not content:
         return "never"
     lines = ["{"]
@@ -183,6 +190,7 @@ def _render_operation(
     path_parameters: Sequence[Any],
     operation: Mapping[str, Any],
 ) -> str:
+    """渲染一个 OpenAPI 操作的参数、请求体和响应"""
     parameters = [*path_parameters, *operation.get("parameters", [])]
     lines = ["{"]
     lines.append(
@@ -269,6 +277,7 @@ def render_openapi_types(document: Mapping[str, Any]) -> str:
 
 
 def main() -> int:
+    """生成或校验前端 OpenAPI TypeScript 协议文件"""
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--check",

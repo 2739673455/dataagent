@@ -1,9 +1,10 @@
-import { BarChart3, Check, Edit2, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Check, Edit2, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/api/errors";
 import { type MetricInfo, metaApi } from "@/api/meta";
 import { Button } from "@/components/ui/button";
+import { MetadataEditorDialog } from "./MetadataEditorDialog";
 import { splitCsv } from "./utils";
 
 interface MetricSectionProps {
@@ -130,8 +131,7 @@ export function MetricSection({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e5e5df] pb-3 shrink-0">
         <div className="flex items-center gap-2">
           <h2 className="flex items-center gap-1.5 text-base font-bold text-[#18181b]">
-            <BarChart3 className="h-4 w-4 text-[#52525b]" />
-            <span>业务指标元数据 ({metrics.length})</span>
+            <span>指标元数据({metrics.length})</span>
           </h2>
           {selectedMetricNames.length > 0 && (
             <span className="rounded bg-[#ebebe6] px-2 py-0.5 text-xs text-[#52525b] font-mono">
@@ -198,7 +198,7 @@ export function MetricSection({
       </div>
 
       {isCreatingMetric && (
-        <div className="mt-3 rounded border border-[#1e2024] bg-[#fafaf8] p-4 text-xs shadow-sm shrink-0 mb-1">
+        <MetadataEditorDialog ariaLabel="添加指标元数据" onClose={() => setIsCreatingMetric(false)}>
           <div className="flex items-center justify-between font-semibold text-[#18181b] border-b border-[#e5e5df] pb-1.5 mb-3">
             <span>添加指标元数据</span>
             <button
@@ -291,11 +291,14 @@ export function MetricSection({
               </Button>
             </div>
           </div>
-        </div>
+        </MetadataEditorDialog>
       )}
 
       {editingMetric && (
-        <div className="mt-3 rounded border border-[#1e2024] bg-[#fafaf8] p-4 text-xs shadow-sm shrink-0 mb-1">
+        <MetadataEditorDialog
+          ariaLabel={`编辑指标元数据 ${editingMetric.name}`}
+          onClose={() => setEditingMetric(null)}
+        >
           <div className="flex items-center justify-between font-semibold text-[#18181b] border-b border-[#e5e5df] pb-1.5 mb-3">
             <span>编辑指标元数据: {editingMetric.name}</span>
             <button
@@ -373,7 +376,7 @@ export function MetricSection({
               </Button>
             </div>
           </div>
-        </div>
+        </MetadataEditorDialog>
       )}
 
       <div className="mt-4 rounded border border-[#d4d4ce]">

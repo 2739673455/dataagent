@@ -40,6 +40,7 @@ class ConversationTitleService:
     """生成并安全更新会话标题"""
 
     def __init__(self, model: BaseChatModel) -> None:
+        """初始化用于生成标题的语言模型"""
         self._model = model
 
     async def generate_and_update(

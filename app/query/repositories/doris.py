@@ -31,7 +31,9 @@ class DorisReadonlyPrivilegeError(RuntimeError):
 class DorisConnectionProvider(Protocol):
     """按查询创建 Doris 异步连接的最小接口"""
 
-    def connection(self) -> AsyncConnection: ...
+    def connection(self) -> AsyncConnection:
+        """返回可作为异步上下文管理器使用的 Doris 连接"""
+        ...
 
 
 class DorisQueryRepository:

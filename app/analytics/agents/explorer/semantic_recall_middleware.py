@@ -30,6 +30,7 @@ def _expanded_content(
     record: SemanticRecallRecord,
     view: SemanticRecallView,
 ) -> str:
+    """按请求视图序列化已授权的语义召回记录"""
     if view == "search_response":
         payload = record.response.model_dump(mode="json")
         payload["recall_id"] = record.recall_id
@@ -44,6 +45,7 @@ def _expanded_content(
 def _current_turn_references(
     messages: list[Any],
 ) -> list[tuple[int, SemanticRecallReference]]:
+    """提取当前用户回合产生的语义召回引用"""
     last_human_index = -1
     for index, message in enumerate(messages):
         if isinstance(message, HumanMessage) and not message.additional_kwargs.get(
@@ -67,6 +69,7 @@ class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
         request: ModelRequest[Any],
         handler: Callable[[ModelRequest[Any]], ModelResponse[Any]],
     ) -> ModelResponse[Any]:
+        """拒绝需要异步数据读取的同步模型调用"""
         if _current_turn_references(request.messages):
             raise RuntimeError("语义召回展开需要异步执行")
         return handler(request)
@@ -76,6 +79,7 @@ class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
         request: ModelRequest[Any],
         handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
     ) -> ModelResponse[Any]:
+        """在异步模型调用前展开当前回合的语义召回引用"""
         references = _current_turn_references(request.messages)
         if not references:
             return await handler(request)

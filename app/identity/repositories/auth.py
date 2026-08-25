@@ -23,6 +23,7 @@ class AuthPGRepo:
     """PostgreSQL 认证身份与 Doris 权限投影存储"""
 
     def __init__(self, session: AsyncSession) -> None:
+        """绑定当前请求使用的异步数据库会话"""
         self._session = session
 
     @property

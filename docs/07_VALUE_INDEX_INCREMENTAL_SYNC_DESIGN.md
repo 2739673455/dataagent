@@ -10,9 +10,9 @@
 | 索引目标 | Elasticsearch 字段取值全文索引 |
 | 核心入口 | [`MetaIndexService.sync_column_values`](../app/metadata/services/index.py) |
 
-本文定义“每日水位增量同步 + 手动全量校准”的取值索引方案。水位同步降低日常扫描量，管理员按需执行全量校准以清理已经失效的历史取值并修复漏数。
+本文定义“每日或手动水位增量同步 + 手动全量校准”的取值索引方案。水位同步降低日常扫描量，管理员按需执行全量校准以清理已经失效的历史取值并修复漏数。
 
-当前实现使用 [`ValueIndexSyncState`](../app/metadata/models.py) 持久化类型化水位、运行所有权和索引代次。Celery Beat 每天在配置时间筛选具备成功水位的字段，Worker 执行增量同步。首次构建和全量校准只能由管理员手动触发。
+当前实现使用 [`ValueIndexSyncState`](../app/metadata/models.py) 持久化类型化水位、运行所有权和索引代次。Celery Beat 每天在配置时间筛选具备成功水位的字段，Worker 执行增量同步。管理员也可以对已建立水位的字段或表手动触发增量同步。首次构建和全量校准只能由管理员手动触发。
 
 ---
 
@@ -60,9 +60,8 @@
 
 | 模式 | 触发条件 | 读取范围 | 删除失效值 |
 | :--- | :--- | :--- | :--- |
-| `bootstrap` | 管理员首次手动同步且无成功状态 | 全字段 | 是 |
-| `incremental` | 每日任务领取已有成功水位且配置可靠游标的字段 | 水位窗口 | 否 |
-| `reconcile` | 管理员对已有状态的字段手动同步 | 全字段 | 是 |
+| `full` | 首次构建或管理员手动同步 | 全字段 | 是 |
+| `incremental` | 每日任务领取或管理员手动选择已有成功水位且配置可靠游标的字段 | 水位窗口 | 否 |
 | `clear` | `index_values=false` | 无 | 删除该字段全部索引 |
 
 缺少游标配置的字段不参与每日自动任务，只能由管理员手动全量同步。
@@ -276,7 +275,8 @@ flowchart LR
 
 - 增量同步负责新增值和当前值的快速可见
 - 管理员手动全量校准负责删除失效值
-- 管理员可对单字段或整表强制触发 `reconcile`
+- 管理员可对单字段或整表强制触发 `full`
+- 管理员可对已完成全量同步且配置可靠游标的单字段或整表触发 `incremental`
 - 对历史行长期保留的追加型或 SCD 表，可降低校准频率
 
 ### 10.2 后续 CDC 策略
@@ -296,7 +296,7 @@ flowchart LR
 
 ### 11.1 字段级互斥
 
-锁粒度为 `(t_name, c_name)`。同一字段只运行一个 `bootstrap`、`incremental` 或 `reconcile` 任务，不同字段可按并发上限并行。
+锁粒度为 `(t_name, c_name)`。同一字段只运行一个 `full` 或 `incremental` 任务，不同字段可按并发上限并行。
 
 ### 11.2 状态所有权
 
@@ -324,13 +324,15 @@ flowchart LR
 ```python
 @dataclass(frozen=True)
 class ValueIndexSyncResult:
-    mode: Literal["bootstrap", "incremental", "reconcile", "clear"]
+    mode: Literal["full", "incremental", "clear"]
     read_value_count: int
     upserted_count: int
     removed_count: int
     cursor_value: Any | None
     sync_generation: str | None
 ```
+
+管理接口根据 `last_full_synced_at` 和 `last_incremental_synced_at` 派生 `last_sync_mode`。管理列表紧凑展示最近成功同步模式和时间，悬停详情展示最近全量、最近增量、同步代次及失败原因，无需增加数据库字段。
 
 路由 schema、前端类型和同步状态展示同步调整。建议记录以下指标：
 
@@ -360,7 +362,7 @@ class ValueIndexSyncResult:
 
 ### 第三阶段：服务编排
 
-1. 实现 `bootstrap`、`incremental`、`reconcile` 和 `clear`
+1. 实现 `full`、`incremental` 和 `clear`
 2. 接入回看窗口和水位提交
 3. 将表级批量同步限制为已开启 `index_values` 的字段
 4. 修改 API 返回结构和前端同步状态展示
@@ -368,7 +370,7 @@ class ValueIndexSyncResult:
 ### 第四阶段：旧状态清理
 
 1. 将现有成功时间迁移为状态表的参考时间，不直接推导游标
-2. 管理员对所有已开启字段手动执行一次 `bootstrap`
+2. 管理员对所有已开启字段手动执行一次 `full`
 3. 确认新状态稳定后删除 `ColumnInfo` 上的旧取值同步状态字段
 
 首次构建会通过稳定编号覆盖当前文档，并由代次清理删除旧编号文档，无需保留旧写入接口。
@@ -379,7 +381,8 @@ class ValueIndexSyncResult:
 
 ### 14.1 单元测试
 
-- 管理员首次手动同步字段时执行 `bootstrap`
+- 管理员首次手动同步字段时执行 `full`
+- 管理员可手动触发已有水位字段的 `incremental`
 - 已有水位且无新数据时不产生 Upsert
 - 水位边界数据重复读取后文档数量不增加
 - 回看窗口能够补偿延迟到达数据

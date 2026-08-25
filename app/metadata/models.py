@@ -218,6 +218,17 @@ class ValueIndexSyncState(MetaBase):
         ]
         return max(timestamps, default=None)
 
+    @property
+    def last_sync_mode(self) -> Literal["full", "incremental"] | None:
+        """返回最近一次成功同步的模式"""
+        if self.last_full_synced_at is None:
+            return "incremental" if self.last_incremental_synced_at else None
+        if self.last_incremental_synced_at is None:
+            return "full"
+        if self.last_full_synced_at >= self.last_incremental_synced_at:
+            return "full"
+        return "incremental"
+
 
 @dataclass
 class ValueInfo:
@@ -251,6 +262,7 @@ class MetricInfo(MetaBase):
         meta_version: int = 1,
         index_version: int = 0,
     ) -> None:
+        """初始化指标元数据及其关联字段引用"""
         self.name = name
         self.description = description
         self.alias = alias

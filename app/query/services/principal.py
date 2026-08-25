@@ -11,13 +11,17 @@ from app.identity.services.credential import DorisCredentialCipher
 class QueryPrincipalUserProvider(Protocol):
     """查询身份解析所需的用户读取接口"""
 
-    async def get_user_by_id(self, user_id: int) -> User | None: ...
+    async def get_user_by_id(self, user_id: int) -> User | None:
+        """按主键读取查询发起用户"""
+        ...
 
 
 class QueryIdentityProvider(Protocol):
     """查询身份解析所需的角色读取接口"""
 
-    async def get(self, role_name: str) -> DorisQueryIdentity | None: ...
+    async def get(self, role_name: str) -> DorisQueryIdentity | None:
+        """读取 Doris 角色对应的稳定查询身份"""
+        ...
 
 
 class QueryPrincipalNotConfiguredError(RuntimeError):
@@ -43,6 +47,7 @@ class QueryPrincipalService:
         identity_provider: QueryIdentityProvider,
         cipher: DorisCredentialCipher,
     ) -> None:
+        """绑定用户、查询身份和凭据解密依赖"""
         self._user_provider = user_provider
         self._identity_provider = identity_provider
         self._cipher = cipher

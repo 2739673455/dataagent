@@ -235,6 +235,12 @@ async def _execute_sql(
             error_detail=str(exc),
             validation=exc.result,
         )
+        logger.warning(
+            "只读查询在执行前被拒绝: "
+            f"user_id={session_key.user_id if session_key else None}, "
+            f"conversation_id={session_key.conversation_id if session_key else None}, "
+            f"issue_count={len(exc.result.issues)}"
+        )
         return {
             "status": "error",
             "code": "sql_validation_failed",
@@ -259,14 +265,23 @@ async def _execute_sql(
             error_code="query_result_rejected",
             error_detail=str(exc),
         )
-        logger.warning(f"只读查询结果校验未通过: {type(exc).__name__}")
+        logger.warning(
+            "只读查询结果校验未通过: "
+            f"user_id={session_key.user_id if session_key else None}, "
+            f"conversation_id={session_key.conversation_id if session_key else None}, "
+            f"error_type={type(exc).__name__}"
+        )
         return {
             "status": "error",
             "code": "query_result_rejected",
             "message": str(exc),
         }
     except Exception:  # noqa: BLE001
-        logger.exception("只读查询工具执行失败")
+        logger.exception(
+            "只读查询工具执行失败: "
+            f"user_id={session_key.user_id if session_key else None}, "
+            f"conversation_id={session_key.conversation_id if session_key else None}"
+        )
         await _record_failure_safely(
             execution_context,
             session_key,

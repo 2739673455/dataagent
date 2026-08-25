@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/api/errors";
-import { type ColumnInfo, type MetricInfo, type TableInfo, metaApi } from "@/api/meta";
+import {
+  type ColumnInfo,
+  type MetricInfo,
+  type TableInfo,
+  type ValueIndexSyncRequestMode,
+  metaApi,
+} from "@/api/meta";
 import { ColumnSection } from "./ColumnSection";
 import { MetricSection } from "./MetricSection";
 import { TableSection } from "./TableSection";
@@ -147,18 +153,20 @@ export function MetadataManagement() {
   };
 
   // 同步已选表字段取值索引
-  const handleSyncTableValues = async () => {
+  const handleSyncTableValues = async (mode: ValueIndexSyncRequestMode) => {
     if (selectedTableNames.length === 0) {
       toast.error("请先选择需要同步取值索引的数据表");
       return;
     }
-    setSyncing("table_values");
+    setSyncing(`table_values_${mode}`);
     try {
-      const res = await metaApi.syncTableValues(selectedTableNames);
-      toast.success(`所选数据表枚举取值同步完成，更新 ${res.length} 个字段`);
+      const res = await metaApi.syncTableValues(selectedTableNames, mode);
+      const modeLabel = mode === "full" ? "全量" : "增量";
+      toast.success(`所选数据表取值索引${modeLabel}同步完成，更新 ${res.length} 个字段`);
       if (selectedTable) await loadColumns(selectedTable);
     } catch (error) {
-      toast.error(getApiErrorMessage(error, "同步表取值索引失败"));
+      const modeLabel = mode === "full" ? "全量" : "增量";
+      toast.error(getApiErrorMessage(error, `表取值索引${modeLabel}同步失败`));
     } finally {
       setSyncing(null);
     }
@@ -184,19 +192,21 @@ export function MetadataManagement() {
   };
 
   // 同步已选字段枚举取值索引
-  const handleSyncColumnValues = async () => {
+  const handleSyncColumnValues = async (mode: ValueIndexSyncRequestMode) => {
     if (!selectedTable || selectedColumnNames.length === 0) {
       toast.error("请先选择需要同步取值索引的字段");
       return;
     }
-    setSyncing("col_values");
+    setSyncing(`col_values_${mode}`);
     try {
       const refs = selectedColumnNames.map((c) => ({ t_name: selectedTable, c_name: c }));
-      const res = await metaApi.syncColumnValues(refs);
-      toast.success(`字段枚举取值同步完成，更新 ${res.length} 个字段`);
+      const res = await metaApi.syncColumnValues(refs, mode);
+      const modeLabel = mode === "full" ? "全量" : "增量";
+      toast.success(`字段取值索引${modeLabel}同步完成，更新 ${res.length} 个字段`);
       await loadColumns(selectedTable);
     } catch (error) {
-      toast.error(getApiErrorMessage(error, "同步字段取值失败"));
+      const modeLabel = mode === "full" ? "全量" : "增量";
+      toast.error(getApiErrorMessage(error, `字段取值索引${modeLabel}同步失败`));
     } finally {
       setSyncing(null);
     }

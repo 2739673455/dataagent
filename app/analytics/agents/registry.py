@@ -90,6 +90,7 @@ class AgentDefinition:
     skills: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        """校验专业 Agent 定义及其工具白名单"""
         validate_agent_type(self.agent_type)
         if not self.description.strip() or not self.system_prompt.strip():
             raise ValueError("智能体描述与 system_prompt 均不能为空")
@@ -168,6 +169,7 @@ class AgentRegistry:
             Coroutine[Any, Any, CompiledStateGraph],
         ],
     ) -> None:
+        """初始化专业 Agent 定义和 Session 级实例缓存"""
         definition_keys = set(definitions)
         expected_keys = set(AGENT_TYPES)
         if definition_keys != expected_keys:

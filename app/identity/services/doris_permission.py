@@ -45,6 +45,7 @@ class DorisPermissionService:
         catalog: str,
         database: str,
     ) -> None:
+        """初始化 Doris 权限操作和 PostgreSQL 投影依赖"""
         if auth_repo.session is not identity_repo.session:
             raise ValueError("认证存储与查询身份存储必须共享同一数据库会话")
         self._auth_repo = auth_repo

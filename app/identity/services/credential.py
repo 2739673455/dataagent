@@ -13,6 +13,7 @@ class DorisCredentialCipher:
     """使用部署级密钥加密 Doris 查询密码"""
 
     def __init__(self, encryption_key: str) -> None:
+        """使用部署级 Fernet 密钥初始化凭据加密器"""
         try:
             self._fernet = Fernet(encryption_key.encode("ascii"))
         except (ValueError, UnicodeEncodeError) as exc:

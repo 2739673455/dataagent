@@ -30,6 +30,7 @@ class SemanticIndexDeltaRepo:
         index_name: str,
         error_resource: str,
     ) -> None:
+        """绑定 Elasticsearch 客户端、索引名称和错误资源类型"""
         self._client = client
         self._index_name = index_name
         self._error_resource = error_resource

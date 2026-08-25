@@ -434,6 +434,7 @@ class PlannerContinuationLimitError(RuntimeError):
     """Planner 自动续写次数超过服务端硬限制"""
 
     def __init__(self, max_continuations: int, finish_reason: str) -> None:
+        """初始化包含续写上限和结束原因的异常"""
         self.max_continuations = max_continuations
         self.finish_reason = finish_reason
         super().__init__(

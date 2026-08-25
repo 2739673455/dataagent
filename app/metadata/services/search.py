@@ -165,6 +165,7 @@ class _ColumnContextBuilder:
         catalog: _SemanticCatalog,
         warnings: list[str],
     ) -> None:
+        """初始化语义目录、告警集合和字段上下文缓存"""
         self._catalog = catalog
         self._warnings = warnings
         self._contexts: dict[ColumnKey, _ColumnContext] = {}

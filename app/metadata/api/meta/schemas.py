@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.metadata.search_models import RequestedValueIndexSyncMode
 from app.shared.config.meta_config import (
     MetadataAlias,
     MetadataDescription,
@@ -87,6 +88,7 @@ class ValueIndexSyncStateResponse(BaseModel):
     current_generation: UUID | None
     last_incremental_synced_at: datetime | None
     last_full_synced_at: datetime | None
+    last_sync_mode: RequestedValueIndexSyncMode | None
     last_synced_at: datetime | None
     last_error: str | None
     updated_at: datetime
@@ -124,10 +126,22 @@ class MetricInfoResponse(BaseModel):
     index_version: int
 
 
+class SemanticIndexUpsertResponse(BaseModel):
+    """自动提交语义索引同步任务的元数据保存结果"""
+
+    semantic_index_task_id: str | None
+
+
 class TableIndexSyncRequest(MetaRequestModel):
     """批量表索引同步请求"""
 
     tables: list[MetadataName] = Field(min_length=1, max_length=10000)
+
+
+class TableValueIndexSyncRequest(TableIndexSyncRequest):
+    """批量表字段取值索引同步请求"""
+
+    mode: RequestedValueIndexSyncMode
 
 
 class TableBatchDeleteRequest(MetaRequestModel):
@@ -140,6 +154,12 @@ class ColumnIndexSyncRequest(MetaRequestModel):
     """批量字段索引同步请求"""
 
     columns: list[ColumnReference] = Field(min_length=1, max_length=10000)
+
+
+class ColumnValueIndexSyncRequest(ColumnIndexSyncRequest):
+    """批量字段取值索引同步请求"""
+
+    mode: RequestedValueIndexSyncMode
 
 
 class ColumnBatchDeleteRequest(MetaRequestModel):

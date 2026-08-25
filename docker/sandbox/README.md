@@ -7,12 +7,27 @@
 
 - Python：将包加入 `requirements.txt`。
 - Node.js：将包加入 `package.json` 的 `dependencies`。
-- 修改依赖后重启服务。`sandbox.rebuild_image: true` 时，管理器会重新执行镜像构建；
-  Docker 会复用未变化的构建层。
+- 修改依赖或 Dockerfile 后执行 `docker compose -f docker/compose.yml build sandbox-image`，再重启 API 和需要访问沙箱的 Worker。
+- 日常启动和重启服务直接复用 `dataagent-sandbox:latest`，无需重新构建。
 
-构建阶段的 Node 下载地址、PyPI 镜像和 npm registry 分别由
-`node_download_base`、`pypi_index_url` 和 `npm_registry` 配置。它们只影响镜像构建，
+首次执行 `docker compose -f docker/compose.yml up -d` 时，Compose 会在镜像缺失时自动构建沙箱镜像。`sandbox-image` 配置为零副本，只负责声明镜像构建规则，不会创建固定沙箱容器。
+
+镜像名称、构建上下文、构建网络和依赖下载源集中定义在 `docker/compose.yml` 的
+`sandbox-image` 服务中。`SANDBOX_NODE_DOWNLOAD_BASE`、`SANDBOX_PYPI_INDEX_URL`
+和 `SANDBOX_NPM_REGISTRY` 环境变量可以临时覆盖默认下载源。它们只影响镜像构建，
 不会为运行中的沙盒开启网络。
+
+```bash
+docker compose -f docker/compose.yml build sandbox-image
+
+# 临时覆盖镜像名称或构建源
+SANDBOX_IMAGE=dataagent-sandbox:dev \
+SANDBOX_NPM_REGISTRY=https://registry.npmjs.org \
+docker compose -f docker/compose.yml build sandbox-image
+```
+
+应用启动阶段只连接 Docker 并读取 `sandbox.image`。跳过完整 Compose 启动且镜像不存在时，
+应用会提示执行 `docker compose -f docker/compose.yml up -d`。
 
 ## 隔离与限制
 

@@ -27,6 +27,7 @@ from app.shared.config.meta_config import (
     TableRole,
     ValueIndexSyncConfig,
 )
+from app.shared.tasks.submission import TaskSubmission
 
 
 class MetaCatalogService:
@@ -124,7 +125,7 @@ class MetaCatalogService:
         index_values: bool,
         reference_t_name: str | None = None,
         reference_c_name: str | None = None,
-    ) -> None:
+    ) -> TaskSubmission | None:
         """新增或更新字段元数据"""
         if not await self._source_repo.table_exists(t_name):
             raise meta_error.InvalidMetadataError(detail=f"源表不存在: {t_name}")
@@ -188,9 +189,13 @@ class MetaCatalogService:
                 table_names=set(),
                 column_keys={(t_name, c_name)},
             )
-            self._semantic_index_scheduler.enqueue_columns([(t_name, c_name)])
+            return self._semantic_index_scheduler.enqueue_columns([(t_name, c_name)])
+        return None
 
-    async def upsert_metric_info(self, metric_info: MetricInfo) -> None:
+    async def upsert_metric_info(
+        self,
+        metric_info: MetricInfo,
+    ) -> TaskSubmission | None:
         """新增或更新指标元数据"""
         async with self._meta_repo.session.begin():
             relevant_column_keys = sorted(
@@ -216,7 +221,8 @@ class MetaCatalogService:
             metric_info.alias = list(dict.fromkeys(metric_info.alias))
             changed = await self._meta_repo.upsert_metric_info(metric_info)
         if changed:
-            self._semantic_index_scheduler.enqueue_metrics([metric_info.name])
+            return self._semantic_index_scheduler.enqueue_metrics([metric_info.name])
+        return None
 
     async def delete_tables(self, table_names: list[str]) -> None:
         """删除多个表及其字段元数据和索引"""

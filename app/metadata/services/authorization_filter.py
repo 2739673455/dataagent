@@ -14,6 +14,7 @@ class MetadataAuthorizationFilter:
         data_source: str,
         database_name: str,
     ) -> None:
+        """绑定当前用户资产策略和元数据数据库范围"""
         self._policy = policy
         self._data_source = data_source
         self._database_name = database_name

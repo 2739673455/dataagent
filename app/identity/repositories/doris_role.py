@@ -16,6 +16,7 @@ class DorisWorkloadGroupNotFoundError(RuntimeError):
     """Doris 工作组不存在"""
 
     def __init__(self, workload_group: str) -> None:
+        """初始化缺失的 Doris 工作组名称"""
         self.workload_group = workload_group
         super().__init__(f"Doris 工作组不存在: {workload_group}")
 
@@ -23,13 +24,16 @@ class DorisWorkloadGroupNotFoundError(RuntimeError):
 class DorisAdminConnectionProvider(Protocol):
     """Doris 权限管理连接提供器"""
 
-    def connection(self) -> AsyncConnection: ...
+    def connection(self) -> AsyncConnection:
+        """创建 Doris 管理操作使用的连接上下文"""
+        ...
 
 
 class DorisRoleRepository:
     """通过独立管理身份操作 Doris 内置 RBAC"""
 
     def __init__(self, provider: DorisAdminConnectionProvider) -> None:
+        """绑定 Doris 管理连接提供器"""
         self._provider = provider
 
     @staticmethod

@@ -27,6 +27,7 @@ from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
 from app.metadata.repositories.value_index import ValueESRepo
 from app.metadata.search_models import (
+    RequestedValueIndexSyncMode,
     SemanticIndexDelta,
     SemanticIndexDocument,
     SemanticIndexSyncResult,
@@ -111,14 +112,14 @@ class MetaIndexService:
         self,
         column_keys: list[ColumnKey],
         *,
-        force_reconcile: bool = False,
+        mode: RequestedValueIndexSyncMode,
     ) -> dict[ColumnKey, ValueIndexSyncResult]:
         """按水位或全量校准模式同步多个字段取值"""
         results: dict[ColumnKey, ValueIndexSyncResult] = {}
         for column_key in dict.fromkeys(column_keys):
             results[column_key] = await self._sync_column_value_index(
                 *column_key,
-                force_reconcile=force_reconcile,
+                requested_mode=mode,
             )
         return results
 
@@ -134,7 +135,7 @@ class MetaIndexService:
         self,
         table_names: list[str],
         *,
-        force_reconcile: bool = False,
+        mode: RequestedValueIndexSyncMode,
     ) -> dict[ColumnKey, ValueIndexSyncResult]:
         """同步多个表下已开启字段的取值索引"""
         column_keys = await self._get_column_keys_by_table_names(
@@ -143,7 +144,7 @@ class MetaIndexService:
         )
         return await self.sync_column_values(
             column_keys,
-            force_reconcile=force_reconcile,
+            mode=mode,
         )
 
     async def _get_column_keys_by_table_names(
@@ -341,7 +342,7 @@ class MetaIndexService:
         t_name: str,
         c_name: str,
         *,
-        force_reconcile: bool,
+        requested_mode: RequestedValueIndexSyncMode,
     ) -> ValueIndexSyncResult:
         """执行单字段取值索引状态机"""
         run_id = uuid.uuid4()
@@ -360,17 +361,17 @@ class MetaIndexService:
             mode = self._select_value_sync_mode(
                 config,
                 state,
-                force_reconcile=force_reconcile,
+                requested_mode=requested_mode,
             )
             generation = (
                 uuid.uuid4()
-                if mode in {"bootstrap", "reconcile"}
+                if mode == "full"
                 else state.current_generation
                 if state is not None
                 else None
             )
             if generation is None:
-                mode = "bootstrap"
+                mode = "full"
                 generation = uuid.uuid4()
             await self._meta_repo.begin_value_index_sync(
                 t_name,
@@ -398,12 +399,11 @@ class MetaIndexService:
                 if current_config != config:
                     raise RuntimeError("字段取值索引同步配置已变化")
                 await self._value_repo.ensure_index()
-                if mode in {"bootstrap", "reconcile"}:
+                if mode == "full":
                     result = await self._run_full_value_sync(
                         column_info,
                         state,
                         config,
-                        mode,
                         generation,
                     )
                 else:
@@ -424,7 +424,7 @@ class MetaIndexService:
                     ),
                     generation=generation,
                     completed_at=datetime.now(UTC),
-                    full_sync=mode in {"bootstrap", "reconcile"},
+                    full_sync=mode == "full",
                     incremental_sync=mode == "incremental",
                 )
                 if not committed:
@@ -450,10 +450,9 @@ class MetaIndexService:
         column_info: ColumnInfo,
         state: ValueIndexSyncState,
         config: ValueIndexSyncConfig,
-        mode: ValueIndexSyncMode,
         generation: uuid.UUID,
     ) -> ValueIndexSyncResult:
-        """执行管理员触发的首次构建或全量校准"""
+        """执行字段取值索引全量替换"""
         upper_bound = (
             await self._source_repo.get_value_sync_upper_bound(
                 column_info.t_name,
@@ -483,7 +482,7 @@ class MetaIndexService:
             else state.cursor_value
         )
         return ValueIndexSyncResult(
-            mode=mode,
+            mode="full",
             read_value_count=read_count,
             upserted_count=read_count,
             removed_count=removed_count,
@@ -591,13 +590,13 @@ class MetaIndexService:
         config: ValueIndexSyncConfig,
         state: ValueIndexSyncState | None,
         *,
-        force_reconcile: bool,
+        requested_mode: RequestedValueIndexSyncMode,
     ) -> ValueIndexSyncMode:
-        """根据手动校准标记和已提交水位选择同步模式"""
+        """校验请求模式所需状态并选择同步模式"""
+        if requested_mode == "full":
+            return "full"
         if state is None or state.current_generation is None:
-            return "bootstrap"
-        if force_reconcile:
-            return "reconcile"
+            raise RuntimeError("字段取值增量同步缺少全量同步状态")
         if config.cursor_column is None or state.cursor_value is None:
             raise RuntimeError("字段取值增量同步缺少游标配置或已提交水位")
         return "incremental"

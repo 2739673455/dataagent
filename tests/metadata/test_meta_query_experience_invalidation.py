@@ -4,7 +4,7 @@ import unittest
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.metadata.models import ColumnInfo, TableInfo
+from app.metadata.models import ColumnInfo, MetricInfo, TableInfo
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
 from app.metadata.services.catalog import MetaCatalogService
@@ -15,6 +15,7 @@ from app.metadata.services.contracts import (
 from app.metadata.services.import_service import ImportMode, MetaImportService
 from app.metadata.services.index import MetaIndexService
 from app.shared.config.meta_config import MetaConfig, TableConfig
+from app.shared.tasks.submission import TaskSubmission
 from tests.identity.test_auth_service import AsyncSessionStub
 
 
@@ -159,13 +160,13 @@ class MetaQueryExperienceInvalidationTest(unittest.IsolatedAsyncioTestCase):
         meta_repo.upsert_column_info = AsyncMock(return_value=True)
         source_repo = MagicMock(spec=SourceDorisRepo)
         source_repo.table_exists = AsyncMock(return_value=True)
-        source_repo.get_column_types = AsyncMock(
-            return_value={"status": "VARCHAR"}
-        )
+        source_repo.get_column_types = AsyncMock(return_value={"status": "VARCHAR"})
         source_repo.get_column_values = AsyncMock(return_value=["已支付"])
         invalidator = MagicMock(spec=MetadataAssetInvalidator)
         invalidator.invalidate_assets = AsyncMock()
         scheduler = MagicMock(spec=MetadataSemanticIndexScheduler)
+        submission = TaskSubmission(task_id="column-index-task")
+        scheduler.enqueue_columns.return_value = submission
         service = build_catalog_service(
             meta_repo,
             source_repo,
@@ -173,7 +174,7 @@ class MetaQueryExperienceInvalidationTest(unittest.IsolatedAsyncioTestCase):
             scheduler,
         )
 
-        await service.upsert_column_info(
+        result = await service.upsert_column_info(
             t_name="orders",
             c_name="status",
             description="订单状态",
@@ -181,7 +182,60 @@ class MetaQueryExperienceInvalidationTest(unittest.IsolatedAsyncioTestCase):
             index_values=True,
         )
 
+        self.assertIs(result, submission)
         scheduler.enqueue_columns.assert_called_once_with([("orders", "status")])
+
+    async def test_catalog_returns_metric_semantic_sync_submission(self) -> None:
+        meta_repo = MagicMock(spec=MetaPGRepo)
+        meta_repo.upsert_metric_info = AsyncMock(return_value=True)
+        invalidator = MagicMock(spec=MetadataAssetInvalidator)
+        scheduler = MagicMock(spec=MetadataSemanticIndexScheduler)
+        submission = TaskSubmission(task_id="metric-index-task")
+        scheduler.enqueue_metrics.return_value = submission
+        service = build_catalog_service(
+            meta_repo,
+            MagicMock(spec=SourceDorisRepo),
+            invalidator,
+            scheduler,
+        )
+
+        result = await service.upsert_metric_info(
+            MetricInfo(
+                name="order_count",
+                description="订单数量",
+                relevant_columns=[],
+                alias=["订单数"],
+            )
+        )
+
+        self.assertIs(result, submission)
+        scheduler.enqueue_metrics.assert_called_once_with(["order_count"])
+
+    async def test_catalog_returns_no_submission_when_metric_is_unchanged(
+        self,
+    ) -> None:
+        meta_repo = MagicMock(spec=MetaPGRepo)
+        meta_repo.upsert_metric_info = AsyncMock(return_value=False)
+        invalidator = MagicMock(spec=MetadataAssetInvalidator)
+        scheduler = MagicMock(spec=MetadataSemanticIndexScheduler)
+        service = build_catalog_service(
+            meta_repo,
+            MagicMock(spec=SourceDorisRepo),
+            invalidator,
+            scheduler,
+        )
+
+        result = await service.upsert_metric_info(
+            MetricInfo(
+                name="order_count",
+                description="订单数量",
+                relevant_columns=[],
+                alias=["订单数"],
+            )
+        )
+
+        self.assertIsNone(result)
+        scheduler.enqueue_metrics.assert_not_called()
 
 
 if __name__ == "__main__":

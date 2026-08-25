@@ -1,4 +1,17 @@
 services:
+  sandbox-image:
+    image: ${SANDBOX_IMAGE:-dataagent-sandbox:latest}
+    build:
+      context: ./sandbox
+      network: host
+      args:
+        NODE_VERSION: ${SANDBOX_NODE_VERSION:-20.19.2}
+        NODE_DOWNLOAD_BASE: ${SANDBOX_NODE_DOWNLOAD_BASE:-https://npmmirror.com/mirrors/node}
+        PYPI_INDEX_URL: ${SANDBOX_PYPI_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
+        NPM_REGISTRY: ${SANDBOX_NPM_REGISTRY:-https://registry.npmmirror.com}
+    deploy:
+      replicas: 0
+
   postgres:
     image: postgres:17-alpine
     container_name: postgres

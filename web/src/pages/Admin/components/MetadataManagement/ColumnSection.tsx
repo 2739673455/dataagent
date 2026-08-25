@@ -1,10 +1,16 @@
-import { Check, Edit2, Layers, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Check, Edit2, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/api/errors";
-import { type ColumnInfo, metaApi } from "@/api/meta";
+import { type ColumnInfo, type ValueIndexSyncRequestMode, metaApi } from "@/api/meta";
 import { Button } from "@/components/ui/button";
-import { formatDateTime, splitCsv } from "./utils";
+import { MetadataEditorDialog } from "./MetadataEditorDialog";
+import {
+  formatDateTime,
+  formatValueIndexSyncDetails,
+  formatValueIndexSyncMode,
+  splitCsv,
+} from "./utils";
 
 interface ColumnSectionProps {
   selectedTable: string | null;
@@ -15,8 +21,60 @@ interface ColumnSectionProps {
   loadingColumns: boolean;
   syncing: string | null;
   onSyncColumnIndexes: () => Promise<void>;
-  onSyncColumnValues: () => Promise<void>;
+  onSyncColumnValues: (mode: ValueIndexSyncRequestMode) => Promise<void>;
   onReloadColumns: (tableName: string) => Promise<void>;
+}
+
+// 渲染字段取值索引的紧凑状态与悬停详情
+function ValueIndexStatus({ column }: { column: ColumnInfo }) {
+  if (!column.index_values) {
+    return (
+      <span className="inline-flex items-center rounded bg-[#e5e5df] px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap text-[#71717a]">
+        未开启
+      </span>
+    );
+  }
+
+  const state = column.value_index_state;
+  const modeLabel = formatValueIndexSyncMode(state?.last_sync_mode);
+  const lastSuccess = state?.last_synced_at
+    ? state.status === "succeeded"
+      ? formatDateTime(state.last_synced_at)
+      : `上次${modeLabel} · ${formatDateTime(state.last_synced_at)}`
+    : null;
+
+  return (
+    <div
+      className="flex flex-col items-start gap-1"
+      title={state ? formatValueIndexSyncDetails(state) : "尚未执行取值索引同步"}
+    >
+      <div className="flex items-center gap-1">
+        <span className="inline-flex items-center rounded bg-[#1e2024] px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap text-[#ffffff]">
+          已开启
+        </span>
+        {state?.status === "syncing" ? (
+          <span className="inline-flex animate-pulse items-center rounded bg-[#e5e5df] px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap text-[#52525b]">
+            同步中
+          </span>
+        ) : state?.status === "failed" ? (
+          <span className="inline-flex items-center rounded bg-[#fee2e2] px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap text-[#b91c1c]">
+            同步失败
+          </span>
+        ) : state?.last_sync_mode ? (
+          <span className="inline-flex items-center rounded bg-[#deded8] px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap text-[#52525b]">
+            上次{modeLabel}
+          </span>
+        ) : null}
+      </div>
+      {lastSuccess ? (
+        <span className="text-[9px] text-[#71717a] font-mono whitespace-nowrap leading-tight">
+          {lastSuccess}
+        </span>
+      ) : (
+        <span className="text-[10px] text-[#a1a1aa] font-mono whitespace-nowrap">未同步</span>
+      )}
+    </div>
+  );
 }
 
 export function ColumnSection({
@@ -140,9 +198,8 @@ export function ColumnSection({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e5e5df] pb-3 shrink-0">
         <div className="flex items-center gap-2">
           <h2 className="flex items-center gap-1.5 text-base font-bold text-[#18181b]">
-            <Layers className="h-4 w-4 text-[#52525b]" />
             <span>
-              表字段元数据 [{selectedTable || "未选择"}] ({columns.length})
+              表字段元数据[{selectedTable || "未选择"}]({columns.length})
             </span>
             {loadingColumns && <RefreshCw className="h-3 w-3 animate-spin text-[#71717a] ml-1" />}
           </h2>
@@ -178,20 +235,39 @@ export function ColumnSection({
                 variant="outline"
                 size="sm"
                 disabled={syncing !== null || selectedColumnNames.length === 0}
-                onClick={() => void onSyncColumnValues()}
+                onClick={() => void onSyncColumnValues("full")}
                 className="h-7 text-xs"
                 title={
                   selectedColumnNames.length === 0
-                    ? "请先勾选需要同步取值索引的字段"
-                    : `同步已选 ${selectedColumnNames.length} 个字段枚举取值`
+                    ? "请先勾选需要全量同步取值索引的字段"
+                    : `全量替换已选 ${selectedColumnNames.length} 个字段的取值索引`
                 }
               >
                 <RefreshCw
-                  className={`h-3.5 w-3.5 mr-1 ${syncing === "col_values" ? "animate-spin" : ""}`}
+                  className={`h-3.5 w-3.5 mr-1 ${syncing === "col_values_full" ? "animate-spin" : ""}`}
                 />
                 {selectedColumnNames.length > 0
-                  ? `同步取值索引 (${selectedColumnNames.length})`
-                  : "同步取值索引"}
+                  ? `全量同步取值 (${selectedColumnNames.length})`
+                  : "全量同步取值"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={syncing !== null || selectedColumnNames.length === 0}
+                onClick={() => void onSyncColumnValues("incremental")}
+                className="h-7 text-xs"
+                title={
+                  selectedColumnNames.length === 0
+                    ? "请先勾选需要增量同步取值索引的字段"
+                    : `按水位增量同步已选 ${selectedColumnNames.length} 个字段，字段需要先完成全量同步`
+                }
+              >
+                <RefreshCw
+                  className={`h-3.5 w-3.5 mr-1 ${syncing === "col_values_incremental" ? "animate-spin" : ""}`}
+                />
+                {selectedColumnNames.length > 0
+                  ? `增量同步取值 (${selectedColumnNames.length})`
+                  : "增量同步取值"}
               </Button>
               <Button
                 variant="destructive"
@@ -236,7 +312,10 @@ export function ColumnSection({
       </div>
 
       {isCreatingColumn && (
-        <div className="mt-3 rounded border border-[#1e2024] bg-[#fafaf8] p-4 text-xs shadow-sm shrink-0 mb-1">
+        <MetadataEditorDialog
+          ariaLabel={`添加字段元数据 ${selectedTable || "未选择"}`}
+          onClose={() => setIsCreatingColumn(false)}
+        >
           <div className="flex items-center justify-between font-semibold text-[#18181b] border-b border-[#e5e5df] pb-1.5 mb-3">
             <span>添加字段元数据: {selectedTable}</span>
             <button
@@ -361,11 +440,14 @@ export function ColumnSection({
               </Button>
             </div>
           </div>
-        </div>
+        </MetadataEditorDialog>
       )}
 
       {editingColumn && (
-        <div className="mt-3 rounded border border-[#1e2024] bg-[#fafaf8] p-4 text-xs shadow-sm shrink-0 mb-1">
+        <MetadataEditorDialog
+          ariaLabel={`编辑字段元数据 ${editingColumn.name}`}
+          onClose={() => setEditingColumn(null)}
+        >
           <div className="flex items-center justify-between font-semibold text-[#18181b] border-b border-[#e5e5df] pb-1.5 mb-3">
             <span>编辑字段元数据: {editingColumn.name}</span>
             <button
@@ -475,7 +557,7 @@ export function ColumnSection({
               </Button>
             </div>
           </div>
-        </div>
+        </MetadataEditorDialog>
       )}
 
       <div className="mt-4 rounded border border-[#d4d4ce]">
@@ -616,51 +698,7 @@ export function ColumnSection({
                         </div>
                       </td>
                       <td className="px-3.5 py-2.5 align-top">
-                        <div className="flex flex-col gap-1 items-start">
-                          <span
-                            className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap ${
-                              col.index_values
-                                ? "bg-[#1e2024] text-[#ffffff]"
-                                : "bg-[#e5e5df] text-[#71717a]"
-                            }`}
-                          >
-                            {col.index_values ? "已开启" : "未开启"}
-                          </span>
-                          {col.index_values &&
-                            (col.value_index_state?.status === "syncing" ? (
-                              <span className="text-[10px] text-[#71717a] font-mono whitespace-nowrap animate-pulse">
-                                正在同步...
-                              </span>
-                            ) : col.value_index_state?.status === "failed" ? (
-                              <div className="flex flex-col items-start">
-                                <span
-                                  className="text-[10px] text-[#71717a] font-mono whitespace-nowrap font-medium"
-                                  title={col.value_index_state.last_error || "取值索引同步失败"}
-                                >
-                                  同步失败
-                                </span>
-                                {col.value_index_state.last_synced_at && (
-                                  <span
-                                    className="text-[9px] text-[#a1a1aa] font-mono whitespace-nowrap"
-                                    title="上次成功同步时刻"
-                                  >
-                                    {formatDateTime(col.value_index_state.last_synced_at)}
-                                  </span>
-                                )}
-                              </div>
-                            ) : col.value_index_state?.status === "succeeded" ? (
-                              <span
-                                className="text-[10px] text-[#71717a] font-mono whitespace-nowrap leading-tight"
-                                title={`同步代次: ${col.value_index_state.current_generation || "无"}`}
-                              >
-                                {formatDateTime(col.value_index_state.last_synced_at)}
-                              </span>
-                            ) : (
-                              <span className="text-[10px] text-[#a1a1aa] font-mono whitespace-nowrap">
-                                未同步
-                              </span>
-                            ))}
-                        </div>
+                        <ValueIndexStatus column={col} />
                       </td>
                       <td className="px-3.5 py-2.5 align-top text-right whitespace-nowrap">
                         <div className="inline-flex items-center justify-end gap-1.5 whitespace-nowrap">

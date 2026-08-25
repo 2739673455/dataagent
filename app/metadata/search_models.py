@@ -10,7 +10,8 @@ SemanticResourceType = Literal["column", "metric", "value"]
 SemanticIndexStatus = Literal["current", "stale", "missing"]
 SemanticTextType = Literal["name", "description", "alias"]
 SemanticMatchType = Literal["fulltext", "vector"]
-ValueIndexSyncMode = Literal["bootstrap", "incremental", "reconcile", "clear"]
+ValueIndexSyncMode = Literal["full", "incremental", "clear"]
+RequestedValueIndexSyncMode = Literal["full", "incremental"]
 
 
 @dataclass(frozen=True, slots=True)

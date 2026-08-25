@@ -89,6 +89,10 @@ export interface components {
       "c_name": string;
       "t_name": string;
     };
+    "ColumnValueIndexSyncRequest": {
+      "columns": Array<components["schemas"]["ColumnReference"]>;
+      "mode": "full" | "incremental";
+    };
     "ConversationListResponse": {
       "conversations": Array<components["schemas"]["ConversationResponse"]>;
     };
@@ -237,6 +241,9 @@ export interface components {
       "columns"?: Array<string>;
       "table_name"?: (string | null);
     };
+    "SemanticIndexUpsertResponse": {
+      "semantic_index_task_id": (string | null);
+    };
     "SetUserAdministratorRequest": {
       "is_admin": boolean;
     };
@@ -261,6 +268,10 @@ export interface components {
       "primary_key_columns": Array<string>;
       "role": "fact" | "dim";
       "value_index_sync": components["schemas"]["ValueIndexSyncConfig"];
+    };
+    "TableValueIndexSyncRequest": {
+      "mode": "full" | "incremental";
+      "tables": Array<string>;
     };
     "TaskAcceptedResponse": {
       "task_id": string;
@@ -344,6 +355,7 @@ export interface components {
       "last_error": (string | null);
       "last_full_synced_at": (string | null);
       "last_incremental_synced_at": (string | null);
+      "last_sync_mode": ("full" | "incremental" | null);
       "last_synced_at": (string | null);
       "status": "syncing" | "succeeded" | "failed";
       "updated_at": string;
@@ -1659,7 +1671,7 @@ export interface operations {
       "cookie"?: never;
     };
     "requestBody": {
-      "application/json": components["schemas"]["ColumnIndexSyncRequest"];
+      "application/json": components["schemas"]["ColumnValueIndexSyncRequest"];
     };
     "responses": {
       "200": {
@@ -1749,7 +1761,7 @@ export interface operations {
       "cookie"?: never;
     };
     "requestBody": {
-      "application/json": components["schemas"]["TableIndexSyncRequest"];
+      "application/json": components["schemas"]["TableValueIndexSyncRequest"];
     };
     "responses": {
       "200": {
@@ -1817,8 +1829,10 @@ export interface operations {
       "application/json": components["schemas"]["ColumnInfoRequest"];
     };
     "responses": {
-      "204": {
-        "content": never;
+      "200": {
+        "content": {
+        "application/json": components["schemas"]["SemanticIndexUpsertResponse"];
+      };
       };
       "422": {
         "content": {
@@ -1847,8 +1861,10 @@ export interface operations {
       "application/json": components["schemas"]["MetricInfoRequest"];
     };
     "responses": {
-      "204": {
-        "content": never;
+      "200": {
+        "content": {
+        "application/json": components["schemas"]["SemanticIndexUpsertResponse"];
+      };
       };
       "422": {
         "content": {

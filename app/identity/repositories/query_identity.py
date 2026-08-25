@@ -10,6 +10,7 @@ class DorisQueryIdentityPGRepo:
     """持久化 Doris 角色与稳定查询身份"""
 
     def __init__(self, session: AsyncSession) -> None:
+        """绑定当前请求使用的异步数据库会话"""
         self._session = session
 
     @property

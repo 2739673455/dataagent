@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import csv
+import hashlib
 import json
 import math
 import re
@@ -64,13 +65,17 @@ class ReadonlyQueryRepository(Protocol):
         self,
         sql: str,
         limits: QueryExecutionLimits,
-    ) -> tuple[str, ...]: ...
+    ) -> tuple[str, ...]:
+        """返回受资源限制约束的查询执行计划"""
+        ...
 
     def stream(
         self,
         sql: str,
         limits: QueryExecutionLimits,
-    ) -> AsyncGenerator[QueryBatch]: ...
+    ) -> AsyncGenerator[QueryBatch]:
+        """按批次流式读取受控查询结果"""
+        ...
 
 
 class QueryArtifactStore(Protocol):
@@ -82,13 +87,16 @@ class QueryArtifactStore(Protocol):
         conversation_id: UUID,
         path: str,
         content: BinaryIO,
-    ) -> None: ...
+    ) -> None:
+        """将查询产物写入指定用户的会话沙盒"""
+        ...
 
 
 class QueryResultLimitExceededError(RuntimeError):
     """查询结果超过允许的最大行数"""
 
     def __init__(self, max_rows: int) -> None:
+        """记录允许返回的最大结果行数"""
         self.max_rows = max_rows
         super().__init__(f"查询结果行数超出限制，最大允许 {max_rows} 行")
 
@@ -97,6 +105,7 @@ class QueryOutputLimitExceededError(RuntimeError):
     """查询 CSV 超过允许的最大字节数"""
 
     def __init__(self, max_output_bytes: int) -> None:
+        """记录允许写入的最大 CSV 字节数"""
         self.max_output_bytes = max_output_bytes
         super().__init__(f"查询输出 CSV 超出限制，最大允许 {max_output_bytes} 字节")
 
@@ -221,6 +230,14 @@ class AnalysisQueryService:
         dialect: QueryDialect = "doris",
     ) -> AnalysisQueryResult:
         """校验、执行并返回查询产物的紧凑摘要"""
+        sql_fingerprint = hashlib.sha256(sql.encode("utf-8")).hexdigest()[:16]
+        logger.info(
+            "开始执行只读分析查询: "
+            f"user_id={session_key.user_id}, "
+            f"conversation_id={session_key.conversation_id}, "
+            f"analysis_id={session_key.analysis_id}, dialect={dialect}, "
+            f"sql_fingerprint={sql_fingerprint}"
+        )
         try:
             async with asyncio.timeout(self._limits.timeout_seconds):
                 details = await self._execute_with_deadline(session_key, sql, dialect)
@@ -233,6 +250,18 @@ class AnalysisQueryService:
                 await self._success_observer(details)
             except Exception:  # noqa: BLE001
                 logger.exception("成功查询观察器执行失败")
+        logger.info(
+            "只读分析查询执行完成: "
+            f"user_id={session_key.user_id}, "
+            f"conversation_id={session_key.conversation_id}, "
+            f"analysis_id={session_key.analysis_id}, "
+            f"sql_fingerprint={sql_fingerprint}, "
+            f"row_count={details.result.row_count}, "
+            f"column_count={len(details.result.schema)}, "
+            f"scan_rows={details.plan_estimate.scan_rows}, "
+            f"scan_bytes={details.plan_estimate.scan_bytes}, "
+            f"artifact_path={details.result.path}"
+        )
         return details.result
 
     async def _execute_with_deadline(
@@ -380,6 +409,7 @@ def estimate_doris_query_plan(
     current: _ScanNodeEstimate | None = None
 
     def finish_current() -> None:
+        """提交当前扫描节点的估算结果"""
         nonlocal current
         if current is not None:
             completed.append(current)

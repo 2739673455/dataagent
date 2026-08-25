@@ -49,6 +49,7 @@ class AgentSessionKey:
     session_id: str
 
     def __post_init__(self) -> None:
+        """校验用户及专业 Agent Session 标识"""
         if isinstance(self.user_id, bool) or self.user_id <= 0:
             raise ValueError("user_id 必须为正整数")
         validate_identifier(self.analysis_id, "analysis_id")

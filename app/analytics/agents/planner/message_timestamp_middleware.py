@@ -13,6 +13,7 @@ from app.analytics.message_metadata import stamp_message_created_at
 
 
 def _stamp_response(response: ModelResponse[Any]) -> ModelResponse[Any]:
+    """为模型响应中的消息补充统一创建时间"""
     for message in response.result:
         stamp_message_created_at(message)
     return response
@@ -26,6 +27,7 @@ class MessageTimestampMiddleware(AgentMiddleware[Any, Any, Any]):
         request: ModelRequest[Any],
         handler: Callable[[ModelRequest[Any]], ModelResponse[Any]],
     ) -> ModelResponse[Any]:
+        """为同步模型响应写入创建时间"""
         return _stamp_response(handler(request))
 
     async def awrap_model_call(
@@ -33,4 +35,5 @@ class MessageTimestampMiddleware(AgentMiddleware[Any, Any, Any]):
         request: ModelRequest[Any],
         handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
     ) -> ModelResponse[Any]:
+        """为异步模型响应写入创建时间"""
         return _stamp_response(await handler(request))

@@ -148,13 +148,15 @@ Doris 角色或 SELECT 权限变更会立即作用于新的目录读取、语义
 ### 6. 启动、前端代理与 Docker 部署边界
 
 ```bash
-docker compose -f docker/compose.yml up -d redis
+docker compose -f docker/compose.yml up -d
 uv sync --group dev
 make run
 make worker
 make beat
 ```
 
+- 完整执行 `docker compose -f docker/compose.yml up -d` 时，Compose 会在沙箱镜像缺失时自动构建 `dataagent-sandbox:latest`，已有镜像时直接复用。`sandbox-image` 使用零副本配置，不会创建固定沙箱容器；用户沙箱仍由应用按需创建。
+- FastAPI 和 Celery Worker 启动时只校验 `sandbox.image` 对应的镜像，不执行镜像构建。修改沙箱依赖或 Dockerfile 后执行 `docker compose -f docker/compose.yml build sandbox-image` 主动更新镜像。
 - 后端默认监听 `7000` 端口。Vite 开发代理的 `VITE_APP_PROXY` 默认为 `http://localhost:7000`，可复制 `web/.env.example` 并在非默认部署中覆盖。
 - Redis 默认监听 `6379` 端口：DB 0 作为 Celery Broker，DB 1 保存 24 小时任务结果，DB 2 协调 Docker 沙箱跨进程所有权。API 和 Worker 必须连接同一 Redis 实例。
 - 使用 `make worker` 启动消费全部队列的 Celery Worker。详细说明见[后台任务设计](docs/08_BACKGROUND_TASKS.md)。

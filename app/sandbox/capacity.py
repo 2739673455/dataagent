@@ -47,6 +47,7 @@ class FairCapacityLimiter:
         max_waiting: int,
         wait_timeout_seconds: float,
     ) -> None:
+        """初始化容量上限、公平等待队列和超时参数"""
         self._max_running = max_running
         self._max_waiting = max_waiting
         self._wait_timeout_seconds = wait_timeout_seconds
@@ -57,6 +58,7 @@ class FairCapacityLimiter:
         self._closed = False
 
     def _remove_waiter_unlocked(self, waiter: _CapacityWaiter) -> None:
+        """从等待队列移除指定项并唤醒其他等待者"""
         try:
             self._waiters.remove(waiter)
         except ValueError:

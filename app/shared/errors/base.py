@@ -35,6 +35,7 @@ class ProblemError(Exception):
         status: int | None = None,
         extensions: Mapping[str, Any] | None = None,
     ) -> None:
+        """构造可序列化为 Problem Details 的应用异常"""
         self.title = title or self.title
         self.detail = detail
         self.extensions = dict(extensions or {})

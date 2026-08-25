@@ -2,7 +2,7 @@
 
 from collections.abc import AsyncIterator
 
-from sqlalchemy import URL, text
+from sqlalchemy import URL
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -81,100 +81,11 @@ class PostgresClientManager:
         self._session_maker = None
 
     async def init_tables(self) -> None:
-        """初始化数据表"""
+        """根据当前 ORM 模型创建尚未存在的数据表"""
         if self._engine is None:
             raise RuntimeError("PostgreSQL 客户端管理器尚未初始化")
         async with self._engine.begin() as connection:
             await connection.run_sync(self._base.metadata.create_all)
-            if self._base is AuthBase:
-                await connection.execute(
-                    text(
-                        "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
-                        "auth_version INTEGER NOT NULL DEFAULT 0"
-                    )
-                )
-            if self._base is MetaBase:
-                await connection.execute(
-                    text(
-                        "ALTER TABLE table_info ADD COLUMN IF NOT EXISTS "
-                        "value_index_sync JSONB NOT NULL DEFAULT "
-                        "'{\"cursor_column\":null}'::jsonb"
-                    )
-                )
-                await connection.execute(
-                    text(
-                        "ALTER TABLE table_info ALTER COLUMN value_index_sync "
-                        "SET DEFAULT "
-                        "'{\"cursor_column\":null}'"
-                    )
-                )
-                await connection.execute(
-                    text(
-                        "UPDATE table_info SET value_index_sync = "
-                        "value_index_sync - 'mode' "
-                        "- 'full_reconcile_interval_hours' "
-                        "- 'lookback_seconds' "
-                        "WHERE jsonb_exists(value_index_sync, 'mode') OR "
-                        "jsonb_exists(value_index_sync, "
-                        "'full_reconcile_interval_hours') OR "
-                        "jsonb_exists(value_index_sync, 'lookback_seconds')"
-                    )
-                )
-                await connection.execute(
-                    text(
-                        """
-                        DO $migration$
-                        BEGIN
-                            IF EXISTS (
-                                SELECT 1
-                                FROM information_schema.columns
-                                WHERE table_schema = current_schema()
-                                  AND table_name = 'column_info'
-                                  AND column_name = 'value_index_sync_status'
-                            ) THEN
-                                EXECUTE $sql$
-                                    INSERT INTO value_index_sync_state (
-                                        t_name,
-                                        c_name,
-                                        status,
-                                        last_full_synced_at,
-                                        updated_at
-                                    )
-                                    SELECT
-                                        t_name,
-                                        name,
-                                        COALESCE(
-                                            value_index_sync_status,
-                                            'succeeded'
-                                        ),
-                                        value_index_synced_at,
-                                        COALESCE(
-                                            value_index_synced_at,
-                                            CURRENT_TIMESTAMP
-                                        )
-                                    FROM column_info
-                                    WHERE value_index_sync_status IS NOT NULL
-                                       OR value_index_synced_at IS NOT NULL
-                                    ON CONFLICT (t_name, c_name) DO NOTHING
-                                $sql$;
-                            END IF;
-                        END
-                        $migration$
-                        """
-                    )
-                )
-                await connection.execute(
-                    text(
-                        "ALTER TABLE column_info "
-                        "DROP COLUMN IF EXISTS value_index_synced_at"
-                    )
-                )
-                await connection.execute(
-                    text(
-                        "ALTER TABLE column_info "
-                        "DROP COLUMN IF EXISTS value_index_sync_status"
-                    )
-                )
 
 
 auth_postgres_client_manager = PostgresClientManager(

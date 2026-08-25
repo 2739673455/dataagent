@@ -11,6 +11,7 @@ class LifecycleGuard:
     """协调并发操作与资源维护"""
 
     def __init__(self) -> None:
+        """初始化活动操作计数和维护删除状态"""
         self._condition = threading.Condition()
         self._active_operations = 0
         self._maintenance = False

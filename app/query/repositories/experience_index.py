@@ -35,6 +35,7 @@ class QueryExperienceESRepo:
     }
 
     def __init__(self, client: AsyncElasticsearch) -> None:
+        """绑定查询经验使用的 Elasticsearch 客户端"""
         self._client = client
 
     async def ensure_index(self) -> None:

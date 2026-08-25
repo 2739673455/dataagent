@@ -2,6 +2,8 @@
 
 from datetime import UTC, datetime, timedelta
 
+from loguru import logger
+
 from app.analytics.services.conversation_lifecycle import (
     ConversationLifecycleService,
 )
@@ -27,6 +29,7 @@ class UserDeletionService:
         conversations: ConversationLifecycleService,
         config: LifecycleConfig,
     ) -> None:
+        """绑定用户注销涉及的各存储和生命周期服务"""
         self._auth_postgres = auth_postgres
         self._meta_postgres = meta_postgres
         self._es = es
@@ -57,27 +60,40 @@ class UserDeletionService:
                 await repo.set_user_active(user, False)
                 await repo.revoke_user_refresh_tokens(user.id, now)
                 await repo.enqueue_user_deletion(user.id, now)
+        logger.info(f"用户注销已受理: operator_id={operator_id}, user_id={user_id}")
         return True
 
     async def process(self, user_id: int) -> None:
         """幂等执行一个用户的跨存储注销清理"""
         if await self._is_completed(user_id):
+            logger.info(f"用户注销清理已完成，跳过重复任务: user_id={user_id}")
             return
+        logger.info(f"开始用户注销清理编排: user_id={user_id}")
         try:
             await self._conversations.delete_user_conversations(user_id)
+            logger.info(f"用户会话资源清理完成: user_id={user_id}")
             await self._sandbox.delete_user_sandbox(user_id)
+            logger.info(f"用户沙箱资源清理完成: user_id={user_id}")
             await self._delete_query_history(user_id)
+            logger.info(f"用户查询经验清理完成: user_id={user_id}")
             await self._complete(user_id)
+            logger.info(f"用户注销清理编排完成: user_id={user_id}")
         except Exception as exc:
             await self._record_failure(user_id, exc)
+            logger.exception(
+                "用户注销清理编排失败: "
+                f"user_id={user_id}, error_type={type(exc).__name__}"
+            )
             raise
 
     async def _is_completed(self, user_id: int) -> bool:
+        """检查用户注销任务是否已经完成"""
         async with self._auth_postgres.session() as session:
             task = await AuthPGRepo(session).get_user_deletion_task(user_id)
             return task is not None and task.status == "completed"
 
     async def _delete_query_history(self, user_id: int) -> None:
+        """删除用户的查询经验索引和数据库记录"""
         async with self._meta_postgres.session() as session:
             repo = QueryExperiencePGRepo(session)
             async with session.begin():
@@ -91,6 +107,7 @@ class UserDeletionService:
                 await repo.delete_by_user(user_id)
 
     async def _complete(self, user_id: int) -> None:
+        """删除认证用户并将注销任务标记完成"""
         now = datetime.now(UTC)
         async with self._auth_postgres.session() as session:
             repo = AuthPGRepo(session)
@@ -105,6 +122,7 @@ class UserDeletionService:
                 await repo.complete_user_deletion(task, now)
 
     async def _record_failure(self, user_id: int, exc: Exception) -> None:
+        """记录注销失败原因和下一次重试时间"""
         now = datetime.now(UTC)
         next_attempt_at = now + timedelta(
             seconds=self._config.user_deletion_retry_seconds
@@ -118,6 +136,11 @@ class UserDeletionService:
                         task,
                         error=f"{type(exc).__name__}: {exc}",
                         next_attempt_at=next_attempt_at,
+                    )
+                    logger.warning(
+                        "用户注销失败状态已记录: "
+                        f"user_id={user_id}, error_type={type(exc).__name__}, "
+                        f"next_attempt_at={next_attempt_at.isoformat()}"
                     )
 
     async def list_due_user_ids(self) -> list[int]:

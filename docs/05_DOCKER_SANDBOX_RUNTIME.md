@@ -41,6 +41,12 @@ Agent 文件与执行协议]
 
 业务层通过构造函数或 FastAPI Depends 接收 `DockerSandboxManager`。`AgentManager`、聊天服务、附件路由和 Celery 任务均不读取沙箱全局单例。应用入口中的 `providers.py` 是统一组装位置。
 
+### 2.1 镜像构建与运行边界
+
+`docker compose up -d` 会在沙箱镜像缺失时自动构建 `dataagent-sandbox:latest`，已有镜像时直接复用。`sandbox-image` 服务配置为零副本，因此 Compose 只维护构建规则，不创建固定沙箱容器。Dockerfile 或沙箱依赖变化后执行 `docker compose -f docker/compose.yml build sandbox-image` 主动更新镜像，再重启使用沙箱的进程。
+
+FastAPI 和 Celery Worker 初始化沙箱管理器时只连接 Docker、读取 `sandbox.image` 并计算容器规格摘要，不执行镜像构建。镜像缺失时应用启动会提示先执行 `docker compose -f docker/compose.yml up -d`。镜像名称、构建上下文、构建网络和下载源定义在 `docker/compose.yml` 的 `sandbox-image` 服务中，构建参数可以通过 `SANDBOX_*` 环境变量覆盖。
+
 ## 3. 资源与权限模型
 
 ### 3.1 用户容器和持久卷

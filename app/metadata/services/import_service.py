@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from loguru import logger
+
 from app.metadata import errors as meta_error
 from app.metadata.models import (
     COLUMN_EXAMPLE_LIMIT,
@@ -133,6 +135,13 @@ class MetaImportService:
             metrics=metric_changes,
         )
         if dry_run:
+            logger.info(
+                "元数据导入预检完成: "
+                f"mode={mode.value}, "
+                f"table_changes={len(table_changes.created) + len(table_changes.updated) + len(table_changes.deleted)}, "
+                f"column_changes={len(column_changes.created) + len(column_changes.updated) + len(column_changes.deleted)}, "
+                f"metric_changes={len(metric_changes.created) + len(metric_changes.updated) + len(metric_changes.deleted)}"
+            )
             return result
 
         if mode is ImportMode.REPLACE:
@@ -174,6 +183,22 @@ class MetaImportService:
             self._semantic_index_scheduler.enqueue_columns(changed_column_keys)
         if changed_metric_names:
             self._semantic_index_scheduler.enqueue_metrics(changed_metric_names)
+
+        logger.info(
+            "元数据导入完成: "
+            f"mode={mode.value}, "
+            f"tables_created={len(table_changes.created)}, "
+            f"tables_updated={len(table_changes.updated)}, "
+            f"tables_deleted={len(table_changes.deleted)}, "
+            f"columns_created={len(column_changes.created)}, "
+            f"columns_updated={len(column_changes.updated)}, "
+            f"columns_deleted={len(column_changes.deleted)}, "
+            f"metrics_created={len(metric_changes.created)}, "
+            f"metrics_updated={len(metric_changes.updated)}, "
+            f"metrics_deleted={len(metric_changes.deleted)}, "
+            f"auto_sync_columns={len(changed_column_keys)}, "
+            f"auto_sync_metrics={len(changed_metric_names)}"
+        )
 
         return result
 

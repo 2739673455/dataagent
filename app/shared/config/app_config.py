@@ -152,13 +152,6 @@ class SandboxConfig(BaseModel):
     )
     ownership: SandboxOwnershipConfig
     image: str
-    build_context: str
-    build_network_mode: str
-    rebuild_image: bool
-    node_version: str
-    node_download_base: str
-    pypi_index_url: str
-    npm_registry: str
     network_mode: Literal["none", "bridge"]
     memory_limit: str
     nano_cpus: int = Field(gt=0)

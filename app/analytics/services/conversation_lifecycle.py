@@ -30,6 +30,7 @@ class ConversationLifecycleService:
         *,
         session_lock_timeout: float,
     ) -> None:
+        """初始化跨存储会话资源和生命周期锁依赖"""
         self._persistence_manager = persistence_manager
         self._agents = agents
         self._sandbox = sandbox

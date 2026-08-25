@@ -63,6 +63,7 @@ class PlannerTurnContext:
     max_continuations: int
 
     def __post_init__(self) -> None:
+        """校验 Planner 回合上下文中的身份和预算参数"""
         if isinstance(self.user_id, bool) or self.user_id <= 0:
             raise ValueError("user_id 必须为正整数")
         if not self.planner_run_id.strip():

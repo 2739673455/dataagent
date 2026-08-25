@@ -7,6 +7,7 @@ from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+from app.metadata.api.meta.schemas import ValueIndexSyncStateResponse
 from app.metadata.models import ColumnInfo, ValueIndexSyncState
 from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
@@ -110,7 +111,7 @@ class MetaIndexServiceTest(unittest.IsolatedAsyncioTestCase):
         service = build_service(meta_repo)
         service.sync_column_values = AsyncMock(return_value={})
 
-        await service.sync_table_values(["orders"])
+        await service.sync_table_values(["orders"], mode="incremental")
 
         meta_repo.list_column_infos_by_table_names.assert_awaited_once_with(
             ["orders"],
@@ -118,7 +119,7 @@ class MetaIndexServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         service.sync_column_values.assert_awaited_once_with(
             [("orders", "status")],
-            force_reconcile=False,
+            mode="incremental",
         )
 
     async def test_semantic_delta_skips_unchanged_documents(self) -> None:
@@ -272,7 +273,7 @@ class MetaIndexServiceTest(unittest.IsolatedAsyncioTestCase):
             "status",
         )
 
-    def test_value_sync_mode_requires_manual_reconcile(self) -> None:
+    def test_value_sync_mode_selects_full_or_incremental(self) -> None:
         now = datetime.now(UTC)
         state = build_state(now)
         config = ValueIndexSyncConfig(
@@ -283,7 +284,7 @@ class MetaIndexServiceTest(unittest.IsolatedAsyncioTestCase):
             MetaIndexService._select_value_sync_mode(
                 config,
                 state,
-                force_reconcile=False,
+                requested_mode="incremental",
             ),
             "incremental",
         )
@@ -291,23 +292,29 @@ class MetaIndexServiceTest(unittest.IsolatedAsyncioTestCase):
             MetaIndexService._select_value_sync_mode(
                 config,
                 state,
-                force_reconcile=True,
+                requested_mode="full",
             ),
-            "reconcile",
+            "full",
         )
         self.assertEqual(
             MetaIndexService._select_value_sync_mode(
                 config,
                 None,
-                force_reconcile=True,
+                requested_mode="full",
             ),
-            "bootstrap",
+            "full",
         )
         with self.assertRaisesRegex(RuntimeError, "缺少游标配置"):
             MetaIndexService._select_value_sync_mode(
                 ValueIndexSyncConfig(),
                 state,
-                force_reconcile=False,
+                requested_mode="incremental",
+            )
+        with self.assertRaisesRegex(RuntimeError, "缺少全量同步状态"):
+            MetaIndexService._select_value_sync_mode(
+                config,
+                None,
+                requested_mode="incremental",
             )
 
     def test_value_state_returns_latest_success_time(self) -> None:
@@ -319,6 +326,13 @@ class MetaIndexServiceTest(unittest.IsolatedAsyncioTestCase):
             state.last_synced_at,
             now + timedelta(minutes=5),
         )
+        self.assertEqual(state.last_sync_mode, "full")
+
+        state.last_incremental_synced_at = now + timedelta(minutes=10)
+
+        self.assertEqual(state.last_sync_mode, "incremental")
+        response = ValueIndexSyncStateResponse.model_validate(state)
+        self.assertEqual(response.last_sync_mode, "incremental")
 
     def test_datetime_cursor_roundtrip_and_lookback(self) -> None:
         cursor = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)

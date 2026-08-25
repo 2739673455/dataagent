@@ -15,7 +15,9 @@ class AgentRuntimeManager(Protocol):
         self,
         user_id: int,
         conversation_id: UUID,
-    ) -> ConversationAgentRuntime: ...
+    ) -> ConversationAgentRuntime:
+        """获取指定用户会话的 Agent 运行时"""
+        ...
 
     def execution(
         self,
@@ -23,4 +25,6 @@ class AgentRuntimeManager(Protocol):
         conversation_id: UUID,
         *,
         runtime: ConversationAgentRuntime,
-    ) -> AbstractAsyncContextManager[PlannerTurnContext]: ...
+    ) -> AbstractAsyncContextManager[PlannerTurnContext]:
+        """创建绑定 Planner 回合预算的执行上下文"""
+        ...

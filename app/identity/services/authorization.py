@@ -58,6 +58,7 @@ class AssetIdentity:
     column_name: str | None = None
 
     def __post_init__(self) -> None:
+        """校验资产层级字段之间的依赖关系"""
         values = (
             self.data_source,
             self.database_name,
@@ -160,6 +161,7 @@ class AuthorizationService:
     """为检索与 SQL 守卫提供用户授权策略"""
 
     def __init__(self, repo: AuthPGRepo) -> None:
+        """绑定认证授权投影仓储"""
         self._repo = repo
 
     async def get_asset_policy(self, user_id: int) -> AssetAccessPolicy:
@@ -231,6 +233,7 @@ class DorisRoleManagementService:
         password_manager: PasswordManager | None = None,
         auth_config: AuthConfig | None = None,
     ) -> None:
+        """初始化 Doris 角色、凭据和用户绑定管理依赖"""
         if repo.session is not identity_repo.session:
             raise ValueError("认证存储与查询身份存储必须共享同一数据库会话")
         self._repo = repo

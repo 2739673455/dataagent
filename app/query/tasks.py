@@ -2,6 +2,8 @@
 
 from uuid import UUID
 
+from loguru import logger
+
 from app.query.providers import build_query_experience_service
 from app.query.task_scheduler import query_experience_index_scheduler
 from app.shared.clients.embedding_client_manager import embedding_client_manager
@@ -14,6 +16,7 @@ _REPAIR_BATCH_SIZE = 500
 
 
 async def _sync_index(experience_id: UUID, revision: int) -> int:
+    """初始化任务资源并同步指定查询经验索引"""
     embedding_client_manager.init()
     es_client_manager.init()
     meta_postgres_client_manager.init()
@@ -37,10 +40,19 @@ async def _sync_index(experience_id: UUID, revision: int) -> int:
     retry_jitter=True,
     max_retries=5,
 )
-def sync_index_task(self: object, experience_id: str, revision: int) -> dict[str, object]:
+def sync_index_task(
+    self: object, experience_id: str, revision: int
+) -> dict[str, object]:
     """同步一条查询经验索引并自动重试"""
     del self
+    logger.info(
+        f"开始同步查询经验索引: experience_id={experience_id}, revision={revision}"
+    )
     synced_revision = run_async(_sync_index(UUID(experience_id), revision))
+    logger.info(
+        "查询经验索引同步完成: "
+        f"experience_id={experience_id}, revision={synced_revision}"
+    )
     return {
         "experience_id": experience_id,
         "revision": synced_revision,
@@ -48,6 +60,7 @@ def sync_index_task(self: object, experience_id: str, revision: int) -> dict[str
 
 
 async def _repair_indexes() -> int:
+    """扫描索引版本落后的查询经验并提交补偿任务"""
     embedding_client_manager.init()
     es_client_manager.init()
     meta_postgres_client_manager.init()
@@ -58,6 +71,7 @@ async def _repair_indexes() -> int:
             ).pending_index_repairs(limit=_REPAIR_BATCH_SIZE)
         for experience_id, revision in pending.items():
             query_experience_index_scheduler.enqueue(experience_id, revision)
+        logger.info(f"查询经验索引补偿扫描完成: dispatched_count={len(pending)}")
         return len(pending)
     finally:
         await meta_postgres_client_manager.close()

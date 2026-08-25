@@ -26,15 +26,21 @@ from app.query.models import (
 class QueryCatalogRepository(Protocol):
     """查询校验所需的元数据目录接口"""
 
-    async def list_table_infos(self) -> list[TableInfo]: ...
+    async def list_table_infos(self) -> list[TableInfo]:
+        """列出参与查询校验的表元数据"""
+        ...
 
-    async def list_column_infos(self) -> list[ColumnInfo]: ...
+    async def list_column_infos(self) -> list[ColumnInfo]:
+        """列出参与查询校验的字段元数据"""
+        ...
 
 
 class QueryAssetPolicyProvider(Protocol):
     """按用户加载查询资产策略"""
 
-    async def get_asset_policy(self, user_id: int) -> AssetAccessPolicy: ...
+    async def get_asset_policy(self, user_id: int) -> AssetAccessPolicy:
+        """加载指定用户的查询资产访问策略"""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +55,7 @@ class QueryRejectedError(ValueError):
     """SQL 未通过确定性安全校验"""
 
     def __init__(self, result: QueryValidationResult) -> None:
+        """保存完整校验结果并汇总拒绝原因"""
         self.result = result
         message = "; ".join(issue.message for issue in result.issues)
         super().__init__(message or "SQL 查询已被拒绝")
@@ -795,6 +802,7 @@ class QueryGuardService:
             return False
 
         def source_side(operand: Expr) -> str | None:
+            """判断操作数来自关联条件的左侧或右侧"""
             while isinstance(operand, exp.Paren):
                 operand = operand.this
             if not isinstance(operand, exp.Column) or not operand.table:

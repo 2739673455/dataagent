@@ -1,9 +1,15 @@
-import { Check, Database, Edit2, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { Check, Edit2, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/api/errors";
-import { type TableInfo, type TableRole, metaApi } from "@/api/meta";
+import {
+  type TableInfo,
+  type TableRole,
+  type ValueIndexSyncRequestMode,
+  metaApi,
+} from "@/api/meta";
 import { Button } from "@/components/ui/button";
+import { MetadataEditorDialog } from "./MetadataEditorDialog";
 
 interface TableSectionProps {
   tables: TableInfo[];
@@ -15,7 +21,7 @@ interface TableSectionProps {
   loadingCatalog: boolean;
   syncing: string | null;
   onSyncTableIndexes: () => Promise<void>;
-  onSyncTableValues: () => Promise<void>;
+  onSyncTableValues: (mode: ValueIndexSyncRequestMode) => Promise<void>;
   onReloadCatalog: () => Promise<void>;
 }
 
@@ -156,8 +162,7 @@ export function TableSection({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e5e5df] pb-3 shrink-0">
         <div className="flex items-center gap-2">
           <h2 className="flex items-center gap-1.5 text-base font-bold text-[#18181b]">
-            <Database className="h-4 w-4 text-[#52525b]" />
-            <span>数据表元数据 ({tables.length})</span>
+            <span>表元数据({tables.length})</span>
             {loadingCatalog && <RefreshCw className="h-3 w-3 animate-spin text-[#71717a] ml-1" />}
           </h2>
           {selectedTableNames.length > 0 && (
@@ -190,20 +195,39 @@ export function TableSection({
             variant="outline"
             size="sm"
             disabled={syncing !== null || selectedTableNames.length === 0}
-            onClick={() => void onSyncTableValues()}
+            onClick={() => void onSyncTableValues("full")}
             className="h-7 text-xs"
             title={
               selectedTableNames.length === 0
-                ? "请先勾选需要同步取值索引的数据表"
-                : `同步已选 ${selectedTableNames.length} 张表的全部字段取值索引`
+                ? "请先勾选需要全量同步取值索引的数据表"
+                : `全量替换已选 ${selectedTableNames.length} 张表的字段取值索引`
             }
           >
             <RefreshCw
-              className={`h-3.5 w-3.5 mr-1 ${syncing === "table_values" ? "animate-spin" : ""}`}
+              className={`h-3.5 w-3.5 mr-1 ${syncing === "table_values_full" ? "animate-spin" : ""}`}
             />
             {selectedTableNames.length > 0
-              ? `同步表取值索引 (${selectedTableNames.length})`
-              : "同步表取值索引"}
+              ? `全量同步取值 (${selectedTableNames.length})`
+              : "全量同步取值"}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={syncing !== null || selectedTableNames.length === 0}
+            onClick={() => void onSyncTableValues("incremental")}
+            className="h-7 text-xs"
+            title={
+              selectedTableNames.length === 0
+                ? "请先勾选需要增量同步取值索引的数据表"
+                : `按水位增量同步已选 ${selectedTableNames.length} 张表，字段需要先完成全量同步`
+            }
+          >
+            <RefreshCw
+              className={`h-3.5 w-3.5 mr-1 ${syncing === "table_values_incremental" ? "animate-spin" : ""}`}
+            />
+            {selectedTableNames.length > 0
+              ? `增量同步取值 (${selectedTableNames.length})`
+              : "增量同步取值"}
           </Button>
           <Button
             variant="destructive"
@@ -237,7 +261,10 @@ export function TableSection({
       </div>
 
       {isCreatingTable && (
-        <div className="mt-3 rounded border border-[#1e2024] bg-[#fafaf8] p-4 text-xs shadow-sm shrink-0 mb-1">
+        <MetadataEditorDialog
+          ariaLabel="添加数据表元数据"
+          onClose={() => setIsCreatingTable(false)}
+        >
           <div className="flex items-center justify-between font-semibold text-[#18181b] border-b border-[#e5e5df] pb-1.5 mb-3">
             <span>添加数据表元数据</span>
             <button
@@ -374,11 +401,15 @@ export function TableSection({
               </Button>
             </div>
           </div>
-        </div>
+        </MetadataEditorDialog>
       )}
 
       {editingTable && (
-        <div className="mt-3 rounded border border-[#1e2024] bg-[#fafaf8] p-4 text-xs shadow-sm shrink-0 mb-1">
+        <MetadataEditorDialog
+          ariaLabel={`编辑表元数据 ${editingTable.name}`}
+          onClose={() => setEditingTable(null)}
+          size="md"
+        >
           <div className="flex items-center justify-between font-semibold text-[#18181b] border-b border-[#e5e5df] pb-1.5 mb-3">
             <span>编辑表元数据: {editingTable.name}</span>
             <button
@@ -443,7 +474,7 @@ export function TableSection({
               </Button>
             </div>
           </div>
-        </div>
+        </MetadataEditorDialog>
       )}
 
       <div className="mt-4 rounded border border-[#d4d4ce]">

@@ -83,8 +83,10 @@ async def verify_doris_query_identities() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """初始化并释放应用进程持有的共享资源"""
     try:
         # FastAPI 应用启动前执行
+        logger.info("开始初始化应用资源")
         embedding_client_manager.init()
         es_client_manager.init()
         await langgraph_postgres_manager.init()
@@ -96,10 +98,12 @@ async def lifespan(app: FastAPI):
         await meta_postgres_client_manager.init_tables()
         admin_doris_client_manager.init()
         await verify_doris_query_identities()
+        logger.info("应用资源初始化完成")
 
         yield
     finally:
         # FastAPI 应用结束前执行
+        logger.info("开始释放应用资源")
         await agent_manager.close()
         await sandbox_manager.close()
         await langgraph_postgres_manager.close()
@@ -109,6 +113,7 @@ async def lifespan(app: FastAPI):
         await auth_postgres_client_manager.close()
         await admin_doris_client_manager.close()
         await query_doris_client_registry.close()
+        logger.info("应用资源释放完成")
 
 
 def register_routes(app: FastAPI) -> None:

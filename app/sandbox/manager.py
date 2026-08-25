@@ -13,11 +13,11 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from typing import Any, BinaryIO
 from uuid import UUID
 
-from docker.errors import APIError, NotFound
+from docker.errors import APIError, ImageNotFound, NotFound
 from docker.models.containers import Container
 from loguru import logger
 
@@ -43,7 +43,7 @@ from app.sandbox.paths import (
     normalize_attachment_path,
     normalize_user_attachment_path,
 )
-from app.shared.config.app_config import ROOT_DIR, SandboxConfig
+from app.shared.config.app_config import SandboxConfig
 
 _DEPLOYMENT_LABEL = "dataagent.sandbox.deployment"
 _USER_LABEL = "dataagent.sandbox.user_id"
@@ -86,15 +86,18 @@ class IteratorReader(io.RawIOBase):
     """将 Docker archive 字节迭代器适配为 tarfile 可读取的流"""
 
     def __init__(self, chunks):
+        """绑定 Docker archive 返回的字节块迭代器"""
         super().__init__()
         self._chunks = chunks
         self._buffer = bytearray()
         self._finished = False
 
     def readable(self) -> bool:
+        """声明该适配器支持读取"""
         return True
 
     def readinto(self, target: Any) -> int:
+        """将迭代器数据填充到目标缓冲区"""
         if self.closed:
             return 0
         view = memoryview(target).cast("B")
@@ -109,6 +112,7 @@ class IteratorReader(io.RawIOBase):
         return size
 
     def close(self) -> None:
+        """关闭底层字节迭代器和读取流"""
         close_chunks = getattr(self._chunks, "close", None)
         if callable(close_chunks):
             close_chunks()
@@ -158,30 +162,17 @@ class DockerSandboxManager:
         return self._client
 
     def _init_sync(self) -> None:
-        """连接 Docker 并确保沙盒镜像存在"""
+        """连接 Docker 并加载沙盒镜像"""
         client = docker.from_env()
         try:
             client.ping()
-            build_context = Path(self._config.build_context)
-            if not build_context.is_absolute():
-                build_context = ROOT_DIR / build_context
-            if self._config.rebuild_image:
-                logger.info(f"构建 Docker 沙箱镜像: image={self._config.image}")
-                build_args = {
-                    "NODE_VERSION": self._config.node_version,
-                    "NODE_DOWNLOAD_BASE": self._config.node_download_base,
-                    "PYPI_INDEX_URL": self._config.pypi_index_url,
-                    "NPM_REGISTRY": self._config.npm_registry,
-                }
-                image, _ = client.images.build(
-                    path=str(build_context),
-                    tag=self._config.image,
-                    rm=True,
-                    network_mode=self._config.build_network_mode,
-                    buildargs=build_args,
-                )
-            else:
+            try:
                 image = client.images.get(self._config.image)
+            except ImageNotFound as exc:
+                raise RuntimeError(
+                    f"Docker 沙箱镜像不存在: {self._config.image}，"
+                    "请先执行 docker compose -f docker/compose.yml up -d"
+                ) from exc
             if self._config.workspace_quota_mode == "application":
                 logger.warning(
                     "Docker 沙箱使用应用层强制的工作区配额；宿主机磁盘占用可能临时超过设定限制"
@@ -1143,6 +1134,7 @@ class DockerSandboxManager:
             raise RuntimeError("会话沙盒守卫不可用")
 
         def prepare() -> int:
+            """在独占维护窗口中准备会话工作区"""
             with (
                 self._ownership.user_maintenance(user_id),
                 self._ownership.conversation_maintenance(
@@ -1204,6 +1196,7 @@ class DockerSandboxManager:
             raise RuntimeError("会话沙盒守卫不可用")
 
         def prepare() -> tuple[int, int]:
+            """在独占维护窗口中准备 Agent Session 工作区"""
             with (
                 self._ownership.user_maintenance(user_id),
                 self._ownership.conversation_maintenance(
@@ -1639,6 +1632,7 @@ class DockerSandboxManager:
             return False
 
         def inspect() -> bool:
+            """在独占维护窗口中检查会话文件"""
             with (
                 self._ownership.user_maintenance(user_id),
                 self._ownership.conversation_maintenance(
@@ -1712,6 +1706,7 @@ class DockerSandboxManager:
             return
 
         def delete() -> None:
+            """删除会话工作区并更新 UID 注册表"""
             with (
                 self._ownership.user_maintenance(user_id),
                 self._ownership.conversation_maintenance(
@@ -1773,6 +1768,7 @@ class DockerSandboxManager:
         user_lock, user_guard, _, _, _ = await self._get_resources(user_id)
 
         def delete() -> None:
+            """删除用户容器和持久化数据卷"""
             with (
                 self._ownership.user_maintenance(user_id),
                 self._ownership.user_mutation(user_id),
@@ -2023,6 +2019,7 @@ class DockerSandboxManager:
         client = self._client
 
         def release_runtime() -> None:
+            """释放运行时租约并按需终止残留容器"""
             if not self._ownership_started:
                 return
             with self._ownership.release_runtime() as last_runtime:

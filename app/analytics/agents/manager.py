@@ -199,6 +199,7 @@ class AgentManager:
         async def build_session_agent(
             session_key: AgentSessionKey,
         ) -> CompiledStateGraph:
+            """为指定专业 Agent Session 构建独立运行图"""
             session_backend = await self._sandbox.get_session_backend(
                 session_key.user_id,
                 session_key.conversation_id,
@@ -224,6 +225,7 @@ class AgentManager:
             session_key: AgentSessionKey,
             result: SpecialistResult,
         ) -> None:
+            """根据 Explorer 产物推进查询经验索引状态"""
             if session_key.agent_type != "explorer":
                 return
             artifact_paths = {artifact.path for artifact in result.artifacts}

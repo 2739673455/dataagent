@@ -82,7 +82,7 @@ async def list_doris_workload_groups(
 )
 async def create_doris_role(
     body: schemas.CreateDorisRoleRequest,
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> schemas.DorisRoleResponse:
     """创建 Doris 角色、查询用户和加密凭据"""
@@ -92,6 +92,11 @@ async def create_doris_role(
         query_user=body.query_user,
         workload_group=body.workload_group,
         is_default=body.is_default,
+    )
+    logger.info(
+        f"管理员创建 Doris 角色: operator_id={current_admin.id}, "
+        f"role={identity.role_name}, query_user={identity.query_user}, "
+        f"workload_group={identity.workload_group}, is_default={identity.is_default}"
     )
     return schemas.DorisRoleResponse.from_entity(identity)
 
@@ -103,7 +108,7 @@ async def create_doris_role(
 )
 async def attach_doris_role(
     body: schemas.AttachDorisRoleRequest,
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> schemas.DorisRoleResponse:
     """接入已有 Doris 角色并自动配置查询用户"""
@@ -114,6 +119,11 @@ async def attach_doris_role(
         query_user=body.query_user,
         is_default=body.is_default,
     )
+    logger.info(
+        f"管理员接入 Doris 角色: operator_id={current_admin.id}, "
+        f"role={identity.role_name}, query_user={identity.query_user}, "
+        f"workload_group={identity.workload_group}, is_default={identity.is_default}"
+    )
     return schemas.DorisRoleResponse.from_entity(identity)
 
 
@@ -123,11 +133,14 @@ async def attach_doris_role(
 )
 async def set_default_doris_role(
     role: RolePath,
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> schemas.DorisRoleResponse:
     """设置新用户使用的缺省 Doris 角色"""
     identity = await service.set_default_role(role)
+    logger.info(
+        f"管理员设置默认 Doris 角色: operator_id={current_admin.id}, role={role}"
+    )
     return schemas.DorisRoleResponse.from_entity(identity)
 
 
@@ -137,11 +150,12 @@ async def set_default_doris_role(
 )
 async def delete_doris_role(
     role: RolePath,
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> Response:
     """删除未使用的非缺省 Doris 角色和查询用户"""
     await service.delete_role(role)
+    logger.info(f"管理员删除 Doris 角色: operator_id={current_admin.id}, role={role}")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -171,7 +185,7 @@ async def list_users(
 )
 async def create_user(
     body: schemas.CreateUserRequest,
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> schemas.UserResponse:
     """平台管理员创建新用户"""
@@ -181,6 +195,11 @@ async def create_user(
         password=body.password.get_secret_value(),
         doris_role=body.doris_role,
         is_admin=body.is_admin,
+    )
+    logger.info(
+        f"管理员创建用户: operator_id={current_admin.id}, user_id={user.id}, "
+        f"username={user.username}, doris_role={user.doris_role_name}, "
+        f"is_admin={user.is_admin}"
     )
     return schemas.UserResponse.from_user(user)
 
@@ -200,6 +219,11 @@ async def delete_user(
             enqueue_user_deletion(user_id)
         except Exception:  # noqa: BLE001
             logger.exception(f"提交用户注销任务失败，等待定时补偿: user_id={user_id}")
+        else:
+            logger.info(
+                f"管理员提交用户注销任务: operator_id={current_admin.id}, "
+                f"user_id={user_id}"
+            )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -207,11 +231,15 @@ async def delete_user(
 async def set_user_doris_role(
     user_id: int,
     body: schemas.SetUserDorisRoleRequest,
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> schemas.UserResponse:
     """替换指定用户唯一 Doris 数据角色"""
     user = await service.set_user_doris_role(user_id, body.role)
+    logger.info(
+        f"管理员修改用户 Doris 角色: operator_id={current_admin.id}, "
+        f"user_id={user_id}, role={user.doris_role_name}"
+    )
     return schemas.UserResponse.from_user(user)
 
 
@@ -219,11 +247,15 @@ async def set_user_doris_role(
 async def set_user_administrator(
     user_id: int,
     body: schemas.SetUserAdministratorRequest,
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> schemas.UserResponse:
     """设置或撤销平台管理员身份"""
     user = await service.set_user_admin(user_id, body.is_admin)
+    logger.info(
+        f"管理员修改用户管理员权限: operator_id={current_admin.id}, "
+        f"user_id={user_id}, is_admin={user.is_admin}"
+    )
     return schemas.UserResponse.from_user(user)
 
 
@@ -231,7 +263,7 @@ async def set_user_administrator(
 async def update_user(
     user_id: int,
     body: schemas.UpdateUserRequest,
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> schemas.UserResponse:
     """平台管理员修改指定用户信息、角色、权限或密码"""
@@ -248,6 +280,10 @@ async def update_user(
         kwargs["is_admin"] = body.is_admin
 
     user = await service.update_user(user_id, **kwargs)
+    logger.info(
+        f"管理员更新用户: operator_id={current_admin.id}, user_id={user_id}, "
+        f"updated_fields={sorted(body.model_fields_set)}"
+    )
     return schemas.UserResponse.from_user(user)
 
 
@@ -275,7 +311,7 @@ async def list_select_grants(
 async def grant_select(
     role: RolePath,
     body: schemas.SelectGrantRequest,
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
     service: DorisPermissionServiceDep,
 ) -> schemas.AssetGrantListResponse:
     """直接向 Doris 角色授予库、表或列 SELECT 权限"""
@@ -283,6 +319,10 @@ async def grant_select(
         role,
         table_name=body.table_name,
         columns=body.columns,
+    )
+    logger.info(
+        f"管理员授予 Doris SELECT 权限: operator_id={current_admin.id}, "
+        f"role={role}, table={body.table_name}, columns={body.columns}"
     )
     return schemas.AssetGrantListResponse(
         grants=[schemas.AssetGrantResponse.from_entity(grant) for grant in grants]
@@ -296,7 +336,7 @@ async def grant_select(
 async def revoke_select(
     role: RolePath,
     body: Annotated[schemas.SelectGrantRequest, Body()],
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
     service: DorisPermissionServiceDep,
 ) -> Response:
     """直接从 Doris 角色回收库、表或列 SELECT 权限"""
@@ -304,6 +344,10 @@ async def revoke_select(
         role,
         table_name=body.table_name,
         columns=body.columns,
+    )
+    logger.info(
+        f"管理员回收 Doris SELECT 权限: operator_id={current_admin.id}, "
+        f"role={role}, table={body.table_name}, columns={body.columns}"
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -328,7 +372,7 @@ async def list_row_policies(
 async def create_row_policy(
     role: RolePath,
     body: schemas.RowPolicyRequest,
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
     service: DorisPermissionServiceDep,
 ) -> Response:
     """直接为 Doris 角色创建行级过滤策略"""
@@ -338,6 +382,11 @@ async def create_row_policy(
         table_name=body.table_name,
         policy_type=body.policy_type,
         predicate=body.predicate,
+    )
+    logger.info(
+        f"管理员创建 Doris 行级策略: operator_id={current_admin.id}, "
+        f"role={role}, policy={body.policy_name}, table={body.table_name}, "
+        f"policy_type={body.policy_type}"
     )
     return Response(status_code=status.HTTP_201_CREATED)
 
@@ -349,7 +398,7 @@ async def create_row_policy(
 async def drop_row_policy(
     role: RolePath,
     body: Annotated[schemas.DropRowPolicyRequest, Body()],
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
     service: DorisPermissionServiceDep,
 ) -> Response:
     """直接删除 Doris 角色的行级过滤策略"""
@@ -357,5 +406,9 @@ async def drop_row_policy(
         role,
         policy_name=body.policy_name,
         table_name=body.table_name,
+    )
+    logger.info(
+        f"管理员删除 Doris 行级策略: operator_id={current_admin.id}, "
+        f"role={role}, policy={body.policy_name}, table={body.table_name}"
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

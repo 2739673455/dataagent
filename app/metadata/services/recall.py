@@ -25,6 +25,7 @@ class SemanticRecallsNotFoundError(Exception):
     """一个或多个召回记录不存在"""
 
     def __init__(self, recall_ids: list[str]) -> None:
+        """初始化未找到的语义召回记录标识"""
         self.recall_ids = recall_ids
         super().__init__(", ".join(recall_ids))
 

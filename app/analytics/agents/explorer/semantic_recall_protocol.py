@@ -19,6 +19,8 @@ _REFERENCE_TOOL_VIEWS: dict[str, SemanticRecallView] = {
 
 @dataclass(frozen=True, slots=True)
 class SemanticRecallReference:
+    """描述持久化语义召回记录及其展开视图"""
+
     recall_id: str
     view: SemanticRecallView
 

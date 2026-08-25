@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 
 import jwt
 from anyio import to_thread
+from loguru import logger
 from pwdlib import PasswordHash
 from sqlalchemy.exc import IntegrityError
 
@@ -30,15 +31,20 @@ _MAX_PASSWORD_LENGTH = 128
 class PasswordManager(Protocol):
     """异步密码哈希接口"""
 
-    async def hash(self, password: str) -> str: ...
+    async def hash(self, password: str) -> str:
+        """异步计算密码哈希"""
+        ...
 
-    async def verify(self, password: str, password_hash: str) -> bool: ...
+    async def verify(self, password: str, password_hash: str) -> bool:
+        """异步校验密码与哈希是否匹配"""
+        ...
 
 
 class Argon2PasswordManager:
     """基于 Argon2id 的异步密码哈希实现"""
 
     def __init__(self, *, max_concurrency: int = ARGON2_MAX_CONCURRENCY) -> None:
+        """初始化 Argon2id 哈希器和并发限制"""
         if max_concurrency <= 0:
             raise ValueError("max_concurrency 必须为正整数")
         self._password_hash = PasswordHash.recommended()
@@ -143,6 +149,7 @@ class JWTCodec:
     """应用 JWT 编解码器"""
 
     def __init__(self, config: AuthConfig) -> None:
+        """绑定 JWT 签名与生命周期配置"""
         self._config = config
 
     def issue_access_token(self, user: User, now: datetime) -> tuple[str, UUID]:
@@ -276,6 +283,7 @@ class AccessTokenAuthenticator:
     """使用独立只读会话认证访问令牌"""
 
     def __init__(self, repo: AuthPGRepo, config: AuthConfig) -> None:
+        """初始化访问令牌编解码器和用户仓储"""
         self._repo = repo
         self._codec = JWTCodec(config)
 
@@ -302,6 +310,7 @@ class AuthService:
         *,
         now: Callable[[], datetime] | None = None,
     ) -> None:
+        """初始化认证仓储、密码哈希器和令牌编解码器"""
         self._repo = repo
         self._config = config
         self._password_manager = password_manager
@@ -398,6 +407,7 @@ class AuthService:
                 raise auth_error.InvalidCredentialsError
             _ensure_active_user(user)
             token_pair = await self._issue_token_pair(user, uuid4())
+        logger.info(f"用户登录成功: user_id={user.id}, username={user.username}")
         return user, token_pair
 
     async def refresh(self, refresh_token: str) -> tuple[User, TokenPair]:
@@ -437,6 +447,7 @@ class AuthService:
             raise auth_error.RefreshTokenReuseError(detail="该刷新令牌已被注销")
         if loaded_user is None or token_pair is None:
             raise RuntimeError("刷新令牌轮换未生成有效令牌对")
+        logger.info(f"刷新令牌轮换成功: user_id={loaded_user.id}")
         return loaded_user, token_pair
 
     async def logout(self, refresh_token: str) -> None:
@@ -453,6 +464,7 @@ class AuthService:
             ):
                 raise auth_error.InvalidTokenError
             await self._repo.revoke_refresh_family(current.family_id, self._now())
+        logger.info(f"用户退出登录并吊销令牌族: user_id={claims.user_id}")
 
     async def change_password(
         self,
@@ -481,6 +493,7 @@ class AuthService:
                 raise auth_error.InvalidCurrentPasswordError
             await self._repo.set_user_password(user, password_hash)
             await self._repo.revoke_user_refresh_tokens(user.id, self._now())
+        logger.info(f"用户密码修改成功并吊销既有令牌: user_id={user_id}")
 
     async def _issue_token_pair(
         self,

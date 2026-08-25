@@ -107,13 +107,6 @@ sandbox:
     wait_timeout_seconds: 300
     lease_seconds: 30
   image: dataagent-sandbox:latest
-  build_context: docker/sandbox
-  build_network_mode: host
-  rebuild_image: true # 启动时通过 Docker 构建缓存同步镜像变更
-  node_version: 20.19.2
-  node_download_base: https://npmmirror.com/mirrors/node
-  pypi_index_url: https://mirrors.aliyun.com/pypi/simple
-  npm_registry: https://registry.npmmirror.com
   network_mode: none # 运行时断网，依赖统一构建到沙盒镜像
   memory_limit: 2g
   nano_cpus: 2000000000 # 每个用户沙盒最多使用 2 个 CPU 核心

@@ -14,6 +14,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from loguru import logger
 from pydantic import ValidationError as PydanticValidationError
 from yaml import YAMLError
 
@@ -159,7 +160,7 @@ async def _load_yaml(file: UploadFile) -> MetaConfig:
 async def import_metadata(
     file: Annotated[UploadFile, File(description="元数据 YAML 文件")],
     service: MetaImportServiceDep,
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
     mode: Annotated[ImportMode, Query(description="导入模式")] = ImportMode.MERGE,
     dry_run: Annotated[bool, Query(description="仅预览变更")] = False,
 ) -> schemas.MetaImportResponse | TaskAcceptedResponse:
@@ -167,9 +168,21 @@ async def import_metadata(
     meta_config = await _load_yaml(file=file)
     if not dry_run:
         submission = enqueue_import(meta_config, mode)
+        logger.info(
+            f"管理员提交元数据导入任务: operator_id={current_admin.id}, "
+            f"task_id={submission.task_id}, mode={mode.value}, "
+            f"table_count={len(meta_config.tables)}, "
+            f"metric_count={len(meta_config.metrics)}"
+        )
         return TaskAcceptedResponse(task_id=submission.task_id)
 
     result = await service.import_metadata(meta_config, mode, True)
+    logger.info(
+        f"管理员完成元数据导入预览: operator_id={current_admin.id}, "
+        f"mode={mode.value}, table_changes={len(result.tables.created) + len(result.tables.updated) + len(result.tables.deleted)}, "
+        f"column_changes={len(result.columns.created) + len(result.columns.updated) + len(result.columns.deleted)}, "
+        f"metric_changes={len(result.metrics.created) + len(result.metrics.updated) + len(result.metrics.deleted)}"
+    )
 
     return schemas.MetaImportResponse(
         mode=result.mode,
@@ -183,10 +196,14 @@ async def import_metadata(
 @router.get("/export", response_class=Response)
 async def export_metadata(
     service: MetaCatalogServiceDep,
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
 ) -> Response:
     """以 YAML 格式导出全部元数据"""
     meta_config = await service.export_metadata()
+    logger.info(
+        f"管理员导出元数据: operator_id={current_admin.id}, "
+        f"table_count={len(meta_config.tables)}, metric_count={len(meta_config.metrics)}"
+    )
     content = yaml.safe_dump(
         meta_config.model_dump(mode="json", exclude_none=True),
         allow_unicode=True,
@@ -253,7 +270,7 @@ async def upsert_table_info(
     t_name: MetadataPath,
     body: schemas.TableInfoRequest,
     service: MetaCatalogServiceDep,
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
 ) -> None:
     """新增或更新表元数据"""
     await service.upsert_table_info(
@@ -262,21 +279,27 @@ async def upsert_table_info(
         description=body.description,
         value_index_sync=body.value_index_sync,
     )
+    logger.info(
+        f"管理员新增或更新表元数据: operator_id={current_admin.id}, "
+        f"table={t_name}, role={body.role}, "
+        "value_index_cursor="
+        f"{body.value_index_sync.cursor_column if body.value_index_sync else None}"
+    )
 
 
 @router.put(
     "/tables/{t_name}/columns/{c_name}",
-    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=schemas.SemanticIndexUpsertResponse,
 )
 async def upsert_column_info(
     t_name: MetadataPath,
     c_name: MetadataPath,
     body: schemas.ColumnInfoRequest,
     service: MetaCatalogServiceDep,
-    _: AdminUserDep,
-) -> None:
+    current_admin: AdminUserDep,
+) -> schemas.SemanticIndexUpsertResponse:
     """新增或更新字段元数据"""
-    await service.upsert_column_info(
+    submission = await service.upsert_column_info(
         t_name=t_name,
         c_name=c_name,
         description=body.description,
@@ -285,17 +308,30 @@ async def upsert_column_info(
         reference_t_name=body.reference_t_name,
         reference_c_name=body.reference_c_name,
     )
+    logger.info(
+        f"管理员新增或更新字段元数据: operator_id={current_admin.id}, "
+        f"column={t_name}.{c_name}, index_values={body.index_values}, "
+        f"reference={body.reference_t_name}.{body.reference_c_name}, "
+        "semantic_index_task_id="
+        f"{submission.task_id if submission is not None else None}"
+    )
+    return schemas.SemanticIndexUpsertResponse(
+        semantic_index_task_id=(submission.task_id if submission is not None else None)
+    )
 
 
-@router.put("/metrics/{metric_name}", status_code=status.HTTP_204_NO_CONTENT)
+@router.put(
+    "/metrics/{metric_name}",
+    response_model=schemas.SemanticIndexUpsertResponse,
+)
 async def upsert_metric_info(
     metric_name: MetadataPath,
     body: schemas.MetricInfoRequest,
     service: MetaCatalogServiceDep,
-    _: AdminUserDep,
-) -> None:
+    current_admin: AdminUserDep,
+) -> schemas.SemanticIndexUpsertResponse:
     """新增或更新指标元数据"""
-    await service.upsert_metric_info(
+    submission = await service.upsert_metric_info(
         metric_info=MetricInfo(
             name=metric_name,
             description=body.description,
@@ -309,27 +345,44 @@ async def upsert_metric_info(
             alias=body.alias,
         )
     )
+    logger.info(
+        f"管理员新增或更新指标元数据: operator_id={current_admin.id}, "
+        f"metric={metric_name}, column_count={len(body.relevant_columns)}, "
+        f"alias_count={len(body.alias)}, "
+        "semantic_index_task_id="
+        f"{submission.task_id if submission is not None else None}"
+    )
+    return schemas.SemanticIndexUpsertResponse(
+        semantic_index_task_id=(submission.task_id if submission is not None else None)
+    )
 
 
 @router.post("/tables/batch-delete", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_tables(
     body: schemas.TableBatchDeleteRequest,
     service: MetaCatalogServiceDep,
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
 ) -> None:
     """批量删除表及其字段元数据和索引"""
     await service.delete_tables(table_names=body.tables)
+    logger.info(
+        f"管理员批量删除表元数据: operator_id={current_admin.id}, tables={body.tables}"
+    )
 
 
 @router.post("/columns/batch-delete", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_columns(
     body: schemas.ColumnBatchDeleteRequest,
     service: MetaCatalogServiceDep,
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
 ) -> None:
     """批量删除字段元数据和索引"""
     await service.delete_columns(
         column_keys=[(column.t_name, column.c_name) for column in body.columns]
+    )
+    logger.info(
+        f"管理员批量删除字段元数据: operator_id={current_admin.id}, "
+        f"columns={[f'{column.t_name}.{column.c_name}' for column in body.columns]}"
     )
 
 
@@ -337,52 +390,75 @@ async def delete_columns(
 async def delete_metrics(
     body: schemas.MetricBatchDeleteRequest,
     service: MetaCatalogServiceDep,
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
 ) -> None:
     """批量删除指标元数据和索引"""
     await service.delete_metrics(metric_names=body.metrics)
+    logger.info(
+        f"管理员批量删除指标元数据: operator_id={current_admin.id}, "
+        f"metrics={body.metrics}"
+    )
 
 
 @router.post("/tables/sync", response_model=TaskAcceptedResponse)
 async def sync_table_indexes(
     body: schemas.TableIndexSyncRequest,
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
 ) -> TaskAcceptedResponse:
     """同步多个表的全部字段语义索引"""
     submission = enqueue_table_indexes(body.tables)
+    logger.info(
+        f"管理员提交表字段语义索引同步任务: operator_id={current_admin.id}, "
+        f"task_id={submission.task_id}, tables={body.tables}"
+    )
     return TaskAcceptedResponse(task_id=submission.task_id)
 
 
 @router.post("/tables/sync-values", response_model=TaskAcceptedResponse)
 async def sync_table_values(
-    body: schemas.TableIndexSyncRequest,
-    _: AdminUserDep,
+    body: schemas.TableValueIndexSyncRequest,
+    current_admin: AdminUserDep,
 ) -> TaskAcceptedResponse:
     """同步多个表中已开启字段的取值索引"""
-    submission = enqueue_table_values(body.tables)
+    submission = enqueue_table_values(body.tables, mode=body.mode)
+    logger.info(
+        f"管理员提交表字段取值索引同步任务: operator_id={current_admin.id}, "
+        f"task_id={submission.task_id}, mode={body.mode}, tables={body.tables}"
+    )
     return TaskAcceptedResponse(task_id=submission.task_id)
 
 
 @router.post("/columns/sync", response_model=TaskAcceptedResponse)
 async def sync_column_indexes(
     body: schemas.ColumnIndexSyncRequest,
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
 ) -> TaskAcceptedResponse:
     """同步多个字段的语义索引"""
     submission = enqueue_column_indexes(
         [(column.t_name, column.c_name) for column in body.columns]
+    )
+    logger.info(
+        f"管理员提交字段语义索引同步任务: operator_id={current_admin.id}, "
+        f"task_id={submission.task_id}, "
+        f"columns={[f'{column.t_name}.{column.c_name}' for column in body.columns]}"
     )
     return TaskAcceptedResponse(task_id=submission.task_id)
 
 
 @router.post("/columns/sync-values", response_model=TaskAcceptedResponse)
 async def sync_column_values(
-    body: schemas.ColumnIndexSyncRequest,
-    _: AdminUserDep,
+    body: schemas.ColumnValueIndexSyncRequest,
+    current_admin: AdminUserDep,
 ) -> TaskAcceptedResponse:
     """同步多个已开启字段的取值索引"""
     submission = enqueue_column_values(
-        [(column.t_name, column.c_name) for column in body.columns]
+        [(column.t_name, column.c_name) for column in body.columns],
+        mode=body.mode,
+    )
+    logger.info(
+        f"管理员提交字段取值索引同步任务: operator_id={current_admin.id}, "
+        f"task_id={submission.task_id}, mode={body.mode}, "
+        f"columns={[f'{column.t_name}.{column.c_name}' for column in body.columns]}"
     )
     return TaskAcceptedResponse(task_id=submission.task_id)
 
@@ -390,8 +466,12 @@ async def sync_column_values(
 @router.post("/metrics/sync", response_model=TaskAcceptedResponse)
 async def sync_metric_indexes(
     body: schemas.MetricIndexSyncRequest,
-    _: AdminUserDep,
+    current_admin: AdminUserDep,
 ) -> TaskAcceptedResponse:
     """同步多个指标的语义索引"""
     submission = enqueue_metric_indexes(body.metrics)
+    logger.info(
+        f"管理员提交指标语义索引同步任务: operator_id={current_admin.id}, "
+        f"task_id={submission.task_id}, metrics={body.metrics}"
+    )
     return TaskAcceptedResponse(task_id=submission.task_id)

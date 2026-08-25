@@ -4,6 +4,8 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from loguru import logger
+
 from app.analytics.agents.manager import AgentManager
 from app.analytics.model_factory import create_active_model
 from app.analytics.repositories.conversation import ConversationPGRepo
@@ -18,13 +20,18 @@ from app.shared.tasks.submission import TaskSubmission
 
 
 def _submit(name: str, args: list[object], *, queue: str) -> TaskSubmission:
+    """向指定队列提交分析后台任务"""
     task = celery_app.send_task(
         name,
         args=args,
         queue=queue,
         routing_key=queue,
     )
-    return TaskSubmission(task_id=task.id)
+    submission = TaskSubmission(task_id=task.id)
+    logger.info(
+        f"分析后台任务已提交: task_id={submission.task_id}, name={name}, queue={queue}"
+    )
+    return submission
 
 
 def enqueue_conversation_title(
@@ -54,6 +61,7 @@ def enqueue_conversation_deletion(
 
 
 async def _repair_conversation_titles() -> int:
+    """扫描超时的标题生成记录并重新提交任务"""
     persistence = LangGraphPostgresManager(cfg.langgraph_postgresql)
     await persistence.init()
     try:
@@ -73,6 +81,7 @@ async def _repair_conversation_titles() -> int:
                     conversation.title,
                     conversation.title_source,
                 )
+        logger.info(f"会话标题补偿扫描完成: pending_count={len(conversations)}")
         return len(conversations)
     finally:
         await persistence.close()
@@ -90,6 +99,7 @@ async def _generate_conversation_title(
     expected_title: str,
     user_text: str,
 ) -> None:
+    """创建短生命周期资源并生成单个会话标题"""
     persistence = LangGraphPostgresManager(cfg.langgraph_postgresql)
     await persistence.init()
     try:
@@ -118,6 +128,9 @@ def generate_conversation_title_task(
     user_text: str,
 ) -> dict[str, object]:
     """生成会话标题并进行条件更新"""
+    logger.info(
+        f"开始生成会话标题: user_id={user_id}, conversation_id={conversation_id}"
+    )
     run_async(
         _generate_conversation_title(
             user_id,
@@ -126,14 +139,18 @@ def generate_conversation_title_task(
             user_text,
         )
     )
+    logger.info(
+        f"会话标题生成完成: user_id={user_id}, conversation_id={conversation_id}"
+    )
     return {"conversation_id": conversation_id, "updated": True}
 
 
 async def _run_with_lifecycle_service[T](
     operation: Callable[[ConversationLifecycleService], Awaitable[T]],
 ) -> T:
+    """初始化会话生命周期资源并执行指定操作"""
     persistence = LangGraphPostgresManager(cfg.langgraph_postgresql)
-    sandbox = create_sandbox_manager(cfg.sandbox, rebuild_image=False)
+    sandbox = create_sandbox_manager(cfg.sandbox)
     agents = AgentManager(persistence, sandbox)
     service = ConversationLifecycleService(
         persistence,
@@ -165,14 +182,21 @@ def delete_conversation_resources_task(
 ) -> dict[str, object]:
     """物理删除会话跨存储资源"""
     identifier = UUID(conversation_id)
+    logger.info(
+        f"开始删除会话物理资源: user_id={user_id}, conversation_id={conversation_id}"
+    )
 
     async def operation(service: ConversationLifecycleService) -> bool:
+        """删除指定会话的全部物理资源"""
         return await service.delete_conversation_resources(user_id, identifier)
 
-    return {
-        "conversation_id": conversation_id,
-        "deleted": run_async(_run_with_lifecycle_service(operation)),
-    }
+    deleted = run_async(_run_with_lifecycle_service(operation))
+    logger.info(
+        "会话物理资源删除完成: "
+        f"user_id={user_id}, conversation_id={conversation_id}, "
+        f"deleted={deleted}"
+    )
+    return {"conversation_id": conversation_id, "deleted": deleted}
 
 
 @celery_app.task(
@@ -184,13 +208,20 @@ def delete_conversation_resources_task(
 )
 def cleanup_expired_drafts_task() -> dict[str, int]:
     """清理一批过期草稿和已有墓碑的会话"""
+    logger.info("开始清理过期草稿和待删除会话")
 
     async def operation(service: ConversationLifecycleService) -> tuple[int, int]:
+        """清理待删除会话和过期草稿"""
         pending = await service.cleanup_pending_deletions()
         drafts = await service.cleanup_expired_drafts()
         return pending, drafts
 
     pending_count, draft_count = run_async(_run_with_lifecycle_service(operation))
+    logger.info(
+        "过期草稿和待删除会话清理完成: "
+        f"pending_deleted_count={pending_count}, "
+        f"draft_deleted_count={draft_count}"
+    )
     return {
         "pending_deleted_count": pending_count,
         "draft_deleted_count": draft_count,

@@ -27,6 +27,7 @@ class RateLimitRule:
     window_seconds: float
 
     def __post_init__(self) -> None:
+        """校验限流阈值和时间窗口"""
         if self.limit <= 0:
             raise ValueError("限流阈值必须为正整数")
         if self.window_seconds <= 0:
@@ -51,6 +52,7 @@ class BoundedRateLimiter:
         max_keys: int,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        """初始化限流规则、容量上限和时间源"""
         if max_keys <= 0:
             raise ValueError("max_keys 必须为正整数")
         self._rule = rule
@@ -127,6 +129,7 @@ class AuthRateLimitService:
         login_identifier: BoundedRateLimiter | None = None,
         refresh_ip: BoundedRateLimiter | None = None,
     ) -> None:
+        """初始化登录与刷新入口的独立限流器"""
         self._login_ip = login_ip or BoundedRateLimiter(
             RateLimitRule(LOGIN_IP_RATE_LIMIT, LOGIN_RATE_WINDOW_SECONDS),
             max_keys=IP_RATE_LIMIT_MAX_KEYS,
