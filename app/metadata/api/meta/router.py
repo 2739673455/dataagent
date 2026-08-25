@@ -277,13 +277,13 @@ async def upsert_table_info(
         t_name=t_name,
         role=body.role,
         description=body.description,
-        value_index_sync=body.value_index_sync,
+        value_index_cursor_column=body.value_index_cursor_column,
     )
     logger.info(
         f"管理员新增或更新表元数据: operator_id={current_admin.id}, "
         f"table={t_name}, role={body.role}, "
-        "value_index_cursor="
-        f"{body.value_index_sync.cursor_column if body.value_index_sync else None}"
+        "value_index_cursor_column="
+        f"{body.value_index_cursor_column}"
     )
 
 

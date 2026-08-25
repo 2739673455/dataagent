@@ -259,7 +259,7 @@ export interface components {
     "TableInfoRequest": {
       "description": string;
       "role": "fact" | "dim";
-      "value_index_sync"?: (components["schemas"]["ValueIndexSyncConfig"] | null);
+      "value_index_cursor_column"?: (string | null);
     };
     "TableInfoResponse": {
       "description": string;
@@ -267,7 +267,7 @@ export interface components {
       "name": string;
       "primary_key_columns": Array<string>;
       "role": "fact" | "dim";
-      "value_index_sync": components["schemas"]["ValueIndexSyncConfig"];
+      "value_index_cursor_column": (string | null);
     };
     "TableValueIndexSyncRequest": {
       "mode": "full" | "incremental";
@@ -343,9 +343,6 @@ export interface components {
       "is_active": boolean;
       "is_admin": boolean;
       "username": string;
-    };
-    "ValueIndexSyncConfig": {
-      "cursor_column"?: (string | null);
     };
     "ValueIndexSyncStateResponse": {
       "current_generation": (string | null);

@@ -5,7 +5,13 @@ import { adminApi, type DorisRoleResponse, type UserListResponse } from "@/api/a
 import { getApiErrorMessage } from "@/api/errors";
 import { useAuthStore, type UserResponse } from "@/auth";
 import { Button } from "@/components/ui/button";
-import { UserCreateCard } from "./UserCreateCard";
+import {
+  AdminDialogActions,
+  AdminDialogCancelButton,
+  AdminDialogPrimaryButton,
+  AdminEditorDialog,
+} from "../AdminEditorDialog";
+import { UserCreateDialog } from "./UserCreateDialog";
 
 const USER_PAGE_SIZE = 50;
 
@@ -185,7 +191,7 @@ export function UserManagement() {
         </div>
 
         {isCreatingUser && (
-          <UserCreateCard
+          <UserCreateDialog
             roles={roles}
             busy={busy}
             onCancel={() => setIsCreatingUser(false)}
@@ -309,145 +315,139 @@ export function UserManagement() {
 
       {/* 编辑用户信息弹窗 */}
       {editingUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-lg border border-[#d4d4ce] bg-[#ffffff] p-6 shadow-lg">
-            <h3 className="text-base font-bold text-[#18181b] mb-4">
-              编辑用户 - <span className="font-mono text-[#52525b]">{editingUser.username}</span>
-            </h3>
-            <div className="space-y-3">
-              <div>
-                <label
-                  htmlFor="admin-edit-username"
-                  className="block text-xs font-medium text-[#71717a] mb-1"
-                >
-                  用户名
-                </label>
+        <AdminEditorDialog
+          ariaLabel={`编辑用户 ${editingUser.username}`}
+          onClose={() => setEditingUser(null)}
+          title={
+            <>
+              编辑用户: <span className="font-mono text-[#52525b]">{editingUser.username}</span>
+            </>
+          }
+        >
+          <div className="space-y-3">
+            <div>
+              <label
+                htmlFor="admin-edit-username"
+                className="block text-xs font-medium text-[#71717a] mb-1"
+              >
+                用户名
+              </label>
+              <input
+                id="admin-edit-username"
+                type="text"
+                value={editUsername}
+                onChange={(e) => setEditUsername(e.target.value)}
+                placeholder="请输入用户名"
+                className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="admin-edit-email"
+                className="block text-xs font-medium text-[#71717a] mb-1"
+              >
+                邮箱地址
+              </label>
+              <input
+                id="admin-edit-email"
+                type="email"
+                value={editEmail}
+                onChange={(e) => setEditEmail(e.target.value)}
+                placeholder="请输入邮箱地址"
+                className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="admin-edit-role"
+                className="block text-xs font-medium text-[#71717a] mb-1"
+              >
+                关联 Doris 角色
+              </label>
+              <select
+                id="admin-edit-role"
+                value={editRole}
+                onChange={(e) => setEditRole(e.target.value)}
+                className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2 text-xs text-[#1e2024] focus:border-[#1e2024] focus:outline-none"
+              >
+                <option value="">[ 未分配 ]</option>
+                {roles
+                  .filter((role) => role.is_active)
+                  .map((role) => (
+                    <option key={role.name} value={role.name}>
+                      {role.name} {role.is_default ? "(默认)" : ""}
+                    </option>
+                  ))}
+              </select>
+            </div>
+            <div className="flex items-center">
+              <label className="flex cursor-pointer items-center gap-1.5 text-xs text-[#52525b]">
                 <input
-                  id="admin-edit-username"
-                  type="text"
-                  value={editUsername}
-                  onChange={(e) => setEditUsername(e.target.value)}
-                  placeholder="请输入用户名"
-                  className="h-9 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+                  type="checkbox"
+                  checked={editIsAdmin}
+                  disabled={editingUser.id === currentUser?.id}
+                  onChange={(e) => setEditIsAdmin(e.target.checked)}
+                  className="h-4 w-4 rounded accent-[#1e2024]"
                 />
-              </div>
+                <span>
+                  设为管理员 {editingUser.id === currentUser?.id && "(当前登录账号不可取消管理员)"}
+                </span>
+              </label>
+            </div>
+            <div>
+              <label
+                htmlFor="admin-edit-password"
+                className="block text-xs font-medium text-[#71717a] mb-1"
+              >
+                重置密码 (可选)
+              </label>
+              <input
+                id="admin-edit-password"
+                type="password"
+                autoComplete="new-password"
+                value={editPassword}
+                onChange={(e) => setEditPassword(e.target.value)}
+                placeholder="留空则保持原密码不变"
+                className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+              />
+            </div>
+            {editPassword && (
               <div>
                 <label
-                  htmlFor="admin-edit-email"
+                  htmlFor="admin-edit-confirm-password"
                   className="block text-xs font-medium text-[#71717a] mb-1"
                 >
-                  邮箱地址
+                  确认新密码
                 </label>
                 <input
-                  id="admin-edit-email"
-                  type="email"
-                  value={editEmail}
-                  onChange={(e) => setEditEmail(e.target.value)}
-                  placeholder="请输入邮箱地址"
-                  className="h-9 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="admin-edit-role"
-                  className="block text-xs font-medium text-[#71717a] mb-1"
-                >
-                  关联 Doris 角色
-                </label>
-                <select
-                  id="admin-edit-role"
-                  value={editRole}
-                  onChange={(e) => setEditRole(e.target.value)}
-                  className="h-9 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-sm text-[#1e2024] focus:border-[#1e2024] focus:outline-none"
-                >
-                  <option value="">[ 未分配 ]</option>
-                  {roles
-                    .filter((role) => role.is_active)
-                    .map((role) => (
-                      <option key={role.name} value={role.name}>
-                        {role.name} {role.is_default ? "(默认)" : ""}
-                      </option>
-                    ))}
-                </select>
-              </div>
-              <div className="pt-1 pb-1">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={editIsAdmin}
-                    disabled={editingUser.id === currentUser?.id}
-                    onChange={(e) => setEditIsAdmin(e.target.checked)}
-                    className="h-4 w-4 rounded accent-[#1e2024]"
-                  />
-                  <span className="text-xs text-[#52525b]">
-                    设为管理员{" "}
-                    {editingUser.id === currentUser?.id && "(当前登录账号不可取消管理员)"}
-                  </span>
-                </label>
-              </div>
-              <div>
-                <label
-                  htmlFor="admin-edit-password"
-                  className="block text-xs font-medium text-[#71717a] mb-1"
-                >
-                  重置密码 (可选)
-                </label>
-                <input
-                  id="admin-edit-password"
+                  id="admin-edit-confirm-password"
                   type="password"
                   autoComplete="new-password"
-                  value={editPassword}
-                  onChange={(e) => setEditPassword(e.target.value)}
-                  placeholder="留空则保持原密码不变"
-                  className="h-9 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+                  value={editConfirmPassword}
+                  onChange={(e) => setEditConfirmPassword(e.target.value)}
+                  placeholder="请再次输入新密码"
+                  className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
                 />
               </div>
-              {editPassword && (
-                <div>
-                  <label
-                    htmlFor="admin-edit-confirm-password"
-                    className="block text-xs font-medium text-[#71717a] mb-1"
-                  >
-                    确认新密码
-                  </label>
-                  <input
-                    id="admin-edit-confirm-password"
-                    type="password"
-                    autoComplete="new-password"
-                    value={editConfirmPassword}
-                    onChange={(e) => setEditConfirmPassword(e.target.value)}
-                    placeholder="请再次输入新密码"
-                    className="h-9 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-sm text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-                  />
-                </div>
-              )}
-            </div>
-            <div className="mt-6 flex justify-end gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={savingUser}
-                onClick={() => setEditingUser(null)}
-                className="h-8 px-3 text-xs"
-              >
-                取消
-              </Button>
-              <Button
-                size="sm"
-                disabled={
-                  savingUser ||
-                  !editUsername.trim() ||
-                  !editEmail.trim() ||
-                  (!!editPassword && (!editConfirmPassword || editPassword !== editConfirmPassword))
-                }
-                onClick={() => void handleSaveUser()}
-                className="h-8 px-3 text-xs bg-[#1e2024] hover:bg-[#2d3139] text-[#ffffff]"
-              >
-                {savingUser ? "保存中..." : "确认保存"}
-              </Button>
-            </div>
+            )}
           </div>
-        </div>
+          <AdminDialogActions>
+            <AdminDialogCancelButton disabled={savingUser} onClick={() => setEditingUser(null)}>
+              取消
+            </AdminDialogCancelButton>
+            <AdminDialogPrimaryButton
+              disabled={
+                savingUser ||
+                !editUsername.trim() ||
+                !editEmail.trim() ||
+                (!!editPassword && (!editConfirmPassword || editPassword !== editConfirmPassword))
+              }
+              onClick={() => void handleSaveUser()}
+            >
+              {savingUser ? "保存中..." : "确认保存"}
+            </AdminDialogPrimaryButton>
+          </AdminDialogActions>
+        </AdminEditorDialog>
       )}
     </div>
   );

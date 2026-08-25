@@ -14,11 +14,9 @@ from app.metadata.models import (
     ColumnInfo,
     ColumnKey,
     MetricInfo,
-    TableInfo,
     ValueIndexSyncState,
     ValueInfo,
     column_resource_key,
-    default_value_index_sync_config,
     serialize_column_examples,
 )
 from app.metadata.repositories.column_index import ColumnESRepo
@@ -37,7 +35,6 @@ from app.metadata.search_models import (
 )
 from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.config.app_config import cfg
-from app.shared.config.meta_config import ValueIndexSyncConfig
 
 _SEMANTIC_PREPROCESS_VERSION = "v1"
 
@@ -356,10 +353,10 @@ class MetaIndexService:
             if not column_info.index_values:
                 return await self._clear_value_index(column_info)
             table_info = await self._meta_repo.get_table_info(t_name)
-            config = self._value_sync_config(table_info)
+            cursor_column = table_info.value_index_cursor_column
             state = column_info.value_index_state
             mode = self._select_value_sync_mode(
-                config,
+                cursor_column,
                 state,
                 requested_mode=requested_mode,
             )
@@ -393,24 +390,24 @@ class MetaIndexService:
                     raise RuntimeError("字段取值索引同步运行所有权已失效")
                 if not column_info.index_values:
                     return await self._clear_value_index(column_info)
-                current_config = self._value_sync_config(
+                current_cursor_column = (
                     await self._meta_repo.get_table_info(t_name)
-                )
-                if current_config != config:
+                ).value_index_cursor_column
+                if current_cursor_column != cursor_column:
                     raise RuntimeError("字段取值索引同步配置已变化")
                 await self._value_repo.ensure_index()
                 if mode == "full":
                     result = await self._run_full_value_sync(
                         column_info,
                         state,
-                        config,
+                        cursor_column,
                         generation,
                     )
                 else:
                     result = await self._run_incremental_value_sync(
                         column_info,
                         state,
-                        config,
+                        cursor_column,
                         generation,
                     )
                 committed = await self._meta_repo.complete_value_index_sync(
@@ -449,16 +446,16 @@ class MetaIndexService:
         self,
         column_info: ColumnInfo,
         state: ValueIndexSyncState,
-        config: ValueIndexSyncConfig,
+        cursor_column: str | None,
         generation: uuid.UUID,
     ) -> ValueIndexSyncResult:
         """执行字段取值索引全量替换"""
         upper_bound = (
             await self._source_repo.get_value_sync_upper_bound(
                 column_info.t_name,
-                config.cursor_column,
+                cursor_column,
             )
-            if config.cursor_column is not None
+            if cursor_column is not None
             else None
         )
         read_count = await self._upsert_value_batches(
@@ -494,15 +491,15 @@ class MetaIndexService:
         self,
         column_info: ColumnInfo,
         state: ValueIndexSyncState,
-        config: ValueIndexSyncConfig,
+        cursor_column: str | None,
         generation: uuid.UUID,
     ) -> ValueIndexSyncResult:
         """执行固定上界和重叠窗口的日常水位同步"""
-        if config.cursor_column is None or state.cursor_value is None:
+        if cursor_column is None or state.cursor_value is None:
             raise RuntimeError("字段取值增量同步缺少已提交水位")
         upper_bound = await self._source_repo.get_value_sync_upper_bound(
             column_info.t_name,
-            config.cursor_column,
+            cursor_column,
         )
         if upper_bound is None:
             return ValueIndexSyncResult(
@@ -522,7 +519,7 @@ class MetaIndexService:
             self._source_repo.iter_changed_column_value_batches(
                 column_info.t_name,
                 column_info.name,
-                config.cursor_column,
+                cursor_column,
                 lower_bound,
                 upper_bound,
             ),
@@ -587,7 +584,7 @@ class MetaIndexService:
 
     @staticmethod
     def _select_value_sync_mode(
-        config: ValueIndexSyncConfig,
+        cursor_column: str | None,
         state: ValueIndexSyncState | None,
         *,
         requested_mode: RequestedValueIndexSyncMode,
@@ -597,7 +594,7 @@ class MetaIndexService:
             return "full"
         if state is None or state.current_generation is None:
             raise RuntimeError("字段取值增量同步缺少全量同步状态")
-        if config.cursor_column is None or state.cursor_value is None:
+        if cursor_column is None or state.cursor_value is None:
             raise RuntimeError("字段取值增量同步缺少游标配置或已提交水位")
         return "incremental"
 
@@ -667,13 +664,6 @@ class MetaIndexService:
         if len(embeddings) != len(texts):
             raise ValueError("语义索引向量生成数量不匹配")
         return embeddings
-
-    @staticmethod
-    def _value_sync_config(table_info: TableInfo) -> ValueIndexSyncConfig:
-        """解析表级字段取值同步配置"""
-        return ValueIndexSyncConfig.model_validate(
-            table_info.value_index_sync or default_value_index_sync_config()
-        )
 
     @staticmethod
     def _serialize_cursor(value: Any) -> dict[str, object]:

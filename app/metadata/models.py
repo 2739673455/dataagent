@@ -38,13 +38,6 @@ type ValueIndexSyncStatus = Literal["syncing", "succeeded", "failed"]
 COLUMN_EXAMPLE_LIMIT = 10
 
 
-def default_value_index_sync_config() -> dict[str, Any]:
-    """生成安全的表级取值索引默认配置"""
-    return {
-        "cursor_column": None,
-    }
-
-
 def column_resource_key(t_name: str, c_name: str) -> str:
     """生成无歧义的表字段联合资源键"""
     return json.dumps(
@@ -91,28 +84,20 @@ class TableInfo(MetaBase):
         JSON, nullable=False, comment="主键字段"
     )
     description: Mapped[str] = mapped_column(Text, nullable=False, comment="表描述")
-    value_index_sync: Mapped[dict[str, Any]] = mapped_column(
-        JSONB,
-        nullable=False,
-        default=default_value_index_sync_config,
-        server_default='{"cursor_column":null}',
-        comment="字段取值索引同步配置",
+    value_index_cursor_column: Mapped[str | None] = mapped_column(
+        String(256),
+        nullable=True,
+        comment="字段取值索引增量游标字段",
     )
     meta_version: Mapped[int] = _version_column(1, "元数据版本")
 
     def metadata_snapshot(self) -> tuple[Any, ...]:
         """生成元数据内容快照"""
-        value_index_sync = self.value_index_sync or default_value_index_sync_config()
         return (
             self.role,
             self.primary_key_columns,
             self.description,
-            json.dumps(
-                value_index_sync,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ),
+            self.value_index_cursor_column,
         )
 
 

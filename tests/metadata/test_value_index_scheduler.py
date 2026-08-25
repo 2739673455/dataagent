@@ -19,9 +19,7 @@ def build_table(name: str, *, incremental: bool) -> TableInfo:
         role="fact",
         primary_key_columns=[],
         description=name,
-        value_index_sync={
-            "cursor_column": "dw_update_time" if incremental else None,
-        },
+        value_index_cursor_column="dw_update_time" if incremental else None,
     )
 
 

@@ -225,18 +225,16 @@ class MetaImportService:
                     role=table_config.role,
                     primary_key_columns=primary_key_columns,
                     description=table_config.description,
-                    value_index_sync=table_config.value_index_sync.model_dump(
-                        mode="json"
-                    ),
+                    value_index_cursor_column=table_config.value_index_cursor_column,
                 )
             )
 
             column_types = await self._source_repo.get_column_types(table_config.name)
-            cursor_column = table_config.value_index_sync.cursor_column
+            cursor_column = table_config.value_index_cursor_column
             if cursor_column is not None and cursor_column not in column_types:
                 raise meta_error.InvalidMetadataError(
                     detail=(
-                        "源表中未找到取值索引游标字段: "
+                        "源表中未找到取值索引增量游标字段: "
                         f"{table_config.name}.{cursor_column}"
                     )
                 )

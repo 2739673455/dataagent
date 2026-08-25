@@ -73,8 +73,7 @@ tables:
   - name: dim_channel_info
     role: dim
     description: 渠道Type 1一致性维度，每个渠道一行
-    value_index_sync:
-      cursor_column: dw_update_time
+    value_index_cursor_column: dw_update_time
     columns:
       - name: channel_sk
         description: 渠道维度代理键
@@ -132,8 +131,7 @@ tables:
   - name: dim_page_info
     role: dim
     description: 页面Type 1一致性维度，每个标准页面一行
-    value_index_sync:
-      cursor_column: dw_update_time
+    value_index_cursor_column: dw_update_time
     columns:
       - name: page_sk
         description: 页面维度代理键
@@ -191,8 +189,7 @@ tables:
   - name: dim_geo_region_zip
     role: dim
     description: 行政区域一致性维度拉链表，每个行政区划业务版本一行
-    value_index_sync:
-      cursor_column: dw_update_time
+    value_index_cursor_column: dw_update_time
     columns:
       - name: region_sk
         description: 行政区域维度代理键
@@ -304,8 +301,7 @@ tables:
   - name: dim_user_info_zip
     role: dim
     description: 用户一致性维度拉链表，每个用户业务版本一行
-    value_index_sync:
-      cursor_column: dw_update_time
+    value_index_cursor_column: dw_update_time
     columns:
       - name: user_sk
         description: 用户维度代理键
@@ -450,8 +446,7 @@ tables:
   - name: dim_user_tag_info
     role: dim
     description: 用户标签维度，每个用户标签一行
-    value_index_sync:
-      cursor_column: dw_update_time
+    value_index_cursor_column: dw_update_time
     columns:
       - name: user_tag_sk
         description: 用户标签代理键
@@ -546,8 +541,7 @@ tables:
   - name: dim_seller_info_zip
     role: dim
     description: 商家一致性维度拉链表，每个商家业务版本一行
-    value_index_sync:
-      cursor_column: dw_update_time
+    value_index_cursor_column: dw_update_time
     columns:
       - name: seller_sk
         description: 商家维度代理键
@@ -641,8 +635,7 @@ tables:
   - name: dim_shop_info_zip
     role: dim
     description: 店铺一致性维度拉链表，每个店铺业务版本一行
-    value_index_sync:
-      cursor_column: dw_update_time
+    value_index_cursor_column: dw_update_time
     columns:
       - name: shop_sk
         description: 店铺维度代理键
@@ -752,8 +745,7 @@ tables:
   - name: dim_category_info_zip
     role: dim
     description: 商品类目一致性维度拉链表，每个类目业务版本一行
-    value_index_sync:
-      cursor_column: dw_update_time
+    value_index_cursor_column: dw_update_time
     columns:
       - name: category_sk
         description: 类目维度代理键
@@ -861,8 +853,7 @@ tables:
   - name: dim_brand_info
     role: dim
     description: 品牌Type 1一致性维度，每个品牌一行
-    value_index_sync:
-      cursor_column: dw_update_time
+    value_index_cursor_column: dw_update_time
     columns:
       - name: brand_sk
         description: 品牌维度代理键
@@ -939,8 +930,7 @@ tables:
   - name: dim_payment_type
     role: dim
     description: 支付方式Type 1一致性维度，每种支付方式一行
-    value_index_sync:
-      cursor_column: dw_update_time
+    value_index_cursor_column: dw_update_time
     columns:
       - name: payment_type_sk
         description: 支付方式维度代理键
@@ -1003,8 +993,7 @@ tables:
   - name: dim_logistics_company
     role: dim
     description: 物流公司Type 1一致性维度，每家物流公司一行
-    value_index_sync:
-      cursor_column: dw_update_time
+    value_index_cursor_column: dw_update_time
     columns:
       - name: logistics_company_sk
         description: 物流公司维度代理键
@@ -1068,8 +1057,7 @@ tables:
   - name: dim_warehouse_info_zip
     role: dim
     description: 仓库一致性维度拉链表，每个仓库业务版本一行
-    value_index_sync:
-      cursor_column: dw_update_time
+    value_index_cursor_column: dw_update_time
     columns:
       - name: warehouse_sk
         description: 仓库维度代理键
@@ -1174,8 +1162,7 @@ tables:
   - name: dim_spu_info_zip
     role: dim
     description: SPU一致性维度拉链表，每个 SPU 业务版本一行
-    value_index_sync:
-      cursor_column: dw_update_time
+    value_index_cursor_column: dw_update_time
     columns:
       - name: spu_sk
         description: SPU维度代理键
@@ -1295,8 +1282,7 @@ tables:
   - name: dim_sku_info_zip
     role: dim
     description: SKU一致性维度拉链表，每个 SKU 业务版本一行
-    value_index_sync:
-      cursor_column: dw_update_time
+    value_index_cursor_column: dw_update_time
     columns:
       - name: sku_sk
         description: SKU维度代理键

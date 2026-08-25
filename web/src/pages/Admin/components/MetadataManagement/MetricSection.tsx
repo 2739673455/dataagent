@@ -1,10 +1,15 @@
-import { Check, Edit2, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Edit2, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/api/errors";
 import { type MetricInfo, metaApi } from "@/api/meta";
 import { Button } from "@/components/ui/button";
-import { MetadataEditorDialog } from "./MetadataEditorDialog";
+import {
+  AdminDialogActions,
+  AdminDialogCancelButton,
+  AdminDialogPrimaryButton,
+  AdminEditorDialog,
+} from "../AdminEditorDialog";
 import { splitCsv } from "./utils";
 
 interface MetricSectionProps {
@@ -198,17 +203,11 @@ export function MetricSection({
       </div>
 
       {isCreatingMetric && (
-        <MetadataEditorDialog ariaLabel="添加指标元数据" onClose={() => setIsCreatingMetric(false)}>
-          <div className="flex items-center justify-between font-semibold text-[#18181b] border-b border-[#e5e5df] pb-1.5 mb-3">
-            <span>添加指标元数据</span>
-            <button
-              type="button"
-              onClick={() => setIsCreatingMetric(false)}
-              className="text-[#71717a] hover:text-[#18181b]"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
+        <AdminEditorDialog
+          ariaLabel="添加指标元数据"
+          onClose={() => setIsCreatingMetric(false)}
+          title="添加指标元数据"
+        >
           <div className="space-y-3">
             <div>
               <label
@@ -271,44 +270,27 @@ export function MetricSection({
                 className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
               />
             </div>
-            <div className="mt-3 flex justify-end gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setIsCreatingMetric(false)}
-                className="h-7 text-xs"
-              >
+            <AdminDialogActions>
+              <AdminDialogCancelButton onClick={() => setIsCreatingMetric(false)}>
                 取消
-              </Button>
-              <Button
-                size="sm"
+              </AdminDialogCancelButton>
+              <AdminDialogPrimaryButton
                 disabled={savingMetric || !newMetricName.trim() || !newMetricDesc.trim()}
                 onClick={() => void handleCreateMetric()}
-                className="h-7 text-xs"
               >
-                <Check className="h-3.5 w-3.5 mr-1" />
                 {savingMetric ? "正在添加..." : "确认添加指标"}
-              </Button>
-            </div>
+              </AdminDialogPrimaryButton>
+            </AdminDialogActions>
           </div>
-        </MetadataEditorDialog>
+        </AdminEditorDialog>
       )}
 
       {editingMetric && (
-        <MetadataEditorDialog
+        <AdminEditorDialog
           ariaLabel={`编辑指标元数据 ${editingMetric.name}`}
           onClose={() => setEditingMetric(null)}
+          title={`编辑指标元数据: ${editingMetric.name}`}
         >
-          <div className="flex items-center justify-between font-semibold text-[#18181b] border-b border-[#e5e5df] pb-1.5 mb-3">
-            <span>编辑指标元数据: {editingMetric.name}</span>
-            <button
-              type="button"
-              onClick={() => setEditingMetric(null)}
-              className="text-[#71717a] hover:text-[#18181b]"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
           <div className="space-y-3">
             <div>
               <label
@@ -356,27 +338,19 @@ export function MetricSection({
                 className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
               />
             </div>
-            <div className="mt-3 flex justify-end gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setEditingMetric(null)}
-                className="h-7 text-xs"
-              >
+            <AdminDialogActions>
+              <AdminDialogCancelButton onClick={() => setEditingMetric(null)}>
                 取消
-              </Button>
-              <Button
-                size="sm"
+              </AdminDialogCancelButton>
+              <AdminDialogPrimaryButton
                 disabled={savingMetric || !editMetricDesc.trim()}
                 onClick={() => void handleSaveMetric()}
-                className="h-7 text-xs"
               >
-                <Check className="h-3.5 w-3.5 mr-1" />
                 {savingMetric ? "保存中..." : "保存指标元数据"}
-              </Button>
-            </div>
+              </AdminDialogPrimaryButton>
+            </AdminDialogActions>
           </div>
-        </MetadataEditorDialog>
+        </AdminEditorDialog>
       )}
 
       <div className="mt-4 rounded border border-[#d4d4ce]">

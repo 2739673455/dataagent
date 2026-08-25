@@ -1,10 +1,15 @@
-import { Check, Edit2, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Edit2, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/api/errors";
-import { type ColumnInfo, type ValueIndexSyncRequestMode, metaApi } from "@/api/meta";
+import { type ColumnInfo, metaApi, type ValueIndexSyncRequestMode } from "@/api/meta";
 import { Button } from "@/components/ui/button";
-import { MetadataEditorDialog } from "./MetadataEditorDialog";
+import {
+  AdminDialogActions,
+  AdminDialogCancelButton,
+  AdminDialogPrimaryButton,
+  AdminEditorDialog,
+} from "../AdminEditorDialog";
 import {
   formatDateTime,
   formatValueIndexSyncDetails,
@@ -228,8 +233,8 @@ export function ColumnSection({
                   className={`h-3.5 w-3.5 mr-1 ${syncing === "col_semantic" ? "animate-spin" : ""}`}
                 />
                 {selectedColumnNames.length > 0
-                  ? `同步字段语义索引 (${selectedColumnNames.length})`
-                  : "同步字段语义索引"}
+                  ? `同步语义索引 (${selectedColumnNames.length})`
+                  : "同步语义索引"}
               </Button>
               <Button
                 variant="outline"
@@ -247,8 +252,8 @@ export function ColumnSection({
                   className={`h-3.5 w-3.5 mr-1 ${syncing === "col_values_full" ? "animate-spin" : ""}`}
                 />
                 {selectedColumnNames.length > 0
-                  ? `全量同步取值 (${selectedColumnNames.length})`
-                  : "全量同步取值"}
+                  ? `全量同步取值索引 (${selectedColumnNames.length})`
+                  : "全量同步取值索引"}
               </Button>
               <Button
                 variant="outline"
@@ -266,8 +271,8 @@ export function ColumnSection({
                   className={`h-3.5 w-3.5 mr-1 ${syncing === "col_values_incremental" ? "animate-spin" : ""}`}
                 />
                 {selectedColumnNames.length > 0
-                  ? `增量同步取值 (${selectedColumnNames.length})`
-                  : "增量同步取值"}
+                  ? `增量同步取值索引 (${selectedColumnNames.length})`
+                  : "增量同步取值索引"}
               </Button>
               <Button
                 variant="destructive"
@@ -312,20 +317,11 @@ export function ColumnSection({
       </div>
 
       {isCreatingColumn && (
-        <MetadataEditorDialog
+        <AdminEditorDialog
           ariaLabel={`添加字段元数据 ${selectedTable || "未选择"}`}
           onClose={() => setIsCreatingColumn(false)}
+          title={`添加字段元数据: ${selectedTable}`}
         >
-          <div className="flex items-center justify-between font-semibold text-[#18181b] border-b border-[#e5e5df] pb-1.5 mb-3">
-            <span>添加字段元数据: {selectedTable}</span>
-            <button
-              type="button"
-              onClick={() => setIsCreatingColumn(false)}
-              className="text-[#71717a] hover:text-[#18181b]"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
           <div className="space-y-3">
             <div>
               <label
@@ -373,7 +369,7 @@ export function ColumnSection({
                 className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
               />
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid gap-3">
               <div>
                 <label
                   htmlFor="new-col-ref-table"
@@ -405,59 +401,42 @@ export function ColumnSection({
                 />
               </div>
             </div>
-            <div className="flex items-center gap-2 pt-1">
-              <input
-                type="checkbox"
-                id="new-col-index-values"
-                checked={newColIndexValues}
-                onChange={(e) => setNewColIndexValues(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-[#d4d4ce] text-[#1e2024] focus:ring-[#1e2024]"
-              />
+            <div className="flex items-center">
               <label
                 htmlFor="new-col-index-values"
-                className="text-xs font-medium text-[#18181b] cursor-pointer"
+                className="flex cursor-pointer items-center gap-1.5 text-xs text-[#52525b]"
               >
-                开启取值索引
+                <input
+                  type="checkbox"
+                  id="new-col-index-values"
+                  checked={newColIndexValues}
+                  onChange={(e) => setNewColIndexValues(e.target.checked)}
+                  className="h-4 w-4 rounded accent-[#1e2024]"
+                />
+                <span>开启取值索引</span>
               </label>
             </div>
-            <div className="mt-3 flex justify-end gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setIsCreatingColumn(false)}
-                className="h-7 text-xs"
-              >
+            <AdminDialogActions>
+              <AdminDialogCancelButton onClick={() => setIsCreatingColumn(false)}>
                 取消
-              </Button>
-              <Button
-                size="sm"
+              </AdminDialogCancelButton>
+              <AdminDialogPrimaryButton
                 disabled={savingColumn || !newColName.trim() || !newColDesc.trim()}
                 onClick={() => void handleCreateColumn()}
-                className="h-7 text-xs"
               >
-                <Check className="h-3.5 w-3.5 mr-1" />
                 {savingColumn ? "正在添加..." : "确认添加字段"}
-              </Button>
-            </div>
+              </AdminDialogPrimaryButton>
+            </AdminDialogActions>
           </div>
-        </MetadataEditorDialog>
+        </AdminEditorDialog>
       )}
 
       {editingColumn && (
-        <MetadataEditorDialog
+        <AdminEditorDialog
           ariaLabel={`编辑字段元数据 ${editingColumn.name}`}
           onClose={() => setEditingColumn(null)}
+          title={`编辑字段元数据: ${editingColumn.name}`}
         >
-          <div className="flex items-center justify-between font-semibold text-[#18181b] border-b border-[#e5e5df] pb-1.5 mb-3">
-            <span>编辑字段元数据: {editingColumn.name}</span>
-            <button
-              type="button"
-              onClick={() => setEditingColumn(null)}
-              className="text-[#71717a] hover:text-[#18181b]"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
           <div className="space-y-3">
             <div>
               <label
@@ -490,7 +469,7 @@ export function ColumnSection({
                 className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
               />
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid gap-3">
               <div>
                 <label
                   htmlFor="edit-col-ref-table"
@@ -522,42 +501,34 @@ export function ColumnSection({
                 />
               </div>
             </div>
-            <div className="flex items-center gap-2 pt-1">
-              <input
-                type="checkbox"
-                id="edit-col-index-values"
-                checked={editColIndexValues}
-                onChange={(e) => setEditColIndexValues(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-[#d4d4ce] text-[#1e2024] focus:ring-[#1e2024]"
-              />
+            <div className="flex items-center">
               <label
                 htmlFor="edit-col-index-values"
-                className="text-xs font-medium text-[#18181b] cursor-pointer"
+                className="flex cursor-pointer items-center gap-1.5 text-xs text-[#52525b]"
               >
-                开启取值索引
+                <input
+                  type="checkbox"
+                  id="edit-col-index-values"
+                  checked={editColIndexValues}
+                  onChange={(e) => setEditColIndexValues(e.target.checked)}
+                  className="h-4 w-4 rounded accent-[#1e2024]"
+                />
+                <span>开启取值索引</span>
               </label>
             </div>
-            <div className="mt-3 flex justify-end gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setEditingColumn(null)}
-                className="h-7 text-xs"
-              >
+            <AdminDialogActions>
+              <AdminDialogCancelButton onClick={() => setEditingColumn(null)}>
                 取消
-              </Button>
-              <Button
-                size="sm"
+              </AdminDialogCancelButton>
+              <AdminDialogPrimaryButton
                 disabled={savingColumn || !editColDesc.trim()}
                 onClick={() => void handleSaveColumn()}
-                className="h-7 text-xs"
               >
-                <Check className="h-3.5 w-3.5 mr-1" />
                 {savingColumn ? "保存中..." : "保存字段元数据"}
-              </Button>
-            </div>
+              </AdminDialogPrimaryButton>
+            </AdminDialogActions>
           </div>
-        </MetadataEditorDialog>
+        </AdminEditorDialog>
       )}
 
       <div className="mt-4 rounded border border-[#d4d4ce]">

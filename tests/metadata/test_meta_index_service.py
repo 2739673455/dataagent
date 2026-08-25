@@ -16,7 +16,6 @@ from app.metadata.repositories.source_doris import SourceDorisRepo
 from app.metadata.repositories.value_index import ValueESRepo
 from app.metadata.services.index import MetaIndexService
 from app.shared.clients.embedding_client_manager import EmbeddingClient
-from app.shared.config.meta_config import ValueIndexSyncConfig
 from tests.identity.test_auth_service import AsyncSessionStub
 
 
@@ -276,13 +275,11 @@ class MetaIndexServiceTest(unittest.IsolatedAsyncioTestCase):
     def test_value_sync_mode_selects_full_or_incremental(self) -> None:
         now = datetime.now(UTC)
         state = build_state(now)
-        config = ValueIndexSyncConfig(
-            cursor_column="dw_update_time",
-        )
+        cursor_column = "dw_update_time"
 
         self.assertEqual(
             MetaIndexService._select_value_sync_mode(
-                config,
+                cursor_column,
                 state,
                 requested_mode="incremental",
             ),
@@ -290,7 +287,7 @@ class MetaIndexServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             MetaIndexService._select_value_sync_mode(
-                config,
+                cursor_column,
                 state,
                 requested_mode="full",
             ),
@@ -298,7 +295,7 @@ class MetaIndexServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             MetaIndexService._select_value_sync_mode(
-                config,
+                cursor_column,
                 None,
                 requested_mode="full",
             ),
@@ -306,13 +303,13 @@ class MetaIndexServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaisesRegex(RuntimeError, "缺少游标配置"):
             MetaIndexService._select_value_sync_mode(
-                ValueIndexSyncConfig(),
+                None,
                 state,
                 requested_mode="incremental",
             )
         with self.assertRaisesRegex(RuntimeError, "缺少全量同步状态"):
             MetaIndexService._select_value_sync_mode(
-                config,
+                cursor_column,
                 None,
                 requested_mode="incremental",
             )

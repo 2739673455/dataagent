@@ -1,18 +1,22 @@
-import { X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { adminApi, type DorisRoleResponse } from "@/api/admin";
 import { getApiErrorMessage } from "@/api/errors";
-import { Button } from "@/components/ui/button";
+import {
+  AdminDialogActions,
+  AdminDialogCancelButton,
+  AdminDialogPrimaryButton,
+  AdminEditorDialog,
+} from "../AdminEditorDialog";
 
-interface UserCreateCardProps {
+interface UserCreateDialogProps {
   roles: DorisRoleResponse[];
   busy: boolean;
   onCancel: () => void;
   onUserCreated: () => void;
 }
 
-export function UserCreateCard({ roles, busy, onCancel, onUserCreated }: UserCreateCardProps) {
+export function UserCreateDialog({ roles, busy, onCancel, onUserCreated }: UserCreateDialogProps) {
   const [newUsername, setNewUsername] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -46,19 +50,8 @@ export function UserCreateCard({ roles, busy, onCancel, onUserCreated }: UserCre
   };
 
   return (
-    <div className="mt-3 rounded border border-[#1e2024] bg-[#fafaf8] p-4 text-xs shadow-sm shrink-0 mb-1">
-      <div className="flex items-center justify-between font-semibold text-[#18181b] border-b border-[#e5e5df] pb-1.5 mb-3">
-        <span>添加新用户账号</span>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="text-[#71717a] hover:text-[#18181b] cursor-pointer"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-5">
+    <AdminEditorDialog ariaLabel="添加新用户账号" onClose={onCancel} title="添加新用户账号">
+      <div className="grid gap-3">
         <div>
           <label
             htmlFor="user-new-username"
@@ -127,7 +120,7 @@ export function UserCreateCard({ roles, busy, onCancel, onUserCreated }: UserCre
           </select>
         </div>
 
-        <div className="flex items-end pb-1.5">
+        <div className="flex items-center">
           <label className="flex items-center gap-1.5 cursor-pointer text-xs text-[#52525b]">
             <input
               type="checkbox"
@@ -140,12 +133,9 @@ export function UserCreateCard({ roles, busy, onCancel, onUserCreated }: UserCre
         </div>
       </div>
 
-      <div className="mt-3 flex justify-end gap-2">
-        <Button variant="outline" size="sm" onClick={onCancel} className="h-7 px-2 text-xs">
-          取消
-        </Button>
-        <Button
-          size="sm"
+      <AdminDialogActions>
+        <AdminDialogCancelButton onClick={onCancel}>取消</AdminDialogCancelButton>
+        <AdminDialogPrimaryButton
           disabled={
             busy ||
             submitting ||
@@ -155,11 +145,10 @@ export function UserCreateCard({ roles, busy, onCancel, onUserCreated }: UserCre
             newPassword.length < 6
           }
           onClick={() => void handleCreateUser()}
-          className="h-7 px-2 text-xs bg-[#1e2024] text-white hover:bg-[#2d3139]"
         >
           {submitting ? "创建中..." : "确认创建"}
-        </Button>
-      </div>
-    </div>
+        </AdminDialogPrimaryButton>
+      </AdminDialogActions>
+    </AdminEditorDialog>
   );
 }

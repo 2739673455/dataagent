@@ -14,9 +14,7 @@ from app.metadata.models import (
     MetricInfo,
     TableInfo,
     ValueIndexSyncState,
-    default_value_index_sync_config,
 )
-from app.shared.config.meta_config import ValueIndexSyncConfig
 
 
 class MetaPGRepo:
@@ -44,16 +42,18 @@ class MetaPGRepo:
             if existing
             else True
         )
-        value_sync_config_changed = existing is not None and (
-            existing.value_index_sync or default_value_index_sync_config()
-        ) != (table_info.value_index_sync or default_value_index_sync_config())
+        value_index_cursor_changed = (
+            existing is not None
+            and existing.value_index_cursor_column
+            != table_info.value_index_cursor_column
+        )
         self._set_versions(
             table_info,
             existing,
             changed,
         )
         await self._session.merge(table_info)
-        if value_sync_config_changed:
+        if value_index_cursor_changed:
             await self._session.execute(
                 delete(ValueIndexSyncState).where(
                     ValueIndexSyncState.t_name == table_info.name
@@ -268,23 +268,23 @@ class MetaPGRepo:
                 if len(pending) >= limit:
                     break
                 continue
-            config = ValueIndexSyncConfig.model_validate(table_info.value_index_sync)
             if (
-                config.cursor_column is None
+                table_info.value_index_cursor_column is None
                 or state is None
                 or state.current_generation is None
                 or state.cursor_value is None
             ):
                 continue
-            due = (state.status == "failed" and state.updated_at < now) or (
-                state.status == "succeeded"
-                and (
-                    state.last_incremental_synced_at is None
-                    or state.last_incremental_synced_at < now
+            due = (
+                (state.status == "failed" and state.updated_at < now)
+                or (
+                    state.status == "succeeded"
+                    and (
+                        state.last_incremental_synced_at is None
+                        or state.last_incremental_synced_at < now
+                    )
                 )
-            ) or (
-                state.status == "syncing"
-                and state.updated_at <= stale_before
+                or (state.status == "syncing" and state.updated_at <= stale_before)
             )
             if due:
                 pending.append((column_info.t_name, column_info.name))

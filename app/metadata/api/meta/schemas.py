@@ -12,7 +12,6 @@ from app.shared.config.meta_config import (
     MetadataDescription,
     MetadataName,
     TableRole,
-    ValueIndexSyncConfig,
 )
 
 
@@ -27,7 +26,7 @@ class TableInfoRequest(MetaRequestModel):
 
     role: TableRole
     description: MetadataDescription
-    value_index_sync: ValueIndexSyncConfig | None = None
+    value_index_cursor_column: MetadataName | None = None
 
 
 class ColumnInfoRequest(MetaRequestModel):
@@ -74,7 +73,7 @@ class TableInfoResponse(BaseModel):
     role: TableRole
     primary_key_columns: list[str]
     description: str
-    value_index_sync: ValueIndexSyncConfig
+    value_index_cursor_column: str | None
     meta_version: int
 
 

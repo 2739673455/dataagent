@@ -75,15 +75,14 @@
 游标通常属于表级变更信息，建议在元数据配置中按表维护：
 
 ```yaml
-value_index_sync:
-  cursor_column: dw_load_time
+value_index_cursor_column: dw_load_time
 ```
 
 建议配置字段：
 
 | 字段 | 类型 | 说明 |
 | :--- | :--- | :--- |
-| `cursor_column` | 字符串或空值 | 行级更新时间或批次游标字段 |
+| `value_index_cursor_column` | 字符串或空值 | 行级更新时间或批次游标字段 |
 
 每日执行时间属于应用级任务配置，在 [`conf/app_config.yaml`](../conf/app_config.yaml) 中维护：
 
@@ -138,7 +137,7 @@ task_queue:
 
 游标使用类型化 JSON 存储，避免时间、整数和字符串统一转换后产生比较语义偏差。
 
-表级 `value_index_sync` 配置发生变化时，PostgreSQL 仓储会删除该表已有字段水位状态。管理员需要重新执行一次手动全量同步，以新的游标语义建立索引和水位。
+表级 `value_index_cursor_column` 配置发生变化时，PostgreSQL 仓储会删除该表已有字段水位状态。管理员需要重新执行一次手动全量同步，以新的游标语义建立索引和水位。
 
 ---
 

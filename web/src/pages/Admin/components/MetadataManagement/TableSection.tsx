@@ -1,15 +1,20 @@
-import { Check, Edit2, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { Edit2, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/api/errors";
 import {
+  metaApi,
   type TableInfo,
   type TableRole,
   type ValueIndexSyncRequestMode,
-  metaApi,
 } from "@/api/meta";
 import { Button } from "@/components/ui/button";
-import { MetadataEditorDialog } from "./MetadataEditorDialog";
+import {
+  AdminDialogActions,
+  AdminDialogCancelButton,
+  AdminDialogPrimaryButton,
+  AdminEditorDialog,
+} from "../AdminEditorDialog";
 
 interface TableSectionProps {
   tables: TableInfo[];
@@ -44,10 +49,12 @@ export function TableSection({
   const [newTableName, setNewTableName] = useState("");
   const [newTableRole, setNewTableRole] = useState<TableRole>("fact");
   const [newTableDesc, setNewTableDesc] = useState("");
+  const [newTableCursorColumn, setNewTableCursorColumn] = useState("");
   const [isTableDropdownOpen, setIsTableDropdownOpen] = useState(false);
   const [editingTable, setEditingTable] = useState<TableInfo | null>(null);
   const [editTableRole, setEditTableRole] = useState<TableRole>("fact");
   const [editTableDesc, setEditTableDesc] = useState("");
+  const [editTableCursorColumn, setEditTableCursorColumn] = useState("");
   const [savingTable, setSavingTable] = useState(false);
   const [deletingTable, setDeletingTable] = useState<string | null>(null);
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
@@ -85,6 +92,7 @@ export function TableSection({
     setNewTableName("");
     setNewTableRole("fact");
     setNewTableDesc("");
+    setNewTableCursorColumn("");
     setIsTableDropdownOpen(false);
 
     if (sourceTables.length === 0) {
@@ -110,6 +118,7 @@ export function TableSection({
       await metaApi.upsertTable(newTableName.trim(), {
         role: newTableRole,
         description: newTableDesc.trim(),
+        value_index_cursor_column: newTableCursorColumn.trim() || null,
       });
       toast.success(`数据表 ${newTableName.trim()} 添加成功`);
       setIsCreatingTable(false);
@@ -129,6 +138,7 @@ export function TableSection({
       await metaApi.upsertTable(editingTable.name, {
         role: editTableRole,
         description: editTableDesc.trim(),
+        value_index_cursor_column: editTableCursorColumn.trim() || null,
       });
       toast.success(`数据表 ${editingTable.name} 更新成功`);
       setEditingTable(null);
@@ -188,8 +198,8 @@ export function TableSection({
               className={`h-3.5 w-3.5 mr-1 ${syncing === "table_semantic" ? "animate-spin" : ""}`}
             />
             {selectedTableNames.length > 0
-              ? `同步表字段语义索引 (${selectedTableNames.length})`
-              : "同步表字段语义索引"}
+              ? `同步语义索引 (${selectedTableNames.length})`
+              : "同步语义索引"}
           </Button>
           <Button
             variant="outline"
@@ -207,8 +217,8 @@ export function TableSection({
               className={`h-3.5 w-3.5 mr-1 ${syncing === "table_values_full" ? "animate-spin" : ""}`}
             />
             {selectedTableNames.length > 0
-              ? `全量同步取值 (${selectedTableNames.length})`
-              : "全量同步取值"}
+              ? `全量同步取值索引 (${selectedTableNames.length})`
+              : "全量同步取值索引"}
           </Button>
           <Button
             variant="outline"
@@ -226,8 +236,8 @@ export function TableSection({
               className={`h-3.5 w-3.5 mr-1 ${syncing === "table_values_incremental" ? "animate-spin" : ""}`}
             />
             {selectedTableNames.length > 0
-              ? `增量同步取值 (${selectedTableNames.length})`
-              : "增量同步取值"}
+              ? `增量同步取值索引 (${selectedTableNames.length})`
+              : "增量同步取值索引"}
           </Button>
           <Button
             variant="destructive"
@@ -261,20 +271,11 @@ export function TableSection({
       </div>
 
       {isCreatingTable && (
-        <MetadataEditorDialog
+        <AdminEditorDialog
           ariaLabel="添加数据表元数据"
           onClose={() => setIsCreatingTable(false)}
+          title="添加数据表元数据"
         >
-          <div className="flex items-center justify-between font-semibold text-[#18181b] border-b border-[#e5e5df] pb-1.5 mb-3">
-            <span>添加数据表元数据</span>
-            <button
-              type="button"
-              onClick={() => setIsCreatingTable(false)}
-              className="text-[#71717a] hover:text-[#18181b]"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
           <div className="space-y-3">
             <div className="relative">
               <div className="flex items-center justify-between mb-1">
@@ -381,45 +382,45 @@ export function TableSection({
                 className="w-full rounded border border-[#d4d4ce] bg-[#ffffff] p-2 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
               />
             </div>
-            <div className="mt-3 flex justify-end gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setIsCreatingTable(false)}
-                className="h-7 text-xs"
+            <div>
+              <label
+                htmlFor="metadata-new-table-cursor-column"
+                className="block text-xs font-medium text-[#71717a] mb-1"
               >
+                增量游标字段
+              </label>
+              <input
+                id="metadata-new-table-cursor-column"
+                value={newTableCursorColumn}
+                onChange={(event) => setNewTableCursorColumn(event.target.value)}
+                placeholder="如：dw_update_time"
+                className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 font-mono text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+              />
+              <p className="mt-1 text-[10px] leading-relaxed text-[#71717a]">
+                留空时仅支持全量同步；系统以该字段最大值记录取值索引同步水位
+              </p>
+            </div>
+            <AdminDialogActions>
+              <AdminDialogCancelButton onClick={() => setIsCreatingTable(false)}>
                 取消
-              </Button>
-              <Button
-                size="sm"
+              </AdminDialogCancelButton>
+              <AdminDialogPrimaryButton
                 disabled={savingTable || !newTableName.trim() || !newTableDesc.trim()}
                 onClick={() => void handleCreateTable()}
-                className="h-7 text-xs"
               >
-                <Check className="h-3.5 w-3.5 mr-1" />
                 {savingTable ? "正在创建..." : "确认添加表"}
-              </Button>
-            </div>
+              </AdminDialogPrimaryButton>
+            </AdminDialogActions>
           </div>
-        </MetadataEditorDialog>
+        </AdminEditorDialog>
       )}
 
       {editingTable && (
-        <MetadataEditorDialog
+        <AdminEditorDialog
           ariaLabel={`编辑表元数据 ${editingTable.name}`}
           onClose={() => setEditingTable(null)}
-          size="md"
+          title={`编辑表元数据: ${editingTable.name}`}
         >
-          <div className="flex items-center justify-between font-semibold text-[#18181b] border-b border-[#e5e5df] pb-1.5 mb-3">
-            <span>编辑表元数据: {editingTable.name}</span>
-            <button
-              type="button"
-              onClick={() => setEditingTable(null)}
-              className="text-[#71717a] hover:text-[#18181b]"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
           <div className="space-y-3">
             <div>
               <label
@@ -454,27 +455,37 @@ export function TableSection({
                 className="w-full rounded border border-[#d4d4ce] bg-[#ffffff] p-2 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
               />
             </div>
-            <div className="mt-3 flex justify-end gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setEditingTable(null)}
-                className="h-7 text-xs"
+            <div>
+              <label
+                htmlFor="metadata-table-cursor-column"
+                className="block text-xs font-medium text-[#71717a] mb-1"
               >
+                增量游标字段
+              </label>
+              <input
+                id="metadata-table-cursor-column"
+                value={editTableCursorColumn}
+                onChange={(event) => setEditTableCursorColumn(event.target.value)}
+                placeholder="如：dw_update_time"
+                className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 font-mono text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+              />
+              <p className="mt-1 text-[10px] leading-relaxed text-[#71717a]">
+                留空时仅支持全量同步；系统以该字段最大值记录取值索引同步水位
+              </p>
+            </div>
+            <AdminDialogActions>
+              <AdminDialogCancelButton onClick={() => setEditingTable(null)}>
                 取消
-              </Button>
-              <Button
-                size="sm"
+              </AdminDialogCancelButton>
+              <AdminDialogPrimaryButton
                 disabled={savingTable || !editTableDesc.trim()}
                 onClick={() => void handleSaveTable()}
-                className="h-7 text-xs"
               >
-                <Check className="h-3.5 w-3.5 mr-1" />
                 {savingTable ? "保存中..." : "保存表元数据"}
-              </Button>
-            </div>
+              </AdminDialogPrimaryButton>
+            </AdminDialogActions>
           </div>
-        </MetadataEditorDialog>
+        </AdminEditorDialog>
       )}
 
       <div className="mt-4 rounded border border-[#d4d4ce]">
@@ -485,9 +496,10 @@ export function TableSection({
             <table className="w-full min-w-[760px] table-fixed text-left text-xs font-mono">
               <colgroup>
                 <col className="w-[44px]" />
-                <col className="w-[28%]" />
+                <col className="w-[24%]" />
                 <col className="w-[130px]" />
-                <col className="w-[50%]" />
+                <col className="w-[40%]" />
+                <col className="w-[18%]" />
                 <col className="w-[84px]" />
               </colgroup>
               <thead className="sticky top-0 z-10 border-b border-[#d4d4ce] bg-[#f4f4f0] text-[#52525b]">
@@ -522,6 +534,9 @@ export function TableSection({
                   </th>
                   <th className="px-3.5 py-2.5 font-medium whitespace-nowrap bg-[#f4f4f0]">
                     业务描述
+                  </th>
+                  <th className="px-3.5 py-2.5 font-medium whitespace-nowrap bg-[#f4f4f0]">
+                    增量游标字段
                   </th>
                   <th className="px-3.5 py-2.5 font-medium whitespace-nowrap text-right bg-[#f4f4f0]">
                     操作
@@ -583,6 +598,16 @@ export function TableSection({
                           {table.description || "-"}
                         </span>
                       </td>
+                      <td className="px-3.5 py-2.5 align-middle text-xs">
+                        <span
+                          className={`font-mono ${
+                            isSelected ? "text-[#d4d4ce]" : "text-[#71717a]"
+                          }`}
+                          title={table.value_index_cursor_column || "未配置增量游标字段"}
+                        >
+                          {table.value_index_cursor_column || "-"}
+                        </span>
+                      </td>
                       <td className="px-3.5 py-2.5 align-middle text-right whitespace-nowrap">
                         <div className="inline-flex items-center justify-end gap-1.5 whitespace-nowrap">
                           <Button
@@ -594,6 +619,7 @@ export function TableSection({
                               setEditingTable(table);
                               setEditTableRole(table.role);
                               setEditTableDesc(table.description);
+                              setEditTableCursorColumn(table.value_index_cursor_column || "");
                             }}
                             className={`h-7 px-2 text-xs ${
                               isSelected

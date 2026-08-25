@@ -1,11 +1,11 @@
-import { Plus, RefreshCw, Shield, Trash2 } from "lucide-react";
+import { Plus, RefreshCw, Shield, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { adminApi, type AssetGrantResponse, type DorisRoleResponse } from "@/api/admin";
 import { getApiErrorMessage } from "@/api/errors";
 import { Button } from "@/components/ui/button";
 import { AssetPermissionPanel } from "./AssetPermissionPanel";
-import { DorisRoleCreateCard } from "./DorisRoleCreateCard";
+import { DorisRoleCreateDialog } from "./DorisRoleCreateDialog";
 import { RowPolicyPanel } from "./RowPolicyPanel";
 
 export function DorisRoleManagement() {
@@ -189,9 +189,20 @@ export function DorisRoleManagement() {
 
         {discoveredRoles.length > 0 && (
           <div className="mt-4 rounded border border-[#d4d4ce] bg-[#fafaf8] p-4 text-xs">
-            <h3 className="font-semibold text-[#18181b]">
-              扫描发现的原生角色（未托管角色可直接接入管理）：
-            </h3>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="font-semibold text-[#18181b]">
+                扫描发现的原生角色（未托管角色可直接接入管理）：
+              </h3>
+              <button
+                type="button"
+                aria-label="关闭原生角色扫描结果"
+                onClick={() => setDiscoveredRoles([])}
+                className="cursor-pointer text-[#71717a] hover:text-[#18181b]"
+                title="关闭"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
             <div className="mt-3 grid gap-3 sm:grid-cols-2 md:grid-cols-3">
               {discoveredRoles.map((role) => (
                 <div
@@ -292,7 +303,7 @@ export function DorisRoleManagement() {
         )}
 
         {isCreatingRole && (
-          <DorisRoleCreateCard
+          <DorisRoleCreateDialog
             rolesCount={roles.length}
             busy={busy}
             workloadGroups={workloadGroups}

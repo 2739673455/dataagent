@@ -1,11 +1,15 @@
-import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { adminApi, type DorisRoleResponse } from "@/api/admin";
 import { getApiErrorMessage } from "@/api/errors";
-import { Button } from "@/components/ui/button";
+import {
+  AdminDialogActions,
+  AdminDialogCancelButton,
+  AdminDialogPrimaryButton,
+  AdminEditorDialog,
+} from "../AdminEditorDialog";
 
-interface DorisRoleCreateCardProps {
+interface DorisRoleCreateDialogProps {
   rolesCount: number;
   busy: boolean;
   workloadGroups: string[];
@@ -14,14 +18,14 @@ interface DorisRoleCreateCardProps {
   onRoleCreated: (role: DorisRoleResponse) => void;
 }
 
-export function DorisRoleCreateCard({
+export function DorisRoleCreateDialog({
   rolesCount,
   busy,
   workloadGroups,
   defaultWorkloadGroup,
   onCancel,
   onRoleCreated,
-}: DorisRoleCreateCardProps) {
+}: DorisRoleCreateDialogProps) {
   const [newRole, setNewRole] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [newQueryUser, setNewQueryUser] = useState("");
@@ -61,19 +65,12 @@ export function DorisRoleCreateCard({
   };
 
   return (
-    <div className="mt-3 rounded border border-[#1e2024] bg-[#fafaf8] p-4 text-xs shadow-sm shrink-0 mb-1">
-      <div className="flex items-center justify-between font-semibold text-[#18181b] border-b border-[#e5e5df] pb-1.5 mb-3">
-        <span>创建新 Doris 角色与查询身份</span>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="text-[#71717a] hover:text-[#18181b] cursor-pointer"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+    <AdminEditorDialog
+      ariaLabel="创建新 Doris 角色与查询身份"
+      onClose={onCancel}
+      title="创建新 Doris 角色与查询身份"
+    >
+      <div className="grid gap-3">
         <div>
           <label htmlFor="role-new-name" className="block text-xs font-medium text-[#71717a] mb-1">
             角色标识 *
@@ -139,12 +136,9 @@ export function DorisRoleCreateCard({
         </div>
       </div>
 
-      <div className="mt-3 flex justify-end gap-2">
-        <Button variant="outline" size="sm" onClick={onCancel} className="h-7 px-2 text-xs">
-          取消
-        </Button>
-        <Button
-          size="sm"
+      <AdminDialogActions>
+        <AdminDialogCancelButton onClick={onCancel}>取消</AdminDialogCancelButton>
+        <AdminDialogPrimaryButton
           disabled={
             busy ||
             submitting ||
@@ -154,11 +148,10 @@ export function DorisRoleCreateCard({
             !newWorkloadGroup
           }
           onClick={() => void handleCreateRole()}
-          className="h-7 px-2 text-xs bg-[#1e2024] text-white hover:bg-[#2d3139]"
         >
           {submitting ? "创建中..." : "确认创建"}
-        </Button>
-      </div>
-    </div>
+        </AdminDialogPrimaryButton>
+      </AdminDialogActions>
+    </AdminEditorDialog>
   );
 }

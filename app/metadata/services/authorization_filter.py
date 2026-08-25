@@ -76,7 +76,7 @@ class MetadataAuthorizationFilter:
                     if (item.name, name) in allowed_columns
                 ],
                 description=item.description,
-                value_index_sync=item.value_index_sync,
+                value_index_cursor_column=item.value_index_cursor_column,
                 meta_version=item.meta_version,
             )
             for item in table_infos

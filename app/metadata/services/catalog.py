@@ -25,7 +25,6 @@ from app.shared.config.meta_config import (
     MetricConfig,
     TableConfig,
     TableRole,
-    ValueIndexSyncConfig,
 )
 from app.shared.tasks.submission import TaskSubmission
 
@@ -72,7 +71,7 @@ class MetaCatalogService:
         t_name: str,
         role: TableRole,
         description: str,
-        value_index_sync: ValueIndexSyncConfig | None = None,
+        value_index_cursor_column: str | None = None,
     ) -> None:
         """新增或更新表元数据"""
         if not await self._source_repo.table_exists(t_name):
@@ -80,34 +79,23 @@ class MetaCatalogService:
         primary_key_columns = await self._source_repo.get_primary_key_columns(t_name)
         column_types = await self._source_repo.get_column_types(t_name)
         if (
-            value_index_sync is not None
-            and value_index_sync.cursor_column is not None
-            and value_index_sync.cursor_column not in column_types
+            value_index_cursor_column is not None
+            and value_index_cursor_column not in column_types
         ):
             raise meta_error.InvalidMetadataError(
                 detail=(
-                    "源表中未找到取值索引游标字段: "
-                    f"{t_name}.{value_index_sync.cursor_column}"
+                    "源表中未找到取值索引增量游标字段: "
+                    f"{t_name}.{value_index_cursor_column}"
                 )
             )
         async with self._meta_repo.session.begin():
-            try:
-                existing = await self._meta_repo.get_table_info(t_name)
-            except meta_error.MetadataNotFoundError:
-                existing = None
             changed = await self._meta_repo.upsert_table_info(
                 TableInfo(
                     name=t_name,
                     role=role,
                     primary_key_columns=primary_key_columns,
                     description=description,
-                    value_index_sync=(
-                        value_index_sync.model_dump(mode="json")
-                        if value_index_sync is not None
-                        else existing.value_index_sync
-                        if existing is not None
-                        else ValueIndexSyncConfig().model_dump(mode="json")
-                    ),
+                    value_index_cursor_column=value_index_cursor_column,
                 )
             )
         if changed:
@@ -336,9 +324,7 @@ class MetaCatalogService:
                     name=table_info.name,
                     role=cast(TableRole, table_info.role),
                     description=table_info.description,
-                    value_index_sync=ValueIndexSyncConfig.model_validate(
-                        table_info.value_index_sync
-                    ),
+                    value_index_cursor_column=table_info.value_index_cursor_column,
                     columns=[
                         ColumnConfig(
                             name=column_info.name,

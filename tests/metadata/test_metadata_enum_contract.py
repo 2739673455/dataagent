@@ -6,8 +6,9 @@ from typing import get_args
 from pydantic import ValidationError
 
 from app.metadata.api.meta.schemas import TableInfoRequest
+from app.metadata.models import TableInfo
 from app.metadata.services.import_service import ImportMode
-from app.shared.config.meta_config import TableRole
+from app.shared.config.meta_config import TableConfig, TableRole
 
 
 class MetadataEnumContractTest(unittest.TestCase):
@@ -44,6 +45,40 @@ class MetadataEnumContractTest(unittest.TestCase):
                         TableInfoRequest.model_validate(
                             {"role": value, "description": "table"}
                         )
+
+    def test_value_index_cursor_uses_flat_contract(self) -> None:
+        request = TableInfoRequest.model_validate(
+            {
+                "role": "fact",
+                "description": "订单事实表",
+                "value_index_cursor_column": "dw_update_time",
+            }
+        )
+        table = TableConfig.model_validate(
+            {
+                "name": "orders",
+                "role": "fact",
+                "description": "订单事实表",
+                "value_index_cursor_column": "dw_update_time",
+            }
+        )
+
+        self.assertEqual(request.value_index_cursor_column, "dw_update_time")
+        self.assertEqual(table.value_index_cursor_column, "dw_update_time")
+        self.assertIn("value_index_cursor_column", TableInfo.__table__.columns)
+        self.assertNotIn("value_index_sync", TableInfo.__table__.columns)
+
+    def test_nested_value_index_cursor_contract_is_rejected(self) -> None:
+        legacy_payload = {
+            "role": "fact",
+            "description": "订单事实表",
+            "value_index_sync": {"cursor_column": "dw_update_time"},
+        }
+
+        with self.assertRaises(ValidationError):
+            TableInfoRequest.model_validate(legacy_payload)
+        with self.assertRaises(ValidationError):
+            TableConfig.model_validate({"name": "orders", **legacy_payload})
 
 
 if __name__ == "__main__":
