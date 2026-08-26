@@ -32,6 +32,15 @@ class DorisQueryUserAlreadyExistsError(RuntimeError):
         super().__init__(f"Doris 查询用户已存在: {query_user}")
 
 
+class DorisRoleAlreadyExistsError(RuntimeError):
+    """Doris 角色已存在"""
+
+    def __init__(self, role_name: str) -> None:
+        """记录发生冲突的 Doris 角色名"""
+        self.role_name = role_name
+        super().__init__(f"Doris 角色已存在: {role_name}")
+
+
 class DorisAdminConnectionProvider(Protocol):
     """Doris 权限管理连接提供器"""
 
@@ -92,6 +101,16 @@ class DorisRoleRepository:
             result = await connection.execute(text("SHOW ROLES"))
             return [dict(row) for row in result.mappings().all()]
 
+    async def list_role_names(self) -> tuple[str, ...]:
+        """读取 Doris 中的全部显式角色名"""
+        rows = await self.list_roles()
+        names = {
+            role_name
+            for row in rows
+            if (role_name := role_name_from_row(row)) is not None
+        }
+        return tuple(sorted(names, key=str.casefold))
+
     async def list_workload_groups(self) -> tuple[str, ...]:
         """读取管理账号可见的 Doris 工作组"""
         async with self._provider.connection() as connection:
@@ -131,7 +150,7 @@ class DorisRoleRepository:
             raise ValueError("生成的 Doris 密码格式无效")
         role_created = False
         try:
-            await self._execute(f"CREATE ROLE {role}")
+            await self._create_role(role_name=role_name, role=role)
             role_created = True
             await self._grant_workload_group_usage(
                 role=role,
@@ -164,12 +183,7 @@ class DorisRoleRepository:
 
     async def verify_configured_roles(self, role_names: Sequence[str]) -> None:
         """确认管理账号可查看且 Doris 已创建全部配置角色"""
-        rows = await self.list_roles()
-        existing = {
-            role_name
-            for row in rows
-            if (role_name := role_name_from_row(row)) is not None
-        }
+        existing = set(await self.list_role_names())
         missing = sorted(set(role_names) - existing)
         if missing:
             raise RuntimeError(f"配置的 Doris 角色不存在: {', '.join(missing)}")
@@ -305,6 +319,16 @@ class DorisRoleRepository:
             message = str(exc.orig).casefold()
             if re.search(r"\bcan\s*not find workload group\b", message):
                 raise DorisWorkloadGroupNotFoundError(workload_group) from exc
+            raise
+
+    async def _create_role(self, *, role_name: str, role: str) -> None:
+        """创建角色并识别 Doris 角色名冲突"""
+        try:
+            await self._execute(f"CREATE ROLE {role}")
+        except OperationalError as exc:
+            message = str(exc.orig).casefold()
+            if re.search(r"\brole\s+role:\s*.+\balready exists?\b", message):
+                raise DorisRoleAlreadyExistsError(role_name) from exc
             raise
 
     async def _create_query_user(

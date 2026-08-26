@@ -11,6 +11,7 @@ from app.identity.api.admin.router import (
     delete_user,
     list_doris_roles,
     list_doris_workload_groups,
+    list_existing_doris_roles,
     list_row_policies,
     list_users,
     set_user_administrator,
@@ -87,6 +88,28 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
         response = await list_doris_workload_groups(MagicMock(), service)
 
         self.assertEqual(response.workload_groups, ["batch", "normal"])
+
+    async def test_list_existing_roles_endpoint(self) -> None:
+        service = MagicMock()
+        existing_role = MagicMock(name="existing_role")
+        existing_role.name = "operator"
+        existing_role.managed = False
+        managed_role = MagicMock(name="managed_role")
+        managed_role.name = "sales"
+        managed_role.managed = True
+        service.list_existing_roles = AsyncMock(
+            return_value=[existing_role, managed_role]
+        )
+
+        response = await list_existing_doris_roles(MagicMock(), service)
+
+        self.assertEqual(
+            [role.model_dump() for role in response.roles],
+            [
+                {"name": "operator", "managed": False},
+                {"name": "sales", "managed": True},
+            ],
+        )
 
     async def test_clear_default_role_endpoint(self) -> None:
         service = MagicMock()

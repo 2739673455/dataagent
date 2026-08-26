@@ -19,6 +19,7 @@ from app.identity.models import (
 from app.identity.repositories.auth import _UNSET, AuthPGRepo
 from app.identity.repositories.doris_role import (
     DorisQueryUserAlreadyExistsError,
+    DorisRoleAlreadyExistsError,
     DorisRoleRepository,
     DorisWorkloadGroupNotFoundError,
 )
@@ -208,6 +209,14 @@ class DorisRoleDescriptor:
     workload_group: str
 
 
+@dataclass(frozen=True, slots=True)
+class DorisExistingRoleDescriptor:
+    """Doris 中已存在的角色及平台管理状态"""
+
+    name: str
+    managed: bool
+
+
 class DorisRoleManagementService:
     """平台管理员维护用户与 Doris 角色绑定"""
 
@@ -249,6 +258,20 @@ class DorisRoleManagementService:
     async def list_workload_groups(self) -> tuple[str, ...]:
         """列出创建角色时可选择的 Doris 工作组"""
         return await self._doris_repo.list_workload_groups()
+
+    async def list_existing_roles(self) -> list[DorisExistingRoleDescriptor]:
+        """列出 Doris 原生角色并标记平台管理状态"""
+        role_names = await self._doris_repo.list_role_names()
+        managed_names = {
+            identity.role_name for identity in await self._identity_repo.list_all()
+        }
+        return [
+            DorisExistingRoleDescriptor(
+                name=role_name,
+                managed=role_name in managed_names,
+            )
+            for role_name in role_names
+        ]
 
     async def create_role(
         self,
@@ -302,6 +325,10 @@ class DorisRoleManagementService:
                     logger.exception(f"补偿删除 Doris 角色及用户失败: {role}")
             if isinstance(exc, (IntegrityError, DorisQueryUserAlreadyExistsError)):
                 raise auth_error.RoleAlreadyExistsError from exc
+            if isinstance(exc, DorisRoleAlreadyExistsError):
+                raise auth_error.RoleAlreadyExistsError(
+                    detail=f"Doris 角色 {role} 已存在"
+                ) from exc
             if isinstance(exc, DorisWorkloadGroupNotFoundError):
                 raise self._workload_group_not_found(workload_group) from exc
             raise

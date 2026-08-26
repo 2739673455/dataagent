@@ -143,6 +143,19 @@ class DorisWorkloadGroupListResponse(BaseModel):
     workload_groups: list[str]
 
 
+class DorisExistingRoleResponse(BaseModel):
+    """Doris 已有角色响应"""
+
+    name: str
+    managed: bool
+
+
+class DorisExistingRoleListResponse(BaseModel):
+    """Doris 已有角色列表响应"""
+
+    roles: list[DorisExistingRoleResponse]
+
+
 class CreateDorisRoleRequest(BaseModel):
     """创建 Doris 角色及稳定查询身份请求"""
 

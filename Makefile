@@ -1,11 +1,13 @@
-.PHONY: help start run worker beat clean
+.PHONY: help start run worker beat init-db bootstrap-admin clean
 
 help:
-	@echo "make start       - 启动后端、Celery Worker 和 Celery Beat"
-	@echo "make run         - 启动后端服务"
-	@echo "make worker      - 启动 Celery Worker"
-	@echo "make beat        - 启动 Celery Beat"
-	@echo "make clean       - 清理临时文件"
+	@echo "make start           - 启动后端、Celery Worker 和 Celery Beat"
+	@echo "make run             - 启动后端服务"
+	@echo "make worker          - 启动 Celery Worker"
+	@echo "make beat            - 启动 Celery Beat"
+	@echo "make init-db         - 初始化数据库"
+	@echo "make bootstrap-admin - 初始化管理员账号"
+	@echo "make clean           - 清理临时文件"
 
 start:
 	$(MAKE) --no-print-directory -j3 run worker beat
@@ -18,6 +20,12 @@ worker:
 
 beat:
 	uv run celery --app app.shared.tasks.celery_app:celery_app beat -l INFO
+
+init-db:
+	uv run scripts/init_db.py
+
+bootstrap-admin:
+	uv run -m scripts.bootstrap_admin -u 123 -e 123@123.com -p 123123
 
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true

@@ -10,6 +10,7 @@ from app.identity.models import DorisQueryIdentity, DorisRoleAssetGrant
 from app.identity.repositories.auth import AuthPGRepo
 from app.identity.repositories.doris_role import (
     DorisQueryUserAlreadyExistsError,
+    DorisRoleAlreadyExistsError,
     DorisRoleRepository,
     DorisWorkloadGroupNotFoundError,
     row_policy_from_row,
@@ -344,6 +345,19 @@ class DorisRoleRepositoryWorkloadGroupTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(":workload_group", str(existence_call.args[0]))
         self.assertEqual(existence_call.args[1], {"workload_group": "normal"})
 
+    async def test_lists_sorted_unique_role_names(self) -> None:
+        repo = DorisRoleRepository(MagicMock())
+        repo.list_roles = AsyncMock(
+            return_value=[
+                {"RoleName": "sales"},
+                {"Name": "operator"},
+                {"Role": "sales"},
+                {"Unknown": "ignored"},
+            ]
+        )
+
+        self.assertEqual(await repo.list_role_names(), ("operator", "sales"))
+
 
 class DorisRoleRepositoryIdentityTest(unittest.IsolatedAsyncioTestCase):
     """验证 Doris 查询身份创建 SQL 与补偿边界"""
@@ -395,6 +409,31 @@ class DorisRoleRepositoryIdentityTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(
             any(statement.startswith("DROP USER") for statement in statements)
         )
+
+    async def test_existing_role_conflict_is_classified(self) -> None:
+        repo = DorisRoleRepository(MagicMock())
+        conflict = OperationalError(
+            "CREATE ROLE",
+            {},
+            RuntimeError(
+                "Role role: sales, db table privs: {}, resource privs: {} "
+                "already exists"
+            ),
+        )
+        repo._execute = AsyncMock(  # pyright: ignore[reportPrivateUsage]
+            side_effect=conflict
+        )
+
+        with self.assertRaises(DorisRoleAlreadyExistsError) as context:
+            await repo.create_role_identity(
+                role_name="sales",
+                query_user="sales_query",
+                password="generated-password",
+                workload_group="normal",
+            )
+
+        self.assertEqual(context.exception.role_name, "sales")
+        repo._execute.assert_awaited_once_with("CREATE ROLE `sales`")  # pyright: ignore[reportPrivateUsage]
 
     async def test_existing_query_user_conflict_is_classified(self) -> None:
         repo = DorisRoleRepository(MagicMock())

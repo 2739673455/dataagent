@@ -118,6 +118,13 @@ export interface components {
     "DeleteConversationRequest": {
       "conversation_ids": Array<string>;
     };
+    "DorisExistingRoleListResponse": {
+      "roles": Array<components["schemas"]["DorisExistingRoleResponse"]>;
+    };
+    "DorisExistingRoleResponse": {
+      "managed": boolean;
+      "name": string;
+    };
     "DorisRoleListResponse": {
       "roles": Array<components["schemas"]["DorisRoleResponse"]>;
     };
@@ -1169,6 +1176,34 @@ export interface operations {
       };
     };
   };
+  "list_existing_doris_roles_api_v1_admin_doris_roles_existing_get": {
+    "parameters": {
+      "path"?: never;
+      "query"?: never;
+      "header"?: never;
+      "cookie"?: never;
+    };
+    "requestBody"?: never;
+    "responses": {
+      "200": {
+        "content": {
+        "application/json": components["schemas"]["DorisExistingRoleListResponse"];
+      };
+      };
+      "422": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+      "default": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+    };
+  };
   "list_metric_infos_api_v1_meta_metrics_get": {
     "parameters": {
       "path"?: never;
@@ -1899,6 +1934,9 @@ export interface paths {
   };
   "/api/v1/admin/doris-roles/default": {
     "delete": operations["clear_default_doris_role_api_v1_admin_doris_roles_default_delete"];
+  };
+  "/api/v1/admin/doris-roles/existing": {
+    "get": operations["list_existing_doris_roles_api_v1_admin_doris_roles_existing_get"];
   };
   "/api/v1/admin/doris-roles/workload-groups": {
     "get": operations["list_doris_workload_groups_api_v1_admin_doris_roles_workload_groups_get"];

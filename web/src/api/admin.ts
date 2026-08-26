@@ -8,6 +8,7 @@ export type AssetGrantListResponse = ApiSchemas["AssetGrantListResponse"];
 export type AssetGrantResponse = ApiSchemas["AssetGrantResponse"];
 export type CreateDorisRoleRequest = ApiSchemas["CreateDorisRoleRequest"];
 export type CreateUserRequest = ApiSchemas["CreateUserRequest"];
+export type DorisExistingRoleResponse = ApiSchemas["DorisExistingRoleResponse"];
 export type DorisRoleResponse = ApiSchemas["DorisRoleResponse"];
 export type RowPolicyResponse = ApiSchemas["RowPolicyResponse"];
 export type RowPolicyRequest = ApiSchemas["RowPolicyRequest"];
@@ -33,6 +34,13 @@ export const adminApi = {
       "/api/v1/admin/doris-roles/workload-groups"
     );
     return response.data.workload_groups;
+  },
+
+  async listExistingRoles(): Promise<DorisExistingRoleResponse[]> {
+    const response = await appClient.get<ApiSchemas["DorisExistingRoleListResponse"]>(
+      "/api/v1/admin/doris-roles/existing"
+    );
+    return response.data.roles;
   },
 
   async createRole(request: CreateDorisRoleRequest): Promise<DorisRoleResponse> {

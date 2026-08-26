@@ -51,6 +51,27 @@ async def list_doris_workload_groups(
     return schemas.DorisWorkloadGroupListResponse(workload_groups=list(workload_groups))
 
 
+@router.get(
+    "/doris-roles/existing",
+    response_model=schemas.DorisExistingRoleListResponse,
+)
+async def list_existing_doris_roles(
+    _: AdminUserDep,
+    service: DorisRoleManagementServiceDep,
+) -> schemas.DorisExistingRoleListResponse:
+    """只读列出 Doris 中已存在的角色"""
+    roles = await service.list_existing_roles()
+    return schemas.DorisExistingRoleListResponse(
+        roles=[
+            schemas.DorisExistingRoleResponse(
+                name=role.name,
+                managed=role.managed,
+            )
+            for role in roles
+        ]
+    )
+
+
 @router.post(
     "/doris-roles",
     response_model=schemas.DorisRoleResponse,

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import {
   adminApi,
   type AssetGrantResponse,
+  type DorisExistingRoleResponse,
   type DorisRoleResponse,
   type RowPolicyResponse,
 } from "@/api/admin";
@@ -15,6 +16,7 @@ import { RowPolicyPanel } from "./RowPolicyPanel";
 
 export function DorisRoleManagement() {
   const [roles, setRoles] = useState<DorisRoleResponse[]>([]);
+  const [existingRoles, setExistingRoles] = useState<DorisExistingRoleResponse[]>([]);
   const [selectedRole, setSelectedRole] = useState("");
   const [policies, setPolicies] = useState<RowPolicyResponse[]>([]);
   const [grants, setGrants] = useState<AssetGrantResponse[]>([]);
@@ -29,11 +31,13 @@ export function DorisRoleManagement() {
   const loadRoles = useCallback(async () => {
     setBusy(true);
     try {
-      const [loadedRoles, loadedWorkloadGroups] = await Promise.all([
+      const [loadedRoles, loadedExistingRoles, loadedWorkloadGroups] = await Promise.all([
         adminApi.listRoles(),
+        adminApi.listExistingRoles(),
         adminApi.listWorkloadGroups(),
       ]);
       setRoles(loadedRoles);
+      setExistingRoles(loadedExistingRoles);
       setWorkloadGroups(loadedWorkloadGroups);
       setSelectedRole((current) =>
         loadedRoles.some((role) => role.name === current) ? current : loadedRoles[0]?.name || ""
@@ -83,8 +87,12 @@ export function DorisRoleManagement() {
         setPolicies(loadedPolicies);
         setGrants(loadedGrants);
       }
-      const loadedRoles = await adminApi.listRoles();
+      const [loadedRoles, loadedExistingRoles] = await Promise.all([
+        adminApi.listRoles(),
+        adminApi.listExistingRoles(),
+      ]);
       setRoles(loadedRoles);
+      setExistingRoles(loadedExistingRoles);
       setSelectedRole((current) =>
         loadedRoles.some((role) => role.name === current) ? current : loadedRoles[0]?.name || ""
       );
@@ -129,20 +137,53 @@ export function DorisRoleManagement() {
         {isCreatingRole && (
           <DorisRoleCreateDialog
             busy={busy}
+            existingRoles={existingRoles}
             workloadGroups={workloadGroups}
             defaultWorkloadGroup={defaultWorkloadGroup}
             onCancel={() => setIsCreatingRole(false)}
             onRoleCreated={(createdRole) => {
               setIsCreatingRole(false);
-              setRoles((prev) => [...prev, createdRole]);
               setSelectedRole(createdRole.name);
+              void loadRoles();
             }}
           />
         )}
 
+        <div className="mt-4 rounded border border-[#d4d4ce] bg-[#fafaf8] p-3">
+          <div className="mb-2">
+            <h3 className="text-sm font-semibold text-[#18181b]">
+              Doris 已有角色 ({existingRoles.length})
+            </h3>
+          </div>
+          {existingRoles.length === 0 ? (
+            <div className="rounded border border-[#e5e5df] bg-[#ffffff] py-5 text-center text-xs text-[#71717a]">
+              Doris 中暂无显式角色
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {existingRoles.map((role) => (
+                <div
+                  key={role.name}
+                  className="flex w-fit max-w-full items-center justify-between gap-3 rounded border border-[#e5e5df] bg-[#ffffff] px-3 py-2 font-mono text-xs"
+                >
+                  <span
+                    className="min-w-0 truncate font-semibold text-[#1e2024]"
+                    title={role.name}
+                  >
+                    {role.name}
+                  </span>
+                  <span className="shrink-0 rounded bg-[#f0f0eb] px-1.5 py-0.5 text-[10px] text-[#71717a]">
+                    {role.managed ? "平台已管理" : "仅 Doris"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {roles.length === 0 ? (
           <div className="mt-4 rounded border border-[#d4d4ce] bg-[#ffffff] py-12 text-center text-sm text-[#71717a]">
-            暂无 Doris 角色
+            暂无平台管理的 Doris 角色
           </div>
         ) : (
           <div className="mt-4 overflow-x-auto overflow-y-hidden rounded border border-[#d4d4ce]">

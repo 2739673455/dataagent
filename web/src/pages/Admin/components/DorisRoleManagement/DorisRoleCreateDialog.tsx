@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { adminApi, type DorisRoleResponse } from "@/api/admin";
+import {
+  adminApi,
+  type DorisExistingRoleResponse,
+  type DorisRoleResponse,
+} from "@/api/admin";
 import { getApiErrorMessage } from "@/api/errors";
 import {
   AdminDialogActions,
@@ -11,6 +15,7 @@ import {
 
 interface DorisRoleCreateDialogProps {
   busy: boolean;
+  existingRoles: DorisExistingRoleResponse[];
   workloadGroups: string[];
   defaultWorkloadGroup: string;
   onCancel: () => void;
@@ -19,6 +24,7 @@ interface DorisRoleCreateDialogProps {
 
 export function DorisRoleCreateDialog({
   busy,
+  existingRoles,
   workloadGroups,
   defaultWorkloadGroup,
   onCancel,
@@ -30,6 +36,9 @@ export function DorisRoleCreateDialog({
   const [newWorkloadGroup, setNewWorkloadGroup] = useState(defaultWorkloadGroup);
   const [submitting, setSubmitting] = useState(false);
 
+  const normalizedRole = newRole.trim();
+  const conflictingRole = existingRoles.find((role) => role.name === normalizedRole);
+
   useEffect(() => {
     if (!workloadGroups.includes(newWorkloadGroup)) {
       setNewWorkloadGroup(defaultWorkloadGroup);
@@ -37,13 +46,19 @@ export function DorisRoleCreateDialog({
   }, [defaultWorkloadGroup, newWorkloadGroup, workloadGroups]);
 
   const handleCreateRole = async () => {
-    if (!newRole.trim() || !newDescription.trim() || !newQueryUser.trim() || !newWorkloadGroup) {
+    if (
+      !normalizedRole ||
+      conflictingRole ||
+      !newDescription.trim() ||
+      !newQueryUser.trim() ||
+      !newWorkloadGroup
+    ) {
       return;
     }
     setSubmitting(true);
     try {
       const created = await adminApi.createRole({
-        role: newRole.trim(),
+        role: normalizedRole,
         description: newDescription.trim(),
         query_user: newQueryUser.trim(),
         workload_group: newWorkloadGroup,
@@ -77,8 +92,18 @@ export function DorisRoleCreateDialog({
             value={newRole}
             onChange={(event) => setNewRole(event.target.value)}
             placeholder="如 data_analyst"
-            className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+            aria-invalid={Boolean(conflictingRole)}
+            className={`h-8 w-full rounded border bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:outline-none ${
+              conflictingRole
+                ? "border-[#dc2626] focus:border-[#dc2626]"
+                : "border-[#d4d4ce] focus:border-[#1e2024]"
+            }`}
           />
+          {conflictingRole && (
+            <p className="mt-1 text-[11px] text-[#dc2626]">
+              Doris 角色 {conflictingRole.name} 已存在
+            </p>
+          )}
         </div>
 
         <div>
@@ -139,7 +164,8 @@ export function DorisRoleCreateDialog({
           disabled={
             busy ||
             submitting ||
-            !newRole.trim() ||
+            !normalizedRole ||
+            Boolean(conflictingRole) ||
             !newDescription.trim() ||
             !newQueryUser.trim() ||
             !newWorkloadGroup
