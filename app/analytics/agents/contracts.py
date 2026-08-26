@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable, Mapping
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from typing import Annotated, Literal, Self
+from typing import TYPE_CHECKING, Annotated, Literal, Self
 from uuid import UUID
 
 from langchain_core.runnables import RunnableConfig
@@ -17,6 +20,12 @@ from pydantic import (
 )
 
 from app.shared.contracts.analysis import IDENTIFIER_PATTERN, AgentType
+
+if TYPE_CHECKING:
+    from langgraph.graph.state import CompiledStateGraph
+
+    from app.analytics.agents.registry import AgentRegistry
+    from app.analytics.agents.session_service import AgentSessionService
 
 Identifier = Annotated[
     str,
@@ -38,6 +47,11 @@ def get_thread_id(user_id: int, conversation_id: UUID) -> str:
     if isinstance(user_id, bool) or user_id <= 0:
         raise ValueError("user_id 必须为正整数")
     return f"user_{user_id}:conversation_{conversation_id}"
+
+
+def conversation_lifecycle_lock_name(user_id: int, conversation_id: UUID) -> str:
+    """构造跨进程会话生命周期锁名称"""
+    return f"conversation:{get_thread_id(user_id, conversation_id)}"
 
 
 def build_planner_config(user_id: int, conversation_id: UUID) -> RunnableConfig:
@@ -70,6 +84,19 @@ class PlannerTurnContext:
             raise ValueError("planner_run_id 不能为空")
         if self.max_continuations < 0:
             raise ValueError("max_continuations 不能为负数")
+
+
+@dataclass(slots=True)
+class ConversationAgentRuntime:
+    """一个用户会话内的 Agent 运行时资源"""
+
+    planner: CompiledStateGraph
+    registry: AgentRegistry
+    session_service: AgentSessionService
+    session_locks: Mapping[str, asyncio.Lock]
+    parallelism: asyncio.Semaphore
+    planner_lock: Callable[[], AbstractAsyncContextManager[None]]
+    conversation_deleted: Callable[[], Awaitable[bool]]
 
 
 class StrictProtocolModel(BaseModel):

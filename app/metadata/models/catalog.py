@@ -1,4 +1,4 @@
-"""元数据模型"""
+"""元数据目录模型"""
 
 import json
 from dataclasses import dataclass

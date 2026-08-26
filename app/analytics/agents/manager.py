@@ -5,9 +5,8 @@ from __future__ import annotations
 import asyncio
 import shlex
 from collections import OrderedDict
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import dataclass
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from uuid import UUID, uuid4
 
 from langchain_core.language_models import BaseChatModel
@@ -18,8 +17,10 @@ from langgraph.graph.state import CompiledStateGraph
 
 from app.analytics.agents.analyst.agent import create_analyst_agent
 from app.analytics.agents.contracts import (
+    ConversationAgentRuntime,
     PlannerTurnContext,
     SpecialistResult,
+    conversation_lifecycle_lock_name,
     get_thread_id,
 )
 from app.analytics.agents.explorer.agent import create_explorer_agent
@@ -61,27 +62,9 @@ _STORE_SCAN_BATCH_SIZE = 1_000
 _AGENT_LIFECYCLE_NAMESPACE = ("agent_lifecycle", "deleted_conversations")
 
 
-def conversation_lifecycle_lock_name(user_id: int, conversation_id: UUID) -> str:
-    """构造跨进程会话生命周期锁名称"""
-    return f"conversation:{get_thread_id(user_id, conversation_id)}"
-
-
 def _conversation_tombstone_key(user_id: int, conversation_id: UUID) -> str:
     """构造持久化删除墓碑键"""
     return f"{user_id}:{conversation_id}"
-
-
-@dataclass(slots=True)
-class ConversationAgentRuntime:
-    """一个用户会话内的 Agent 运行时资源"""
-
-    planner: CompiledStateGraph
-    registry: AgentRegistry
-    session_service: AgentSessionService
-    session_locks: Mapping[str, asyncio.Lock]
-    parallelism: asyncio.Semaphore
-    planner_lock: Callable[[], AbstractAsyncContextManager[None]]
-    conversation_deleted: Callable[[], Awaitable[bool]]
 
 
 _SPECIALIST_BUILDERS = {

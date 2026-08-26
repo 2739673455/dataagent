@@ -80,9 +80,7 @@ class FairCapacityLimiter:
                 candidates: list[int] = []
                 with self._condition:
                     if self._closed:
-                        raise SandboxCapacityClosedError(
-                            "Docker 沙箱容量限制器已关闭"
-                        )
+                        raise SandboxCapacityClosedError("Docker 沙箱容量限制器已关闭")
                     if (
                         waiter is not None
                         and waiter.cancelled
@@ -95,9 +93,7 @@ class FairCapacityLimiter:
                     if user_id in self._running_users:
                         return False
                     if waiter is None:
-                        occupied = len(self._running_users) + len(
-                            self._reserved_users
-                        )
+                        occupied = len(self._running_users) + len(self._reserved_users)
                         if occupied < self._max_running and not self._waiters:
                             self._reserved_users.add(user_id)
                             return True

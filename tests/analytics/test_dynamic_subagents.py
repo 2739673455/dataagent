@@ -23,12 +23,13 @@ from pydantic import Field, ValidationError
 
 from app.analytics.agents.contracts import (
     ArtifactReference,
+    ConversationAgentRuntime,
     DelegateAgentRequest,
     RepairRequest,
     SpecialistResult,
     build_planner_config,
 )
-from app.analytics.agents.manager import AgentManager, ConversationAgentRuntime
+from app.analytics.agents.manager import AgentManager
 from app.analytics.agents.registry import AgentRegistry, build_agent_definitions
 from app.analytics.agents.session_service import AgentSessionService
 from app.shared.contracts.analysis import AgentSessionKey, AgentType

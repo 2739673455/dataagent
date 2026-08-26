@@ -7,7 +7,7 @@ from typing import Any
 from loguru import logger
 
 from app.metadata import errors as meta_error
-from app.metadata.models import (
+from app.metadata.models.catalog import (
     COLUMN_EXAMPLE_LIMIT,
     ColumnInfo,
     ColumnKey,

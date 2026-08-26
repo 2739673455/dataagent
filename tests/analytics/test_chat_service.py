@@ -16,8 +16,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from pydantic import ValidationError
 
-from app.analytics.agents.contracts import PlannerTurnContext
-from app.analytics.agents.manager import ConversationAgentRuntime
+from app.analytics.agents.contracts import ConversationAgentRuntime, PlannerTurnContext
 from app.analytics.agents.planner.message_timestamp_middleware import (
     MessageTimestampMiddleware,
 )

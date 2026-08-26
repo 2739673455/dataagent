@@ -1,7 +1,7 @@
 import unittest
 
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
-from app.metadata.models import ColumnInfo, TableInfo
+from app.metadata.models.catalog import ColumnInfo, TableInfo
 from app.query.services.guard import QueryGuardService, QueryRejectedError
 
 

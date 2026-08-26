@@ -52,6 +52,7 @@ _ResultT = TypeVar("_ResultT")
 _SANDBOX_STAGING_ROOT = SANDBOX_STAGING_ROOT
 _SANDBOX_WORKSPACE_ROOT = SANDBOX_WORKSPACE_ROOT
 
+
 class DockerSandboxBackend(BaseSandbox):
     """将一个用户容器中的会话目录暴露为虚拟文件系统"""
 

@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 from app.identity.models import asset_resource_key
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
-from app.metadata.search_models import SearchHit
+from app.metadata.models.search import SearchHit
 from app.query.models import (
     AnalysisQueryResult,
     QueryColumnRef,

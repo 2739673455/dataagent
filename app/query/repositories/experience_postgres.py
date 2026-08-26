@@ -9,7 +9,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.metadata.models import (
+from app.metadata.models.catalog import (
     ColumnInfo,
     TableInfo,
 )

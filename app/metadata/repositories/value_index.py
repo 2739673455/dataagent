@@ -6,8 +6,8 @@ from typing import Any, ClassVar
 
 from elasticsearch import AsyncElasticsearch
 
-from app.metadata.models import ColumnKey, ValueInfo, column_resource_key
-from app.metadata.search_models import SearchHit
+from app.metadata.models.catalog import ColumnKey, ValueInfo, column_resource_key
+from app.metadata.models.search import SearchHit
 from app.shared.config.app_config import cfg
 
 

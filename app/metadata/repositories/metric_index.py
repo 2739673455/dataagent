@@ -4,14 +4,14 @@ from typing import Any, ClassVar, cast
 
 from elasticsearch import AsyncElasticsearch
 
-from app.metadata.models import MetricInfo
-from app.metadata.repositories.semantic_index import SemanticIndexDeltaRepo
-from app.metadata.search_models import (
+from app.metadata.models.catalog import MetricInfo
+from app.metadata.models.search import (
     SearchHit,
     SemanticIndexDelta,
     SemanticIndexDocument,
     SemanticTextType,
 )
+from app.metadata.repositories.semantic_index import SemanticIndexDeltaRepo
 from app.shared.config.app_config import cfg
 
 

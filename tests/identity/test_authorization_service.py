@@ -149,9 +149,7 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
         self.doris_repo.list_workload_groups.assert_awaited_once_with()
 
     async def test_lists_existing_doris_roles_with_management_status(self) -> None:
-        self.doris_repo.list_role_names = AsyncMock(
-            return_value=("operator", "sales")
-        )
+        self.doris_repo.list_role_names = AsyncMock(return_value=("operator", "sales"))
         self.identity_repo.list_all = AsyncMock(return_value=[query_identity("sales")])
 
         roles = await self.service().list_existing_roles()

@@ -6,7 +6,7 @@ from typing import get_args
 from pydantic import ValidationError
 
 from app.metadata.api.meta.schemas import TableInfoRequest
-from app.metadata.models import TableInfo
+from app.metadata.models.catalog import TableInfo
 from app.metadata.services.import_service import ImportMode
 from app.shared.config.meta_config import TableConfig, TableRole
 

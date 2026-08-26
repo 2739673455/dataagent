@@ -20,18 +20,20 @@ from loguru import logger
 from pydantic import ValidationError
 
 from app.analytics.agents.contracts import (
+    ConversationAgentRuntime,
     DelegateAgentResult,
     PlannerTurnContext,
     build_planner_config,
 )
-from app.analytics.agents.manager import ConversationAgentRuntime
 from app.analytics.api.chat import schemas as chat_schema
 from app.analytics.message_metadata import (
     MESSAGE_PAYLOAD_KEY,
     get_message_created_at,
 )
-from app.analytics.services.contracts import AgentRuntimeManager
-from app.sandbox.manager import DockerSandboxManager
+from app.analytics.services.contracts import (
+    AgentRuntimeManager,
+    ConversationFileReader,
+)
 
 _IMAGE_SUFFIXES = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 
@@ -179,7 +181,7 @@ def _langchain_message_to_schema(
 
 
 async def _build_image_data_url(
-    sandbox: DockerSandboxManager,
+    sandbox: ConversationFileReader,
     user_id: int,
     conversation_id: UUID,
     attachment: chat_schema.AttachmentReference,
@@ -213,7 +215,7 @@ def _append_prompt(
 
 
 async def _process_attachments(
-    sandbox: DockerSandboxManager,
+    sandbox: ConversationFileReader,
     content_parts: list[dict[str, Any]],
     attachments: list[chat_schema.AttachmentReference],
     user_id: int,
@@ -270,7 +272,7 @@ async def _process_attachments(
 
 
 async def _schema_to_human_message(
-    sandbox: DockerSandboxManager,
+    sandbox: ConversationFileReader,
     message: chat_schema.UserMessageRequest,
     user_id: int,
     conversation_id: UUID,
@@ -353,7 +355,7 @@ async def _execute_agent(
 
 async def run_agent_turn(
     agents: AgentRuntimeManager,
-    sandbox: DockerSandboxManager,
+    sandbox: ConversationFileReader,
     user_id: int,
     conversation_id: UUID,
     user_message: chat_schema.UserMessageRequest,

@@ -21,33 +21,6 @@ from app.shared.contracts.analysis import (
     validate_agent_type,
 )
 
-_PLATFORM_TOOL_ALLOWLISTS: dict[AgentType, frozenset[str]] = {
-    "explorer": frozenset(
-        {
-            "search_semantic_resources",
-            "list_semantic_recalls",
-            "get_semantic_recall",
-            "merge_semantic_recalls",
-            "delete_semantic_recalls",
-            "search_query_experiences",
-            "execute_sql",
-        }
-    ),
-    "analyst": frozenset(),
-    "reviewer": frozenset(),
-    "visualizer": frozenset(),
-}
-
-_REQUIRED_TOOLS: dict[AgentType, frozenset[str]] = {
-    "explorer": frozenset(
-        {
-            "search_semantic_resources",
-            "search_query_experiences",
-            "execute_sql",
-        }
-    ),
-}
-
 _RESERVED_MCP_TOOL_NAMES = frozenset(
     {
         "delegate_agent",
@@ -64,18 +37,54 @@ _RESERVED_MCP_TOOL_NAMES = frozenset(
     }
 )
 
-_SYSTEM_PROMPTS: dict[AgentType, str] = {
-    "explorer": EXPLORER_SYSTEM_PROMPT,
-    "analyst": ANALYST_SYSTEM_PROMPT,
-    "reviewer": REVIEWER_SYSTEM_PROMPT,
-    "visualizer": VISUALIZER_SYSTEM_PROMPT,
-}
 
-_DESCRIPTIONS: dict[AgentType, str] = {
-    "explorer": "检索语义目录并生成、检查、执行只读数据查询",
-    "analyst": "对指标变化执行贡献分解、维度下钻和根因候选分析",
-    "reviewer": "审查上游数据、分析结论和产物，发现问题时发起修补",
-    "visualizer": "生成可追溯的图表、表格和下载报告",
+@dataclass(frozen=True, slots=True)
+class AgentSpec:
+    """一种专业 Agent 的集中配置"""
+
+    description: str
+    system_prompt: str
+    platform_tools: frozenset[str] = frozenset()
+    required_tools: frozenset[str] = frozenset()
+    use_mcp: bool = False
+
+
+_AGENT_SPECS: dict[AgentType, AgentSpec] = {
+    "explorer": AgentSpec(
+        description="检索语义目录并生成、检查、执行只读数据查询",
+        system_prompt=EXPLORER_SYSTEM_PROMPT,
+        platform_tools=frozenset(
+            {
+                "search_semantic_resources",
+                "list_semantic_recalls",
+                "get_semantic_recall",
+                "merge_semantic_recalls",
+                "delete_semantic_recalls",
+                "search_query_experiences",
+                "execute_sql",
+            }
+        ),
+        required_tools=frozenset(
+            {
+                "search_semantic_resources",
+                "search_query_experiences",
+                "execute_sql",
+            }
+        ),
+        use_mcp=True,
+    ),
+    "analyst": AgentSpec(
+        description="对指标变化执行贡献分解、维度下钻和根因候选分析",
+        system_prompt=ANALYST_SYSTEM_PROMPT,
+    ),
+    "reviewer": AgentSpec(
+        description="审查上游数据、分析结论和产物，发现问题时发起修补",
+        system_prompt=REVIEWER_SYSTEM_PROMPT,
+    ),
+    "visualizer": AgentSpec(
+        description="生成可追溯的图表、表格和下载报告",
+        system_prompt=VISUALIZER_SYSTEM_PROMPT,
+    ),
 }
 
 
@@ -127,9 +136,9 @@ def build_agent_definitions(
         )
 
     missing_by_agent = {
-        agent_type: sorted(required - tools_by_name.keys())
-        for agent_type, required in _REQUIRED_TOOLS.items()
-        if required - tools_by_name.keys()
+        agent_type: sorted(spec.required_tools - tools_by_name.keys())
+        for agent_type, spec in _AGENT_SPECS.items()
+        if spec.required_tools - tools_by_name.keys()
     }
     if missing_by_agent:
         details = "; ".join(
@@ -138,24 +147,23 @@ def build_agent_definitions(
         )
         raise ValueError(f"缺少必需的专家工具: {details}")
 
-    tool_allowlists = {
-        **_PLATFORM_TOOL_ALLOWLISTS,
-        "explorer": _PLATFORM_TOOL_ALLOWLISTS["explorer"] | mcp_tool_names,
-    }
-
-    return {
-        agent_type: AgentDefinition(
+    definitions: dict[AgentType, AgentDefinition] = {}
+    for agent_type in AGENT_TYPES:
+        spec = _AGENT_SPECS[agent_type]
+        allowed_tool_names = spec.platform_tools
+        if spec.use_mcp:
+            allowed_tool_names |= mcp_tool_names
+        definitions[agent_type] = AgentDefinition(
             agent_type=agent_type,
-            description=_DESCRIPTIONS[agent_type],
-            system_prompt=_SYSTEM_PROMPTS[agent_type],
+            description=spec.description,
+            system_prompt=spec.system_prompt,
             tools=tuple(
                 tools_by_name[name]
-                for name in sorted(tool_allowlists[agent_type])
+                for name in sorted(allowed_tool_names)
                 if name in tools_by_name
             ),
         )
-        for agent_type in AGENT_TYPES
-    }
+    return definitions
 
 
 class AgentRegistry:

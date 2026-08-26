@@ -2,7 +2,7 @@
 
 from typing import Protocol
 
-from app.metadata.models import ColumnKey
+from app.metadata.models.catalog import ColumnKey
 from app.shared.tasks.submission import TaskSubmission
 
 

@@ -23,7 +23,7 @@ from app.identity.api.auth.dependencies import (
 )
 from app.metadata import errors as meta_error
 from app.metadata.api.meta import schemas
-from app.metadata.models import (
+from app.metadata.models.catalog import (
     ColumnKey,
     ColumnReference,
     MetricInfo,

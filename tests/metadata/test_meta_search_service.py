@@ -7,14 +7,14 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
-from app.metadata.models import (
+from app.metadata.models.catalog import (
     ColumnInfo,
     MetricInfo,
     TableInfo,
     ValueIndexSyncState,
     ValueInfo,
 )
-from app.metadata.search_models import SearchHit, SemanticSearchRequest
+from app.metadata.models.search import SearchHit, SemanticSearchRequest
 from app.metadata.services.search import MetaSearchService
 
 

@@ -1,8 +1,8 @@
 """元数据白名单过滤与引用脱敏"""
 
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
-from app.metadata.models import ColumnInfo, ColumnKey, MetricInfo, TableInfo
-from app.metadata.search_models import SemanticSearchResponse
+from app.metadata.models.catalog import ColumnInfo, ColumnKey, MetricInfo, TableInfo
+from app.metadata.models.search import SemanticSearchResponse
 
 
 class MetadataAuthorizationFilter:

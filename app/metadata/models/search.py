@@ -1,4 +1,4 @@
-"""语义目录检索模型"""
+"""元数据语义检索模型"""
 
 from dataclasses import dataclass
 from datetime import datetime

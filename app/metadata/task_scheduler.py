@@ -4,7 +4,7 @@ from typing import Any
 
 from loguru import logger
 
-from app.metadata.models import ColumnKey
+from app.metadata.models.catalog import ColumnKey
 from app.shared.tasks.celery_app import celery_app
 from app.shared.tasks.submission import TaskSubmission
 

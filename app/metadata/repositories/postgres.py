@@ -7,7 +7,7 @@ from sqlalchemy import delete, select, text, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.metadata import errors as meta_error
-from app.metadata.models import (
+from app.metadata.models.catalog import (
     ColumnInfo,
     ColumnMetric,
     ColumnReference,

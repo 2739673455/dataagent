@@ -12,7 +12,7 @@ from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.scope import Scope, traverse_scope
 
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
-from app.metadata.models import ColumnInfo, TableInfo
+from app.metadata.models.catalog import ColumnInfo, TableInfo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
 from app.query.models import (
     QueryColumnRef,

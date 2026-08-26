@@ -1,19 +1,19 @@
 """会话资源生命周期编排"""
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from app.analytics.agents.manager import (
-    AgentManager,
+from app.analytics.agents.contracts import (
     conversation_lifecycle_lock_name,
 )
 from app.analytics.repositories.conversation import ConversationPGRepo
-from app.metadata.repositories.recall import SemanticRecallPGRepo
-from app.sandbox.manager import DockerSandboxManager
-from app.shared.clients.langgraph_postgres_manager import (
-    LangGraphPostgresManager,
+from app.analytics.services.contracts import (
+    ConversationAgentLifecycle,
+    ConversationLifecycleLockProvider,
+    ConversationRecallCleaner,
+    ConversationSandboxCleaner,
 )
 from app.shared.config.app_config import LifecycleConfig
 
@@ -23,15 +23,19 @@ class ConversationLifecycleService:
 
     def __init__(
         self,
-        persistence_manager: LangGraphPostgresManager,
-        agents: AgentManager,
-        sandbox: DockerSandboxManager,
+        repository_factory: Callable[[], ConversationPGRepo],
+        recall_cleaner_factory: Callable[[], ConversationRecallCleaner],
+        lock_provider: ConversationLifecycleLockProvider,
+        agents: ConversationAgentLifecycle,
+        sandbox: ConversationSandboxCleaner,
         config: LifecycleConfig,
         *,
         session_lock_timeout: float,
     ) -> None:
         """初始化跨存储会话资源和生命周期锁依赖"""
-        self._persistence_manager = persistence_manager
+        self._repository_factory = repository_factory
+        self._recall_cleaner_factory = recall_cleaner_factory
+        self._lock_provider = lock_provider
         self._agents = agents
         self._sandbox = sandbox
         self._config = config
@@ -44,7 +48,7 @@ class ConversationLifecycleService:
         conversation_id: UUID,
     ) -> AsyncGenerator[None]:
         """获取跨进程会话生命周期锁"""
-        async with self._persistence_manager.advisory_lock(
+        async with self._lock_provider.advisory_lock(
             conversation_lifecycle_lock_name(user_id, conversation_id),
             timeout=self._session_lock_timeout,
         ):
@@ -59,9 +63,9 @@ class ConversationLifecycleService:
     ) -> bool:
         """写入删除墓碑并使会话立即从接口中消失"""
         await self._agents.cancel_agent_execution(user_id, conversation_id)
-        conversation_repo = ConversationPGRepo(self._persistence_manager.get_store())
+        repository = self._repository_factory()
         async with self.lock(user_id, conversation_id):
-            conversation = await conversation_repo.get(
+            conversation = await repository.get(
                 user_id,
                 conversation_id,
                 include_deleting=True,
@@ -71,7 +75,7 @@ class ConversationLifecycleService:
             if draft_only and not conversation.is_draft:
                 return False
             if conversation.deletion_requested_at is None:
-                await conversation_repo.update(
+                await repository.update(
                     conversation,
                     deletion_requested_at=datetime.now(UTC),
                 )
@@ -86,10 +90,10 @@ class ConversationLifecycleService:
         draft_only: bool = False,
     ) -> bool:
         """幂等删除一个会话的全部跨存储资源"""
-        conversation_repo = ConversationPGRepo(self._persistence_manager.get_store())
-        recall_repo = SemanticRecallPGRepo(self._persistence_manager.get_store())
+        repository = self._repository_factory()
+        recall_cleaner = self._recall_cleaner_factory()
         async with self.lock(user_id, conversation_id):
-            conversation = await conversation_repo.get(
+            conversation = await repository.get(
                 user_id,
                 conversation_id,
                 include_deleting=True,
@@ -108,30 +112,27 @@ class ConversationLifecycleService:
                 user_id,
                 conversation_id,
             )
-            await recall_repo.delete_all(user_id, conversation_id)
+            await recall_cleaner.delete_all(user_id, conversation_id)
             await self._sandbox.delete_conversation(user_id, conversation_id)
-            await conversation_repo.delete(user_id, conversation_id)
+            await repository.delete(user_id, conversation_id)
             return True
 
     async def delete_user_conversations(self, user_id: int) -> None:
         """删除用户全部会话及残留召回记录"""
-        conversation_repo = ConversationPGRepo(self._persistence_manager.get_store())
-        while conversations := await conversation_repo.list_all_by_user(
+        repository = self._repository_factory()
+        while conversations := await repository.list_all_by_user(
             user_id,
             include_deleting=True,
         ):
             for conversation in conversations:
                 await self.delete_conversation_resources(user_id, conversation.id)
         await self._agents.delete_user_agents(user_id)
-        await SemanticRecallPGRepo(
-            self._persistence_manager.get_store()
-        ).delete_all_by_user(user_id)
+        await self._recall_cleaner_factory().delete_all_by_user(user_id)
 
     async def cleanup_expired_drafts(self) -> int:
         """执行一批过期草稿回收"""
         cutoff = datetime.now(UTC) - timedelta(minutes=self._config.draft_ttl_minutes)
-        repository = ConversationPGRepo(self._persistence_manager.get_store())
-        drafts = await repository.list_expired_drafts(
+        drafts = await self._repository_factory().list_expired_drafts(
             cutoff,
             limit=self._config.cleanup_batch_size,
         )
@@ -147,8 +148,7 @@ class ConversationLifecycleService:
 
     async def cleanup_pending_deletions(self) -> int:
         """执行一批已有删除墓碑的物理资源清理"""
-        repository = ConversationPGRepo(self._persistence_manager.get_store())
-        conversations = await repository.list_pending_deletions(
+        conversations = await self._repository_factory().list_pending_deletions(
             limit=self._config.cleanup_batch_size
         )
         deleted = 0

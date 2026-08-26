@@ -3,13 +3,13 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from app.metadata.models import ColumnInfo, ValueInfo, column_resource_key
+from app.metadata.models.catalog import ColumnInfo, ValueInfo, column_resource_key
+from app.metadata.models.search import SemanticIndexDelta, SemanticIndexDocument
 from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.value_index import (
     ValueESRepo,
     value_document_id,
 )
-from app.metadata.search_models import SemanticIndexDelta, SemanticIndexDocument
 
 
 def build_column() -> ColumnInfo:

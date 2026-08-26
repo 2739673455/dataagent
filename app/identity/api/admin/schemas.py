@@ -171,6 +171,7 @@ class CreateDorisRoleRequest(BaseModel):
         max_length=128,
         pattern=_IDENTIFIER_PATTERN,
     )
+
     @field_validator("role")
     @classmethod
     def normalize_role(cls, role: str) -> str:

@@ -33,8 +33,8 @@ from app.identity.services.auth import (
     AuthenticatedUser,
     PasswordManager,
 )
+from app.identity.services.contracts import QueryClientInvalidator
 from app.identity.services.credential import DorisCredentialCipher
-from app.shared.clients.doris_client_manager import DorisQueryClientRegistry
 from app.shared.config.app_config import AuthConfig, cfg
 
 
@@ -226,7 +226,7 @@ class DorisRoleManagementService:
         identity_repo: DorisQueryIdentityPGRepo,
         doris_repo: DorisRoleRepository,
         cipher: DorisCredentialCipher,
-        client_registry: DorisQueryClientRegistry,
+        client_registry: QueryClientInvalidator,
         password_manager: PasswordManager | None = None,
         auth_config: AuthConfig | None = None,
     ) -> None:

@@ -10,7 +10,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from app.metadata.models import (
+from app.metadata.models.catalog import (
     ColumnInfo,
     ColumnKey,
     MetricInfo,
@@ -19,12 +19,7 @@ from app.metadata.models import (
     column_resource_key,
     serialize_column_examples,
 )
-from app.metadata.repositories.column_index import ColumnESRepo
-from app.metadata.repositories.metric_index import MetricESRepo
-from app.metadata.repositories.postgres import MetaPGRepo
-from app.metadata.repositories.source_doris import SourceDorisRepo
-from app.metadata.repositories.value_index import ValueESRepo
-from app.metadata.search_models import (
+from app.metadata.models.search import (
     RequestedValueIndexSyncMode,
     SemanticIndexDelta,
     SemanticIndexDocument,
@@ -33,6 +28,11 @@ from app.metadata.search_models import (
     ValueIndexSyncMode,
     ValueIndexSyncResult,
 )
+from app.metadata.repositories.column_index import ColumnESRepo
+from app.metadata.repositories.metric_index import MetricESRepo
+from app.metadata.repositories.postgres import MetaPGRepo
+from app.metadata.repositories.source_doris import SourceDorisRepo
+from app.metadata.repositories.value_index import ValueESRepo
 from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.config.app_config import cfg
 

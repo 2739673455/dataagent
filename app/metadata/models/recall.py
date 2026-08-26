@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from app.metadata.search_models import SemanticSearchRequest, SemanticSearchResponse
+from app.metadata.models.search import SemanticSearchRequest, SemanticSearchResponse
 
 SemanticRecallKind = Literal["search", "merged"]
 

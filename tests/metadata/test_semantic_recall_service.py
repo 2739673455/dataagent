@@ -28,10 +28,7 @@ from app.analytics.agents.explorer.tools import (
     search_semantic_resources,
 )
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
-from app.metadata.repositories.column_index import ColumnESRepo
-from app.metadata.repositories.recall import SemanticRecallPGRepo
-from app.metadata.repositories.value_index import ValueESRepo
-from app.metadata.search_models import (
+from app.metadata.models.search import (
     SemanticColumnResult,
     SemanticMatchReason,
     SemanticMetricResult,
@@ -41,6 +38,9 @@ from app.metadata.search_models import (
     SemanticTableContext,
     SemanticValueResult,
 )
+from app.metadata.repositories.column_index import ColumnESRepo
+from app.metadata.repositories.recall import SemanticRecallPGRepo
+from app.metadata.repositories.value_index import ValueESRepo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
 from app.metadata.services.recall import (
     SemanticRecallService,

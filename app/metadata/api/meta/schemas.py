@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.metadata.search_models import RequestedValueIndexSyncMode
+from app.metadata.models.search import RequestedValueIndexSyncMode
 from app.shared.config.meta_config import (
     MetadataAlias,
     MetadataDescription,

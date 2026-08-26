@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.metadata.models import ColumnInfo, TableInfo, ValueIndexSyncState
+from app.metadata.models.catalog import ColumnInfo, TableInfo, ValueIndexSyncState
 from app.metadata.repositories.postgres import MetaPGRepo
 
 

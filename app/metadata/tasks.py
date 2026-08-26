@@ -7,17 +7,17 @@ from typing import Any
 
 from loguru import logger
 
+from app.metadata.models.search import (
+    RequestedValueIndexSyncMode,
+    SemanticIndexSyncResult,
+    ValueIndexSyncResult,
+)
 from app.metadata.providers import (
     build_meta_import_service,
     build_meta_index_service,
 )
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
-from app.metadata.search_models import (
-    RequestedValueIndexSyncMode,
-    SemanticIndexSyncResult,
-    ValueIndexSyncResult,
-)
 from app.metadata.services.import_service import ImportMode, MetaImportResult
 from app.shared.clients.doris_client_manager import admin_doris_client_manager
 from app.shared.clients.embedding_client_manager import embedding_client_manager

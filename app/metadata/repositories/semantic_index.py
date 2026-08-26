@@ -4,7 +4,7 @@ from typing import Any, cast
 
 from elasticsearch import AsyncElasticsearch
 
-from app.metadata.search_models import (
+from app.metadata.models.search import (
     SemanticIndexDelta,
     SemanticIndexDocument,
     SemanticTextType,
@@ -71,9 +71,7 @@ class SemanticIndexDeltaRepo:
                     text=text_value,
                     text_type=cast(SemanticTextType, text_type_value),
                     embedding=None,
-                    embedding_revision=str(
-                        source.get("embedding_revision") or ""
-                    ),
+                    embedding_revision=str(source.get("embedding_revision") or ""),
                     meta_version=int(source.get("meta_version") or 0),
                     payload_hash=str(source.get("payload_hash") or ""),
                     payload=payload if isinstance(payload, dict) else {},
@@ -144,8 +142,7 @@ class SemanticIndexDeltaRepo:
                     )
                 ]
                 raise RuntimeError(
-                    f"Elasticsearch {self._error_resource}差量写入失败: "
-                    f"{failures[:3]}"
+                    f"Elasticsearch {self._error_resource}差量写入失败: {failures[:3]}"
                 )
         if actions:
             await self._client.indices.refresh(index=self._index_name)

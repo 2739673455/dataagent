@@ -8,6 +8,7 @@ from loguru import logger
 
 from app.analytics.agents.manager import AgentManager
 from app.analytics.model_factory import create_active_model
+from app.analytics.providers import build_conversation_lifecycle_service
 from app.analytics.repositories.conversation import ConversationPGRepo
 from app.analytics.services.conversation_lifecycle import ConversationLifecycleService
 from app.analytics.services.conversation_title import ConversationTitleService
@@ -152,7 +153,7 @@ async def _run_with_lifecycle_service[T](
     persistence = LangGraphPostgresManager(cfg.langgraph_postgresql)
     sandbox = create_sandbox_manager(cfg.sandbox)
     agents = AgentManager(persistence, sandbox)
-    service = ConversationLifecycleService(
+    service = build_conversation_lifecycle_service(
         persistence,
         agents,
         sandbox,

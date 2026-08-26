@@ -66,8 +66,7 @@ def normalize_attachment_path(path: str) -> str:
     parts = PurePosixPath(path).parts
     if not parts or any(
         part in {"", ".", ".."}
-        or len(part.encode("utf-8", errors="surrogatepass"))
-        > _PATH_COMPONENT_MAX_BYTES
+        or len(part.encode("utf-8", errors="surrogatepass")) > _PATH_COMPONENT_MAX_BYTES
         for part in parts
     ):
         raise SandboxPathError(path)

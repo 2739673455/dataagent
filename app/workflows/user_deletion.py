@@ -8,13 +8,12 @@ from app.analytics.services.conversation_lifecycle import (
     ConversationLifecycleService,
 )
 from app.identity import errors as auth_error
-from app.identity.repositories.auth import AuthPGRepo
-from app.query.repositories.experience_index import QueryExperienceESRepo
-from app.query.repositories.experience_postgres import QueryExperiencePGRepo
-from app.sandbox.manager import DockerSandboxManager
-from app.shared.clients.es_client_manager import ESClientManager
-from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import LifecycleConfig
+from app.workflows.contracts import (
+    UserDeletionStateStore,
+    UserQueryHistoryCleaner,
+    UserSandboxCleaner,
+)
 
 
 class UserDeletionService:
@@ -22,17 +21,15 @@ class UserDeletionService:
 
     def __init__(
         self,
-        auth_postgres: PostgresClientManager,
-        meta_postgres: PostgresClientManager,
-        es: ESClientManager,
-        sandbox: DockerSandboxManager,
+        state_store: UserDeletionStateStore,
+        query_history: UserQueryHistoryCleaner,
+        sandbox: UserSandboxCleaner,
         conversations: ConversationLifecycleService,
         config: LifecycleConfig,
     ) -> None:
         """绑定用户注销涉及的各存储和生命周期服务"""
-        self._auth_postgres = auth_postgres
-        self._meta_postgres = meta_postgres
-        self._es = es
+        self._state_store = state_store
+        self._query_history = query_history
         self._sandbox = sandbox
         self._conversations = conversations
         self._config = config
@@ -44,24 +41,10 @@ class UserDeletionService:
                 detail="不能注销当前操作的管理员账号"
             )
 
-        now = datetime.now(UTC)
-        async with self._auth_postgres.session() as session:
-            repo = AuthPGRepo(session)
-            async with session.begin():
-                await repo.lock_security_mutation()
-                user = await repo.get_user_by_id_for_update(user_id)
-                task = await repo.get_user_deletion_task(user_id)
-                if user is None:
-                    if task is not None and task.status == "completed":
-                        return False
-                    raise auth_error.UserNotFoundError
-                if user.is_active and user.is_admin and await repo.count_admins() <= 1:
-                    raise auth_error.LastAdministratorError
-                await repo.set_user_active(user, False)
-                await repo.revoke_user_refresh_tokens(user.id, now)
-                await repo.enqueue_user_deletion(user.id, now)
-        logger.info(f"用户注销已受理: operator_id={operator_id}, user_id={user_id}")
-        return True
+        submitted = await self._state_store.request(user_id, datetime.now(UTC))
+        if submitted:
+            logger.info(f"用户注销已受理: operator_id={operator_id}, user_id={user_id}")
+        return submitted
 
     async def process(self, user_id: int) -> None:
         """幂等执行一个用户的跨存储注销清理"""
@@ -74,9 +57,9 @@ class UserDeletionService:
             logger.info(f"用户会话资源清理完成: user_id={user_id}")
             await self._sandbox.delete_user_sandbox(user_id)
             logger.info(f"用户沙箱资源清理完成: user_id={user_id}")
-            await self._delete_query_history(user_id)
+            await self._query_history.delete_user_query_history(user_id)
             logger.info(f"用户查询经验清理完成: user_id={user_id}")
-            await self._complete(user_id)
+            await self._state_store.complete(user_id, datetime.now(UTC))
             logger.info(f"用户注销清理编排完成: user_id={user_id}")
         except Exception as exc:
             await self._record_failure(user_id, exc)
@@ -88,38 +71,7 @@ class UserDeletionService:
 
     async def _is_completed(self, user_id: int) -> bool:
         """检查用户注销任务是否已经完成"""
-        async with self._auth_postgres.session() as session:
-            task = await AuthPGRepo(session).get_user_deletion_task(user_id)
-            return task is not None and task.status == "completed"
-
-    async def _delete_query_history(self, user_id: int) -> None:
-        """删除用户的查询经验索引和数据库记录"""
-        async with self._meta_postgres.session() as session:
-            repo = QueryExperiencePGRepo(session)
-            async with session.begin():
-                experience_ids = await repo.list_ids_by_user(user_id)
-
-        await QueryExperienceESRepo(self._es.get_client()).delete_many(experience_ids)
-
-        async with self._meta_postgres.session() as session:
-            repo = QueryExperiencePGRepo(session)
-            async with session.begin():
-                await repo.delete_by_user(user_id)
-
-    async def _complete(self, user_id: int) -> None:
-        """删除认证用户并将注销任务标记完成"""
-        now = datetime.now(UTC)
-        async with self._auth_postgres.session() as session:
-            repo = AuthPGRepo(session)
-            async with session.begin():
-                await repo.lock_security_mutation()
-                task = await repo.get_user_deletion_task(user_id)
-                if task is None:
-                    raise RuntimeError("用户注销任务记录不存在")
-                user = await repo.get_user_by_id_for_update(user_id)
-                if user is not None:
-                    await repo.delete_user(user)
-                await repo.complete_user_deletion(task, now)
+        return await self._state_store.is_completed(user_id)
 
     async def _record_failure(self, user_id: int, exc: Exception) -> None:
         """记录注销失败原因和下一次重试时间"""
@@ -127,27 +79,20 @@ class UserDeletionService:
         next_attempt_at = now + timedelta(
             seconds=self._config.user_deletion_retry_seconds
         )
-        async with self._auth_postgres.session() as session:
-            repo = AuthPGRepo(session)
-            async with session.begin():
-                task = await repo.get_user_deletion_task(user_id)
-                if task is not None and task.status != "completed":
-                    await repo.record_user_deletion_failure(
-                        task,
-                        error=f"{type(exc).__name__}: {exc}",
-                        next_attempt_at=next_attempt_at,
-                    )
-                    logger.warning(
-                        "用户注销失败状态已记录: "
-                        f"user_id={user_id}, error_type={type(exc).__name__}, "
-                        f"next_attempt_at={next_attempt_at.isoformat()}"
-                    )
+        await self._state_store.record_failure(
+            user_id,
+            error=f"{type(exc).__name__}: {exc}",
+            next_attempt_at=next_attempt_at,
+        )
+        logger.warning(
+            "用户注销失败状态已记录: "
+            f"user_id={user_id}, error_type={type(exc).__name__}, "
+            f"next_attempt_at={next_attempt_at.isoformat()}"
+        )
 
     async def list_due_user_ids(self) -> list[int]:
         """列出到达重试时间的用户注销任务"""
-        async with self._auth_postgres.session() as session:
-            tasks = await AuthPGRepo(session).list_due_user_deletions(
-                datetime.now(UTC),
-                limit=self._config.cleanup_batch_size,
-            )
-            return [task.user_id for task in tasks]
+        return await self._state_store.list_due_user_ids(
+            datetime.now(UTC),
+            limit=self._config.cleanup_batch_size,
+        )

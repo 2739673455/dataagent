@@ -3,7 +3,7 @@
 from typing import cast
 
 from app.metadata import errors as meta_error
-from app.metadata.models import (
+from app.metadata.models.catalog import (
     COLUMN_EXAMPLE_LIMIT,
     ColumnInfo,
     ColumnReference,

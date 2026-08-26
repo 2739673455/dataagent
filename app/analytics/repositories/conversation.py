@@ -160,9 +160,7 @@ class ConversationPGRepo:
         visible = (
             conversations
             if include_deleting
-            else [
-                item for item in conversations if item.deletion_requested_at is None
-            ]
+            else [item for item in conversations if item.deletion_requested_at is None]
         )
         return sorted(
             visible,
@@ -217,7 +215,10 @@ class ConversationPGRepo:
         )
         return sorted(
             conversations,
-            key=lambda item: (item.deletion_requested_at or item.update_at, str(item.id)),
+            key=lambda item: (
+                item.deletion_requested_at or item.update_at,
+                str(item.id),
+            ),
         )[:limit]
 
     async def list_pending_title_generations(

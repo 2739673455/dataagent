@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from app.metadata.api.meta.schemas import ValueIndexSyncStateResponse
-from app.metadata.models import ColumnInfo, ValueIndexSyncState
+from app.metadata.models.catalog import ColumnInfo, ValueIndexSyncState
 from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
 from app.metadata.repositories.postgres import MetaPGRepo

@@ -22,7 +22,7 @@ from app.analytics.agents.explorer.semantic_recall_protocol import (
     SemanticRecallView,
     parse_semantic_recall_reference,
 )
-from app.metadata.recall_models import SemanticRecallRecord
+from app.metadata.models.recall import SemanticRecallRecord
 from app.metadata.services.recall import SemanticRecallsNotFoundError
 
 

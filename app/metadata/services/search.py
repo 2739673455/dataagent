@@ -9,18 +9,14 @@ from typing import Literal, TypeVar, cast
 from loguru import logger
 
 from app.identity.services.authorization import AssetAccessPolicy
-from app.metadata.models import (
+from app.metadata.models.catalog import (
     ColumnInfo,
     ColumnKey,
     MetricInfo,
     TableInfo,
     serialize_column_examples,
 )
-from app.metadata.repositories.column_index import ColumnESRepo
-from app.metadata.repositories.metric_index import MetricESRepo
-from app.metadata.repositories.postgres import MetaPGRepo
-from app.metadata.repositories.value_index import ValueESRepo
-from app.metadata.search_models import (
+from app.metadata.models.search import (
     SearchHit,
     SemanticColumnResult,
     SemanticIndexStatus,
@@ -33,6 +29,10 @@ from app.metadata.search_models import (
     SemanticTableContext,
     SemanticValueResult,
 )
+from app.metadata.repositories.column_index import ColumnESRepo
+from app.metadata.repositories.metric_index import MetricESRepo
+from app.metadata.repositories.postgres import MetaPGRepo
+from app.metadata.repositories.value_index import ValueESRepo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
 from app.shared.clients.embedding_client_manager import EmbeddingClient
 

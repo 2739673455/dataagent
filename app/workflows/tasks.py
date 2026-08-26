@@ -5,8 +5,9 @@ from datetime import UTC, datetime
 from loguru import logger
 
 from app.analytics.agents.manager import AgentManager
-from app.analytics.services.conversation_lifecycle import ConversationLifecycleService
-from app.identity.repositories.auth import AuthPGRepo
+from app.analytics.providers import build_conversation_lifecycle_service
+from app.identity.services.user_deletion_store import PostgresUserDeletionStateStore
+from app.query.services.user_cleanup import QueryHistoryCleanupService
 from app.sandbox.providers import create_sandbox_manager
 from app.shared.clients.es_client_manager import ESClientManager
 from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
@@ -42,7 +43,7 @@ async def _process_user_deletion(user_id: int) -> None:
     persistence = LangGraphPostgresManager(cfg.langgraph_postgresql)
     sandbox = create_sandbox_manager(cfg.sandbox)
     agents = AgentManager(persistence, sandbox)
-    conversations = ConversationLifecycleService(
+    conversations = build_conversation_lifecycle_service(
         persistence,
         agents,
         sandbox,
@@ -50,9 +51,8 @@ async def _process_user_deletion(user_id: int) -> None:
         session_lock_timeout=cfg.agent.orchestration.session_lock_timeout,
     )
     service = UserDeletionService(
-        auth_postgres,
-        meta_postgres,
-        es,
+        PostgresUserDeletionStateStore(auth_postgres),
+        QueryHistoryCleanupService(meta_postgres, es),
         sandbox,
         conversations,
         cfg.lifecycle,
@@ -94,15 +94,16 @@ async def _dispatch_due_user_deletions() -> int:
     auth_postgres = PostgresClientManager(cfg.auth_postgresql, AuthBase)
     auth_postgres.init()
     try:
-        async with auth_postgres.session() as session:
-            tasks = await AuthPGRepo(session).list_due_user_deletions(
-                datetime.now(UTC),
-                limit=cfg.lifecycle.cleanup_batch_size,
-            )
-        for task in tasks:
-            enqueue_user_deletion(task.user_id)
-        logger.info(f"用户注销任务补偿扫描完成: dispatched_count={len(tasks)}")
-        return len(tasks)
+        user_ids = await PostgresUserDeletionStateStore(
+            auth_postgres
+        ).list_due_user_ids(
+            datetime.now(UTC),
+            limit=cfg.lifecycle.cleanup_batch_size,
+        )
+        for user_id in user_ids:
+            enqueue_user_deletion(user_id)
+        logger.info(f"用户注销任务补偿扫描完成: dispatched_count={len(user_ids)}")
+        return len(user_ids)
     finally:
         await auth_postgres.close()
 

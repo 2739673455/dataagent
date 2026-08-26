@@ -4,7 +4,7 @@ import unittest
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.metadata.models import ColumnInfo, MetricInfo, TableInfo
+from app.metadata.models.catalog import ColumnInfo, MetricInfo, TableInfo
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
 from app.metadata.services.catalog import MetaCatalogService

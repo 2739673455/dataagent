@@ -7,9 +7,8 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from app.metadata.recall_models import SemanticRecallRecord
-from app.metadata.repositories.recall import SemanticRecallPGRepo
-from app.metadata.search_models import (
+from app.metadata.models.recall import SemanticRecallRecord
+from app.metadata.models.search import (
     SemanticColumnResult,
     SemanticMetricResult,
     SemanticRelation,
@@ -18,6 +17,7 @@ from app.metadata.search_models import (
     SemanticTableContext,
     SemanticValueResult,
 )
+from app.metadata.repositories.recall import SemanticRecallPGRepo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
 
 

@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from langchain_core.messages import ToolMessage
 
-from app.metadata.recall_models import SemanticRecallRecord
+from app.metadata.models.recall import SemanticRecallRecord
 
 type SemanticRecallView = Literal["search_response", "record"]
 

@@ -1,6 +1,6 @@
 import { Check, ChevronDown, Copy, Download, Eye, FileText, Loader2, Square, Wrench } from "lucide-react";
 import type { RefObject } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -35,6 +35,11 @@ type ToolRunDisplayItem = {
 };
 
 type DisplayItem = MessageDisplayItem | ToolRunDisplayItem;
+type UserMessageNavigationItem = {
+  key: string;
+  createdAt: string | null;
+  preview: string;
+};
 const TOOL_ARGS_PREVIEW_MAX_LENGTH = 120;
 
 function ImagePreview({ alt, onClose, src }: { alt: string; onClose: () => void; src: string }) {
@@ -82,6 +87,7 @@ const messageTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
   day: "2-digit",
   hour: "2-digit",
   minute: "2-digit",
+  second: "2-digit",
   hourCycle: "h23",
 });
 
@@ -92,7 +98,94 @@ function formatMessageTime(value: string | null | undefined): string | null {
   const parts = Object.fromEntries(
     messageTimeFormatter.formatToParts(date).map((part) => [part.type, part.value])
   );
-  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
+function getUserMessagePreview(message: MessageDisplayItem["message"]): string {
+  const content = message.parts
+    .map((part) => (part.type === "text" ? part.text : "[图片]"))
+    .join("\n")
+    .trim();
+  if (content) return content;
+
+  const attachmentNames = message.attachments?.map((attachment) =>
+    getAttachmentName(attachment.f_path)
+  );
+  return attachmentNames?.length ? `[附件] ${attachmentNames.join("、")}` : "空消息";
+}
+
+function findActiveUserMessageKey(viewport: HTMLDivElement): string | null {
+  const messageElements = viewport.querySelectorAll<HTMLElement>("[data-user-message-key]");
+  if (messageElements.length === 0) return null;
+
+  const viewportRect = viewport.getBoundingClientRect();
+  const activationLine = viewportRect.top + viewportRect.height / 2;
+  let activeKey = messageElements[0]?.dataset.userMessageKey ?? null;
+
+  for (const element of messageElements) {
+    if (element.getBoundingClientRect().top > activationLine) break;
+    activeKey = element.dataset.userMessageKey ?? activeKey;
+  }
+  return activeKey;
+}
+
+function UserMessageQuickNavigation({
+  activeKey,
+  items,
+  onNavigate,
+}: {
+  activeKey: string | null;
+  items: UserMessageNavigationItem[];
+  onNavigate: (key: string) => void;
+}) {
+  return (
+    <nav
+      aria-label="用户消息快速导航"
+      className="absolute left-3 top-1/2 z-20 hidden -translate-y-1/2 xl:block"
+    >
+      <div className="flex flex-col gap-1.5 py-2">
+        {items.map((item, index) => {
+          const tooltipPosition =
+            index < 2
+              ? "top-0"
+              : index >= items.length - 2
+                ? "bottom-0"
+                : "top-1/2 -translate-y-1/2";
+          return (
+            <div key={item.key} className="group relative flex h-2.5 items-center">
+              <button
+                type="button"
+                aria-label={`跳转到用户消息：${item.preview}`}
+                onClick={() => onNavigate(item.key)}
+                className="flex h-2.5 w-10 items-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#71717a]"
+              >
+                <span
+                  className={cn(
+                    "block h-0.5 rounded-full transition-all duration-150 group-hover:h-1 group-hover:w-10",
+                    activeKey === item.key ? "w-10 bg-[#18181b]" : "w-8 bg-[#a1a1aa]"
+                  )}
+                />
+              </button>
+              <div
+                role="tooltip"
+                className={cn(
+                  "pointer-events-none invisible absolute left-full z-30 ml-3 w-72 rounded border border-[#d4d4ce] bg-[#ffffff] p-3 text-left opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100",
+                  tooltipPosition
+                )}
+              >
+                <div className="mb-1.5 text-[11px] text-[#71717a]">
+                  {formatMessageTime(item.createdAt) ?? "时间未记录"}
+                </div>
+                <div className="max-h-24 overflow-hidden whitespace-pre-wrap break-words text-xs leading-5 text-[#27272a]">
+                  {item.preview}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </nav>
+  );
 }
 
 function isImageAttachment(name: string) {
@@ -719,9 +812,63 @@ export function ChatMessages({
   viewportRef,
 }: ChatMessagesProps) {
   const displayItems = buildDisplayItems(conversationId, messages, isStreaming);
+  const messageElementsRef = useRef(new Map<string, HTMLDivElement>());
+  const [activeUserMessageKey, setActiveUserMessageKey] = useState<string | null>(null);
+  const userMessageNavigationItems = displayItems.flatMap<UserMessageNavigationItem>((item) =>
+    item.type === "message" && item.message.role === "user"
+      ? [
+          {
+            key: item.key,
+            createdAt: item.message.createdAt ?? null,
+            preview: getUserMessagePreview(item.message),
+          },
+        ]
+      : []
+  );
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!conversationId || isLoading || userMessageNavigationItems.length === 0 || !viewport) {
+      setActiveUserMessageKey(null);
+      return;
+    }
+
+    let animationFrame: number | null = null;
+    const updateActiveMessage = () => {
+      animationFrame = null;
+      setActiveUserMessageKey(findActiveUserMessageKey(viewport));
+    };
+    const scheduleUpdate = () => {
+      if (animationFrame !== null) return;
+      animationFrame = window.requestAnimationFrame(updateActiveMessage);
+    };
+
+    scheduleUpdate();
+    viewport.addEventListener("scroll", scheduleUpdate, { passive: true });
+    window.addEventListener("resize", scheduleUpdate);
+    return () => {
+      viewport.removeEventListener("scroll", scheduleUpdate);
+      window.removeEventListener("resize", scheduleUpdate);
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
+    };
+  }, [conversationId, isLoading, userMessageNavigationItems.length, viewportRef]);
+
+  const navigateToUserMessage = (key: string) => {
+    const element = messageElementsRef.current.get(key);
+    if (!element) return;
+    setActiveUserMessageKey(key);
+    element.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[#f4f4f0] font-mono text-[#1e2024]">
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[#f4f4f0] font-mono text-[#1e2024]">
+      {conversationSelected && !isLoading && userMessageNavigationItems.length > 0 ? (
+        <UserMessageQuickNavigation
+          activeKey={activeUserMessageKey}
+          items={userMessageNavigationItems}
+          onNavigate={navigateToUserMessage}
+        />
+      ) : null}
       <div
         ref={viewportRef}
         className="min-h-0 flex-1 overflow-y-auto px-4 py-4 [scrollbar-gutter:stable_both-edges]"
@@ -757,12 +904,24 @@ export function ChatMessages({
           <div className="mx-auto w-full max-w-4xl space-y-1">
             {displayItems.map((item) =>
               item.type === "message" ? (
-                <MessageBubble
+                <div
                   key={item.key}
-                  message={item.message}
-                  onOpenPreviewAttachment={onOpenPreviewAttachment}
-                  username={username}
-                />
+                  ref={(element) => {
+                    if (element) {
+                      messageElementsRef.current.set(item.key, element);
+                    } else {
+                      messageElementsRef.current.delete(item.key);
+                    }
+                  }}
+                  data-user-message-key={item.message.role === "user" ? item.key : undefined}
+                  className="scroll-mt-4"
+                >
+                  <MessageBubble
+                    message={item.message}
+                    onOpenPreviewAttachment={onOpenPreviewAttachment}
+                    username={username}
+                  />
+                </div>
               ) : (
                 <ToolRunBar
                   key={item.key}
