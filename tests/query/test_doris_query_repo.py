@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, Mock
 
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from app.query.models import QueryExecutionLimits
+from app.query.models.execution import QueryExecutionLimits, QueryExecutionOptions
 from app.query.repositories.doris import (
     DorisConnectionProvider,
     DorisQueryRepository,
@@ -121,11 +121,10 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
             workload_group="dataagent_readonly",
             timeout_seconds=17,
             memory_limit_bytes=4096,
-            max_scan_rows=100,
-            max_scan_bytes=4096,
-            max_cell_bytes=1024,
             max_rows=10,
             max_output_bytes=1024,
+        )
+        options = QueryExecutionOptions(
             batch_size=2,
             sample_rows=1,
         )
@@ -135,6 +134,7 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
             async for batch in repo.stream(
                 "SELECT id, ':secret' AS name FROM t",
                 limits,
+                options,
             )
         ]
 
@@ -151,7 +151,6 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
                 "SET workload_group = 'dataagent_readonly'",
                 "SET query_timeout = 17",
                 "SET exec_mem_limit = 4096",
-                "SET max_allowed_packet = 1024",
             ],
         )
         streamed_sql = str(connection.stream.await_args.args[0])
@@ -180,15 +179,12 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
             workload_group="dataagent_readonly",
             timeout_seconds=1,
             memory_limit_bytes=1,
-            max_scan_rows=1,
-            max_scan_bytes=1,
-            max_cell_bytes=1,
             max_rows=1,
             max_output_bytes=1024,
-            batch_size=1,
         )
+        options = QueryExecutionOptions(batch_size=1)
 
-        batches = [batch async for batch in repo.stream("SELECT 1", limits)]
+        batches = [batch async for batch in repo.stream("SELECT 1", limits, options)]
 
         self.assertEqual(len(batches), 1)
         self.assertEqual(batches[0].column_names, ("id", "name"))
@@ -199,31 +195,27 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
         connection.__aenter__.return_value = connection
         plan_result = Mock()
         plan_result.fetchall.return_value = [("PLAN FRAGMENT 0",), ("SCAN orders",)]
-        connection.execute.side_effect = [None, None, None, None, plan_result]
+        connection.execute.side_effect = [None, None, None, plan_result]
         provider = FakeConnectionProvider(cast(AsyncConnection, connection))
         repo = DorisQueryRepository(cast(DorisConnectionProvider, provider))
         limits = QueryExecutionLimits(
             workload_group="dataagent_readonly",
             timeout_seconds=3,
             memory_limit_bytes=2048,
-            max_scan_rows=100,
-            max_scan_bytes=4096,
-            max_cell_bytes=1024,
             max_rows=5,
             max_output_bytes=1024,
-            batch_size=2,
         )
 
         plan = await repo.explain("SELECT ':secret' AS token FROM orders", limits)
 
         self.assertEqual(plan, ("PLAN FRAGMENT 0", "SCAN orders"))
         self.assertEqual(provider.calls, 1)
-        explain_sql = str(connection.execute.await_args_list[4].args[0])
+        explain_sql = str(connection.execute.await_args_list[3].args[0])
         self.assertEqual(
             explain_sql,
             "EXPLAIN SELECT ':secret' AS token FROM orders",
         )
-        self.assertEqual(connection.execute.await_args_list[4].args[0]._bindparams, {})
+        self.assertEqual(connection.execute.await_args_list[3].args[0]._bindparams, {})
 
     async def test_cancelled_explain_invalidates_connection(self) -> None:
         connection = AsyncMock()
@@ -233,7 +225,7 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
         async def execute(_: object) -> None:
             nonlocal calls
             calls += 1
-            if calls == 5:
+            if calls == 4:
                 await asyncio.Event().wait()
 
         connection.execute.side_effect = execute
@@ -243,15 +235,11 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
             workload_group="dataagent_readonly",
             timeout_seconds=3,
             memory_limit_bytes=2048,
-            max_scan_rows=100,
-            max_scan_bytes=4096,
-            max_cell_bytes=1024,
             max_rows=5,
             max_output_bytes=1024,
-            batch_size=2,
         )
         task = asyncio.create_task(repo.explain("SELECT 1", limits))
-        while calls < 5:
+        while calls < 4:
             await asyncio.sleep(0)
 
         task.cancel()

@@ -70,15 +70,15 @@ flowchart TD
 ### 2.5 历史查询经验沉淀与检索 (Query Experience)
 - **SQL 指纹与结构模板提取**：
   - 基于 `sqlglot` 对执行成功的 SQL 进行字面量脱敏与结构归一化，提取稳定的 SQL 模板与 64 位 SHA-256 结构指纹。
-  - 按 `(owner_user_id, role_name, fingerprint)` 聚合为私有查询经验（[`QueryExperience`](../app/query/models.py)）。
+  - 按 `(owner_user_id, role_name, fingerprint)` 聚合为私有查询经验（[`QueryExperience`](../app/query/models/experience.py)）。
 - **元数据版本联动与自动失效**：
-  - 经验关联引用的表与字段记录了创建时的 `meta_version`（[`QueryExperienceAsset`](../app/query/models.py)）。
+  - 经验关联引用的表与字段记录了创建时的 `meta_version`（[`QueryExperienceAsset`](../app/query/models/experience.py)）。
   - 当管理员修改或删除底层表/字段元数据时，[`QueryExperienceService.invalidate_assets`](../app/query/services/experience.py) 自动将受影响的历史经验置为 `disabled` 并下线其 ES 检索索引。
 - **双路索引与 Explorer 召回**：
   - 同步至 Elasticsearch 索引（`data-agent-query-experience`，[`QueryExperienceESRepo`](../app/query/repositories/experience_index.py)）。
   - Explorer Agent 通过 [`search_query_experiences`](../app/analytics/agents/explorer/tools/query_experience.py) 工具按自然语言意图和当前权限召回高分历史模板，加速 SQL 编写并提升准确率。
 - **执行流水审计与采纳提升**：
-  - 记录每次执行流水（[`QueryExecution`](../app/query/models.py)）。
+  - 记录每次执行流水（[`QueryExecution`](../app/query/models/execution.py)）。
   - 当最终产物被分析采纳时，自动将经验晋升为 `promoted` 优质候选。
 
 ---

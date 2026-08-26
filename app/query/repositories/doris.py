@@ -9,7 +9,11 @@ from typing import Protocol
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from app.query.models import QueryBatch, QueryExecutionLimits
+from app.query.models.execution import (
+    QueryBatch,
+    QueryExecutionLimits,
+    QueryExecutionOptions,
+)
 
 _PRIVILEGE_PATTERN = re.compile(
     r"\b(?:node|admin|grant|select|load|alter|create|drop|usage|show_view)_priv\b"
@@ -55,9 +59,6 @@ class DorisQueryRepository:
         await connection.execute(text(f"SET query_timeout = {limits.timeout_seconds}"))
         await connection.execute(
             text(f"SET exec_mem_limit = {limits.memory_limit_bytes}")
-        )
-        await connection.execute(
-            text(f"SET max_allowed_packet = {limits.max_cell_bytes}")
         )
 
     async def verify_readonly_access(
@@ -165,6 +166,7 @@ class DorisQueryRepository:
         self,
         sql: str,
         limits: QueryExecutionLimits,
+        options: QueryExecutionOptions,
     ) -> AsyncGenerator[QueryBatch]:
         """设置会话限制并流式返回查询结果分区"""
         async with self._connection_provider.connection() as connection:
@@ -174,13 +176,13 @@ class DorisQueryRepository:
                     self._literal_sql(self._bounded_sql(sql, limits.max_rows)),
                     execution_options={
                         "stream_results": True,
-                        "yield_per": limits.batch_size,
+                        "yield_per": options.batch_size,
                     },
                 )
                 try:
                     column_names = tuple(map(str, result.keys()))
                     yielded = False
-                    async for rows in result.partitions(limits.batch_size):
+                    async for rows in result.partitions(options.batch_size):
                         yielded = True
                         yield QueryBatch(
                             column_names=column_names,

@@ -26,7 +26,7 @@ flowchart LR
 - **JWT 双 Token 机制**：
   - `access_token`：短期令牌（默认 15 分钟），用于接口请求认证。
   - `refresh_token`：长期令牌（默认 30 天），每次刷新后轮换。
-  - **Refresh Token 会话机制**：签发时将摘要写入 [`refresh_tokens`](../app/identity/models.py)，刷新时原子轮换，登出、修改密码和停用用户时撤销对应会话，防止令牌重放。
+  - **Refresh Token 会话机制**：签发时将摘要写入 [`refresh_tokens`](../app/identity/models/account.py)，刷新时原子轮换，登出、修改密码和停用用户时撤销对应会话，防止令牌重放。
 - **登录频控与防爆破**：[`AuthRateLimitService`](../app/identity/services/rate_limit.py) 基于滑动时间窗口分别对 `Client IP` 与 `Username` 实施独立限流，超过阈值直接阻断。
 - **请求链路跟踪**：[`TraceMiddleware`](../app/shared/observability/trace.py) 自动为每个 HTTP 请求分配 `request_id` 与 `trace_id`，并将当前认证用户 `user_id` 注入上下文变量（[`context`](../app/shared/observability/context.py)），供日志与下游逻辑调用。
 
@@ -35,7 +35,7 @@ flowchart LR
 - **最后管理员保护机制**：系统严格禁止降权或删除系统中最后一个管理员账号，避免平台管理权死锁。
 
 ### 2.3 Doris 查询身份与凭据加密体系
-- **查询身份隔离（Query Identity）**：系统不直接使用 Doris 超级管理员执行用户分析查询，而是为每个 Doris 业务角色创建专用的查询代理用户（如 `sales_query`），保存在 [`doris_query_identities`](../app/identity/models.py) 中。
+- **查询身份隔离（Query Identity）**：系统不直接使用 Doris 超级管理员执行用户分析查询，而是为每个 Doris 业务角色创建专用的查询代理用户（如 `sales_query`），保存在 [`doris_query_identities`](../app/identity/models/doris.py) 中。
 - **对称加密保护**：查询账号的高强度随机密码由 [`DorisCredentialCipher`](../app/identity/services/credential.py) 基于 Fernet 密钥对称加密后持久化存储，对外接口绝不返回明文密码。
 - **动态角色发现与接入**：
   - `discover_roles`：扫描 Doris 中已存在的角色列表并识别是否已在平台登记。
@@ -49,7 +49,7 @@ flowchart LR
   - 支持创建 `RESTRICTIVE` / `PERMISSIVE` 类型的行过滤策略（`CREATE ROW POLICY ... USING (predicate)`）。
   - 支持行策略删除（`DROP ROW POLICY ... FOR ROLE `role``）。
 - **资产授权投影与过滤**：
-  - 授权变更时同步在 PostgreSQL 写入 [`doris_role_asset_grants`](../app/identity/models.py) 投影。
+  - 授权变更时同步在 PostgreSQL 写入 [`doris_role_asset_grants`](../app/identity/models/doris.py) 投影。
   - [`MetadataAuthorizationFilter`](../app/metadata/services/authorization_filter.py) 在元数据目录和检索时，根据用户的 [`AssetAccessPolicy`](../app/identity/services/authorization.py) 动态过滤不可见的表、字段和指标。
 
 ---

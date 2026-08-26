@@ -5,7 +5,7 @@ from typing import Self
 
 from pydantic import BaseModel, Field, SecretStr
 
-from app.identity.models import User
+from app.identity.models.account import User
 from app.identity.services.auth import AuthenticatedUser, TokenPair
 
 

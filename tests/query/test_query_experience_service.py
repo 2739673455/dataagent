@@ -6,16 +6,20 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
-from app.identity.models import asset_resource_key
+from app.identity.models.doris import asset_resource_key
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
 from app.metadata.models.search import SearchHit
-from app.query.models import (
+from app.query.models.execution import (
     AnalysisQueryResult,
-    QueryColumnRef,
     QueryExecution,
+    QueryResultColumn,
+)
+from app.query.models.experience import (
     QueryExperience,
     QueryExperienceAsset,
-    QueryResultColumn,
+)
+from app.query.models.validation import (
+    QueryColumnRef,
     QueryTableRef,
     QueryValidationResult,
 )

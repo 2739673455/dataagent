@@ -11,7 +11,7 @@ flowchart LR
     subgraph GuardChecks [安全审计项]
         AST[严格只读校验\n阻断 DDL / DML / SET]
         AssetAuth[资产授权校验\n校验表/列可见性]
-        LimitInject[执行结果硬上限\n扫描规模与行数约束]
+        LimitInject[执行结果硬上限\n行数与文件大小约束]
     end
     
     Guard --> GuardChecks
@@ -50,8 +50,8 @@ flowchart LR
 - **资产范围与越权审计**：
   - 提取 SQL 涉及的所有物理表与字段，与用户当前的授权策略（[`AssetAccessPolicy`](../app/identity/services/authorization.py)）进行交集比对。
   - 若查询包含未授权表或未授权列，直接抛出拒绝访问异常。
-- **执行结果硬上限与扫描预检**：
-  - `AnalysisQueryService` 在执行前解析 `EXPLAIN` 结果并检查扫描行数与字节数，`DorisQueryRepository` 再用外层查询强制限制实际返回行数。
+- **执行结果硬上限**：
+  - `DorisQueryRepository` 使用外层查询强制限制实际返回行数，`AnalysisQueryService` 在流式写入过程中限制 CSV 文件大小。
 
 ### 2.3 连接级资源配额控制
 在建立 Doris 异步连接后，[`DorisQueryRepository._apply_session_limits`](../app/query/repositories/doris.py) 自动在当前会话执行参数注入：
@@ -59,12 +59,11 @@ flowchart LR
 SET workload_group = '{workload_group}';
 SET query_timeout = {timeout_seconds};
 SET exec_mem_limit = {memory_limit_bytes};
-SET max_allowed_packet = {max_cell_bytes};
 ```
 - 确保单个重型分析查询不会耗尽数仓全局计算资源或阻塞其他业务。
 
 ### 2.4 服务端游标分批流式传输
-- [`DorisQueryRepository.stream`](../app/query/repositories/doris.py) 结合服务端游标（Server-side Cursor）按批次（[`QueryBatch`](../app/query/models.py)）拉取数据，避免一次性将百万级结果集加载至 Web 服务内存。
+- [`DorisQueryRepository.stream`](../app/query/repositories/doris.py) 结合服务端游标（Server-side Cursor）按批次（[`QueryBatch`](../app/query/models/execution.py)）拉取数据，避免一次性将百万级结果集加载至 Web 服务内存。
 - [`AnalysisQueryService`](../app/query/services/executor.py) 提供面向上层 Agent 的高级封装，将结果集直接格式化并流式写入用户沙盒中的 CSV 文件。
 
 ### 2.5 查询经验记忆
@@ -88,7 +87,7 @@ SET max_allowed_packet = {max_cell_bytes};
 | [`QueryGuardService`](../app/query/services/guard.py) | `check(user_id, sql, dialect)` / `require_safe(user_id, sql, dialect)` | 校验 SQL 语法只读性、提取依赖表列、比对用户资产白名单 |
 | [`QueryPrincipalService`](../app/query/services/principal.py) | `resolve(user_id)` | 获取并解密当前用户绑定的只读代理身份 |
 | [`AnalysisQueryService`](../app/query/services/executor.py) | `execute(session_key, sql, dialect)` | 结合安全守卫执行受控查询，并将结果安全落盘为 CSV 数据集 |
-| [`DorisQueryRepository`](../app/query/repositories/doris.py) | `stream(sql, limits)` | 会话级参数注入与服务端游标流式拉取 |
+| [`DorisQueryRepository`](../app/query/repositories/doris.py) | `stream(sql, limits, options)` | 会话级参数注入与服务端游标流式拉取 |
 | `QueryExperienceService` | `record_success` / `record_failure` / `promote_by_artifacts` / `invalidate_assets` / `search` | 记录查询事实、聚合候选经验并执行权限感知的混合检索 |
 
 ---
@@ -99,7 +98,8 @@ SET max_allowed_packet = {max_cell_bytes};
 - 分析查询调度服务：[`app/query/services/executor.py`](../app/query/services/executor.py)
 - 查询代理身份调度：[`app/query/services/principal.py`](../app/query/services/principal.py)
 - Doris 底层查询仓储：[`app/query/repositories/doris.py`](../app/query/repositories/doris.py)
-- 查询模型与限制协议：[`app/query/models.py`](../app/query/models.py)
-- 查询经验模型：[`app/query/models.py`](../app/query/models.py)
+- 查询校验模型：[`app/query/models/validation.py`](../app/query/models/validation.py)
+- 查询执行模型、资源限制与流式处理选项：[`app/query/models/execution.py`](../app/query/models/execution.py)
+- 查询经验模型：[`app/query/models/experience.py`](../app/query/models/experience.py)
 - 查询经验服务：[`app/query/services/experience.py`](../app/query/services/experience.py)
 - 查询经验检索工具：[`app/analytics/agents/explorer/tools/query_experience.py`](../app/analytics/agents/explorer/tools/query_experience.py)

@@ -21,13 +21,16 @@ from uuid import UUID, uuid4
 
 from loguru import logger
 
-from app.query.models import (
+from app.query.models.execution import (
     AnalysisQueryResult,
     QueryBatch,
-    QueryDialect,
     QueryExecutionLimits,
+    QueryExecutionOptions,
     QueryResultColumn,
     QueryTimeRange,
+)
+from app.query.models.validation import (
+    QueryDialect,
     QueryValidationResult,
 )
 from app.query.services.guard import QueryGuardService
@@ -73,6 +76,7 @@ class ReadonlyQueryRepository(Protocol):
         self,
         sql: str,
         limits: QueryExecutionLimits,
+        options: QueryExecutionOptions,
     ) -> AsyncGenerator[QueryBatch]:
         """按批次流式读取受控查询结果"""
         ...
@@ -116,10 +120,6 @@ class QueryResultShapeError(RuntimeError):
 
 class QueryPlanUnavailableError(RuntimeError):
     """Doris 查询计划缺少可验证的扫描估算"""
-
-
-class QueryScanLimitExceededError(RuntimeError):
-    """Doris 查询计划超过允许的扫描预算"""
 
 
 class QueryExecutionTimeoutError(RuntimeError):
@@ -214,6 +214,7 @@ class AnalysisQueryService:
         query_repo: ReadonlyQueryRepository,
         artifact_store: QueryArtifactStore,
         limits: QueryExecutionLimits,
+        options: QueryExecutionOptions,
         success_observer: QuerySuccessObserver | None = None,
     ) -> None:
         """初始化分析查询服务"""
@@ -221,6 +222,7 @@ class AnalysisQueryService:
         self._query_repo = query_repo
         self._artifact_store = artifact_store
         self._limits = limits
+        self._options = options
         self._success_observer = success_observer
 
     async def execute(
@@ -277,18 +279,10 @@ class AnalysisQueryService:
             plan,
             require_scan=bool(guarded.validation.tables),
         )
-        if estimate.scan_rows > self._limits.max_scan_rows:
-            raise QueryScanLimitExceededError(
-                f"Doris 估算扫描行数超出限制，最大允许 {self._limits.max_scan_rows} 行"
-            )
-        if estimate.scan_bytes > self._limits.max_scan_bytes:
-            raise QueryScanLimitExceededError(
-                f"Doris 估算扫描字节数超出限制，最大允许 {self._limits.max_scan_bytes} 字节"
-            )
         relative_path = (
             f"analyses/{session_key.analysis_id}/sessions/"
             f"{session_key.agent_type}/{session_key.session_id}/"
-            f"query_{uuid4().hex}.{self._limits.output_format}"
+            f"query_{uuid4().hex}.csv"
         )
         with tempfile.TemporaryFile(mode="w+b") as temporary_file:
             summary = await self._write_csv(temporary_file, guarded.sql)
@@ -331,7 +325,9 @@ class AnalysisQueryService:
         column_stats: list[_ColumnStats] = []
         sample: list[dict[str, Any]] = []
         row_count = 0
-        async with aclosing(self._query_repo.stream(sql, self._limits)) as batches:
+        async with aclosing(
+            self._query_repo.stream(sql, self._limits, self._options)
+        ) as batches:
             async for batch in batches:
                 if column_names is None:
                     column_names = batch.column_names
@@ -350,7 +346,7 @@ class AnalysisQueryService:
                     for stats, value in zip(column_stats, row, strict=True):
                         stats.observe(value)
                     writer.writerow(_csv_value(value) for value in row)
-                    if len(sample) < self._limits.sample_rows:
+                    if len(sample) < self._options.sample_rows:
                         sample.append(
                             {
                                 name: _summary_value(value)

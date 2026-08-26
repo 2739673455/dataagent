@@ -8,7 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 from app.identity.api.auth.schemas import UserResponse
-from app.identity.models import (
+from app.identity.models.doris import (
     DorisQueryIdentity,
     DorisRoleAssetGrant,
     DorisRowPolicy,

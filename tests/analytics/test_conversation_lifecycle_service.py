@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from app.analytics.models import ConversationInfo
+from app.analytics.models.conversation import ConversationInfo
 from app.analytics.services.conversation_lifecycle import ConversationLifecycleService
 from app.shared.config.app_config import LifecycleConfig
 

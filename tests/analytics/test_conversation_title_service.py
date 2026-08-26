@@ -16,7 +16,7 @@ from app.analytics.api.chat.router import (
     api_create_conversation,
     api_stream_chat,
 )
-from app.analytics.models import ConversationInfo
+from app.analytics.models.conversation import ConversationInfo
 from app.analytics.services.conversation_title import (
     ConversationTitleService,
     initial_conversation_title,

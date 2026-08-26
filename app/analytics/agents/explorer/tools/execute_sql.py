@@ -15,10 +15,13 @@ from app.identity.repositories.query_identity import DorisQueryIdentityPGRepo
 from app.identity.services.authorization import AuthorizationService
 from app.identity.services.credential import DorisCredentialCipher
 from app.metadata.repositories.postgres import MetaPGRepo
-from app.query.models import (
-    QueryDialect,
+from app.query.models.execution import (
     QueryExecutionLimits,
+    QueryExecutionOptions,
     QueryExecutionStatus,
+)
+from app.query.models.validation import (
+    QueryDialect,
     QueryValidationResult,
 )
 from app.query.providers import build_query_experience_service
@@ -31,7 +34,6 @@ from app.query.services.executor import (
     QueryPlanUnavailableError,
     QueryResultLimitExceededError,
     QueryResultShapeError,
-    QueryScanLimitExceededError,
     SuccessfulQueryExecution,
 )
 from app.query.services.experience import (
@@ -46,7 +48,7 @@ from app.shared.clients.postgres_client_manager import (
     meta_postgres_client_manager,
 )
 from app.shared.config.app_config import cfg
-from app.shared.contracts.analysis import AgentSessionKey, validate_agent_type
+from app.shared.contracts.analysis import AgentSessionKey
 
 
 def _get_query_session(runtime: ToolRuntime) -> AgentSessionKey:
@@ -55,22 +57,16 @@ def _get_query_session(runtime: ToolRuntime) -> AgentSessionKey:
     user_id = configurable.get("user_id")
     raw_conversation_id = configurable.get("conversation_id")
     analysis_id = configurable.get("analysis_id")
-    raw_agent_type = configurable.get("agent_type")
     session_id = configurable.get("session_id")
     if not isinstance(user_id, int) or not isinstance(raw_conversation_id, str):
         raise TypeError("配置中未找到查询上下文")
     if not isinstance(analysis_id, str) or not isinstance(session_id, str):
         raise TypeError("配置中未找到专家会话上下文")
-    if not isinstance(raw_agent_type, str):
-        raise TypeError("配置中未找到智能体类型")
-    agent_type = validate_agent_type(raw_agent_type)
-    if agent_type != "explorer":
-        raise ValueError("SQL 工具仅支持在 explorer 会话中运行")
     return AgentSessionKey(
         user_id=user_id,
         conversation_id=UUID(raw_conversation_id),
         analysis_id=analysis_id,
-        agent_type=agent_type,
+        agent_type="explorer",
         session_id=session_id,
     )
 
@@ -84,7 +80,6 @@ def _build_query_guard(
         MetaPGRepo(meta_session),
         data_source=cfg.query.data_source,
         current_database=cfg.doris.database,
-        max_cell_bytes=cfg.query.max_cell_bytes,
         policy_provider=AuthorizationService(AuthPGRepo(auth_session)),
     )
 
@@ -194,14 +189,12 @@ async def _execute_sql(
                 workload_group=principal.workload_group,
                 timeout_seconds=cfg.query.timeout_seconds,
                 memory_limit_bytes=cfg.query.memory_limit_bytes,
-                max_scan_rows=cfg.query.max_scan_rows,
-                max_scan_bytes=cfg.query.max_scan_bytes,
-                max_cell_bytes=cfg.query.max_cell_bytes,
                 max_rows=cfg.query.max_rows,
                 max_output_bytes=cfg.query.max_output_bytes,
+            )
+            options = QueryExecutionOptions(
                 batch_size=cfg.query.batch_size,
                 sample_rows=cfg.query.sample_rows,
-                output_format=cfg.query.output_format,
             )
             service = AnalysisQueryService(
                 _build_query_guard(meta_session, auth_session),
@@ -214,6 +207,7 @@ async def _execute_sql(
                 ),
                 artifact_store,
                 limits,
+                options,
                 success_observer=lambda details: _record_success_safely(
                     context,
                     details,
@@ -254,7 +248,6 @@ async def _execute_sql(
         QueryPlanUnavailableError,
         QueryResultLimitExceededError,
         QueryResultShapeError,
-        QueryScanLimitExceededError,
     ) as exc:
         await _record_failure_safely(
             execution_context,

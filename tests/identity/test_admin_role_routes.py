@@ -18,7 +18,7 @@ from app.identity.api.admin.router import (
     set_user_doris_role,
     update_user,
 )
-from app.identity.models import DorisQueryIdentity, DorisRowPolicy
+from app.identity.models.doris import DorisQueryIdentity, DorisRowPolicy
 from app.identity.services.auth import AuthenticatedUser
 from app.identity.services.doris_permission import DorisRoleStatus
 from tests.identity.test_auth_service import build_user

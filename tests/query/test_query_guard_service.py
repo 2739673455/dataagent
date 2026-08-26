@@ -64,7 +64,6 @@ def make_guard(policy: AssetAccessPolicy | None = None) -> QueryGuardService:
         FakeCatalogRepo(),
         data_source="doris",
         current_database="analytics",
-        max_cell_bytes=1024 * 1024,
         policy_provider=StaticPolicyProvider(policy) if policy else None,
     )
 
@@ -208,20 +207,6 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(sql=sql):
                 result = await make_guard().check(7, sql)
                 self.assertTrue(result.valid, result.issues)
-
-    async def test_rejects_static_oversized_string_expansion(self) -> None:
-        for sql in (
-            "SELECT REPEAT('x', 500000000)",
-            "SELECT RPAD('x', 500000000, 'y')",
-            "SELECT SPACE(500000000)",
-        ):
-            with self.subTest(sql=sql):
-                result = await make_guard().check(7, sql)
-                self.assertFalse(result.valid)
-                self.assertIn(
-                    "value_expansion_too_large",
-                    {issue.code for issue in result.issues},
-                )
 
     async def test_require_safe_never_returns_rejected_sql(self) -> None:
         with self.assertRaises(QueryRejectedError):

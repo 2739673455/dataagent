@@ -17,7 +17,7 @@ from pwdlib import PasswordHash
 from sqlalchemy.exc import IntegrityError
 
 from app.identity import errors as auth_error
-from app.identity.models import RefreshToken, User
+from app.identity.models.account import RefreshToken, User
 from app.identity.repositories.auth import AuthPGRepo
 from app.shared.config.app_config import AuthConfig
 

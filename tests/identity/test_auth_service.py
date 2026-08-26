@@ -7,7 +7,7 @@ from typing import Self
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.identity import errors as auth_error
-from app.identity.models import RefreshToken, User
+from app.identity.models.account import RefreshToken, User
 from app.identity.repositories.auth import AuthPGRepo
 from app.identity.services.auth import (
     AccessTokenAuthenticator,

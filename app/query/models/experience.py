@@ -1,11 +1,10 @@
-"""受控查询领域模型与协议"""
+"""查询经验聚合与检索模型"""
 
-from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import (
     JSON,
     CheckConstraint,
@@ -22,144 +21,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.shared.database.base import MetaBase
 
-QueryDialect = Literal["doris", "mysql"]
-type QueryExecutionStatus = Literal["rejected", "failed", "succeeded"]
 type QueryExperienceQuality = Literal["candidate", "promoted", "disabled"]
 type QueryAssetKind = Literal["table", "column"]
-
-
-class QueryTableRef(BaseModel):
-    """查询引用的数据表"""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    database: str | None = None
-    name: str
-
-    @property
-    def qualified_name(self) -> str:
-        """返回包含数据库名的表标识"""
-        return f"{self.database}.{self.name}" if self.database else self.name
-
-
-class QueryColumnRef(BaseModel):
-    """查询引用的物理字段"""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    database: str | None = None
-    table: str
-    name: str
-
-    @property
-    def qualified_name(self) -> str:
-        """返回包含数据库名和表名的字段标识"""
-        prefix = f"{self.database}." if self.database else ""
-        return f"{prefix}{self.table}.{self.name}"
-
-
-class QueryValidationIssue(BaseModel):
-    """一项确定性的 SQL 校验问题"""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    code: str
-    message: str
-    table: str | None = None
-    column: str | None = None
-
-
-class QueryValidationResult(BaseModel):
-    """SQL 安全检查结果"""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    valid: bool
-    dialect: QueryDialect
-    normalized_sql: str | None
-    tables: list[QueryTableRef] = Field(default_factory=list)
-    columns: list[QueryColumnRef] = Field(default_factory=list)
-    output_columns: list[str] = Field(default_factory=list)
-    issues: list[QueryValidationIssue] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def validate_status(self) -> "QueryValidationResult":
-        """保证校验状态和问题列表一致"""
-        if self.valid == bool(self.issues):
-            raise ValueError("valid 必须与 issues 是否为空保持相反状态")
-        if self.valid and self.normalized_sql is None:
-            raise ValueError("有效查询必须包含 normalized_sql")
-        return self
-
-
-class QueryExecutionLimits(BaseModel):
-    """Doris 单次查询资源限制"""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    workload_group: str = Field(
-        min_length=1,
-        max_length=128,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
-    )
-    timeout_seconds: int = Field(gt=0)
-    memory_limit_bytes: int = Field(gt=0)
-    max_scan_rows: int = Field(gt=0)
-    max_scan_bytes: int = Field(gt=0)
-    max_cell_bytes: int = Field(gt=0)
-    max_rows: int = Field(gt=0)
-    max_output_bytes: int = Field(gt=0)
-    batch_size: int = Field(gt=0)
-    sample_rows: int = Field(default=5, ge=0, le=100)
-    output_format: Literal["csv"] = "csv"
-
-
-@dataclass(frozen=True, slots=True)
-class QueryBatch:
-    """Doris 服务端游标返回的一批结果"""
-
-    column_names: tuple[str, ...]
-    rows: tuple[tuple[Any, ...], ...]
-
-
-class QueryResultColumn(BaseModel):
-    """查询结果字段信息"""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    name: str
-    type: str
-    nullable: bool
-
-
-class QueryTimeRange(BaseModel):
-    """时间字段在结果集中的取值范围"""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    start: str
-    end: str
-
-
-class AnalysisQueryResult(BaseModel):
-    """写入会话沙盒后的查询结果摘要"""
-
-    model_config = ConfigDict(
-        frozen=True,
-        extra="forbid",
-        serialize_by_alias=True,
-    )
-
-    path: str
-    result_schema: list[QueryResultColumn] = Field(alias="schema")
-    row_count: int
-    time_range: dict[str, QueryTimeRange]
-    sample: list[dict[str, Any]]
-
-    @property
-    def schema(self) -> list[QueryResultColumn]:  # pyright: ignore[reportIncompatibleMethodOverride]
-        """返回查询结果字段信息"""
-        return self.result_schema
 
 
 class QueryExperience(MetaBase):
@@ -318,57 +181,6 @@ class QueryExperienceAsset(MetaBase):
             "kind",
             "table_name",
             "column_name",
-        ),
-    )
-
-
-class QueryExecution(MetaBase):
-    """一次 SQL 尝试及其最终采用状态"""
-
-    __tablename__ = "query_executions"
-
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    experience_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("query_experiences.id", ondelete="SET NULL"),
-        index=True,
-    )
-    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    role_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
-    conversation_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
-    analysis_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    session_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    tool_call_id: Mapped[str | None] = mapped_column(String(256))
-    purpose: Mapped[str] = mapped_column(Text, nullable=False)
-    raw_sql: Mapped[str] = mapped_column(Text, nullable=False)
-    normalized_sql: Mapped[str | None] = mapped_column(Text)
-    sql_template: Mapped[str | None] = mapped_column(Text)
-    fingerprint: Mapped[str | None] = mapped_column(String(64), index=True)
-    dialect: Mapped[str] = mapped_column(String(16), nullable=False)
-    status: Mapped[str] = mapped_column(String(16), nullable=False)
-    error_code: Mapped[str | None] = mapped_column(String(128))
-    error_detail: Mapped[str | None] = mapped_column(Text)
-    validation: Mapped[dict[str, object] | None] = mapped_column(JSON)
-    plan_estimate: Mapped[dict[str, object] | None] = mapped_column(JSON)
-    result_summary: Mapped[dict[str, object] | None] = mapped_column(JSON)
-    artifact_path: Mapped[str | None] = mapped_column(String(1024), index=True)
-    adopted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "status IN ('rejected', 'failed', 'succeeded')",
-            name="ck_query_execution_status",
-        ),
-        Index(
-            "ix_query_execution_session",
-            "user_id",
-            "conversation_id",
-            "analysis_id",
-            "session_id",
         ),
     )
 

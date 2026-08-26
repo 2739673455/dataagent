@@ -8,8 +8,8 @@ from uuid import UUID
 from langchain.tools import ToolRuntime
 
 from app.analytics.agents.explorer.tools.execute_sql import create_execute_sql_tool
-from app.query.models import (
-    AnalysisQueryResult,
+from app.query.models.execution import AnalysisQueryResult
+from app.query.models.validation import (
     QueryValidationIssue,
     QueryValidationResult,
 )
@@ -29,7 +29,6 @@ def make_runtime() -> ToolRuntime:
                 "user_id": 7,
                 "conversation_id": "550e8400-e29b-41d4-a716-446655440000",
                 "analysis_id": "analysis",
-                "agent_type": "explorer",
                 "session_id": "query",
             }
         },

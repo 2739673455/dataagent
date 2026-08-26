@@ -8,11 +8,11 @@ from loguru import logger
 from sqlalchemy.exc import IntegrityError
 
 from app.identity import errors as auth_error
-from app.identity.models import (
+from app.identity.models.account import User
+from app.identity.models.doris import (
     AssetScope,
     DorisQueryIdentity,
     DorisRoleAssetGrant,
-    User,
     asset_resource_key,
     normalize_doris_role_name,
 )

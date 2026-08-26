@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 from langgraph.store.base import BaseStore
 
-from app.analytics.models import ConversationInfo
+from app.analytics.models.conversation import ConversationInfo
 
 _CONVERSATION_NAMESPACE = "conversations"
 _SEARCH_BATCH_SIZE = 1_000

@@ -1,4 +1,4 @@
-"""会话模型"""
+"""会话目录模型"""
 
 from datetime import datetime
 from uuid import UUID

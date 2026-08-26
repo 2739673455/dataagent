@@ -14,7 +14,7 @@ from sqlglot.optimizer.scope import Scope, traverse_scope
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
 from app.metadata.models.catalog import ColumnInfo, TableInfo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
-from app.query.models import (
+from app.query.models.validation import (
     QueryColumnRef,
     QueryDialect,
     QueryTableRef,
@@ -197,16 +197,12 @@ class QueryGuardService:
         *,
         data_source: str,
         current_database: str,
-        max_cell_bytes: int,
         policy_provider: QueryAssetPolicyProvider | None = None,
     ) -> None:
         """初始化查询安全服务"""
         self._catalog_repo = catalog_repo
         self._data_source = data_source
         self._current_database = current_database
-        if max_cell_bytes <= 0:
-            raise ValueError("max_cell_bytes 必须为正整数")
-        self._max_cell_bytes = max_cell_bytes
         self._policy_provider = policy_provider
 
     async def check(
@@ -221,7 +217,6 @@ class QueryGuardService:
             return self._result(dialect, None, issues)
 
         issues.extend(self._check_readonly(expression))
-        issues.extend(self._check_value_expansion(expression))
         if issues:
             return self._result(dialect, None, issues)
 
@@ -398,52 +393,6 @@ class QueryGuardService:
                 )
             )
         return issues
-
-    def _check_value_expansion(
-        self,
-        expression: Expr,
-    ) -> list[QueryValidationIssue]:
-        """拒绝可静态推导为超大单元格的字符串扩展"""
-        oversized: set[str] = set()
-        for function in expression.find_all(exp.Repeat, exp.Pad, exp.Space):
-            target_length: int | None = None
-            if isinstance(function, exp.Repeat):
-                count = self._literal_nonnegative_int(function.args.get("times"))
-                source = function.this
-                if count is not None and isinstance(source, exp.Literal):
-                    target_length = len(source.name.encode("utf-8")) * count
-                elif count is not None:
-                    target_length = count
-            elif isinstance(function, exp.Pad):
-                target_length = self._literal_nonnegative_int(
-                    function.args.get("expression")
-                )
-            elif isinstance(function, exp.Space):
-                target_length = self._literal_nonnegative_int(function.this)
-            if target_length is not None and target_length > self._max_cell_bytes:
-                oversized.add(function.sql(dialect="doris"))
-        if not oversized:
-            return []
-        return [
-            QueryValidationIssue(
-                code="value_expansion_too_large",
-                message=(
-                    "查询包含超出单单元格上限的字符串扩展操作: "
-                    + ", ".join(sorted(oversized))
-                ),
-            )
-        ]
-
-    @staticmethod
-    def _literal_nonnegative_int(value: object) -> int | None:
-        """读取非负整数字面量"""
-        if not isinstance(value, exp.Literal) or value.is_string:
-            return None
-        try:
-            parsed = int(value.this)
-        except (TypeError, ValueError):
-            return None
-        return parsed if parsed >= 0 else None
 
     async def _load_catalog(
         self,

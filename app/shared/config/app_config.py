@@ -118,19 +118,15 @@ class LifecycleConfig(BaseModel):
 
 # 查询与沙盒配置
 class QueryConfig(BaseModel):
-    """只读分析查询资源限制"""
+    """只读分析查询配置"""
 
     data_source: str = Field(min_length=1)
     timeout_seconds: int = Field(gt=0)
     memory_limit_bytes: int = Field(gt=0)
-    max_scan_rows: int = Field(gt=0)
-    max_scan_bytes: int = Field(gt=0)
     max_rows: int = Field(gt=0)
-    max_cell_bytes: int = Field(gt=0)
     max_output_bytes: int = Field(gt=0)
     batch_size: int = Field(gt=0)
     sample_rows: int = Field(ge=0, le=100)
-    output_format: Literal["csv"] = "csv"
 
 
 class SandboxOwnershipConfig(BaseModel):
@@ -366,8 +362,6 @@ class Cfg(BaseModel):
         """校验查询、沙盒、目录和数据连接之间的全局约束"""
         if self.query.max_output_bytes > self.sandbox.max_file_bytes:
             raise ValueError("query.max_output_bytes 不能大于 sandbox.max_file_bytes")
-        if self.query.max_cell_bytes > self.query.max_output_bytes:
-            raise ValueError("query.max_cell_bytes 不能大于 query.max_output_bytes")
         return self
 
 

@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 
 from app.identity import errors as auth_error
-from app.identity.models import DorisQueryIdentity, DorisRoleAssetGrant
+from app.identity.models.doris import DorisQueryIdentity, DorisRoleAssetGrant
 from app.identity.repositories.auth import AuthPGRepo
 from app.identity.repositories.doris_role import (
     DorisRoleAlreadyExistsError,

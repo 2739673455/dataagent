@@ -11,7 +11,7 @@ from sqlglot import exp
 from sqlglot.errors import ParseError
 
 from app.identity import errors as auth_error
-from app.identity.models import (
+from app.identity.models.doris import (
     AssetScope,
     DorisRoleAssetGrant,
     DorisRowPolicy,

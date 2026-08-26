@@ -8,12 +8,9 @@ from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.identity.models import (
-    DorisRoleAssetGrant,
-    RefreshToken,
-    User,
-    UserDeletionTask,
-)
+from app.identity.models.account import RefreshToken, User
+from app.identity.models.doris import DorisRoleAssetGrant
+from app.identity.models.lifecycle import UserDeletionTask
 
 _SECURITY_MUTATION_LOCK_KEY = 0x444154414147454E
 _UNSET = object()

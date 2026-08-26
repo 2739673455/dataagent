@@ -3,7 +3,7 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from app.identity.models import DorisQueryIdentity
+from app.identity.models.doris import DorisQueryIdentity
 from app.query.services.principal import (
     QueryPrincipalNotConfiguredError,
     QueryPrincipalService,

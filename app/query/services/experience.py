@@ -11,19 +11,20 @@ from uuid import UUID, uuid4
 from loguru import logger
 from sqlglot import exp, parse_one
 
-from app.identity.models import asset_resource_key
+from app.identity.models.doris import asset_resource_key
 from app.identity.services.authorization import AssetAccessPolicy
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
-from app.query.models import (
+from app.query.models.execution import QueryExecution, QueryExecutionStatus
+from app.query.models.experience import (
     QueryAssetKind,
     QueryAssetSnapshot,
-    QueryDialect,
-    QueryExecution,
-    QueryExecutionStatus,
     QueryExperience,
     QueryExperienceAsset,
     QueryExperienceQuality,
     QueryExperienceSearchResult,
+)
+from app.query.models.validation import (
+    QueryDialect,
     QueryValidationResult,
 )
 from app.query.repositories.experience_index import QueryExperienceESRepo

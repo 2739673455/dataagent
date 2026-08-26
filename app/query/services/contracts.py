@@ -3,7 +3,8 @@
 from typing import Protocol
 from uuid import UUID
 
-from app.identity.models import DorisQueryIdentity, User
+from app.identity.models.account import User
+from app.identity.models.doris import DorisQueryIdentity
 
 
 class QueryExperienceIndexScheduler(Protocol):

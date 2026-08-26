@@ -8,9 +8,12 @@ from decimal import Decimal
 from typing import Any, BinaryIO, cast
 from uuid import UUID, uuid4
 
-from app.query.models import (
+from app.query.models.execution import (
     QueryBatch,
     QueryExecutionLimits,
+    QueryExecutionOptions,
+)
+from app.query.models.validation import (
     QueryTableRef,
     QueryValidationIssue,
     QueryValidationResult,
@@ -22,7 +25,6 @@ from app.query.services.executor import (
     QueryOutputLimitExceededError,
     QueryPlanUnavailableError,
     QueryResultLimitExceededError,
-    QueryScanLimitExceededError,
     SuccessfulQueryExecution,
     estimate_doris_query_plan,
 )
@@ -84,6 +86,7 @@ class FakeQueryRepo:
         self,
         sql: str,
         limits: QueryExecutionLimits,
+        options: QueryExecutionOptions,
     ) -> AsyncGenerator[QueryBatch]:
         self.sql = sql
         try:
@@ -153,16 +156,17 @@ def make_limits(**updates: int) -> QueryExecutionLimits:
         "workload_group": "dataagent_readonly",
         "timeout_seconds": 10,
         "memory_limit_bytes": 1024,
-        "max_scan_rows": 1000,
-        "max_scan_bytes": 1024 * 1024,
-        "max_cell_bytes": 1024,
         "max_rows": 10,
         "max_output_bytes": 1024,
-        "batch_size": 2,
-        "sample_rows": 2,
     }
     values.update(updates)
     return QueryExecutionLimits.model_validate(values)
+
+
+def make_options(**updates: int) -> QueryExecutionOptions:
+    values = {"batch_size": 2, "sample_rows": 2}
+    values.update(updates)
+    return QueryExecutionOptions.model_validate(values)
 
 
 def make_session_key(conversation_id: UUID | None = None) -> AgentSessionKey:
@@ -184,6 +188,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
             repo,
             store,
             make_limits(timeout_seconds=1),
+            make_options(),
         )
 
         with self.assertRaises(QueryExecutionTimeoutError):
@@ -266,29 +271,6 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
                 require_scan=True,
             )
 
-    async def test_scan_limit_rejects_before_stream_and_upload(self) -> None:
-        guard = RecordingGuard(physical_table=True)
-        repo = FakeQueryRepo(
-            [QueryBatch(column_names=("id",), rows=((1,),))],
-            plan=(
-                "0:VOlapScanNode",
-                "cardinality=1001, avgRowSize=8",
-            ),
-        )
-        store = RecordingArtifactStore()
-        service = AnalysisQueryService(
-            cast(QueryGuardService, guard),
-            repo,
-            store,
-            make_limits(max_scan_rows=1000),
-        )
-
-        with self.assertRaises(QueryScanLimitExceededError):
-            await service.execute(make_session_key(), "SELECT raw")
-
-        self.assertIsNone(repo.sql)
-        self.assertEqual(store.uploads, [])
-
     async def test_guarded_batches_are_written_and_summarized(self) -> None:
         timestamp_1 = datetime(2026, 1, 2, 3, tzinfo=UTC)
         timestamp_2 = datetime(2026, 1, 3, 4, tzinfo=UTC)
@@ -311,6 +293,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
             repo,
             store,
             make_limits(),
+            make_options(),
         )
         conversation_id = uuid4()
         session_key = make_session_key(conversation_id)
@@ -365,6 +348,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
             repo,
             store,
             make_limits(),
+            make_options(),
             success_observer=observe,
         )
 
@@ -387,6 +371,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
             FakeQueryRepo([QueryBatch(column_names=("id",), rows=((1,),))]),
             RecordingArtifactStore(),
             make_limits(),
+            make_options(),
             success_observer=observe,
         )
 
@@ -410,6 +395,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
             repo,
             store,
             make_limits(max_rows=2),
+            make_options(),
         )
 
         with self.assertRaises(QueryResultLimitExceededError):
@@ -426,6 +412,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
             repo,
             store,
             make_limits(),
+            make_options(),
         )
 
         result = await service.execute(make_session_key(), "SELECT raw")
@@ -444,6 +431,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
             query_repo,
             store,
             make_limits(),
+            make_options(),
         )
 
         with self.assertRaises(QueryRejectedError):
@@ -461,6 +449,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
             repo,
             store,
             make_limits(max_output_bytes=11),
+            make_options(),
         )
 
         with self.assertRaises(QueryOutputLimitExceededError):
@@ -481,6 +470,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
             repo,
             store,
             make_limits(max_output_bytes=2048),
+            make_options(),
         )
 
         result = await service.execute(make_session_key(), "SELECT raw")
@@ -507,7 +497,8 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
             cast(QueryGuardService, guard),
             repo,
             store,
-            make_limits(max_output_bytes=2048, sample_rows=3),
+            make_limits(max_output_bytes=2048),
+            make_options(sample_rows=3),
         )
 
         result = await service.execute(make_session_key(), "SELECT raw")

@@ -3,7 +3,8 @@
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.identity.models import DorisQueryIdentity, User
+from app.identity.models.account import User
+from app.identity.models.doris import DorisQueryIdentity
 
 
 class DorisQueryIdentityPGRepo:

@@ -13,7 +13,8 @@ from app.metadata.models.catalog import (
     ColumnInfo,
     TableInfo,
 )
-from app.query.models import QueryExecution, QueryExperience, QueryExperienceAsset
+from app.query.models.execution import QueryExecution
+from app.query.models.experience import QueryExperience, QueryExperienceAsset
 
 
 class QueryExperiencePGRepo:

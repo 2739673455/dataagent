@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from app.identity.models import DorisRowPolicy
+from app.identity.models.doris import DorisRowPolicy
 
 _IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_$.-]{0,127}$")
 
