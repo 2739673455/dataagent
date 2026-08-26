@@ -8,7 +8,8 @@ from pydantic import ValidationError
 
 from app.analytics.agents.explorer.recall_runtime import (
     create_authorized_semantic_recall_service,
-    resolve_semantic_recall_context,
+    resolve_semantic_recall_identity,
+    semantic_recall_repository,
 )
 from app.analytics.agents.explorer.semantic_recall_protocol import (
     semantic_recall_reference,
@@ -69,10 +70,7 @@ async def search_semantic_resources(
         }
 
     try:
-        user_id, conversation_id, recall_repo = resolve_semantic_recall_context(
-            runtime.config,
-            runtime.store,
-        )
+        user_id, conversation_id = resolve_semantic_recall_identity(runtime.config)
         async with (
             auth_postgres_client_manager.session() as auth_session,
             meta_postgres_client_manager.session() as meta_session,
@@ -96,10 +94,6 @@ async def search_semantic_resources(
                 database_name=cfg.doris.database,
             )
             response = await service.search(request)
-            recall_service = SemanticRecallService(
-                recall_repo,
-                authorization_filter,
-            )
     except Exception:  # noqa: BLE001
         logger.exception("元数据语义检索失败")
         return {
@@ -108,12 +102,16 @@ async def search_semantic_resources(
         }
 
     try:
-        record = await recall_service.record_search(
-            user_id,
-            conversation_id,
-            request,
-            response,
-        )
+        async with semantic_recall_repository() as recall_repo:
+            record = await SemanticRecallService(
+                recall_repo,
+                authorization_filter,
+            ).record_search(
+                user_id,
+                conversation_id,
+                request,
+                response,
+            )
     except Exception:  # noqa: BLE001
         logger.exception("语义召回快照持久化失败")
         return {
@@ -153,12 +151,10 @@ async def list_semantic_recalls(
     if not 1 <= limit <= 100:
         return {"status": "error", "message": "limit 参数必须在 1 到 100 之间"}
     try:
-        user_id, conversation_id, repo = resolve_semantic_recall_context(
-            runtime.config,
-            runtime.store,
-        )
-        service = await create_authorized_semantic_recall_service(user_id, repo)
-        records = await service.list(user_id, conversation_id, limit=limit)
+        user_id, conversation_id = resolve_semantic_recall_identity(runtime.config)
+        async with semantic_recall_repository() as repo:
+            service = await create_authorized_semantic_recall_service(user_id, repo)
+            records = await service.list(user_id, conversation_id, limit=limit)
     except Exception:  # noqa: BLE001
         logger.exception("获取语义召回列表失败")
         return {
@@ -178,12 +174,10 @@ async def get_semantic_recall(
 ) -> dict[str, Any]:
     """读取当前会话某条语义召回记录的请求、结果和合并来源"""
     try:
-        user_id, conversation_id, repo = resolve_semantic_recall_context(
-            runtime.config,
-            runtime.store,
-        )
-        service = await create_authorized_semantic_recall_service(user_id, repo)
-        record = await service.get(user_id, conversation_id, recall_id)
+        user_id, conversation_id = resolve_semantic_recall_identity(runtime.config)
+        async with semantic_recall_repository() as repo:
+            service = await create_authorized_semantic_recall_service(user_id, repo)
+            record = await service.get(user_id, conversation_id, recall_id)
     except SemanticRecallsNotFoundError as exc:
         return {
             "status": "error",
@@ -209,12 +203,10 @@ async def merge_semantic_recalls(
 ) -> dict[str, Any]:
     """去重合并多条语义召回并保存新快照，源记录保持不变"""
     try:
-        user_id, conversation_id, repo = resolve_semantic_recall_context(
-            runtime.config,
-            runtime.store,
-        )
-        service = await create_authorized_semantic_recall_service(user_id, repo)
-        record = await service.merge(user_id, conversation_id, recall_ids)
+        user_id, conversation_id = resolve_semantic_recall_identity(runtime.config)
+        async with semantic_recall_repository() as repo:
+            service = await create_authorized_semantic_recall_service(user_id, repo)
+            record = await service.merge(user_id, conversation_id, recall_ids)
     except SemanticRecallsNotFoundError as exc:
         return {
             "status": "error",
@@ -237,16 +229,14 @@ async def delete_semantic_recalls(
 ) -> dict[str, Any]:
     """删除当前会话指定的语义召回记录"""
     try:
-        user_id, conversation_id, repo = resolve_semantic_recall_context(
-            runtime.config,
-            runtime.store,
-        )
-        service = await create_authorized_semantic_recall_service(user_id, repo)
-        deleted, missing = await service.delete(
-            user_id,
-            conversation_id,
-            recall_ids,
-        )
+        user_id, conversation_id = resolve_semantic_recall_identity(runtime.config)
+        async with semantic_recall_repository() as repo:
+            service = await create_authorized_semantic_recall_service(user_id, repo)
+            deleted, missing = await service.delete(
+                user_id,
+                conversation_id,
+                recall_ids,
+            )
     except Exception:  # noqa: BLE001
         logger.exception("删除语义召回记录失败")
         return {

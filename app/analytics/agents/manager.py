@@ -45,6 +45,9 @@ from app.analytics.agents.reviewer.agent import create_reviewer_agent
 from app.analytics.agents.session_service import AgentSessionService
 from app.analytics.agents.visualizer.agent import create_visualizer_agent
 from app.analytics.model_factory import create_configured_model
+from app.analytics.services.conversation_tombstone import (
+    ConversationTombstoneService,
+)
 from app.query.providers import build_query_experience_service
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.manager import DockerSandboxManager
@@ -58,13 +61,6 @@ from app.shared.contracts.analysis import AgentSessionKey, AgentType
 type ConversationKey = tuple[int, UUID]
 
 _DEFAULT_MAX_CACHED_RUNTIMES = 128
-_STORE_SCAN_BATCH_SIZE = 1_000
-_AGENT_LIFECYCLE_NAMESPACE = ("agent_lifecycle", "deleted_conversations")
-
-
-def _conversation_tombstone_key(user_id: int, conversation_id: UUID) -> str:
-    """构造持久化删除墓碑键"""
-    return f"{user_id}:{conversation_id}"
 
 
 _SPECIALIST_BUILDERS = {
@@ -82,6 +78,7 @@ class AgentManager:
         self,
         persistence_manager: LangGraphPostgresManager,
         sandbox: DockerSandboxManager,
+        tombstones: ConversationTombstoneService,
         max_cached_runtimes: int = _DEFAULT_MAX_CACHED_RUNTIMES,
     ) -> None:
         """初始化 Agent 管理器"""
@@ -89,6 +86,7 @@ class AgentManager:
             raise ValueError("max_cached_runtimes 必须为正整数")
         self._persistence_manager = persistence_manager
         self._sandbox = sandbox
+        self._tombstones = tombstones
         self._max_cached_runtimes = max_cached_runtimes
         self._conversation_runtimes: OrderedDict[
             ConversationKey, ConversationAgentRuntime
@@ -176,7 +174,6 @@ class AgentManager:
 
         backend = sandbox_backend
         checkpointer = self._persistence_manager.get_checkpointer()
-        store = self._persistence_manager.get_store()
         definitions = self._definitions
 
         async def build_session_agent(
@@ -197,7 +194,6 @@ class AgentManager:
                 tools=definition.tools,
                 backend=session_backend,
                 checkpointer=checkpointer,
-                store=store,
                 skills=definition.skills,
             )
 
@@ -254,7 +250,6 @@ class AgentManager:
             delegate_agent=delegate_agent,
             backend=backend,
             checkpointer=checkpointer,
-            store=store,
             interpreter_mode=interpreter_cfg.mode,
             interpreter_ptc=interpreter_cfg.ptc,
             interpreter_timeout_seconds=interpreter_cfg.timeout_seconds,
@@ -458,20 +453,7 @@ class AgentManager:
             await self.delete_agent(user_id, conversation_id)
 
         await self._persistence_manager.delete_user_threads(user_id)
-        store = self._persistence_manager.get_store()
-        tombstone_keys: list[str] = []
-        offset = 0
-        while items := await store.asearch(
-            _AGENT_LIFECYCLE_NAMESPACE,
-            limit=_STORE_SCAN_BATCH_SIZE,
-            offset=offset,
-        ):
-            tombstone_keys.extend(
-                item.key for item in items if item.key.startswith(f"{user_id}:")
-            )
-            offset += len(items)
-        for key in tombstone_keys:
-            await store.adelete(_AGENT_LIFECYCLE_NAMESPACE, key)
+        await self._tombstones.delete_by_user(user_id)
         async with self._state_lock:
             self._deleted_conversation_keys = {
                 key for key in self._deleted_conversation_keys if key[0] != user_id
@@ -482,12 +464,8 @@ class AgentManager:
         user_id: int,
         conversation_id: UUID,
     ) -> bool:
-        """从 Store 查询跨进程删除墓碑"""
-        item = await self._persistence_manager.get_store().aget(
-            _AGENT_LIFECYCLE_NAMESPACE,
-            _conversation_tombstone_key(user_id, conversation_id),
-        )
-        return item is not None
+        """从关系表查询跨进程删除墓碑"""
+        return await self._tombstones.exists(user_id, conversation_id)
 
     async def _mark_conversation_deleted(
         self,
@@ -495,12 +473,7 @@ class AgentManager:
         conversation_id: UUID,
     ) -> None:
         """在删除 Checkpoint 前写入持久化墓碑"""
-        await self._persistence_manager.get_store().aput(
-            _AGENT_LIFECYCLE_NAMESPACE,
-            _conversation_tombstone_key(user_id, conversation_id),
-            {"deleted": True},
-            index=False,
-        )
+        await self._tombstones.save(user_id, conversation_id)
 
     @asynccontextmanager
     async def execution(

@@ -85,7 +85,7 @@ lifecycle:
   cleanup_batch_size: 100
   user_deletion_retry_seconds: 60
 
-# 查询与沙盒配置
+# 查询与沙箱配置
 query:
   data_source: doris
   timeout_seconds: 60
@@ -103,9 +103,9 @@ sandbox:
     wait_timeout_seconds: 300
     lease_seconds: 30
   image: dataagent-sandbox:latest
-  network_mode: none # 运行时断网，依赖统一构建到沙盒镜像
+  network_mode: none # 运行时断网，依赖统一构建到沙箱镜像
   memory_limit: 2g
-  nano_cpus: 2000000000 # 每个用户沙盒最多使用 2 个 CPU 核心
+  nano_cpus: 2000000000 # 每个用户沙箱最多使用 2 个 CPU 核心
   pids_limit: 256
   execute_timeout_seconds: 120 # 单次 Shell 命令的硬超时上限
   max_output_bytes: 4194304 # 覆盖 DeepAgents 结构化读取的最坏 JSON 转义开销

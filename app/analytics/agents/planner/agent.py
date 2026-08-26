@@ -11,7 +11,6 @@ from langchain_core.tools import BaseTool
 from langchain_quickjs import CodeInterpreterMiddleware
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.store.base import BaseStore
 
 from .message_timestamp_middleware import MessageTimestampMiddleware
 from .prompt import build_planner_system_prompt
@@ -25,7 +24,6 @@ def create_planner_agent(
     delegate_agent: BaseTool,
     backend: BackendProtocol,
     checkpointer: BaseCheckpointSaver,
-    store: BaseStore,
     interpreter_mode: InterpreterMode | None,
     interpreter_ptc: Sequence[str | BaseTool],
     interpreter_timeout_seconds: float,
@@ -61,6 +59,5 @@ def create_planner_agent(
         subagents=[],
         backend=backend,
         checkpointer=checkpointer,
-        store=store,
         name="planner",
     )

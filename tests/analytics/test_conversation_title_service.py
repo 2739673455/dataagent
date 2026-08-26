@@ -16,7 +16,7 @@ from app.analytics.api.chat.router import (
     api_create_conversation,
     api_stream_chat,
 )
-from app.analytics.models.conversation import ConversationInfo
+from app.analytics.models.conversation import Conversation
 from app.analytics.services.conversation_title import (
     ConversationTitleService,
     initial_conversation_title,
@@ -36,9 +36,9 @@ def _conversation(
     *,
     title_pending: bool,
     is_draft: bool = False,
-) -> ConversationInfo:
+) -> Conversation:
     now = datetime.now(UTC)
-    return ConversationInfo(
+    return Conversation(
         id=_CONVERSATION_ID,
         user_id=7,
         title=title,
@@ -108,6 +108,7 @@ class ConversationTitleTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_create_uses_initial_message_title(self) -> None:
         repository = MagicMock()
+        repository.session.begin.side_effect = _unlocked
         expected = _conversation("首条用户消息", title_pending=True)
         repository.create = AsyncMock(return_value=expected)
         current_user = MagicMock(id=7)
@@ -127,14 +128,14 @@ class ConversationTitleTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_first_stream_claims_background_title_generation(self) -> None:
         repository = MagicMock()
+        repository.session.begin.side_effect = _unlocked
         pending = _conversation("新对话", title_pending=True, is_draft=True)
-        claimed = pending.model_copy(
-            update={
-                "title": "分析华北区域销售额",
-                "title_source": "分析华北区域销售额",
-                "is_draft": False,
-            }
+        claimed = _conversation(
+            "分析华北区域销售额",
+            title_pending=True,
+            is_draft=False,
         )
+        claimed.title_source = "分析华北区域销售额"
         repository.get = AsyncMock(return_value=pending)
         repository.claim_title_generation = AsyncMock(return_value=claimed)
         request = chat_schema.ChatStreamRequest(

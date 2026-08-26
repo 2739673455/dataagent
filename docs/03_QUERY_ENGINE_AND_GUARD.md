@@ -64,7 +64,7 @@ SET exec_mem_limit = {memory_limit_bytes};
 
 ### 2.4 服务端游标分批流式传输
 - [`DorisQueryRepository.stream`](../app/query/repositories/doris.py) 结合服务端游标（Server-side Cursor）按批次（[`QueryBatch`](../app/query/models/execution.py)）拉取数据，避免一次性将百万级结果集加载至 Web 服务内存。
-- [`AnalysisQueryService`](../app/query/services/executor.py) 提供面向上层 Agent 的高级封装，将结果集直接格式化并流式写入用户沙盒中的 CSV 文件。
+- [`AnalysisQueryService`](../app/query/services/executor.py) 提供面向上层 Agent 的高级封装，将结果集直接格式化并流式写入用户沙箱中的 CSV 文件。
 
 ### 2.5 查询经验记忆
 

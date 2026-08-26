@@ -527,9 +527,10 @@ class AgentExecutionLifecycleTest(unittest.IsolatedAsyncioTestCase):
     async def test_delete_agent_cancels_active_execution(self) -> None:
         persistence_manager = MagicMock()
         persistence_manager.delete_thread = AsyncMock()
-        store = MagicMock()
-        store.aput = AsyncMock()
-        persistence_manager.get_store.return_value = store
+        tombstones = MagicMock()
+        tombstones.save = AsyncMock()
+        tombstones.exists = AsyncMock(return_value=False)
+        tombstones.delete_by_user = AsyncMock()
 
         @asynccontextmanager
         async def advisory_lock(*args: object, **kwargs: object):
@@ -537,7 +538,7 @@ class AgentExecutionLifecycleTest(unittest.IsolatedAsyncioTestCase):
             yield
 
         persistence_manager.advisory_lock = advisory_lock
-        manager = AgentManager(persistence_manager, MagicMock())
+        manager = AgentManager(persistence_manager, MagicMock(), tombstones)
         runtime = MagicMock()
         runtime.planner_lock = advisory_lock
         runtime.session_service.planner_run = advisory_lock

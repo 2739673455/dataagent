@@ -8,7 +8,6 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.store.base import BaseStore
 
 from app.analytics.agents.contracts import SpecialistResult
 from app.analytics.agents.explorer.prompt import EXPLORER_SYSTEM_PROMPT
@@ -24,7 +23,6 @@ def create_explorer_agent(
     tools: Sequence[BaseTool],
     backend: BackendProtocol,
     checkpointer: BaseCheckpointSaver,
-    store: BaseStore,
     skills: Sequence[str] = (),
 ) -> CompiledStateGraph:
     """编译数据探索 Agent"""
@@ -43,6 +41,5 @@ def create_explorer_agent(
         subagents=[],
         response_format=SpecialistResult,
         checkpointer=checkpointer,
-        store=store,
         name="explorer",
     )

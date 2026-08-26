@@ -44,11 +44,12 @@ async def api_create_conversation(
 ) -> chat_schema.ConversationResponse:
     """创建新对话"""
     user_id = current_user.id
-    conversation = await conversation_repo.create(
-        user_id,
-        initial_conversation_title(body.initial_message),
-        is_draft=body.is_draft,
-    )
+    async with conversation_repo.session.begin():
+        conversation = await conversation_repo.create(
+            user_id,
+            initial_conversation_title(body.initial_message),
+            is_draft=body.is_draft,
+        )
 
     logger.info(
         f"创建对话: conversation_id={conversation.id}, is_draft={conversation.is_draft}"
@@ -119,16 +120,17 @@ async def api_update_conversation(
     """修改对话信息"""
     user_id = current_user.id
 
-    # 检查对话是否存在且属于当前用户
-    conversation = await conversation_repo.get(user_id, body.conversation_id)
-    if conversation is None:
-        raise chat_error.ConversationNotFoundError
+    async with conversation_repo.session.begin():
+        # 检查对话是否存在且属于当前用户
+        conversation = await conversation_repo.get(user_id, body.conversation_id)
+        if conversation is None:
+            raise chat_error.ConversationNotFoundError
 
-    await conversation_repo.update(
-        conversation,
-        title=body.title,
-        title_pending=False,
-    )
+        await conversation_repo.update(
+            conversation,
+            title=body.title,
+            title_pending=False,
+        )
     logger.info(f"更新对话: conversation_id={body.conversation_id}")
 
 
@@ -266,42 +268,52 @@ async def api_stream_chat(
 ) -> StreamingResponse:
     """通过 SSE 执行单轮对话并流式返回 Agent 事件"""
     user_id = current_user.id
+    title_submission: tuple[UUID, str, str] | None = None
     async with lifecycle.lock(user_id, body.conversation_id):
-        conversation = await conversation_repo.get(user_id, body.conversation_id)
-        if conversation is None:
-            raise chat_error.ConversationNotFoundError
+        async with conversation_repo.session.begin():
+            conversation = await conversation_repo.get(user_id, body.conversation_id)
+            if conversation is None:
+                raise chat_error.ConversationNotFoundError
 
-        user_text = "\n".join(
-            part.text
-            for part in body.message.parts
-            if isinstance(part, chat_schema.TextContent)
-        ).strip()
-        if (
-            conversation.title_pending
-            and conversation.title_source is None
-            and user_text
-        ):
-            conversation = await conversation_repo.claim_title_generation(
-                conversation,
-                title=initial_conversation_title(user_text),
-                source=user_text,
-            )
-            try:
-                enqueue_conversation_title(
-                    user_id,
+            user_text = "\n".join(
+                part.text
+                for part in body.message.parts
+                if isinstance(part, chat_schema.TextContent)
+            ).strip()
+            if (
+                conversation.title_pending
+                and conversation.title_source is None
+                and user_text
+            ):
+                conversation = await conversation_repo.claim_title_generation(
+                    conversation,
+                    title=initial_conversation_title(user_text),
+                    source=user_text,
+                )
+                title_submission = (
                     conversation.id,
                     conversation.title,
                     user_text,
                 )
+            elif conversation.is_draft:
+                await conversation_repo.update(conversation, is_draft=False)
+            else:
+                await conversation_repo.update(conversation)
+
+        if title_submission is not None:
+            conversation_id, expected_title, source = title_submission
+            try:
+                enqueue_conversation_title(
+                    user_id,
+                    conversation_id,
+                    expected_title,
+                    source,
+                )
             except Exception:  # noqa: BLE001
                 logger.exception(
                     "提交会话标题任务失败，等待定时补偿: "
-                    f"conversation_id={conversation.id}"
+                    f"conversation_id={conversation_id}"
                 )
-        elif conversation.is_draft:
-            await conversation_repo.update(conversation, is_draft=False)
-        else:
-            await conversation_repo.update(conversation)
 
     context.user_id_ctx.set(str(user_id))
     return StreamingResponse(

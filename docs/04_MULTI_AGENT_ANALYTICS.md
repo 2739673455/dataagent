@@ -19,7 +19,7 @@ flowchart TD
     
     subgraph Persistence [状态持久化 & 运行时]
         S1 & S2 & S3 & S4 & S5 & Planner --> Checkpoint[(PostgreSQL Checkpoints\nthread_id + checkpoint_ns)]
-        S1 & S2 & S3 & S4 & S5 --> Sandbox[(Docker 用户沙盒\nCSV / Python 脚本 / 图表 / 报告)]
+        S1 & S2 & S3 & S4 & S5 --> Sandbox[(Docker 用户沙箱\nCSV / Python 脚本 / 图表 / 报告)]
     end
     
     S4 -->|发现口径或逻辑缺陷| Repair[RepairRequest\n结构化修补请求]
@@ -33,10 +33,10 @@ flowchart TD
 
 ### 2.1 Agent Definition 与 Agent Session 分离
 - **Agent Definition（能力定义）**：
-  - 静态声明 Agent 的能力类型、模型参数、System Prompt、工具白名单、技能与沙盒读写权限。
+  - 静态声明 Agent 的能力类型、模型参数、System Prompt、工具白名单、技能与沙箱读写权限。
   - 会话生命周期内全局单例，构建一次即可复用。
 - **Agent Session（执行实例）**：
-  - 动态创建的执行实例，拥有独立的消息历史、工具调用栈、沙盒工作目录与状态。
+  - 动态创建的执行实例，拥有独立的消息历史、工具调用栈、沙箱工作目录与状态。
   - **支持同类型并行**：例如 Planner 可以针对一个分析任务同时创建多个 `analyst` Session（如分别分析 `region`、`product`、`channel` 维度），在独立线程中并行计算而不互相污染。
 
 ### 2.2 状态隔离与恢复机制（`thread_id + checkpoint_ns`）
@@ -46,8 +46,8 @@ flowchart TD
 - **价值**：既保证了各专业 Agent 消息历史独立、并行执行互不阻塞，又支持在主对话后续多轮交互中精准唤醒指定 Session 继续上下文。
 
 ### 2.3 产物隔离与轻量化消息传递
-- 大规模数据集、Python 计算与可视化脚本、静态图表和分析报告全部存放在用户的 **Docker 本地沙盒** 中。
-- Agent 间消息交互仅传递数据摘要、统计指标、字段列表与沙盒文件路径（如 `analyses/sales/report.csv`），杜绝大文本爆 Token 与上下文超限。
+- 大规模数据集、Python 计算与可视化脚本、静态图表和分析报告全部存放在用户的 **Docker 本地沙箱** 中。
+- Agent 间消息交互仅传递数据摘要、统计指标、字段列表与沙箱文件路径（如 `analyses/sales/report.csv`），杜绝大文本爆 Token 与上下文超限。
 
 ### 2.4 审查与回退修补闭环（Repair Loop）
 - 下游 Agent（如 `Reviewer`）在审查数据口径、计算公式或可视化产物时，若发现异常，不直接抛弃结果，而是输出结构化的 [`RepairRequest`](../app/analytics/agents/contracts.py)（包含目标 Agent 类型、原 Session ID、问题描述与证据）。
@@ -60,10 +60,10 @@ flowchart TD
 | Agent 类型 | 核心职责 | 挂载工具与能力 | 交付产物 |
 | :--- | :--- | :--- | :--- |
 | [`Planner`](../app/analytics/agents/planner/agent.py) | 用户目标理解、任务动态拆分、委派调度、修补决策、结果汇总 | `delegate_agent`、`read_file`、`list_dir` | 最终自然语言回答与报告汇总 |
-| [`Explorer`](../app/analytics/agents/explorer/agent.py) | 语义目录检索、历史查询经验复用、只读 SQL 生成、执行与数据探查 | [`semantic_recall`](../app/analytics/agents/explorer/tools/semantic_recall.py)、[`search_query_experiences`](../app/analytics/agents/explorer/tools/query_experience.py)、[`execute_sql`](../app/analytics/agents/explorer/tools/execute_sql.py)、沙盒文件工具 | CSV 数据集、字段画像与数据特征摘要 |
-| [`Analyst`](../app/analytics/agents/analyst/agent.py) | 指标变化贡献率拆解、维度下钻、因果/相关性统计分析 | 沙盒 Shell 命令执行（运行 Python/Pandas/Scipy 分析脚本）、沙盒文件读写 | 归因分析结论、维度贡献率计算结果、统计衍生表 |
-| [`Reviewer`](../app/analytics/agents/reviewer/agent.py) | 独立核验 SQL 取数口径、复核计算脚本逻辑、审查最终结论 | 沙盒 Shell 命令执行（运行校验脚本）、文件读取 | 审查通过确认 或 `RepairRequest` 结构化修补请求 |
-| [`Visualizer`](../app/analytics/agents/visualizer/agent.py) | 静态图表生成、展示表格格式化与自包含 HTML 报告排版（消费 Analyst 汇总结果） | 沙盒 Shell 与文件工具（运行 Matplotlib / Seaborn 渲染静态图表，生成自包含 HTML 报告） | PNG / SVG 静态图表、自包含 HTML 分析报告（.html）和格式化数据文件 |
+| [`Explorer`](../app/analytics/agents/explorer/agent.py) | 语义目录检索、历史查询经验复用、只读 SQL 生成、执行与数据探查 | [`semantic_recall`](../app/analytics/agents/explorer/tools/semantic_recall.py)、[`search_query_experiences`](../app/analytics/agents/explorer/tools/query_experience.py)、[`execute_sql`](../app/analytics/agents/explorer/tools/execute_sql.py)、沙箱文件工具 | CSV 数据集、字段画像与数据特征摘要 |
+| [`Analyst`](../app/analytics/agents/analyst/agent.py) | 指标变化贡献率拆解、维度下钻、因果/相关性统计分析 | 沙箱 Shell 命令执行（运行 Python/Pandas/Scipy 分析脚本）、沙箱文件读写 | 归因分析结论、维度贡献率计算结果、统计衍生表 |
+| [`Reviewer`](../app/analytics/agents/reviewer/agent.py) | 独立核验 SQL 取数口径、复核计算脚本逻辑、审查最终结论 | 沙箱 Shell 命令执行（运行校验脚本）、文件读取 | 审查通过确认 或 `RepairRequest` 结构化修补请求 |
+| [`Visualizer`](../app/analytics/agents/visualizer/agent.py) | 静态图表生成、展示表格格式化与自包含 HTML 报告排版（消费 Analyst 汇总结果） | 沙箱 Shell 与文件工具（运行 Matplotlib / Seaborn 渲染静态图表，生成自包含 HTML 报告） | PNG / SVG 静态图表、自包含 HTML 分析报告（.html）和格式化数据文件 |
 
 ---
 
@@ -71,7 +71,9 @@ flowchart TD
 
 - **SSE 实时事件流**：[`AgentManager.run_agent_turn`](../app/analytics/agents/manager.py) 将 Planner 及各子 Agent 的执行节点状态、消息增量、工具调用参数与返回结果，实时转换为标准化 SSE 事件推送到前端。
 - **对话标题智能生成**：[`ConversationTitleService`](../app/analytics/services/conversation_title.py) 在首轮对话完成时，异步调用轻量模型提取会话核心议题并自动命名。
-- **会话历史管理**：基于 [`ConversationPGRepo`](../app/analytics/repositories/conversation.py) 维护用户全部对话生命周期。
+- **会话历史管理**：在分析运行 PostgreSQL 数据库的 `conversations` 关系表中维护会话目录、草稿、删除请求与标题生成状态，[`ConversationPGRepo`](../app/analytics/repositories/conversation.py) 使用数据库条件查询处理列表和补偿扫描。
+- **运行数据关系化**：`semantic_recall_snapshots` 保存会话级语义召回快照，`conversation_tombstones` 保存跨进程删除墓碑，均支持明确约束、事务和条件查询。
+- **LangGraph 持久化边界**：LangGraph PostgreSQL Checkpointer 只保存 Agent 图状态和消息历史，业务运行数据不再使用 LangGraph Store。
 
 ---
 

@@ -1,6 +1,6 @@
-# 本地 Docker 沙盒
+# 本地 Docker 沙箱
 
-沙盒镜像在构建阶段安装数据分析依赖，运行中的用户容器默认使用
+沙箱镜像在构建阶段安装数据分析依赖，运行中的用户容器默认使用
 `network_mode: none`，不能临时从 PyPI、npm 或外部网站下载内容。
 
 ## 增加依赖
@@ -15,7 +15,7 @@
 镜像名称、构建上下文、构建网络和依赖下载源集中定义在 `docker/compose.yml` 的
 `sandbox-image` 服务中。`SANDBOX_NODE_DOWNLOAD_BASE`、`SANDBOX_PYPI_INDEX_URL`
 和 `SANDBOX_NPM_REGISTRY` 环境变量可以临时覆盖默认下载源。它们只影响镜像构建，
-不会为运行中的沙盒开启网络。
+不会为运行中的沙箱开启网络。
 
 ```bash
 docker compose -f docker/compose.yml build sandbox-image

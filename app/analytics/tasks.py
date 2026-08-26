@@ -12,9 +12,14 @@ from app.analytics.providers import build_conversation_lifecycle_service
 from app.analytics.repositories.conversation import ConversationPGRepo
 from app.analytics.services.conversation_lifecycle import ConversationLifecycleService
 from app.analytics.services.conversation_title import ConversationTitleService
+from app.analytics.services.conversation_tombstone import (
+    ConversationTombstoneService,
+)
 from app.sandbox.providers import create_sandbox_manager
 from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
+from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
+from app.shared.database.base import AnalyticsBase
 from app.shared.tasks.celery_app import celery_app
 from app.shared.tasks.runner import run_async
 from app.shared.tasks.submission import TaskSubmission
@@ -63,17 +68,21 @@ def enqueue_conversation_deletion(
 
 async def _repair_conversation_titles() -> int:
     """扫描超时的标题生成记录并重新提交任务"""
-    persistence = LangGraphPostgresManager(cfg.langgraph_postgresql)
-    await persistence.init()
+    analytics_postgres = PostgresClientManager(
+        cfg.langgraph_postgresql,
+        AnalyticsBase,
+    )
+    analytics_postgres.init()
     try:
-        repository = ConversationPGRepo(persistence.get_store())
-        cutoff = datetime.now(UTC) - timedelta(
-            seconds=cfg.task_queue.lifecycle_schedule_seconds
-        )
-        conversations = await repository.list_pending_title_generations(
-            cutoff,
-            limit=cfg.lifecycle.cleanup_batch_size,
-        )
+        async with analytics_postgres.session() as session:
+            repository = ConversationPGRepo(session)
+            cutoff = datetime.now(UTC) - timedelta(
+                seconds=cfg.task_queue.lifecycle_schedule_seconds
+            )
+            conversations = await repository.list_pending_title_generations(
+                cutoff,
+                limit=cfg.lifecycle.cleanup_batch_size,
+            )
         for conversation in conversations:
             if conversation.title_source is not None:
                 enqueue_conversation_title(
@@ -85,7 +94,7 @@ async def _repair_conversation_titles() -> int:
         logger.info(f"会话标题补偿扫描完成: pending_count={len(conversations)}")
         return len(conversations)
     finally:
-        await persistence.close()
+        await analytics_postgres.close()
 
 
 @celery_app.task(name="dataagent.analytics.repair_conversation_titles")
@@ -101,18 +110,23 @@ async def _generate_conversation_title(
     user_text: str,
 ) -> None:
     """创建短生命周期资源并生成单个会话标题"""
-    persistence = LangGraphPostgresManager(cfg.langgraph_postgresql)
-    await persistence.init()
+    analytics_postgres = PostgresClientManager(
+        cfg.langgraph_postgresql,
+        AnalyticsBase,
+    )
+    analytics_postgres.init()
     try:
-        await ConversationTitleService(create_active_model()).generate_and_update(
-            ConversationPGRepo(persistence.get_store()),
-            user_id,
-            conversation_id,
-            expected_title,
-            user_text,
-        )
+        async with analytics_postgres.session() as session:
+            await ConversationTitleService(create_active_model()).generate_and_update(
+                ConversationPGRepo(session),
+                user_id,
+                conversation_id,
+                expected_title,
+                user_text,
+            )
+            await session.commit()
     finally:
-        await persistence.close()
+        await analytics_postgres.close()
 
 
 @celery_app.task(
@@ -151,22 +165,33 @@ async def _run_with_lifecycle_service[T](
 ) -> T:
     """初始化会话生命周期资源并执行指定操作"""
     persistence = LangGraphPostgresManager(cfg.langgraph_postgresql)
+    analytics_postgres = PostgresClientManager(
+        cfg.langgraph_postgresql,
+        AnalyticsBase,
+    )
     sandbox = create_sandbox_manager(cfg.sandbox)
-    agents = AgentManager(persistence, sandbox)
+    agents = AgentManager(
+        persistence,
+        sandbox,
+        ConversationTombstoneService(analytics_postgres),
+    )
     service = build_conversation_lifecycle_service(
         persistence,
+        analytics_postgres,
         agents,
         sandbox,
         cfg.lifecycle,
         session_lock_timeout=cfg.agent.orchestration.session_lock_timeout,
     )
     await persistence.init()
+    analytics_postgres.init()
     await sandbox.init(start_cleanup=False)
     try:
         return await operation(service)
     finally:
         await agents.close()
         await sandbox.disconnect()
+        await analytics_postgres.close()
         await persistence.close()
 
 

@@ -186,7 +186,7 @@ async def _build_image_data_url(
     conversation_id: UUID,
     attachment: chat_schema.AttachmentReference,
 ) -> str:
-    """读取沙盒中的图片附件，并转换为 data URL"""
+    """读取沙箱中的图片附件，并转换为 data URL"""
     mime_type, _ = mimetypes.guess_type(attachment.f_path)
     if not mime_type:
         mime_type = "application/octet-stream"

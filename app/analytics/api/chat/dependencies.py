@@ -3,14 +3,22 @@
 from typing import Annotated
 
 from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics.repositories.conversation import ConversationPGRepo
-from app.shared.clients.langgraph_postgres_manager import langgraph_postgres_manager
+from app.shared.clients.postgres_client_manager import (
+    analytics_postgres_client_manager,
+)
 
 
-def get_conversation_pg_repo() -> ConversationPGRepo:
+async def get_conversation_pg_repo(
+    session: Annotated[
+        AsyncSession,
+        Depends(analytics_postgres_client_manager.get_session),
+    ],
+) -> ConversationPGRepo:
     """创建会话目录数据访问"""
-    return ConversationPGRepo(langgraph_postgres_manager.get_store())
+    return ConversationPGRepo(session)
 
 
 ConversationPGRepoDep = Annotated[

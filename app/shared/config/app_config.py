@@ -116,7 +116,7 @@ class LifecycleConfig(BaseModel):
     user_deletion_retry_seconds: int = Field(gt=0)
 
 
-# 查询与沙盒配置
+# 查询与沙箱配置
 class QueryConfig(BaseModel):
     """只读分析查询配置"""
 
@@ -139,7 +139,7 @@ class SandboxOwnershipConfig(BaseModel):
 
 
 class SandboxConfig(BaseModel):
-    """本地 Docker 沙盒配置"""
+    """本地 Docker 沙箱配置"""
 
     deployment_namespace: str = Field(
         min_length=1,
@@ -171,7 +171,7 @@ class SandboxConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_size_limits(self) -> "SandboxConfig":
-        """校验沙盒容量限制之间的关系"""
+        """校验沙箱容量限制之间的关系"""
         if self.max_output_bytes > self.max_capture_bytes:
             raise ValueError("max_output_bytes 不能大于 max_capture_bytes")
         if self.max_capture_bytes > self.max_file_bytes:
@@ -346,7 +346,7 @@ class Cfg(BaseModel):
     auth: AuthConfig
     lifecycle: LifecycleConfig
 
-    # 查询与沙盒配置
+    # 查询与沙箱配置
     query: QueryConfig
     sandbox: SandboxConfig
 
@@ -359,7 +359,7 @@ class Cfg(BaseModel):
 
     @model_validator(mode="after")
     def validate_cross_component_invariants(self) -> "Cfg":
-        """校验查询、沙盒、目录和数据连接之间的全局约束"""
+        """校验查询、沙箱、目录和数据连接之间的全局约束"""
         if self.query.max_output_bytes > self.sandbox.max_file_bytes:
             raise ValueError("query.max_output_bytes 不能大于 sandbox.max_file_bytes")
         return self

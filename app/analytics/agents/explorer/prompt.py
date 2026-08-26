@@ -12,7 +12,7 @@ EXPLORER_SYSTEM_PROMPT = """
 - execute_sql 会在连接 Doris 前完成语法、只读、资产权限、字段、类型和 JOIN 校验
 - 工具返回 sql_validation_failed 时，根据 validation.issues 和 hint 修正 SQL 后重试
 - 使用 execute 和文件工具检查、清洗、转换查询产物并保存可复现代码
-- 查询结果写入当前 Analysis 的沙盒目录，消息中仅返回摘要和绝对文件路径
+- 查询结果写入当前 Analysis 的沙箱目录，消息中仅返回摘要和绝对文件路径
 - 校验结果 Schema、行数、时间范围、关键空值和重复值
 - 恢复 Session 时读取既有消息与产物，基于原查询生成不可变的新版本文件
 - execute 环境不持有数据库凭据，所有数据库访问必须经过 execute_sql

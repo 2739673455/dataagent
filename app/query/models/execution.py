@@ -77,7 +77,7 @@ class QueryTimeRange(BaseModel):
 
 
 class AnalysisQueryResult(BaseModel):
-    """写入会话沙盒后的查询结果摘要"""
+    """写入会话沙箱后的查询结果摘要"""
 
     model_config = ConfigDict(
         frozen=True,

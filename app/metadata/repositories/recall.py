@@ -1,39 +1,65 @@
-"""语义召回记录 PostgreSQL Store 数据访问"""
+"""语义召回快照 PostgreSQL 数据访问"""
 
+from typing import cast
 from uuid import UUID
 
-from langgraph.store.base import BaseStore
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.metadata.models.recall import SemanticRecallRecord
-
-_SEMANTIC_RECALL_NAMESPACE = "semantic_recalls"
-_DELETE_BATCH_SIZE = 1_000
+from app.metadata.models.recall import (
+    SemanticRecallKind,
+    SemanticRecallRecord,
+    SemanticRecallSnapshot,
+)
+from app.metadata.models.search import SemanticSearchRequest, SemanticSearchResponse
 
 
 class SemanticRecallPGRepo:
-    """按用户和会话隔离语义召回记录"""
+    """按用户和会话隔离语义召回快照"""
 
-    def __init__(self, store: BaseStore) -> None:
-        """初始化召回记录数据访问"""
-        self._store = store
+    def __init__(self, session: AsyncSession) -> None:
+        """初始化召回快照数据访问"""
+        self._session = session
 
     @staticmethod
-    def _namespace(user_id: int, conversation_id: UUID) -> tuple[str, str, str]:
-        """构造会话级召回记录命名空间"""
-        return (
-            _SEMANTIC_RECALL_NAMESPACE,
-            str(user_id),
-            str(conversation_id),
+    def _to_record(snapshot: SemanticRecallSnapshot) -> SemanticRecallRecord:
+        """将关系模型转换为领域记录"""
+        return SemanticRecallRecord(
+            recall_id=snapshot.recall_id,
+            user_id=snapshot.user_id,
+            conversation_id=snapshot.conversation_id,
+            kind=cast("SemanticRecallKind", snapshot.kind),
+            request=(
+                SemanticSearchRequest.model_validate(snapshot.request)
+                if snapshot.request is not None
+                else None
+            ),
+            response=SemanticSearchResponse.model_validate(snapshot.response),
+            source_recall_ids=snapshot.source_recall_ids,
+            created_at=snapshot.created_at,
+            updated_at=snapshot.updated_at,
         )
 
     async def save(self, record: SemanticRecallRecord) -> None:
-        """保存召回记录快照"""
-        await self._store.aput(
-            self._namespace(record.user_id, record.conversation_id),
-            record.recall_id,
-            record.model_dump(mode="json"),
-            index=False,
+        """保存召回快照"""
+        self._session.add(
+            SemanticRecallSnapshot(
+                user_id=record.user_id,
+                conversation_id=record.conversation_id,
+                recall_id=record.recall_id,
+                kind=record.kind,
+                request=(
+                    record.request.model_dump(mode="json")
+                    if record.request is not None
+                    else None
+                ),
+                response=record.response.model_dump(mode="json"),
+                source_recall_ids=record.source_recall_ids,
+                created_at=record.created_at,
+                updated_at=record.updated_at,
+            )
         )
+        await self._session.flush()
 
     async def get(
         self,
@@ -41,14 +67,15 @@ class SemanticRecallPGRepo:
         conversation_id: UUID,
         recall_id: str,
     ) -> SemanticRecallRecord | None:
-        """获取指定召回记录"""
-        item = await self._store.aget(
-            self._namespace(user_id, conversation_id),
-            recall_id,
+        """获取指定召回快照"""
+        snapshot = await self._session.scalar(
+            select(SemanticRecallSnapshot).where(
+                SemanticRecallSnapshot.user_id == user_id,
+                SemanticRecallSnapshot.conversation_id == conversation_id,
+                SemanticRecallSnapshot.recall_id == recall_id,
+            )
         )
-        if item is None:
-            return None
-        return SemanticRecallRecord.model_validate(item.value)
+        return self._to_record(snapshot) if snapshot is not None else None
 
     async def list(
         self,
@@ -58,18 +85,23 @@ class SemanticRecallPGRepo:
         limit: int,
         offset: int = 0,
     ) -> list[SemanticRecallRecord]:
-        """按创建时间倒序列出会话召回记录"""
-        items = await self._store.asearch(
-            self._namespace(user_id, conversation_id),
-            limit=limit,
-            offset=offset,
-        )
-        records = [SemanticRecallRecord.model_validate(item.value) for item in items]
-        return sorted(
-            records,
-            key=lambda record: (record.created_at, record.recall_id),
-            reverse=True,
-        )
+        """按创建时间倒序列出会话召回快照"""
+        snapshots = (
+            await self._session.scalars(
+                select(SemanticRecallSnapshot)
+                .where(
+                    SemanticRecallSnapshot.user_id == user_id,
+                    SemanticRecallSnapshot.conversation_id == conversation_id,
+                )
+                .order_by(
+                    SemanticRecallSnapshot.created_at.desc(),
+                    SemanticRecallSnapshot.recall_id.desc(),
+                )
+                .limit(limit)
+                .offset(offset)
+            )
+        ).all()
+        return [self._to_record(snapshot) for snapshot in snapshots]
 
     async def delete(
         self,
@@ -77,30 +109,35 @@ class SemanticRecallPGRepo:
         conversation_id: UUID,
         recall_id: str,
     ) -> bool:
-        """删除召回记录并返回删除前是否存在"""
-        namespace = self._namespace(user_id, conversation_id)
-        item = await self._store.aget(namespace, recall_id)
-        if item is None:
+        """删除召回快照并返回删除前是否存在"""
+        snapshot = await self._session.scalar(
+            select(SemanticRecallSnapshot).where(
+                SemanticRecallSnapshot.user_id == user_id,
+                SemanticRecallSnapshot.conversation_id == conversation_id,
+                SemanticRecallSnapshot.recall_id == recall_id,
+            )
+        )
+        if snapshot is None:
             return False
-        await self._store.adelete(namespace, recall_id)
+        await self._session.delete(snapshot)
+        await self._session.flush()
         return True
 
     async def delete_all(self, user_id: int, conversation_id: UUID) -> None:
-        """删除会话下的全部召回记录"""
-        namespace = self._namespace(user_id, conversation_id)
-        while items := await self._store.asearch(
-            namespace,
-            limit=_DELETE_BATCH_SIZE,
-        ):
-            for item in items:
-                await self._store.adelete(namespace, item.key)
+        """删除会话下的全部召回快照"""
+        await self._session.execute(
+            delete(SemanticRecallSnapshot).where(
+                SemanticRecallSnapshot.user_id == user_id,
+                SemanticRecallSnapshot.conversation_id == conversation_id,
+            )
+        )
+        await self._session.flush()
 
     async def delete_all_by_user(self, user_id: int) -> None:
-        """删除用户全部会话下的召回记录"""
-        namespace_prefix = (_SEMANTIC_RECALL_NAMESPACE, str(user_id))
-        while items := await self._store.asearch(
-            namespace_prefix,
-            limit=_DELETE_BATCH_SIZE,
-        ):
-            for item in items:
-                await self._store.adelete(item.namespace, item.key)
+        """删除用户全部会话下的召回快照"""
+        await self._session.execute(
+            delete(SemanticRecallSnapshot).where(
+                SemanticRecallSnapshot.user_id == user_id
+            )
+        )
+        await self._session.flush()

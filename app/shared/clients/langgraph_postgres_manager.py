@@ -6,7 +6,6 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langgraph.store.postgres.aio import AsyncPostgresStore
 from psycopg import AsyncConnection
 from psycopg.conninfo import make_conninfo
 from psycopg.rows import DictRow, dict_row
@@ -25,7 +24,7 @@ def _advisory_lock_key(name: str) -> int:
 
 
 class LangGraphPostgresManager:
-    """LangGraph PostgreSQL Checkpointer 和 Store 生命周期管理器"""
+    """LangGraph PostgreSQL Checkpointer 和咨询锁生命周期管理器"""
 
     def __init__(self, db_config: DBConfig) -> None:
         """初始化 PostgreSQL 持久化配置"""
@@ -33,7 +32,6 @@ class LangGraphPostgresManager:
         self._pool: AsyncConnectionPool[AsyncConnection[DictRow]] | None = None
         self._advisory_pool: AsyncConnectionPool[AsyncConnection[DictRow]] | None = None
         self._checkpointer: AsyncPostgresSaver | None = None
-        self._store: AsyncPostgresStore | None = None
         self._advisory_locks: dict[str, asyncio.Lock] = {}
 
     @property
@@ -48,7 +46,7 @@ class LangGraphPostgresManager:
         )
 
     async def init(self) -> None:
-        """初始化连接池和 LangGraph 持久化组件"""
+        """初始化连接池和 LangGraph Checkpointer"""
         pool = AsyncConnectionPool[AsyncConnection[DictRow]](
             conninfo=self._conninfo,
             min_size=1,
@@ -80,10 +78,8 @@ class LangGraphPostgresManager:
             raise
 
         checkpointer = AsyncPostgresSaver(pool)
-        store = AsyncPostgresStore(pool)
         try:
             await checkpointer.setup()
-            await store.setup()
         except Exception:
             await advisory_pool.close()
             await pool.close()
@@ -92,19 +88,12 @@ class LangGraphPostgresManager:
         self._pool = pool
         self._advisory_pool = advisory_pool
         self._checkpointer = checkpointer
-        self._store = store
 
     def get_checkpointer(self) -> AsyncPostgresSaver:
         """获取已初始化的 Checkpointer"""
         if self._checkpointer is None:
             raise RuntimeError("LangGraph PostgreSQL 管理器尚未初始化")
         return self._checkpointer
-
-    def get_store(self) -> AsyncPostgresStore:
-        """获取已初始化的 Store"""
-        if self._store is None:
-            raise RuntimeError("LangGraph PostgreSQL 管理器尚未初始化")
-        return self._store
 
     @asynccontextmanager
     async def advisory_lock(
@@ -180,7 +169,6 @@ class LangGraphPostgresManager:
         self._advisory_pool = None
         self._pool = None
         self._checkpointer = None
-        self._store = None
         self._advisory_locks.clear()
 
 

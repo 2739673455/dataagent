@@ -75,7 +75,7 @@ class DockerSandboxBackend(BaseSandbox):
         session_scope: SandboxSessionScope | None = None,
         execution_uid: int | None = None,
     ) -> None:
-        """初始化会话级 Docker 沙盒后端"""
+        """初始化会话级 Docker 沙箱后端"""
         self._user_id = user_id
         self._conversation_id = conversation_id
         self._conversation_dir = f"{_SANDBOX_WORKSPACE_ROOT}/{conversation_id}"
@@ -123,7 +123,7 @@ class DockerSandboxBackend(BaseSandbox):
 
     @property
     def id(self) -> str:
-        """获取沙盒后端唯一标识"""
+        """获取沙箱后端唯一标识"""
         scope = (
             f":{self._session_scope.relative_workspace}"
             if self._session_scope is not None
@@ -193,7 +193,7 @@ class DockerSandboxBackend(BaseSandbox):
 
     @contextmanager
     def _operation(self) -> Generator[None, None, None]:
-        """在资源生命周期保护下执行沙盒操作"""
+        """在资源生命周期保护下执行沙箱操作"""
         self._touch()
         existing_container = getattr(self._operation_local, "container", None)
         cancel_event = getattr(self._operation_local, "cancel_event", None)

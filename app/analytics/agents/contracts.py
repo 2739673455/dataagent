@@ -116,7 +116,7 @@ class DelegateAgentRequest(StrictProtocolModel):
 
 
 class ArtifactReference(StrictProtocolModel):
-    """沙盒内可验证产物的引用"""
+    """沙箱内可验证产物的引用"""
 
     path: Annotated[
         str,
@@ -140,9 +140,9 @@ class ArtifactReference(StrictProtocolModel):
     @field_validator("path")
     @classmethod
     def validate_sandbox_path(cls, value: str) -> str:
-        """只接受规范化的沙盒绝对路径"""
+        """只接受规范化的沙箱绝对路径"""
         if not value.startswith("/"):
-            raise ValueError("产物路径必须是绝对沙盒路径")
+            raise ValueError("产物路径必须是绝对沙箱路径")
         segments = value.split("/")
         if any(segment in {".", ".."} for segment in segments):
             raise ValueError("产物路径不能包含相对路径点段")

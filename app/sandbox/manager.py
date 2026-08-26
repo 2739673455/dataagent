@@ -120,14 +120,14 @@ class IteratorReader(io.RawIOBase):
 
 
 class DockerSandboxManager:
-    """管理每个用户唯一的本地 Docker 沙盒"""
+    """管理每个用户唯一的本地 Docker 沙箱"""
 
     def __init__(
         self,
         sandbox_config: SandboxConfig,
         ownership: SandboxOwnership,
     ) -> None:
-        """初始化 Docker 沙盒管理器"""
+        """初始化 Docker 沙箱管理器"""
         self._config = sandbox_config
         self._ownership = ownership
         self._client: docker.DockerClient | None = None
@@ -162,7 +162,7 @@ class DockerSandboxManager:
         return self._client
 
     def _init_sync(self) -> None:
-        """连接 Docker 并加载沙盒镜像"""
+        """连接 Docker 并加载沙箱镜像"""
         client = docker.from_env()
         try:
             client.ping()
@@ -186,7 +186,7 @@ class DockerSandboxManager:
         self._client = client
 
     async def init(self, *, start_cleanup: bool = True) -> None:
-        """初始化 Docker 沙盒管理器"""
+        """初始化 Docker 沙箱管理器"""
         async with self._init_lock:
             if not self._ownership_started:
                 await asyncio.to_thread(self._ownership.start_runtime)
@@ -241,7 +241,7 @@ class DockerSandboxManager:
             )
 
     def _touch_user(self, user_id: int) -> None:
-        """记录用户沙盒最近活动时间"""
+        """记录用户沙箱最近活动时间"""
         activity_at = time.time()
         with self._activity_lock:
             self._last_activity[user_id] = activity_at
@@ -255,7 +255,7 @@ class DockerSandboxManager:
         return max(local_activity, self._ownership.last_activity(user_id))
 
     def _idle_seconds(self, user_id: int) -> float:
-        """获取用户沙盒持续空闲的秒数"""
+        """获取用户沙箱持续空闲的秒数"""
         last_activity = self._last_activity_timestamp(user_id)
         if last_activity <= 0:
             return 0.0
@@ -845,7 +845,7 @@ class DockerSandboxManager:
         """校验并规范化 UID 注册表中的 Session 键"""
         parts = PurePosixPath(key).parts
         if len(parts) != 6 or parts[1] != "analyses" or parts[3] != "sessions":
-            raise ValueError("沙盒 Session UID 键无效")
+            raise ValueError("沙箱 Session UID 键无效")
         conversation_id = str(UUID(parts[0]))
         scope = SandboxSessionScope(parts[2], parts[4], parts[5])
         return scope.registry_key(UUID(conversation_id))
@@ -938,7 +938,7 @@ class DockerSandboxManager:
             )
             if candidate not in used_uids:
                 return candidate
-        raise RuntimeError("沙盒 UID 分配范围已耗尽")
+        raise RuntimeError("沙箱 UID 分配范围已耗尽")
 
     def _ensure_workspace_archive_sync(
         self,
@@ -1121,7 +1121,7 @@ class DockerSandboxManager:
         user_id: int,
         conversation_id: UUID,
     ) -> DockerSandboxBackend:
-        """获取用户指定会话的沙盒后端"""
+        """获取用户指定会话的沙箱后端"""
         await self.init()
         (
             user_lock,
@@ -1131,7 +1131,7 @@ class DockerSandboxManager:
             mutation_lock,
         ) = await self._get_resources(user_id, conversation_id)
         if conversation_guard is None or mutation_lock is None:
-            raise RuntimeError("会话沙盒守卫不可用")
+            raise RuntimeError("会话沙箱守卫不可用")
 
         def prepare() -> int:
             """在独占维护窗口中准备会话工作区"""
@@ -1193,7 +1193,7 @@ class DockerSandboxManager:
             mutation_lock,
         ) = await self._get_resources(user_id, conversation_id)
         if conversation_guard is None or mutation_lock is None:
-            raise RuntimeError("会话沙盒守卫不可用")
+            raise RuntimeError("会话沙箱守卫不可用")
 
         def prepare() -> tuple[int, int]:
             """在独占维护窗口中准备 Agent Session 工作区"""
@@ -1524,7 +1524,7 @@ class DockerSandboxManager:
             mutation_lock,
         ) = await self._get_resources(user_id, conversation_id)
         if conversation_guard is None or mutation_lock is None:
-            raise RuntimeError("会话沙盒守卫不可用")
+            raise RuntimeError("会话沙箱守卫不可用")
         async with user_lock:
             await asyncio.to_thread(
                 self._upload_attachment_sync,
@@ -1584,7 +1584,7 @@ class DockerSandboxManager:
             conversation_id,
         )
         if conversation_guard is None:
-            raise RuntimeError("会话沙盒守卫不可用")
+            raise RuntimeError("会话沙箱守卫不可用")
         async with user_lock:
             try:
                 content = await asyncio.to_thread(
@@ -1693,7 +1693,7 @@ class DockerSandboxManager:
         user_id: int,
         conversation_id: UUID,
     ) -> None:
-        """删除用户沙盒中的会话目录"""
+        """删除用户沙箱中的会话目录"""
         await self.init()
         (
             user_lock,
@@ -1746,7 +1746,7 @@ class DockerSandboxManager:
                         if isinstance(raw_output, bytes)
                         else str(raw_output)
                     ).strip()
-                    raise OSError(detail or "删除对话沙盒失败")
+                    raise OSError(detail or "删除对话沙箱失败")
                 registry = self._load_uid_registry_sync(container)
                 registry.conversations.pop(str(conversation_id), None)
                 session_prefix = f"{conversation_id}/"
@@ -1897,7 +1897,7 @@ class DockerSandboxManager:
                 self._record_cleanup_result(started_at, [error])
 
     def _managed_user_ids_sync(self) -> set[int]:
-        """列出 Docker 中已有的用户沙盒"""
+        """列出 Docker 中已有的用户沙箱"""
         user_ids: set[int] = set()
         containers = self._get_client().containers.list(
             all=True,
@@ -2005,7 +2005,7 @@ class DockerSandboxManager:
         await self._close(finalize_containers=True)
 
     async def disconnect(self) -> None:
-        """释放短生命周期管理器且保留运行中的沙盒容器"""
+        """释放短生命周期管理器且保留运行中的沙箱容器"""
         await self._close(finalize_containers=False)
 
     async def _close(self, *, finalize_containers: bool) -> None:

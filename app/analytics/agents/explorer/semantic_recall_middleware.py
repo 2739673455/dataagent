@@ -15,7 +15,8 @@ from loguru import logger
 
 from app.analytics.agents.explorer.recall_runtime import (
     create_authorized_semantic_recall_service,
-    resolve_semantic_recall_context,
+    resolve_semantic_recall_identity,
+    semantic_recall_repository,
 )
 from app.analytics.agents.explorer.semantic_recall_protocol import (
     SemanticRecallReference,
@@ -86,19 +87,17 @@ class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
 
         messages = list(request.messages)
         try:
-            user_id, conversation_id, repo = resolve_semantic_recall_context(
-                get_config(),
-                request.runtime.store,
-            )
-            service = await create_authorized_semantic_recall_service(user_id, repo)
-            records: dict[str, SemanticRecallRecord] = {}
-            for _, reference in references:
-                if reference.recall_id not in records:
-                    records[reference.recall_id] = await service.get(
-                        user_id,
-                        conversation_id,
-                        reference.recall_id,
-                    )
+            user_id, conversation_id = resolve_semantic_recall_identity(get_config())
+            async with semantic_recall_repository() as repo:
+                service = await create_authorized_semantic_recall_service(user_id, repo)
+                records: dict[str, SemanticRecallRecord] = {}
+                for _, reference in references:
+                    if reference.recall_id not in records:
+                        records[reference.recall_id] = await service.get(
+                            user_id,
+                            conversation_id,
+                            reference.recall_id,
+                        )
         except SemanticRecallsNotFoundError as exc:
             expanded_error = json.dumps(
                 {

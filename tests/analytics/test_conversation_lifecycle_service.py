@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from app.analytics.models.conversation import ConversationInfo
+from app.analytics.models.conversation import Conversation
 from app.analytics.services.conversation_lifecycle import ConversationLifecycleService
 from app.shared.config.app_config import LifecycleConfig
 
@@ -33,8 +33,8 @@ def build_config() -> LifecycleConfig:
     )
 
 
-def build_conversation(*, is_draft: bool, updated_at: datetime) -> ConversationInfo:
-    return ConversationInfo(
+def build_conversation(*, is_draft: bool, updated_at: datetime) -> Conversation:
+    return Conversation(
         id=uuid4(),
         user_id=7,
         title="新对话",
@@ -43,6 +43,22 @@ def build_conversation(*, is_draft: bool, updated_at: datetime) -> ConversationI
         create_at=updated_at,
         update_at=updated_at,
     )
+
+
+@asynccontextmanager
+async def conversation_repository(
+    repository: MagicMock,
+) -> AsyncGenerator[MagicMock]:
+    """提供测试使用的会话数据访问上下文"""
+    yield repository
+
+
+@asynccontextmanager
+async def recall_repository(
+    repository: MagicMock,
+) -> AsyncGenerator[MagicMock]:
+    """提供测试使用的语义召回数据访问上下文"""
+    yield repository
 
 
 class ConversationLifecycleServiceTest(unittest.IsolatedAsyncioTestCase):
@@ -66,8 +82,8 @@ class ConversationLifecycleServiceTest(unittest.IsolatedAsyncioTestCase):
         sandbox.delete_conversation = AsyncMock()
         return (
             ConversationLifecycleService(
-                lambda: conversation_repo,
-                lambda: recall_cleaner,
+                lambda: conversation_repository(conversation_repo),
+                lambda: recall_repository(recall_cleaner),
                 persistence,
                 agents,
                 sandbox,

@@ -24,6 +24,7 @@ from app.shared.clients.embedding_client_manager import embedding_client_manager
 from app.shared.clients.es_client_manager import es_client_manager
 from app.shared.clients.langgraph_postgres_manager import langgraph_postgres_manager
 from app.shared.clients.postgres_client_manager import (
+    analytics_postgres_client_manager,
     auth_postgres_client_manager,
     meta_postgres_client_manager,
 )
@@ -96,6 +97,8 @@ async def lifespan(app: FastAPI):
         await auth_postgres_client_manager.init_tables()
         meta_postgres_client_manager.init()
         await meta_postgres_client_manager.init_tables()
+        analytics_postgres_client_manager.init()
+        await analytics_postgres_client_manager.init_tables()
         admin_doris_client_manager.init()
         await verify_doris_query_identities()
         logger.info("应用资源初始化完成")
@@ -109,6 +112,7 @@ async def lifespan(app: FastAPI):
         await langgraph_postgres_manager.close()
         await embedding_client_manager.close()
         await es_client_manager.close()
+        await analytics_postgres_client_manager.close()
         await meta_postgres_client_manager.close()
         await auth_postgres_client_manager.close()
         await admin_doris_client_manager.close()

@@ -17,7 +17,7 @@ from app.workflows.contracts import (
 
 
 class UserDeletionService:
-    """协调认证库、会话库、元数据库、索引和沙盒的用户注销"""
+    """协调认证库、会话库、元数据库、索引和沙箱的用户注销"""
 
     def __init__(
         self,

@@ -3,6 +3,8 @@
 import inspect
 import json
 import unittest
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -13,7 +15,6 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 from langgraph.runtime import Runtime
-from langgraph.store.memory import InMemoryStore
 from pydantic import BaseModel
 
 from app.analytics.agents.explorer.semantic_recall_middleware import (
@@ -28,6 +29,7 @@ from app.analytics.agents.explorer.tools import (
     search_semantic_resources,
 )
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
+from app.metadata.models.recall import SemanticRecallRecord
 from app.metadata.models.search import (
     SemanticColumnResult,
     SemanticMatchReason,
@@ -46,6 +48,80 @@ from app.metadata.services.recall import (
     SemanticRecallService,
     SemanticRecallsNotFoundError,
 )
+
+
+class InMemorySemanticRecallRepo:
+    """为服务与工具单元测试提供进程内召回仓储"""
+
+    def __init__(self) -> None:
+        """初始化空召回记录集合"""
+        self.records: dict[tuple[int, object, str], SemanticRecallRecord] = {}
+
+    async def save(self, record: SemanticRecallRecord) -> None:
+        """保存召回记录"""
+        self.records[(record.user_id, record.conversation_id, record.recall_id)] = (
+            record
+        )
+
+    async def get(
+        self,
+        user_id: int,
+        conversation_id: object,
+        recall_id: str,
+    ) -> SemanticRecallRecord | None:
+        """获取召回记录"""
+        return self.records.get((user_id, conversation_id, recall_id))
+
+    async def list(
+        self,
+        user_id: int,
+        conversation_id: object,
+        *,
+        limit: int,
+        offset: int = 0,
+    ) -> list[SemanticRecallRecord]:
+        """按创建时间倒序列出召回记录"""
+        records = sorted(
+            (
+                record
+                for (owner_id, owner_conversation_id, _), record in self.records.items()
+                if owner_id == user_id
+                and owner_conversation_id == conversation_id
+            ),
+            key=lambda record: (record.created_at, record.recall_id),
+            reverse=True,
+        )
+        return records[offset : offset + limit]
+
+    async def delete(
+        self,
+        user_id: int,
+        conversation_id: object,
+        recall_id: str,
+    ) -> bool:
+        """删除召回记录"""
+        return self.records.pop((user_id, conversation_id, recall_id), None) is not None
+
+    async def delete_all(self, user_id: int, conversation_id: object) -> None:
+        """删除会话全部召回记录"""
+        self.records = {
+            key: value
+            for key, value in self.records.items()
+            if key[:2] != (user_id, conversation_id)
+        }
+
+
+def recall_repo(repo: InMemorySemanticRecallRepo) -> SemanticRecallPGRepo:
+    """将测试仓储收窄为服务声明的具体仓储类型"""
+    return cast(SemanticRecallPGRepo, repo)
+
+
+@asynccontextmanager
+async def recall_repository_context(
+    repo: InMemorySemanticRecallRepo,
+) -> AsyncGenerator[SemanticRecallPGRepo]:
+    """模拟工具使用的短事务召回仓储上下文"""
+    yield recall_repo(repo)
 
 
 def build_response(
@@ -149,10 +225,9 @@ class SemanticRecallServiceTest(unittest.IsolatedAsyncioTestCase):
     """验证召回记录生命周期和会话隔离"""
 
     async def asyncSetUp(self) -> None:
-        self.store = InMemoryStore()
-        self.repo = SemanticRecallPGRepo(self.store)
+        self.repo = InMemorySemanticRecallRepo()
         self.service = SemanticRecallService(
-            self.repo,
+            recall_repo(self.repo),
             build_authorization_filter(unrestricted=True),
         )
         self.user_id = 7
@@ -299,7 +374,7 @@ class SemanticRecallServiceTest(unittest.IsolatedAsyncioTestCase):
             second,
         )
         restricted = SemanticRecallService(
-            self.repo,
+            recall_repo(self.repo),
             build_authorization_filter(
                 AssetIdentity(
                     "doris",
@@ -373,10 +448,9 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
     async def test_tool_message_persists_reference_and_model_sees_authorized_record(
         self,
     ) -> None:
-        store = InMemoryStore()
-        repo = SemanticRecallPGRepo(store)
+        repo = InMemorySemanticRecallRepo()
         unrestricted_service = SemanticRecallService(
-            repo,
+            recall_repo(repo),
             build_authorization_filter(unrestricted=True),
         )
         conversation_id = uuid4()
@@ -410,10 +484,10 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         request = ModelRequest(
             model=GenericFakeChatModel(messages=iter([AIMessage(content="ok")])),
             messages=messages,
-            runtime=Runtime(store=store),
+            runtime=Runtime(),
         )
         restricted_service = SemanticRecallService(
-            repo,
+            recall_repo(repo),
             build_authorization_filter(
                 AssetIdentity("doris", "analytics", "orders", "status")
             ),
@@ -439,6 +513,11 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
                 "create_authorized_semantic_recall_service",
                 new=AsyncMock(return_value=restricted_service),
             ),
+            patch(
+                "app.analytics.agents.explorer.semantic_recall_middleware."
+                "semantic_recall_repository",
+                return_value=recall_repository_context(repo),
+            ),
         ):
             await SemanticRecallExpansionMiddleware().awrap_model_call(
                 request,
@@ -453,10 +532,9 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("paid", expanded_content)
 
     async def test_get_tool_writes_only_recall_reference_to_state(self) -> None:
-        store = InMemoryStore()
-        repo = SemanticRecallPGRepo(store)
+        repo = InMemorySemanticRecallRepo()
         service = SemanticRecallService(
-            repo,
+            recall_repo(repo),
             build_authorization_filter(unrestricted=True),
         )
         conversation_id = uuid4()
@@ -470,12 +548,19 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         builder.add_node("tools", ToolNode([get_semantic_recall]))
         builder.add_edge(START, "tools")
         builder.add_edge("tools", END)
-        graph = builder.compile(store=store)
+        graph = builder.compile()
 
-        with patch(
-            "app.analytics.agents.explorer.tools.semantic_recall."
-            "create_authorized_semantic_recall_service",
-            new=AsyncMock(return_value=service),
+        with (
+            patch(
+                "app.analytics.agents.explorer.tools.semantic_recall."
+                "create_authorized_semantic_recall_service",
+                new=AsyncMock(return_value=service),
+            ),
+            patch(
+                "app.analytics.agents.explorer.tools.semantic_recall."
+                "semantic_recall_repository",
+                return_value=recall_repository_context(repo),
+            ),
         ):
             result = await graph.ainvoke(
                 {
@@ -508,23 +593,30 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("semantic_recall", payload)
         self.assertNotIn("amount", content)
 
-    async def test_tool_node_injects_store_and_conversation_context(self) -> None:
-        store = InMemoryStore()
+    async def test_tool_node_injects_conversation_context(self) -> None:
+        repo = InMemorySemanticRecallRepo()
         builder = StateGraph(MessagesState)
         builder.add_node("tools", ToolNode([list_semantic_recalls]))
         builder.add_edge(START, "tools")
         builder.add_edge("tools", END)
-        graph = builder.compile(store=store)
+        graph = builder.compile()
         conversation_id = uuid4()
 
         service = SemanticRecallService(
-            SemanticRecallPGRepo(store),
+            recall_repo(repo),
             build_authorization_filter(unrestricted=True),
         )
-        with patch(
-            "app.analytics.agents.explorer.tools.semantic_recall."
-            "create_authorized_semantic_recall_service",
-            new=AsyncMock(return_value=service),
+        with (
+            patch(
+                "app.analytics.agents.explorer.tools.semantic_recall."
+                "create_authorized_semantic_recall_service",
+                new=AsyncMock(return_value=service),
+            ),
+            patch(
+                "app.analytics.agents.explorer.tools.semantic_recall."
+                "semantic_recall_repository",
+                return_value=recall_repository_context(repo),
+            ),
         ):
             result = await graph.ainvoke(
                 {

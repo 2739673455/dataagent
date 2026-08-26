@@ -8,7 +8,6 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.store.base import BaseStore
 
 from app.analytics.agents.analyst.prompt import ANALYST_SYSTEM_PROMPT
 from app.analytics.agents.contracts import SpecialistResult
@@ -21,7 +20,6 @@ def create_analyst_agent(
     tools: Sequence[BaseTool],
     backend: BackendProtocol,
     checkpointer: BaseCheckpointSaver,
-    store: BaseStore,
     skills: Sequence[str] = (),
 ) -> CompiledStateGraph:
     """编译分析 Agent"""
@@ -40,6 +38,5 @@ def create_analyst_agent(
         subagents=[],
         response_format=SpecialistResult,
         checkpointer=checkpointer,
-        store=store,
         name="analyst",
     )

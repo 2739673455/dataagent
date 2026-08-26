@@ -83,7 +83,7 @@ class ReadonlyQueryRepository(Protocol):
 
 
 class QueryArtifactStore(Protocol):
-    """查询产物写入会话沙盒的最小接口"""
+    """查询产物写入会话沙箱的最小接口"""
 
     async def write_artifact(
         self,
@@ -92,7 +92,7 @@ class QueryArtifactStore(Protocol):
         path: str,
         content: BinaryIO,
     ) -> None:
-        """将查询产物写入指定用户的会话沙盒"""
+        """将查询产物写入指定用户的会话沙箱"""
         ...
 
 
@@ -206,7 +206,7 @@ class _Utf8LimitedWriter:
 
 
 class AnalysisQueryService:
-    """强制经过 Guard 后流式执行查询并写入当前会话沙盒"""
+    """强制经过 Guard 后流式执行查询并写入当前会话沙箱"""
 
     def __init__(
         self,

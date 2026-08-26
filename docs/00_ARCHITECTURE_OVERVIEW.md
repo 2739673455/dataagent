@@ -2,7 +2,7 @@
 
 ## 1. 架构定位与业务目标
 
-DataAgent 是面向企业数据分析场景的多 Agent 协同系统。系统通过持久化规划器（Planner）、专业子 Agent（探查、分析、审查、可视化）、多租户安全沙盒以及端到端数据权限管控体系，实现从自然语言提问到受控取数、深度归因、代码复核及分析产物交付的闭环数据分析。
+DataAgent 是面向企业数据分析场景的多 Agent 协同系统。系统通过持久化规划器（Planner）、专业子 Agent（探查、分析、审查、可视化）、多租户安全沙箱以及端到端数据权限管控体系，实现从自然语言提问到受控取数、深度归因、代码复核及分析产物交付的闭环数据分析。
 
 ```mermaid
 flowchart TD
@@ -12,7 +12,7 @@ flowchart TD
         Auth[01 认证授权与数据安全]
         Meta[02 元数据资产与语义检索]
         Query[03 安全查询引擎与执行守卫]
-        SandboxMgr[05 Docker 多租户沙盒管理器]
+        SandboxMgr[05 Docker 多租户沙箱管理器]
     end
 
     subgraph AgentLayer [04 多 Agent 协同与分析调度]
@@ -61,7 +61,7 @@ flowchart TD
 | [`02_METADATA_AND_SEARCH.md`](../docs/02_METADATA_AND_SEARCH.md) | 元数据资产与语义检索 | 表/字段/指标元数据全生命周期管理、YAML 格式导入导出与冲突校验、ES 全文/向量/字段值多索引版本同步、多阶段语义召回、拓扑关系补全与召回历史沉淀 | [`MetaCatalogService`](../app/metadata/services/catalog.py)<br>[`MetaImportService`](../app/metadata/services/import_service.py)<br>[`MetaIndexService`](../app/metadata/services/index.py)<br>[`MetaSearchService`](../app/metadata/services/search.py) |
 | [`03_QUERY_ENGINE_AND_GUARD.md`](../docs/03_QUERY_ENGINE_AND_GUARD.md) | 安全查询引擎与执行守卫 | 基于用户绑定的 Doris 隔离查询身份受控执行、连接级资源限制（`workload_group`、内存、超时、包大小）、服务端游标流式拉取、基于 AST 语法树的严格只读与越权拦截校验 | [`DorisQueryRepository`](../app/query/repositories/doris.py)<br>[`QueryGuardService`](../app/query/services/guard.py)<br>[`AnalysisQueryService`](../app/query/services/executor.py) |
 | [`04_MULTI_AGENT_ANALYTICS.md`](../docs/04_MULTI_AGENT_ANALYTICS.md) | 多 Agent 协同与数据分析 | 基于 DeepAgents 与 LangGraph Checkpoint 的动态子 Agent 架构；Planner 动态调度；Explorer、Analyst、Reviewer、Visualizer 专业分工；基于 `thread_id + checkpoint_ns` 的多维并行与状态持久化；跨 Agent 审查与 `RepairRequest` 回退修补；SSE 实时流式响应 | [`AgentManager`](../app/analytics/agents/manager.py)<br>[`AgentRegistry`](../app/analytics/agents/registry.py)<br>[`AgentSessionService`](../app/analytics/agents/session_service.py)<br>[`ChatService`](../app/analytics/services/chat.py) |
-| [`05_DOCKER_SANDBOX_RUNTIME.md`](../docs/05_DOCKER_SANDBOX_RUNTIME.md) | Docker 多租户沙盒运行环境 | 一用户一容器 + 一用户一持久化 Named Volume；会话与 Agent Session UID/GID 隔离；Redis 跨进程运行实例、操作和维护租约；全局容器容量控制与进程内 FIFO 等待；附件与分析产物安全传输 | [`DockerSandboxManager`](../app/sandbox/manager.py)<br>[`DockerSandboxBackend`](../app/sandbox/backend.py)<br>[`RedisSandboxOwnership`](../app/sandbox/ownership.py) |
+| [`05_DOCKER_SANDBOX_RUNTIME.md`](../docs/05_DOCKER_SANDBOX_RUNTIME.md) | Docker 多租户沙箱运行环境 | 一用户一容器 + 一用户一持久化 Named Volume；会话与 Agent Session UID/GID 隔离；Redis 跨进程运行实例、操作和维护租约；全局容器容量控制与进程内 FIFO 等待；附件与分析产物安全传输 | [`DockerSandboxManager`](../app/sandbox/manager.py)<br>[`DockerSandboxBackend`](../app/sandbox/backend.py)<br>[`RedisSandboxOwnership`](../app/sandbox/ownership.py) |
 | [`08_BACKGROUND_TASKS.md`](../docs/08_BACKGROUND_TASKS.md) | Celery 后台任务与可靠性 | Redis 队列、Worker 与 Beat 部署、索引和跨存储生命周期任务、任务状态查询、重试与持久化补偿 | [`celery_app`](../app/shared/tasks/celery_app.py)<br>[`metadata.tasks`](../app/metadata/tasks.py)<br>[`analytics.tasks`](../app/analytics/tasks.py)<br>[`workflows.tasks`](../app/workflows/tasks.py) |
 
 ### 2.1 模块化单体目录
@@ -106,7 +106,7 @@ sequenceDiagram
     participant Analyst as 分析器 (Analyst Agent)
     participant Reviewer as 审查器 (Reviewer Agent)
     participant Visualizer as 可视化 (Visualizer Agent)
-    participant Sandbox as Docker 沙盒 (SandboxManager)
+    participant Sandbox as Docker 沙箱 (SandboxManager)
 
     User->>Gateway: POST /api/v1/chat/stream（自然语言提问）
     Gateway->>AuthSvc: 校验 JWT Token 并提取用户所属 Doris 角色
@@ -165,5 +165,5 @@ sequenceDiagram
 - **Agent 编排与状态存储**：LangChain + LangGraph + PostgreSQL AsyncSession (`checkpointer=PostgresSaver`)
 - **数据源与执行引擎**：Apache Doris（分析型数仓，只读代理身份隔离 + Workload Group 配额）
 - **搜索引擎**：Elasticsearch 8.x（文本 BM25 检索 + 稠密向量 KNN 检索 + 字段值模糊检索）
-- **环境隔离沙盒**：Docker Engine + Docker SDK + Named Volumes（会话 UID/GID 权限隔离 + FIFO 并发队列）
+- **环境隔离沙箱**：Docker Engine + Docker SDK + Named Volumes（会话 UID/GID 权限隔离 + FIFO 并发队列）
 - **后台任务**：Celery 5.6 + Redis（索引构建、跨存储生命周期、定时补偿和短期任务结果）

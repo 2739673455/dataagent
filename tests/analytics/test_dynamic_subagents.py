@@ -398,7 +398,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
         from deepagents.backends import LocalShellBackend
         from langchain_core.messages import HumanMessage
         from langgraph.checkpoint.memory import InMemorySaver
-        from langgraph.store.memory import InMemoryStore
 
         from app.analytics.agents.analyst.agent import create_analyst_agent
         from app.analytics.agents.explorer.agent import create_explorer_agent
@@ -437,7 +436,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
                         tools=[],
                         backend=LocalShellBackend(root_dir=workspace),
                         checkpointer=InMemorySaver(),
-                        store=InMemoryStore(),
                     )
 
                     graph.invoke(
@@ -458,7 +456,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
         from langchain.agents.middleware.types import AgentMiddleware
         from langchain_core.messages import HumanMessage
         from langgraph.checkpoint.memory import InMemorySaver
-        from langgraph.store.memory import InMemoryStore
 
         from app.analytics.agents.planner.agent import create_planner_agent
 
@@ -496,7 +493,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
                     delegate_agent=delegate_agent,
                     backend=LocalShellBackend(root_dir=workspace),
                     checkpointer=InMemorySaver(),
-                    store=InMemoryStore(),
                     interpreter_mode="thread",
                     interpreter_ptc=["delegate_agent"],
                     interpreter_timeout_seconds=1,
@@ -1015,8 +1011,8 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             planner_lock=lambda: distributed_locks.acquire("planner"),
             conversation_deleted=_conversation_not_deleted,
         )
-        first_manager = AgentManager(MagicMock(), MagicMock())
-        second_manager = AgentManager(MagicMock(), MagicMock())
+        first_manager = AgentManager(MagicMock(), MagicMock(), MagicMock())
+        second_manager = AgentManager(MagicMock(), MagicMock(), MagicMock())
         active = 0
         max_active = 0
 
@@ -1057,22 +1053,23 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             planner_lock=lambda: distributed_locks.acquire("conversation"),
             conversation_deleted=conversation_deleted,
         )
-        store = MagicMock()
+        tombstones = MagicMock()
 
         async def write_tombstone(*args: object, **kwargs: object) -> None:
             nonlocal tombstone
             del args, kwargs
             tombstone = True
 
-        store.aput = AsyncMock(side_effect=write_tombstone)
+        tombstones.save = AsyncMock(side_effect=write_tombstone)
+        tombstones.exists = AsyncMock(side_effect=lambda *_: tombstone)
+        tombstones.delete_by_user = AsyncMock()
         persistence = MagicMock()
-        persistence.get_store.return_value = store
         persistence.delete_thread = AsyncMock()
         persistence.advisory_lock = lambda *args, **kwargs: distributed_locks.acquire(
             "conversation"
         )
-        deleting_worker = AgentManager(persistence, MagicMock())
-        serving_worker = AgentManager(MagicMock(), MagicMock())
+        deleting_worker = AgentManager(persistence, MagicMock(), tombstones)
+        serving_worker = AgentManager(MagicMock(), MagicMock(), tombstones)
 
         await deleting_worker.delete_agent(12, _CONVERSATION_ID)
 

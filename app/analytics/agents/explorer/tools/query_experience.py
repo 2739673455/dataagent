@@ -5,7 +5,10 @@ from typing import Annotated, Any
 from langchain.tools import ToolRuntime, tool
 from loguru import logger
 
-from app.analytics.agents.explorer.recall_runtime import resolve_semantic_recall_context
+from app.analytics.agents.explorer.recall_runtime import (
+    resolve_semantic_recall_identity,
+    semantic_recall_repository,
+)
 from app.identity.repositories.auth import AuthPGRepo
 from app.identity.services.authorization import AuthorizationService
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
@@ -42,27 +45,23 @@ async def search_query_experiences(
         return {"status": "error", "message": "limit 参数必须在 1 到 10 之间"}
 
     try:
-        user_id, conversation_id, recall_repo = resolve_semantic_recall_context(
-            runtime.config,
-            runtime.store,
-        )
-        async with (
-            auth_postgres_client_manager.session() as auth_session,
-            meta_postgres_client_manager.session() as meta_session,
-        ):
+        user_id, conversation_id = resolve_semantic_recall_identity(runtime.config)
+        async with auth_postgres_client_manager.session() as auth_session:
             auth_repo = AuthPGRepo(auth_session)
             user = await auth_repo.get_user_by_id(user_id)
             if user is None or user.doris_role_name is None:
                 return {"status": "success", "experiences": []}
             policy = await AuthorizationService(auth_repo).get_asset_policy(user_id)
-            authorization_filter = MetadataAuthorizationFilter(
-                policy,
-                cfg.query.data_source,
-                cfg.doris.database,
-            )
+
+        authorization_filter = MetadataAuthorizationFilter(
+            policy,
+            cfg.query.data_source,
+            cfg.doris.database,
+        )
+        table_names: set[str] = set()
+        column_keys: set[tuple[str, str]] = set()
+        async with semantic_recall_repository() as recall_repo:
             recall_service = SemanticRecallService(recall_repo, authorization_filter)
-            table_names: set[str] = set()
-            column_keys: set[tuple[str, str]] = set()
             for recall_id in dict.fromkeys(recall_ids or []):
                 record = await recall_service.get(
                     user_id,
@@ -73,6 +72,8 @@ async def search_query_experiences(
                 column_keys.update(
                     (item.t_name, item.name) for item in record.response.columns
                 )
+
+        async with meta_postgres_client_manager.session() as meta_session:
             service = build_query_experience_service(meta_session)
             experiences = await service.search(
                 user_id=user_id,
