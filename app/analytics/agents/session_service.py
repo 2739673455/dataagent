@@ -17,8 +17,8 @@ from loguru import logger
 from pydantic import BaseModel, ValidationError
 
 from app.analytics.agents.contracts import (
-    DelegateAgentRequest,
-    DelegateAgentResult,
+    DelegationRequest,
+    DelegationResult,
     SpecialistResult,
     get_thread_id,
 )
@@ -172,12 +172,12 @@ class AgentSessionService:
 
     @staticmethod
     def _failed_result(
-        request: DelegateAgentRequest,
+        request: DelegationRequest,
         summary: str,
         limitation: str,
-    ) -> DelegateAgentResult:
+    ) -> DelegationResult:
         """构造符合协议的失败结果"""
-        return DelegateAgentResult(
+        return DelegationResult(
             status="failed",
             analysis_id=request.analysis_id,
             agent_type=request.agent_type,
@@ -186,7 +186,7 @@ class AgentSessionService:
             limitations=[limitation],
         )
 
-    def _build_session_key(self, request: DelegateAgentRequest) -> AgentSessionKey:
+    def _build_session_key(self, request: DelegationRequest) -> AgentSessionKey:
         """把已校验请求绑定到当前用户会话"""
         return AgentSessionKey(
             user_id=self._user_id,
@@ -305,7 +305,7 @@ class AgentSessionService:
 
     async def _invoke_specialist(
         self,
-        request: DelegateAgentRequest,
+        request: DelegationRequest,
         session_key: AgentSessionKey,
         config: RunnableConfig,
     ) -> SpecialistResult:
@@ -339,11 +339,11 @@ class AgentSessionService:
 
     def _apply_repair_limits(
         self,
-        request: DelegateAgentRequest,
+        request: DelegationRequest,
         session_key: AgentSessionKey,
         result: SpecialistResult,
         budget: _ExecutionBudget,
-    ) -> DelegateAgentResult | None:
+    ) -> DelegationResult | None:
         """检查修补轮次、深度和重复原因"""
         if result.status != "needs_repair":
             return None
@@ -407,7 +407,7 @@ class AgentSessionService:
 
     @staticmethod
     def _validate_repair_depth(
-        request: DelegateAgentRequest,
+        request: DelegationRequest,
         session_key: AgentSessionKey,
         budget: _ExecutionBudget,
     ) -> str | None:
@@ -423,7 +423,7 @@ class AgentSessionService:
 
     @staticmethod
     def _consume_repair_depth(
-        request: DelegateAgentRequest,
+        request: DelegationRequest,
         session_key: AgentSessionKey,
         budget: _ExecutionBudget,
     ) -> None:
@@ -434,12 +434,12 @@ class AgentSessionService:
         budget.session_repair_depths[session_key.checkpoint_ns] = request.repair_depth
 
     @staticmethod
-    def _to_delegate_result(
-        request: DelegateAgentRequest,
+    def _to_delegation_result(
+        request: DelegationRequest,
         result: SpecialistResult,
-    ) -> DelegateAgentResult:
+    ) -> DelegationResult:
         """补充 Session 身份并生成委派结果"""
-        return DelegateAgentResult(
+        return DelegationResult(
             status=result.status,
             analysis_id=request.analysis_id,
             agent_type=request.agent_type,
@@ -452,11 +452,11 @@ class AgentSessionService:
             limitations=result.limitations,
         )
 
-    async def delegate(
+    async def execute_delegation(
         self,
-        request: DelegateAgentRequest,
+        request: DelegationRequest,
         parent_config: RunnableConfig,
-    ) -> DelegateAgentResult:
+    ) -> DelegationResult:
         """创建或恢复一个专业 Agent Session"""
         try:
             budget = self._get_budget(parent_config)
@@ -536,7 +536,7 @@ class AgentSessionService:
                 )
             if limited_result:
                 return limited_result
-            return self._to_delegate_result(request, result)
+            return self._to_delegation_result(request, result)
         except (RuntimeError, TypeError) as exc:
             return self._failed_result(
                 request,

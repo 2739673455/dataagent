@@ -10,6 +10,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
 from app.analytics.agents.contracts import SpecialistResult
+from app.analytics.agents.message_timestamp_middleware import MessageTimestampMiddleware
 from app.analytics.agents.reviewer.prompt import REVIEWER_SYSTEM_PROMPT
 from app.shared.config.app_config import cfg
 
@@ -32,7 +33,7 @@ def create_reviewer_agent(
         model=model,
         tools=tools,
         system_prompt=REVIEWER_SYSTEM_PROMPT,
-        middleware=[filesystem],
+        middleware=[filesystem, MessageTimestampMiddleware()],
         backend=backend,
         skills=list(skills),
         subagents=[],

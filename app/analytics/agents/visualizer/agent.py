@@ -10,6 +10,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
 from app.analytics.agents.contracts import SpecialistResult
+from app.analytics.agents.message_timestamp_middleware import MessageTimestampMiddleware
 from app.analytics.agents.visualizer.prompt import VISUALIZER_SYSTEM_PROMPT
 from app.shared.config.app_config import cfg
 
@@ -32,7 +33,7 @@ def create_visualizer_agent(
         model=model,
         tools=tools,
         system_prompt=VISUALIZER_SYSTEM_PROMPT,
-        middleware=[filesystem],
+        middleware=[filesystem, MessageTimestampMiddleware()],
         backend=backend,
         skills=list(skills),
         subagents=[],

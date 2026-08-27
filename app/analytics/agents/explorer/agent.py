@@ -14,6 +14,7 @@ from app.analytics.agents.explorer.prompt import EXPLORER_SYSTEM_PROMPT
 from app.analytics.agents.explorer.semantic_recall_middleware import (
     SemanticRecallExpansionMiddleware,
 )
+from app.analytics.agents.message_timestamp_middleware import MessageTimestampMiddleware
 from app.shared.config.app_config import cfg
 
 
@@ -35,7 +36,11 @@ def create_explorer_agent(
         model=model,
         tools=tools,
         system_prompt=EXPLORER_SYSTEM_PROMPT,
-        middleware=[filesystem, SemanticRecallExpansionMiddleware()],
+        middleware=[
+            filesystem,
+            SemanticRecallExpansionMiddleware(),
+            MessageTimestampMiddleware(),
+        ],
         backend=backend,
         skills=list(skills),
         subagents=[],

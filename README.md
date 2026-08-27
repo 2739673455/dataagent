@@ -39,7 +39,7 @@
 - **Agent 工具集成**：将语义检索与召回管理封装为标准 LangChain 工具，供大模型在规划阶段调用。
 
 ### 5. 智能体运行时与会话对话系统
-- **动态 Agent 编排**：基于 `deepagents` 与 LangGraph 构建持久化 Planner 和专业 Agent，Planner 通过 `delegate_agent` 调度注册的专业 Agent，每类 Agent 使用独立工具白名单。
+- **动态 Agent 编排**：基于 `deepagents` 与 LangGraph 构建持久化 Planner 和专业 Agent，Planner 通过 `delegation` 调度注册的专业 Agent，每类 Agent 使用独立工具白名单。
 - **会话状态持久化**：使用 LangGraph PostgreSQL Checkpointer 保存对话消息、中间推理过程与图状态；会话目录、语义召回快照和删除墓碑使用同库正式关系表管理。
 - **流式对话接口（SSE）**：提供 Server-Sent Events 流式对话响应，支持模型 Token 增量输出与工具调用过程实时推送。
 - **多模态与消息处理**：支持图片等附件的解析和传递；语义召回在 checkpoint 中只保留 `recall_id`，完整内容按最新权限仅在当前模型请求中临时展开。
@@ -71,7 +71,7 @@
 - **会话产物**：CSV 写入 `/analyses/{analysis_id}/sessions/{agent_type}/{session_id}/query_{uuid}.csv`，Agent 仅接收路径、Schema、行数、时间范围和少量样例。
 
 ### 10. Dynamic Subagents 与多 Agent 体系
-- **Planner 协调智能体**：Planner 通过结构化 `delegate_agent` 请求拆分任务、并行调度专业 Agent 并汇总可追溯结果；同一用户回合的所有自动续写共享委派预算，自动续写次数、委派次数、并行 Session、修补轮次、修补深度和 Session 续接次数均有服务端硬限制。
+- **Planner 协调智能体**：Planner 通过结构化 `delegation` 请求拆分任务、并行调度专业 Agent 并汇总可追溯结果；同一用户回合的所有自动续写共享委派预算，自动续写次数、委派次数、并行 Session、修补轮次、修补深度和 Session 续接次数均有服务端硬限制。
 - **结构化修补链路**：专业 Agent 可返回带产物证据的 `RepairRequest`，仅能指向同一 Analysis 内已存在的上游 Session；服务端检查目标、修补深度和实际产物后续接执行。
 - **专业 Agent 矩阵**：`explorer` 负责语义目录、MCP 外部能力和受控 SQL 数据集；`analyst` 自主编写和运行归因分析代码；`reviewer` 独立审查数据、分析结论与产物并发起修补；`visualizer` 自主生成图表、表格与报告。
 - **按 Agent 聚合代码**：`app/analytics/agents` 包含 Planner 和四个专业 Agent，每个 Agent 目录聚合自己的构造器与 Prompt；跨 Agent 协议、注册表和 Session 管理位于公共层，平台级数据查询工具归属于 `explorer` Agent。

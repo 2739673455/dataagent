@@ -26,12 +26,14 @@ from app.analytics.agents.explorer.semantic_recall_protocol import (
     semantic_recall_reference,
 )
 from app.analytics.agents.explorer.tools import (
+    delete_recalls,
     get_recall,
     list_recalls,
+    merge_recalls,
     search_context,
 )
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
-from app.metadata.models.recall import SemanticRecallRecord, SemanticRecallRequest
+from app.metadata.models.recall import SemanticRecallRecord
 from app.metadata.models.search import (
     SemanticColumnResult,
     SemanticMatchReason,
@@ -48,8 +50,8 @@ from app.metadata.repositories.recall import SemanticRecallPGRepo
 from app.metadata.repositories.value_index import ValueESRepo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
 from app.metadata.services.recall import (
+    SemanticQueriesNotFoundError,
     SemanticRecallService,
-    SemanticRecallsNotFoundError,
 )
 from app.shared.contracts.query_experience import (
     QueryAssetSnapshot,
@@ -66,38 +68,27 @@ class InMemorySemanticRecallRepo:
 
     async def save(self, record: SemanticRecallRecord) -> None:
         """保存召回记录"""
-        self.records[(record.user_id, record.conversation_id, record.recall_id)] = (
-            record
-        )
+        self.records[
+            (record.user_id, record.conversation_id, record.response.search_id)
+        ] = record
 
-    async def get(
-        self,
-        user_id: int,
-        conversation_id: object,
-        recall_id: str,
-    ) -> SemanticRecallRecord | None:
-        """获取召回记录"""
-        return self.records.get((user_id, conversation_id, recall_id))
-
-    async def get_latest_search_by_query(
+    async def get_latest_by_query(
         self,
         user_id: int,
         conversation_id: object,
         query: str,
     ) -> SemanticRecallRecord | None:
-        """获取指定查询标识的最近原始召回"""
+        """获取指定 query 的最新召回记录"""
         records = [
             record
             for (owner_id, owner_conversation_id, _), record in self.records.items()
             if owner_id == user_id
             and owner_conversation_id == conversation_id
-            and record.kind == "search"
-            and record.request is not None
-            and record.request.query == query
+            and record.query == query
         ]
         return max(
             records,
-            key=lambda record: (record.created_at, record.recall_id),
+            key=lambda record: (record.created_at, record.response.search_id),
             default=None,
         )
 
@@ -109,26 +100,39 @@ class InMemorySemanticRecallRepo:
         limit: int,
         offset: int = 0,
     ) -> list[SemanticRecallRecord]:
-        """按创建时间倒序列出召回记录"""
+        """按创建时间倒序列出每个 query 的最新召回记录"""
+        latest_by_query: dict[str, SemanticRecallRecord] = {}
+        for (owner_id, owner_conversation_id, _), record in self.records.items():
+            if owner_id != user_id or owner_conversation_id != conversation_id:
+                continue
+            current = latest_by_query.get(record.query)
+            if current is None or (record.created_at, record.response.search_id) > (
+                current.created_at,
+                current.response.search_id,
+            ):
+                latest_by_query[record.query] = record
         records = sorted(
-            (
-                record
-                for (owner_id, owner_conversation_id, _), record in self.records.items()
-                if owner_id == user_id and owner_conversation_id == conversation_id
-            ),
-            key=lambda record: (record.created_at, record.recall_id),
+            latest_by_query.values(),
+            key=lambda record: (record.created_at, record.response.search_id),
             reverse=True,
         )
         return records[offset : offset + limit]
 
-    async def delete(
+    async def delete_by_query(
         self,
         user_id: int,
         conversation_id: object,
-        recall_id: str,
+        query: str,
     ) -> bool:
-        """删除召回记录"""
-        return self.records.pop((user_id, conversation_id, recall_id), None) is not None
+        """删除 query 的全部召回记录"""
+        keys = [
+            key
+            for key, record in self.records.items()
+            if key[:2] == (user_id, conversation_id) and record.query == query
+        ]
+        for key in keys:
+            del self.records[key]
+        return bool(keys)
 
     async def delete_all(self, user_id: int, conversation_id: object) -> None:
         """删除会话全部召回记录"""
@@ -190,14 +194,11 @@ def build_query_experience(
 def build_request(
     query: str,
     resource_types: list[SemanticResourceType],
-) -> SemanticRecallRequest:
+) -> SemanticResourceSearchRequest:
     """构造组合检索请求"""
-    return SemanticRecallRequest(
-        query=query,
-        resource_search=SemanticResourceSearchRequest(
-            terms=[query],
-            resource_types=resource_types,
-        ),
+    return SemanticResourceSearchRequest(
+        terms=[query],
+        resource_types=resource_types,
     )
 
 
@@ -320,6 +321,7 @@ class SemanticRecallServiceTest(unittest.IsolatedAsyncioTestCase):
         await self.service.record_search(
             self.user_id,
             self.conversation_id,
+            query,
             build_request(query, ["column"]),
             build_response(search_id, query, score=score, reason=reason),
             [],
@@ -337,21 +339,27 @@ class SemanticRecallServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(
-            {record.recall_id for record in records}, {"search_a", "search_b"}
+            {record.response.search_id for record in records},
+            {"search_a", "search_b"},
         )
-        by_id = {record.recall_id: record for record in records}
+        by_id = {record.response.search_id: record for record in records}
         search_a_request = by_id["search_a"].request
         assert search_a_request is not None
-        self.assertEqual(search_a_request.query, "本月收入")
+        self.assertEqual(search_a_request.terms, ["本月收入"])
         self.assertEqual(by_id["search_b"].response.terms, ["订单金额"])
-        self.assertIsNone(await self.repo.get(8, self.conversation_id, "search_a"))
-        self.assertIsNone(await self.repo.get(self.user_id, uuid4(), "search_a"))
+        self.assertIsNone(
+            await self.repo.get_latest_by_query(8, self.conversation_id, "本月收入")
+        )
+        self.assertIsNone(
+            await self.repo.get_latest_by_query(self.user_id, uuid4(), "本月收入")
+        )
 
     async def test_postgres_repo_round_trips_combined_recall_payload(self) -> None:
         experience = build_query_experience()
         record = await self.service.record_search(
             self.user_id,
             self.conversation_id,
+            "本月收入",
             build_request("本月收入", ["column"]),
             build_response("search_a", "本月收入", score=0.8, reason="收入"),
             [experience],
@@ -365,6 +373,10 @@ class SemanticRecallServiceTest(unittest.IsolatedAsyncioTestCase):
 
         snapshot = session.add.call_args.args[0]
         self.assertEqual(
+            set(snapshot.request),
+            {"terms", "resource_types", "limit_per_type"},
+        )
+        self.assertEqual(
             set(snapshot.response),
             {
                 "semantic_resources",
@@ -372,7 +384,33 @@ class SemanticRecallServiceTest(unittest.IsolatedAsyncioTestCase):
                 "query_experiences_retrieved_at",
             },
         )
+        self.assertNotIn("search_id", snapshot.response["semantic_resources"])
         self.assertEqual(SemanticRecallPGRepo._to_record(snapshot), record)
+        invalid_payload = record.model_dump()
+        invalid_payload["query_experiences_retrieved_at"] = None
+        with self.assertRaises(ValidationError):
+            SemanticRecallRecord.model_validate(invalid_payload)
+
+    async def test_list_and_get_use_latest_snapshot_for_each_query(self) -> None:
+        await self._record("search_a", "本月收入", 0.4, "first")
+        await self._record("search_b", "本月收入", 0.8, "second")
+
+        records = await self.service.list(
+            self.user_id,
+            self.conversation_id,
+            limit=10,
+        )
+        record = await self.service.get(
+            self.user_id,
+            self.conversation_id,
+            "本月收入",
+        )
+
+        self.assertEqual(
+            [item.response.search_id for item in records],
+            ["search_b"],
+        )
+        self.assertEqual(record.response.search_id, "search_b")
 
     async def test_query_experience_cache_expires_at_one_day(self) -> None:
         retrieved_at = datetime(2026, 8, 26, 10, 0, tzinfo=UTC)
@@ -380,6 +418,7 @@ class SemanticRecallServiceTest(unittest.IsolatedAsyncioTestCase):
         await self.service.record_search(
             self.user_id,
             self.conversation_id,
+            "本月收入",
             build_request("本月收入", ["column"]),
             build_response("search_a", "本月收入", score=0.8, reason="收入"),
             [experience],
@@ -402,18 +441,47 @@ class SemanticRecallServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fresh, ([experience], retrieved_at))
         self.assertIsNone(expired)
 
-    async def test_merge_creates_deduplicated_snapshot_and_keeps_sources(self) -> None:
-        await self._record("search_a", "本月收入", 0.4, "query_a")
-        await self._record("search_b", "订单金额", 0.8, "query_b")
+    async def test_merge_absorbs_resources_without_source_experiences(self) -> None:
+        target_experience = build_query_experience(column="amount")
+        source_experience = build_query_experience(column="status")
+        target_retrieved_at = datetime.now(UTC)
+        await self.service.record_search(
+            self.user_id,
+            self.conversation_id,
+            "本月收入",
+            build_request("本月收入", ["column"]),
+            build_response("search_a", "本月收入", score=0.4, reason="query_a"),
+            [target_experience],
+            target_retrieved_at,
+        )
+        source_response = build_response(
+            "search_b",
+            "订单金额",
+            score=0.8,
+            reason="query_b",
+        )
+        source_response.columns[0].name = "status"
+        source_response.columns[0].examples = ["paid"]
+        source_response.values[0].c_name = "status"
+        await self.service.record_search(
+            self.user_id,
+            self.conversation_id,
+            "订单金额",
+            build_request("订单金额", ["column"]),
+            source_response,
+            [source_experience],
+            datetime.now(UTC),
+        )
 
         merged = await self.service.merge(
             self.user_id,
             self.conversation_id,
-            ["search_a", "search_b"],
+            "本月收入",
+            "订单金额",
         )
 
-        self.assertEqual(merged.kind, "merged")
-        self.assertEqual(merged.source_recall_ids, ["search_a", "search_b"])
+        self.assertEqual(merged.query, "本月收入")
+        self.assertEqual(merged.source_queries, ["订单金额"])
         self.assertEqual(merged.response.terms, ["本月收入", "订单金额"])
         self.assertEqual(len(merged.response.metrics), 1)
         self.assertEqual(merged.response.metrics[0].rank_score, 0.8)
@@ -421,40 +489,82 @@ class SemanticRecallServiceTest(unittest.IsolatedAsyncioTestCase):
             [reason.term for reason in merged.response.metrics[0].match_reasons],
             ["query_a", "query_b"],
         )
-        self.assertEqual(merged.response.columns[0].examples, ["query_a", "query_b"])
-        self.assertIsNotNone(
-            await self.repo.get(self.user_id, self.conversation_id, "search_a")
+        self.assertEqual(
+            [item.name for item in merged.response.columns],
+            ["status", "amount"],
+        )
+        self.assertEqual(merged.query_experiences, [target_experience])
+        self.assertEqual(
+            merged.query_experiences_retrieved_at,
+            target_retrieved_at,
         )
         self.assertIsNotNone(
-            await self.repo.get(self.user_id, self.conversation_id, "search_b")
+            await self.repo.get_latest_by_query(
+                self.user_id,
+                self.conversation_id,
+                "本月收入",
+            )
+        )
+        self.assertIsNone(
+            await self.repo.get_latest_by_query(
+                self.user_id,
+                self.conversation_id,
+                "订单金额",
+            )
+        )
+
+        continued = await self.service.record_search(
+            self.user_id,
+            self.conversation_id,
+            "本月收入",
+            build_request("本月收入", ["column"]),
+            build_response("search_c", "本月收入", score=0.6, reason="query_c"),
+            [target_experience],
+            target_retrieved_at,
+        )
+
+        self.assertEqual(continued.source_queries, ["订单金额"])
+        self.assertEqual(continued.query_experiences, [target_experience])
+        self.assertEqual(
+            [item.name for item in continued.response.columns],
+            ["status", "amount"],
         )
 
     async def test_delete_reports_missing_records(self) -> None:
         await self._record("search_a", "本月收入", 0.4, "query_a")
+        await self._record("search_b", "本月收入", 0.8, "query_b")
 
         deleted, missing = await self.service.delete(
             self.user_id,
             self.conversation_id,
-            ["search_a", "unknown", "search_a"],
+            ["本月收入", "unknown", "本月收入"],
         )
 
-        self.assertEqual(deleted, ["search_a"])
+        self.assertEqual(deleted, ["本月收入"])
         self.assertEqual(missing, ["unknown"])
         self.assertIsNone(
-            await self.repo.get(self.user_id, self.conversation_id, "search_a")
+            await self.repo.get_latest_by_query(
+                self.user_id,
+                self.conversation_id,
+                "本月收入",
+            )
+        )
+        self.assertFalse(
+            any(record.query == "本月收入" for record in self.repo.records.values())
         )
 
     async def test_merge_rejects_missing_record(self) -> None:
         await self._record("search_a", "本月收入", 0.4, "query_a")
 
-        with self.assertRaises(SemanticRecallsNotFoundError) as context:
+        with self.assertRaises(SemanticQueriesNotFoundError) as context:
             await self.service.merge(
                 self.user_id,
                 self.conversation_id,
-                ["search_a", "unknown"],
+                "本月收入",
+                "unknown",
             )
 
-        self.assertEqual(context.exception.recall_ids, ["unknown"])
+        self.assertEqual(context.exception.queries, ["unknown"])
 
     async def test_delete_all_removes_only_target_conversation(self) -> None:
         await self._record("search_a", "本月收入", 0.4, "query_a")
@@ -462,6 +572,7 @@ class SemanticRecallServiceTest(unittest.IsolatedAsyncioTestCase):
         await self.service.record_search(
             self.user_id,
             other_conversation_id,
+            "其他查询",
             build_request("其他查询", ["column"]),
             build_response(
                 "search_other",
@@ -484,10 +595,10 @@ class SemanticRecallServiceTest(unittest.IsolatedAsyncioTestCase):
             [],
         )
         self.assertIsNotNone(
-            await self.repo.get(
+            await self.repo.get_latest_by_query(
                 self.user_id,
                 other_conversation_id,
-                "search_other",
+                "其他查询",
             )
         )
 
@@ -500,6 +611,7 @@ class SemanticRecallServiceTest(unittest.IsolatedAsyncioTestCase):
         await self.service.record_search(
             self.user_id,
             self.conversation_id,
+            "本月收入",
             build_request("本月收入", ["column"]),
             first,
             [],
@@ -508,6 +620,7 @@ class SemanticRecallServiceTest(unittest.IsolatedAsyncioTestCase):
         await self.service.record_search(
             self.user_id,
             self.conversation_id,
+            "订单状态",
             build_request("订单状态", ["value"]),
             second,
             [],
@@ -528,7 +641,7 @@ class SemanticRecallServiceTest(unittest.IsolatedAsyncioTestCase):
         recalled = await restricted.get(
             self.user_id,
             self.conversation_id,
-            "search_a",
+            "本月收入",
         )
         listed = await restricted.list(
             self.user_id,
@@ -538,7 +651,8 @@ class SemanticRecallServiceTest(unittest.IsolatedAsyncioTestCase):
         merged = await restricted.merge(
             self.user_id,
             self.conversation_id,
-            ["search_a", "search_b"],
+            "本月收入",
+            "订单状态",
         )
 
         self.assertEqual(recalled.response.metrics, [])
@@ -552,17 +666,14 @@ class SemanticRecallServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(merged.response.columns, [])
         self.assertEqual([item.value for item in merged.response.values], ["paid"])
 
-        persisted = await self.repo.get(
+        persisted = await self.repo.get_latest_by_query(
             self.user_id,
             self.conversation_id,
-            "search_a",
+            "本月收入",
         )
         assert persisted is not None
-        self.assertEqual([item.name for item in persisted.response.columns], ["amount"])
-        self.assertEqual(
-            persisted.response.warnings,
-            ["backend failed while loading orders.amount"],
-        )
+        self.assertEqual(persisted.response.columns, [])
+        self.assertEqual(persisted.response.warnings, [])
 
 
 class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
@@ -585,6 +696,15 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("include_relations", search_properties)
         self.assertIn("resource_types", search_schema["required"])
         self.assertIn("terms", search_schema["required"])
+        get_schema = cast(type[BaseModel], get_recall.tool_call_schema)
+        merge_schema = cast(type[BaseModel], merge_recalls.tool_call_schema)
+        delete_schema = cast(type[BaseModel], delete_recalls.tool_call_schema)
+        self.assertEqual(set(get_schema.model_fields), {"query"})
+        self.assertEqual(
+            set(merge_schema.model_fields),
+            {"target_query", "source_query"},
+        )
+        self.assertEqual(set(delete_schema.model_fields), {"queries"})
 
     async def test_search_tool_uses_query_for_experiences_and_terms_for_resources(
         self,
@@ -609,8 +729,10 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         meta_search_service = MagicMock()
         second_response = response.model_copy(
             deep=True,
-            update={"search_id": "search_b"},
+            update={"search_id": "search_b", "terms": ["订单状态"]},
         )
+        second_response.columns[0].name = "status"
+        second_response.columns[0].examples = ["paid"]
         meta_search_service.search = AsyncMock(side_effect=[response, second_response])
         experience_service = MagicMock()
         experience_service.search = AsyncMock(return_value=[experience])
@@ -678,17 +800,26 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
                 query="统计本月订单收入",
                 terms=["收入", "订单金额"],
             )
-            first_stored = await repo.get(7, conversation_id, "search_a")
+            first_stored = await repo.get_latest_by_query(
+                7,
+                conversation_id,
+                "统计本月订单收入",
+            )
             second_result = await cast(Any, search_context).coroutine(
                 runtime=runtime,
                 resource_types=["column", "metric"],
                 query="统计本月订单收入",
-                terms=["收入", "订单金额"],
+                terms=["订单状态"],
             )
 
-        resource_request = meta_search_service.search.await_args.args[0]
-        self.assertFalse(hasattr(resource_request, "query"))
-        self.assertEqual(resource_request.terms, ["收入", "订单金额"])
+        resource_requests = [
+            call.args[0] for call in meta_search_service.search.await_args_list
+        ]
+        self.assertTrue(all(not hasattr(item, "query") for item in resource_requests))
+        self.assertEqual(
+            [item.terms for item in resource_requests],
+            [["收入", "订单金额"], ["订单状态"]],
+        )
         experience_service.search.assert_awaited_once_with(
             user_id=7,
             role_name="analyst",
@@ -700,17 +831,29 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             first_result,
-            {"status": "stored", "recall_id": "search_a"},
+            {"status": "stored", "query": "统计本月订单收入"},
         )
         self.assertEqual(
             second_result,
-            {"status": "stored", "recall_id": "search_b"},
+            {"status": "stored", "query": "统计本月订单收入"},
         )
-        second_stored = await repo.get(7, conversation_id, "search_b")
+        second_stored = await repo.get_latest_by_query(
+            7,
+            conversation_id,
+            "统计本月订单收入",
+        )
         assert first_stored is not None
         assert second_stored is not None
         assert second_stored.request is not None
-        self.assertEqual(second_stored.request.query, "统计本月订单收入")
+        self.assertEqual(second_stored.query, "统计本月订单收入")
+        self.assertEqual(
+            second_stored.response.terms,
+            ["收入", "订单金额", "订单状态"],
+        )
+        self.assertEqual(
+            [item.name for item in second_stored.response.columns],
+            ["amount", "status"],
+        )
         self.assertEqual(second_stored.query_experiences, [experience])
         self.assertEqual(
             second_stored.query_experiences_retrieved_at,
@@ -730,6 +873,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         record = await unrestricted_service.record_search(
             7,
             conversation_id,
+            "revenue",
             build_request("revenue", ["column"]),
             build_response("search_a", "revenue", score=0.8, reason="query"),
             [experience],
@@ -800,10 +944,13 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(current_reference.content, reference_content)
+        self.assertNotIn("recall_id", reference_content)
         self.assertNotIn("amount", reference_content)
         self.assertNotIn("SELECT status", reference_content)
         self.assertEqual(getattr(seen_messages[0], "content", None), reference_content)
         expanded_content = str(getattr(seen_messages[2], "content", ""))
+        self.assertNotIn("search_id", expanded_content)
+        self.assertNotIn("recall_id", expanded_content)
         self.assertNotIn("amount", expanded_content)
         self.assertIn("paid", expanded_content)
         self.assertIn("SELECT status", expanded_content)
@@ -818,6 +965,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         await service.record_search(
             1,
             conversation_id,
+            "revenue",
             build_request("revenue", ["column"]),
             build_response("search_a", "revenue", score=0.8, reason="query"),
             [],
@@ -849,7 +997,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
                             tool_calls=[
                                 {
                                     "name": "get_recall",
-                                    "args": {"recall_id": "search_a"},
+                                    "args": {"query": "revenue"},
                                     "id": "call_1",
                                     "type": "tool_call",
                                 }
@@ -867,8 +1015,9 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
 
         content = str(result["messages"][-1].content)
         payload = json.loads(content)
-        self.assertEqual(payload["recall_id"], "search_a")
+        self.assertEqual(payload["query"], "revenue")
         self.assertEqual(payload["status"], "stored")
+        self.assertNotIn("recall_id", payload)
         self.assertNotIn("semantic_recall", payload)
         self.assertNotIn("amount", content)
 

@@ -7,11 +7,15 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from app.metadata.models.recall import SemanticRecallRecord, SemanticRecallRequest
+from app.metadata.models.recall import (
+    SemanticRecallRecord,
+    normalize_semantic_recall_query,
+)
 from app.metadata.models.search import (
     SemanticColumnResult,
     SemanticMetricResult,
     SemanticRelation,
+    SemanticResourceSearchRequest,
     SemanticSearchResponse,
     SemanticTableContext,
     SemanticValueResult,
@@ -23,13 +27,13 @@ from app.shared.contracts.query_experience import QueryExperienceSearchResult
 _QUERY_EXPERIENCE_CACHE_TTL = timedelta(days=1)
 
 
-class SemanticRecallsNotFoundError(Exception):
-    """一个或多个召回记录不存在"""
+class SemanticQueriesNotFoundError(Exception):
+    """一个或多个查询业务键不存在"""
 
-    def __init__(self, recall_ids: list[str]) -> None:
-        """初始化未找到的语义召回记录标识"""
-        self.recall_ids = recall_ids
-        super().__init__(", ".join(recall_ids))
+    def __init__(self, queries: list[str]) -> None:
+        """初始化未找到的查询业务键"""
+        self.queries = queries
+        super().__init__(", ".join(queries))
 
 
 def _stable_union[T](groups: list[list[T]]) -> list[T]:
@@ -163,22 +167,6 @@ def _merge_relations(
     return [matches[0] for matches in groups]
 
 
-def _merge_query_experiences(
-    records: list[SemanticRecallRecord],
-) -> list[QueryExperienceSearchResult]:
-    """按经验 ID 合并查询经验并保留最高分结果"""
-    by_id: dict[UUID, QueryExperienceSearchResult] = {}
-    for record in records:
-        for experience in record.query_experiences:
-            current = by_id.get(experience.experience_id)
-            if current is None or experience.score > current.score:
-                by_id[experience.experience_id] = experience
-    return sorted(
-        by_id.values(),
-        key=lambda item: (-item.score, -item.adopted_count, item.experience_id.hex),
-    )
-
-
 def merge_semantic_search_responses(
     recall_id: str,
     responses: list[SemanticSearchResponse],
@@ -220,23 +208,35 @@ class SemanticRecallService:
         self,
         user_id: int,
         conversation_id: UUID,
-        request: SemanticRecallRequest,
+        query: str,
+        request: SemanticResourceSearchRequest,
         response: SemanticSearchResponse,
         query_experiences: list[QueryExperienceSearchResult],
         query_experiences_retrieved_at: datetime,
     ) -> SemanticRecallRecord:
-        """持久化一次原始查询及完整召回结果"""
+        """将一次检索结果增量合入 query 的持续上下文"""
+        query = normalize_semantic_recall_query(query)
         now = datetime.now(UTC)
+        previous = await self._repo.get_latest_by_query(
+            user_id,
+            conversation_id,
+            query,
+        )
+        if previous is not None:
+            previous = self._authorize_record(previous)
+            response = merge_semantic_search_responses(
+                response.search_id,
+                [previous.response, response],
+            )
         record = SemanticRecallRecord(
-            recall_id=response.search_id,
             user_id=user_id,
             conversation_id=conversation_id,
-            kind="search",
+            query=query,
             request=request,
             response=self._authorization_filter.filter_semantic_response(response),
             query_experiences=self._filter_query_experiences(query_experiences),
             query_experiences_retrieved_at=query_experiences_retrieved_at,
-            source_recall_ids=[],
+            source_queries=(previous.source_queries if previous is not None else []),
             created_at=now,
             updated_at=now,
         )
@@ -252,12 +252,13 @@ class SemanticRecallService:
         now: datetime | None = None,
     ) -> tuple[list[QueryExperienceSearchResult], datetime] | None:
         """读取当前查询在一天有效期内的查询经验结果"""
-        record = await self._repo.get_latest_search_by_query(
+        query = normalize_semantic_recall_query(query)
+        record = await self._repo.get_latest_by_query(
             user_id,
             conversation_id,
             query,
         )
-        if record is None or record.query_experiences_retrieved_at is None:
+        if record is None:
             return None
         retrieved_at = record.query_experiences_retrieved_at
         if retrieved_at.tzinfo is None:
@@ -272,12 +273,17 @@ class SemanticRecallService:
         self,
         user_id: int,
         conversation_id: UUID,
-        recall_id: str,
+        query: str,
     ) -> SemanticRecallRecord:
-        """获取召回记录，不存在时给出明确错误"""
-        record = await self._repo.get(user_id, conversation_id, recall_id)
+        """按 query 获取最新召回记录，不存在时给出明确错误"""
+        normalized_query = normalize_semantic_recall_query(query)
+        record = await self._repo.get_latest_by_query(
+            user_id,
+            conversation_id,
+            normalized_query,
+        )
         if record is None:
-            raise SemanticRecallsNotFoundError([recall_id])
+            raise SemanticQueriesNotFoundError([normalized_query])
         return self._authorize_record(record)
 
     async def list(
@@ -307,43 +313,66 @@ class SemanticRecallService:
         self,
         user_id: int,
         conversation_id: UUID,
-        recall_ids: list[str],
+        target_query: str,
+        source_query: str,
     ) -> SemanticRecallRecord:
-        """创建保留源记录的去重合并快照"""
-        source_ids = list(dict.fromkeys(recall_ids))
-        if len(source_ids) < 2:
-            raise ValueError("至少需要两个不同的召回 ID")
+        """将来源 query 的语义资源吸收到目标并删除来源"""
+        target = normalize_semantic_recall_query(target_query)
+        source = normalize_semantic_recall_query(source_query)
+        if target == source:
+            raise ValueError("目标 query 和来源 query 不能相同")
 
-        records: list[SemanticRecallRecord] = []
-        missing: list[str] = []
-        for recall_id in source_ids:
-            record = await self._repo.get(user_id, conversation_id, recall_id)
-            if record is None:
-                missing.append(recall_id)
-            else:
-                records.append(self._authorize_record(record))
+        target_record = await self._repo.get_latest_by_query(
+            user_id,
+            conversation_id,
+            target,
+        )
+        source_record = await self._repo.get_latest_by_query(
+            user_id,
+            conversation_id,
+            source,
+        )
+        missing = [
+            query
+            for query, record in ((target, target_record), (source, source_record))
+            if record is None
+        ]
         if missing:
-            raise SemanticRecallsNotFoundError(missing)
+            raise SemanticQueriesNotFoundError(missing)
+        assert target_record is not None
+        assert source_record is not None
+        target_record = self._authorize_record(target_record)
+        source_record = self._authorize_record(source_record)
 
         now = datetime.now(UTC)
         merged_id = f"recall_{uuid.uuid4().hex}"
+        absorbed_queries = _stable_union(
+            [
+                target_record.source_queries,
+                [source],
+                source_record.source_queries,
+            ]
+        )
+        absorbed_queries = [query for query in absorbed_queries if query != target]
         merged = SemanticRecallRecord(
-            recall_id=merged_id,
             user_id=user_id,
             conversation_id=conversation_id,
-            kind="merged",
+            query=target,
             request=None,
             response=merge_semantic_search_responses(
                 merged_id,
-                [record.response for record in records],
+                [target_record.response, source_record.response],
             ),
-            query_experiences=_merge_query_experiences(records),
-            query_experiences_retrieved_at=None,
-            source_recall_ids=source_ids,
+            query_experiences=target_record.query_experiences,
+            query_experiences_retrieved_at=(
+                target_record.query_experiences_retrieved_at
+            ),
+            source_queries=absorbed_queries,
             created_at=now,
             updated_at=now,
         )
         await self._repo.save(merged)
+        await self._repo.delete_by_query(user_id, conversation_id, source)
         return merged
 
     def _authorize_record(
@@ -389,14 +418,17 @@ class SemanticRecallService:
         self,
         user_id: int,
         conversation_id: UUID,
-        recall_ids: list[str],
+        queries: list[str],
     ) -> tuple[list[str], list[str]]:
-        """批量删除并分别返回已删除和不存在的记录 ID"""
+        """批量删除 query 的全部快照并返回处理结果"""
         deleted: list[str] = []
         missing: list[str] = []
-        for recall_id in dict.fromkeys(recall_ids):
-            if await self._repo.delete(user_id, conversation_id, recall_id):
-                deleted.append(recall_id)
+        normalized_queries = dict.fromkeys(
+            normalize_semantic_recall_query(item) for item in queries
+        )
+        for query in normalized_queries:
+            if await self._repo.delete_by_query(user_id, conversation_id, query):
+                deleted.append(query)
             else:
-                missing.append(recall_id)
+                missing.append(query)
         return deleted, missing

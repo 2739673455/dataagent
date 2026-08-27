@@ -6,16 +6,16 @@ from langchain.tools import ToolRuntime, tool
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 
-from app.analytics.agents.contracts import DelegateAgentRequest
+from app.analytics.agents.contracts import DelegationRequest
 from app.analytics.agents.session_service import AgentSessionService
 from app.shared.contracts.analysis import AgentType
 
 
-def create_delegate_agent_tool(service: AgentSessionService) -> BaseTool:
-    """创建只绑定当前用户会话的 delegate_agent Tool"""
+def create_delegation_tool(service: AgentSessionService) -> BaseTool:
+    """创建只绑定当前用户会话的 delegation Tool"""
 
-    @tool("delegate_agent")
-    async def delegate_agent(
+    @tool("delegation")
+    async def delegation(
         runtime: ToolRuntime,
         analysis_id: Annotated[
             str,
@@ -39,17 +39,17 @@ def create_delegate_agent_tool(service: AgentSessionService) -> BaseTool:
         ] = 0,
     ) -> dict[str, object]:
         """创建或恢复专业 Agent Session 并返回可验证的结构化结果"""
-        request = DelegateAgentRequest(
+        request = DelegationRequest(
             analysis_id=analysis_id,
             agent_type=agent_type,
             session_id=session_id,
             message=message,
             repair_depth=repair_depth,
         )
-        result = await service.delegate(
+        result = await service.execute_delegation(
             request,
             cast(RunnableConfig, runtime.config),
         )
         return result.model_dump(mode="json")
 
-    return delegate_agent
+    return delegation

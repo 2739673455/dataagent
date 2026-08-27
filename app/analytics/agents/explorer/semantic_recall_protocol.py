@@ -21,7 +21,7 @@ _REFERENCE_TOOL_VIEWS: dict[str, SemanticRecallView] = {
 class SemanticRecallReference:
     """描述持久化语义召回记录及其展开视图"""
 
-    recall_id: str
+    query: str
     view: SemanticRecallView
 
 
@@ -31,7 +31,7 @@ def semantic_recall_reference(
     """构造只含持久化记录引用的工具结果"""
     return {
         "status": "stored",
-        "recall_id": record.recall_id,
+        "query": record.query,
     }
 
 
@@ -50,7 +50,7 @@ def parse_semantic_recall_reference(
         return None
     if payload.get("status") != "stored":
         return None
-    recall_id = payload.get("recall_id")
-    if not isinstance(recall_id, str) or not recall_id.strip():
+    query = payload.get("query")
+    if not isinstance(query, str) or not query.strip():
         return None
-    return SemanticRecallReference(recall_id=recall_id, view=expected_view)
+    return SemanticRecallReference(query=query.strip(), view=expected_view)

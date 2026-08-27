@@ -12,7 +12,8 @@ from langchain_quickjs import CodeInterpreterMiddleware
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
-from .message_timestamp_middleware import MessageTimestampMiddleware
+from app.analytics.agents.message_timestamp_middleware import MessageTimestampMiddleware
+
 from .prompt import build_planner_system_prompt
 
 type InterpreterMode = Literal["thread", "turn", "call"]
@@ -21,7 +22,7 @@ type InterpreterMode = Literal["thread", "turn", "call"]
 def create_planner_agent(
     *,
     model: BaseChatModel,
-    delegate_agent: BaseTool,
+    delegation_tool: BaseTool,
     backend: BackendProtocol,
     checkpointer: BaseCheckpointSaver,
     interpreter_mode: InterpreterMode | None,
@@ -46,7 +47,7 @@ def create_planner_agent(
     )
     return create_deep_agent(
         model=model,
-        tools=[delegate_agent],
+        tools=[delegation_tool],
         system_prompt=build_planner_system_prompt(
             max_delegations=max_delegations_per_run,
             max_repair_rounds=max_repair_rounds,

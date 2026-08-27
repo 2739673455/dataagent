@@ -23,7 +23,7 @@ from app.shared.contracts.analysis import (
 
 _RESERVED_MCP_TOOL_NAMES = frozenset(
     {
-        "delegate_agent",
+        "delegation",
         "task",
         "eval",
         "ls",
@@ -104,7 +104,7 @@ class AgentDefinition:
         tool_names = [tool.name for tool in self.tools]
         if len(tool_names) != len(set(tool_names)):
             raise ValueError(f"智能体类型 {self.agent_type} 包含重复工具")
-        if "delegate_agent" in tool_names or "task" in tool_names:
+        if "delegation" in tool_names or "task" in tool_names:
             raise ValueError("专家智能体不能拥有委派工具")
 
     @property

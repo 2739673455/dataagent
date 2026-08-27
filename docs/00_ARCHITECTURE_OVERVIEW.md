@@ -114,7 +114,7 @@ sequenceDiagram
     
     rect rgb(240, 248, 255)
         note over Planner, Explorer: 阶段一：目标拆解与数据获取
-        Planner->>Explorer: 动态委派取数任务 (delegate_agent)
+        Planner->>Explorer: 动态委派取数任务 (delegation)
         Explorer->>SearchSvc: 检索相关指标与表元数据 (语义召回)
         SearchSvc-->>Explorer: 返回授权范围内的表结构与指标口径
         Explorer->>Guard: 提交拟执行 SQL 进行安全合规审计

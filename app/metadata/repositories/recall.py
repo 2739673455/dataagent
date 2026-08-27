@@ -1,18 +1,19 @@
 """语义召回快照 PostgreSQL 数据访问"""
 
-from typing import cast
 from uuid import UUID
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.metadata.models.recall import (
-    SemanticRecallKind,
     SemanticRecallRecord,
-    SemanticRecallRequest,
     SemanticRecallSnapshot,
 )
-from app.metadata.models.search import SemanticSearchResponse
+from app.metadata.models.search import (
+    SemanticResourceSearchRequest,
+    SemanticSearchResponse,
+)
 from app.shared.contracts.query_experience import QueryExperienceSearchResult
 
 
@@ -27,19 +28,20 @@ class SemanticRecallPGRepo:
     def _to_record(snapshot: SemanticRecallSnapshot) -> SemanticRecallRecord:
         """将关系模型转换为领域记录"""
         response_payload = snapshot.response
+        semantic_resources = {
+            **response_payload["semantic_resources"],
+            "search_id": snapshot.recall_id,
+        }
         return SemanticRecallRecord(
-            recall_id=snapshot.recall_id,
             user_id=snapshot.user_id,
             conversation_id=snapshot.conversation_id,
-            kind=cast("SemanticRecallKind", snapshot.kind),
+            query=snapshot.query,
             request=(
-                SemanticRecallRequest.model_validate(snapshot.request)
+                SemanticResourceSearchRequest.model_validate(snapshot.request)
                 if snapshot.request is not None
                 else None
             ),
-            response=SemanticSearchResponse.model_validate(
-                response_payload["semantic_resources"]
-            ),
+            response=SemanticSearchResponse.model_validate(semantic_resources),
             query_experiences=[
                 QueryExperienceSearchResult.model_validate(item)
                 for item in response_payload["query_experiences"]
@@ -47,7 +49,7 @@ class SemanticRecallPGRepo:
             query_experiences_retrieved_at=response_payload[
                 "query_experiences_retrieved_at"
             ],
-            source_recall_ids=snapshot.source_recall_ids,
+            source_queries=snapshot.source_queries,
             created_at=snapshot.created_at,
             updated_at=snapshot.updated_at,
         )
@@ -58,68 +60,52 @@ class SemanticRecallPGRepo:
             SemanticRecallSnapshot(
                 user_id=record.user_id,
                 conversation_id=record.conversation_id,
-                recall_id=record.recall_id,
-                kind=record.kind,
+                recall_id=record.response.search_id,
+                query=record.query,
                 request=(
                     record.request.model_dump(mode="json")
                     if record.request is not None
                     else None
                 ),
                 response={
-                    "semantic_resources": record.response.model_dump(mode="json"),
+                    "semantic_resources": record.response.model_dump(
+                        mode="json",
+                        exclude={"search_id"},
+                    ),
                     "query_experiences": [
                         item.model_dump(mode="json")
                         for item in record.query_experiences
                     ],
                     "query_experiences_retrieved_at": (
                         record.query_experiences_retrieved_at.isoformat()
-                        if record.query_experiences_retrieved_at is not None
-                        else None
                     ),
                 },
-                source_recall_ids=record.source_recall_ids,
+                source_queries=record.source_queries,
                 created_at=record.created_at,
                 updated_at=record.updated_at,
             )
         )
         await self._session.flush()
 
-    async def get_latest_search_by_query(
+    async def get_latest_by_query(
         self,
         user_id: int,
         conversation_id: UUID,
         query: str,
     ) -> SemanticRecallRecord | None:
-        """获取会话中指定查询标识的最近一次原始召回"""
+        """获取会话中指定 query 的最新召回快照"""
         snapshot = await self._session.scalar(
             select(SemanticRecallSnapshot)
             .where(
                 SemanticRecallSnapshot.user_id == user_id,
                 SemanticRecallSnapshot.conversation_id == conversation_id,
-                SemanticRecallSnapshot.kind == "search",
-                SemanticRecallSnapshot.request["query"].as_string() == query,
+                SemanticRecallSnapshot.query == query,
             )
             .order_by(
                 SemanticRecallSnapshot.created_at.desc(),
                 SemanticRecallSnapshot.recall_id.desc(),
             )
             .limit(1)
-        )
-        return self._to_record(snapshot) if snapshot is not None else None
-
-    async def get(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        recall_id: str,
-    ) -> SemanticRecallRecord | None:
-        """获取指定召回快照"""
-        snapshot = await self._session.scalar(
-            select(SemanticRecallSnapshot).where(
-                SemanticRecallSnapshot.user_id == user_id,
-                SemanticRecallSnapshot.conversation_id == conversation_id,
-                SemanticRecallSnapshot.recall_id == recall_id,
-            )
         )
         return self._to_record(snapshot) if snapshot is not None else None
 
@@ -131,17 +117,28 @@ class SemanticRecallPGRepo:
         limit: int,
         offset: int = 0,
     ) -> list[SemanticRecallRecord]:
-        """按创建时间倒序列出会话召回快照"""
+        """按创建时间倒序列出会话中每个 query 的最新快照"""
+        latest = (
+            select(SemanticRecallSnapshot)
+            .where(
+                SemanticRecallSnapshot.user_id == user_id,
+                SemanticRecallSnapshot.conversation_id == conversation_id,
+            )
+            .distinct(SemanticRecallSnapshot.query)
+            .order_by(
+                SemanticRecallSnapshot.query,
+                SemanticRecallSnapshot.created_at.desc(),
+                SemanticRecallSnapshot.recall_id.desc(),
+            )
+            .subquery()
+        )
+        latest_snapshot = aliased(SemanticRecallSnapshot, latest)
         snapshots = (
             await self._session.scalars(
-                select(SemanticRecallSnapshot)
-                .where(
-                    SemanticRecallSnapshot.user_id == user_id,
-                    SemanticRecallSnapshot.conversation_id == conversation_id,
-                )
+                select(latest_snapshot)
                 .order_by(
-                    SemanticRecallSnapshot.created_at.desc(),
-                    SemanticRecallSnapshot.recall_id.desc(),
+                    latest_snapshot.created_at.desc(),
+                    latest_snapshot.recall_id.desc(),
                 )
                 .limit(limit)
                 .offset(offset)
@@ -149,23 +146,29 @@ class SemanticRecallPGRepo:
         ).all()
         return [self._to_record(snapshot) for snapshot in snapshots]
 
-    async def delete(
+    async def delete_by_query(
         self,
         user_id: int,
         conversation_id: UUID,
-        recall_id: str,
+        query: str,
     ) -> bool:
-        """删除召回快照并返回删除前是否存在"""
+        """删除 query 的全部召回快照并返回删除前是否存在"""
         snapshot = await self._session.scalar(
             select(SemanticRecallSnapshot).where(
                 SemanticRecallSnapshot.user_id == user_id,
                 SemanticRecallSnapshot.conversation_id == conversation_id,
-                SemanticRecallSnapshot.recall_id == recall_id,
+                SemanticRecallSnapshot.query == query,
             )
         )
         if snapshot is None:
             return False
-        await self._session.delete(snapshot)
+        await self._session.execute(
+            delete(SemanticRecallSnapshot).where(
+                SemanticRecallSnapshot.user_id == user_id,
+                SemanticRecallSnapshot.conversation_id == conversation_id,
+                SemanticRecallSnapshot.query == query,
+            )
+        )
         await self._session.flush()
         return True
 

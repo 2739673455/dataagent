@@ -1,6 +1,7 @@
-"""Planner 消息创建时间中间件"""
+"""模型响应消息创建时间中间件"""
 
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from langchain.agents.middleware.types import (
@@ -9,13 +10,16 @@ from langchain.agents.middleware.types import (
     ModelResponse,
 )
 
-from app.analytics.message_metadata import stamp_message_created_at
+from app.analytics.agents.contracts import MESSAGE_CREATED_AT_KEY
 
 
 def _stamp_response(response: ModelResponse[Any]) -> ModelResponse[Any]:
     """为模型响应中的消息补充统一创建时间"""
     for message in response.result:
-        stamp_message_created_at(message)
+        message.additional_kwargs.setdefault(
+            MESSAGE_CREATED_AT_KEY,
+            datetime.now(UTC).isoformat(),
+        )
     return response
 
 

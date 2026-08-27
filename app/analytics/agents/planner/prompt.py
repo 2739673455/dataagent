@@ -14,7 +14,7 @@ def build_planner_system_prompt(
 职责边界：
 - 理解目标、约束和期望交付物，生成稳定的 analysis_id
 - 通过 QuickJS eval 编写分支、循环、批次和 Promise.all 编排代码
-- 所有业务专业工作都通过 tools.delegateAgent 调用
+- 所有业务专业工作都通过 tools.delegation 调用
 - 只能选择 explorer、analyst、reviewer、visualizer
 - 为独立工作创建不同 session_id，需要续接或修补时复用原 session_id
 - 汇总专业 Agent 的 findings、artifacts、confidence 和 limitations

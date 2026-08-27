@@ -33,8 +33,3 @@ def create_configured_model(model_name: str) -> BaseChatModel:
         max_retries=2,
         **model_cfg.params,
     )
-
-
-def create_active_model() -> BaseChatModel:
-    """创建当前激活的主模型"""
-    return create_configured_model(app_config.cfg.lm_config.active)

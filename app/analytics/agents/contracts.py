@@ -40,6 +40,7 @@ NonEmptyText = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000),
 ]
+MESSAGE_CREATED_AT_KEY = "dataagent_created_at"
 
 
 def get_thread_id(user_id: int, conversation_id: UUID) -> str:
@@ -105,7 +106,7 @@ class StrictProtocolModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
-class DelegateAgentRequest(StrictProtocolModel):
+class DelegationRequest(StrictProtocolModel):
     """Planner 发起专业 Agent 委派的请求"""
 
     analysis_id: Identifier
@@ -196,8 +197,8 @@ class SpecialistResult(StrictProtocolModel):
         return self
 
 
-class DelegateAgentResult(StrictProtocolModel):
-    """delegate_agent 返回给 Planner 的稳定协议"""
+class DelegationResult(StrictProtocolModel):
+    """delegation 返回给 Planner 的稳定协议"""
 
     status: Literal["completed", "needs_repair", "failed"]
     analysis_id: Identifier

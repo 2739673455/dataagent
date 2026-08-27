@@ -1,7 +1,7 @@
 """语义召回记录模型"""
 
 from datetime import datetime
-from typing import Any, Literal, Self
+from typing import Any, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -16,22 +16,15 @@ from app.metadata.models.search import (
 from app.shared.contracts.query_experience import QueryExperienceSearchResult
 from app.shared.database.base import AnalyticsBase
 
-SemanticRecallKind = Literal["search", "merged"]
 
-
-class SemanticRecallRequest(BaseModel):
-    """语义资源与查询经验的组合检索请求"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    query: str = Field(min_length=1, max_length=1000)
-    resource_search: SemanticResourceSearchRequest
-
-    @field_validator("query", mode="before")
-    @classmethod
-    def strip_query(cls, value: object) -> object:
-        """清理查询标识文本"""
-        return value.strip() if isinstance(value, str) else value
+def normalize_semantic_recall_query(query: str) -> str:
+    """校验并清理查询业务键"""
+    normalized = query.strip()
+    if not normalized:
+        raise ValueError("query 不能为空")
+    if len(normalized) > 1000:
+        raise ValueError("query 长度不能超过 1000")
+    return normalized
 
 
 class SemanticRecallSnapshot(AnalyticsBase):
@@ -42,10 +35,10 @@ class SemanticRecallSnapshot(AnalyticsBase):
     user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     conversation_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     recall_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    query: Mapped[str] = mapped_column(String(1000), nullable=False)
     request: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     response: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    source_recall_ids: Mapped[list[str]] = mapped_column(
+    source_queries: Mapped[list[str]] = mapped_column(
         JSONB,
         nullable=False,
         default=list,
@@ -75,8 +68,7 @@ class SemanticRecallSnapshot(AnalyticsBase):
             "ix_semantic_recall_snapshots_query_created",
             "user_id",
             "conversation_id",
-            "kind",
-            text("(request ->> 'query')"),
+            "query",
             "created_at",
         ),
     )
@@ -87,39 +79,34 @@ class SemanticRecallRecord(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    recall_id: str
     user_id: int
     conversation_id: UUID
-    kind: SemanticRecallKind
-    request: SemanticRecallRequest | None
+    query: str = Field(min_length=1, max_length=1000)
+    request: SemanticResourceSearchRequest | None
     response: SemanticSearchResponse
     query_experiences: list[QueryExperienceSearchResult]
-    query_experiences_retrieved_at: datetime | None
-    source_recall_ids: list[str]
+    query_experiences_retrieved_at: datetime
+    source_queries: list[str]
     created_at: datetime
     updated_at: datetime
 
+    @field_validator("query", mode="before")
+    @classmethod
+    def strip_query(cls, value: object) -> object:
+        """清理召回记录的查询业务键"""
+        return (
+            normalize_semantic_recall_query(value) if isinstance(value, str) else value
+        )
+
     @model_validator(mode="after")
-    def validate_kind_payload(self) -> Self:
-        """校验原始召回和合并召回的数据约束"""
-        if self.response.search_id != self.recall_id:
-            raise ValueError("response.search_id 必须与 recall_id 一致")
-        if self.kind == "search":
-            if self.request is None:
-                raise ValueError("原始检索召回必须包含 request")
-            if self.source_recall_ids:
-                raise ValueError("原始检索召回不能包含来源召回")
-            if len(self.query_experiences) > 3:
-                raise ValueError("原始检索召回最多包含三条查询经验")
-            if self.query_experiences_retrieved_at is None:
-                raise ValueError("原始检索召回必须包含查询经验检索时间")
-            if self.response.terms != self.request.resource_search.terms:
-                raise ValueError("召回结果检索词必须与原始请求一致")
+    def validate_context_payload(self) -> Self:
+        """校验持续上下文版本的数据约束"""
+        if len(self.query_experiences) > 3:
+            raise ValueError("召回上下文最多包含三条查询经验")
+        if self.request is not None:
+            if not set(self.request.terms).issubset(self.response.terms):
+                raise ValueError("本次检索词必须包含在累计召回结果中")
         else:
-            if self.request is not None:
-                raise ValueError("合并召回不能包含 request")
-            if len(self.source_recall_ids) < 2:
-                raise ValueError("合并召回至少需要两个来源召回")
-            if self.query_experiences_retrieved_at is not None:
-                raise ValueError("合并召回不能包含查询经验检索时间")
+            if not self.source_queries:
+                raise ValueError("没有检索请求的召回必须包含来源 query")
         return self

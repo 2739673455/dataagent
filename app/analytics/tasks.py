@@ -7,7 +7,7 @@ from uuid import UUID
 from loguru import logger
 
 from app.analytics.agents.manager import AgentManager
-from app.analytics.model_factory import create_active_model
+from app.analytics.model_factory import create_configured_model
 from app.analytics.providers import build_conversation_lifecycle_service
 from app.analytics.repositories.conversation import ConversationPGRepo
 from app.analytics.services.conversation_lifecycle import ConversationLifecycleService
@@ -117,7 +117,9 @@ async def _generate_conversation_title(
     analytics_postgres.init()
     try:
         async with analytics_postgres.session() as session:
-            await ConversationTitleService(create_active_model()).generate_and_update(
+            await ConversationTitleService(
+                create_configured_model(cfg.lm_config.active)
+            ).generate_and_update(
                 ConversationPGRepo(session),
                 user_id,
                 conversation_id,

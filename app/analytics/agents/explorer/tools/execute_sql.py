@@ -38,7 +38,6 @@ from app.query.services.executor import (
 )
 from app.query.services.experience import (
     QueryExecutionContext,
-    QueryExperienceService,
 )
 from app.query.services.guard import QueryGuardService, QueryRejectedError
 from app.query.services.principal import QueryPrincipalService
@@ -103,11 +102,6 @@ def _query_purpose(runtime: ToolRuntime, purpose: str | None) -> str:
     return "执行只读数据查询"
 
 
-def _query_experience_service(meta_session: AsyncSession) -> QueryExperienceService:
-    """构造查询经验记录与检索服务"""
-    return build_query_experience_service(meta_session)
-
-
 async def _record_success_safely(
     context: QueryExecutionContext,
     details: SuccessfulQueryExecution,
@@ -115,7 +109,7 @@ async def _record_success_safely(
     """记录成功查询，持久化故障不改变查询结果"""
     try:
         async with meta_postgres_client_manager.session() as session:
-            await _query_experience_service(session).record_success(context, details)
+            await build_query_experience_service(session).record_success(context, details)
     except Exception:  # noqa: BLE001
         logger.exception("记录成功查询历史失败")
 
@@ -136,7 +130,7 @@ async def _record_failure_safely(
         return
     try:
         async with meta_postgres_client_manager.session() as session:
-            await _query_experience_service(session).record_failure(
+            await build_query_experience_service(session).record_failure(
                 context,
                 session_key,
                 raw_sql=raw_sql,

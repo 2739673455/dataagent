@@ -34,7 +34,7 @@ from app.analytics.agents.explorer.tools import (
 )
 from app.analytics.agents.mcp import get_mcp_tools
 from app.analytics.agents.planner.agent import create_planner_agent
-from app.analytics.agents.planner.tools import create_delegate_agent_tool
+from app.analytics.agents.planner.delegation import create_delegation_tool
 from app.analytics.agents.registry import (
     AgentDefinition,
     AgentRegistry,
@@ -241,11 +241,11 @@ class AgentManager:
             ),
             result_observer=observe_specialist_result,
         )
-        delegate_agent = create_delegate_agent_tool(session_service)
+        delegation_tool = create_delegation_tool(session_service)
         interpreter_cfg = app_config.cfg.agent.interpreter
         planner = create_planner_agent(
             model=self._models[self._planner_model_name],
-            delegate_agent=delegate_agent,
+            delegation_tool=delegation_tool,
             backend=backend,
             checkpointer=checkpointer,
             interpreter_mode=interpreter_cfg.mode,

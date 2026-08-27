@@ -20,22 +20,33 @@ from loguru import logger
 from pydantic import ValidationError
 
 from app.analytics.agents.contracts import (
+    MESSAGE_CREATED_AT_KEY,
     ConversationAgentRuntime,
-    DelegateAgentResult,
+    DelegationResult,
     PlannerTurnContext,
     build_planner_config,
 )
 from app.analytics.api.chat import schemas as chat_schema
-from app.analytics.message_metadata import (
-    MESSAGE_PAYLOAD_KEY,
-    get_message_created_at,
-)
 from app.analytics.services.contracts import (
     AgentRuntimeManager,
     ConversationFileReader,
 )
 
 _IMAGE_SUFFIXES = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
+MESSAGE_PAYLOAD_KEY = "dataagent_message"
+
+
+def _message_created_at(message: BaseMessage) -> datetime | None:
+    """读取消息创建时间"""
+    value = message.additional_kwargs.get(MESSAGE_CREATED_AT_KEY)
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _content_to_parts(content: Any) -> list[chat_schema.MessagePart]:
@@ -84,11 +95,11 @@ def _schema_from_metadata(
     return schema.model_copy(update={"message_id": message.id})
 
 
-def _delegate_result_attachments(
+def _delegation_result_attachments(
     message: ToolMessage,
 ) -> list[chat_schema.Attachment]:
     """从委派结果的稳定协议中提取可下载产物"""
-    if message.name != "delegate_agent":
+    if message.name != "delegation":
         return []
     content = message.content
     if isinstance(content, str):
@@ -101,7 +112,7 @@ def _delegate_result_attachments(
     else:
         return []
     try:
-        result = DelegateAgentResult.model_validate(payload)
+        result = DelegationResult.model_validate(payload)
     except ValidationError:
         logger.warning(
             f"委派结果载荷无效: message_id={message.id}, "
@@ -127,7 +138,7 @@ def _langchain_message_to_schema(
     if isinstance(message, ToolMessage):
         return chat_schema.MessageResponse(
             message_id=message.id,
-            created_at=get_message_created_at(message),
+            created_at=_message_created_at(message),
             role="tool",
             parts=[
                 chat_schema.ToolResultPart(
@@ -137,7 +148,7 @@ def _langchain_message_to_schema(
                     content=str(message.content),
                 )
             ],
-            attachments=_delegate_result_attachments(message) or None,
+            attachments=_delegation_result_attachments(message) or None,
         )
 
     if isinstance(message, AIMessage):
@@ -170,7 +181,7 @@ def _langchain_message_to_schema(
 
     return chat_schema.MessageResponse(
         message_id=message.id,
-        created_at=get_message_created_at(message),
+        created_at=_message_created_at(message),
         role=role,
         parts=parts,
         finish_reason=cast(

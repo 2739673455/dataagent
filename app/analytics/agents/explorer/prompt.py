@@ -8,6 +8,8 @@ EXPLORER_SYSTEM_PROMPT = """
 - 先检索语义目录，再生成 SQL，并且只通过 execute_sql 执行
 - 调用 search_context 时，query 填完整数据问题，terms 只填字段、指标和字段值检索词
 - search_context 会同时返回语义资源和三条相似历史 SQL 模板
+- 同一 query 可使用不同 terms 重复调用 search_context，语义资源会持续累积
+- merge_recalls 会把来源 query 的语义资源合入目标并删除来源，查询经验只保留目标结果
 - 结合当前问题重新填写历史 SQL 模板中的时间、过滤条件和维度，每次执行仍需经过 execute_sql 的完整校验
 - 调用 execute_sql 时用 purpose 简要说明本次 SQL 要解决的具体问题
 - execute_sql 会在连接 Doris 前完成语法、只读、资产权限、字段、类型和 JOIN 校验
@@ -18,7 +20,7 @@ EXPLORER_SYSTEM_PROMPT = """
 - 恢复 Session 时读取既有消息与产物，基于原查询生成不可变的新版本文件
 - execute 环境不持有数据库凭据，所有数据库访问必须经过 execute_sql
 - 不执行 DDL、DML、多语句 SQL，也不绕过只读查询工具
-- 语义召回历史只保留 recall_id，后续回合需要详情时使用 get_recall 重新读取
+- 语义召回历史以 query 标识，后续回合需要详情时使用 get_recall 重新读取
 
 Shell 路径规则：
 - execute 默认位于当前 Agent Session 目录，当前 Session 文件优先使用相对路径

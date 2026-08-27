@@ -16,15 +16,15 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from pydantic import ValidationError
 
-from app.analytics.agents.contracts import ConversationAgentRuntime, PlannerTurnContext
-from app.analytics.agents.planner.message_timestamp_middleware import (
+from app.analytics.agents.contracts import (
+    MESSAGE_CREATED_AT_KEY,
+    ConversationAgentRuntime,
+    PlannerTurnContext,
+)
+from app.analytics.agents.message_timestamp_middleware import (
     MessageTimestampMiddleware,
 )
 from app.analytics.api.chat import schemas as chat_schema
-from app.analytics.message_metadata import (
-    MESSAGE_PAYLOAD_KEY,
-    get_message_created_at,
-)
 from app.analytics.services import chat as chat_service
 from app.sandbox.paths import normalize_attachment_path
 
@@ -98,7 +98,7 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
         )
 
         metadata = chat_schema.MessageResponse.model_validate(
-            message.additional_kwargs[MESSAGE_PAYLOAD_KEY]
+            message.additional_kwargs[chat_service.MESSAGE_PAYLOAD_KEY]
         )
         self.assertIsNotNone(metadata.created_at)
 
@@ -111,7 +111,7 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
 
         await middleware.awrap_model_call(MagicMock(), handler)
 
-        self.assertIsNotNone(get_message_created_at(response_message))
+        self.assertIn(MESSAGE_CREATED_AT_KEY, response_message.additional_kwargs)
 
 
 class _RepeatingPlanner:
@@ -245,7 +245,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(responses), 3)
 
 
-def _delegate_payload() -> dict[str, object]:
+def _delegation_payload() -> dict[str, object]:
     return {
         "status": "completed",
         "analysis_id": "sales-review",
@@ -269,12 +269,12 @@ def _delegate_payload() -> dict[str, object]:
 
 
 class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
-    def test_delegate_artifacts_are_restored_from_history(self) -> None:
+    def test_delegation_artifacts_are_restored_from_history(self) -> None:
         message = ToolMessage(
             id="message-1",
-            name="delegate_agent",
+            name="delegation",
             tool_call_id="call-1",
-            content=json.dumps(_delegate_payload()),
+            content=json.dumps(_delegation_payload()),
         )
 
         schema = chat_service._langchain_message_to_schema(message)
@@ -295,12 +295,12 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             attachment.f_path,
         )
 
-    async def test_delegate_artifacts_are_in_stream_updates(self) -> None:
+    async def test_delegation_artifacts_are_in_stream_updates(self) -> None:
         message = ToolMessage(
             id="message-1",
-            name="delegate_agent",
+            name="delegation",
             tool_call_id="call-1",
-            content=json.dumps(_delegate_payload()),
+            content=json.dumps(_delegation_payload()),
         )
         planner = MagicMock()
 
@@ -343,12 +343,12 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(responses), 1)
         self.assertEqual(len(responses[0].attachments or []), 1)
 
-    def test_invalid_delegate_artifact_payload_is_not_exposed(self) -> None:
-        payload = _delegate_payload()
+    def test_invalid_delegation_artifact_payload_is_not_exposed(self) -> None:
+        payload = _delegation_payload()
         payload["artifacts"] = [{"path": "/analyses/../secret"}]
         message = ToolMessage(
             id="message-1",
-            name="delegate_agent",
+            name="delegation",
             tool_call_id="call-1",
             content=json.dumps(payload),
         )

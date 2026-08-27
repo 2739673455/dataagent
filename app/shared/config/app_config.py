@@ -246,7 +246,7 @@ class InterpreterConfig(BaseModel):
     """Planner 内嵌解释器配置"""
 
     mode: Literal["thread"]
-    ptc: list[Literal["delegate_agent"]]
+    ptc: list[Literal["delegation"]]
     timeout_seconds: float = Field(gt=0)
     memory_limit_bytes: int = Field(gt=0)
 

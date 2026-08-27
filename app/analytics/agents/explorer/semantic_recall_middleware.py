@@ -24,7 +24,7 @@ from app.analytics.agents.explorer.semantic_recall_protocol import (
     parse_semantic_recall_reference,
 )
 from app.metadata.models.recall import SemanticRecallRecord
-from app.metadata.services.recall import SemanticRecallsNotFoundError
+from app.metadata.services.recall import SemanticQueriesNotFoundError
 
 
 def _expanded_content(
@@ -34,20 +34,20 @@ def _expanded_content(
     """按请求视图序列化已授权的语义召回记录"""
     if view == "search_response":
         payload = record.response.model_dump(mode="json")
-        payload["query"] = record.request.query if record.request is not None else None
+        payload.pop("search_id", None)
+        payload["query"] = record.query
         payload["query_experiences"] = [
             item.model_dump(mode="json") for item in record.query_experiences
         ]
         payload["query_experiences_retrieved_at"] = (
             record.query_experiences_retrieved_at.isoformat()
-            if record.query_experiences_retrieved_at is not None
-            else None
         )
-        payload["recall_id"] = record.recall_id
     else:
+        recall = record.model_dump(mode="json")
+        recall["response"].pop("search_id", None)
         payload = {
             "status": "success",
-            "recall": record.model_dump(mode="json"),
+            "recall": recall,
         }
     return json.dumps(payload, ensure_ascii=False)
 
@@ -101,18 +101,18 @@ class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
                 service = await create_authorized_semantic_recall_service(user_id, repo)
                 records: dict[str, SemanticRecallRecord] = {}
                 for _, reference in references:
-                    if reference.recall_id not in records:
-                        records[reference.recall_id] = await service.get(
+                    if reference.query not in records:
+                        records[reference.query] = await service.get(
                             user_id,
                             conversation_id,
-                            reference.recall_id,
+                            reference.query,
                         )
-        except SemanticRecallsNotFoundError as exc:
+        except SemanticQueriesNotFoundError as exc:
             expanded_error = json.dumps(
                 {
                     "status": "error",
                     "message": "未找到指定的语义召回记录",
-                    "recall_ids": exc.recall_ids,
+                    "queries": exc.queries,
                 },
                 ensure_ascii=False,
             )
@@ -146,7 +146,7 @@ class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
                 messages[index] = message.model_copy(
                     update={
                         "content": _expanded_content(
-                            records[reference.recall_id],
+                            records[reference.query],
                             reference.view,
                         )
                     }

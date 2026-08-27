@@ -158,7 +158,7 @@ agent:
   interpreter:
     mode: thread
     ptc:
-      - delegate_agent
+      - delegation
     timeout_seconds: 30
     memory_limit_bytes: 67108864
   specialists:

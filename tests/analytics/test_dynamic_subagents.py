@@ -24,7 +24,7 @@ from pydantic import Field, ValidationError
 from app.analytics.agents.contracts import (
     ArtifactReference,
     ConversationAgentRuntime,
-    DelegateAgentRequest,
+    DelegationRequest,
     RepairRequest,
     SpecialistResult,
     build_planner_config,
@@ -242,8 +242,8 @@ def _request(
     *,
     agent_type: AgentType = "analyst",
     repair_depth: int = 0,
-) -> DelegateAgentRequest:
-    return DelegateAgentRequest(
+) -> DelegationRequest:
+    return DelegationRequest(
         analysis_id="sales-decline",
         agent_type=agent_type,
         session_id=session_id,
@@ -305,7 +305,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
             )
 
         with self.assertRaises(ValidationError):
-            DelegateAgentRequest.model_validate(
+            DelegationRequest.model_validate(
                 {
                     "analysis_id": "sales",
                     "agent_type": "explorer",
@@ -450,7 +450,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
         from app.analytics.agents.planner.agent import create_planner_agent
 
         @tool
-        def delegate_agent(message: str) -> str:
+        def delegation(message: str) -> str:
             """委派测试专业 Agent"""
             return message
 
@@ -480,11 +480,11 @@ class DynamicSubagentContractTest(unittest.TestCase):
             ):
                 graph = create_planner_agent(
                     model=model,
-                    delegate_agent=delegate_agent,
+                    delegation_tool=delegation,
                     backend=LocalShellBackend(root_dir=workspace),
                     checkpointer=InMemorySaver(),
                     interpreter_mode="thread",
-                    interpreter_ptc=["delegate_agent"],
+                    interpreter_ptc=["delegation"],
                     interpreter_timeout_seconds=1,
                     interpreter_memory_limit_bytes=2 * 1024 * 1024,
                     max_delegations_per_run=2,
@@ -503,7 +503,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
                 model.seen_tools
             )
         )
-        self.assertIn("delegate_agent", model.seen_tools)
+        self.assertIn("delegation", model.seen_tools)
 
 
 class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
@@ -567,7 +567,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         config.setdefault("configurable", {})["planner_run_id"] = "observer-run"
 
         async with service.planner_run("observer-run"):
-            result = await service.delegate(
+            result = await service.execute_delegation(
                 _request("base", agent_type="explorer"),
                 config,
             )
@@ -587,9 +587,9 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         async with service.planner_run("parallel-run"):
             results = await asyncio.gather(
-                service.delegate(_request("region"), config),
-                service.delegate(_request("region"), config),
-                service.delegate(_request("product"), config),
+                service.execute_delegation(_request("region"), config),
+                service.execute_delegation(_request("region"), config),
+                service.execute_delegation(_request("product"), config),
             )
 
         self.assertTrue(all(result.status == "completed" for result in results))
@@ -605,9 +605,9 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         async with service.planner_run("limited-run"):
             await asyncio.gather(
-                service.delegate(_request("region"), config),
-                service.delegate(_request("product"), config),
-                service.delegate(_request("channel"), config),
+                service.execute_delegation(_request("region"), config),
+                service.execute_delegation(_request("product"), config),
+                service.execute_delegation(_request("channel"), config),
             )
 
         self.assertEqual(fake.max_active, 1)
@@ -633,14 +633,14 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             second_service.planner_run("worker-two"),
         ):
             await asyncio.gather(
-                first_service.delegate(_request("region"), first_config),
-                second_service.delegate(_request("region"), second_config),
+                first_service.execute_delegation(_request("region"), first_config),
+                second_service.execute_delegation(_request("region"), second_config),
             )
 
         namespace = "subagents/sales-decline/analyst/region"
         self.assertEqual(fake.max_active_by_namespace[namespace], 1)
 
-    async def test_delegate_builds_controlled_subagent_config(self) -> None:
+    async def test_delegation_builds_controlled_subagent_config(self) -> None:
         fake = _FakeAgent()
         service = _service(fake)
         parent = build_planner_config(12, _CONVERSATION_ID)
@@ -650,7 +650,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         parent_configurable["planner_run_id"] = "config-run"
 
         async with service.planner_run("config-run"):
-            result = await service.delegate(_request("region"), parent)
+            result = await service.execute_delegation(_request("region"), parent)
 
         self.assertEqual(result.status, "completed")
         invoked = fake.configs[0]
@@ -678,9 +678,9 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         config.setdefault("configurable", {})["planner_run_id"] = "budget-run"
 
         async with service.planner_run("budget-run"):
-            first = await service.delegate(_request("region"), config)
-            second = await service.delegate(_request("region"), config)
-            third = await service.delegate(_request("region"), config)
+            first = await service.execute_delegation(_request("region"), config)
+            second = await service.execute_delegation(_request("region"), config)
+            third = await service.execute_delegation(_request("region"), config)
 
         self.assertEqual(first.status, "completed")
         self.assertEqual(second.status, "completed")
@@ -694,7 +694,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         config.setdefault("configurable", {})["planner_run_id"] = "timeout-run"
 
         async with service.planner_run("timeout-run"):
-            result = await service.delegate(_request("region"), config)
+            result = await service.execute_delegation(_request("region"), config)
 
         self.assertEqual(result.status, "failed")
         self.assertIn("超时", result.limitations[0])
@@ -723,7 +723,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         config.setdefault("configurable", {})["planner_run_id"] = "self-repair-run"
 
         async with service.planner_run("self-repair-run"):
-            result = await service.delegate(_request("region"), config)
+            result = await service.execute_delegation(_request("region"), config)
 
         self.assertEqual(result.status, "failed")
         self.assertIn("修补自身", result.limitations[0])
@@ -736,7 +736,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         config.setdefault("configurable", {})["planner_run_id"] = "artifact-run"
 
         async with service.planner_run("artifact-run"):
-            result = await service.delegate(_request("region"), config)
+            result = await service.execute_delegation(_request("region"), config)
 
         self.assertEqual(result.status, "failed")
         self.assertIn("产物不存在", result.limitations[0])
@@ -782,7 +782,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         config.setdefault("configurable", {})["planner_run_id"] = "artifact-fan-out"
 
         async with service.planner_run("artifact-fan-out"):
-            result = await service.delegate(_request("region"), config)
+            result = await service.execute_delegation(_request("region"), config)
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(max_active, 8)
@@ -804,7 +804,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         config.setdefault("configurable", {})["planner_run_id"] = "path-domain-run"
 
         async with service.planner_run("path-domain-run"):
-            result = await service.delegate(_request("region"), config)
+            result = await service.execute_delegation(_request("region"), config)
 
         self.assertEqual(result.status, "failed")
         self.assertIn("超出当前分析范围", result.limitations[0])
@@ -834,7 +834,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         config.setdefault("configurable", {})["planner_run_id"] = "unknown-target"
 
         async with service.planner_run("unknown-target"):
-            result = await service.delegate(_request("region"), config)
+            result = await service.execute_delegation(_request("region"), config)
 
         self.assertEqual(result.status, "failed")
         self.assertIn("已存在的 Session", result.limitations[0])
@@ -846,7 +846,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         first_config = build_planner_config(12, _CONVERSATION_ID)
         first_config.setdefault("configurable", {})["planner_run_id"] = "create-target"
         async with first_service.planner_run("create-target"):
-            created = await first_service.delegate(
+            created = await first_service.execute_delegation(
                 _request("base", agent_type="explorer"),
                 first_config,
             )
@@ -876,7 +876,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         async with restarted_service.planner_run("after-restart"):
-            result = await restarted_service.delegate(
+            result = await restarted_service.execute_delegation(
                 _request("region"),
                 restarted_config,
             )
@@ -908,21 +908,21 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         config.setdefault("configurable", {})["planner_run_id"] = "signed-depth"
 
         async with service.planner_run("signed-depth"):
-            repair_result = await service.delegate(_request("region"), config)
-            wrong_depth = await service.delegate(
+            repair_result = await service.execute_delegation(_request("region"), config)
+            wrong_depth = await service.execute_delegation(
                 _request("base", agent_type="explorer"),
                 config,
             )
             fake.output = None
-            repaired = await service.delegate(
+            repaired = await service.execute_delegation(
                 _request("base", agent_type="explorer", repair_depth=1),
                 config,
             )
-            reset_depth = await service.delegate(
+            reset_depth = await service.execute_delegation(
                 _request("base", agent_type="explorer"),
                 config,
             )
-            continued_repair = await service.delegate(
+            continued_repair = await service.execute_delegation(
                 _request("base", agent_type="explorer", repair_depth=1),
                 config,
             )
@@ -958,7 +958,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         config.setdefault("configurable", {})["planner_run_id"] = "repair-depth-run"
 
         async with service.planner_run("repair-depth-run"):
-            result = await service.delegate(_request("region"), config)
+            result = await service.execute_delegation(_request("region"), config)
 
         self.assertEqual(result.status, "failed")
         self.assertIn("max repair depth", result.limitations[0])
@@ -967,7 +967,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         fake = _FakeAgent()
         service = _service(fake)
 
-        result = await service.delegate(
+        result = await service.execute_delegation(
             _request("region"),
             build_planner_config(12, _CONVERSATION_ID),
         )
@@ -1075,26 +1075,26 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         os.getenv("RUN_QUICKJS_INTEGRATION") == "1",
         "requires QuickJS integration environment",
     )
-    async def test_quickjs_bridge_calls_delegate_with_shared_run_budget(self) -> None:
+    async def test_quickjs_bridge_calls_delegation_with_shared_run_budget(self) -> None:
         from langchain.agents.middleware.types import ModelRequest
         from langchain.tools import ToolRuntime
         from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
         from langchain_core.messages import AIMessage
         from langchain_quickjs import CodeInterpreterMiddleware
 
-        from app.analytics.agents.planner.tools import create_delegate_agent_tool
+        from app.analytics.agents.planner.delegation import create_delegation_tool
 
         fake = _FakeAgent()
         service = _service(fake, max_delegations_per_run=1)
-        delegate_tool = create_delegate_agent_tool(service)
+        delegation_tool = create_delegation_tool(service)
         middleware = CodeInterpreterMiddleware(
             mode="call",
-            ptc=["delegate_agent"],
+            ptc=["delegation"],
         )
         request = ModelRequest(
             model=GenericFakeChatModel(messages=iter([AIMessage(content="ok")])),
             messages=[],
-            tools=[delegate_tool],
+            tools=[delegation_tool],
         )
         middleware._prepare_for_call(request)
         config = build_planner_config(12, _CONVERSATION_ID)
@@ -1114,7 +1114,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 result = await eval_coroutine(
                     runtime=runtime,
                     code="""
-await tools.delegateAgent({
+await tools.delegation({
   analysis_id: "sales-decline",
   agent_type: "analyst",
   session_id: "region",
