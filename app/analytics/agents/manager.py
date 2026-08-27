@@ -26,12 +26,11 @@ from app.analytics.agents.contracts import (
 from app.analytics.agents.explorer.agent import create_explorer_agent
 from app.analytics.agents.explorer.tools import (
     create_execute_sql_tool,
-    delete_semantic_recalls,
-    get_semantic_recall,
-    list_semantic_recalls,
-    merge_semantic_recalls,
-    search_query_experiences,
-    search_semantic_resources,
+    delete_recalls,
+    get_recall,
+    list_recalls,
+    merge_recalls,
+    search_context,
 )
 from app.analytics.agents.mcp import get_mcp_tools
 from app.analytics.agents.planner.agent import create_planner_agent
@@ -124,12 +123,11 @@ class AgentManager:
                 for model_name in configured_names
             }
             platform_tools: list[BaseTool] = [
-                search_semantic_resources,
-                list_semantic_recalls,
-                get_semantic_recall,
-                merge_semantic_recalls,
-                delete_semantic_recalls,
-                search_query_experiences,
+                search_context,
+                list_recalls,
+                get_recall,
+                merge_recalls,
+                delete_recalls,
                 create_execute_sql_tool(self._sandbox),
             ]
             mcp_tools = await get_mcp_tools()

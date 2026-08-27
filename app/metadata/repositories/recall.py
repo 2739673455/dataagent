@@ -9,9 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.metadata.models.recall import (
     SemanticRecallKind,
     SemanticRecallRecord,
+    SemanticRecallRequest,
     SemanticRecallSnapshot,
 )
-from app.metadata.models.search import SemanticSearchRequest, SemanticSearchResponse
+from app.metadata.models.search import SemanticSearchResponse
+from app.shared.contracts.query_experience import QueryExperienceSearchResult
 
 
 class SemanticRecallPGRepo:
@@ -24,17 +26,27 @@ class SemanticRecallPGRepo:
     @staticmethod
     def _to_record(snapshot: SemanticRecallSnapshot) -> SemanticRecallRecord:
         """将关系模型转换为领域记录"""
+        response_payload = snapshot.response
         return SemanticRecallRecord(
             recall_id=snapshot.recall_id,
             user_id=snapshot.user_id,
             conversation_id=snapshot.conversation_id,
             kind=cast("SemanticRecallKind", snapshot.kind),
             request=(
-                SemanticSearchRequest.model_validate(snapshot.request)
+                SemanticRecallRequest.model_validate(snapshot.request)
                 if snapshot.request is not None
                 else None
             ),
-            response=SemanticSearchResponse.model_validate(snapshot.response),
+            response=SemanticSearchResponse.model_validate(
+                response_payload["semantic_resources"]
+            ),
+            query_experiences=[
+                QueryExperienceSearchResult.model_validate(item)
+                for item in response_payload["query_experiences"]
+            ],
+            query_experiences_retrieved_at=response_payload[
+                "query_experiences_retrieved_at"
+            ],
             source_recall_ids=snapshot.source_recall_ids,
             created_at=snapshot.created_at,
             updated_at=snapshot.updated_at,
@@ -53,13 +65,47 @@ class SemanticRecallPGRepo:
                     if record.request is not None
                     else None
                 ),
-                response=record.response.model_dump(mode="json"),
+                response={
+                    "semantic_resources": record.response.model_dump(mode="json"),
+                    "query_experiences": [
+                        item.model_dump(mode="json")
+                        for item in record.query_experiences
+                    ],
+                    "query_experiences_retrieved_at": (
+                        record.query_experiences_retrieved_at.isoformat()
+                        if record.query_experiences_retrieved_at is not None
+                        else None
+                    ),
+                },
                 source_recall_ids=record.source_recall_ids,
                 created_at=record.created_at,
                 updated_at=record.updated_at,
             )
         )
         await self._session.flush()
+
+    async def get_latest_search_by_query(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        query: str,
+    ) -> SemanticRecallRecord | None:
+        """获取会话中指定查询标识的最近一次原始召回"""
+        snapshot = await self._session.scalar(
+            select(SemanticRecallSnapshot)
+            .where(
+                SemanticRecallSnapshot.user_id == user_id,
+                SemanticRecallSnapshot.conversation_id == conversation_id,
+                SemanticRecallSnapshot.kind == "search",
+                SemanticRecallSnapshot.request["query"].as_string() == query,
+            )
+            .order_by(
+                SemanticRecallSnapshot.created_at.desc(),
+                SemanticRecallSnapshot.recall_id.desc(),
+            )
+            .limit(1)
+        )
+        return self._to_record(snapshot) if snapshot is not None else None
 
     async def get(
         self,

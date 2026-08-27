@@ -14,7 +14,7 @@ from app.metadata.models.catalog import (
     ValueIndexSyncState,
     ValueInfo,
 )
-from app.metadata.models.search import SearchHit, SemanticSearchRequest
+from app.metadata.models.search import SearchHit, SemanticResourceSearchRequest
 from app.metadata.services.search import MetaSearchService
 
 
@@ -152,7 +152,10 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         response = await service.search(
-            SemanticSearchRequest(query="金额", resource_types=["column"])
+            SemanticResourceSearchRequest(
+                terms=["金额"],
+                resource_types=["column"],
+            )
         )
 
         self.assertEqual([item.name for item in response.columns], ["amount"])
@@ -172,8 +175,8 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         service = self.build_restricted_service()
 
         response = await service.search(
-            SemanticSearchRequest(
-                query="收入",
+            SemanticResourceSearchRequest(
+                terms=["收入"],
                 resource_types=["column", "metric", "value"],
             )
         )
@@ -201,22 +204,21 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         ]
 
         response = await self.service.search(
-            SemanticSearchRequest(
-                query="销售额",
-                terms=["GMV"],
+            SemanticResourceSearchRequest(
+                terms=["销售额", "GMV"],
                 resource_types=["column"],
             )
         )
 
-        self.assertEqual(response.queries, ["销售额", "GMV"])
+        self.assertEqual(response.terms, ["销售额", "GMV"])
         self.assertEqual([item.name for item in response.columns], ["amount"])
         self.assertEqual(
             [reason.model_dump() for reason in response.columns[0].match_reasons],
             [
-                {"match_type": "fulltext", "query": "销售额", "score": 0.9},
-                {"match_type": "fulltext", "query": "GMV", "score": 0.9},
-                {"match_type": "vector", "query": "销售额", "score": 0.9},
-                {"match_type": "vector", "query": "GMV", "score": 0.9},
+                {"match_type": "fulltext", "term": "销售额", "score": 0.9},
+                {"match_type": "fulltext", "term": "GMV", "score": 0.9},
+                {"match_type": "vector", "term": "销售额", "score": 0.9},
+                {"match_type": "vector", "term": "GMV", "score": 0.9},
             ],
         )
         self.assertEqual(response.metrics, [])
@@ -237,7 +239,10 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         self.metric_repo.search_vector_hits.return_value = [metric_hit]
 
         response = await self.service.search(
-            SemanticSearchRequest(query="收入", resource_types=["metric"])
+            SemanticResourceSearchRequest(
+                terms=["收入"],
+                resource_types=["metric"],
+            )
         )
 
         self.assertEqual([item.name for item in response.metrics], ["revenue"])
@@ -255,7 +260,10 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         ]
 
         response = await self.service.search(
-            SemanticSearchRequest(query="100", resource_types=["value"])
+            SemanticResourceSearchRequest(
+                terms=["100"],
+                resource_types=["value"],
+            )
         )
 
         self.assertEqual([item.value for item in response.values], ["100"])
@@ -273,7 +281,10 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         self.column_repo.search_vector_hits.return_value = [column_hit]
 
         response = await self.service.search(
-            SemanticSearchRequest(query="销售额", resource_types=["column"])
+            SemanticResourceSearchRequest(
+                terms=["销售额"],
+                resource_types=["column"],
+            )
         )
 
         self.assertEqual(response.status, "partial")
@@ -318,7 +329,10 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         self.column_repo.search_vector_hits.return_value = [direct_hit]
 
         response = await self.service.search(
-            SemanticSearchRequest(query="销售额", resource_types=["column"])
+            SemanticResourceSearchRequest(
+                terms=["销售额"],
+                resource_types=["column"],
+            )
         )
 
         self.assertEqual(
@@ -335,22 +349,22 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.relations[0].source_c_name, "customer_id")
         self.assertEqual(response.relations[0].target_t_name, "customers")
 
-    async def test_match_reason_preserves_query_containing_colon(self) -> None:
+    async def test_match_reason_preserves_term_containing_colon(self) -> None:
         column_hit = SearchHit(item=self.column, score=0.75)
         self.embedding_client.aembed_documents.return_value = [[0.1]]
         self.column_repo.search_text_hits.return_value = [column_hit]
         self.column_repo.search_vector_hits.return_value = []
 
         response = await self.service.search(
-            SemanticSearchRequest(
-                query="销售额:含税",
+            SemanticResourceSearchRequest(
+                terms=["销售额:含税"],
                 resource_types=["column"],
             )
         )
 
         reason = response.columns[0].match_reasons[0]
         self.assertEqual(reason.match_type, "fulltext")
-        self.assertEqual(reason.query, "销售额:含税")
+        self.assertEqual(reason.term, "销售额:含税")
         self.assertEqual(reason.score, 0.75)
 
     async def test_index_queries_obey_service_concurrency_limit(self) -> None:
@@ -379,14 +393,14 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         await self.service.search(
-            SemanticSearchRequest(
-                query="q0",
+            SemanticResourceSearchRequest(
                 terms=[f"q{index}" for index in range(1, 10)],
                 resource_types=["value"],
             )
         )
 
         self.assertEqual(max_active, 2)
+        self.assertEqual(self.value_repo.search_hits.await_count, 9)
 
     async def test_metadata_catalog_is_loaded_sequentially(self) -> None:
         calls: list[str] = []
@@ -409,7 +423,10 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         self.value_repo.search_hits.return_value = []
 
         await self.service.search(
-            SemanticSearchRequest(query="100", resource_types=["value"])
+            SemanticResourceSearchRequest(
+                terms=["100"],
+                resource_types=["value"],
+            )
         )
 
         self.assertEqual(calls, ["tables", "columns", "metrics"])
@@ -461,7 +478,10 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         self.metric_repo.search_vector_hits.return_value = []
 
         response = await self.service.search(
-            SemanticSearchRequest(query="宽指标", resource_types=["metric"])
+            SemanticResourceSearchRequest(
+                terms=["宽指标"],
+                resource_types=["metric"],
+            )
         )
 
         returned_columns = {(column.t_name, column.name) for column in response.columns}

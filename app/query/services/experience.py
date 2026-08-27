@@ -16,12 +16,8 @@ from app.identity.services.authorization import AssetAccessPolicy
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
 from app.query.models.execution import QueryExecution, QueryExecutionStatus
 from app.query.models.experience import (
-    QueryAssetKind,
-    QueryAssetSnapshot,
     QueryExperience,
     QueryExperienceAsset,
-    QueryExperienceQuality,
-    QueryExperienceSearchResult,
 )
 from app.query.models.validation import (
     QueryDialect,
@@ -33,6 +29,12 @@ from app.query.services.contracts import QueryExperienceIndexScheduler
 from app.query.services.executor import SuccessfulQueryExecution
 from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.contracts.analysis import AgentSessionKey
+from app.shared.contracts.query_experience import (
+    QueryAssetKind,
+    QueryAssetSnapshot,
+    QueryExperienceQuality,
+    QueryExperienceSearchResult,
+)
 
 _SEARCH_POOL_SIZE = 100
 _RRF_K = 60

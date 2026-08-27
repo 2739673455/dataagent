@@ -55,19 +55,17 @@ _AGENT_SPECS: dict[AgentType, AgentSpec] = {
         system_prompt=EXPLORER_SYSTEM_PROMPT,
         platform_tools=frozenset(
             {
-                "search_semantic_resources",
-                "list_semantic_recalls",
-                "get_semantic_recall",
-                "merge_semantic_recalls",
-                "delete_semantic_recalls",
-                "search_query_experiences",
+                "search_context",
+                "list_recalls",
+                "get_recall",
+                "merge_recalls",
+                "delete_recalls",
                 "execute_sql",
             }
         ),
         required_tools=frozenset(
             {
-                "search_semantic_resources",
-                "search_query_experiences",
+                "search_context",
                 "execute_sql",
             }
         ),

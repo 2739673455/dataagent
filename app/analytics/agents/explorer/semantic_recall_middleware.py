@@ -34,6 +34,15 @@ def _expanded_content(
     """按请求视图序列化已授权的语义召回记录"""
     if view == "search_response":
         payload = record.response.model_dump(mode="json")
+        payload["query"] = record.request.query if record.request is not None else None
+        payload["query_experiences"] = [
+            item.model_dump(mode="json") for item in record.query_experiences
+        ]
+        payload["query_experiences_retrieved_at"] = (
+            record.query_experiences_retrieved_at.isoformat()
+            if record.query_experiences_retrieved_at is not None
+            else None
+        )
         payload["recall_id"] = record.recall_id
     else:
         payload = {

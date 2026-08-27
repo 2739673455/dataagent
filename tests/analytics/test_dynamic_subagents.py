@@ -76,7 +76,7 @@ class RecordingChatModel(BaseChatModel):
 
 
 @tool
-def search_semantic_resources(query: str) -> str:
+def search_context(query: str) -> str:
     """检索测试语义资源"""
     return query
 
@@ -85,12 +85,6 @@ def search_semantic_resources(query: str) -> str:
 def execute_sql(sql: str) -> str:
     """执行测试 SQL"""
     return sql
-
-
-@tool
-def search_query_experiences(query: str) -> str:
-    """检索测试查询经验"""
-    return query
 
 
 @tool
@@ -186,8 +180,7 @@ async def _conversation_not_deleted() -> bool:
 def _registry(fake: _FakeAgent) -> AgentRegistry:
     definitions = build_agent_definitions(
         [
-            search_semantic_resources,
-            search_query_experiences,
+            search_context,
             execute_sql,
         ],
         [],
@@ -340,8 +333,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
     def test_registry_applies_independent_tool_allowlists(self) -> None:
         definitions = build_agent_definitions(
             [
-                search_semantic_resources,
-                search_query_experiences,
+                search_context,
                 execute_sql,
             ],
             [mcp_web_search],
@@ -350,8 +342,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
         self.assertEqual(
             definitions["explorer"].tool_names,
             {
-                "search_semantic_resources",
-                "search_query_experiences",
+                "search_context",
                 "execute_sql",
                 "mcp_web_search",
             },
@@ -371,7 +362,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
 
     def test_registry_fails_fast_when_required_tools_are_missing(self) -> None:
         with self.assertRaisesRegex(ValueError, "缺少必需的专家工具"):
-            build_agent_definitions([search_semantic_resources], [])
+            build_agent_definitions([search_context], [])
 
     def test_registry_rejects_mcp_tool_names_reserved_by_runtime(self) -> None:
         @tool("execute")
@@ -382,8 +373,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "冲突"):
             build_agent_definitions(
                 [
-                    search_semantic_resources,
-                    search_query_experiences,
+                    search_context,
                     execute_sql,
                 ],
                 [conflicting_mcp_tool],
@@ -522,8 +512,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_registry_builds_and_caches_one_agent_per_session(self) -> None:
         definitions = build_agent_definitions(
             [
-                search_semantic_resources,
-                search_query_experiences,
+                search_context,
                 execute_sql,
             ],
             [],

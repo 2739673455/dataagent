@@ -3,22 +3,24 @@
 import json
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from app.metadata.models.recall import SemanticRecallRecord
+from app.metadata.models.recall import SemanticRecallRecord, SemanticRecallRequest
 from app.metadata.models.search import (
     SemanticColumnResult,
     SemanticMetricResult,
     SemanticRelation,
-    SemanticSearchRequest,
     SemanticSearchResponse,
     SemanticTableContext,
     SemanticValueResult,
 )
 from app.metadata.repositories.recall import SemanticRecallPGRepo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
+from app.shared.contracts.query_experience import QueryExperienceSearchResult
+
+_QUERY_EXPERIENCE_CACHE_TTL = timedelta(days=1)
 
 
 class SemanticRecallsNotFoundError(Exception):
@@ -161,6 +163,22 @@ def _merge_relations(
     return [matches[0] for matches in groups]
 
 
+def _merge_query_experiences(
+    records: list[SemanticRecallRecord],
+) -> list[QueryExperienceSearchResult]:
+    """按经验 ID 合并查询经验并保留最高分结果"""
+    by_id: dict[UUID, QueryExperienceSearchResult] = {}
+    for record in records:
+        for experience in record.query_experiences:
+            current = by_id.get(experience.experience_id)
+            if current is None or experience.score > current.score:
+                by_id[experience.experience_id] = experience
+    return sorted(
+        by_id.values(),
+        key=lambda item: (-item.score, -item.adopted_count, item.experience_id.hex),
+    )
+
+
 def merge_semantic_search_responses(
     recall_id: str,
     responses: list[SemanticSearchResponse],
@@ -175,7 +193,7 @@ def merge_semantic_search_responses(
             else "success"
         ),
         search_id=recall_id,
-        queries=_stable_union([response.queries for response in responses]),
+        terms=_stable_union([response.terms for response in responses]),
         metrics=_merge_metrics(responses),
         columns=_merge_columns(responses),
         values=_merge_values(responses),
@@ -202,8 +220,10 @@ class SemanticRecallService:
         self,
         user_id: int,
         conversation_id: UUID,
-        request: SemanticSearchRequest,
+        request: SemanticRecallRequest,
         response: SemanticSearchResponse,
+        query_experiences: list[QueryExperienceSearchResult],
+        query_experiences_retrieved_at: datetime,
     ) -> SemanticRecallRecord:
         """持久化一次原始查询及完整召回结果"""
         now = datetime.now(UTC)
@@ -214,12 +234,39 @@ class SemanticRecallService:
             kind="search",
             request=request,
             response=self._authorization_filter.filter_semantic_response(response),
+            query_experiences=self._filter_query_experiences(query_experiences),
+            query_experiences_retrieved_at=query_experiences_retrieved_at,
             source_recall_ids=[],
             created_at=now,
             updated_at=now,
         )
         await self._repo.save(record)
         return record
+
+    async def get_fresh_query_experiences(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        query: str,
+        *,
+        now: datetime | None = None,
+    ) -> tuple[list[QueryExperienceSearchResult], datetime] | None:
+        """读取当前查询在一天有效期内的查询经验结果"""
+        record = await self._repo.get_latest_search_by_query(
+            user_id,
+            conversation_id,
+            query,
+        )
+        if record is None or record.query_experiences_retrieved_at is None:
+            return None
+        retrieved_at = record.query_experiences_retrieved_at
+        if retrieved_at.tzinfo is None:
+            retrieved_at = retrieved_at.replace(tzinfo=UTC)
+        current_time = now or datetime.now(UTC)
+        if current_time - retrieved_at >= _QUERY_EXPERIENCE_CACHE_TTL:
+            return None
+        authorized = self._authorize_record(record)
+        return authorized.query_experiences, retrieved_at
 
     async def get(
         self,
@@ -290,6 +337,8 @@ class SemanticRecallService:
                 merged_id,
                 [record.response for record in records],
             ),
+            query_experiences=_merge_query_experiences(records),
+            query_experiences_retrieved_at=None,
             source_recall_ids=source_ids,
             created_at=now,
             updated_at=now,
@@ -303,9 +352,38 @@ class SemanticRecallService:
     ) -> SemanticRecallRecord:
         """按当前策略生成召回记录的安全读取副本"""
         response = self._authorization_filter.filter_semantic_response(record.response)
-        if response is record.response:
+        query_experiences = self._filter_query_experiences(record.query_experiences)
+        if (
+            response is record.response
+            and query_experiences == record.query_experiences
+        ):
             return record
-        return record.model_copy(update={"response": response})
+        return record.model_copy(
+            update={
+                "response": response,
+                "query_experiences": query_experiences,
+            }
+        )
+
+    def _filter_query_experiences(
+        self,
+        experiences: list[QueryExperienceSearchResult],
+    ) -> list[QueryExperienceSearchResult]:
+        """移除包含当前用户不可见资产的查询经验"""
+        return [
+            experience
+            for experience in experiences
+            if all(
+                self._authorization_filter.table_is_visible(asset.table)
+                if asset.kind == "table"
+                else asset.column is not None
+                and self._authorization_filter.column_is_allowed(
+                    asset.table,
+                    asset.column,
+                )
+                for asset in experience.assets
+            )
+        ]
 
     async def delete(
         self,

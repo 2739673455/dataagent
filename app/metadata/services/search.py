@@ -23,8 +23,8 @@ from app.metadata.models.search import (
     SemanticMatchReason,
     SemanticMetricResult,
     SemanticRelation,
+    SemanticResourceSearchRequest,
     SemanticResourceType,
-    SemanticSearchRequest,
     SemanticSearchResponse,
     SemanticTableContext,
     SemanticValueResult,
@@ -106,8 +106,8 @@ class _SemanticCatalog:
 class _SearchContext:
     """单次语义检索的输入、目录和可变召回状态"""
 
-    request: SemanticSearchRequest
-    queries: list[str]
+    request: SemanticResourceSearchRequest
+    terms: list[str]
     resource_types: set[SemanticResourceType]
     catalog: _SemanticCatalog
     allowed_columns: frozenset[ColumnKey] | None
@@ -387,13 +387,19 @@ class MetaSearchService:
         )
         self._index_query_semaphore = asyncio.Semaphore(max_concurrent_index_queries)
 
-    async def search(self, request: SemanticSearchRequest) -> SemanticSearchResponse:
+    async def search(
+        self,
+        request: SemanticResourceSearchRequest,
+    ) -> SemanticSearchResponse:
         """按加载目录、执行召回和构建响应三个阶段完成语义检索"""
         context = await self._create_context(request)
         await self._retrieve(context)
         return self._build_response(context)
 
-    async def _create_context(self, request: SemanticSearchRequest) -> _SearchContext:
+    async def _create_context(
+        self,
+        request: SemanticResourceSearchRequest,
+    ) -> _SearchContext:
         """加载完整元数据并创建单次检索上下文"""
         table_infos = await self._meta_repo.list_table_infos()
         column_infos = await self._meta_repo.list_column_infos()
@@ -424,7 +430,7 @@ class MetaSearchService:
         }
         return _SearchContext(
             request=request,
-            queries=list(dict.fromkeys([request.query, *request.terms])),
+            terms=request.terms,
             resource_types=set(request.resource_types),
             catalog=_SemanticCatalog(
                 tables=visible_tables,
@@ -466,12 +472,12 @@ class MetaSearchService:
                 *(
                     self._run_index_query(
                         self._column_repo.search_text_hits(
-                            query,
+                            term,
                             allowed_columns=context.allowed_columns,
                             limit=context.search_limit,
                         )
                     )
-                    for query in context.queries
+                    for term in context.terms
                 ),
                 return_exceptions=True,
             )
@@ -487,12 +493,12 @@ class MetaSearchService:
                 *(
                     self._run_index_query(
                         self._metric_repo.search_text_hits(
-                            query,
+                            term,
                             allowed_metrics=context.allowed_metrics,
                             limit=context.search_limit,
                         )
                     )
-                    for query in context.queries
+                    for term in context.terms
                 ),
                 return_exceptions=True,
             )
@@ -509,7 +515,7 @@ class MetaSearchService:
     ) -> None:
         """收集字段和指标向量命中"""
         try:
-            embeddings = await self._embedding_client.aembed_documents(context.queries)
+            embeddings = await self._embedding_client.aembed_documents(context.terms)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -566,8 +572,8 @@ class MetaSearchService:
         backend_name: str,
         match_type: Literal["fulltext", "vector"],
     ) -> None:
-        """校验并融合每个查询的字段索引命中"""
-        for query, result in zip(context.queries, results, strict=True):
+        """校验并融合每个检索词的字段索引命中"""
+        for term, result in zip(context.terms, results, strict=True):
             if isinstance(result, BaseException):
                 context.record_backend_failure(backend_name, result)
                 continue
@@ -583,7 +589,7 @@ class MetaSearchService:
                     self._rrf_score(rank),
                     SemanticMatchReason(
                         match_type=match_type,
-                        query=query,
+                        term=term,
                         score=hit.score,
                     ),
                 )
@@ -596,8 +602,8 @@ class MetaSearchService:
         backend_name: str,
         match_type: Literal["fulltext", "vector"],
     ) -> None:
-        """校验并融合每个查询的指标索引命中"""
-        for query, result in zip(context.queries, results, strict=True):
+        """校验并融合每个检索词的指标索引命中"""
+        for term, result in zip(context.terms, results, strict=True):
             if isinstance(result, BaseException):
                 context.record_backend_failure(backend_name, result)
                 continue
@@ -615,7 +621,7 @@ class MetaSearchService:
                     self._rrf_score(rank),
                     SemanticMatchReason(
                         match_type=match_type,
-                        query=query,
+                        term=term,
                         score=hit.score,
                     ),
                 )
@@ -629,16 +635,16 @@ class MetaSearchService:
             *(
                 self._run_index_query(
                     self._value_repo.search_hits(
-                        query,
+                        term,
                         allowed_columns=context.allowed_columns,
                         limit=context.search_limit,
                     )
                 )
-                for query in context.queries
+                for term in context.terms
             ),
             return_exceptions=True,
         )
-        for query, result in zip(context.queries, results, strict=True):
+        for term, result in zip(context.terms, results, strict=True):
             if isinstance(result, BaseException):
                 context.record_backend_failure("字段取值全文", result)
                 continue
@@ -654,7 +660,7 @@ class MetaSearchService:
                     self._rrf_score(rank),
                     SemanticMatchReason(
                         match_type="fulltext",
-                        query=query,
+                        term=term,
                         score=hit.score,
                     ),
                 )
@@ -676,7 +682,7 @@ class MetaSearchService:
         return SemanticSearchResponse(
             status="partial" if context.partial else "success",
             search_id=f"search_{uuid.uuid4().hex}",
-            queries=context.queries,
+            terms=context.terms,
             metrics=metric_results,
             columns=column_results,
             values=value_results,

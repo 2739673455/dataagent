@@ -72,30 +72,28 @@ class ValueIndexSyncResult:
     sync_generation: str | None
 
 
-class SemanticSearchRequest(BaseModel):
-    """语义目录检索请求"""
+class SemanticResourceSearchRequest(BaseModel):
+    """语义资源检索请求"""
 
     model_config = ConfigDict(extra="forbid")
 
-    query: str = Field(min_length=1, max_length=1000)
-    terms: list[str] = Field(default_factory=list, max_length=20)
+    terms: list[str] = Field(min_length=1, max_length=20)
     resource_types: list[SemanticResourceType] = Field(
         min_length=1,
         max_length=3,
     )
     limit_per_type: int = Field(default=5, ge=1, le=20)
 
-    @field_validator("query", mode="before")
-    @classmethod
-    def strip_query(cls, value: object) -> object:
-        """清理原始检索文本"""
-        return value.strip() if isinstance(value, str) else value
-
     @field_validator("terms")
     @classmethod
     def normalize_string_list(cls, values: list[str]) -> list[str]:
         """清理并稳定去重字符串列表"""
-        return list(dict.fromkeys(value.strip() for value in values if value.strip()))
+        normalized = list(
+            dict.fromkeys(value.strip() for value in values if value.strip())
+        )
+        if not normalized:
+            raise ValueError("terms 至少需要一个非空检索词")
+        return normalized
 
     @field_validator("resource_types")
     @classmethod
@@ -112,7 +110,7 @@ class SemanticMatchReason(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     match_type: SemanticMatchType
-    query: str
+    term: str
     score: float
 
 
@@ -186,7 +184,7 @@ class SemanticSearchResponse(BaseModel):
 
     status: Literal["success", "partial"]
     search_id: str
-    queries: list[str]
+    terms: list[str]
     metrics: list[SemanticMetricResult]
     columns: list[SemanticColumnResult]
     values: list[SemanticValueResult]

@@ -1,10 +1,8 @@
 """查询经验聚合与检索模型"""
 
 from datetime import datetime
-from typing import Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict
 from sqlalchemy import (
     JSON,
     CheckConstraint,
@@ -20,9 +18,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.shared.database.base import MetaBase
-
-type QueryExperienceQuality = Literal["candidate", "promoted", "disabled"]
-type QueryAssetKind = Literal["table", "column"]
 
 
 class QueryExperience(MetaBase):
@@ -183,33 +178,3 @@ class QueryExperienceAsset(MetaBase):
             "column_name",
         ),
     )
-
-
-class QueryAssetSnapshot(BaseModel):
-    """查询经验返回的资产引用"""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    kind: QueryAssetKind
-    database: str
-    table: str
-    column: str | None = None
-    meta_version: int
-
-
-class QueryExperienceSearchResult(BaseModel):
-    """提供给 Explorer 的紧凑查询经验"""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    experience_id: UUID
-    purpose: str
-    sql_template: str
-    dialect: str
-    assets: list[QueryAssetSnapshot]
-    quality: QueryExperienceQuality
-    success_count: int
-    adopted_count: int
-    score: float
-    match_reasons: list[str]
-    last_used_at: datetime

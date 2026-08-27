@@ -1,5 +1,6 @@
 """Explorer 语义资源召回与记录管理工具"""
 
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from langchain.tools import ToolRuntime, tool
@@ -16,7 +17,8 @@ from app.analytics.agents.explorer.semantic_recall_protocol import (
 )
 from app.identity.repositories.auth import AuthPGRepo
 from app.identity.services.authorization import AuthorizationService
-from app.metadata.models.search import SemanticSearchRequest
+from app.metadata.models.recall import SemanticRecallRequest
+from app.metadata.models.search import SemanticResourceSearchRequest
 from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
 from app.metadata.repositories.postgres import MetaPGRepo
@@ -27,6 +29,7 @@ from app.metadata.services.recall import (
     SemanticRecallsNotFoundError,
 )
 from app.metadata.services.search import MetaSearchService
+from app.query.providers import build_query_experience_service
 from app.shared.clients.embedding_client_manager import embedding_client_manager
 from app.shared.clients.es_client_manager import es_client_manager
 from app.shared.clients.postgres_client_manager import (
@@ -34,33 +37,38 @@ from app.shared.clients.postgres_client_manager import (
     meta_postgres_client_manager,
 )
 from app.shared.config.app_config import cfg
+from app.shared.contracts.query_experience import QueryExperienceSearchResult
+
+_QUERY_EXPERIENCE_LIMIT = 3
 
 
 @tool
-async def search_semantic_resources(
+async def search_context(
     runtime: ToolRuntime,
     resource_types: Annotated[
         list[Literal["column", "metric", "value"]],
         "必须选择需要检索的资源类型：字段、指标或字段值，可多选",
     ],
-    query: Annotated[str, "原始问题或需要检索的完整业务短语"],
+    query: Annotated[str, "用于标识当前查询并检索历史 SQL 经验的完整数据问题"],
     terms: Annotated[
-        list[str] | None,
-        "补充检索词或业务同义词，最多 20 个，不需要重复 query",
-    ] = None,
+        list[str],
+        "用于检索字段、指标和字段值的业务词或同义词，至少 1 个且最多 20 个",
+    ],
     limit_per_type: Annotated[int, "每类直接候选的最大数量，范围 1 到 20"] = 5,
 ) -> dict[str, Any]:
-    """检索字段、指标和字段值，保存并返回本次召回记录
+    """检索语义资源和三条历史 SQL 经验，保存并返回本次召回记录
 
-    工具不会调用模型扩展关键词，也不会决定最终查询口径。第一次结果不充分时，
-    可以调整 terms 或 resource_types 再次检索
+    query 只用于标识查询和检索历史经验，terms 专门用于语义资源检索。工具不会
+    调用模型扩展检索词，也不会决定最终查询口径
     """
     try:
-        request = SemanticSearchRequest(
+        request = SemanticRecallRequest(
             query=query,
-            terms=terms or [],
-            resource_types=resource_types,
-            limit_per_type=limit_per_type,
+            resource_search=SemanticResourceSearchRequest(
+                terms=terms,
+                resource_types=resource_types,
+                limit_per_type=limit_per_type,
+            ),
         )
     except ValidationError as exc:
         return {
@@ -73,11 +81,13 @@ async def search_semantic_resources(
         user_id, conversation_id = resolve_semantic_recall_identity(runtime.config)
         async with (
             auth_postgres_client_manager.session() as auth_session,
-            meta_postgres_client_manager.session() as meta_session,
+            meta_postgres_client_manager.session() as meta_search_session,
         ):
-            asset_policy = await AuthorizationService(
-                AuthPGRepo(auth_session)
-            ).get_asset_policy(user_id)
+            auth_repo = AuthPGRepo(auth_session)
+            user = await auth_repo.get_user_by_id(user_id)
+            asset_policy = await AuthorizationService(auth_repo).get_asset_policy(
+                user_id
+            )
             authorization_filter = MetadataAuthorizationFilter(
                 asset_policy,
                 cfg.query.data_source,
@@ -88,17 +98,44 @@ async def search_semantic_resources(
                 column_repo=ColumnESRepo(es_client_manager.get_client()),
                 metric_repo=MetricESRepo(es_client_manager.get_client()),
                 value_repo=ValueESRepo(es_client_manager.get_client()),
-                meta_repo=MetaPGRepo(meta_session),
+                meta_repo=MetaPGRepo(meta_search_session),
                 asset_policy=asset_policy,
                 data_source=cfg.query.data_source,
                 database_name=cfg.doris.database,
             )
-            response = await service.search(request)
+            response = await service.search(request.resource_search)
+        async with semantic_recall_repository() as recall_repo:
+            recall_service = SemanticRecallService(recall_repo, authorization_filter)
+            cached = await recall_service.get_fresh_query_experiences(
+                user_id,
+                conversation_id,
+                request.query,
+            )
+        if cached is None:
+            query_experiences: list[QueryExperienceSearchResult] = []
+            if user is not None and user.doris_role_name is not None:
+                async with meta_postgres_client_manager.session() as experience_session:
+                    query_experiences = await build_query_experience_service(
+                        experience_session
+                    ).search(
+                        user_id=user_id,
+                        role_name=user.doris_role_name,
+                        policy=asset_policy,
+                        query=request.query,
+                        table_names={item.name for item in response.tables},
+                        column_keys={
+                            (item.t_name, item.name) for item in response.columns
+                        },
+                        limit=_QUERY_EXPERIENCE_LIMIT,
+                    )
+            query_experiences_retrieved_at = datetime.now(UTC)
+        else:
+            query_experiences, query_experiences_retrieved_at = cached
     except Exception:  # noqa: BLE001
-        logger.exception("元数据语义检索失败")
+        logger.exception("语义资源与查询经验检索失败")
         return {
             "status": "error",
-            "message": "元数据检索服务暂不可用",
+            "message": "语义资源与查询经验检索暂不可用",
         }
 
     try:
@@ -111,6 +148,8 @@ async def search_semantic_resources(
                 conversation_id,
                 request,
                 response,
+                query_experiences,
+                query_experiences_retrieved_at,
             )
     except Exception:  # noqa: BLE001
         logger.exception("语义召回快照持久化失败")
@@ -129,8 +168,14 @@ def _record_summary(record: Any) -> dict[str, Any]:
         "recall_id": record.recall_id,
         "kind": record.kind,
         "query": record.request.query if record.request is not None else None,
-        "queries": response.queries,
+        "terms": response.terms,
         "source_recall_ids": record.source_recall_ids,
+        "query_experience_count": len(record.query_experiences),
+        "query_experiences_retrieved_at": (
+            record.query_experiences_retrieved_at.isoformat()
+            if record.query_experiences_retrieved_at is not None
+            else None
+        ),
         "resource_counts": {
             "metrics": len(response.metrics),
             "columns": len(response.columns),
@@ -143,7 +188,7 @@ def _record_summary(record: Any) -> dict[str, Any]:
 
 
 @tool
-async def list_semantic_recalls(
+async def list_recalls(
     runtime: ToolRuntime,
     limit: Annotated[int, "返回最近记录的数量，范围 1 到 100"] = 20,
 ) -> dict[str, Any]:
@@ -168,7 +213,7 @@ async def list_semantic_recalls(
 
 
 @tool
-async def get_semantic_recall(
+async def get_recall(
     runtime: ToolRuntime,
     recall_id: Annotated[str, "需要读取的召回记录 ID"],
 ) -> dict[str, Any]:
@@ -194,7 +239,7 @@ async def get_semantic_recall(
 
 
 @tool
-async def merge_semantic_recalls(
+async def merge_recalls(
     runtime: ToolRuntime,
     recall_ids: Annotated[
         list[str],
@@ -223,7 +268,7 @@ async def merge_semantic_recalls(
 
 
 @tool
-async def delete_semantic_recalls(
+async def delete_recalls(
     runtime: ToolRuntime,
     recall_ids: Annotated[list[str], "需要删除的召回记录 ID"],
 ) -> dict[str, Any]:

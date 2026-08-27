@@ -11,9 +11,9 @@ from app.metadata.models.recall import SemanticRecallRecord
 type SemanticRecallView = Literal["search_response", "record"]
 
 _REFERENCE_TOOL_VIEWS: dict[str, SemanticRecallView] = {
-    "search_semantic_resources": "search_response",
-    "get_semantic_recall": "record",
-    "merge_semantic_recalls": "record",
+    "search_context": "search_response",
+    "get_recall": "record",
+    "merge_recalls": "record",
 }
 
 
