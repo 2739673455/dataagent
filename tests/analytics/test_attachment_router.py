@@ -71,14 +71,14 @@ class AttachmentRouterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.attachment.f_path, "uploads/report.csv")
         self.conversation_repo.update.assert_awaited_once_with(self.conversation)
 
-    async def test_upload_and_delete_reject_analysis_artifact_path(self) -> None:
+    async def test_upload_and_delete_map_unsafe_path_error(self) -> None:
         file = UploadFile(
             file=io.BytesIO(b"overwrite"),
-            filename="analyses/run/report.csv",
+            filename="../report.csv",
         )
 
         self.sandbox.upload_user_attachment.side_effect = SandboxPathError(
-            "analyses/run/report.csv"
+            "../report.csv"
         )
         with self.assertRaises(attachment_error.PathTraversalError):
             await api_upload_attachment(
@@ -90,13 +90,13 @@ class AttachmentRouterTest(unittest.IsolatedAsyncioTestCase):
                 file=file,
             )
         self.sandbox.delete_user_attachment.side_effect = SandboxPathError(
-            "analyses/run/report.csv"
+            "../report.csv"
         )
         with self.assertRaises(attachment_error.PathTraversalError):
             await api_delete_attachment(
                 body=DeleteAttachmentRequest(
                     conversation_id=self.conversation_id,
-                    f_path="analyses/run/report.csv",
+                    f_path="../report.csv",
                 ),
                 conversation_repo=self.conversation_repo,
                 current_user=self.user,

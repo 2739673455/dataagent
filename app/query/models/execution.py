@@ -118,7 +118,6 @@ class QueryExecution(MetaBase):
     normalized_sql: Mapped[str | None] = mapped_column(Text)
     sql_template: Mapped[str | None] = mapped_column(Text)
     fingerprint: Mapped[str | None] = mapped_column(String(64), index=True)
-    dialect: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     error_code: Mapped[str | None] = mapped_column(String(128))
     error_detail: Mapped[str | None] = mapped_column(Text)

@@ -1,6 +1,7 @@
 """查询经验检索结果契约"""
 
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
@@ -26,9 +27,9 @@ class QueryExperienceRecallResult(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    id: UUID
     purpose: str
     sql_template: str
-    dialect: str
     assets: list[QueryAssetSnapshot]
 
 

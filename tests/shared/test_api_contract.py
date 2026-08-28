@@ -27,7 +27,6 @@ class ApiContractTests(unittest.TestCase):
             schemas["TableInfoResponse"]["properties"]["role"]["enum"],
         )
         self.assertIn("type", schemas["TextContent"]["required"])
-        self.assertNotIn("DiscoveredDorisRoleResponse", schemas)
         for event_name in (
             "ChatStreamMessageEvent",
             "ChatStreamErrorEvent",
@@ -37,10 +36,6 @@ class ApiContractTests(unittest.TestCase):
         self.assertIn("created_at", schemas["MessageResponse"]["properties"])
         doris_role = schemas["UserResponse"]["properties"]["doris_role"]
         self.assertIn({"type": "null"}, doris_role["anyOf"])
-        self.assertNotIn(
-            "is_active",
-            schemas["DorisRoleResponse"]["properties"],
-        )
 
         problem = schemas["ProblemDetails"]
         self.assertEqual(

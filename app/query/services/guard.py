@@ -16,7 +16,6 @@ from app.metadata.models.catalog import ColumnInfo, TableInfo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
 from app.query.models.validation import (
     QueryColumnRef,
-    QueryDialect,
     QueryTableRef,
     QueryValidationIssue,
     QueryValidationResult,
@@ -209,16 +208,15 @@ class QueryGuardService:
         self,
         user_id: int,
         sql: str,
-        dialect: QueryDialect = "doris",
     ) -> QueryValidationResult:
         """返回 SQL 的完整安全检查结果"""
-        expression, issues = self._parse_single_query(sql, dialect)
+        expression, issues = self._parse_single_query(sql)
         if expression is None:
-            return self._result(dialect, None, issues)
+            return self._result(None, issues)
 
         issues.extend(self._check_readonly(expression))
         if issues:
-            return self._result(dialect, None, issues)
+            return self._result(None, issues)
 
         policy = (
             await self._policy_provider.get_asset_policy(user_id)
@@ -233,17 +231,17 @@ class QueryGuardService:
         issues.extend(table_issues)
         issues.extend(self._check_restricted_stars(catalog, raw_tables, star_tables))
         if issues:
-            return self._result(dialect, None, issues, tables=raw_tables)
+            return self._result(None, issues, tables=raw_tables)
 
         try:
-            qualified = self._qualify(expression, catalog, dialect)
+            qualified = self._qualify(expression, catalog)
         except OptimizeError as exc:
             issue = self._optimization_issue(expression, catalog, exc)
-            return self._result(dialect, None, [issue], tables=raw_tables)
+            return self._result(None, [issue], tables=raw_tables)
 
         columns = self._collect_physical_columns(qualified, catalog)
         issues.extend(self._check_joins(qualified))
-        issues.extend(self._check_types(qualified, catalog, dialect))
+        issues.extend(self._check_types(qualified, catalog))
         output_columns = list(qualified.named_selects)
         duplicate_outputs = self._duplicates(output_columns)
         if duplicate_outputs:
@@ -264,9 +262,8 @@ class QueryGuardService:
                 )
             )
 
-        normalized_sql = qualified.sql(dialect=dialect, pretty=False)
+        normalized_sql = qualified.sql(dialect="doris", pretty=False)
         return self._result(
-            dialect,
             normalized_sql if not issues else None,
             issues,
             tables=raw_tables,
@@ -278,17 +275,15 @@ class QueryGuardService:
         self,
         user_id: int,
         sql: str,
-        dialect: QueryDialect = "doris",
     ) -> GuardedQuery:
         """返回可执行 SQL 并在校验失败时拒绝查询"""
-        result = await self.check(user_id, sql, dialect)
+        result = await self.check(user_id, sql)
         if not result.valid or result.normalized_sql is None:
             raise QueryRejectedError(result)
         return GuardedQuery(sql=result.normalized_sql, validation=result)
 
     @staticmethod
     def _result(
-        dialect: QueryDialect,
         normalized_sql: str | None,
         issues: list[QueryValidationIssue],
         *,
@@ -305,7 +300,6 @@ class QueryGuardService:
         )
         return QueryValidationResult(
             valid=not distinct_issues,
-            dialect=dialect,
             normalized_sql=normalized_sql,
             tables=tables or [],
             columns=columns or [],
@@ -316,7 +310,6 @@ class QueryGuardService:
     @staticmethod
     def _parse_single_query(
         sql: str,
-        dialect: QueryDialect,
     ) -> tuple[Expr | None, list[QueryValidationIssue]]:
         """解析且限制输入中只有一条有效语句"""
         if not sql.strip():
@@ -324,7 +317,7 @@ class QueryGuardService:
                 QueryValidationIssue(code="empty_sql", message="SQL 语句不能为空")
             ]
         try:
-            parsed = sqlglot.parse(sql, read=dialect)
+            parsed = sqlglot.parse(sql, read="doris")
         except ParseError as exc:
             return None, [
                 QueryValidationIssue(
@@ -551,7 +544,6 @@ class QueryGuardService:
         self,
         expression: Expr,
         catalog: _Catalog,
-        dialect: QueryDialect,
     ) -> exp.Query:
         """基于元数据补全并验证字段、别名和 CTE 引用"""
         schema = catalog.sqlglot_schema
@@ -561,7 +553,7 @@ class QueryGuardService:
             exp.Query,
             qualify(
                 expression.copy(),
-                dialect=dialect,
+                dialect="doris",
                 db=self._current_database,
                 schema=cast(dict[str, object], schema),
                 expand_alias_refs=True,
@@ -772,7 +764,6 @@ class QueryGuardService:
         self,
         expression: Expr,
         catalog: _Catalog,
-        dialect: QueryDialect,
     ) -> list[QueryValidationIssue]:
         """检查比较和算术表达式中的明显类型冲突"""
         schema = catalog.sqlglot_schema
@@ -782,17 +773,16 @@ class QueryGuardService:
             annotate_types(
                 expression,
                 schema=cast(dict[str, object], schema),
-                dialect=dialect,
+                dialect="doris",
             )
         except (OptimizeError, ValueError):
             return []
-        return self._find_type_issues(expression, dialect)
+        return self._find_type_issues(expression)
 
     @classmethod
     def _find_type_issues(
         cls,
         expression: Expr,
-        dialect: QueryDialect,
     ) -> list[QueryValidationIssue]:
         """从已完成类型推导的 AST 中查找冲突"""
         issues: list[QueryValidationIssue] = []
@@ -805,7 +795,7 @@ class QueryGuardService:
                         code="incompatible_types",
                         message=(
                             f"比较操作两端数据类型不兼容 ({left_category} 与 {right_category}): "
-                            f"{comparison.sql(dialect=dialect)}"
+                            f"{comparison.sql(dialect='doris')}"
                         ),
                     )
                 )
@@ -820,7 +810,7 @@ class QueryGuardService:
                         code="incompatible_types",
                         message=(
                             f"IN 谓词数据类型不兼容 ({left_category} 与 {right_category}): "
-                            f"{predicate.sql(dialect=dialect)}"
+                            f"{predicate.sql(dialect='doris')}"
                         ),
                     )
                 )
@@ -840,7 +830,7 @@ class QueryGuardService:
                 QueryValidationIssue(
                     code="incompatible_types",
                     message=(
-                        f"BETWEEN 谓词数据类型不兼容: {predicate.sql(dialect=dialect)}"
+                        f"BETWEEN 谓词数据类型不兼容: {predicate.sql(dialect='doris')}"
                     ),
                 )
             )
@@ -860,7 +850,7 @@ class QueryGuardService:
                     code="incompatible_types",
                     message=(
                         "算术运算要求两侧为兼容的数值类型: "
-                        f"{arithmetic.sql(dialect=dialect)}"
+                        f"{arithmetic.sql(dialect='doris')}"
                     ),
                 )
             )

@@ -1,6 +1,7 @@
 """Explorer 受控只读 SQL 执行工具"""
 
 from collections.abc import Mapping
+from functools import partial
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -20,10 +21,7 @@ from app.query.models.execution import (
     QueryExecutionOptions,
     QueryExecutionStatus,
 )
-from app.query.models.validation import (
-    QueryDialect,
-    QueryValidationResult,
-)
+from app.query.models.validation import QueryValidationResult
 from app.query.providers import build_query_experience_service
 from app.query.repositories.doris import DorisQueryRepository
 from app.query.services.executor import (
@@ -102,6 +100,16 @@ def _query_purpose(runtime: ToolRuntime, purpose: str | None) -> str:
     return "执行只读数据查询"
 
 
+def _error_details(error: Exception) -> list[dict[str, str]]:
+    """构造可供模型处理的异常类别和原因"""
+    return [
+        {
+            "type": type(error).__name__,
+            "msg": str(error).strip() or "异常未提供详情",
+        }
+    ]
+
+
 async def _record_success_safely(
     context: QueryExecutionContext,
     details: SuccessfulQueryExecution,
@@ -118,7 +126,6 @@ async def _record_failure_safely(
     context: QueryExecutionContext | None,
     *,
     raw_sql: str,
-    dialect: QueryDialect,
     status: QueryExecutionStatus,
     error_code: str,
     error_detail: str,
@@ -132,7 +139,6 @@ async def _record_failure_safely(
             await build_query_experience_service(session).record_failure(
                 context,
                 raw_sql=raw_sql,
-                dialect=dialect,
                 status=status,
                 error_code=error_code,
                 error_detail=error_detail,
@@ -145,9 +151,8 @@ async def _record_failure_safely(
 async def _execute_sql(
     artifact_store: QueryArtifactStore,
     runtime: ToolRuntime,
-    sql: Annotated[str, "需要执行的单条 Doris/MySQL 只读 SQL"],
+    sql: Annotated[str, "需要执行的单条 Doris 只读 SQL"],
     purpose: Annotated[str | None, "本次 SQL 要解决的具体数据问题"] = None,
-    dialect: Annotated[QueryDialect, "SQL 输入方言"] = "doris",
 ) -> dict[str, Any]:
     """安全执行只读 SQL，将完整结果写入当前会话 CSV 并返回紧凑摘要"""
     session_key: AgentSessionKey | None = None
@@ -165,17 +170,11 @@ async def _execute_sql(
                     cfg.doris_credentials.encryption_key.get_secret_value()
                 ),
             ).resolve(session_key.user_id)
-            context = QueryExecutionContext(
+            execution_context = QueryExecutionContext(
                 session_key=session_key,
                 role_name=principal.role_name,
                 purpose=_query_purpose(runtime, purpose),
                 tool_call_id=runtime.tool_call_id,
-            )
-            execution_context = context
-            logger.info(
-                f"已选择只读查询主体: user_id={session_key.user_id}, "
-                f"doris_role={principal.role_name}, "
-                f"doris_user={principal.query_user}"
             )
             limits = QueryExecutionLimits(
                 workload_group=principal.workload_group,
@@ -200,21 +199,19 @@ async def _execute_sql(
                 artifact_store,
                 limits,
                 options,
-                success_observer=lambda details: _record_success_safely(
-                    context,
-                    details,
+                success_observer=partial(
+                    _record_success_safely,
+                    execution_context,
                 ),
             )
             result = await service.execute(
                 session_key,
                 sql,
-                dialect,
             )
     except QueryRejectedError as exc:
         await _record_failure_safely(
             execution_context,
             raw_sql=sql,
-            dialect=dialect,
             status="rejected",
             error_code="sql_validation_failed",
             error_detail=str(exc),
@@ -222,7 +219,6 @@ async def _execute_sql(
         )
         logger.warning(
             "只读查询在执行前被拒绝: "
-            f"user_id={session_key.user_id if session_key else None}, "
             f"conversation_id={session_key.conversation_id if session_key else None}, "
             f"issue_count={len(exc.result.issues)}"
         )
@@ -243,14 +239,12 @@ async def _execute_sql(
         await _record_failure_safely(
             execution_context,
             raw_sql=sql,
-            dialect=dialect,
             status="failed",
             error_code="query_result_rejected",
             error_detail=str(exc),
         )
         logger.warning(
             "只读查询结果校验未通过: "
-            f"user_id={session_key.user_id if session_key else None}, "
             f"conversation_id={session_key.conversation_id if session_key else None}, "
             f"error_type={type(exc).__name__}"
         )
@@ -258,25 +252,25 @@ async def _execute_sql(
             "status": "error",
             "code": "query_result_rejected",
             "message": str(exc),
+            "details": _error_details(exc),
         }
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         logger.exception(
             "只读查询工具执行失败: "
-            f"user_id={session_key.user_id if session_key else None}, "
             f"conversation_id={session_key.conversation_id if session_key else None}"
         )
         await _record_failure_safely(
             execution_context,
             raw_sql=sql,
-            dialect=dialect,
             status="failed",
             error_code="readonly_query_failed",
-            error_detail="只读查询执行失败",
+            error_detail=str(exc).strip() or "异常未提供详情",
         )
         return {
             "status": "error",
             "code": "readonly_query_failed",
             "message": "只读查询执行失败",
+            "details": _error_details(exc),
         }
     return {"status": "success", **result.model_dump(mode="json")}
 
@@ -287,9 +281,8 @@ def create_execute_sql_tool(artifact_store: QueryArtifactStore) -> BaseTool:
     @tool("execute_sql")
     async def execute_sql_tool(
         runtime: ToolRuntime,
-        sql: Annotated[str, "需要执行的单条 Doris/MySQL 只读 SQL"],
+        sql: Annotated[str, "需要执行的单条 Doris 只读 SQL"],
         purpose: Annotated[str | None, "本次 SQL 要解决的具体数据问题"] = None,
-        dialect: Annotated[QueryDialect, "SQL 输入方言"] = "doris",
     ) -> dict[str, Any]:
         """安全执行只读 SQL 并写入会话产物"""
         return await _execute_sql(
@@ -297,7 +290,6 @@ def create_execute_sql_tool(artifact_store: QueryArtifactStore) -> BaseTool:
             runtime,
             sql,
             purpose,
-            dialect,
         )
 
     return execute_sql_tool

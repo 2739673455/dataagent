@@ -44,7 +44,6 @@ class QueryExperiencePGRepo:
                 owner_user_id=experience.owner_user_id,
                 role_name=experience.role_name,
                 fingerprint=experience.fingerprint,
-                dialect=experience.dialect,
                 purposes=experience.purposes,
                 representative_sql=experience.representative_sql,
                 sql_template=experience.sql_template,

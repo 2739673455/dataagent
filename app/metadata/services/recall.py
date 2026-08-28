@@ -5,7 +5,10 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from app.metadata.models.recall import SemanticRecallRecord
+from app.metadata.models.recall import (
+    SemanticRecallRecord,
+    SemanticRecallResourceDeletion,
+)
 from app.metadata.models.search import (
     SemanticColumnRecallResult,
     SemanticMetricRecallResult,
@@ -184,6 +187,100 @@ def _failure_is_refreshed(
     return failure.term is None or failure.term in request.terms
 
 
+def _remove_semantic_resources(
+    response: SemanticResourceRecallResponse,
+    deletion: SemanticRecallResourceDeletion,
+) -> SemanticResourceRecallResponse:
+    """移除资源并保持字段、指标、表上下文之间的一致性"""
+    removed_tables = {
+        table_name
+        for table_name, table_deletion in deletion.tables.items()
+        if table_deletion.deletes_entire_table
+    }
+    removed_columns = {
+        (table_name, column_name)
+        for table_name, table_deletion in deletion.tables.items()
+        if table_deletion.columns is not None
+        for column_name, column_deletion in table_deletion.columns.items()
+        if column_deletion.deletes_entire_column
+    }
+    removed_values = {
+        (table_name, column_name, value)
+        for table_name, table_deletion in deletion.tables.items()
+        if table_deletion.columns is not None
+        for column_name, column_deletion in table_deletion.columns.items()
+        if column_deletion.values is not None
+        for value in column_deletion.values
+    }
+    removed_metrics = set(deletion.metrics)
+
+    remaining_columns = [
+        item
+        for item in response.columns
+        if item.t_name not in removed_tables
+        and (item.t_name, item.name) not in removed_columns
+    ]
+    remaining_column_keys = {
+        (item.t_name, item.name) for item in remaining_columns
+    }
+    remaining_values = [
+        item
+        for item in response.values
+        if (item.t_name, item.c_name) in remaining_column_keys
+        and (item.t_name, item.c_name, item.value) not in removed_values
+    ]
+    remaining_metrics = [
+        item
+        for item in response.metrics
+        if item.name not in removed_metrics
+        and all(
+            (reference["t_name"], reference["c_name"]) in remaining_column_keys
+            for reference in item.relevant_columns
+        )
+    ]
+    table_names = {item.t_name for item in remaining_columns}
+    remaining_tables = [
+        item.model_copy(
+            update={
+                "primary_key_columns": [
+                    column_name
+                    for column_name in item.primary_key_columns
+                    if (item.name, column_name) in remaining_column_keys
+                ]
+            }
+        )
+        for item in response.tables
+        if item.name in table_names
+    ]
+    remaining_columns = [
+        item.model_copy(
+            update={
+                "reference_t_name": (
+                    item.reference_t_name
+                    if (item.reference_t_name, item.reference_c_name)
+                    in remaining_column_keys
+                    else None
+                ),
+                "reference_c_name": (
+                    item.reference_c_name
+                    if (item.reference_t_name, item.reference_c_name)
+                    in remaining_column_keys
+                    else None
+                ),
+            }
+        )
+        for item in remaining_columns
+    ]
+    return response.model_copy(
+        update={
+            "metrics": remaining_metrics,
+            "columns": remaining_columns,
+            "values": remaining_values,
+            "tables": remaining_tables,
+        }
+    )
+
+
 class SemanticRecallContextService:
     """记录、查询、合并和删除会话级语义召回"""
 
@@ -323,18 +420,16 @@ class SemanticRecallContextService:
             conversation_id,
             source_query,
         )
-        missing = [
-            query
-            for query, record in (
-                (target_query, target_record),
-                (source_query, source_record),
-            )
-            if record is None
-        ]
-        if missing:
+        if target_record is None or source_record is None:
+            missing = [
+                query
+                for query, record in (
+                    (target_query, target_record),
+                    (source_query, source_record),
+                )
+                if record is None
+            ]
             raise SemanticQueriesNotFoundError(missing)
-        assert target_record is not None
-        assert source_record is not None
         target_record = self._authorize_record(target_record)
         source_record = self._authorize_record(source_record)
 
@@ -377,11 +472,6 @@ class SemanticRecallContextService:
         """按当前策略生成召回记录的安全读取副本"""
         response = self._authorization_filter.filter_recall_response(record.response)
         query_experiences = self._filter_query_experiences(record.query_experiences)
-        if (
-            response is record.response
-            and query_experiences == record.query_experiences
-        ):
-            return record
         return record.model_copy(
             update={
                 "response": response,
@@ -413,17 +503,79 @@ class SemanticRecallContextService:
         self,
         user_id: int,
         conversation_id: UUID,
-        queries: list[str],
-    ) -> tuple[list[str], list[str]]:
-        """批量删除 query 的全部快照并返回处理结果"""
-        deleted: list[str] = []
+        deletions: list[SemanticRecallResourceDeletion],
+    ) -> list[SemanticRecallRecord]:
+        """按 query 删除资源并返回各 query 的最终上下文"""
+        loaded: list[tuple[SemanticRecallResourceDeletion, SemanticRecallRecord]] = []
         missing: list[str] = []
-        unique_queries = list(dict.fromkeys(queries))
-        for query in sorted(unique_queries):
+        for query in sorted(deletion.query for deletion in deletions):
             await self._repo.acquire_query_lock(user_id, conversation_id, query)
-        for query in unique_queries:
-            if await self._repo.delete_by_query(user_id, conversation_id, query):
-                deleted.append(query)
-            else:
-                missing.append(query)
-        return deleted, missing
+        for deletion in deletions:
+            record = await self._repo.get_latest_by_query(
+                user_id,
+                conversation_id,
+                deletion.query,
+            )
+            if record is None:
+                missing.append(deletion.query)
+                continue
+            loaded.append((deletion, self._authorize_record(record)))
+        if missing:
+            raise SemanticQueriesNotFoundError(missing)
+
+        results: list[SemanticRecallRecord] = []
+        for deletion, record in loaded:
+            if deletion.deletes_entire_query:
+                await self._repo.delete_by_query(
+                    user_id,
+                    conversation_id,
+                    deletion.query,
+                )
+                results.append(
+                    record.model_copy(
+                        update={
+                            "request": None,
+                            "response": record.response.model_copy(
+                                update={
+                                    "recall_id": f"recall_{uuid.uuid4().hex}",
+                                    "metrics": [],
+                                    "columns": [],
+                                    "values": [],
+                                    "tables": [],
+                                }
+                            ),
+                            "query_experiences": [],
+                            "created_at": datetime.now(UTC),
+                        }
+                    )
+                )
+                continue
+
+            response = _remove_semantic_resources(record.response, deletion)
+            removed_experience_ids = {
+                item.id for item in deletion.query_experiences
+            }
+            query_experiences = [
+                experience
+                for experience in record.query_experiences
+                if experience.id not in removed_experience_ids
+            ]
+            if (
+                response == record.response
+                and query_experiences == record.query_experiences
+            ):
+                results.append(record)
+                continue
+            updated_record = record.model_copy(
+                update={
+                    "request": None,
+                    "response": response.model_copy(
+                        update={"recall_id": f"recall_{uuid.uuid4().hex}"}
+                    ),
+                    "query_experiences": query_experiences,
+                    "created_at": datetime.now(UTC),
+                }
+            )
+            await self._repo.save(updated_record)
+            results.append(updated_record)
+        return results

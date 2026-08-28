@@ -18,10 +18,7 @@ from app.query.models.experience import (
     QueryExperience,
     QueryExperienceAsset,
 )
-from app.query.models.validation import (
-    QueryDialect,
-    QueryValidationResult,
-)
+from app.query.models.validation import QueryValidationResult
 from app.query.repositories.experience_index import QueryExperienceESRepo
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
 from app.query.services.contracts import QueryExperienceIndexScheduler
@@ -60,17 +57,17 @@ class _QueryExperienceSemanticRecall:
     ranks: dict[UUID, float]
 
 
-def build_sql_template(sql: str, dialect: QueryDialect) -> tuple[str, str]:
+def build_sql_template(sql: str) -> tuple[str, str]:
     """将 SQL 字面量替换为参数并生成稳定结构指纹"""
-    expression = parse_one(sql, read=dialect)
+    expression = parse_one(sql, read="doris")
     parameter_index = 0
     for node in list(expression.walk()):
         if not isinstance(node, exp.Literal):
             continue
         parameter_index += 1
         node.replace(exp.Placeholder(this=f"p{parameter_index}"))
-    template = expression.sql(dialect=dialect, pretty=False)
-    fingerprint = hashlib.sha256(f"{dialect}\0{template}".encode()).hexdigest()
+    template = expression.sql(dialect="doris", pretty=False)
+    fingerprint = hashlib.sha256(template.encode()).hexdigest()
     return template, fingerprint
 
 
@@ -101,10 +98,7 @@ class QueryExperienceService:
         details: SuccessfulQueryExecution,
     ) -> UUID:
         """记录成功执行并增量更新相同结构的查询经验"""
-        sql_template, fingerprint = build_sql_template(
-            details.normalized_sql,
-            details.dialect,
-        )
+        sql_template, fingerprint = build_sql_template(details.normalized_sql)
         tables = {item.name for item in details.validation.tables}
         columns = {(item.table, item.name) for item in details.validation.columns}
         async with self._repo.session.begin():
@@ -118,7 +112,6 @@ class QueryExperienceService:
                 owner_user_id=context.session_key.user_id,
                 role_name=context.role_name,
                 fingerprint=fingerprint,
-                dialect=details.dialect,
                 purposes=[context.purpose],
                 representative_sql=details.normalized_sql,
                 sql_template=sql_template,
@@ -141,7 +134,6 @@ class QueryExperienceService:
                 normalized_sql=details.normalized_sql,
                 sql_template=sql_template,
                 fingerprint=fingerprint,
-                dialect=details.dialect,
                 status="succeeded",
                 validation=details.validation.model_dump(mode="json"),
                 plan_estimate=asdict(details.plan_estimate),
@@ -166,7 +158,6 @@ class QueryExperienceService:
         context: QueryExecutionContext,
         *,
         raw_sql: str,
-        dialect: QueryDialect,
         status: QueryExecutionStatus,
         error_code: str,
         error_detail: str,
@@ -182,7 +173,6 @@ class QueryExperienceService:
             tool_call_id=context.tool_call_id,
             purpose=context.purpose,
             raw_sql=raw_sql,
-            dialect=dialect,
             status=status,
             error_code=error_code,
             error_detail=error_detail[:4000],
@@ -471,9 +461,9 @@ class QueryExperienceService:
             return None
 
         return QueryExperienceRecallResult(
+            id=experience.id,
             purpose=experience.purposes[-1],
             sql_template=experience.sql_template,
-            dialect=experience.dialect,
             assets=[
                 QueryAssetSnapshot(
                     kind=cast(QueryAssetKind, asset.kind),

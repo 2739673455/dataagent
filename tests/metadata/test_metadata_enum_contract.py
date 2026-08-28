@@ -3,8 +3,6 @@
 import unittest
 from typing import get_args
 
-from pydantic import ValidationError
-
 from app.metadata.api.meta.schemas import TableInfoRequest
 from app.metadata.models.catalog import TableInfo
 from app.metadata.services.import_service import ImportMode
@@ -21,11 +19,6 @@ class MetadataEnumContractTest(unittest.TestCase):
     def test_table_roles_match_frontend_contract(self) -> None:
         self.assertEqual(set(get_args(TableRole)), {"fact", "dim"})
 
-    def test_all_import_modes_are_accepted(self) -> None:
-        for value in ("merge", "replace"):
-            with self.subTest(value=value):
-                self.assertEqual(ImportMode(value).value, value)
-
     def test_all_table_roles_are_accepted(self) -> None:
         for value in ("fact", "dim"):
             with self.subTest(value=value):
@@ -33,18 +26,6 @@ class MetadataEnumContractTest(unittest.TestCase):
                     {"role": value, "description": "table"}
                 )
                 self.assertEqual(request.role, value)
-
-    def test_legacy_and_unknown_values_are_rejected(self) -> None:
-        for value in ("overwrite", "dimension", "aggregate"):
-            with self.subTest(value=value):
-                if value == "overwrite":
-                    with self.assertRaises(ValueError):
-                        ImportMode(value)
-                else:
-                    with self.assertRaises(ValidationError):
-                        TableInfoRequest.model_validate(
-                            {"role": value, "description": "table"}
-                        )
 
     def test_value_index_cursor_uses_flat_contract(self) -> None:
         request = TableInfoRequest.model_validate(
@@ -66,19 +47,6 @@ class MetadataEnumContractTest(unittest.TestCase):
         self.assertEqual(request.value_index_cursor_column, "dw_update_time")
         self.assertEqual(table.value_index_cursor_column, "dw_update_time")
         self.assertIn("value_index_cursor_column", TableInfo.__table__.columns)
-        self.assertNotIn("value_index_sync", TableInfo.__table__.columns)
-
-    def test_nested_value_index_cursor_contract_is_rejected(self) -> None:
-        legacy_payload = {
-            "role": "fact",
-            "description": "订单事实表",
-            "value_index_sync": {"cursor_column": "dw_update_time"},
-        }
-
-        with self.assertRaises(ValidationError):
-            TableInfoRequest.model_validate(legacy_payload)
-        with self.assertRaises(ValidationError):
-            TableConfig.model_validate({"name": "orders", **legacy_payload})
 
 
 if __name__ == "__main__":

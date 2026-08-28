@@ -8,6 +8,7 @@ from app.sandbox.exceptions import SandboxPathError
 
 SANDBOX_WORKSPACE_ROOT = "/workspace/conversations"
 SANDBOX_STAGING_ROOT = "/workspace/.dataagent-staging"
+USER_ATTACHMENT_ROOT = "uploads"
 _PATH_MAX_BYTES = 4096
 _PATH_COMPONENT_MAX_BYTES = 255
 
@@ -74,8 +75,8 @@ def normalize_attachment_path(path: str) -> str:
 
 
 def normalize_user_attachment_path(path: str) -> str:
-    """校验用户可变附件路径并隔离系统分析产物目录"""
+    """将用户可变附件路径限制在统一上传目录"""
     normalized_path = normalize_attachment_path(path)
-    if PurePosixPath(normalized_path).parts[0] == "analyses":
-        raise SandboxPathError(path)
-    return normalized_path
+    if PurePosixPath(normalized_path).parts[0] == USER_ATTACHMENT_ROOT:
+        return normalized_path
+    return f"{USER_ATTACHMENT_ROOT}/{normalized_path}"

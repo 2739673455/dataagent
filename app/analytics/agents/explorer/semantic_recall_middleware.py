@@ -26,79 +26,76 @@ from app.metadata.models.recall import SemanticRecallRecord
 from app.metadata.services.recall import SemanticQueriesNotFoundError
 
 
-def _expanded_content(
+def semantic_recall_payload(
     record: SemanticRecallRecord,
-) -> str:
-    """仅序列化模型执行 SQL 所需的元数据和历史经验"""
-    resources, query_experiences = _model_visible_recall(record)
-    payload = {**resources, "query_experiences": query_experiences}
-    return json.dumps(payload, ensure_ascii=False)
-
-
-def _model_visible_recall(
-    record: SemanticRecallRecord,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """按模型可用的元数据字段构造显式白名单投影"""
+) -> dict[str, Any]:
+    """投影模型执行 SQL 所需的元数据和历史经验"""
     response = record.response
-    resources = {
-        "metrics": [
-            {
-                "name": item.name,
+    values_by_column: dict[tuple[str, str], list[str]] = {}
+    for item in response.values:
+        values_by_column.setdefault((item.t_name, item.c_name), []).append(item.value)
+
+    tables: dict[str, dict[str, Any]] = {
+        item.name: {
+            "role": item.role,
+            "description": item.description,
+            "primary_key_columns": item.primary_key_columns,
+            "columns": {},
+        }
+        for item in response.tables
+    }
+    for item in response.columns:
+        table = tables.get(item.t_name)
+        if table is None:
+            continue
+        column = {
+            "type": item.type,
+            "description": item.description,
+            "alias": item.alias,
+            "examples": item.examples,
+            "reference_t_name": item.reference_t_name,
+            "reference_c_name": item.reference_c_name,
+        }
+        values = values_by_column.get((item.t_name, item.name))
+        if values:
+            column["values"] = values
+        table["columns"][item.name] = column
+
+    payload = {
+        "query": record.query,
+        "metrics": {
+            item.name: {
                 "description": item.description,
                 "alias": item.alias,
                 "relevant_columns": item.relevant_columns,
             }
             for item in response.metrics
-        ],
-        "columns": [
+        },
+        "tables": tables,
+        "query_experiences": [
             {
-                "t_name": item.t_name,
-                "name": item.name,
-                "type": item.type,
-                "description": item.description,
-                "alias": item.alias,
-                "examples": item.examples,
-                "reference_t_name": item.reference_t_name,
-                "reference_c_name": item.reference_c_name,
+                "id": str(experience.id),
+                "purpose": experience.purpose,
+                "sql_template": experience.sql_template,
+                "assets": [
+                    {
+                        "kind": asset.kind,
+                        "database": asset.database,
+                        "table": asset.table,
+                        "column": asset.column,
+                    }
+                    for asset in experience.assets
+                ],
             }
-            for item in response.columns
-        ],
-        "values": [
-            {
-                "value": item.value,
-                "t_name": item.t_name,
-                "c_name": item.c_name,
-            }
-            for item in response.values
-        ],
-        "tables": [
-            {
-                "name": item.name,
-                "role": item.role,
-                "description": item.description,
-                "primary_key_columns": item.primary_key_columns,
-            }
-            for item in response.tables
+            for experience in record.query_experiences
         ],
     }
-    query_experiences = [
-        {
-            "purpose": experience.purpose,
-            "sql_template": experience.sql_template,
-            "dialect": experience.dialect,
-            "assets": [
-                {
-                    "kind": asset.kind,
-                    "database": asset.database,
-                    "table": asset.table,
-                    "column": asset.column,
-                }
-                for asset in experience.assets
-            ],
-        }
-        for experience in record.query_experiences
-    ]
-    return resources, query_experiences
+    return payload
+
+
+def _expanded_content(record: SemanticRecallRecord) -> str:
+    """序列化模型可见的语义召回上下文"""
+    return json.dumps(semantic_recall_payload(record), ensure_ascii=False)
 
 
 def _current_turn_references(
@@ -167,10 +164,7 @@ class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
             )
             for index, _ in references:
                 message = messages[index]
-                if isinstance(message, ToolMessage):
-                    messages[index] = message.model_copy(
-                        update={"content": expanded_error}
-                    )
+                messages[index] = message.model_copy(update={"content": expanded_error})
             return await handler(request.override(messages=messages))
         except Exception:  # noqa: BLE001
             logger.exception("语义召回展开失败")
@@ -183,20 +177,16 @@ class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
             )
             for index, _ in references:
                 message = messages[index]
-                if isinstance(message, ToolMessage):
-                    messages[index] = message.model_copy(
-                        update={"content": expanded_error}
-                    )
+                messages[index] = message.model_copy(update={"content": expanded_error})
             return await handler(request.override(messages=messages))
 
         for index, reference in references:
             message = messages[index]
-            if isinstance(message, ToolMessage):
-                messages[index] = message.model_copy(
-                    update={
-                        "content": _expanded_content(
-                            records[reference.query],
-                        )
-                    }
-                )
+            messages[index] = message.model_copy(
+                update={
+                    "content": _expanded_content(
+                        records[reference.query],
+                    )
+                }
+            )
         return await handler(request.override(messages=messages))

@@ -274,7 +274,6 @@ def build_experience(
         owner_user_id=7,
         role_name="analyst",
         fingerprint=uuid4().hex,
-        dialect="doris",
         purposes=["统计订单金额"],
         representative_sql=f"SELECT {column_name} FROM {table_name}",
         sql_template=f"SELECT {column_name} FROM {table_name} WHERE id = :p1",
@@ -329,12 +328,10 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
 
     def test_sql_template_redacts_literals_and_has_stable_fingerprint(self) -> None:
         first_template, first_fingerprint = build_sql_template(
-            "SELECT amount FROM orders WHERE region = '华东' AND day >= '2026-01-01'",
-            "doris",
+            "SELECT amount FROM orders WHERE region = '华东' AND day >= '2026-01-01'"
         )
         second_template, second_fingerprint = build_sql_template(
-            "SELECT amount FROM orders WHERE region = '华南' AND day >= '2026-08-01'",
-            "doris",
+            "SELECT amount FROM orders WHERE region = '华南' AND day >= '2026-08-01'"
         )
 
         self.assertEqual(first_template, second_template)
@@ -359,11 +356,9 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         details = SuccessfulQueryExecution(
             session_key=session_key,
             raw_sql="SELECT amount FROM orders WHERE region = '华东'",
-            dialect="doris",
             normalized_sql="SELECT amount FROM orders WHERE region = '华东' LIMIT 100",
             validation=QueryValidationResult(
                 valid=True,
-                dialect="doris",
                 normalized_sql=(
                     "SELECT amount FROM orders WHERE region = '华东' LIMIT 100"
                 ),
@@ -551,7 +546,7 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             set(recall.results[0].model_dump()),
-            {"purpose", "sql_template", "dialect", "assets"},
+            {"id", "purpose", "sql_template", "assets"},
         )
 
     async def test_recall_keeps_vector_results_when_text_search_fails(self) -> None:
@@ -622,7 +617,6 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
                 purpose="删除订单",
             ),
             raw_sql="DELETE FROM orders",
-            dialect="doris",
             status="rejected",
             error_code="sql_validation_failed",
             error_detail="readonly query required",

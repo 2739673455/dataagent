@@ -380,7 +380,7 @@ async def run_agent_turn(
 ) -> AsyncGenerator[chat_schema.MessageResponse]:
     """执行一轮 Agent 对话并流式返回响应"""
     logger.info(
-        f"智能体回合开始: user_id={user_id}, conversation_id={conversation_id}, "
+        f"智能体回合开始: conversation_id={conversation_id}, "
         f"parts={len(user_message.parts)}, "
         f"attachments={len(user_message.attachments or ())}"
     )
@@ -422,8 +422,8 @@ async def run_agent_turn(
                         if response := _langchain_message_to_schema(message):
                             responses.append(response)
                 logger.debug(
-                    f"智能体流式更新: user_id={user_id}, "
-                    f"conversation_id={conversation_id}, nodes={tuple(chunk)}, "
+                    f"智能体流式更新: conversation_id={conversation_id}, "
+                    f"nodes={tuple(chunk)}, "
                     f"messages={len(responses)}"
                 )
                 for response in responses:
@@ -446,7 +446,7 @@ async def run_agent_turn(
             # 空增量会保留 Checkpointer 中的已有状态并继续生成
             input_messages = []
 
-    logger.info(f"智能体回合结束: user_id={user_id}, conversation_id={conversation_id}")
+    logger.info(f"智能体回合结束: conversation_id={conversation_id}")
 
 
 class PlannerContinuationLimitError(RuntimeError):

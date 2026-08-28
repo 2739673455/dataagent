@@ -29,7 +29,6 @@ class QueryExperience(MetaBase):
     owner_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     role_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
-    dialect: Mapped[str] = mapped_column(String(16), nullable=False)
     purposes: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     representative_sql: Mapped[str] = mapped_column(Text, nullable=False)
     sql_template: Mapped[str] = mapped_column(Text, nullable=False)

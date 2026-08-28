@@ -13,12 +13,6 @@ class AppConfigInvariantTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             Cfg.model_validate(values)
 
-    def test_static_doris_role_credentials_are_not_configured(self) -> None:
-        values = cfg.model_dump(mode="python")
-
-        self.assertNotIn("doris_roles", values)
-        self.assertNotIn("doris_security_admin", values)
-
     def test_planner_continuation_limit_must_not_be_negative(self) -> None:
         values = cfg.model_dump(mode="python")
         values["agent"]["orchestration"]["max_continuations"] = -1

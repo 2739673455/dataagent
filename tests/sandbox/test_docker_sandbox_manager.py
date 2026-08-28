@@ -97,10 +97,19 @@ class NormalizeAttachmentPathTest(unittest.TestCase):
         with self.assertRaises(SandboxPathError):
             normalize_attachment_path(f"{'x' * 256}.csv")
 
-    def test_user_attachment_rejects_system_analysis_root(self) -> None:
-        for path in ("analyses", "analyses/report.csv", "analyses/nested/report.csv"):
-            with self.subTest(path=path), self.assertRaises(SandboxPathError):
-                normalize_user_attachment_path(path)
+    def test_user_attachment_adds_one_uploads_prefix(self) -> None:
+        self.assertEqual(
+            normalize_user_attachment_path("report.csv"),
+            "uploads/report.csv",
+        )
+        self.assertEqual(
+            normalize_user_attachment_path("reports/summary.csv"),
+            "uploads/reports/summary.csv",
+        )
+        self.assertEqual(
+            normalize_user_attachment_path("uploads/report.csv"),
+            "uploads/report.csv",
+        )
 
     def test_system_paths_and_nested_analysis_names_remain_valid(self) -> None:
         self.assertEqual(
@@ -108,7 +117,7 @@ class NormalizeAttachmentPathTest(unittest.TestCase):
             "analyses/run/report.csv",
         )
         self.assertEqual(
-            normalize_user_attachment_path("uploads/analyses/report.csv"),
+            normalize_user_attachment_path("analyses/report.csv"),
             "uploads/analyses/report.csv",
         )
 
@@ -135,7 +144,7 @@ class AttachmentCapabilityTest(unittest.IsolatedAsyncioTestCase):
             content,
         )
 
-    async def test_user_mutations_reject_analysis_path_before_io(self) -> None:
+    async def test_user_mutations_reject_unsafe_path_before_io(self) -> None:
         manager = build_sandbox_manager(build_sandbox_config())
         conversation_id = uuid4()
         writer = AsyncMock()
@@ -148,14 +157,14 @@ class AttachmentCapabilityTest(unittest.IsolatedAsyncioTestCase):
                 await manager.upload_user_attachment(
                     7,
                     conversation_id,
-                    "analyses/run/report.csv",
+                    "../report.csv",
                     io.BytesIO(b"overwrite"),
                 )
             with self.assertRaises(SandboxPathError):
                 await manager.delete_user_attachment(
                     7,
                     conversation_id,
-                    "analyses/run/report.csv",
+                    "../report.csv",
                 )
 
         writer.assert_not_awaited()
@@ -649,7 +658,7 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         container.reload()
         self.assertEqual(container.status, "running")
 
-    async def test_user_mutations_cannot_change_analysis_artifact(self) -> None:
+    async def test_user_mutations_are_scoped_away_from_analysis_artifact(self) -> None:
         conversation_id = uuid4()
         artifact_path = "analyses/run/report.csv"
         await self.manager.write_artifact(
@@ -659,19 +668,18 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
             io.BytesIO(b"verified artifact"),
         )
 
-        with self.assertRaises(SandboxPathError):
-            await self.manager.upload_user_attachment(
-                self.user_id,
-                conversation_id,
-                artifact_path,
-                io.BytesIO(b"user overwrite"),
-            )
-        with self.assertRaises(SandboxPathError):
-            await self.manager.delete_user_attachment(
-                self.user_id,
-                conversation_id,
-                artifact_path,
-            )
+        uploaded_path = await self.manager.upload_user_attachment(
+            self.user_id,
+            conversation_id,
+            artifact_path,
+            io.BytesIO(b"user upload"),
+        )
+        self.assertEqual(uploaded_path, "uploads/analyses/run/report.csv")
+        await self.manager.delete_user_attachment(
+            self.user_id,
+            conversation_id,
+            artifact_path,
+        )
 
         self.assertEqual(
             await self.manager.download_file(
@@ -746,11 +754,15 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         )[0]
         self.assertIsNotNone(linked_upload.error)
         self.assertIsNotNone(second.read("/injected.txt").error)
+        self.assertEqual(
+            first.execute(f"ln -s ../{second_id} uploads").exit_code,
+            0,
+        )
         with self.assertRaises(SandboxPathError):
             await self.manager.upload_user_attachment(
                 self.user_id,
                 first_id,
-                "linked_directory/http-injected.txt",
+                "http-injected.txt",
                 io.BytesIO(b"HTTP_INJECTED_CONTENT"),
             )
         with self.assertRaises(SandboxPathError):

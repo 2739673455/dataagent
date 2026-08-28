@@ -38,19 +38,17 @@ from app.shared.contracts.analysis import AgentSessionKey
 
 class RecordingGuard:
     def __init__(self, *, physical_table: bool = False) -> None:
-        self.calls: list[tuple[int, str, str]] = []
+        self.calls: list[tuple[int, str]] = []
         self.physical_table = physical_table
 
     async def require_safe(
         self,
         user_id: int,
         sql: str,
-        dialect: str,
     ) -> GuardedQuery:
-        self.calls.append((user_id, sql, dialect))
+        self.calls.append((user_id, sql))
         validation = QueryValidationResult(
             valid=True,
-            dialect="doris",
             normalized_sql="SELECT normalized",
             tables=(
                 [QueryTableRef(database="analytics", name="orders")]
@@ -126,11 +124,9 @@ class RejectingGuard:
         self,
         user_id: int,
         sql: str,
-        dialect: str,
     ) -> GuardedQuery:
         result = QueryValidationResult(
             valid=False,
-            dialect="doris",
             normalized_sql=None,
             issues=[
                 QueryValidationIssue(
@@ -300,7 +296,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
 
         result = await service.execute(session_key, "SELECT raw")
 
-        self.assertEqual(guard.calls, [(9, "SELECT raw", "doris")])
+        self.assertEqual(guard.calls, [(9, "SELECT raw")])
         self.assertEqual(repo.explain_sql, "SELECT normalized")
         self.assertEqual(repo.sql, "SELECT normalized")
         self.assertEqual(result.row_count, 3)

@@ -29,10 +29,7 @@ from app.query.models.execution import (
     QueryResultColumn,
     QueryTimeRange,
 )
-from app.query.models.validation import (
-    QueryDialect,
-    QueryValidationResult,
-)
+from app.query.models.validation import QueryValidationResult
 from app.query.services.guard import QueryGuardService
 from app.shared.contracts.analysis import AgentSessionKey
 
@@ -141,7 +138,6 @@ class SuccessfulQueryExecution:
 
     session_key: AgentSessionKey
     raw_sql: str
-    dialect: QueryDialect
     normalized_sql: str
     validation: QueryValidationResult
     plan_estimate: QueryPlanEstimate
@@ -229,20 +225,18 @@ class AnalysisQueryService:
         self,
         session_key: AgentSessionKey,
         sql: str,
-        dialect: QueryDialect = "doris",
     ) -> AnalysisQueryResult:
         """校验、执行并返回查询产物的紧凑摘要"""
         sql_fingerprint = hashlib.sha256(sql.encode("utf-8")).hexdigest()[:16]
         logger.info(
             "开始执行只读分析查询: "
-            f"user_id={session_key.user_id}, "
             f"conversation_id={session_key.conversation_id}, "
-            f"analysis_id={session_key.analysis_id}, dialect={dialect}, "
+            f"analysis_id={session_key.analysis_id}, "
             f"sql_fingerprint={sql_fingerprint}"
         )
         try:
             async with asyncio.timeout(self._limits.timeout_seconds):
-                details = await self._execute_with_deadline(session_key, sql, dialect)
+                details = await self._execute_with_deadline(session_key, sql)
         except TimeoutError:
             raise QueryExecutionTimeoutError(
                 f"查询执行超时，最大允许 {self._limits.timeout_seconds} 秒"
@@ -254,7 +248,6 @@ class AnalysisQueryService:
                 logger.exception("成功查询观察器执行失败")
         logger.info(
             "只读分析查询执行完成: "
-            f"user_id={session_key.user_id}, "
             f"conversation_id={session_key.conversation_id}, "
             f"analysis_id={session_key.analysis_id}, "
             f"sql_fingerprint={sql_fingerprint}, "
@@ -270,10 +263,9 @@ class AnalysisQueryService:
         self,
         session_key: AgentSessionKey,
         sql: str,
-        dialect: QueryDialect,
     ) -> SuccessfulQueryExecution:
         """在调用方建立的硬时限内完成整个查询生命周期"""
-        guarded = await self._guard.require_safe(session_key.user_id, sql, dialect)
+        guarded = await self._guard.require_safe(session_key.user_id, sql)
         plan = await self._query_repo.explain(guarded.sql, self._limits)
         estimate = estimate_doris_query_plan(
             plan,
@@ -303,7 +295,6 @@ class AnalysisQueryService:
         return SuccessfulQueryExecution(
             session_key=session_key,
             raw_sql=sql,
-            dialect=dialect,
             normalized_sql=guarded.sql,
             validation=guarded.validation,
             plan_estimate=estimate,

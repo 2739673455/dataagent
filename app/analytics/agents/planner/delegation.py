@@ -5,6 +5,8 @@ from typing import Annotated, cast
 from langchain.tools import ToolRuntime, tool
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
+from loguru import logger
+from pydantic import ValidationError
 
 from app.analytics.agents.contracts import DelegationRequest
 from app.analytics.agents.session_service import AgentSessionService
@@ -39,17 +41,39 @@ def create_delegation_tool(service: AgentSessionService) -> BaseTool:
         ] = 0,
     ) -> dict[str, object]:
         """创建或恢复专业 Agent Session 并返回可验证的结构化结果"""
-        request = DelegationRequest(
-            analysis_id=analysis_id,
-            agent_type=agent_type,
-            session_id=session_id,
-            message=message,
-            repair_depth=repair_depth,
-        )
-        result = await service.execute_delegation(
-            request,
-            cast(RunnableConfig, runtime.config),
-        )
+        try:
+            request = DelegationRequest(
+                analysis_id=analysis_id,
+                agent_type=agent_type,
+                session_id=session_id,
+                message=message,
+                repair_depth=repair_depth,
+            )
+        except ValidationError as exc:
+            return {
+                "status": "error",
+                "code": "invalid_delegation_request",
+                "message": "委派请求无效",
+                "details": exc.errors(include_url=False),
+            }
+        try:
+            result = await service.execute_delegation(
+                request,
+                cast(RunnableConfig, runtime.config),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("执行专业 Agent 委派失败")
+            return {
+                "status": "error",
+                "code": "delegation_failed",
+                "message": "专业 Agent 委派失败",
+                "details": [
+                    {
+                        "type": type(exc).__name__,
+                        "msg": str(exc).strip() or "异常未提供详情",
+                    }
+                ],
+            }
         return result.model_dump(mode="json")
 
     return delegation

@@ -252,7 +252,11 @@ class _ColumnContextBuilder:
                     "metric_dependency",
                 )
         for (t_name, c_name, _), _, _ in ranked.values:
-            self._add_column((t_name, c_name), "value_owner")
+            self._add_column(
+                (t_name, c_name),
+                "value_owner",
+                counts_toward_limit=False,
+            )
 
     def _add_primary_keys(self) -> None:
         """为参与结果的表补充主键字段"""

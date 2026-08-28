@@ -1,10 +1,6 @@
 """查询引用与 SQL 校验模型"""
 
-from typing import Literal
-
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-QueryDialect = Literal["doris", "mysql"]
 
 
 class QueryTableRef(BaseModel):
@@ -54,7 +50,6 @@ class QueryValidationResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     valid: bool
-    dialect: QueryDialect
     normalized_sql: str | None
     tables: list[QueryTableRef] = Field(default_factory=list)
     columns: list[QueryColumnRef] = Field(default_factory=list)
