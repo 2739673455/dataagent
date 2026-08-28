@@ -99,13 +99,6 @@ class PermissionDeniedError(ProblemError):
     status = HTTPStatus.FORBIDDEN
 
 
-class AssetAccessDeniedError(PermissionDeniedError):
-    """表示当前身份无权访问目标数据资产"""
-
-    type = "asset-access-denied"
-    title = "无权访问该数据资产"
-
-
 class UserNotFoundError(ProblemError):
     """表示目标用户不存在"""
 
@@ -168,14 +161,6 @@ class LastAdministratorError(ProblemError):
     type = "last-administrator"
     title = "必须保留至少一位管理员"
     status = HTTPStatus.CONFLICT
-
-
-class UserDeletionPendingError(ProblemError):
-    """表示用户注销任务仍等待后台重试"""
-
-    type = "user-deletion-pending"
-    title = "用户注销已进入重试队列"
-    status = HTTPStatus.SERVICE_UNAVAILABLE
 
 
 class InvalidDorisPermissionError(ProblemError):

@@ -130,6 +130,7 @@ class QueryExperienceESRepo:
         user_id: int,
         role_name: str,
         limit: int,
+        min_score: float,
     ) -> list[SearchHit[UUID]]:
         """按任务向量执行语义检索"""
         if not await self._client.indices.exists(index=self._index_name):
@@ -148,6 +149,7 @@ class QueryExperienceESRepo:
                 },
             },
             size=limit,
+            min_score=min_score,
         )
         return self._hits(result)
 

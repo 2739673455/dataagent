@@ -1,10 +1,10 @@
 """语义召回记录模型"""
 
 from datetime import datetime
-from typing import Any, Self
+from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import DateTime, Index, Integer, String, Uuid, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -13,7 +13,7 @@ from app.metadata.models.search import (
     SemanticResourceRecallRequest,
     SemanticResourceRecallResponse,
 )
-from app.shared.contracts.query_experience import QueryExperienceSearchResult
+from app.shared.contracts.query_experience import QueryExperienceRecallResult
 from app.shared.database.base import AnalyticsBase
 
 
@@ -48,11 +48,6 @@ class SemanticRecallSnapshot(AnalyticsBase):
         DateTime(timezone=True),
         nullable=False,
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-    )
-
     __table_args__ = (
         Index(
             "ix_semantic_recall_snapshots_conversation_created",
@@ -84,21 +79,7 @@ class SemanticRecallRecord(BaseModel):
     query: str = Field(min_length=1, max_length=1000)
     request: SemanticResourceRecallRequest | None
     response: SemanticResourceRecallResponse
-    query_experiences: list[QueryExperienceSearchResult]
+    query_experiences: list[QueryExperienceRecallResult]
     query_experiences_retrieved_at: datetime
     source_queries: list[str]
     created_at: datetime
-    updated_at: datetime
-
-    @model_validator(mode="after")
-    def validate_context_payload(self) -> Self:
-        """校验持续上下文版本的数据约束"""
-        if len(self.query_experiences) > 3:
-            raise ValueError("召回上下文最多包含三条查询经验")
-        if self.request is not None:
-            if not set(self.request.terms).issubset(self.response.terms):
-                raise ValueError("本次检索词必须包含在累计召回结果中")
-        else:
-            if not self.source_queries:
-                raise ValueError("没有检索请求的召回必须包含来源 query")
-        return self

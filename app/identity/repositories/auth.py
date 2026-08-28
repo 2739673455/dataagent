@@ -194,12 +194,6 @@ class AuthPGRepo:
         current.revoked_at = revoked_at
         current.replaced_by_id = replacement_id
 
-    @staticmethod
-    def revoke_refresh_token(token: RefreshToken, revoked_at: datetime) -> None:
-        """吊销单个刷新令牌"""
-        if token.revoked_at is None:
-            token.revoked_at = revoked_at
-
     async def revoke_refresh_family(
         self,
         family_id: UUID,

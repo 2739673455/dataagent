@@ -90,28 +90,10 @@ class ColumnESRepo:
     async def list_resource_documents(
         self,
         resource_key: str,
-        *,
-        t_name: str,
-        c_name: str,
     ) -> list[SemanticIndexDocument]:
-        """读取字段当前语义索引文档并兼容识别旧文档"""
+        """读取字段当前语义索引文档"""
         return await self._delta_repo.list_documents(
-            {
-                "bool": {
-                    "should": [
-                        {"term": {"resource_key": resource_key}},
-                        {
-                            "bool": {
-                                "filter": [
-                                    {"term": {"t_name": t_name}},
-                                    {"term": {"name": c_name}},
-                                ]
-                            }
-                        },
-                    ],
-                    "minimum_should_match": 1,
-                }
-            }
+            {"term": {"resource_key": resource_key}}
         )
 
     async def apply_delta(self, delta: SemanticIndexDelta) -> None:
@@ -123,23 +105,8 @@ class ColumnESRepo:
         await self._delete_by_filter(
             [
                 {
-                    "bool": {
-                        "should": [
-                            {
-                                "term": {
-                                    "resource_key": column_resource_key(t_name, c_name)
-                                }
-                            },
-                            {
-                                "bool": {
-                                    "filter": [
-                                        {"term": {"t_name": t_name}},
-                                        {"term": {"name": c_name}},
-                                    ]
-                                }
-                            },
-                        ],
-                        "minimum_should_match": 1,
+                    "term": {
+                        "resource_key": column_resource_key(t_name, c_name)
                     }
                 }
             ]

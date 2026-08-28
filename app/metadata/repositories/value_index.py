@@ -186,23 +186,8 @@ class ValueESRepo:
 
     @staticmethod
     def _resource_query(t_name: str, c_name: str) -> dict[str, Any]:
-        """构造字段资源过滤并覆盖旧索引文档"""
-        return {
-            "bool": {
-                "should": [
-                    {"term": {"resource_key": column_resource_key(t_name, c_name)}},
-                    {
-                        "bool": {
-                            "filter": [
-                                {"term": {"t_name": t_name}},
-                                {"term": {"c_name": c_name}},
-                            ]
-                        }
-                    },
-                ],
-                "minimum_should_match": 1,
-            }
-        }
+        """构造字段资源过滤条件"""
+        return {"term": {"resource_key": column_resource_key(t_name, c_name)}}
 
     @staticmethod
     def _deleted_count(result: Any) -> int:

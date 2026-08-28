@@ -177,38 +177,42 @@ class ElasticsearchResourceKeyFilterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(value_filter[0]["terms"]["resource_key"]), 10_000)
         self.assertNotIn("should", value_filter[0])
 
-    async def test_resync_deletes_keyed_and_legacy_documents(self) -> None:
+    async def test_resync_deletes_documents_by_resource_key(self) -> None:
         column = build_column()
 
         await ColumnESRepo(self.client).delete(column.t_name, column.name)
         column_query = self.client.delete_by_query.await_args.kwargs["query"]
-        column_should = column_query["bool"]["filter"][0]["bool"]["should"]
         self.assertEqual(
-            column_should[0]["term"]["resource_key"],
-            column_resource_key(column.t_name, column.name),
-        )
-        self.assertEqual(
-            column_should[1]["bool"]["filter"],
-            [
-                {"term": {"t_name": column.t_name}},
-                {"term": {"name": column.name}},
-            ],
+            column_query,
+            {
+                "bool": {
+                    "filter": [
+                        {
+                            "term": {
+                                "resource_key": column_resource_key(
+                                    column.t_name,
+                                    column.name,
+                                )
+                            }
+                        }
+                    ]
+                }
+            },
         )
 
         self.client.delete_by_query.reset_mock()
         await ValueESRepo(self.client).delete_by_column(column.t_name, column.name)
         value_query = self.client.delete_by_query.await_args.kwargs["query"]
-        value_should = value_query["bool"]["should"]
         self.assertEqual(
-            value_should[0]["term"]["resource_key"],
-            column_resource_key(column.t_name, column.name),
-        )
-        self.assertEqual(
-            value_should[1]["bool"]["filter"],
-            [
-                {"term": {"t_name": column.t_name}},
-                {"term": {"c_name": column.name}},
-            ],
+            value_query,
+            {
+                "term": {
+                    "resource_key": column_resource_key(
+                        column.t_name,
+                        column.name,
+                    )
+                }
+            },
         )
 
     def test_resource_key_does_not_collide_when_names_contain_dots(self) -> None:

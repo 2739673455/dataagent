@@ -131,7 +131,7 @@ class MetadataAuthorizationFilter:
             )
         ]
 
-    def filter_semantic_response(
+    def filter_recall_response(
         self,
         response: SemanticResourceRecallResponse,
     ) -> SemanticResourceRecallResponse:

@@ -75,10 +75,7 @@ class AccessTokenClaims:
     """已验证的访问令牌载荷"""
 
     user_id: int
-    token_id: UUID
     auth_version: int
-    issued_at: datetime
-    expires_at: datetime
 
 
 @dataclass(frozen=True)
@@ -88,8 +85,6 @@ class RefreshTokenClaims:
     user_id: int
     token_id: UUID
     family_id: UUID
-    issued_at: datetime
-    expires_at: datetime
 
 
 @dataclass(frozen=True)
@@ -152,28 +147,21 @@ class JWTCodec:
         """绑定 JWT 签名与生命周期配置"""
         self._config = config
 
-    def issue_access_token(self, user: User, now: datetime) -> tuple[str, UUID]:
+    def issue_access_token(self, user: User, now: datetime) -> str:
         """签发短期访问令牌"""
-        token_id = uuid4()
         expires_at = now + timedelta(minutes=self._config.access_token_minutes)
         payload: dict[str, Any] = {
             "sub": str(user.id),
-            "jti": str(token_id),
             "auth_version": user.auth_version,
             "token_type": "access",
-            "is_admin": user.is_admin,
-            "doris_role": user.doris_role_name,
             "iat": now,
             "exp": expires_at,
             "iss": self._config.issuer,
         }
-        return (
-            jwt.encode(
-                payload,
-                self._config.jwt_secret,
-                algorithm=self._config.jwt_algorithm,
-            ),
-            token_id,
+        return jwt.encode(
+            payload,
+            self._config.jwt_secret,
+            algorithm=self._config.jwt_algorithm,
         )
 
     def issue_refresh_token(
@@ -200,27 +188,36 @@ class JWTCodec:
 
     def decode_access_token(self, token: str) -> AccessTokenClaims:
         """校验并解析访问令牌"""
-        payload = self._decode(token, "access")
+        payload = self._decode(
+            token,
+            "access",
+            required_claims={"sub", "auth_version", "token_type", "iat", "exp", "iss"},
+        )
         return AccessTokenClaims(
             user_id=self._parse_user_id(payload),
-            token_id=self._parse_uuid(payload, "jti"),
             auth_version=self._parse_auth_version(payload),
-            issued_at=self._parse_timestamp(payload, "iat"),
-            expires_at=self._parse_timestamp(payload, "exp"),
         )
 
     def decode_refresh_token(self, token: str) -> RefreshTokenClaims:
         """校验并解析刷新令牌"""
-        payload = self._decode(token, "refresh")
+        payload = self._decode(
+            token,
+            "refresh",
+            required_claims={"sub", "jti", "family_id", "token_type", "iat", "exp", "iss"},
+        )
         return RefreshTokenClaims(
             user_id=self._parse_user_id(payload),
             token_id=self._parse_uuid(payload, "jti"),
             family_id=self._parse_uuid(payload, "family_id"),
-            issued_at=self._parse_timestamp(payload, "iat"),
-            expires_at=self._parse_timestamp(payload, "exp"),
         )
 
-    def _decode(self, token: str, expected_type: str) -> dict[str, Any]:
+    def _decode(
+        self,
+        token: str,
+        expected_type: str,
+        *,
+        required_claims: set[str],
+    ) -> dict[str, Any]:
         """验证 JWT 签名、标准声明与令牌类型"""
         try:
             payload = jwt.decode(
@@ -229,7 +226,7 @@ class JWTCodec:
                 algorithms=[self._config.jwt_algorithm],
                 issuer=self._config.issuer,
                 leeway=5,
-                options={"require": ["sub", "jti", "token_type", "iat", "exp", "iss"]},
+                options={"require": sorted(required_claims)},
             )
         except jwt.PyJWTError as exc:
             raise auth_error.InvalidTokenError from exc
@@ -269,15 +266,6 @@ class JWTCodec:
             return UUID(str(payload[key]))
         except (KeyError, TypeError, ValueError) as exc:
             raise auth_error.InvalidTokenError(detail=f"令牌 {key} 声明无效") from exc
-
-    @staticmethod
-    def _parse_timestamp(payload: dict[str, Any], key: str) -> datetime:
-        """解析时间戳声明"""
-        value = payload.get(key)
-        if not isinstance(value, (int, float)):
-            raise auth_error.InvalidTokenError(detail=f"令牌 {key} 声明无效")
-        return datetime.fromtimestamp(value, UTC)
-
 
 class AccessTokenAuthenticator:
     """使用独立只读会话认证访问令牌"""
@@ -504,7 +492,7 @@ class AuthService:
     ) -> TokenPair:
         """签发并持久化一个令牌对"""
         now = self._now()
-        access_token, _ = self._codec.issue_access_token(user, now)
+        access_token = self._codec.issue_access_token(user, now)
         token_id = refresh_token_id or uuid4()
         refresh_token = self._codec.issue_refresh_token(
             user.id,

@@ -4,7 +4,7 @@
 
 审查范围：`app/` 全模块，重点覆盖语义召回、查询经验、Agent 运行时、身份认证、元数据索引和沙箱管理。
 
-当前状态：第一项已实施；其余问题仅记录调整建议，尚未实施。
+当前状态：全部问题项已实施，并完成静态检查、类型检查和完整测试集验证。
 
 ## 一、优先处理的功能问题
 
@@ -22,7 +22,7 @@
 - 同一 query 的后续检索成功覆盖相同失败范围时会清除旧失败；未覆盖的 term 继续保留失败状态。
 - 权限过滤保留通用告警和 `failures`，只移除指向未授权字段、指标或字段值的索引状态告警。
 
-### 2. 查询经验的全文和向量检索仍共用失败边界
+### 2. [已处理] 查询经验的全文和向量检索失败边界
 
 位置：
 
@@ -44,7 +44,13 @@
 - 全部失败时按现有产品要求返回空经验并正常返回语义资源。
 - 全部失败时不推进有效缓存时间，确保下次调用能够重试。可以保留上一次成功检索时间；首次检索失败时使用已过期的时间值或重新设计缓存状态字段。
 
-### 3. 持续上下文可能保留旧元数据快照
+处理结果：
+
+- `QueryExperienceService.recall()` 返回 `success`、`partial` 或 `failed`，全文与向量通道分别执行和记录故障。
+- 向量生成或任一索引通道失败时保留另一路候选；全部失败时返回空经验。
+- `recall_context` 将全部失败写为空经验和已过期时间，不会命中 24 小时缓存，下一次同 query 调用会重新检索。
+
+### 3. [已处理] 持续上下文可能保留旧元数据快照
 
 位置：
 
@@ -65,7 +71,12 @@
 - 表继续使用现有的“同名表选择最大 `meta_version`”规则；字段值没有 `meta_version`，暂时维持现有按 `(t_name, c_name, value)` 和 `rank_score` 的合并规则。
 - 字段或指标改名会改变当前主键，系统将其识别为新资源；本次不引入不可变 ID 来关联改名前后的实体。
 
-### 4. 同一个 query 并发召回可能丢失增量
+处理结果：
+
+- 指标按 `name`、字段按 `(t_name, name)` 选择 `meta_version` 最大的完整结果；版本相同时使用 `rank_score` 保持稳定排序。
+- 选中的完整结果直接替换旧快照，避免旧描述、别名、引用关系和索引状态残留。
+
+### 4. [已处理] 同一个 query 并发召回可能丢失增量
 
 位置：
 
@@ -85,7 +96,12 @@
 - 合并两个 query 时按照稳定排序获取两把锁，避免死锁。
 - 保留快照版本设计时，在锁内完成最新版本读取、合并、保存和来源删除。
 
-### 5. 查询经验仍可能返回弱相关的三个结果
+处理结果：
+
+- `SemanticRecallPGRepo` 在当前事务中使用 PostgreSQL advisory lock 锁定 `(user_id, conversation_id, query)`。
+- `record()`、`delete()` 在锁内读写；`merge()` 按 query 的稳定顺序取得两把锁，随后读取、合并、保存和删除来源快照。
+
+### 5. [已处理] 查询经验仍可能返回弱相关的三个结果
 
 位置：
 
@@ -104,9 +120,14 @@
 - 相似度阈值应由查询经验检索配置统一管理。
 - 过滤、权限检查和有效性检查后允许返回少于三条经验。
 
+处理结果：
+
+- 查询配置新增 `query_experience_vector_score_threshold`，当前阈值为 `0.65`。
+- Elasticsearch 向量查询通过 `min_score` 在 RRF 前过滤候选；有效候选不足时直接返回少于三条结果。
+
 ## 二、同类架构和冗余问题
 
-### 6. 元数据 Elasticsearch 仓储仍包含历史兼容查询
+### 6. [已处理] 元数据 Elasticsearch 仓储仍包含历史兼容查询
 
 位置：
 
@@ -129,7 +150,9 @@
 - 统一只按 `resource_key` 查询、过滤和删除。
 - 同步收紧只为旧匹配逻辑服务的方法参数。
 
-### 7. 语义召回快照的 `updated_at` 与 `created_at` 重复
+处理结果：字段、指标和字段值索引的读取、白名单过滤和删除均只使用 `resource_key`；字段索引读取接口同时移除了旧名称参数。
+
+### 7. [已处理] 语义召回快照的 `updated_at` 与 `created_at` 重复
 
 位置：
 
@@ -148,7 +171,9 @@
 
 建议：删除 ORM、领域记录、仓储转换和模型展开中的 `updated_at`。
 
-### 8. Agent 运行时保存了未使用的并发状态引用
+处理结果：已从 ORM、领域记录、仓储读写和模型视图中删除该字段。
+
+### 8. [已处理] Agent 运行时保存了未使用的并发状态引用
 
 位置：
 
@@ -164,7 +189,9 @@
 
 建议：删除两个运行时字段及其配套 property。
 
-### 9. 查询执行记录存在重复身份来源
+处理结果：已删除 `ConversationAgentRuntime` 的 `session_locks`、`parallelism` 字段和 `AgentSessionService` 对应 property；会话服务内部并发控制保持不变。
+
+### 9. [已处理] 查询执行记录存在重复身份来源
 
 位置：
 
@@ -185,7 +212,9 @@
 - 角色、查询目的和 `tool_call_id` 作为该上下文的其他字段。
 - 成功和失败记录统一从同一上下文获取身份信息。
 
-### 10. 访问令牌保存了未使用且可能过期的用户状态
+处理结果：`QueryExecutionContext` 持有完整 `AgentSessionKey`，成功和失败持久化统一从该键读取用户、会话、分析和 Session 标识。
+
+### 10. [已处理] 访问令牌保存了未使用且可能过期的用户状态
 
 位置：
 
@@ -208,7 +237,9 @@
 - 时间声明继续在解码时校验，无需保存在返回的 claims 对象中。
 - 评估访问令牌 `jti` 是否有近期明确用途，没有用途时删除。
 
-### 11. 语义召回结果向模型暴露了内部版本信息
+处理结果：访问令牌现在仅包含用户标识、认证版本、令牌类型和标准签发/过期/签发方声明；已删除 `jti`、管理员和 Doris 角色副本，解析 claims 也不再暴露时间字段。
+
+### 11. [已处理] 语义召回结果向模型暴露了内部版本信息
 
 位置：
 
@@ -228,7 +259,9 @@
 - `index_status` 保留给模型，作为无需了解版本号的索引可用性状态。
 - 补充中间件测试，断言模型展开内容不含 `meta_version` 或 `index_version`，持久化记录仍保留这些内部字段。
 
-### 12. Specialist 和 Delegation 结果协议重复
+处理结果：`SemanticRecallExpansionMiddleware` 使用显式白名单向模型提供字段、指标、字段值、表元数据和历史 SQL 经验；排序、命中依据、索引状态、版本、失败告警、缓存时间及召回记录信息保留在内部快照中。
+
+### 12. [已处理] Specialist 和 Delegation 结果协议重复
 
 位置：
 
@@ -243,7 +276,9 @@
 
 建议：抽取共同结果基类，由 `SpecialistResult` 和 `DelegationResult` 在其上增加各自字段。
 
-### 13. 查询经验数量限制存在重复定义
+处理结果：已提取 `AgentResult` 公共基类，状态载荷校验只保留一份；`DelegationResult` 仅声明委派定位字段。
+
+### 13. [已处理] 查询经验数量限制存在重复定义
 
 位置：
 
@@ -263,7 +298,9 @@
 - 评估删除 `validate_context_payload()` 中由服务构造流程已经保证的约束。
 - 如果保留领域不变量，所有调用方使用同一底层定义，避免重复常量。
 
-### 14. 同一召回业务层仍混用 `search` 和 `recall`
+处理结果：数量策略集中为 `QUERY_EXPERIENCE_RECALL_LIMIT`；已删除快照模型中重复的数量和载荷校验器。
+
+### 14. [已处理] 同一召回业务层仍混用 `search` 和 `recall`
 
 位置：
 
@@ -285,9 +322,11 @@
 - 领域层和模型协议统一使用 `recall`：例如 `QueryExperienceRecallResult`、`recall()`、`filter_recall_response()`、`_RecallContext`。
 - Elasticsearch 仓储中的 `search_text()`、`search_vector()`、`SearchHit` 保留 `search`，因为它们表达索引检索原语。
 
-## 三、确认未使用的遗留代码
+处理结果：查询经验结果、服务入口和转换函数统一使用 `recall`；权限过滤器使用 `filter_recall_response()`；语义服务内部上下文改为 `_RecallContext`。Elasticsearch 原语继续保留 `search` 命名。
 
-以下符号在全仓库只有定义，没有调用：
+## 三、[已处理] 确认未使用的遗留代码
+
+以下符号已删除：
 
 - `app/identity/errors.py:102`：`AssetAccessDeniedError`
 - `app/identity/errors.py:173`：`UserDeletionPendingError`
@@ -298,7 +337,7 @@
 - `app/analytics/agents/manager.py:362`：`AgentManager.reset`
 - `app/shared/config/app_config.py:376`：`reload_config`
 
-建议：直接删除定义及配套测试、导入和注释，不保留兼容别名或转发方法。
+处理结果：定义、配套导入和测试引用已同步清理，未保留兼容别名或转发方法。
 
 ## 四、建议实施顺序
 
@@ -316,9 +355,6 @@
 
 ## 五、验证结果
 
-- `ruff check app`：通过。
-- `pyright app`：`0 errors, 0 warnings, 0 informations`。
-- 非沙箱测试：`296 passed, 1 skipped, 56 subtests passed`。
-- `tests/sandbox/test_docker_sandbox_manager.py`：`28 passed, 18 skipped, 10 subtests passed`。
-- `tests/sandbox/test_sandbox_tombstones.py`：`2 passed`。
-- `tests/sandbox/test_sandbox_ownership.py` 在当前 Python 3.14 环境中无法完整执行。最小脚本可以复现连续第三次 `asyncio.to_thread()` 卡住，因此该现象未计为项目代码问题。
+- `uv run ruff check app tests`：通过。
+- `uv run pyright app`：`0 errors, 0 warnings, 0 informations`。
+- `uv run pytest -q`：`338 passed, 19 skipped, 66 subtests passed`。

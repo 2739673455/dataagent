@@ -1,10 +1,8 @@
 """语义召回记录管理服务"""
 
-import json
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any
 from uuid import UUID
 
 from app.metadata.models.recall import SemanticRecallRecord
@@ -19,7 +17,7 @@ from app.metadata.models.search import (
 )
 from app.metadata.repositories.recall import SemanticRecallPGRepo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
-from app.shared.contracts.query_experience import QueryExperienceSearchResult
+from app.shared.contracts.query_experience import QueryExperienceRecallResult
 
 _QUERY_EXPERIENCE_CACHE_TTL = timedelta(days=1)
 
@@ -46,20 +44,6 @@ def _stable_union[T](groups: list[list[T]]) -> list[T]:
     return result
 
 
-def _stable_json_union(groups: list[list[Any]]) -> list[Any]:
-    """稳定合并任意 JSON 值列表"""
-    result: list[Any] = []
-    seen: set[str] = set()
-    for group in groups:
-        for item in group:
-            key = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
-            if key in seen:
-                continue
-            seen.add(key)
-            result.append(item)
-    return result
-
-
 def _group_items[ItemT, KeyT](
     groups: list[list[ItemT]],
     key: Callable[[ItemT], KeyT],
@@ -75,17 +59,20 @@ def _group_items[ItemT, KeyT](
 def _merge_metrics(
     responses: list[SemanticResourceRecallResponse],
 ) -> list[SemanticMetricRecallResult]:
-    """合并指标结果并保留最高排名快照和全部命中依据"""
-    result: list[SemanticMetricRecallResult] = []
-    for matches in _group_items([item.metrics for item in responses], lambda x: x.name):
-        best = max(matches, key=lambda item: item.rank_score).model_copy(deep=True)
-        best.alias = _stable_union([item.alias for item in matches])
-        best.relevant_columns = _stable_json_union(
-            [item.relevant_columns for item in matches]
-        )
-        best.match_reasons = _stable_union([item.match_reasons for item in matches])
-        result.append(best)
-    return sorted(result, key=lambda item: (-item.rank_score, item.name))
+    """按指标主键保留最新元数据快照"""
+    return sorted(
+        (
+            max(
+                matches,
+                key=lambda item: (item.meta_version, item.rank_score),
+            ).model_copy(deep=True)
+            for matches in _group_items(
+                [item.metrics for item in responses],
+                lambda item: item.name,
+            )
+        ),
+        key=lambda item: (-item.rank_score, item.name),
+    )
 
 
 def _column_score(item: SemanticColumnRecallResult) -> float:
@@ -96,21 +83,17 @@ def _column_score(item: SemanticColumnRecallResult) -> float:
 def _merge_columns(
     responses: list[SemanticResourceRecallResponse],
 ) -> list[SemanticColumnRecallResult]:
-    """合并字段结果并累计引入原因"""
-    result: list[SemanticColumnRecallResult] = []
-    groups = _group_items(
-        [item.columns for item in responses],
-        lambda x: (x.t_name, x.name),
-    )
-    for matches in groups:
-        best = max(matches, key=_column_score).model_copy(deep=True)
-        best.alias = _stable_union([item.alias for item in matches])
-        best.examples = _stable_json_union([item.examples for item in matches])
-        best.inclusion_reasons = _stable_union(
-            [item.inclusion_reasons for item in matches]
+    """按字段联合主键保留最新元数据快照"""
+    result = [
+        max(
+            matches,
+            key=lambda item: (item.meta_version, _column_score(item)),
+        ).model_copy(deep=True)
+        for matches in _group_items(
+            [item.columns for item in responses],
+            lambda item: (item.t_name, item.name),
         )
-        best.match_reasons = _stable_union([item.match_reasons for item in matches])
-        result.append(best)
+    ]
     return sorted(
         result,
         key=lambda item: (-_column_score(item), item.t_name, item.name),
@@ -220,11 +203,12 @@ class SemanticRecallContextService:
         query: str,
         request: SemanticResourceRecallRequest,
         response: SemanticResourceRecallResponse,
-        query_experiences: list[QueryExperienceSearchResult],
+        query_experiences: list[QueryExperienceRecallResult],
         query_experiences_retrieved_at: datetime,
     ) -> SemanticRecallRecord:
         """将一次检索结果增量合入 query 的持续上下文"""
         now = datetime.now(UTC)
+        await self._repo.acquire_query_lock(user_id, conversation_id, query)
         previous = await self._repo.get_latest_by_query(
             user_id,
             conversation_id,
@@ -242,12 +226,11 @@ class SemanticRecallContextService:
             conversation_id=conversation_id,
             query=query,
             request=request,
-            response=self._authorization_filter.filter_semantic_response(response),
+            response=self._authorization_filter.filter_recall_response(response),
             query_experiences=self._filter_query_experiences(query_experiences),
             query_experiences_retrieved_at=query_experiences_retrieved_at,
             source_queries=(previous.source_queries if previous is not None else []),
             created_at=now,
-            updated_at=now,
         )
         await self._repo.save(record)
         return record
@@ -259,7 +242,7 @@ class SemanticRecallContextService:
         query: str,
         *,
         now: datetime | None = None,
-    ) -> tuple[list[QueryExperienceSearchResult], datetime] | None:
+    ) -> tuple[list[QueryExperienceRecallResult], datetime] | None:
         """读取当前查询在一天有效期内的查询经验结果"""
         record = await self._repo.get_latest_by_query(
             user_id,
@@ -327,6 +310,9 @@ class SemanticRecallContextService:
         if target_query == source_query:
             raise ValueError("目标 query 和来源 query 不能相同")
 
+        for query in sorted((target_query, source_query)):
+            await self._repo.acquire_query_lock(user_id, conversation_id, query)
+
         target_record = await self._repo.get_latest_by_query(
             user_id,
             conversation_id,
@@ -379,7 +365,6 @@ class SemanticRecallContextService:
             ),
             source_queries=absorbed_queries,
             created_at=now,
-            updated_at=now,
         )
         await self._repo.save(merged)
         await self._repo.delete_by_query(user_id, conversation_id, source_query)
@@ -390,7 +375,7 @@ class SemanticRecallContextService:
         record: SemanticRecallRecord,
     ) -> SemanticRecallRecord:
         """按当前策略生成召回记录的安全读取副本"""
-        response = self._authorization_filter.filter_semantic_response(record.response)
+        response = self._authorization_filter.filter_recall_response(record.response)
         query_experiences = self._filter_query_experiences(record.query_experiences)
         if (
             response is record.response
@@ -406,8 +391,8 @@ class SemanticRecallContextService:
 
     def _filter_query_experiences(
         self,
-        experiences: list[QueryExperienceSearchResult],
-    ) -> list[QueryExperienceSearchResult]:
+        experiences: list[QueryExperienceRecallResult],
+    ) -> list[QueryExperienceRecallResult]:
         """移除包含当前用户不可见资产的查询经验"""
         return [
             experience
@@ -433,7 +418,10 @@ class SemanticRecallContextService:
         """批量删除 query 的全部快照并返回处理结果"""
         deleted: list[str] = []
         missing: list[str] = []
-        for query in dict.fromkeys(queries):
+        unique_queries = list(dict.fromkeys(queries))
+        for query in sorted(unique_queries):
+            await self._repo.acquire_query_lock(user_id, conversation_id, query)
+        for query in unique_queries:
             if await self._repo.delete_by_query(user_id, conversation_id, query):
                 deleted.append(query)
             else:

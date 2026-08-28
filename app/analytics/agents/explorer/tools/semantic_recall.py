@@ -37,9 +37,12 @@ from app.shared.clients.postgres_client_manager import (
     meta_postgres_client_manager,
 )
 from app.shared.config.app_config import cfg
-from app.shared.contracts.query_experience import QueryExperienceSearchResult
+from app.shared.contracts.query_experience import (
+    QUERY_EXPERIENCE_RECALL_LIMIT,
+    QueryExperienceRecallResult,
+)
 
-_QUERY_EXPERIENCE_LIMIT = 3
+_STALE_QUERY_EXPERIENCES_RETRIEVED_AT = datetime.min.replace(tzinfo=UTC)
 
 
 @tool
@@ -115,8 +118,8 @@ async def recall_context(
             "message": "语义资源召回暂不可用",
         }
 
-    query_experiences: list[QueryExperienceSearchResult] = []
-    query_experiences_retrieved_at = datetime.now(UTC)
+    query_experiences: list[QueryExperienceRecallResult] = []
+    query_experiences_retrieved_at = _STALE_QUERY_EXPERIENCES_RETRIEVED_AT
     try:
         async with semantic_recall_repository() as recall_repo:
             recall_service = SemanticRecallContextService(
@@ -131,16 +134,22 @@ async def recall_context(
         if cached is None:
             if user is not None and user.doris_role_name is not None:
                 async with meta_postgres_client_manager.session() as experience_session:
-                    query_experiences = await build_query_experience_service(
+                    experience_recall = await build_query_experience_service(
                         experience_session
-                    ).search(
+                    ).recall(
                         user_id=user_id,
                         role_name=user.doris_role_name,
                         policy=asset_policy,
                         query=query,
-                        limit=_QUERY_EXPERIENCE_LIMIT,
+                        limit=QUERY_EXPERIENCE_RECALL_LIMIT,
                     )
-            query_experiences_retrieved_at = datetime.now(UTC)
+                    if experience_recall.status == "failed":
+                        logger.warning("查询经验全文和向量检索均不可用")
+                    else:
+                        query_experiences = experience_recall.results
+                        query_experiences_retrieved_at = datetime.now(UTC)
+            else:
+                query_experiences_retrieved_at = datetime.now(UTC)
         else:
             query_experiences, query_experiences_retrieved_at = cached
     except Exception:  # noqa: BLE001
@@ -171,23 +180,8 @@ async def recall_context(
 
 
 def _record_summary(record: Any) -> dict[str, Any]:
-    """构造适合模型浏览的召回记录摘要"""
-    response = record.response
-    return {
-        "query": record.query,
-        "terms": response.terms,
-        "query_experience_count": len(record.query_experiences),
-        "query_experiences_retrieved_at": (
-            record.query_experiences_retrieved_at.isoformat()
-        ),
-        "resource_counts": {
-            "metrics": len(response.metrics),
-            "columns": len(response.columns),
-            "values": len(response.values),
-            "tables": len(response.tables),
-        },
-        "created_at": record.created_at.isoformat(),
-    }
+    """构造供后续 get_recall 使用的最小记录引用"""
+    return {"query": record.query}
 
 
 @tool

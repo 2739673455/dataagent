@@ -107,17 +107,6 @@ class AssetIdentity:
             for own, target in zip(own_parts, other_parts, strict=True)
         )
 
-    def as_dict(self) -> dict[str, str | None]:
-        """转换为错误响应可用的结构"""
-        return {
-            "scope": self.scope.value,
-            "data_source": self.data_source,
-            "database_name": self.database_name,
-            "table_name": self.table_name,
-            "column_name": self.column_name,
-        }
-
-
 @dataclass(frozen=True)
 class AssetAccessPolicy:
     """用户资产访问策略快照"""

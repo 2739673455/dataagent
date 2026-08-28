@@ -109,15 +109,15 @@ class JWTCodecTest(unittest.TestCase):
 
     def test_access_token_round_trip(self) -> None:
         now = datetime.now(UTC)
-        token, token_id = self.codec.issue_access_token(self.user, now)
+        token = self.codec.issue_access_token(self.user, now)
 
         claims = self.codec.decode_access_token(token)
 
         self.assertEqual(claims.user_id, self.user.id)
-        self.assertEqual(claims.token_id, token_id)
+        self.assertEqual(claims.auth_version, self.user.auth_version)
 
     def test_expired_access_token_is_rejected(self) -> None:
-        token, _ = self.codec.issue_access_token(
+        token = self.codec.issue_access_token(
             self.user,
             datetime.now(UTC) - timedelta(hours=1),
         )
@@ -275,7 +275,7 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_authenticate_access_token_returns_immutable_snapshot(self) -> None:
         user = build_user()
         self.repo.get_user_by_id.return_value = user
-        token, _ = JWTCodec(build_config()).issue_access_token(user, self.now)
+        token = JWTCodec(build_config()).issue_access_token(user, self.now)
 
         principal = await AccessTokenAuthenticator(
             self.repo,

@@ -5,6 +5,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 type QueryAssetKind = Literal["table", "column"]
+QUERY_EXPERIENCE_RECALL_LIMIT = 3
+QueryExperienceRecallStatus = Literal["success", "partial", "failed"]
 
 
 class QueryAssetSnapshot(BaseModel):
@@ -19,7 +21,7 @@ class QueryAssetSnapshot(BaseModel):
     meta_version: int
 
 
-class QueryExperienceSearchResult(BaseModel):
+class QueryExperienceRecallResult(BaseModel):
     """提供给 Explorer 的紧凑查询经验"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -28,3 +30,12 @@ class QueryExperienceSearchResult(BaseModel):
     sql_template: str
     dialect: str
     assets: list[QueryAssetSnapshot]
+
+
+class QueryExperienceRecall(BaseModel):
+    """一次查询经验召回的结果及检索通道状态"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    status: QueryExperienceRecallStatus
+    results: list[QueryExperienceRecallResult]

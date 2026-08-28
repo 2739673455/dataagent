@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated, Literal, Self
@@ -94,8 +93,6 @@ class ConversationAgentRuntime:
     planner: CompiledStateGraph
     registry: AgentRegistry
     session_service: AgentSessionService
-    session_locks: Mapping[str, asyncio.Lock]
-    parallelism: asyncio.Semaphore
     planner_lock: Callable[[], AbstractAsyncContextManager[None]]
     conversation_deleted: Callable[[], Awaitable[bool]]
 
@@ -162,8 +159,8 @@ class RepairRequest(StrictProtocolModel):
     expected_result: NonEmptyText
 
 
-class SpecialistResult(StrictProtocolModel):
-    """所有专业 Agent 的结构化输出"""
+class AgentResult(StrictProtocolModel):
+    """专业 Agent 与委派工具共用的结构化结果"""
 
     status: Literal["completed", "needs_repair", "failed"]
     summary: NonEmptyText
@@ -197,39 +194,13 @@ class SpecialistResult(StrictProtocolModel):
         return self
 
 
-class DelegationResult(StrictProtocolModel):
+class SpecialistResult(AgentResult):
+    """所有专业 Agent 的结构化输出"""
+
+
+class DelegationResult(AgentResult):
     """delegation 返回给 Planner 的稳定协议"""
 
-    status: Literal["completed", "needs_repair", "failed"]
     analysis_id: Identifier
     agent_type: AgentType
     session_id: Identifier
-    summary: NonEmptyText
-    findings: Annotated[list[NonEmptyText], Field(max_length=100)] = Field(
-        default_factory=list
-    )
-    artifacts: Annotated[list[ArtifactReference], Field(max_length=100)] = Field(
-        default_factory=list
-    )
-    repair_requests: Annotated[list[RepairRequest], Field(max_length=20)] = Field(
-        default_factory=list
-    )
-    confidence: Literal["low", "medium", "high"] | None = None
-    limitations: Annotated[list[NonEmptyText], Field(max_length=100)] = Field(
-        default_factory=list
-    )
-
-    @model_validator(mode="after")
-    def validate_status_payload(self) -> Self:
-        """校验委派结果状态与载荷的一致性"""
-        if self.status == "needs_repair" and not self.repair_requests:
-            raise ValueError("needs_repair 状态必须包含至少一个修补请求")
-        if self.status != "needs_repair" and self.repair_requests:
-            raise ValueError("修补请求仅在 needs_repair 状态下有效")
-        if self.status == "completed" and not self.findings:
-            raise ValueError("completed 状态必须包含至少一个分析结论 (findings)")
-        if self.status == "completed" and not self.artifacts:
-            raise ValueError("completed 状态必须包含至少一个分析产物 (artifacts)")
-        if self.status == "failed" and not self.limitations:
-            raise ValueError("failed 状态必须包含至少一个局限性说明 (limitations)")
-        return self

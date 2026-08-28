@@ -188,8 +188,6 @@ class MetaIndexService:
         )
         current = await self._column_repo.list_resource_documents(
             resource_key,
-            t_name=column_info.t_name,
-            c_name=column_info.name,
         )
         delta, embedded_count = await self._semantic_delta(targets, current)
         await self._column_repo.apply_delta(delta)

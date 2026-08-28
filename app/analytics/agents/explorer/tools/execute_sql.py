@@ -116,7 +116,6 @@ async def _record_success_safely(
 
 async def _record_failure_safely(
     context: QueryExecutionContext | None,
-    session_key: AgentSessionKey | None,
     *,
     raw_sql: str,
     dialect: QueryDialect,
@@ -126,13 +125,12 @@ async def _record_failure_safely(
     validation: QueryValidationResult | None = None,
 ) -> None:
     """记录失败查询，持久化故障不覆盖原始错误"""
-    if context is None or session_key is None:
+    if context is None:
         return
     try:
         async with meta_postgres_client_manager.session() as session:
             await build_query_experience_service(session).record_failure(
                 context,
-                session_key,
                 raw_sql=raw_sql,
                 dialect=dialect,
                 status=status,
@@ -168,7 +166,7 @@ async def _execute_sql(
                 ),
             ).resolve(session_key.user_id)
             context = QueryExecutionContext(
-                user_id=session_key.user_id,
+                session_key=session_key,
                 role_name=principal.role_name,
                 purpose=_query_purpose(runtime, purpose),
                 tool_call_id=runtime.tool_call_id,
@@ -215,7 +213,6 @@ async def _execute_sql(
     except QueryRejectedError as exc:
         await _record_failure_safely(
             execution_context,
-            session_key,
             raw_sql=sql,
             dialect=dialect,
             status="rejected",
@@ -245,7 +242,6 @@ async def _execute_sql(
     ) as exc:
         await _record_failure_safely(
             execution_context,
-            session_key,
             raw_sql=sql,
             dialect=dialect,
             status="failed",
@@ -271,7 +267,6 @@ async def _execute_sql(
         )
         await _record_failure_safely(
             execution_context,
-            session_key,
             raw_sql=sql,
             dialect=dialect,
             status="failed",

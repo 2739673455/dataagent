@@ -127,6 +127,7 @@ class QueryConfig(BaseModel):
     max_output_bytes: int = Field(gt=0)
     batch_size: int = Field(gt=0)
     sample_rows: int = Field(ge=0, le=100)
+    query_experience_vector_score_threshold: float = Field(ge=0, le=1)
 
 
 class SandboxOwnershipConfig(BaseModel):
@@ -371,12 +372,6 @@ def _load_config() -> Cfg:
     loaded_cfg = OmegaConf.load(CONFIG_FILE)
     primitive_cfg = OmegaConf.to_container(loaded_cfg, resolve=True)
     return Cfg.model_validate(cast(dict[str, Any], primitive_cfg))
-
-
-def reload_config() -> None:
-    """重新加载配置"""
-    global cfg
-    cfg = _load_config()
 
 
 cfg = _load_config()

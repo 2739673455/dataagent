@@ -56,6 +56,8 @@ class FakeIndexRepo:
         self.indexed: list[dict[str, object]] = []
         self.text_hits: list[SearchHit[UUID]] = []
         self.vector_hits: list[SearchHit[UUID]] = []
+        self.text_error: Exception | None = None
+        self.vector_error: Exception | None = None
         self.deleted: list[UUID] = []
         self.delete_error: Exception | None = None
 
@@ -92,6 +94,8 @@ class FakeIndexRepo:
         limit: int,
     ) -> list[SearchHit[UUID]]:
         del query, user_id, role_name, limit
+        if self.text_error is not None:
+            raise self.text_error
         return self.text_hits
 
     async def search_vector(
@@ -101,8 +105,11 @@ class FakeIndexRepo:
         user_id: int,
         role_name: str,
         limit: int,
+        min_score: float,
     ) -> list[SearchHit[UUID]]:
-        del embedding, user_id, role_name, limit
+        del embedding, user_id, role_name, limit, min_score
+        if self.vector_error is not None:
+            raise self.vector_error
         return self.vector_hits
 
 
@@ -393,7 +400,7 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
 
         experience_id = await service.record_success(
             QueryExecutionContext(
-                user_id=7,
+                session_key=details.session_key,
                 role_name="analyst",
                 purpose="统计华东订单金额",
                 tool_call_id="call-1",
@@ -425,7 +432,7 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(index_repo.indexed, [])
         self.assertEqual(embedding_client.texts, [])
 
-    async def test_search_disables_changed_assets_and_filters_latest_permissions(
+    async def test_recall_disables_changed_assets_and_filters_latest_permissions(
         self,
     ) -> None:
         repo = FakePGRepo()
@@ -483,7 +490,7 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-        results = await service.search(
+        recall = await service.recall(
             user_id=7,
             role_name="analyst",
             policy=policy,
@@ -491,11 +498,14 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             limit=5,
         )
 
-        self.assertEqual([item.sql_template for item in results], [allowed.sql_template])
+        self.assertEqual(
+            [item.sql_template for item in recall.results], [allowed.sql_template]
+        )
+        self.assertEqual(recall.status, "success")
         self.assertEqual(stale.quality, "disabled")
         self.assertEqual(scheduler.enqueued, [(stale.id, stale.revision)])
 
-    async def test_search_uses_rrf_order_and_returns_compact_results(self) -> None:
+    async def test_recall_uses_rrf_order_and_returns_compact_results(self) -> None:
         repo = FakePGRepo()
         first = build_experience(
             table_name="orders",
@@ -524,7 +534,7 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         ]
         service = build_service(repo, index_repo, FakeEmbeddingClient())
 
-        results = await service.search(
+        recall = await service.recall(
             user_id=7,
             role_name="analyst",
             policy=AssetAccessPolicy(
@@ -536,13 +546,63 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(
-            [item.sql_template for item in results],
+            [item.sql_template for item in recall.results],
             [first.sql_template, second.sql_template],
         )
         self.assertEqual(
-            set(results[0].model_dump()),
+            set(recall.results[0].model_dump()),
             {"purpose", "sql_template", "dialect", "assets"},
         )
+
+    async def test_recall_keeps_vector_results_when_text_search_fails(self) -> None:
+        repo = FakePGRepo()
+        experience = build_experience(
+            table_name="orders",
+            column_name="amount",
+            meta_version=1,
+        )
+        repo.experiences = [experience]
+        repo.current_versions = {
+            asset.resource_key: 1 for asset in experience.assets
+        }
+        index_repo = FakeIndexRepo()
+        index_repo.text_error = RuntimeError("text index unavailable")
+        index_repo.vector_hits = [SearchHit(item=experience.id, score=0.9)]
+        service = build_service(repo, index_repo, FakeEmbeddingClient())
+
+        recall = await service.recall(
+            user_id=7,
+            role_name="analyst",
+            policy=AssetAccessPolicy(
+                user_id=7,
+                grants=frozenset({AssetIdentity("doris", "analytics")}),
+            ),
+            query="订单金额",
+            limit=3,
+        )
+
+        self.assertEqual(recall.status, "partial")
+        self.assertEqual([item.sql_template for item in recall.results], [experience.sql_template])
+
+    async def test_recall_reports_failed_when_all_search_channels_fail(self) -> None:
+        index_repo = FakeIndexRepo()
+        index_repo.text_error = RuntimeError("text index unavailable")
+        index_repo.vector_error = RuntimeError("vector index unavailable")
+        service = build_service(FakePGRepo(), index_repo, FakeEmbeddingClient())
+
+        recall = await service.recall(
+            user_id=7,
+            role_name="analyst",
+            policy=AssetAccessPolicy(
+                user_id=7,
+                grants=frozenset({AssetIdentity("doris", "analytics")}),
+            ),
+            query="订单金额",
+            limit=3,
+        )
+
+        self.assertEqual(recall.status, "failed")
+        self.assertEqual(recall.results, [])
 
     async def test_failure_records_error_without_creating_experience(self) -> None:
         repo = FakePGRepo()
@@ -557,11 +617,10 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
 
         await service.record_failure(
             QueryExecutionContext(
-                user_id=7,
+                session_key=session_key,
                 role_name="analyst",
                 purpose="删除订单",
             ),
-            session_key,
             raw_sql="DELETE FROM orders",
             dialect="doris",
             status="rejected",
@@ -669,11 +728,13 @@ class QueryExperienceESRepoTest(unittest.IsolatedAsyncioTestCase):
             user_id=7,
             role_name="analyst",
             limit=5,
+            min_score=0.65,
         )
 
         self.assertEqual([hit.item for hit in hits], [experience_id])
         request = client.search.await_args.kwargs
         self.assertEqual(request["size"], 5)
+        self.assertEqual(request["min_score"], 0.65)
         filters = request["knn"]["filter"]["bool"]["filter"]
         self.assertEqual(
             filters,

@@ -96,16 +96,6 @@ class AgentSessionService:
         self._budgets: dict[str, _ExecutionBudget] = {}
         self._budget_lock = ThreadLock()
 
-    @property
-    def session_locks(self) -> Mapping[str, asyncio.Lock]:
-        """返回只读语义的 Session 锁视图"""
-        return self._session_locks
-
-    @property
-    def parallelism(self) -> asyncio.Semaphore:
-        """返回会话级并发控制器"""
-        return self._parallelism
-
     @asynccontextmanager
     async def planner_run(self, planner_run_id: str) -> AsyncGenerator[None, None]:
         """为单次 Planner 执行建立独立委派预算"""

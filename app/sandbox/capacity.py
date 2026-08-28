@@ -175,16 +175,6 @@ class FairCapacityLimiter:
             self._reserved_users.difference_update(self._running_users)
             self._condition.notify_all()
 
-    def reconcile(self, running_user_ids: list[int]) -> list[int]:
-        """登记已有运行容器并返回超过上限的用户"""
-        keep = running_user_ids[: self._max_running]
-        overflow = running_user_ids[self._max_running :]
-        with self._condition:
-            self._running_users = set(keep)
-            self._reserved_users.clear()
-            self._condition.notify_all()
-        return overflow
-
     def cancel_user(self, user_id: int) -> None:
         """取消指定用户的全部容量等待"""
         with self._condition:

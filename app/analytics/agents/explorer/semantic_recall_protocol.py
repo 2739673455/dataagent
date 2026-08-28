@@ -2,27 +2,20 @@
 
 import json
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from langchain_core.messages import ToolMessage
 
 from app.metadata.models.recall import SemanticRecallRecord
 
-type SemanticRecallView = Literal["resources", "record"]
-
-_REFERENCE_TOOL_VIEWS: dict[str, SemanticRecallView] = {
-    "recall_context": "resources",
-    "get_recall": "record",
-    "merge_recalls": "record",
-}
+_REFERENCE_TOOLS = frozenset({"recall_context", "get_recall", "merge_recalls"})
 
 
 @dataclass(frozen=True, slots=True)
 class SemanticRecallReference:
-    """描述持久化语义召回记录及其展开视图"""
+    """描述一条待展开的持久化语义召回记录"""
 
     query: str
-    view: SemanticRecallView
 
 
 def semantic_recall_reference(
@@ -39,8 +32,7 @@ def parse_semantic_recall_reference(
     message: ToolMessage,
 ) -> SemanticRecallReference | None:
     """解析受控的语义召回引用消息"""
-    expected_view = _REFERENCE_TOOL_VIEWS.get(message.name or "")
-    if expected_view is None or not isinstance(message.content, str):
+    if message.name not in _REFERENCE_TOOLS or not isinstance(message.content, str):
         return None
     try:
         payload = json.loads(message.content)
@@ -53,4 +45,4 @@ def parse_semantic_recall_reference(
     query = payload.get("query")
     if not isinstance(query, str) or not query or query != query.strip():
         return None
-    return SemanticRecallReference(query=query, view=expected_view)
+    return SemanticRecallReference(query=query)

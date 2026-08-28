@@ -20,7 +20,6 @@ from app.analytics.agents.explorer.recall_runtime import (
 )
 from app.analytics.agents.explorer.semantic_recall_protocol import (
     SemanticRecallReference,
-    SemanticRecallView,
     parse_semantic_recall_reference,
 )
 from app.metadata.models.recall import SemanticRecallRecord
@@ -29,27 +28,77 @@ from app.metadata.services.recall import SemanticQueriesNotFoundError
 
 def _expanded_content(
     record: SemanticRecallRecord,
-    view: SemanticRecallView,
 ) -> str:
-    """按请求视图序列化已授权的语义召回记录"""
-    if view == "resources":
-        payload = record.response.model_dump(mode="json")
-        payload.pop("recall_id", None)
-        payload["query"] = record.query
-        payload["query_experiences"] = [
-            item.model_dump(mode="json") for item in record.query_experiences
-        ]
-        payload["query_experiences_retrieved_at"] = (
-            record.query_experiences_retrieved_at.isoformat()
-        )
-    else:
-        recall = record.model_dump(mode="json", exclude={"source_queries"})
-        recall["response"].pop("recall_id", None)
-        payload = {
-            "status": "success",
-            "recall": recall,
-        }
+    """仅序列化模型执行 SQL 所需的元数据和历史经验"""
+    resources, query_experiences = _model_visible_recall(record)
+    payload = {**resources, "query_experiences": query_experiences}
     return json.dumps(payload, ensure_ascii=False)
+
+
+def _model_visible_recall(
+    record: SemanticRecallRecord,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """按模型可用的元数据字段构造显式白名单投影"""
+    response = record.response
+    resources = {
+        "metrics": [
+            {
+                "name": item.name,
+                "description": item.description,
+                "alias": item.alias,
+                "relevant_columns": item.relevant_columns,
+            }
+            for item in response.metrics
+        ],
+        "columns": [
+            {
+                "t_name": item.t_name,
+                "name": item.name,
+                "type": item.type,
+                "description": item.description,
+                "alias": item.alias,
+                "examples": item.examples,
+                "reference_t_name": item.reference_t_name,
+                "reference_c_name": item.reference_c_name,
+            }
+            for item in response.columns
+        ],
+        "values": [
+            {
+                "value": item.value,
+                "t_name": item.t_name,
+                "c_name": item.c_name,
+            }
+            for item in response.values
+        ],
+        "tables": [
+            {
+                "name": item.name,
+                "role": item.role,
+                "description": item.description,
+                "primary_key_columns": item.primary_key_columns,
+            }
+            for item in response.tables
+        ],
+    }
+    query_experiences = [
+        {
+            "purpose": experience.purpose,
+            "sql_template": experience.sql_template,
+            "dialect": experience.dialect,
+            "assets": [
+                {
+                    "kind": asset.kind,
+                    "database": asset.database,
+                    "table": asset.table,
+                    "column": asset.column,
+                }
+                for asset in experience.assets
+            ],
+        }
+        for experience in record.query_experiences
+    ]
+    return resources, query_experiences
 
 
 def _current_turn_references(
@@ -147,7 +196,6 @@ class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
                     update={
                         "content": _expanded_content(
                             records[reference.query],
-                            reference.view,
                         )
                     }
                 )

@@ -11,6 +11,7 @@ from sqlglot import exp, parse_one
 
 from app.identity.models.doris import asset_resource_key
 from app.identity.services.authorization import AssetAccessPolicy
+from app.metadata.models.search import SearchHit
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
 from app.query.models.execution import QueryExecution, QueryExecutionStatus
 from app.query.models.experience import (
@@ -26,11 +27,14 @@ from app.query.repositories.experience_postgres import QueryExperiencePGRepo
 from app.query.services.contracts import QueryExperienceIndexScheduler
 from app.query.services.executor import SuccessfulQueryExecution
 from app.shared.clients.embedding_client_manager import EmbeddingClient
+from app.shared.config.app_config import cfg
 from app.shared.contracts.analysis import AgentSessionKey
 from app.shared.contracts.query_experience import (
     QueryAssetKind,
     QueryAssetSnapshot,
-    QueryExperienceSearchResult,
+    QueryExperienceRecall,
+    QueryExperienceRecallResult,
+    QueryExperienceRecallStatus,
 )
 
 _SEARCH_POOL_SIZE = 100
@@ -42,10 +46,18 @@ _INDEX_TEXT_MAX_CHARS = 8000
 class QueryExecutionContext:
     """SQL 工具提供的用户、角色和任务上下文"""
 
-    user_id: int
+    session_key: AgentSessionKey
     role_name: str
     purpose: str
     tool_call_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _QueryExperienceSemanticRecall:
+    """查询经验索引通道的内部融合结果"""
+
+    status: QueryExperienceRecallStatus
+    ranks: dict[UUID, float]
 
 
 def build_sql_template(sql: str, dialect: QueryDialect) -> tuple[str, str]:
@@ -103,7 +115,7 @@ class QueryExperienceService:
             experience_id = uuid4()
             experience = QueryExperience(
                 id=experience_id,
-                owner_user_id=context.user_id,
+                owner_user_id=context.session_key.user_id,
                 role_name=context.role_name,
                 fingerprint=fingerprint,
                 dialect=details.dialect,
@@ -118,11 +130,11 @@ class QueryExperienceService:
                 column_versions,
             )
             execution = QueryExecution(
-                user_id=context.user_id,
+                user_id=context.session_key.user_id,
                 role_name=context.role_name,
-                conversation_id=details.session_key.conversation_id,
-                analysis_id=details.session_key.analysis_id,
-                session_id=details.session_key.session_id,
+                conversation_id=context.session_key.conversation_id,
+                analysis_id=context.session_key.analysis_id,
+                session_id=context.session_key.session_id,
                 tool_call_id=context.tool_call_id,
                 purpose=context.purpose,
                 raw_sql=details.raw_sql,
@@ -152,7 +164,6 @@ class QueryExperienceService:
     async def record_failure(
         self,
         context: QueryExecutionContext,
-        session_key: AgentSessionKey,
         *,
         raw_sql: str,
         dialect: QueryDialect,
@@ -163,11 +174,11 @@ class QueryExperienceService:
     ) -> None:
         """记录被 Guard 拒绝或执行失败的 SQL"""
         execution = QueryExecution(
-            user_id=context.user_id,
+            user_id=context.session_key.user_id,
             role_name=context.role_name,
-            conversation_id=session_key.conversation_id,
-            analysis_id=session_key.analysis_id,
-            session_id=session_key.session_id,
+            conversation_id=context.session_key.conversation_id,
+            analysis_id=context.session_key.analysis_id,
+            session_id=context.session_key.session_id,
             tool_call_id=context.tool_call_id,
             purpose=context.purpose,
             raw_sql=raw_sql,
@@ -212,7 +223,7 @@ class QueryExperienceService:
             self._index_scheduler.enqueue(experience_id, revision)
         return list(revisions)
 
-    async def search(
+    async def recall(
         self,
         *,
         user_id: int,
@@ -220,13 +231,16 @@ class QueryExperienceService:
         policy: AssetAccessPolicy,
         query: str,
         limit: int,
-    ) -> list[QueryExperienceSearchResult]:
+    ) -> QueryExperienceRecall:
         """按混合语义排名检索查询经验"""
-        semantic_ranks = await self._semantic_ranks(
+        semantic_recall = await self._semantic_recall(
             query,
             user_id=user_id,
             role_name=role_name,
         )
+        if semantic_recall.status == "failed":
+            return QueryExperienceRecall(status="failed", results=[])
+        semantic_ranks = semantic_recall.ranks
         async with self._repo.session.begin():
             semantic_ids = list(semantic_ranks)
             experiences = await self._repo.get_many(
@@ -266,17 +280,21 @@ class QueryExperienceService:
             experiences,
             key=lambda item: (-semantic_ranks[item.id], item.id.hex),
         )
-        return [
+        results = [
             result
             for experience in ordered_experiences
             if (
-                result := self._to_search_result(
+                result := self._to_recall_result(
                     experience,
                     authorization_filter,
                 )
             )
             is not None
         ][:limit]
+        return QueryExperienceRecall(
+            status=semantic_recall.status,
+            results=results,
+        )
 
     def _build_assets(
         self,
@@ -358,46 +376,82 @@ class QueryExperienceService:
         async with self._repo.session.begin():
             return await self._repo.list_pending_index_repairs(limit=limit)
 
-    async def _semantic_ranks(
+    async def _semantic_recall(
         self,
         query: str,
         *,
         user_id: int,
         role_name: str,
-    ) -> dict[UUID, float]:
-        """获取查询经验的文本和向量倒数排名分数"""
+    ) -> _QueryExperienceSemanticRecall:
+        """分别召回全文和向量候选，并融合可用通道"""
+        text_task = asyncio.create_task(
+            self._index_repo.search_text(
+                query,
+                user_id=user_id,
+                role_name=role_name,
+                limit=_SEARCH_POOL_SIZE,
+            )
+        )
+        vector_task: asyncio.Task[list[SearchHit[UUID]]] | None = None
         try:
             embeddings = await self._embedding_client.aembed_documents([query])
             if len(embeddings) != 1:
                 raise ValueError("查询经验检索向量生成数量不匹配")
-            text_hits, vector_hits = await asyncio.gather(
-                self._index_repo.search_text(
-                    query,
-                    user_id=user_id,
-                    role_name=role_name,
-                    limit=_SEARCH_POOL_SIZE,
-                ),
+            vector_task = asyncio.create_task(
                 self._index_repo.search_vector(
                     embeddings[0],
                     user_id=user_id,
                     role_name=role_name,
                     limit=_SEARCH_POOL_SIZE,
-                ),
+                    min_score=cfg.query.query_experience_vector_score_threshold,
+                )
             )
+        except asyncio.CancelledError:
+            text_task.cancel()
+            await asyncio.gather(text_task, return_exceptions=True)
+            raise
         except Exception:  # noqa: BLE001
-            logger.exception("查询经验语义检索失败")
-            return {}
+            logger.exception("查询经验向量生成失败")
+
+        text_hits = await self._await_hits(text_task, "全文")
+        vector_hits = (
+            await self._await_hits(vector_task, "向量")
+            if vector_task is not None
+            else None
+        )
+        available_hits = [
+            hits for hits in (text_hits, vector_hits) if hits is not None
+        ]
+        if not available_hits:
+            return _QueryExperienceSemanticRecall(status="failed", ranks={})
         ranks: dict[UUID, float] = {}
-        for hits in (text_hits, vector_hits):
+        for hits in available_hits:
             for rank, hit in enumerate(hits, start=1):
                 ranks[hit.item] = ranks.get(hit.item, 0) + 1 / (_RRF_K + rank)
-        return ranks
+        return _QueryExperienceSemanticRecall(
+            status="success" if len(available_hits) == 2 else "partial",
+            ranks=ranks,
+        )
 
-    def _to_search_result(
+    @staticmethod
+    async def _await_hits(
+        task: asyncio.Task[list[SearchHit[UUID]]],
+        channel: str,
+    ) -> list[SearchHit[UUID]] | None:
+        """等待单个检索通道，保留另一路的结果"""
+        try:
+            return await task
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.exception(f"查询经验{channel}检索失败")
+            return None
+
+    def _to_recall_result(
         self,
         experience: QueryExperience,
         authorization_filter: MetadataAuthorizationFilter,
-    ) -> QueryExperienceSearchResult | None:
+    ) -> QueryExperienceRecallResult | None:
         """将已通过有效性检查的经验转换为模型可用结果"""
         experience_tables = {
             asset.table_name for asset in experience.assets if asset.kind == "table"
@@ -416,7 +470,7 @@ class QueryExperienceService:
         ):
             return None
 
-        return QueryExperienceSearchResult(
+        return QueryExperienceRecallResult(
             purpose=experience.purposes[-1],
             sql_template=experience.sql_template,
             dialect=experience.dialect,

@@ -94,6 +94,7 @@ query:
   max_output_bytes: 33554432
   batch_size: 100
   sample_rows: 5
+  query_experience_vector_score_threshold: 0.65
 
 sandbox:
   deployment_namespace: local # 同一 Docker 主机上的部署实例必须使用不同命名空间

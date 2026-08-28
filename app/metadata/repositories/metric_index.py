@@ -86,17 +86,9 @@ class MetricESRepo:
         self,
         resource_key: str,
     ) -> list[SemanticIndexDocument]:
-        """读取指标当前语义索引文档并兼容识别旧文档"""
+        """读取指标当前语义索引文档"""
         return await self._delta_repo.list_documents(
-            {
-                "bool": {
-                    "should": [
-                        {"term": {"resource_key": resource_key}},
-                        {"term": {"name": resource_key}},
-                    ],
-                    "minimum_should_match": 1,
-                }
-            }
+            {"term": {"resource_key": resource_key}}
         )
 
     async def apply_delta(self, delta: SemanticIndexDelta) -> None:
@@ -108,13 +100,7 @@ class MetricESRepo:
         await self._delete_by_filter(
             [
                 {
-                    "bool": {
-                        "should": [
-                            {"term": {"resource_key": metric_name}},
-                            {"term": {"name": metric_name}},
-                        ],
-                        "minimum_should_match": 1,
-                    }
+                    "term": {"resource_key": metric_name}
                 }
             ]
         )
@@ -238,16 +224,7 @@ class MetricESRepo:
         """构造指标名称白名单过滤条件"""
         if not allowed_metrics:
             raise ValueError("allowed_metrics 列表不能为空")
-        names = sorted(allowed_metrics)
-        return {
-            "bool": {
-                "should": [
-                    {"terms": {"resource_key": names}},
-                    {"terms": {"name": names}},
-                ],
-                "minimum_should_match": 1,
-            }
-        }
+        return {"terms": {"resource_key": sorted(allowed_metrics)}}
 
     @staticmethod
     def _hits(result: dict[str, Any]) -> list[SearchHit[MetricInfo]]:

@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -14,7 +14,7 @@ from app.metadata.models.search import (
     SemanticResourceRecallRequest,
     SemanticResourceRecallResponse,
 )
-from app.shared.contracts.query_experience import QueryExperienceSearchResult
+from app.shared.contracts.query_experience import QueryExperienceRecallResult
 
 
 class SemanticRecallPGRepo:
@@ -43,7 +43,7 @@ class SemanticRecallPGRepo:
             ),
             response=SemanticResourceRecallResponse.model_validate(semantic_resources),
             query_experiences=[
-                QueryExperienceSearchResult.model_validate(item)
+                QueryExperienceRecallResult.model_validate(item)
                 for item in response_payload["query_experiences"]
             ],
             query_experiences_retrieved_at=response_payload[
@@ -51,7 +51,6 @@ class SemanticRecallPGRepo:
             ],
             source_queries=snapshot.source_queries,
             created_at=snapshot.created_at,
-            updated_at=snapshot.updated_at,
         )
 
     async def save(self, record: SemanticRecallRecord) -> None:
@@ -82,10 +81,25 @@ class SemanticRecallPGRepo:
                 },
                 source_queries=record.source_queries,
                 created_at=record.created_at,
-                updated_at=record.updated_at,
             )
         )
         await self._session.flush()
+
+    async def acquire_query_lock(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        query: str,
+    ) -> None:
+        """在当前事务内锁定一个会话查询的持续上下文"""
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+            {
+                "lock_key": (
+                    f"semantic-recall:{user_id}:{conversation_id}:{query}"
+                )
+            },
+        )
 
     async def get_latest_by_query(
         self,

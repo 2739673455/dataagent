@@ -133,14 +133,6 @@ class AgentManager:
             self._planner_model_name = active_model_name
             self._definitions = definitions
 
-    async def get_active_model(self) -> BaseChatModel:
-        """获取 Planner 使用的共享主模型"""
-        await self.init()
-        async with self._state_lock:
-            if self._models is None or self._planner_model_name is None:
-                raise RuntimeError("Agent 管理器尚未初始化")
-            return self._models[self._planner_model_name]
-
     def _specialist_model(self, agent_type: AgentType) -> BaseChatModel:
         """解析专业 Agent 配置中的模型引用"""
         if self._models is None or self._planner_model_name is None:
@@ -238,8 +230,6 @@ class AgentManager:
             planner=planner,
             registry=registry,
             session_service=session_service,
-            session_locks=session_service.session_locks,
-            parallelism=session_service.parallelism,
             planner_lock=lambda: self._persistence_manager.advisory_lock(
                 conversation_lifecycle_lock_name(user_id, conversation_id),
                 timeout=orchestration_cfg.session_lock_timeout,
@@ -358,11 +348,6 @@ class AgentManager:
                 )
                 self._runtime_build_tasks[conversation_key] = build_task
         return await asyncio.shield(build_task)
-
-    async def reset(self) -> None:
-        """清空缓存并按最新配置重新初始化共享资源"""
-        await self.close()
-        await self.init()
 
     async def cancel_agent_execution(
         self,

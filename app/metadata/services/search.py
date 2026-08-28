@@ -103,7 +103,7 @@ class _SemanticCatalog:
 
 
 @dataclass(slots=True)
-class _SearchContext:
+class _RecallContext:
     """单次语义召回的输入、目录和可变状态"""
 
     request: SemanticResourceRecallRequest
@@ -392,7 +392,7 @@ class SemanticResourceRecallService:
     async def _create_context(
         self,
         request: SemanticResourceRecallRequest,
-    ) -> _SearchContext:
+    ) -> _RecallContext:
         """加载完整元数据并创建单次检索上下文"""
         table_infos = await self._meta_repo.list_table_infos()
         column_infos = await self._meta_repo.list_column_infos()
@@ -421,7 +421,7 @@ class SemanticResourceRecallService:
                 allowed_column_keys,
             )
         }
-        return _SearchContext(
+        return _RecallContext(
             request=request,
             catalog=_SemanticCatalog(
                 tables=visible_tables,
@@ -430,7 +430,7 @@ class SemanticResourceRecallService:
             ),
         )
 
-    async def _retrieve(self, context: _SearchContext) -> None:
+    async def _retrieve(self, context: _RecallContext) -> None:
         """按请求类型执行确定顺序的多路召回"""
         if (
             context.selects_any("column")
@@ -445,7 +445,7 @@ class SemanticResourceRecallService:
 
     async def _collect_fulltext_matches(
         self,
-        context: _SearchContext,
+        context: _RecallContext,
     ) -> None:
         """收集字段和指标全文命中"""
         if context.selects_any("column") and context.catalog.columns:
@@ -494,7 +494,7 @@ class SemanticResourceRecallService:
 
     async def _collect_vector_matches(
         self,
-        context: _SearchContext,
+        context: _RecallContext,
     ) -> None:
         """收集字段和指标向量命中"""
         try:
@@ -566,7 +566,7 @@ class SemanticResourceRecallService:
 
     def _merge_column_hits(
         self,
-        context: _SearchContext,
+        context: _RecallContext,
         results: list[list[SearchHit[ColumnInfo]] | BaseException],
         *,
         backend_name: str,
@@ -602,7 +602,7 @@ class SemanticResourceRecallService:
 
     def _merge_metric_hits(
         self,
-        context: _SearchContext,
+        context: _RecallContext,
         results: list[list[SearchHit[MetricInfo]] | BaseException],
         *,
         backend_name: str,
@@ -640,7 +640,7 @@ class SemanticResourceRecallService:
 
     async def _collect_value_matches(
         self,
-        context: _SearchContext,
+        context: _RecallContext,
     ) -> None:
         """收集字段值全文索引命中"""
         allowed_columns = frozenset(context.catalog.columns)
@@ -686,7 +686,7 @@ class SemanticResourceRecallService:
 
     def _build_response(
         self,
-        context: _SearchContext,
+        context: _RecallContext,
     ) -> SemanticResourceRecallResponse:
         """融合候选排名并组装最终语义召回响应"""
         ranked = self._rank_context(context)
@@ -713,7 +713,7 @@ class SemanticResourceRecallService:
             truncated=ranked.truncated or context_truncated,
         )
 
-    def _rank_context(self, context: _SearchContext) -> _RankedCandidates:
+    def _rank_context(self, context: _RecallContext) -> _RankedCandidates:
         """对三类候选执行类型内融合排名"""
         columns, columns_truncated = self._rank_candidates(
             context.column_scores,
@@ -773,7 +773,7 @@ class SemanticResourceRecallService:
     def _build_metric_results(
         self,
         ranked_metrics: list[tuple[str, float, list[SemanticMatchReason]]],
-        context: _SearchContext,
+        context: _RecallContext,
     ) -> list[SemanticMetricRecallResult]:
         """构建指标检索响应"""
         results: list[SemanticMetricRecallResult] = []
@@ -806,7 +806,7 @@ class SemanticResourceRecallService:
     def _build_value_results(
         self,
         ranked_values: list[tuple[ValueKey, float, list[SemanticMatchReason]]],
-        context: _SearchContext,
+        context: _RecallContext,
     ) -> list[SemanticValueRecallResult]:
         """构建字段值检索响应"""
         results: list[SemanticValueRecallResult] = []

@@ -958,8 +958,6 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             planner=graph,
             registry=_registry(fake),
             session_service=first_service,
-            session_locks=first_service.session_locks,
-            parallelism=first_service.parallelism,
             planner_lock=lambda: distributed_locks.acquire("planner"),
             conversation_deleted=_conversation_not_deleted,
         )
@@ -967,8 +965,6 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             planner=graph,
             registry=_registry(fake),
             session_service=second_service,
-            session_locks=second_service.session_locks,
-            parallelism=second_service.parallelism,
             planner_lock=lambda: distributed_locks.acquire("planner"),
             conversation_deleted=_conversation_not_deleted,
         )
@@ -1009,8 +1005,6 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             planner=graph,
             registry=_registry(fake),
             session_service=service,
-            session_locks=service.session_locks,
-            parallelism=service.parallelism,
             planner_lock=lambda: distributed_locks.acquire("conversation"),
             conversation_deleted=conversation_deleted,
         )
