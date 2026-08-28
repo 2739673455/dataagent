@@ -84,7 +84,6 @@ class AuthorizationServiceTest(unittest.IsolatedAsyncioTestCase):
 
         policy = await AuthorizationService(repo).get_asset_policy(user.id)
 
-        self.assertFalse(policy.unrestricted)
         self.assertTrue(
             policy.allows(AssetIdentity("doris", "sales", "orders", "amount"))
         )

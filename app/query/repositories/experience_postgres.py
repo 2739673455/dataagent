@@ -157,54 +157,6 @@ class QueryExperiencePGRepo:
         by_id = {item.id: item for item in result.unique().all()}
         return [by_id[item_id] for item_id in experience_ids if item_id in by_id]
 
-    async def find_by_assets(
-        self,
-        user_id: int,
-        role_name: str,
-        resource_keys: set[str],
-        *,
-        limit: int,
-    ) -> list[QueryExperience]:
-        """按当前召回资产查找用户经验"""
-        if not resource_keys:
-            return []
-        result = await self._session.scalars(
-            select(QueryExperience)
-            .join(QueryExperienceAsset)
-            .options(selectinload(QueryExperience.assets))
-            .where(
-                QueryExperience.owner_user_id == user_id,
-                QueryExperience.role_name == role_name,
-                QueryExperience.quality != "disabled",
-                QueryExperienceAsset.resource_key.in_(resource_keys),
-            )
-            .distinct()
-            .order_by(QueryExperience.last_used_at.desc())
-            .limit(limit)
-        )
-        return list(result.unique().all())
-
-    async def list_recent(
-        self,
-        user_id: int,
-        role_name: str,
-        *,
-        limit: int,
-    ) -> list[QueryExperience]:
-        """列出用户最近的可用经验"""
-        result = await self._session.scalars(
-            select(QueryExperience)
-            .options(selectinload(QueryExperience.assets))
-            .where(
-                QueryExperience.owner_user_id == user_id,
-                QueryExperience.role_name == role_name,
-                QueryExperience.quality != "disabled",
-            )
-            .order_by(QueryExperience.last_used_at.desc())
-            .limit(limit)
-        )
-        return list(result.unique().all())
-
     async def promote_by_artifacts(
         self,
         user_id: int,

@@ -17,6 +17,8 @@ from app.metadata.models.catalog import (
 from app.metadata.models.search import SearchHit, SemanticResourceSearchRequest
 from app.metadata.services.search import MetaSearchService
 
+_FULL_DATABASE_GRANT = AssetIdentity("doris", "ecommerce")
+
 
 def build_table(
     name: str = "orders",
@@ -112,7 +114,10 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
             metric_repo=self.metric_repo,
             value_repo=self.value_repo,
             meta_repo=self.meta_repo,
-            asset_policy=AssetAccessPolicy(user_id=1, unrestricted=True),
+            asset_policy=AssetAccessPolicy(
+                user_id=1,
+                grants=frozenset({_FULL_DATABASE_GRANT}),
+            ),
             data_source="doris",
             database_name="ecommerce",
         )
@@ -386,7 +391,10 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
             metric_repo=self.metric_repo,
             value_repo=self.value_repo,
             meta_repo=self.meta_repo,
-            asset_policy=AssetAccessPolicy(user_id=1, unrestricted=True),
+            asset_policy=AssetAccessPolicy(
+                user_id=1,
+                grants=frozenset({_FULL_DATABASE_GRANT}),
+            ),
             data_source="doris",
             database_name="ecommerce",
             max_concurrent_index_queries=2,

@@ -43,7 +43,7 @@ def _expanded_content(
             record.query_experiences_retrieved_at.isoformat()
         )
     else:
-        recall = record.model_dump(mode="json")
+        recall = record.model_dump(mode="json", exclude={"source_queries"})
         recall["response"].pop("search_id", None)
         payload = {
             "status": "success",

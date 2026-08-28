@@ -51,6 +51,6 @@ def parse_semantic_recall_reference(
     if payload.get("status") != "stored":
         return None
     query = payload.get("query")
-    if not isinstance(query, str) or not query.strip():
+    if not isinstance(query, str) or not query or query != query.strip():
         return None
-    return SemanticRecallReference(query=query.strip(), view=expected_view)
+    return SemanticRecallReference(query=query, view=expected_view)

@@ -119,6 +119,12 @@ def _delegation_result_attachments(
             f"tool_call_id={message.tool_call_id}"
         )
         return []
+    if result.model_dump(mode="json") != payload:
+        logger.warning(
+            f"委派结果载荷不是规范化形式: message_id={message.id}, "
+            f"tool_call_id={message.tool_call_id}"
+        )
+        return []
     return [
         chat_schema.Attachment(
             f_path=artifact.path.removeprefix("/"),

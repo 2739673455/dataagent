@@ -110,8 +110,8 @@ class _SearchContext:
     terms: list[str]
     resource_types: set[SemanticResourceType]
     catalog: _SemanticCatalog
-    allowed_columns: frozenset[ColumnKey] | None
-    allowed_metrics: frozenset[str] | None
+    allowed_columns: frozenset[ColumnKey]
+    allowed_metrics: frozenset[str]
     column_scores: dict[ColumnKey, _CandidateScore] = field(default_factory=dict)
     metric_scores: dict[str, _CandidateScore] = field(default_factory=dict)
     value_scores: dict[ValueKey, _CandidateScore] = field(default_factory=dict)
@@ -437,16 +437,8 @@ class MetaSearchService:
                 columns=allowed_columns,
                 metrics=allowed_metrics,
             ),
-            allowed_columns=(
-                None
-                if self._authorization_filter.unrestricted
-                else frozenset(allowed_columns)
-            ),
-            allowed_metrics=(
-                None
-                if self._authorization_filter.unrestricted
-                else frozenset(allowed_metrics)
-            ),
+            allowed_columns=frozenset(allowed_columns),
+            allowed_metrics=frozenset(allowed_metrics),
         )
 
     async def _retrieve(self, context: _SearchContext) -> None:

@@ -402,7 +402,7 @@ class QueryGuardService:
         table_infos = await self._catalog_repo.list_table_infos()
         column_infos = await self._catalog_repo.list_column_infos()
         restricted_star_tables: frozenset[str] = frozenset()
-        if policy is not None and not policy.unrestricted:
+        if policy is not None:
             authorization_filter = MetadataAuthorizationFilter(
                 policy,
                 self._data_source,

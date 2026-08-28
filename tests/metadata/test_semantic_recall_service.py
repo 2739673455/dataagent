@@ -21,8 +21,10 @@ from pydantic import BaseModel, ValidationError
 
 from app.analytics.agents.explorer.semantic_recall_middleware import (
     SemanticRecallExpansionMiddleware,
+    _expanded_content,
 )
 from app.analytics.agents.explorer.semantic_recall_protocol import (
+    parse_semantic_recall_reference,
     semantic_recall_reference,
 )
 from app.analytics.agents.explorer.tools import (
@@ -32,6 +34,7 @@ from app.analytics.agents.explorer.tools import (
     merge_recalls,
     search_context,
 )
+from app.analytics.agents.explorer.tools.semantic_recall import _record_summary
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
 from app.metadata.models.recall import SemanticRecallRecord
 from app.metadata.models.search import (
@@ -57,6 +60,9 @@ from app.shared.contracts.query_experience import (
     QueryAssetSnapshot,
     QueryExperienceSearchResult,
 )
+
+_FULL_DATABASE_GRANT = AssetIdentity("doris", "analytics")
+_CONFIGURED_DATABASE_GRANT = AssetIdentity("doris", "ecommerce")
 
 
 class InMemorySemanticRecallRepo:
@@ -285,14 +291,12 @@ def build_response(
 
 def build_authorization_filter(
     *grants: AssetIdentity,
-    unrestricted: bool = False,
 ) -> MetadataAuthorizationFilter:
     """构造召回测试的资产授权过滤器"""
     return MetadataAuthorizationFilter(
         AssetAccessPolicy(
             user_id=7,
             grants=frozenset(grants),
-            unrestricted=unrestricted,
         ),
         "doris",
         "analytics",
@@ -306,7 +310,7 @@ class SemanticRecallServiceTest(unittest.IsolatedAsyncioTestCase):
         self.repo = InMemorySemanticRecallRepo()
         self.service = SemanticRecallService(
             recall_repo(self.repo),
-            build_authorization_filter(unrestricted=True),
+            build_authorization_filter(_FULL_DATABASE_GRANT),
         )
         self.user_id = 7
         self.conversation_id = uuid4()
@@ -706,12 +710,53 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(set(delete_schema.model_fields), {"queries"})
 
+    def test_reference_loader_rejects_noncanonical_query(self) -> None:
+        message = ToolMessage(
+            id="message-1",
+            tool_call_id="call-1",
+            name="search_context",
+            content=json.dumps({"status": "stored", "query": " revenue "}),
+        )
+
+        self.assertIsNone(parse_semantic_recall_reference(message))
+
+    async def test_merged_source_queries_are_hidden_from_model_payloads(
+        self,
+    ) -> None:
+        repo = InMemorySemanticRecallRepo()
+        service = SemanticRecallService(
+            recall_repo(repo),
+            build_authorization_filter(_FULL_DATABASE_GRANT),
+        )
+        conversation_id = uuid4()
+        for query, search_id in (("订单金额", "search_a"), ("本月收入", "search_b")):
+            await service.record_search(
+                7,
+                conversation_id,
+                query,
+                build_request(query, ["column"]),
+                build_response(search_id, query, score=0.8, reason=query),
+                [],
+                datetime.now(UTC),
+            )
+        merged = await service.merge(7, conversation_id, "本月收入", "订单金额")
+
+        summary = _record_summary(merged)
+        expanded = json.loads(_expanded_content(merged, "record"))
+
+        self.assertEqual(merged.source_queries, ["订单金额"])
+        self.assertNotIn("source_queries", summary)
+        self.assertNotIn("source_queries", expanded["recall"])
+
     async def test_search_tool_uses_query_for_experiences_and_terms_for_resources(
         self,
     ) -> None:
         repo = InMemorySemanticRecallRepo()
         conversation_id = uuid4()
-        policy = AssetAccessPolicy(user_id=7, unrestricted=True)
+        policy = AssetAccessPolicy(
+            user_id=7,
+            grants=frozenset({_CONFIGURED_DATABASE_GRANT}),
+        )
         response = build_response(
             "search_a",
             "收入",
@@ -864,13 +909,13 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         repo = InMemorySemanticRecallRepo()
-        unrestricted_service = SemanticRecallService(
+        service_with_full_database_grant = SemanticRecallService(
             recall_repo(repo),
-            build_authorization_filter(unrestricted=True),
+            build_authorization_filter(_FULL_DATABASE_GRANT),
         )
         conversation_id = uuid4()
         experience = build_query_experience(column="status")
-        record = await unrestricted_service.record_search(
+        record = await service_with_full_database_grant.record_search(
             7,
             conversation_id,
             "revenue",
@@ -959,7 +1004,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         repo = InMemorySemanticRecallRepo()
         service = SemanticRecallService(
             recall_repo(repo),
-            build_authorization_filter(unrestricted=True),
+            build_authorization_filter(_FULL_DATABASE_GRANT),
         )
         conversation_id = uuid4()
         await service.record_search(
@@ -1032,7 +1077,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
 
         service = SemanticRecallService(
             recall_repo(repo),
-            build_authorization_filter(unrestricted=True),
+            build_authorization_filter(_FULL_DATABASE_GRANT),
         )
         with (
             patch(

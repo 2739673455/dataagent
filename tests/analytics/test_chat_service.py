@@ -359,6 +359,28 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         assert schema is not None
         self.assertIsNone(schema.attachments)
 
+    def test_noncanonical_delegation_payload_is_not_exposed(self) -> None:
+        payload = _delegation_payload()
+        payload["artifacts"] = [
+            {
+                "path": "/analyses/sales-review/sessions/visualizer/chart-1/report.html ",
+                "media_type": "text/html",
+                "description": "Interactive report",
+            }
+        ]
+        message = ToolMessage(
+            id="message-1",
+            name="delegation",
+            tool_call_id="call-1",
+            content=json.dumps(payload),
+        )
+
+        schema = chat_service._langchain_message_to_schema(message)
+
+        self.assertIsNotNone(schema)
+        assert schema is not None
+        self.assertIsNone(schema.attachments)
+
 
 if __name__ == "__main__":
     unittest.main()

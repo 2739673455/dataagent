@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import DateTime, Index, Integer, String, Uuid, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -28,7 +28,7 @@ def normalize_semantic_recall_query(query: str) -> str:
 
 
 class SemanticRecallSnapshot(AnalyticsBase):
-    """语义召回关系快照"""
+    """语义召回持久化快照"""
 
     __tablename__ = "semantic_recall_snapshots"
 
@@ -89,14 +89,6 @@ class SemanticRecallRecord(BaseModel):
     source_queries: list[str]
     created_at: datetime
     updated_at: datetime
-
-    @field_validator("query", mode="before")
-    @classmethod
-    def strip_query(cls, value: object) -> object:
-        """清理召回记录的查询业务键"""
-        return (
-            normalize_semantic_recall_query(value) if isinstance(value, str) else value
-        )
 
     @model_validator(mode="after")
     def validate_context_payload(self) -> Self:

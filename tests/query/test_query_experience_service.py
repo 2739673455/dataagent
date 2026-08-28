@@ -240,38 +240,6 @@ class FakePGRepo:
         }
         return [by_id[item_id] for item_id in experience_ids if item_id in by_id]
 
-    async def find_by_assets(
-        self,
-        user_id: int,
-        role_name: str,
-        resource_keys: set[str],
-        *,
-        limit: int,
-    ) -> list[QueryExperience]:
-        return [
-            item
-            for item in self.experiences
-            if item.owner_user_id == user_id
-            and item.role_name == role_name
-            and item.quality != "disabled"
-            and any(asset.resource_key in resource_keys for asset in item.assets)
-        ][:limit]
-
-    async def list_recent(
-        self,
-        user_id: int,
-        role_name: str,
-        *,
-        limit: int,
-    ) -> list[QueryExperience]:
-        return [
-            item
-            for item in self.experiences
-            if item.owner_user_id == user_id
-            and item.role_name == role_name
-            and item.quality != "disabled"
-        ][:limit]
-
     async def current_asset_versions(
         self,
         experiences: list[QueryExperience],

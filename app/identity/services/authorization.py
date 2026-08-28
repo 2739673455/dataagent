@@ -124,13 +124,10 @@ class AssetAccessPolicy:
 
     user_id: int
     grants: frozenset[AssetIdentity] = frozenset()
-    unrestricted: bool = False
 
     def allows(self, asset: AssetIdentity) -> bool:
         """判断是否拥有目标资产的完整访问权"""
-        return self.unrestricted or any(
-            grant.encompasses(asset) for grant in self.grants
-        )
+        return any(grant.encompasses(asset) for grant in self.grants)
 
     def is_visible(self, asset: AssetIdentity) -> bool:
         """判断资产或其任一下级资产是否可见"""

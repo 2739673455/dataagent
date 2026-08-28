@@ -79,16 +79,18 @@ class MetadataAuthorizationFilterTest(unittest.TestCase):
         self.assertIsNone(columns[0].reference_t_name)
         self.assertIsNone(columns[0].reference_c_name)
 
-    def test_unrestricted_policy_keeps_original_metadata(self) -> None:
+    def test_database_grant_keeps_all_database_metadata(self) -> None:
         authorization_filter = MetadataAuthorizationFilter(
-            AssetAccessPolicy(user_id=1, unrestricted=True),
+            AssetAccessPolicy(
+                user_id=1,
+                grants=frozenset({AssetIdentity("doris", "analytics")}),
+            ),
             "doris",
             "analytics",
         )
         allowed = authorization_filter.allowed_column_keys(self.columns)
         filtered = authorization_filter.filter_columns(self.columns, allowed)
 
-        self.assertIs(filtered[0], self.columns[0])
         self.assertEqual(filtered[0].reference_t_name, "customers")
 
 

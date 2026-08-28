@@ -7,10 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from app.metadata.models.recall import (
-    SemanticRecallRecord,
-    normalize_semantic_recall_query,
-)
+from app.metadata.models.recall import SemanticRecallRecord
 from app.metadata.models.search import (
     SemanticColumnResult,
     SemanticMetricResult,
@@ -215,7 +212,6 @@ class SemanticRecallService:
         query_experiences_retrieved_at: datetime,
     ) -> SemanticRecallRecord:
         """将一次检索结果增量合入 query 的持续上下文"""
-        query = normalize_semantic_recall_query(query)
         now = datetime.now(UTC)
         previous = await self._repo.get_latest_by_query(
             user_id,
@@ -252,7 +248,6 @@ class SemanticRecallService:
         now: datetime | None = None,
     ) -> tuple[list[QueryExperienceSearchResult], datetime] | None:
         """读取当前查询在一天有效期内的查询经验结果"""
-        query = normalize_semantic_recall_query(query)
         record = await self._repo.get_latest_by_query(
             user_id,
             conversation_id,
@@ -276,14 +271,13 @@ class SemanticRecallService:
         query: str,
     ) -> SemanticRecallRecord:
         """按 query 获取最新召回记录，不存在时给出明确错误"""
-        normalized_query = normalize_semantic_recall_query(query)
         record = await self._repo.get_latest_by_query(
             user_id,
             conversation_id,
-            normalized_query,
+            query,
         )
         if record is None:
-            raise SemanticQueriesNotFoundError([normalized_query])
+            raise SemanticQueriesNotFoundError([query])
         return self._authorize_record(record)
 
     async def list(
@@ -317,24 +311,25 @@ class SemanticRecallService:
         source_query: str,
     ) -> SemanticRecallRecord:
         """将来源 query 的语义资源吸收到目标并删除来源"""
-        target = normalize_semantic_recall_query(target_query)
-        source = normalize_semantic_recall_query(source_query)
-        if target == source:
+        if target_query == source_query:
             raise ValueError("目标 query 和来源 query 不能相同")
 
         target_record = await self._repo.get_latest_by_query(
             user_id,
             conversation_id,
-            target,
+            target_query,
         )
         source_record = await self._repo.get_latest_by_query(
             user_id,
             conversation_id,
-            source,
+            source_query,
         )
         missing = [
             query
-            for query, record in ((target, target_record), (source, source_record))
+            for query, record in (
+                (target_query, target_record),
+                (source_query, source_record),
+            )
             if record is None
         ]
         if missing:
@@ -349,15 +344,17 @@ class SemanticRecallService:
         absorbed_queries = _stable_union(
             [
                 target_record.source_queries,
-                [source],
+                [source_query],
                 source_record.source_queries,
             ]
         )
-        absorbed_queries = [query for query in absorbed_queries if query != target]
+        absorbed_queries = [
+            query for query in absorbed_queries if query != target_query
+        ]
         merged = SemanticRecallRecord(
             user_id=user_id,
             conversation_id=conversation_id,
-            query=target,
+            query=target_query,
             request=None,
             response=merge_semantic_search_responses(
                 merged_id,
@@ -372,7 +369,7 @@ class SemanticRecallService:
             updated_at=now,
         )
         await self._repo.save(merged)
-        await self._repo.delete_by_query(user_id, conversation_id, source)
+        await self._repo.delete_by_query(user_id, conversation_id, source_query)
         return merged
 
     def _authorize_record(
@@ -423,10 +420,7 @@ class SemanticRecallService:
         """批量删除 query 的全部快照并返回处理结果"""
         deleted: list[str] = []
         missing: list[str] = []
-        normalized_queries = dict.fromkeys(
-            normalize_semantic_recall_query(item) for item in queries
-        )
-        for query in normalized_queries:
+        for query in dict.fromkeys(queries):
             if await self._repo.delete_by_query(user_id, conversation_id, query):
                 deleted.append(query)
             else:

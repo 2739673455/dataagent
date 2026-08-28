@@ -255,48 +255,13 @@ class QueryExperienceService:
             user_id=user_id,
             role_name=role_name,
         )
-        resource_keys = {
-            asset_resource_key(
-                self._data_source,
-                self._database_name,
-                table_name,
-            )
-            for table_name in table_names
-        }
-        resource_keys.update(
-            asset_resource_key(
-                self._data_source,
-                self._database_name,
-                table_name,
-                column_name,
-            )
-            for table_name, column_name in column_keys
-        )
         async with self._repo.session.begin():
             semantic_ids = list(semantic_ranks)
-            candidates = [
-                *await self._repo.get_many(
-                    user_id,
-                    semantic_ids,
-                    role_name=role_name,
-                ),
-                *await self._repo.find_by_assets(
-                    user_id,
-                    role_name,
-                    resource_keys,
-                    limit=_SEARCH_POOL_SIZE,
-                ),
-            ]
-            if len(candidates) < limit:
-                candidates.extend(
-                    await self._repo.list_recent(
-                        user_id,
-                        role_name,
-                        limit=_SEARCH_POOL_SIZE,
-                    )
-                )
-            distinct = {item.id: item for item in candidates}
-            experiences = list(distinct.values())
+            experiences = await self._repo.get_many(
+                user_id,
+                semantic_ids,
+                role_name=role_name,
+            )
             current_versions = await self._repo.current_asset_versions(experiences)
             invalid_revisions = {
                 experience.id: experience.revision

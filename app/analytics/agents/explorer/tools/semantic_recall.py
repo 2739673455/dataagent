@@ -172,7 +172,6 @@ def _record_summary(record: Any) -> dict[str, Any]:
     return {
         "query": record.query,
         "terms": response.terms,
-        "source_queries": record.source_queries,
         "query_experience_count": len(record.query_experiences),
         "query_experiences_retrieved_at": (
             record.query_experiences_retrieved_at.isoformat()
@@ -220,6 +219,7 @@ async def get_recall(
 ) -> dict[str, Any]:
     """按 query 读取当前会话的最新召回记录"""
     try:
+        query = normalize_semantic_recall_query(query)
         user_id, conversation_id = resolve_semantic_recall_identity(runtime.config)
         async with semantic_recall_repository() as repo:
             service = await create_authorized_semantic_recall_service(user_id, repo)
@@ -247,6 +247,8 @@ async def merge_recalls(
 ) -> dict[str, Any]:
     """合并来源 query 的语义资源并删除来源，查询经验只保留目标结果"""
     try:
+        target_query = normalize_semantic_recall_query(target_query)
+        source_query = normalize_semantic_recall_query(source_query)
         user_id, conversation_id = resolve_semantic_recall_identity(runtime.config)
         async with semantic_recall_repository() as repo:
             service = await create_authorized_semantic_recall_service(user_id, repo)
@@ -278,6 +280,7 @@ async def delete_recalls(
 ) -> dict[str, Any]:
     """删除当前会话指定 query 的全部召回快照"""
     try:
+        queries = [normalize_semantic_recall_query(query) for query in queries]
         user_id, conversation_id = resolve_semantic_recall_identity(runtime.config)
         async with semantic_recall_repository() as repo:
             service = await create_authorized_semantic_recall_service(user_id, repo)

@@ -19,11 +19,6 @@ class MetadataAuthorizationFilter:
         self._data_source = data_source
         self._database_name = database_name
 
-    @property
-    def unrestricted(self) -> bool:
-        """返回当前策略是否可查看完整目录"""
-        return self._policy.unrestricted
-
     def identity(
         self,
         table_name: str | None = None,
@@ -50,8 +45,6 @@ class MetadataAuthorizationFilter:
         column_infos: list[ColumnInfo],
     ) -> frozenset[ColumnKey]:
         """返回可以完整读取的字段键"""
-        if self._policy.unrestricted:
-            return frozenset((item.t_name, item.name) for item in column_infos)
         return frozenset(
             (item.t_name, item.name)
             for item in column_infos
@@ -64,8 +57,6 @@ class MetadataAuthorizationFilter:
         allowed_columns: frozenset[ColumnKey],
     ) -> list[TableInfo]:
         """过滤表并移除未授权的主键名称"""
-        if self._policy.unrestricted:
-            return table_infos
         return [
             TableInfo(
                 name=item.name,
@@ -89,8 +80,6 @@ class MetadataAuthorizationFilter:
         allowed_columns: frozenset[ColumnKey],
     ) -> list[ColumnInfo]:
         """过滤字段并移除指向未授权资产的外键引用"""
-        if self._policy.unrestricted:
-            return column_infos
         filtered: list[ColumnInfo] = []
         for item in column_infos:
             if (item.t_name, item.name) not in allowed_columns:
@@ -123,8 +112,6 @@ class MetadataAuthorizationFilter:
         allowed_columns: frozenset[ColumnKey],
     ) -> list[MetricInfo]:
         """仅保留依赖字段全部授权的指标"""
-        if self._policy.unrestricted:
-            return metric_infos
         database_allowed = self._policy.allows(self.identity())
         return [
             item
@@ -144,8 +131,6 @@ class MetadataAuthorizationFilter:
         response: SemanticSearchResponse,
     ) -> SemanticSearchResponse:
         """按当前权限过滤已持久化的语义召回快照"""
-        if self._policy.unrestricted:
-            return response
         columns = []
         for item in response.columns:
             if not self.column_is_allowed(item.t_name, item.name):
