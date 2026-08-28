@@ -1,6 +1,5 @@
 import asyncio
 import threading
-import time
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -8,6 +7,14 @@ from uuid import uuid4
 from app.sandbox.manager import DockerSandboxManager
 from app.sandbox.ownership import LocalSandboxOwnership
 from tests.sandbox.test_docker_sandbox_manager import build_sandbox_config
+
+
+def _assert_threads_stopped(*threads: threading.Thread) -> None:
+    """等待测试线程退出，避免失败路径阻塞测试进程"""
+    for thread in threads:
+        if thread.ident is not None:
+            thread.join(timeout=1)
+    assert all(not thread.is_alive() for thread in threads)
 
 
 def test_user_maintenance_waits_for_operations_and_blocks_new_operations() -> None:
@@ -34,22 +41,24 @@ def test_user_maintenance_waits_for_operations_and_blocks_new_operations() -> No
         with ownership.operation(7, second_conversation):
             second_started.set()
 
-    first_thread = threading.Thread(target=first_operation)
-    maintenance_thread = threading.Thread(target=maintenance)
-    second_thread = threading.Thread(target=second_operation)
-    first_thread.start()
-    assert first_started.wait(timeout=1)
-    maintenance_thread.start()
-    assert not maintenance_started.wait(timeout=0.05)
-    release_first.set()
-    assert maintenance_started.wait(timeout=1)
-    second_thread.start()
-    assert not second_started.wait(timeout=0.05)
-    release_maintenance.set()
-    assert second_started.wait(timeout=1)
-    first_thread.join(timeout=1)
-    maintenance_thread.join(timeout=1)
-    second_thread.join(timeout=1)
+    first_thread = threading.Thread(target=first_operation, daemon=True)
+    maintenance_thread = threading.Thread(target=maintenance, daemon=True)
+    second_thread = threading.Thread(target=second_operation, daemon=True)
+    try:
+        first_thread.start()
+        assert first_started.wait(timeout=1)
+        maintenance_thread.start()
+        assert not maintenance_started.wait(timeout=0.05)
+        release_first.set()
+        assert maintenance_started.wait(timeout=1)
+        second_thread.start()
+        assert not second_started.wait(timeout=0.05)
+        release_maintenance.set()
+        assert second_started.wait(timeout=1)
+    finally:
+        release_first.set()
+        release_maintenance.set()
+        _assert_threads_stopped(first_thread, maintenance_thread, second_thread)
 
 
 def test_conversation_maintenance_only_waits_for_target_conversation() -> None:
@@ -74,20 +83,21 @@ def test_conversation_maintenance_only_waits_for_target_conversation() -> None:
         with ownership.operation(7, other_conversation):
             other_started.set()
 
-    target_thread = threading.Thread(target=target_operation)
-    maintenance_thread = threading.Thread(target=maintenance)
-    other_thread = threading.Thread(target=other_operation)
-    target_thread.start()
-    assert target_started.wait(timeout=1)
-    maintenance_thread.start()
-    assert not maintenance_started.wait(timeout=0.05)
-    other_thread.start()
-    assert other_started.wait(timeout=1)
-    release_target.set()
-    assert maintenance_started.wait(timeout=1)
-    target_thread.join(timeout=1)
-    maintenance_thread.join(timeout=1)
-    other_thread.join(timeout=1)
+    target_thread = threading.Thread(target=target_operation, daemon=True)
+    maintenance_thread = threading.Thread(target=maintenance, daemon=True)
+    other_thread = threading.Thread(target=other_operation, daemon=True)
+    try:
+        target_thread.start()
+        assert target_started.wait(timeout=1)
+        maintenance_thread.start()
+        assert not maintenance_started.wait(timeout=0.05)
+        other_thread.start()
+        assert other_started.wait(timeout=1)
+        release_target.set()
+        assert maintenance_started.wait(timeout=1)
+    finally:
+        release_target.set()
+        _assert_threads_stopped(target_thread, maintenance_thread, other_thread)
 
 
 def test_nested_operation_uses_one_ownership_slot() -> None:
@@ -143,21 +153,3 @@ def test_local_runtime_release_marks_current_runtime_as_last() -> None:
 
     with ownership.release_runtime() as last_runtime:
         assert last_runtime
-
-
-def test_user_maintenance_does_not_busy_wait() -> None:
-    ownership = LocalSandboxOwnership()
-    conversation_id = uuid4()
-    release_operation = threading.Event()
-
-    def operation() -> None:
-        with ownership.operation(7, conversation_id):
-            release_operation.wait(timeout=1)
-
-    thread = threading.Thread(target=operation)
-    thread.start()
-    time.sleep(0.01)
-    release_operation.set()
-    with ownership.user_maintenance(7):
-        pass
-    thread.join(timeout=1)

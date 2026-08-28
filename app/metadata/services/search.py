@@ -1,4 +1,4 @@
-"""确定性的元数据语义搜索服务"""
+"""确定性的元数据语义资源召回服务"""
 
 import asyncio
 import uuid
@@ -18,16 +18,16 @@ from app.metadata.models.catalog import (
 )
 from app.metadata.models.search import (
     SearchHit,
-    SemanticColumnResult,
+    SemanticColumnRecallResult,
     SemanticIndexStatus,
     SemanticMatchReason,
-    SemanticMetricResult,
-    SemanticRelation,
-    SemanticResourceSearchRequest,
+    SemanticMetricRecallResult,
+    SemanticRecallFailure,
+    SemanticResourceRecallRequest,
+    SemanticResourceRecallResponse,
     SemanticResourceType,
-    SemanticSearchResponse,
     SemanticTableContext,
-    SemanticValueResult,
+    SemanticValueRecallResult,
 )
 from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
@@ -95,7 +95,7 @@ class _ColumnContext:
 
 @dataclass(frozen=True, slots=True)
 class _SemanticCatalog:
-    """语义检索使用的完整元数据目录"""
+    """语义召回使用的完整元数据目录"""
 
     tables: dict[str, TableInfo]
     columns: dict[ColumnKey, ColumnInfo]
@@ -104,19 +104,15 @@ class _SemanticCatalog:
 
 @dataclass(slots=True)
 class _SearchContext:
-    """单次语义检索的输入、目录和可变召回状态"""
+    """单次语义召回的输入、目录和可变状态"""
 
-    request: SemanticResourceSearchRequest
-    terms: list[str]
-    resource_types: set[SemanticResourceType]
+    request: SemanticResourceRecallRequest
     catalog: _SemanticCatalog
-    allowed_columns: frozenset[ColumnKey]
-    allowed_metrics: frozenset[str]
     column_scores: dict[ColumnKey, _CandidateScore] = field(default_factory=dict)
     metric_scores: dict[str, _CandidateScore] = field(default_factory=dict)
     value_scores: dict[ValueKey, _CandidateScore] = field(default_factory=dict)
+    failures: list[SemanticRecallFailure] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    partial: bool = False
 
     @property
     def search_limit(self) -> int:
@@ -128,23 +124,38 @@ class _SearchContext:
 
     def selects_any(self, *resource_types: SemanticResourceType) -> bool:
         """判断本次请求是否选择任一资源类型"""
-        return not self.resource_types.isdisjoint(resource_types)
+        return any(
+            resource_type in self.request.resource_types
+            for resource_type in resource_types
+        )
 
     def record_backend_failure(
         self,
         backend_name: str,
         error: BaseException,
+        *,
+        resource_type: SemanticResourceType,
+        channel: Literal["fulltext", "vector"],
+        term: str | None = None,
     ) -> None:
-        """记录后端降级并保留任务取消语义"""
+        """记录检索失败范围并保留任务取消语义"""
         if isinstance(error, asyncio.CancelledError):
             raise error
         if not isinstance(error, Exception):
             raise error
-        self.partial = True
-        logger.opt(exception=error).warning(f"语义检索后端不可用: {backend_name}")
-        warning = f"{backend_name} 检索服务暂不可用"
-        if warning not in self.warnings:
-            self.warnings.append(warning)
+        failure_scope = (
+            f"{resource_type}/{channel}/{backend_name}, term={term}"
+            if term is not None
+            else f"{resource_type}/{channel}/{backend_name}"
+        )
+        logger.opt(exception=error).warning(f"语义召回后端失败: {failure_scope}")
+        failure = SemanticRecallFailure(
+            resource_type=resource_type,
+            channel=channel,
+            term=term,
+        )
+        if failure not in self.failures:
+            self.failures.append(failure)
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,14 +187,13 @@ class _ColumnContextBuilder:
         self,
         ranked: _RankedCandidates,
     ) -> tuple[
-        list[SemanticColumnResult],
+        list[SemanticColumnRecallResult],
         list[SemanticTableContext],
-        list[SemanticRelation],
         bool,
     ]:
-        """按直接候选、依赖字段和表关系顺序构建上下文"""
+        """按直接候选、依赖字段和外键上下文顺序构建字段上下文"""
         self._add_ranked_resources(ranked)
-        relations = self._build_relations()
+        self._add_foreign_key_context()
         self._add_primary_keys()
         if self._truncated:
             self._warnings.append(
@@ -193,7 +203,6 @@ class _ColumnContextBuilder:
         return (
             self._build_column_results(),
             self._build_table_contexts(),
-            relations,
             self._truncated,
         )
 
@@ -258,9 +267,8 @@ class _ColumnContextBuilder:
                     counts_toward_limit=False,
                 )
 
-    def _build_relations(self) -> list[SemanticRelation]:
-        """补充参与表的一层外键字段并构建关系"""
-        relations: dict[tuple[str, str, str, str], SemanticRelation] = {}
+    def _add_foreign_key_context(self) -> None:
+        """补充参与表的一层外键字段和目标字段"""
         participating_tables = self._participating_tables()
         foreign_keys = sorted(
             (
@@ -287,25 +295,10 @@ class _ColumnContextBuilder:
                 "reference_target",
                 counts_toward_limit=False,
             )
-            if source_key not in self._contexts or target_key not in self._contexts:
-                continue
-            relation_key = (
-                source_key[0],
-                source_key[1],
-                target_key[0],
-                target_key[1],
-            )
-            relations[relation_key] = SemanticRelation(
-                source_t_name=source_key[0],
-                source_c_name=source_key[1],
-                target_t_name=target_key[0],
-                target_c_name=target_key[1],
-            )
-        return list(relations.values())
 
-    def _build_column_results(self) -> list[SemanticColumnResult]:
+    def _build_column_results(self) -> list[SemanticColumnRecallResult]:
         """将字段上下文转换为响应模型"""
-        results: list[SemanticColumnResult] = []
+        results: list[SemanticColumnRecallResult] = []
         for context in self._contexts.values():
             column_info = context.info
             index_status = _index_status(column_info)
@@ -317,7 +310,7 @@ class _ColumnContextBuilder:
                     f"{index_status}: {column_info.t_name}.{column_info.name}"
                 )
             results.append(
-                SemanticColumnResult(
+                SemanticColumnRecallResult(
                     t_name=column_info.t_name,
                     name=column_info.name,
                     type=column_info.type,
@@ -357,7 +350,7 @@ class _ColumnContextBuilder:
         return {context.info.t_name for context in self._contexts.values()}
 
 
-class MetaSearchService:
+class SemanticResourceRecallService:
     """聚合元数据、语义索引和字段值索引"""
 
     def __init__(
@@ -372,7 +365,7 @@ class MetaSearchService:
         database_name: str,
         max_concurrent_index_queries: int = _DEFAULT_INDEX_QUERY_CONCURRENCY,
     ) -> None:
-        """初始化元数据语义搜索服务"""
+        """初始化元数据语义资源召回服务"""
         if max_concurrent_index_queries <= 0:
             raise ValueError("max_concurrent_index_queries 必须为正整数")
         self._embedding_client = embedding_client
@@ -387,18 +380,18 @@ class MetaSearchService:
         )
         self._index_query_semaphore = asyncio.Semaphore(max_concurrent_index_queries)
 
-    async def search(
+    async def recall(
         self,
-        request: SemanticResourceSearchRequest,
-    ) -> SemanticSearchResponse:
-        """按加载目录、执行召回和构建响应三个阶段完成语义检索"""
+        request: SemanticResourceRecallRequest,
+    ) -> SemanticResourceRecallResponse:
+        """按加载目录、执行召回和构建响应三个阶段完成语义资源召回"""
         context = await self._create_context(request)
         await self._retrieve(context)
         return self._build_response(context)
 
     async def _create_context(
         self,
-        request: SemanticResourceSearchRequest,
+        request: SemanticResourceRecallRequest,
     ) -> _SearchContext:
         """加载完整元数据并创建单次检索上下文"""
         table_infos = await self._meta_repo.list_table_infos()
@@ -430,15 +423,11 @@ class MetaSearchService:
         }
         return _SearchContext(
             request=request,
-            terms=request.terms,
-            resource_types=set(request.resource_types),
             catalog=_SemanticCatalog(
                 tables=visible_tables,
                 columns=allowed_columns,
                 metrics=allowed_metrics,
             ),
-            allowed_columns=frozenset(allowed_columns),
-            allowed_metrics=frozenset(allowed_metrics),
         )
 
     async def _retrieve(self, context: _SearchContext) -> None:
@@ -460,16 +449,17 @@ class MetaSearchService:
     ) -> None:
         """收集字段和指标全文命中"""
         if context.selects_any("column") and context.catalog.columns:
+            allowed_columns = frozenset(context.catalog.columns)
             results = await asyncio.gather(
                 *(
                     self._run_index_query(
                         self._column_repo.search_text_hits(
                             term,
-                            allowed_columns=context.allowed_columns,
+                            allowed_columns=allowed_columns,
                             limit=context.search_limit,
                         )
                     )
-                    for term in context.terms
+                    for term in context.request.terms
                 ),
                 return_exceptions=True,
             )
@@ -481,16 +471,17 @@ class MetaSearchService:
             )
 
         if context.selects_any("metric") and context.catalog.metrics:
+            allowed_metrics = frozenset(context.catalog.metrics)
             results = await asyncio.gather(
                 *(
                     self._run_index_query(
                         self._metric_repo.search_text_hits(
                             term,
-                            allowed_metrics=context.allowed_metrics,
+                            allowed_metrics=allowed_metrics,
                             limit=context.search_limit,
                         )
                     )
-                    for term in context.terms
+                    for term in context.request.terms
                 ),
                 return_exceptions=True,
             )
@@ -507,20 +498,36 @@ class MetaSearchService:
     ) -> None:
         """收集字段和指标向量命中"""
         try:
-            embeddings = await self._embedding_client.aembed_documents(context.terms)
+            embeddings = await self._embedding_client.aembed_documents(
+                context.request.terms
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
-            context.record_backend_failure("向量生成", exc)
+            if context.selects_any("column") and context.catalog.columns:
+                context.record_backend_failure(
+                    "向量生成",
+                    exc,
+                    resource_type="column",
+                    channel="vector",
+                )
+            if context.selects_any("metric") and context.catalog.metrics:
+                context.record_backend_failure(
+                    "向量生成",
+                    exc,
+                    resource_type="metric",
+                    channel="vector",
+                )
             return
 
         if context.selects_any("column") and context.catalog.columns:
+            allowed_columns = frozenset(context.catalog.columns)
             results = await asyncio.gather(
                 *(
                     self._run_index_query(
                         self._column_repo.search_vector_hits(
                             embedding,
-                            allowed_columns=context.allowed_columns,
+                            allowed_columns=allowed_columns,
                             limit=context.search_limit,
                         )
                     )
@@ -536,12 +543,13 @@ class MetaSearchService:
             )
 
         if context.selects_any("metric") and context.catalog.metrics:
+            allowed_metrics = frozenset(context.catalog.metrics)
             results = await asyncio.gather(
                 *(
                     self._run_index_query(
                         self._metric_repo.search_vector_hits(
                             embedding,
-                            allowed_metrics=context.allowed_metrics,
+                            allowed_metrics=allowed_metrics,
                             limit=context.search_limit,
                         )
                     )
@@ -565,9 +573,15 @@ class MetaSearchService:
         match_type: Literal["fulltext", "vector"],
     ) -> None:
         """校验并融合每个检索词的字段索引命中"""
-        for term, result in zip(context.terms, results, strict=True):
+        for term, result in zip(context.request.terms, results, strict=True):
             if isinstance(result, BaseException):
-                context.record_backend_failure(backend_name, result)
+                context.record_backend_failure(
+                    backend_name,
+                    result,
+                    resource_type="column",
+                    channel=match_type,
+                    term=term,
+                )
                 continue
             seen_keys: set[ColumnKey] = set()
             for rank, hit in enumerate(result, start=1):
@@ -595,9 +609,15 @@ class MetaSearchService:
         match_type: Literal["fulltext", "vector"],
     ) -> None:
         """校验并融合每个检索词的指标索引命中"""
-        for term, result in zip(context.terms, results, strict=True):
+        for term, result in zip(context.request.terms, results, strict=True):
             if isinstance(result, BaseException):
-                context.record_backend_failure(backend_name, result)
+                context.record_backend_failure(
+                    backend_name,
+                    result,
+                    resource_type="metric",
+                    channel=match_type,
+                    term=term,
+                )
                 continue
             seen_names: set[str] = set()
             for rank, hit in enumerate(result, start=1):
@@ -623,22 +643,29 @@ class MetaSearchService:
         context: _SearchContext,
     ) -> None:
         """收集字段值全文索引命中"""
+        allowed_columns = frozenset(context.catalog.columns)
         results = await asyncio.gather(
             *(
                 self._run_index_query(
-                    self._value_repo.search_hits(
-                        term,
-                        allowed_columns=context.allowed_columns,
-                        limit=context.search_limit,
+                        self._value_repo.search_hits(
+                            term,
+                            allowed_columns=allowed_columns,
+                            limit=context.search_limit,
+                        )
                     )
-                )
-                for term in context.terms
+                for term in context.request.terms
             ),
             return_exceptions=True,
         )
-        for term, result in zip(context.terms, results, strict=True):
+        for term, result in zip(context.request.terms, results, strict=True):
             if isinstance(result, BaseException):
-                context.record_backend_failure("字段取值全文", result)
+                context.record_backend_failure(
+                    "字段取值全文",
+                    result,
+                    resource_type="value",
+                    channel="fulltext",
+                    term=term,
+                )
                 continue
             for rank, hit in enumerate(result, start=1):
                 column_key = (hit.item.t_name, hit.item.c_name)
@@ -657,29 +684,31 @@ class MetaSearchService:
                     ),
                 )
 
-    def _build_response(self, context: _SearchContext) -> SemanticSearchResponse:
-        """融合候选排名并组装最终语义检索响应"""
+    def _build_response(
+        self,
+        context: _SearchContext,
+    ) -> SemanticResourceRecallResponse:
+        """融合候选排名并组装最终语义召回响应"""
         ranked = self._rank_context(context)
         metric_results = self._build_metric_results(ranked.metrics, context)
         value_results = self._build_value_results(ranked.values, context)
         (
             column_results,
             table_contexts,
-            relations,
             context_truncated,
         ) = _ColumnContextBuilder(
             context.catalog,
             context.warnings,
         ).build(ranked)
-        return SemanticSearchResponse(
-            status="partial" if context.partial else "success",
-            search_id=f"search_{uuid.uuid4().hex}",
-            terms=context.terms,
+        return SemanticResourceRecallResponse(
+            status="partial" if context.failures else "success",
+            recall_id=f"recall_{uuid.uuid4().hex}",
+            terms=context.request.terms,
             metrics=metric_results,
             columns=column_results,
             values=value_results,
             tables=table_contexts,
-            relations=relations,
+            failures=context.failures,
             warnings=context.warnings,
             truncated=ranked.truncated or context_truncated,
         )
@@ -745,16 +774,16 @@ class MetaSearchService:
         self,
         ranked_metrics: list[tuple[str, float, list[SemanticMatchReason]]],
         context: _SearchContext,
-    ) -> list[SemanticMetricResult]:
+    ) -> list[SemanticMetricRecallResult]:
         """构建指标检索响应"""
-        results: list[SemanticMetricResult] = []
+        results: list[SemanticMetricRecallResult] = []
         for name, rank_score, match_reasons in ranked_metrics:
             metric_info = context.catalog.metrics[name]
             index_status = _index_status(metric_info)
             if index_status != "current" and _has_semantic_index_match(match_reasons):
                 context.warnings.append(f"指标语义索引状态为 {index_status}: {name}")
             results.append(
-                SemanticMetricResult(
+                SemanticMetricRecallResult(
                     name=metric_info.name,
                     description=metric_info.description,
                     alias=metric_info.alias,
@@ -778,9 +807,9 @@ class MetaSearchService:
         self,
         ranked_values: list[tuple[ValueKey, float, list[SemanticMatchReason]]],
         context: _SearchContext,
-    ) -> list[SemanticValueResult]:
+    ) -> list[SemanticValueRecallResult]:
         """构建字段值检索响应"""
-        results: list[SemanticValueResult] = []
+        results: list[SemanticValueRecallResult] = []
         warned_columns: set[ColumnKey] = set()
         for (t_name, c_name, value), rank_score, match_reasons in ranked_values:
             column_info = context.catalog.columns[(t_name, c_name)]
@@ -794,7 +823,7 @@ class MetaSearchService:
                 )
                 warned_columns.add((t_name, c_name))
             results.append(
-                SemanticValueResult(
+                SemanticValueRecallResult(
                     value=value,
                     t_name=t_name,
                     c_name=c_name,

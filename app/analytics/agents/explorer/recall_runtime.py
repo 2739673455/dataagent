@@ -10,7 +10,7 @@ from app.identity.repositories.auth import AuthPGRepo
 from app.identity.services.authorization import AuthorizationService
 from app.metadata.repositories.recall import SemanticRecallPGRepo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
-from app.metadata.services.recall import SemanticRecallService
+from app.metadata.services.recall import SemanticRecallContextService
 from app.shared.clients.postgres_client_manager import (
     analytics_postgres_client_manager,
     auth_postgres_client_manager,
@@ -43,13 +43,13 @@ async def semantic_recall_repository() -> AsyncGenerator[SemanticRecallPGRepo]:
 async def create_authorized_semantic_recall_service(
     user_id: int,
     repo: SemanticRecallPGRepo,
-) -> SemanticRecallService:
+) -> SemanticRecallContextService:
     """使用用户最新资产权限创建召回服务"""
     async with auth_postgres_client_manager.session() as auth_session:
         policy = await AuthorizationService(AuthPGRepo(auth_session)).get_asset_policy(
             user_id
         )
-    return SemanticRecallService(
+    return SemanticRecallContextService(
         repo,
         MetadataAuthorizationFilter(
             policy,

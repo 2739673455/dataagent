@@ -18,7 +18,7 @@ from app.analytics.agents.explorer.semantic_recall_protocol import (
 from app.identity.repositories.auth import AuthPGRepo
 from app.identity.services.authorization import AuthorizationService
 from app.metadata.models.recall import normalize_semantic_recall_query
-from app.metadata.models.search import SemanticResourceSearchRequest
+from app.metadata.models.search import SemanticResourceRecallRequest
 from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
 from app.metadata.repositories.postgres import MetaPGRepo
@@ -26,9 +26,9 @@ from app.metadata.repositories.value_index import ValueESRepo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
 from app.metadata.services.recall import (
     SemanticQueriesNotFoundError,
-    SemanticRecallService,
+    SemanticRecallContextService,
 )
-from app.metadata.services.search import MetaSearchService
+from app.metadata.services.search import SemanticResourceRecallService
 from app.query.providers import build_query_experience_service
 from app.shared.clients.embedding_client_manager import embedding_client_manager
 from app.shared.clients.es_client_manager import es_client_manager
@@ -43,7 +43,7 @@ _QUERY_EXPERIENCE_LIMIT = 3
 
 
 @tool
-async def search_context(
+async def recall_context(
     runtime: ToolRuntime,
     query: Annotated[str, "用于标识当前查询并检索历史 SQL 经验的完整数据问题"],
     resource_types: Annotated[
@@ -63,7 +63,7 @@ async def search_context(
     """
     try:
         query = normalize_semantic_recall_query(query)
-        request = SemanticResourceSearchRequest(
+        request = SemanticResourceRecallRequest(
             terms=terms,
             resource_types=resource_types,
             limit_per_type=limit_per_type,
@@ -71,13 +71,13 @@ async def search_context(
     except ValidationError as exc:
         return {
             "status": "error",
-            "message": "语义检索请求无效",
+            "message": "语义召回请求无效",
             "details": exc.errors(include_url=False),
         }
     except ValueError as exc:
         return {
             "status": "error",
-            "message": "语义检索请求无效",
+            "message": "语义召回请求无效",
             "details": [{"loc": ["query"], "msg": str(exc)}],
         }
 
@@ -97,7 +97,7 @@ async def search_context(
                 cfg.query.data_source,
                 cfg.doris.database,
             )
-            service = MetaSearchService(
+            service = SemanticResourceRecallService(
                 embedding_client=embedding_client_manager.get_client(),
                 column_repo=ColumnESRepo(es_client_manager.get_client()),
                 metric_repo=MetricESRepo(es_client_manager.get_client()),
@@ -107,16 +107,28 @@ async def search_context(
                 data_source=cfg.query.data_source,
                 database_name=cfg.doris.database,
             )
-            response = await service.search(request)
+            response = await service.recall(request)
+    except Exception:  # noqa: BLE001
+        logger.exception("语义资源召回失败")
+        return {
+            "status": "error",
+            "message": "语义资源召回暂不可用",
+        }
+
+    query_experiences: list[QueryExperienceSearchResult] = []
+    query_experiences_retrieved_at = datetime.now(UTC)
+    try:
         async with semantic_recall_repository() as recall_repo:
-            recall_service = SemanticRecallService(recall_repo, authorization_filter)
+            recall_service = SemanticRecallContextService(
+                recall_repo,
+                authorization_filter,
+            )
             cached = await recall_service.get_fresh_query_experiences(
                 user_id,
                 conversation_id,
                 query,
             )
         if cached is None:
-            query_experiences: list[QueryExperienceSearchResult] = []
             if user is not None and user.doris_role_name is not None:
                 async with meta_postgres_client_manager.session() as experience_session:
                     query_experiences = await build_query_experience_service(
@@ -126,28 +138,20 @@ async def search_context(
                         role_name=user.doris_role_name,
                         policy=asset_policy,
                         query=query,
-                        table_names={item.name for item in response.tables},
-                        column_keys={
-                            (item.t_name, item.name) for item in response.columns
-                        },
                         limit=_QUERY_EXPERIENCE_LIMIT,
                     )
             query_experiences_retrieved_at = datetime.now(UTC)
         else:
             query_experiences, query_experiences_retrieved_at = cached
     except Exception:  # noqa: BLE001
-        logger.exception("语义资源与查询经验检索失败")
-        return {
-            "status": "error",
-            "message": "语义资源与查询经验检索暂不可用",
-        }
+        logger.exception("查询经验检索失败")
 
     try:
         async with semantic_recall_repository() as recall_repo:
-            record = await SemanticRecallService(
+            record = await SemanticRecallContextService(
                 recall_repo,
                 authorization_filter,
-            ).record_search(
+            ).record(
                 user_id,
                 conversation_id,
                 query,
@@ -181,7 +185,6 @@ def _record_summary(record: Any) -> dict[str, Any]:
             "columns": len(response.columns),
             "values": len(response.values),
             "tables": len(response.tables),
-            "relations": len(response.relations),
         },
         "created_at": record.created_at.isoformat(),
     }

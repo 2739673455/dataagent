@@ -76,7 +76,7 @@ class RecordingChatModel(BaseChatModel):
 
 
 @tool
-def search_context(query: str) -> str:
+def recall_context(query: str) -> str:
     """检索测试语义资源"""
     return query
 
@@ -180,7 +180,7 @@ async def _conversation_not_deleted() -> bool:
 def _registry(fake: _FakeAgent) -> AgentRegistry:
     definitions = build_agent_definitions(
         [
-            search_context,
+            recall_context,
             execute_sql,
         ],
         [],
@@ -209,9 +209,6 @@ def _service(
         [AgentSessionKey],
         AbstractAsyncContextManager[None],
     ] = _unlocked_session,
-    result_observer: (
-        Callable[[AgentSessionKey, SpecialistResult], Awaitable[None]] | None
-    ) = None,
 ) -> AgentSessionService:
     async def artifact_exists(path: str) -> bool:
         del path
@@ -233,7 +230,6 @@ def _service(
         artifact_verifier=artifact_verifier or artifact_exists,
         session_exists=session_exists,
         session_lock_factory=session_lock_factory,
-        result_observer=result_observer,
     )
 
 
@@ -333,7 +329,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
     def test_registry_applies_independent_tool_allowlists(self) -> None:
         definitions = build_agent_definitions(
             [
-                search_context,
+                recall_context,
                 execute_sql,
             ],
             [mcp_web_search],
@@ -342,7 +338,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
         self.assertEqual(
             definitions["explorer"].tool_names,
             {
-                "search_context",
+                "recall_context",
                 "execute_sql",
                 "mcp_web_search",
             },
@@ -362,7 +358,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
 
     def test_registry_fails_fast_when_required_tools_are_missing(self) -> None:
         with self.assertRaisesRegex(ValueError, "缺少必需的专家工具"):
-            build_agent_definitions([search_context], [])
+            build_agent_definitions([recall_context], [])
 
     def test_registry_rejects_mcp_tool_names_reserved_by_runtime(self) -> None:
         @tool("execute")
@@ -373,7 +369,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "冲突"):
             build_agent_definitions(
                 [
-                    search_context,
+                    recall_context,
                     execute_sql,
                 ],
                 [conflicting_mcp_tool],
@@ -512,7 +508,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_registry_builds_and_caches_one_agent_per_session(self) -> None:
         definitions = build_agent_definitions(
             [
-                search_context,
+                recall_context,
                 execute_sql,
             ],
             [],
@@ -552,30 +548,6 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNot(first_region, product_agent)
         self.assertEqual(build_counts[region.checkpoint_ns], 1)
         self.assertEqual(build_counts[product.checkpoint_ns], 1)
-
-    async def test_completed_result_is_sent_to_result_observer(self) -> None:
-        observed: list[tuple[AgentSessionKey, SpecialistResult]] = []
-
-        async def observe(
-            session_key: AgentSessionKey,
-            result: SpecialistResult,
-        ) -> None:
-            observed.append((session_key, result))
-
-        service = _service(_FakeAgent(), result_observer=observe)
-        config = build_planner_config(12, _CONVERSATION_ID)
-        config.setdefault("configurable", {})["planner_run_id"] = "observer-run"
-
-        async with service.planner_run("observer-run"):
-            result = await service.execute_delegation(
-                _request("base", agent_type="explorer"),
-                config,
-            )
-
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(len(observed), 1)
-        self.assertEqual(observed[0][0].agent_type, "explorer")
-        self.assertEqual(observed[0][1].artifacts, result.artifacts)
 
     async def test_same_session_serializes_while_other_sessions_run_parallel(
         self,

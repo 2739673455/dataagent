@@ -11,8 +11,8 @@ from app.metadata.models.recall import (
     SemanticRecallSnapshot,
 )
 from app.metadata.models.search import (
-    SemanticResourceSearchRequest,
-    SemanticSearchResponse,
+    SemanticResourceRecallRequest,
+    SemanticResourceRecallResponse,
 )
 from app.shared.contracts.query_experience import QueryExperienceSearchResult
 
@@ -30,18 +30,18 @@ class SemanticRecallPGRepo:
         response_payload = snapshot.response
         semantic_resources = {
             **response_payload["semantic_resources"],
-            "search_id": snapshot.recall_id,
+            "recall_id": snapshot.recall_id,
         }
         return SemanticRecallRecord(
             user_id=snapshot.user_id,
             conversation_id=snapshot.conversation_id,
             query=snapshot.query,
             request=(
-                SemanticResourceSearchRequest.model_validate(snapshot.request)
+                SemanticResourceRecallRequest.model_validate(snapshot.request)
                 if snapshot.request is not None
                 else None
             ),
-            response=SemanticSearchResponse.model_validate(semantic_resources),
+            response=SemanticResourceRecallResponse.model_validate(semantic_resources),
             query_experiences=[
                 QueryExperienceSearchResult.model_validate(item)
                 for item in response_payload["query_experiences"]
@@ -60,7 +60,7 @@ class SemanticRecallPGRepo:
             SemanticRecallSnapshot(
                 user_id=record.user_id,
                 conversation_id=record.conversation_id,
-                recall_id=record.response.search_id,
+                recall_id=record.response.recall_id,
                 query=record.query,
                 request=(
                     record.request.model_dump(mode="json")
@@ -70,7 +70,7 @@ class SemanticRecallPGRepo:
                 response={
                     "semantic_resources": record.response.model_dump(
                         mode="json",
-                        exclude={"search_id"},
+                        exclude={"recall_id"},
                     ),
                     "query_experiences": [
                         item.model_dump(mode="json")

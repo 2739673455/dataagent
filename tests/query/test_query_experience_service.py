@@ -65,7 +65,6 @@ class FakeIndexRepo:
         *,
         owner_user_id: int,
         role_name: str,
-        quality: str,
         text: str,
         embedding: list[float],
     ) -> None:
@@ -74,7 +73,6 @@ class FakeIndexRepo:
                 "experience_id": experience_id,
                 "owner_user_id": owner_user_id,
                 "role_name": role_name,
-                "quality": quality,
                 "text": text,
                 "embedding": embedding,
             }
@@ -143,11 +141,8 @@ class FakePGRepo:
         execution.experience_id = experience.id
         experience.assets = assets
         experience.quality = "candidate"
-        experience.success_count = 1
-        experience.adopted_count = 0
         experience.revision = 1
         experience.indexed_revision = 0
-        experience.last_used_at = datetime.now(UTC)
         self.executions.append(execution)
         self.experiences.append(experience)
         return experience
@@ -210,20 +205,8 @@ class FakePGRepo:
                 continue
             experience.quality = "disabled"
             experience.revision += 1
-            experience.invalidated_at = datetime.now(UTC)
             revisions[experience.id] = experience.revision
         return revisions
-
-    async def promote_by_artifacts(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        analysis_id: str,
-        session_id: str,
-        artifact_paths: set[str],
-    ) -> list[QueryExperience]:
-        del user_id, conversation_id, analysis_id, session_id, artifact_paths
-        return self.experiences
 
     async def get_many(
         self,
@@ -289,12 +272,8 @@ def build_experience(
         representative_sql=f"SELECT {column_name} FROM {table_name}",
         sql_template=f"SELECT {column_name} FROM {table_name} WHERE id = :p1",
         quality=quality,
-        success_count=4,
-        adopted_count=2 if quality == "promoted" else 0,
         revision=2,
         indexed_revision=2,
-        first_used_at=datetime.now(UTC),
-        last_used_at=datetime.now(UTC),
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
     )
@@ -330,37 +309,16 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             meta_version=1,
             quality="disabled",
         )
-        experience.invalidated_at = datetime.now(UTC)
         previous_revision = experience.revision
-        previous_success_count = experience.success_count
-        used_at = datetime.now(UTC)
 
         experience.refresh_from_success(
             purpose="按地区统计订单金额",
             representative_sql="SELECT region, SUM(amount) FROM orders GROUP BY region",
             sql_template="SELECT region, SUM(amount) FROM orders GROUP BY region",
-            used_at=used_at,
         )
 
         self.assertEqual(experience.quality, "candidate")
-        self.assertIsNone(experience.invalidated_at)
         self.assertEqual(experience.revision, previous_revision + 1)
-        self.assertEqual(experience.success_count, previous_success_count + 1)
-        self.assertEqual(experience.last_used_at, used_at)
-
-        promoted = build_experience(
-            table_name="orders",
-            column_name="amount",
-            meta_version=1,
-            quality="promoted",
-        )
-        promoted.refresh_from_success(
-            purpose="继续统计订单金额",
-            representative_sql=promoted.representative_sql,
-            sql_template=promoted.sql_template,
-            used_at=used_at,
-        )
-        self.assertEqual(promoted.quality, "promoted")
 
     def test_sql_template_redacts_literals_and_has_stable_fingerprint(self) -> None:
         first_template, first_fingerprint = build_sql_template(
@@ -477,7 +435,6 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             table_name="orders",
             column_name="amount",
             meta_version=1,
-            quality="promoted",
         )
         denied = build_experience(
             table_name="salaries",
@@ -531,17 +488,61 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             role_name="analyst",
             policy=policy,
             query="订单金额",
-            table_names={"orders"},
-            column_keys={("orders", "amount")},
             limit=5,
         )
 
-        self.assertEqual([item.experience_id for item in results], [allowed.id])
-        self.assertIn("final_artifact_adopted", results[0].match_reasons)
-        self.assertIn("column_overlap", results[0].match_reasons)
+        self.assertEqual([item.sql_template for item in results], [allowed.sql_template])
         self.assertEqual(stale.quality, "disabled")
-        self.assertIsNotNone(stale.invalidated_at)
         self.assertEqual(scheduler.enqueued, [(stale.id, stale.revision)])
+
+    async def test_search_uses_rrf_order_and_returns_compact_results(self) -> None:
+        repo = FakePGRepo()
+        first = build_experience(
+            table_name="orders",
+            column_name="amount",
+            meta_version=1,
+        )
+        second = build_experience(
+            table_name="customers",
+            column_name="name",
+            meta_version=1,
+        )
+        repo.experiences = [first, second]
+        repo.current_versions = {
+            asset.resource_key: 1
+            for experience in repo.experiences
+            for asset in experience.assets
+        }
+        index_repo = FakeIndexRepo()
+        index_repo.text_hits = [
+            SearchHit(item=first.id, score=0.1),
+            SearchHit(item=second.id, score=100),
+        ]
+        index_repo.vector_hits = [
+            SearchHit(item=first.id, score=0.1),
+            SearchHit(item=second.id, score=100),
+        ]
+        service = build_service(repo, index_repo, FakeEmbeddingClient())
+
+        results = await service.search(
+            user_id=7,
+            role_name="analyst",
+            policy=AssetAccessPolicy(
+                user_id=7,
+                grants=frozenset({AssetIdentity("doris", "analytics")}),
+            ),
+            query="订单与客户",
+            limit=2,
+        )
+
+        self.assertEqual(
+            [item.sql_template for item in results],
+            [first.sql_template, second.sql_template],
+        )
+        self.assertEqual(
+            set(results[0].model_dump()),
+            {"purpose", "sql_template", "dialect", "assets"},
+        )
 
     async def test_failure_records_error_without_creating_experience(self) -> None:
         repo = FakePGRepo()
@@ -573,35 +574,6 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(repo.executions[0].experience_id)
         self.assertEqual(repo.experiences, [])
 
-    async def test_final_artifact_promotion_resynchronizes_semantic_index(self) -> None:
-        repo = FakePGRepo()
-        promoted = build_experience(
-            table_name="orders",
-            column_name="amount",
-            meta_version=1,
-            quality="promoted",
-        )
-        repo.experiences = [promoted]
-        index_repo = FakeIndexRepo()
-        scheduler = FakeIndexScheduler()
-        service = build_service(
-            repo,
-            index_repo,
-            FakeEmbeddingClient(),
-            scheduler,
-        )
-
-        promoted_ids = await service.promote_by_artifacts(
-            user_id=7,
-            conversation_id=uuid4(),
-            analysis_id="sales",
-            session_id="orders",
-            artifact_paths={"/analyses/sales/sessions/explorer/orders/query.csv"},
-        )
-
-        self.assertEqual(promoted_ids, [promoted.id])
-        self.assertEqual(scheduler.enqueued, [(promoted.id, promoted.revision)])
-
     async def test_metadata_change_proactively_disables_matching_experiences(
         self,
     ) -> None:
@@ -610,7 +582,6 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             table_name="orders",
             column_name="amount",
             meta_version=1,
-            quality="promoted",
         )
         retained = build_experience(
             table_name="customers",
@@ -710,10 +681,6 @@ class QueryExperienceESRepoTest(unittest.IsolatedAsyncioTestCase):
                 {"term": {"owner_user_id": 7}},
                 {"term": {"role_name": "analyst"}},
             ],
-        )
-        self.assertEqual(
-            request["knn"]["filter"]["bool"]["must_not"],
-            [{"term": {"quality": "disabled"}}],
         )
 
 

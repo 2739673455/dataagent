@@ -6,7 +6,7 @@ from app.analytics.agents.explorer.tools.semantic_recall import (
     get_recall,
     list_recalls,
     merge_recalls,
-    search_context,
+    recall_context,
 )
 
 __all__ = [
@@ -15,5 +15,5 @@ __all__ = [
     "get_recall",
     "list_recalls",
     "merge_recalls",
-    "search_context",
+    "recall_context",
 ]

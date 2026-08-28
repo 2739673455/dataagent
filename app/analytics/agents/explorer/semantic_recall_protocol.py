@@ -8,10 +8,10 @@ from langchain_core.messages import ToolMessage
 
 from app.metadata.models.recall import SemanticRecallRecord
 
-type SemanticRecallView = Literal["search_response", "record"]
+type SemanticRecallView = Literal["resources", "record"]
 
 _REFERENCE_TOOL_VIEWS: dict[str, SemanticRecallView] = {
-    "search_context": "search_response",
+    "recall_context": "resources",
     "get_recall": "record",
     "merge_recalls": "record",
 }

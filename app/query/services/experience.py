@@ -2,9 +2,7 @@
 
 import asyncio
 import hashlib
-import math
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
 from typing import cast
 from uuid import UUID, uuid4
 
@@ -32,7 +30,6 @@ from app.shared.contracts.analysis import AgentSessionKey
 from app.shared.contracts.query_experience import (
     QueryAssetKind,
     QueryAssetSnapshot,
-    QueryExperienceQuality,
     QueryExperienceSearchResult,
 )
 
@@ -147,7 +144,6 @@ class QueryExperienceService:
                         for key, value in details.result.time_range.items()
                     },
                 },
-                artifact_path=details.result.path,
             )
             stored = await self._repo.record_success(execution, experience, assets)
         self._index_scheduler.enqueue(stored.id, stored.revision)
@@ -186,28 +182,6 @@ class QueryExperienceService:
         async with self._repo.session.begin():
             await self._repo.record_failure(execution)
 
-    async def promote_by_artifacts(
-        self,
-        *,
-        user_id: int,
-        conversation_id: UUID,
-        analysis_id: str,
-        session_id: str,
-        artifact_paths: set[str],
-    ) -> list[UUID]:
-        """把最终 Explorer 结果直接采用的查询提升为正式经验"""
-        async with self._repo.session.begin():
-            experiences = await self._repo.promote_by_artifacts(
-                user_id,
-                conversation_id,
-                analysis_id,
-                session_id,
-                artifact_paths,
-            )
-        for experience in experiences:
-            self._index_scheduler.enqueue(experience.id, experience.revision)
-        return [experience.id for experience in experiences]
-
     async def invalidate_assets(
         self,
         *,
@@ -245,11 +219,9 @@ class QueryExperienceService:
         role_name: str,
         policy: AssetAccessPolicy,
         query: str,
-        table_names: set[str],
-        column_keys: set[tuple[str, str]],
         limit: int,
     ) -> list[QueryExperienceSearchResult]:
-        """融合语义、资产、质量和新鲜度检索查询经验"""
+        """按混合语义排名检索查询经验"""
         semantic_ranks = await self._semantic_ranks(
             query,
             user_id=user_id,
@@ -290,24 +262,21 @@ class QueryExperienceService:
             self._data_source,
             self._database_name,
         )
-        results = [
+        ordered_experiences = sorted(
+            experiences,
+            key=lambda item: (-semantic_ranks[item.id], item.id.hex),
+        )
+        return [
             result
-            for experience in experiences
+            for experience in ordered_experiences
             if (
-                result := self._score_experience(
+                result := self._to_search_result(
                     experience,
-                    semantic_ranks.get(experience.id, {}),
-                    table_names,
-                    column_keys,
                     authorization_filter,
                 )
             )
             is not None
-        ]
-        return sorted(
-            results,
-            key=lambda item: (-item.score, -item.adopted_count, item.experience_id.hex),
-        )[:limit]
+        ][:limit]
 
     def _build_assets(
         self,
@@ -376,7 +345,6 @@ class QueryExperienceService:
                 experience.id,
                 owner_user_id=experience.owner_user_id,
                 role_name=experience.role_name,
-                quality=experience.quality,
                 text=text,
                 embedding=embeddings[0],
             )
@@ -396,7 +364,7 @@ class QueryExperienceService:
         *,
         user_id: int,
         role_name: str,
-    ) -> dict[UUID, dict[str, float]]:
+    ) -> dict[UUID, float]:
         """获取查询经验的文本和向量倒数排名分数"""
         try:
             embeddings = await self._embedding_client.aembed_documents([query])
@@ -419,23 +387,18 @@ class QueryExperienceService:
         except Exception:  # noqa: BLE001
             logger.exception("查询经验语义检索失败")
             return {}
-        ranks: dict[UUID, dict[str, float]] = {}
-        for channel, hits in (("text", text_hits), ("vector", vector_hits)):
+        ranks: dict[UUID, float] = {}
+        for hits in (text_hits, vector_hits):
             for rank, hit in enumerate(hits, start=1):
-                ranks.setdefault(hit.item, {})[channel] = 1 / (_RRF_K + rank)
+                ranks[hit.item] = ranks.get(hit.item, 0) + 1 / (_RRF_K + rank)
         return ranks
 
-    def _score_experience(
+    def _to_search_result(
         self,
         experience: QueryExperience,
-        semantic_scores: dict[str, float],
-        query_tables: set[str],
-        query_columns: set[tuple[str, str]],
         authorization_filter: MetadataAuthorizationFilter,
     ) -> QueryExperienceSearchResult | None:
-        """按资产权限、语义得分和血缘重叠度评估单条经验"""
-        if experience.quality == "disabled":
-            return None
+        """将已通过有效性检查的经验转换为模型可用结果"""
         experience_tables = {
             asset.table_name for asset in experience.assets if asset.kind == "table"
         }
@@ -453,30 +416,7 @@ class QueryExperienceService:
         ):
             return None
 
-        score = sum(semantic_scores.values()) * 12
-        reasons = [f"{channel}_match" for channel in semantic_scores]
-        if query_tables:
-            coverage = len(query_tables & experience_tables) / len(query_tables)
-            score += 0.2 * coverage
-            if coverage:
-                reasons.append("table_overlap")
-        if query_columns:
-            coverage = len(query_columns & experience_columns) / len(query_columns)
-            score += 0.35 * coverage
-            if coverage:
-                reasons.append("column_overlap")
-        if experience.quality == "promoted":
-            score += 0.15
-            reasons.append("final_artifact_adopted")
-        score += min(0.05, math.log1p(experience.success_count) / 100)
-        score += min(0.05, math.log1p(experience.adopted_count) / 50)
-        last_used_at = experience.last_used_at
-        if last_used_at.tzinfo is None:
-            last_used_at = last_used_at.replace(tzinfo=UTC)
-        age_days = max(0.0, (datetime.now(UTC) - last_used_at).total_seconds() / 86400)
-        score += 0.05 / (1 + age_days / 30)
         return QueryExperienceSearchResult(
-            experience_id=experience.id,
             purpose=experience.purposes[-1],
             sql_template=experience.sql_template,
             dialect=experience.dialect,
@@ -497,12 +437,6 @@ class QueryExperienceService:
                     ),
                 )
             ],
-            quality=cast(QueryExperienceQuality, experience.quality),
-            success_count=experience.success_count,
-            adopted_count=experience.adopted_count,
-            score=round(score, 6),
-            match_reasons=list(dict.fromkeys(reasons)),
-            last_used_at=experience.last_used_at,
         )
 
     @staticmethod

@@ -55,7 +55,7 @@ _AGENT_SPECS: dict[AgentType, AgentSpec] = {
         system_prompt=EXPLORER_SYSTEM_PROMPT,
         platform_tools=frozenset(
             {
-                "search_context",
+                "recall_context",
                 "list_recalls",
                 "get_recall",
                 "merge_recalls",
@@ -65,7 +65,7 @@ _AGENT_SPECS: dict[AgentType, AgentSpec] = {
         ),
         required_tools=frozenset(
             {
-                "search_context",
+                "recall_context",
                 "execute_sql",
             }
         ),

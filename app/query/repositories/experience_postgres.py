@@ -1,6 +1,5 @@
 """查询执行历史与经验 PostgreSQL 数据访问"""
 
-from collections import Counter
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -50,12 +49,8 @@ class QueryExperiencePGRepo:
                 representative_sql=experience.representative_sql,
                 sql_template=experience.sql_template,
                 quality="candidate",
-                success_count=1,
-                adopted_count=0,
                 revision=1,
                 indexed_revision=0,
-                first_used_at=now,
-                last_used_at=now,
                 created_at=now,
                 updated_at=now,
             )
@@ -82,7 +77,6 @@ class QueryExperiencePGRepo:
                 purpose=experience.purposes[0],
                 representative_sql=experience.representative_sql,
                 sql_template=experience.sql_template,
-                used_at=now,
             )
         else:
             experience_id = inserted_id
@@ -157,69 +151,6 @@ class QueryExperiencePGRepo:
         by_id = {item.id: item for item in result.unique().all()}
         return [by_id[item_id] for item_id in experience_ids if item_id in by_id]
 
-    async def promote_by_artifacts(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        analysis_id: str,
-        session_id: str,
-        artifact_paths: set[str],
-    ) -> list[QueryExperience]:
-        """提升被 Explorer 最终结果采用的查询经验"""
-        if not artifact_paths:
-            return []
-        now = datetime.now(UTC)
-        executions = list(
-            (
-                await self._session.scalars(
-                    select(QueryExecution)
-                    .join(
-                        QueryExperience,
-                        QueryExperience.id == QueryExecution.experience_id,
-                    )
-                    .where(
-                        QueryExecution.user_id == user_id,
-                        QueryExecution.conversation_id == conversation_id,
-                        QueryExecution.analysis_id == analysis_id,
-                        QueryExecution.session_id == session_id,
-                        QueryExecution.status == "succeeded",
-                        QueryExecution.adopted_at.is_(None),
-                        QueryExecution.artifact_path.in_(artifact_paths),
-                        QueryExperience.owner_user_id == user_id,
-                        QueryExperience.quality != "disabled",
-                    )
-                    .with_for_update()
-                )
-            ).all()
-        )
-        counts = Counter(
-            execution.experience_id
-            for execution in executions
-            if execution.experience_id is not None
-        )
-        if not counts:
-            return []
-        for execution in executions:
-            execution.adopted_at = now
-        for experience_id, count in counts.items():
-            await self._session.execute(
-                update(QueryExperience)
-                .where(QueryExperience.id == experience_id)
-                .values(
-                    quality="promoted",
-                    adopted_count=QueryExperience.adopted_count + count,
-                    revision=QueryExperience.revision + 1,
-                    last_adopted_at=now,
-                    updated_at=now,
-                )
-            )
-        await self._session.flush()
-        return await self.get_many(
-            user_id,
-            list(counts),
-            role_name=None,
-        )
-
     async def disable_by_resource_keys(
         self,
         resource_keys: set[str],
@@ -256,7 +187,6 @@ class QueryExperiencePGRepo:
             .values(
                 quality="disabled",
                 revision=QueryExperience.revision + 1,
-                invalidated_at=now,
                 updated_at=now,
             )
             .returning(QueryExperience.id, QueryExperience.revision)

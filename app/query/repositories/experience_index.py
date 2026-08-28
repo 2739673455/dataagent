@@ -18,7 +18,6 @@ class QueryExperienceESRepo:
         "properties": {
             "owner_user_id": {"type": "long"},
             "role_name": {"type": "keyword"},
-            "quality": {"type": "keyword"},
             "text": {
                 "type": "text",
                 "analyzer": "ik_max_word",
@@ -52,7 +51,6 @@ class QueryExperienceESRepo:
         *,
         owner_user_id: int,
         role_name: str,
-        quality: str,
         text: str,
         embedding: list[float],
     ) -> None:
@@ -64,7 +62,6 @@ class QueryExperienceESRepo:
             document={
                 "owner_user_id": owner_user_id,
                 "role_name": role_name,
-                "quality": quality,
                 "text": text,
                 "embedding": embedding,
             },
@@ -120,7 +117,6 @@ class QueryExperienceESRepo:
                         }
                     ],
                     "filter": self._scope_filter(user_id, role_name),
-                    "must_not": [{"term": {"quality": "disabled"}}],
                 }
             },
             size=limit,
@@ -148,7 +144,6 @@ class QueryExperienceESRepo:
                 "filter": {
                     "bool": {
                         "filter": self._scope_filter(user_id, role_name),
-                        "must_not": [{"term": {"quality": "disabled"}}],
                     }
                 },
             },

@@ -1,12 +1,9 @@
 """查询经验检索结果契约"""
 
-from datetime import datetime
 from typing import Literal
-from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-type QueryExperienceQuality = Literal["candidate", "promoted", "disabled"]
 type QueryAssetKind = Literal["table", "column"]
 
 
@@ -27,14 +24,7 @@ class QueryExperienceSearchResult(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    experience_id: UUID
     purpose: str
     sql_template: str
     dialect: str
     assets: list[QueryAssetSnapshot]
-    quality: QueryExperienceQuality
-    success_count: int
-    adopted_count: int
-    score: float
-    match_reasons: list[str]
-    last_used_at: datetime

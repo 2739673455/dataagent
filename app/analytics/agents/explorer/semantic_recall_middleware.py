@@ -32,9 +32,9 @@ def _expanded_content(
     view: SemanticRecallView,
 ) -> str:
     """按请求视图序列化已授权的语义召回记录"""
-    if view == "search_response":
+    if view == "resources":
         payload = record.response.model_dump(mode="json")
-        payload.pop("search_id", None)
+        payload.pop("recall_id", None)
         payload["query"] = record.query
         payload["query_experiences"] = [
             item.model_dump(mode="json") for item in record.query_experiences
@@ -44,7 +44,7 @@ def _expanded_content(
         )
     else:
         recall = record.model_dump(mode="json", exclude={"source_queries"})
-        recall["response"].pop("search_id", None)
+        recall["response"].pop("recall_id", None)
         payload = {
             "status": "success",
             "recall": recall,

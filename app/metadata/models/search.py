@@ -1,4 +1,4 @@
-"""元数据语义检索模型"""
+"""元数据语义召回模型"""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -72,8 +72,8 @@ class ValueIndexSyncResult:
     sync_generation: str | None
 
 
-class SemanticResourceSearchRequest(BaseModel):
-    """语义资源检索请求"""
+class SemanticResourceRecallRequest(BaseModel):
+    """语义资源召回请求"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -114,8 +114,18 @@ class SemanticMatchReason(BaseModel):
     score: float
 
 
-class SemanticMetricResult(BaseModel):
-    """指标语义检索结果"""
+class SemanticRecallFailure(BaseModel):
+    """一次资源检索通道的失败范围"""
+
+    model_config = ConfigDict(frozen=True)
+
+    resource_type: SemanticResourceType
+    channel: SemanticMatchType
+    term: str | None
+
+
+class SemanticMetricRecallResult(BaseModel):
+    """指标语义召回结果"""
 
     name: str
     description: str
@@ -128,8 +138,8 @@ class SemanticMetricResult(BaseModel):
     index_status: SemanticIndexStatus
 
 
-class SemanticColumnResult(BaseModel):
-    """字段语义检索结果"""
+class SemanticColumnRecallResult(BaseModel):
+    """字段语义召回结果"""
 
     t_name: str
     name: str
@@ -147,8 +157,8 @@ class SemanticColumnResult(BaseModel):
     index_status: SemanticIndexStatus
 
 
-class SemanticValueResult(BaseModel):
-    """字段取值语义检索结果"""
+class SemanticValueRecallResult(BaseModel):
+    """字段取值语义召回结果"""
 
     value: str
     t_name: str
@@ -169,26 +179,16 @@ class SemanticTableContext(BaseModel):
     meta_version: int
 
 
-class SemanticRelation(BaseModel):
-    """字段关联关系"""
-
-    source_t_name: str
-    source_c_name: str
-    target_t_name: str
-    target_c_name: str
-    type: Literal["foreign_key"] = "foreign_key"
-
-
-class SemanticSearchResponse(BaseModel):
-    """语义目录检索响应"""
+class SemanticResourceRecallResponse(BaseModel):
+    """语义目录召回响应"""
 
     status: Literal["success", "partial"]
-    search_id: str
+    recall_id: str
     terms: list[str]
-    metrics: list[SemanticMetricResult]
-    columns: list[SemanticColumnResult]
-    values: list[SemanticValueResult]
+    metrics: list[SemanticMetricRecallResult]
+    columns: list[SemanticColumnRecallResult]
+    values: list[SemanticValueRecallResult]
     tables: list[SemanticTableContext]
-    relations: list[SemanticRelation]
+    failures: list[SemanticRecallFailure]
     warnings: list[str]
     truncated: bool

@@ -19,7 +19,6 @@ from app.analytics.agents.analyst.agent import create_analyst_agent
 from app.analytics.agents.contracts import (
     ConversationAgentRuntime,
     PlannerTurnContext,
-    SpecialistResult,
     conversation_lifecycle_lock_name,
     get_thread_id,
 )
@@ -30,7 +29,7 @@ from app.analytics.agents.explorer.tools import (
     get_recall,
     list_recalls,
     merge_recalls,
-    search_context,
+    recall_context,
 )
 from app.analytics.agents.mcp import get_mcp_tools
 from app.analytics.agents.planner.agent import create_planner_agent
@@ -47,13 +46,11 @@ from app.analytics.model_factory import create_configured_model
 from app.analytics.services.conversation_tombstone import (
     ConversationTombstoneService,
 )
-from app.query.providers import build_query_experience_service
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.manager import DockerSandboxManager
 from app.shared.clients.langgraph_postgres_manager import (
     LangGraphPostgresManager,
 )
-from app.shared.clients.postgres_client_manager import meta_postgres_client_manager
 from app.shared.config import app_config
 from app.shared.contracts.analysis import AgentSessionKey, AgentType
 
@@ -123,7 +120,7 @@ class AgentManager:
                 for model_name in configured_names
             }
             platform_tools: list[BaseTool] = [
-                search_context,
+                recall_context,
                 list_recalls,
                 get_recall,
                 merge_recalls,
@@ -198,24 +195,6 @@ class AgentManager:
         registry = AgentRegistry(definitions, build_session_agent)
         orchestration_cfg = app_config.cfg.agent.orchestration
 
-        async def observe_specialist_result(
-            session_key: AgentSessionKey,
-            result: SpecialistResult,
-        ) -> None:
-            """根据 Explorer 产物推进查询经验索引状态"""
-            if session_key.agent_type != "explorer":
-                return
-            artifact_paths = {artifact.path for artifact in result.artifacts}
-            async with meta_postgres_client_manager.session() as meta_session:
-                service = build_query_experience_service(meta_session)
-                await service.promote_by_artifacts(
-                    user_id=session_key.user_id,
-                    conversation_id=session_key.conversation_id,
-                    analysis_id=session_key.analysis_id,
-                    session_id=session_key.session_id,
-                    artifact_paths=artifact_paths,
-                )
-
         session_service = AgentSessionService(
             registry=registry,
             user_id=user_id,
@@ -239,7 +218,6 @@ class AgentManager:
                 f"{key.checkpoint_ns}",
                 timeout=orchestration_cfg.session_lock_timeout,
             ),
-            result_observer=observe_specialist_result,
         )
         delegation_tool = create_delegation_tool(session_service)
         interpreter_cfg = app_config.cfg.agent.interpreter

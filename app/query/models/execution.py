@@ -98,7 +98,7 @@ class AnalysisQueryResult(BaseModel):
 
 
 class QueryExecution(MetaBase):
-    """一次 SQL 尝试及其最终采用状态"""
+    """一次 SQL 尝试"""
 
     __tablename__ = "query_executions"
 
@@ -125,8 +125,6 @@ class QueryExecution(MetaBase):
     validation: Mapped[dict[str, object] | None] = mapped_column(JSON)
     plan_estimate: Mapped[dict[str, object] | None] = mapped_column(JSON)
     result_summary: Mapped[dict[str, object] | None] = mapped_column(JSON)
-    artifact_path: Mapped[str | None] = mapped_column(String(1024), index=True)
-    adopted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

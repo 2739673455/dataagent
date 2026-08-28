@@ -10,8 +10,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.metadata.models.search import (
-    SemanticResourceSearchRequest,
-    SemanticSearchResponse,
+    SemanticResourceRecallRequest,
+    SemanticResourceRecallResponse,
 )
 from app.shared.contracts.query_experience import QueryExperienceSearchResult
 from app.shared.database.base import AnalyticsBase
@@ -82,8 +82,8 @@ class SemanticRecallRecord(BaseModel):
     user_id: int
     conversation_id: UUID
     query: str = Field(min_length=1, max_length=1000)
-    request: SemanticResourceSearchRequest | None
-    response: SemanticSearchResponse
+    request: SemanticResourceRecallRequest | None
+    response: SemanticResourceRecallResponse
     query_experiences: list[QueryExperienceSearchResult]
     query_experiences_retrieved_at: datetime
     source_queries: list[str]

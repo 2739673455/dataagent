@@ -9,13 +9,13 @@ from uuid import UUID
 
 from app.metadata.models.recall import SemanticRecallRecord
 from app.metadata.models.search import (
-    SemanticColumnResult,
-    SemanticMetricResult,
-    SemanticRelation,
-    SemanticResourceSearchRequest,
-    SemanticSearchResponse,
+    SemanticColumnRecallResult,
+    SemanticMetricRecallResult,
+    SemanticRecallFailure,
+    SemanticResourceRecallRequest,
+    SemanticResourceRecallResponse,
     SemanticTableContext,
-    SemanticValueResult,
+    SemanticValueRecallResult,
 )
 from app.metadata.repositories.recall import SemanticRecallPGRepo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
@@ -73,10 +73,10 @@ def _group_items[ItemT, KeyT](
 
 
 def _merge_metrics(
-    responses: list[SemanticSearchResponse],
-) -> list[SemanticMetricResult]:
+    responses: list[SemanticResourceRecallResponse],
+) -> list[SemanticMetricRecallResult]:
     """合并指标结果并保留最高排名快照和全部命中依据"""
-    result: list[SemanticMetricResult] = []
+    result: list[SemanticMetricRecallResult] = []
     for matches in _group_items([item.metrics for item in responses], lambda x: x.name):
         best = max(matches, key=lambda item: item.rank_score).model_copy(deep=True)
         best.alias = _stable_union([item.alias for item in matches])
@@ -88,16 +88,16 @@ def _merge_metrics(
     return sorted(result, key=lambda item: (-item.rank_score, item.name))
 
 
-def _column_score(item: SemanticColumnResult) -> float:
+def _column_score(item: SemanticColumnRecallResult) -> float:
     """将关系补充字段的空排名转换为可比较分数"""
     return item.rank_score if item.rank_score is not None else float("-inf")
 
 
 def _merge_columns(
-    responses: list[SemanticSearchResponse],
-) -> list[SemanticColumnResult]:
+    responses: list[SemanticResourceRecallResponse],
+) -> list[SemanticColumnRecallResult]:
     """合并字段结果并累计引入原因"""
-    result: list[SemanticColumnResult] = []
+    result: list[SemanticColumnRecallResult] = []
     groups = _group_items(
         [item.columns for item in responses],
         lambda x: (x.t_name, x.name),
@@ -118,10 +118,10 @@ def _merge_columns(
 
 
 def _merge_values(
-    responses: list[SemanticSearchResponse],
-) -> list[SemanticValueResult]:
+    responses: list[SemanticResourceRecallResponse],
+) -> list[SemanticValueRecallResult]:
     """合并字段值结果并保留最高排名"""
-    result: list[SemanticValueResult] = []
+    result: list[SemanticValueRecallResult] = []
     groups = _group_items(
         [item.values for item in responses],
         lambda x: (x.t_name, x.c_name, x.value),
@@ -137,7 +137,7 @@ def _merge_values(
 
 
 def _merge_tables(
-    responses: list[SemanticSearchResponse],
+    responses: list[SemanticResourceRecallResponse],
 ) -> list[SemanticTableContext]:
     """按元数据版本合并表上下文"""
     groups = _group_items([item.tables for item in responses], lambda x: x.name)
@@ -147,49 +147,61 @@ def _merge_tables(
     )
 
 
-def _merge_relations(
-    responses: list[SemanticSearchResponse],
-) -> list[SemanticRelation]:
-    """稳定去重字段关系"""
-    groups = _group_items(
-        [item.relations for item in responses],
-        lambda x: (
-            x.source_t_name,
-            x.source_c_name,
-            x.target_t_name,
-            x.target_c_name,
-            x.type,
-        ),
-    )
-    return [matches[0] for matches in groups]
-
-
-def merge_semantic_search_responses(
+def merge_semantic_recall_responses(
     recall_id: str,
-    responses: list[SemanticSearchResponse],
-) -> SemanticSearchResponse:
+    responses: list[SemanticResourceRecallResponse],
+    *,
+    refresh_request: SemanticResourceRecallRequest | None = None,
+) -> SemanticResourceRecallResponse:
     """生成多个召回结果的去重合并快照"""
     if len(responses) < 2:
         raise ValueError("至少需要两个召回响应")
-    return SemanticSearchResponse(
-        status=(
-            "partial"
-            if any(response.status == "partial" for response in responses)
-            else "success"
-        ),
-        search_id=recall_id,
+    failures = _merge_failures(responses, refresh_request)
+    return SemanticResourceRecallResponse(
+        status="partial" if failures else "success",
+        recall_id=recall_id,
         terms=_stable_union([response.terms for response in responses]),
         metrics=_merge_metrics(responses),
         columns=_merge_columns(responses),
         values=_merge_values(responses),
         tables=_merge_tables(responses),
-        relations=_merge_relations(responses),
+        failures=failures,
         warnings=_stable_union([response.warnings for response in responses]),
         truncated=any(response.truncated for response in responses),
     )
 
 
-class SemanticRecallService:
+def _merge_failures(
+    responses: list[SemanticResourceRecallResponse],
+    refresh_request: SemanticResourceRecallRequest | None,
+) -> list[SemanticRecallFailure]:
+    """合并失败范围，并在本次成功覆盖时清除旧失败"""
+    failures = _stable_union([response.failures for response in responses])
+    if refresh_request is None:
+        return failures
+
+    latest_failures = set(responses[-1].failures)
+    return [
+        failure
+        for failure in failures
+        if failure in latest_failures
+        or not _failure_is_refreshed(failure, refresh_request)
+    ]
+
+
+def _failure_is_refreshed(
+    failure: SemanticRecallFailure,
+    request: SemanticResourceRecallRequest,
+) -> bool:
+    """判断本次请求是否覆盖了一个旧失败范围"""
+    if failure.resource_type not in request.resource_types:
+        return False
+    if failure.resource_type == "value" and failure.channel != "fulltext":
+        return False
+    return failure.term is None or failure.term in request.terms
+
+
+class SemanticRecallContextService:
     """记录、查询、合并和删除会话级语义召回"""
 
     def __init__(
@@ -201,13 +213,13 @@ class SemanticRecallService:
         self._repo = repo
         self._authorization_filter = authorization_filter
 
-    async def record_search(
+    async def record(
         self,
         user_id: int,
         conversation_id: UUID,
         query: str,
-        request: SemanticResourceSearchRequest,
-        response: SemanticSearchResponse,
+        request: SemanticResourceRecallRequest,
+        response: SemanticResourceRecallResponse,
         query_experiences: list[QueryExperienceSearchResult],
         query_experiences_retrieved_at: datetime,
     ) -> SemanticRecallRecord:
@@ -220,9 +232,10 @@ class SemanticRecallService:
         )
         if previous is not None:
             previous = self._authorize_record(previous)
-            response = merge_semantic_search_responses(
-                response.search_id,
+            response = merge_semantic_recall_responses(
+                response.recall_id,
                 [previous.response, response],
+                refresh_request=request,
             )
         record = SemanticRecallRecord(
             user_id=user_id,
@@ -356,7 +369,7 @@ class SemanticRecallService:
             conversation_id=conversation_id,
             query=target_query,
             request=None,
-            response=merge_semantic_search_responses(
+            response=merge_semantic_recall_responses(
                 merged_id,
                 [target_record.response, source_record.response],
             ),

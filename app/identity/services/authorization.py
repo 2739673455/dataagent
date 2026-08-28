@@ -135,14 +135,6 @@ class AssetAccessPolicy:
             asset.encompasses(grant) for grant in self.grants
         )
 
-    def require(self, asset: AssetIdentity) -> None:
-        """要求目标资产具备完整访问权"""
-        if not self.allows(asset):
-            raise auth_error.AssetAccessDeniedError(
-                detail="该数据资产不在用户授权白名单范围内",
-                extensions={"asset": asset.as_dict()},
-            )
-
 
 class AuthorizationService:
     """为检索与 SQL 守卫提供用户授权策略"""
@@ -196,17 +188,6 @@ class AuthorizationService:
 
 
 @dataclass(frozen=True, slots=True)
-class DorisRoleDescriptor:
-    """可分配的 Doris 数据角色"""
-
-    name: str
-    description: str
-    is_default: bool
-    query_user: str
-    workload_group: str
-
-
-@dataclass(frozen=True, slots=True)
 class DorisExistingRoleDescriptor:
     """Doris 中已存在的角色及平台管理状态"""
 
@@ -237,20 +218,6 @@ class DorisRoleManagementService:
         self._client_registry = client_registry
         self._password_manager = password_manager or Argon2PasswordManager()
         self._auth_config = auth_config or cfg.auth
-
-    async def list_roles(self) -> list[DorisRoleDescriptor]:
-        """列出全部可分配的 Doris 数据角色"""
-        identities = await self._identity_repo.list_all()
-        return [
-            DorisRoleDescriptor(
-                name=identity.role_name,
-                description=identity.description,
-                is_default=identity.is_default,
-                query_user=identity.query_user,
-                workload_group=identity.workload_group,
-            )
-            for identity in identities
-        ]
 
     async def list_workload_groups(self) -> tuple[str, ...]:
         """列出创建角色时可选择的 Doris 工作组"""

@@ -1,4 +1,4 @@
-"""元数据语义检索服务测试"""
+"""元数据语义资源召回服务测试"""
 
 import asyncio
 import unittest
@@ -14,8 +14,12 @@ from app.metadata.models.catalog import (
     ValueIndexSyncState,
     ValueInfo,
 )
-from app.metadata.models.search import SearchHit, SemanticResourceSearchRequest
-from app.metadata.services.search import MetaSearchService
+from app.metadata.models.search import (
+    SearchHit,
+    SemanticRecallFailure,
+    SemanticResourceRecallRequest,
+)
+from app.metadata.services.search import SemanticResourceRecallService
 
 _FULL_DATABASE_GRANT = AssetIdentity("doris", "ecommerce")
 
@@ -85,7 +89,7 @@ def build_metric() -> MetricInfo:
     )
 
 
-class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
+class SemanticResourceRecallServiceTest(unittest.IsolatedAsyncioTestCase):
     """验证阶段化检索编排和资源类型选择"""
 
     async def asyncSetUp(self) -> None:
@@ -108,7 +112,7 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         self.meta_repo.list_column_infos = AsyncMock(return_value=[self.column])
         self.meta_repo.list_metric_infos = AsyncMock(return_value=[self.metric])
 
-        self.service = MetaSearchService(
+        self.service = SemanticResourceRecallService(
             embedding_client=self.embedding_client,
             column_repo=self.column_repo,
             metric_repo=self.metric_repo,
@@ -125,9 +129,9 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
     def build_restricted_service(
         self,
         *grants: AssetIdentity,
-    ) -> MetaSearchService:
+    ) -> SemanticResourceRecallService:
         """构造字段白名单受限的检索服务"""
-        return MetaSearchService(
+        return SemanticResourceRecallService(
             embedding_client=self.embedding_client,
             column_repo=self.column_repo,
             metric_repo=self.metric_repo,
@@ -156,8 +160,8 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        response = await service.search(
-            SemanticResourceSearchRequest(
+        response = await service.recall(
+            SemanticResourceRecallRequest(
                 terms=["金额"],
                 resource_types=["column"],
             )
@@ -179,8 +183,8 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_empty_asset_policy_skips_all_backends(self) -> None:
         service = self.build_restricted_service()
 
-        response = await service.search(
-            SemanticResourceSearchRequest(
+        response = await service.recall(
+            SemanticResourceRecallRequest(
                 terms=["收入"],
                 resource_types=["column", "metric", "value"],
             )
@@ -208,8 +212,8 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
             [column_hit],
         ]
 
-        response = await self.service.search(
-            SemanticResourceSearchRequest(
+        response = await self.service.recall(
+            SemanticResourceRecallRequest(
                 terms=["销售额", "GMV"],
                 resource_types=["column"],
             )
@@ -243,8 +247,8 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         self.metric_repo.search_text_hits.return_value = [metric_hit]
         self.metric_repo.search_vector_hits.return_value = [metric_hit]
 
-        response = await self.service.search(
-            SemanticResourceSearchRequest(
+        response = await self.service.recall(
+            SemanticResourceRecallRequest(
                 terms=["收入"],
                 resource_types=["metric"],
             )
@@ -264,8 +268,8 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
             )
         ]
 
-        response = await self.service.search(
-            SemanticResourceSearchRequest(
+        response = await self.service.recall(
+            SemanticResourceRecallRequest(
                 terms=["100"],
                 resource_types=["value"],
             )
@@ -285,8 +289,8 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         self.column_repo.search_text_hits.side_effect = RuntimeError("text down")
         self.column_repo.search_vector_hits.return_value = [column_hit]
 
-        response = await self.service.search(
-            SemanticResourceSearchRequest(
+        response = await self.service.recall(
+            SemanticResourceRecallRequest(
                 terms=["销售额"],
                 resource_types=["column"],
             )
@@ -295,11 +299,48 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, "partial")
         self.assertEqual([item.name for item in response.columns], ["amount"])
         self.assertEqual(
-            response.warnings,
-            ["字段全文 检索服务暂不可用"],
+            response.failures,
+            [
+                SemanticRecallFailure(
+                    resource_type="column",
+                    channel="fulltext",
+                    term="销售额",
+                )
+            ],
         )
 
-    async def test_column_context_adds_primary_key_and_one_hop_relation(self) -> None:
+    async def test_vector_failure_identifies_the_affected_term(self) -> None:
+        column_hit = SearchHit(item=self.column, score=0.9)
+        self.embedding_client.aembed_documents.return_value = [[0.1], [0.2]]
+        self.column_repo.search_text_hits.return_value = []
+        self.column_repo.search_vector_hits.side_effect = [
+            RuntimeError("vector down"),
+            [column_hit],
+        ]
+
+        response = await self.service.recall(
+            SemanticResourceRecallRequest(
+                terms=["销售额", "GMV"],
+                resource_types=["column"],
+            )
+        )
+
+        self.assertEqual(response.status, "partial")
+        self.assertEqual([item.name for item in response.columns], ["amount"])
+        self.assertEqual(
+            response.failures,
+            [
+                SemanticRecallFailure(
+                    resource_type="column",
+                    channel="vector",
+                    term="销售额",
+                )
+            ],
+        )
+
+    async def test_column_context_adds_primary_key_and_one_hop_foreign_key_context(
+        self,
+    ) -> None:
         order_id = build_column(name="id", index_values=False)
         customer_id = build_column(
             name="customer_id",
@@ -333,8 +374,8 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         self.column_repo.search_text_hits.return_value = [direct_hit]
         self.column_repo.search_vector_hits.return_value = [direct_hit]
 
-        response = await self.service.search(
-            SemanticResourceSearchRequest(
+        response = await self.service.recall(
+            SemanticResourceRecallRequest(
                 terms=["销售额"],
                 resource_types=["column"],
             )
@@ -350,9 +391,6 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
                 ("customers", "tenant_id"),
             },
         )
-        self.assertEqual(len(response.relations), 1)
-        self.assertEqual(response.relations[0].source_c_name, "customer_id")
-        self.assertEqual(response.relations[0].target_t_name, "customers")
 
     async def test_match_reason_preserves_term_containing_colon(self) -> None:
         column_hit = SearchHit(item=self.column, score=0.75)
@@ -360,8 +398,8 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         self.column_repo.search_text_hits.return_value = [column_hit]
         self.column_repo.search_vector_hits.return_value = []
 
-        response = await self.service.search(
-            SemanticResourceSearchRequest(
+        response = await self.service.recall(
+            SemanticResourceRecallRequest(
                 terms=["销售额:含税"],
                 resource_types=["column"],
             )
@@ -385,7 +423,7 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
             return []
 
         self.value_repo.search_hits.side_effect = search_value
-        self.service = MetaSearchService(
+        self.service = SemanticResourceRecallService(
             embedding_client=self.embedding_client,
             column_repo=self.column_repo,
             metric_repo=self.metric_repo,
@@ -400,8 +438,8 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
             max_concurrent_index_queries=2,
         )
 
-        await self.service.search(
-            SemanticResourceSearchRequest(
+        await self.service.recall(
+            SemanticResourceRecallRequest(
                 terms=[f"q{index}" for index in range(1, 10)],
                 resource_types=["value"],
             )
@@ -430,8 +468,8 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         self.meta_repo.list_metric_infos.side_effect = load_metrics
         self.value_repo.search_hits.return_value = []
 
-        await self.service.search(
-            SemanticResourceSearchRequest(
+        await self.service.recall(
+            SemanticResourceRecallRequest(
                 terms=["100"],
                 resource_types=["value"],
             )
@@ -485,8 +523,8 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         self.metric_repo.search_text_hits.return_value = [metric_hit]
         self.metric_repo.search_vector_hits.return_value = []
 
-        response = await self.service.search(
-            SemanticResourceSearchRequest(
+        response = await self.service.recall(
+            SemanticResourceRecallRequest(
                 terms=["宽指标"],
                 resource_types=["metric"],
             )
@@ -497,7 +535,6 @@ class MetaSearchServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(("orders", "id"), returned_columns)
         self.assertIn(("orders", "customer_id"), returned_columns)
         self.assertIn(("customers", "id"), returned_columns)
-        self.assertEqual(len(response.relations), 1)
         self.assertIn(
             "排序后的字段上下文已截断，最多保留 30 个资源",
             response.warnings,

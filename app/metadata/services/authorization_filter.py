@@ -2,7 +2,12 @@
 
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
 from app.metadata.models.catalog import ColumnInfo, ColumnKey, MetricInfo, TableInfo
-from app.metadata.models.search import SemanticSearchResponse
+from app.metadata.models.search import (
+    SemanticColumnRecallResult,
+    SemanticMetricRecallResult,
+    SemanticResourceRecallResponse,
+    SemanticValueRecallResult,
+)
 
 
 class MetadataAuthorizationFilter:
@@ -128,8 +133,8 @@ class MetadataAuthorizationFilter:
 
     def filter_semantic_response(
         self,
-        response: SemanticSearchResponse,
-    ) -> SemanticSearchResponse:
+        response: SemanticResourceRecallResponse,
+    ) -> SemanticResourceRecallResponse:
         """按当前权限过滤已持久化的语义召回快照"""
         columns = []
         for item in response.columns:
@@ -155,47 +160,73 @@ class MetadataAuthorizationFilter:
                     }
                 )
             )
+        metrics = [
+            item
+            for item in response.metrics
+            if self._semantic_metric_is_allowed(item.relevant_columns)
+        ]
+        values = [
+            item
+            for item in response.values
+            if self.column_is_allowed(item.t_name, item.c_name)
+        ]
+        tables = [
+            item.model_copy(
+                update={
+                    "primary_key_columns": [
+                        column_name
+                        for column_name in item.primary_key_columns
+                        if self.column_is_allowed(item.name, column_name)
+                    ]
+                }
+            )
+            for item in response.tables
+            if self.table_is_visible(item.name)
+        ]
         return response.model_copy(
             update={
-                "metrics": [
-                    item
-                    for item in response.metrics
-                    if self._semantic_metric_is_allowed(item.relevant_columns)
-                ],
+                "metrics": metrics,
                 "columns": columns,
-                "values": [
-                    item
-                    for item in response.values
-                    if self.column_is_allowed(item.t_name, item.c_name)
-                ],
-                "tables": [
-                    item.model_copy(
-                        update={
-                            "primary_key_columns": [
-                                column_name
-                                for column_name in item.primary_key_columns
-                                if self.column_is_allowed(item.name, column_name)
-                            ]
-                        }
-                    )
-                    for item in response.tables
-                    if self.table_is_visible(item.name)
-                ],
-                "relations": [
-                    item
-                    for item in response.relations
-                    if self.column_is_allowed(
-                        item.source_t_name,
-                        item.source_c_name,
-                    )
-                    and self.column_is_allowed(
-                        item.target_t_name,
-                        item.target_c_name,
-                    )
-                ],
-                "warnings": [],
+                "values": values,
+                "tables": tables,
+                "warnings": self._filter_semantic_warnings(
+                    response,
+                    columns,
+                    metrics,
+                    values,
+                ),
             }
         )
+
+    @staticmethod
+    def _filter_semantic_warnings(
+        response: SemanticResourceRecallResponse,
+        columns: list[SemanticColumnRecallResult],
+        metrics: list[SemanticMetricRecallResult],
+        values: list[SemanticValueRecallResult],
+    ) -> list[str]:
+        """移除指向已过滤资产的索引状态告警，保留通用告警"""
+        allowed_column_keys = {(item.t_name, item.name) for item in columns}
+        allowed_metric_names = {item.name for item in metrics}
+        allowed_value_column_keys = {(item.t_name, item.c_name) for item in values}
+        denied_warnings: set[str] = set()
+
+        for item in response.columns:
+            if (item.t_name, item.name) not in allowed_column_keys:
+                denied_warnings.add(
+                    "字段语义索引状态为 "
+                    f"{item.index_status}: {item.t_name}.{item.name}"
+                )
+        for item in response.metrics:
+            if item.name not in allowed_metric_names:
+                denied_warnings.add(f"指标语义索引状态为 {item.index_status}: {item.name}")
+        for item in response.values:
+            if (item.t_name, item.c_name) not in allowed_value_column_keys:
+                denied_warnings.add(
+                    "字段取值索引状态为 "
+                    f"{item.sync_status or '未知'}: {item.t_name}.{item.c_name}"
+                )
+        return [warning for warning in response.warnings if warning not in denied_warnings]
 
     def _semantic_metric_is_allowed(
         self,
