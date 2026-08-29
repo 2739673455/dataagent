@@ -182,7 +182,7 @@ def enqueue_import(
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_jitter=True,
-    max_retries=5,
+    max_retries=3,
 )
 def sync_table_indexes_task(table_names: list[str]) -> dict[str, Any]:
     """执行多个表的字段语义索引同步"""
@@ -213,7 +213,7 @@ def sync_table_indexes_task(table_names: list[str]) -> dict[str, Any]:
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_jitter=True,
-    max_retries=5,
+    max_retries=3,
 )
 def sync_table_values_task(
     table_names: list[str],
@@ -247,7 +247,7 @@ def sync_table_values_task(
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_jitter=True,
-    max_retries=5,
+    max_retries=3,
 )
 def sync_column_indexes_task(column_keys: list[list[str]]) -> dict[str, Any]:
     """执行指定字段的语义索引同步"""
@@ -279,7 +279,7 @@ def sync_column_indexes_task(column_keys: list[list[str]]) -> dict[str, Any]:
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_jitter=True,
-    max_retries=5,
+    max_retries=3,
 )
 def sync_column_values_task(
     column_keys: list[list[str]],
@@ -316,7 +316,7 @@ def sync_column_values_task(
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_jitter=True,
-    max_retries=5,
+    max_retries=3,
 )
 def sync_metric_indexes_task(metric_names: list[str]) -> dict[str, Any]:
     """执行指定指标的语义索引同步"""

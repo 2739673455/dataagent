@@ -51,10 +51,8 @@ class ConversationLifecycleLockProvider(Protocol):
     def advisory_lock(
         self,
         name: str,
-        *,
-        timeout: float,
     ) -> AbstractAsyncContextManager[None]:
-        """创建指定名称的跨进程锁上下文"""
+        """创建指定名称的非阻塞跨进程锁上下文"""
         ...
 
 

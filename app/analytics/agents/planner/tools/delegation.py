@@ -35,10 +35,6 @@ def create_delegation_tool(service: AgentSessionService) -> BaseTool:
             str,
             "交给专业 Agent 的完整目标、输入产物路径和约束",
         ],
-        repair_depth: Annotated[
-            int,
-            "当前修补链深度，普通委派为 0，沿 RepairRequest 委派时加一",
-        ] = 0,
     ) -> dict[str, object]:
         """创建或恢复专业 Agent Session 并返回可验证的结构化结果"""
         try:
@@ -47,7 +43,6 @@ def create_delegation_tool(service: AgentSessionService) -> BaseTool:
                 agent_type=agent_type,
                 session_id=session_id,
                 message=message,
-                repair_depth=repair_depth,
             )
         except ValidationError as exc:
             return {

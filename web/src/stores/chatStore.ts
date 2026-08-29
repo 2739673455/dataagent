@@ -241,8 +241,8 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     const generation = sessionLifecycle.current();
     set((state) => {
       const conversationRuns = state.subagentRunsByConversation[conversationId] ?? {};
-      const current = conversationRuns[identity.delegationId] ??
-        createSubagentRun(identity, "completed");
+      const current =
+        conversationRuns[identity.delegationId] ?? createSubagentRun(identity, "completed");
       return {
         subagentRunsByConversation: {
           ...state.subagentRunsByConversation,
@@ -259,8 +259,8 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       if (sessionLifecycle.isCurrent(generation)) {
         set((state) => {
           const conversationRuns = state.subagentRunsByConversation[conversationId] ?? {};
-          const current = conversationRuns[identity.delegationId] ??
-            createSubagentRun(identity, "completed");
+          const current =
+            conversationRuns[identity.delegationId] ?? createSubagentRun(identity, "completed");
           const merged = [...current.messages];
           for (const message of messages) {
             if (!messageAlreadyExists(merged, message)) merged.push(message);

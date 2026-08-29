@@ -150,12 +150,7 @@ agent:
   orchestration:
     mode: dynamic_subagents
     max_parallel_sessions: 8
-    max_delegations_per_run: 20
     max_continuations: 3
-    max_session_resumes: 3
-    max_repair_rounds: 3
-    max_repair_depth: 5
-    session_lock_timeout: 300
   interpreter:
     mode: thread
     ptc:

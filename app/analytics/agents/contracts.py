@@ -71,7 +71,7 @@ def build_planner_config(user_id: int, conversation_id: UUID) -> RunnableConfig:
 
 @dataclass(frozen=True, slots=True)
 class PlannerTurnContext:
-    """绑定一个用户回合的 Planner 预算和续写上限"""
+    """绑定一个用户回合的 Planner 运行身份和续写上限"""
 
     user_id: int
     conversation_id: UUID
@@ -79,7 +79,7 @@ class PlannerTurnContext:
     max_continuations: int
 
     def __post_init__(self) -> None:
-        """校验 Planner 回合上下文中的身份和预算参数"""
+        """校验 Planner 回合上下文中的身份和续写参数"""
         if isinstance(self.user_id, bool) or self.user_id <= 0:
             raise ValueError("user_id 必须为正整数")
         if not self.planner_run_id.strip():
@@ -155,7 +155,6 @@ class DelegationRequest(StrictProtocolModel):
     agent_type: AgentType
     session_id: Identifier
     message: NonEmptyText
-    repair_depth: int = Field(default=0, ge=0)
 
 
 class ListSessionsRequest(StrictProtocolModel):

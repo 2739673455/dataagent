@@ -1,10 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import {
-  adminApi,
-  type DorisExistingRoleResponse,
-  type DorisRoleResponse,
-} from "@/api/admin";
+import { adminApi, type DorisExistingRoleResponse, type DorisRoleResponse } from "@/api/admin";
 import { getApiErrorMessage } from "@/api/errors";
 import {
   AdminDialogActions,

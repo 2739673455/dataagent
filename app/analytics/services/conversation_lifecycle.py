@@ -33,8 +33,6 @@ class ConversationLifecycleService:
         agents: ConversationAgentLifecycle,
         sandbox: ConversationSandboxCleaner,
         config: LifecycleConfig,
-        *,
-        session_lock_timeout: float,
     ) -> None:
         """初始化跨存储会话资源和生命周期锁依赖"""
         self._repository_factory = repository_factory
@@ -43,7 +41,6 @@ class ConversationLifecycleService:
         self._agents = agents
         self._sandbox = sandbox
         self._config = config
-        self._session_lock_timeout = session_lock_timeout
 
     @asynccontextmanager
     async def lock(
@@ -54,7 +51,6 @@ class ConversationLifecycleService:
         """获取跨进程会话生命周期锁"""
         async with self._lock_provider.advisory_lock(
             conversation_lifecycle_lock_name(user_id, conversation_id),
-            timeout=self._session_lock_timeout,
         ):
             yield
 

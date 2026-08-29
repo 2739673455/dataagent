@@ -144,7 +144,6 @@ class ConversationAgentRuntimeFactory:
             checkpointer=checkpointer,
             sandbox=self._sandbox,
             conversation_backend=conversation_backend,
-            lock_timeout=orchestration.session_lock_timeout,
         )
         specialist_factory = SpecialistAgentFactory(
             resources.specialist_definitions,
@@ -158,11 +157,6 @@ class ConversationAgentRuntimeFactory:
             user_id=user_id,
             conversation_id=conversation_id,
             max_parallel_sessions=orchestration.max_parallel_sessions,
-            max_delegations_per_run=orchestration.max_delegations_per_run,
-            max_repair_rounds=orchestration.max_repair_rounds,
-            max_repair_depth=orchestration.max_repair_depth,
-            max_session_resumes=orchestration.max_session_resumes,
-            session_lock_timeout=orchestration.session_lock_timeout,
         )
         planner = self._create_planner(
             resources.planner_model,
@@ -175,7 +169,6 @@ class ConversationAgentRuntimeFactory:
             session_service=session_service,
             planner_lock=lambda: self._persistence.advisory_lock(
                 conversation_lifecycle_lock_name(user_id, conversation_id),
-                timeout=orchestration.session_lock_timeout,
             ),
             conversation_deleted=lambda: self._tombstones.exists(
                 user_id,
@@ -197,7 +190,6 @@ class ConversationAgentRuntimeFactory:
             create_delete_session_tool(session_service),
         ]
         interpreter = app_config.cfg.agent.interpreter
-        orchestration = app_config.cfg.agent.orchestration
         return create_planner_agent(
             model=model,
             tools=planner_tools,
@@ -208,9 +200,6 @@ class ConversationAgentRuntimeFactory:
             interpreter_timeout_seconds=interpreter.timeout_seconds,
             interpreter_memory_limit_bytes=interpreter.memory_limit_bytes,
             interpreter_max_ptc_calls=interpreter.max_ptc_calls_per_eval,
-            max_delegations_per_run=orchestration.max_delegations_per_run,
-            max_repair_rounds=orchestration.max_repair_rounds,
-            max_repair_depth=orchestration.max_repair_depth,
         )
 
     def close(self) -> None:

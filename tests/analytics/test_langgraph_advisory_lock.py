@@ -90,9 +90,9 @@ class _FakePool:
 
 
 class AdvisoryLockTest(unittest.IsolatedAsyncioTestCase):
-    """验证失败等待者及时归还小连接池连接"""
+    """验证咨询锁竞争立即失败并正确释放连接"""
 
-    async def test_cross_worker_waiter_does_not_starve_pool(self) -> None:
+    async def test_cross_worker_conflict_fails_immediately(self) -> None:
         pool = _FakePool(size=2)
         first_manager = LangGraphPostgresManager(MagicMock())
         second_manager = LangGraphPostgresManager(MagicMock())
@@ -100,31 +100,26 @@ class AdvisoryLockTest(unittest.IsolatedAsyncioTestCase):
         cast(Any, second_manager)._advisory_pool = pool
         holder_entered = asyncio.Event()
         release_holder = asyncio.Event()
-        waiter_entered = asyncio.Event()
 
         async def hold_lock() -> None:
-            async with first_manager.advisory_lock("shared", timeout=1):
+            async with first_manager.advisory_lock("shared"):
                 holder_entered.set()
                 await release_holder.wait()
 
-        async def wait_for_lock() -> None:
-            async with second_manager.advisory_lock("shared", timeout=1):
-                waiter_entered.set()
-
         holder = asyncio.create_task(hold_lock())
         await holder_entered.wait()
-        waiter = asyncio.create_task(wait_for_lock())
-        await asyncio.sleep(0.01)
+
+        with self.assertRaisesRegex(RuntimeError, "咨询锁正在使用"):
+            async with second_manager.advisory_lock("shared"):
+                self.fail("conflicting worker acquired lock")
 
         await asyncio.wait_for(pool.probe(), timeout=0.2)
-        self.assertFalse(waiter_entered.is_set())
 
         release_holder.set()
-        await asyncio.gather(holder, waiter)
-        self.assertTrue(waiter_entered.is_set())
+        await holder
         self.assertLessEqual(pool.max_borrowed, 2)
 
-    async def test_same_process_waiters_use_local_lock(self) -> None:
+    async def test_same_process_conflicts_do_not_borrow_connections(self) -> None:
         pool = _FakePool(size=2)
         manager = LangGraphPostgresManager(MagicMock())
         cast(Any, manager)._advisory_pool = pool
@@ -132,24 +127,27 @@ class AdvisoryLockTest(unittest.IsolatedAsyncioTestCase):
         release_holder = asyncio.Event()
 
         async def hold_lock() -> None:
-            async with manager.advisory_lock("shared", timeout=1):
+            async with manager.advisory_lock("shared"):
                 holder_entered.set()
                 await release_holder.wait()
 
-        async def wait_for_lock() -> None:
-            async with manager.advisory_lock("shared", timeout=1):
+        async def compete_for_lock() -> None:
+            async with manager.advisory_lock("shared"):
                 return
 
         holder = asyncio.create_task(hold_lock())
         await holder_entered.wait()
-        waiters = [asyncio.create_task(wait_for_lock()) for _ in range(20)]
-        await asyncio.sleep(0.01)
+        conflicts = await asyncio.gather(
+            *(compete_for_lock() for _ in range(20)),
+            return_exceptions=True,
+        )
 
         self.assertEqual(pool.borrowed, 1)
+        self.assertTrue(all(isinstance(result, RuntimeError) for result in conflicts))
         await asyncio.wait_for(pool.probe(), timeout=0.2)
 
         release_holder.set()
-        await asyncio.gather(holder, *waiters)
+        await holder
 
     async def test_successful_holders_do_not_use_checkpoint_pool(self) -> None:
         advisory_pool = _FakePool(size=12)
@@ -161,7 +159,7 @@ class AdvisoryLockTest(unittest.IsolatedAsyncioTestCase):
         release = asyncio.Event()
 
         async def hold_lock(index: int) -> None:
-            async with manager.advisory_lock(f"lock-{index}", timeout=1):
+            async with manager.advisory_lock(f"lock-{index}"):
                 entered[index].set()
                 await release.wait()
 

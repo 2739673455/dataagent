@@ -61,14 +61,14 @@ Analytics
 
 流式连接每 15 秒发送 keep-alive。客户端断开后设置取消事件，运行时在安全边界停止后续工作。
 
-Planner 可以在 QuickJS 中通过 Programmatic Tool Calling 调用白名单工具，并用 `Promise.all` 并行委派独立分支。委派次数、并行 Session、继续执行次数和修补深度都受配置限制。
+Planner 可以在 QuickJS 中通过 Programmatic Tool Calling 调用白名单工具，并用 `Promise.all` 并行委派独立分支。并行 Session 和继续执行次数受配置限制。
 
 ## 3. 委派和恢复专业 Agent Session
 
 ```text
 Planner 调用 delegation
-→ 提供 analysis_id、agent_type、session_id、message 和 repair_depth
-→ 校验严格结构和本轮预算
+→ 提供 analysis_id、agent_type、session_id 和 message
+→ 校验严格结构和 Planner 运行状态
 → 生成专业 Agent checkpoint namespace
 → 获取同 Session 的进程内锁和 PostgreSQL advisory lock
 → 获取或创建绑定独立沙箱目录的专业 Agent

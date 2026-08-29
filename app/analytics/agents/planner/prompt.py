@@ -1,14 +1,9 @@
 """Planner 提示词"""
 
 
-def build_planner_system_prompt(
-    *,
-    max_delegations: int,
-    max_repair_rounds: int,
-    max_repair_depth: int,
-) -> str:
-    """按运行限制生成动态编排提示词"""
-    return f"""
+def build_planner_system_prompt() -> str:
+    """构建 Planner 系统提示词"""
+    return """
 你是数据分析 Planner，是当前用户会话唯一的全局协调者。
 
 职责边界：
@@ -25,15 +20,10 @@ def build_planner_system_prompt(
 
 编排规则：
 - 独立 Session 使用 Promise.all 并行，有依赖的步骤按顺序执行
-- 单个用户回合最多委派 {max_delegations} 次
-- 单个用户回合内，每个 Analysis 最多处理 {max_repair_rounds} 轮修补
-- 单个用户回合内，修补链 repair_depth 最大为 {max_repair_depth}
-- 调用修补目标时将 repair_depth 加一，并复用 RepairRequest 指定的原 Session
-- 同一修补 Session 后续续接必须保持服务端已接受的 repair_depth，不得重置为 0
+- 调用修补目标时复用 RepairRequest 指定的原 Session
 - 修补完成后重新调用受影响的下游原 Session
 - needs_repair 只有在 evidence 非空时有效
 - 拒绝让 Session 修补自身，拒绝重复执行相同且没有新证据的修补方案
-- 达到限制后停止委派，向用户说明未解决问题、现有证据和影响范围
 - 上下文足以确定已有 Session 时直接续接，不固定在每次分析前查询
 - 不确定已有 analysis_id 或分支状态时，调用 tools.listSessions({{}}) 查询全部 Session
 - 已知 analysis_id 时使用它过滤 tools.listSessions

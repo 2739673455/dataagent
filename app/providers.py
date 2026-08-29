@@ -34,7 +34,6 @@ conversation_lifecycle_service = build_conversation_lifecycle_service(
     agent_manager,
     sandbox_manager,
     cfg.lifecycle,
-    session_lock_timeout=cfg.agent.orchestration.session_lock_timeout,
 )
 user_deletion_service = UserDeletionService(
     PostgresUserDeletionStateStore(auth_postgres_client_manager),

@@ -17,10 +17,8 @@ class FakePersistenceManager:
     async def advisory_lock(
         self,
         name: str,
-        *,
-        timeout: float,
     ) -> AsyncGenerator[None]:
-        del name, timeout
+        del name
         yield
 
 
@@ -88,7 +86,6 @@ class ConversationLifecycleServiceTest(unittest.IsolatedAsyncioTestCase):
                 agents,
                 sandbox,
                 build_config(),
-                session_lock_timeout=1,
             ),
             agents,
             sandbox,

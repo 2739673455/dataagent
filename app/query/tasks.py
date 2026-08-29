@@ -38,7 +38,7 @@ async def _sync_index(experience_id: UUID, revision: int) -> int:
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_jitter=True,
-    max_retries=5,
+    max_retries=3,
 )
 def sync_index_task(
     self: object, experience_id: str, revision: int

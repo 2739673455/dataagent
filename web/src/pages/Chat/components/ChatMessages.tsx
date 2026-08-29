@@ -1,4 +1,17 @@
-import { Check, ChevronDown, Copy, Download, Eye, FileText, Loader2, Square, Wrench } from "lucide-react";
+import {
+  Bot,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Download,
+  Eye,
+  FileText,
+  Loader2,
+  Sparkles,
+  Square,
+  Wrench,
+} from "lucide-react";
 import type { RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -17,7 +30,7 @@ import type {
   TextContent,
 } from "@/types";
 
-type MessageDisplayItem = {
+export type MessageDisplayItem = {
   key: string;
   type: "message";
   message: {
@@ -30,7 +43,7 @@ type MessageDisplayItem = {
   };
 };
 
-type ToolRunDisplayItem = {
+export type ToolRunDisplayItem = {
   key: string;
   type: "tool_run";
   toolCallId: string;
@@ -43,20 +56,75 @@ type ToolRunDisplayItem = {
   interrupted?: boolean;
 };
 
-type DisplayItem = MessageDisplayItem | ToolRunDisplayItem;
+export type DisplayItem = MessageDisplayItem | ToolRunDisplayItem;
+
+export type ChatTurn = {
+  key: string;
+  userItem: MessageDisplayItem | null;
+  intermediateItems: DisplayItem[];
+  finalItem: MessageDisplayItem | null;
+};
+
 type SubagentRunMap = Record<string, SubagentRun>;
+
 type UserMessageNavigationItem = {
   key: string;
   createdAt: string | null;
   preview: string;
 };
+
 const TOOL_ARGS_PREVIEW_MAX_LENGTH = 120;
-const AGENT_TYPE_LABELS: Record<AgentType, string> = {
-  explorer: "Explorer",
-  analyst: "Analyst",
-  reviewer: "Reviewer",
-  visualizer: "Visualizer",
+
+const AGENT_CONFIG: Record<
+  AgentType,
+  {
+    name: string;
+    roleName: string;
+    title: string;
+    badgeBg: string;
+    badgeText: string;
+    border: string;
+    bg: string;
+  }
+> = {
+  explorer: {
+    name: "Explorer",
+    roleName: "探索者",
+    title: "Explorer 探索者",
+    badgeBg: "bg-[#e0f2fe]",
+    badgeText: "text-[#0369a1]",
+    border: "border-[#bae6fd]",
+    bg: "bg-[#f0f9ff]",
+  },
+  analyst: {
+    name: "Analyst",
+    roleName: "分析师",
+    title: "Analyst 分析师",
+    badgeBg: "bg-[#ede9fe]",
+    badgeText: "text-[#6d28d9]",
+    border: "border-[#ddd6fe]",
+    bg: "bg-[#f5f3ff]",
+  },
+  reviewer: {
+    name: "Reviewer",
+    roleName: "审查员",
+    title: "Reviewer 审查员",
+    badgeBg: "bg-[#fef3c7]",
+    badgeText: "text-[#b45309]",
+    border: "border-[#fde68a]",
+    bg: "bg-[#fffbeb]",
+  },
+  visualizer: {
+    name: "Visualizer",
+    roleName: "可视化专家",
+    title: "Visualizer 可视化专家",
+    badgeBg: "bg-[#d1fae5]",
+    badgeText: "text-[#047857]",
+    border: "border-[#a7f3d0]",
+    bg: "bg-[#ecfdf5]",
+  },
 };
+
 const AGENT_TYPES = new Set<AgentType>(["explorer", "analyst", "reviewer", "visualizer"]);
 
 function ImagePreview({ alt, onClose, src }: { alt: string; onClose: () => void; src: string }) {
@@ -220,7 +288,7 @@ function isInteractiveTableAttachment(attachment: Attachment) {
   );
 }
 
-function buildDisplayItems(
+export function buildDisplayItems(
   conversationId: string | null,
   messages: MessageResponse[],
   isStreaming: boolean
@@ -317,6 +385,55 @@ function buildDisplayItems(
   return items;
 }
 
+export function groupDisplayItemsIntoTurns(displayItems: DisplayItem[]): ChatTurn[] {
+  const turns: ChatTurn[] = [];
+  let currentUserItem: MessageDisplayItem | null = null;
+  let currentAssistantItems: DisplayItem[] = [];
+
+  const flushTurn = () => {
+    if (!currentUserItem && currentAssistantItems.length === 0) return;
+
+    let finalItem: MessageDisplayItem | null = null;
+    let intermediateItems: DisplayItem[] = [];
+
+    if (currentAssistantItems.length > 0) {
+      const lastItem = currentAssistantItems[currentAssistantItems.length - 1];
+      if (lastItem.type === "message" && lastItem.message.role === "assistant") {
+        finalItem = lastItem;
+        intermediateItems = currentAssistantItems.slice(0, currentAssistantItems.length - 1);
+      } else {
+        intermediateItems = [...currentAssistantItems];
+      }
+    }
+
+    const key =
+      currentUserItem?.key ??
+      (finalItem?.key || intermediateItems[0]?.key || `turn-${turns.length}`);
+
+    turns.push({
+      key,
+      userItem: currentUserItem,
+      intermediateItems,
+      finalItem,
+    });
+
+    currentUserItem = null;
+    currentAssistantItems = [];
+  };
+
+  for (const item of displayItems) {
+    if (item.type === "message" && item.message.role === "user") {
+      flushTurn();
+      currentUserItem = item;
+    } else {
+      currentAssistantItems.push(item);
+    }
+  }
+
+  flushTurn();
+  return turns;
+}
+
 function formatToolArgValue(value: unknown): string {
   if (value === null) return "null";
   if (value === undefined) return "undefined";
@@ -361,6 +478,23 @@ function getSubagentRunIdentity(item: ToolRunDisplayItem): SubagentRunIdentity |
     agentType: agentType as AgentType,
     sessionId,
   };
+}
+
+function getSubagentStatusLabel(status: SubagentRun["status"]): string {
+  switch (status) {
+    case "running":
+      return "运行中";
+    case "completed":
+      return "已完成";
+    case "needs_repair":
+      return "待修补";
+    case "failed":
+      return "失败";
+    case "cancelled":
+      return "已取消";
+    case "interrupted":
+      return "已中断";
+  }
 }
 
 function CodeBlock({ children, className }: { children: React.ReactNode; className?: string }) {
@@ -517,156 +651,6 @@ function PartView({
     >
       <img src={part.image_url} alt="asset" className="max-h-72 rounded object-cover" />
     </button>
-  );
-}
-
-function ToolRunBar({
-  item,
-  loadSubagentMessages,
-  onOpenPreviewAttachment,
-  subagentRun,
-}: {
-  item: ToolRunDisplayItem;
-  loadSubagentMessages?: (
-    conversationId: string,
-    run: SubagentRunIdentity
-  ) => Promise<MessageResponse[]>;
-  onOpenPreviewAttachment?: (attachment: Attachment) => void;
-  subagentRun?: SubagentRun;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [historyError, setHistoryError] = useState<string | null>(null);
-  const previousSubagentStatus = useRef(subagentRun?.status);
-  const argsPreview = getToolArgsPreview(item.args);
-  const hasAttachments = item.completed && (item.attachments?.length ?? 0) > 0;
-  const subagentIdentity = getSubagentRunIdentity(item);
-
-  useEffect(() => {
-    if (subagentRun?.status === "running") {
-      setIsOpen(true);
-    } else if (previousSubagentStatus.current === "running") {
-      setIsOpen(false);
-    }
-    previousSubagentStatus.current = subagentRun?.status;
-  }, [subagentRun?.status]);
-
-  const loadHistory = () => {
-    if (!subagentIdentity || !item.conversationId || !loadSubagentMessages) return;
-    setHistoryError(null);
-    void loadSubagentMessages(item.conversationId, subagentIdentity).catch(() => {
-      setHistoryError("工作详情加载失败，请重试");
-    });
-  };
-
-  const toggleOpen = () => {
-    const nextOpen = !isOpen;
-    setIsOpen(nextOpen);
-    if (
-      !nextOpen ||
-      !subagentIdentity ||
-      !item.conversationId ||
-      !loadSubagentMessages ||
-      subagentRun?.historyLoaded ||
-      subagentRun?.historyLoading ||
-      subagentRun?.status === "running"
-    ) {
-      return;
-    }
-    loadHistory();
-  };
-
-  return (
-    <div className="my-2 font-mono text-xs">
-      <div className="rounded border border-[#d4d4ce] bg-[#ffffff] shadow-xs">
-        <button
-          type="button"
-          onClick={toggleOpen}
-          className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition hover:bg-[#fafaf8]"
-        >
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-[#ebebe6]">
-              {item.completed ? (
-                <Wrench className="h-3 w-3 text-[#52525b]" />
-              ) : item.interrupted ? (
-                <Square className="h-3 w-3 text-[#a1a1aa]" />
-              ) : (
-                <Loader2 className="h-3 w-3 animate-spin text-[#1e2024]" />
-              )}
-            </div>
-            <span className="font-medium text-[#18181b]">{item.name}</span>
-            {argsPreview ? (
-              <span className="truncate text-[#71717a] text-[11px]">{argsPreview}</span>
-            ) : null}
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            <span
-              className={cn(
-                "rounded px-1.5 py-0.5 text-[10px] font-medium",
-                item.completed
-                  ? "bg-[#ebebe6] text-[#3f3f46]"
-                  : item.interrupted
-                    ? "bg-[#f0f0ec] text-[#a1a1aa]"
-                    : "bg-[#deded8] text-[#18181b]"
-              )}
-            >
-              {item.completed ? "已完成" : item.interrupted ? "已中断" : "执行中"}
-            </span>
-            <ChevronDown
-              className={cn(
-                "h-3.5 w-3.5 text-[#71717a] transition-transform",
-                isOpen && "rotate-180"
-              )}
-            />
-          </div>
-        </button>
-
-        {isOpen && (
-          <div className="space-y-2 border-t border-[#e5e5df] bg-[#fafaf8] p-3 text-[11px]">
-            {item.args !== undefined ? (
-              <div className="space-y-1">
-                <p className="font-medium text-[#71717a]">参数</p>
-                <pre className="overflow-x-auto whitespace-pre-wrap rounded border border-[#e5e5df] bg-[#ffffff] p-2 text-[#3f3f46]">
-                  {JSON.stringify(item.args, null, 2)}
-                </pre>
-              </div>
-            ) : null}
-            {item.result !== undefined ? (
-              <div className="space-y-1">
-                <p className="font-medium text-[#71717a]">输出</p>
-                <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded border border-[#e5e5df] bg-[#ffffff] p-2 text-[#27272a]">
-                  {item.result}
-                </pre>
-              </div>
-            ) : null}
-            {subagentIdentity ? (
-              <SubagentActivityPanel
-                conversationId={item.conversationId}
-                error={historyError}
-                identity={subagentIdentity}
-                onOpenPreviewAttachment={onOpenPreviewAttachment}
-                onRetryHistory={loadHistory}
-                run={subagentRun}
-              />
-            ) : null}
-          </div>
-        )}
-      </div>
-
-      {hasAttachments && (
-        <div className="mt-2 flex flex-wrap gap-2 px-1">
-          {(item.attachments ?? []).map((attachment) => (
-            <AttachmentChip
-              key={attachment.f_path}
-              attachment={attachment}
-              conversationId={item.conversationId}
-              isUser={false}
-              onOpenPreviewAttachment={onOpenPreviewAttachment}
-            />
-          ))}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -832,7 +816,7 @@ function MessageBubble({
 
   return (
     <>
-      <div className="my-3 font-mono">
+      <div className="my-2.5 font-mono">
         <div
           className={cn(
             "rounded border p-3.5 shadow-xs",
@@ -886,100 +870,561 @@ function MessageBubble({
   );
 }
 
-function getSubagentStatusLabel(status: SubagentRun["status"]): string {
-  switch (status) {
-    case "running":
-      return "运行中";
-    case "completed":
-      return "已完成";
-    case "needs_repair":
-      return "待修补";
-    case "failed":
-      return "失败";
-    case "cancelled":
-      return "已取消";
-    case "interrupted":
-      return "已中断";
-  }
-}
-
-function SubagentActivityPanel({
-  conversationId,
-  error,
-  identity,
+/**
+ * 普通工具调用的紧凑条目组件
+ */
+function GenericToolRunBar({
+  item,
   onOpenPreviewAttachment,
-  onRetryHistory,
-  run,
 }: {
-  conversationId?: string | null;
-  error: string | null;
-  identity: SubagentRunIdentity;
+  item: ToolRunDisplayItem;
   onOpenPreviewAttachment?: (attachment: Attachment) => void;
-  onRetryHistory: () => void;
-  run?: SubagentRun;
 }) {
-  const displayItems = buildDisplayItems(
-    conversationId ?? null,
-    run?.messages ?? [],
-    run?.status === "running"
-  );
-  const retryHistory = () => {
-    onRetryHistory();
-  };
+  const [isOpen, setIsOpen] = useState(false);
+  const argsPreview = getToolArgsPreview(item.args);
+  const hasAttachments = item.completed && (item.attachments?.length ?? 0) > 0;
 
   return (
-    <div className="space-y-2 border-t border-[#d4d4ce] pt-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <span className="font-semibold text-[#27272a]">
-            {AGENT_TYPE_LABELS[identity.agentType]}
-          </span>
-          <span className="ml-2 text-[#71717a]">{identity.sessionId}</span>
-        </div>
-        <span className="shrink-0 rounded bg-[#ebebe6] px-1.5 py-0.5 text-[10px] text-[#52525b]">
-          {run ? getSubagentStatusLabel(run.status) : "加载中"}
-        </span>
-      </div>
-
-      {error ? (
+    <div className="my-1.5 font-mono text-xs">
+      <div className="rounded border border-[#d4d4ce] bg-[#ffffff] shadow-xs">
         <button
           type="button"
-          onClick={retryHistory}
-          className="text-left text-[11px] text-[#b91c1c] underline underline-offset-2"
+          onClick={() => setIsOpen(!isOpen)}
+          className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition hover:bg-[#fafaf8]"
         >
-          {error}
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-[#ebebe6]">
+              {item.completed ? (
+                <Wrench className="h-3 w-3 text-[#52525b]" />
+              ) : item.interrupted ? (
+                <Square className="h-3 w-3 text-[#a1a1aa]" />
+              ) : (
+                <Loader2 className="h-3 w-3 animate-spin text-[#1e2024]" />
+              )}
+            </div>
+            <span className="font-medium text-[#18181b]">{item.name}</span>
+            {argsPreview ? (
+              <span className="truncate text-[#71717a] text-[11px]">{argsPreview}</span>
+            ) : null}
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <span
+              className={cn(
+                "rounded px-1.5 py-0.5 text-[10px] font-medium",
+                item.completed
+                  ? "bg-[#ebebe6] text-[#3f3f46]"
+                  : item.interrupted
+                    ? "bg-[#f0f0ec] text-[#a1a1aa]"
+                    : "bg-[#deded8] text-[#18181b]"
+              )}
+            >
+              {item.completed ? "已完成" : item.interrupted ? "已中断" : "执行中"}
+            </span>
+            <ChevronDown
+              className={cn(
+                "h-3.5 w-3.5 text-[#71717a] transition-transform",
+                isOpen && "rotate-180"
+              )}
+            />
+          </div>
         </button>
-      ) : null}
-      {!run || run.historyLoading ? (
-        <div className="flex items-center gap-2 rounded border border-[#e5e5df] bg-[#ffffff] px-2 py-2 text-[#71717a]">
-          <Loader2 className="h-3 w-3 animate-spin" />
-          <span>正在加载工作详情...</span>
+
+        {isOpen && (
+          <div className="space-y-2 border-t border-[#e5e5df] bg-[#fafaf8] p-3 text-[11px]">
+            {item.args !== undefined ? (
+              <div className="space-y-1">
+                <p className="font-medium text-[#71717a]">参数</p>
+                <pre className="overflow-x-auto whitespace-pre-wrap rounded border border-[#e5e5df] bg-[#ffffff] p-2 text-[#3f3f46]">
+                  {JSON.stringify(item.args, null, 2)}
+                </pre>
+              </div>
+            ) : null}
+            {item.result !== undefined ? (
+              <div className="space-y-1">
+                <p className="font-medium text-[#71717a]">输出</p>
+                <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded border border-[#e5e5df] bg-[#ffffff] p-2 text-[#27272a]">
+                  {item.result}
+                </pre>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </div>
+
+      {hasAttachments && (
+        <div className="mt-1.5 flex flex-wrap gap-2 px-1">
+          {(item.attachments ?? []).map((attachment) => (
+            <AttachmentChip
+              key={attachment.f_path}
+              attachment={attachment}
+              conversationId={item.conversationId}
+              isUser={false}
+              onOpenPreviewAttachment={onOpenPreviewAttachment}
+            />
+          ))}
         </div>
-      ) : displayItems.length === 0 ? (
-        <p className="rounded border border-[#e5e5df] bg-[#ffffff] px-2 py-2 text-[#71717a]">
-          {run.status === "running" ? "等待 Specialist 输出..." : "没有可展示的工作消息"}
-        </p>
-      ) : (
-        <div className="space-y-1 border-l-2 border-[#d4d4ce] pl-2">
-          {displayItems.map((displayItem) =>
-            displayItem.type === "message" ? (
-              <MessageBubble
-                key={displayItem.key}
-                assistantName={AGENT_TYPE_LABELS[identity.agentType]}
-                message={displayItem.message}
-                onOpenPreviewAttachment={onOpenPreviewAttachment}
-                username="用户"
-              />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Specialist 内部工具调用的折叠组件
+ */
+function SubagentInternalProcessCollapse({
+  items,
+  isStreaming,
+  onOpenPreviewAttachment,
+}: {
+  items: DisplayItem[];
+  isStreaming: boolean;
+  onOpenPreviewAttachment?: (attachment: Attachment) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <div className="my-2 rounded border border-[#e5e5df] bg-[#fcfcfb]">
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left text-xs transition hover:bg-[#f4f4f0]"
+      >
+        <div className="flex items-center gap-2 text-[#52525b]">
+          <div className="flex h-4 w-4 items-center justify-center rounded bg-[#ebebe6]">
+            {isStreaming ? (
+              <Loader2 className="h-2.5 w-2.5 animate-spin text-[#18181b]" />
             ) : (
-              <ToolRunBar
-                key={displayItem.key}
-                item={displayItem}
+              <Wrench className="h-2.5 w-2.5 text-[#71717a]" />
+            )}
+          </div>
+          <span className="font-medium text-[11px]">
+            Specialist 执行与工具调用 ({items.length} 步)
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5 text-[11px] text-[#71717a]">
+          <span>{isOpen ? "收起" : "展开详情"}</span>
+          <ChevronDown
+            className={cn("h-3 w-3 transition-transform duration-150", isOpen && "rotate-180")}
+          />
+        </div>
+      </button>
+
+      {isOpen && (
+        <div className="space-y-1.5 border-t border-[#e5e5df] bg-[#fafaf8] p-2.5">
+          {items.map((item) =>
+            item.type === "message" ? (
+              <div
+                key={item.key}
+                className="rounded border border-[#e5e5df] bg-[#ffffff] p-2 text-xs text-[#3f3f46]"
+              >
+                {item.message.parts.map((part) => (
+                  <PartView key={getMessagePartKey(part)} part={part} renderMarkdown={true} />
+                ))}
+              </div>
+            ) : (
+              <GenericToolRunBar
+                key={item.key}
+                item={item}
                 onOpenPreviewAttachment={onOpenPreviewAttachment}
               />
             )
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * 专业 Agent 委派 (Delegation) 的专属展示卡片
+ * 内部同样遵循：若有最终结果，则突出展示最终结果并将内部工具调用折叠
+ */
+function DelegationToolRunBar({
+  item,
+  loadSubagentMessages,
+  onOpenPreviewAttachment,
+  subagentRun,
+}: {
+  item: ToolRunDisplayItem;
+  loadSubagentMessages?: (
+    conversationId: string,
+    run: SubagentRunIdentity
+  ) => Promise<MessageResponse[]>;
+  onOpenPreviewAttachment?: (attachment: Attachment) => void;
+  subagentRun?: SubagentRun;
+}) {
+  const identity = getSubagentRunIdentity(item);
+  const [isCardOpen, setIsCardOpen] = useState(true);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const instruction = typeof item.args?.message === "string" ? item.args.message : null;
+
+  if (!identity) {
+    return <GenericToolRunBar item={item} onOpenPreviewAttachment={onOpenPreviewAttachment} />;
+  }
+
+  const agentConfig = AGENT_CONFIG[identity.agentType];
+  const runStatus =
+    subagentRun?.status ??
+    (item.completed ? "completed" : item.interrupted ? "interrupted" : "running");
+  const isRunning = runStatus === "running";
+
+  const loadHistory = () => {
+    if (!item.conversationId || !loadSubagentMessages) return;
+    setHistoryError(null);
+    void loadSubagentMessages(item.conversationId, identity).catch(() => {
+      setHistoryError("加载 Specialist 工作详情失败，点击重试");
+    });
+  };
+
+  // 解析 subagentRun 的消息流
+  const subagentDisplayItems = subagentRun
+    ? buildDisplayItems(item.conversationId ?? null, subagentRun.messages, isRunning)
+    : [];
+
+  let subagentFinalItem: MessageDisplayItem | null = null;
+  let subagentIntermediateItems: DisplayItem[] = [];
+
+  if (subagentDisplayItems.length > 0) {
+    const lastItem = subagentDisplayItems[subagentDisplayItems.length - 1];
+    if (lastItem.type === "message" && lastItem.message.role === "assistant") {
+      subagentFinalItem = lastItem;
+      subagentIntermediateItems = subagentDisplayItems.slice(0, subagentDisplayItems.length - 1);
+    } else {
+      subagentIntermediateItems = subagentDisplayItems;
+    }
+  }
+
+  // 尝试从 item.result 解析结构化委派输出（当无 message 流或作为兜底展示）
+  const parsedDelegationResult = (() => {
+    if (!item.result) return null;
+    try {
+      const parsed = JSON.parse(item.result);
+      if (typeof parsed === "object" && parsed !== null) {
+        return parsed as {
+          summary?: string;
+          findings?: string[];
+          limitations?: string[];
+          status?: string;
+        };
+      }
+    } catch {
+      // 非 JSON 字符串
+    }
+    return null;
+  })();
+
+  return (
+    <div className="my-2.5 font-mono text-xs">
+      <div
+        className={cn(
+          "rounded-md border shadow-xs overflow-hidden",
+          agentConfig.border,
+          "bg-[#ffffff]"
+        )}
+      >
+        {/* 卡片头部 */}
+        <div className="flex items-center justify-between gap-2 border-b border-[#e5e5df] bg-[#fafaf8] px-3.5 py-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div
+              className={cn(
+                "flex h-6 px-2 shrink-0 items-center justify-center gap-1 rounded text-xs font-semibold",
+                agentConfig.badgeBg,
+                agentConfig.badgeText
+              )}
+            >
+              <Bot className="h-3.5 w-3.5" />
+              <span>{agentConfig.title}</span>
+            </div>
+            <span className="truncate text-[#71717a] text-[11px]" title={identity.sessionId}>
+              #{identity.sessionId}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <span
+              className={cn(
+                "flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-medium",
+                runStatus === "completed"
+                  ? "bg-[#e6f4ea] text-[#137333] border border-[#ceead6]"
+                  : runStatus === "running"
+                    ? "bg-[#e0f2fe] text-[#0369a1] border border-[#bae6fd]"
+                    : runStatus === "needs_repair"
+                      ? "bg-[#fef7e0] text-[#b06000] border border-[#feefc3]"
+                      : runStatus === "failed"
+                        ? "bg-[#fce8e6] text-[#c5221f] border border-[#fad2cf]"
+                        : "bg-[#f0f0ec] text-[#71717a]"
+              )}
+            >
+              {isRunning ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : null}
+              {runStatus === "completed" ? <Check className="h-2.5 w-2.5" /> : null}
+              <span>{getSubagentStatusLabel(runStatus)}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsCardOpen(!isCardOpen)}
+              className="rounded p-1 text-[#71717a] hover:bg-[#ebebe6] transition"
+              title={isCardOpen ? "折叠卡片" : "展开卡片"}
+            >
+              <ChevronDown
+                className={cn(
+                  "h-3.5 w-3.5 transition-transform duration-150",
+                  !isCardOpen && "-rotate-90"
+                )}
+              />
+            </button>
+          </div>
+        </div>
+
+        {/* 卡片主体 */}
+        {isCardOpen && (
+          <div className="p-3 space-y-2.5">
+            {/* 委派任务目标 */}
+            {instruction && (
+              <div className="rounded border border-[#e5e5df] bg-[#f8f8f6] p-2.5 text-xs text-[#52525b] leading-relaxed">
+                <span className="font-semibold text-[#27272a] mr-1.5">🎯 目标:</span>
+                {instruction}
+              </div>
+            )}
+
+            {/* Specialist 内部流式或历史内容 */}
+            {subagentRun && subagentRun.messages.length > 0 ? (
+              <div className="space-y-2">
+                {/* 内部中间工具与过程（若已有最终消息则折叠） */}
+                {subagentIntermediateItems.length > 0 && (
+                  <SubagentInternalProcessCollapse
+                    items={subagentIntermediateItems}
+                    isStreaming={isRunning}
+                    onOpenPreviewAttachment={onOpenPreviewAttachment}
+                  />
+                )}
+
+                {/* 内部最终结论消息（直接展示） */}
+                {subagentFinalItem ? (
+                  <div className="rounded border border-[#e5e5df] bg-[#ffffff] p-3 shadow-xs">
+                    <div className="mb-1.5 flex items-center justify-between border-b border-[#e5e5df] pb-1 text-[11px] text-[#71717a]">
+                      <span className="font-semibold text-[#18181b]">
+                        {agentConfig.title} 结论输出
+                      </span>
+                      {subagentFinalItem.message.createdAt ? (
+                        <span>{formatMessageTime(subagentFinalItem.message.createdAt)}</span>
+                      ) : null}
+                    </div>
+                    <div className="space-y-1.5">
+                      {subagentFinalItem.message.parts.map((part) => (
+                        <PartView key={getMessagePartKey(part)} part={part} renderMarkdown={true} />
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : isRunning ? (
+              <div className="flex items-center gap-2 rounded border border-[#e5e5df] bg-[#ffffff] px-3 py-2 text-[#71717a]">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-[#18181b]" />
+                <span>Specialist 正在执行分析与计算...</span>
+              </div>
+            ) : parsedDelegationResult ? (
+              /* 如果尚未拉取历史消息，但有结构化返回结果，展示摘要与结论 */
+              <div className="space-y-2">
+                {parsedDelegationResult.summary && (
+                  <div className="rounded border border-[#e5e5df] bg-[#ffffff] p-3 text-xs leading-relaxed text-[#27272a]">
+                    <p className="font-semibold text-[#18181b] mb-1">分析总结</p>
+                    <p className="whitespace-pre-wrap">{parsedDelegationResult.summary}</p>
+                  </div>
+                )}
+                {parsedDelegationResult.findings && parsedDelegationResult.findings.length > 0 && (
+                  <div className="rounded border border-[#e5e5df] bg-[#ffffff] p-3 text-xs text-[#27272a]">
+                    <p className="font-semibold text-[#18181b] mb-1.5">核心发现</p>
+                    <ul className="list-disc pl-4 space-y-1 text-[#3f3f46]">
+                      {parsedDelegationResult.findings.map((finding) => (
+                        <li key={finding}>{finding}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {item.conversationId && loadSubagentMessages && !subagentRun?.historyLoaded && (
+                  <button
+                    type="button"
+                    onClick={loadHistory}
+                    disabled={subagentRun?.historyLoading}
+                    className="flex items-center gap-1.5 text-[11px] text-[#52525b] hover:text-[#18181b] underline underline-offset-2"
+                  >
+                    {subagentRun?.historyLoading ? (
+                      <>
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        <span>正在加载完整工作记录...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ChevronRight className="h-3 w-3" />
+                        <span>查看 Specialist 完整执行过程</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            ) : (
+              item.conversationId &&
+              loadSubagentMessages && (
+                <button
+                  type="button"
+                  onClick={loadHistory}
+                  disabled={subagentRun?.historyLoading}
+                  className="flex items-center gap-1.5 text-[11px] text-[#52525b] hover:text-[#18181b] underline underline-offset-2"
+                >
+                  {subagentRun?.historyLoading ? (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      <span>正在加载工作详情...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ChevronRight className="h-3 w-3" />
+                      <span>展开 Specialist 工作详情</span>
+                    </>
+                  )}
+                </button>
+              )
+            )}
+
+            {historyError && (
+              <button
+                type="button"
+                onClick={loadHistory}
+                className="text-left text-[11px] text-[#b91c1c] underline underline-offset-2"
+              >
+                {historyError}
+              </button>
+            )}
+
+            {/* 产物附件 */}
+            {(item.attachments?.length ?? 0) > 0 && (
+              <div className="pt-1 flex flex-wrap gap-2">
+                {(item.attachments ?? []).map((attachment) => (
+                  <AttachmentChip
+                    key={attachment.f_path}
+                    attachment={attachment}
+                    conversationId={item.conversationId}
+                    isUser={false}
+                    onOpenPreviewAttachment={onOpenPreviewAttachment}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 主会话中，当产生最终结果后，将所有中间消息和工具调用折叠展示的容器组件
+ */
+function ExecutionProcessCollapse({
+  hasFinalItem,
+  isStreaming,
+  items,
+  loadSubagentMessages,
+  onOpenPreviewAttachment,
+  subagentRuns,
+  username,
+}: {
+  hasFinalItem: boolean;
+  isStreaming: boolean;
+  items: DisplayItem[];
+  loadSubagentMessages?: (
+    conversationId: string,
+    run: SubagentRunIdentity
+  ) => Promise<MessageResponse[]>;
+  onOpenPreviewAttachment?: (attachment: Attachment) => void;
+  subagentRuns: SubagentRunMap;
+  username: string;
+}) {
+  const [userToggledOpen, setUserToggledOpen] = useState<boolean | null>(null);
+
+  // 默认规则：若已有最终结果则收起，否则（执行中或未出最终结果）展开
+  const isOpen = userToggledOpen ?? !hasFinalItem;
+
+  // 统计工具数量与主要委派信息作为摘要
+  const toolCount = items.filter((i) => i.type === "tool_run").length;
+
+  return (
+    <div className="my-2 font-mono text-xs">
+      <div className="rounded-md border border-[#d4d4ce] bg-[#ffffff] shadow-xs overflow-hidden">
+        {/* 折叠栏触发器 */}
+        <button
+          type="button"
+          onClick={() => setUserToggledOpen(!isOpen)}
+          className="flex w-full items-center justify-between gap-3 px-3.5 py-2 text-left transition hover:bg-[#fafaf8]"
+        >
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-[#ebebe6]">
+              {isStreaming && !hasFinalItem ? (
+                <Loader2 className="h-3 w-3 animate-spin text-[#18181b]" />
+              ) : (
+                <Sparkles className="h-3 w-3 text-[#52525b]" />
+              )}
+            </div>
+            <span className="font-semibold text-[#18181b]">
+              {isStreaming && !hasFinalItem ? "正在执行分析与工具调用..." : "思考与工具调用过程"}
+            </span>
+            <span className="rounded bg-[#f0f0eb] px-1.5 py-0.5 text-[10px] text-[#52525b]">
+              共 {items.length} 步{toolCount > 0 ? ` · ${toolCount} 个工具` : ""}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0 text-[#71717a]">
+            <span className="text-[11px]">{isOpen ? "收起过程" : "展开过程"}</span>
+            <ChevronDown
+              className={cn(
+                "h-3.5 w-3.5 transition-transform duration-150",
+                isOpen && "rotate-180"
+              )}
+            />
+          </div>
+        </button>
+
+        {/* 展开后的中间消息与工具列表 */}
+        {isOpen && (
+          <div className="space-y-2 border-t border-[#e5e5df] bg-[#fafaf8] p-3">
+            {items.map((item) => {
+              if (item.type === "message") {
+                return (
+                  <MessageBubble
+                    key={item.key}
+                    assistantName="DataAgent"
+                    message={item.message}
+                    onOpenPreviewAttachment={onOpenPreviewAttachment}
+                    username={username}
+                  />
+                );
+              }
+
+              if (item.name === "delegation") {
+                return (
+                  <DelegationToolRunBar
+                    key={item.key}
+                    item={item}
+                    loadSubagentMessages={loadSubagentMessages}
+                    onOpenPreviewAttachment={onOpenPreviewAttachment}
+                    subagentRun={subagentRuns[item.toolCallId]}
+                  />
+                );
+              }
+
+              return (
+                <GenericToolRunBar
+                  key={item.key}
+                  item={item}
+                  onOpenPreviewAttachment={onOpenPreviewAttachment}
+                />
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1013,15 +1458,17 @@ export function ChatMessages({
   viewportRef,
 }: ChatMessagesProps) {
   const displayItems = buildDisplayItems(conversationId, messages, isStreaming);
+  const turns = groupDisplayItemsIntoTurns(displayItems);
   const messageElementsRef = useRef(new Map<string, HTMLDivElement>());
   const [activeUserMessageKey, setActiveUserMessageKey] = useState<string | null>(null);
-  const userMessageNavigationItems = displayItems.flatMap<UserMessageNavigationItem>((item) =>
-    item.type === "message" && item.message.role === "user"
+
+  const userMessageNavigationItems = turns.flatMap<UserMessageNavigationItem>((turn) =>
+    turn.userItem
       ? [
           {
-            key: item.key,
-            createdAt: item.message.createdAt ?? null,
-            preview: getUserMessagePreview(item.message),
+            key: turn.userItem.key,
+            createdAt: turn.userItem.message.createdAt ?? null,
+            preview: getUserMessagePreview(turn.userItem.message),
           },
         ]
       : []
@@ -1102,37 +1549,64 @@ export function ChatMessages({
             </div>
           </div>
         ) : (
-          <div className="mx-auto w-full max-w-4xl space-y-1">
-            {displayItems.map((item) =>
-              item.type === "message" ? (
-                <div
-                  key={item.key}
-                  ref={(element) => {
-                    if (element) {
-                      messageElementsRef.current.set(item.key, element);
-                    } else {
-                      messageElementsRef.current.delete(item.key);
-                    }
-                  }}
-                  data-user-message-key={item.message.role === "user" ? item.key : undefined}
-                  className="scroll-mt-4"
-                >
-                  <MessageBubble
-                    message={item.message}
-                    onOpenPreviewAttachment={onOpenPreviewAttachment}
-                    username={username}
-                  />
+          <div className="mx-auto w-full max-w-4xl space-y-3">
+            {turns.map((turn) => {
+              const isTurnStreaming = isStreaming && turn.finalItem === null;
+              return (
+                <div key={turn.key} className="space-y-1">
+                  {turn.userItem && (
+                    <div
+                      ref={(element) => {
+                        if (element) {
+                          messageElementsRef.current.set(turn.userItem!.key, element);
+                        } else {
+                          messageElementsRef.current.delete(turn.userItem!.key);
+                        }
+                      }}
+                      data-user-message-key={turn.userItem.key}
+                      className="scroll-mt-4"
+                    >
+                      <MessageBubble
+                        message={turn.userItem.message}
+                        onOpenPreviewAttachment={onOpenPreviewAttachment}
+                        username={username}
+                      />
+                    </div>
+                  )}
+
+                  {turn.intermediateItems.length > 0 && (
+                    <ExecutionProcessCollapse
+                      hasFinalItem={turn.finalItem !== null}
+                      isStreaming={isTurnStreaming}
+                      items={turn.intermediateItems}
+                      loadSubagentMessages={loadSubagentMessages}
+                      onOpenPreviewAttachment={onOpenPreviewAttachment}
+                      subagentRuns={subagentRuns}
+                      username={username}
+                    />
+                  )}
+
+                  {turn.finalItem && (
+                    <MessageBubble
+                      assistantName="DataAgent"
+                      message={turn.finalItem.message}
+                      onOpenPreviewAttachment={onOpenPreviewAttachment}
+                      username={username}
+                    />
+                  )}
+
+                  {turn.userItem &&
+                    turn.intermediateItems.length === 0 &&
+                    !turn.finalItem &&
+                    isTurnStreaming && (
+                      <div className="my-2 flex items-center gap-2 rounded border border-[#d4d4ce] bg-[#ffffff] px-3.5 py-2.5 text-xs text-[#52525b] shadow-xs font-mono">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-[#18181b]" />
+                        <span>DataAgent 正在思考并规划...</span>
+                      </div>
+                    )}
                 </div>
-              ) : (
-                <ToolRunBar
-                  key={item.key}
-                  item={item}
-                  loadSubagentMessages={loadSubagentMessages}
-                  onOpenPreviewAttachment={onOpenPreviewAttachment}
-                  subagentRun={subagentRuns[item.toolCallId]}
-                />
-              )
-            )}
+              );
+            })}
           </div>
         )}
       </div>

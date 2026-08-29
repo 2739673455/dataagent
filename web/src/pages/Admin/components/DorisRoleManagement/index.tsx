@@ -166,10 +166,7 @@ export function DorisRoleManagement() {
                   key={role.name}
                   className="flex w-fit max-w-full items-center justify-between gap-3 rounded border border-[#e5e5df] bg-[#ffffff] px-3 py-2 font-mono text-xs"
                 >
-                  <span
-                    className="min-w-0 truncate font-semibold text-[#1e2024]"
-                    title={role.name}
-                  >
+                  <span className="min-w-0 truncate font-semibold text-[#1e2024]" title={role.name}>
                     {role.name}
                   </span>
                   <span className="shrink-0 rounded bg-[#f0f0eb] px-1.5 py-0.5 text-[10px] text-[#71717a]">

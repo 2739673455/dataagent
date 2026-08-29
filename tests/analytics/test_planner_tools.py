@@ -46,7 +46,7 @@ class PlannerToolsTest(unittest.IsolatedAsyncioTestCase):
     async def test_unexpected_failure_includes_exception_detail(self) -> None:
         service = MagicMock()
         service.execute_delegation = AsyncMock(
-            side_effect=RuntimeError("委派预算不可用")
+            side_effect=RuntimeError("Planner 执行状态不可用")
         )
         tool = create_delegation_tool(service)
         runtime = make_runtime()
@@ -63,7 +63,7 @@ class PlannerToolsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["code"], "delegation_failed")
         self.assertEqual(
             result["details"],
-            [{"type": "RuntimeError", "msg": "委派预算不可用"}],
+            [{"type": "RuntimeError", "msg": "Planner 执行状态不可用"}],
         )
         call = service.execute_delegation.await_args
         self.assertEqual(call.kwargs["delegation_id"], "delegation-call")

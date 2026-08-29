@@ -37,8 +37,6 @@ def build_conversation_lifecycle_service(
     agents: AgentManager,
     sandbox: DockerSandboxManager,
     config: LifecycleConfig,
-    *,
-    session_lock_timeout: float,
 ) -> ConversationLifecycleService:
     """组装会话跨存储生命周期服务"""
     return ConversationLifecycleService(
@@ -48,5 +46,4 @@ def build_conversation_lifecycle_service(
         agents,
         sandbox,
         config,
-        session_lock_timeout=session_lock_timeout,
     )

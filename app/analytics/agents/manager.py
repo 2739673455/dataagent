@@ -161,7 +161,6 @@ class AgentManager:
         await self.cancel_agent_execution(user_id, conversation_id)
         async with self._persistence_manager.advisory_lock(
             conversation_lifecycle_lock_name(user_id, conversation_id),
-            timeout=app_config.cfg.agent.orchestration.session_lock_timeout,
         ):
             await self.delete_agent_under_lifecycle_lock(user_id, conversation_id)
 
@@ -231,7 +230,7 @@ class AgentManager:
         *,
         runtime: ConversationAgentRuntime,
     ) -> AsyncGenerator[PlannerTurnContext, None]:
-        """登记完整用户回合并建立共享委派预算"""
+        """登记完整用户回合并建立共享运行状态"""
         current_task = asyncio.current_task()
         if current_task is None:
             raise RuntimeError("Agent 执行必须在 asyncio 任务上下文中进行")

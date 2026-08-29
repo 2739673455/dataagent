@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import shlex
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from contextlib import AbstractAsyncContextManager
 from typing import Protocol
 from uuid import UUID
@@ -34,7 +34,7 @@ class AgentSessionStore(Protocol):
 
     async def delete_workspace(self, session_key: AgentSessionKey) -> bool: ...
 
-    async def artifact_exists(self, path: str) -> bool: ...
+    async def find_missing_files(self, paths: Collection[str]) -> set[str]: ...
 
     def lock(
         self,
@@ -54,7 +54,6 @@ class PostgresSandboxSessionStore:
         checkpointer: AsyncPostgresSaver,
         sandbox: DockerSandboxManager,
         conversation_backend: DockerSandboxBackend,
-        lock_timeout: float,
     ) -> None:
         """初始化 Conversation 级状态访问上下文"""
         self._user_id = user_id
@@ -64,7 +63,6 @@ class PostgresSandboxSessionStore:
         self._checkpointer = checkpointer
         self._sandbox = sandbox
         self._conversation_backend = conversation_backend
-        self._lock_timeout = lock_timeout
 
     async def list_namespaces(self, analysis_id: str | None) -> list[str]:
         """列出当前 Conversation 的专业 Session namespace"""
@@ -108,14 +106,22 @@ class PostgresSandboxSessionStore:
             session_key.session_id,
         )
 
-    async def artifact_exists(self, path: str) -> bool:
-        """验证产物文件存在于当前 Conversation 工作区"""
-        relative_path = path.lstrip("/")
+    async def find_missing_files(self, paths: Collection[str]) -> set[str]:
+        """批量返回当前 Conversation 工作区中不存在的文件"""
+        if not paths:
+            return set()
+        arguments = " ".join(shlex.quote(path) for path in sorted(paths))
+        command = (
+            f"set -- {arguments}; "
+            'for path do [ -f "${path#/}" ] || printf \'%s\\0\' "$path"; done'
+        )
         result = await self._conversation_backend.aexecute(
-            f"test -f {shlex.quote(relative_path)}",
+            command,
             timeout=10,
         )
-        return result.exit_code == 0
+        if result.exit_code != 0 or result.truncated:
+            raise RuntimeError("批量验证产物文件失败")
+        return {path for path in result.output.split("\0") if path}
 
     def lock(
         self,
@@ -124,5 +130,4 @@ class PostgresSandboxSessionStore:
         """获取专业 Session 的跨进程互斥锁"""
         return self._persistence.advisory_lock(
             f"specialist:{self._thread_id}:{session_key.checkpoint_ns}",
-            timeout=self._lock_timeout,
         )

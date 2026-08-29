@@ -13,7 +13,6 @@ from psycopg_pool import AsyncConnectionPool
 
 from app.shared.config.app_config import DBConfig, cfg
 
-_ADVISORY_LOCK_POLL_SECONDS = 0.05
 _ADVISORY_POOL_MAX_SIZE = 12
 
 
@@ -99,46 +98,35 @@ class LangGraphPostgresManager:
     async def advisory_lock(
         self,
         name: str,
-        *,
-        timeout: float,
     ) -> AsyncGenerator[None, None]:
-        """在连接级 PostgreSQL advisory lock 下执行临界区"""
+        """非阻塞获取连接级 PostgreSQL advisory lock"""
         if not name:
             raise ValueError("咨询锁名称不能为空")
-        if timeout <= 0:
-            raise ValueError("咨询锁超时时间必须为正数")
         if self._advisory_pool is None:
             raise RuntimeError("LangGraph PostgreSQL 管理器尚未初始化")
 
         lock_key = _advisory_lock_key(name)
         advisory_pool = self._advisory_pool
-        deadline = asyncio.get_running_loop().time() + timeout
         local_lock = self._advisory_locks.setdefault(name, asyncio.Lock())
+        if local_lock.locked():
+            raise RuntimeError(f"咨询锁正在使用: {name}")
+        await local_lock.acquire()
         try:
-            await asyncio.wait_for(local_lock.acquire(), timeout=timeout)
-        except TimeoutError as exc:
-            raise TimeoutError(f"获取咨询锁超时: {name}") from exc
-        try:
-            while True:
-                async with advisory_pool.connection() as connection:
-                    cursor = await connection.execute(
-                        "SELECT pg_try_advisory_lock(%s) AS acquired",
+            async with advisory_pool.connection() as connection:
+                cursor = await connection.execute(
+                    "SELECT pg_try_advisory_lock(%s) AS acquired",
+                    (lock_key,),
+                )
+                row = await cursor.fetchone()
+                if row is None or not bool(row["acquired"]):
+                    raise RuntimeError(f"咨询锁正在使用: {name}")
+                try:
+                    yield
+                finally:
+                    await connection.execute(
+                        "SELECT pg_advisory_unlock(%s)",
                         (lock_key,),
                     )
-                    row = await cursor.fetchone()
-                    if row is not None and bool(row["acquired"]):
-                        try:
-                            yield
-                        finally:
-                            await connection.execute(
-                                "SELECT pg_advisory_unlock(%s)",
-                                (lock_key,),
-                            )
-                        return
-                remaining = deadline - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    raise TimeoutError(f"获取咨询锁超时: {name}")
-                await asyncio.sleep(min(_ADVISORY_LOCK_POLL_SECONDS, remaining))
         finally:
             local_lock.release()
 

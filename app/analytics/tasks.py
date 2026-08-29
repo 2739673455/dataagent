@@ -187,7 +187,6 @@ async def _run_with_lifecycle_service[T](
         agents,
         sandbox,
         cfg.lifecycle,
-        session_lock_timeout=cfg.agent.orchestration.session_lock_timeout,
     )
     await persistence.init()
     analytics_postgres.init()
@@ -206,7 +205,7 @@ async def _run_with_lifecycle_service[T](
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_jitter=True,
-    max_retries=5,
+    max_retries=3,
 )
 def delete_conversation_resources_task(
     user_id: int,

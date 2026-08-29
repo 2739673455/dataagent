@@ -71,8 +71,8 @@
 - **会话产物**：CSV 写入 `/analyses/{analysis_id}/sessions/{agent_type}/{session_id}/query_{uuid}.csv`，Agent 仅接收路径、Schema、行数、时间范围和少量样例。
 
 ### 10. Dynamic Subagents 与多 Agent 体系
-- **Planner 协调智能体**：Planner 通过结构化 `delegation` 请求拆分任务、并行调度专业 Agent 并汇总可追溯结果；同一用户回合的所有自动续写共享委派预算，自动续写次数、委派次数、并行 Session、修补轮次、修补深度和 Session 续接次数均有服务端硬限制。
-- **结构化修补链路**：专业 Agent 可返回带产物证据的 `RepairRequest`，仅能指向同一 Analysis 内已存在的上游 Session；服务端检查目标、修补深度和实际产物后续接执行。
+- **Planner 协调智能体**：Planner 通过结构化 `delegation` 请求拆分任务、并行调度专业 Agent 并汇总可追溯结果；自动续写次数与并行 Session 数受服务端硬限制，连续重复的修补请求会被服务端终止。
+- **结构化修补链路**：专业 Agent 可返回带产物证据的 `RepairRequest`，仅能指向同一 Analysis 内已存在的上游 Session；服务端检查目标和实际产物后续接执行。
 - **专业 Agent 矩阵**：`explorer` 负责语义目录、MCP 外部能力和受控 SQL 数据集；`analyst` 自主编写和运行归因分析代码；`reviewer` 独立审查数据、分析结论与产物并发起修补；`visualizer` 自主生成图表、表格与报告。
 - **按 Agent 聚合代码**：`app/analytics/agents` 包含 Planner 和四个专业 Agent，每个 Agent 目录聚合自己的构造器与 Prompt；跨 Agent 协议、注册表和 Session 管理位于公共层，平台级数据查询工具归属于 `explorer` Agent。
 - **专业 Agent 通用执行能力**：归因、审查和可视化 Agent 使用 DeepAgents 内置的 Shell 与文件工具，在各自 Session 沙箱中编写、运行、修改和验证代码。算法与核验方法由 Agent 根据数据和业务问题自主选择，代码、参数和结果作为产物保留。

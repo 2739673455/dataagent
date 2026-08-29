@@ -76,8 +76,7 @@ describe("subagent activity state", () => {
     await useChatStore.getState().loadSubagentMessages(conversationId, identity);
     await useChatStore.getState().loadSubagentMessages(conversationId, identity);
 
-    const run =
-      useChatStore.getState().subagentRunsByConversation[conversationId]["call-history"];
+    const run = useChatStore.getState().subagentRunsByConversation[conversationId]["call-history"];
     expect(getMessages).toHaveBeenCalledTimes(1);
     expect(run.historyLoaded).toBe(true);
     expect(run.status).toBe("completed");

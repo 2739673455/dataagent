@@ -235,12 +235,7 @@ class OrchestrationConfig(BaseModel):
 
     mode: Literal["dynamic_subagents"]
     max_parallel_sessions: int = Field(gt=0)
-    max_delegations_per_run: int = Field(gt=0)
     max_continuations: int = Field(ge=0)
-    max_session_resumes: int = Field(gt=0)
-    max_repair_rounds: int = Field(ge=0)
-    max_repair_depth: int = Field(ge=0)
-    session_lock_timeout: float = Field(gt=0)
 
 
 class InterpreterConfig(BaseModel):

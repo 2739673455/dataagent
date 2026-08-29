@@ -77,9 +77,7 @@ export default function ChatPage() {
   const params = useParams();
   const conversations = useChatStore((state) => state.conversations);
   const messagesByConversation = useChatStore((state) => state.messagesByConversation);
-  const subagentRunsByConversation = useChatStore(
-    (state) => state.subagentRunsByConversation
-  );
+  const subagentRunsByConversation = useChatStore((state) => state.subagentRunsByConversation);
   const isLoadingMessages = useChatStore((state) => state.isLoadingMessages);
   const loadConversations = useChatStore((state) => state.loadConversations);
   const createConversation = useChatStore((state) => state.createConversation);
@@ -94,9 +92,7 @@ export default function ChatPage() {
   const appendSubagentMessage = useChatStore((state) => state.appendSubagentMessage);
   const updateSubagentStatus = useChatStore((state) => state.updateSubagentStatus);
   const loadSubagentMessages = useChatStore((state) => state.loadSubagentMessages);
-  const interruptRunningSubagents = useChatStore(
-    (state) => state.interruptRunningSubagents
-  );
+  const interruptRunningSubagents = useChatStore((state) => state.interruptRunningSubagents);
   const user = useAuthStore((state) => state.user);
 
   // 每个会话独立持有 SSE 请求的取消控制器

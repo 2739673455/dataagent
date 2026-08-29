@@ -7,7 +7,7 @@ import os
 import tempfile
 import unittest
 from collections import Counter
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Collection
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -203,8 +203,14 @@ class _DistributedLockRegistry:
 
     @asynccontextmanager
     async def acquire(self, name: str) -> AsyncGenerator[None, None]:
-        async with self._locks.setdefault(name, asyncio.Lock()):
+        lock = self._locks.setdefault(name, asyncio.Lock())
+        if lock.locked():
+            raise RuntimeError(f"lock busy: {name}")
+        await lock.acquire()
+        try:
             yield
+        finally:
+            lock.release()
 
     def session_lock(
         self,
@@ -230,7 +236,8 @@ class _FakeSessionStore:
         self,
         fake: _FakeAgent,
         *,
-        artifact_verifier: Callable[[str], Awaitable[bool]] | None = None,
+        artifact_verifier: Callable[[Collection[str]], Awaitable[set[str]]]
+        | None = None,
         lock_factory: Callable[
             [AgentSessionKey],
             AbstractAsyncContextManager[None],
@@ -274,10 +281,10 @@ class _FakeSessionStore:
         self._fake.workspace_sessions.discard(namespace)
         return existed
 
-    async def artifact_exists(self, path: str) -> bool:
+    async def find_missing_files(self, paths: Collection[str]) -> set[str]:
         if self._artifact_verifier is None:
-            return True
-        return await self._artifact_verifier(path)
+            return set()
+        return await self._artifact_verifier(paths)
 
     def lock(
         self,
@@ -290,22 +297,16 @@ def _service(
     fake: _FakeAgent,
     *,
     max_parallel_sessions: int = 8,
-    max_delegations_per_run: int = 20,
-    max_repair_rounds: int = 3,
-    max_repair_depth: int = 5,
-    max_session_resumes: int = 3,
-    session_lock_timeout: float = 1,
     artifacts_exist: bool = True,
-    artifact_verifier: Callable[[str], Awaitable[bool]] | None = None,
+    artifact_verifier: Callable[[Collection[str]], Awaitable[set[str]]] | None = None,
     session_store: AgentSessionStore | None = None,
     session_lock_factory: Callable[
         [AgentSessionKey],
         AbstractAsyncContextManager[None],
     ] = _unlocked_session,
 ) -> AgentSessionService:
-    async def artifact_exists(path: str) -> bool:
-        del path
-        return artifacts_exist
+    async def find_missing_files(paths: Collection[str]) -> set[str]:
+        return set() if artifacts_exist else set(paths)
 
     graph = cast(CompiledStateGraph, fake)
 
@@ -318,17 +319,12 @@ def _service(
         session_store=session_store
         or _FakeSessionStore(
             fake,
-            artifact_verifier=artifact_verifier or artifact_exists,
+            artifact_verifier=artifact_verifier or find_missing_files,
             lock_factory=session_lock_factory,
         ),
         user_id=12,
         conversation_id=_CONVERSATION_ID,
         max_parallel_sessions=max_parallel_sessions,
-        max_delegations_per_run=max_delegations_per_run,
-        max_repair_rounds=max_repair_rounds,
-        max_repair_depth=max_repair_depth,
-        max_session_resumes=max_session_resumes,
-        session_lock_timeout=session_lock_timeout,
     )
 
 
@@ -336,14 +332,12 @@ def _request(
     session_id: str,
     *,
     agent_type: AgentType = "analyst",
-    repair_depth: int = 0,
 ) -> DelegationRequest:
     return DelegationRequest(
         analysis_id="sales-decline",
         agent_type=agent_type,
         session_id=session_id,
         message="analyze the supplied artifact",
-        repair_depth=repair_depth,
     )
 
 
@@ -621,9 +615,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
                     interpreter_timeout_seconds=1,
                     interpreter_memory_limit_bytes=2 * 1024 * 1024,
                     interpreter_max_ptc_calls=4,
-                    max_delegations_per_run=2,
-                    max_repair_rounds=1,
-                    max_repair_depth=1,
                 )
 
             graph.invoke(
@@ -773,19 +764,6 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(listed.sessions[0].session_id, "region")
         self.assertEqual(listed.sessions[0].status, "completed")
 
-    async def test_list_sessions_does_not_consume_delegation_budget(self) -> None:
-        fake = _FakeAgent()
-        service = _service(fake, max_delegations_per_run=1)
-        config = build_planner_config(12, _CONVERSATION_ID)
-        config.setdefault("configurable", {})["planner_run_id"] = "list-budget"
-
-        async with service.planner_run("list-budget"):
-            await service.list_sessions(None)
-            await service.list_sessions("sales-decline")
-            result = await service.execute_delegation(_request("region"), config)
-
-        self.assertEqual(result.status, "completed")
-
     async def test_delete_session_removes_state_and_allows_clean_same_id(
         self,
     ) -> None:
@@ -837,70 +815,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake.persisted_sessions, set())
         self.assertEqual(fake.workspace_sessions, set())
 
-    async def test_delete_session_does_not_refund_delegation_budget(self) -> None:
-        fake = _FakeAgent()
-        service = _service(fake, max_delegations_per_run=1)
-        config = build_planner_config(12, _CONVERSATION_ID)
-        config.setdefault("configurable", {})["planner_run_id"] = "delete-budget"
-        request = DeleteSessionRequest(
-            analysis_id="sales-decline",
-            agent_type="analyst",
-            session_id="region",
-        )
-
-        async with service.planner_run("delete-budget"):
-            first = await service.execute_delegation(_request("region"), config)
-            await service.delete_session(request, config)
-            second = await service.execute_delegation(_request("region"), config)
-
-        self.assertEqual(first.status, "completed")
-        self.assertEqual(second.status, "failed")
-        self.assertIn("委派次数上限", second.limitations[0])
-
-    async def test_delete_session_does_not_refund_repair_round_budget(self) -> None:
-        base_namespace = "subagents/sales-decline/explorer/base"
-        repair = RepairRequest(
-            target_agent_type="explorer",
-            target_session_id="base",
-            reason="source data must be refreshed",
-            evidence=[
-                ArtifactReference(path="/analyses/sales-decline/shared/evidence.json")
-            ],
-            expected_result="refresh source data",
-        )
-        fake = _FakeAgent(
-            output={
-                "structured_response": SpecialistResult(
-                    status="needs_repair",
-                    summary="source data is stale",
-                    repair_requests=[repair],
-                )
-            }
-        )
-        fake.persisted_sessions.add(base_namespace)
-        fake.checkpoints[base_namespace] = {
-            "ts": "2026-08-29T12:00:00+00:00",
-            "channel_values": {},
-        }
-        service = _service(fake, max_repair_rounds=1)
-        config = build_planner_config(12, _CONVERSATION_ID)
-        config.setdefault("configurable", {})["planner_run_id"] = "repair-budget"
-        request = DeleteSessionRequest(
-            analysis_id="sales-decline",
-            agent_type="analyst",
-            session_id="region",
-        )
-
-        async with service.planner_run("repair-budget"):
-            first = await service.execute_delegation(_request("region"), config)
-            await service.delete_session(request, config)
-            second = await service.execute_delegation(_request("product"), config)
-
-        self.assertEqual(first.status, "needs_repair")
-        self.assertEqual(second.status, "failed")
-        self.assertIn("max repair rounds", second.limitations[0])
-
-    async def test_delete_session_waits_for_active_delegation(self) -> None:
+    async def test_delete_session_rejects_active_delegation(self) -> None:
         fake = _FakeAgent(delay=0.03)
         service = _service(fake)
         config = build_planner_config(12, _CONVERSATION_ID)
@@ -916,55 +831,14 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 service.execute_delegation(_request("region"), config)
             )
             await asyncio.sleep(0.005)
-            deletion = asyncio.create_task(service.delete_session(request, config))
-            delegation_result, deletion_result = await asyncio.gather(
-                delegation,
-                deletion,
-            )
+            with self.assertRaisesRegex(RuntimeError, "Session 正在执行或删除"):
+                await service.delete_session(request, config)
+            delegation_result = await delegation
 
         self.assertEqual(delegation_result.status, "completed")
-        self.assertTrue(deletion_result.existed)
-        self.assertNotIn(request.session_id, " ".join(fake.persisted_sessions))
+        self.assertIn(request.session_id, " ".join(fake.persisted_sessions))
 
-    async def test_delete_session_timeout_is_stable_and_retryable(self) -> None:
-        fake = _FakeAgent()
-        distributed_locks = _DistributedLockRegistry()
-        store = _FakeSessionStore(
-            fake,
-            lock_factory=distributed_locks.session_lock,
-        )
-        service = _service(
-            fake,
-            session_store=store,
-            session_lock_timeout=0.01,
-        )
-        config = build_planner_config(12, _CONVERSATION_ID)
-        config.setdefault("configurable", {})["planner_run_id"] = "delete-timeout"
-        request = DeleteSessionRequest(
-            analysis_id="sales-decline",
-            agent_type="analyst",
-            session_id="region",
-        )
-        session_key = AgentSessionKey(
-            user_id=12,
-            conversation_id=_CONVERSATION_ID,
-            analysis_id=request.analysis_id,
-            agent_type=request.agent_type,
-            session_id=request.session_id,
-        )
-
-        async with service.planner_run("delete-timeout"):
-            async with distributed_locks.session_lock(session_key):
-                with self.assertRaisesRegex(
-                    TimeoutError,
-                    "Session 删除等待锁超时",
-                ):
-                    await service.delete_session(request, config)
-            retried = await service.delete_session(request, config)
-
-        self.assertFalse(retried.existed)
-
-    async def test_same_session_serializes_while_other_sessions_run_parallel(
+    async def test_same_session_conflict_fails_while_other_sessions_run_parallel(
         self,
     ) -> None:
         fake = _FakeAgent(delay=0.03)
@@ -979,27 +853,42 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 service.execute_delegation(_request("product"), config),
             )
 
-        self.assertTrue(all(result.status == "completed" for result in results))
+        self.assertEqual(
+            [result.status for result in results].count("completed"),
+            2,
+        )
+        failed = next(result for result in results if result.status == "failed")
+        self.assertIn("Session 正在执行或删除", failed.limitations[0])
         region_ns = "subagents/sales-decline/analyst/region"
         self.assertEqual(fake.max_active_by_namespace[region_ns], 1)
         self.assertGreaterEqual(fake.max_active, 2)
 
-    async def test_parallelism_semaphore_limits_different_sessions(self) -> None:
+    async def test_parallelism_limit_rejects_excess_sessions(self) -> None:
         fake = _FakeAgent(delay=0.02)
         service = _service(fake, max_parallel_sessions=1)
         config = build_planner_config(12, _CONVERSATION_ID)
         config.setdefault("configurable", {})["planner_run_id"] = "limited-run"
 
         async with service.planner_run("limited-run"):
-            await asyncio.gather(
+            results = await asyncio.gather(
                 service.execute_delegation(_request("region"), config),
                 service.execute_delegation(_request("product"), config),
                 service.execute_delegation(_request("channel"), config),
             )
 
         self.assertEqual(fake.max_active, 1)
+        self.assertEqual(
+            [result.status for result in results],
+            ["completed", "failed", "failed"],
+        )
+        self.assertTrue(
+            all(
+                "并行 Session 已满" in result.limitations[0]
+                for result in results[1:]
+            )
+        )
 
-    async def test_same_session_serializes_across_service_instances(self) -> None:
+    async def test_same_session_conflict_fails_across_service_instances(self) -> None:
         fake = _FakeAgent(delay=0.03)
         distributed_locks = _DistributedLockRegistry()
         first_service = _service(
@@ -1019,13 +908,17 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             first_service.planner_run("worker-one"),
             second_service.planner_run("worker-two"),
         ):
-            await asyncio.gather(
+            results = await asyncio.gather(
                 first_service.execute_delegation(_request("region"), first_config),
                 second_service.execute_delegation(_request("region"), second_config),
             )
 
         namespace = "subagents/sales-decline/analyst/region"
         self.assertEqual(fake.max_active_by_namespace[namespace], 1)
+        self.assertEqual(
+            [result.status for result in results].count("failed"),
+            1,
+        )
 
     async def test_delegation_builds_controlled_subagent_config(self) -> None:
         fake = _FakeAgent()
@@ -1053,38 +946,6 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             parent_configurable.get("thread_id"),
         )
         self.assertNotIn("checkpoint_id", invoked_configurable)
-
-    async def test_delegation_and_resume_limits_apply_per_planner_run(self) -> None:
-        fake = _FakeAgent()
-        service = _service(
-            fake,
-            max_delegations_per_run=2,
-            max_session_resumes=1,
-        )
-        config = build_planner_config(12, _CONVERSATION_ID)
-        config.setdefault("configurable", {})["planner_run_id"] = "budget-run"
-
-        async with service.planner_run("budget-run"):
-            first = await service.execute_delegation(_request("region"), config)
-            second = await service.execute_delegation(_request("region"), config)
-            third = await service.execute_delegation(_request("region"), config)
-
-        self.assertEqual(first.status, "completed")
-        self.assertEqual(second.status, "completed")
-        self.assertEqual(third.status, "failed")
-        self.assertIn("委派次数上限", third.limitations[0])
-
-    async def test_session_timeout_returns_failed_protocol_result(self) -> None:
-        fake = _FakeAgent(delay=0.05)
-        service = _service(fake, session_lock_timeout=0.005)
-        config = build_planner_config(12, _CONVERSATION_ID)
-        config.setdefault("configurable", {})["planner_run_id"] = "timeout-run"
-
-        async with service.planner_run("timeout-run"):
-            result = await service.execute_delegation(_request("region"), config)
-
-        self.assertEqual(result.status, "failed")
-        self.assertIn("超时", result.limitations[0])
 
     async def test_self_repair_is_rejected_after_structured_retry(self) -> None:
         repair = RepairRequest(
@@ -1129,7 +990,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("产物不存在", result.limitations[0])
         self.assertEqual(len(fake.configs), 2)
 
-    async def test_artifact_verification_has_bounded_fan_out(self) -> None:
+    async def test_artifact_verification_batches_all_paths(self) -> None:
         artifacts = [
             ArtifactReference(
                 path=(
@@ -1150,19 +1011,11 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 )
             }
         )
-        active = 0
-        max_active = 0
+        verified_batches: list[set[str]] = []
 
-        async def verify(path: str) -> bool:
-            nonlocal active, max_active
-            del path
-            active += 1
-            max_active = max(max_active, active)
-            try:
-                await asyncio.sleep(0.001)
-                return True
-            finally:
-                active -= 1
+        async def verify(paths: Collection[str]) -> set[str]:
+            verified_batches.append(set(paths))
+            return set()
 
         service = _service(fake, artifact_verifier=verify)
         config = build_planner_config(12, _CONVERSATION_ID)
@@ -1172,7 +1025,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             result = await service.execute_delegation(_request("region"), config)
 
         self.assertEqual(result.status, "completed")
-        self.assertEqual(max_active, 8)
+        self.assertEqual(verified_batches, [{artifact.path for artifact in artifacts}])
 
     async def test_completed_artifact_outside_session_is_rejected(self) -> None:
         fake = _FakeAgent(
@@ -1269,96 +1122,6 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result.status, "needs_repair")
-
-    async def test_repair_depth_requires_server_issued_value(self) -> None:
-        repair = RepairRequest(
-            target_agent_type="explorer",
-            target_session_id="base",
-            reason="missing dimension",
-            evidence=[
-                ArtifactReference(path="/analyses/sales-decline/shared/source.json")
-            ],
-            expected_result="add dimension",
-        )
-        fake = _FakeAgent(
-            output={
-                "structured_response": SpecialistResult(
-                    status="needs_repair",
-                    summary="input is incomplete",
-                    repair_requests=[repair],
-                )
-            }
-        )
-        base_namespace = "subagents/sales-decline/explorer/base"
-        fake.persisted_sessions.add(base_namespace)
-        fake.checkpoints[base_namespace] = {
-            "ts": "2026-08-29T12:00:00+00:00",
-            "channel_values": {},
-        }
-        service = _service(fake)
-        config = build_planner_config(12, _CONVERSATION_ID)
-        config.setdefault("configurable", {})["planner_run_id"] = "signed-depth"
-
-        async with service.planner_run("signed-depth"):
-            repair_result = await service.execute_delegation(_request("region"), config)
-            wrong_depth = await service.execute_delegation(
-                _request("base", agent_type="explorer"),
-                config,
-            )
-            fake.output = None
-            repaired = await service.execute_delegation(
-                _request("base", agent_type="explorer", repair_depth=1),
-                config,
-            )
-            reset_depth = await service.execute_delegation(
-                _request("base", agent_type="explorer"),
-                config,
-            )
-            continued_repair = await service.execute_delegation(
-                _request("base", agent_type="explorer", repair_depth=1),
-                config,
-            )
-
-        self.assertEqual(repair_result.status, "needs_repair")
-        self.assertIn("修补深度必须为 1", wrong_depth.limitations[0])
-        self.assertEqual(repaired.status, "completed")
-        self.assertIn("修补深度必须为 1", reset_depth.limitations[0])
-        self.assertEqual(continued_repair.status, "completed")
-
-    async def test_repair_depth_limit_stops_new_repair_request(self) -> None:
-        repair = RepairRequest(
-            target_agent_type="explorer",
-            target_session_id="base",
-            reason="missing dimension",
-            evidence=[
-                ArtifactReference(path="/analyses/sales-decline/shared/source.json")
-            ],
-            expected_result="add dimension",
-        )
-        fake = _FakeAgent(
-            output={
-                "structured_response": SpecialistResult(
-                    status="needs_repair",
-                    summary="input is incomplete",
-                    repair_requests=[repair],
-                )
-            }
-        )
-        base_namespace = "subagents/sales-decline/explorer/base"
-        fake.persisted_sessions.add(base_namespace)
-        fake.checkpoints[base_namespace] = {
-            "ts": "2026-08-29T12:00:00+00:00",
-            "channel_values": {},
-        }
-        service = _service(fake, max_repair_depth=0)
-        config = build_planner_config(12, _CONVERSATION_ID)
-        config.setdefault("configurable", {})["planner_run_id"] = "repair-depth-run"
-
-        async with service.planner_run("repair-depth-run"):
-            result = await service.execute_delegation(_request("region"), config)
-
-        self.assertEqual(result.status, "failed")
-        self.assertIn("max repair depth", result.limitations[0])
 
     async def test_missing_planner_run_id_is_rejected(self) -> None:
         fake = _FakeAgent()
@@ -1515,20 +1278,25 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(messages, [first_ai, first_tool])
         self.assertIsNone(missing)
 
-    async def test_delegation_timeout_emits_failed_status(self) -> None:
+    async def test_delegation_conflict_emits_failed_status(self) -> None:
         fake = _FakeAgent(delay=0.05)
-        service = _service(fake, session_lock_timeout=0.01)
+        service = _service(fake)
         config = build_planner_config(12, _CONVERSATION_ID)
-        config.setdefault("configurable", {})["planner_run_id"] = "timeout-activity"
+        config.setdefault("configurable", {})["planner_run_id"] = "conflict-activity"
         activities: list[SubagentMessageActivity | SubagentStatusActivity] = []
 
-        async with service.planner_run("timeout-activity"):
+        async with service.planner_run("conflict-activity"):
+            active = asyncio.create_task(
+                service.execute_delegation(_request("region"), config)
+            )
+            await asyncio.sleep(0.005)
             result = await service.execute_delegation(
                 _request("region"),
                 config,
-                delegation_id="delegation-timeout",
+                delegation_id="delegation-conflict",
                 activity_writer=activities.append,
             )
+            await active
 
         self.assertEqual(result.status, "failed")
         self.assertEqual(
@@ -1537,12 +1305,12 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 for activity in activities
                 if isinstance(activity, SubagentStatusActivity)
             ],
-            ["running", "failed"],
+            ["failed"],
         )
 
     async def test_delegation_cancellation_emits_cancelled_status(self) -> None:
         fake = _FakeAgent(delay=0.2)
-        service = _service(fake, session_lock_timeout=1)
+        service = _service(fake)
         config = build_planner_config(12, _CONVERSATION_ID)
         config.setdefault("configurable", {})["planner_run_id"] = "cancel-activity"
         activities: list[SubagentMessageActivity | SubagentStatusActivity] = []
@@ -1570,7 +1338,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             ["running", "cancelled"],
         )
 
-    async def test_agent_manager_serializes_same_planner_across_workers(self) -> None:
+    async def test_agent_manager_rejects_same_planner_across_workers(self) -> None:
         fake = _FakeAgent()
         first_service = _service(fake)
         second_service = _service(fake)
@@ -1604,12 +1372,17 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0.01)
                 active -= 1
 
-        await asyncio.gather(
+        results = await asyncio.gather(
             run(first_manager, first_runtime),
             run(second_manager, second_runtime),
+            return_exceptions=True,
         )
 
         self.assertEqual(max_active, 1)
+        self.assertEqual(
+            sum(isinstance(result, RuntimeError) for result in results),
+            1,
+        )
 
     async def test_persisted_tombstone_blocks_other_worker_execution(self) -> None:
         fake = _FakeAgent()
@@ -1674,7 +1447,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         fake = _FakeAgent()
-        service = _service(fake, max_delegations_per_run=1)
+        service = _service(fake)
         delegation_tool = create_delegation_tool(service)
         list_sessions_tool = create_list_sessions_tool(service)
         delete_session_tool = create_delete_session_tool(service)
@@ -1721,7 +1494,6 @@ const delegated = await tools.delegation({
   agent_type: "analyst",
   session_id: "region",
   message: "analyze source",
-  repair_depth: 0,
 });
 const listed = await tools.listSessions({ analysis_id: "sales-decline" });
 const deleted = await tools.deleteSession({

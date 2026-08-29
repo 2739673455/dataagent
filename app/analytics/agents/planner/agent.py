@@ -33,9 +33,6 @@ def create_planner_agent(
     interpreter_timeout_seconds: float,
     interpreter_memory_limit_bytes: int,
     interpreter_max_ptc_calls: int,
-    max_delegations_per_run: int,
-    max_repair_rounds: int,
-    max_repair_depth: int,
 ) -> CompiledStateGraph:
     """使用显式解释器与编排限制编译 Planner Agent"""
     interpreter = CodeInterpreterMiddleware(
@@ -52,11 +49,7 @@ def create_planner_agent(
     return create_deep_agent(
         model=model,
         tools=tools,
-        system_prompt=build_planner_system_prompt(
-            max_delegations=max_delegations_per_run,
-            max_repair_rounds=max_repair_rounds,
-            max_repair_depth=max_repair_depth,
-        ),
+        system_prompt=build_planner_system_prompt(),
         middleware=cast(
             "Sequence[AgentMiddleware[Any, Any, Any]]",
             [

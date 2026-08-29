@@ -60,7 +60,6 @@ async def _process_user_deletion(user_id: int) -> None:
         agents,
         sandbox,
         cfg.lifecycle,
-        session_lock_timeout=cfg.agent.orchestration.session_lock_timeout,
     )
     service = UserDeletionService(
         PostgresUserDeletionStateStore(auth_postgres),
@@ -88,7 +87,7 @@ async def _process_user_deletion(user_id: int) -> None:
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_jitter=True,
-    max_retries=5,
+    max_retries=3,
 )
 def delete_user_task(user_id: int) -> dict[str, object]:
     """执行用户跨存储注销清理"""
