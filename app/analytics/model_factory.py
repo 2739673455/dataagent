@@ -30,6 +30,6 @@ def create_configured_model(model_name: str) -> BaseChatModel:
         api_key=model_cfg.api_key,
         profile=model_cfg.profile,
         request_timeout=30,
-        max_retries=2,
+        max_retries=3,
         **model_cfg.params,
     )

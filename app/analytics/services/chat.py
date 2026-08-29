@@ -453,9 +453,6 @@ async def _execute_agent(
         turn_context.user_id,
         turn_context.conversation_id,
     )
-    config.setdefault("configurable", {})["planner_run_id"] = (
-        turn_context.planner_run_id
-    )
     async for chunk in runtime.planner.astream(
         input={"messages": input_messages},
         config=config,

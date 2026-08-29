@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from threading import Lock as ThreadLock
 from typing import cast
@@ -37,7 +36,7 @@ from app.shared.contracts.analysis import AgentSessionKey, validate_agent_type
 
 _STRUCTURED_RETRY_MESSAGE = """
 上一条响应没有通过 SpecialistResult 协议校验。请根据当前 Session 已有工作重新输出结构化结果，不要重复执行工具。
-completed 必须包含 findings 和 artifacts；needs_repair 必须包含有 evidence 的 repair_requests；failed 必须包含 limitations。
+completed 必须在 content 中给出完整结论；needs_repair 必须包含 repair_requests；failed 必须包含 failure_reasons。
 """.strip()
 _INTERNAL_RETRY_KEY = "dataagent_internal_retry"
 _STRUCTURED_RESPONSE_TOOL_NAME = "SpecialistResult"
@@ -56,13 +55,6 @@ async def _acquire_nowait(
         yield
     finally:
         guard.release()
-
-
-@dataclass(slots=True)
-class _PlannerRunState:
-    """记录单次 Planner 执行的防循环状态"""
-
-    last_repair_fingerprint: dict[str, tuple[object, ...]] = field(default_factory=dict)
 
 
 class AgentSessionService:
@@ -89,32 +81,7 @@ class AgentSessionService:
         self._parallelism = asyncio.Semaphore(max_parallel_sessions)
         self._session_query_parallelism = asyncio.Semaphore(max_parallel_sessions)
         self._active_sessions: dict[str, datetime] = {}
-        self._run_states: dict[str, _PlannerRunState] = {}
         self._runtime_state_lock = ThreadLock()
-
-    @asynccontextmanager
-    async def planner_run(self, planner_run_id: str) -> AsyncGenerator[None, None]:
-        """为单次 Planner 执行建立独立运行状态"""
-        with self._runtime_state_lock:
-            if planner_run_id in self._run_states:
-                raise RuntimeError("Planner 执行状态已存在")
-            self._run_states[planner_run_id] = _PlannerRunState()
-        try:
-            yield
-        finally:
-            with self._runtime_state_lock:
-                self._run_states.pop(planner_run_id, None)
-
-    def _get_run_state(self, parent_config: RunnableConfig) -> _PlannerRunState:
-        """通过显式 Planner run ID 读取跨 PTC 边界的共享状态"""
-        planner_run_id = parent_config.get("configurable", {}).get("planner_run_id")
-        if not isinstance(planner_run_id, str):
-            raise TypeError("委派配置中缺少 planner_run_id")
-        with self._runtime_state_lock:
-            run_state = self._run_states.get(planner_run_id)
-        if run_state is None:
-            raise RuntimeError("Planner 执行状态不可用")
-        return run_state
 
     async def _is_existing_session(self, session_key: AgentSessionKey) -> bool:
         """从活跃执行或持久化 Checkpoint 识别 Session"""
@@ -154,8 +121,8 @@ class AgentSessionService:
     @staticmethod
     def _failed_result(
         request: DelegationRequest,
-        summary: str,
-        limitation: str,
+        content: str,
+        reason: str,
     ) -> DelegationResult:
         """构造符合协议的失败结果"""
         return DelegationResult(
@@ -163,8 +130,8 @@ class AgentSessionService:
             analysis_id=request.analysis_id,
             agent_type=request.agent_type,
             session_id=request.session_id,
-            summary=summary,
-            limitations=[limitation],
+            content=content,
+            failure_reasons=[reason],
         )
 
     def _build_session_key(
@@ -268,7 +235,7 @@ class AgentSessionService:
                     pass
                 else:
                     status = result.status
-                    summary = result.summary
+                    summary = result.content
                     artifact_count = len(result.artifacts)
             if active_at is not None:
                 status = "active"
@@ -319,31 +286,23 @@ class AgentSessionService:
         result: SpecialistResult,
         session_key: AgentSessionKey,
     ) -> None:
-        """验证结论产物和修补证据实际存在于当前工作区"""
+        """验证结论产物实际存在于当前工作区"""
         session_prefix = (
             f"/analyses/{session_key.analysis_id}/sessions/{session_key.agent_type}/"
             f"{session_key.session_id}/"
         )
         shared_prefix = f"/analyses/{session_key.analysis_id}/shared/"
-        analysis_prefix = f"/analyses/{session_key.analysis_id}/"
         artifact_paths = {artifact.path for artifact in result.artifacts}
         invalid_artifacts = sorted(
             path
             for path in artifact_paths
             if not path.startswith((session_prefix, shared_prefix))
         )
-        evidence_paths = {
-            artifact.path
-            for repair in result.repair_requests
-            for artifact in repair.evidence
-        }
-        invalid_evidence = sorted(
-            path for path in evidence_paths if not path.startswith(analysis_prefix)
-        )
-        if invalid_artifacts or invalid_evidence:
-            invalid = [*invalid_artifacts, *invalid_evidence]
-            raise ValueError(f"产物路径超出当前分析范围: {', '.join(invalid)}")
-        paths = artifact_paths | evidence_paths
+        if invalid_artifacts:
+            raise ValueError(
+                f"产物路径超出当前分析范围: {', '.join(invalid_artifacts)}"
+            )
+        paths = artifact_paths
 
         missing = sorted(await self._session_store.find_missing_files(paths))
         if missing:
@@ -530,37 +489,6 @@ class AgentSessionService:
                 result.append(message)
         return result if found else None
 
-    def _reject_repeated_repair_request(
-        self,
-        request: DelegationRequest,
-        session_key: AgentSessionKey,
-        result: SpecialistResult,
-        run_state: _PlannerRunState,
-    ) -> DelegationResult | None:
-        """拒绝同一 Session 连续提出相同的修补请求"""
-        if result.status != "needs_repair":
-            return None
-        fingerprint = tuple(
-            sorted(
-                (
-                    repair.target_agent_type,
-                    repair.target_session_id,
-                    repair.reason,
-                    tuple(artifact.path for artifact in repair.evidence),
-                )
-                for repair in result.repair_requests
-            )
-        )
-        previous = run_state.last_repair_fingerprint.get(session_key.checkpoint_ns)
-        run_state.last_repair_fingerprint[session_key.checkpoint_ns] = fingerprint
-        if previous == fingerprint:
-            return self._failed_result(
-                request,
-                "Repeated repair request stopped",
-                "the same repair reason and evidence appeared twice consecutively",
-            )
-        return None
-
     @staticmethod
     def _to_delegation_result(
         request: DelegationRequest,
@@ -572,12 +500,10 @@ class AgentSessionService:
             analysis_id=request.analysis_id,
             agent_type=request.agent_type,
             session_id=request.session_id,
-            summary=result.summary,
-            findings=result.findings,
+            content=result.content,
             artifacts=result.artifacts,
             repair_requests=result.repair_requests,
-            confidence=result.confidence,
-            limitations=result.limitations,
+            failure_reasons=result.failure_reasons,
         )
 
     async def execute_delegation(
@@ -593,115 +519,89 @@ class AgentSessionService:
             delegation_id=delegation_id or uuid4().hex
         ).delegation_id
         activity_started = False
+        session_key = self._build_session_key(
+            request.analysis_id,
+            request.agent_type,
+            request.session_id,
+        )
+        session_lock = self._session_locks.setdefault(
+            session_key.checkpoint_ns,
+            asyncio.Lock(),
+        )
+        config = self.build_subagent_config(parent_config, session_key)
         try:
-            run_state = self._get_run_state(parent_config)
-            session_key = self._build_session_key(
-                request.analysis_id,
-                request.agent_type,
-                request.session_id,
-            )
-            session_lock = self._session_locks.setdefault(
-                session_key.checkpoint_ns,
-                asyncio.Lock(),
-            )
-            config = self.build_subagent_config(parent_config, session_key)
-            try:
-                async with (
-                    _acquire_nowait(session_lock, "Session 正在执行或删除"),
-                    self._session_store.lock(session_key),
-                    _acquire_nowait(
-                        self._parallelism,
-                        "当前 Conversation 的并行 Session 已满",
-                    ),
-                ):
-                    with self._runtime_state_lock:
-                        self._active_sessions[session_key.checkpoint_ns] = datetime.now(
-                            UTC
+            async with (
+                _acquire_nowait(session_lock, "Session 正在执行或删除"),
+                self._session_store.lock(session_key),
+                _acquire_nowait(
+                    self._parallelism,
+                    "当前 Conversation 的并行 Session 已满",
+                ),
+            ):
+                with self._runtime_state_lock:
+                    self._active_sessions[session_key.checkpoint_ns] = datetime.now(UTC)
+                try:
+                    if activity_writer is not None:
+                        activity_started = True
+                        activity_writer(
+                            SubagentStatusActivity(
+                                delegation_id=delegation_id,
+                                analysis_id=request.analysis_id,
+                                agent_type=request.agent_type,
+                                session_id=request.session_id,
+                                status="running",
+                            )
                         )
                     try:
-                        if activity_writer is not None:
-                            activity_started = True
-                            activity_writer(
-                                SubagentStatusActivity(
-                                    delegation_id=delegation_id,
-                                    analysis_id=request.analysis_id,
-                                    agent_type=request.agent_type,
-                                    session_id=request.session_id,
-                                    status="running",
-                                )
-                            )
-                        try:
-                            result = await self._invoke_specialist(
-                                request,
-                                session_key,
-                                config,
-                                delegation_id,
-                                activity_writer,
-                            )
-                        except Exception:
-                            self._write_status_activity(
-                                request,
-                                delegation_id,
-                                "failed",
-                                activity_writer,
-                            )
-                            raise
-                    finally:
-                        with self._runtime_state_lock:
-                            self._active_sessions.pop(
-                                session_key.checkpoint_ns,
-                                None,
-                            )
-                    with self._runtime_state_lock:
-                        limited_result = self._reject_repeated_repair_request(
+                        result = await self._invoke_specialist(
                             request,
                             session_key,
-                            result,
-                            run_state,
+                            config,
+                            delegation_id,
+                            activity_writer,
                         )
-                    if limited_result:
+                    except Exception:
                         self._write_status_activity(
                             request,
                             delegation_id,
-                            limited_result.status,
+                            "failed",
                             activity_writer,
                         )
-                        return limited_result
-                    self._write_status_activity(
-                        request,
-                        delegation_id,
-                        result.status,
-                        activity_writer,
-                    )
-                    return self._to_delegation_result(request, result)
-            except asyncio.CancelledError:
-                if activity_started:
-                    self._write_status_activity(
-                        request,
-                        delegation_id,
-                        "cancelled",
-                        activity_writer,
-                    )
-                raise
-            except Exception as exc:  # noqa: BLE001
-                if not activity_started:
-                    self._write_status_activity(
-                        request,
-                        delegation_id,
-                        "failed",
-                        activity_writer,
-                    )
-                return self._failed_result(
+                        raise
+                finally:
+                    with self._runtime_state_lock:
+                        self._active_sessions.pop(
+                            session_key.checkpoint_ns,
+                            None,
+                        )
+                self._write_status_activity(
                     request,
-                    "专家智能体会话执行失败",
-                    f"{type(exc).__name__}: {exc}",
+                    delegation_id,
+                    result.status,
+                    activity_writer,
                 )
-
-        except (RuntimeError, TypeError) as exc:
+                return self._to_delegation_result(request, result)
+        except asyncio.CancelledError:
+            if activity_started:
+                self._write_status_activity(
+                    request,
+                    delegation_id,
+                    "cancelled",
+                    activity_writer,
+                )
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if not activity_started:
+                self._write_status_activity(
+                    request,
+                    delegation_id,
+                    "failed",
+                    activity_writer,
+                )
             return self._failed_result(
                 request,
-                "规划器运行状态拒绝了委派请求",
-                str(exc),
+                "专家智能体会话执行失败",
+                f"{type(exc).__name__}: {exc}",
             )
 
     @staticmethod
@@ -727,10 +627,8 @@ class AgentSessionService:
     async def delete_session(
         self,
         request: DeleteSessionRequest,
-        parent_config: RunnableConfig,
     ) -> DeleteSessionResult:
         """幂等删除专业 Agent Session 的持久化与沙箱状态"""
-        self._get_run_state(parent_config)
         session_key = self._build_session_key(
             request.analysis_id,
             request.agent_type,
@@ -761,11 +659,6 @@ class AgentSessionService:
             except Exception as exc:
                 raise RuntimeError("删除 Session 工作区失败") from exc
             with self._runtime_state_lock:
-                for run_state in self._run_states.values():
-                    run_state.last_repair_fingerprint.pop(
-                        session_key.checkpoint_ns,
-                        None,
-                    )
                 self._active_sessions.pop(
                     session_key.checkpoint_ns,
                     None,
@@ -784,4 +677,3 @@ class AgentSessionService:
         self._session_locks.clear()
         with self._runtime_state_lock:
             self._active_sessions.clear()
-            self._run_states.clear()

@@ -94,14 +94,14 @@ Planner 调用 delegation
 
 ```text
 completed
-→ 必须包含 findings
-→ 必须包含 artifacts
+→ content 必须包含完整结论
+→ artifacts 可选
 
 needs_repair
 → 必须包含 repair_requests
 
 failed
-→ 必须包含 limitations
+→ 必须包含 failure_reasons
 ```
 
 四类 Agent 的职责和能力：
@@ -131,14 +131,14 @@ Visualizer
 ```text
 下游 Agent 发现上游问题
 → 返回 target_agent_type、target_session_id
-→ 提供 reason、evidence 和 expected_result
+→ 提供 reason 和 expected_result，问题依据写入 reason
 → Planner 将修补消息委派回原 Session
 → 原 Agent 读取原 checkpoint 和原文件
 → 原 Agent 修改自己的产物并返回新结果
 → Planner 重新运行依赖旧产物的下游 Session
 ```
 
-系统限制 repair depth、重复 repair fingerprint 和 Session 恢复次数，避免循环修补。
+Planner 根据修补结果和当前分析目标决定是否继续处理 Repair Request。
 
 ## 5. 为 Explorer 提供召回和查询工具
 

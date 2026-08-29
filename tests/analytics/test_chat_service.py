@@ -239,7 +239,6 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         turn_context = PlannerTurnContext(
             user_id=7,
             conversation_id=_CONVERSATION_ID,
-            planner_run_id=f"{finish_reason}-turn",
             max_continuations=2,
         )
         manager = _TurnManagerStub(runtime, turn_context)
@@ -271,13 +270,6 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(manager.execution_count, 1)
         self.assertEqual(len(planner.configs), 3)
-        self.assertEqual(
-            {
-                config.get("configurable", {}).get("planner_run_id")
-                for config in planner.configs
-            },
-            {turn_context.planner_run_id},
-        )
         self.assertEqual(planner.input_sizes, [1, 0, 0])
         self.assertEqual(len(events), 3)
         self.assertTrue(
@@ -294,8 +286,7 @@ def _delegation_payload() -> dict[str, object]:
         "analysis_id": "sales-review",
         "agent_type": "visualizer",
         "session_id": "chart-1",
-        "summary": "Chart generated",
-        "findings": ["Revenue increased"],
+        "content": "Chart generated",
         "artifacts": [
             {
                 "path": (
@@ -306,8 +297,7 @@ def _delegation_payload() -> dict[str, object]:
             }
         ],
         "repair_requests": [],
-        "confidence": "high",
-        "limitations": [],
+        "failure_reasons": [],
     }
 
 
@@ -385,7 +375,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             PlannerTurnContext(
                 user_id=7,
                 conversation_id=_CONVERSATION_ID,
-                planner_run_id="subagent-stream",
                 max_continuations=0,
             ),
         )
@@ -464,7 +453,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         turn_context = PlannerTurnContext(
             user_id=7,
             conversation_id=_CONVERSATION_ID,
-            planner_run_id="artifact-turn",
             max_continuations=0,
         )
         manager = _TurnManagerStub(runtime, turn_context)

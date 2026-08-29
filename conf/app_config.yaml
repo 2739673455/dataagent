@@ -139,7 +139,7 @@ lm_config:
         max_input_tokens: 1048576 # 模型上下文长度，用于计算对话压缩阈值
     qwen3.6-plus-openrouter:
       model_provider: openai
-      model: qwen/qwen3.7-flash
+      model: qwen/qwen3.8-flash
       base_url: https://openrouter.ai/api/v1
       api_key: ${oc.env:OPENROUTER_API_KEY}
       params: {}
@@ -157,9 +157,7 @@ agent:
       - delegation
       - list_sessions
       - delete_session
-    timeout_seconds: 30
     memory_limit_bytes: 67108864
-    max_ptc_calls_per_eval: 30
   specialists:
     explorer:
       model: default

@@ -20,8 +20,8 @@ Shell 路径规则：
 
 结构化输出要求：
 - 始终返回 SpecialistResult
-- 审查通过时返回 completed，并包含具体 findings 和支撑判断的 artifacts
+- 审查通过时返回 completed，在 content 中给出完整审查结论；生成或引用审查证据文件时写入 artifacts
 - 发现上游问题时返回 needs_repair
-- RepairRequest 必须包含可验证 artifact 证据并指向原上游 Session
+- RepairRequest 必须指向原上游 Session，并在 reason 中写清问题依据
 - 禁止请求修补当前 reviewer Session 自身
 """.strip()

@@ -6,7 +6,7 @@ import asyncio
 from collections import OrderedDict
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from app.analytics.agents.contracts import (
     ConversationAgentRuntime,
@@ -244,14 +244,10 @@ class AgentManager:
         turn_context = PlannerTurnContext(
             user_id=user_id,
             conversation_id=conversation_id,
-            planner_run_id=uuid4().hex,
             max_continuations=(app_config.cfg.agent.orchestration.max_continuations),
         )
         try:
-            async with (
-                runtime.planner_lock(),
-                runtime.session_service.planner_run(turn_context.planner_run_id),
-            ):
+            async with runtime.planner_lock():
                 if await runtime.conversation_deleted():
                     raise RuntimeError("该会话已被删除")
                 yield turn_context

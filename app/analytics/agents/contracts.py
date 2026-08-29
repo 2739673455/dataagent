@@ -38,7 +38,7 @@ Identifier = Annotated[
 ]
 NonEmptyText = Annotated[
     str,
-    StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000),
+    StringConstraints(strip_whitespace=True, min_length=1),
 ]
 MESSAGE_CREATED_AT_KEY = "dataagent_created_at"
 DELEGATION_CONTEXT_KEY = "dataagent_delegation_context"
@@ -71,19 +71,16 @@ def build_planner_config(user_id: int, conversation_id: UUID) -> RunnableConfig:
 
 @dataclass(frozen=True, slots=True)
 class PlannerTurnContext:
-    """绑定一个用户回合的 Planner 运行身份和续写上限"""
+    """绑定一个用户回合的身份和续写上限"""
 
     user_id: int
     conversation_id: UUID
-    planner_run_id: str
     max_continuations: int
 
     def __post_init__(self) -> None:
         """校验 Planner 回合上下文中的身份和续写参数"""
         if isinstance(self.user_id, bool) or self.user_id <= 0:
             raise ValueError("user_id 必须为正整数")
-        if not self.planner_run_id.strip():
-            raise ValueError("planner_run_id 不能为空")
         if self.max_continuations < 0:
             raise ValueError("max_continuations 不能为负数")
 
@@ -213,7 +210,6 @@ class RepairRequest(StrictProtocolModel):
     target_agent_type: AgentType
     target_session_id: Identifier
     reason: NonEmptyText
-    evidence: Annotated[list[ArtifactReference], Field(min_length=1, max_length=20)]
     expected_result: NonEmptyText
 
 
@@ -221,34 +217,28 @@ class AgentResult(StrictProtocolModel):
     """专业 Agent 与委派工具共用的结构化结果"""
 
     status: Literal["completed", "needs_repair", "failed"]
-    summary: NonEmptyText
-    findings: Annotated[list[NonEmptyText], Field(max_length=100)] = Field(
+    content: NonEmptyText
+    artifacts: Annotated[list[ArtifactReference], Field(max_length=50)] = Field(
         default_factory=list
     )
-    artifacts: Annotated[list[ArtifactReference], Field(max_length=100)] = Field(
+    repair_requests: Annotated[list[RepairRequest], Field(max_length=50)] = Field(
         default_factory=list
     )
-    repair_requests: Annotated[list[RepairRequest], Field(max_length=20)] = Field(
-        default_factory=list
-    )
-    confidence: Literal["low", "medium", "high"] | None = None
-    limitations: Annotated[list[NonEmptyText], Field(max_length=100)] = Field(
+    failure_reasons: Annotated[list[NonEmptyText], Field(max_length=50)] = Field(
         default_factory=list
     )
 
     @model_validator(mode="after")
     def validate_status_payload(self) -> Self:
-        """校验状态与证据载荷的一致性"""
+        """校验状态与结果载荷的一致性"""
         if self.status == "needs_repair" and not self.repair_requests:
             raise ValueError("needs_repair 状态必须包含至少一个修补请求")
         if self.status != "needs_repair" and self.repair_requests:
             raise ValueError("修补请求仅在 needs_repair 状态下有效")
-        if self.status == "completed" and not self.findings:
-            raise ValueError("completed 状态必须包含至少一个分析结论 (findings)")
-        if self.status == "completed" and not self.artifacts:
-            raise ValueError("completed 状态必须包含至少一个分析产物 (artifacts)")
-        if self.status == "failed" and not self.limitations:
-            raise ValueError("failed 状态必须包含至少一个局限性说明 (limitations)")
+        if self.status == "failed" and not self.failure_reasons:
+            raise ValueError("failed 状态必须包含至少一个失败原因 (failure_reasons)")
+        if self.status != "failed" and self.failure_reasons:
+            raise ValueError("失败原因仅在 failed 状态下有效")
         return self
 
 

@@ -95,8 +95,7 @@ describe("chat message display and turn grouping", () => {
             name: "delegation",
             content: JSON.stringify({
               status: "completed",
-              summary: "GMV总计100万",
-              findings: ["增长15%"],
+              content: "GMV总计100万",
             }),
           },
         ],

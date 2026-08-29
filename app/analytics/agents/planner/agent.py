@@ -30,17 +30,15 @@ def create_planner_agent(
     checkpointer: BaseCheckpointSaver,
     interpreter_mode: InterpreterMode | None,
     interpreter_ptc: Sequence[str | BaseTool],
-    interpreter_timeout_seconds: float,
     interpreter_memory_limit_bytes: int,
-    interpreter_max_ptc_calls: int,
 ) -> CompiledStateGraph:
-    """使用显式解释器与编排限制编译 Planner Agent"""
+    """使用显式解释器配置编译 Planner Agent"""
     interpreter = CodeInterpreterMiddleware(
         mode=interpreter_mode,
         ptc=list(interpreter_ptc),
-        timeout=interpreter_timeout_seconds,
+        timeout=float("inf"),
         memory_limit=interpreter_memory_limit_bytes,
-        max_ptc_calls=interpreter_max_ptc_calls,
+        max_ptc_calls=None,
     )
     filesystem = FilesystemMiddleware(
         backend=backend,

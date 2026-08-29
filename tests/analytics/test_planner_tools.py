@@ -84,7 +84,6 @@ class PlannerToolsTest(unittest.IsolatedAsyncioTestCase):
         tool = create_delete_session_tool(MagicMock())
 
         result = await cast(Any, tool).coroutine(
-            runtime=make_runtime(),
             analysis_id="analysis",
             agent_type="analyst",
             session_id="",
@@ -99,7 +98,6 @@ class PlannerToolsTest(unittest.IsolatedAsyncioTestCase):
         tool = create_delete_session_tool(service)
 
         result = await cast(Any, tool).coroutine(
-            runtime=make_runtime(),
             analysis_id="analysis",
             agent_type="analyst",
             session_id="session",

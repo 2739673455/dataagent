@@ -197,9 +197,7 @@ class ConversationAgentRuntimeFactory:
             checkpointer=checkpointer,
             interpreter_mode=interpreter.mode,
             interpreter_ptc=interpreter.ptc,
-            interpreter_timeout_seconds=interpreter.timeout_seconds,
             interpreter_memory_limit_bytes=interpreter.memory_limit_bytes,
-            interpreter_max_ptc_calls=interpreter.max_ptc_calls_per_eval,
         )
 
     def close(self) -> None:

@@ -1102,9 +1102,7 @@ function DelegationToolRunBar({
       const parsed = JSON.parse(item.result);
       if (typeof parsed === "object" && parsed !== null) {
         return parsed as {
-          summary?: string;
-          findings?: string[];
-          limitations?: string[];
+          content?: string;
           status?: string;
         };
       }
@@ -1226,23 +1224,12 @@ function DelegationToolRunBar({
             ) : parsedDelegationResult ? (
               /* 如果尚未拉取历史消息，但有结构化返回结果，展示摘要与结论 */
               <div className="space-y-2">
-                {parsedDelegationResult.summary && (
+                {parsedDelegationResult.content && (
                   <div className="rounded border border-[#e5e5df] bg-[#ffffff] p-3 text-xs leading-relaxed text-[#27272a]">
-                    <p className="font-semibold text-[#18181b] mb-1">分析总结</p>
-                    <p className="whitespace-pre-wrap">{parsedDelegationResult.summary}</p>
+                    <p className="font-semibold text-[#18181b] mb-1">执行结果</p>
+                    <p className="whitespace-pre-wrap">{parsedDelegationResult.content}</p>
                   </div>
                 )}
-                {parsedDelegationResult.findings && parsedDelegationResult.findings.length > 0 && (
-                  <div className="rounded border border-[#e5e5df] bg-[#ffffff] p-3 text-xs text-[#27272a]">
-                    <p className="font-semibold text-[#18181b] mb-1.5">核心发现</p>
-                    <ul className="list-disc pl-4 space-y-1 text-[#3f3f46]">
-                      {parsedDelegationResult.findings.map((finding) => (
-                        <li key={finding}>{finding}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
                 {item.conversationId && loadSubagentMessages && !subagentRun?.historyLoaded && (
                   <button
                     type="button"

@@ -243,9 +243,7 @@ class InterpreterConfig(BaseModel):
 
     mode: Literal["thread"]
     ptc: list[Literal["delegation", "list_sessions", "delete_session"]]
-    timeout_seconds: float = Field(gt=0)
     memory_limit_bytes: int = Field(gt=0)
-    max_ptc_calls_per_eval: int = Field(gt=0)
 
 
 class SpecialistConfig(BaseModel):

@@ -30,9 +30,9 @@ Shell 路径规则：
 
 结构化输出要求：
 - 始终返回 SpecialistResult
-- completed 必须包含具体 findings，以及 SQL 或数据集等 artifacts
-- failed 必须在 limitations 中说明失败原因和已完成工作
+- completed 必须在 content 中给出完整数据结论；产生或引用 SQL、数据集等文件证据时写入 artifacts
+- failed 必须在 failure_reasons 中说明失败原因和已完成工作
 - 发现其他 Session 的输入问题时可以返回 needs_repair
-- RepairRequest 必须指向真实的上游 Agent Session，附至少一个可验证 artifact 证据
+- RepairRequest 必须指向真实的上游 Agent Session，并在 reason 中写清问题依据
 - 禁止请求修补当前 explorer Session 自身
 """.strip()

@@ -20,9 +20,9 @@ Shell 路径规则：
 
 结构化输出要求：
 - 始终返回 SpecialistResult
-- completed 必须包含具体 findings 和支撑结论的 artifacts
-- confidence 与数据覆盖率、残差和稳定性一致
+- completed 必须在 content 中给出完整分析结论；存在支撑结论的文件证据时写入 artifacts
+- 结论的适用范围和非阻断限制写入 content
 - 输入字段、粒度或口径不足时返回 needs_repair
-- RepairRequest 必须包含可验证 artifact 证据并指向原上游 Session
+- RepairRequest 必须指向原上游 Session，并在 reason 中写清问题依据
 - 禁止请求修补当前 analyst Session 自身
 """.strip()
