@@ -123,8 +123,6 @@ class QueryConfig(BaseModel):
     data_source: str = Field(min_length=1)
     timeout_seconds: int = Field(gt=0)
     memory_limit_bytes: int = Field(gt=0)
-    max_rows: int = Field(gt=0)
-    max_output_bytes: int = Field(gt=0)
     batch_size: int = Field(gt=0)
     sample_rows: int = Field(ge=0, le=100)
     query_experience_vector_score_threshold: float = Field(ge=0, le=1)
@@ -154,8 +152,6 @@ class SandboxConfig(BaseModel):
     nano_cpus: int = Field(gt=0)
     pids_limit: int = Field(gt=0)
     execute_timeout_seconds: int = Field(default=120, gt=0, le=600)
-    max_output_bytes: int = Field(ge=4 * 1024 * 1024)
-    max_capture_bytes: int = Field(gt=0)
     max_file_bytes: int = Field(gt=0)
     max_workspace_bytes: int = Field(gt=0)
     workspace_quota_mode: Literal["application", "volume_driver"]
@@ -173,10 +169,6 @@ class SandboxConfig(BaseModel):
     @model_validator(mode="after")
     def validate_size_limits(self) -> "SandboxConfig":
         """校验沙箱容量限制之间的关系"""
-        if self.max_output_bytes > self.max_capture_bytes:
-            raise ValueError("max_output_bytes 不能大于 max_capture_bytes")
-        if self.max_capture_bytes > self.max_file_bytes:
-            raise ValueError("max_capture_bytes 不能大于 max_file_bytes")
         if self.max_file_bytes > self.max_workspace_bytes:
             raise ValueError("max_file_bytes 不能大于 max_workspace_bytes")
         if self.idle_stop_seconds >= self.idle_remove_seconds:
@@ -351,13 +343,6 @@ class Cfg(BaseModel):
 
     # 外部工具配置
     mcp: dict[str, MCPCfg]
-
-    @model_validator(mode="after")
-    def validate_cross_component_invariants(self) -> "Cfg":
-        """校验查询、沙箱、目录和数据连接之间的全局约束"""
-        if self.query.max_output_bytes > self.sandbox.max_file_bytes:
-            raise ValueError("query.max_output_bytes 不能大于 sandbox.max_file_bytes")
-        return self
 
 
 def _load_config() -> Cfg:

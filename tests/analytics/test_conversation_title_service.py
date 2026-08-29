@@ -50,9 +50,9 @@ def _conversation(
 
 
 class ConversationTitleTest(unittest.IsolatedAsyncioTestCase):
-    def test_initial_title_uses_first_30_trimmed_characters(self) -> None:
+    def test_initial_title_uses_first_64_trimmed_characters(self) -> None:
         source = "  " + "数" * 70 + "  "
-        self.assertEqual(initial_conversation_title(source), "数" * 30)
+        self.assertEqual(initial_conversation_title(source), "数" * 64)
         self.assertEqual(initial_conversation_title(" \n "), "新对话")
 
     def test_generated_title_is_normalized_and_limited(self) -> None:
@@ -60,7 +60,7 @@ class ConversationTitleTest(unittest.IsolatedAsyncioTestCase):
             _normalize_generated_title("  标题： “华东销售趋势分析”  "),
             "华东销售趋势分析",
         )
-        self.assertEqual(len(_normalize_generated_title("题" * 80)), 30)
+        self.assertEqual(len(_normalize_generated_title("题" * 80)), 64)
 
     async def test_model_title_updates_unchanged_initial_title(self) -> None:
         repository = MagicMock()

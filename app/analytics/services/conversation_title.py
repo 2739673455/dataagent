@@ -10,7 +10,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.analytics.repositories.conversation import ConversationPGRepo
 
 _DEFAULT_TITLE = "新对话"
-_MAX_TITLE_LENGTH = 30
+_MAX_TITLE_LENGTH = 64
 _MAX_MODEL_INPUT_LENGTH = 4_000
 _TITLE_PROMPT = f"""概括下一条用户消息的核心主题并生成会话标题
 

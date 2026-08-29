@@ -302,7 +302,7 @@ def _delegation_payload() -> dict[str, object]:
 
 
 class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
-    def test_large_subagent_tool_payloads_are_truncated(self) -> None:
+    def test_large_subagent_tool_payloads_are_preserved(self) -> None:
         call_schema = chat_service._langchain_message_to_schema(
             AIMessage(
                 content="",
@@ -332,8 +332,8 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(result_part, chat_schema.ToolResultPart)
         assert isinstance(call_part, chat_schema.ToolCallPart)
         assert isinstance(result_part, chat_schema.ToolResultPart)
-        self.assertTrue(call_part.args["_truncated"])
-        self.assertTrue(result_part.content.endswith("...[工具结果已截断]"))
+        self.assertEqual(call_part.args, {"sql": "x" * 25_000})
+        self.assertEqual(result_part.content, "x" * 55_000)
 
     async def test_subagent_custom_stream_is_projected_to_public_events(self) -> None:
         planner = MagicMock()

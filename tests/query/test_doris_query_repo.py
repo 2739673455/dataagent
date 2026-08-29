@@ -126,8 +126,6 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
             workload_group="dataagent_readonly",
             timeout_seconds=17,
             memory_limit_bytes=4096,
-            max_rows=10,
-            max_output_bytes=1024,
         )
         options = QueryExecutionOptions(
             batch_size=2,
@@ -159,7 +157,7 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
         streamed_sql = str(connection.stream.await_args.args[0])
-        self.assertIn("LIMIT 11", streamed_sql)
+        self.assertNotIn("LIMIT", streamed_sql)
         self.assertIn("':secret'", streamed_sql)
         self.assertEqual(connection.stream.await_args.args[0]._bindparams, {})
         self.assertEqual(
@@ -184,8 +182,6 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
             workload_group="dataagent_readonly",
             timeout_seconds=1,
             memory_limit_bytes=1,
-            max_rows=1,
-            max_output_bytes=1024,
         )
         options = QueryExecutionOptions(batch_size=1)
 
@@ -207,8 +203,6 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
             workload_group="dataagent_readonly",
             timeout_seconds=3,
             memory_limit_bytes=2048,
-            max_rows=5,
-            max_output_bytes=1024,
         )
 
         plan = await repo.explain("SELECT ':secret' AS token FROM orders", limits)
@@ -240,8 +234,6 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
             workload_group="dataagent_readonly",
             timeout_seconds=3,
             memory_limit_bytes=2048,
-            max_rows=5,
-            max_output_bytes=1024,
         )
         task = asyncio.create_task(repo.explain("SELECT 1", limits))
         while calls < 4:
@@ -265,8 +257,6 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
             workload_group="dataagent_readonly",
             timeout_seconds=17,
             memory_limit_bytes=4096,
-            max_rows=10,
-            max_output_bytes=1024,
         )
         options = QueryExecutionOptions(batch_size=2)
 
@@ -292,8 +282,6 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
             workload_group="dataagent_readonly",
             timeout_seconds=5,
             memory_limit_bytes=4096,
-            max_rows=10,
-            max_output_bytes=1024,
         )
 
         with self.assertRaisesRegex(

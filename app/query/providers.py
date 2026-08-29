@@ -112,8 +112,6 @@ class DefaultQueryExecutionRuntime:
             workload_group=principal.workload_group,
             timeout_seconds=cfg.query.timeout_seconds,
             memory_limit_bytes=cfg.query.memory_limit_bytes,
-            max_rows=cfg.query.max_rows,
-            max_output_bytes=cfg.query.max_output_bytes,
         )
         return AnalysisQueryService(
             DorisQueryRepository(connection_provider),

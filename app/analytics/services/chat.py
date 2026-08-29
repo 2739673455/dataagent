@@ -42,8 +42,6 @@ from app.analytics.services.contracts import (
 
 _IMAGE_SUFFIXES = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 MESSAGE_PAYLOAD_KEY = "dataagent_message"
-_MAX_TOOL_ARGS_CHARS = 20_000
-_MAX_TOOL_RESULT_CHARS = 50_000
 
 
 def _message_created_at(message: BaseMessage) -> datetime | None:
@@ -161,7 +159,7 @@ def _langchain_message_to_schema(
                     type="tool_result",
                     tool_call_id=message.tool_call_id,
                     name=message.name or "",
-                    content=_truncate_tool_result(str(message.content)),
+                    content=str(message.content),
                 )
             ],
             attachments=_delegation_result_attachments(message) or None,
@@ -190,7 +188,7 @@ def _langchain_message_to_schema(
                 type="tool_call",
                 tool_call_id=tool_call.get("id") or "",
                 name=tool_call.get("name") or "",
-                args=_truncate_tool_args(tool_call.get("args", {})),
+                args=cast(dict[str, object], tool_call.get("args", {})),
             )
             for tool_call in message.tool_calls
         )
@@ -205,29 +203,6 @@ def _langchain_message_to_schema(
             message.response_metadata.get("finish_reason"),
         ),
     )
-
-
-def _truncate_tool_result(content: str) -> str:
-    """限制发送给前端的单条工具结果大小"""
-    if len(content) <= _MAX_TOOL_RESULT_CHARS:
-        return content
-    return content[:_MAX_TOOL_RESULT_CHARS] + "\n...[工具结果已截断]"
-
-
-def _truncate_tool_args(args: object) -> dict[str, object]:
-    """限制发送给前端的单次工具参数大小"""
-    if not isinstance(args, dict):
-        return {}
-    try:
-        serialized = json.dumps(args, ensure_ascii=False, default=str)
-    except (TypeError, ValueError):
-        return {"_truncated": True, "preview": "工具参数无法序列化"}
-    if len(serialized) <= _MAX_TOOL_ARGS_CHARS:
-        return cast(dict[str, object], args)
-    return {
-        "_truncated": True,
-        "preview": serialized[:_MAX_TOOL_ARGS_CHARS] + "...[工具参数已截断]",
-    }
 
 
 def _subagent_activity_to_event(

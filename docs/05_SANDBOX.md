@@ -213,11 +213,9 @@ Agent 使用 Skill
 
 ```text
 资源上限
-→ max_output_bytes
-→ max_capture_bytes
 → max_file_bytes
 → max_workspace_bytes
-→ max_output <= max_capture <= max_file <= max_workspace
+→ max_file <= max_workspace
 
 工作区配额
 → application 模式由应用计算并强制

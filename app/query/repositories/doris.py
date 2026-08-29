@@ -136,13 +136,6 @@ class DorisQueryRepository:
             )
 
     @staticmethod
-    def _bounded_sql(sql: str, max_rows: int) -> str:
-        """使用外层查询限制数据库实际返回的最大行数"""
-        return (
-            f"SELECT * FROM ({sql}) AS `_dataagent_readonly_query` LIMIT {max_rows + 1}"
-        )
-
-    @staticmethod
     def _is_timeout_error(exc: BaseException) -> bool:
         """判断是否为 Doris 查询超时异常"""
         if isinstance(exc, TimeoutError):
@@ -189,7 +182,7 @@ class DorisQueryRepository:
             try:
                 await self._apply_session_limits(connection, limits)
                 result = await connection.stream(
-                    self._literal_sql(self._bounded_sql(sql, limits.max_rows)),
+                    self._literal_sql(sql),
                     execution_options={
                         "stream_results": True,
                         "yield_per": options.batch_size,

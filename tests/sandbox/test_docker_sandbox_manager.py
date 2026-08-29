@@ -52,8 +52,6 @@ def build_sandbox_config(**updates: object) -> SandboxConfig:
         "pids_limit": 64,
         "network_mode": "none",
         "execute_timeout_seconds": 120,
-        "max_output_bytes": 4 * 1024 * 1024,
-        "max_capture_bytes": 5 * 1024 * 1024,
         "max_file_bytes": 6 * 1024 * 1024,
         "max_workspace_bytes": 24 * 1024 * 1024,
         "workspace_quota_mode": "application",
@@ -183,9 +181,9 @@ class SandboxConfigTest(unittest.TestCase):
         config = build_sandbox_config()
         self.assertEqual(config.network_mode, "none")
 
-    def test_rejects_inconsistent_size_limits(self) -> None:
+    def test_rejects_file_limit_larger_than_workspace(self) -> None:
         with self.assertRaises(ValidationError):
-            build_sandbox_config(max_output_bytes=5 * 1024 * 1024 + 1)
+            build_sandbox_config(max_file_bytes=24 * 1024 * 1024 + 1)
 
     def test_rejects_non_positive_limits(self) -> None:
         with self.assertRaises(ValidationError):
@@ -1072,11 +1070,11 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         raw_file = backend.download_files(["/windows.txt"])[0]
         self.assertEqual(raw_file.content, b"updated\r\ntext\r\n")
 
-    async def test_output_and_file_limits(self) -> None:
+    async def test_direct_output_and_file_limits(self) -> None:
         backend = await self.manager.get_backend(self.user_id, uuid4())
         response = backend.execute("python3 -c \"print('x' * 7000000)\"")
-        self.assertTrue(response.truncated)
-        self.assertLessEqual(len(response.output.encode()), 4 * 1024 * 1024)
+        self.assertFalse(response.truncated)
+        self.assertEqual(len(response.output.encode()), 7_000_001)
 
         offload = backend.execute_with_offload(
             "python3 -c \"print('y' * 7000000)\"",

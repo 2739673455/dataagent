@@ -100,8 +100,6 @@ class DockerSandboxBackend(BaseSandbox):
             str(conversation_id),
             str(self._execution_uid),
         )
-        self._max_output_bytes = sandbox_config.max_output_bytes
-        self._max_capture_bytes = sandbox_config.max_capture_bytes
         self._max_file_bytes = sandbox_config.max_file_bytes
         self._max_workspace_bytes = sandbox_config.max_workspace_bytes
         self._ownership = ownership
@@ -307,8 +305,7 @@ class DockerSandboxBackend(BaseSandbox):
             workdir=self._workspace_dir,
         )
         exec_id = created["Id"]
-        output_tail = bytearray()
-        output_size = 0
+        output_buffer = bytearray()
         output_stream = api_client.exec_start(exec_id, stream=True, demux=False)
         try:
             for chunk in output_stream:
@@ -318,10 +315,7 @@ class DockerSandboxBackend(BaseSandbox):
                     chunk = bytes([chunk])
                 elif isinstance(chunk, str):
                     chunk = chunk.encode()
-                output_size += len(chunk)
-                output_tail.extend(chunk)
-                if len(output_tail) > self._max_output_bytes:
-                    del output_tail[: len(output_tail) - self._max_output_bytes]
+                output_buffer.extend(chunk)
         finally:
             close_stream = getattr(output_stream, "close", None)
             if callable(close_stream):
@@ -331,11 +325,10 @@ class DockerSandboxBackend(BaseSandbox):
                 stream_response.close()
 
         inspected = api_client.exec_inspect(exec_id)
-        output = output_tail.decode("utf-8", errors="replace")
+        output = output_buffer.decode("utf-8", errors="replace")
         return ExecuteResponse(
             output=self._hide_workspace(output) or "",
             exit_code=inspected.get("ExitCode"),
-            truncated=output_size > self._max_output_bytes,
         )
 
     def _workspace_size_unlocked(self) -> int:
@@ -418,10 +411,10 @@ class DockerSandboxBackend(BaseSandbox):
         max_capture_bytes: int | None = None,
         timeout: int | None = None,
     ) -> ExecuteOffloadResult:
-        """在会话目录中对大命令输出进行源端卸载"""
+        """在会话目录中卸载大命令输出，并复用单文件容量上限"""
         capture_limit = min(
-            max_capture_bytes or self._max_capture_bytes,
-            self._max_capture_bytes,
+            max_capture_bytes or self._max_file_bytes,
+            self._max_file_bytes,
         )
         return super().execute_with_offload(
             command,

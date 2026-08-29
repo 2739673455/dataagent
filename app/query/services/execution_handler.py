@@ -13,10 +13,8 @@ from app.query.models.execution import (
 from app.query.models.validation import QueryValidationResult
 from app.query.services.executor import (
     AnalysisQueryService,
-    QueryOutputLimitExceededError,
     QueryPlanUnavailableError,
     QueryRejectedError,
-    QueryResultLimitExceededError,
     QueryResultShapeError,
     SuccessfulQueryExecution,
 )
@@ -120,9 +118,7 @@ class QueryExecutionHandler:
             raise
         except (
             QueryExecutionTimeoutError,
-            QueryOutputLimitExceededError,
             QueryPlanUnavailableError,
-            QueryResultLimitExceededError,
             QueryResultShapeError,
         ) as exc:
             await self._record_failure_safely(

@@ -43,22 +43,19 @@ Explorer 提交 purpose 和 SQL
   → workload_group
   → query_timeout
   → exec_mem_limit
-→ 包装行数限制并流式执行
-  → SELECT * FROM (...) LIMIT max_rows + 1
+→ 流式执行
   → 使用服务端游标分批读取
   → 校验各批次列名和结果形状一致
 → 流式写临时 CSV
   → 转义表格公式注入值
-  → 限制最大 UTF-8 文件字节数
   → 统计 schema、nullable、time_range 和 sample
-→ 校验最大行数
 → 原子保存为当前 Explorer Session 下的 query_<uuid>.csv
 → 返回 path、schema、row_count、time_range 和 sample
 ```
 
-查询同时受 Doris 查询超时、内存、最大行数和最大输出文件限制。完整结果只保存在沙箱 CSV 中，工具响应只返回路径和有限摘要。
+查询受 Doris 查询超时和内存限制。完整结果只保存在沙箱 CSV 中，工具响应只返回路径和有限摘要。
 
-执行失败时，工具会区分 SQL 校验拒绝、无权限、计划不可估算、查询超时、Doris 故障、行数超限、文件超限和结果结构异常，并尽量返回具体原因。
+执行失败时，工具会区分 SQL 校验拒绝、无权限、计划不可估算、查询超时、Doris 故障和结果结构异常，并尽量返回具体原因。
 
 ## 2. 记录查询执行历史
 

@@ -12,10 +12,8 @@ from loguru import logger
 from app.query.models.execution import QueryExecutionTimeoutError
 from app.query.services.execution_handler import QueryExecutionHandler
 from app.query.services.executor import (
-    QueryOutputLimitExceededError,
     QueryPlanUnavailableError,
     QueryRejectedError,
-    QueryResultLimitExceededError,
     QueryResultShapeError,
 )
 from app.shared.contracts.analysis import AgentSessionKey
@@ -101,9 +99,7 @@ async def _execute_sql(
         }
     except (
         QueryExecutionTimeoutError,
-        QueryOutputLimitExceededError,
         QueryPlanUnavailableError,
-        QueryResultLimitExceededError,
         QueryResultShapeError,
     ) as exc:
         logger.warning(

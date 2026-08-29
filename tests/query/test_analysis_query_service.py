@@ -20,10 +20,8 @@ from app.query.models.validation import (
 )
 from app.query.services.executor import (
     AnalysisQueryService,
-    QueryOutputLimitExceededError,
     QueryPlanUnavailableError,
     QueryRejectedError,
-    QueryResultLimitExceededError,
     _estimate_doris_query_plan,
 )
 from app.shared.contracts.analysis import AgentSessionKey
@@ -95,8 +93,6 @@ def make_limits(**updates: int) -> QueryExecutionLimits:
         "workload_group": "dataagent_readonly",
         "timeout_seconds": 10,
         "memory_limit_bytes": 1024,
-        "max_rows": 10,
-        "max_output_bytes": 1024,
     }
     values.update(updates)
     return QueryExecutionLimits.model_validate(values)
@@ -311,7 +307,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(details.validation.tables[0].name, "orders")
         self.assertEqual(details.result.row_count, 1)
 
-    async def test_row_limit_discards_temporary_artifact(self) -> None:
+    async def test_all_streamed_rows_are_written(self) -> None:
         repo = FakeQueryRepo(
             [
                 QueryBatch(
@@ -324,18 +320,20 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         service = AnalysisQueryService(
             repo,
             store,
-            make_limits(max_rows=2),
+            make_limits(),
             make_options(),
         )
 
-        with self.assertRaises(QueryResultLimitExceededError):
+        result = (
             await service.execute(
                 make_session_key(),
                 "SELECT raw",
                 make_validation(),
             )
+        ).result
 
-        self.assertEqual(store.uploads, [])
+        self.assertEqual(result.row_count, 3)
+        self.assertEqual(store.uploads[0][3], b"id\n1\n2\n3\n")
 
     async def test_empty_query_still_writes_header_and_unknown_schema(self) -> None:
         repo = FakeQueryRepo([QueryBatch(column_names=("id",), rows=())])
@@ -389,25 +387,27 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(query_repo.explain_sql)
         self.assertEqual(store.uploads, [])
 
-    async def test_utf8_output_byte_limit_prevents_artifact_upload(self) -> None:
+    async def test_utf8_output_is_written_without_query_size_limit(self) -> None:
         repo = FakeQueryRepo([QueryBatch(column_names=("text",), rows=(("你好",),))])
         store = RecordingArtifactStore()
         service = AnalysisQueryService(
             repo,
             store,
-            make_limits(max_output_bytes=11),
+            make_limits(),
             make_options(),
         )
 
-        with self.assertRaises(QueryOutputLimitExceededError):
+        result = (
             await service.execute(
                 make_session_key(),
                 "SELECT raw",
                 make_validation(),
             )
+        ).result
 
+        self.assertEqual(result.row_count, 1)
         self.assertTrue(repo.closed)
-        self.assertEqual(store.uploads, [])
+        self.assertEqual(store.uploads[0][3], "text\n你好\n".encode())
 
     async def test_sample_truncation_does_not_truncate_csv_artifact(self) -> None:
         long_value = "x" * 1000
@@ -418,7 +418,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         service = AnalysisQueryService(
             repo,
             store,
-            make_limits(max_output_bytes=2048),
+            make_limits(),
             make_options(),
         )
 
@@ -450,7 +450,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         service = AnalysisQueryService(
             repo,
             store,
-            make_limits(max_output_bytes=2048),
+            make_limits(),
             make_options(sample_rows=3),
         )
 

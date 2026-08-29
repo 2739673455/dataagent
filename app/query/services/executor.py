@@ -91,15 +91,6 @@ class QueryArtifactStore(Protocol):
         ...
 
 
-class QueryResultLimitExceededError(RuntimeError):
-    """查询结果超过允许的最大行数"""
-
-    def __init__(self, max_rows: int) -> None:
-        """记录允许返回的最大结果行数"""
-        self.max_rows = max_rows
-        super().__init__(f"查询结果行数超出限制，最大允许 {max_rows} 行")
-
-
 class QueryRejectedError(ValueError):
     """SQL 未通过确定性安全校验"""
 
@@ -108,15 +99,6 @@ class QueryRejectedError(ValueError):
         self.result = result
         message = "; ".join(issue.message for issue in result.issues)
         super().__init__(message or "SQL 查询已被拒绝")
-
-
-class QueryOutputLimitExceededError(RuntimeError):
-    """查询 CSV 超过允许的最大字节数"""
-
-    def __init__(self, max_output_bytes: int) -> None:
-        """记录允许写入的最大 CSV 字节数"""
-        self.max_output_bytes = max_output_bytes
-        super().__init__(f"查询输出 CSV 超出限制，最大允许 {max_output_bytes} 字节")
 
 
 class QueryResultShapeError(RuntimeError):
@@ -182,23 +164,17 @@ class _ColumnStats:
 
 
 @dataclass(slots=True)
-class _Utf8LimitedWriter:
-    """在写入临时文件前实施 UTF-8 编码字节硬限制"""
+class _Utf8Writer:
+    """将 CSV 文本编码为 UTF-8 后写入二进制文件"""
 
     destination: BinaryIO
-    max_bytes: int
-    bytes_written: int = 0
 
     def write(self, value: str) -> int:
         """编码并写入一段 CSV 文本"""
         encoded = value.encode("utf-8")
-        projected_bytes = self.bytes_written + len(encoded)
-        if projected_bytes > self.max_bytes:
-            raise QueryOutputLimitExceededError(self.max_bytes)
         written = self.destination.write(encoded)
         if written != len(encoded):
             raise OSError("临时查询输出写入不完整")
-        self.bytes_written = projected_bytes
         return len(value)
 
 
@@ -292,11 +268,7 @@ class AnalysisQueryService:
         sql: str,
     ) -> "_QuerySummary":
         """流式执行查询并写入 CSV，同时保留字段统计与少量样例"""
-        limited_writer = _Utf8LimitedWriter(
-            temporary_file,
-            self._limits.max_output_bytes,
-        )
-        writer = csv.writer(limited_writer, lineterminator="\n")
+        writer = csv.writer(_Utf8Writer(temporary_file), lineterminator="\n")
         column_names: tuple[str, ...] | None = None
         column_stats: list[_ColumnStats] = []
         sample: list[dict[str, Any]] = []
@@ -312,8 +284,6 @@ class AnalysisQueryService:
                     writer.writerow(_csv_value(name) for name in column_names)
                 elif batch.column_names != column_names:
                     raise QueryResultShapeError("流式查询各批次返回的列结构不一致")
-                if row_count + len(batch.rows) > self._limits.max_rows:
-                    raise QueryResultLimitExceededError(self._limits.max_rows)
                 for row in batch.rows:
                     if len(row) != len(column_names):
                         raise QueryResultShapeError(

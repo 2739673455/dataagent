@@ -88,10 +88,8 @@ lifecycle:
 # 查询与沙箱配置
 query:
   data_source: doris
-  timeout_seconds: 60
+  timeout_seconds: 300
   memory_limit_bytes: 1073741824
-  max_rows: 100000
-  max_output_bytes: 33554432
   batch_size: 100
   sample_rows: 5
   query_experience_vector_score_threshold: 0.65
@@ -109,8 +107,6 @@ sandbox:
   nano_cpus: 2000000000 # 每个用户沙箱最多使用 2 个 CPU 核心
   pids_limit: 256
   execute_timeout_seconds: 120 # 单次 Shell 命令的硬超时上限
-  max_output_bytes: 4194304 # 覆盖 DeepAgents 结构化读取的最坏 JSON 转义开销
-  max_capture_bytes: 10485760
   max_file_bytes: 104857600
   max_workspace_bytes: 1073741824
   workspace_quota_mode: application # 生产环境应改为 volume_driver 并使用支持硬配额的卷驱动

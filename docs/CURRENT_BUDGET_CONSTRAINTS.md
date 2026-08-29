@@ -1,42 +1,5 @@
-## 5. 聊天与活动流
-
-| ID    | 约束项               |      当前值 | 作用域            | 定义位置                                       | 处理结果 |
-| ----- | -------------------- | ----------: | ----------------- | ---------------------------------------------- | -------- |
-| TX-01 | 子 Agent Tool Args   | 20,000 字符 | 单条 SSE 消息     | `app/analytics/services/chat.py`               | 待定     |
-| TX-02 | 子 Agent Tool Result | 50,000 字符 | 单条 SSE 消息     | `app/analytics/services/chat.py`               | 待定     |
-| TX-03 | 初始标题消息         | 20,000 字符 | 创建 Conversation | `app/analytics/api/chat/schemas.py`            | 待定     |
-| TX-04 | Conversation 标题    |     64 字符 | Conversation      | `app/analytics/api/chat/schemas.py`            | 待定     |
-| TX-05 | 标题模型输入         |  4,000 字符 | 标题生成          | `app/analytics/services/conversation_title.py` | 待定     |
-| TX-06 | 生成标题长度         |     30 字符 | 标题生成          | `app/analytics/services/conversation_title.py` | 待定     |
-
-## 6. 查询执行
-
-| ID   | 约束项               |     当前值 | 作用域        | 定义位置                         | 处理结果 |
-| ---- | -------------------- | ---------: | ------------- | -------------------------------- | -------- |
-| Q-01 | `timeout_seconds`    |      60 秒 | 单条 SQL      | `conf/app_config.yaml`           | 待定     |
-| Q-02 | `memory_limit_bytes` |      1 GiB | 单条 SQL      | `conf/app_config.yaml`           | 待定     |
-| Q-03 | `max_rows`           | 100,000 行 | 单条 SQL      | `conf/app_config.yaml`           | 待定     |
-| Q-04 | `max_output_bytes`   |     32 MiB | 单条 SQL 输出 | `conf/app_config.yaml`           | 待定     |
-| Q-05 | `batch_size`         |     100 行 | 查询拉取      | `conf/app_config.yaml`           | 待定     |
-| Q-06 | `sample_rows`        |       5 行 | 查询摘要      | `conf/app_config.yaml`           | 待定     |
-| Q-07 | Sample 字符串        |   512 字符 | 查询摘要字段  | `app/query/services/executor.py` | 待定     |
-| Q-08 | Sample 集合          |      20 项 | 查询摘要字段  | `app/query/services/executor.py` | 待定     |
-| Q-09 | Sample 嵌套深度      |          4 | 查询摘要字段  | `app/query/services/executor.py` | 待定     |
-
 ## 7. 沙箱
-
-### 7.1 单个 Conversation 沙箱
-
-| ID    | 约束项         |  当前值 | 作用域              | 定义位置               | 处理结果 |
-| ----- | -------------- | ------: | ------------------- | ---------------------- | -------- |
-| SB-01 | 容器内存       |   2 GiB | 沙箱容器            | `conf/app_config.yaml` | 待定     |
-| SB-02 | CPU            |    2 核 | 沙箱容器            | `conf/app_config.yaml` | 待定     |
-| SB-03 | PID            |     256 | 沙箱容器            | `conf/app_config.yaml` | 待定     |
 | SB-04 | Shell 执行超时 |  120 秒 | 单条命令            | `conf/app_config.yaml` | 待定     |
-| SB-05 | 命令返回输出   |   4 MiB | 单条命令            | `conf/app_config.yaml` | 待定     |
-| SB-06 | 捕获内容       |  10 MiB | 单次读取/捕获       | `conf/app_config.yaml` | 待定     |
-| SB-07 | 单文件         | 100 MiB | Conversation 工作区 | `conf/app_config.yaml` | 待定     |
-| SB-08 | 工作区         |   1 GiB | Conversation 工作区 | `conf/app_config.yaml` | 待定     |
 
 ### 7.2 全局容量
 

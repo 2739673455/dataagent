@@ -22,7 +22,6 @@ class CreateConversationRequest(BaseModel):
     is_draft: bool = Field(default=False, description="是否创建草稿对话")
     initial_message: str | None = Field(
         default=None,
-        max_length=20_000,
         description="用于初始化标题的首条用户文本",
     )
 

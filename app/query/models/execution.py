@@ -40,8 +40,6 @@ class QueryExecutionLimits(BaseModel):
     )
     timeout_seconds: int = Field(gt=0)
     memory_limit_bytes: int = Field(gt=0)
-    max_rows: int = Field(gt=0)
-    max_output_bytes: int = Field(gt=0)
 
 
 class QueryExecutionOptions(BaseModel):
