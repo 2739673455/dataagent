@@ -1,17 +1,23 @@
-import { ArrowLeft, Database, Shield, Users } from "lucide-react";
+import { ArrowLeft, Database, History, Shield, Users } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ROUTES } from "@/config/settings";
-import { DorisRoleManagement, MetadataManagement, UserManagement } from "./components";
+import {
+  DorisRoleManagement,
+  MetadataManagement,
+  QueryExperienceManagement,
+  UserManagement,
+} from "./components";
 
 export default function AdminPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
-  const activeTab = (tabParam === "users" || tabParam === "roles" ? tabParam : "metadata") as
-    | "metadata"
-    | "users"
-    | "roles";
-  const setActiveTab = (tab: "metadata" | "users" | "roles") => {
+  const activeTab = (
+    tabParam === "users" || tabParam === "roles" || tabParam === "experiences"
+      ? tabParam
+      : "metadata"
+  ) as "metadata" | "users" | "roles" | "experiences";
+  const setActiveTab = (tab: "metadata" | "users" | "roles" | "experiences") => {
     setSearchParams(tab === "metadata" ? {} : { tab });
   };
 
@@ -71,6 +77,18 @@ export default function AdminPage() {
             <Shield className="h-4 w-4" />
             <span>Doris 角色管理</span>
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("experiences")}
+            className={`flex shrink-0 items-center gap-1.5 rounded px-4 py-2 text-sm font-medium transition-colors cursor-pointer ${
+              activeTab === "experiences"
+                ? "bg-[#1e2024] text-[#ffffff]"
+                : "text-[#52525b] hover:bg-[#ebebe6] hover:text-[#18181b]"
+            }`}
+          >
+            <History className="h-4 w-4" />
+            <span>查询经验</span>
+          </button>
         </div>
 
         {/* 1. Doris 角色与权限管理 Tab */}
@@ -81,6 +99,9 @@ export default function AdminPage() {
 
         {/* 3. 元数据管理 Tab */}
         {activeTab === "metadata" && <MetadataManagement />}
+
+        {/* 4. 查询经验管理 Tab */}
+        {activeTab === "experiences" && <QueryExperienceManagement />}
       </div>
     </main>
   );

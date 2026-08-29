@@ -15,6 +15,12 @@ export type RowPolicyRequest = ApiSchemas["RowPolicyRequest"];
 export type SelectGrantRequest = ApiSchemas["SelectGrantRequest"];
 export type UpdateUserRequest = ApiSchemas["UpdateUserRequest"];
 export type UserListResponse = ApiSchemas["UserListResponse"];
+export type QueryExperienceDeletionResponse = ApiSchemas["QueryExperienceDeletionResponse"];
+export type QueryExperienceDetailResponse = ApiSchemas["QueryExperienceDetailResponse"];
+export type QueryExperienceSourceExecutionListResponse =
+  ApiSchemas["QueryExperienceSourceExecutionListResponse"];
+export type QueryExperienceListResponse = ApiSchemas["QueryExperienceListResponse"];
+export type QueryExperienceStatus = ApiSchemas["QueryExperienceStatus"];
 
 type DorisRoleListResponse = ApiSchemas["DorisRoleListResponse"];
 type DropRowPolicyRequest = ApiSchemas["DropRowPolicyRequest"];
@@ -103,6 +109,61 @@ export const adminApi = {
     const response = await appClient.put<UserResponse>(
       `/api/v1/admin/users/${userId}`,
       request satisfies UpdateUserRequest
+    );
+    return response.data;
+  },
+
+  async listQueryExperiences(params: {
+    limit: number;
+    offset: number;
+    roleName?: string;
+    status?: QueryExperienceStatus;
+    query?: string;
+  }): Promise<QueryExperienceListResponse> {
+    const response = await appClient.get<QueryExperienceListResponse>(
+      "/api/v1/admin/query-experiences",
+      {
+        params: {
+          limit: params.limit,
+          offset: params.offset,
+          ...(params.roleName ? { role_name: params.roleName } : {}),
+          ...(params.status ? { status: params.status } : {}),
+          ...(params.query?.trim() ? { query: params.query.trim() } : {}),
+        },
+      }
+    );
+    return response.data;
+  },
+
+  async getQueryExperience(id: string): Promise<QueryExperienceDetailResponse> {
+    const response = await appClient.get<QueryExperienceDetailResponse>(
+      `/api/v1/admin/query-experiences/${id}`
+    );
+    return response.data;
+  },
+
+  async listQueryExperienceSourceExecutions(
+    id: string,
+    limit: number,
+    offset: number
+  ): Promise<QueryExperienceSourceExecutionListResponse> {
+    const response = await appClient.get<QueryExperienceSourceExecutionListResponse>(
+      `/api/v1/admin/query-experiences/${id}/executions`,
+      { params: { limit, offset } }
+    );
+    return response.data;
+  },
+
+  async disableQueryExperience(id: string): Promise<QueryExperienceDetailResponse> {
+    const response = await appClient.post<QueryExperienceDetailResponse>(
+      `/api/v1/admin/query-experiences/${id}/disable`
+    );
+    return response.data;
+  },
+
+  async deleteQueryExperience(id: string): Promise<QueryExperienceDeletionResponse> {
+    const response = await appClient.delete<QueryExperienceDeletionResponse>(
+      `/api/v1/admin/query-experiences/${id}`
     );
     return response.data;
   },

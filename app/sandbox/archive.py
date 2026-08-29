@@ -399,6 +399,57 @@ class SandboxArchiveStore:
             raise RuntimeError("Agent Session 工作区权限设置失败")
         return conversation_uid, session_uid
 
+    def delete_session(
+        self,
+        container: Container,
+        conversation_id: UUID,
+        scope: SandboxSessionScope,
+    ) -> bool:
+        """删除 Agent Session 工作区、暂存目录和 UID 映射"""
+        registry = self._load_registry(container)
+        registry_key = scope.registry_key(conversation_id)
+        session_uid = registry.sessions.get(registry_key)
+        session_path = posixpath.join(
+            SANDBOX_WORKSPACE_ROOT,
+            str(conversation_id),
+            scope.relative_workspace,
+        )
+        session_exists = self.inspect_path(container, session_path) is not None
+        staging_path = (
+            posixpath.join(
+                SANDBOX_STAGING_ROOT,
+                str(conversation_id),
+                str(session_uid),
+            )
+            if session_uid is not None
+            else None
+        )
+        staging_exists = bool(
+            staging_path is not None
+            and self.inspect_path(container, staging_path) is not None
+        )
+        targets = [session_path]
+        if staging_path is not None:
+            targets.append(staging_path)
+        result = container.exec_run(
+            ["rm", "-rf", "--", *targets],
+            user="0",
+            privileged=True,
+            workdir="/workspace",
+        )
+        if result.exit_code != 0:
+            raw_output = result.output or b""
+            detail = (
+                raw_output.decode("utf-8", errors="replace")
+                if isinstance(raw_output, bytes)
+                else str(raw_output)
+            ).strip()
+            raise OSError(detail or "删除 Agent Session 沙箱失败")
+        mapping_existed = registry.sessions.pop(registry_key, None) is not None
+        if mapping_existed:
+            self._write_registry(container, registry)
+        return session_exists or staging_exists or mapping_existed
+
     @staticmethod
     def _registered_session_uid(
         registry: _UidRegistry,

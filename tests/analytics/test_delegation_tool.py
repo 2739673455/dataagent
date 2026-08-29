@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 from langchain.tools import ToolRuntime
 
-from app.analytics.agents.planner.delegation import create_delegation_tool
+from app.analytics.agents.planner.delegation import (
+    create_delegation_tool,
+    create_delete_session_tool,
+    create_list_sessions_tool,
+)
 
 
 def make_runtime() -> ToolRuntime:
@@ -59,4 +63,47 @@ class DelegationToolTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             result["details"],
             [{"type": "RuntimeError", "msg": "委派预算不可用"}],
+        )
+
+    async def test_list_sessions_rejects_invalid_analysis_id(self) -> None:
+        tool = create_list_sessions_tool(MagicMock())
+
+        result = await cast(Any, tool).coroutine(
+            runtime=make_runtime(),
+            analysis_id="Invalid ID",
+        )
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["code"], "invalid_list_sessions_request")
+
+    async def test_delete_session_rejects_invalid_request(self) -> None:
+        tool = create_delete_session_tool(MagicMock())
+
+        result = await cast(Any, tool).coroutine(
+            runtime=make_runtime(),
+            analysis_id="analysis",
+            agent_type="analyst",
+            session_id="",
+        )
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["code"], "invalid_delete_session_request")
+
+    async def test_delete_session_includes_execution_error_detail(self) -> None:
+        service = MagicMock()
+        service.delete_session = AsyncMock(side_effect=TimeoutError("获取锁超时"))
+        tool = create_delete_session_tool(service)
+
+        result = await cast(Any, tool).coroutine(
+            runtime=make_runtime(),
+            analysis_id="analysis",
+            agent_type="analyst",
+            session_id="session",
+        )
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["code"], "delete_session_failed")
+        self.assertEqual(
+            result["details"],
+            [{"type": "TimeoutError", "msg": "获取锁超时"}],
         )

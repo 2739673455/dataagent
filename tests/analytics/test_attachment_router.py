@@ -12,7 +12,7 @@ from app.analytics.api.attachment.router import (
 )
 from app.analytics.api.chat.schemas import DeleteAttachmentRequest
 from app.sandbox import errors as attachment_error
-from app.sandbox.exceptions import SandboxPathError
+from app.sandbox.exceptions import SandboxPathError, SandboxStorageLimitError
 
 
 class AsyncContextStub:
@@ -102,6 +102,22 @@ class AttachmentRouterTest(unittest.IsolatedAsyncioTestCase):
                 current_user=self.user,
                 lifecycle=self.lifecycle,
                 sandbox=self.sandbox,
+            )
+
+    async def test_upload_maps_workspace_limit_error(self) -> None:
+        file = UploadFile(file=io.BytesIO(b"report"), filename="report.csv")
+        self.sandbox.upload_user_attachment.side_effect = SandboxStorageLimitError(
+            "工作区容量超出限制"
+        )
+
+        with self.assertRaises(attachment_error.SandboxStorageLimitProblem):
+            await api_upload_attachment(
+                conversation_repo=self.conversation_repo,
+                current_user=self.user,
+                lifecycle=self.lifecycle,
+                sandbox=self.sandbox,
+                conversation_id=self.conversation_id,
+                file=file,
             )
 
     async def test_delete_uses_user_attachment_capability(self) -> None:

@@ -809,6 +809,39 @@ class DockerSandboxManager:
         scope = SandboxSessionScope(analysis_id, agent_type, session_id)
         return await self._prepare_backend(user_id, conversation_id, scope)
 
+    async def delete_session(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        analysis_id: str,
+        agent_type: str,
+        session_id: str,
+    ) -> bool:
+        """幂等删除专业 Agent Session 的全部沙箱资源"""
+        scope = SandboxSessionScope(analysis_id, agent_type, session_id)
+        await self.init()
+        resources = self._get_conversation_resources(user_id, conversation_id)
+
+        def delete() -> bool:
+            """在独占维护窗口中删除 Session 沙箱资源"""
+            with self._conversation_maintenance(
+                user_id,
+                conversation_id,
+                resources,
+                resources.mutation_lock,
+            ):
+                container = self._get_or_create_storage_container_sync(user_id)
+                return self._archive.delete_session(
+                    container,
+                    conversation_id,
+                    scope,
+                )
+
+        async with resources.user.lock:
+            deleted = await asyncio.to_thread(delete)
+        self._touch_user(user_id)
+        return deleted
+
     def _upload_attachment_sync(
         self,
         user_id: int,

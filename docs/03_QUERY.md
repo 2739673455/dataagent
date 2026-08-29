@@ -11,6 +11,7 @@ Query
 → 沉淀查询经验
 → 检索查询经验
 → 失效和修复查询经验
+→ 管理查询经验
 ```
 
 ## 1. 执行分析查询
@@ -98,7 +99,7 @@ SQL 成功并提交 CSV
 经验不存在
 → 创建 QueryExperience
 → 保存当前 authorization_epoch
-→ 保存 purpose、sql_template 和 candidate 状态
+→ 保存 purpose、sql_template 和 active 状态
 → 保存 SQL 使用的表和字段资产快照
 → revision 从 1 开始
 
@@ -107,7 +108,9 @@ SQL 成功并提交 CSV
 → 最近最多保留 20 个不同 purpose
 → 替换表和字段资产快照
 → 增加 revision
-→ 将 quality 恢复为 candidate
+→ metadata_changed 禁用恢复为 active
+→ admin 禁用保持 disabled
+→ deleting 状态不再更新经验内容
 
 经验保存成功
 → 提交指定 revision 的 Elasticsearch 索引任务
@@ -125,7 +128,7 @@ recall_context 提供 query、role_name 和 authorization_epoch
 → 向量结果应用最低相似度阈值
 → 使用 RRF 融合两个通道名次
 → 按候选 ID 从 PostgreSQL 读取完整经验
-→ 校验 quality 仍为 candidate
+→ 校验 status 仍为 active
 → 校验 role_name 和 authorization_epoch 仍匹配
 → 按稳定资源键读取当前元数据
 → 校验每个资产 meta_version 没有过期
@@ -156,7 +159,8 @@ recall_context 提供 query、role_name 和 authorization_epoch
 表或字段元数据发生变化
 → metadata 提供受影响 resource_key
 → 找到引用这些资产的 QueryExperience
-→ 将 quality 设置为 disabled
+→ 将 status 设置为 disabled
+→ 记录 disabled_reason=metadata_changed
 → 增加或更新索引 revision
 → 从 Elasticsearch 删除经验文档
 
@@ -174,6 +178,42 @@ SELECT 权限回收或 Row Policy 变化
 → 重新提交索引任务
 → 当前 revision 同步成功后更新 indexed_revision
 ```
+
+## 6. 管理查询经验
+
+查询经验管理入口位于管理员中心，所有后端接口均要求平台管理员身份。列表和详情读取 PostgreSQL 事实数据，因此可以查看有效、禁用、删除中和索引待同步记录。
+
+```text
+管理员打开查询经验页面
+→ 按 Doris 角色、状态或关键词筛选
+→ 查看 purpose、SQL 模板、元数据资产和来源执行记录
+→ 不展示 authorization_epoch、meta_version 和内部 revision
+
+管理员禁用 active 或 metadata_changed 经验
+→ 按经验 ID 获取行锁
+→ status 设置为 disabled
+→ disabled_reason 设置为 admin
+→ 记录管理员和禁用时间
+→ revision 增加 1
+→ 索引任务删除 Elasticsearch 文档
+→ 后续成功执行更新内容但保持管理员禁用
+
+管理员直接删除 active 或 disabled 经验
+→ 按经验 ID 获取行锁
+→ status 设置为 deleting
+→ 记录管理员和删除请求时间
+→ revision 增加 1
+→ 经验立即停止参与召回
+→ 索引任务按 revision 删除 Elasticsearch 文档
+→ 索引删除成功后删除 PostgreSQL 经验和资产
+→ QueryExecution 继续保留并将 experience_id 置空
+
+索引任务提交或执行失败
+→ PostgreSQL 保留 pending 或 deleting 状态
+→ 周期 repair 任务根据 revision 差异重新提交
+```
+
+管理页面不提供手工创建、编辑 SQL、直接启用和手工重新提交索引功能。
 
 ## 数据、任务和代码
 
@@ -206,6 +246,8 @@ Celery
 → app/query/services/executor.py
 → app/query/services/execution_handler.py
 → app/query/services/experience.py
+→ app/query/services/experience_management.py
+→ app/query/api/admin
 → app/query/tasks.py
 → app/analytics/agents/explorer/tools/execute_sql.py
 ```

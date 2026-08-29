@@ -6,6 +6,7 @@ import time
 import unittest
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -14,6 +15,7 @@ from pydantic import ValidationError
 
 from app.analytics.agents.manager import AgentManager
 from app.analytics.agents.skills import packaged_agent_skill_mounts
+from app.sandbox.archive import SandboxArchiveStore
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.capacity import FairCapacityLimiter
 from app.sandbox.concurrency import LifecycleGuard
@@ -426,6 +428,33 @@ class DockerSandboxManagerPolicyTest(unittest.TestCase):
                 f"{conversation_root}/"
             )
         )
+
+    def test_archive_delete_session_removes_workspace_staging_and_uid(self) -> None:
+        conversation_id = uuid4()
+        scope = SandboxSessionScope("sales-decline", "analyst", "region")
+        registry_key = scope.registry_key(conversation_id)
+        registry = SimpleNamespace(
+            conversations={str(conversation_id): 100_001},
+            sessions={registry_key: 100_002},
+        )
+        store = SandboxArchiveStore(1024, 4096)
+        container = MagicMock()
+        container.exec_run.return_value = SimpleNamespace(exit_code=0, output=b"")
+
+        with (
+            patch.object(store, "_load_registry", return_value=registry),
+            patch.object(store, "inspect_path", return_value=MagicMock()),
+            patch.object(store, "_write_registry") as write_registry,
+        ):
+            deleted = store.delete_session(container, conversation_id, scope)
+
+        self.assertTrue(deleted)
+        command = container.exec_run.call_args.args[0]
+        self.assertEqual(command[:3], ["rm", "-rf", "--"])
+        self.assertIn(scope.relative_workspace, command[3])
+        self.assertTrue(command[4].endswith("/100002"))
+        self.assertNotIn(registry_key, registry.sessions)
+        write_registry.assert_called_once_with(container, registry)
 
     def test_execute_timeout_is_clamped_to_sandbox_limit(self) -> None:
         backend = self._session_backend(
@@ -867,6 +896,38 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(preserved.file_data)
         assert preserved.file_data is not None
         self.assertIn("east,42", preserved.file_data["content"])
+
+    async def test_delete_session_removes_files_and_allows_clean_recreation(
+        self,
+    ) -> None:
+        conversation_id = uuid4()
+        backend = await self.manager.get_session_backend(
+            self.user_id,
+            conversation_id,
+            "sales-decline",
+            "analyst",
+            "region",
+        )
+        self.assertIsNone(backend.write("old.txt", "old state").error)
+
+        deleted = await self.manager.delete_session(
+            self.user_id,
+            conversation_id,
+            "sales-decline",
+            "analyst",
+            "region",
+        )
+        recreated = await self.manager.get_session_backend(
+            self.user_id,
+            conversation_id,
+            "sales-decline",
+            "analyst",
+            "region",
+        )
+
+        self.assertTrue(deleted)
+        self.assertIsNotNone(recreated.read("old.txt").error)
+        self.assertIsNone(recreated.write("new.txt", "new state").error)
 
     async def test_session_execute_reports_virtual_working_directory(self) -> None:
         conversation_id = uuid4()

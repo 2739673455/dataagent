@@ -26,6 +26,10 @@ from app.analytics.agents.contracts import (
     PlannerTurnContext,
     build_planner_config,
 )
+from app.analytics.agents.user_message_metadata import (
+    USER_MESSAGE_METADATA_KEY,
+    UserMessageMetadata,
+)
 from app.analytics.api.chat import schemas as chat_schema
 from app.analytics.services.contracts import (
     AgentRuntimeManager,
@@ -307,8 +311,9 @@ async def _schema_to_human_message(
         )
 
     stored_parts: list[chat_schema.MessagePart] = [*message.parts]
+    received_at = datetime.now(UTC)
     metadata = chat_schema.MessageResponse(
-        created_at=datetime.now(UTC),
+        created_at=received_at,
         role="user",
         parts=stored_parts,
         attachments=(
@@ -323,7 +328,12 @@ async def _schema_to_human_message(
     return HumanMessage(
         id=str(uuid.uuid4()),
         content=cast(list[str | dict[Any, Any]], content_parts),
-        additional_kwargs={MESSAGE_PAYLOAD_KEY: metadata},
+        additional_kwargs={
+            MESSAGE_PAYLOAD_KEY: metadata,
+            USER_MESSAGE_METADATA_KEY: UserMessageMetadata(
+                received_at=received_at
+            ).model_dump(mode="json"),
+        },
     )
 
 

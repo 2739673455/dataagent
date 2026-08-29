@@ -5,30 +5,37 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from threading import Lock as ThreadLock
 from typing import cast
 from uuid import UUID
 
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
+from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ValidationError
 
 from app.analytics.agents.contracts import (
     DelegationRequest,
     DelegationResult,
+    DeleteSessionRequest,
+    DeleteSessionResult,
+    ListSessionsResult,
+    SessionSummary,
     SpecialistResult,
     get_thread_id,
 )
-from app.analytics.agents.registry import AgentRegistry
-from app.shared.contracts.analysis import AgentSessionKey
+from app.analytics.agents.session_store import AgentSessionStore
+from app.shared.contracts.analysis import AgentSessionKey, validate_agent_type
 
 _STRUCTURED_RETRY_MESSAGE = """
 上一条响应没有通过 SpecialistResult 协议校验。请根据当前 Session 已有工作重新输出结构化结果，不要重复执行工具。
 completed 必须包含 findings 和 artifacts；needs_repair 必须包含有 evidence 的 repair_requests；failed 必须包含 limitations。
 """.strip()
 _MAX_PARALLEL_ARTIFACT_VERIFICATIONS = 8
+
 
 @dataclass(slots=True)
 class _ExecutionBudget:
@@ -40,6 +47,7 @@ class _ExecutionBudget:
     last_repair_fingerprint: dict[str, tuple[object, ...]] = field(default_factory=dict)
     pending_repair_depths: dict[str, int] = field(default_factory=dict)
     session_repair_depths: dict[str, int] = field(default_factory=dict)
+    seen_sessions: set[str] = field(default_factory=set)
 
 
 class AgentSessionService:
@@ -48,7 +56,8 @@ class AgentSessionService:
     def __init__(
         self,
         *,
-        registry: AgentRegistry,
+        build_agent: Callable[[AgentSessionKey], Awaitable[CompiledStateGraph]],
+        session_store: AgentSessionStore,
         user_id: int,
         conversation_id: UUID,
         max_parallel_sessions: int,
@@ -57,12 +66,6 @@ class AgentSessionService:
         max_repair_depth: int,
         max_session_resumes: int,
         session_lock_timeout: float,
-        artifact_verifier: Callable[[str], Awaitable[bool]],
-        session_exists: Callable[[AgentSessionKey], Awaitable[bool]],
-        session_lock_factory: Callable[
-            [AgentSessionKey],
-            AbstractAsyncContextManager[None],
-        ],
     ) -> None:
         """初始化会话身份、并发控制和委派预算限制"""
         if max_parallel_sessions <= 0:
@@ -76,7 +79,8 @@ class AgentSessionService:
         if session_lock_timeout <= 0:
             raise ValueError("session_lock_timeout 必须为正数")
 
-        self._registry = registry
+        self._build_agent = build_agent
+        self._session_store = session_store
         self._user_id = user_id
         self._conversation_id = conversation_id
         self._max_delegations_per_run = max_delegations_per_run
@@ -84,15 +88,13 @@ class AgentSessionService:
         self._max_repair_depth = max_repair_depth
         self._max_session_resumes = max_session_resumes
         self._session_lock_timeout = session_lock_timeout
-        self._artifact_verifier = artifact_verifier
         self._artifact_verification_parallelism = asyncio.Semaphore(
             min(max_parallel_sessions, _MAX_PARALLEL_ARTIFACT_VERIFICATIONS)
         )
-        self._session_exists = session_exists
-        self._session_lock_factory = session_lock_factory
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._parallelism = asyncio.Semaphore(max_parallel_sessions)
-        self._known_sessions: set[str] = set()
+        self._session_query_parallelism = asyncio.Semaphore(max_parallel_sessions)
+        self._active_sessions: dict[str, datetime] = {}
         self._budgets: dict[str, _ExecutionBudget] = {}
         self._budget_lock = ThreadLock()
 
@@ -132,24 +134,48 @@ class AgentSessionService:
             return "本次 Planner 执行已达到委派次数上限"
 
         checkpoint_ns = session_key.checkpoint_ns
-        if persisted_session_exists or checkpoint_ns in self._known_sessions:
+        if persisted_session_exists or checkpoint_ns in budget.seen_sessions:
             budget.session_resumes[checkpoint_ns] += 1
             if budget.session_resumes[checkpoint_ns] > self._max_session_resumes:
                 return "本次 Planner 执行已达到 Session 续接次数上限"
         else:
-            self._known_sessions.add(checkpoint_ns)
+            budget.seen_sessions.add(checkpoint_ns)
         return None
 
     async def _is_existing_session(self, session_key: AgentSessionKey) -> bool:
-        """从当前进程缓存或持久化 Checkpoint 识别 Session"""
+        """从活跃执行或持久化 Checkpoint 识别 Session"""
         with self._budget_lock:
-            if session_key.checkpoint_ns in self._known_sessions:
+            if session_key.checkpoint_ns in self._active_sessions:
                 return True
-        exists = await self._session_exists(session_key)
-        if exists:
-            with self._budget_lock:
-                self._known_sessions.add(session_key.checkpoint_ns)
-        return exists
+        return await self._session_store.load_checkpoint(session_key) is not None
+
+    def _parse_session_namespace(self, checkpoint_ns: str) -> AgentSessionKey | None:
+        """把受控专业 Session namespace 还原为身份键"""
+        parts = checkpoint_ns.split("/")
+        if len(parts) != 4 or parts[0] != "subagents":
+            return None
+        try:
+            return AgentSessionKey(
+                user_id=self._user_id,
+                conversation_id=self._conversation_id,
+                analysis_id=parts[1],
+                agent_type=validate_agent_type(parts[2]),
+                session_id=parts[3],
+            )
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _checkpoint_updated_at(checkpoint: Mapping[str, object]) -> datetime | None:
+        """读取 Checkpoint 的 UTC 更新时间"""
+        timestamp = checkpoint.get("ts")
+        if not isinstance(timestamp, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(timestamp)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
     @staticmethod
     def _failed_result(
@@ -167,7 +193,10 @@ class AgentSessionService:
             limitations=[limitation],
         )
 
-    def _build_session_key(self, request: DelegationRequest) -> AgentSessionKey:
+    def _build_session_key(
+        self,
+        request: DelegationRequest | DeleteSessionRequest,
+    ) -> AgentSessionKey:
         """把已校验请求绑定到当前用户会话"""
         return AgentSessionKey(
             user_id=self._user_id,
@@ -216,6 +245,76 @@ class AgentSessionService:
         if isinstance(candidate, BaseModel):
             candidate = candidate.model_dump(mode="python")
         return SpecialistResult.model_validate(candidate)
+
+    async def list_sessions(self, analysis_id: str | None) -> ListSessionsResult:
+        """查询当前 Conversation 内的专业 Agent Session"""
+        namespaces = await self._session_store.list_namespaces(analysis_id)
+        with self._budget_lock:
+            active_sessions = dict(self._active_sessions)
+        all_namespaces = set(namespaces)
+        for namespace in active_sessions:
+            session_key = self._parse_session_namespace(namespace)
+            if session_key is not None and (
+                analysis_id is None or session_key.analysis_id == analysis_id
+            ):
+                all_namespaces.add(namespace)
+
+        async def load_summary(checkpoint_ns: str) -> SessionSummary | None:
+            """读取单个 Session 的最新持久化状态并叠加活跃状态"""
+            session_key = self._parse_session_namespace(checkpoint_ns)
+            if session_key is None or (
+                analysis_id is not None and session_key.analysis_id != analysis_id
+            ):
+                return None
+            async with self._session_query_parallelism:
+                checkpoint = await self._session_store.load_checkpoint(session_key)
+            active_at = active_sessions.get(checkpoint_ns)
+            if checkpoint is None and active_at is None:
+                return None
+            status = "interrupted"
+            summary: str | None = None
+            artifact_count = 0
+            updated_at = (
+                self._checkpoint_updated_at(checkpoint)
+                if checkpoint is not None
+                else None
+            )
+            if checkpoint is not None:
+                channel_values = checkpoint.get("channel_values")
+                structured_response = (
+                    channel_values.get("structured_response")
+                    if isinstance(channel_values, Mapping)
+                    else None
+                )
+                try:
+                    result = self._parse_specialist_result(structured_response)
+                except (TypeError, ValueError, ValidationError):
+                    pass
+                else:
+                    status = result.status
+                    summary = result.summary
+                    artifact_count = len(result.artifacts)
+            if active_at is not None:
+                status = "active"
+                updated_at = active_at
+            return SessionSummary(
+                analysis_id=session_key.analysis_id,
+                agent_type=session_key.agent_type,
+                session_id=session_key.session_id,
+                status=status,
+                summary=summary,
+                artifact_count=artifact_count,
+                updated_at=updated_at,
+            )
+
+        summaries = await asyncio.gather(
+            *(load_summary(namespace) for namespace in sorted(all_namespaces))
+        )
+        sessions = sorted(
+            (summary for summary in summaries if summary is not None),
+            key=lambda item: (item.analysis_id, item.agent_type, item.session_id),
+        )
+        return ListSessionsResult(analysis_id=analysis_id, sessions=sessions)
 
     async def _validate_repair_targets(
         self,
@@ -273,7 +372,7 @@ class AgentSessionService:
         async def verify(path: str) -> bool:
             """在受控并发范围内验证单个产物路径"""
             async with self._artifact_verification_parallelism:
-                return await self._artifact_verifier(path)
+                return await self._session_store.artifact_exists(path)
 
         verified = await asyncio.gather(*(verify(path) for path in sorted(paths)))
         missing = [
@@ -291,7 +390,7 @@ class AgentSessionService:
         config: RunnableConfig,
     ) -> SpecialistResult:
         """调用专业 Agent 并允许一次纯结构化修正"""
-        agent = await self._registry.get_agent(session_key)
+        agent = await self._build_agent(session_key)
         output = await agent.ainvoke(
             {"messages": [HumanMessage(content=request.message)]},
             config=config,
@@ -448,28 +547,6 @@ class AgentSessionService:
                     "Delegation rejected by repair depth limit",
                     f"max repair depth is {self._max_repair_depth}",
                 )
-            persisted_session_exists = await self._is_existing_session(session_key)
-            with self._budget_lock:
-                limitation = self._validate_repair_depth(
-                    request,
-                    session_key,
-                    budget,
-                )
-                if limitation is None:
-                    limitation = self._consume_delegation(
-                        budget,
-                        session_key,
-                        persisted_session_exists,
-                    )
-                if limitation is None:
-                    self._consume_repair_depth(request, session_key, budget)
-            if limitation:
-                return self._failed_result(
-                    request,
-                    "Delegation rejected by execution limit",
-                    limitation,
-                )
-
             session_lock = self._session_locks.setdefault(
                 session_key.checkpoint_ns,
                 asyncio.Lock(),
@@ -478,13 +555,61 @@ class AgentSessionService:
             try:
                 async with asyncio.timeout(self._session_lock_timeout):
                     async with session_lock:
-                        async with self._session_lock_factory(session_key):
-                            async with self._parallelism:
-                                result = await self._invoke_specialist(
+                        async with self._session_store.lock(session_key):
+                            persisted_session_exists = await self._is_existing_session(
+                                session_key
+                            )
+                            with self._budget_lock:
+                                limitation = self._validate_repair_depth(
                                     request,
                                     session_key,
-                                    config,
+                                    budget,
                                 )
+                                if limitation is None:
+                                    limitation = self._consume_delegation(
+                                        budget,
+                                        session_key,
+                                        persisted_session_exists,
+                                    )
+                                if limitation is None:
+                                    self._consume_repair_depth(
+                                        request,
+                                        session_key,
+                                        budget,
+                                    )
+                            if limitation:
+                                return self._failed_result(
+                                    request,
+                                    "Delegation rejected by execution limit",
+                                    limitation,
+                                )
+                            async with self._parallelism:
+                                with self._budget_lock:
+                                    self._active_sessions[session_key.checkpoint_ns] = (
+                                        datetime.now(UTC)
+                                    )
+                                try:
+                                    result = await self._invoke_specialist(
+                                        request,
+                                        session_key,
+                                        config,
+                                    )
+                                finally:
+                                    with self._budget_lock:
+                                        self._active_sessions.pop(
+                                            session_key.checkpoint_ns,
+                                            None,
+                                        )
+                            with self._budget_lock:
+                                limited_result = self._apply_repair_limits(
+                                    request,
+                                    session_key,
+                                    result,
+                                    budget,
+                                )
+                            if limited_result:
+                                return limited_result
+                            return self._to_delegation_result(request, result)
             except TimeoutError:
                 return self._failed_result(
                     request,
@@ -500,16 +625,6 @@ class AgentSessionService:
                     f"{type(exc).__name__}: {exc}",
                 )
 
-            with self._budget_lock:
-                limited_result = self._apply_repair_limits(
-                    request,
-                    session_key,
-                    result,
-                    budget,
-                )
-            if limited_result:
-                return limited_result
-            return self._to_delegation_result(request, result)
         except (RuntimeError, TypeError) as exc:
             return self._failed_result(
                 request,
@@ -517,9 +632,71 @@ class AgentSessionService:
                 str(exc),
             )
 
+    async def delete_session(
+        self,
+        request: DeleteSessionRequest,
+        parent_config: RunnableConfig,
+    ) -> DeleteSessionResult:
+        """幂等删除专业 Agent Session 的持久化与沙箱状态"""
+        self._get_budget(parent_config)
+        session_key = self._build_session_key(request)
+        session_lock = self._session_locks.setdefault(
+            session_key.checkpoint_ns,
+            asyncio.Lock(),
+        )
+        try:
+            async with asyncio.timeout(self._session_lock_timeout):
+                async with session_lock:
+                    async with self._session_store.lock(session_key):
+                        try:
+                            checkpoint_deleted = (
+                                await self._session_store.delete_checkpoint(session_key)
+                            )
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:
+                            raise RuntimeError("删除 Session Checkpoint 失败") from exc
+                        try:
+                            workspace_deleted = (
+                                await self._session_store.delete_workspace(session_key)
+                            )
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:
+                            raise RuntimeError("删除 Session 工作区失败") from exc
+                        with self._budget_lock:
+                            for budget in self._budgets.values():
+                                budget.pending_repair_depths.pop(
+                                    session_key.checkpoint_ns,
+                                    None,
+                                )
+                                budget.session_repair_depths.pop(
+                                    session_key.checkpoint_ns,
+                                    None,
+                                )
+                                budget.last_repair_fingerprint.pop(
+                                    session_key.checkpoint_ns,
+                                    None,
+                                )
+                                budget.seen_sessions.discard(session_key.checkpoint_ns)
+                            self._active_sessions.pop(
+                                session_key.checkpoint_ns,
+                                None,
+                            )
+        except TimeoutError as exc:
+            raise TimeoutError("Session 删除等待锁超时") from exc
+        existed = checkpoint_deleted or workspace_deleted
+        return DeleteSessionResult(
+            analysis_id=request.analysis_id,
+            agent_type=request.agent_type,
+            session_id=request.session_id,
+            existed=existed,
+            message=("Session 已删除" if existed else "Session 不存在，无需删除"),
+        )
+
     def clear(self) -> None:
         """清除无运行任务时的 Session 内存状态"""
         self._session_locks.clear()
-        self._known_sessions.clear()
         with self._budget_lock:
+            self._active_sessions.clear()
             self._budgets.clear()

@@ -160,8 +160,11 @@ agent:
     mode: thread
     ptc:
       - delegation
+      - list_sessions
+      - delete_session
     timeout_seconds: 30
     memory_limit_bytes: 67108864
+    max_ptc_calls_per_eval: 30
   specialists:
     explorer:
       model: default

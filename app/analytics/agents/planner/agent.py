@@ -13,6 +13,9 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
 from app.analytics.agents.message_timestamp_middleware import MessageTimestampMiddleware
+from app.analytics.agents.user_message_metadata import (
+    UserMessageMetadataMiddleware,
+)
 
 from .prompt import build_planner_system_prompt
 
@@ -22,13 +25,14 @@ type InterpreterMode = Literal["thread", "turn", "call"]
 def create_planner_agent(
     *,
     model: BaseChatModel,
-    delegation_tool: BaseTool,
+    tools: Sequence[BaseTool],
     backend: BackendProtocol,
     checkpointer: BaseCheckpointSaver,
     interpreter_mode: InterpreterMode | None,
     interpreter_ptc: Sequence[str | BaseTool],
     interpreter_timeout_seconds: float,
     interpreter_memory_limit_bytes: int,
+    interpreter_max_ptc_calls: int,
     max_delegations_per_run: int,
     max_repair_rounds: int,
     max_repair_depth: int,
@@ -39,7 +43,7 @@ def create_planner_agent(
         ptc=list(interpreter_ptc),
         timeout=interpreter_timeout_seconds,
         memory_limit=interpreter_memory_limit_bytes,
-        max_ptc_calls=max_delegations_per_run,
+        max_ptc_calls=interpreter_max_ptc_calls,
     )
     filesystem = FilesystemMiddleware(
         backend=backend,
@@ -47,7 +51,7 @@ def create_planner_agent(
     )
     return create_deep_agent(
         model=model,
-        tools=[delegation_tool],
+        tools=tools,
         system_prompt=build_planner_system_prompt(
             max_delegations=max_delegations_per_run,
             max_repair_rounds=max_repair_rounds,
@@ -55,7 +59,12 @@ def create_planner_agent(
         ),
         middleware=cast(
             "Sequence[AgentMiddleware[Any, Any, Any]]",
-            [filesystem, interpreter, MessageTimestampMiddleware()],
+            [
+                filesystem,
+                interpreter,
+                UserMessageMetadataMiddleware(),
+                MessageTimestampMiddleware(),
+            ],
         ),
         subagents=[],
         backend=backend,

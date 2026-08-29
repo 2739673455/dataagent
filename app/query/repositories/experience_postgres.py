@@ -1,9 +1,10 @@
 """查询执行历史与经验 PostgreSQL 数据访问"""
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, select, tuple_, update
+from sqlalchemy import Text, cast, delete, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -14,6 +15,16 @@ from app.metadata.models.catalog import (
 )
 from app.query.models.execution import QueryExecution
 from app.query.models.experience import QueryExperience, QueryExperienceAsset
+
+
+@dataclass(frozen=True, slots=True)
+class QueryExperienceOverview:
+    """查询经验及其资产、执行聚合统计。"""
+
+    experience: QueryExperience
+    asset_count: int
+    execution_count: int
+    last_executed_at: datetime | None
 
 
 class QueryExperiencePGRepo:
@@ -46,15 +57,18 @@ class QueryExperiencePGRepo:
                 fingerprint=experience.fingerprint,
                 purposes=experience.purposes,
                 sql_template=experience.sql_template,
-                quality="candidate",
+                status="active",
+                disabled_reason=None,
+                disabled_by_user_id=None,
+                disabled_at=None,
+                deletion_requested_by_user_id=None,
+                deletion_requested_at=None,
                 revision=1,
                 indexed_revision=0,
                 created_at=now,
                 updated_at=now,
             )
-            .on_conflict_do_nothing(
-                index_elements=["role_name", "fingerprint"]
-            )
+            .on_conflict_do_nothing(index_elements=["role_name", "fingerprint"])
             .returning(QueryExperience.id)
         )
         inserted_id = await self._session.scalar(statement)
@@ -70,22 +84,24 @@ class QueryExperiencePGRepo:
             if existing is None:
                 raise RuntimeError("查询经验写入未返回记录行")
             experience_id = existing.id
-            existing.refresh_from_success(
+            experience_updated = existing.refresh_from_success(
                 purpose=experience.purposes[0],
                 authorization_epoch=experience.authorization_epoch,
                 sql_template=experience.sql_template,
             )
         else:
             experience_id = inserted_id
+            experience_updated = True
 
-        await self._session.execute(
-            delete(QueryExperienceAsset).where(
-                QueryExperienceAsset.experience_id == experience_id
+        if experience_updated:
+            await self._session.execute(
+                delete(QueryExperienceAsset).where(
+                    QueryExperienceAsset.experience_id == experience_id
+                )
             )
-        )
-        for asset in assets:
-            asset.experience_id = experience_id
-        self._session.add_all(assets)
+            for asset in assets:
+                asset.experience_id = experience_id
+            self._session.add_all(assets)
         execution.experience_id = experience_id
         self._session.add(execution)
         await self._session.flush()
@@ -130,7 +146,7 @@ class QueryExperiencePGRepo:
         by_id = {item.id: item for item in result.unique().all()}
         return [by_id[item_id] for item_id in experience_ids if item_id in by_id]
 
-    async def disable_by_resource_keys(
+    async def disable_for_changed_resources(
         self,
         resource_keys: set[str],
     ) -> dict[UUID, int]:
@@ -143,17 +159,20 @@ class QueryExperiencePGRepo:
                     select(QueryExperience.id)
                     .join(QueryExperienceAsset)
                     .where(
-                        QueryExperience.quality != "disabled",
+                        QueryExperience.status == "active",
                         QueryExperienceAsset.resource_key.in_(resource_keys),
                     )
                     .distinct()
                 )
             ).all()
         )
-        return await self.disable(experience_ids)
+        return await self.disable_for_metadata_change(experience_ids)
 
-    async def disable(self, experience_ids: set[UUID] | list[UUID]) -> dict[UUID, int]:
-        """禁用指定经验并返回失效后的版本"""
+    async def disable_for_metadata_change(
+        self,
+        experience_ids: set[UUID] | list[UUID],
+    ) -> dict[UUID, int]:
+        """因元数据变化禁用指定经验并返回新版本"""
         if not experience_ids:
             return {}
         now = datetime.now(UTC)
@@ -161,10 +180,13 @@ class QueryExperiencePGRepo:
             update(QueryExperience)
             .where(
                 QueryExperience.id.in_(experience_ids),
-                QueryExperience.quality != "disabled",
+                QueryExperience.status == "active",
             )
             .values(
-                quality="disabled",
+                status="disabled",
+                disabled_reason="metadata_changed",
+                disabled_by_user_id=None,
+                disabled_at=now,
                 revision=QueryExperience.revision + 1,
                 updated_at=now,
             )
@@ -172,6 +194,198 @@ class QueryExperiencePGRepo:
         )
         await self._session.flush()
         return {experience_id: revision for experience_id, revision in result.tuples()}
+
+    async def list_overviews(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        role_name: str | None,
+        status: str | None,
+        query: str | None,
+    ) -> tuple[list[QueryExperienceOverview], int]:
+        """按筛选条件分页读取查询经验概览。"""
+        filters = []
+        if role_name is not None:
+            filters.append(QueryExperience.role_name == role_name)
+        if status is not None:
+            filters.append(QueryExperience.status == status)
+        if query is not None:
+            pattern = f"%{query}%"
+            filters.append(
+                or_(
+                    QueryExperience.sql_template.ilike(pattern),
+                    QueryExperience.fingerprint.ilike(pattern),
+                    cast(QueryExperience.purposes, Text).ilike(pattern),
+                )
+            )
+
+        asset_count = (
+            select(func.count(QueryExperienceAsset.id))
+            .where(QueryExperienceAsset.experience_id == QueryExperience.id)
+            .correlate(QueryExperience)
+            .scalar_subquery()
+        )
+        execution_count = (
+            select(func.count(QueryExecution.id))
+            .where(QueryExecution.experience_id == QueryExperience.id)
+            .correlate(QueryExperience)
+            .scalar_subquery()
+        )
+        last_executed_at = (
+            select(func.max(QueryExecution.created_at))
+            .where(QueryExecution.experience_id == QueryExperience.id)
+            .correlate(QueryExperience)
+            .scalar_subquery()
+        )
+        total = await self._session.scalar(
+            select(func.count()).select_from(QueryExperience).where(*filters)
+        )
+        result = await self._session.execute(
+            select(
+                QueryExperience,
+                asset_count.label("asset_count"),
+                execution_count.label("execution_count"),
+                last_executed_at.label("last_executed_at"),
+            )
+            .where(*filters)
+            .order_by(QueryExperience.updated_at.desc(), QueryExperience.id)
+            .limit(limit)
+            .offset(offset)
+        )
+        rows = [
+            QueryExperienceOverview(
+                experience=experience,
+                asset_count=asset_total,
+                execution_count=execution_total,
+                last_executed_at=last_execution,
+            )
+            for experience, asset_total, execution_total, last_execution in result.all()
+        ]
+        return rows, total or 0
+
+    async def get_overview(
+        self,
+        experience_id: UUID,
+    ) -> QueryExperienceOverview | None:
+        """读取一条查询经验及其聚合统计。"""
+        experience = await self.get(experience_id)
+        if experience is None:
+            return None
+        execution_count, last_executed_at = (
+            await self._session.execute(
+                select(
+                    func.count(QueryExecution.id),
+                    func.max(QueryExecution.created_at),
+                ).where(QueryExecution.experience_id == experience_id)
+            )
+        ).one()
+        return QueryExperienceOverview(
+            experience=experience,
+            asset_count=len(experience.assets),
+            execution_count=execution_count,
+            last_executed_at=last_executed_at,
+        )
+
+    async def list_source_executions(
+        self,
+        experience_id: UUID,
+        *,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[QueryExecution], int]:
+        """分页读取一条经验的来源执行记录。"""
+        filters = (
+            QueryExecution.experience_id == experience_id,
+            QueryExecution.status == "succeeded",
+        )
+        total = await self._session.scalar(
+            select(func.count()).select_from(QueryExecution).where(*filters)
+        )
+        executions = list(
+            (
+                await self._session.scalars(
+                    select(QueryExecution)
+                    .where(*filters)
+                    .order_by(
+                        QueryExecution.created_at.desc(), QueryExecution.id.desc()
+                    )
+                    .limit(limit)
+                    .offset(offset)
+                )
+            ).all()
+        )
+        return executions, total or 0
+
+    async def disable_manually(
+        self,
+        experience_id: UUID,
+        admin_user_id: int,
+    ) -> tuple[QueryExperience | None, bool]:
+        """按行锁将查询经验标记为管理员禁用。"""
+        experience = await self._session.scalar(
+            select(QueryExperience)
+            .options(selectinload(QueryExperience.assets))
+            .where(QueryExperience.id == experience_id)
+            .with_for_update()
+        )
+        if experience is None or experience.status == "deleting":
+            return experience, False
+        if experience.status == "disabled" and experience.disabled_reason == "admin":
+            return experience, False
+        now = datetime.now(UTC)
+        experience.status = "disabled"
+        experience.disabled_reason = "admin"
+        experience.disabled_by_user_id = admin_user_id
+        experience.disabled_at = now
+        experience.deletion_requested_by_user_id = None
+        experience.deletion_requested_at = None
+        experience.revision += 1
+        experience.updated_at = now
+        await self._session.flush()
+        return experience, True
+
+    async def request_deletion(
+        self,
+        experience_id: UUID,
+        admin_user_id: int,
+    ) -> tuple[QueryExperience | None, bool]:
+        """按行锁将查询经验标记为删除中。"""
+        experience = await self._session.scalar(
+            select(QueryExperience)
+            .options(selectinload(QueryExperience.assets))
+            .where(QueryExperience.id == experience_id)
+            .with_for_update()
+        )
+        if experience is None:
+            return None, False
+        if experience.status == "deleting":
+            return experience, False
+        now = datetime.now(UTC)
+        experience.status = "deleting"
+        experience.disabled_reason = None
+        experience.disabled_by_user_id = None
+        experience.disabled_at = None
+        experience.deletion_requested_by_user_id = admin_user_id
+        experience.deletion_requested_at = now
+        experience.revision += 1
+        experience.updated_at = now
+        await self._session.flush()
+        return experience, True
+
+    async def finalize_deletion(self, experience_id: UUID, revision: int) -> bool:
+        """删除已完成当前索引清理的查询经验。"""
+        deleted_id = await self._session.scalar(
+            delete(QueryExperience)
+            .where(
+                QueryExperience.id == experience_id,
+                QueryExperience.revision == revision,
+                QueryExperience.status == "deleting",
+            )
+            .returning(QueryExperience.id)
+        )
+        await self._session.flush()
+        return deleted_id is not None
 
     async def mark_indexes_synced(self, revisions: dict[UUID, int]) -> None:
         """记录经验搜索投影已同步到指定版本"""

@@ -217,7 +217,7 @@ class QueryExperienceService:
             for table_name, column_name in column_keys
         )
         async with self._repo.session.begin():
-            revisions = await self._repo.disable_by_resource_keys(resource_keys)
+            revisions = await self._repo.disable_for_changed_resources(resource_keys)
         for experience_id, revision in revisions.items():
             self._index_scheduler.enqueue(experience_id, revision)
         return list(revisions)
@@ -251,18 +251,20 @@ class QueryExperienceService:
             invalid_revisions = {
                 experience.id: experience.revision
                 for experience in experiences
-                if experience.quality == "disabled"
+                if experience.status != "active"
             }
             stale_ids = {
                 experience.id
                 for experience in experiences
-                if experience.quality != "disabled"
+                if experience.status == "active"
                 and any(
                     current_versions.get(asset.resource_key) != asset.meta_version
                     for asset in experience.assets
                 )
             }
-            invalid_revisions.update(await self._repo.disable(stale_ids))
+            invalid_revisions.update(
+                await self._repo.disable_for_metadata_change(stale_ids)
+            )
             experiences = [
                 experience
                 for experience in experiences
@@ -354,7 +356,15 @@ class QueryExperienceService:
             return experience.indexed_revision
 
         revision = experience.revision
-        if experience.quality == "disabled":
+        if experience.status == "deleting":
+            await self._index_repo.delete(
+                experience.id,
+                revision=revision,
+            )
+            async with self._repo.session.begin():
+                await self._repo.finalize_deletion(experience.id, revision)
+            return revision
+        if experience.status == "disabled":
             await self._index_repo.delete(
                 experience.id,
                 revision=revision,

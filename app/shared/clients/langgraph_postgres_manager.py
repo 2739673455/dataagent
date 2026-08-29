@@ -146,6 +146,65 @@ class LangGraphPostgresManager:
         """删除会话线程的全部 Checkpoint"""
         await self.get_checkpointer().adelete_thread(thread_id)
 
+    async def list_checkpoint_namespaces(
+        self,
+        thread_id: str,
+        *,
+        prefix: str,
+    ) -> list[str]:
+        """列出线程内具有指定前缀的唯一 Checkpoint namespace"""
+        if not thread_id or not prefix:
+            raise ValueError("thread_id 和 prefix 均不能为空")
+        if self._pool is None:
+            raise RuntimeError("LangGraph PostgreSQL 管理器尚未初始化")
+        async with self._pool.connection() as connection:
+            cursor = await connection.execute(
+                """
+                SELECT DISTINCT checkpoint_ns
+                FROM checkpoints
+                WHERE thread_id = %s
+                  AND left(checkpoint_ns, length(%s)) = %s
+                ORDER BY checkpoint_ns
+                """,
+                (thread_id, prefix, prefix),
+            )
+            rows = await cursor.fetchall()
+        return [str(row["checkpoint_ns"]) for row in rows]
+
+    async def delete_checkpoint_namespace(
+        self,
+        thread_id: str,
+        checkpoint_ns: str,
+    ) -> bool:
+        """原子删除线程内单个 namespace 的全部 Checkpoint 数据"""
+        if not thread_id or not checkpoint_ns:
+            raise ValueError("thread_id 和 checkpoint_ns 均不能为空")
+        if self._pool is None:
+            raise RuntimeError("LangGraph PostgreSQL 管理器尚未初始化")
+        deleted = 0
+        statements = (
+            (
+                "DELETE FROM checkpoint_writes "
+                "WHERE thread_id = %s AND checkpoint_ns = %s"
+            ),
+            (
+                "DELETE FROM checkpoint_blobs "
+                "WHERE thread_id = %s AND checkpoint_ns = %s"
+            ),
+            ("DELETE FROM checkpoints WHERE thread_id = %s AND checkpoint_ns = %s"),
+        )
+        async with (
+            self._pool.connection() as connection,
+            connection.transaction(),
+        ):
+            for statement in statements:
+                cursor = await connection.execute(
+                    statement,
+                    (thread_id, checkpoint_ns),
+                )
+                deleted += max(cursor.rowcount, 0)
+        return deleted > 0
+
     async def delete_user_threads(self, user_id: int) -> None:
         """删除用户全部 LangGraph Checkpoint 线程"""
         thread_prefix = f"user_{user_id}:conversation_"

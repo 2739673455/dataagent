@@ -170,42 +170,53 @@ description: 基于 Explorer 查询结果或用户数据产物执行专业业务
 
 ## 产物规范
 
-根据任务复杂度创建必要产物，避免机械生成空文件。复杂分析通常包括：
+遵循**最小有效产物原则（Minimal Viable Artifacts）**，根据任务实际复杂度创建产物，严禁机械生成无实质数据的占位文件、空白 Markdown 模板或冗余中间文件。
+
+### 1. 常规/单指标分析（默认模式，最精简结构）
+
+绝大多数常规分析仅需生成一个入口脚本和一个核心证据表：
 
 ```text
-analysis/
-├── analysis_plan_v1.md
-├── analysis_manifest_v1.json
-├── data_profile_v1.json
-├── metric_summary_v1.csv
-├── decomposition_v1.csv
-├── segment_diagnostics_v1.csv
-├── validation_v1.json
-└── methodology_v1.md
 scripts/
-└── analyze_v1.py
+└── analyze_v1.py           # 分析计算与数据自校验入口脚本
+evidence/
+└── metric_summary_v1.csv   # 核心计算结果与指标对比证据表
 ```
 
-`analysis_manifest` 应记录输入路径、数据粒度、指标公式、过滤条件、分析窗口、方法参数、输出文件和主要校验结果。无需包含模型消息或无法复现的推理过程。
+*注：分析计划、计算方法与口径说明直接体现在代码注释及返回的 `findings` 中，无需单独创建 `.md` 文档。*
 
-证据表应使用清晰字段，例如：
+### 2. 多维归因/复杂诊断分析（按需扩展）
 
-- 维度与成员
-- 基准值、当前值、绝对变化、相对变化
-- 分子、分母、样本量或业务规模
-- 贡献量、贡献率或效应量
-- 置信区间、稳定性标记和数据质量标记
+当且仅当涉及多重归因分解、复杂下钻或多数据集交叉校验时，按需生成扩展表：
 
-简单问题可以只保留一个分析脚本、一张证据表和一个校验结果。所有共享产物使用不可变版本名。
+```text
+scripts/
+└── analyze_v1.py               # 完整分析脚本
+evidence/
+├── metric_summary_v1.csv       # 总体与核心维度对比表
+├── decomposition_v1.csv        # 结构/效率/乘法因子拆解表（按需）
+└── segment_diagnostics_v1.csv  # 细分人群/长尾诊断表（按需）
+```
+
+### 3. 证据表字段规范
+
+证据表统一使用清晰且具备自解释性的列名，例如：
+- 维度与成员（如 `channel`, `region`, `dt`）
+- 基准值、当前值、绝对变化量、相对变化率（如 `base_value`, `current_value`, `diff_value`, `growth_rate`）
+- 分子、分母、样本量或业务规模（如 `numerator`, `denominator`, `sample_size`）
+- 贡献量、贡献率或效应量（如 `contribution_value`, `contribution_rate`）
+- 数据质量与置信度标记（如 `is_significant`, `sample_coverage`）
+
+所有对外暴露的产物均使用不可变版本名（如 `_v1.csv`）。
 
 ## 执行环境
 
 - `execute` 默认工作目录是当前 Analyst Session，当前文件优先使用相对路径
 - 文件工具和 `SpecialistResult` 使用 `/analyses/...` 虚拟路径
-- `execute` 读取其他 Session 时使用 `$DATAAGENT_CONVERSATION_ROOT/analyses/...`
-- Python 统一使用 `uv run python`，优先使用镜像已有的 pandas、polars、duckdb、pyarrow、numpy、scipy 和 scikit-learn
-- 中小型数据优先使用 pandas；大文件或超出内存风险的数据使用 Polars、DuckDB、PyArrow 或分块处理
-- 技能自带脚本位于 `/skills/analyst/analysis/scripts/`，可直接执行；技能目录只读，输出必须写入当前 Session
+- `execute` 读取其他 Session 的虚拟路径时，使用 "$DATAAGENT_CONVERSATION_ROOT/analyses/..."
+- Python 统一直接执行 `python <script_path>`（或 `python3`），沙箱镜像已全局预装 pandas、polars、duckdb、pyarrow、numpy、scipy、scikit-learn、openpyxl 等数据分析库
+- 优先在单进程内完成向量化计算，中小型数据使用 pandas，大文件或内存紧张时使用 Polars、DuckDB 或 PyArrow 分块
+- 技能自带脚本位于 `/skills/analyst/analysis/scripts/`，可直接执行；技能目录只读，计算输出必须写入当前 Session
 
 ## 结论写法
 

@@ -25,15 +25,21 @@ from app.analytics.agents.contracts import (
     ArtifactReference,
     ConversationAgentRuntime,
     DelegationRequest,
+    DeleteSessionRequest,
     RepairRequest,
     SpecialistResult,
     build_planner_config,
 )
 from app.analytics.agents.manager import AgentManager
-from app.analytics.agents.registry import AgentRegistry, build_agent_definitions
 from app.analytics.agents.session_service import AgentSessionService
+from app.analytics.agents.session_store import AgentSessionStore
 from app.analytics.agents.skills import agent_skills_mount_path
-from app.shared.contracts.analysis import AgentSessionKey, AgentType
+from app.analytics.agents.specialists import (
+    SpecialistAgentFactory,
+    SpecialistDefinition,
+    build_specialist_definitions,
+)
+from app.shared.contracts.analysis import AGENT_TYPES, AgentSessionKey, AgentType
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
 
@@ -109,6 +115,8 @@ class _FakeAgent:
         self.max_active_by_namespace: Counter[str] = Counter()
         self.configs: list[RunnableConfig] = []
         self.persisted_sessions: set[str] = set()
+        self.workspace_sessions: set[str] = set()
+        self.checkpoints: dict[str, dict[str, object]] = {}
 
     async def ainvoke(
         self,
@@ -129,22 +137,35 @@ class _FakeAgent:
             if self.delay:
                 await asyncio.sleep(self.delay)
             self.persisted_sessions.add(namespace)
+            self.workspace_sessions.add(namespace)
             if self.output is not None:
-                return self.output
-            configurable = config.get("configurable", {})
-            artifact_path = (
-                f"/analyses/{configurable['analysis_id']}/sessions/"
-                f"{configurable['agent_type']}/{configurable['session_id']}/result.json"
-            )
-            return {
-                "structured_response": SpecialistResult(
-                    status="completed",
-                    summary="analysis complete",
-                    findings=["verified finding"],
-                    artifacts=[ArtifactReference(path=artifact_path)],
-                    confidence="high",
+                output = self.output
+            else:
+                configurable = config.get("configurable", {})
+                artifact_path = (
+                    f"/analyses/{configurable['analysis_id']}/sessions/"
+                    f"{configurable['agent_type']}/{configurable['session_id']}/"
+                    "result.json"
                 )
+                output = {
+                    "structured_response": SpecialistResult(
+                        status="completed",
+                        summary="analysis complete",
+                        findings=["verified finding"],
+                        artifacts=[ArtifactReference(path=artifact_path)],
+                        confidence="high",
+                    )
+                }
+            structured_response = (
+                output.get("structured_response")
+                if isinstance(output, dict)
+                else output
+            )
+            self.checkpoints[namespace] = {
+                "ts": "2026-08-29T12:00:00+00:00",
+                "channel_values": {"structured_response": structured_response},
             }
+            return output
         finally:
             self.active_by_namespace[namespace] -= 1
             self.active -= 1
@@ -178,21 +199,65 @@ async def _conversation_not_deleted() -> bool:
     return False
 
 
-def _registry(fake: _FakeAgent) -> AgentRegistry:
-    definitions = build_agent_definitions(
-        [
-            recall_context,
-            execute_sql,
-        ],
-        [],
-    )
-    graph = cast(CompiledStateGraph, fake)
+class _FakeSessionStore:
+    def __init__(
+        self,
+        fake: _FakeAgent,
+        *,
+        artifact_verifier: Callable[[str], Awaitable[bool]] | None = None,
+        lock_factory: Callable[
+            [AgentSessionKey],
+            AbstractAsyncContextManager[None],
+        ] = _unlocked_session,
+    ) -> None:
+        self._fake = fake
+        self._artifact_verifier = artifact_verifier
+        self._lock_factory = lock_factory
+        self.workspace_delete_failures = 0
 
-    async def build_agent(session_key: AgentSessionKey) -> CompiledStateGraph:
-        del session_key
-        return graph
+    async def list_namespaces(self, analysis_id: str | None) -> list[str]:
+        prefix = f"subagents/{analysis_id}/" if analysis_id else "subagents/"
+        return sorted(
+            namespace
+            for namespace in self._fake.persisted_sessions
+            if namespace.startswith(prefix)
+        )
 
-    return AgentRegistry(definitions, build_agent)
+    async def load_checkpoint(
+        self,
+        session_key: AgentSessionKey,
+    ) -> dict[str, object] | None:
+        return self._fake.checkpoints.get(session_key.checkpoint_ns)
+
+    async def delete_checkpoint(self, session_key: AgentSessionKey) -> bool:
+        namespace = session_key.checkpoint_ns
+        existed = (
+            namespace in self._fake.persisted_sessions
+            or namespace in self._fake.checkpoints
+        )
+        self._fake.persisted_sessions.discard(namespace)
+        self._fake.checkpoints.pop(namespace, None)
+        return existed
+
+    async def delete_workspace(self, session_key: AgentSessionKey) -> bool:
+        if self.workspace_delete_failures:
+            self.workspace_delete_failures -= 1
+            raise RuntimeError("sensitive container failure")
+        namespace = session_key.checkpoint_ns
+        existed = namespace in self._fake.workspace_sessions
+        self._fake.workspace_sessions.discard(namespace)
+        return existed
+
+    async def artifact_exists(self, path: str) -> bool:
+        if self._artifact_verifier is None:
+            return True
+        return await self._artifact_verifier(path)
+
+    def lock(
+        self,
+        session_key: AgentSessionKey,
+    ) -> AbstractAsyncContextManager[None]:
+        return self._lock_factory(session_key)
 
 
 def _service(
@@ -206,6 +271,7 @@ def _service(
     session_lock_timeout: float = 1,
     artifacts_exist: bool = True,
     artifact_verifier: Callable[[str], Awaitable[bool]] | None = None,
+    session_store: AgentSessionStore | None = None,
     session_lock_factory: Callable[
         [AgentSessionKey],
         AbstractAsyncContextManager[None],
@@ -215,11 +281,20 @@ def _service(
         del path
         return artifacts_exist
 
-    async def session_exists(session_key: AgentSessionKey) -> bool:
-        return session_key.checkpoint_ns in fake.persisted_sessions
+    graph = cast(CompiledStateGraph, fake)
+
+    async def build_agent(session_key: AgentSessionKey) -> CompiledStateGraph:
+        del session_key
+        return graph
 
     return AgentSessionService(
-        registry=_registry(fake),
+        build_agent=build_agent,
+        session_store=session_store
+        or _FakeSessionStore(
+            fake,
+            artifact_verifier=artifact_verifier or artifact_exists,
+            lock_factory=session_lock_factory,
+        ),
         user_id=12,
         conversation_id=_CONVERSATION_ID,
         max_parallel_sessions=max_parallel_sessions,
@@ -228,9 +303,6 @@ def _service(
         max_repair_depth=max_repair_depth,
         max_session_resumes=max_session_resumes,
         session_lock_timeout=session_lock_timeout,
-        artifact_verifier=artifact_verifier or artifact_exists,
-        session_exists=session_exists,
-        session_lock_factory=session_lock_factory,
     )
 
 
@@ -327,8 +399,8 @@ class DynamicSubagentContractTest(unittest.TestCase):
                 repair_requests=[],
             )
 
-    def test_registry_applies_independent_tool_allowlists(self) -> None:
-        definitions = build_agent_definitions(
+    def test_specialist_definitions_assign_data_tools_only_to_explorer(self) -> None:
+        definitions = build_specialist_definitions(
             [
                 recall_context,
                 execute_sql,
@@ -357,8 +429,10 @@ class DynamicSubagentContractTest(unittest.TestCase):
             set(),
         )
 
-    def test_registry_assigns_analysis_skill_only_to_analyst(self) -> None:
-        definitions = build_agent_definitions(
+    def test_specialist_definitions_assign_analysis_skill_only_to_analyst(
+        self,
+    ) -> None:
+        definitions = build_specialist_definitions(
             [
                 recall_context,
                 execute_sql,
@@ -374,18 +448,18 @@ class DynamicSubagentContractTest(unittest.TestCase):
         self.assertEqual(definitions["reviewer"].skills, ())
         self.assertEqual(definitions["visualizer"].skills, ())
 
-    def test_registry_fails_fast_when_required_tools_are_missing(self) -> None:
-        with self.assertRaisesRegex(ValueError, "缺少必需的专家工具"):
-            build_agent_definitions([recall_context], [])
+    def test_specialist_definitions_require_explorer_data_tools(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Explorer 缺少必需工具"):
+            build_specialist_definitions([recall_context], [])
 
-    def test_registry_rejects_mcp_tool_names_reserved_by_runtime(self) -> None:
+    def test_specialist_definitions_reject_reserved_mcp_tool_names(self) -> None:
         @tool("execute")
         def conflicting_mcp_tool(command: str) -> str:
             """模拟与 Shell 工具冲突的 MCP 工具"""
             return command
 
         with self.assertRaisesRegex(ValueError, "冲突"):
-            build_agent_definitions(
+            build_specialist_definitions(
                 [
                     recall_context,
                     execute_sql,
@@ -420,7 +494,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
             "reviewer": create_reviewer_agent,
             "visualizer": create_visualizer_agent,
         }
-        definitions = build_agent_definitions(
+        definitions = build_specialist_definitions(
             [recall_context, execute_sql],
             [],
         )
@@ -474,6 +548,16 @@ class DynamicSubagentContractTest(unittest.TestCase):
             return message
 
         @tool
+        def list_sessions() -> str:
+            """查询测试专业 Session"""
+            return "[]"
+
+        @tool
+        def delete_session(session_id: str) -> str:
+            """删除测试专业 Session"""
+            return session_id
+
+        @tool
         def eval(code: str) -> str:
             """模拟 Planner 解释器工具"""
             return code
@@ -499,13 +583,18 @@ class DynamicSubagentContractTest(unittest.TestCase):
             ):
                 graph = create_planner_agent(
                     model=model,
-                    delegation_tool=delegation,
+                    tools=[delegation, list_sessions, delete_session],
                     backend=LocalShellBackend(root_dir=workspace),
                     checkpointer=InMemorySaver(),
                     interpreter_mode="thread",
-                    interpreter_ptc=["delegation"],
+                    interpreter_ptc=[
+                        "delegation",
+                        "list_sessions",
+                        "delete_session",
+                    ],
                     interpreter_timeout_seconds=1,
                     interpreter_memory_limit_bytes=2 * 1024 * 1024,
+                    interpreter_max_ptc_calls=4,
                     max_delegations_per_run=2,
                     max_repair_rounds=1,
                     max_repair_depth=1,
@@ -523,29 +612,38 @@ class DynamicSubagentContractTest(unittest.TestCase):
             )
         )
         self.assertIn("delegation", model.seen_tools)
+        self.assertIn("list_sessions", model.seen_tools)
+        self.assertIn("delete_session", model.seen_tools)
 
 
 class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
     """验证 Session 隔离、并发和修补限制"""
 
-    async def test_registry_builds_and_caches_one_agent_per_session(self) -> None:
-        definitions = build_agent_definitions(
-            [
-                recall_context,
-                execute_sql,
-            ],
-            [],
+    async def test_specialist_factory_builds_a_fresh_agent_per_call(self) -> None:
+        built_agents: list[CompiledStateGraph] = []
+
+        def build_agent(**kwargs: object) -> CompiledStateGraph:
+            del kwargs
+            agent = cast(CompiledStateGraph, _FakeAgent())
+            built_agents.append(agent)
+            return agent
+
+        definitions: dict[AgentType, SpecialistDefinition] = {
+            agent_type: SpecialistDefinition(builder=build_agent)
+            for agent_type in AGENT_TYPES
+        }
+        model = RecordingChatModel()
+        models: dict[AgentType, BaseChatModel] = {
+            agent_type: model for agent_type in AGENT_TYPES
+        }
+        sandbox = MagicMock()
+        sandbox.get_session_backend = AsyncMock(return_value=MagicMock())
+        factory = SpecialistAgentFactory(
+            definitions,
+            models,
+            sandbox,
+            MagicMock(),
         )
-        build_counts: Counter[str] = Counter()
-
-        async def build_agent(
-            session_key: AgentSessionKey,
-        ) -> CompiledStateGraph:
-            build_counts[session_key.checkpoint_ns] += 1
-            await asyncio.sleep(0.01)
-            return cast(CompiledStateGraph, _FakeAgent())
-
-        registry = AgentRegistry(definitions, build_agent)
         region = AgentSessionKey(
             user_id=12,
             conversation_id=_CONVERSATION_ID,
@@ -562,15 +660,283 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         first_region, second_region, product_agent = await asyncio.gather(
-            registry.get_agent(region),
-            registry.get_agent(region),
-            registry.get_agent(product),
+            factory.create(region),
+            factory.create(region),
+            factory.create(product),
         )
 
-        self.assertIs(first_region, second_region)
+        self.assertIsNot(first_region, second_region)
         self.assertIsNot(first_region, product_agent)
-        self.assertEqual(build_counts[region.checkpoint_ns], 1)
-        self.assertEqual(build_counts[product.checkpoint_ns], 1)
+        self.assertEqual(len(built_agents), 3)
+        self.assertEqual(sandbox.get_session_backend.await_count, 3)
+
+    async def test_list_sessions_reads_persisted_states_and_analysis_filter(
+        self,
+    ) -> None:
+        fake = _FakeAgent()
+        completed_ns = "subagents/sales-decline/analyst/region"
+        interrupted_ns = "subagents/inventory/explorer/base"
+        fake.persisted_sessions.update({completed_ns, interrupted_ns})
+        fake.checkpoints[completed_ns] = {
+            "ts": "2026-08-29T12:00:00+00:00",
+            "channel_values": {
+                "structured_response": SpecialistResult(
+                    status="completed",
+                    summary="region complete",
+                    findings=["region finding"],
+                    artifacts=[
+                        ArtifactReference(
+                            path=(
+                                "/analyses/sales-decline/sessions/analyst/"
+                                "region/result.json"
+                            )
+                        )
+                    ],
+                )
+            },
+        }
+        fake.checkpoints[interrupted_ns] = {
+            "ts": "2026-08-29T12:01:00+00:00",
+            "channel_values": {},
+        }
+        service = _service(fake)
+
+        all_sessions = await service.list_sessions(None)
+        filtered = await service.list_sessions("sales-decline")
+
+        self.assertEqual(
+            [session.status for session in all_sessions.sessions],
+            ["interrupted", "completed"],
+        )
+        self.assertEqual(len(filtered.sessions), 1)
+        self.assertEqual(filtered.sessions[0].summary, "region complete")
+        self.assertEqual(filtered.sessions[0].artifact_count, 1)
+
+    async def test_list_sessions_reports_active_session_before_checkpoint(
+        self,
+    ) -> None:
+        fake = _FakeAgent(delay=0.05)
+        service = _service(fake)
+        config = build_planner_config(12, _CONVERSATION_ID)
+        config.setdefault("configurable", {})["planner_run_id"] = "active-run"
+
+        async with service.planner_run("active-run"):
+            delegation = asyncio.create_task(
+                service.execute_delegation(_request("region"), config)
+            )
+            await asyncio.sleep(0.01)
+            listed = await service.list_sessions("sales-decline")
+            await delegation
+
+        self.assertEqual(len(listed.sessions), 1)
+        self.assertEqual(listed.sessions[0].status, "active")
+
+    async def test_list_sessions_survives_service_recreation(self) -> None:
+        fake = _FakeAgent()
+        config = build_planner_config(12, _CONVERSATION_ID)
+        config.setdefault("configurable", {})["planner_run_id"] = "persist-run"
+        first_service = _service(fake)
+
+        async with first_service.planner_run("persist-run"):
+            await first_service.execute_delegation(_request("region"), config)
+
+        recreated_service = _service(fake)
+        listed = await recreated_service.list_sessions("sales-decline")
+
+        self.assertEqual(len(listed.sessions), 1)
+        self.assertEqual(listed.sessions[0].session_id, "region")
+        self.assertEqual(listed.sessions[0].status, "completed")
+
+    async def test_list_sessions_does_not_consume_delegation_budget(self) -> None:
+        fake = _FakeAgent()
+        service = _service(fake, max_delegations_per_run=1)
+        config = build_planner_config(12, _CONVERSATION_ID)
+        config.setdefault("configurable", {})["planner_run_id"] = "list-budget"
+
+        async with service.planner_run("list-budget"):
+            await service.list_sessions(None)
+            await service.list_sessions("sales-decline")
+            result = await service.execute_delegation(_request("region"), config)
+
+        self.assertEqual(result.status, "completed")
+
+    async def test_delete_session_removes_state_and_allows_clean_same_id(
+        self,
+    ) -> None:
+        fake = _FakeAgent()
+        service = _service(fake)
+        config = build_planner_config(12, _CONVERSATION_ID)
+        config.setdefault("configurable", {})["planner_run_id"] = "delete-run"
+        request = DeleteSessionRequest(
+            analysis_id="sales-decline",
+            agent_type="analyst",
+            session_id="region",
+        )
+
+        async with service.planner_run("delete-run"):
+            await service.execute_delegation(_request("region"), config)
+            deleted = await service.delete_session(request, config)
+            listed = await service.list_sessions("sales-decline")
+            deleted_again = await service.delete_session(request, config)
+            recreated = await service.execute_delegation(_request("region"), config)
+
+        self.assertTrue(deleted.existed)
+        self.assertFalse(deleted_again.existed)
+        self.assertEqual(listed.sessions, [])
+        self.assertEqual(recreated.status, "completed")
+        configurable = fake.configs[-1].get("configurable", {})
+        self.assertEqual(configurable.get("session_id"), request.session_id)
+
+    async def test_delete_session_retry_finishes_partial_cleanup(self) -> None:
+        fake = _FakeAgent()
+        store = _FakeSessionStore(fake)
+        store.workspace_delete_failures = 1
+        service = _service(fake, session_store=store)
+        config = build_planner_config(12, _CONVERSATION_ID)
+        config.setdefault("configurable", {})["planner_run_id"] = "delete-retry"
+        request = DeleteSessionRequest(
+            analysis_id="sales-decline",
+            agent_type="analyst",
+            session_id="region",
+        )
+
+        async with service.planner_run("delete-retry"):
+            await service.execute_delegation(_request("region"), config)
+            with self.assertRaisesRegex(RuntimeError, "删除 Session 工作区失败") as ctx:
+                await service.delete_session(request, config)
+            retried = await service.delete_session(request, config)
+
+        self.assertNotIn("sensitive container failure", str(ctx.exception))
+        self.assertTrue(retried.existed)
+        self.assertEqual(fake.persisted_sessions, set())
+        self.assertEqual(fake.workspace_sessions, set())
+
+    async def test_delete_session_does_not_refund_delegation_budget(self) -> None:
+        fake = _FakeAgent()
+        service = _service(fake, max_delegations_per_run=1)
+        config = build_planner_config(12, _CONVERSATION_ID)
+        config.setdefault("configurable", {})["planner_run_id"] = "delete-budget"
+        request = DeleteSessionRequest(
+            analysis_id="sales-decline",
+            agent_type="analyst",
+            session_id="region",
+        )
+
+        async with service.planner_run("delete-budget"):
+            first = await service.execute_delegation(_request("region"), config)
+            await service.delete_session(request, config)
+            second = await service.execute_delegation(_request("region"), config)
+
+        self.assertEqual(first.status, "completed")
+        self.assertEqual(second.status, "failed")
+        self.assertIn("委派次数上限", second.limitations[0])
+
+    async def test_delete_session_does_not_refund_repair_round_budget(self) -> None:
+        base_namespace = "subagents/sales-decline/explorer/base"
+        repair = RepairRequest(
+            target_agent_type="explorer",
+            target_session_id="base",
+            reason="source data must be refreshed",
+            evidence=[
+                ArtifactReference(path="/analyses/sales-decline/shared/evidence.json")
+            ],
+            expected_result="refresh source data",
+        )
+        fake = _FakeAgent(
+            output={
+                "structured_response": SpecialistResult(
+                    status="needs_repair",
+                    summary="source data is stale",
+                    repair_requests=[repair],
+                )
+            }
+        )
+        fake.persisted_sessions.add(base_namespace)
+        fake.checkpoints[base_namespace] = {
+            "ts": "2026-08-29T12:00:00+00:00",
+            "channel_values": {},
+        }
+        service = _service(fake, max_repair_rounds=1)
+        config = build_planner_config(12, _CONVERSATION_ID)
+        config.setdefault("configurable", {})["planner_run_id"] = "repair-budget"
+        request = DeleteSessionRequest(
+            analysis_id="sales-decline",
+            agent_type="analyst",
+            session_id="region",
+        )
+
+        async with service.planner_run("repair-budget"):
+            first = await service.execute_delegation(_request("region"), config)
+            await service.delete_session(request, config)
+            second = await service.execute_delegation(_request("product"), config)
+
+        self.assertEqual(first.status, "needs_repair")
+        self.assertEqual(second.status, "failed")
+        self.assertIn("max repair rounds", second.limitations[0])
+
+    async def test_delete_session_waits_for_active_delegation(self) -> None:
+        fake = _FakeAgent(delay=0.03)
+        service = _service(fake)
+        config = build_planner_config(12, _CONVERSATION_ID)
+        config.setdefault("configurable", {})["planner_run_id"] = "delete-race"
+        request = DeleteSessionRequest(
+            analysis_id="sales-decline",
+            agent_type="analyst",
+            session_id="region",
+        )
+
+        async with service.planner_run("delete-race"):
+            delegation = asyncio.create_task(
+                service.execute_delegation(_request("region"), config)
+            )
+            await asyncio.sleep(0.005)
+            deletion = asyncio.create_task(service.delete_session(request, config))
+            delegation_result, deletion_result = await asyncio.gather(
+                delegation,
+                deletion,
+            )
+
+        self.assertEqual(delegation_result.status, "completed")
+        self.assertTrue(deletion_result.existed)
+        self.assertNotIn(request.session_id, " ".join(fake.persisted_sessions))
+
+    async def test_delete_session_timeout_is_stable_and_retryable(self) -> None:
+        fake = _FakeAgent()
+        distributed_locks = _DistributedLockRegistry()
+        store = _FakeSessionStore(
+            fake,
+            lock_factory=distributed_locks.session_lock,
+        )
+        service = _service(
+            fake,
+            session_store=store,
+            session_lock_timeout=0.01,
+        )
+        config = build_planner_config(12, _CONVERSATION_ID)
+        config.setdefault("configurable", {})["planner_run_id"] = "delete-timeout"
+        request = DeleteSessionRequest(
+            analysis_id="sales-decline",
+            agent_type="analyst",
+            session_id="region",
+        )
+        session_key = AgentSessionKey(
+            user_id=12,
+            conversation_id=_CONVERSATION_ID,
+            analysis_id=request.analysis_id,
+            agent_type=request.agent_type,
+            session_id=request.session_id,
+        )
+
+        async with service.planner_run("delete-timeout"):
+            async with distributed_locks.session_lock(session_key):
+                with self.assertRaisesRegex(
+                    TimeoutError,
+                    "Session 删除等待锁超时",
+                ):
+                    await service.delete_session(request, config)
+            retried = await service.delete_session(request, config)
+
+        self.assertFalse(retried.existed)
 
     async def test_same_session_serializes_while_other_sessions_run_parallel(
         self,
@@ -897,7 +1263,12 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 )
             }
         )
-        fake.persisted_sessions.add("subagents/sales-decline/explorer/base")
+        base_namespace = "subagents/sales-decline/explorer/base"
+        fake.persisted_sessions.add(base_namespace)
+        fake.checkpoints[base_namespace] = {
+            "ts": "2026-08-29T12:00:00+00:00",
+            "channel_values": {},
+        }
         service = _service(fake)
         config = build_planner_config(12, _CONVERSATION_ID)
         config.setdefault("configurable", {})["planner_run_id"] = "signed-depth"
@@ -947,7 +1318,12 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 )
             }
         )
-        fake.persisted_sessions.add("subagents/sales-decline/explorer/base")
+        base_namespace = "subagents/sales-decline/explorer/base"
+        fake.persisted_sessions.add(base_namespace)
+        fake.checkpoints[base_namespace] = {
+            "ts": "2026-08-29T12:00:00+00:00",
+            "channel_values": {},
+        }
         service = _service(fake, max_repair_depth=0)
         config = build_planner_config(12, _CONVERSATION_ID)
         config.setdefault("configurable", {})["planner_run_id"] = "repair-depth-run"
@@ -979,14 +1355,12 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         distributed_locks = _DistributedLockRegistry()
         first_runtime = ConversationAgentRuntime(
             planner=graph,
-            registry=_registry(fake),
             session_service=first_service,
             planner_lock=lambda: distributed_locks.acquire("planner"),
             conversation_deleted=_conversation_not_deleted,
         )
         second_runtime = ConversationAgentRuntime(
             planner=graph,
-            registry=_registry(fake),
             session_service=second_service,
             planner_lock=lambda: distributed_locks.acquire("planner"),
             conversation_deleted=_conversation_not_deleted,
@@ -1026,7 +1400,6 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         runtime = ConversationAgentRuntime(
             planner=graph,
-            registry=_registry(fake),
             session_service=service,
             planner_lock=lambda: distributed_locks.acquire("conversation"),
             conversation_deleted=conversation_deleted,
@@ -1064,26 +1437,43 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         os.getenv("RUN_QUICKJS_INTEGRATION") == "1",
         "requires QuickJS integration environment",
     )
-    async def test_quickjs_bridge_calls_delegation_with_shared_run_budget(self) -> None:
+    async def test_quickjs_bridge_calls_session_lifecycle_tools(self) -> None:
         from langchain.agents.middleware.types import ModelRequest
         from langchain.tools import ToolRuntime
         from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
         from langchain_core.messages import AIMessage
         from langchain_quickjs import CodeInterpreterMiddleware
 
-        from app.analytics.agents.planner.delegation import create_delegation_tool
+        from app.analytics.agents.planner.delegation import (
+            create_delegation_tool,
+            create_delete_session_tool,
+            create_list_sessions_tool,
+        )
 
         fake = _FakeAgent()
         service = _service(fake, max_delegations_per_run=1)
         delegation_tool = create_delegation_tool(service)
+        list_sessions_tool = create_list_sessions_tool(service)
+        delete_session_tool = create_delete_session_tool(service)
+
+        @tool
+        def forbidden_tool() -> str:
+            """模拟未加入 PTC 白名单的 Agent Tool"""
+            return "must not be callable"
+
         middleware = CodeInterpreterMiddleware(
             mode="call",
-            ptc=["delegation"],
+            ptc=["delegation", "list_sessions", "delete_session"],
         )
         request = ModelRequest(
             model=GenericFakeChatModel(messages=iter([AIMessage(content="ok")])),
             messages=[],
-            tools=[delegation_tool],
+            tools=[
+                delegation_tool,
+                list_sessions_tool,
+                delete_session_tool,
+                forbidden_tool,
+            ],
         )
         middleware._prepare_for_call(request)
         config = build_planner_config(12, _CONVERSATION_ID)
@@ -1103,17 +1493,28 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 result = await eval_coroutine(
                     runtime=runtime,
                     code="""
-await tools.delegation({
+const delegated = await tools.delegation({
   analysis_id: "sales-decline",
   agent_type: "analyst",
   session_id: "region",
   message: "analyze source",
   repair_depth: 0,
-})
+});
+const listed = await tools.listSessions({ analysis_id: "sales-decline" });
+const deleted = await tools.deleteSession({
+  analysis_id: "sales-decline",
+  agent_type: "analyst",
+  session_id: "region",
+});
+const forbiddenType = typeof tools.forbiddenTool;
+({ delegated, listed, deleted, forbiddenType });
 """,
                 )
         finally:
             middleware._registry.close()
 
         self.assertIn("completed", str(result.content))
+        self.assertIn("success", str(result.content))
+        self.assertIn("undefined", str(result.content))
         self.assertEqual(len(fake.configs), 1)
+        self.assertEqual(fake.persisted_sessions, set())

@@ -3,73 +3,34 @@
 from __future__ import annotations
 
 import asyncio
-import shlex
 from collections import OrderedDict
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from uuid import UUID, uuid4
 
-from langchain_core.language_models import BaseChatModel
-from langchain_core.runnables import RunnableConfig
-from langchain_core.tools import BaseTool
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langgraph.graph.state import CompiledStateGraph
-
-from app.analytics.agents.analyst.agent import create_analyst_agent
 from app.analytics.agents.contracts import (
     ConversationAgentRuntime,
     PlannerTurnContext,
     conversation_lifecycle_lock_name,
     get_thread_id,
 )
-from app.analytics.agents.explorer.agent import create_explorer_agent
-from app.analytics.agents.explorer.tools import (
-    create_execute_sql_tool,
-    delete_recalls,
-    get_recall,
-    list_recalls,
-    merge_recalls,
-    recall_context,
-)
-from app.analytics.agents.mcp import get_mcp_tools
-from app.analytics.agents.planner.agent import create_planner_agent
-from app.analytics.agents.planner.delegation import create_delegation_tool
-from app.analytics.agents.registry import (
-    AgentDefinition,
-    AgentRegistry,
-    build_agent_definitions,
-)
-from app.analytics.agents.reviewer.agent import create_reviewer_agent
-from app.analytics.agents.session_service import AgentSessionService
-from app.analytics.agents.visualizer.agent import create_visualizer_agent
-from app.analytics.model_factory import create_configured_model
+from app.analytics.agents.runtime_factory import ConversationAgentRuntimeFactory
 from app.analytics.services.conversation_tombstone import (
     ConversationTombstoneService,
 )
-from app.query.providers import build_query_execution_handler
-from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.manager import DockerSandboxManager
 from app.shared.clients.langgraph_postgres_manager import (
     LangGraphPostgresManager,
 )
 from app.shared.config import app_config
-from app.shared.contracts.analysis import AgentSessionKey, AgentType
 
 type ConversationKey = tuple[int, UUID]
 
 _DEFAULT_MAX_CACHED_RUNTIMES = 128
 
 
-_SPECIALIST_BUILDERS = {
-    "explorer": create_explorer_agent,
-    "analyst": create_analyst_agent,
-    "reviewer": create_reviewer_agent,
-    "visualizer": create_visualizer_agent,
-}
-
-
 class AgentManager:
-    """管理共享模型资源和会话级 Agent 运行时"""
+    """管理 Conversation Agent 运行时的缓存、执行和删除生命周期"""
 
     def __init__(
         self,
@@ -82,8 +43,12 @@ class AgentManager:
         if max_cached_runtimes <= 0:
             raise ValueError("max_cached_runtimes 必须为正整数")
         self._persistence_manager = persistence_manager
-        self._sandbox = sandbox
         self._tombstones = tombstones
+        self._runtime_factory = ConversationAgentRuntimeFactory(
+            persistence_manager,
+            sandbox,
+            tombstones,
+        )
         self._max_cached_runtimes = max_cached_runtimes
         self._conversation_runtimes: OrderedDict[
             ConversationKey, ConversationAgentRuntime
@@ -96,184 +61,10 @@ class AgentManager:
         ] = {}
         self._deleted_conversation_keys: set[ConversationKey] = set()
         self._state_lock = asyncio.Lock()
-        self._models: dict[str, BaseChatModel] | None = None
-        self._planner_model_name: str | None = None
-        self._definitions: dict[AgentType, AgentDefinition] | None = None
 
     async def init(self) -> None:
-        """初始化所有 Agent 共享的模型和工具"""
-        async with self._state_lock:
-            if self._models is not None and self._definitions is not None:
-                return
-
-            active_model_name = app_config.cfg.lm_config.active
-            configured_names = {
-                active_model_name,
-                *(
-                    active_model_name
-                    if specialist.model == "default"
-                    else specialist.model
-                    for specialist in app_config.cfg.agent.specialists.values()
-                ),
-            }
-            models = {
-                model_name: create_configured_model(model_name)
-                for model_name in configured_names
-            }
-            platform_tools: list[BaseTool] = [
-                recall_context,
-                list_recalls,
-                get_recall,
-                merge_recalls,
-                delete_recalls,
-                create_execute_sql_tool(
-                    build_query_execution_handler(self._sandbox)
-                ),
-            ]
-            mcp_tools = await get_mcp_tools()
-            definitions = build_agent_definitions(platform_tools, mcp_tools)
-            self._models = models
-            self._planner_model_name = active_model_name
-            self._definitions = definitions
-
-    def _specialist_model(self, agent_type: AgentType) -> BaseChatModel:
-        """解析专业 Agent 配置中的模型引用"""
-        if self._models is None or self._planner_model_name is None:
-            raise RuntimeError("Agent 管理器尚未初始化")
-        configured_name = app_config.cfg.agent.specialists[agent_type].model
-        model_name = (
-            self._planner_model_name
-            if configured_name == "default"
-            else configured_name
-        )
-        return self._models[model_name]
-
-    def _build_conversation_runtime(
-        self,
-        sandbox_backend: DockerSandboxBackend,
-        user_id: int,
-        conversation_id: UUID,
-    ) -> ConversationAgentRuntime:
-        """构建共享 Backend 和持久化组件的会话级 Agent 运行时"""
-        if (
-            self._models is None
-            or self._planner_model_name is None
-            or self._definitions is None
-        ):
-            raise RuntimeError("Agent 管理器尚未初始化")
-
-        backend = sandbox_backend
-        checkpointer = self._persistence_manager.get_checkpointer()
-        definitions = self._definitions
-
-        async def build_session_agent(
-            session_key: AgentSessionKey,
-        ) -> CompiledStateGraph:
-            """为指定专业 Agent Session 构建独立运行图"""
-            session_backend = await self._sandbox.get_session_backend(
-                session_key.user_id,
-                session_key.conversation_id,
-                session_key.analysis_id,
-                session_key.agent_type,
-                session_key.session_id,
-            )
-            definition = definitions[session_key.agent_type]
-            builder = _SPECIALIST_BUILDERS[session_key.agent_type]
-            return builder(
-                model=self._specialist_model(session_key.agent_type),
-                tools=definition.tools,
-                backend=session_backend,
-                checkpointer=checkpointer,
-                skills=definition.skills,
-            )
-
-        registry = AgentRegistry(definitions, build_session_agent)
-        orchestration_cfg = app_config.cfg.agent.orchestration
-
-        session_service = AgentSessionService(
-            registry=registry,
-            user_id=user_id,
-            conversation_id=conversation_id,
-            max_parallel_sessions=orchestration_cfg.max_parallel_sessions,
-            max_delegations_per_run=orchestration_cfg.max_delegations_per_run,
-            max_repair_rounds=orchestration_cfg.max_repair_rounds,
-            max_repair_depth=orchestration_cfg.max_repair_depth,
-            max_session_resumes=orchestration_cfg.max_session_resumes,
-            session_lock_timeout=orchestration_cfg.session_lock_timeout,
-            artifact_verifier=lambda path: self._artifact_exists(
-                sandbox_backend,
-                path,
-            ),
-            session_exists=lambda key: self._session_checkpoint_exists(
-                checkpointer,
-                key,
-            ),
-            session_lock_factory=lambda key: self._persistence_manager.advisory_lock(
-                f"specialist:{get_thread_id(user_id, conversation_id)}:"
-                f"{key.checkpoint_ns}",
-                timeout=orchestration_cfg.session_lock_timeout,
-            ),
-        )
-        delegation_tool = create_delegation_tool(session_service)
-        interpreter_cfg = app_config.cfg.agent.interpreter
-        planner = create_planner_agent(
-            model=self._models[self._planner_model_name],
-            delegation_tool=delegation_tool,
-            backend=backend,
-            checkpointer=checkpointer,
-            interpreter_mode=interpreter_cfg.mode,
-            interpreter_ptc=interpreter_cfg.ptc,
-            interpreter_timeout_seconds=interpreter_cfg.timeout_seconds,
-            interpreter_memory_limit_bytes=interpreter_cfg.memory_limit_bytes,
-            max_delegations_per_run=orchestration_cfg.max_delegations_per_run,
-            max_repair_rounds=orchestration_cfg.max_repair_rounds,
-            max_repair_depth=orchestration_cfg.max_repair_depth,
-        )
-        return ConversationAgentRuntime(
-            planner=planner,
-            registry=registry,
-            session_service=session_service,
-            planner_lock=lambda: self._persistence_manager.advisory_lock(
-                conversation_lifecycle_lock_name(user_id, conversation_id),
-                timeout=orchestration_cfg.session_lock_timeout,
-            ),
-            conversation_deleted=lambda: self._conversation_is_deleted(
-                user_id,
-                conversation_id,
-            ),
-        )
-
-    @staticmethod
-    async def _session_checkpoint_exists(
-        checkpointer: AsyncPostgresSaver,
-        session_key: AgentSessionKey,
-    ) -> bool:
-        """从 PostgreSQL Checkpointer 验证专业 Session 已存在"""
-        checkpoint = await checkpointer.aget_tuple(
-            RunnableConfig(
-                configurable={
-                    "thread_id": get_thread_id(
-                        session_key.user_id,
-                        session_key.conversation_id,
-                    ),
-                    "checkpoint_ns": session_key.checkpoint_ns,
-                }
-            )
-        )
-        return checkpoint is not None
-
-    @staticmethod
-    async def _artifact_exists(
-        sandbox_backend: DockerSandboxBackend,
-        path: str,
-    ) -> bool:
-        """在会话工作目录内验证产物文件存在"""
-        relative_path = path.lstrip("/")
-        result = await sandbox_backend.aexecute(
-            f"test -f {shlex.quote(relative_path)}",
-            timeout=10,
-        )
-        return result.exit_code == 0
+        """初始化运行时工厂持有的共享模型和工具"""
+        await self._runtime_factory.init()
 
     async def _build_and_cache_conversation_runtime(
         self,
@@ -284,12 +75,7 @@ class AgentManager:
         """构建会话级 Agent 运行时并写入缓存"""
         current_task = asyncio.current_task()
         try:
-            sandbox_backend = await self._sandbox.get_backend(
-                user_id,
-                conversation_id,
-            )
-            runtime = self._build_conversation_runtime(
-                sandbox_backend,
+            runtime = await self._runtime_factory.create(
                 user_id,
                 conversation_id,
             )
@@ -319,7 +105,6 @@ class AgentManager:
                             break
                         evicted = self._conversation_runtimes.pop(evictable_key)
                         evicted.session_service.clear()
-                        evicted.registry.clear()
         return runtime
 
     async def get_conversation_runtime(
@@ -392,7 +177,6 @@ class AgentManager:
             runtime = self._conversation_runtimes.pop(conversation_key, None)
         if runtime is not None:
             runtime.session_service.clear()
-            runtime.registry.clear()
         await self._mark_conversation_deleted(user_id, conversation_id)
         await self._persistence_manager.delete_thread(
             get_thread_id(user_id, conversation_id)
@@ -493,9 +277,6 @@ class AgentManager:
             self._runtime_build_tasks.clear()
             self._conversation_run_tasks.clear()
             self._conversation_runtimes.clear()
-            self._models = None
-            self._planner_model_name = None
-            self._definitions = None
         for build_task in build_tasks:
             build_task.cancel()
         for run_task in run_tasks:
@@ -505,4 +286,4 @@ class AgentManager:
             await asyncio.gather(*pending_tasks, return_exceptions=True)
         for runtime in runtimes:
             runtime.session_service.clear()
-            runtime.registry.clear()
+        self._runtime_factory.close()

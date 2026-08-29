@@ -24,6 +24,10 @@ from app.analytics.agents.contracts import (
 from app.analytics.agents.message_timestamp_middleware import (
     MessageTimestampMiddleware,
 )
+from app.analytics.agents.user_message_metadata import (
+    USER_MESSAGE_METADATA_KEY,
+    UserMessageMetadata,
+)
 from app.analytics.api.chat import schemas as chat_schema
 from app.analytics.services import chat as chat_service
 from app.sandbox.paths import normalize_attachment_path
@@ -101,6 +105,31 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
             message.additional_kwargs[chat_service.MESSAGE_PAYLOAD_KEY]
         )
         self.assertIsNotNone(metadata.created_at)
+        private_metadata = UserMessageMetadata.model_validate(
+            message.additional_kwargs[USER_MESSAGE_METADATA_KEY]
+        )
+        self.assertEqual(metadata.created_at, private_metadata.received_at)
+
+    async def test_private_user_message_metadata_is_not_exposed_by_api_schema(
+        self,
+    ) -> None:
+        message = await chat_service._schema_to_human_message(
+            MagicMock(),
+            chat_schema.UserMessageRequest(
+                parts=[chat_schema.TextContent(type="text", text="analyze")]
+            ),
+            7,
+            _CONVERSATION_ID,
+        )
+
+        response = chat_service._langchain_message_to_schema(message)
+
+        self.assertIsNotNone(response)
+        assert response is not None
+        payload = response.model_dump(mode="json")
+        self.assertNotIn(USER_MESSAGE_METADATA_KEY, payload)
+        self.assertIsNotNone(payload["created_at"])
+        self.assertNotIn("<message_metadata>", json.dumps(payload))
 
     async def test_model_response_creation_time_is_persisted(self) -> None:
         middleware = MessageTimestampMiddleware()

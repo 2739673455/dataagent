@@ -7,13 +7,28 @@ import time
 from collections import defaultdict
 from collections.abc import Generator
 from contextlib import contextmanager, suppress
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import UUID, uuid4
 
 from redis import Redis
 from redis.exceptions import LockError, RedisError
 
 from app.sandbox.exceptions import SandboxDeletedError, SandboxOwnershipError
+
+_REGISTER_OPERATION_SCRIPT = """
+if redis.call("exists", KEYS[1]) == 1 then
+    return 1
+end
+if redis.call("exists", KEYS[2]) == 1 then
+    return 2
+end
+if redis.call("exists", KEYS[3]) == 1 or redis.call("exists", KEYS[4]) == 1 then
+    return 3
+end
+redis.call("zadd", KEYS[5], ARGV[1], ARGV[2])
+redis.call("zadd", KEYS[6], ARGV[1], ARGV[2])
+return 0
+"""
 
 
 class SandboxOwnership(Protocol):
@@ -287,6 +302,9 @@ class RedisSandboxOwnership:
         self._runtime_token = uuid4().hex
         self._runtime_stop: threading.Event | None = None
         self._runtime_renewal: threading.Thread | None = None
+        self._operation_leases: dict[str, tuple[str, str]] = {}
+        self._operation_renewal_failures: set[str] = set()
+        self._operation_leases_lock = threading.Lock()
 
     def _key(self, suffix: str) -> str:
         """构造当前部署隔离的 Redis 键"""
@@ -332,9 +350,43 @@ class RedisSandboxOwnership:
             with suppress(LockError):
                 lock.release()
 
+    @contextmanager
+    def _short_lock(self, suffix: str) -> Generator[None, None, None]:
+        """获取只保护短时 Redis 事务的分布式锁"""
+        lock = self._redis.lock(
+            self._key(f"lock:{suffix}"),
+            timeout=self._lock_timeout_seconds,
+            blocking_timeout=self._wait_timeout_seconds,
+            thread_local=False,
+        )
+        if not lock.acquire(blocking=True):
+            raise SandboxOwnershipError(f"等待沙箱跨进程锁超时: {suffix}")
+        try:
+            yield
+        finally:
+            with suppress(LockError):
+                lock.release()
+
     def _runtimes_key(self) -> str:
         """返回活跃沙箱运行时集合的 Redis 键"""
         return self._key("active:runtimes")
+
+    def _renew_leases(self) -> None:
+        """续期当前运行时及其全部活跃操作"""
+        with self._operation_leases_lock:
+            operation_leases = tuple(self._operation_leases.items())
+            expires_at = time.time() + self._lease_seconds
+            pipe = self._redis.pipeline(transaction=True)
+            pipe.zadd(self._runtimes_key(), {self._runtime_token: expires_at})
+            for token, (user_active_key, conversation_active_key) in operation_leases:
+                pipe.zadd(user_active_key, {token: expires_at})
+                pipe.zadd(conversation_active_key, {token: expires_at})
+            try:
+                pipe.execute()
+            except RedisError:
+                self._operation_renewal_failures.update(
+                    token for token, _ in operation_leases
+                )
 
     def _renew_runtime(self) -> None:
         """循环续期当前进程的运行时租约"""
@@ -343,19 +395,13 @@ class RedisSandboxOwnership:
             return
         interval = max(1.0, self._lease_seconds / 3)
         while not stop.wait(interval):
-            try:
-                self._redis.zadd(
-                    self._runtimes_key(),
-                    {self._runtime_token: (time.time() + self._lease_seconds)},
-                )
-            except RedisError:
-                continue
+            self._renew_leases()
 
     def start_runtime(self) -> None:
         """登记当前进程并启动运行时租约续期线程"""
         if self._runtime_stop is not None:
             return
-        with self._lock("runtimes"):
+        with self._short_lock("runtimes"):
             self._prune_active(self._runtimes_key())
             self._redis.zadd(
                 self._runtimes_key(),
@@ -462,6 +508,52 @@ class RedisSandboxOwnership:
         _, count = pipe.execute()
         return int(count)
 
+    def _register_operation(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        token: str,
+        user_active_key: str,
+        conversation_active_key: str,
+    ) -> None:
+        """原子检查维护和删除状态并登记操作租约"""
+        deadline = time.monotonic() + self._wait_timeout_seconds
+        keys = (
+            self._deleted_user_key(user_id),
+            self._deleted_conversation_key(user_id, conversation_id),
+            self._key(f"lock:user:{user_id}:gate"),
+            self._key(f"lock:conversation:{user_id}:{conversation_id}:gate"),
+            user_active_key,
+            conversation_active_key,
+        )
+        while True:
+            try:
+                status = int(
+                    cast(
+                        str | int,
+                        self._redis.eval(
+                            _REGISTER_OPERATION_SCRIPT,
+                            len(keys),
+                            *keys,
+                            str(time.time() + self._lease_seconds),
+                            token,
+                        ),
+                    )
+                )
+            except RedisError as exc:
+                raise SandboxOwnershipError("登记沙箱操作租约失败") from exc
+            if status == 0:
+                return
+            if status == 1:
+                raise SandboxDeletedError("用户沙箱已被删除")
+            if status == 2:
+                raise SandboxDeletedError("会话沙箱已被删除")
+            if status != 3:
+                raise SandboxOwnershipError(f"登记沙箱操作返回未知状态: {status}")
+            if time.monotonic() >= deadline:
+                raise SandboxOwnershipError("等待沙箱维护结束超时")
+            time.sleep(0.1)
+
     @contextmanager
     def operation(
         self,
@@ -482,54 +574,39 @@ class RedisSandboxOwnership:
                 depths[key] -= 1
             return
 
+        if self._runtime_stop is None:
+            raise SandboxOwnershipError("沙箱运行时尚未启动")
+
         token = uuid4().hex
         user_active_key = self._active_user_key(user_id)
         conversation_active_key = self._active_conversation_key(
             user_id,
             conversation_id,
         )
-        with (
-            self._lock(f"user:{user_id}:gate"),
-            self._lock(f"conversation:{user_id}:{conversation_id}:gate"),
-        ):
-            self.assert_available(user_id, conversation_id)
-            expires_at = time.time() + self._lease_seconds
-            pipe = self._redis.pipeline(transaction=True)
-            pipe.zadd(user_active_key, {token: expires_at})
-            pipe.zadd(conversation_active_key, {token: expires_at})
-            pipe.execute()
-
-        stop = threading.Event()
-        renewal_failed = threading.Event()
-
-        def renew() -> None:
-            """定期续期当前沙箱操作的用户和会话租约"""
-            interval = max(1.0, self._lease_seconds / 3)
-            while not stop.wait(interval):
-                try:
-                    expires_at = time.time() + self._lease_seconds
-                    pipe = self._redis.pipeline(transaction=True)
-                    pipe.zadd(user_active_key, {token: expires_at})
-                    pipe.zadd(conversation_active_key, {token: expires_at})
-                    pipe.execute()
-                except RedisError:
-                    renewal_failed.set()
-
-        renewal = threading.Thread(
-            target=renew,
-            name="sandbox-operation-renewal",
-            daemon=True,
+        self._register_operation(
+            user_id,
+            conversation_id,
+            token,
+            user_active_key,
+            conversation_active_key,
         )
-        renewal.start()
+        with self._operation_leases_lock:
+            self._operation_leases[token] = (
+                user_active_key,
+                conversation_active_key,
+            )
         depths[key] = 1
         try:
             yield
-            if renewal_failed.is_set():
+            with self._operation_leases_lock:
+                renewal_failed = token in self._operation_renewal_failures
+            if renewal_failed:
                 raise SandboxOwnershipError("沙箱操作租约续期失败")
         finally:
             depths.pop(key, None)
-            stop.set()
-            renewal.join(timeout=2)
+            with self._operation_leases_lock:
+                self._operation_leases.pop(token, None)
+                self._operation_renewal_failures.discard(token)
             pipe = self._redis.pipeline(transaction=True)
             pipe.zrem(user_active_key, token)
             pipe.zrem(conversation_active_key, token)

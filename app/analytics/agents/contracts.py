@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Literal, Self
 from uuid import UUID
 
@@ -23,7 +24,6 @@ from app.shared.contracts.analysis import IDENTIFIER_PATTERN, AgentType
 if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
 
-    from app.analytics.agents.registry import AgentRegistry
     from app.analytics.agents.session_service import AgentSessionService
 
 Identifier = Annotated[
@@ -91,7 +91,6 @@ class ConversationAgentRuntime:
     """一个用户会话内的 Agent 运行时资源"""
 
     planner: CompiledStateGraph
-    registry: AgentRegistry
     session_service: AgentSessionService
     planner_lock: Callable[[], AbstractAsyncContextManager[None]]
     conversation_deleted: Callable[[], Awaitable[bool]]
@@ -111,6 +110,20 @@ class DelegationRequest(StrictProtocolModel):
     session_id: Identifier
     message: NonEmptyText
     repair_depth: int = Field(default=0, ge=0)
+
+
+class ListSessionsRequest(StrictProtocolModel):
+    """查询当前 Conversation 内专业 Session 的请求"""
+
+    analysis_id: Identifier | None = None
+
+
+class DeleteSessionRequest(StrictProtocolModel):
+    """删除专业 Agent Session 的请求"""
+
+    analysis_id: Identifier
+    agent_type: AgentType
+    session_id: Identifier
 
 
 class ArtifactReference(StrictProtocolModel):
@@ -204,3 +217,39 @@ class DelegationResult(AgentResult):
     analysis_id: Identifier
     agent_type: AgentType
     session_id: Identifier
+
+
+class SessionSummary(StrictProtocolModel):
+    """单个专业 Agent Session 的结构化摘要"""
+
+    analysis_id: Identifier
+    agent_type: AgentType
+    session_id: Identifier
+    status: Literal[
+        "active",
+        "completed",
+        "needs_repair",
+        "failed",
+        "interrupted",
+    ]
+    summary: NonEmptyText | None = None
+    artifact_count: int = Field(default=0, ge=0)
+    updated_at: datetime | None = None
+
+
+class ListSessionsResult(StrictProtocolModel):
+    """当前 Conversation 内的专业 Session 列表"""
+
+    analysis_id: Identifier | None = None
+    sessions: list[SessionSummary]
+
+
+class DeleteSessionResult(StrictProtocolModel):
+    """删除专业 Agent Session 的成功响应"""
+
+    status: Literal["success"] = "success"
+    analysis_id: Identifier
+    agent_type: AgentType
+    session_id: Identifier
+    existed: bool
+    message: NonEmptyText

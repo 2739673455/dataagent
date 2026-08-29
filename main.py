@@ -15,6 +15,7 @@ from app.identity.repositories.query_identity import DorisQueryIdentityPGRepo
 from app.identity.services.credential import DorisCredentialCipher
 from app.metadata.api.meta.router import router as meta_router
 from app.providers import agent_manager, sandbox_manager
+from app.query.api.admin.router import router as query_experience_admin_router
 from app.query.repositories.doris import DorisQueryRepository
 from app.shared.clients.doris_client_manager import (
     admin_doris_client_manager,
@@ -124,6 +125,10 @@ def _register_routes(app: FastAPI) -> None:
     """注册接口"""
     app.include_router(auth_router, prefix="/api/v1/auth")
     app.include_router(admin_router, prefix="/api/v1/admin")
+    app.include_router(
+        query_experience_admin_router,
+        prefix="/api/v1/admin/query-experiences",
+    )
     app.include_router(chat_router, prefix="/api/v1/chat")
     app.include_router(
         attachment_router,

@@ -58,7 +58,7 @@ async def api_upload_attachment(
         except SandboxFileTooLargeError:
             raise attachment_error.AttachmentTooLargeError from None
         except SandboxStorageLimitError:
-            raise attachment_error.SandboxStorageLimitError from None
+            raise attachment_error.SandboxStorageLimitProblem from None
         await conversation_repo.update(conversation)
 
     logger.info(f"上传附件: conversation_id={conversation_id}, file={f_path}")

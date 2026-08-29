@@ -154,7 +154,7 @@ class FakePGRepo:
     ) -> QueryExperience:
         execution.experience_id = experience.id
         experience.assets = assets
-        experience.quality = "candidate"
+        experience.status = "active"
         experience.revision = 1
         experience.indexed_revision = 0
         self.executions.append(execution)
@@ -170,12 +170,13 @@ class FakePGRepo:
         if stored is None:
             self.experiences.append(experience)
             return experience
-        stored.refresh_from_success(
+        update_assets = stored.refresh_from_success(
             purpose=experience.purposes[0],
             authorization_epoch=experience.authorization_epoch,
             sql_template=experience.sql_template,
         )
-        stored.assets = assets
+        if update_assets:
+            stored.assets = assets
         execution.experience_id = stored.id
         return stored
 
@@ -201,36 +202,48 @@ class FakePGRepo:
                 {
                     item.id: item.revision
                     for item in self.experiences
-                    if item.quality == "disabled"
-                    and item.indexed_revision < item.revision
+                    if item.indexed_revision < item.revision
                 }.items()
             )[:limit]
         )
 
-    async def disable_by_resource_keys(
+    async def disable_for_changed_resources(
         self,
         resource_keys: set[str],
     ) -> dict[UUID, int]:
         experience_ids = {
             item.id
             for item in self.experiences
-            if item.quality != "disabled"
+            if item.status == "active"
             and any(asset.resource_key in resource_keys for asset in item.assets)
         }
-        return await self.disable(experience_ids)
+        return await self.disable_for_metadata_change(experience_ids)
 
-    async def disable(
+    async def disable_for_metadata_change(
         self,
         experience_ids: set[UUID] | list[UUID],
     ) -> dict[UUID, int]:
         revisions: dict[UUID, int] = {}
         for experience in self.experiences:
-            if experience.id not in experience_ids or experience.quality == "disabled":
+            if experience.id not in experience_ids or experience.status != "active":
                 continue
-            experience.quality = "disabled"
+            experience.status = "disabled"
+            experience.disabled_reason = "metadata_changed"
+            experience.disabled_at = datetime.now(UTC)
             experience.revision += 1
             revisions[experience.id] = experience.revision
         return revisions
+
+    async def finalize_deletion(self, experience_id: UUID, revision: int) -> bool:
+        for experience in self.experiences:
+            if (
+                experience.id == experience_id
+                and experience.revision == revision
+                and experience.status == "deleting"
+            ):
+                self.experiences.remove(experience)
+                return True
+        return False
 
     async def get_many(
         self,
@@ -276,7 +289,7 @@ def build_experience(
     table_name: str,
     column_name: str,
     meta_version: int,
-    quality: str = "candidate",
+    status: str = "active",
     role_name: str = "analyst",
     authorization_epoch: UUID = AUTHORIZATION_EPOCH,
 ) -> QueryExperience:
@@ -295,7 +308,9 @@ def build_experience(
         fingerprint=uuid4().hex,
         purposes=["统计订单金额"],
         sql_template=f"SELECT {column_name} FROM {table_name} WHERE id = :p1",
-        quality=quality,
+        status=status,
+        disabled_reason="metadata_changed" if status == "disabled" else None,
+        disabled_at=datetime.now(UTC) if status == "disabled" else None,
         revision=2,
         indexed_revision=2,
         created_at=datetime.now(UTC),
@@ -331,7 +346,7 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             table_name="orders",
             column_name="amount",
             meta_version=1,
-            quality="disabled",
+            status="disabled",
         )
         previous_revision = experience.revision
 
@@ -341,8 +356,52 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             sql_template="SELECT region, SUM(amount) FROM orders GROUP BY region",
         )
 
-        self.assertEqual(experience.quality, "candidate")
+        self.assertEqual(experience.status, "active")
         self.assertEqual(experience.revision, previous_revision + 1)
+
+    def test_successful_reexecution_preserves_admin_disabled_experience(self) -> None:
+        experience = build_experience(
+            table_name="orders",
+            column_name="amount",
+            meta_version=1,
+            status="disabled",
+        )
+        experience.disabled_reason = "admin"
+        experience.disabled_by_user_id = 9
+
+        experience.refresh_from_success(
+            purpose="按地区统计订单金额",
+            authorization_epoch=experience.authorization_epoch,
+            sql_template="SELECT region, SUM(amount) FROM orders GROUP BY region",
+        )
+
+        self.assertEqual(experience.status, "disabled")
+        self.assertEqual(experience.disabled_reason, "admin")
+        self.assertEqual(experience.disabled_by_user_id, 9)
+
+    def test_successful_reexecution_does_not_update_deleting_experience(self) -> None:
+        experience = build_experience(
+            table_name="orders",
+            column_name="amount",
+            meta_version=1,
+            status="deleting",
+        )
+        experience.disabled_reason = None
+        experience.disabled_at = None
+        experience.deletion_requested_by_user_id = 9
+        experience.deletion_requested_at = datetime.now(UTC)
+        previous_revision = experience.revision
+        previous_purposes = list(experience.purposes)
+
+        changed = experience.refresh_from_success(
+            purpose="按地区统计订单金额",
+            authorization_epoch=experience.authorization_epoch,
+            sql_template="SELECT region, SUM(amount) FROM orders GROUP BY region",
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(experience.revision, previous_revision)
+        self.assertEqual(experience.purposes, previous_purposes)
 
     def test_new_authorization_epoch_resets_shared_purposes(self) -> None:
         experience = build_experience(
@@ -548,7 +607,7 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             [same_role.sql_template, allowed.sql_template],
         )
         self.assertEqual(recall.status, "success")
-        self.assertEqual(stale.quality, "disabled")
+        self.assertEqual(stale.status, "disabled")
         self.assertEqual(scheduler.enqueued, [(stale.id, stale.revision)])
 
     async def test_recall_uses_rrf_order_and_returns_compact_results(self) -> None:
@@ -608,9 +667,7 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             meta_version=1,
         )
         repo.experiences = [experience]
-        repo.current_versions = {
-            asset.resource_key: 1 for asset in experience.assets
-        }
+        repo.current_versions = {asset.resource_key: 1 for asset in experience.assets}
         index_repo = FakeIndexRepo()
         index_repo.text_error = RuntimeError("text index unavailable")
         index_repo.vector_hits = [SearchHit(item=experience.id, score=0.9)]
@@ -628,7 +685,9 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(recall.status, "partial")
-        self.assertEqual([item.sql_template for item in recall.results], [experience.sql_template])
+        self.assertEqual(
+            [item.sql_template for item in recall.results], [experience.sql_template]
+        )
 
     async def test_recall_reports_failed_when_all_search_channels_fail(self) -> None:
         index_repo = FakeIndexRepo()
@@ -709,8 +768,8 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(invalidated_ids, [invalid.id])
-        self.assertEqual(invalid.quality, "disabled")
-        self.assertEqual(retained.quality, "candidate")
+        self.assertEqual(invalid.status, "disabled")
+        self.assertEqual(retained.status, "active")
         self.assertEqual(scheduler.enqueued, [(invalid.id, invalid.revision)])
 
     async def test_sync_index_deletes_disabled_experience(self) -> None:
@@ -734,6 +793,30 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(index_repo.deleted, [(invalid.id, invalid.revision)])
         self.assertEqual(invalid.indexed_revision, invalid.revision)
+
+    async def test_sync_index_deletes_deleting_experience_from_both_stores(
+        self,
+    ) -> None:
+        repo = FakePGRepo()
+        experience = build_experience(
+            table_name="orders",
+            column_name="amount",
+            meta_version=1,
+            status="deleting",
+        )
+        experience.disabled_reason = None
+        experience.disabled_at = None
+        experience.deletion_requested_by_user_id = 9
+        experience.deletion_requested_at = datetime.now(UTC)
+        experience.indexed_revision = experience.revision - 1
+        repo.experiences = [experience]
+        index_repo = FakeIndexRepo()
+        service = build_service(repo, index_repo, FakeEmbeddingClient())
+
+        await service.sync_index(experience.id, experience.revision)
+
+        self.assertEqual(index_repo.deleted, [(experience.id, experience.revision)])
+        self.assertEqual(repo.experiences, [])
 
     async def test_sync_index_writes_current_revision(self) -> None:
         repo = FakePGRepo()
@@ -796,6 +879,35 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertLess(experience.indexed_revision, experience.revision)
         self.assertEqual(repo.marked, [])
 
+    async def test_deleting_experience_is_repairable_when_index_delete_fails(
+        self,
+    ) -> None:
+        repo = FakePGRepo()
+        experience = build_experience(
+            table_name="orders",
+            column_name="amount",
+            meta_version=1,
+            status="deleting",
+        )
+        experience.disabled_reason = None
+        experience.disabled_at = None
+        experience.deletion_requested_by_user_id = 9
+        experience.deletion_requested_at = datetime.now(UTC)
+        experience.indexed_revision = experience.revision - 1
+        repo.experiences = [experience]
+        index_repo = FakeIndexRepo()
+        index_repo.delete_error = RuntimeError("index unavailable")
+        service = build_service(repo, index_repo, FakeEmbeddingClient())
+
+        with self.assertRaisesRegex(RuntimeError, "index unavailable"):
+            await service.sync_index(experience.id, experience.revision)
+
+        self.assertEqual(repo.experiences, [experience])
+        self.assertEqual(
+            await service.pending_index_repairs(limit=10),
+            {experience.id: experience.revision},
+        )
+
 
 class QueryExperienceESRepoTest(unittest.IsolatedAsyncioTestCase):
     async def test_index_uses_external_revision(self) -> None:
@@ -845,7 +957,9 @@ class QueryExperienceESRepoTest(unittest.IsolatedAsyncioTestCase):
             refresh="wait_for",
         )
 
-    async def test_semantic_search_is_scoped_to_role_and_authorization_epoch(self) -> None:
+    async def test_semantic_search_is_scoped_to_role_and_authorization_epoch(
+        self,
+    ) -> None:
         experience_id = uuid4()
         client = MagicMock()
         client.indices.exists = AsyncMock(return_value=True)
