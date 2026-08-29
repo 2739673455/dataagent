@@ -6,7 +6,16 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { chatApi } from "@/api/chat";
 import { cn, getAttachmentName } from "@/lib/utils";
-import type { Attachment, ImageContent, MessagePart, MessageResponse, TextContent } from "@/types";
+import type {
+  AgentType,
+  Attachment,
+  ImageContent,
+  MessagePart,
+  MessageResponse,
+  SubagentRun,
+  SubagentRunIdentity,
+  TextContent,
+} from "@/types";
 
 type MessageDisplayItem = {
   key: string;
@@ -35,12 +44,20 @@ type ToolRunDisplayItem = {
 };
 
 type DisplayItem = MessageDisplayItem | ToolRunDisplayItem;
+type SubagentRunMap = Record<string, SubagentRun>;
 type UserMessageNavigationItem = {
   key: string;
   createdAt: string | null;
   preview: string;
 };
 const TOOL_ARGS_PREVIEW_MAX_LENGTH = 120;
+const AGENT_TYPE_LABELS: Record<AgentType, string> = {
+  explorer: "Explorer",
+  analyst: "Analyst",
+  reviewer: "Reviewer",
+  visualizer: "Visualizer",
+};
+const AGENT_TYPES = new Set<AgentType>(["explorer", "analyst", "reviewer", "visualizer"]);
 
 function ImagePreview({ alt, onClose, src }: { alt: string; onClose: () => void; src: string }) {
   return createPortal(
@@ -325,6 +342,27 @@ function getToolArgsPreview(args?: Record<string, unknown>): string | null {
   return `${preview.slice(0, TOOL_ARGS_PREVIEW_MAX_LENGTH).trimEnd()}...`;
 }
 
+function getSubagentRunIdentity(item: ToolRunDisplayItem): SubagentRunIdentity | null {
+  if (item.name !== "delegation" || !item.args) return null;
+  const analysisId = item.args.analysis_id;
+  const agentType = item.args.agent_type;
+  const sessionId = item.args.session_id;
+  if (
+    typeof analysisId !== "string" ||
+    typeof agentType !== "string" ||
+    !AGENT_TYPES.has(agentType as AgentType) ||
+    typeof sessionId !== "string"
+  ) {
+    return null;
+  }
+  return {
+    delegationId: item.toolCallId,
+    analysisId,
+    agentType: agentType as AgentType,
+    sessionId,
+  };
+}
+
 function CodeBlock({ children, className }: { children: React.ReactNode; className?: string }) {
   const [copied, setCopied] = useState(false);
   const text = String(children).replace(/\n$/, "");
@@ -484,21 +522,65 @@ function PartView({
 
 function ToolRunBar({
   item,
+  loadSubagentMessages,
   onOpenPreviewAttachment,
+  subagentRun,
 }: {
   item: ToolRunDisplayItem;
+  loadSubagentMessages?: (
+    conversationId: string,
+    run: SubagentRunIdentity
+  ) => Promise<MessageResponse[]>;
   onOpenPreviewAttachment?: (attachment: Attachment) => void;
+  subagentRun?: SubagentRun;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const previousSubagentStatus = useRef(subagentRun?.status);
   const argsPreview = getToolArgsPreview(item.args);
   const hasAttachments = item.completed && (item.attachments?.length ?? 0) > 0;
+  const subagentIdentity = getSubagentRunIdentity(item);
+
+  useEffect(() => {
+    if (subagentRun?.status === "running") {
+      setIsOpen(true);
+    } else if (previousSubagentStatus.current === "running") {
+      setIsOpen(false);
+    }
+    previousSubagentStatus.current = subagentRun?.status;
+  }, [subagentRun?.status]);
+
+  const loadHistory = () => {
+    if (!subagentIdentity || !item.conversationId || !loadSubagentMessages) return;
+    setHistoryError(null);
+    void loadSubagentMessages(item.conversationId, subagentIdentity).catch(() => {
+      setHistoryError("工作详情加载失败，请重试");
+    });
+  };
+
+  const toggleOpen = () => {
+    const nextOpen = !isOpen;
+    setIsOpen(nextOpen);
+    if (
+      !nextOpen ||
+      !subagentIdentity ||
+      !item.conversationId ||
+      !loadSubagentMessages ||
+      subagentRun?.historyLoaded ||
+      subagentRun?.historyLoading ||
+      subagentRun?.status === "running"
+    ) {
+      return;
+    }
+    loadHistory();
+  };
 
   return (
     <div className="my-2 font-mono text-xs">
       <div className="rounded border border-[#d4d4ce] bg-[#ffffff] shadow-xs">
         <button
           type="button"
-          onClick={() => setIsOpen((value) => !value)}
+          onClick={toggleOpen}
           className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition hover:bg-[#fafaf8]"
         >
           <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -556,6 +638,16 @@ function ToolRunBar({
                   {item.result}
                 </pre>
               </div>
+            ) : null}
+            {subagentIdentity ? (
+              <SubagentActivityPanel
+                conversationId={item.conversationId}
+                error={historyError}
+                identity={subagentIdentity}
+                onOpenPreviewAttachment={onOpenPreviewAttachment}
+                onRetryHistory={loadHistory}
+                run={subagentRun}
+              />
             ) : null}
           </div>
         )}
@@ -721,10 +813,12 @@ function AttachmentChip({
 }
 
 function MessageBubble({
+  assistantName = "DataAgent",
   message,
   onOpenPreviewAttachment,
   username,
 }: {
+  assistantName?: string;
   message: MessageDisplayItem["message"];
   onOpenPreviewAttachment?: (attachment: Attachment) => void;
   username: string;
@@ -747,7 +841,9 @@ function MessageBubble({
         >
           {/* 消息来源标识 */}
           <div className="mb-2 flex items-center justify-between border-b border-[#e5e5df] pb-1.5 text-xs">
-            <span className="font-semibold text-[#18181b]">{isUser ? username : "DataAgent"}</span>
+            <span className="font-semibold text-[#18181b]">
+              {isUser ? username : assistantName}
+            </span>
             {createdAt ? <time className="text-[#71717a]">{createdAt}</time> : null}
           </div>
 
@@ -790,12 +886,115 @@ function MessageBubble({
   );
 }
 
+function getSubagentStatusLabel(status: SubagentRun["status"]): string {
+  switch (status) {
+    case "running":
+      return "运行中";
+    case "completed":
+      return "已完成";
+    case "needs_repair":
+      return "待修补";
+    case "failed":
+      return "失败";
+    case "cancelled":
+      return "已取消";
+    case "interrupted":
+      return "已中断";
+  }
+}
+
+function SubagentActivityPanel({
+  conversationId,
+  error,
+  identity,
+  onOpenPreviewAttachment,
+  onRetryHistory,
+  run,
+}: {
+  conversationId?: string | null;
+  error: string | null;
+  identity: SubagentRunIdentity;
+  onOpenPreviewAttachment?: (attachment: Attachment) => void;
+  onRetryHistory: () => void;
+  run?: SubagentRun;
+}) {
+  const displayItems = buildDisplayItems(
+    conversationId ?? null,
+    run?.messages ?? [],
+    run?.status === "running"
+  );
+  const retryHistory = () => {
+    onRetryHistory();
+  };
+
+  return (
+    <div className="space-y-2 border-t border-[#d4d4ce] pt-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <span className="font-semibold text-[#27272a]">
+            {AGENT_TYPE_LABELS[identity.agentType]}
+          </span>
+          <span className="ml-2 text-[#71717a]">{identity.sessionId}</span>
+        </div>
+        <span className="shrink-0 rounded bg-[#ebebe6] px-1.5 py-0.5 text-[10px] text-[#52525b]">
+          {run ? getSubagentStatusLabel(run.status) : "加载中"}
+        </span>
+      </div>
+
+      {error ? (
+        <button
+          type="button"
+          onClick={retryHistory}
+          className="text-left text-[11px] text-[#b91c1c] underline underline-offset-2"
+        >
+          {error}
+        </button>
+      ) : null}
+      {!run || run.historyLoading ? (
+        <div className="flex items-center gap-2 rounded border border-[#e5e5df] bg-[#ffffff] px-2 py-2 text-[#71717a]">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          <span>正在加载工作详情...</span>
+        </div>
+      ) : displayItems.length === 0 ? (
+        <p className="rounded border border-[#e5e5df] bg-[#ffffff] px-2 py-2 text-[#71717a]">
+          {run.status === "running" ? "等待 Specialist 输出..." : "没有可展示的工作消息"}
+        </p>
+      ) : (
+        <div className="space-y-1 border-l-2 border-[#d4d4ce] pl-2">
+          {displayItems.map((displayItem) =>
+            displayItem.type === "message" ? (
+              <MessageBubble
+                key={displayItem.key}
+                assistantName={AGENT_TYPE_LABELS[identity.agentType]}
+                message={displayItem.message}
+                onOpenPreviewAttachment={onOpenPreviewAttachment}
+                username="用户"
+              />
+            ) : (
+              <ToolRunBar
+                key={displayItem.key}
+                item={displayItem}
+                onOpenPreviewAttachment={onOpenPreviewAttachment}
+              />
+            )
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface ChatMessagesProps {
   conversationId: string | null;
   conversationSelected: boolean;
   isLoading: boolean;
   isStreaming: boolean;
   messages: MessageResponse[];
+  subagentRuns: SubagentRunMap;
+  loadSubagentMessages: (
+    conversationId: string,
+    run: SubagentRunIdentity
+  ) => Promise<MessageResponse[]>;
   onOpenPreviewAttachment?: (attachment: Attachment) => void;
   username: string;
   viewportRef: RefObject<HTMLDivElement | null>;
@@ -807,6 +1006,8 @@ export function ChatMessages({
   isLoading,
   isStreaming,
   messages,
+  subagentRuns,
+  loadSubagentMessages,
   onOpenPreviewAttachment,
   username,
   viewportRef,
@@ -926,7 +1127,9 @@ export function ChatMessages({
                 <ToolRunBar
                   key={item.key}
                   item={item}
+                  loadSubagentMessages={loadSubagentMessages}
                   onOpenPreviewAttachment={onOpenPreviewAttachment}
+                  subagentRun={subagentRuns[item.toolCallId]}
                 />
               )
             )}

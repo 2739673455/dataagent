@@ -20,6 +20,8 @@ from app.analytics.agents.contracts import (
     MESSAGE_CREATED_AT_KEY,
     ConversationAgentRuntime,
     PlannerTurnContext,
+    SubagentMessageActivity,
+    SubagentStatusActivity,
 )
 from app.analytics.agents.message_timestamp_middleware import (
     MessageTimestampMiddleware,
@@ -155,19 +157,25 @@ class _RepeatingPlanner:
         self,
         input: dict[str, list[Any]],
         config: RunnableConfig,
+        **kwargs: Any,
     ) -> AsyncIterator[dict[str, Any]]:
+        del kwargs
         self.configs.append(config)
         self.input_sizes.append(len(input["messages"]))
         yield {
-            "model": {
-                "messages": [
-                    AIMessage(
-                        id=f"response-{len(self.configs)}",
-                        content="partial response",
-                        response_metadata={"finish_reason": self.finish_reason},
-                    )
-                ]
-            }
+            "type": "updates",
+            "ns": (),
+            "data": {
+                "model": {
+                    "messages": [
+                        AIMessage(
+                            id=f"response-{len(self.configs)}",
+                            content="partial response",
+                            response_metadata={"finish_reason": self.finish_reason},
+                        )
+                    ]
+                }
+            },
         }
 
 
@@ -239,7 +247,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         user_message = chat_schema.UserMessageRequest(
             parts=[chat_schema.TextContent(type="text", text="analyze")],
         )
-        responses: list[chat_schema.MessageResponse] = []
+        events: list[chat_schema.ChatStreamEventPayload] = []
         with (
             patch.object(
                 chat_service,
@@ -251,7 +259,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                 "连续续写次数超过上限",
             ),
         ):
-            async for response in chat_service.run_agent_turn(
+            async for event in chat_service.run_agent_turn(
                 manager,
                 MagicMock(),
                 7,
@@ -259,7 +267,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                 user_message,
                 asyncio.Event(),
             ):
-                responses.append(response)
+                events.append(event)
 
         self.assertEqual(manager.execution_count, 1)
         self.assertEqual(len(planner.configs), 3)
@@ -271,7 +279,13 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
             {turn_context.planner_run_id},
         )
         self.assertEqual(planner.input_sizes, [1, 0, 0])
-        self.assertEqual(len(responses), 3)
+        self.assertEqual(len(events), 3)
+        self.assertTrue(
+            all(
+                isinstance(event, chat_schema.ChatStreamMessageEvent)
+                for event in events
+            )
+        )
 
 
 def _delegation_payload() -> dict[str, object]:
@@ -298,6 +312,109 @@ def _delegation_payload() -> dict[str, object]:
 
 
 class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
+    def test_large_subagent_tool_payloads_are_truncated(self) -> None:
+        call_schema = chat_service._langchain_message_to_schema(
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "large-call",
+                        "name": "execute_sql",
+                        "args": {"sql": "x" * 25_000},
+                    }
+                ],
+            )
+        )
+        result_schema = chat_service._langchain_message_to_schema(
+            ToolMessage(
+                content="x" * 55_000,
+                name="execute_sql",
+                tool_call_id="large-call",
+            )
+        )
+
+        self.assertIsNotNone(call_schema)
+        self.assertIsNotNone(result_schema)
+        assert call_schema is not None and result_schema is not None
+        call_part = call_schema.parts[-1]
+        result_part = result_schema.parts[0]
+        self.assertIsInstance(call_part, chat_schema.ToolCallPart)
+        self.assertIsInstance(result_part, chat_schema.ToolResultPart)
+        assert isinstance(call_part, chat_schema.ToolCallPart)
+        assert isinstance(result_part, chat_schema.ToolResultPart)
+        self.assertTrue(call_part.args["_truncated"])
+        self.assertTrue(result_part.content.endswith("...[工具结果已截断]"))
+
+    async def test_subagent_custom_stream_is_projected_to_public_events(self) -> None:
+        planner = MagicMock()
+
+        async def stream_subagent_activity(
+            *args: Any, **kwargs: Any
+        ) -> AsyncIterator[dict[str, Any]]:
+            del args, kwargs
+            yield {
+                "type": "custom",
+                "ns": (),
+                "data": SubagentStatusActivity(
+                    delegation_id="delegation-1",
+                    analysis_id="sales-review",
+                    agent_type="explorer",
+                    session_id="source-1",
+                    status="running",
+                ),
+            }
+            yield {
+                "type": "custom",
+                "ns": (),
+                "data": SubagentMessageActivity(
+                    delegation_id="delegation-1",
+                    analysis_id="sales-review",
+                    agent_type="explorer",
+                    session_id="source-1",
+                    message=AIMessage(id="specialist-1", content="正在检查数据"),
+                ),
+            }
+            yield {"type": "custom", "ns": (), "data": {"private": True}}
+
+        planner.astream = stream_subagent_activity
+        runtime_mock = MagicMock()
+        runtime_mock.planner = planner
+        runtime = cast(ConversationAgentRuntime, runtime_mock)
+        manager = _TurnManagerStub(
+            runtime,
+            PlannerTurnContext(
+                user_id=7,
+                conversation_id=_CONVERSATION_ID,
+                planner_run_id="subagent-stream",
+                max_continuations=0,
+            ),
+        )
+        events: list[chat_schema.ChatStreamEventPayload] = []
+
+        with patch.object(
+            chat_service,
+            "_schema_to_human_message",
+            new=AsyncMock(return_value=HumanMessage(content="analyze")),
+        ):
+            async for event in chat_service.run_agent_turn(
+                manager,
+                MagicMock(),
+                7,
+                _CONVERSATION_ID,
+                chat_schema.UserMessageRequest(
+                    parts=[chat_schema.TextContent(type="text", text="analyze")]
+                ),
+                asyncio.Event(),
+            ):
+                events.append(event)
+
+        self.assertEqual(len(events), 2)
+        self.assertIsInstance(events[0], chat_schema.ChatStreamSubagentStatusEvent)
+        self.assertIsInstance(events[1], chat_schema.ChatStreamSubagentMessageEvent)
+        message_event = cast(chat_schema.ChatStreamSubagentMessageEvent, events[1])
+        self.assertEqual(message_event.delegation_id, "delegation-1")
+        self.assertEqual(message_event.message.parts[0].type, "text")
+
     def test_delegation_artifacts_are_restored_from_history(self) -> None:
         message = ToolMessage(
             id="message-1",
@@ -334,7 +451,11 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         planner = MagicMock()
 
         async def stream_tool_message(*args: Any, **kwargs: Any) -> AsyncIterator[dict]:
-            yield {"tools": {"messages": [message]}}
+            yield {
+                "type": "updates",
+                "ns": (),
+                "data": {"tools": {"messages": [message]}},
+            }
 
         planner.astream = stream_tool_message
         runtime_mock = MagicMock()
@@ -350,7 +471,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         user_message = chat_schema.UserMessageRequest(
             parts=[chat_schema.TextContent(type="text", text="analyze")],
         )
-        responses: list[chat_schema.MessageResponse] = []
+        events: list[chat_schema.ChatStreamEventPayload] = []
 
         with (
             patch.object(
@@ -359,7 +480,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=HumanMessage(content="analyze")),
             ),
         ):
-            async for response in chat_service.run_agent_turn(
+            async for event in chat_service.run_agent_turn(
                 manager,
                 MagicMock(),
                 7,
@@ -367,10 +488,13 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 user_message,
                 asyncio.Event(),
             ):
-                responses.append(response)
+                events.append(event)
 
-        self.assertEqual(len(responses), 1)
-        self.assertEqual(len(responses[0].attachments or []), 1)
+        self.assertEqual(len(events), 1)
+        event = events[0]
+        self.assertIsInstance(event, chat_schema.ChatStreamMessageEvent)
+        assert isinstance(event, chat_schema.ChatStreamMessageEvent)
+        self.assertEqual(len(event.message.attachments or []), 1)
 
     def test_invalid_delegation_artifact_payload_is_not_exposed(self) -> None:
         payload = _delegation_payload()

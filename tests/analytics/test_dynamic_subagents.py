@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
@@ -22,12 +22,16 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import Field, ValidationError
 
 from app.analytics.agents.contracts import (
+    DELEGATION_CONTEXT_KEY,
     ArtifactReference,
     ConversationAgentRuntime,
+    DelegationMessageContext,
     DelegationRequest,
     DeleteSessionRequest,
     RepairRequest,
     SpecialistResult,
+    SubagentMessageActivity,
+    SubagentStatusActivity,
     build_planner_config,
 )
 from app.analytics.agents.manager import AgentManager
@@ -106,14 +110,17 @@ class _FakeAgent:
         *,
         delay: float = 0,
         output: object | None = None,
+        stream_messages: list[BaseMessage] | None = None,
     ) -> None:
         self.delay = delay
         self.output = output
+        self.stream_messages = stream_messages or []
         self.active = 0
         self.max_active = 0
         self.active_by_namespace: Counter[str] = Counter()
         self.max_active_by_namespace: Counter[str] = Counter()
         self.configs: list[RunnableConfig] = []
+        self.inputs: list[dict[str, Any]] = []
         self.persisted_sessions: set[str] = set()
         self.workspace_sessions: set[str] = set()
         self.checkpoints: dict[str, dict[str, object]] = {}
@@ -123,7 +130,7 @@ class _FakeAgent:
         input: dict[str, Any],
         config: RunnableConfig,
     ) -> object:
-        del input
+        self.inputs.append(input)
         namespace = str(config.get("configurable", {}).get("checkpoint_ns"))
         self.configs.append(config)
         self.active += 1
@@ -169,6 +176,25 @@ class _FakeAgent:
         finally:
             self.active_by_namespace[namespace] -= 1
             self.active -= 1
+
+    async def astream(
+        self,
+        input: dict[str, Any],
+        config: RunnableConfig,
+        **kwargs: Any,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """使用 v2 values 事件模拟 CompiledStateGraph 流"""
+        del kwargs
+        output = await self.ainvoke(input, config)
+        for message in self.stream_messages:
+            node_name = "tools" if isinstance(message, ToolMessage) else "model"
+            yield {
+                "type": "updates",
+                "ns": (),
+                "data": {node_name: {"messages": [message]}},
+            }
+        values = output if isinstance(output, dict) else {"structured_response": output}
+        yield {"type": "values", "ns": (), "data": values}
 
 
 class _DistributedLockRegistry:
@@ -1347,6 +1373,203 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("缺少 planner_run_id", result.limitations[0])
         self.assertEqual(fake.configs, [])
 
+    async def test_delegation_streams_public_messages_and_statuses(self) -> None:
+        tool_call = AIMessage(
+            id="specialist-tool-call",
+            content="正在查询区域销售数据",
+            tool_calls=[
+                {
+                    "id": "sql-call",
+                    "name": "execute_sql",
+                    "args": {"sql": "select region, sum(gmv) from sales"},
+                }
+            ],
+        )
+        tool_result = ToolMessage(
+            id="specialist-tool-result",
+            content="华东,1200",
+            name="execute_sql",
+            tool_call_id="sql-call",
+        )
+        structured_call = AIMessage(
+            id="structured-call",
+            content="",
+            tool_calls=[
+                {
+                    "id": "specialist-result-call",
+                    "name": "SpecialistResult",
+                    "args": {"status": "completed"},
+                }
+            ],
+        )
+        structured_result = ToolMessage(
+            id="structured-result",
+            content="accepted",
+            name="SpecialistResult",
+            tool_call_id="specialist-result-call",
+        )
+        fake = _FakeAgent(
+            stream_messages=[
+                tool_call,
+                tool_call,
+                tool_result,
+                structured_call,
+                structured_result,
+            ],
+        )
+        service = _service(fake)
+        config = build_planner_config(12, _CONVERSATION_ID)
+        config.setdefault("configurable", {})["planner_run_id"] = "activity-run"
+        activities: list[SubagentMessageActivity | SubagentStatusActivity] = []
+
+        async with service.planner_run("activity-run"):
+            result = await service.execute_delegation(
+                _request("region"),
+                config,
+                delegation_id="delegation-region",
+                activity_writer=activities.append,
+            )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(
+            [
+                activity.status
+                for activity in activities
+                if isinstance(activity, SubagentStatusActivity)
+            ],
+            ["running", "completed"],
+        )
+        messages = [
+            activity
+            for activity in activities
+            if isinstance(activity, SubagentMessageActivity)
+        ]
+        self.assertEqual(
+            [activity.message.id for activity in messages],
+            ["specialist-tool-call", "specialist-tool-result"],
+        )
+        self.assertTrue(
+            all(activity.delegation_id == "delegation-region" for activity in messages)
+        )
+        task_message = cast(HumanMessage, fake.inputs[0]["messages"][0])
+        self.assertEqual(
+            task_message.additional_kwargs[DELEGATION_CONTEXT_KEY],
+            {"delegation_id": "delegation-region"},
+        )
+
+    async def test_get_delegation_messages_segments_checkpoint_history(self) -> None:
+        fake = _FakeAgent()
+        namespace = "subagents/sales-decline/analyst/region"
+        first_context = DelegationMessageContext(delegation_id="delegation-first")
+        second_context = DelegationMessageContext(delegation_id="delegation-second")
+        first_ai = AIMessage(id="first-ai", content="第一轮分析")
+        first_tool = ToolMessage(
+            id="first-tool",
+            content="第一轮结果",
+            name="execute_sql",
+            tool_call_id="first-call",
+        )
+        second_ai = AIMessage(id="second-ai", content="第二轮分析")
+        fake.checkpoints[namespace] = {
+            "ts": "2026-08-29T12:00:00+00:00",
+            "channel_values": {
+                "messages": [
+                    HumanMessage(
+                        content="first",
+                        additional_kwargs={
+                            DELEGATION_CONTEXT_KEY: first_context.model_dump(mode="json")
+                        },
+                    ),
+                    first_ai,
+                    first_tool,
+                    ToolMessage(
+                        content="private structured result",
+                        name="SpecialistResult",
+                        tool_call_id="structured-call",
+                    ),
+                    HumanMessage(
+                        content="second",
+                        additional_kwargs={
+                            DELEGATION_CONTEXT_KEY: second_context.model_dump(mode="json")
+                        },
+                    ),
+                    second_ai,
+                ]
+            },
+        }
+        service = _service(fake)
+
+        messages = await service.get_delegation_messages(
+            "sales-decline",
+            "analyst",
+            "region",
+            "delegation-first",
+        )
+        missing = await service.get_delegation_messages(
+            "sales-decline",
+            "analyst",
+            "region",
+            "delegation-missing",
+        )
+
+        self.assertEqual(messages, [first_ai, first_tool])
+        self.assertIsNone(missing)
+
+    async def test_delegation_timeout_emits_failed_status(self) -> None:
+        fake = _FakeAgent(delay=0.05)
+        service = _service(fake, session_lock_timeout=0.01)
+        config = build_planner_config(12, _CONVERSATION_ID)
+        config.setdefault("configurable", {})["planner_run_id"] = "timeout-activity"
+        activities: list[SubagentMessageActivity | SubagentStatusActivity] = []
+
+        async with service.planner_run("timeout-activity"):
+            result = await service.execute_delegation(
+                _request("region"),
+                config,
+                delegation_id="delegation-timeout",
+                activity_writer=activities.append,
+            )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(
+            [
+                activity.status
+                for activity in activities
+                if isinstance(activity, SubagentStatusActivity)
+            ],
+            ["running", "failed"],
+        )
+
+    async def test_delegation_cancellation_emits_cancelled_status(self) -> None:
+        fake = _FakeAgent(delay=0.2)
+        service = _service(fake, session_lock_timeout=1)
+        config = build_planner_config(12, _CONVERSATION_ID)
+        config.setdefault("configurable", {})["planner_run_id"] = "cancel-activity"
+        activities: list[SubagentMessageActivity | SubagentStatusActivity] = []
+
+        async with service.planner_run("cancel-activity"):
+            task = asyncio.create_task(
+                service.execute_delegation(
+                    _request("region"),
+                    config,
+                    delegation_id="delegation-cancel",
+                    activity_writer=activities.append,
+                )
+            )
+            await asyncio.sleep(0.01)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+        self.assertEqual(
+            [
+                activity.status
+                for activity in activities
+                if isinstance(activity, SubagentStatusActivity)
+            ],
+            ["running", "cancelled"],
+        )
+
     async def test_agent_manager_serializes_same_planner_across_workers(self) -> None:
         fake = _FakeAgent()
         first_service = _service(fake)
@@ -1444,7 +1667,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         from langchain_core.messages import AIMessage
         from langchain_quickjs import CodeInterpreterMiddleware
 
-        from app.analytics.agents.planner.delegation import (
+        from app.analytics.agents.planner.tools import (
             create_delegation_tool,
             create_delete_session_tool,
             create_list_sessions_tool,

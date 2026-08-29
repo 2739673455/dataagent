@@ -13,6 +13,8 @@ from pydantic import (
     model_validator,
 )
 
+from app.shared.contracts.analysis import AgentType
+
 
 class CreateConversationRequest(BaseModel):
     """创建对话请求"""
@@ -171,6 +173,12 @@ class MessageListResponse(BaseModel):
     messages: list[MessageResponse]
 
 
+class SubagentMessageListResponse(BaseModel):
+    """一次 Specialist delegation 的公开工作消息"""
+
+    messages: list[MessageResponse]
+
+
 class ChatStreamMessageEvent(BaseModel):
     """SSE 消息事件"""
 
@@ -191,8 +199,40 @@ class ChatStreamDoneEvent(BaseModel):
     type: Literal["done"]
 
 
+class ChatStreamSubagentMessageEvent(BaseModel):
+    """Specialist 执行期间产生的公开消息事件"""
+
+    type: Literal["subagent_message"]
+    delegation_id: str
+    analysis_id: str
+    agent_type: AgentType
+    session_id: str
+    message: MessageResponse
+
+
+class ChatStreamSubagentStatusEvent(BaseModel):
+    """Specialist 执行状态事件"""
+
+    type: Literal["subagent_status"]
+    delegation_id: str
+    analysis_id: str
+    agent_type: AgentType
+    session_id: str
+    status: Literal[
+        "running",
+        "completed",
+        "needs_repair",
+        "failed",
+        "cancelled",
+    ]
+
+
 ChatStreamEventPayload = Annotated[
-    ChatStreamMessageEvent | ChatStreamErrorEvent | ChatStreamDoneEvent,
+    ChatStreamMessageEvent
+    | ChatStreamErrorEvent
+    | ChatStreamDoneEvent
+    | ChatStreamSubagentMessageEvent
+    | ChatStreamSubagentStatusEvent,
     Field(discriminator="type"),
 ]
 

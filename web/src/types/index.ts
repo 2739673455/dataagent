@@ -43,3 +43,27 @@ export type UploadAttachmentResponse = Omit<
 export type ChatStreamRequest = ApiSchemas["ChatStreamRequest"];
 
 export type ChatStreamEvent = ApiSchemas["ChatStreamEvent"];
+export type AgentType = ApiSchemas["AgentType"];
+export type SubagentMessageListResponse = Omit<
+  ApiSchemas["SubagentMessageListResponse"],
+  "messages"
+> & {
+  messages: MessageResponse[];
+};
+export type SubagentStatusEvent = Extract<ChatStreamEvent, { type: "subagent_status" }>;
+export type SubagentMessageEvent = Extract<ChatStreamEvent, { type: "subagent_message" }>;
+export type SubagentRunStatus = SubagentStatusEvent["status"] | "interrupted";
+
+export interface SubagentRunIdentity {
+  delegationId: string;
+  analysisId: string;
+  agentType: AgentType;
+  sessionId: string;
+}
+
+export interface SubagentRun extends SubagentRunIdentity {
+  status: SubagentRunStatus;
+  messages: MessageResponse[];
+  historyLoaded: boolean;
+  historyLoading: boolean;
+}

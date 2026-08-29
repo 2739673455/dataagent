@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Literal, Self
 from uuid import UUID
 
+from langchain_core.messages import BaseMessage
 from langchain_core.runnables import RunnableConfig
 from pydantic import (
     BaseModel,
@@ -40,6 +41,7 @@ NonEmptyText = Annotated[
     StringConstraints(strip_whitespace=True, min_length=1, max_length=20_000),
 ]
 MESSAGE_CREATED_AT_KEY = "dataagent_created_at"
+DELEGATION_CONTEXT_KEY = "dataagent_delegation_context"
 
 
 def get_thread_id(user_id: int, conversation_id: UUID) -> str:
@@ -86,6 +88,41 @@ class PlannerTurnContext:
             raise ValueError("max_continuations 不能为负数")
 
 
+type SubagentRunStatus = Literal[
+    "running",
+    "completed",
+    "needs_repair",
+    "failed",
+    "cancelled",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class SubagentMessageActivity:
+    """一次 Specialist 执行产生的公开候选消息"""
+
+    delegation_id: str
+    analysis_id: str
+    agent_type: AgentType
+    session_id: str
+    message: BaseMessage
+
+
+@dataclass(frozen=True, slots=True)
+class SubagentStatusActivity:
+    """一次 Specialist 执行的状态变化"""
+
+    delegation_id: str
+    analysis_id: str
+    agent_type: AgentType
+    session_id: str
+    status: SubagentRunStatus
+
+
+type SubagentActivity = SubagentMessageActivity | SubagentStatusActivity
+type SubagentActivityWriter = Callable[[SubagentActivity], None]
+
+
 @dataclass(slots=True)
 class ConversationAgentRuntime:
     """一个用户会话内的 Agent 运行时资源"""
@@ -100,6 +137,15 @@ class StrictProtocolModel(BaseModel):
     """拒绝未知字段的协议模型基类"""
 
     model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class DelegationMessageContext(StrictProtocolModel):
+    """持久化在 Specialist 输入消息中的委派边界"""
+
+    delegation_id: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=255),
+    ]
 
 
 class DelegationRequest(StrictProtocolModel):

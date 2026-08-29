@@ -10,14 +10,16 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from threading import Lock as ThreadLock
 from typing import cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ValidationError
 
 from app.analytics.agents.contracts import (
+    DELEGATION_CONTEXT_KEY,
+    DelegationMessageContext,
     DelegationRequest,
     DelegationResult,
     DeleteSessionRequest,
@@ -25,6 +27,10 @@ from app.analytics.agents.contracts import (
     ListSessionsResult,
     SessionSummary,
     SpecialistResult,
+    SubagentActivityWriter,
+    SubagentMessageActivity,
+    SubagentRunStatus,
+    SubagentStatusActivity,
     get_thread_id,
 )
 from app.analytics.agents.session_store import AgentSessionStore
@@ -35,6 +41,8 @@ _STRUCTURED_RETRY_MESSAGE = """
 completed 必须包含 findings 和 artifacts；needs_repair 必须包含有 evidence 的 repair_requests；failed 必须包含 limitations。
 """.strip()
 _MAX_PARALLEL_ARTIFACT_VERIFICATIONS = 8
+_INTERNAL_RETRY_KEY = "dataagent_internal_retry"
+_STRUCTURED_RESPONSE_TOOL_NAME = "SpecialistResult"
 
 
 @dataclass(slots=True)
@@ -195,15 +203,17 @@ class AgentSessionService:
 
     def _build_session_key(
         self,
-        request: DelegationRequest | DeleteSessionRequest,
+        analysis_id: str,
+        agent_type: str,
+        session_id: str,
     ) -> AgentSessionKey:
-        """把已校验请求绑定到当前用户会话"""
+        """把受控标识绑定到当前用户会话"""
         return AgentSessionKey(
             user_id=self._user_id,
             conversation_id=self._conversation_id,
-            analysis_id=request.analysis_id,
-            agent_type=request.agent_type,
-            session_id=request.session_id,
+            analysis_id=analysis_id,
+            agent_type=validate_agent_type(agent_type),
+            session_id=session_id,
         )
 
     @staticmethod
@@ -388,12 +398,29 @@ class AgentSessionService:
         request: DelegationRequest,
         session_key: AgentSessionKey,
         config: RunnableConfig,
+        delegation_id: str,
+        activity_writer: SubagentActivityWriter | None,
     ) -> SpecialistResult:
         """调用专业 Agent 并允许一次纯结构化修正"""
         agent = await self._build_agent(session_key)
-        output = await agent.ainvoke(
-            {"messages": [HumanMessage(content=request.message)]},
-            config=config,
+        context = DelegationMessageContext(delegation_id=delegation_id)
+        output = await self._stream_specialist(
+            agent,
+            {
+                "messages": [
+                    HumanMessage(
+                        content=request.message,
+                        additional_kwargs={
+                            DELEGATION_CONTEXT_KEY: context.model_dump(mode="json")
+                        },
+                    )
+                ]
+            },
+            config,
+            request,
+            delegation_id,
+            activity_writer,
+            emit_messages=True,
         )
         try:
             result = self._parse_specialist_result(output)
@@ -401,21 +428,151 @@ class AgentSessionService:
             await self._verify_result_artifacts(result, session_key)
             return result
         except (TypeError, ValueError, ValidationError):
-            retry_output = await agent.ainvoke(
+            retry_output = await self._stream_specialist(
+                agent,
                 {
                     "messages": [
                         HumanMessage(
                             content=_STRUCTURED_RETRY_MESSAGE,
-                            additional_kwargs={"dataagent_internal_retry": True},
+                            additional_kwargs={_INTERNAL_RETRY_KEY: True},
                         )
                     ]
                 },
-                config=config,
+                config,
+                request,
+                delegation_id,
+                activity_writer,
+                emit_messages=False,
             )
             result = self._parse_specialist_result(retry_output)
             await self._validate_repair_targets(result, session_key)
             await self._verify_result_artifacts(result, session_key)
             return result
+
+    @staticmethod
+    def _is_public_activity_message(message: BaseMessage) -> bool:
+        """筛除结构化协议消息，只保留可展示的 Agent 工作消息"""
+        if isinstance(message, AIMessage):
+            return not any(
+                call.get("name") == _STRUCTURED_RESPONSE_TOOL_NAME
+                for call in message.tool_calls
+            )
+        if isinstance(message, ToolMessage):
+            return message.name != _STRUCTURED_RESPONSE_TOOL_NAME
+        return False
+
+    async def _stream_specialist(
+        self,
+        agent: CompiledStateGraph,
+        input_state: dict[str, list[HumanMessage]],
+        config: RunnableConfig,
+        request: DelegationRequest,
+        delegation_id: str,
+        activity_writer: SubagentActivityWriter | None,
+        *,
+        emit_messages: bool,
+    ) -> Mapping[str, object]:
+        """执行 Specialist 并把节点消息投影为当前 Planner 的活动流"""
+        final_values: Mapping[str, object] | None = None
+        emitted_message_ids: set[str] = set()
+        async for part in agent.astream(
+            input_state,
+            config=config,
+            stream_mode=["updates", "values"],
+            version="v2",
+        ):
+            if not isinstance(part, Mapping):
+                continue
+            part_type = part.get("type")
+            data = part.get("data")
+            if part_type == "values" and isinstance(data, Mapping):
+                final_values = data
+                continue
+            if (
+                not emit_messages
+                or activity_writer is None
+                or part_type != "updates"
+                or not isinstance(data, Mapping)
+            ):
+                continue
+            for node_name, update in data.items():
+                if node_name not in {"model", "tools"} or not isinstance(
+                    update, Mapping
+                ):
+                    continue
+                messages = update.get("messages")
+                if not isinstance(messages, list):
+                    continue
+                for message in messages:
+                    if not isinstance(message, BaseMessage):
+                        continue
+                    if not self._is_public_activity_message(message):
+                        continue
+                    if message.id is not None:
+                        if message.id in emitted_message_ids:
+                            continue
+                        emitted_message_ids.add(message.id)
+                    activity_writer(
+                        SubagentMessageActivity(
+                            delegation_id=delegation_id,
+                            analysis_id=request.analysis_id,
+                            agent_type=request.agent_type,
+                            session_id=request.session_id,
+                            message=message,
+                        )
+                    )
+        if final_values is None:
+            raise RuntimeError("Specialist 执行未产生最终状态")
+        return final_values
+
+    async def get_delegation_messages(
+        self,
+        analysis_id: str,
+        agent_type: str,
+        session_id: str,
+        delegation_id: str,
+    ) -> list[BaseMessage] | None:
+        """从 Session Checkpoint 读取一次 delegation 的可展示消息"""
+        context = DelegationMessageContext(delegation_id=delegation_id)
+        session_key = self._build_session_key(analysis_id, agent_type, session_id)
+        checkpoint = await self._session_store.load_checkpoint(session_key)
+        if checkpoint is None:
+            return None
+        channel_values = checkpoint.get("channel_values")
+        messages = (
+            channel_values.get("messages")
+            if isinstance(channel_values, Mapping)
+            else None
+        )
+        if not isinstance(messages, list):
+            return None
+
+        found = False
+        result: list[BaseMessage] = []
+        for message in messages:
+            if not isinstance(message, BaseMessage):
+                continue
+            raw_context = message.additional_kwargs.get(DELEGATION_CONTEXT_KEY)
+            if raw_context is not None:
+                try:
+                    message_context = DelegationMessageContext.model_validate(
+                        raw_context
+                    )
+                except ValidationError:
+                    if found:
+                        break
+                    continue
+                if found:
+                    break
+                found = message_context.delegation_id == context.delegation_id
+                continue
+            if not found:
+                continue
+            if message.additional_kwargs.get(_INTERNAL_RETRY_KEY) is True:
+                break
+            if self._is_public_activity_message(message):
+                result.append(message)
+        return result if found else None
 
     def _apply_repair_limits(
         self,
@@ -536,11 +693,22 @@ class AgentSessionService:
         self,
         request: DelegationRequest,
         parent_config: RunnableConfig,
+        *,
+        delegation_id: str | None = None,
+        activity_writer: SubagentActivityWriter | None = None,
     ) -> DelegationResult:
         """创建或恢复一个专业 Agent Session"""
+        delegation_id = DelegationMessageContext(
+            delegation_id=delegation_id or uuid4().hex
+        ).delegation_id
+        activity_started = False
         try:
             budget = self._get_budget(parent_config)
-            session_key = self._build_session_key(request)
+            session_key = self._build_session_key(
+                request.analysis_id,
+                request.agent_type,
+                request.session_id,
+            )
             if request.repair_depth > self._max_repair_depth:
                 return self._failed_result(
                     request,
@@ -589,11 +757,33 @@ class AgentSessionService:
                                         datetime.now(UTC)
                                     )
                                 try:
-                                    result = await self._invoke_specialist(
-                                        request,
-                                        session_key,
-                                        config,
-                                    )
+                                    if activity_writer is not None:
+                                        activity_started = True
+                                        activity_writer(
+                                            SubagentStatusActivity(
+                                                delegation_id=delegation_id,
+                                                analysis_id=request.analysis_id,
+                                                agent_type=request.agent_type,
+                                                session_id=request.session_id,
+                                                status="running",
+                                            )
+                                        )
+                                    try:
+                                        result = await self._invoke_specialist(
+                                            request,
+                                            session_key,
+                                            config,
+                                            delegation_id,
+                                            activity_writer,
+                                        )
+                                    except Exception:
+                                        self._write_status_activity(
+                                            request,
+                                            delegation_id,
+                                            "failed",
+                                            activity_writer,
+                                        )
+                                        raise
                                 finally:
                                     with self._budget_lock:
                                         self._active_sessions.pop(
@@ -608,15 +798,41 @@ class AgentSessionService:
                                     budget,
                                 )
                             if limited_result:
+                                self._write_status_activity(
+                                    request,
+                                    delegation_id,
+                                    limited_result.status,
+                                    activity_writer,
+                                )
                                 return limited_result
+                            self._write_status_activity(
+                                request,
+                                delegation_id,
+                                result.status,
+                                activity_writer,
+                            )
                             return self._to_delegation_result(request, result)
             except TimeoutError:
+                if activity_started:
+                    self._write_status_activity(
+                        request,
+                        delegation_id,
+                        "failed",
+                        activity_writer,
+                    )
                 return self._failed_result(
                     request,
                     "专家智能体会话超时",
                     f"超时时间为 {self._session_lock_timeout} 秒",
                 )
             except asyncio.CancelledError:
+                if activity_started:
+                    self._write_status_activity(
+                        request,
+                        delegation_id,
+                        "cancelled",
+                        activity_writer,
+                    )
                 raise
             except Exception as exc:  # noqa: BLE001
                 return self._failed_result(
@@ -632,6 +848,26 @@ class AgentSessionService:
                 str(exc),
             )
 
+    @staticmethod
+    def _write_status_activity(
+        request: DelegationRequest,
+        delegation_id: str,
+        status: SubagentRunStatus,
+        activity_writer: SubagentActivityWriter | None,
+    ) -> None:
+        """在存在活动订阅时发送 Specialist 状态"""
+        if activity_writer is None:
+            return
+        activity_writer(
+            SubagentStatusActivity(
+                delegation_id=delegation_id,
+                analysis_id=request.analysis_id,
+                agent_type=request.agent_type,
+                session_id=request.session_id,
+                status=status,
+            )
+        )
+
     async def delete_session(
         self,
         request: DeleteSessionRequest,
@@ -639,7 +875,11 @@ class AgentSessionService:
     ) -> DeleteSessionResult:
         """幂等删除专业 Agent Session 的持久化与沙箱状态"""
         self._get_budget(parent_config)
-        session_key = self._build_session_key(request)
+        session_key = self._build_session_key(
+            request.analysis_id,
+            request.agent_type,
+            request.session_id,
+        )
         session_lock = self._session_locks.setdefault(
             session_key.checkpoint_ns,
             asyncio.Lock(),

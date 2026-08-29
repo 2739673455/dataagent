@@ -30,6 +30,7 @@ from app.analytics.tasks import (
 )
 from app.identity.api.auth.dependencies import AnalysisUserDep, CurrentUserDep
 from app.sandbox.manager import DockerSandboxManager
+from app.shared.contracts.analysis import AgentType
 from app.shared.observability import context
 
 router = APIRouter(tags=["chat"])
@@ -179,6 +180,42 @@ async def api_get_messages(
     return chat_schema.MessageListResponse(messages=messages)
 
 
+@router.get(
+    "/{conversation_id}/subagents/{analysis_id}/{agent_type}/{session_id}/"
+    "runs/{delegation_id}/messages"
+)
+async def api_get_subagent_messages(
+    conversation_id: UUID,
+    analysis_id: str,
+    agent_type: AgentType,
+    session_id: str,
+    delegation_id: str,
+    conversation_repo: ConversationPGRepoDep,
+    current_user: CurrentUserDep,
+    agents: AgentManagerDep,
+) -> chat_schema.SubagentMessageListResponse:
+    """读取一次 Specialist delegation 的公开工作消息"""
+    user_id = current_user.id
+    conversation = await conversation_repo.get(user_id, conversation_id)
+    if conversation is None:
+        raise chat_error.ConversationNotFoundError
+    try:
+        messages = await chat_service.list_subagent_messages(
+            agents,
+            user_id,
+            conversation_id,
+            analysis_id,
+            agent_type,
+            session_id,
+            delegation_id,
+        )
+    except ValueError as exc:
+        raise chat_error.SubagentRunNotFoundError from exc
+    if messages is None:
+        raise chat_error.SubagentRunNotFoundError
+    return chat_schema.SubagentMessageListResponse(messages=messages)
+
+
 def _serialize_sse_event(event: chat_schema.ChatStreamEventPayload) -> str:
     """将聊天事件序列化为 SSE 数据帧"""
     return f"data: {event.model_dump_json()}\n\n"
@@ -201,7 +238,7 @@ async def _stream_agent_response(
         user_message,
         cancel,
     )
-    next_message_task: asyncio.Task[chat_schema.MessageResponse] | None = None
+    next_message_task: asyncio.Task[chat_schema.ChatStreamEventPayload] | None = None
     try:
         next_message_task = asyncio.create_task(anext(responses))
         while True:
@@ -214,13 +251,11 @@ async def _stream_agent_response(
                 continue
 
             try:
-                message = next_message_task.result()
+                event = next_message_task.result()
             except StopAsyncIteration:
                 break
 
-            yield _serialize_sse_event(
-                chat_schema.ChatStreamMessageEvent(type="message", message=message)
-            )
+            yield _serialize_sse_event(event)
             next_message_task = asyncio.create_task(anext(responses))
     except asyncio.CancelledError:
         logger.info(f"SSE 连接断开: conversation_id={conversation_id}")

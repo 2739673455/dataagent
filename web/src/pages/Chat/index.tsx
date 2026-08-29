@@ -77,6 +77,9 @@ export default function ChatPage() {
   const params = useParams();
   const conversations = useChatStore((state) => state.conversations);
   const messagesByConversation = useChatStore((state) => state.messagesByConversation);
+  const subagentRunsByConversation = useChatStore(
+    (state) => state.subagentRunsByConversation
+  );
   const isLoadingMessages = useChatStore((state) => state.isLoadingMessages);
   const loadConversations = useChatStore((state) => state.loadConversations);
   const createConversation = useChatStore((state) => state.createConversation);
@@ -88,6 +91,12 @@ export default function ChatPage() {
   const unmarkStreaming = useChatStore((state) => state.unmarkStreaming);
   const ensureConversation = useChatStore((state) => state.ensureConversation);
   const appendMessage = useChatStore((state) => state.appendMessage);
+  const appendSubagentMessage = useChatStore((state) => state.appendSubagentMessage);
+  const updateSubagentStatus = useChatStore((state) => state.updateSubagentStatus);
+  const loadSubagentMessages = useChatStore((state) => state.loadSubagentMessages);
+  const interruptRunningSubagents = useChatStore(
+    (state) => state.interruptRunningSubagents
+  );
   const user = useAuthStore((state) => state.user);
 
   // 每个会话独立持有 SSE 请求的取消控制器
@@ -133,6 +142,9 @@ export default function ChatPage() {
   const currentMessages = routeConversationId
     ? (messagesByConversation[routeConversationId] ?? [])
     : [];
+  const currentSubagentRuns = routeConversationId
+    ? (subagentRunsByConversation[routeConversationId] ?? {})
+    : {};
   const currentMessageCount = currentMessages.length;
   const returnedPreviewAttachments = useMemo(
     () => collectReturnedPreviewAttachments(currentMessages),
@@ -320,19 +332,29 @@ export default function ChatPage() {
       streamControllersRef.current.get(conversationId)?.abort();
       const controller = new AbortController();
       streamControllersRef.current.set(conversationId, controller);
+      let receivedDone = false;
 
       const onEvent = (event: ChatStreamEvent) => {
         if (!sessionLifecycle.isCurrent(generation)) return;
         if (event.type === "message") {
           appendMessage(conversationId, event.message);
+        } else if (event.type === "subagent_message") {
+          appendSubagentMessage(conversationId, event);
+        } else if (event.type === "subagent_status") {
+          updateSubagentStatus(conversationId, event);
         } else if (event.type === "error") {
           toast.error(event.content);
+        } else if (event.type === "done") {
+          receivedDone = true;
         }
       };
 
       void chatApi
         .streamChat(conversationId, message, controller.signal, onEvent)
         .catch((error: unknown) => {
+          if (sessionLifecycle.isCurrent(generation)) {
+            interruptRunningSubagents(conversationId);
+          }
           if (error instanceof DOMException && error.name === "AbortError") return;
           if (!sessionLifecycle.isCurrent(generation)) return;
           toast.error(getApiErrorMessage(error, "聊天连接异常"));
@@ -341,13 +363,21 @@ export default function ChatPage() {
           if (streamControllersRef.current.get(conversationId) === controller) {
             streamControllersRef.current.delete(conversationId);
             if (sessionLifecycle.isCurrent(generation)) {
+              if (!receivedDone) interruptRunningSubagents(conversationId);
               unmarkStreaming(conversationId);
               void loadConversations();
             }
           }
         });
     },
-    [appendMessage, loadConversations, unmarkStreaming]
+    [
+      appendMessage,
+      appendSubagentMessage,
+      interruptRunningSubagents,
+      loadConversations,
+      unmarkStreaming,
+      updateSubagentStatus,
+    ]
   );
 
   // 页面卸载时取消全部正在运行的 SSE 请求
@@ -575,6 +605,8 @@ export default function ChatPage() {
             isLoading={isLoadingMessages}
             isStreaming={isStreaming}
             messages={currentMessages}
+            subagentRuns={currentSubagentRuns}
+            loadSubagentMessages={loadSubagentMessages}
             onOpenPreviewAttachment={handleOpenPreviewAttachment}
             username={user?.username ?? "用户"}
             viewportRef={messageViewportRef}

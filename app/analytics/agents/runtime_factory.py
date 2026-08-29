@@ -25,7 +25,7 @@ from app.analytics.agents.explorer.tools import (
 )
 from app.analytics.agents.mcp import get_mcp_tools
 from app.analytics.agents.planner.agent import create_planner_agent
-from app.analytics.agents.planner.delegation import (
+from app.analytics.agents.planner.tools import (
     create_delegation_tool,
     create_delete_session_tool,
     create_list_sessions_tool,

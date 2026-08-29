@@ -386,8 +386,12 @@ GET /chat/{conversation_id}/subagents/{analysis_id}/{agent_type}/{session_id}/ru
 
 - `app/analytics/agents/contracts.py`
   - 增加内部 Subagent Activity 类型和 writer 协议。
-- `app/analytics/agents/planner/delegation.py`
+- `app/analytics/agents/planner/tools/delegation.py`
   - 传递 delegation tool call ID 和 StreamWriter。
+- `app/analytics/agents/planner/tools/list_sessions.py`
+  - 提供专业 Session 查询工具。
+- `app/analytics/agents/planner/tools/delete_session.py`
+  - 提供专业 Session 删除工具。
 - `app/analytics/agents/session_service.py`
   - 将 Specialist 调用改为流式执行。
   - 发送消息和状态活动。

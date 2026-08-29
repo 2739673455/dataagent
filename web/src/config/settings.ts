@@ -24,6 +24,14 @@ export const CHAT_API_ROUTES = {
   updateConversation: "/api/v1/chat/update",
   deleteDraftConversation: (conversationId: string) => `/api/v1/chat/draft/${conversationId}`,
   getMessages: (conversationId: string) => `/api/v1/chat/ls/${conversationId}`,
+  getSubagentMessages: (
+    conversationId: string,
+    analysisId: string,
+    agentType: string,
+    sessionId: string,
+    delegationId: string
+  ) =>
+    `/api/v1/chat/${encodeURIComponent(conversationId)}/subagents/${encodeURIComponent(analysisId)}/${encodeURIComponent(agentType)}/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(delegationId)}/messages`,
   uploadAttachment: "/api/v1/chat/attachment/upload",
   getAttachment: "/api/v1/chat/attachment/get",
   deleteAttachment: "/api/v1/chat/attachment/delete",

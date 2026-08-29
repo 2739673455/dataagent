@@ -16,6 +16,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langgraph.types import StreamPart
 from loguru import logger
 from pydantic import ValidationError
 
@@ -24,6 +25,9 @@ from app.analytics.agents.contracts import (
     ConversationAgentRuntime,
     DelegationResult,
     PlannerTurnContext,
+    SubagentActivity,
+    SubagentMessageActivity,
+    SubagentStatusActivity,
     build_planner_config,
 )
 from app.analytics.agents.user_message_metadata import (
@@ -38,6 +42,8 @@ from app.analytics.services.contracts import (
 
 _IMAGE_SUFFIXES = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 MESSAGE_PAYLOAD_KEY = "dataagent_message"
+_MAX_TOOL_ARGS_CHARS = 20_000
+_MAX_TOOL_RESULT_CHARS = 50_000
 
 
 def _message_created_at(message: BaseMessage) -> datetime | None:
@@ -155,7 +161,7 @@ def _langchain_message_to_schema(
                     type="tool_result",
                     tool_call_id=message.tool_call_id,
                     name=message.name or "",
-                    content=str(message.content),
+                    content=_truncate_tool_result(str(message.content)),
                 )
             ],
             attachments=_delegation_result_attachments(message) or None,
@@ -184,7 +190,7 @@ def _langchain_message_to_schema(
                 type="tool_call",
                 tool_call_id=tool_call.get("id") or "",
                 name=tool_call.get("name") or "",
-                args=tool_call.get("args", {}),
+                args=_truncate_tool_args(tool_call.get("args", {})),
             )
             for tool_call in message.tool_calls
         )
@@ -199,6 +205,57 @@ def _langchain_message_to_schema(
             message.response_metadata.get("finish_reason"),
         ),
     )
+
+
+def _truncate_tool_result(content: str) -> str:
+    """限制发送给前端的单条工具结果大小"""
+    if len(content) <= _MAX_TOOL_RESULT_CHARS:
+        return content
+    return content[:_MAX_TOOL_RESULT_CHARS] + "\n...[工具结果已截断]"
+
+
+def _truncate_tool_args(args: object) -> dict[str, object]:
+    """限制发送给前端的单次工具参数大小"""
+    if not isinstance(args, dict):
+        return {}
+    try:
+        serialized = json.dumps(args, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return {"_truncated": True, "preview": "工具参数无法序列化"}
+    if len(serialized) <= _MAX_TOOL_ARGS_CHARS:
+        return cast(dict[str, object], args)
+    return {
+        "_truncated": True,
+        "preview": serialized[:_MAX_TOOL_ARGS_CHARS] + "...[工具参数已截断]",
+    }
+
+
+def _subagent_activity_to_event(
+    activity: SubagentActivity,
+) -> chat_schema.ChatStreamEventPayload | None:
+    """把受信任的 Agent 内部活动投影为公开聊天事件"""
+    if isinstance(activity, SubagentMessageActivity):
+        message = _langchain_message_to_schema(activity.message)
+        if message is None:
+            return None
+        return chat_schema.ChatStreamSubagentMessageEvent(
+            type="subagent_message",
+            delegation_id=activity.delegation_id,
+            analysis_id=activity.analysis_id,
+            agent_type=activity.agent_type,
+            session_id=activity.session_id,
+            message=message,
+        )
+    if isinstance(activity, SubagentStatusActivity):
+        return chat_schema.ChatStreamSubagentStatusEvent(
+            type="subagent_status",
+            delegation_id=activity.delegation_id,
+            analysis_id=activity.analysis_id,
+            agent_type=activity.agent_type,
+            session_id=activity.session_id,
+            status=activity.status,
+        )
+    return None
 
 
 async def _build_image_data_url(
@@ -360,11 +417,37 @@ async def list_messages(
     return result
 
 
+async def list_subagent_messages(
+    agents: AgentRuntimeManager,
+    user_id: int,
+    conversation_id: UUID,
+    analysis_id: str,
+    agent_type: str,
+    session_id: str,
+    delegation_id: str,
+) -> list[chat_schema.MessageResponse] | None:
+    """读取一次 Specialist delegation 的公开工作消息"""
+    runtime = await agents.get_conversation_runtime(user_id, conversation_id)
+    messages = await runtime.session_service.get_delegation_messages(
+        analysis_id,
+        agent_type,
+        session_id,
+        delegation_id,
+    )
+    if messages is None:
+        return None
+    return [
+        schema
+        for message in messages
+        if (schema := _langchain_message_to_schema(message)) is not None
+    ]
+
+
 async def _execute_agent(
     input_messages: list[BaseMessage],
     runtime: ConversationAgentRuntime,
     turn_context: PlannerTurnContext,
-) -> AsyncGenerator[dict[str, Any]]:
+) -> AsyncGenerator[StreamPart[Any, Any]]:
     """执行 Agent 并流式返回原始更新"""
     config = build_planner_config(
         turn_context.user_id,
@@ -376,6 +459,8 @@ async def _execute_agent(
     async for chunk in runtime.planner.astream(
         input={"messages": input_messages},
         config=config,
+        stream_mode=["updates", "custom"],
+        version="v2",
     ):
         yield chunk
 
@@ -387,7 +472,7 @@ async def run_agent_turn(
     conversation_id: UUID,
     user_message: chat_schema.UserMessageRequest,
     cancel: asyncio.Event,
-) -> AsyncGenerator[chat_schema.MessageResponse]:
+) -> AsyncGenerator[chat_schema.ChatStreamEventPayload]:
     """执行一轮 Agent 对话并流式返回响应"""
     logger.info(
         f"智能体回合开始: conversation_id={conversation_id}, "
@@ -423,9 +508,29 @@ async def run_agent_turn(
                     logger.info(f"智能体执行已取消: conversation_id={conversation_id}")
                     break
 
+                if chunk.get("type") == "custom":
+                    activity = chunk.get("data")
+                    if (
+                        isinstance(
+                            activity,
+                            (SubagentMessageActivity, SubagentStatusActivity),
+                        )
+                        and (event := _subagent_activity_to_event(activity)) is not None
+                    ):
+                        yield event
+                    continue
+                if chunk.get("type") != "updates":
+                    continue
+                data = chunk.get("data")
+                if not isinstance(data, dict):
+                    continue
+
                 responses: list[chat_schema.MessageResponse] = []
                 for node in ("model", "tools"):
-                    messages = chunk.get(node, {}).get("messages")
+                    update = data.get(node)
+                    messages = (
+                        update.get("messages") if isinstance(update, dict) else None
+                    )
                     if not isinstance(messages, list):
                         continue
                     for message in messages:
@@ -438,7 +543,10 @@ async def run_agent_turn(
                 )
                 for response in responses:
                     last_finish_reason = response.finish_reason
-                    yield response
+                    yield chat_schema.ChatStreamMessageEvent(
+                        type="message",
+                        message=response,
+                    )
 
             if (
                 cancel.is_set()

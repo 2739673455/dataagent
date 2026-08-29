@@ -31,6 +31,8 @@ class ApiContractTests(unittest.TestCase):
             "ChatStreamMessageEvent",
             "ChatStreamErrorEvent",
             "ChatStreamDoneEvent",
+            "ChatStreamSubagentMessageEvent",
+            "ChatStreamSubagentStatusEvent",
         ):
             self.assertIn("type", schemas[event_name]["required"])
         self.assertIn("created_at", schemas["MessageResponse"]["properties"])
@@ -63,7 +65,7 @@ class ApiContractTests(unittest.TestCase):
             stream_response["content"]["text/event-stream"]["schema"],
         )
         self.assertEqual(
-            3,
+            5,
             len(schemas["ChatStreamEvent"]["oneOf"]),
         )
 

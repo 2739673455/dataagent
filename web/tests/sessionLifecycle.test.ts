@@ -29,11 +29,20 @@ describe("session lifecycle", () => {
       parts: [{ type: "text", text: "secret" }],
     });
     store.markStreaming("00000000-0000-4000-8000-000000000001");
+    store.updateSubagentStatus("00000000-0000-4000-8000-000000000001", {
+      type: "subagent_status",
+      delegation_id: "call-private",
+      analysis_id: "private",
+      agent_type: "analyst",
+      session_id: "private",
+      status: "running",
+    });
 
     sessionLifecycle.transition();
 
     expect(useChatStore.getState().conversations).toEqual([]);
     expect(useChatStore.getState().messagesByConversation).toEqual({});
+    expect(useChatStore.getState().subagentRunsByConversation).toEqual({});
     expect(useChatStore.getState().isLoadingMessages).toBe(false);
     expect(useChatStore.getState().streamingConversations.size).toBe(0);
   });

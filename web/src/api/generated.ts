@@ -3,6 +3,7 @@
 
 export interface components {
   "schemas": {
+    "AgentType": "explorer" | "analyst" | "reviewer" | "visualizer";
     "AssetGrantListResponse": {
       "grants": Array<components["schemas"]["AssetGrantResponse"]>;
     };
@@ -42,7 +43,7 @@ export interface components {
       "content": string;
       "type": "error";
     };
-    "ChatStreamEvent": (components["schemas"]["ChatStreamMessageEvent"] | components["schemas"]["ChatStreamErrorEvent"] | components["schemas"]["ChatStreamDoneEvent"]);
+    "ChatStreamEvent": (components["schemas"]["ChatStreamMessageEvent"] | components["schemas"]["ChatStreamErrorEvent"] | components["schemas"]["ChatStreamDoneEvent"] | components["schemas"]["ChatStreamSubagentMessageEvent"] | components["schemas"]["ChatStreamSubagentStatusEvent"]);
     "ChatStreamMessageEvent": {
       "message": components["schemas"]["MessageResponse"];
       "type": "message";
@@ -50,6 +51,22 @@ export interface components {
     "ChatStreamRequest": {
       "conversation_id": string;
       "message": components["schemas"]["UserMessageRequest"];
+    };
+    "ChatStreamSubagentMessageEvent": {
+      "agent_type": components["schemas"]["AgentType"];
+      "analysis_id": string;
+      "delegation_id": string;
+      "message": components["schemas"]["MessageResponse"];
+      "session_id": string;
+      "type": "subagent_message";
+    };
+    "ChatStreamSubagentStatusEvent": {
+      "agent_type": components["schemas"]["AgentType"];
+      "analysis_id": string;
+      "delegation_id": string;
+      "session_id": string;
+      "status": "running" | "completed" | "needs_repair" | "failed" | "cancelled";
+      "type": "subagent_status";
     };
     "ColumnBatchDeleteRequest": {
       "columns": Array<components["schemas"]["ColumnReference"]>;
@@ -317,6 +334,9 @@ export interface components {
     };
     "SetUserDorisRoleRequest": {
       "role": string;
+    };
+    "SubagentMessageListResponse": {
+      "messages": Array<components["schemas"]["MessageResponse"]>;
     };
     "TableBatchDeleteRequest": {
       "tables": Array<string>;
@@ -620,6 +640,40 @@ export interface operations {
       "200": {
         "content": {
         "application/json": components["schemas"]["MessageListResponse"];
+      };
+      };
+      "422": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+      "default": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+    };
+  };
+  "api_get_subagent_messages_api_v1_chat__conversation_id__subagents__analysis_id___agent_type___session_id__runs__delegation_id__messages_get": {
+    "parameters": {
+      "path": {
+        "agent_type": "explorer" | "analyst" | "reviewer" | "visualizer";
+        "analysis_id": string;
+        "conversation_id": string;
+        "delegation_id": string;
+        "session_id": string;
+      };
+      "query"?: never;
+      "header"?: never;
+      "cookie"?: never;
+    };
+    "requestBody"?: never;
+    "responses": {
+      "200": {
+        "content": {
+        "application/json": components["schemas"]["SubagentMessageListResponse"];
       };
       };
       "422": {
@@ -2262,6 +2316,9 @@ export interface paths {
   };
   "/api/v1/chat/update": {
     "post": operations["api_update_conversation_api_v1_chat_update_post"];
+  };
+  "/api/v1/chat/{conversation_id}/subagents/{analysis_id}/{agent_type}/{session_id}/runs/{delegation_id}/messages": {
+    "get": operations["api_get_subagent_messages_api_v1_chat__conversation_id__subagents__analysis_id___agent_type___session_id__runs__delegation_id__messages_get"];
   };
   "/api/v1/meta/columns/batch-delete": {
     "post": operations["delete_columns_api_v1_meta_columns_batch_delete_post"];

@@ -8,6 +8,8 @@ import type {
   ConversationListResponse,
   ConversationResponse,
   MessageListResponse,
+  SubagentMessageListResponse,
+  SubagentRunIdentity,
   UploadAttachmentResponse,
 } from "@/types";
 import appClient from "./appClient";
@@ -99,6 +101,18 @@ export const chatApi = {
 
   getMessages(conversationId: string) {
     return appClient.get<MessageListResponse>(CHAT_API_ROUTES.getMessages(conversationId));
+  },
+
+  getSubagentMessages(conversationId: string, run: SubagentRunIdentity) {
+    return appClient.get<SubagentMessageListResponse>(
+      CHAT_API_ROUTES.getSubagentMessages(
+        conversationId,
+        run.analysisId,
+        run.agentType,
+        run.sessionId,
+        run.delegationId
+      )
+    );
   },
 
   uploadAttachment(conversationId: string, file: File) {
