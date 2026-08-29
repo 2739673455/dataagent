@@ -3,6 +3,7 @@
 import json
 from collections.abc import Awaitable, Callable
 from typing import Any
+from uuid import UUID
 
 from langchain.agents.middleware.types import (
     AgentMiddleware,
@@ -117,6 +118,62 @@ def _current_turn_references(
     ]
 
 
+async def _load_recall_records(
+    user_id: int,
+    conversation_id: UUID,
+    references: list[tuple[int, SemanticRecallReference]],
+) -> dict[str, SemanticRecallRecord]:
+    """按 query 批量加载当前用户可见的语义召回记录"""
+    async with semantic_recall_repository() as repo:
+        service = await create_authorized_semantic_recall_service(user_id, repo)
+        records: dict[str, SemanticRecallRecord] = {}
+        for _, reference in references:
+            if reference.query not in records:
+                records[reference.query] = await service.get(
+                    user_id,
+                    conversation_id,
+                    reference.query,
+                )
+    return records
+
+
+def _replace_reference_content(
+    messages: list[Any],
+    references: list[tuple[int, SemanticRecallReference]],
+    records: dict[str, SemanticRecallRecord],
+) -> list[Any]:
+    """使用已授权召回内容替换消息副本中的引用"""
+    expanded = list(messages)
+    for index, reference in references:
+        message = expanded[index]
+        expanded[index] = message.model_copy(
+            update={"content": _expanded_content(records[reference.query])}
+        )
+    return expanded
+
+
+async def expand_semantic_recall_messages_for_display(
+    messages: list[Any],
+    user_id: int,
+    conversation_id: UUID,
+) -> list[Any]:
+    """在公开消息投影中展开语义召回引用，不修改持久化消息"""
+    references = [
+        (index, reference)
+        for index, message in enumerate(messages)
+        if isinstance(message, ToolMessage)
+        and (reference := parse_semantic_recall_reference(message)) is not None
+    ]
+    if not references:
+        return messages
+    try:
+        records = await _load_recall_records(user_id, conversation_id, references)
+    except Exception:  # noqa: BLE001
+        logger.exception("公开消息中的语义召回展开失败")
+        return messages
+    return _replace_reference_content(messages, references, records)
+
+
 class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
     """仅在当前模型请求中展开已授权的召回记录"""
 
@@ -143,16 +200,11 @@ class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
         messages = list(request.messages)
         try:
             user_id, conversation_id = resolve_semantic_recall_identity(get_config())
-            async with semantic_recall_repository() as repo:
-                service = await create_authorized_semantic_recall_service(user_id, repo)
-                records: dict[str, SemanticRecallRecord] = {}
-                for _, reference in references:
-                    if reference.query not in records:
-                        records[reference.query] = await service.get(
-                            user_id,
-                            conversation_id,
-                            reference.query,
-                        )
+            records = await _load_recall_records(
+                user_id,
+                conversation_id,
+                references,
+            )
         except SemanticQueriesNotFoundError as exc:
             expanded_error = json.dumps(
                 {
@@ -180,13 +232,5 @@ class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
                 messages[index] = message.model_copy(update={"content": expanded_error})
             return await handler(request.override(messages=messages))
 
-        for index, reference in references:
-            message = messages[index]
-            messages[index] = message.model_copy(
-                update={
-                    "content": _expanded_content(
-                        records[reference.query],
-                    )
-                }
-            )
+        messages = _replace_reference_content(messages, references, records)
         return await handler(request.override(messages=messages))

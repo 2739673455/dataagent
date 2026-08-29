@@ -1,5 +1,5 @@
-import { Download, Eye, Loader2, Search, Upload, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Download, Eye, FileText, Loader2, Search, Upload, X } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/api/errors";
 import { type ImportMode, type MetaImportResponse, metaApi } from "@/api/meta";
@@ -10,6 +10,7 @@ interface YamlSectionProps {
 }
 
 export function YamlSection({ onDataReload }: YamlSectionProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importMode, setImportMode] = useState<ImportMode>("merge");
   const [dryRun, setDryRun] = useState(false);
@@ -130,6 +131,7 @@ export function YamlSection({ onDataReload }: YamlSectionProps) {
         <p className="font-semibold text-[#18181b] mb-3">批量导入与导出元数据 (YAML)</p>
         <div className="flex flex-wrap items-center gap-3">
           <input
+            ref={fileInputRef}
             type="file"
             accept=".yaml,.yml"
             disabled={importing}
@@ -137,8 +139,46 @@ export function YamlSection({ onDataReload }: YamlSectionProps) {
               setImportFile(e.target.files?.[0] || null);
               setImportResult(null);
             }}
-            className="text-xs text-[#52525b] file:mr-2 file:rounded file:border file:border-[#d4d4ce] file:bg-[#ffffff] file:px-2.5 file:py-1 file:text-xs file:font-medium file:text-[#18181b] hover:file:bg-[#ebebe6] disabled:opacity-50"
+            className="hidden"
           />
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={importing}
+              onClick={() => fileInputRef.current?.click()}
+              className="h-8 text-xs"
+            >
+              <FileText className="h-3.5 w-3.5 mr-1 text-[#52525b]" />
+              选择文件
+            </Button>
+            {importFile ? (
+              <div className="flex items-center gap-1.5 rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 py-1 text-xs text-[#27272a]">
+                <span
+                  className="max-w-[180px] truncate font-mono text-[11px]"
+                  title={importFile.name}
+                >
+                  {importFile.name}
+                </span>
+                <button
+                  type="button"
+                  disabled={importing}
+                  onClick={() => {
+                    setImportFile(null);
+                    setImportResult(null);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }}
+                  className="rounded p-0.5 text-[#71717a] hover:bg-[#f4f4f0] hover:text-[#18181b] transition"
+                  title="清除文件"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ) : (
+              <span className="text-xs text-[#a1a1aa]">未选择文件</span>
+            )}
+          </div>
           <div className="flex items-center gap-2 text-xs">
             <label htmlFor="metadata-import-mode" className="text-[#71717a]">
               模式

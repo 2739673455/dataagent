@@ -123,6 +123,14 @@ class RoleAlreadyExistsError(ProblemError):
     status = HTTPStatus.CONFLICT
 
 
+class QueryUserAlreadyExistsError(ProblemError):
+    """表示 Doris 查询用户名已经被占用"""
+
+    type = "query-user-already-exists"
+    title = "查询用户已存在"
+    status = HTTPStatus.CONFLICT
+
+
 class WorkloadGroupNotFoundError(ProblemError):
     """表示目标 Doris 工作组不存在"""
 

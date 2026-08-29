@@ -404,6 +404,79 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message_event.delegation_id, "delegation-1")
         self.assertEqual(message_event.message.parts[0].type, "text")
 
+    async def test_semantic_recall_result_is_expanded_in_stream_and_history(
+        self,
+    ) -> None:
+        reference = ToolMessage(
+            id="recall-message",
+            name="recall_context",
+            tool_call_id="recall-call",
+            content=json.dumps({"status": "stored", "query": "收入趋势"}),
+        )
+        detailed_content = json.dumps(
+            {
+                "query": "收入趋势",
+                "tables": {"orders": {"columns": {"amount": {"type": "DECIMAL"}}}},
+            },
+            ensure_ascii=False,
+        )
+        expanded = reference.model_copy(update={"content": detailed_content})
+        expander = AsyncMock(return_value=[expanded])
+        activity = SubagentMessageActivity(
+            delegation_id="delegation-1",
+            analysis_id="sales-review",
+            agent_type="explorer",
+            session_id="source-1",
+            message=reference,
+        )
+
+        with patch.object(
+            chat_service,
+            "expand_semantic_recall_messages_for_display",
+            new=expander,
+        ):
+            stream_event = await chat_service._subagent_activity_to_event(
+                activity,
+                7,
+                _CONVERSATION_ID,
+            )
+
+            runtime = MagicMock()
+            runtime.session_service.get_delegation_messages = AsyncMock(
+                return_value=[reference]
+            )
+            agents = MagicMock()
+            agents.get_conversation_runtime = AsyncMock(return_value=runtime)
+            history = await chat_service.list_subagent_messages(
+                agents,
+                7,
+                _CONVERSATION_ID,
+                "sales-review",
+                "explorer",
+                "source-1",
+                "delegation-1",
+            )
+
+        self.assertIsInstance(
+            stream_event,
+            chat_schema.ChatStreamSubagentMessageEvent,
+        )
+        assert isinstance(stream_event, chat_schema.ChatStreamSubagentMessageEvent)
+        stream_part = stream_event.message.parts[0]
+        self.assertIsInstance(stream_part, chat_schema.ToolResultPart)
+        assert isinstance(stream_part, chat_schema.ToolResultPart)
+        self.assertEqual(stream_part.content, detailed_content)
+        self.assertIsNotNone(history)
+        assert history is not None
+        history_part = history[0].parts[0]
+        self.assertIsInstance(history_part, chat_schema.ToolResultPart)
+        assert isinstance(history_part, chat_schema.ToolResultPart)
+        self.assertEqual(history_part.content, detailed_content)
+        self.assertEqual(
+            reference.content,
+            json.dumps({"status": "stored", "query": "收入趋势"}),
+        )
+
     def test_delegation_artifacts_are_restored_from_history(self) -> None:
         message = ToolMessage(
             id="message-1",

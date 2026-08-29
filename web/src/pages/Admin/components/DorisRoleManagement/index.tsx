@@ -164,14 +164,25 @@ export function DorisRoleManagement() {
               {existingRoles.map((role) => (
                 <div
                   key={role.name}
-                  className="flex w-fit max-w-full items-center justify-between gap-3 rounded border border-[#e5e5df] bg-[#ffffff] px-3 py-2 font-mono text-xs"
+                  className="flex min-w-[220px] max-w-full flex-col gap-1.5 rounded border border-[#e5e5df] bg-[#ffffff] px-3 py-2 font-mono text-xs"
                 >
-                  <span className="min-w-0 truncate font-semibold text-[#1e2024]" title={role.name}>
-                    {role.name}
-                  </span>
-                  <span className="shrink-0 rounded bg-[#f0f0eb] px-1.5 py-0.5 text-[10px] text-[#71717a]">
-                    {role.managed ? "平台已管理" : "仅 Doris"}
-                  </span>
+                  <div className="flex items-center justify-between gap-3">
+                    <span
+                      className="min-w-0 truncate font-semibold text-[#1e2024]"
+                      title={role.name}
+                    >
+                      {role.name}
+                    </span>
+                    <span className="shrink-0 rounded bg-[#f0f0eb] px-1.5 py-0.5 text-[10px] text-[#71717a]">
+                      {role.managed ? "平台已管理" : "仅 Doris"}
+                    </span>
+                  </div>
+                  <div
+                    className="truncate text-[10px] text-[#71717a]"
+                    title={role.doris_users.length > 0 ? role.doris_users.join(", ") : "暂无用户"}
+                  >
+                    {role.doris_users.length > 0 ? role.doris_users.join(", ") : "暂无用户"}
+                  </div>
                 </div>
               ))}
             </div>

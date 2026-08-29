@@ -21,6 +21,7 @@ from pydantic import BaseModel, ValidationError
 from app.analytics.agents.explorer.semantic_recall_middleware import (
     SemanticRecallExpansionMiddleware,
     _expanded_content,
+    expand_semantic_recall_messages_for_display,
 )
 from app.analytics.agents.explorer.semantic_recall_protocol import (
     parse_semantic_recall_reference,
@@ -1592,12 +1593,17 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             patch(
                 "app.analytics.agents.explorer.semantic_recall_middleware."
                 "semantic_recall_repository",
-                return_value=recall_repository_context(repo),
+                side_effect=lambda: recall_repository_context(repo),
             ),
         ):
             await SemanticRecallExpansionMiddleware().awrap_model_call(
                 request,
                 handler,
+            )
+            display_messages = await expand_semantic_recall_messages_for_display(
+                [current_reference],
+                7,
+                conversation_id,
             )
 
         self.assertEqual(current_reference.content, reference_content)
@@ -1610,6 +1616,9 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("amount", expanded_content)
         self.assertIn("paid", expanded_content)
         self.assertIn("SELECT status", expanded_content)
+        display_content = str(getattr(display_messages[0], "content", ""))
+        self.assertIn("paid", display_content)
+        self.assertIn("SELECT status", display_content)
 
     async def test_get_tool_writes_only_recall_reference_to_state(self) -> None:
         repo = InMemorySemanticRecallRepo()

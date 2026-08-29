@@ -459,6 +459,14 @@ function getToolArgsPreview(args?: Record<string, unknown>): string | null {
   return `${preview.slice(0, TOOL_ARGS_PREVIEW_MAX_LENGTH).trimEnd()}...`;
 }
 
+function formatToolResult(result: string): string {
+  try {
+    return JSON.stringify(JSON.parse(result), null, 2);
+  } catch {
+    return result;
+  }
+}
+
 function getSubagentRunIdentity(item: ToolRunDisplayItem): SubagentRunIdentity | null {
   if (item.name !== "delegation" || !item.args) return null;
   const analysisId = item.args.analysis_id;
@@ -824,7 +832,12 @@ function MessageBubble({
           )}
         >
           {/* 消息来源标识 */}
-          <div className="mb-2 flex items-center justify-between border-b border-[#e5e5df] pb-1.5 text-xs">
+          <div
+            className={cn(
+              "mb-2 flex items-center justify-between border-b pb-1.5 text-xs",
+              isUser ? "border-[#d4d4ce]" : "border-[#e5e5df]"
+            )}
+          >
             <span className="font-semibold text-[#18181b]">
               {isUser ? username : assistantName}
             </span>
@@ -893,13 +906,13 @@ function GenericToolRunBar({
           className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition hover:bg-[#fafaf8]"
         >
           <div className="flex min-w-0 flex-1 items-center gap-2">
-            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-[#ebebe6]">
+            <div className="flex h-5 w-5 shrink-0 items-center justify-center">
               {item.completed ? (
-                <Wrench className="h-3 w-3 text-[#52525b]" />
+                <Wrench className="h-3.5 w-3.5 text-[#71717a]" />
               ) : item.interrupted ? (
-                <Square className="h-3 w-3 text-[#a1a1aa]" />
+                <Square className="h-3.5 w-3.5 text-[#a1a1aa]" />
               ) : (
-                <Loader2 className="h-3 w-3 animate-spin text-[#1e2024]" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-[#1e2024]" />
               )}
             </div>
             <span className="font-medium text-[#18181b]">{item.name}</span>
@@ -911,12 +924,12 @@ function GenericToolRunBar({
           <div className="flex items-center gap-2 shrink-0">
             <span
               className={cn(
-                "rounded px-1.5 py-0.5 text-[10px] font-medium",
+                "text-[11px] font-medium",
                 item.completed
-                  ? "bg-[#ebebe6] text-[#3f3f46]"
+                  ? "text-[#71717a]"
                   : item.interrupted
-                    ? "bg-[#f0f0ec] text-[#a1a1aa]"
-                    : "bg-[#deded8] text-[#18181b]"
+                    ? "text-[#a1a1aa]"
+                    : "text-[#18181b]"
               )}
             >
               {item.completed ? "已完成" : item.interrupted ? "已中断" : "执行中"}
@@ -944,7 +957,7 @@ function GenericToolRunBar({
               <div className="space-y-1">
                 <p className="font-medium text-[#71717a]">输出</p>
                 <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded border border-[#e5e5df] bg-[#ffffff] p-2 text-[#27272a]">
-                  {item.result}
+                  {formatToolResult(item.result)}
                 </pre>
               </div>
             ) : null}
@@ -991,7 +1004,7 @@ function SubagentInternalProcessCollapse({
         className="flex w-full items-center justify-between gap-2 px-2.5 py-1.5 text-left text-xs transition hover:bg-[#f4f4f0]"
       >
         <div className="flex items-center gap-2 text-[#52525b]">
-          <div className="flex h-4 w-4 items-center justify-center rounded bg-[#ebebe6]">
+          <div className="flex h-4 w-4 items-center justify-center">
             {isStreaming ? (
               <Loader2 className="h-2.5 w-2.5 animate-spin text-[#18181b]" />
             ) : (
@@ -1347,17 +1360,17 @@ function ExecutionProcessCollapse({
           className="flex w-full items-center justify-between gap-3 px-3.5 py-2 text-left transition hover:bg-[#fafaf8]"
         >
           <div className="flex min-w-0 flex-1 items-center gap-2">
-            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-[#ebebe6]">
+            <div className="flex h-5 w-5 shrink-0 items-center justify-center">
               {isStreaming && !hasFinalItem ? (
-                <Loader2 className="h-3 w-3 animate-spin text-[#18181b]" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-[#18181b]" />
               ) : (
-                <Sparkles className="h-3 w-3 text-[#52525b]" />
+                <Sparkles className="h-3.5 w-3.5 text-[#52525b]" />
               )}
             </div>
             <span className="font-semibold text-[#18181b]">
-              {isStreaming && !hasFinalItem ? "正在执行分析与工具调用..." : "思考与工具调用过程"}
+              {isStreaming && !hasFinalItem ? "处理中" : "已完成"}
             </span>
-            <span className="rounded bg-[#f0f0eb] px-1.5 py-0.5 text-[10px] text-[#52525b]">
+            <span className="text-[11px] text-[#71717a]">
               共 {items.length} 步{toolCount > 0 ? ` · ${toolCount} 个工具` : ""}
             </span>
           </div>

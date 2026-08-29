@@ -12,8 +12,8 @@ from app.metadata.repositories.recall import SemanticRecallPGRepo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
 from app.metadata.services.recall import SemanticRecallContextService
 from app.shared.clients.postgres_client_manager import (
-    analytics_postgres_client_manager,
     auth_postgres_client_manager,
+    meta_postgres_client_manager,
 )
 from app.shared.config.app_config import cfg
 
@@ -34,7 +34,7 @@ def resolve_semantic_recall_identity(
 async def semantic_recall_repository() -> AsyncGenerator[SemanticRecallPGRepo]:
     """创建带短事务边界的语义召回数据访问"""
     async with (
-        analytics_postgres_client_manager.session() as session,
+        meta_postgres_client_manager.session() as session,
         session.begin(),
     ):
         yield SemanticRecallPGRepo(session)

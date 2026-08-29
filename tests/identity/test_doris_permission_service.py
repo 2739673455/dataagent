@@ -18,6 +18,7 @@ from app.identity.repositories.doris_role import (
     DorisRoleRepository,
     DorisWorkloadGroupNotFoundError,
     _row_policy_from_row,
+    role_users_from_row,
 )
 from app.identity.repositories.query_identity import DorisQueryIdentityPGRepo
 from app.identity.services.doris_permission import DorisPermissionService
@@ -398,6 +399,13 @@ class DorisRoleRepositoryWorkloadGroupTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(await repo.list_role_names(), ("operator", "sales"))
+
+    def test_reads_users_from_role_row(self) -> None:
+        self.assertEqual(
+            role_users_from_row({"Users": "'alice'@'%', 'reporting'@'10.0.0.%'"}),
+            ("'alice'@'%'", "'reporting'@'10.0.0.%'"),
+        )
+        self.assertEqual(role_users_from_row({"Users": None}), ())
 
 
 class DorisRoleRepositoryIdentityTest(unittest.IsolatedAsyncioTestCase):

@@ -19,8 +19,8 @@ Workflows
 → identity 禁用目标用户
 → identity 撤销目标用户 Refresh Token
 → identity 创建或复用 pending UserDeletionTask
-→ 提交 dataagent.workflows.delete_user
-→ 请求返回 task_id
+→ 等待周期调度原子领取
+→ 请求返回 204
 ```
 
 用户在请求阶段已经失去访问能力，后台资源清理可以随后完成。
@@ -59,13 +59,17 @@ Worker 接收 user_id
 → 让当前 Celery 任务失败
 
 Beat 周期调用 dispatch_due_user_deletions
-→ 查询到期的 pending 任务
+→ 使用 PostgreSQL 行锁领取到期的 pending 任务
+→ 跳过其他调度器已经锁定的记录
+→ 将 next_attempt_at 推进到 Celery 任务租约到期时间
 → 按 cleanup_batch_size 限制数量
 → 为每个 user_id 重新提交 delete_user
+→ Worker 每次开始执行或自动重试时续期任务租约
+→ Broker 发布失败时记录错误并按 user_deletion_retry_seconds 重新到期
 → 已完成步骤以幂等方式跳过或重复执行
 ```
 
-该恢复路径覆盖首次任务提交失败、Worker 中断和 PostgreSQL、LangGraph、Redis、Docker 的暂时性故障。
+所有注销任务统一经过周期调度入口，避免 API 直接提交和补偿扫描并发产生重复任务。任务租约覆盖 Celery Visibility Timeout；Worker 中断或任务消息丢失后，记录会重新到期并被后续周期领取。
 
 ## 一致性和代码
 

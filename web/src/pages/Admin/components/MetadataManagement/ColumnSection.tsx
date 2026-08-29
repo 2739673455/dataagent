@@ -537,7 +537,7 @@ export function ColumnSection({
             {selectedTable ? "该表暂未配置任何字段元数据" : "请先选择数据表"}
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="max-h-[410px] overflow-auto">
             <table className="w-full min-w-[760px] table-fixed text-left text-xs font-mono">
               <colgroup>
                 <col className="w-[44px]" />

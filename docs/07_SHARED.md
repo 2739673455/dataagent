@@ -61,8 +61,8 @@ Celery Worker 在任务进程中重新初始化所需客户端，不复用 fork 
 ```text
 SQLAlchemy 模型选择 Base
 → identity 使用 AuthBase
-→ metadata 和 query 使用 MetaBase
-→ analytics 和召回快照使用 AnalyticsBase
+→ metadata、语义召回快照和 query 使用 MetaBase
+→ analytics 使用 AnalyticsBase
 → LangGraph 使用自身 schema
 
 跨模块传递数据
@@ -142,7 +142,7 @@ Worker 执行任务
 → analytics.repair_conversation_titles
 
 每 user_deletion_retry_seconds
-→ workflows.dispatch_due_user_deletions
+→ workflows.dispatch_due_user_deletions 原子领取并提交到期注销任务
 
 每 query_experience_repair_seconds
 → query.repair_indexes

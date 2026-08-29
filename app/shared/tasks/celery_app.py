@@ -6,6 +6,8 @@ from kombu import Queue
 
 from app.shared.config.app_config import cfg
 
+TASK_VISIBILITY_TIMEOUT_SECONDS = cfg.task_queue.task_time_limit_seconds + 300
+
 celery_app = Celery(
     "dataagent",
     broker=cfg.task_queue.broker_url,
@@ -22,7 +24,7 @@ celery_app.conf.update(
     accept_content=["json"],
     broker_connection_retry_on_startup=True,
     broker_transport_options={
-        "visibility_timeout": cfg.task_queue.task_time_limit_seconds + 300,
+        "visibility_timeout": TASK_VISIBILITY_TIMEOUT_SECONDS,
     },
     enable_utc=True,
     result_accept_content=["json"],

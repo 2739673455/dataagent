@@ -12,7 +12,6 @@ from app.identity.api.auth.dependencies import (
     DorisRoleManagementServiceDep,
     UserDeletionServiceDep,
 )
-from app.workflows.tasks import enqueue_user_deletion
 
 router = APIRouter(tags=["admin"])
 RolePath = Annotated[
@@ -66,6 +65,7 @@ async def list_existing_doris_roles(
             schemas.DorisExistingRoleResponse(
                 name=role.name,
                 managed=role.managed,
+                doris_users=list(role.doris_users),
             )
             for role in roles
         ]
@@ -198,16 +198,7 @@ async def delete_user(
     service: UserDeletionServiceDep,
 ) -> Response:
     """平台管理员删除指定用户"""
-    if await service.request_deletion(user_id, operator_id=current_admin.id):
-        try:
-            enqueue_user_deletion(user_id)
-        except Exception:  # noqa: BLE001
-            logger.exception(f"提交用户注销任务失败，等待定时补偿: user_id={user_id}")
-        else:
-            logger.info(
-                f"管理员提交用户注销任务: operator_id={current_admin.id}, "
-                f"user_id={user_id}"
-            )
+    await service.request_deletion(user_id, operator_id=current_admin.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from pydantic import SecretStr, ValidationError
 
@@ -94,9 +94,11 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
         existing_role = MagicMock(name="existing_role")
         existing_role.name = "operator"
         existing_role.managed = False
+        existing_role.doris_users = ("'root'@'%'",)
         managed_role = MagicMock(name="managed_role")
         managed_role.name = "sales"
         managed_role.managed = True
+        managed_role.doris_users = ("'sales_query'@'%'",)
         service.list_existing_roles = AsyncMock(
             return_value=[existing_role, managed_role]
         )
@@ -106,8 +108,16 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [role.model_dump() for role in response.roles],
             [
-                {"name": "operator", "managed": False},
-                {"name": "sales", "managed": True},
+                {
+                    "name": "operator",
+                    "managed": False,
+                    "doris_users": ["'root'@'%'"],
+                },
+                {
+                    "name": "sales",
+                    "managed": True,
+                    "doris_users": ["'sales_query'@'%'"],
+                },
             ],
         )
 
@@ -212,18 +222,14 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
         service.request_deletion = AsyncMock(return_value=True)
         admin_user = build_user(user_id=1, is_admin=True)
 
-        with patch(
-            "app.identity.api.admin.router.enqueue_user_deletion"
-        ) as enqueue_deletion:
-            response = await delete_user(
-                12,
-                AuthenticatedUser.from_user(admin_user),
-                service,
-            )
+        response = await delete_user(
+            12,
+            AuthenticatedUser.from_user(admin_user),
+            service,
+        )
 
         self.assertEqual(response.status_code, 204)
         service.request_deletion.assert_awaited_once_with(12, operator_id=1)
-        enqueue_deletion.assert_called_once_with(12)
 
     async def test_list_users_returns_page_metadata(self) -> None:
         service = MagicMock()

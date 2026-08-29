@@ -84,10 +84,3 @@ class UserDeletionService:
             f"user_id={user_id}, error_type={type(exc).__name__}, "
             f"next_attempt_at={next_attempt_at.isoformat()}"
         )
-
-    async def list_due_user_ids(self) -> list[int]:
-        """列出到达重试时间的用户注销任务"""
-        return await self._state_store.list_due_user_ids(
-            datetime.now(UTC),
-            limit=self._config.cleanup_batch_size,
-        )

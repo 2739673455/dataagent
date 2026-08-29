@@ -30,6 +30,9 @@ from app.analytics.agents.contracts import (
     SubagentStatusActivity,
     build_planner_config,
 )
+from app.analytics.agents.explorer.semantic_recall_middleware import (
+    expand_semantic_recall_messages_for_display,
+)
 from app.analytics.agents.user_message_metadata import (
     USER_MESSAGE_METADATA_KEY,
     UserMessageMetadata,
@@ -205,12 +208,19 @@ def _langchain_message_to_schema(
     )
 
 
-def _subagent_activity_to_event(
+async def _subagent_activity_to_event(
     activity: SubagentActivity,
+    user_id: int,
+    conversation_id: UUID,
 ) -> chat_schema.ChatStreamEventPayload | None:
     """把受信任的 Agent 内部活动投影为公开聊天事件"""
     if isinstance(activity, SubagentMessageActivity):
-        message = _langchain_message_to_schema(activity.message)
+        expanded = await expand_semantic_recall_messages_for_display(
+            [activity.message],
+            user_id,
+            conversation_id,
+        )
+        message = _langchain_message_to_schema(expanded[0])
         if message is None:
             return None
         return chat_schema.ChatStreamSubagentMessageEvent(
@@ -411,6 +421,11 @@ async def list_subagent_messages(
     )
     if messages is None:
         return None
+    messages = await expand_semantic_recall_messages_for_display(
+        messages,
+        user_id,
+        conversation_id,
+    )
     return [
         schema
         for message in messages
@@ -482,14 +497,17 @@ async def run_agent_turn(
 
                 if chunk.get("type") == "custom":
                     activity = chunk.get("data")
-                    if (
-                        isinstance(
-                            activity,
-                            (SubagentMessageActivity, SubagentStatusActivity),
-                        )
-                        and (event := _subagent_activity_to_event(activity)) is not None
+                    if isinstance(
+                        activity,
+                        (SubagentMessageActivity, SubagentStatusActivity),
                     ):
-                        yield event
+                        event = await _subagent_activity_to_event(
+                            activity,
+                            user_id,
+                            conversation_id,
+                        )
+                        if event is not None:
+                            yield event
                     continue
                 if chunk.get("type") != "updates":
                     continue

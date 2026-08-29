@@ -14,7 +14,7 @@ from app.metadata.models.search import (
     SemanticResourceRecallResponse,
 )
 from app.shared.contracts.query_experience import QueryExperienceRecallResult
-from app.shared.database.base import AnalyticsBase
+from app.shared.database.base import MetaBase
 
 SemanticResourceName = Annotated[
     str,
@@ -32,7 +32,7 @@ def normalize_semantic_recall_query(query: str) -> str:
     return normalized
 
 
-class SemanticRecallSnapshot(AnalyticsBase):
+class SemanticRecallSnapshot(MetaBase):
     """语义召回持久化快照"""
 
     __tablename__ = "semantic_recall_snapshots"

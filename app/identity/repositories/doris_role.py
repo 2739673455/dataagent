@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from app.identity.models.doris import DorisRowPolicy
 
 _IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_$.-]{0,127}$")
+_USER_IDENTITY_PATTERN = re.compile(r"'(?:\\.|''|[^'])*'@'(?:\\.|''|[^'])*'")
 
 
 class DorisWorkloadGroupNotFoundError(RuntimeError):
@@ -385,3 +386,19 @@ def role_name_from_row(row: Mapping[str, object]) -> str | None:
         if value is not None:
             return str(value)
     return None
+
+
+def role_users_from_row(row: Mapping[str, object]) -> tuple[str, ...]:
+    """从 SHOW ROLES 结果读取关联的 Doris 用户身份"""
+    value = row.get("Users")
+    if value is None:
+        return ()
+    text = str(value).strip()
+    if not text or text.casefold() == "null":
+        return ()
+    identities = tuple(
+        match.group(0) for match in _USER_IDENTITY_PATTERN.finditer(text)
+    )
+    if identities:
+        return identities
+    return tuple(item.strip() for item in text.split(",") if item.strip())

@@ -148,6 +148,7 @@ class DorisExistingRoleResponse(BaseModel):
 
     name: str
     managed: bool
+    doris_users: list[str]
 
 
 class DorisExistingRoleListResponse(BaseModel):

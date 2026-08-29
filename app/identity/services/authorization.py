@@ -23,6 +23,8 @@ from app.identity.repositories.doris_role import (
     DorisRoleAlreadyExistsError,
     DorisRoleRepository,
     DorisWorkloadGroupNotFoundError,
+    role_name_from_row,
+    role_users_from_row,
 )
 from app.identity.repositories.query_identity import DorisQueryIdentityPGRepo
 from app.identity.services.auth import (
@@ -108,6 +110,7 @@ class AssetIdentity:
             for own, target in zip(own_parts, other_parts, strict=True)
         )
 
+
 @dataclass(frozen=True)
 class AssetAccessPolicy:
     """用户资产访问策略快照"""
@@ -192,6 +195,7 @@ class DorisExistingRoleDescriptor:
 
     name: str
     managed: bool
+    doris_users: tuple[str, ...]
 
 
 class DorisRoleManagementService:
@@ -224,17 +228,20 @@ class DorisRoleManagementService:
 
     async def list_existing_roles(self) -> list[DorisExistingRoleDescriptor]:
         """列出 Doris 原生角色并标记平台管理状态"""
-        role_names = await self._doris_repo.list_role_names()
+        rows = await self._doris_repo.list_roles()
         managed_names = {
             identity.role_name for identity in await self._identity_repo.list_all()
         }
-        return [
+        roles = [
             DorisExistingRoleDescriptor(
                 name=role_name,
                 managed=role_name in managed_names,
+                doris_users=role_users_from_row(row),
             )
-            for role_name in role_names
+            for row in rows
+            if (role_name := role_name_from_row(row)) is not None
         ]
+        return sorted(roles, key=lambda role: role.name.casefold())
 
     async def create_role(
         self,
@@ -257,8 +264,8 @@ class DorisRoleManagementService:
                 if await self._identity_repo.get(role) is not None:
                     raise auth_error.RoleAlreadyExistsError
                 if await self._identity_repo.get_by_query_user(query_user) is not None:
-                    raise auth_error.RoleAlreadyExistsError(
-                        detail="Doris 查询用户已被占用"
+                    raise auth_error.QueryUserAlreadyExistsError(
+                        detail=f"Doris 查询用户 {query_user} 已存在"
                     )
                 await self._doris_repo.create_role_identity(
                     role_name=role,
@@ -286,7 +293,11 @@ class DorisRoleManagementService:
                     )
                 except Exception:  # noqa: BLE001
                     logger.exception(f"补偿删除 Doris 角色及用户失败: {role}")
-            if isinstance(exc, (IntegrityError, DorisQueryUserAlreadyExistsError)):
+            if isinstance(exc, DorisQueryUserAlreadyExistsError):
+                raise auth_error.QueryUserAlreadyExistsError(
+                    detail=f"Doris 查询用户 {exc.query_user} 已存在"
+                ) from exc
+            if isinstance(exc, IntegrityError):
                 raise auth_error.RoleAlreadyExistsError from exc
             if isinstance(exc, DorisRoleAlreadyExistsError):
                 raise auth_error.RoleAlreadyExistsError(

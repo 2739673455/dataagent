@@ -29,7 +29,7 @@ from app.shared.tasks.celery_app import celery_app
 from app.shared.tasks.runner import run_async
 from app.shared.tasks.submission import TaskSubmission
 
-_PERIODIC_BATCH_SIZE = 500
+_PERIODIC_BATCH_SIZE = 50
 
 
 async def _run_with_metadata_resources[T](

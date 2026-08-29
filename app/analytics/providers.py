@@ -34,6 +34,7 @@ async def _semantic_recall_repository(
 def build_conversation_lifecycle_service(
     persistence: LangGraphPostgresManager,
     analytics_postgres: PostgresClientManager,
+    meta_postgres: PostgresClientManager,
     agents: AgentManager,
     sandbox: DockerSandboxManager,
     config: LifecycleConfig,
@@ -41,7 +42,7 @@ def build_conversation_lifecycle_service(
     """组装会话跨存储生命周期服务"""
     return ConversationLifecycleService(
         lambda: _conversation_repository(analytics_postgres),
-        lambda: _semantic_recall_repository(analytics_postgres),
+        lambda: _semantic_recall_repository(meta_postgres),
         persistence,
         agents,
         sandbox,

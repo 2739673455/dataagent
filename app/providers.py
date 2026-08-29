@@ -12,6 +12,7 @@ from app.shared.clients.langgraph_postgres_manager import langgraph_postgres_man
 from app.shared.clients.postgres_client_manager import (
     analytics_postgres_client_manager,
     auth_postgres_client_manager,
+    meta_postgres_client_manager,
 )
 from app.shared.config.app_config import cfg
 from app.workflows.user_deletion import UserDeletionService
@@ -31,6 +32,7 @@ agent_manager = AgentManager(
 conversation_lifecycle_service = build_conversation_lifecycle_service(
     langgraph_postgres_manager,
     analytics_postgres_client_manager,
+    meta_postgres_client_manager,
     agent_manager,
     sandbox_manager,
     cfg.lifecycle,

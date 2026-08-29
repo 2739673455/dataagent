@@ -7,6 +7,7 @@ from app.identity import errors as auth_error
 from app.identity.models.doris import DorisQueryIdentity, DorisRoleAssetGrant
 from app.identity.repositories.auth import AuthPGRepo
 from app.identity.repositories.doris_role import (
+    DorisQueryUserAlreadyExistsError,
     DorisRoleAlreadyExistsError,
     DorisRoleRepository,
     DorisWorkloadGroupNotFoundError,
@@ -153,14 +154,22 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
         self.doris_repo.list_workload_groups.assert_awaited_once_with()
 
     async def test_lists_existing_doris_roles_with_management_status(self) -> None:
-        self.doris_repo.list_role_names = AsyncMock(return_value=("operator", "sales"))
+        self.doris_repo.list_roles = AsyncMock(
+            return_value=[
+                {"Name": "sales", "Users": "'sales_query'@'%'"},
+                {"Name": "operator", "Users": "'root'@'%'"},
+            ]
+        )
         self.identity_repo.list_all = AsyncMock(return_value=[query_identity("sales")])
 
         roles = await self.service().list_existing_roles()
 
         self.assertEqual(
-            [(role.name, role.managed) for role in roles],
-            [("operator", False), ("sales", True)],
+            [(role.name, role.managed, role.doris_users) for role in roles],
+            [
+                ("operator", False, ("'root'@'%'",)),
+                ("sales", True, ("'sales_query'@'%'",)),
+            ],
         )
 
     async def test_list_users_returns_rows_and_total(self) -> None:
@@ -300,6 +309,27 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(context.exception.detail, "Doris 角色 sales 已存在")
+
+    async def test_existing_doris_query_user_is_mapped_to_user_conflict(self) -> None:
+        self.identity_repo.get.return_value = None
+        self.identity_repo.get_by_query_user = AsyncMock(return_value=None)
+        self.doris_repo.create_role_identity = AsyncMock(
+            side_effect=DorisQueryUserAlreadyExistsError("sales_query")
+        )
+        self.cipher.generate_password.return_value = "generated-password"
+
+        with self.assertRaises(auth_error.QueryUserAlreadyExistsError) as context:
+            await self.service().create_role(
+                role_name="sales",
+                description="Sales analysts",
+                query_user="sales_query",
+                workload_group="normal",
+            )
+
+        self.assertEqual(
+            context.exception.detail,
+            "Doris 查询用户 sales_query 已存在",
+        )
 
     async def test_default_role_can_be_deleted_when_unassigned(self) -> None:
         self.identity_repo.get.return_value = query_identity(default=True)

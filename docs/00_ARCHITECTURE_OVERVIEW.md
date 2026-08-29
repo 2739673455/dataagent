@@ -124,14 +124,13 @@ Celery Beat
 元数据 PostgreSQL
 → metadata
   → 表、字段、指标、取值索引状态
+  → 语义召回快照
 → query
   → 查询执行、查询经验、经验资产
 
 分析 PostgreSQL
 → analytics
   → 对话、删除墓碑
-→ metadata
-  → 语义召回快照
 
 LangGraph PostgreSQL
 → analytics

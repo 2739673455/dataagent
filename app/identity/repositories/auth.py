@@ -258,13 +258,14 @@ class AuthPGRepo:
             )
         )
 
-    async def list_due_user_deletions(
+    async def claim_due_user_deletions(
         self,
         now: datetime,
         *,
+        lease_until: datetime,
         limit: int,
     ) -> list[UserDeletionTask]:
-        """列出到期且未完成的用户注销任务"""
+        """原子领取到期且未完成的用户注销任务"""
         result = await self._session.scalars(
             select(UserDeletionTask)
             .where(
@@ -273,8 +274,31 @@ class AuthPGRepo:
             )
             .order_by(UserDeletionTask.next_attempt_at, UserDeletionTask.user_id)
             .limit(limit)
+            .with_for_update(skip_locked=True)
         )
-        return list(result)
+        tasks = list(result)
+        for task in tasks:
+            task.next_attempt_at = lease_until
+        await self._session.flush()
+        return tasks
+
+    async def extend_user_deletion_claim(
+        self,
+        user_id: int,
+        *,
+        lease_until: datetime,
+    ) -> bool:
+        """延长一个未完成用户注销任务的领取租约"""
+        task = await self._session.get(
+            UserDeletionTask,
+            user_id,
+            with_for_update=True,
+        )
+        if task is None or task.status == "completed":
+            return False
+        task.next_attempt_at = lease_until
+        await self._session.flush()
+        return True
 
     async def record_user_deletion_failure(
         self,

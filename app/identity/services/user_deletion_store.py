@@ -72,11 +72,27 @@ class PostgresUserDeletionStateStore:
                         next_attempt_at=next_attempt_at,
                     )
 
-    async def list_due_user_ids(self, now: datetime, *, limit: int) -> list[int]:
-        """列出已到执行时间的注销用户"""
+    async def claim_due_user_ids(
+        self,
+        now: datetime,
+        *,
+        lease_until: datetime,
+        limit: int,
+    ) -> list[int]:
+        """原子领取已到执行时间的注销用户并设置任务租约"""
         async with self._postgres.session() as session:
-            tasks = await AuthPGRepo(session).list_due_user_deletions(
-                now,
-                limit=limit,
-            )
+            async with session.begin():
+                tasks = await AuthPGRepo(session).claim_due_user_deletions(
+                    now,
+                    lease_until=lease_until,
+                    limit=limit,
+                )
             return [task.user_id for task in tasks]
+
+    async def extend_claim(self, user_id: int, *, lease_until: datetime) -> bool:
+        """在任务开始或重试开始时延长领取租约"""
+        async with self._postgres.session() as session, session.begin():
+            return await AuthPGRepo(session).extend_user_deletion_claim(
+                user_id,
+                lease_until=lease_until,
+            )

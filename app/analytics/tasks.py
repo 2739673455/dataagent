@@ -20,7 +20,7 @@ from app.sandbox.providers import create_sandbox_manager
 from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
-from app.shared.database.base import AnalyticsBase
+from app.shared.database.base import AnalyticsBase, MetaBase
 from app.shared.tasks.celery_app import celery_app
 from app.shared.tasks.runner import run_async
 from app.shared.tasks.submission import TaskSubmission
@@ -172,6 +172,10 @@ async def _run_with_lifecycle_service[T](
         cfg.langgraph_postgresql,
         AnalyticsBase,
     )
+    meta_postgres = PostgresClientManager(
+        cfg.meta_postgresql,
+        MetaBase,
+    )
     sandbox = create_sandbox_manager(
         cfg.sandbox,
         packaged_agent_skill_mounts(),
@@ -184,18 +188,21 @@ async def _run_with_lifecycle_service[T](
     service = build_conversation_lifecycle_service(
         persistence,
         analytics_postgres,
+        meta_postgres,
         agents,
         sandbox,
         cfg.lifecycle,
     )
     await persistence.init()
     analytics_postgres.init()
+    meta_postgres.init()
     await sandbox.init(start_cleanup=False)
     try:
         return await operation(service)
     finally:
         await agents.close()
         await sandbox.disconnect()
+        await meta_postgres.close()
         await analytics_postgres.close()
         await persistence.close()
 

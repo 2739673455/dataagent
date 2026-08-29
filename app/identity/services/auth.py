@@ -21,7 +21,7 @@ from app.identity.models.account import RefreshToken, User
 from app.identity.repositories.auth import AuthPGRepo
 from app.shared.config.app_config import AuthConfig
 
-ARGON2_MAX_CONCURRENCY = 4
+ARGON2_MAX_CONCURRENCY = 2
 _USERNAME_PATTERN = re.compile(r"^[a-z0-9_.-]{3,64}$")
 _EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 _MAX_EMAIL_LENGTH = 320

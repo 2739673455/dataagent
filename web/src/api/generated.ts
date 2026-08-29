@@ -139,6 +139,7 @@ export interface components {
       "roles": Array<components["schemas"]["DorisExistingRoleResponse"]>;
     };
     "DorisExistingRoleResponse": {
+      "doris_users": Array<string>;
       "managed": boolean;
       "name": string;
     };

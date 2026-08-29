@@ -1,6 +1,6 @@
 """跨存储用户注销后台任务"""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 
@@ -15,8 +15,11 @@ from app.sandbox.providers import create_sandbox_manager
 from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
-from app.shared.database.base import AnalyticsBase, AuthBase
-from app.shared.tasks.celery_app import celery_app
+from app.shared.database.base import AnalyticsBase, AuthBase, MetaBase
+from app.shared.tasks.celery_app import (
+    TASK_VISIBILITY_TIMEOUT_SECONDS,
+    celery_app,
+)
 from app.shared.tasks.runner import run_async
 from app.shared.tasks.submission import TaskSubmission
 from app.workflows.user_deletion import UserDeletionService
@@ -44,6 +47,10 @@ async def _process_user_deletion(user_id: int) -> None:
         cfg.langgraph_postgresql,
         AnalyticsBase,
     )
+    meta_postgres = PostgresClientManager(
+        cfg.meta_postgresql,
+        MetaBase,
+    )
     persistence = LangGraphPostgresManager(cfg.langgraph_postgresql)
     sandbox = create_sandbox_manager(
         cfg.sandbox,
@@ -57,12 +64,14 @@ async def _process_user_deletion(user_id: int) -> None:
     conversations = build_conversation_lifecycle_service(
         persistence,
         analytics_postgres,
+        meta_postgres,
         agents,
         sandbox,
         cfg.lifecycle,
     )
+    state_store = PostgresUserDeletionStateStore(auth_postgres)
     service = UserDeletionService(
-        PostgresUserDeletionStateStore(auth_postgres),
+        state_store,
         sandbox,
         conversations,
         cfg.lifecycle,
@@ -70,14 +79,22 @@ async def _process_user_deletion(user_id: int) -> None:
 
     auth_postgres.init()
     analytics_postgres.init()
+    meta_postgres.init()
     await persistence.init()
     await sandbox.init(start_cleanup=False)
     try:
+        started_at = datetime.now(UTC)
+        await state_store.extend_claim(
+            user_id,
+            lease_until=started_at
+            + timedelta(seconds=TASK_VISIBILITY_TIMEOUT_SECONDS),
+        )
         await service.process(user_id)
     finally:
         await agents.close()
         await sandbox.disconnect()
         await persistence.close()
+        await meta_postgres.close()
         await analytics_postgres.close()
         await auth_postgres.close()
 
@@ -98,20 +115,43 @@ def delete_user_task(user_id: int) -> dict[str, object]:
 
 
 async def _dispatch_due_user_deletions() -> int:
-    """扫描到期注销记录并向生命周期队列提交任务"""
+    """原子领取到期注销记录并向生命周期队列提交任务"""
     auth_postgres = PostgresClientManager(cfg.auth_postgresql, AuthBase)
     auth_postgres.init()
     try:
-        user_ids = await PostgresUserDeletionStateStore(
-            auth_postgres
-        ).list_due_user_ids(
-            datetime.now(UTC),
+        state_store = PostgresUserDeletionStateStore(auth_postgres)
+        claimed_at = datetime.now(UTC)
+        user_ids = await state_store.claim_due_user_ids(
+            claimed_at,
+            lease_until=claimed_at
+            + timedelta(seconds=TASK_VISIBILITY_TIMEOUT_SECONDS),
             limit=cfg.lifecycle.cleanup_batch_size,
         )
+        dispatched_count = 0
+        failed_count = 0
         for user_id in user_ids:
-            enqueue_user_deletion(user_id)
-        logger.info(f"用户注销任务补偿扫描完成: dispatched_count={len(user_ids)}")
-        return len(user_ids)
+            try:
+                enqueue_user_deletion(user_id)
+            except Exception as exc:  # noqa: BLE001
+                failed_at = datetime.now(UTC)
+                await state_store.record_failure(
+                    user_id,
+                    error=f"{type(exc).__name__}: {exc}",
+                    next_attempt_at=failed_at
+                    + timedelta(seconds=cfg.lifecycle.user_deletion_retry_seconds),
+                )
+                failed_count += 1
+                logger.exception(
+                    f"提交用户注销任务失败并释放领取: user_id={user_id}"
+                )
+            else:
+                dispatched_count += 1
+        logger.info(
+            "用户注销任务调度完成: "
+            f"claimed_count={len(user_ids)}, dispatched_count={dispatched_count}, "
+            f"failed_count={failed_count}"
+        )
+        return dispatched_count
     finally:
         await auth_postgres.close()
 
