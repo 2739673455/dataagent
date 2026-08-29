@@ -3,7 +3,7 @@
 from typing import Any, ClassVar, cast
 from uuid import UUID
 
-from elasticsearch import AsyncElasticsearch
+from elasticsearch import AsyncElasticsearch, ConflictError, NotFoundError
 
 from app.metadata.models.search import SearchHit
 from app.shared.config.app_config import cfg
@@ -49,48 +49,44 @@ class QueryExperienceESRepo:
         self,
         experience_id: UUID,
         *,
+        revision: int,
         role_name: str,
         authorization_epoch: UUID,
         text: str,
         embedding: list[float],
     ) -> None:
-        """覆盖写入一条查询经验索引文档"""
+        """按外部版本顺序覆盖查询经验索引文档"""
         await self.ensure_index()
-        await self._client.index(
-            index=self._index_name,
-            id=str(experience_id),
-            document={
-                "role_name": role_name,
-                "authorization_epoch": str(authorization_epoch),
-                "text": text,
-                "embedding": embedding,
-            },
-            refresh="wait_for",
-        )
-
-    async def delete_many(self, experience_ids: list[UUID]) -> None:
-        """删除指定查询经验的全部索引文档"""
-        if not experience_ids or not await self._client.indices.exists(
-            index=self._index_name
-        ):
-            return
-        for offset in range(0, len(experience_ids), 1000):
-            result = await self._client.delete_by_query(
+        try:
+            await self._client.index(
                 index=self._index_name,
-                query={
-                    "ids": {
-                        "values": [
-                            str(experience_id)
-                            for experience_id in experience_ids[offset : offset + 1000]
-                        ]
-                    }
+                id=str(experience_id),
+                document={
+                    "role_name": role_name,
+                    "authorization_epoch": str(authorization_epoch),
+                    "text": text,
+                    "embedding": embedding,
                 },
-                conflicts="proceed",
-                refresh=True,
+                version=revision,
+                version_type="external_gte",
+                refresh="wait_for",
             )
-            body = result.body if hasattr(result, "body") else result
-            if isinstance(body, dict) and body.get("failures"):
-                raise RuntimeError("Elasticsearch 删除查询经验存在失败项")
+        except ConflictError:
+            return
+
+    async def delete(self, experience_id: UUID, *, revision: int) -> None:
+        """按外部版本顺序删除查询经验索引文档"""
+        await self.ensure_index()
+        try:
+            await self._client.delete(
+                index=self._index_name,
+                id=str(experience_id),
+                version=revision,
+                version_type="external_gte",
+                refresh="wait_for",
+            )
+        except (ConflictError, NotFoundError):
+            return
 
     async def search_text(
         self,

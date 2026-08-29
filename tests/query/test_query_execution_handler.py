@@ -1,22 +1,21 @@
 import unittest
-from contextlib import asynccontextmanager
-from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from app.identity.services.authorization import AssetAccessPolicy
 from app.query.models.execution import AnalysisQueryResult
 from app.query.models.validation import QueryValidationIssue, QueryValidationResult
-from app.query.services.execution_handler import QueryExecutionHandler
+from app.query.services.execution_handler import (
+    QueryExecutionHandler,
+    QueryExecutionRuntime,
+)
 from app.query.services.executor import (
     AnalysisQueryService,
     QueryPlanEstimate,
     QueryRejectedError,
     SuccessfulQueryExecution,
 )
-from app.query.services.experience import QueryExperienceService
-from app.query.services.principal import QueryPrincipalService, ResolvedQueryPrincipal
+from app.query.services.principal import ResolvedQueryPrincipal
 from app.shared.contracts.analysis import AgentSessionKey
 
 
@@ -54,14 +53,8 @@ class QueryExecutionHandlerTest(unittest.IsolatedAsyncioTestCase):
     def make_handler(
         self,
         execution_service: AnalysisQueryService,
-        experience_service: QueryExperienceService,
-    ) -> tuple[QueryExecutionHandler, AsyncMock]:
-        """使用业务服务替身构造查询处理器"""
-
-        @asynccontextmanager
-        async def session_scope():
-            yield MagicMock(spec=AsyncSession)
-
+    ) -> tuple[QueryExecutionHandler, MagicMock]:
+        """使用查询运行环境替身构造查询处理器"""
         principal = ResolvedQueryPrincipal(
             role_name="dataagent_standard",
             authorization_epoch=uuid4(),
@@ -69,29 +62,27 @@ class QueryExecutionHandlerTest(unittest.IsolatedAsyncioTestCase):
             password="query_password",
             workload_group="dataagent_standard",
         )
-        principal_service = MagicMock(spec=QueryPrincipalService)
-        principal_service.resolve = AsyncMock(return_value=principal)
-        execution_service_factory = AsyncMock(return_value=execution_service)
-        handler = QueryExecutionHandler(
-            session_scope,
-            session_scope,
-            lambda _: principal_service,
-            cast(Any, execution_service_factory),
-            lambda _: experience_service,
+        runtime = MagicMock(spec=QueryExecutionRuntime)
+        runtime.resolve_principal = AsyncMock(
+            return_value=(principal, AssetAccessPolicy(user_id=7))
         )
-        return handler, execution_service_factory
+        runtime.validate = AsyncMock(
+            return_value=QueryValidationResult(
+                valid=True,
+                normalized_sql="SELECT 1",
+            )
+        )
+        runtime.create_executor = AsyncMock(return_value=execution_service)
+        runtime.record_success = AsyncMock()
+        runtime.record_failure = AsyncMock()
+        return QueryExecutionHandler(runtime), runtime
 
     async def test_executes_query_and_records_success(self) -> None:
         session_key = make_session_key()
         details = make_success(session_key)
         execution_service = MagicMock(spec=AnalysisQueryService)
         execution_service.execute = AsyncMock(return_value=details)
-        experience_service = MagicMock(spec=QueryExperienceService)
-        experience_service.record_success = AsyncMock()
-        handler, execution_service_factory = self.make_handler(
-            execution_service,
-            experience_service,
-        )
+        handler, runtime = self.make_handler(execution_service)
 
         result = await handler.execute(
             session_key,
@@ -101,9 +92,14 @@ class QueryExecutionHandlerTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result, details.result)
-        execution_service_factory.assert_awaited_once()
-        execution_service.execute.assert_awaited_once_with(session_key, "SELECT 1")
-        context, recorded_details = experience_service.record_success.await_args.args
+        runtime.create_executor.assert_awaited_once()
+        validation = runtime.validate.return_value
+        execution_service.execute.assert_awaited_once_with(
+            session_key,
+            "SELECT 1",
+            validation,
+        )
+        context, recorded_details = runtime.record_success.await_args.args
         self.assertEqual(context.role_name, "dataagent_standard")
         self.assertIsNotNone(context.authorization_epoch)
         self.assertEqual(context.purpose, "统计订单")
@@ -115,11 +111,10 @@ class QueryExecutionHandlerTest(unittest.IsolatedAsyncioTestCase):
         details = make_success(session_key)
         execution_service = MagicMock(spec=AnalysisQueryService)
         execution_service.execute = AsyncMock(return_value=details)
-        experience_service = MagicMock(spec=QueryExperienceService)
-        experience_service.record_success = AsyncMock(
+        handler, runtime = self.make_handler(execution_service)
+        runtime.record_success = AsyncMock(
             side_effect=RuntimeError("history unavailable")
         )
-        handler, _ = self.make_handler(execution_service, experience_service)
 
         result = await handler.execute(
             session_key,
@@ -142,12 +137,10 @@ class QueryExecutionHandlerTest(unittest.IsolatedAsyncioTestCase):
                 )
             ],
         )
-        error = QueryRejectedError(validation)
         execution_service = MagicMock(spec=AnalysisQueryService)
-        execution_service.execute = AsyncMock(side_effect=error)
-        experience_service = MagicMock(spec=QueryExperienceService)
-        experience_service.record_failure = AsyncMock()
-        handler, _ = self.make_handler(execution_service, experience_service)
+        execution_service.execute = AsyncMock()
+        handler, runtime = self.make_handler(execution_service)
+        runtime.validate = AsyncMock(return_value=validation)
 
         with self.assertRaises(QueryRejectedError) as raised:
             await handler.execute(
@@ -157,8 +150,10 @@ class QueryExecutionHandlerTest(unittest.IsolatedAsyncioTestCase):
                 tool_call_id="call-2",
             )
 
-        self.assertIs(raised.exception, error)
-        _, kwargs = experience_service.record_failure.await_args
+        self.assertIs(raised.exception.result, validation)
+        runtime.create_executor.assert_not_awaited()
+        execution_service.execute.assert_not_awaited()
+        _, kwargs = runtime.record_failure.await_args
         self.assertEqual(kwargs["status"], "rejected")
         self.assertEqual(kwargs["error_code"], "sql_validation_failed")
         self.assertEqual(kwargs["validation"], validation)

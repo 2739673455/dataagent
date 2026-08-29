@@ -1,169 +1,233 @@
-# 系统全景架构与模块交互总览
+# DataAgent 架构与功能总览
 
-## 1. 架构定位与业务目标
-
-DataAgent 是面向企业数据分析场景的多 Agent 协同系统。系统通过持久化规划器（Planner）、专业子 Agent（探查、分析、审查、可视化）、多租户安全沙箱以及端到端数据权限管控体系，实现从自然语言提问到受控取数、深度归因、代码复核及分析产物交付的闭环数据分析。
-
-```mermaid
-flowchart TD
-    User([终端用户 / 管理员]) --> Gateway[FastAPI 网关 & 中间件]
-    
-    subgraph CoreServices [核心支撑服务层]
-        Auth[01 认证授权与数据安全]
-        Meta[02 元数据资产与语义检索]
-        Query[03 安全查询引擎与执行守卫]
-        SandboxMgr[05 Docker 多租户沙箱管理器]
-    end
-
-    subgraph AgentLayer [04 多 Agent 协同与分析调度]
-        Planner[Planner 核心规划器]
-        Explorer[Explorer 取数探查 Agent]
-        Analyst[Analyst 归因分析 Agent]
-        Reviewer[Reviewer 审查核验 Agent]
-        Visualizer[Visualizer 可视化 Agent]
-    end
-
-    subgraph StorageLayer [基础设施与存储]
-        PG[(PostgreSQL\nAuth / Meta / Checkpoints)]
-        ES[(Elasticsearch\n全文 / 向量 / 字段值索引)]
-        Doris[(Apache Doris\n分析型数据库)]
-        Docker[(Docker Runtime\n多用户隔离容器 & Named Volume)]
-        Redis[(Redis\nCelery Broker / Result Backend)]
-    end
-
-    Gateway --> Auth
-    Gateway --> Meta
-    Gateway --> AgentLayer
-    
-    Planner --> Explorer & Analyst & Reviewer & Visualizer
-    Explorer --> Query
-    Explorer --> Meta
-    Explorer & Analyst & Reviewer & Visualizer --> SandboxMgr
-    
-    Auth --> PG & Doris
-    Meta --> PG & ES
-    Query --> Doris
-    SandboxMgr --> Docker
-    AgentLayer --> PG
-    Gateway --> Redis
-    Redis --> Meta & Query & AgentLayer
-```
-
----
-
-## 2. 模块划分与文档清单
-
-系统当前已落地的核心能力划分为 5 大业务与技术模块：
-
-| 模块文档 | 模块名称 | 核心职责 | 核心组件 / 服务 |
-| :--- | :--- | :--- | :--- |
-| [`01_AUTH_AND_SECURITY.md`](../docs/01_AUTH_AND_SECURITY.md) | 认证授权与数据安全 | 用户认证、Refresh Token 轮换与撤销、限流防爆破、平台管理员管控、Doris 动态查询身份加密存储、Doris 库表列 SELECT 权限授权与回收、Doris 行级过滤策略管理（`SHOW/CREATE/DROP ROW POLICY`）、数据资产白名单投影 | [`AuthService`](../app/identity/services/auth.py)<br>[`AuthorizationService`](../app/identity/services/authorization.py)<br>[`DorisPermissionService`](../app/identity/services/doris_permission.py)<br>[`DorisCredentialCipher`](../app/identity/services/credential.py) |
-| [`02_METADATA_AND_SEARCH.md`](../docs/02_METADATA_AND_SEARCH.md) | 元数据资产与语义检索 | 表/字段/指标元数据全生命周期管理、YAML 格式导入导出与冲突校验、ES 全文/向量/字段值多索引版本同步、多阶段语义召回、拓扑关系补全与召回历史沉淀 | [`MetaCatalogService`](../app/metadata/services/catalog.py)<br>[`MetaImportService`](../app/metadata/services/import_service.py)<br>[`MetaIndexService`](../app/metadata/services/index.py)<br>[`MetaSearchService`](../app/metadata/services/search.py) |
-| [`03_QUERY_ENGINE_AND_GUARD.md`](../docs/03_QUERY_ENGINE_AND_GUARD.md) | 安全查询引擎与执行守卫 | 基于用户绑定的 Doris 隔离查询身份受控执行、连接级资源限制（`workload_group`、内存、超时、包大小）、服务端游标流式拉取、基于 AST 语法树的严格只读与越权拦截校验 | [`DorisQueryRepository`](../app/query/repositories/doris.py)<br>[`QueryGuardService`](../app/query/services/guard.py)<br>[`AnalysisQueryService`](../app/query/services/executor.py) |
-| [`04_MULTI_AGENT_ANALYTICS.md`](../docs/04_MULTI_AGENT_ANALYTICS.md) | 多 Agent 协同与数据分析 | 基于 DeepAgents 与 LangGraph Checkpoint 的动态子 Agent 架构；Planner 动态调度；Explorer、Analyst、Reviewer、Visualizer 专业分工；基于 `thread_id + checkpoint_ns` 的多维并行与状态持久化；跨 Agent 审查与 `RepairRequest` 回退修补；SSE 实时流式响应 | [`AgentManager`](../app/analytics/agents/manager.py)<br>[`AgentRegistry`](../app/analytics/agents/registry.py)<br>[`AgentSessionService`](../app/analytics/agents/session_service.py)<br>[`ChatService`](../app/analytics/services/chat.py) |
-| [`05_DOCKER_SANDBOX_RUNTIME.md`](../docs/05_DOCKER_SANDBOX_RUNTIME.md) | Docker 多租户沙箱运行环境 | 一用户一容器 + 一用户一持久化 Named Volume；会话与 Agent Session UID/GID 隔离；Redis 跨进程运行实例、操作和维护租约；全局容器容量控制与进程内 FIFO 等待；附件与分析产物安全传输 | [`DockerSandboxManager`](../app/sandbox/manager.py)<br>[`DockerSandboxBackend`](../app/sandbox/backend.py)<br>[`RedisSandboxOwnership`](../app/sandbox/ownership.py) |
-| [`08_BACKGROUND_TASKS.md`](../docs/08_BACKGROUND_TASKS.md) | Celery 后台任务与可靠性 | Redis 队列、Worker 与 Beat 部署、索引和跨存储生命周期任务、任务状态查询、重试与持久化补偿 | [`celery_app`](../app/shared/tasks/celery_app.py)<br>[`metadata.tasks`](../app/metadata/tasks.py)<br>[`analytics.tasks`](../app/analytics/tasks.py)<br>[`workflows.tasks`](../app/workflows/tasks.py) |
-
-### 2.1 模块化单体目录
-
-后端按照业务能力聚合代码，每个业务模块在内部保留接口、应用服务、仓储和领域模型分层：
+当前项目划分为 **7 个一级模块**。文档按“模块 → 功能域 → 具体功能 → 处理细节”展示当前实现。
 
 ```text
-app/
-├── identity/       # 认证、用户、角色与数据权限
-├── metadata/       # 元数据目录、语义检索与索引同步
-├── query/          # SQL 守卫、受控执行与查询经验
-├── analytics/      # 对话、附件接口与多 Agent 分析编排
-├── sandbox/        # Docker 隔离运行时
-├── workflows/      # 用户注销等跨模块业务流程
-└── shared/
-    ├── config/         # 应用与元数据配置
-    ├── errors/         # HTTP Problem Details 与全局异常处理
-    ├── observability/  # 结构化日志、请求上下文与链路追踪
-    ├── database/       # SQLAlchemy 声明基类
-    ├── clients/        # PostgreSQL、Doris、ES 等外部资源客户端
-    ├── contracts/      # 跨模块共享的稳定协议
-    └── tasks/          # Celery 应用、队列、运行辅助和共享任务协议
+DataAgent
+→ identity 身份与授权
+  → 登录和刷新会话
+  → 修改密码和退出登录
+  → 管理用户
+  → 管理 Doris 角色、SELECT 权限和行级策略
+  → 发起用户注销
+→ metadata 元数据
+  → 查看和维护表、字段、指标目录
+  → 批量导入和导出目录
+  → 同步语义索引和字段取值索引
+  → 召回语义资源
+  → 持续构建、合并和删除 query 上下文
+→ query 查询
+  → 执行分析查询
+  → 记录查询执行历史
+  → 沉淀查询经验
+  → 检索查询经验
+  → 失效和修复查询经验
+→ analytics 分析
+  → 管理对话和消息
+  → 执行一轮多 Agent 分析
+  → 委派、恢复和修补专业 Agent Session
+  → 管理召回工具、查询工具、Skill、附件和产物
+  → 生成标题和删除对话
+→ sandbox 沙箱
+  → 准备用户沙箱和 Session 工作区
+  → 提供文件工具和命令执行
+  → 上传、下载和保存产物
+  → 隔离用户、对话和 Agent Session
+  → 控制容量、回收空闲容器和删除资源
+→ workflows 工作流
+  → 受理用户注销
+  → 执行跨存储注销清理
+  → 恢复失败或丢失任务
+→ shared 共享基础设施
+  → 加载和校验配置
+  → 管理外部客户端
+  → 提供数据库基础和共享契约
+  → 统一错误、日志和 Trace
+  → 路由后台任务并提供任务状态
 ```
 
-模块内依赖方向统一为 `api → services → repositories / models`。`metadata` 服务通过端口接收查询经验失效能力，避免依赖 `query` 的具体实现；跨多个业务模块的持久化操作由 `workflows` 统一编排。`shared` 不依赖业务模块。
+## 模块文档
 
----
-
-## 3. 端到端典型业务链路
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as 用户 / 前端
-    participant Gateway as API 网关 (Chat Router)
-    participant AuthSvc as 权限服务 (AuthService)
-    participant Planner as 规划器 (Planner Agent)
-    participant Explorer as 探查器 (Explorer Agent)
-    participant SearchSvc as 语义检索 (MetaSearchService)
-    participant Guard as 安全守卫 (QueryGuardService)
-    participant Doris as Apache Doris
-    participant Analyst as 分析器 (Analyst Agent)
-    participant Reviewer as 审查器 (Reviewer Agent)
-    participant Visualizer as 可视化 (Visualizer Agent)
-    participant Sandbox as Docker 沙箱 (SandboxManager)
-
-    User->>Gateway: POST /api/v1/chat/stream（自然语言提问）
-    Gateway->>AuthSvc: 校验 JWT Token 并提取用户所属 Doris 角色
-    Gateway->>Planner: 启动分析会话 (SSE Stream)
-    
-    rect rgb(240, 248, 255)
-        note over Planner, Explorer: 阶段一：目标拆解与数据获取
-        Planner->>Explorer: 动态委派取数任务 (delegation)
-        Explorer->>SearchSvc: 检索相关指标与表元数据 (语义召回)
-        SearchSvc-->>Explorer: 返回授权范围内的表结构与指标口径
-        Explorer->>Guard: 提交拟执行 SQL 进行安全合规审计
-        Guard->>Guard: AST 语法树解析 (阻断 DDL/DML/越权表)
-        Guard-->>Explorer: 审计通过 (附加资源限制参数)
-        Explorer->>Doris: 使用用户专属代理账号执行 SQL
-        Doris-->>Explorer: 返回数据流
-        Explorer->>Sandbox: 将原始数据集保存为 CSV 文件并输出数据摘要
-        Explorer-->>Planner: 返回数据集引用与字段画像
-    end
-
-    rect rgb(255, 250, 240)
-        note over Planner, Analyst: 阶段二：归因与统计分析
-        Planner->>Analyst: 动态委派归因分析 (支持按多维度并行派生 Session)
-        Analyst->>Sandbox: 读取数据集，编写并运行 Python 计算脚本
-        Sandbox-->>Analyst: 输出分析结果、维度贡献率与统计特征
-        Analyst-->>Planner: 提交初步归因结论与分析中间产物
-    end
-
-    rect rgb(255, 240, 245)
-        note over Planner, Reviewer: 阶段三：独立核验与修补闭环
-        Planner->>Reviewer: 委派审查任务 (核验 SQL 口径与计算逻辑)
-        Reviewer->>Sandbox: 独立运行核验脚本，校验指标一致性
-        alt 发现口径偏差或计算缺陷
-            Reviewer-->>Planner: 返回结构化 RepairRequest 修补请求
-            Planner->>Explorer: 唤醒原 Session 续接修复取数口径
-            Explorer-->>Planner: 更新数据集
-        else 核验通过
-            Reviewer-->>Planner: 审查通过确认
-        end
-    end
-
-    rect rgb(240, 255, 240)
-        note over Planner, Visualizer: 阶段四：产物渲染与汇总响应
-        Planner->>Visualizer: 委派图表生成与报告排版
-        Visualizer->>Sandbox: 读取分析产物，生成静态图表与报告文件
-        Visualizer-->>Planner: 返回图表、数据文件与报告附件引用
-        Planner-->>Gateway: 汇总多 Agent 产物并完成最终回答
-        Gateway-->>User: SSE 持续输出完整分析报告、图表及附件引用
-    end
+```text
+identity
+→ docs/01_IDENTITY.md
+metadata
+→ docs/02_METADATA.md
+query
+→ docs/03_QUERY.md
+analytics
+→ docs/04_ANALYTICS.md
+sandbox
+→ docs/05_SANDBOX.md
+workflows
+→ docs/06_WORKFLOWS.md
+shared
+→ docs/07_SHARED.md
 ```
 
----
+## 运行形态
 
-## 4. 技术栈与架构原则
+```text
+FastAPI Web 进程
+→ main.py 组合应用
+  → 初始化日志、异常处理、Trace 和 CORS
+  → 注册 /api/v1 路由
+  → 初始化 PostgreSQL、Doris、Elasticsearch、Embedding 和 LangGraph
+  → 初始化 Docker 沙箱和 AgentManager
+  → 校验 Doris 查询身份只读权限
+  → 关闭时按依赖顺序释放资源
 
-- **后端运行时**：Python 3.14 + FastAPI + Uvicorn + Loguru
-- **Agent 编排与状态存储**：LangChain + LangGraph + PostgreSQL AsyncSession (`checkpointer=PostgresSaver`)
-- **数据源与执行引擎**：Apache Doris（分析型数仓，只读代理身份隔离 + Workload Group 配额）
-- **搜索引擎**：Elasticsearch 8.x（文本 BM25 检索 + 稠密向量 KNN 检索 + 字段值模糊检索）
-- **环境隔离沙箱**：Docker Engine + Docker SDK + Named Volumes（会话 UID/GID 权限隔离 + FIFO 并发队列）
-- **后台任务**：Celery 5.6 + Redis（索引构建、跨存储生命周期、定时补偿和短期任务结果）
+Celery Worker
+→ 加载各业务模块 tasks.py
+  → metadata-index 队列处理索引和元数据导入
+  → lifecycle 队列处理对话和用户生命周期
+  → lightweight 队列处理对话标题
+  → default 队列承接未单独路由任务
+
+Celery Beat
+→ 提交周期任务
+  → 字段取值索引调度
+  → 草稿和对话删除修复
+  → 对话标题修复
+  → 用户注销修复
+  → 查询经验索引修复
+```
+
+## HTTP 入口
+
+```text
+/api/v1
+→ /auth
+  → identity 认证接口
+→ /admin
+  → identity 用户、角色、权限、行策略管理
+→ /meta
+  → metadata 目录与索引任务管理
+→ /chat
+  → analytics 对话、消息和 SSE 分析
+→ /chat/attachment
+  → analytics + sandbox 附件管理
+→ /tasks
+  → shared Celery 任务状态
+```
+
+## 存储归属
+
+```text
+认证 PostgreSQL
+→ identity
+  → 用户、Refresh Token
+  → Doris 查询身份和资产授权投影
+  → 用户注销任务
+
+元数据 PostgreSQL
+→ metadata
+  → 表、字段、指标、取值索引状态
+→ query
+  → 查询执行、查询经验、经验资产
+
+分析 PostgreSQL
+→ analytics
+  → 对话、删除墓碑
+→ metadata
+  → 语义召回快照
+
+LangGraph PostgreSQL
+→ analytics
+  → Planner 与专业 Agent checkpoint、消息和状态
+
+Elasticsearch
+→ metadata
+  → 字段、指标、字段值检索文档
+→ query
+  → 查询经验检索文档
+
+Doris
+→ identity
+  → 角色、查询用户、SELECT 和 Row Policy 实时状态
+→ metadata
+  → 物理目录校验、字段取值读取
+→ query
+  → EXPLAIN 和只读 SQL 执行
+
+Redis
+→ shared
+  → Celery broker 和 result backend
+→ sandbox
+  → 跨进程运行实例、租约、锁和活动状态
+
+Docker Named Volume
+→ sandbox
+  → 用户上传文件、查询结果和分析产物
+```
+
+## 核心业务链路
+
+```text
+用户问题
+→ analytics 创建 Planner turn
+→ Planner delegation
+→ Explorer recall_context
+→ metadata 召回字段、字段值、指标和查询经验上下文
+→ Explorer execute_sql
+→ query 解析身份、Guard、EXPLAIN、执行和 CSV 落盘
+→ Analyst 读取 CSV 并分析
+→ Reviewer 审查证据和结论
+→ Visualizer 生成图表或报告
+→ Planner 汇总最终回答
+
+元数据变更
+→ metadata 校验并更新 meta_version
+→ query 按资产键失效查询经验
+→ metadata 提交语义索引或取值索引任务
+→ Worker 差量同步 Elasticsearch
+→ 新召回读取 PostgreSQL 当前目录并过滤 ES 候选
+
+权限变更
+→ identity 修改 Doris 权限和 PostgreSQL 投影
+→ 收紧权限时轮换 authorization_epoch
+→ metadata 召回按当前 AssetAccessPolicy 过滤
+→ query Guard 按当前 AssetAccessPolicy 校验
+→ query 经验按 role_name + authorization_epoch 隔离
+
+对话删除
+→ analytics 写墓碑并阻止新运行
+→ Celery 删除 LangGraph 状态和召回快照
+→ sandbox 删除会话目录
+→ analytics 删除对话记录
+
+用户注销
+→ identity 禁用用户并记录注销任务
+→ workflows 清理用户全部对话
+→ sandbox 删除用户容器和卷
+→ identity 标记注销完成
+```
+
+## 依赖规则
+
+```text
+API
+→ Service
+→ Repository / 外部能力 Protocol
+→ PostgreSQL、Doris、Elasticsearch、Redis、Docker
+
+业务模块
+→ 可以依赖 shared
+→ 跨模块只使用公开 Service、Protocol 或 shared contract
+
+workflows
+→ 只编排跨模块公开能力
+→ 不复制各模块内部清理和一致性规则
+
+shared
+→ 不依赖业务模块
+
+模型可见数据
+→ 使用专门投影
+→ 不直接暴露内部版本、排名、索引状态、授权代次和运行元数据
+
+架构调整
+→ 从底层真实抽象开始修改
+→ 同步修改全部调用方
+→ 不保留旧接口别名和兼容转发层
+```

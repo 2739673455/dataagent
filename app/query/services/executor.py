@@ -1,6 +1,5 @@
 """受控只读查询执行与会话产物写入"""
 
-import asyncio
 import base64
 import csv
 import hashlib
@@ -30,7 +29,6 @@ from app.query.models.execution import (
     QueryTimeRange,
 )
 from app.query.models.validation import QueryValidationResult
-from app.query.services.guard import QueryGuardService
 from app.shared.contracts.analysis import AgentSessionKey
 
 _SAMPLE_STRING_MAX_CHARS = 512
@@ -129,10 +127,6 @@ class QueryPlanUnavailableError(RuntimeError):
     """Doris 查询计划缺少可验证的扫描估算"""
 
 
-class QueryExecutionTimeoutError(RuntimeError):
-    """查询校验、执行和产物提交超过端到端时限"""
-
-
 @dataclass(frozen=True, slots=True)
 class QueryPlanEstimate:
     """从 Doris EXPLAIN 提取的物理扫描估算"""
@@ -209,18 +203,16 @@ class _Utf8LimitedWriter:
 
 
 class AnalysisQueryService:
-    """强制经过 Guard 后流式执行查询并写入当前会话沙箱"""
+    """流式执行已通过 Guard 的查询并写入当前会话沙箱"""
 
     def __init__(
         self,
-        guard: QueryGuardService,
         query_repo: ReadonlyQueryRepository,
         artifact_store: QueryArtifactStore,
         limits: QueryExecutionLimits,
         options: QueryExecutionOptions,
     ) -> None:
         """初始化只读查询服务"""
-        self._guard = guard
         self._query_repo = query_repo
         self._artifact_store = artifact_store
         self._limits = limits
@@ -230,8 +222,9 @@ class AnalysisQueryService:
         self,
         session_key: AgentSessionKey,
         sql: str,
+        validation: QueryValidationResult,
     ) -> SuccessfulQueryExecution:
-        """校验并执行查询，返回完整的成功执行信息"""
+        """执行已校验查询，返回完整的成功执行信息"""
         sql_fingerprint = hashlib.sha256(sql.encode("utf-8")).hexdigest()[:16]
         logger.info(
             "开始执行只读查询: "
@@ -239,54 +232,47 @@ class AnalysisQueryService:
             f"analysis_id={session_key.analysis_id}, "
             f"sql_fingerprint={sql_fingerprint}"
         )
-        try:
-            async with asyncio.timeout(self._limits.timeout_seconds):
-                validation = await self._guard.check(session_key.user_id, sql)
-                normalized_sql = validation.normalized_sql
-                if not validation.valid or normalized_sql is None:
-                    raise QueryRejectedError(validation)
+        normalized_sql = validation.normalized_sql
+        if not validation.valid or normalized_sql is None:
+            raise QueryRejectedError(validation)
 
-                plan = await self._query_repo.explain(normalized_sql, self._limits)
-                estimate = _estimate_doris_query_plan(
-                    plan,
-                    require_scan=bool(validation.tables),
-                )
-                relative_path = (
-                    f"analyses/{session_key.analysis_id}/sessions/"
-                    f"{session_key.agent_type}/{session_key.session_id}/"
-                    f"query_{uuid4().hex}.csv"
-                )
-                with tempfile.TemporaryFile(mode="w+b") as temporary_file:
-                    summary = await self._execute_to_csv(
-                        temporary_file,
-                        normalized_sql,
-                    )
-                    temporary_file.seek(0)
-                    await self._artifact_store.write_artifact(
-                        session_key.user_id,
-                        session_key.conversation_id,
-                        relative_path,
-                        temporary_file,
-                    )
-                result = AnalysisQueryResult(
-                    path=f"/{PurePosixPath(relative_path)}",
-                    schema=summary.schema,
-                    row_count=summary.row_count,
-                    time_range=summary.time_range,
-                    sample=summary.sample,
-                )
-                details = SuccessfulQueryExecution(
-                    session_key=session_key,
-                    raw_sql=sql,
-                    normalized_sql=normalized_sql,
-                    validation=validation,
-                    plan_estimate=estimate,
-                    result=result,
-                )
-        except TimeoutError:
-            raise QueryExecutionTimeoutError(
-                f"查询执行超时，最大允许 {self._limits.timeout_seconds} 秒"
-            ) from None
+        plan = await self._query_repo.explain(normalized_sql, self._limits)
+        estimate = _estimate_doris_query_plan(
+            plan,
+            require_scan=bool(validation.tables),
+        )
+        relative_path = (
+            f"analyses/{session_key.analysis_id}/sessions/"
+            f"{session_key.agent_type}/{session_key.session_id}/"
+            f"query_{uuid4().hex}.csv"
+        )
+        with tempfile.TemporaryFile(mode="w+b") as temporary_file:
+            summary = await self._execute_to_csv(
+                temporary_file,
+                normalized_sql,
+            )
+            temporary_file.seek(0)
+            await self._artifact_store.write_artifact(
+                session_key.user_id,
+                session_key.conversation_id,
+                relative_path,
+                temporary_file,
+            )
+        result = AnalysisQueryResult(
+            path=f"/{PurePosixPath(relative_path)}",
+            schema=summary.schema,
+            row_count=summary.row_count,
+            time_range=summary.time_range,
+            sample=summary.sample,
+        )
+        details = SuccessfulQueryExecution(
+            session_key=session_key,
+            raw_sql=sql,
+            normalized_sql=normalized_sql,
+            validation=validation,
+            plan_estimate=estimate,
+            result=result,
+        )
         logger.info(
             "只读查询执行完成: "
             f"conversation_id={session_key.conversation_id}, "

@@ -1,14 +1,36 @@
 """按用户唯一 Doris 角色选择稳定共享查询身份"""
 
 from dataclasses import dataclass, field
+from typing import Protocol
 from uuid import UUID
 
 from app.identity import errors as auth_error
-from app.query.services.contracts import (
-    QueryCredentialDecryptor,
-    QueryIdentityProvider,
-    QueryPrincipalUserProvider,
-)
+from app.identity.models.account import User
+from app.identity.models.doris import DorisQueryIdentity
+
+
+class QueryPrincipalUserProvider(Protocol):
+    """查询身份解析所需的用户读取能力"""
+
+    async def get_user_by_id(self, user_id: int) -> User | None:
+        """按主键读取查询发起用户"""
+        ...
+
+
+class QueryIdentityProvider(Protocol):
+    """查询身份解析所需的角色身份读取能力"""
+
+    async def get(self, role_name: str) -> DorisQueryIdentity | None:
+        """读取 Doris 角色对应的查询身份"""
+        ...
+
+
+class QueryCredentialDecryptor(Protocol):
+    """查询身份解析所需的凭据解密能力"""
+
+    def decrypt(self, encrypted_password: str) -> str:
+        """解密 Doris 查询用户密码"""
+        ...
 
 
 class QueryPrincipalNotConfiguredError(RuntimeError):

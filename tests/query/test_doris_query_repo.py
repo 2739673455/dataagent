@@ -4,9 +4,14 @@ from collections.abc import AsyncIterator
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from app.query.models.execution import QueryExecutionLimits, QueryExecutionOptions
+from app.query.models.execution import (
+    QueryExecutionLimits,
+    QueryExecutionOptions,
+    QueryExecutionTimeoutError,
+)
 from app.query.repositories.doris import (
     DorisConnectionProvider,
     DorisQueryRepository,
@@ -247,3 +252,52 @@ class DorisQueryRepositoryTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await task
         connection.invalidate.assert_awaited_once()
+
+    async def test_stream_converts_doris_query_timeout_error(self) -> None:
+        connection = AsyncMock()
+        connection.__aenter__.return_value = connection
+        connection.stream.side_effect = OperationalError(
+            "statement", {}, Exception("Doris query timeout after 17 seconds")
+        )
+        provider = FakeConnectionProvider(cast(AsyncConnection, connection))
+        repo = DorisQueryRepository(cast(DorisConnectionProvider, provider))
+        limits = QueryExecutionLimits(
+            workload_group="dataagent_readonly",
+            timeout_seconds=17,
+            memory_limit_bytes=4096,
+            max_rows=10,
+            max_output_bytes=1024,
+        )
+        options = QueryExecutionOptions(batch_size=2)
+
+        with self.assertRaisesRegex(
+            QueryExecutionTimeoutError,
+            "Doris 查询执行超时，最大允许 17 秒",
+        ):
+            async for _ in repo.stream("SELECT 1", limits, options):
+                pass
+
+    async def test_explain_converts_doris_query_timeout_error(self) -> None:
+        connection = AsyncMock()
+        connection.__aenter__.return_value = connection
+        connection.execute.side_effect = [
+            None,
+            None,
+            None,
+            OperationalError("statement", {}, Exception("Doris query timeout")),
+        ]
+        provider = FakeConnectionProvider(cast(AsyncConnection, connection))
+        repo = DorisQueryRepository(cast(DorisConnectionProvider, provider))
+        limits = QueryExecutionLimits(
+            workload_group="dataagent_readonly",
+            timeout_seconds=5,
+            memory_limit_bytes=4096,
+            max_rows=10,
+            max_output_bytes=1024,
+        )
+
+        with self.assertRaisesRegex(
+            QueryExecutionTimeoutError,
+            "Doris 查询执行超时，最大允许 5 秒",
+        ):
+            await repo.explain("SELECT 1", limits)

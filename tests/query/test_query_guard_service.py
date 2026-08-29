@@ -49,29 +49,17 @@ class FakeCatalogRepo:
         return self.columns
 
 
-class StaticPolicyProvider:
-    def __init__(self, policy: AssetAccessPolicy) -> None:
-        self.policy = policy
-
-    async def get_asset_policy(self, user_id: int) -> AssetAccessPolicy:
-        if self.policy.user_id != user_id:
-            raise AssertionError("unexpected user")
-        return self.policy
-
-
-def make_guard(policy: AssetAccessPolicy | None = None) -> QueryGuardService:
+def make_guard() -> QueryGuardService:
     return QueryGuardService(
         FakeCatalogRepo(),
         data_source="doris",
         current_database="analytics",
-        policy_provider=StaticPolicyProvider(policy) if policy else None,
     )
 
 
 class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
     async def test_accepts_qualified_cte_readonly_query(self) -> None:
         result = await make_guard().check(
-            7,
             """
             WITH order_totals AS (
                 SELECT user_id, SUM(amount) AS total
@@ -117,12 +105,12 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
         }
         for sql, issue_code in cases.items():
             with self.subTest(sql=sql):
-                result = await make_guard().check(7, sql)
+                result = await make_guard().check(sql)
                 self.assertFalse(result.valid)
                 self.assertIn(issue_code, {issue.code for issue in result.issues})
 
     async def test_allows_explicitly_approved_readonly_time_function(self) -> None:
-        result = await make_guard().check(7, "SELECT NOW() AS generated_at")
+        result = await make_guard().check("SELECT NOW() AS generated_at")
 
         self.assertTrue(result.valid)
 
@@ -137,10 +125,10 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
         }
         for sql, issue_code in cases.items():
             with self.subTest(sql=sql):
-                result = await make_guard().check(7, sql)
+                result = await make_guard().check(sql)
                 self.assertIn(issue_code, {issue.code for issue in result.issues})
 
-    async def test_rejects_invalid_join_and_type_conflicts(self) -> None:
+    async def test_rejects_invalid_join_and_duplicate_outputs(self) -> None:
         cases = {
             "SELECT o.id FROM orders o JOIN users u": "join_condition_required",
             "SELECT o.id FROM orders o CROSS JOIN users u": "cross_join_forbidden",
@@ -165,28 +153,15 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
             ): "invalid_join_condition",
             (
                 "SELECT o.id AS order_id, u.id AS user_id FROM orders o "
-                "JOIN users u ON (o.user_id = u.id) IS NOT NULL"
-            ): "invalid_join_condition",
-            (
-                "SELECT o.id AS order_id, u.id AS user_id FROM orders o "
                 "JOIN users u ON o.id + u.id > 0"
             ): "invalid_join_condition",
-            (
-                "SELECT o.id AS order_id, u.id AS user_id FROM orders o "
-                "JOIN users u ON COALESCE(o.id, 0) * 0 = COALESCE(u.id, 0) * 0"
-            ): "invalid_join_condition",
-            (
-                "SELECT o.id AS order_id, u.id AS user_id FROM orders o "
-                "JOIN users u ON o.user_id <=> u.id OR NOT(o.user_id <=> u.id)"
-            ): "invalid_join_condition",
-            "SELECT amount = 'not-a-number' FROM orders": "incompatible_types",
             "SELECT o.id, u.id FROM orders o JOIN users u ON o.user_id = u.id": (
                 "duplicate_output_column"
             ),
         }
         for sql, issue_code in cases.items():
             with self.subTest(sql=sql):
-                result = await make_guard().check(7, sql)
+                result = await make_guard().check(sql)
                 self.assertIn(issue_code, {issue.code for issue in result.issues})
 
     async def test_accepts_join_using_and_cross_source_predicates(self) -> None:
@@ -203,10 +178,33 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
                 "SELECT o.id AS order_id, u.id AS user_id FROM orders o "
                 "JOIN users u ON o.user_id = u.id AND o.id > 0 AND u.id > 0"
             ),
+            (
+                "SELECT o.id AS order_id, u.id AS user_id FROM orders o "
+                "JOIN users u ON (o.user_id = u.id) IS NOT NULL"
+            ),
+            (
+                "SELECT o.id AS order_id, u.id AS user_id FROM orders o "
+                "JOIN users u ON COALESCE(o.id, 0) * 0 = COALESCE(u.id, 0) * 0"
+            ),
+            (
+                "SELECT o.id AS order_id, u.id AS user_id FROM orders o "
+                "JOIN users u ON o.user_id <=> u.id OR NOT(o.user_id <=> u.id)"
+            ),
+            (
+                "SELECT o.id AS order_id, u.id AS user_id FROM orders o "
+                "JOIN users u ON CAST(o.user_id AS VARCHAR) = CAST(u.id AS VARCHAR)"
+            ),
         ):
             with self.subTest(sql=sql):
-                result = await make_guard().check(7, sql)
+                result = await make_guard().check(sql)
                 self.assertTrue(result.valid, result.issues)
+
+    async def test_defers_expression_type_compatibility_to_doris(self) -> None:
+        result = await make_guard().check(
+            "SELECT amount = 'not-a-number' FROM orders"
+        )
+
+        self.assertTrue(result.valid, result.issues)
 
 
 class QueryGuardAuthorizationTest(unittest.IsolatedAsyncioTestCase):
@@ -224,7 +222,7 @@ class QueryGuardAuthorizationTest(unittest.IsolatedAsyncioTestCase):
                 }
             ),
         )
-        result = await make_guard(policy).check(7, "SELECT id FROM orders")
+        result = await make_guard().check("SELECT id FROM orders", policy)
         self.assertTrue(result.valid)
 
     async def test_column_grant_cannot_authorize_star(self) -> None:
@@ -241,7 +239,7 @@ class QueryGuardAuthorizationTest(unittest.IsolatedAsyncioTestCase):
                 }
             ),
         )
-        result = await make_guard(policy).check(7, "SELECT * FROM orders")
+        result = await make_guard().check("SELECT * FROM orders", policy)
         self.assertEqual(
             {issue.code for issue in result.issues},
             {"column_access_denied"},
@@ -261,9 +259,9 @@ class QueryGuardAuthorizationTest(unittest.IsolatedAsyncioTestCase):
                 }
             ),
         )
-        result = await make_guard(policy).check(
-            7,
+        result = await make_guard().check(
             "SELECT id FROM orders WHERE amount > 10",
+            policy,
         )
         self.assertEqual(
             {issue.column for issue in result.issues},
@@ -284,15 +282,15 @@ class QueryGuardAuthorizationTest(unittest.IsolatedAsyncioTestCase):
                 }
             ),
         )
-        denied_table = await make_guard(policy).check(7, "SELECT 1 FROM users")
-        missing_table = await make_guard(policy).check(7, "SELECT 1 FROM secrets")
-        denied_column = await make_guard(policy).check(
-            7,
+        denied_table = await make_guard().check("SELECT 1 FROM users", policy)
+        missing_table = await make_guard().check("SELECT 1 FROM secrets", policy)
+        denied_column = await make_guard().check(
             "SELECT amount FROM orders",
+            policy,
         )
-        missing_column = await make_guard(policy).check(
-            7,
+        missing_column = await make_guard().check(
             "SELECT secret_amount FROM orders",
+            policy,
         )
 
         self.assertEqual(
@@ -317,7 +315,7 @@ class QueryGuardAuthorizationTest(unittest.IsolatedAsyncioTestCase):
                 }
             ),
         )
-        result = await make_guard(policy).check(7, "SELECT * FROM orders")
+        result = await make_guard().check("SELECT * FROM orders", policy)
         self.assertTrue(result.valid)
 
     async def test_qualified_star_does_not_require_other_joined_table_grant(
@@ -341,12 +339,12 @@ class QueryGuardAuthorizationTest(unittest.IsolatedAsyncioTestCase):
                 }
             ),
         )
-        result = await make_guard(policy).check(
-            7,
+        result = await make_guard().check(
             """
             SELECT o.*, u.id AS user_pk
             FROM orders o
             JOIN users u ON o.user_id = u.id
             """,
+            policy,
         )
         self.assertTrue(result.valid)

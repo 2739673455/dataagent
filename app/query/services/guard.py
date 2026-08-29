@@ -7,7 +7,6 @@ from typing import Protocol, cast
 import sqlglot
 from sqlglot import Expr, exp
 from sqlglot.errors import OptimizeError, ParseError
-from sqlglot.optimizer.annotate_types import annotate_types
 from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.scope import Scope, traverse_scope
 
@@ -31,14 +30,6 @@ class QueryCatalogRepository(Protocol):
 
     async def list_column_infos(self) -> list[ColumnInfo]:
         """列出参与查询校验的字段元数据"""
-        ...
-
-
-class QueryAssetPolicyProvider(Protocol):
-    """按用户加载查询资产策略"""
-
-    async def get_asset_policy(self, user_id: int) -> AssetAccessPolicy:
-        """加载指定用户的查询资产访问策略"""
         ...
 
 
@@ -132,41 +123,6 @@ _COMPARISON_TYPES = (
     exp.LTE,
     exp.NullSafeEQ,
 )
-_ARITHMETIC_TYPES = (exp.Add, exp.Sub, exp.Mul, exp.Div, exp.Mod)
-_NUMERIC_TYPES = frozenset(
-    {
-        "BIGINT",
-        "DECIMAL",
-        "DOUBLE",
-        "FLOAT",
-        "INT",
-        "LARGEINT",
-        "MEDIUMINT",
-        "SMALLINT",
-        "TINYINT",
-        "UBIGINT",
-        "UINT",
-        "USMALLINT",
-        "UTINYINT",
-    }
-)
-_STRING_TYPES = frozenset(
-    {"CHAR", "LONGTEXT", "MEDIUMTEXT", "STRING", "TEXT", "TINYTEXT", "VARCHAR"}
-)
-_TEMPORAL_TYPES = frozenset(
-    {
-        "DATE",
-        "DATE32",
-        "DATETIME",
-        "DATETIME64",
-        "TIME",
-        "TIMESTAMP",
-        "TIMESTAMPTZ",
-    }
-)
-_BINARY_TYPES = frozenset(
-    {"BINARY", "BLOB", "LONGBLOB", "MEDIUMBLOB", "TINYBLOB", "VARBINARY"}
-)
 
 
 class QueryGuardService:
@@ -178,18 +134,16 @@ class QueryGuardService:
         *,
         data_source: str,
         current_database: str,
-        policy_provider: QueryAssetPolicyProvider | None = None,
     ) -> None:
         """初始化查询安全服务"""
         self._catalog_repo = catalog_repo
         self._data_source = data_source
         self._current_database = current_database
-        self._policy_provider = policy_provider
 
     async def check(
         self,
-        user_id: int,
         sql: str,
+        policy: AssetAccessPolicy | None = None,
     ) -> QueryValidationResult:
         """返回 SQL 的完整安全检查结果"""
         expression, issues = self._parse_single_query(sql)
@@ -200,11 +154,6 @@ class QueryGuardService:
         if issues:
             return self._result(None, issues)
 
-        policy = (
-            await self._policy_provider.get_asset_policy(user_id)
-            if self._policy_provider is not None
-            else None
-        )
         catalog = await self._load_catalog(policy)
         raw_tables, star_tables, table_issues = self._resolve_tables(
             expression,
@@ -223,7 +172,6 @@ class QueryGuardService:
 
         columns = self._collect_physical_columns(qualified, catalog)
         issues.extend(self._check_joins(qualified))
-        issues.extend(self._check_types(qualified, catalog))
         output_columns = list(qualified.named_selects)
         duplicate_outputs = self._duplicates(output_columns)
         if duplicate_outputs:
@@ -656,12 +604,8 @@ class QueryGuardService:
                     )
                     left_aliases.add(right_alias)
                     continue
-                has_unsupported_boolean = on is not None and any(
-                    on.find_all(exp.Or, exp.Not, exp.Xor)
-                )
                 if on is not None and (
-                    has_unsupported_boolean
-                    or not cls._join_condition_links_sources(
+                    not cls._join_condition_links_sources(
                         on,
                         left_aliases,
                         right_alias,
@@ -687,184 +631,76 @@ class QueryGuardService:
         left_aliases: set[str],
         right_alias: str,
     ) -> bool:
-        """确认 JOIN 条件每个可成立分支都包含跨来源谓词"""
+        """确认 JOIN 条件的布尔分支包含跨来源比较"""
         if isinstance(condition, exp.Paren):
             return cls._join_condition_links_sources(
                 condition.this,
                 left_aliases,
                 right_alias,
             )
-        if isinstance(condition, (exp.Not, exp.Or, exp.Xor)):
-            return False
-        if isinstance(condition, exp.And):
-            child_results = (
-                cls._join_condition_links_sources(
-                    condition.this,
-                    left_aliases,
-                    right_alias,
-                ),
-                cls._join_condition_links_sources(
-                    condition.expression,
-                    left_aliases,
-                    right_alias,
-                ),
+        if isinstance(condition, exp.Not):
+            return cls._join_condition_links_sources(
+                condition.this,
+                left_aliases,
+                right_alias,
             )
-            return any(child_results)
-        if not isinstance(condition, _COMPARISON_TYPES):
-            return False
+        if isinstance(condition, (exp.Or, exp.Xor)):
+            return all(
+                cls._join_condition_links_sources(
+                    child,
+                    left_aliases,
+                    right_alias,
+                )
+                for child in (condition.this, condition.expression)
+            )
+        if isinstance(condition, exp.And):
+            return any(
+                cls._join_condition_links_sources(
+                    child,
+                    left_aliases,
+                    right_alias,
+                )
+                for child in (condition.this, condition.expression)
+            )
+        if isinstance(condition, _COMPARISON_TYPES):
+            return cls._comparison_links_sources(
+                condition,
+                left_aliases,
+                right_alias,
+            )
+        return any(
+            cls._join_condition_links_sources(
+                child,
+                left_aliases,
+                right_alias,
+            )
+            for child in condition.iter_expressions()
+        )
+
+    @staticmethod
+    def _comparison_links_sources(
+        comparison: Expr,
+        left_aliases: set[str],
+        right_alias: str,
+    ) -> bool:
+        """判断比较操作的两侧分别只引用前置来源和当前右侧来源"""
 
         def source_side(operand: Expr) -> str | None:
-            """判断操作数来自关联条件的左侧或右侧"""
-            while isinstance(operand, exp.Paren):
-                operand = operand.this
-            if not isinstance(operand, exp.Column) or not operand.table:
-                return None
-            alias = operand.table.casefold()
-            if alias == right_alias:
-                return "right"
-            if alias in left_aliases:
+            aliases = {
+                column.table.casefold()
+                for column in operand.find_all(exp.Column)
+                if column.table
+            }
+            if aliases and aliases <= left_aliases:
                 return "left"
+            if aliases == {right_alias}:
+                return "right"
             return None
 
         return {
-            source_side(condition.this),
-            source_side(condition.expression),
+            source_side(comparison.this),
+            source_side(comparison.expression),
         } == {"left", "right"}
-
-    def _check_types(
-        self,
-        expression: Expr,
-        catalog: _Catalog,
-    ) -> list[QueryValidationIssue]:
-        """检查比较和算术表达式中的明显类型冲突"""
-        schema = catalog.sqlglot_schema
-        if self._current_database:
-            schema = {self._current_database: schema}
-        try:
-            annotate_types(
-                expression,
-                schema=cast(dict[str, object], schema),
-                dialect="doris",
-            )
-        except (OptimizeError, ValueError):
-            return []
-        return self._find_type_issues(expression)
-
-    @classmethod
-    def _find_type_issues(
-        cls,
-        expression: Expr,
-    ) -> list[QueryValidationIssue]:
-        """从已完成类型推导的 AST 中查找冲突"""
-        issues: list[QueryValidationIssue] = []
-        for comparison in expression.find_all(*_COMPARISON_TYPES):
-            left_category = cls._type_category(comparison.this)
-            right_category = cls._type_category(comparison.expression)
-            if not cls._types_compatible(left_category, right_category):
-                issues.append(
-                    QueryValidationIssue(
-                        code="incompatible_types",
-                        message=(
-                            f"比较操作两端数据类型不兼容 ({left_category} 与 {right_category}): "
-                            f"{comparison.sql(dialect='doris')}"
-                        ),
-                    )
-                )
-        for predicate in expression.find_all(exp.In):
-            left_category = cls._type_category(predicate.this)
-            for candidate in predicate.expressions:
-                right_category = cls._type_category(candidate)
-                if cls._types_compatible(left_category, right_category):
-                    continue
-                issues.append(
-                    QueryValidationIssue(
-                        code="incompatible_types",
-                        message=(
-                            f"IN 谓词数据类型不兼容 ({left_category} 与 {right_category}): "
-                            f"{predicate.sql(dialect='doris')}"
-                        ),
-                    )
-                )
-                break
-        for predicate in expression.find_all(exp.Between):
-            value_category = cls._type_category(predicate.this)
-            bound_categories = (
-                cls._type_category(predicate.args[argument])
-                for argument in ("low", "high")
-            )
-            if all(
-                cls._types_compatible(value_category, bound_category)
-                for bound_category in bound_categories
-            ):
-                continue
-            issues.append(
-                QueryValidationIssue(
-                    code="incompatible_types",
-                    message=(
-                        f"BETWEEN 谓词数据类型不兼容: {predicate.sql(dialect='doris')}"
-                    ),
-                )
-            )
-        for arithmetic in expression.find_all(*_ARITHMETIC_TYPES):
-            left_category = cls._type_category(arithmetic.this)
-            right_category = cls._type_category(arithmetic.expression)
-            if {left_category, right_category} <= {"numeric", "unknown", "null"}:
-                continue
-            if (
-                isinstance(arithmetic, (exp.Add, exp.Sub))
-                and "temporal" in {left_category, right_category}
-                and "interval" in {left_category, right_category}
-            ):
-                continue
-            issues.append(
-                QueryValidationIssue(
-                    code="incompatible_types",
-                    message=(
-                        "算术运算要求两侧为兼容的数值类型: "
-                        f"{arithmetic.sql(dialect='doris')}"
-                    ),
-                )
-            )
-        return issues
-
-    @staticmethod
-    def _type_category(expression: Expr) -> str:
-        """把 sqlglot 推断类型归并为可比较类别"""
-        if isinstance(expression, exp.Null):
-            return "null"
-        data_type = expression.type
-        if not isinstance(data_type, exp.DataType):
-            return "unknown"
-        type_name = (
-            data_type.this.name
-            if hasattr(data_type.this, "name")
-            else str(data_type.this)
-        )
-        type_name = type_name.upper()
-        if type_name in _NUMERIC_TYPES:
-            return "numeric"
-        if type_name in _STRING_TYPES:
-            return "string"
-        if type_name in _TEMPORAL_TYPES:
-            return "temporal"
-        if type_name in _BINARY_TYPES:
-            return "binary"
-        if type_name == "BOOLEAN":
-            return "boolean"
-        if type_name == "INTERVAL":
-            return "interval"
-        if type_name in {"NULL", "UNKNOWN"}:
-            return "null" if type_name == "NULL" else "unknown"
-        return type_name.casefold()
-
-    @staticmethod
-    def _types_compatible(left: str, right: str) -> bool:
-        """判断两侧类型是否适合直接比较"""
-        if left in {"unknown", "null"} or right in {"unknown", "null"}:
-            return True
-        if left == right:
-            return True
-        return {left, right} == {"string", "temporal"}
 
     def _check_asset_policy(
         self,

@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.identity.services.authorization import AssetAccessPolicy
 from app.query.models.execution import AnalysisQueryResult
 from app.query.models.validation import QueryValidationResult
 from app.query.providers import build_query_execution_handler
@@ -19,10 +20,23 @@ provider_module = importlib.import_module("app.query.providers")
 class QueryProvidersTest(unittest.IsolatedAsyncioTestCase):
     async def test_server_selected_profile_builds_query_limits(self) -> None:
         session = MagicMock(spec=AsyncSession)
+        active_sessions = {"auth": 0, "meta": 0}
 
         @asynccontextmanager
-        async def session_scope():
-            yield session
+        async def auth_session_scope():
+            active_sessions["auth"] += 1
+            try:
+                yield session
+            finally:
+                active_sessions["auth"] -= 1
+
+        @asynccontextmanager
+        async def meta_session_scope():
+            active_sessions["meta"] += 1
+            try:
+                yield session
+            finally:
+                active_sessions["meta"] -= 1
 
         principal = ResolvedQueryPrincipal(
             role_name="dataagent_standard",
@@ -57,8 +71,12 @@ class QueryProvidersTest(unittest.IsolatedAsyncioTestCase):
             ),
             result=query_result,
         )
+        async def execute_query(*_: object) -> SuccessfulQueryExecution:
+            self.assertEqual(active_sessions, {"auth": 0, "meta": 0})
+            return details
+
         execution_service = MagicMock()
-        execution_service.execute = AsyncMock(return_value=details)
+        execution_service.execute = AsyncMock(side_effect=execute_query)
         experience_service = MagicMock()
         experience_service.record_success = AsyncMock()
         connection_provider = MagicMock()
@@ -67,18 +85,33 @@ class QueryProvidersTest(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 provider_module.auth_postgres_client_manager,
                 "session",
-                new=session_scope,
+                new=auth_session_scope,
             ),
             patch.object(
                 provider_module.meta_postgres_client_manager,
                 "session",
-                new=session_scope,
+                new=meta_session_scope,
             ),
             patch.object(
                 provider_module.QueryPrincipalService,
                 "resolve",
                 new=AsyncMock(return_value=principal),
             ) as resolve,
+            patch.object(
+                provider_module.AuthorizationService,
+                "get_asset_policy",
+                new=AsyncMock(return_value=AssetAccessPolicy(user_id=7)),
+            ),
+            patch.object(
+                provider_module.QueryGuardService,
+                "check",
+                new=AsyncMock(
+                    return_value=QueryValidationResult(
+                        valid=True,
+                        normalized_sql="SELECT 1",
+                    )
+                ),
+            ),
             patch.object(
                 provider_module.query_doris_client_registry,
                 "get_or_create",
@@ -109,8 +142,10 @@ class QueryProvidersTest(unittest.IsolatedAsyncioTestCase):
             "standard_readonly",
             "query_password",
         )
-        limits = service_type.call_args.args[3]
+        limits = service_type.call_args.args[2]
         self.assertEqual(limits.workload_group, "dataagent_standard")
+        execution_service.execute.assert_awaited_once()
+        self.assertEqual(active_sessions, {"auth": 0, "meta": 0})
         self.assertEqual(result, query_result)
 
 

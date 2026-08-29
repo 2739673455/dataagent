@@ -9,9 +9,9 @@ from langchain_core.messages import HumanMessage
 from langchain_core.tools import BaseTool
 from loguru import logger
 
+from app.query.models.execution import QueryExecutionTimeoutError
 from app.query.services.execution_handler import QueryExecutionHandler
 from app.query.services.executor import (
-    QueryExecutionTimeoutError,
     QueryOutputLimitExceededError,
     QueryPlanUnavailableError,
     QueryRejectedError,

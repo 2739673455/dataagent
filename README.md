@@ -2,7 +2,7 @@
 
 基于多 Agent 协作、Docker 容器隔离沙箱与语义知识检索的智能数据分析平台。
 
-后端采用模块化单体结构，代码按 `identity`、`metadata`、`query`、`analytics`、`sandbox` 业务能力聚合，各模块内部保留 `api → services → repositories / models` 分层。跨模块流程集中在 `app/workflows`，配置、错误协议、可观测性、数据库基础设施、外部客户端和共享协议集中在 `app/shared`。完整目录和依赖约束见[架构总览](docs/00_ARCHITECTURE_OVERVIEW.md#21-模块化单体目录)。
+后端采用模块化单体结构，代码划分为 `identity`、`metadata`、`query`、`analytics`、`sandbox`、`workflows`、`shared` 七个一级模块。完整功能树和依赖约束见[架构总览](docs/00_ARCHITECTURE_OVERVIEW.md)。
 
 ---
 
@@ -159,7 +159,7 @@ make beat
 - FastAPI 和 Celery Worker 启动时只校验 `sandbox.image` 对应的镜像，不执行镜像构建。修改沙箱依赖或 Dockerfile 后执行 `docker compose -f docker/compose.yml build sandbox-image` 主动更新镜像。
 - 后端默认监听 `7000` 端口。Vite 开发代理的 `VITE_APP_PROXY` 默认为 `http://localhost:7000`，可复制 `web/.env.example` 并在非默认部署中覆盖。
 - Redis 默认监听 `6379` 端口：DB 0 作为 Celery Broker，DB 1 保存 24 小时任务结果，DB 2 协调 Docker 沙箱跨进程所有权。API 和 Worker 必须连接同一 Redis 实例。
-- 使用 `make worker` 启动消费全部队列的 Celery Worker。详细说明见[后台任务设计](docs/08_BACKGROUND_TASKS.md)。
+- 使用 `make worker` 启动消费全部队列的 Celery Worker。详细说明见[Shared 共享基础设施功能](docs/07_SHARED.md)。
 - `lifecycle` Worker 必须能够访问 Docker Engine，Celery Beat 只运行一个实例。
 - 同一 Docker 主机上的不同部署必须使用唯一的 `sandbox.deployment_namespace`，避免容器和数据卷名称冲突。
 - 同一 `deployment_namespace` 的 API 与 Celery Worker 必须共享 `sandbox.ownership.redis_url`。Redis 租约负责 UID 注册表、工作区维护、全局容器容量和关闭收尾协调，可以运行多个 Uvicorn/Gunicorn Worker。

@@ -24,6 +24,10 @@ from app.shared.database.base import MetaBase
 type QueryExecutionStatus = Literal["rejected", "failed", "succeeded"]
 
 
+class QueryExecutionTimeoutError(RuntimeError):
+    """Doris 查询执行超时"""
+
+
 class QueryExecutionLimits(BaseModel):
     """Doris 单次查询资源限制"""
 

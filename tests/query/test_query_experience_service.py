@@ -60,21 +60,26 @@ class FakeIndexRepo:
         self.vector_hits: list[SearchHit[UUID]] = []
         self.text_error: Exception | None = None
         self.vector_error: Exception | None = None
-        self.deleted: list[UUID] = []
+        self.index_error: Exception | None = None
+        self.deleted: list[tuple[UUID, int]] = []
         self.delete_error: Exception | None = None
 
     async def index(
         self,
         experience_id: UUID,
         *,
+        revision: int,
         role_name: str,
         authorization_epoch: UUID,
         text: str,
         embedding: list[float],
     ) -> None:
+        if self.index_error is not None:
+            raise self.index_error
         self.indexed.append(
             {
                 "experience_id": experience_id,
+                "revision": revision,
                 "role_name": role_name,
                 "authorization_epoch": authorization_epoch,
                 "text": text,
@@ -82,10 +87,10 @@ class FakeIndexRepo:
             }
         )
 
-    async def delete_many(self, experience_ids: list[UUID]) -> None:
+    async def delete(self, experience_id: UUID, *, revision: int) -> None:
         if self.delete_error is not None:
             raise self.delete_error
-        self.deleted.extend(experience_ids)
+        self.deleted.append((experience_id, revision))
 
     async def search_text(
         self,
@@ -727,25 +732,117 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
 
         await service.sync_index(invalid.id, invalid.revision)
 
-        self.assertEqual(index_repo.deleted, [invalid.id])
+        self.assertEqual(index_repo.deleted, [(invalid.id, invalid.revision)])
         self.assertEqual(invalid.indexed_revision, invalid.revision)
+
+    async def test_sync_index_writes_current_revision(self) -> None:
+        repo = FakePGRepo()
+        experience = build_experience(
+            table_name="orders",
+            column_name="amount",
+            meta_version=1,
+        )
+        experience.indexed_revision = experience.revision - 1
+        repo.experiences = [experience]
+        index_repo = FakeIndexRepo()
+        service = build_service(repo, index_repo, FakeEmbeddingClient())
+
+        await service.sync_index(experience.id, experience.revision)
+
+        self.assertEqual(index_repo.indexed[0]["revision"], experience.revision)
+        self.assertEqual(experience.indexed_revision, experience.revision)
+
+    async def test_sync_failure_does_not_advance_indexed_revision(self) -> None:
+        repo = FakePGRepo()
+        experience = build_experience(
+            table_name="orders",
+            column_name="amount",
+            meta_version=1,
+        )
+        experience.indexed_revision = experience.revision - 1
+        repo.experiences = [experience]
+        index_repo = FakeIndexRepo()
+        index_repo.index_error = RuntimeError("index unavailable")
+        service = build_service(repo, index_repo, FakeEmbeddingClient())
+
+        with self.assertRaisesRegex(RuntimeError, "index unavailable"):
+            await service.sync_index(experience.id, experience.revision)
+
+        self.assertEqual(
+            experience.indexed_revision,
+            experience.revision - 1,
+        )
+        self.assertEqual(repo.marked, [])
+
+    async def test_delete_failure_does_not_advance_indexed_revision(self) -> None:
+        repo = FakePGRepo()
+        experience = build_experience(
+            table_name="orders",
+            column_name="amount",
+            meta_version=1,
+        )
+        repo.experiences = [experience]
+        index_repo = FakeIndexRepo()
+        index_repo.delete_error = RuntimeError("index unavailable")
+        service = build_service(repo, index_repo, FakeEmbeddingClient())
+        await service.invalidate_assets(
+            table_names={"orders"},
+            column_keys=set(),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "index unavailable"):
+            await service.sync_index(experience.id, experience.revision)
+
+        self.assertLess(experience.indexed_revision, experience.revision)
+        self.assertEqual(repo.marked, [])
 
 
 class QueryExperienceESRepoTest(unittest.IsolatedAsyncioTestCase):
-    async def test_delete_many_removes_documents_from_index(self) -> None:
-        experience_ids = [uuid4(), uuid4()]
+    async def test_index_uses_external_revision(self) -> None:
+        experience_id = uuid4()
         client = MagicMock()
         client.indices.exists = AsyncMock(return_value=True)
-        client.delete_by_query = AsyncMock()
+        client.index = AsyncMock()
         repo = QueryExperienceESRepo(cast(Any, client))
 
-        await repo.delete_many(experience_ids)
+        await repo.index(
+            experience_id,
+            revision=7,
+            role_name="analyst",
+            authorization_epoch=AUTHORIZATION_EPOCH,
+            text="统计订单金额",
+            embedding=[0.1, 0.2],
+        )
 
-        client.delete_by_query.assert_awaited_once_with(
+        client.index.assert_awaited_once_with(
             index=repo._index_name,
-            query={"ids": {"values": [str(item) for item in experience_ids]}},
-            conflicts="proceed",
-            refresh=True,
+            id=str(experience_id),
+            document={
+                "role_name": "analyst",
+                "authorization_epoch": str(AUTHORIZATION_EPOCH),
+                "text": "统计订单金额",
+                "embedding": [0.1, 0.2],
+            },
+            version=7,
+            version_type="external_gte",
+            refresh="wait_for",
+        )
+
+    async def test_delete_uses_external_revision(self) -> None:
+        experience_id = uuid4()
+        client = MagicMock()
+        client.indices.exists = AsyncMock(return_value=True)
+        client.delete = AsyncMock()
+        repo = QueryExperienceESRepo(cast(Any, client))
+
+        await repo.delete(experience_id, revision=8)
+
+        client.delete.assert_awaited_once_with(
+            index=repo._index_name,
+            id=str(experience_id),
+            version=8,
+            version_type="external_gte",
+            refresh="wait_for",
         )
 
     async def test_semantic_search_is_scoped_to_role_and_authorization_epoch(self) -> None:

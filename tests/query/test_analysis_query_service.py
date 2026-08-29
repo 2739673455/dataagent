@@ -1,58 +1,32 @@
-import asyncio
 import csv
 import io
 import unittest
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, BinaryIO, cast
+from typing import BinaryIO
 from uuid import UUID, uuid4
 
 from app.query.models.execution import (
     QueryBatch,
     QueryExecutionLimits,
     QueryExecutionOptions,
+    QueryExecutionTimeoutError,
 )
 from app.query.models.validation import (
     QueryTableRef,
     QueryValidationIssue,
     QueryValidationResult,
 )
-from app.query.repositories.doris import DorisQueryRepository
 from app.query.services.executor import (
     AnalysisQueryService,
-    QueryExecutionTimeoutError,
     QueryOutputLimitExceededError,
     QueryPlanUnavailableError,
     QueryRejectedError,
     QueryResultLimitExceededError,
     _estimate_doris_query_plan,
 )
-from app.query.services.guard import QueryGuardService
 from app.shared.contracts.analysis import AgentSessionKey
-
-
-class RecordingGuard:
-    def __init__(self, *, physical_table: bool = False) -> None:
-        self.calls: list[tuple[int, str]] = []
-        self.physical_table = physical_table
-
-    async def check(
-        self,
-        user_id: int,
-        sql: str,
-    ) -> QueryValidationResult:
-        self.calls.append((user_id, sql))
-        validation = QueryValidationResult(
-            valid=True,
-            normalized_sql="SELECT normalized",
-            tables=(
-                [QueryTableRef(database="analytics", name="orders")]
-                if self.physical_table
-                else []
-            ),
-        )
-        return validation
 
 
 class FakeQueryRepo:
@@ -104,42 +78,16 @@ class RecordingArtifactStore:
         self.uploads.append((user_id, conversation_id, path, content.read()))
 
 
-class HangingQueryRepo(FakeQueryRepo):
+class TimingOutQueryRepo(FakeQueryRepo):
     async def explain(
         self,
         sql: str,
         limits: QueryExecutionLimits,
     ) -> tuple[str, ...]:
         self.explain_sql = sql
-        await asyncio.Event().wait()
-        raise AssertionError("unreachable")
-
-
-class RejectingGuard:
-    async def check(
-        self,
-        user_id: int,
-        sql: str,
-    ) -> QueryValidationResult:
-        return QueryValidationResult(
-            valid=False,
-            normalized_sql=None,
-            issues=[
-                QueryValidationIssue(
-                    code="readonly_query_required",
-                    message="Only SELECT queries are allowed",
-                )
-            ],
+        raise QueryExecutionTimeoutError(
+            f"Doris 查询执行超时，最大允许 {limits.timeout_seconds} 秒"
         )
-
-
-class FailingConnectionProvider:
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def connection(self) -> object:
-        self.calls += 1
-        raise AssertionError("Doris connection must not be requested")
 
 
 def make_limits(**updates: int) -> QueryExecutionLimits:
@@ -170,12 +118,24 @@ def make_session_key(conversation_id: UUID | None = None) -> AgentSessionKey:
     )
 
 
+def make_validation(*, physical_table: bool = False) -> QueryValidationResult:
+    """构造已经通过 Guard 的查询结果"""
+    return QueryValidationResult(
+        valid=True,
+        normalized_sql="SELECT normalized",
+        tables=(
+            [QueryTableRef(database="analytics", name="orders")]
+            if physical_table
+            else []
+        ),
+    )
+
+
 class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
-    async def test_query_has_end_to_end_hard_timeout(self) -> None:
-        repo = HangingQueryRepo([])
+    async def test_query_propagates_repository_timeout(self) -> None:
+        repo = TimingOutQueryRepo([])
         store = RecordingArtifactStore()
         service = AnalysisQueryService(
-            cast(QueryGuardService, RecordingGuard()),
             repo,
             store,
             make_limits(timeout_seconds=1),
@@ -183,7 +143,11 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with self.assertRaises(QueryExecutionTimeoutError):
-            await service.execute(make_session_key(), "SELECT raw")
+            await service.execute(
+                make_session_key(),
+                "SELECT raw",
+                make_validation(),
+            )
 
         self.assertEqual(store.uploads, [])
 
@@ -265,7 +229,6 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_guarded_batches_are_written_and_summarized(self) -> None:
         timestamp_1 = datetime(2026, 1, 2, 3, tzinfo=UTC)
         timestamp_2 = datetime(2026, 1, 3, 4, tzinfo=UTC)
-        guard = RecordingGuard()
         repo = FakeQueryRepo(
             [
                 QueryBatch(
@@ -280,7 +243,6 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         store = RecordingArtifactStore()
         service = AnalysisQueryService(
-            cast(QueryGuardService, guard),
             repo,
             store,
             make_limits(),
@@ -289,10 +251,13 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         conversation_id = uuid4()
         session_key = make_session_key(conversation_id)
 
-        details = await service.execute(session_key, "SELECT raw")
+        details = await service.execute(
+            session_key,
+            "SELECT raw",
+            make_validation(),
+        )
         result = details.result
 
-        self.assertEqual(guard.calls, [(9, "SELECT raw")])
         self.assertEqual(repo.explain_sql, "SELECT normalized")
         self.assertEqual(repo.sql, "SELECT normalized")
         self.assertEqual(result.row_count, 3)
@@ -320,7 +285,6 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[1][1], "12.50")
 
     async def test_returns_lineage_after_artifact_commit(self) -> None:
-        guard = RecordingGuard(physical_table=True)
         repo = FakeQueryRepo(
             [QueryBatch(column_names=("id",), rows=((1,),))],
             plan=("0:VOlapScanNode", "cardinality=1, avgRowSize=8"),
@@ -328,14 +292,17 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         store = RecordingArtifactStore()
         session_key = make_session_key()
         service = AnalysisQueryService(
-            cast(QueryGuardService, guard),
             repo,
             store,
             make_limits(),
             make_options(),
         )
 
-        details = await service.execute(session_key, "SELECT raw")
+        details = await service.execute(
+            session_key,
+            "SELECT raw",
+            make_validation(physical_table=True),
+        )
 
         self.assertEqual(len(store.uploads), 1)
         self.assertEqual(details.session_key, session_key)
@@ -345,7 +312,6 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(details.result.row_count, 1)
 
     async def test_row_limit_discards_temporary_artifact(self) -> None:
-        guard = RecordingGuard()
         repo = FakeQueryRepo(
             [
                 QueryBatch(
@@ -356,7 +322,6 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         store = RecordingArtifactStore()
         service = AnalysisQueryService(
-            cast(QueryGuardService, guard),
             repo,
             store,
             make_limits(max_rows=2),
@@ -364,35 +329,41 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with self.assertRaises(QueryResultLimitExceededError):
-            await service.execute(make_session_key(), "SELECT raw")
+            await service.execute(
+                make_session_key(),
+                "SELECT raw",
+                make_validation(),
+            )
 
         self.assertEqual(store.uploads, [])
 
     async def test_empty_query_still_writes_header_and_unknown_schema(self) -> None:
-        guard = RecordingGuard()
         repo = FakeQueryRepo([QueryBatch(column_names=("id",), rows=())])
         store = RecordingArtifactStore()
         service = AnalysisQueryService(
-            cast(QueryGuardService, guard),
             repo,
             store,
             make_limits(),
             make_options(),
         )
 
-        result = (await service.execute(make_session_key(), "SELECT raw")).result
+        result = (
+            await service.execute(
+                make_session_key(),
+                "SELECT raw",
+                make_validation(),
+            )
+        ).result
 
         self.assertEqual(result.row_count, 0)
         self.assertEqual(result.schema[0].type, "unknown")
         self.assertTrue(result.schema[0].nullable)
         self.assertEqual(store.uploads[0][3], b"id\n")
 
-    async def test_guard_rejection_never_requests_doris_connection(self) -> None:
-        connection_provider = FailingConnectionProvider()
-        query_repo = DorisQueryRepository(cast(Any, connection_provider))
+    async def test_invalid_validation_never_requests_doris_repository(self) -> None:
+        query_repo = FakeQueryRepo([])
         store = RecordingArtifactStore()
         service = AnalysisQueryService(
-            cast(QueryGuardService, RejectingGuard()),
             query_repo,
             store,
             make_limits(),
@@ -400,17 +371,28 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with self.assertRaises(QueryRejectedError):
-            await service.execute(make_session_key(), "DELETE FROM orders")
+            await service.execute(
+                make_session_key(),
+                "DELETE FROM orders",
+                QueryValidationResult(
+                    valid=False,
+                    normalized_sql=None,
+                    issues=[
+                        QueryValidationIssue(
+                            code="readonly_query_required",
+                            message="只允许只读查询",
+                        )
+                    ],
+                ),
+            )
 
-        self.assertEqual(connection_provider.calls, 0)
+        self.assertIsNone(query_repo.explain_sql)
         self.assertEqual(store.uploads, [])
 
     async def test_utf8_output_byte_limit_prevents_artifact_upload(self) -> None:
-        guard = RecordingGuard()
         repo = FakeQueryRepo([QueryBatch(column_names=("text",), rows=(("你好",),))])
         store = RecordingArtifactStore()
         service = AnalysisQueryService(
-            cast(QueryGuardService, guard),
             repo,
             store,
             make_limits(max_output_bytes=11),
@@ -418,33 +400,40 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with self.assertRaises(QueryOutputLimitExceededError):
-            await service.execute(make_session_key(), "SELECT raw")
+            await service.execute(
+                make_session_key(),
+                "SELECT raw",
+                make_validation(),
+            )
 
         self.assertTrue(repo.closed)
         self.assertEqual(store.uploads, [])
 
     async def test_sample_truncation_does_not_truncate_csv_artifact(self) -> None:
         long_value = "x" * 1000
-        guard = RecordingGuard()
         repo = FakeQueryRepo(
             [QueryBatch(column_names=("text",), rows=((long_value,),))]
         )
         store = RecordingArtifactStore()
         service = AnalysisQueryService(
-            cast(QueryGuardService, guard),
             repo,
             store,
             make_limits(max_output_bytes=2048),
             make_options(),
         )
 
-        result = (await service.execute(make_session_key(), "SELECT raw")).result
+        result = (
+            await service.execute(
+                make_session_key(),
+                "SELECT raw",
+                make_validation(),
+            )
+        ).result
 
         self.assertEqual(result.sample[0]["text"], f"{'x' * 512}…")
         self.assertIn(long_value.encode(), store.uploads[0][3])
 
     async def test_csv_formula_strings_and_headers_are_escaped(self) -> None:
-        guard = RecordingGuard()
         repo = FakeQueryRepo(
             [
                 QueryBatch(
@@ -459,14 +448,19 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         store = RecordingArtifactStore()
         service = AnalysisQueryService(
-            cast(QueryGuardService, guard),
             repo,
             store,
             make_limits(max_output_bytes=2048),
             make_options(sample_rows=3),
         )
 
-        result = (await service.execute(make_session_key(), "SELECT raw")).result
+        result = (
+            await service.execute(
+                make_session_key(),
+                "SELECT raw",
+                make_validation(),
+            )
+        ).result
 
         rows = list(csv.reader(io.StringIO(store.uploads[0][3].decode())))
         self.assertEqual(rows[0], ["'=formula_header", "plain"])

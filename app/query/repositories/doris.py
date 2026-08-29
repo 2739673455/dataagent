@@ -7,12 +7,14 @@ from collections.abc import AsyncGenerator, Mapping, Sequence
 from typing import Protocol
 
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.query.models.execution import (
     QueryBatch,
     QueryExecutionLimits,
     QueryExecutionOptions,
+    QueryExecutionTimeoutError,
 )
 
 _PRIVILEGE_PATTERN = re.compile(
@@ -141,6 +143,14 @@ class DorisQueryRepository:
         )
 
     @staticmethod
+    def _is_timeout_error(exc: BaseException) -> bool:
+        """判断是否为 Doris 查询超时异常"""
+        if isinstance(exc, TimeoutError):
+            return True
+        message = str(exc).lower()
+        return "timeout" in message or "timed out" in message
+
+    @staticmethod
     def _literal_sql(sql: str):
         """构造不把 SQL 字符串内冒号解释为绑定参数的语句"""
         return text(sql.replace(":", r"\:"))
@@ -160,6 +170,12 @@ class DorisQueryRepository:
                 )
             except asyncio.CancelledError:
                 await connection.invalidate()
+                raise
+            except (SQLAlchemyError, TimeoutError) as exc:
+                if self._is_timeout_error(exc):
+                    raise QueryExecutionTimeoutError(
+                        f"Doris 查询执行超时，最大允许 {limits.timeout_seconds} 秒"
+                    ) from exc
                 raise
 
     async def stream(
@@ -196,4 +212,10 @@ class DorisQueryRepository:
                         await close_result
             except asyncio.CancelledError:
                 await connection.invalidate()
+                raise
+            except (SQLAlchemyError, TimeoutError) as exc:
+                if self._is_timeout_error(exc):
+                    raise QueryExecutionTimeoutError(
+                        f"Doris 查询执行超时，最大允许 {limits.timeout_seconds} 秒"
+                    ) from exc
                 raise

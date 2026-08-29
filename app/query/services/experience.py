@@ -3,7 +3,7 @@
 import asyncio
 import hashlib
 from dataclasses import asdict, dataclass
-from typing import cast
+from typing import Protocol, cast
 from uuid import UUID, uuid4
 
 from loguru import logger
@@ -21,7 +21,6 @@ from app.query.models.experience import (
 from app.query.models.validation import QueryValidationResult
 from app.query.repositories.experience_index import QueryExperienceESRepo
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
-from app.query.services.contracts import QueryExperienceIndexScheduler
 from app.query.services.executor import SuccessfulQueryExecution
 from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.config.app_config import cfg
@@ -37,6 +36,14 @@ from app.shared.contracts.query_experience import (
 _SEARCH_POOL_SIZE = 100
 _RRF_K = 60
 _INDEX_TEXT_MAX_CHARS = 8000
+
+
+class QueryExperienceIndexScheduler(Protocol):
+    """查询经验索引任务调度能力"""
+
+    def enqueue(self, experience_id: UUID, revision: int) -> None:
+        """提交指定经验版本的索引同步任务"""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,14 +345,20 @@ class QueryExperienceService:
         async with self._repo.session.begin():
             experience = await self._repo.get(experience_id)
         if experience is None:
-            await self._index_repo.delete_many([experience_id])
+            await self._index_repo.delete(
+                experience_id,
+                revision=requested_revision,
+            )
             return requested_revision
         if experience.indexed_revision >= experience.revision:
             return experience.indexed_revision
 
         revision = experience.revision
         if experience.quality == "disabled":
-            await self._index_repo.delete_many([experience.id])
+            await self._index_repo.delete(
+                experience.id,
+                revision=revision,
+            )
         else:
             text = self._experience_text(experience)
             embeddings = await self._embedding_client.aembed_documents([text])
@@ -353,6 +366,7 @@ class QueryExperienceService:
                 raise ValueError("查询经验向量生成数量不匹配")
             await self._index_repo.index(
                 experience.id,
+                revision=revision,
                 role_name=experience.role_name,
                 authorization_epoch=experience.authorization_epoch,
                 text=text,

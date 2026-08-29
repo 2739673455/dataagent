@@ -1,16 +1,18 @@
 """只读查询完整用例编排"""
 
-from collections.abc import Awaitable, Callable
-from contextlib import AbstractAsyncContextManager
+from typing import Protocol
 
 from loguru import logger
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.query.models.execution import AnalysisQueryResult, QueryExecutionStatus
+from app.identity.services.authorization import AssetAccessPolicy
+from app.query.models.execution import (
+    AnalysisQueryResult,
+    QueryExecutionStatus,
+    QueryExecutionTimeoutError,
+)
 from app.query.models.validation import QueryValidationResult
 from app.query.services.executor import (
     AnalysisQueryService,
-    QueryExecutionTimeoutError,
     QueryOutputLimitExceededError,
     QueryPlanUnavailableError,
     QueryRejectedError,
@@ -18,19 +20,56 @@ from app.query.services.executor import (
     QueryResultShapeError,
     SuccessfulQueryExecution,
 )
-from app.query.services.experience import QueryExecutionContext, QueryExperienceService
-from app.query.services.principal import QueryPrincipalService, ResolvedQueryPrincipal
+from app.query.services.experience import QueryExecutionContext
+from app.query.services.principal import ResolvedQueryPrincipal
 from app.shared.contracts.analysis import AgentSessionKey
 
-type AsyncSessionFactory = Callable[
-    [], AbstractAsyncContextManager[AsyncSession]
-]
-type QueryPrincipalServiceFactory = Callable[[AsyncSession], QueryPrincipalService]
-type AnalysisQueryServiceFactory = Callable[
-    [AsyncSession, AsyncSession, ResolvedQueryPrincipal],
-    Awaitable[AnalysisQueryService],
-]
-type QueryExperienceServiceFactory = Callable[[AsyncSession], QueryExperienceService]
+
+class QueryExecutionRuntime(Protocol):
+    """一次查询各阶段所需的短生命周期运行环境"""
+
+    async def resolve_principal(
+        self,
+        user_id: int,
+    ) -> tuple[ResolvedQueryPrincipal, AssetAccessPolicy]:
+        """解析查询身份和当前资产策略"""
+        ...
+
+    async def validate(
+        self,
+        sql: str,
+        policy: AssetAccessPolicy,
+    ) -> QueryValidationResult:
+        """在独立元数据会话中校验 SQL"""
+        ...
+
+    async def create_executor(
+        self,
+        principal: ResolvedQueryPrincipal,
+    ) -> AnalysisQueryService:
+        """创建不持有 PostgreSQL 会话的 Doris 查询执行器"""
+        ...
+
+    async def record_success(
+        self,
+        context: QueryExecutionContext,
+        details: SuccessfulQueryExecution,
+    ) -> None:
+        """在独立元数据会话中记录成功事实"""
+        ...
+
+    async def record_failure(
+        self,
+        context: QueryExecutionContext,
+        *,
+        raw_sql: str,
+        status: QueryExecutionStatus,
+        error_code: str,
+        error_detail: str,
+        validation: QueryValidationResult | None = None,
+    ) -> None:
+        """在独立元数据会话中记录失败事实"""
+        ...
 
 
 class QueryExecutionHandler:
@@ -38,18 +77,10 @@ class QueryExecutionHandler:
 
     def __init__(
         self,
-        auth_session_factory: AsyncSessionFactory,
-        meta_session_factory: AsyncSessionFactory,
-        principal_service_factory: QueryPrincipalServiceFactory,
-        execution_service_factory: AnalysisQueryServiceFactory,
-        experience_service_factory: QueryExperienceServiceFactory,
+        runtime: QueryExecutionRuntime,
     ) -> None:
-        """绑定查询用例所需的会话和业务服务工厂"""
-        self._auth_session_factory = auth_session_factory
-        self._meta_session_factory = meta_session_factory
-        self._principal_service_factory = principal_service_factory
-        self._execution_service_factory = execution_service_factory
-        self._experience_service_factory = experience_service_factory
+        """绑定查询用例运行环境"""
+        self._runtime = runtime
 
     async def execute(
         self,
@@ -62,26 +93,21 @@ class QueryExecutionHandler:
         """执行一次只读查询并记录成功或失败事实"""
         context: QueryExecutionContext | None = None
         try:
-            async with (
-                self._auth_session_factory() as auth_session,
-                self._meta_session_factory() as meta_session,
-            ):
-                principal = await self._principal_service_factory(
-                    auth_session
-                ).resolve(session_key.user_id)
-                context = QueryExecutionContext(
-                    session_key=session_key,
-                    role_name=principal.role_name,
-                    authorization_epoch=principal.authorization_epoch,
-                    purpose=purpose,
-                    tool_call_id=tool_call_id,
-                )
-                service = await self._execution_service_factory(
-                    auth_session,
-                    meta_session,
-                    principal,
-                )
-                details = await service.execute(session_key, sql)
+            principal, policy = await self._runtime.resolve_principal(
+                session_key.user_id
+            )
+            context = QueryExecutionContext(
+                session_key=session_key,
+                role_name=principal.role_name,
+                authorization_epoch=principal.authorization_epoch,
+                purpose=purpose,
+                tool_call_id=tool_call_id,
+            )
+            validation = await self._runtime.validate(sql, policy)
+            if not validation.valid or validation.normalized_sql is None:
+                raise QueryRejectedError(validation)
+            service = await self._runtime.create_executor(principal)
+            details = await service.execute(session_key, sql, validation)
         except QueryRejectedError as exc:
             await self._record_failure_safely(
                 context,
@@ -126,11 +152,7 @@ class QueryExecutionHandler:
     ) -> None:
         """记录成功查询，持久化故障不改变查询结果"""
         try:
-            async with self._meta_session_factory() as session:
-                await self._experience_service_factory(session).record_success(
-                    context,
-                    details,
-                )
+            await self._runtime.record_success(context, details)
         except Exception:  # noqa: BLE001
             logger.exception("记录成功查询历史失败")
 
@@ -148,14 +170,13 @@ class QueryExecutionHandler:
         if context is None:
             return
         try:
-            async with self._meta_session_factory() as session:
-                await self._experience_service_factory(session).record_failure(
-                    context,
-                    raw_sql=raw_sql,
-                    status=status,
-                    error_code=error_code,
-                    error_detail=error_detail,
-                    validation=validation,
-                )
+            await self._runtime.record_failure(
+                context,
+                raw_sql=raw_sql,
+                status=status,
+                error_code=error_code,
+                error_detail=error_detail,
+                validation=validation,
+            )
         except Exception:  # noqa: BLE001
             logger.exception("记录失败查询历史失败")
