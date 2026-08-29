@@ -43,24 +43,6 @@ class QueryAssetPolicyProvider(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class GuardedQuery:
-    """通过全部检查且可交给执行层的 SQL"""
-
-    sql: str
-    validation: QueryValidationResult
-
-
-class QueryRejectedError(ValueError):
-    """SQL 未通过确定性安全校验"""
-
-    def __init__(self, result: QueryValidationResult) -> None:
-        """保存完整校验结果并汇总拒绝原因"""
-        self.result = result
-        message = "; ".join(issue.message for issue in result.issues)
-        super().__init__(message or "SQL 查询已被拒绝")
-
-
-@dataclass(frozen=True, slots=True)
 class _Catalog:
     """一次校验使用的元数据目录快照"""
 
@@ -270,17 +252,6 @@ class QueryGuardService:
             columns=columns,
             output_columns=output_columns,
         )
-
-    async def require_safe(
-        self,
-        user_id: int,
-        sql: str,
-    ) -> GuardedQuery:
-        """返回可执行 SQL 并在校验失败时拒绝查询"""
-        result = await self.check(user_id, sql)
-        if not result.valid or result.normalized_sql is None:
-            raise QueryRejectedError(result)
-        return GuardedQuery(sql=result.normalized_sql, validation=result)
 
     @staticmethod
     def _result(

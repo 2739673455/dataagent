@@ -5,18 +5,17 @@ from datetime import UTC, datetime
 from loguru import logger
 
 from app.analytics.agents.manager import AgentManager
+from app.analytics.agents.skills import packaged_agent_skill_mounts
 from app.analytics.providers import build_conversation_lifecycle_service
 from app.analytics.services.conversation_tombstone import (
     ConversationTombstoneService,
 )
 from app.identity.services.user_deletion_store import PostgresUserDeletionStateStore
-from app.query.services.user_cleanup import QueryHistoryCleanupService
 from app.sandbox.providers import create_sandbox_manager
-from app.shared.clients.es_client_manager import ESClientManager
 from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
-from app.shared.database.base import AnalyticsBase, AuthBase, MetaBase
+from app.shared.database.base import AnalyticsBase, AuthBase
 from app.shared.tasks.celery_app import celery_app
 from app.shared.tasks.runner import run_async
 from app.shared.tasks.submission import TaskSubmission
@@ -41,14 +40,15 @@ def enqueue_user_deletion(user_id: int) -> TaskSubmission:
 async def _process_user_deletion(user_id: int) -> None:
     """初始化跨存储资源并处理单个用户注销任务"""
     auth_postgres = PostgresClientManager(cfg.auth_postgresql, AuthBase)
-    meta_postgres = PostgresClientManager(cfg.meta_postgresql, MetaBase)
     analytics_postgres = PostgresClientManager(
         cfg.langgraph_postgresql,
         AnalyticsBase,
     )
-    es = ESClientManager(cfg.elasticsearch)
     persistence = LangGraphPostgresManager(cfg.langgraph_postgresql)
-    sandbox = create_sandbox_manager(cfg.sandbox)
+    sandbox = create_sandbox_manager(
+        cfg.sandbox,
+        packaged_agent_skill_mounts(),
+    )
     agents = AgentManager(
         persistence,
         sandbox,
@@ -64,16 +64,13 @@ async def _process_user_deletion(user_id: int) -> None:
     )
     service = UserDeletionService(
         PostgresUserDeletionStateStore(auth_postgres),
-        QueryHistoryCleanupService(meta_postgres, es),
         sandbox,
         conversations,
         cfg.lifecycle,
     )
 
     auth_postgres.init()
-    meta_postgres.init()
     analytics_postgres.init()
-    es.init()
     await persistence.init()
     await sandbox.init(start_cleanup=False)
     try:
@@ -82,9 +79,7 @@ async def _process_user_deletion(user_id: int) -> None:
         await agents.close()
         await sandbox.disconnect()
         await persistence.close()
-        await es.close()
         await analytics_postgres.close()
-        await meta_postgres.close()
         await auth_postgres.close()
 
 

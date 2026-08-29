@@ -43,7 +43,7 @@ def _log_problem(exc: ProblemError, source: Exception) -> None:
         logger.warning(exc.title, **context)
 
 
-def problem_error_handler(request: Request, exc: ProblemError) -> JSONResponse:
+def _problem_error_handler(request: Request, exc: ProblemError) -> JSONResponse:
     """处理应用预期异常"""
     _log_problem(exc, exc)
     retry_after = exc.extensions.get("retry_after_seconds")
@@ -57,7 +57,7 @@ def problem_error_handler(request: Request, exc: ProblemError) -> JSONResponse:
     return _build_response(request, exc, headers=headers)
 
 
-def validation_error_handler(
+def _validation_error_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
     """处理请求参数校验异常"""
@@ -80,7 +80,7 @@ def validation_error_handler(
     return _build_response(request, problem)
 
 
-def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     """统一处理 FastAPI 与 Starlette HTTP 异常"""
     if isinstance(exc.detail, str):
         detail = exc.detail
@@ -103,7 +103,7 @@ def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse
     return _build_response(request, problem, headers=exc.headers)
 
 
-def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """处理所有未捕获异常且不向客户端泄露内部信息"""
     problem = ProblemError()
     _log_problem(problem, exc)
@@ -114,17 +114,17 @@ def register_exception_handlers(app: FastAPI) -> None:
     """注册全局异常处理器"""
     app.add_exception_handler(
         ProblemError,
-        cast(ExceptionHandler, problem_error_handler),
+        cast(ExceptionHandler, _problem_error_handler),
     )
     app.add_exception_handler(
         RequestValidationError,
-        cast(ExceptionHandler, validation_error_handler),
+        cast(ExceptionHandler, _validation_error_handler),
     )
     app.add_exception_handler(
         HTTPException,
-        cast(ExceptionHandler, http_exception_handler),
+        cast(ExceptionHandler, _http_exception_handler),
     )
     app.add_exception_handler(
         Exception,
-        cast(ExceptionHandler, unhandled_exception_handler),
+        cast(ExceptionHandler, _unhandled_exception_handler),
     )

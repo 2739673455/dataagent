@@ -81,6 +81,9 @@ class AuthorizationServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         repo.get_user_by_id = AsyncMock(return_value=user)
         repo.list_role_asset_grants = AsyncMock(return_value=[grant])
+        repo.session = MagicMock()
+        identity = query_identity("sales")
+        repo.session.scalar = AsyncMock(return_value=identity)
 
         policy = await AuthorizationService(repo).get_asset_policy(user.id)
 
@@ -90,6 +93,8 @@ class AuthorizationServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(
             policy.allows(AssetIdentity("doris", "sales", "orders", "cost"))
         )
+        self.assertEqual(policy.role_name, "sales")
+        self.assertEqual(policy.authorization_epoch, identity.authorization_epoch)
 
     async def test_non_admin_is_rejected_from_admin_operations(self) -> None:
         with self.assertRaises(auth_error.PermissionDeniedError):

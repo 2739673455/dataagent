@@ -134,12 +134,18 @@ class RuntimeOwnership(LocalSandboxOwnership):
 
 
 def test_manager_only_finalizes_containers_for_last_runtime() -> None:
+    async def run_inline(operation, *args):
+        return operation(*args)
+
     async def run(last_runtime: bool) -> int:
         ownership = RuntimeOwnership(last_runtime=last_runtime)
-        manager = DockerSandboxManager(build_sandbox_config(), ownership)
+        manager = DockerSandboxManager(build_sandbox_config(), ownership, ())
         manager._client = MagicMock()
         manager._ownership_started = True
-        with patch.object(manager, "_finalize_containers_sync") as finalize:
+        with (
+            patch.object(manager, "_finalize_containers_sync") as finalize,
+            patch("app.sandbox.manager.asyncio.to_thread", side_effect=run_inline),
+        ):
             await manager.close()
         return finalize.call_count
 

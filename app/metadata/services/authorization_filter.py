@@ -8,6 +8,7 @@ from app.metadata.models.search import (
     SemanticResourceRecallResponse,
     SemanticValueRecallResult,
 )
+from app.shared.contracts.query_experience import QueryAssetSnapshot
 
 
 class MetadataAuthorizationFilter:
@@ -41,9 +42,35 @@ class MetadataAuthorizationFilter:
         """判断表或任一下级字段是否对用户可见"""
         return self._policy.is_visible(self.identity(table_name))
 
+    def table_is_allowed(self, table_name: str) -> bool:
+        """判断表是否具备完整读取权限"""
+        return self._policy.allows(self.identity(table_name))
+
     def column_is_allowed(self, table_name: str, column_name: str) -> bool:
         """判断字段是否具备完整读取权限"""
         return self._policy.allows(self.identity(table_name, column_name))
+
+    def query_experience_is_allowed(
+        self,
+        assets: list[QueryAssetSnapshot],
+    ) -> bool:
+        """判断经验中每张表的实际引用资产是否均可读取"""
+        tables = {asset.table for asset in assets if asset.kind == "table"}
+        columns_by_table: dict[str, set[str]] = {}
+        for asset in assets:
+            if asset.kind != "column" or asset.column is None:
+                continue
+            tables.add(asset.table)
+            columns_by_table.setdefault(asset.table, set()).add(asset.column)
+        return all(
+            all(
+                self.column_is_allowed(table_name, column_name)
+                for column_name in columns_by_table.get(table_name, set())
+            )
+            if columns_by_table.get(table_name)
+            else self.table_is_allowed(table_name)
+            for table_name in tables
+        )
 
     def allowed_column_keys(
         self,

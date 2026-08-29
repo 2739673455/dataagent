@@ -39,6 +39,10 @@ class QueryPrincipalServiceTest(unittest.IsolatedAsyncioTestCase):
         resolved = await service.resolve(user.id)
 
         self.assertEqual(resolved.role_name, "sales")
+        self.assertEqual(
+            resolved.authorization_epoch,
+            identity_provider.get.return_value.authorization_epoch,
+        )
         self.assertEqual(resolved.query_user, "sales_query")
         self.assertEqual(resolved.password, "query_password")
         self.assertNotIn("query_password", repr(resolved))

@@ -14,24 +14,24 @@ from app.providers import (
 from app.sandbox.manager import DockerSandboxManager
 
 
-def get_agent_manager() -> AgentManager:
+def _get_agent_manager() -> AgentManager:
     """获取应用级 Agent 管理器"""
     return agent_manager
 
 
-def get_sandbox_manager() -> DockerSandboxManager:
+def _get_sandbox_manager() -> DockerSandboxManager:
     """获取应用级沙箱管理器"""
     return sandbox_manager
 
 
-def get_conversation_lifecycle_service() -> ConversationLifecycleService:
+def _get_conversation_lifecycle_service() -> ConversationLifecycleService:
     """获取应用级会话生命周期服务"""
     return conversation_lifecycle_service
 
 
-AgentManagerDep = Annotated[AgentManager, Depends(get_agent_manager)]
-SandboxManagerDep = Annotated[DockerSandboxManager, Depends(get_sandbox_manager)]
+AgentManagerDep = Annotated[AgentManager, Depends(_get_agent_manager)]
+SandboxManagerDep = Annotated[DockerSandboxManager, Depends(_get_sandbox_manager)]
 ConversationLifecycleServiceDep = Annotated[
     ConversationLifecycleService,
-    Depends(get_conversation_lifecycle_service),
+    Depends(_get_conversation_lifecycle_service),
 ]

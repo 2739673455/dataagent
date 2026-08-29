@@ -40,28 +40,28 @@ SessionDep = Annotated[
 ]
 
 
-def get_query_identity_repo(session: SessionDep) -> DorisQueryIdentityPGRepo:
+def _get_query_identity_repo(session: SessionDep) -> DorisQueryIdentityPGRepo:
     """创建请求级 Doris 查询身份访问"""
     return DorisQueryIdentityPGRepo(session)
 
 
 QueryIdentityRepoDep = Annotated[
     DorisQueryIdentityPGRepo,
-    Depends(get_query_identity_repo),
+    Depends(_get_query_identity_repo),
 ]
 
 
 @lru_cache(maxsize=1)
-def get_password_manager() -> Argon2PasswordManager:
+def _get_password_manager() -> Argon2PasswordManager:
     """创建进程级密码哈希器"""
     return Argon2PasswordManager()
 
 
-def get_auth_service(
+def _get_auth_service(
     session: SessionDep,
     password_manager: Annotated[
         Argon2PasswordManager,
-        Depends(get_password_manager),
+        Depends(_get_password_manager),
     ],
 ) -> AuthService:
     """创建请求级认证服务"""
@@ -72,18 +72,18 @@ def get_auth_service(
     )
 
 
-AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
+AuthServiceDep = Annotated[AuthService, Depends(_get_auth_service)]
 
 
 @lru_cache(maxsize=1)
-def get_auth_rate_limit_service() -> AuthRateLimitService:
+def _get_auth_rate_limit_service() -> AuthRateLimitService:
     """创建进程级认证限流服务"""
     return AuthRateLimitService()
 
 
 AuthRateLimitServiceDep = Annotated[
     AuthRateLimitService,
-    Depends(get_auth_rate_limit_service),
+    Depends(_get_auth_rate_limit_service),
 ]
 _bearer = HTTPBearer(auto_error=False)
 
@@ -93,7 +93,7 @@ def get_client_ip(request: Request) -> str:
     return request.client.host if request.client is not None else "unknown"
 
 
-async def get_current_user(
+async def _get_current_user(
     credentials: Annotated[
         HTTPAuthorizationCredentials | None,
         Depends(_bearer),
@@ -109,19 +109,19 @@ async def get_current_user(
         ).authenticate(credentials.credentials)
 
 
-CurrentUserDep = Annotated[AuthenticatedUser, Depends(get_current_user)]
+CurrentUserDep = Annotated[AuthenticatedUser, Depends(_get_current_user)]
 
 
-async def require_admin(current_user: CurrentUserDep) -> AuthenticatedUser:
+async def _require_admin(current_user: CurrentUserDep) -> AuthenticatedUser:
     """要求当前用户是平台管理员"""
     AuthorizationService.require_admin(current_user)
     return current_user
 
 
-AdminUserDep = Annotated[AuthenticatedUser, Depends(require_admin)]
+AdminUserDep = Annotated[AuthenticatedUser, Depends(_require_admin)]
 
 
-async def require_analysis_access(
+async def _require_analysis_access(
     current_user: CurrentUserDep,
     identity_repo: QueryIdentityRepoDep,
 ) -> AuthenticatedUser:
@@ -135,41 +135,41 @@ async def require_analysis_access(
     return current_user
 
 
-AnalysisUserDep = Annotated[AuthenticatedUser, Depends(require_analysis_access)]
+AnalysisUserDep = Annotated[AuthenticatedUser, Depends(_require_analysis_access)]
 
 
-async def get_role_management_service() -> AsyncGenerator[DorisRoleManagementService]:
+async def _get_role_management_service() -> AsyncGenerator[DorisRoleManagementService]:
     """创建独立会话的 Doris 角色管理服务"""
     async with auth_postgres_client_manager.session() as session:
         yield DorisRoleManagementService(
             AuthPGRepo(session),
             DorisQueryIdentityPGRepo(session),
             DorisRoleRepository(admin_doris_client_manager),
-            get_doris_credential_cipher(),
+            _get_doris_credential_cipher(),
             query_doris_client_registry,
-            get_password_manager(),
+            _get_password_manager(),
             cfg.auth,
         )
 
 
 DorisRoleManagementServiceDep = Annotated[
     DorisRoleManagementService,
-    Depends(get_role_management_service),
+    Depends(_get_role_management_service),
 ]
 
 
-def get_user_deletion_service() -> UserDeletionService:
+def _get_user_deletion_service() -> UserDeletionService:
     """获取进程级跨存储用户注销服务"""
     return user_deletion_service
 
 
 UserDeletionServiceDep = Annotated[
     UserDeletionService,
-    Depends(get_user_deletion_service),
+    Depends(_get_user_deletion_service),
 ]
 
 
-async def get_doris_permission_service() -> AsyncGenerator[DorisPermissionService]:
+async def _get_doris_permission_service() -> AsyncGenerator[DorisPermissionService]:
     """创建 Doris 权限管理服务"""
     async with auth_postgres_client_manager.session() as session:
         yield DorisPermissionService(
@@ -184,12 +184,12 @@ async def get_doris_permission_service() -> AsyncGenerator[DorisPermissionServic
 
 DorisPermissionServiceDep = Annotated[
     DorisPermissionService,
-    Depends(get_doris_permission_service),
+    Depends(_get_doris_permission_service),
 ]
 
 
 @lru_cache(maxsize=1)
-def get_doris_credential_cipher() -> DorisCredentialCipher:
+def _get_doris_credential_cipher() -> DorisCredentialCipher:
     """创建进程级 Doris 查询凭据加密器"""
     return DorisCredentialCipher(
         cfg.doris_credentials.encryption_key.get_secret_value()

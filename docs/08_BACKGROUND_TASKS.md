@@ -17,7 +17,7 @@ Celery Beat ──周期触发──> Redis DB 0
 | 队列 | 任务 | 资源特征 |
 | :--- | :--- | :--- |
 | `metadata-index` | 字段/指标语义索引、字段取值索引、YAML 导入、查询经验索引 | Embedding、Doris、PostgreSQL、Elasticsearch I/O |
-| `lifecycle` | 会话物理清理、过期草稿清理、用户注销 | PostgreSQL、LangGraph、Elasticsearch、Docker 跨存储操作 |
+| `lifecycle` | 会话物理清理、过期草稿清理、用户注销 | PostgreSQL、LangGraph、Docker 跨存储操作 |
 | `lightweight` | 会话标题生成 | 单次模型调用和会话关系表条件更新 |
 | `default` | 未显式路由的管理任务 | 兜底队列 |
 
@@ -30,7 +30,7 @@ Celery Beat ──周期触发──> Redis DB 0
 | 元数据语义/取值索引 | 元数据更新后自动提交语义任务，管理员手动提交取值全量任务 | 语义文档差量、Embedding、Doris 水位扫描、ES 写入、版本和水位更新 | 语义任务使用 Celery 重试；取值任务使用 `value_index_sync_state` 和每日 Beat 增量调度 |
 | 查询经验索引 | PostgreSQL 记录成功事实 | Embedding 和 ES 投影维护 | `revision/indexed_revision` 定期补偿 |
 | YAML 元数据导入 | YAML 解析和结构校验 | Doris 校验、批量写库、索引清理 | Celery 重试和任务结果 |
-| 用户注销 | 禁用用户、吊销令牌、写注销任务表 | 清理会话、沙箱、查询历史和用户记录 | `user_deletion_tasks` 到期重投 |
+| 用户注销 | 禁用用户、吊销令牌、写注销任务表 | 清理会话、沙箱和用户记录；保留查询执行审计与角色共享经验 | `user_deletion_tasks` 到期重投 |
 | 会话删除 | 取消当前进程执行并写删除墓碑 | 清理 Checkpoint、召回记录、沙箱目录和会话目录 | 删除墓碑定期扫描补偿 |
 | 过期草稿 | 无请求操作 | 周期扫描并执行跨存储删除 | Celery Beat 周期触发 |
 | 会话标题 | 保存首条消息和待生成状态 | 调用模型并条件更新标题 | 待生成记录定期重投，避免覆盖手工标题 |

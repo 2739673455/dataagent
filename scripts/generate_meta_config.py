@@ -385,7 +385,7 @@ def _split_columns(body: str) -> list[str]:
     return [part for part in parts if part]
 
 
-def parse_ecommerce_schema(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]:
+def _parse_ecommerce_schema(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]:
     """解析电商 DDL 中的表、字段和注释"""
     sql = ddl_path.read_text(encoding="utf-8")
     result: dict[str, Any] = {}
@@ -486,7 +486,7 @@ def _metric(
     }
 
 
-def build_metrics() -> list[dict[str, Any]]:
+def _build_metrics() -> list[dict[str, Any]]:
     """构建常用综合电商业务指标"""
     m = _metric
     return [
@@ -608,9 +608,9 @@ def build_metrics() -> list[dict[str, Any]]:
     ]
 
 
-def build_config(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]:
+def _build_config(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]:
     """构建完整元数据配置并校验所有引用"""
-    schema = parse_ecommerce_schema(ddl_path)
+    schema = _parse_ecommerce_schema(ddl_path)
     if set(schema) != set(TABLE_ORDER):
         missing = sorted(set(TABLE_ORDER) - set(schema))
         unexpected = sorted(set(schema) - set(TABLE_ORDER))
@@ -644,7 +644,7 @@ def build_config(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]:
                 "columns": columns,
             }
         )
-    metrics = build_metrics()
+    metrics = _build_metrics()
     missing_metric_columns = sorted(
         {
             (reference["t_name"], reference["c_name"])
@@ -667,7 +667,7 @@ def main() -> None:
     parser.add_argument("--ddl", type=Path, default=DEFAULT_DDL_PATH)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
     args = parser.parse_args()
-    config = build_config(args.ddl.resolve())
+    config = _build_config(args.ddl.resolve())
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         yaml.dump(

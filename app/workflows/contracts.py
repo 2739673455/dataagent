@@ -40,11 +40,3 @@ class UserSandboxCleaner(Protocol):
     async def delete_user_sandbox(self, user_id: int) -> None:
         """删除用户全部沙箱资源"""
         ...
-
-
-class UserQueryHistoryCleaner(Protocol):
-    """用户注销所需的查询历史清理能力"""
-
-    async def delete_user_query_history(self, user_id: int) -> None:
-        """删除用户全部查询记录和查询经验"""
-        ...

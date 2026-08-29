@@ -2,7 +2,7 @@ import unittest
 
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
 from app.metadata.models.catalog import ColumnInfo, TableInfo
-from app.query.services.guard import QueryGuardService, QueryRejectedError
+from app.query.services.guard import QueryGuardService
 
 
 def make_column(table: str, name: str, data_type: str) -> ColumnInfo:
@@ -207,10 +207,6 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(sql=sql):
                 result = await make_guard().check(7, sql)
                 self.assertTrue(result.valid, result.issues)
-
-    async def test_require_safe_never_returns_rejected_sql(self) -> None:
-        with self.assertRaises(QueryRejectedError):
-            await make_guard().require_safe(7, "UPDATE orders SET amount = 0")
 
 
 class QueryGuardAuthorizationTest(unittest.IsolatedAsyncioTestCase):

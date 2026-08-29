@@ -32,11 +32,13 @@ from app.query.services.executor import (
 from app.query.services.experience import (
     QueryExecutionContext,
     QueryExperienceService,
-    build_sql_template,
+    _build_sql_template,
 )
 from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.contracts.analysis import AgentSessionKey
 from tests.identity.test_auth_service import AsyncSessionStub
+
+AUTHORIZATION_EPOCH = uuid4()
 
 
 class FakeEmbeddingClient:
@@ -65,16 +67,16 @@ class FakeIndexRepo:
         self,
         experience_id: UUID,
         *,
-        owner_user_id: int,
         role_name: str,
+        authorization_epoch: UUID,
         text: str,
         embedding: list[float],
     ) -> None:
         self.indexed.append(
             {
                 "experience_id": experience_id,
-                "owner_user_id": owner_user_id,
                 "role_name": role_name,
+                "authorization_epoch": authorization_epoch,
                 "text": text,
                 "embedding": embedding,
             }
@@ -89,11 +91,11 @@ class FakeIndexRepo:
         self,
         query: str,
         *,
-        user_id: int,
         role_name: str,
+        authorization_epoch: UUID,
         limit: int,
     ) -> list[SearchHit[UUID]]:
-        del query, user_id, role_name, limit
+        del query, role_name, authorization_epoch, limit
         if self.text_error is not None:
             raise self.text_error
         return self.text_hits
@@ -102,12 +104,12 @@ class FakeIndexRepo:
         self,
         embedding: list[float],
         *,
-        user_id: int,
         role_name: str,
+        authorization_epoch: UUID,
         limit: int,
         min_score: float,
     ) -> list[SearchHit[UUID]]:
-        del embedding, user_id, role_name, limit, min_score
+        del embedding, role_name, authorization_epoch, limit, min_score
         if self.vector_error is not None:
             raise self.vector_error
         return self.vector_hits
@@ -151,8 +153,26 @@ class FakePGRepo:
         experience.revision = 1
         experience.indexed_revision = 0
         self.executions.append(execution)
-        self.experiences.append(experience)
-        return experience
+        stored = next(
+            (
+                item
+                for item in self.experiences
+                if item.role_name == experience.role_name
+                and item.fingerprint == experience.fingerprint
+            ),
+            None,
+        )
+        if stored is None:
+            self.experiences.append(experience)
+            return experience
+        stored.refresh_from_success(
+            purpose=experience.purposes[0],
+            authorization_epoch=experience.authorization_epoch,
+            sql_template=experience.sql_template,
+        )
+        stored.assets = assets
+        execution.experience_id = stored.id
+        return stored
 
     async def record_failure(self, execution: QueryExecution) -> None:
         self.executions.append(execution)
@@ -170,21 +190,13 @@ class FakePGRepo:
             if revision is not None and revision == experience.revision:
                 experience.indexed_revision = revision
 
-    async def list_pending_index_deletions(
-        self,
-        user_id: int,
-        role_name: str,
-        *,
-        limit: int,
-    ) -> dict[UUID, int]:
+    async def list_pending_index_repairs(self, *, limit: int) -> dict[UUID, int]:
         return dict(
             list(
                 {
                     item.id: item.revision
                     for item in self.experiences
-                    if item.owner_user_id == user_id
-                    and item.role_name == role_name
-                    and item.quality == "disabled"
+                    if item.quality == "disabled"
                     and item.indexed_revision < item.revision
                 }.items()
             )[:limit]
@@ -217,16 +229,16 @@ class FakePGRepo:
 
     async def get_many(
         self,
-        user_id: int,
         experience_ids: list[UUID],
         *,
-        role_name: str | None,
+        role_name: str,
+        authorization_epoch: UUID,
     ) -> list[QueryExperience]:
         by_id = {
             item.id: item
             for item in self.experiences
-            if item.owner_user_id == user_id
-            and (role_name is None or item.role_name == role_name)
+            if item.role_name == role_name
+            and item.authorization_epoch == authorization_epoch
         }
         return [by_id[item_id] for item_id in experience_ids if item_id in by_id]
 
@@ -260,6 +272,8 @@ def build_experience(
     column_name: str,
     meta_version: int,
     quality: str = "candidate",
+    role_name: str = "analyst",
+    authorization_epoch: UUID = AUTHORIZATION_EPOCH,
 ) -> QueryExperience:
     experience_id = uuid4()
     table_key = asset_resource_key("doris", "analytics", table_name)
@@ -271,11 +285,10 @@ def build_experience(
     )
     experience = QueryExperience(
         id=experience_id,
-        owner_user_id=7,
-        role_name="analyst",
+        role_name=role_name,
+        authorization_epoch=authorization_epoch,
         fingerprint=uuid4().hex,
         purposes=["统计订单金额"],
-        representative_sql=f"SELECT {column_name} FROM {table_name}",
         sql_template=f"SELECT {column_name} FROM {table_name} WHERE id = :p1",
         quality=quality,
         revision=2,
@@ -319,18 +332,35 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
 
         experience.refresh_from_success(
             purpose="按地区统计订单金额",
-            representative_sql="SELECT region, SUM(amount) FROM orders GROUP BY region",
+            authorization_epoch=experience.authorization_epoch,
             sql_template="SELECT region, SUM(amount) FROM orders GROUP BY region",
         )
 
         self.assertEqual(experience.quality, "candidate")
         self.assertEqual(experience.revision, previous_revision + 1)
 
+    def test_new_authorization_epoch_resets_shared_purposes(self) -> None:
+        experience = build_experience(
+            table_name="orders",
+            column_name="amount",
+            meta_version=1,
+        )
+        next_epoch = uuid4()
+
+        experience.refresh_from_success(
+            purpose="按渠道统计订单金额",
+            authorization_epoch=next_epoch,
+            sql_template=experience.sql_template,
+        )
+
+        self.assertEqual(experience.authorization_epoch, next_epoch)
+        self.assertEqual(experience.purposes, ["按渠道统计订单金额"])
+
     def test_sql_template_redacts_literals_and_has_stable_fingerprint(self) -> None:
-        first_template, first_fingerprint = build_sql_template(
+        first_template, first_fingerprint = _build_sql_template(
             "SELECT amount FROM orders WHERE region = '华东' AND day >= '2026-01-01'"
         )
-        second_template, second_fingerprint = build_sql_template(
+        second_template, second_fingerprint = _build_sql_template(
             "SELECT amount FROM orders WHERE region = '华南' AND day >= '2026-08-01'"
         )
 
@@ -397,6 +427,7 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             QueryExecutionContext(
                 session_key=details.session_key,
                 role_name="analyst",
+                authorization_epoch=AUTHORIZATION_EPOCH,
                 purpose="统计华东订单金额",
                 tool_call_id="call-1",
             ),
@@ -448,13 +479,25 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             column_name="region",
             meta_version=1,
         )
-        foreign = build_experience(
+        same_role = build_experience(
             table_name="orders",
             column_name="amount",
             meta_version=1,
         )
-        foreign.owner_user_id = 8
-        repo.experiences = [allowed, denied, stale, foreign]
+        same_role.purposes = ["同角色成员沉淀的订单查询"]
+        other_role = build_experience(
+            table_name="orders",
+            column_name="amount",
+            meta_version=1,
+            role_name="finance",
+        )
+        old_epoch = build_experience(
+            table_name="orders",
+            column_name="amount",
+            meta_version=1,
+            authorization_epoch=uuid4(),
+        )
+        repo.experiences = [allowed, denied, stale, same_role, other_role, old_epoch]
         repo.current_versions = {asset.resource_key: 1 for asset in allowed.assets}
         repo.current_versions.update({asset.resource_key: 1 for asset in denied.assets})
         repo.current_versions.update(
@@ -464,7 +507,9 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             }
         )
         index_repo.text_hits = [
-            SearchHit(item=foreign.id, score=20),
+            SearchHit(item=other_role.id, score=30),
+            SearchHit(item=old_epoch.id, score=25),
+            SearchHit(item=same_role.id, score=20),
             SearchHit(item=denied.id, score=10),
             SearchHit(item=stale.id, score=8),
             SearchHit(item=allowed.id, score=5),
@@ -486,15 +531,16 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         recall = await service.recall(
-            user_id=7,
             role_name="analyst",
+            authorization_epoch=AUTHORIZATION_EPOCH,
             policy=policy,
             query="订单金额",
             limit=5,
         )
 
         self.assertEqual(
-            [item.sql_template for item in recall.results], [allowed.sql_template]
+            [item.sql_template for item in recall.results],
+            [same_role.sql_template, allowed.sql_template],
         )
         self.assertEqual(recall.status, "success")
         self.assertEqual(stale.quality, "disabled")
@@ -530,8 +576,8 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         service = build_service(repo, index_repo, FakeEmbeddingClient())
 
         recall = await service.recall(
-            user_id=7,
             role_name="analyst",
+            authorization_epoch=AUTHORIZATION_EPOCH,
             policy=AssetAccessPolicy(
                 user_id=7,
                 grants=frozenset({AssetIdentity("doris", "analytics")}),
@@ -566,8 +612,8 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         service = build_service(repo, index_repo, FakeEmbeddingClient())
 
         recall = await service.recall(
-            user_id=7,
             role_name="analyst",
+            authorization_epoch=AUTHORIZATION_EPOCH,
             policy=AssetAccessPolicy(
                 user_id=7,
                 grants=frozenset({AssetIdentity("doris", "analytics")}),
@@ -586,8 +632,8 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         service = build_service(FakePGRepo(), index_repo, FakeEmbeddingClient())
 
         recall = await service.recall(
-            user_id=7,
             role_name="analyst",
+            authorization_epoch=AUTHORIZATION_EPOCH,
             policy=AssetAccessPolicy(
                 user_id=7,
                 grants=frozenset({AssetIdentity("doris", "analytics")}),
@@ -614,6 +660,7 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             QueryExecutionContext(
                 session_key=session_key,
                 role_name="analyst",
+                authorization_epoch=AUTHORIZATION_EPOCH,
                 purpose="删除订单",
             ),
             raw_sql="DELETE FROM orders",
@@ -701,7 +748,7 @@ class QueryExperienceESRepoTest(unittest.IsolatedAsyncioTestCase):
             refresh=True,
         )
 
-    async def test_semantic_search_is_scoped_to_user_and_role(self) -> None:
+    async def test_semantic_search_is_scoped_to_role_and_authorization_epoch(self) -> None:
         experience_id = uuid4()
         client = MagicMock()
         client.indices.exists = AsyncMock(return_value=True)
@@ -719,8 +766,8 @@ class QueryExperienceESRepoTest(unittest.IsolatedAsyncioTestCase):
 
         hits = await repo.search_vector(
             [0.1, 0.2],
-            user_id=7,
             role_name="analyst",
+            authorization_epoch=AUTHORIZATION_EPOCH,
             limit=5,
             min_score=0.65,
         )
@@ -733,8 +780,8 @@ class QueryExperienceESRepoTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             filters,
             [
-                {"term": {"owner_user_id": 7}},
                 {"term": {"role_name": "analyst"}},
+                {"term": {"authorization_epoch": str(AUTHORIZATION_EPOCH)}},
             ],
         )
 

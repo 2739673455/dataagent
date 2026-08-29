@@ -26,18 +26,18 @@ flowchart TD
 ## 2. 核心架构与功能特性
 
 ### 2.1 元数据目录管理模型
-- **表元数据（[`TableInfo`](../app/metadata/models.py)）**：
+- **表元数据（[`TableInfo`](../app/metadata/models/catalog.py)）**：
   - 支持区分表角色（`fact` 事实表 / `dimension` 维度表）。
   - 维护主键列（`primary_key_columns`）与业务描述。
   - 维护字段取值索引的表级游标配置，回看窗口由应用级配置统一管理。
   - 包含 `meta_version` 变更版本号。
-- **字段元数据（[`ColumnInfo`](../app/metadata/models.py)）**：
+- **字段元数据（[`ColumnInfo`](../app/metadata/models/catalog.py)）**：
   - 记录数据类型、业务别名列表（`alias`）、示例值（`examples`）。
   - 支持外键与关联引用（`reference_t_name`、`reference_c_name`）。
   - `index_values` 标记：控制是否对该字段枚举值建立全文索引。
   - `meta_version` 与 `index_version`：记录元数据版本与语义索引版本，用于判断同步状态。
-- **指标元数据（[`MetricInfo`](../app/metadata/models.py)）**：
-  - 记录业务指标口径、别名及计算所需的关联字段集合（[`ColumnReference`](../app/metadata/models.py)）。
+- **指标元数据（[`MetricInfo`](../app/metadata/models/catalog.py)）**：
+  - 记录业务指标口径、别名及计算所需的关联字段集合（[`ColumnReference`](../app/metadata/models/catalog.py)）。
 
 ### 2.2 YAML 元数据导入导出与冲突校验
 - [`MetaImportService`](../app/metadata/services/import_service.py) 支持通过标准 YAML 配置文件批量定义数仓元数据。
@@ -70,16 +70,15 @@ flowchart TD
 ### 2.5 历史查询经验沉淀与检索 (Query Experience)
 - **SQL 指纹与结构模板提取**：
   - 基于 `sqlglot` 对执行成功的 SQL 进行字面量脱敏与结构归一化，提取稳定的 SQL 模板与 64 位 SHA-256 结构指纹。
-  - 按 `(owner_user_id, role_name, fingerprint)` 聚合为私有查询经验（[`QueryExperience`](../app/query/models/experience.py)）。
+  - 按 `(role_name, fingerprint)` 聚合为角色共享查询经验，并记录角色的 `authorization_epoch`（[`QueryExperience`](../app/query/models/experience.py)）。
 - **元数据版本联动与自动失效**：
   - 经验关联引用的表与字段记录了创建时的 `meta_version`（[`QueryExperienceAsset`](../app/query/models/experience.py)）。
   - 当管理员修改或删除底层表/字段元数据时，[`QueryExperienceService.invalidate_assets`](../app/query/services/experience.py) 自动将受影响的历史经验置为 `disabled` 并下线其 ES 检索索引。
 - **双路索引与 Explorer 召回**：
   - 同步至 Elasticsearch 索引（`data-agent-query-experience`，[`QueryExperienceESRepo`](../app/query/repositories/experience_index.py)）。
-  - Explorer Agent 通过 [`search_query_experiences`](../app/analytics/agents/explorer/tools/query_experience.py) 工具按自然语言意图和当前权限召回高分历史模板，加速 SQL 编写并提升准确率。
-- **执行流水审计与采纳提升**：
-  - 记录每次执行流水（[`QueryExecution`](../app/query/models/execution.py)）。
-  - 当最终产物被分析采纳时，自动将经验晋升为 `promoted` 优质候选。
+  - Explorer 按当前 `role_name` 和 `authorization_epoch` 进行全文与向量召回；PostgreSQL 回查、元数据版本检查和当前资产权限复核后，返回最多 3 条模板。
+- **执行流水审计**：
+  - 每次执行都记录用户、角色、权限纪元、`purpose`、原始 SQL 和结果摘要（[`QueryExecution`](../app/query/models/execution.py)）。用户注销后该审计事实及其角色共享经验继续保留。
 
 ---
 

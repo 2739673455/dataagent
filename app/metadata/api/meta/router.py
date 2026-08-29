@@ -59,7 +59,7 @@ router = APIRouter(tags=["meta"])
 MetadataPath = Annotated[MetadataName, Path()]
 
 
-async def get_meta_catalog_service(
+async def _get_meta_catalog_service(
     _: AdminUserDep,
 ) -> AsyncGenerator[MetaCatalogService]:
     """为平台管理员创建完整元数据目录服务"""
@@ -81,7 +81,7 @@ async def get_meta_catalog_service(
         )
 
 
-async def get_meta_import_service() -> AsyncGenerator[MetaImportService]:
+async def _get_meta_import_service() -> AsyncGenerator[MetaImportService]:
     """创建请求级元数据导入服务"""
     async with (
         meta_postgres_client_manager.session() as meta_session,
@@ -94,11 +94,11 @@ async def get_meta_import_service() -> AsyncGenerator[MetaImportService]:
 
 MetaCatalogServiceDep = Annotated[
     MetaCatalogService,
-    Depends(get_meta_catalog_service),
+    Depends(_get_meta_catalog_service),
 ]
 MetaImportServiceDep = Annotated[
     MetaImportService,
-    Depends(get_meta_import_service),
+    Depends(_get_meta_import_service),
 ]
 
 

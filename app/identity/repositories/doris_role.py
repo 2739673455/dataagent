@@ -196,7 +196,7 @@ class DorisRoleRepository:
                 f"SHOW ROW POLICY FOR ROLE {role}"
             )
             return [
-                row_policy_from_row(cast(Mapping[str, object], row))
+                _row_policy_from_row(cast(Mapping[str, object], row))
                 for row in result.mappings().all()
             ]
 
@@ -360,7 +360,7 @@ class DorisRoleRepository:
         return f"SELECT_PRIV({quoted_columns})"
 
 
-def row_policy_from_row(row: Mapping[str, object]) -> DorisRowPolicy:
+def _row_policy_from_row(row: Mapping[str, object]) -> DorisRowPolicy:
     """将 Doris SHOW ROW POLICY 结果转换为稳定模型"""
     raw_policy_type = str(row["FilterType"]).upper()
     if raw_policy_type not in {"RESTRICTIVE", "PERMISSIVE"}:

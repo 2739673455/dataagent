@@ -4,12 +4,9 @@ import asyncio
 import hashlib
 import io
 import json
-import posixpath
-import tarfile
-import tempfile
 import threading
 import time
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -22,6 +19,7 @@ from docker.models.containers import Container
 from loguru import logger
 
 import docker
+from app.sandbox.archive import SandboxArchiveStore
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.capacity import (
     FairCapacityLimiter,
@@ -31,14 +29,10 @@ from app.sandbox.concurrency import LifecycleGuard
 from app.sandbox.exceptions import (
     SandboxCapacityCancelledError,
     SandboxCapacityTimeoutError,
-    SandboxFileTooLargeError,
-    SandboxPathError,
-    SandboxStorageLimitError,
 )
 from app.sandbox.ownership import SandboxOwnership
 from app.sandbox.paths import (
-    SANDBOX_STAGING_ROOT,
-    SANDBOX_WORKSPACE_ROOT,
+    SandboxReadonlyMount,
     SandboxSessionScope,
     normalize_attachment_path,
     normalize_user_attachment_path,
@@ -49,24 +43,9 @@ _DEPLOYMENT_LABEL = "dataagent.sandbox.deployment"
 _USER_LABEL = "dataagent.sandbox.user_id"
 _QUOTA_MODE_LABEL = "dataagent.sandbox.quota_mode"
 _QUOTA_BYTES_LABEL = "dataagent.sandbox.quota_bytes"
-_MIN_CONVERSATION_UID = 100_000
-_MAX_CONVERSATION_UID = 2_147_483_646
 _CONTAINER_SPEC_LABEL = "dataagent.sandbox.spec"
-_SANDBOX_STAGING_ROOT = SANDBOX_STAGING_ROOT
-_SANDBOX_WORKSPACE_ROOT = SANDBOX_WORKSPACE_ROOT
-_SANDBOX_UID_REGISTRY = "/workspace/.dataagent-uids.json"
 _SANDBOX_ACTIVITY_FILE = "/workspace/.dataagent-activity.json"
-_UID_REGISTRY_VERSION = 2
 _ACTIVITY_FILE_VERSION = 1
-_ARCHIVE_SPOOL_BYTES = 8 * 1024 * 1024
-
-
-@dataclass(slots=True)
-class SandboxUidRegistry:
-    """持久化 conversation 和 Agent Session 的 Linux UID"""
-
-    conversations: dict[str, int]
-    sessions: dict[str, int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,41 +61,22 @@ class DockerSandboxHealth:
     capacity: SandboxCapacitySnapshot
 
 
-class IteratorReader(io.RawIOBase):
-    """将 Docker archive 字节迭代器适配为 tarfile 可读取的流"""
+@dataclass(frozen=True, slots=True)
+class _UserResources:
+    """一个用户对应的进程内并发资源"""
 
-    def __init__(self, chunks):
-        """绑定 Docker archive 返回的字节块迭代器"""
-        super().__init__()
-        self._chunks = chunks
-        self._buffer = bytearray()
-        self._finished = False
+    lock: asyncio.Lock
+    guard: LifecycleGuard
+    start_lock: threading.Lock
 
-    def readable(self) -> bool:
-        """声明该适配器支持读取"""
-        return True
 
-    def readinto(self, target: Any) -> int:
-        """将迭代器数据填充到目标缓冲区"""
-        if self.closed:
-            return 0
-        view = memoryview(target).cast("B")
-        while len(self._buffer) < len(view) and not self._finished:
-            try:
-                self._buffer.extend(next(self._chunks))
-            except StopIteration:
-                self._finished = True
-        size = min(len(view), len(self._buffer))
-        view[:size] = self._buffer[:size]
-        del self._buffer[:size]
-        return size
+@dataclass(frozen=True, slots=True)
+class _ConversationResources:
+    """一个会话对应的完整进程内并发资源"""
 
-    def close(self) -> None:
-        """关闭底层字节迭代器和读取流"""
-        close_chunks = getattr(self._chunks, "close", None)
-        if callable(close_chunks):
-            close_chunks()
-        super().close()
+    user: _UserResources
+    guard: LifecycleGuard
+    mutation_lock: threading.RLock
 
 
 class DockerSandboxManager:
@@ -126,10 +86,26 @@ class DockerSandboxManager:
         self,
         sandbox_config: SandboxConfig,
         ownership: SandboxOwnership,
+        readonly_mounts: Sequence[SandboxReadonlyMount],
     ) -> None:
         """初始化 Docker 沙箱管理器"""
         self._config = sandbox_config
         self._ownership = ownership
+        self._readonly_mounts = tuple(
+            sorted(readonly_mounts, key=lambda mount: mount.target.as_posix())
+        )
+        sources = [mount.source for mount in self._readonly_mounts]
+        targets = [mount.target for mount in self._readonly_mounts]
+        if len(sources) != len(set(sources)):
+            raise ValueError("沙箱只读挂载包含重复源目录")
+        if len(targets) != len(set(targets)):
+            raise ValueError("沙箱只读挂载包含重复目标路径")
+        if any(
+            left != right and (left.is_relative_to(right) or right.is_relative_to(left))
+            for index, left in enumerate(targets)
+            for right in targets[index + 1 :]
+        ):
+            raise ValueError("沙箱只读挂载目标路径不能互相嵌套")
         self._client: docker.DockerClient | None = None
         self._container_spec: str | None = None
         self._init_lock = asyncio.Lock()
@@ -146,6 +122,10 @@ class DockerSandboxManager:
             max_running=sandbox_config.max_running_containers,
             max_waiting=sandbox_config.max_capacity_waiters,
             wait_timeout_seconds=sandbox_config.capacity_wait_timeout_seconds,
+        )
+        self._archive = SandboxArchiveStore(
+            sandbox_config.max_file_bytes,
+            sandbox_config.max_workspace_bytes,
         )
         self._health_lock = threading.Lock()
         self._last_cleanup_started_at: float | None = None
@@ -205,40 +185,57 @@ class DockerSandboxManager:
                     self._cleanup_idle_containers()
                 )
 
-    async def _get_resources(
+    def _get_user_resources(self, user_id: int) -> _UserResources:
+        """获取用户级并发控制资源"""
+        with self._resource_lock:
+            return _UserResources(
+                lock=self._user_locks.setdefault(user_id, asyncio.Lock()),
+                guard=self._user_guards.setdefault(user_id, LifecycleGuard()),
+                start_lock=self._start_locks.setdefault(user_id, threading.Lock()),
+            )
+
+    def _get_conversation_resources(
         self,
         user_id: int,
-        conversation_id: UUID | None = None,
-    ) -> tuple[
-        asyncio.Lock,
-        LifecycleGuard,
-        threading.Lock,
-        LifecycleGuard | None,
-        threading.RLock | None,
-    ]:
-        """获取用户和会话的并发控制资源"""
+        conversation_id: UUID,
+    ) -> _ConversationResources:
+        """获取用户和会话的完整并发控制资源"""
         with self._resource_lock:
-            user_lock = self._user_locks.setdefault(user_id, asyncio.Lock())
-            user_guard = self._user_guards.setdefault(user_id, LifecycleGuard())
-            start_lock = self._start_locks.setdefault(user_id, threading.Lock())
-            conversation_guard = None
-            mutation_lock = None
-            if conversation_id is not None:
-                conversation_guard = self._conversation_guards.setdefault(
+            user = self._get_user_resources(user_id)
+            return _ConversationResources(
+                user=user,
+                guard=self._conversation_guards.setdefault(
                     (user_id, conversation_id),
                     LifecycleGuard(),
-                )
-                mutation_lock = self._mutation_locks.setdefault(
+                ),
+                mutation_lock=self._mutation_locks.setdefault(
                     (user_id, conversation_id),
                     threading.RLock(),
-                )
-            return (
-                user_lock,
-                user_guard,
-                start_lock,
-                conversation_guard,
-                mutation_lock,
+                ),
             )
+
+    @contextmanager
+    def _conversation_maintenance(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        resources: _ConversationResources,
+        mutation_lock: threading.RLock | None = None,
+    ) -> Generator[None, None, None]:
+        """在跨进程和进程内保护下独占维护会话"""
+        with (
+            self._ownership.user_maintenance(user_id),
+            self._ownership.conversation_maintenance(user_id, conversation_id),
+            self._ownership.user_mutation(user_id),
+            resources.user.guard.maintenance(),
+            resources.guard.maintenance(),
+        ):
+            self._ownership.assert_available(user_id, conversation_id)
+            if mutation_lock is None:
+                yield
+            else:
+                with mutation_lock:
+                    yield
 
     def _touch_user(self, user_id: int) -> None:
         """记录用户沙箱最近活动时间"""
@@ -317,16 +314,34 @@ class DockerSandboxManager:
             "environment": {"HOME": "/tmp"},
         }
 
+    def _readonly_mount_volumes(self) -> dict[str, dict[str, str]]:
+        """构造宿主机只读目录的 Docker 挂载参数"""
+        return {
+            str(mount.source): {
+                "bind": mount.target.as_posix(),
+                "mode": "ro",
+            }
+            for mount in self._readonly_mounts
+        }
+
     def _container_spec_digest(self, image_id: str) -> str:
         """计算完整容器运行和存储规格的稳定摘要"""
         spec_payload = {
-            "layout_version": 4,
+            "layout_version": 5,
             "image_id": image_id,
             "runtime": self._runtime_container_spec(),
             "workspace_mount": {
                 "target": "/workspace",
                 "mode": "rw",
             },
+            "readonly_mounts": [
+                {
+                    "source": str(mount.source),
+                    "target": mount.target.as_posix(),
+                    "mode": "ro",
+                }
+                for mount in self._readonly_mounts
+            ],
             "volume": {
                 "driver": self._config.volume_driver,
                 "driver_options": self._config.volume_driver_options,
@@ -380,7 +395,10 @@ class DockerSandboxManager:
         container = client.containers.create(
             self._config.image,
             name=self._container_name(user_id),
-            volumes={volume.name: {"bind": "/workspace", "mode": "rw"}},
+            volumes={
+                volume.name: {"bind": "/workspace", "mode": "rw"},
+                **self._readonly_mount_volumes(),
+            },
             labels={
                 **self._resource_labels(user_id),
                 _CONTAINER_SPEC_LABEL: self._container_spec,
@@ -619,60 +637,6 @@ class DockerSandboxManager:
                 self._mark_user_not_running(user_id)
                 logger.info(f"启动时停止超出上限的 Docker 沙箱: user_id={user_id}")
 
-    @contextmanager
-    def _open_archive_sync(
-        self,
-        container: Container,
-        path: str,
-    ) -> Generator[tarfile.TarFile, None, None]:
-        """流式打开容器中的 archive，适用于运行或停止状态"""
-        chunks, _ = container.get_archive(path)
-        raw_reader = IteratorReader(iter(chunks))
-        buffered_reader = io.BufferedReader(raw_reader)
-        try:
-            with tarfile.open(fileobj=buffered_reader, mode="r|*") as archive:
-                yield archive
-        finally:
-            buffered_reader.close()
-
-    def _inspect_archive_path_sync(
-        self,
-        container: Container,
-        path: str,
-    ) -> tarfile.TarInfo | None:
-        """读取容器路径对应的首个 archive 条目"""
-        try:
-            with self._open_archive_sync(container, path) as archive:
-                member = next(iter(archive), None)
-                if member is None:
-                    return None
-                return member
-        except NotFound:
-            return None
-
-    def _read_archive_file_sync(
-        self,
-        container: Container,
-        path: str,
-        max_bytes: int,
-    ) -> tuple[bytes, tarfile.TarInfo]:
-        """从运行或停止容器读取一个普通文件"""
-        with self._open_archive_sync(container, path) as archive:
-            member = next(iter(archive), None)
-            if member is None or not member.isreg():
-                raise FileNotFoundError(path)
-            if member.size > max_bytes:
-                raise SandboxFileTooLargeError(
-                    f"文件大小超出限制: {member.size} > {max_bytes}"
-                )
-            extracted = archive.extractfile(member)
-            if extracted is None:
-                raise FileNotFoundError(path)
-            content = extracted.read(max_bytes + 1)
-            if len(content) > max_bytes:
-                raise SandboxFileTooLargeError(f"文件大小超出限制: > {max_bytes}")
-            return content, member
-
     @staticmethod
     def _parse_docker_timestamp(value: object) -> float:
         """解析 Docker 返回的 RFC3339 时间戳"""
@@ -690,7 +654,7 @@ class DockerSandboxManager:
         """从持久文件或 Docker 状态恢复最近活动时间"""
         now = time.time()
         try:
-            content, member = self._read_archive_file_sync(
+            content, member = self._archive.read_file(
                 container,
                 _SANDBOX_ACTIVITY_FILE,
                 16 * 1024,
@@ -737,7 +701,7 @@ class DockerSandboxManager:
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
-        self._put_archive_sync(
+        self._archive.put(
             container,
             "/workspace",
             [],
@@ -755,366 +719,75 @@ class DockerSandboxManager:
         with self._activity_lock:
             self._last_persisted_activity[user_id] = activity_at
 
-    def _put_archive_sync(
+    def _build_backend(
         self,
-        container: Container,
-        base_path: str,
-        directories: list[tuple[str, int, int, int]],
-        files: list[tuple[str, int, int, int, BinaryIO, int]],
-    ) -> None:
-        """构造受控 tar 并写入运行或停止容器"""
-        with tempfile.SpooledTemporaryFile(max_size=_ARCHIVE_SPOOL_BYTES) as buffer:
-            with tarfile.open(fileobj=buffer, mode="w") as archive:
-                for name, owner_uid, owner_gid, mode in directories:
-                    info = tarfile.TarInfo(name=name.rstrip("/") + "/")
-                    info.type = tarfile.DIRTYPE
-                    info.mode = mode
-                    info.uid = owner_uid
-                    info.gid = owner_gid
-                    archive.addfile(info)
-                for name, owner_uid, owner_gid, mode, content, size in files:
-                    info = tarfile.TarInfo(name=name)
-                    info.size = size
-                    info.mode = mode
-                    info.uid = owner_uid
-                    info.gid = owner_gid
-                    archive.addfile(info, content)
-            buffer.seek(0)
-            if not container.put_archive(base_path, buffer):
-                raise OSError(f"写入 Docker 归档失败: {base_path}")
-
-    def _write_uid_registry_sync(
-        self,
-        container: Container,
-        registry: SandboxUidRegistry,
-    ) -> None:
-        """将 UID 注册表持久化到用户数据卷"""
-        content = json.dumps(
-            {
-                "version": _UID_REGISTRY_VERSION,
-                "conversations": registry.conversations,
-                "sessions": registry.sessions,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-        self._put_archive_sync(
-            container,
-            "/workspace",
-            [],
-            [
-                (
-                    PurePosixPath(_SANDBOX_UID_REGISTRY).name,
-                    0,
-                    0,
-                    0o600,
-                    io.BytesIO(content),
-                    len(content),
-                )
-            ],
-        )
-
-    def _scan_workspace_uids_sync(
-        self,
-        container: Container,
-    ) -> SandboxUidRegistry:
-        """首次迁移时从目录属主构建完整会话 UID 注册表"""
-        mapping: dict[str, int] = {}
-        try:
-            with self._open_archive_sync(container, _SANDBOX_WORKSPACE_ROOT) as archive:
-                for member in archive:
-                    if not member.isdir():
-                        continue
-                    parts = PurePosixPath(member.name).parts
-                    if "conversations" in parts:
-                        parts = parts[parts.index("conversations") + 1 :]
-                    if len(parts) != 1:
-                        continue
-                    try:
-                        conversation_id = str(UUID(parts[0]))
-                    except ValueError:
-                        continue
-                    if _MIN_CONVERSATION_UID <= member.uid <= _MAX_CONVERSATION_UID:
-                        mapping[conversation_id] = member.uid
-        except NotFound:
-            pass
-        return SandboxUidRegistry(conversations=mapping, sessions={})
-
-    @staticmethod
-    def _validate_session_registry_key(key: str) -> str:
-        """校验并规范化 UID 注册表中的 Session 键"""
-        parts = PurePosixPath(key).parts
-        if len(parts) != 6 or parts[1] != "analyses" or parts[3] != "sessions":
-            raise ValueError("沙箱 Session UID 键无效")
-        conversation_id = str(UUID(parts[0]))
-        scope = SandboxSessionScope(parts[2], parts[4], parts[5])
-        return scope.registry_key(UUID(conversation_id))
-
-    @staticmethod
-    def _validate_uid_registry(registry: SandboxUidRegistry) -> None:
-        """校验 conversation 和 Session UID 全局唯一"""
-        values = [*registry.conversations.values(), *registry.sessions.values()]
-        if len(values) != len(set(values)):
-            raise RuntimeError("沙箱 UID 注册表包含重复的 UID")
-        if any(
-            uid < _MIN_CONVERSATION_UID or uid > _MAX_CONVERSATION_UID for uid in values
-        ):
-            raise RuntimeError("沙箱 UID 注册表包含无效的 UID")
-
-    def _load_uid_registry_sync(
-        self,
-        container: Container,
-    ) -> SandboxUidRegistry:
-        """读取 UID 注册表，不存在时从已有工作区迁移"""
-        migrated = False
-        try:
-            content, member = self._read_archive_file_sync(
-                container,
-                _SANDBOX_UID_REGISTRY,
-                4 * 1024 * 1024,
-            )
-            if member.uid != 0:
-                raise RuntimeError("沙箱 UID 注册表文件拥有者无效")
-            payload = json.loads(content)
-            version = payload.get("version")
-            if version not in {1, _UID_REGISTRY_VERSION}:
-                raise RuntimeError("不支持的沙箱 UID 注册表版本")
-            raw_conversations = payload.get("conversations")
-            raw_sessions = payload.get("sessions", {}) if version == 2 else {}
-            if not isinstance(raw_conversations, dict) or not isinstance(
-                raw_sessions,
-                dict,
-            ):
-                raise TypeError("沙箱 UID 注册表格式无效")
-            registry = SandboxUidRegistry(
-                conversations={
-                    str(UUID(key)): int(value)
-                    for key, value in raw_conversations.items()
-                },
-                sessions={
-                    self._validate_session_registry_key(key): int(value)
-                    for key, value in raw_sessions.items()
-                },
-            )
-            migrated = version == 1
-        except (NotFound, FileNotFoundError):
-            registry = self._scan_workspace_uids_sync(container)
-            migrated = True
-        self._validate_uid_registry(registry)
-        if migrated:
-            self._write_uid_registry_sync(container, registry)
-        return registry
-
-    def _allocate_conversation_uid(
-        self,
+        user_id: int,
         conversation_id: UUID,
-        used_uids: set[int],
-    ) -> int:
-        """为会话确定性分配未使用的 Linux UID"""
-        uid_range = _MAX_CONVERSATION_UID - _MIN_CONVERSATION_UID + 1
-        for attempt in range(uid_range):
-            digest = hashlib.blake2s(
-                conversation_id.bytes + attempt.to_bytes(8, "big")
-            ).digest()
-            candidate = (
-                _MIN_CONVERSATION_UID + int.from_bytes(digest[:8], "big") % uid_range
-            )
-            if candidate not in used_uids:
-                return candidate
-        raise RuntimeError("会话 UID 分配范围已耗尽")
-
-    def _allocate_session_uid(
-        self,
-        registry_key: str,
-        used_uids: set[int],
-    ) -> int:
-        """为 Agent Session 确定性分配未使用的 Linux UID"""
-        uid_range = _MAX_CONVERSATION_UID - _MIN_CONVERSATION_UID + 1
-        seed = f"session:{registry_key}".encode()
-        for attempt in range(uid_range):
-            digest = hashlib.blake2s(seed + attempt.to_bytes(8, "big")).digest()
-            candidate = (
-                _MIN_CONVERSATION_UID + int.from_bytes(digest[:8], "big") % uid_range
-            )
-            if candidate not in used_uids:
-                return candidate
-        raise RuntimeError("沙箱 UID 分配范围已耗尽")
-
-    def _ensure_workspace_archive_sync(
-        self,
-        container: Container,
-        conversation_id: UUID,
-    ) -> int:
-        """不启动容器地创建会话工作区并返回稳定 UID"""
-        self._put_archive_sync(
-            container,
-            "/workspace",
-            [
-                ("conversations", 0, 0, 0o711),
-                (PurePosixPath(_SANDBOX_STAGING_ROOT).name, 0, 0, 0o700),
-            ],
-            [],
-        )
-        registry = self._load_uid_registry_sync(container)
-        key = str(conversation_id)
-        conversation_uid = registry.conversations.get(key)
-        if conversation_uid is None:
-            conversation_uid = self._allocate_conversation_uid(
-                conversation_id,
-                {
-                    *registry.conversations.values(),
-                    *registry.sessions.values(),
-                },
-            )
-            registry.conversations[key] = conversation_uid
-            self._write_uid_registry_sync(container, registry)
-
-        target_path = f"{_SANDBOX_WORKSPACE_ROOT}/{conversation_id}"
-        existing = self._inspect_archive_path_sync(container, target_path)
-        if existing is not None and (
-            not existing.isdir() or existing.uid != conversation_uid
-        ):
-            raise RuntimeError("对话工作区所有者与 UID 注册表不一致")
-
-        conversation_name = str(conversation_id)
-        self._put_archive_sync(
-            container,
-            _SANDBOX_WORKSPACE_ROOT,
-            [
-                (conversation_name, conversation_uid, conversation_uid, 0o750),
-                (
-                    f"{conversation_name}/.home",
-                    conversation_uid,
-                    conversation_uid,
-                    0o700,
-                ),
-                (
-                    f"{conversation_name}/.cache",
-                    conversation_uid,
-                    conversation_uid,
-                    0o700,
-                ),
-                (
-                    f"{conversation_name}/.cache/uv",
-                    conversation_uid,
-                    conversation_uid,
-                    0o700,
-                ),
-                (
-                    f"{conversation_name}/.tmp",
-                    conversation_uid,
-                    conversation_uid,
-                    0o700,
-                ),
-            ],
-            [],
-        )
-        self._put_archive_sync(
-            container,
-            _SANDBOX_STAGING_ROOT,
-            [
-                (conversation_name, 0, 0, 0o700),
-                (f"{conversation_name}/{conversation_uid}", 0, 0, 0o700),
-            ],
-            [],
-        )
-        return conversation_uid
-
-    def _ensure_session_workspace_archive_sync(
-        self,
-        container: Container,
-        conversation_id: UUID,
-        scope: SandboxSessionScope,
-    ) -> tuple[int, int]:
-        """创建 Agent Session 目录并返回 conversation/session UID"""
-        conversation_uid = self._ensure_workspace_archive_sync(
-            container,
+        conversation_uid: int,
+        resources: _ConversationResources,
+        scope: SandboxSessionScope | None,
+        execution_uid: int | None,
+    ) -> DockerSandboxBackend:
+        """使用已准备的工作区构造沙箱后端"""
+        return DockerSandboxBackend(
+            user_id,
             conversation_id,
+            conversation_uid,
+            self._config,
+            self._ownership,
+            resources.user.guard,
+            resources.guard,
+            resources.mutation_lock,
+            lambda: self._touch_user(user_id),
+            lambda cancel_event: self._get_running_container_sync(
+                user_id,
+                resources.user.start_lock,
+                cancel_event,
+            ),
+            self._capacity.notify_waiters,
+            session_scope=scope,
+            execution_uid=execution_uid,
         )
-        registry = self._load_uid_registry_sync(container)
-        registry_key = scope.registry_key(conversation_id)
-        session_uid = registry.sessions.get(registry_key)
-        if session_uid is None:
-            session_uid = self._allocate_session_uid(
-                registry_key,
-                {
-                    *registry.conversations.values(),
-                    *registry.sessions.values(),
-                },
-            )
-            registry.sessions[registry_key] = session_uid
-            self._write_uid_registry_sync(container, registry)
 
-        conversation_name = str(conversation_id)
-        session_relative = scope.relative_workspace
-        session_path = posixpath.join(
-            _SANDBOX_WORKSPACE_ROOT,
-            conversation_name,
-            session_relative,
-        )
-        existing = self._inspect_archive_path_sync(container, session_path)
-        if existing is not None and (
-            not existing.isdir()
-            or existing.uid not in {conversation_uid, session_uid}
-            or existing.gid != conversation_uid
-        ):
-            raise RuntimeError("Agent Session 工作区所有者无效")
+    async def _prepare_backend(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        scope: SandboxSessionScope | None = None,
+    ) -> DockerSandboxBackend:
+        """准备工作区并创建普通或 Session 后端"""
+        await self.init()
+        resources = self._get_conversation_resources(user_id, conversation_id)
 
-        analysis_root = f"analyses/{scope.analysis_id}"
-        sessions_root = f"{analysis_root}/sessions"
-        agent_root = f"{sessions_root}/{scope.agent_type}"
-        self._put_archive_sync(
-            container,
-            f"{_SANDBOX_WORKSPACE_ROOT}/{conversation_name}",
-            [
-                ("analyses", conversation_uid, conversation_uid, 0o750),
-                (analysis_root, conversation_uid, conversation_uid, 0o750),
-                (sessions_root, conversation_uid, conversation_uid, 0o750),
-                (agent_root, conversation_uid, conversation_uid, 0o750),
-                (session_relative, session_uid, conversation_uid, 0o750),
-                (
-                    f"{session_relative}/.home",
-                    session_uid,
-                    conversation_uid,
-                    0o700,
-                ),
-                (
-                    f"{session_relative}/.cache",
-                    session_uid,
-                    conversation_uid,
-                    0o700,
-                ),
-                (
-                    f"{session_relative}/.cache/uv",
-                    session_uid,
-                    conversation_uid,
-                    0o700,
-                ),
-                (
-                    f"{session_relative}/.tmp",
-                    session_uid,
-                    conversation_uid,
-                    0o700,
-                ),
-            ],
-            [],
+        def prepare() -> tuple[int, int | None]:
+            """在独占维护窗口中准备工作区"""
+            with self._conversation_maintenance(
+                user_id,
+                conversation_id,
+                resources,
+            ):
+                container = self._get_or_create_storage_container_sync(user_id)
+                if scope is None:
+                    return self._archive.ensure_workspace(
+                        container, conversation_id
+                    ), None
+                return self._archive.ensure_session_workspace(
+                    container,
+                    conversation_id,
+                    scope,
+                )
+
+        async with resources.user.lock:
+            conversation_uid, execution_uid = await asyncio.to_thread(prepare)
+        self._touch_user(user_id)
+        return self._build_backend(
+            user_id,
+            conversation_id,
+            conversation_uid,
+            resources,
+            scope,
+            execution_uid,
         )
-        self._put_archive_sync(
-            container,
-            posixpath.join(_SANDBOX_STAGING_ROOT, conversation_name),
-            [(str(session_uid), 0, 0, 0o700)],
-            [],
-        )
-        prepared = self._inspect_archive_path_sync(container, session_path)
-        if (
-            prepared is None
-            or not prepared.isdir()
-            or prepared.uid != session_uid
-            or prepared.gid != conversation_uid
-            or prepared.mode & 0o777 != 0o750
-        ):
-            raise RuntimeError("Agent Session 工作区权限设置失败")
-        return conversation_uid, session_uid
 
     async def get_backend(
         self,
@@ -1122,57 +795,7 @@ class DockerSandboxManager:
         conversation_id: UUID,
     ) -> DockerSandboxBackend:
         """获取用户指定会话的沙箱后端"""
-        await self.init()
-        (
-            user_lock,
-            user_guard,
-            start_lock,
-            conversation_guard,
-            mutation_lock,
-        ) = await self._get_resources(user_id, conversation_id)
-        if conversation_guard is None or mutation_lock is None:
-            raise RuntimeError("会话沙箱守卫不可用")
-
-        def prepare() -> int:
-            """在独占维护窗口中准备会话工作区"""
-            with (
-                self._ownership.user_maintenance(user_id),
-                self._ownership.conversation_maintenance(
-                    user_id,
-                    conversation_id,
-                ),
-                self._ownership.user_mutation(user_id),
-                user_guard.maintenance(),
-                conversation_guard.maintenance(),
-            ):
-                self._ownership.assert_available(user_id, conversation_id)
-                container = self._get_or_create_storage_container_sync(user_id)
-                return self._ensure_workspace_archive_sync(
-                    container,
-                    conversation_id,
-                )
-
-        async with user_lock:
-            conversation_uid = await asyncio.to_thread(prepare)
-        self._touch_user(user_id)
-        backend = DockerSandboxBackend(
-            user_id,
-            conversation_id,
-            conversation_uid,
-            self._config,
-            self._ownership,
-            user_guard,
-            conversation_guard,
-            mutation_lock,
-            lambda: self._touch_user(user_id),
-            lambda cancel_event: self._get_running_container_sync(
-                user_id,
-                start_lock,
-                cancel_event,
-            ),
-            self._capacity.notify_waiters,
-        )
-        return backend
+        return await self._prepare_backend(user_id, conversation_id)
 
     async def get_session_backend(
         self,
@@ -1183,201 +806,8 @@ class DockerSandboxManager:
         session_id: str,
     ) -> DockerSandboxBackend:
         """获取独立 Linux 身份的专业 Agent Session 后端"""
-        await self.init()
         scope = SandboxSessionScope(analysis_id, agent_type, session_id)
-        (
-            user_lock,
-            user_guard,
-            start_lock,
-            conversation_guard,
-            mutation_lock,
-        ) = await self._get_resources(user_id, conversation_id)
-        if conversation_guard is None or mutation_lock is None:
-            raise RuntimeError("会话沙箱守卫不可用")
-
-        def prepare() -> tuple[int, int]:
-            """在独占维护窗口中准备 Agent Session 工作区"""
-            with (
-                self._ownership.user_maintenance(user_id),
-                self._ownership.conversation_maintenance(
-                    user_id,
-                    conversation_id,
-                ),
-                self._ownership.user_mutation(user_id),
-                user_guard.maintenance(),
-                conversation_guard.maintenance(),
-            ):
-                self._ownership.assert_available(user_id, conversation_id)
-                container = self._get_or_create_storage_container_sync(user_id)
-                return self._ensure_session_workspace_archive_sync(
-                    container,
-                    conversation_id,
-                    scope,
-                )
-
-        async with user_lock:
-            conversation_uid, session_uid = await asyncio.to_thread(prepare)
-        self._touch_user(user_id)
-        return DockerSandboxBackend(
-            user_id,
-            conversation_id,
-            conversation_uid,
-            self._config,
-            self._ownership,
-            user_guard,
-            conversation_guard,
-            mutation_lock,
-            lambda: self._touch_user(user_id),
-            lambda cancel_event: self._get_running_container_sync(
-                user_id,
-                start_lock,
-                cancel_event,
-            ),
-            self._capacity.notify_waiters,
-            session_scope=scope,
-            execution_uid=session_uid,
-        )
-
-    @staticmethod
-    def _registered_session_uid_for_path(
-        registry: SandboxUidRegistry,
-        conversation_id: UUID,
-        relative_path: str,
-    ) -> int | None:
-        """返回与产物路径精确绑定的 Session UID"""
-        parts = PurePosixPath(relative_path).parts
-        if len(parts) < 3 or parts[0] != "analyses" or parts[2] != "sessions":
-            return None
-        if len(parts) < 6:
-            raise SandboxPathError(relative_path)
-        try:
-            scope = SandboxSessionScope(parts[1], parts[3], parts[4])
-        except ValueError as exc:
-            raise SandboxPathError(relative_path) from exc
-        session_uid = registry.sessions.get(scope.registry_key(conversation_id))
-        if session_uid is None:
-            raise SandboxPathError(relative_path)
-        return session_uid
-
-    @classmethod
-    def _allowed_file_uids_for_path(
-        cls,
-        registry: SandboxUidRegistry,
-        conversation_id: UUID,
-        conversation_uid: int,
-        relative_path: str,
-    ) -> set[int]:
-        """返回给定会话文件路径允许使用的属主 UID"""
-        allowed = {conversation_uid}
-        session_uid = cls._registered_session_uid_for_path(
-            registry,
-            conversation_id,
-            relative_path,
-        )
-        if session_uid is not None:
-            allowed.add(session_uid)
-        return allowed
-
-    def _validate_attachment_target_sync(
-        self,
-        container: Container,
-        conversation_id: UUID,
-        conversation_uid: int,
-        relative_path: str,
-    ) -> tuple[list[tuple[str, int, int, int]], int]:
-        """校验附件路径中的每个组件并返回待创建目录和被替换大小"""
-        workspace = f"{_SANDBOX_WORKSPACE_ROOT}/{conversation_id}"
-        registry = self._load_uid_registry_sync(container)
-        session_uid = self._registered_session_uid_for_path(
-            registry,
-            conversation_id,
-            relative_path,
-        )
-        root_info = self._inspect_archive_path_sync(container, workspace)
-        if (
-            root_info is None
-            or not root_info.isdir()
-            or root_info.uid != conversation_uid
-            or root_info.gid != conversation_uid
-        ):
-            raise OSError("对话工作区无效")
-
-        parts = PurePosixPath(relative_path).parts
-        directories: list[tuple[str, int, int, int]] = []
-        current_path = workspace
-        for index, component in enumerate(parts[:-1], start=1):
-            current_path = posixpath.join(current_path, component)
-            info = self._inspect_archive_path_sync(container, current_path)
-            directory_uid = (
-                session_uid
-                if session_uid is not None and index >= 5
-                else conversation_uid
-            )
-            if info is None:
-                directories.append(
-                    (
-                        "/".join(parts[:index]),
-                        directory_uid,
-                        conversation_uid,
-                        0o750,
-                    )
-                )
-                continue
-            allowed_uids = (
-                {conversation_uid, session_uid}
-                if session_uid is not None and index >= 5
-                else {conversation_uid}
-            )
-            if (
-                not info.isdir()
-                or info.uid not in allowed_uids
-                or info.gid != conversation_uid
-            ):
-                raise SandboxPathError(relative_path)
-
-        target_path = posixpath.join(workspace, relative_path)
-        target_info = self._inspect_archive_path_sync(container, target_path)
-        if target_info is None:
-            return directories, 0
-        allowed_target_uids = {conversation_uid}
-        if session_uid is not None:
-            allowed_target_uids.add(session_uid)
-        if (
-            not target_info.isreg()
-            or target_info.uid not in allowed_target_uids
-            or target_info.gid != conversation_uid
-        ):
-            raise SandboxPathError(relative_path)
-        return directories, target_info.size
-
-    def _workspace_archive_size_sync(
-        self,
-        container: Container,
-        conversation_id: UUID,
-        conversation_uid: int,
-    ) -> int:
-        """在停止状态下流式统计会话工作区普通文件大小"""
-        workspace = f"{_SANDBOX_WORKSPACE_ROOT}/{conversation_id}"
-        registry = self._load_uid_registry_sync(container)
-        session_prefix = f"{conversation_id}/"
-        allowed_uids = {
-            conversation_uid,
-            *(
-                uid
-                for key, uid in registry.sessions.items()
-                if key.startswith(session_prefix)
-            ),
-        }
-        total = 0
-        with self._open_archive_sync(container, workspace) as archive:
-            for member in archive:
-                if member.isreg():
-                    if member.uid not in allowed_uids or member.gid != conversation_uid:
-                        raise OSError("对话工作区包含无效的所有者")
-                    total += member.size
-                    if total > self._config.max_workspace_bytes:
-                        break
-        return total
+        return await self._prepare_backend(user_id, conversation_id, scope)
 
     def _upload_attachment_sync(
         self,
@@ -1385,127 +815,38 @@ class DockerSandboxManager:
         conversation_id: UUID,
         normalized_path: str,
         content: BinaryIO,
-        user_guard: LifecycleGuard,
-        conversation_guard: LifecycleGuard,
-        mutation_lock: threading.RLock,
+        resources: _ConversationResources,
     ) -> None:
         """使用 Docker Archive API 上传附件，不启动容器"""
-        with (
-            self._ownership.user_maintenance(user_id),
-            self._ownership.conversation_maintenance(
-                user_id,
-                conversation_id,
-            ),
-            self._ownership.user_mutation(user_id),
-            user_guard.maintenance(),
-            conversation_guard.maintenance(),
-            mutation_lock,
+        with self._conversation_maintenance(
+            user_id,
+            conversation_id,
+            resources,
+            resources.mutation_lock,
         ):
-            self._ownership.assert_available(user_id, conversation_id)
             container = self._get_or_create_storage_container_sync(user_id)
-            conversation_uid = self._ensure_workspace_archive_sync(
+            self._archive.upload_file(
                 container,
                 conversation_id,
-            )
-            content.seek(0, io.SEEK_END)
-            size = content.tell()
-            content.seek(0)
-            if size > self._config.max_file_bytes:
-                raise SandboxFileTooLargeError(
-                    f"文件大小超出限制: {size} > {self._config.max_file_bytes}"
-                )
-            directories, replaced_size = self._validate_attachment_target_sync(
-                container,
-                conversation_id,
-                conversation_uid,
                 normalized_path,
+                content,
             )
-            current_size = self._workspace_archive_size_sync(
-                container,
-                conversation_id,
-                conversation_uid,
-            )
-            projected_size = current_size - replaced_size + size
-            if projected_size > self._config.max_workspace_bytes:
-                raise SandboxStorageLimitError(
-                    "工作区容量超出限制: "
-                    f"{projected_size} > {self._config.max_workspace_bytes}"
-                )
-            workspace = f"{_SANDBOX_WORKSPACE_ROOT}/{conversation_id}"
-            self._put_archive_sync(
-                container,
-                workspace,
-                directories,
-                [
-                    (
-                        normalized_path,
-                        conversation_uid,
-                        conversation_uid,
-                        0o640,
-                        content,
-                        size,
-                    )
-                ],
-            )
-            written = self._inspect_archive_path_sync(
-                container,
-                posixpath.join(workspace, normalized_path),
-            )
-            if (
-                written is None
-                or not written.isreg()
-                or written.uid != conversation_uid
-                or written.size != size
-            ):
-                raise OSError("上传附件未通过校验")
 
     def _download_attachment_sync(
         self,
         user_id: int,
         conversation_id: UUID,
         normalized_path: str,
-        user_guard: LifecycleGuard,
-        conversation_guard: LifecycleGuard,
+        resources: _ConversationResources,
     ) -> bytes:
         """使用 Docker Archive API 下载附件，不启动容器"""
-        with (
-            self._ownership.user_maintenance(user_id),
-            self._ownership.conversation_maintenance(
-                user_id,
-                conversation_id,
-            ),
-            self._ownership.user_mutation(user_id),
-            user_guard.maintenance(),
-            conversation_guard.maintenance(),
-        ):
-            self._ownership.assert_available(user_id, conversation_id)
+        with self._conversation_maintenance(user_id, conversation_id, resources):
             container = self._get_or_create_storage_container_sync(user_id)
-            conversation_uid = self._ensure_workspace_archive_sync(
+            return self._archive.download_file(
                 container,
                 conversation_id,
-            )
-            self._validate_attachment_target_sync(
-                container,
-                conversation_id,
-                conversation_uid,
                 normalized_path,
             )
-            workspace = f"{_SANDBOX_WORKSPACE_ROOT}/{conversation_id}"
-            content, member = self._read_archive_file_sync(
-                container,
-                posixpath.join(workspace, normalized_path),
-                self._config.max_file_bytes,
-            )
-            registry = self._load_uid_registry_sync(container)
-            allowed_uids = self._allowed_file_uids_for_path(
-                registry,
-                conversation_id,
-                conversation_uid,
-                normalized_path,
-            )
-            if member.uid not in allowed_uids or member.gid != conversation_uid:
-                raise FileNotFoundError(normalized_path)
-            return content
 
     async def _upload_normalized_file(
         self,
@@ -1516,25 +857,15 @@ class DockerSandboxManager:
     ) -> None:
         """将已校验路径的文件对象写入用户会话目录"""
         await self.init()
-        (
-            user_lock,
-            user_guard,
-            _,
-            conversation_guard,
-            mutation_lock,
-        ) = await self._get_resources(user_id, conversation_id)
-        if conversation_guard is None or mutation_lock is None:
-            raise RuntimeError("会话沙箱守卫不可用")
-        async with user_lock:
+        resources = self._get_conversation_resources(user_id, conversation_id)
+        async with resources.user.lock:
             await asyncio.to_thread(
                 self._upload_attachment_sync,
                 user_id,
                 conversation_id,
                 normalized_path,
                 content,
-                user_guard,
-                conversation_guard,
-                mutation_lock,
+                resources,
             )
         self._touch_user(user_id)
 
@@ -1579,21 +910,15 @@ class DockerSandboxManager:
         """下载用户会话目录中的文件"""
         normalized_path = normalize_attachment_path(path)
         await self.init()
-        user_lock, user_guard, _, conversation_guard, _ = await self._get_resources(
-            user_id,
-            conversation_id,
-        )
-        if conversation_guard is None:
-            raise RuntimeError("会话沙箱守卫不可用")
-        async with user_lock:
+        resources = self._get_conversation_resources(user_id, conversation_id)
+        async with resources.user.lock:
             try:
                 content = await asyncio.to_thread(
                     self._download_attachment_sync,
                     user_id,
                     conversation_id,
                     normalized_path,
-                    user_guard,
-                    conversation_guard,
+                    resources,
                 )
             except NotFound:
                 raise FileNotFoundError(normalized_path) from None
@@ -1624,66 +949,23 @@ class DockerSandboxManager:
         """检查用户会话目录中的文件是否存在"""
         normalized_path = normalize_attachment_path(path)
         await self.init()
-        user_lock, user_guard, _, conversation_guard, _ = await self._get_resources(
-            user_id,
-            conversation_id,
-        )
-        if conversation_guard is None:
-            return False
+        resources = self._get_conversation_resources(user_id, conversation_id)
 
         def inspect() -> bool:
             """在独占维护窗口中检查会话文件"""
-            with (
-                self._ownership.user_maintenance(user_id),
-                self._ownership.conversation_maintenance(
-                    user_id,
-                    conversation_id,
-                ),
-                self._ownership.user_mutation(user_id),
-                user_guard.maintenance(),
-                conversation_guard.maintenance(),
+            with self._conversation_maintenance(
+                user_id,
+                conversation_id,
+                resources,
             ):
-                self._ownership.assert_available(user_id, conversation_id)
                 container = self._get_or_create_storage_container_sync(user_id)
-                conversation_uid = self._ensure_workspace_archive_sync(
+                return self._archive.is_file(
                     container,
                     conversation_id,
-                )
-                try:
-                    self._validate_attachment_target_sync(
-                        container,
-                        conversation_id,
-                        conversation_uid,
-                        normalized_path,
-                    )
-                except SandboxPathError:
-                    return False
-                target = self._inspect_archive_path_sync(
-                    container,
-                    posixpath.join(
-                        _SANDBOX_WORKSPACE_ROOT,
-                        str(conversation_id),
-                        normalized_path,
-                    ),
-                )
-                registry = self._load_uid_registry_sync(container)
-                try:
-                    allowed_uids = self._allowed_file_uids_for_path(
-                        registry,
-                        conversation_id,
-                        conversation_uid,
-                        normalized_path,
-                    )
-                except SandboxPathError:
-                    return False
-                return bool(
-                    target is not None
-                    and target.isreg()
-                    and target.uid in allowed_uids
-                    and target.gid == conversation_uid
+                    normalized_path,
                 )
 
-        async with user_lock:
+        async with resources.user.lock:
             result = await asyncio.to_thread(inspect)
         self._touch_user(user_id)
         return result
@@ -1695,15 +977,7 @@ class DockerSandboxManager:
     ) -> None:
         """删除用户沙箱中的会话目录"""
         await self.init()
-        (
-            user_lock,
-            user_guard,
-            start_lock,
-            conversation_guard,
-            mutation_lock,
-        ) = await self._get_resources(user_id, conversation_id)
-        if conversation_guard is None or mutation_lock is None:
-            return
+        resources = self._get_conversation_resources(user_id, conversation_id)
 
         def delete() -> None:
             """删除会话工作区并更新 UID 注册表"""
@@ -1714,58 +988,29 @@ class DockerSandboxManager:
                     conversation_id,
                 ),
                 self._ownership.user_mutation(user_id),
-                user_guard.maintenance(),
-                conversation_guard.maintenance(allow_deleted=True),
-                mutation_lock,
+                resources.user.guard.maintenance(),
+                resources.guard.maintenance(allow_deleted=True),
+                resources.mutation_lock,
             ):
                 self._ownership.mark_conversation_deleted(
                     user_id,
                     conversation_id,
                 )
-                container = self._get_running_container_sync(user_id, start_lock)
-                self._ensure_workspace_archive_sync(container, conversation_id)
-                result = container.exec_run(
-                    [
-                        "rm",
-                        "-rf",
-                        "--",
-                        f"{_SANDBOX_WORKSPACE_ROOT}/{conversation_id}",
-                        posixpath.join(
-                            _SANDBOX_STAGING_ROOT,
-                            str(conversation_id),
-                        ),
-                    ],
-                    user="0",
-                    privileged=True,
-                    workdir="/workspace",
+                container = self._get_running_container_sync(
+                    user_id,
+                    resources.user.start_lock,
                 )
-                if result.exit_code != 0:
-                    raw_output = result.output or b""
-                    detail = (
-                        raw_output.decode("utf-8", errors="replace")
-                        if isinstance(raw_output, bytes)
-                        else str(raw_output)
-                    ).strip()
-                    raise OSError(detail or "删除对话沙箱失败")
-                registry = self._load_uid_registry_sync(container)
-                registry.conversations.pop(str(conversation_id), None)
-                session_prefix = f"{conversation_id}/"
-                registry.sessions = {
-                    key: value
-                    for key, value in registry.sessions.items()
-                    if not key.startswith(session_prefix)
-                }
-                self._write_uid_registry_sync(container, registry)
+                self._archive.delete_conversation(container, conversation_id)
 
-        async with user_lock:
-            conversation_guard.mark_deleted()
+        async with resources.user.lock:
+            resources.guard.mark_deleted()
             await asyncio.to_thread(delete)
         self._touch_user(user_id)
 
     async def delete_user_sandbox(self, user_id: int) -> None:
         """删除用户容器及其持久化数据卷"""
         await self.init()
-        user_lock, user_guard, _, _, _ = await self._get_resources(user_id)
+        resources = self._get_user_resources(user_id)
 
         def delete() -> None:
             """删除用户容器和持久化数据卷"""
@@ -1773,7 +1018,7 @@ class DockerSandboxManager:
                 self._ownership.user_maintenance(user_id),
                 self._ownership.user_mutation(user_id),
                 self._ownership.capacity(),
-                user_guard.maintenance(allow_deleted=True),
+                resources.guard.maintenance(allow_deleted=True),
             ):
                 self._ownership.mark_user_deleted(user_id)
                 client = self._get_client()
@@ -1788,8 +1033,8 @@ class DockerSandboxManager:
                 except NotFound:
                     pass
 
-        async with user_lock:
-            user_guard.mark_deleted()
+        async with resources.lock:
+            resources.guard.mark_deleted()
             self._capacity.cancel_user(user_id)
             await asyncio.to_thread(delete)
         self._mark_user_not_running(user_id)
@@ -1861,19 +1106,13 @@ class DockerSandboxManager:
 
         for user_id in user_ids:
             try:
-                (
-                    user_lock,
-                    user_guard,
-                    start_lock,
-                    _,
-                    _,
-                ) = await self._get_resources(user_id)
-                async with user_lock:
+                resources = self._get_user_resources(user_id)
+                async with resources.lock:
                     await asyncio.to_thread(
                         self._cleanup_idle_container_sync,
                         user_id,
-                        user_guard,
-                        start_lock,
+                        resources.guard,
+                        resources.start_lock,
                     )
             except asyncio.CancelledError:
                 raise

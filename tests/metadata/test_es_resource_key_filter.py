@@ -8,7 +8,7 @@ from app.metadata.models.search import SemanticIndexDelta, SemanticIndexDocument
 from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.value_index import (
     ValueESRepo,
-    value_document_id,
+    _value_document_id,
 )
 
 
@@ -226,8 +226,8 @@ class ElasticsearchResourceKeyFilterTest(unittest.IsolatedAsyncioTestCase):
         same = ValueInfo(value="c", t_name="a", c_name="b")
         different_boundary = ValueInfo(value="bc", t_name="a", c_name="")
 
-        self.assertEqual(value_document_id(first), value_document_id(same))
+        self.assertEqual(_value_document_id(first), _value_document_id(same))
         self.assertNotEqual(
-            value_document_id(first),
-            value_document_id(different_boundary),
+            _value_document_id(first),
+            _value_document_id(different_boundary),
         )

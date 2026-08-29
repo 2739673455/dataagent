@@ -11,7 +11,7 @@ from app.metadata.models.search import SearchHit
 from app.shared.config.app_config import cfg
 
 
-def value_document_id(value_info: ValueInfo) -> str:
+def _value_document_id(value_info: ValueInfo) -> str:
     """生成无歧义且稳定的字段取值文档编号"""
     identity = json.dumps(
         ["value", value_info.t_name, value_info.c_name, value_info.value],
@@ -74,7 +74,7 @@ class ValueESRepo:
                     {
                         "index": {
                             "_index": self._index_name,
-                            "_id": value_document_id(value_info),
+                            "_id": _value_document_id(value_info),
                         }
                     }
                 )

@@ -82,6 +82,10 @@ class DorisQueryIdentity(AuthBase):
     query_user: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     encrypted_password: Mapped[str] = mapped_column(Text, nullable=False)
     workload_group: Mapped[str] = mapped_column(String(128), nullable=False)
+    authorization_epoch: Mapped[UUID] = mapped_column(
+        nullable=False,
+        default=uuid4,
+    )
     is_default: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -108,6 +112,10 @@ class DorisQueryIdentity(AuthBase):
             postgresql_where=text("is_default"),
         ),
     )
+
+    def rotate_authorization_epoch(self) -> None:
+        """推进角色授权代次，使旧查询经验立即失效。"""
+        self.authorization_epoch = uuid4()
 
 
 class DorisRoleAssetGrant(AuthBase):

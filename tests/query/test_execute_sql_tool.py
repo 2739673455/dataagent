@@ -1,8 +1,6 @@
-import importlib
 import unittest
-from contextlib import asynccontextmanager
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 from langchain.tools import ToolRuntime
@@ -10,14 +8,9 @@ from pydantic import BaseModel
 
 from app.analytics.agents.explorer.tools.execute_sql import create_execute_sql_tool
 from app.query.models.execution import AnalysisQueryResult
-from app.query.models.validation import (
-    QueryValidationIssue,
-    QueryValidationResult,
-)
-from app.query.services.guard import QueryRejectedError
-from app.query.services.principal import ResolvedQueryPrincipal
-
-tool_module = importlib.import_module("app.analytics.agents.explorer.tools.execute_sql")
+from app.query.models.validation import QueryValidationIssue, QueryValidationResult
+from app.query.services.execution_handler import QueryExecutionHandler
+from app.query.services.executor import QueryRejectedError
 
 
 def make_runtime() -> ToolRuntime:
@@ -40,15 +33,7 @@ def make_runtime() -> ToolRuntime:
 
 
 class ExecuteSqlToolTest(unittest.IsolatedAsyncioTestCase):
-    async def test_server_selected_profile_controls_pool_and_workload_group(
-        self,
-    ) -> None:
-        principal = ResolvedQueryPrincipal(
-            role_name="dataagent_standard",
-            query_user="standard_readonly",
-            password="query_password",
-            workload_group="dataagent_standard",
-        )
+    async def test_forwards_tool_context_to_query_handler(self) -> None:
         query_result = AnalysisQueryResult(
             path="/analyses/a/sessions/explorer/s/query.csv",
             schema=[],
@@ -56,81 +41,35 @@ class ExecuteSqlToolTest(unittest.IsolatedAsyncioTestCase):
             time_range={},
             sample=[],
         )
-        session = MagicMock()
+        handler = MagicMock(spec=QueryExecutionHandler)
+        handler.execute = AsyncMock(return_value=query_result)
+        tool = create_execute_sql_tool(handler)
 
-        @asynccontextmanager
-        async def session_context():
-            yield session
-
-        service = MagicMock()
-        service.execute = AsyncMock(return_value=query_result)
-        provider = MagicMock()
-        runtime = make_runtime()
-        with (
-            patch.object(
-                tool_module.auth_postgres_client_manager,
-                "session",
-                new=session_context,
-            ),
-            patch.object(
-                tool_module.meta_postgres_client_manager,
-                "session",
-                new=session_context,
-            ),
-            patch.object(
-                tool_module.QueryPrincipalService,
-                "resolve",
-                new=AsyncMock(return_value=principal),
-            ) as resolve,
-            patch.object(
-                tool_module.query_doris_client_registry,
-                "get_or_create",
-                new=AsyncMock(return_value=provider),
-            ) as get_pool,
-            patch.object(
-                tool_module,
-                "_build_query_guard",
-                return_value=MagicMock(),
-            ),
-            patch.object(
-                tool_module,
-                "AnalysisQueryService",
-                return_value=service,
-            ) as service_type,
-        ):
-            artifact_store = MagicMock()
-            tool = create_execute_sql_tool(artifact_store)
-            schema = cast(type[BaseModel], tool.tool_call_schema)
-            self.assertEqual(set(schema.model_fields), {"sql", "purpose"})
-            coroutine = cast(Any, tool).coroutine
-            result = await coroutine(runtime=runtime, sql="SELECT 1")
-
-        resolve.assert_awaited_once_with(7)
-        get_pool.assert_awaited_once_with(
-            "dataagent_standard",
-            "standard_readonly",
-            "query_password",
+        schema = cast(type[BaseModel], tool.tool_call_schema)
+        self.assertEqual(set(schema.model_fields), {"sql", "purpose"})
+        result = await cast(Any, tool).coroutine(
+            runtime=make_runtime(),
+            sql="SELECT 1",
         )
-        limits = service_type.call_args.args[3]
-        self.assertEqual(limits.workload_group, "dataagent_standard")
-        service.execute.assert_awaited_once()
-        session_key = service.execute.await_args.args[0]
+
+        handler.execute.assert_awaited_once()
+        session_key, sql = handler.execute.await_args.args
         self.assertEqual(session_key.user_id, 7)
         self.assertEqual(
             session_key.conversation_id,
             UUID("550e8400-e29b-41d4-a716-446655440000"),
         )
+        self.assertEqual(sql, "SELECT 1")
+        self.assertEqual(
+            handler.execute.await_args.kwargs,
+            {
+                "purpose": "执行只读数据查询",
+                "tool_call_id": "query-call",
+            },
+        )
         self.assertEqual(result["status"], "success")
 
-    async def test_validation_failure_returns_actionable_error_before_query(
-        self,
-    ) -> None:
-        principal = ResolvedQueryPrincipal(
-            role_name="dataagent_standard",
-            query_user="standard_readonly",
-            password="query_password",
-            workload_group="dataagent_standard",
-        )
+    async def test_validation_failure_returns_actionable_error(self) -> None:
         validation = QueryValidationResult(
             valid=False,
             normalized_sql=None,
@@ -143,45 +82,14 @@ class ExecuteSqlToolTest(unittest.IsolatedAsyncioTestCase):
                 )
             ],
         )
-        service = MagicMock()
-        service.execute = AsyncMock(side_effect=QueryRejectedError(validation))
-        session = MagicMock()
+        handler = MagicMock(spec=QueryExecutionHandler)
+        handler.execute = AsyncMock(side_effect=QueryRejectedError(validation))
+        tool = create_execute_sql_tool(handler)
 
-        @asynccontextmanager
-        async def session_context():
-            yield session
-
-        with (
-            patch.object(
-                tool_module.auth_postgres_client_manager,
-                "session",
-                new=session_context,
-            ),
-            patch.object(
-                tool_module.meta_postgres_client_manager,
-                "session",
-                new=session_context,
-            ),
-            patch.object(
-                tool_module.QueryPrincipalService,
-                "resolve",
-                new=AsyncMock(return_value=principal),
-            ),
-            patch.object(
-                tool_module.query_doris_client_registry,
-                "get_or_create",
-                new=AsyncMock(return_value=MagicMock()),
-            ),
-            patch.object(tool_module, "_build_query_guard", return_value=MagicMock()),
-            patch.object(tool_module, "AnalysisQueryService", return_value=service),
-        ):
-            artifact_store = MagicMock()
-            tool = create_execute_sql_tool(artifact_store)
-            coroutine = cast(Any, tool).coroutine
-            result = await coroutine(
-                runtime=make_runtime(),
-                sql="SELECT missing_amount FROM orders",
-            )
+        result = await cast(Any, tool).coroutine(
+            runtime=make_runtime(),
+            sql="SELECT missing_amount FROM orders",
+        )
 
         self.assertEqual(result["status"], "error")
         self.assertEqual(result["code"], "sql_validation_failed")
@@ -192,34 +100,14 @@ class ExecuteSqlToolTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_unexpected_failure_includes_exception_detail(self) -> None:
-        session = MagicMock()
+        handler = MagicMock(spec=QueryExecutionHandler)
+        handler.execute = AsyncMock(side_effect=RuntimeError("查询身份暂不可用"))
+        tool = create_execute_sql_tool(handler)
 
-        @asynccontextmanager
-        async def session_context():
-            yield session
-
-        with (
-            patch.object(
-                tool_module.auth_postgres_client_manager,
-                "session",
-                new=session_context,
-            ),
-            patch.object(
-                tool_module.meta_postgres_client_manager,
-                "session",
-                new=session_context,
-            ),
-            patch.object(
-                tool_module.QueryPrincipalService,
-                "resolve",
-                new=AsyncMock(side_effect=RuntimeError("查询身份暂不可用")),
-            ),
-        ):
-            tool = create_execute_sql_tool(MagicMock())
-            result = await cast(Any, tool).coroutine(
-                runtime=make_runtime(),
-                sql="SELECT 1",
-            )
+        result = await cast(Any, tool).coroutine(
+            runtime=make_runtime(),
+            sql="SELECT 1",
+        )
 
         self.assertEqual(result["status"], "error")
         self.assertEqual(result["code"], "readonly_query_failed")

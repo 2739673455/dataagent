@@ -6,14 +6,18 @@ from unittest.mock import AsyncMock, MagicMock, call
 from sqlalchemy.exc import OperationalError
 
 from app.identity import errors as auth_error
-from app.identity.models.doris import DorisQueryIdentity, DorisRoleAssetGrant
+from app.identity.models.doris import (
+    DorisQueryIdentity,
+    DorisRoleAssetGrant,
+    DorisRowPolicy,
+)
 from app.identity.repositories.auth import AuthPGRepo
 from app.identity.repositories.doris_role import (
     DorisQueryUserAlreadyExistsError,
     DorisRoleAlreadyExistsError,
     DorisRoleRepository,
     DorisWorkloadGroupNotFoundError,
-    row_policy_from_row,
+    _row_policy_from_row,
 )
 from app.identity.repositories.query_identity import DorisQueryIdentityPGRepo
 from app.identity.services.doris_permission import DorisPermissionService
@@ -78,7 +82,7 @@ class DorisPermissionServiceTest(unittest.IsolatedAsyncioTestCase):
             )
 
     def test_show_row_policy_result_is_converted_to_stable_model(self) -> None:
-        policy = row_policy_from_row(
+        policy = _row_policy_from_row(
             {
                 "PolicyName": "region_east_filter",
                 "CatalogName": "internal",
@@ -150,9 +154,13 @@ class DorisPermissionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.doris_repo.grant_select.assert_not_awaited()
 
     async def test_revoke_removes_exact_projection(self) -> None:
-        self.identity_repo.get = AsyncMock(
-            side_effect=self._load_identity_in_transaction
-        )
+        identity = query_identity()
+
+        async def load_identity(_: str) -> DorisQueryIdentity:
+            self.assertTrue(self.session.active)
+            return identity
+
+        self.identity_repo.get = AsyncMock(side_effect=load_identity)
         persisted = DorisRoleAssetGrant(
             role_name="sales",
             scope="column",
@@ -164,6 +172,7 @@ class DorisPermissionServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         self.auth_repo.find_asset_grant.return_value = persisted
 
+        previous_epoch = identity.authorization_epoch
         await self.service.revoke_select(
             "sales",
             table_name="orders",
@@ -172,6 +181,8 @@ class DorisPermissionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.doris_repo.revoke_select.assert_awaited_once()
         self.auth_repo.delete_asset_grant.assert_awaited_once_with(persisted)
+        self.assertNotEqual(identity.authorization_epoch, previous_epoch)
+        self.identity_repo.flush.assert_awaited_once_with()
 
     async def test_revoke_all_groups_database_table_and_column_grants(self) -> None:
         self.identity_repo.get = AsyncMock(
@@ -266,6 +277,8 @@ class DorisPermissionServiceTest(unittest.IsolatedAsyncioTestCase):
         return query_identity()
 
     async def test_row_policy_accepts_target_columns(self) -> None:
+        identity = self.identity_repo.get.return_value
+        previous_epoch = identity.authorization_epoch
         await self.service.create_row_policy(
             "sales",
             policy_name="sales_region",
@@ -277,6 +290,34 @@ class DorisPermissionServiceTest(unittest.IsolatedAsyncioTestCase):
         call = self.doris_repo.create_row_policy.await_args.kwargs
         self.assertEqual(call["role_name"], "sales")
         self.assertIn("region", call["predicate_sql"])
+        self.assertNotEqual(identity.authorization_epoch, previous_epoch)
+        self.identity_repo.flush.assert_awaited_once_with()
+
+    async def test_drop_row_policy_rotates_authorization_epoch(self) -> None:
+        identity = self.identity_repo.get.return_value
+        previous_epoch = identity.authorization_epoch
+        self.doris_repo.list_role_row_policies = AsyncMock(
+            return_value=[
+                DorisRowPolicy(
+                    policy_name="sales_region",
+                    catalog_name="internal",
+                    database_name="ecommerce",
+                    table_name="orders",
+                    policy_type="RESTRICTIVE",
+                    predicate="region = 'east'",
+                )
+            ]
+        )
+
+        await self.service.drop_row_policy(
+            "sales",
+            policy_name="sales_region",
+            table_name="orders",
+        )
+
+        self.doris_repo.drop_row_policy.assert_awaited_once()
+        self.assertNotEqual(identity.authorization_epoch, previous_epoch)
+        self.identity_repo.flush.assert_awaited_once_with()
 
     async def test_row_policy_rejects_subquery_and_unknown_column(self) -> None:
         for predicate in (

@@ -11,7 +11,6 @@ from app.identity import errors as auth_error
 from app.shared.config.app_config import LifecycleConfig
 from app.workflows.contracts import (
     UserDeletionStateStore,
-    UserQueryHistoryCleaner,
     UserSandboxCleaner,
 )
 
@@ -22,14 +21,12 @@ class UserDeletionService:
     def __init__(
         self,
         state_store: UserDeletionStateStore,
-        query_history: UserQueryHistoryCleaner,
         sandbox: UserSandboxCleaner,
         conversations: ConversationLifecycleService,
         config: LifecycleConfig,
     ) -> None:
         """绑定用户注销涉及的各存储和生命周期服务"""
         self._state_store = state_store
-        self._query_history = query_history
         self._sandbox = sandbox
         self._conversations = conversations
         self._config = config
@@ -57,8 +54,6 @@ class UserDeletionService:
             logger.info(f"用户会话资源清理完成: user_id={user_id}")
             await self._sandbox.delete_user_sandbox(user_id)
             logger.info(f"用户沙箱资源清理完成: user_id={user_id}")
-            await self._query_history.delete_user_query_history(user_id)
-            logger.info(f"用户查询经验清理完成: user_id={user_id}")
             await self._state_store.complete(user_id, datetime.now(UTC))
             logger.info(f"用户注销清理编排完成: user_id={user_id}")
         except Exception as exc:

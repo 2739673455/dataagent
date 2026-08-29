@@ -17,7 +17,7 @@ from app.query.models.experience import QueryExperience, QueryExperienceAsset
 
 
 class QueryExperiencePGRepo:
-    """持久化用户私有查询执行和聚合经验"""
+    """持久化查询执行审计和角色级聚合经验"""
 
     def __init__(self, session: AsyncSession) -> None:
         """绑定当前请求使用的异步数据库会话"""
@@ -41,11 +41,10 @@ class QueryExperiencePGRepo:
             insert(QueryExperience)
             .values(
                 id=proposed_id,
-                owner_user_id=experience.owner_user_id,
                 role_name=experience.role_name,
+                authorization_epoch=experience.authorization_epoch,
                 fingerprint=experience.fingerprint,
                 purposes=experience.purposes,
-                representative_sql=experience.representative_sql,
                 sql_template=experience.sql_template,
                 quality="candidate",
                 revision=1,
@@ -54,7 +53,7 @@ class QueryExperiencePGRepo:
                 updated_at=now,
             )
             .on_conflict_do_nothing(
-                index_elements=["owner_user_id", "role_name", "fingerprint"]
+                index_elements=["role_name", "fingerprint"]
             )
             .returning(QueryExperience.id)
         )
@@ -63,7 +62,6 @@ class QueryExperiencePGRepo:
             existing = await self._session.scalar(
                 select(QueryExperience)
                 .where(
-                    QueryExperience.owner_user_id == experience.owner_user_id,
                     QueryExperience.role_name == experience.role_name,
                     QueryExperience.fingerprint == experience.fingerprint,
                 )
@@ -74,7 +72,7 @@ class QueryExperiencePGRepo:
             experience_id = existing.id
             existing.refresh_from_success(
                 purpose=experience.purposes[0],
-                representative_sql=experience.representative_sql,
+                authorization_epoch=experience.authorization_epoch,
                 sql_template=experience.sql_template,
             )
         else:
@@ -109,39 +107,21 @@ class QueryExperiencePGRepo:
             .where(QueryExperience.id == experience_id)
         )
 
-    async def list_ids_by_user(self, user_id: int) -> list[UUID]:
-        """列出用户全部查询经验主键"""
-        result = await self._session.scalars(
-            select(QueryExperience.id).where(QueryExperience.owner_user_id == user_id)
-        )
-        return list(result)
-
-    async def delete_by_user(self, user_id: int) -> None:
-        """删除用户全部查询执行和查询经验"""
-        await self._session.execute(
-            delete(QueryExecution).where(QueryExecution.user_id == user_id)
-        )
-        await self._session.execute(
-            delete(QueryExperience).where(QueryExperience.owner_user_id == user_id)
-        )
-        await self._session.flush()
-
     async def get_many(
         self,
-        user_id: int,
         experience_ids: list[UUID],
         *,
-        role_name: str | None,
+        role_name: str,
+        authorization_epoch: UUID,
     ) -> list[QueryExperience]:
-        """在用户和可选角色范围内按 ID 批量读取经验"""
+        """在当前角色和授权代次范围内按 ID 批量读取经验。"""
         if not experience_ids:
             return []
         conditions = [
-            QueryExperience.owner_user_id == user_id,
             QueryExperience.id.in_(experience_ids),
+            QueryExperience.role_name == role_name,
+            QueryExperience.authorization_epoch == authorization_epoch,
         ]
-        if role_name is not None:
-            conditions.append(QueryExperience.role_name == role_name)
         result = await self._session.scalars(
             select(QueryExperience)
             .options(selectinload(QueryExperience.assets))
@@ -205,27 +185,6 @@ class QueryExperiencePGRepo:
                 .values(indexed_revision=revision)
             )
         await self._session.flush()
-
-    async def list_pending_index_deletions(
-        self,
-        user_id: int,
-        role_name: str,
-        *,
-        limit: int,
-    ) -> dict[UUID, int]:
-        """列出当前用户尚未完成索引删除的失效经验"""
-        result = await self._session.execute(
-            select(QueryExperience.id, QueryExperience.revision)
-            .where(
-                QueryExperience.owner_user_id == user_id,
-                QueryExperience.role_name == role_name,
-                QueryExperience.quality == "disabled",
-                QueryExperience.indexed_revision < QueryExperience.revision,
-            )
-            .order_by(QueryExperience.updated_at)
-            .limit(limit)
-        )
-        return {experience_id: revision for experience_id, revision in result.tuples()}
 
     async def list_pending_index_repairs(
         self,

@@ -46,6 +46,7 @@ from app.analytics.model_factory import create_configured_model
 from app.analytics.services.conversation_tombstone import (
     ConversationTombstoneService,
 )
+from app.query.providers import build_query_execution_handler
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.manager import DockerSandboxManager
 from app.shared.clients.langgraph_postgres_manager import (
@@ -125,7 +126,9 @@ class AgentManager:
                 get_recall,
                 merge_recalls,
                 delete_recalls,
-                create_execute_sql_tool(self._sandbox),
+                create_execute_sql_tool(
+                    build_query_execution_handler(self._sandbox)
+                ),
             ]
             mcp_tools = await get_mcp_tools()
             definitions = build_agent_definitions(platform_tools, mcp_tools)

@@ -192,6 +192,26 @@ class DockerSandboxBackend(BaseSandbox):
         return GrepMatch(**{**match, "path": self._to_virtual_path(match["path"])})
 
     @contextmanager
+    def _resolved_operation(
+        self,
+        path: str,
+        *,
+        mutation: bool = False,
+    ) -> Generator[str | None, None, None]:
+        """解析路径并进入沙箱操作窗口"""
+        try:
+            resolved_path = (
+                self._resolve_mutation_path(path)
+                if mutation
+                else self._resolve_path(path)
+            )
+        except SandboxPathError:
+            yield None
+            return
+        with self._operation():
+            yield resolved_path
+
+    @contextmanager
     def _operation(self) -> Generator[None, None, None]:
         """在资源生命周期保护下执行沙箱操作"""
         self._touch()
@@ -413,11 +433,9 @@ class DockerSandboxBackend(BaseSandbox):
 
     def ls(self, path: str) -> LsResult:
         """列出当前会话目录内容"""
-        try:
-            resolved_path = self._resolve_path(path)
-        except SandboxPathError:
-            return LsResult(error=INVALID_PATH)
-        with self._operation():
+        with self._resolved_operation(path) as resolved_path:
+            if resolved_path is None:
+                return LsResult(error=INVALID_PATH)
             result = super().ls(resolved_path)
             return LsResult(
                 error=self._hide_workspace(result.error),
@@ -434,11 +452,9 @@ class DockerSandboxBackend(BaseSandbox):
 
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         """读取当前会话文件"""
-        try:
-            resolved_path = self._resolve_path(file_path)
-        except SandboxPathError:
-            return ReadResult(error=INVALID_PATH)
-        with self._operation():
+        with self._resolved_operation(file_path) as resolved_path:
+            if resolved_path is None:
+                return ReadResult(error=INVALID_PATH)
             result = super().read(resolved_path, offset, limit)
             result.error = self._hide_workspace(result.error)
             return result
@@ -454,11 +470,9 @@ class DockerSandboxBackend(BaseSandbox):
 
     def write(self, file_path: str, content: str) -> WriteResult:
         """写入当前会话文件"""
-        try:
-            resolved_path = self._resolve_mutation_path(file_path)
-        except SandboxPathError:
-            return WriteResult(error=INVALID_PATH)
-        with self._operation():
+        with self._resolved_operation(file_path, mutation=True) as resolved_path:
+            if resolved_path is None:
+                return WriteResult(error=INVALID_PATH)
             result = super().write(resolved_path, content)
             return WriteResult(
                 error=self._hide_workspace(result.error),
@@ -477,11 +491,9 @@ class DockerSandboxBackend(BaseSandbox):
         replace_all: bool = False,
     ) -> EditResult:
         """编辑当前会话文件"""
-        try:
-            resolved_path = self._resolve_mutation_path(file_path)
-        except SandboxPathError:
-            return EditResult(error=INVALID_PATH)
-        with self._operation():
+        with self._resolved_operation(file_path, mutation=True) as resolved_path:
+            if resolved_path is None:
+                return EditResult(error=INVALID_PATH)
             with self._mutation_lock:
                 result = self._edit_file(
                     resolved_path,
@@ -565,11 +577,9 @@ class DockerSandboxBackend(BaseSandbox):
 
     def delete(self, file_path: str) -> DeleteResult:
         """删除当前会话文件或目录"""
-        try:
-            resolved_path = self._resolve_mutation_path(file_path)
-        except SandboxPathError:
-            return DeleteResult(error=INVALID_PATH)
-        with self._operation():
+        with self._resolved_operation(file_path, mutation=True) as resolved_path:
+            if resolved_path is None:
+                return DeleteResult(error=INVALID_PATH)
             with self._mutation_lock:
                 result = super().delete(resolved_path)
             return DeleteResult(
@@ -590,11 +600,9 @@ class DockerSandboxBackend(BaseSandbox):
         max_count: int | None = None,
     ) -> GrepResult:
         """搜索当前会话文件内容"""
-        try:
-            resolved_path = self._resolve_path(path or "/")
-        except SandboxPathError:
-            return GrepResult(error=INVALID_PATH)
-        with self._operation():
+        with self._resolved_operation(path or "/") as resolved_path:
+            if resolved_path is None:
+                return GrepResult(error=INVALID_PATH)
             result = super().grep(
                 pattern,
                 resolved_path,
@@ -631,11 +639,9 @@ class DockerSandboxBackend(BaseSandbox):
 
     def glob(self, pattern: str, path: str | None = None) -> GlobResult:
         """匹配当前会话中的文件"""
-        try:
-            resolved_path = self._resolve_path(path or "/")
-        except SandboxPathError:
-            return GlobResult(error=INVALID_PATH)
-        with self._operation():
+        with self._resolved_operation(path or "/") as resolved_path:
+            if resolved_path is None:
+                return GlobResult(error=INVALID_PATH)
             result = super().glob(pattern, resolved_path)
             return GlobResult(
                 error=self._hide_workspace(result.error),

@@ -32,6 +32,7 @@ from app.analytics.agents.contracts import (
 from app.analytics.agents.manager import AgentManager
 from app.analytics.agents.registry import AgentRegistry, build_agent_definitions
 from app.analytics.agents.session_service import AgentSessionService
+from app.analytics.agents.skills import agent_skills_mount_path
 from app.shared.contracts.analysis import AgentSessionKey, AgentType
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -356,6 +357,23 @@ class DynamicSubagentContractTest(unittest.TestCase):
             set(),
         )
 
+    def test_registry_assigns_analysis_skill_only_to_analyst(self) -> None:
+        definitions = build_agent_definitions(
+            [
+                recall_context,
+                execute_sql,
+            ],
+            [],
+        )
+
+        self.assertEqual(
+            definitions["analyst"].skills,
+            (agent_skills_mount_path("analyst"),),
+        )
+        self.assertEqual(definitions["explorer"].skills, ())
+        self.assertEqual(definitions["reviewer"].skills, ())
+        self.assertEqual(definitions["visualizer"].skills, ())
+
     def test_registry_fails_fast_when_required_tools_are_missing(self) -> None:
         with self.assertRaisesRegex(ValueError, "缺少必需的专家工具"):
             build_agent_definitions([recall_context], [])
@@ -402,6 +420,10 @@ class DynamicSubagentContractTest(unittest.TestCase):
             "reviewer": create_reviewer_agent,
             "visualizer": create_visualizer_agent,
         }
+        definitions = build_agent_definitions(
+            [recall_context, execute_sql],
+            [],
+        )
         required_tools = {
             "ls",
             "read_file",
@@ -422,6 +444,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
                         tools=[],
                         backend=LocalShellBackend(root_dir=workspace),
                         checkpointer=InMemorySaver(),
+                        skills=definitions[cast(AgentType, agent_type)].skills,
                     )
 
                     graph.invoke(

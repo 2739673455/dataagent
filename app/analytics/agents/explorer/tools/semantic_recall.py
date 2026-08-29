@@ -124,7 +124,6 @@ async def recall_context(
             meta_postgres_client_manager.session() as meta_search_session,
         ):
             auth_repo = AuthPGRepo(auth_session)
-            user = await auth_repo.get_user_by_id(user_id)
             asset_policy = await AuthorizationService(auth_repo).get_asset_policy(
                 user_id
             )
@@ -155,20 +154,29 @@ async def recall_context(
             recall_service = SemanticRecallContextService(
                 recall_repo,
                 authorization_filter,
+                query_experience_role_name=asset_policy.role_name,
+                query_experience_authorization_epoch=(
+                    asset_policy.authorization_epoch
+                ),
             )
             cached = await recall_service.get_fresh_query_experiences(
                 user_id,
                 conversation_id,
                 query,
+                role_name=asset_policy.role_name,
+                authorization_epoch=asset_policy.authorization_epoch,
             )
         if cached is None:
-            if user is not None and user.doris_role_name is not None:
+            if (
+                asset_policy.role_name is not None
+                and asset_policy.authorization_epoch is not None
+            ):
                 async with meta_postgres_client_manager.session() as experience_session:
                     experience_recall = await build_query_experience_service(
                         experience_session
                     ).recall(
-                        user_id=user_id,
-                        role_name=user.doris_role_name,
+                        role_name=asset_policy.role_name,
+                        authorization_epoch=asset_policy.authorization_epoch,
                         policy=asset_policy,
                         query=query,
                         limit=QUERY_EXPERIENCE_RECALL_LIMIT,
@@ -190,6 +198,10 @@ async def recall_context(
             record = await SemanticRecallContextService(
                 recall_repo,
                 authorization_filter,
+                query_experience_role_name=asset_policy.role_name,
+                query_experience_authorization_epoch=(
+                    asset_policy.authorization_epoch
+                ),
             ).record(
                 user_id,
                 conversation_id,

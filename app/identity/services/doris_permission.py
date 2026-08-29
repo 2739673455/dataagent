@@ -208,6 +208,7 @@ class DorisPermissionService:
                 for grant in grants:
                     if grant is not None:
                         await self._auth_repo.delete_asset_grant(grant)
+                await self._rotate_authorization_epoch(role)
         except BaseException:
             if doris_changed:
                 await self._compensate_select(
@@ -242,6 +243,7 @@ class DorisPermissionService:
                     revoked_targets.append(target)
 
                 await self._auth_repo.delete_role_asset_grants(role)
+                await self._rotate_authorization_epoch(role)
                 return len(grants)
         except BaseException:
             for target in reversed(revoked_targets):
@@ -268,7 +270,7 @@ class DorisPermissionService:
         predicate: str,
     ) -> None:
         """校验并创建绑定到角色的 Doris 行策略"""
-        role = await self._require_role(role_name)
+        role = self._normalize_role(role_name)
         columns = await self._doris_repo.list_table_columns(
             self._database,
             table_name,
@@ -276,15 +278,35 @@ class DorisPermissionService:
         if not columns:
             raise auth_error.InvalidDorisPermissionError(detail="目标表不存在")
         predicate_sql = self._validate_predicate(predicate, table_name, columns)
-        await self._doris_repo.create_row_policy(
-            policy_name=policy_name,
-            role_name=role,
-            catalog=self._catalog,
-            database=self._database,
-            table=table_name,
-            policy_type=policy_type,
-            predicate_sql=predicate_sql,
-        )
+        doris_changed = False
+        try:
+            async with self._auth_repo.session.begin():
+                await self._auth_repo.lock_security_mutation()
+                await self._require_role_exists(role)
+                await self._doris_repo.create_row_policy(
+                    policy_name=policy_name,
+                    role_name=role,
+                    catalog=self._catalog,
+                    database=self._database,
+                    table=table_name,
+                    policy_type=policy_type,
+                    predicate_sql=predicate_sql,
+                )
+                doris_changed = True
+                await self._rotate_authorization_epoch(role)
+        except BaseException:
+            if doris_changed:
+                try:
+                    await self._doris_repo.drop_row_policy(
+                        policy_name=policy_name,
+                        role_name=role,
+                        catalog=self._catalog,
+                        database=self._database,
+                        table=table_name,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(f"Doris 行策略补偿删除失败: role={role}")
+            raise
 
     async def drop_row_policy(
         self,
@@ -294,14 +316,45 @@ class DorisPermissionService:
         table_name: str,
     ) -> None:
         """删除绑定到角色的 Doris 行策略"""
-        role = await self._require_role(role_name)
-        await self._doris_repo.drop_row_policy(
-            policy_name=policy_name,
-            role_name=role,
-            catalog=self._catalog,
-            database=self._database,
-            table=table_name,
+        role = self._normalize_role(role_name)
+        policies = await self._doris_repo.list_role_row_policies(role)
+        original = next(
+            (
+                item
+                for item in policies
+                if item.policy_name == policy_name and item.table_name == table_name
+            ),
+            None,
         )
+        doris_changed = False
+        try:
+            async with self._auth_repo.session.begin():
+                await self._auth_repo.lock_security_mutation()
+                await self._require_role_exists(role)
+                await self._doris_repo.drop_row_policy(
+                    policy_name=policy_name,
+                    role_name=role,
+                    catalog=self._catalog,
+                    database=self._database,
+                    table=table_name,
+                )
+                doris_changed = True
+                await self._rotate_authorization_epoch(role)
+        except BaseException:
+            if doris_changed and original is not None:
+                try:
+                    await self._doris_repo.create_row_policy(
+                        policy_name=original.policy_name,
+                        role_name=role,
+                        catalog=original.catalog_name,
+                        database=original.database_name,
+                        table=original.table_name,
+                        policy_type=original.policy_type,
+                        predicate_sql=original.predicate,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(f"Doris 行策略补偿创建失败: role={role}")
+            raise
 
     async def _require_role(self, role_name: str) -> str:
         """要求角色存在于稳定查询身份配置"""
@@ -324,6 +377,14 @@ class DorisPermissionService:
         identity = await self._identity_repo.get(role_name)
         if identity is None:
             raise auth_error.RoleNotFoundError
+
+    async def _rotate_authorization_epoch(self, role_name: str) -> None:
+        """轮换角色安全边界，并持久化到当前认证事务。"""
+        identity = await self._identity_repo.get(role_name)
+        if identity is None:
+            raise auth_error.RoleNotFoundError
+        identity.rotate_authorization_epoch()
+        await self._identity_repo.flush()
 
     async def _compensate_select(
         self,

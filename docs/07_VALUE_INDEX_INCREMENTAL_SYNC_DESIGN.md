@@ -12,7 +12,7 @@
 
 本文定义“每日或手动水位增量同步 + 手动全量校准”的取值索引方案。水位同步降低日常扫描量，管理员按需执行全量校准以清理已经失效的历史取值并修复漏数。
 
-当前实现使用 [`ValueIndexSyncState`](../app/metadata/models.py) 持久化类型化水位、运行所有权和索引代次。Celery Beat 每天在配置时间筛选具备成功水位的字段，Worker 执行增量同步。管理员也可以对已建立水位的字段或表手动触发增量同步。首次构建和全量校准只能由管理员手动触发。
+当前实现使用 [`ValueIndexSyncState`](../app/metadata/models/catalog.py) 持久化类型化水位、运行所有权和索引代次。Celery Beat 每天在配置时间筛选具备成功水位的字段，Worker 执行增量同步。管理员也可以对已建立水位的字段或表手动触发增量同步。首次构建和全量校准只能由管理员手动触发。
 
 ---
 
@@ -418,7 +418,7 @@ class ValueIndexSyncResult:
 - Doris 数据源仓储：[`app/metadata/repositories/source_doris.py`](../app/metadata/repositories/source_doris.py)
 - 取值索引仓储：[`app/metadata/repositories/value_index.py`](../app/metadata/repositories/value_index.py)
 - PostgreSQL 元数据仓储：[`app/metadata/repositories/postgres.py`](../app/metadata/repositories/postgres.py)
-- 元数据模型：[`app/metadata/models.py`](../app/metadata/models.py)
+- 元数据模型：[`app/metadata/models/catalog.py`](../app/metadata/models/catalog.py)
 - 元数据配置 schema：[`app/shared/config/meta_config.py`](../app/shared/config/meta_config.py)
 - 同步 API：[`app/metadata/api/meta/router.py`](../app/metadata/api/meta/router.py)
 

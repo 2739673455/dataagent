@@ -101,6 +101,7 @@ FastAPI 和 Celery Worker 初始化沙箱管理器时只连接 Docker、读取 `
 - `application` 配额模式在上传、写入和执行前后检查工作区占用量
 - `volume_driver` 模式把容量参数交给支持硬配额的 Docker Volume Driver
 - 容器根文件系统只读，默认无网络，移除 capabilities，并启用 `no-new-privileges`
+- 随应用发布的 Agent 技能按 `/skills/{agent_type}` 只读挂载，技能脚本可以直接执行，输出仍受 Session 工作区权限约束
 - 内存、CPU、进程数、执行时间、文件大小、工作区大小和输出大小均由 `sandbox` 配置限制
 
 ## 7. 关键配置

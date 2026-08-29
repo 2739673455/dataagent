@@ -54,7 +54,7 @@ _ERROR_RESPONSES = {
 }
 
 
-async def verify_doris_query_identities() -> None:
+async def _verify_doris_query_identities() -> None:
     """校验数据库中全部查询身份的 Doris 权限"""
     cipher = DorisCredentialCipher(
         cfg.doris_credentials.encryption_key.get_secret_value()
@@ -83,7 +83,7 @@ async def verify_doris_query_identities() -> None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def _lifespan(app: FastAPI):
     """初始化并释放应用进程持有的共享资源"""
     try:
         # FastAPI 应用启动前执行
@@ -100,7 +100,7 @@ async def lifespan(app: FastAPI):
         analytics_postgres_client_manager.init()
         await analytics_postgres_client_manager.init_tables()
         admin_doris_client_manager.init()
-        await verify_doris_query_identities()
+        await _verify_doris_query_identities()
         logger.info("应用资源初始化完成")
 
         yield
@@ -120,7 +120,7 @@ async def lifespan(app: FastAPI):
         logger.info("应用资源释放完成")
 
 
-def register_routes(app: FastAPI) -> None:
+def _register_routes(app: FastAPI) -> None:
     """注册接口"""
     app.include_router(auth_router, prefix="/api/v1/auth")
     app.include_router(admin_router, prefix="/api/v1/admin")
@@ -133,7 +133,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(task_router, prefix="/api/v1/tasks")
 
 
-def register_middlewares(app: FastAPI) -> None:
+def _register_middlewares(app: FastAPI) -> None:
     """注册中间件"""
     app.middleware("http")(trace.middleware)
     app.add_middleware(
@@ -145,17 +145,17 @@ def register_middlewares(app: FastAPI) -> None:
     )
 
 
-def create_app() -> FastAPI:
+def _create_app() -> FastAPI:
     """创建并组装 FastAPI 应用"""
     setup_logger()
-    app = FastAPI(lifespan=lifespan, responses=_ERROR_RESPONSES)
-    register_middlewares(app)
+    app = FastAPI(lifespan=_lifespan, responses=_ERROR_RESPONSES)
+    _register_middlewares(app)
     register_exception_handlers(app)
-    register_routes(app)
+    _register_routes(app)
     return app
 
 
-app = create_app()
+app = _create_app()
 
 
 if __name__ == "__main__":

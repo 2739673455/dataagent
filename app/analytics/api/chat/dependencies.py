@@ -11,7 +11,7 @@ from app.shared.clients.postgres_client_manager import (
 )
 
 
-async def get_conversation_pg_repo(
+async def _get_conversation_pg_repo(
     session: Annotated[
         AsyncSession,
         Depends(analytics_postgres_client_manager.get_session),
@@ -23,5 +23,5 @@ async def get_conversation_pg_repo(
 
 ConversationPGRepoDep = Annotated[
     ConversationPGRepo,
-    Depends(get_conversation_pg_repo),
+    Depends(_get_conversation_pg_repo),
 ]

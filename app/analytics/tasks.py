@@ -7,6 +7,7 @@ from uuid import UUID
 from loguru import logger
 
 from app.analytics.agents.manager import AgentManager
+from app.analytics.agents.skills import packaged_agent_skill_mounts
 from app.analytics.model_factory import create_configured_model
 from app.analytics.providers import build_conversation_lifecycle_service
 from app.analytics.repositories.conversation import ConversationPGRepo
@@ -171,7 +172,10 @@ async def _run_with_lifecycle_service[T](
         cfg.langgraph_postgresql,
         AnalyticsBase,
     )
-    sandbox = create_sandbox_manager(cfg.sandbox)
+    sandbox = create_sandbox_manager(
+        cfg.sandbox,
+        packaged_agent_skill_mounts(),
+    )
     agents = AgentManager(
         persistence,
         sandbox,

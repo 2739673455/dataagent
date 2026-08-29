@@ -1,6 +1,7 @@
 """按用户唯一 Doris 角色选择稳定共享查询身份"""
 
 from dataclasses import dataclass, field
+from uuid import UUID
 
 from app.identity import errors as auth_error
 from app.query.services.contracts import (
@@ -19,9 +20,10 @@ class ResolvedQueryPrincipal:
     """服务端选择的稳定查询身份"""
 
     role_name: str
+    authorization_epoch: UUID
     query_user: str
-    password: str = field(repr=False)
     workload_group: str
+    password: str = field(repr=False)
 
 
 class QueryPrincipalService:
@@ -54,6 +56,7 @@ class QueryPrincipalService:
             )
         return ResolvedQueryPrincipal(
             role_name=user.doris_role_name,
+            authorization_epoch=identity.authorization_epoch,
             query_user=identity.query_user,
             password=self._cipher.decrypt(identity.encrypted_password),
             workload_group=identity.workload_group,

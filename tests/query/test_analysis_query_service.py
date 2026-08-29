@@ -24,15 +24,11 @@ from app.query.services.executor import (
     QueryExecutionTimeoutError,
     QueryOutputLimitExceededError,
     QueryPlanUnavailableError,
-    QueryResultLimitExceededError,
-    SuccessfulQueryExecution,
-    estimate_doris_query_plan,
-)
-from app.query.services.guard import (
-    GuardedQuery,
-    QueryGuardService,
     QueryRejectedError,
+    QueryResultLimitExceededError,
+    _estimate_doris_query_plan,
 )
+from app.query.services.guard import QueryGuardService
 from app.shared.contracts.analysis import AgentSessionKey
 
 
@@ -41,11 +37,11 @@ class RecordingGuard:
         self.calls: list[tuple[int, str]] = []
         self.physical_table = physical_table
 
-    async def require_safe(
+    async def check(
         self,
         user_id: int,
         sql: str,
-    ) -> GuardedQuery:
+    ) -> QueryValidationResult:
         self.calls.append((user_id, sql))
         validation = QueryValidationResult(
             valid=True,
@@ -56,7 +52,7 @@ class RecordingGuard:
                 else []
             ),
         )
-        return GuardedQuery(sql="SELECT normalized", validation=validation)
+        return validation
 
 
 class FakeQueryRepo:
@@ -120,12 +116,12 @@ class HangingQueryRepo(FakeQueryRepo):
 
 
 class RejectingGuard:
-    async def require_safe(
+    async def check(
         self,
         user_id: int,
         sql: str,
-    ) -> GuardedQuery:
-        result = QueryValidationResult(
+    ) -> QueryValidationResult:
+        return QueryValidationResult(
             valid=False,
             normalized_sql=None,
             issues=[
@@ -135,7 +131,6 @@ class RejectingGuard:
                 )
             ],
         )
-        raise QueryRejectedError(result)
 
 
 class FailingConnectionProvider:
@@ -193,7 +188,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store.uploads, [])
 
     def test_estimates_doris_scan_rows_and_bytes(self) -> None:
-        estimate = estimate_doris_query_plan(
+        estimate = _estimate_doris_query_plan(
             (
                 "0:VOlapScanNode",
                 "cardinality=120, avgRowSize=16.5, numNodes=3",
@@ -209,7 +204,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(estimate.scan_bytes, 2780)
 
     def test_estimates_thousands_separated_doris_plan_values(self) -> None:
-        estimate = estimate_doris_query_plan(
+        estimate = _estimate_doris_query_plan(
             (
                 "0:VOlapScanNode",
                 "cardinality=1,500,000, avgRowSize=1,024.5",
@@ -222,7 +217,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
 
     def test_rejects_malformed_plan_numbers_instead_of_using_prefix(self) -> None:
         with self.assertRaises(QueryPlanUnavailableError):
-            estimate_doris_query_plan(
+            _estimate_doris_query_plan(
                 (
                     "0:VOlapScanNode",
                     "cardinality=12,34, avgRowSize=8",
@@ -231,7 +226,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
             )
 
     def test_unnumbered_plan_nodes_cannot_overwrite_scan_estimates(self) -> None:
-        estimate = estimate_doris_query_plan(
+        estimate = _estimate_doris_query_plan(
             (
                 "0:VOlapScanNode",
                 "cardinality=100000000, avgRowSize=100",
@@ -246,7 +241,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
 
     def test_each_unnumbered_scan_requires_its_own_estimate(self) -> None:
         with self.assertRaises(QueryPlanUnavailableError):
-            estimate_doris_query_plan(
+            _estimate_doris_query_plan(
                 (
                     "VFileScanNode",
                     "cardinality=100, avgRowSize=10",
@@ -257,9 +252,9 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
 
     def test_requires_complete_scan_estimates_for_physical_tables(self) -> None:
         with self.assertRaises(QueryPlanUnavailableError):
-            estimate_doris_query_plan(("PLAN FRAGMENT 0",), require_scan=True)
+            _estimate_doris_query_plan(("PLAN FRAGMENT 0",), require_scan=True)
         with self.assertRaises(QueryPlanUnavailableError):
-            estimate_doris_query_plan(
+            _estimate_doris_query_plan(
                 (
                     "0:VOlapScanNode",
                     "cardinality=10000000, avgRowSize=0.0",
@@ -294,7 +289,8 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         conversation_id = uuid4()
         session_key = make_session_key(conversation_id)
 
-        result = await service.execute(session_key, "SELECT raw")
+        details = await service.execute(session_key, "SELECT raw")
+        result = details.result
 
         self.assertEqual(guard.calls, [(9, "SELECT raw")])
         self.assertEqual(repo.explain_sql, "SELECT normalized")
@@ -323,15 +319,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[0], ["id", "amount", "created_at"])
         self.assertEqual(rows[1][1], "12.50")
 
-    async def test_success_observer_receives_lineage_after_artifact_commit(
-        self,
-    ) -> None:
-        observed: list[SuccessfulQueryExecution] = []
-
-        async def observe(details: SuccessfulQueryExecution) -> None:
-            self.assertEqual(len(store.uploads), 1)
-            observed.append(details)
-
+    async def test_returns_lineage_after_artifact_commit(self) -> None:
         guard = RecordingGuard(physical_table=True)
         repo = FakeQueryRepo(
             [QueryBatch(column_names=("id",), rows=((1,),))],
@@ -345,35 +333,16 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
             store,
             make_limits(),
             make_options(),
-            success_observer=observe,
         )
 
-        result = await service.execute(session_key, "SELECT raw")
+        details = await service.execute(session_key, "SELECT raw")
 
-        self.assertEqual(len(observed), 1)
-        self.assertEqual(observed[0].session_key, session_key)
-        self.assertEqual(observed[0].raw_sql, "SELECT raw")
-        self.assertEqual(observed[0].normalized_sql, "SELECT normalized")
-        self.assertEqual(observed[0].validation.tables[0].name, "orders")
-        self.assertEqual(observed[0].result, result)
-
-    async def test_success_observer_failure_keeps_completed_query_result(self) -> None:
-        async def observe(details: SuccessfulQueryExecution) -> None:
-            del details
-            raise RuntimeError("history store unavailable")
-
-        service = AnalysisQueryService(
-            cast(QueryGuardService, RecordingGuard()),
-            FakeQueryRepo([QueryBatch(column_names=("id",), rows=((1,),))]),
-            RecordingArtifactStore(),
-            make_limits(),
-            make_options(),
-            success_observer=observe,
-        )
-
-        result = await service.execute(make_session_key(), "SELECT raw")
-
-        self.assertEqual(result.row_count, 1)
+        self.assertEqual(len(store.uploads), 1)
+        self.assertEqual(details.session_key, session_key)
+        self.assertEqual(details.raw_sql, "SELECT raw")
+        self.assertEqual(details.normalized_sql, "SELECT normalized")
+        self.assertEqual(details.validation.tables[0].name, "orders")
+        self.assertEqual(details.result.row_count, 1)
 
     async def test_row_limit_discards_temporary_artifact(self) -> None:
         guard = RecordingGuard()
@@ -411,7 +380,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
             make_options(),
         )
 
-        result = await service.execute(make_session_key(), "SELECT raw")
+        result = (await service.execute(make_session_key(), "SELECT raw")).result
 
         self.assertEqual(result.row_count, 0)
         self.assertEqual(result.schema[0].type, "unknown")
@@ -469,7 +438,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
             make_options(),
         )
 
-        result = await service.execute(make_session_key(), "SELECT raw")
+        result = (await service.execute(make_session_key(), "SELECT raw")).result
 
         self.assertEqual(result.sample[0]["text"], f"{'x' * 512}…")
         self.assertIn(long_value.encode(), store.uploads[0][3])
@@ -497,7 +466,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
             make_options(sample_rows=3),
         )
 
-        result = await service.execute(make_session_key(), "SELECT raw")
+        result = (await service.execute(make_session_key(), "SELECT raw")).result
 
         rows = list(csv.reader(io.StringIO(store.uploads[0][3].decode())))
         self.assertEqual(rows[0], ["'=formula_header", "plain"])

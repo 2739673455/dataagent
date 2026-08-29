@@ -408,7 +408,7 @@ def _atomic_jsonl(path: Path, rows: Iterable[Mapping[str, Any]]) -> int:
     return count
 
 
-def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
+def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
     with path.open(encoding="utf-8") as source:
         for line_number, line in enumerate(source, start=1):
             if not line.strip():
@@ -913,8 +913,8 @@ def validate_catalog(data_dir: Path) -> dict[str, int]:
         "categories.json": categories[0],
         "brands.json": brands[0],
         "shops.json": shops[0],
-        "spus.jsonl": next(iter_jsonl(data_dir / "spus.jsonl")),
-        "skus.jsonl": next(iter_jsonl(data_dir / "skus.jsonl")),
+        "spus.jsonl": next(_iter_jsonl(data_dir / "spus.jsonl")),
+        "skus.jsonl": next(_iter_jsonl(data_dir / "skus.jsonl")),
     }
     missing_lineage_fields = [
         f"{artifact}.{field}"
@@ -972,7 +972,7 @@ def validate_catalog(data_dir: Path) -> dict[str, int]:
     lineage_sku_refs: dict[int, int] = {}
     origin_sku_keys: set[str] = set()
     self_operated_spus = 0
-    for row in iter_jsonl(data_dir / "lineage.jsonl"):
+    for row in _iter_jsonl(data_dir / "lineage.jsonl"):
         spu_id = int(row["spu_id"])
         if spu_id in lineage_spu_ids:
             raise ValueError(f"血缘SPU业务ID重复: {spu_id}")
@@ -1104,7 +1104,7 @@ def validate_catalog(data_dir: Path) -> dict[str, int]:
     spu_refs: dict[int, tuple[int, int, int]] = {}
     root_counts: Counter[str] = Counter()
     brand_usage: Counter[int] = Counter()
-    for row in iter_jsonl(data_dir / "spus.jsonl"):
+    for row in _iter_jsonl(data_dir / "spus.jsonl"):
         spu_id = int(row["spu_id"])
         category_id = int(row["category_id"])
         brand_id = int(row["brand_id"])
@@ -1136,7 +1136,7 @@ def validate_catalog(data_dir: Path) -> dict[str, int]:
 
     sku_ids: set[int] = set()
     sku_counts: Counter[int] = Counter()
-    for row in iter_jsonl(data_dir / "skus.jsonl"):
+    for row in _iter_jsonl(data_dir / "skus.jsonl"):
         sku_id = int(row["sku_id"])
         spu_id = int(row["spu_id"])
         if sku_id in sku_ids:

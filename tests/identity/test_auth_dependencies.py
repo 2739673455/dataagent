@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.identity.api.auth.dependencies import get_current_user
+from app.identity.api.auth.dependencies import _get_current_user
 from app.identity.services.auth import AuthenticatedUser
 from app.shared.config.app_config import cfg
 from tests.identity.test_auth_service import build_user
@@ -46,7 +46,7 @@ class AuthDependencyTest(unittest.IsolatedAsyncioTestCase):
                 return_value=authenticator,
             ) as create_authenticator,
         ):
-            result = await get_current_user(credentials)
+            result = await _get_current_user(credentials)
 
         self.assertIs(result, principal)
         create_session.assert_called_once_with()

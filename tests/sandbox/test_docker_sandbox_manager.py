@@ -13,6 +13,7 @@ from docker.errors import ImageNotFound
 from pydantic import ValidationError
 
 from app.analytics.agents.manager import AgentManager
+from app.analytics.agents.skills import packaged_agent_skill_mounts
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.capacity import FairCapacityLimiter
 from app.sandbox.concurrency import LifecycleGuard
@@ -71,7 +72,11 @@ def build_sandbox_config(**updates: object) -> SandboxConfig:
 
 def build_sandbox_manager(config: SandboxConfig) -> DockerSandboxManager:
     """构造使用进程内协调器的测试沙箱管理器"""
-    return DockerSandboxManager(config, LocalSandboxOwnership())
+    return DockerSandboxManager(
+        config,
+        LocalSandboxOwnership(),
+        packaged_agent_skill_mounts(),
+    )
 
 
 class NormalizeAttachmentPathTest(unittest.TestCase):
@@ -487,6 +492,17 @@ class DockerSandboxManagerPolicyTest(unittest.TestCase):
             changed_digest = manager._container_spec_digest("sha256:image")
         self.assertNotEqual(original_digest, changed_digest)
 
+    def test_packaged_agent_skills_use_read_only_container_mounts(self) -> None:
+        manager = build_sandbox_manager(build_sandbox_config())
+
+        volumes = manager._readonly_mount_volumes()
+
+        self.assertEqual(len(volumes), 1)
+        self.assertEqual(
+            next(iter(volumes.values())),
+            {"bind": "/skills/analyst", "mode": "ro"},
+        )
+
     def test_health_exposes_cleanup_and_capacity_state(self) -> None:
 
         manager = build_sandbox_manager(build_sandbox_config())
@@ -657,6 +673,23 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(backend.execute("printf started").output, "started")
         container.reload()
         self.assertEqual(container.status, "running")
+
+    async def test_packaged_agent_skills_are_readable_and_immutable(self) -> None:
+        backend = await self.manager.get_session_backend(
+            self.user_id,
+            uuid4(),
+            "analysis-run",
+            "analyst",
+            "analyst-session",
+        )
+        skill_path = "/skills/analyst/analysis/SKILL.md"
+
+        result = backend.execute(
+            f"grep -q '^name: analysis$' {skill_path} "
+            f"&& ! printf changed >> {skill_path}"
+        )
+
+        self.assertEqual(result.exit_code, 0, result.output)
 
     async def test_user_mutations_are_scoped_away_from_analysis_artifact(self) -> None:
         conversation_id = uuid4()
@@ -1049,17 +1082,15 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_idle_container_restarts_on_next_operation(self) -> None:
         backend = await self.manager.get_backend(self.user_id, uuid4())
-        _, user_guard, start_lock, _, _ = await self.manager._get_resources(
-            self.user_id
-        )
+        resources = self.manager._get_user_resources(self.user_id)
         self._set_last_activity(
             time.time() - self.manager._config.idle_stop_seconds - 1
         )
         await asyncio.to_thread(
             self.manager._cleanup_idle_container_sync,
             self.user_id,
-            user_guard,
-            start_lock,
+            resources.guard,
+            resources.start_lock,
         )
         container = self.manager._get_existing_container_sync(self.user_id)
         self.assertIsNotNone(container)
@@ -1091,9 +1122,7 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(old_container)
         assert old_container is not None
         old_container_id = old_container.id
-        _, user_guard, start_lock, _, _ = await self.manager._get_resources(
-            self.user_id
-        )
+        resources = self.manager._get_user_resources(self.user_id)
         self._set_last_activity(
             time.time() - self.manager._config.idle_remove_seconds - 1
         )
@@ -1101,8 +1130,8 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.to_thread(
             self.manager._cleanup_idle_container_sync,
             self.user_id,
-            user_guard,
-            start_lock,
+            resources.guard,
+            resources.start_lock,
         )
 
         self.assertIsNone(self.manager._get_existing_container_sync(self.user_id))
@@ -1124,13 +1153,11 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         operation = asyncio.create_task(
             asyncio.to_thread(backend.execute, "sleep 0.6; printf completed")
         )
-        _, user_guard, start_lock, _, _ = await self.manager._get_resources(
-            self.user_id
-        )
+        resources = self.manager._get_user_resources(self.user_id)
         for _ in range(20):
             active_container = self.manager._get_existing_container_sync(self.user_id)
             if (
-                user_guard.active_operations
+                resources.guard.active_operations
                 and active_container is not None
                 and active_container.status == "running"
             ):
@@ -1143,8 +1170,8 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         await asyncio.to_thread(
             self.manager._cleanup_idle_container_sync,
             self.user_id,
-            user_guard,
-            start_lock,
+            resources.guard,
+            resources.start_lock,
         )
 
         container = self.manager._get_existing_container_sync(self.user_id)

@@ -3,7 +3,7 @@
 import unittest
 
 from main import app
-from scripts.generate_openapi_types import OUTPUT_PATH, render_openapi_types
+from scripts.generate_openapi_types import OUTPUT_PATH, _render_openapi_types
 
 
 class ApiContractTests(unittest.TestCase):
@@ -12,7 +12,7 @@ class ApiContractTests(unittest.TestCase):
 
     def test_generated_types_match_openapi(self) -> None:
         self.assertEqual(
-            render_openapi_types(self.openapi),
+            _render_openapi_types(self.openapi),
             OUTPUT_PATH.read_text(),
         )
 

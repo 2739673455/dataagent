@@ -19,8 +19,8 @@ from app.analytics.api.chat.router import (
 from app.analytics.models.conversation import Conversation
 from app.analytics.services.conversation_title import (
     ConversationTitleService,
+    _normalize_generated_title,
     initial_conversation_title,
-    normalize_generated_title,
 )
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -57,10 +57,10 @@ class ConversationTitleTest(unittest.IsolatedAsyncioTestCase):
 
     def test_generated_title_is_normalized_and_limited(self) -> None:
         self.assertEqual(
-            normalize_generated_title("  标题： “华东销售趋势分析”  "),
+            _normalize_generated_title("  标题： “华东销售趋势分析”  "),
             "华东销售趋势分析",
         )
-        self.assertEqual(len(normalize_generated_title("题" * 80)), 30)
+        self.assertEqual(len(_normalize_generated_title("题" * 80)), 30)
 
     async def test_model_title_updates_unchanged_initial_title(self) -> None:
         repository = MagicMock()

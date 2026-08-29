@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
-def parse_args() -> argparse.Namespace:
+def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="生成电商数仓模拟数据")
     parser.add_argument(
         "--smoke",
@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run(ctx: RunContext, args: argparse.Namespace) -> None:
+def _run(ctx: RunContext, args: argparse.Namespace) -> None:
     tables = support.reflect_tables(ctx.engine)
 
     if args.validate_only:
@@ -189,11 +189,11 @@ def run(ctx: RunContext, args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    args = parse_args()
+    args = _parse_args()
     gen = GenerateConfig.smoke() if args.smoke else GenerateConfig()
     ctx = RunContext(DorisConfig(), gen)
     try:
-        run(ctx, args)
+        _run(ctx, args)
     finally:
         ctx.close()
 

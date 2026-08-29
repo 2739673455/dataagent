@@ -16,7 +16,7 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete", "options", "head")
 PARAMETER_LOCATIONS = ("path", "query", "header", "cookie")
 
 
-def load_openapi() -> dict[str, Any]:
+def _load_openapi() -> dict[str, Any]:
     """加载当前 FastAPI 应用生成的 OpenAPI"""
     project_root = str(PROJECT_ROOT)
     if project_root not in sys.path:
@@ -59,7 +59,7 @@ def _render_ref(ref: str) -> str:
     return f'components["schemas"][{_quote(name)}]'
 
 
-def render_schema(schema: Any, indent: int = 0) -> str:
+def _render_schema(schema: Any, indent: int = 0) -> str:
     """把 OpenAPI JSON Schema 转换为 TypeScript 类型"""
     if not isinstance(schema, Mapping):
         return "unknown"
@@ -73,14 +73,14 @@ def render_schema(schema: Any, indent: int = 0) -> str:
     for keyword, separator in (("anyOf", " | "), ("oneOf", " | "), ("allOf", " & ")):
         variants = schema.get(keyword)
         if isinstance(variants, list):
-            rendered = _unique([render_schema(item, indent) for item in variants])
+            rendered = _unique([_render_schema(item, indent) for item in variants])
             return f"({separator.join(rendered)})"
 
     schema_type = schema.get("type")
     if isinstance(schema_type, list):
         rendered = _unique(
             [
-                render_schema({**schema, "type": item}, indent)
+                _render_schema({**schema, "type": item}, indent)
                 for item in schema_type
             ]
         )
@@ -94,7 +94,7 @@ def render_schema(schema: Any, indent: int = 0) -> str:
     if schema_type == "boolean":
         return "boolean"
     if schema_type == "array":
-        return f"Array<{render_schema(schema.get('items', {}), indent)}>"
+        return f"Array<{_render_schema(schema.get('items', {}), indent)}>"
 
     properties = schema.get("properties")
     additional = schema.get("additionalProperties")
@@ -105,12 +105,12 @@ def render_schema(schema: Any, indent: int = 0) -> str:
         if isinstance(properties, Mapping):
             for name in sorted(properties):
                 optional = "" if name in required else "?"
-                rendered = render_schema(properties[name], indent + 1)
+                rendered = _render_schema(properties[name], indent + 1)
                 lines.append(f"{child_indent}{_quote(name)}{optional}: {rendered};")
         if additional is True:
             lines.append(f"{child_indent}[key: string]: unknown;")
         elif isinstance(additional, Mapping):
-            rendered = render_schema(additional, indent + 1)
+            rendered = _render_schema(additional, indent + 1)
             lines.append(f"{child_indent}[key: string]: {rendered};")
         lines.append(f"{'  ' * indent}}}")
         return "\n".join(lines)
@@ -161,7 +161,7 @@ def _render_parameters(
         for parameter in values:
             name = str(parameter["name"])
             optional = "" if parameter.get("required") else "?"
-            rendered = render_schema(parameter.get("schema", {}), indent + 2)
+            rendered = _render_schema(parameter.get("schema", {}), indent + 2)
             lines.append(f"{parameter_indent}{_quote(name)}{optional}: {rendered};")
         lines.append(f"{location_indent}}};")
     lines.append(f"{'  ' * indent}}}")
@@ -179,7 +179,7 @@ def _render_content(content: Any, indent: int) -> str:
         schema = media.get("schema", {}) if isinstance(media, Mapping) else {}
         lines.append(
             f"{child_indent}{_quote(str(media_type))}: "
-            f"{render_schema(schema, indent + 1)};"
+            f"{_render_schema(schema, indent + 1)};"
         )
     lines.append(f"{'  ' * indent}}}")
     return "\n".join(lines)
@@ -223,7 +223,7 @@ def _render_operation(
     return "\n".join(lines)
 
 
-def render_openapi_types(document: Mapping[str, Any]) -> str:
+def _render_openapi_types(document: Mapping[str, Any]) -> str:
     """生成稳定排序的 TypeScript OpenAPI 协议"""
     components = document.get("components", {})
     schemas = components.get("schemas", {}) if isinstance(components, Mapping) else {}
@@ -237,7 +237,7 @@ def render_openapi_types(document: Mapping[str, Any]) -> str:
     ]
     if isinstance(schemas, Mapping):
         for name in sorted(schemas):
-            rendered = render_schema(schemas[name], 2)
+            rendered = _render_schema(schemas[name], 2)
             lines.append(f"    {_quote(str(name))}: {rendered};")
     lines.extend(["  };", "}", "", "export interface operations {"])
 
@@ -285,7 +285,7 @@ def main() -> int:
         help="检查已提交类型是否与当前 OpenAPI 一致",
     )
     args = parser.parse_args()
-    generated = render_openapi_types(load_openapi())
+    generated = _render_openapi_types(_load_openapi())
     if args.check:
         if not OUTPUT_PATH.exists() or OUTPUT_PATH.read_text() != generated:
             print(

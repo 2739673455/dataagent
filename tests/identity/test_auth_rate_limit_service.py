@@ -10,8 +10,8 @@ from httpx import ASGITransport, AsyncClient
 
 from app.identity import errors as auth_error
 from app.identity.api.auth.dependencies import (
-    get_auth_rate_limit_service,
-    get_auth_service,
+    _get_auth_rate_limit_service,
+    _get_auth_service,
 )
 from app.identity.api.auth.router import router
 from app.identity.services.rate_limit import (
@@ -21,7 +21,7 @@ from app.identity.services.rate_limit import (
 )
 from app.shared.errors.base import ProblemError
 from app.shared.errors.exc_handlers import (
-    problem_error_handler,
+    _problem_error_handler,
     register_exception_handlers,
 )
 
@@ -131,7 +131,7 @@ class AuthRateLimitRouterTest(unittest.IsolatedAsyncioTestCase):
         register_exception_handlers(app)
 
         async def async_problem_handler(request, exc):
-            return problem_error_handler(request, exc)
+            return _problem_error_handler(request, exc)
 
         async def override_auth_service():
             return service
@@ -141,8 +141,8 @@ class AuthRateLimitRouterTest(unittest.IsolatedAsyncioTestCase):
 
         app.add_exception_handler(ProblemError, async_problem_handler)
         app.include_router(router, prefix="/api/v1/auth")
-        app.dependency_overrides[get_auth_service] = override_auth_service
-        app.dependency_overrides[get_auth_rate_limit_service] = (
+        app.dependency_overrides[_get_auth_service] = override_auth_service
+        app.dependency_overrides[_get_auth_rate_limit_service] = (
             override_rate_limit_service
         )
         return app

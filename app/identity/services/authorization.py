@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
@@ -112,6 +113,8 @@ class AssetAccessPolicy:
     """用户资产访问策略快照"""
 
     user_id: int
+    role_name: str | None = None
+    authorization_epoch: UUID | None = None
     grants: frozenset[AssetIdentity] = frozenset()
 
     def allows(self, asset: AssetIdentity) -> bool:
@@ -141,9 +144,16 @@ class AuthorizationService:
             raise auth_error.InactiveUserError
         if user.doris_role_name is None:
             return AssetAccessPolicy(user_id=user.id)
+        identity = await DorisQueryIdentityPGRepo(self._repo.session).get(
+            user.doris_role_name
+        )
+        if identity is None:
+            return AssetAccessPolicy(user_id=user.id)
         grants = await self._repo.list_role_asset_grants(user.doris_role_name)
         return AssetAccessPolicy(
             user_id=user.id,
+            role_name=user.doris_role_name,
+            authorization_epoch=identity.authorization_epoch,
             grants=frozenset(self._grant_identity(grant) for grant in grants),
         )
 

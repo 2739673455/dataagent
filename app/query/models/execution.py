@@ -109,6 +109,7 @@ class QueryExecution(MetaBase):
     )
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     role_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    authorization_epoch: Mapped[UUID] = mapped_column(nullable=False, default=uuid4)
     conversation_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
     analysis_id: Mapped[str] = mapped_column(String(64), nullable=False)
     session_id: Mapped[str] = mapped_column(String(64), nullable=False)

@@ -45,7 +45,6 @@ class UserDeletionServiceTest(unittest.IsolatedAsyncioTestCase):
         MagicMock,
         MagicMock,
         MagicMock,
-        MagicMock,
     ]:
         state_store = MagicMock()
         state_store.request = AsyncMock(return_value=True)
@@ -53,23 +52,20 @@ class UserDeletionServiceTest(unittest.IsolatedAsyncioTestCase):
         state_store.complete = AsyncMock()
         state_store.record_failure = AsyncMock()
         state_store.list_due_user_ids = AsyncMock(return_value=[])
-        query_history = MagicMock()
-        query_history.delete_user_query_history = AsyncMock()
         sandbox = MagicMock()
         sandbox.delete_user_sandbox = AsyncMock()
         conversations = MagicMock()
         conversations.delete_user_conversations = AsyncMock()
         service = UserDeletionService(
             state_store,
-            query_history,
             sandbox,
             conversations,
             build_config(),
         )
-        return service, state_store, query_history, conversations, sandbox
+        return service, state_store, conversations, sandbox
 
     async def test_request_disables_user_revokes_tokens_and_enqueues_task(self) -> None:
-        service, state_store, _, _, _ = self.build_service()
+        service, state_store, _, _ = self.build_service()
 
         submitted = await service.request_deletion(8, operator_id=1)
 
@@ -110,7 +106,7 @@ class UserDeletionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(submitted)
 
     async def test_delete_self_is_rejected_before_any_storage_access(self) -> None:
-        service, state_store, _, _, _ = self.build_service()
+        service, state_store, _, _ = self.build_service()
 
         with self.assertRaises(auth_error.InvalidUserMutationError):
             await service.request_deletion(1, operator_id=1)
@@ -118,7 +114,7 @@ class UserDeletionServiceTest(unittest.IsolatedAsyncioTestCase):
         state_store.request.assert_not_called()
 
     async def test_completed_deletion_can_be_submitted_again(self) -> None:
-        service, state_store, _, _, _ = self.build_service()
+        service, state_store, _, _ = self.build_service()
         state_store.request.return_value = False
 
         submitted = await service.request_deletion(8, operator_id=1)
@@ -126,7 +122,7 @@ class UserDeletionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(submitted)
 
     async def test_process_cleans_each_storage_then_completes_task(self) -> None:
-        service, state_store, query_history, conversations, sandbox = (
+        service, state_store, conversations, sandbox = (
             self.build_service()
         )
 
@@ -134,12 +130,11 @@ class UserDeletionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         conversations.delete_user_conversations.assert_awaited_once_with(8)
         sandbox.delete_user_sandbox.assert_awaited_once_with(8)
-        query_history.delete_user_query_history.assert_awaited_once_with(8)
         state_store.complete.assert_awaited_once_with(8, ANY)
         state_store.record_failure.assert_not_awaited()
 
     async def test_process_records_failure_for_automatic_retry(self) -> None:
-        service, state_store, _, conversations, sandbox = self.build_service()
+        service, state_store, conversations, sandbox = self.build_service()
         failure = RuntimeError("sandbox unavailable")
         conversations.delete_user_conversations.side_effect = failure
 

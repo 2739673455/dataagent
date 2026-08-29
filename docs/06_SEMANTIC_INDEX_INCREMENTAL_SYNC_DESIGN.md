@@ -60,7 +60,7 @@
 
 ### 4.1 资源键
 
-字段继续使用 [`column_resource_key`](../app/metadata/models.py) 生成无歧义联合资源键：
+字段继续使用 [`column_resource_key`](../app/metadata/models/catalog.py) 生成无歧义联合资源键：
 
 ```text
 ["table_name","column_name"]
@@ -348,7 +348,7 @@ Bulk API 可以在一次请求中提交多种文档操作，但不提供跨文�
 - 字段语义索引仓储：[`app/metadata/repositories/column_index.py`](../app/metadata/repositories/column_index.py)
 - 指标语义索引仓储：[`app/metadata/repositories/metric_index.py`](../app/metadata/repositories/metric_index.py)
 - PostgreSQL 元数据仓储：[`app/metadata/repositories/postgres.py`](../app/metadata/repositories/postgres.py)
-- 元数据模型与资源键：[`app/metadata/models.py`](../app/metadata/models.py)
+- 元数据模型与资源键：[`app/metadata/models/catalog.py`](../app/metadata/models/catalog.py)
 - 同步 API：[`app/metadata/api/meta/router.py`](../app/metadata/api/meta/router.py)
 
 ## 12. 参考资料

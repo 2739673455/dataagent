@@ -29,7 +29,7 @@ def validate_agent_type(value: str) -> AgentType:
     return value
 
 
-def validate_identifier(value: str, field_name: str) -> str:
+def _validate_identifier(value: str, field_name: str) -> str:
     """校验 Analysis 和 Session 标识"""
     if not isinstance(value, str) or IDENTIFIER_PATTERN.fullmatch(value) is None:
         raise ValueError(
@@ -52,9 +52,9 @@ class AgentSessionKey:
         """校验用户及专业 Agent Session 标识"""
         if isinstance(self.user_id, bool) or self.user_id <= 0:
             raise ValueError("user_id 必须为正整数")
-        validate_identifier(self.analysis_id, "analysis_id")
+        _validate_identifier(self.analysis_id, "analysis_id")
         validate_agent_type(self.agent_type)
-        validate_identifier(self.session_id, "session_id")
+        _validate_identifier(self.session_id, "session_id")
 
     @property
     def checkpoint_ns(self) -> str:

@@ -12,7 +12,7 @@ from .preparation import prepare_catalog, validate_catalog
 ROOT_DIR = Path(__file__).resolve().parents[1]
 
 
-def parse_args() -> argparse.Namespace:
+def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="准备综合电商真实商品维度目录")
     parser.add_argument(
         "--output-dir",
@@ -45,7 +45,7 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
-    args = parse_args()
+    args = _parse_args()
     output_dir = args.output_dir.resolve()
     if args.validate_only:
         result = validate_catalog(output_dir)

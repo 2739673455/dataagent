@@ -45,6 +45,7 @@ class QueryExecutionContext:
 
     session_key: AgentSessionKey
     role_name: str
+    authorization_epoch: UUID
     purpose: str
     tool_call_id: str | None = None
 
@@ -57,7 +58,7 @@ class _QueryExperienceSemanticRecall:
     ranks: dict[UUID, float]
 
 
-def build_sql_template(sql: str) -> tuple[str, str]:
+def _build_sql_template(sql: str) -> tuple[str, str]:
     """将 SQL 字面量替换为参数并生成稳定结构指纹"""
     expression = parse_one(sql, read="doris")
     parameter_index = 0
@@ -98,7 +99,7 @@ class QueryExperienceService:
         details: SuccessfulQueryExecution,
     ) -> UUID:
         """记录成功执行并增量更新相同结构的查询经验"""
-        sql_template, fingerprint = build_sql_template(details.normalized_sql)
+        sql_template, fingerprint = _build_sql_template(details.normalized_sql)
         tables = {item.name for item in details.validation.tables}
         columns = {(item.table, item.name) for item in details.validation.columns}
         async with self._repo.session.begin():
@@ -109,11 +110,10 @@ class QueryExperienceService:
             experience_id = uuid4()
             experience = QueryExperience(
                 id=experience_id,
-                owner_user_id=context.session_key.user_id,
                 role_name=context.role_name,
+                authorization_epoch=context.authorization_epoch,
                 fingerprint=fingerprint,
                 purposes=[context.purpose],
-                representative_sql=details.normalized_sql,
                 sql_template=sql_template,
             )
             assets = self._build_assets(
@@ -125,6 +125,7 @@ class QueryExperienceService:
             execution = QueryExecution(
                 user_id=context.session_key.user_id,
                 role_name=context.role_name,
+                authorization_epoch=context.authorization_epoch,
                 conversation_id=context.session_key.conversation_id,
                 analysis_id=context.session_key.analysis_id,
                 session_id=context.session_key.session_id,
@@ -167,6 +168,7 @@ class QueryExperienceService:
         execution = QueryExecution(
             user_id=context.session_key.user_id,
             role_name=context.role_name,
+            authorization_epoch=context.authorization_epoch,
             conversation_id=context.session_key.conversation_id,
             analysis_id=context.session_key.analysis_id,
             session_id=context.session_key.session_id,
@@ -216,8 +218,8 @@ class QueryExperienceService:
     async def recall(
         self,
         *,
-        user_id: int,
         role_name: str,
+        authorization_epoch: UUID,
         policy: AssetAccessPolicy,
         query: str,
         limit: int,
@@ -225,8 +227,8 @@ class QueryExperienceService:
         """按混合语义排名检索查询经验"""
         semantic_recall = await self._semantic_recall(
             query,
-            user_id=user_id,
             role_name=role_name,
+            authorization_epoch=authorization_epoch,
         )
         if semantic_recall.status == "failed":
             return QueryExperienceRecall(status="failed", results=[])
@@ -234,9 +236,9 @@ class QueryExperienceService:
         async with self._repo.session.begin():
             semantic_ids = list(semantic_ranks)
             experiences = await self._repo.get_many(
-                user_id,
                 semantic_ids,
                 role_name=role_name,
+                authorization_epoch=authorization_epoch,
             )
             current_versions = await self._repo.current_asset_versions(experiences)
             invalid_revisions = {
@@ -351,8 +353,8 @@ class QueryExperienceService:
                 raise ValueError("查询经验向量生成数量不匹配")
             await self._index_repo.index(
                 experience.id,
-                owner_user_id=experience.owner_user_id,
                 role_name=experience.role_name,
+                authorization_epoch=experience.authorization_epoch,
                 text=text,
                 embedding=embeddings[0],
             )
@@ -370,15 +372,15 @@ class QueryExperienceService:
         self,
         query: str,
         *,
-        user_id: int,
         role_name: str,
+        authorization_epoch: UUID,
     ) -> _QueryExperienceSemanticRecall:
         """分别召回全文和向量候选，并融合可用通道"""
         text_task = asyncio.create_task(
             self._index_repo.search_text(
                 query,
-                user_id=user_id,
                 role_name=role_name,
+                authorization_epoch=authorization_epoch,
                 limit=_SEARCH_POOL_SIZE,
             )
         )
@@ -390,8 +392,8 @@ class QueryExperienceService:
             vector_task = asyncio.create_task(
                 self._index_repo.search_vector(
                     embeddings[0],
-                    user_id=user_id,
                     role_name=role_name,
+                    authorization_epoch=authorization_epoch,
                     limit=_SEARCH_POOL_SIZE,
                     min_score=cfg.query.query_experience_vector_score_threshold,
                 )
@@ -409,9 +411,7 @@ class QueryExperienceService:
             if vector_task is not None
             else None
         )
-        available_hits = [
-            hits for hits in (text_hits, vector_hits) if hits is not None
-        ]
+        available_hits = [hits for hits in (text_hits, vector_hits) if hits is not None]
         if not available_hits:
             return _QueryExperienceSemanticRecall(status="failed", ranks={})
         ranks: dict[UUID, float] = {}
@@ -443,44 +443,30 @@ class QueryExperienceService:
         authorization_filter: MetadataAuthorizationFilter,
     ) -> QueryExperienceRecallResult | None:
         """将已通过有效性检查的经验转换为模型可用结果"""
-        experience_tables = {
-            asset.table_name for asset in experience.assets if asset.kind == "table"
-        }
-        experience_columns = {
-            (asset.table_name, asset.column_name)
-            for asset in experience.assets
-            if asset.kind == "column" and asset.column_name is not None
-        }
-        if any(
-            not authorization_filter.table_is_visible(table_name)
-            for table_name in experience_tables
-        ) or any(
-            not authorization_filter.column_is_allowed(table_name, column_name)
-            for table_name, column_name in experience_columns
-        ):
+        assets = [
+            QueryAssetSnapshot(
+                kind=cast(QueryAssetKind, asset.kind),
+                database=asset.database_name,
+                table=asset.table_name,
+                column=asset.column_name,
+                meta_version=asset.meta_version,
+            )
+            for asset in sorted(
+                experience.assets,
+                key=lambda item: (
+                    item.kind,
+                    item.table_name,
+                    item.column_name or "",
+                ),
+            )
+        ]
+        if not authorization_filter.query_experience_is_allowed(assets):
             return None
-
         return QueryExperienceRecallResult(
             id=experience.id,
             purpose=experience.purposes[-1],
             sql_template=experience.sql_template,
-            assets=[
-                QueryAssetSnapshot(
-                    kind=cast(QueryAssetKind, asset.kind),
-                    database=asset.database_name,
-                    table=asset.table_name,
-                    column=asset.column_name,
-                    meta_version=asset.meta_version,
-                )
-                for asset in sorted(
-                    experience.assets,
-                    key=lambda item: (
-                        item.kind,
-                        item.table_name,
-                        item.column_name or "",
-                    ),
-                )
-            ],
+            assets=assets,
         )
 
     @staticmethod

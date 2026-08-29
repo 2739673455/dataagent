@@ -60,7 +60,7 @@ flowchart TD
 | Agent 类型 | 核心职责 | 挂载工具与能力 | 交付产物 |
 | :--- | :--- | :--- | :--- |
 | [`Planner`](../app/analytics/agents/planner/agent.py) | 用户目标理解、任务动态拆分、委派调度、修补决策、结果汇总 | `delegation`、`read_file`、`list_dir` | 最终自然语言回答与报告汇总 |
-| [`Explorer`](../app/analytics/agents/explorer/agent.py) | 语义目录检索、历史查询经验复用、只读 SQL 生成、执行与数据探查 | [`semantic_recall`](../app/analytics/agents/explorer/tools/semantic_recall.py)、[`search_query_experiences`](../app/analytics/agents/explorer/tools/query_experience.py)、[`execute_sql`](../app/analytics/agents/explorer/tools/execute_sql.py)、沙箱文件工具 | CSV 数据集、字段画像与数据特征摘要 |
+| [`Explorer`](../app/analytics/agents/explorer/agent.py) | 语义目录检索、历史查询经验复用、只读 SQL 生成、执行与数据探查 | [`semantic_recall`](../app/analytics/agents/explorer/tools/semantic_recall.py)、[`execute_sql`](../app/analytics/agents/explorer/tools/execute_sql.py)、沙箱文件工具 | CSV 数据集、字段画像与数据特征摘要 |
 | [`Analyst`](../app/analytics/agents/analyst/agent.py) | 指标变化贡献率拆解、维度下钻、因果/相关性统计分析 | 沙箱 Shell 命令执行（运行 Python/Pandas/Scipy 分析脚本）、沙箱文件读写 | 归因分析结论、维度贡献率计算结果、统计衍生表 |
 | [`Reviewer`](../app/analytics/agents/reviewer/agent.py) | 独立核验 SQL 取数口径、复核计算脚本逻辑、审查最终结论 | 沙箱 Shell 命令执行（运行校验脚本）、文件读取 | 审查通过确认 或 `RepairRequest` 结构化修补请求 |
 | [`Visualizer`](../app/analytics/agents/visualizer/agent.py) | 静态图表生成、展示表格格式化与自包含 HTML 报告排版（消费 Analyst 汇总结果） | 沙箱 Shell 与文件工具（运行 Matplotlib / Seaborn 渲染静态图表，生成自包含 HTML 报告） | PNG / SVG 静态图表、自包含 HTML 分析报告（.html）和格式化数据文件 |

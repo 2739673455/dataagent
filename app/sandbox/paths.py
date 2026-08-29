@@ -1,7 +1,7 @@
 """沙箱工作区路径模型与校验"""
 
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from uuid import UUID
 
 from app.sandbox.exceptions import SandboxPathError
@@ -11,6 +11,31 @@ SANDBOX_STAGING_ROOT = "/workspace/.dataagent-staging"
 USER_ATTACHMENT_ROOT = "uploads"
 _PATH_MAX_BYTES = 4096
 _PATH_COMPONENT_MAX_BYTES = 255
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxReadonlyMount:
+    """一个暴露给沙箱容器的宿主机只读目录"""
+
+    source: Path
+    target: PurePosixPath
+
+    def __post_init__(self) -> None:
+        """规范化源目录并校验容器目标路径"""
+        source = self.source.resolve(strict=True)
+        if not source.is_dir():
+            raise ValueError(f"沙箱只读挂载源不是目录: {source}")
+        target = self.target
+        if (
+            not target.is_absolute()
+            or target == PurePosixPath("/")
+            or target == PurePosixPath("/workspace")
+            or target.is_relative_to(PurePosixPath("/workspace"))
+            or target == PurePosixPath("/tmp")
+            or target.is_relative_to(PurePosixPath("/tmp"))
+        ):
+            raise ValueError(f"沙箱只读挂载目标路径无效: {target}")
+        object.__setattr__(self, "source", source)
 
 
 @dataclass(frozen=True, slots=True)

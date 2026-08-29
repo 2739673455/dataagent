@@ -31,7 +31,7 @@ def initial_conversation_title(user_text: str | None) -> str:
     return normalized[:_MAX_TITLE_LENGTH]
 
 
-def normalize_generated_title(raw_title: str) -> str:
+def _normalize_generated_title(raw_title: str) -> str:
     """规范化模型生成的标题"""
     title = " ".join(raw_title.split()).strip(_TITLE_WRAPPERS).strip()
     for prefix in ("标题：", "标题:"):
@@ -63,7 +63,7 @@ class ConversationTitleService:
                 HumanMessage(content=user_text[:_MAX_MODEL_INPUT_LENGTH]),
             ]
         )
-        generated_title = normalize_generated_title(response.text)
+        generated_title = _normalize_generated_title(response.text)
         if not generated_title:
             return
 

@@ -56,4 +56,6 @@ async def create_authorized_semantic_recall_service(
             cfg.query.data_source,
             cfg.doris.database,
         ),
+        query_experience_role_name=policy.role_name,
+        query_experience_authorization_epoch=policy.authorization_epoch,
     )

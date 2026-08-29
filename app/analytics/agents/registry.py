@@ -13,6 +13,7 @@ from langgraph.graph.state import CompiledStateGraph
 from app.analytics.agents.analyst.prompt import ANALYST_SYSTEM_PROMPT
 from app.analytics.agents.explorer.prompt import EXPLORER_SYSTEM_PROMPT
 from app.analytics.agents.reviewer.prompt import REVIEWER_SYSTEM_PROMPT
+from app.analytics.agents.skills import agent_skills_mount_path
 from app.analytics.agents.visualizer.prompt import VISUALIZER_SYSTEM_PROMPT
 from app.shared.contracts.analysis import (
     AGENT_TYPES,
@@ -46,6 +47,7 @@ class AgentSpec:
     system_prompt: str
     platform_tools: frozenset[str] = frozenset()
     required_tools: frozenset[str] = frozenset()
+    skills: tuple[str, ...] = ()
     use_mcp: bool = False
 
 
@@ -74,6 +76,7 @@ _AGENT_SPECS: dict[AgentType, AgentSpec] = {
     "analyst": AgentSpec(
         description="对指标变化执行贡献分解、维度下钻和根因候选分析",
         system_prompt=ANALYST_SYSTEM_PROMPT,
+        skills=(agent_skills_mount_path("analyst"),),
     ),
     "reviewer": AgentSpec(
         description="审查上游数据、分析结论和产物，发现问题时发起修补",
@@ -160,6 +163,7 @@ def build_agent_definitions(
                 for name in sorted(allowed_tool_names)
                 if name in tools_by_name
             ),
+            skills=spec.skills,
         )
     return definitions
 

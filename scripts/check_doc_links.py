@@ -10,15 +10,15 @@ _MARKDOWN_LINK_PATTERN = re.compile(r"!?\[[^\]]*]\(([^)]+)\)")
 _EXTERNAL_SCHEMES = {"http", "https", "mailto", "data"}
 
 
-def documentation_files() -> list[Path]:
+def _documentation_files() -> list[Path]:
     """返回需要检查的项目文档"""
     return [ROOT_DIR / "README.md", *sorted((ROOT_DIR / "docs").rglob("*.md"))]
 
 
-def check_document_links(paths: Iterable[Path] | None = None) -> list[str]:
+def _check_document_links(paths: Iterable[Path] | None = None) -> list[str]:
     """返回全部失效本地链接"""
     broken_links: list[str] = []
-    for document_path in paths or documentation_files():
+    for document_path in paths or _documentation_files():
         content = document_path.read_text()
         for match in _MARKDOWN_LINK_PATTERN.finditer(content):
             raw_target = match.group(1).strip().strip("<>")
@@ -40,7 +40,7 @@ def check_document_links(paths: Iterable[Path] | None = None) -> list[str]:
 
 def main() -> None:
     """执行文档链接检查"""
-    broken_links = check_document_links()
+    broken_links = _check_document_links()
     if broken_links:
         details = "\n".join(broken_links)
         raise SystemExit(f"发现失效的本地文档链接:\n{details}")

@@ -68,14 +68,15 @@ SET exec_mem_limit = {memory_limit_bytes};
 
 ### 2.5 查询经验记忆
 
-每次 `execute_sql` 尝试都会在 Meta PostgreSQL 写入一条执行记录。成功执行会按 `用户 + Doris 角色 + SQL 结构指纹` 聚合为用户私有经验，Guard 提取的表和字段及其 `meta_version` 会作为经验资产快照保存。当前阶段不建立 SQL 与指标的结构化关联。
+每次 `execute_sql` 尝试都会在 Meta PostgreSQL 写入一条执行记录，保留用户、角色、权限纪元、`purpose`、原始 SQL 和结果摘要。成功执行会按 `Doris 角色 + SQL 结构指纹` 聚合为角色共享经验，Guard 提取的表和字段及其 `meta_version` 会作为经验资产快照保存。
 
-- SQL 结构指纹来自 Guard 规范化 SQL 的 AST，所有字面量会替换为 `:p1`、`:p2` 等占位符。Elasticsearch 只保存任务文本、表字段名称和向量，不保存原始 SQL、查询字面量或结果样本。
-- 成功查询先进入 `candidate` 状态。Explorer 的最终 `SpecialistResult` 直接引用对应查询产物时，经验提升为 `promoted` 并累计采用次数。
-- `search_query_experiences` 融合全文召回、向量召回、表字段重合度、成功次数、采用次数和新鲜度排序。
+- SQL 结构指纹来自 Guard 规范化 SQL 的 AST，所有字面量会替换为 `:p1`、`:p2` 等占位符。Elasticsearch 只保存任务文本、表字段名称、角色、权限纪元和向量，不保存原始 SQL、查询字面量或结果样本。
+- 成功查询进入 `candidate` 状态；相同角色和指纹会聚合最近的去重 `purpose`。
+- 查询经验以全文与向量融合排序。ES 候选、PostgreSQL 回查均按角色和权限纪元限制，服务层随后进行元数据版本和资产权限复核，最终保留最多 3 条。
 - 表或字段元数据更新、删除及批量导入完成后，所有关联经验会立即转为 `disabled` 并删除 Elasticsearch 文档。检索时还会再次比较当前元数据版本，补偿并发变更或索引删除失败，失效经验不会返回 Explorer。
 - 已失效 SQL 后续重新通过完整 Guard 并成功执行时，会使用最新表字段版本恢复为新的 `candidate` 经验。
 - PostgreSQL 保存完整事实和聚合状态，Elasticsearch 作为可重建的语义检索索引。索引更新失败不会改变 SQL 的成功结果，后续执行或采用会再次触发同步。
+- 撤销 SELECT 权限、创建或删除 Row Policy 会轮换角色权限纪元，使旧经验与旧会话缓存立即失效。用户注销不会删除查询执行审计或角色共享经验；沙箱文件仍会清理，结果摘要中的产物路径可能失效。
 
 ---
 
@@ -102,4 +103,4 @@ SET exec_mem_limit = {memory_limit_bytes};
 - 查询执行模型、资源限制与流式处理选项：[`app/query/models/execution.py`](../app/query/models/execution.py)
 - 查询经验模型：[`app/query/models/experience.py`](../app/query/models/experience.py)
 - 查询经验服务：[`app/query/services/experience.py`](../app/query/services/experience.py)
-- 查询经验检索工具：[`app/analytics/agents/explorer/tools/query_experience.py`](../app/analytics/agents/explorer/tools/query_experience.py)
+- 查询经验检索工具：[`app/analytics/agents/explorer/tools/semantic_recall.py`](../app/analytics/agents/explorer/tools/semantic_recall.py)

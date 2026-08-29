@@ -1,4 +1,4 @@
-"""受控分析查询执行与会话产物写入"""
+"""受控只读查询执行与会话产物写入"""
 
 import asyncio
 import base64
@@ -9,7 +9,7 @@ import math
 import re
 import tempfile
 import unicodedata
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator
 from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
@@ -102,6 +102,16 @@ class QueryResultLimitExceededError(RuntimeError):
         super().__init__(f"查询结果行数超出限制，最大允许 {max_rows} 行")
 
 
+class QueryRejectedError(ValueError):
+    """SQL 未通过确定性安全校验"""
+
+    def __init__(self, result: QueryValidationResult) -> None:
+        """保存完整校验结果并汇总拒绝原因"""
+        self.result = result
+        message = "; ".join(issue.message for issue in result.issues)
+        super().__init__(message or "SQL 查询已被拒绝")
+
+
 class QueryOutputLimitExceededError(RuntimeError):
     """查询 CSV 超过允许的最大字节数"""
 
@@ -142,9 +152,6 @@ class SuccessfulQueryExecution:
     validation: QueryValidationResult
     plan_estimate: QueryPlanEstimate
     result: AnalysisQueryResult
-
-
-type QuerySuccessObserver = Callable[[SuccessfulQueryExecution], Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -211,43 +218,77 @@ class AnalysisQueryService:
         artifact_store: QueryArtifactStore,
         limits: QueryExecutionLimits,
         options: QueryExecutionOptions,
-        success_observer: QuerySuccessObserver | None = None,
     ) -> None:
-        """初始化分析查询服务"""
+        """初始化只读查询服务"""
         self._guard = guard
         self._query_repo = query_repo
         self._artifact_store = artifact_store
         self._limits = limits
         self._options = options
-        self._success_observer = success_observer
 
     async def execute(
         self,
         session_key: AgentSessionKey,
         sql: str,
-    ) -> AnalysisQueryResult:
-        """校验、执行并返回查询产物的紧凑摘要"""
+    ) -> SuccessfulQueryExecution:
+        """校验并执行查询，返回完整的成功执行信息"""
         sql_fingerprint = hashlib.sha256(sql.encode("utf-8")).hexdigest()[:16]
         logger.info(
-            "开始执行只读分析查询: "
+            "开始执行只读查询: "
             f"conversation_id={session_key.conversation_id}, "
             f"analysis_id={session_key.analysis_id}, "
             f"sql_fingerprint={sql_fingerprint}"
         )
         try:
             async with asyncio.timeout(self._limits.timeout_seconds):
-                details = await self._execute_with_deadline(session_key, sql)
+                validation = await self._guard.check(session_key.user_id, sql)
+                normalized_sql = validation.normalized_sql
+                if not validation.valid or normalized_sql is None:
+                    raise QueryRejectedError(validation)
+
+                plan = await self._query_repo.explain(normalized_sql, self._limits)
+                estimate = _estimate_doris_query_plan(
+                    plan,
+                    require_scan=bool(validation.tables),
+                )
+                relative_path = (
+                    f"analyses/{session_key.analysis_id}/sessions/"
+                    f"{session_key.agent_type}/{session_key.session_id}/"
+                    f"query_{uuid4().hex}.csv"
+                )
+                with tempfile.TemporaryFile(mode="w+b") as temporary_file:
+                    summary = await self._execute_to_csv(
+                        temporary_file,
+                        normalized_sql,
+                    )
+                    temporary_file.seek(0)
+                    await self._artifact_store.write_artifact(
+                        session_key.user_id,
+                        session_key.conversation_id,
+                        relative_path,
+                        temporary_file,
+                    )
+                result = AnalysisQueryResult(
+                    path=f"/{PurePosixPath(relative_path)}",
+                    schema=summary.schema,
+                    row_count=summary.row_count,
+                    time_range=summary.time_range,
+                    sample=summary.sample,
+                )
+                details = SuccessfulQueryExecution(
+                    session_key=session_key,
+                    raw_sql=sql,
+                    normalized_sql=normalized_sql,
+                    validation=validation,
+                    plan_estimate=estimate,
+                    result=result,
+                )
         except TimeoutError:
             raise QueryExecutionTimeoutError(
                 f"查询执行超时，最大允许 {self._limits.timeout_seconds} 秒"
             ) from None
-        if self._success_observer is not None:
-            try:
-                await self._success_observer(details)
-            except Exception:  # noqa: BLE001
-                logger.exception("成功查询观察器执行失败")
         logger.info(
-            "只读分析查询执行完成: "
+            "只读查询执行完成: "
             f"conversation_id={session_key.conversation_id}, "
             f"analysis_id={session_key.analysis_id}, "
             f"sql_fingerprint={sql_fingerprint}, "
@@ -257,56 +298,14 @@ class AnalysisQueryService:
             f"scan_bytes={details.plan_estimate.scan_bytes}, "
             f"artifact_path={details.result.path}"
         )
-        return details.result
+        return details
 
-    async def _execute_with_deadline(
-        self,
-        session_key: AgentSessionKey,
-        sql: str,
-    ) -> SuccessfulQueryExecution:
-        """在调用方建立的硬时限内完成整个查询生命周期"""
-        guarded = await self._guard.require_safe(session_key.user_id, sql)
-        plan = await self._query_repo.explain(guarded.sql, self._limits)
-        estimate = estimate_doris_query_plan(
-            plan,
-            require_scan=bool(guarded.validation.tables),
-        )
-        relative_path = (
-            f"analyses/{session_key.analysis_id}/sessions/"
-            f"{session_key.agent_type}/{session_key.session_id}/"
-            f"query_{uuid4().hex}.csv"
-        )
-        with tempfile.TemporaryFile(mode="w+b") as temporary_file:
-            summary = await self._write_csv(temporary_file, guarded.sql)
-            temporary_file.seek(0)
-            await self._artifact_store.write_artifact(
-                session_key.user_id,
-                session_key.conversation_id,
-                relative_path,
-                temporary_file,
-            )
-        result = AnalysisQueryResult(
-            path=f"/{PurePosixPath(relative_path)}",
-            schema=summary.schema,
-            row_count=summary.row_count,
-            time_range=summary.time_range,
-            sample=summary.sample,
-        )
-        return SuccessfulQueryExecution(
-            session_key=session_key,
-            raw_sql=sql,
-            normalized_sql=guarded.sql,
-            validation=guarded.validation,
-            plan_estimate=estimate,
-            result=result,
-        )
-
-    async def _write_csv(
+    async def _execute_to_csv(
         self,
         temporary_file: BinaryIO,
         sql: str,
     ) -> "_QuerySummary":
-        """分批写 CSV 并在内存中仅保留字段统计与少量样例"""
+        """流式执行查询并写入 CSV，同时保留字段统计与少量样例"""
         limited_writer = _Utf8LimitedWriter(
             temporary_file,
             self._limits.max_output_bytes,
@@ -386,7 +385,7 @@ class _QuerySummary:
     sample: list[dict[str, Any]]
 
 
-def estimate_doris_query_plan(
+def _estimate_doris_query_plan(
     plan: tuple[str, ...],
     *,
     require_scan: bool,

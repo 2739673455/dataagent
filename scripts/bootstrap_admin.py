@@ -33,7 +33,7 @@ def _resolve_value(cli_val: str | None, env_name: str) -> str:
     raise ValueError(f"缺少必要配置，请通过 CLI 参数或环境变量 {env_name} 提供")
 
 
-async def bootstrap_admin() -> None:
+async def _bootstrap_admin() -> None:
     """创建或幂等确认显式凭据对应的管理员"""
     args = _parse_args()
     username = _resolve_value(args.username, _USERNAME_ENV)
@@ -65,4 +65,4 @@ async def bootstrap_admin() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(bootstrap_admin())
+    asyncio.run(_bootstrap_admin())
