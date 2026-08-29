@@ -72,9 +72,11 @@ Planner 调用 delegation
 → 生成专业 Agent checkpoint namespace
 → 获取同 Session 的进程内锁和 PostgreSQL advisory lock
 → 获取或创建绑定独立沙箱目录的专业 Agent
+→ 为本次 delegation 创建独占的 Shell Job Runtime
 → 调用 Agent 并解析结构化结果
 → 格式无效时执行有限次结构化重试
 → 校验每个 artifact 文件真实存在
+→ 取消并清理仍在运行的 Shell Job
 → 返回稳定 DelegationResult
 ```
 
@@ -125,6 +127,10 @@ Visualizer
 → 读取已审查数据和结论
 → 生成图表、表格和下载报告
 ```
+
+四类 Specialist 都使用 `execute`、`list_shell_jobs`、`get_shell_job` 和 `cancel_shell_job`。`execute` 前台固定等待 60 秒；超时后任务留在当前 Agent Run 后台继续运行。每次 Specialist 模型调用前，`ShellJobContextMiddleware` 把运行中任务和未查看终态任务作为临时 `<shell_jobs>` 系统指令附加到请求副本。该区块不写入消息、Checkpoint 或 SSE 活动流。
+
+Shell 工具的 AIMessage 和 ToolMessage 沿用现有子 Agent 活动流。Specialist 返回最终结果前应处理运行中任务；Agent Run 的 `finally` 清理负责兜底终止遗留进程，完成后才释放 Session 锁。
 
 ## 4. 修补上游分析产物
 

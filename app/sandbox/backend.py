@@ -11,8 +11,9 @@ import tarfile
 import threading
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import BinaryIO, TypeVar
+from typing import BinaryIO, Literal, TypeVar
 from uuid import UUID
 
 from deepagents.backends.protocol import (
@@ -45,12 +46,42 @@ from app.sandbox.paths import (
     SANDBOX_WORKSPACE_ROOT,
     SandboxSessionScope,
 )
-from app.sandbox.scripts import _COMMIT_UPLOAD_SCRIPT, _LARGE_EDIT_SCRIPT
+from app.sandbox.scripts import (
+    _CANCEL_SHELL_JOB_SCRIPT,
+    _COMMIT_UPLOAD_SCRIPT,
+    _LARGE_EDIT_SCRIPT,
+    _SHELL_JOB_STARTED_MARKER,
+    _SHELL_JOB_WRAPPER_SCRIPT,
+)
 from app.shared.config.app_config import SandboxConfig
 
 _ResultT = TypeVar("_ResultT")
 _SANDBOX_STAGING_ROOT = SANDBOX_STAGING_ROOT
 _SANDBOX_WORKSPACE_ROOT = SANDBOX_WORKSPACE_ROOT
+_SHELL_JOB_INLINE_BYTES = 80_000
+_SHELL_JOB_CANCEL_GRACE_SECONDS = 1.0
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxShellJobExecution:
+    """Sandbox Shell Job 的最终执行信息"""
+
+    status: Literal["completed", "failed", "interrupted"]
+    exit_code: int | None = None
+    output: str | None = None
+    output_inline_truncated: bool = False
+    output_truncated: bool = False
+    workspace_limit_exceeded: bool = False
+    error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxShellJobCancellation:
+    """Sandbox 进程组取消结果"""
+
+    ready: bool
+    signal_sent: bool
+    exited: bool
 
 
 class DockerSandboxBackend(BaseSandbox):
@@ -94,7 +125,9 @@ class DockerSandboxBackend(BaseSandbox):
         self._file_mode = 0o640 if session_scope is not None else 0o600
         self._directory_mode = 0o750 if session_scope is not None else 0o700
         self._umask = 0o027 if session_scope is not None else 0o077
-        self._execute_timeout_seconds = sandbox_config.execute_timeout_seconds
+        self._internal_command_timeout_seconds = (
+            sandbox_config.internal_command_timeout_seconds
+        )
         self._staging_dir = posixpath.join(
             _SANDBOX_STAGING_ROOT,
             str(conversation_id),
@@ -179,7 +212,10 @@ class DockerSandboxBackend(BaseSandbox):
         """从错误信息中隐藏容器工作目录"""
         if message is None:
             return None
-        return message.replace(self._conversation_dir, "")
+        return message.replace(self._conversation_dir, "").replace(
+            self._staging_dir,
+            "<sandbox-staging>",
+        )
 
     def _map_file_info(self, info: FileInfo) -> FileInfo:
         """转换文件信息中的路径"""
@@ -266,9 +302,9 @@ class DockerSandboxBackend(BaseSandbox):
         timeout: int | None = None,
     ) -> ExecuteResponse:
         """流式执行命令并限制宿主机保留的输出"""
-        effective_timeout = self._execute_timeout_seconds
+        effective_timeout = self._internal_command_timeout_seconds
         if timeout is not None and timeout > 0:
-            effective_timeout = min(timeout, self._execute_timeout_seconds)
+            effective_timeout = min(timeout, self._internal_command_timeout_seconds)
         file_limit_blocks = max(1, self._max_file_bytes // 512)
         command_shell = (
             f"umask {self._umask:03o}; ulimit -f {file_limit_blocks}; "
@@ -337,7 +373,7 @@ class DockerSandboxBackend(BaseSandbox):
             [
                 "timeout",
                 "--signal=KILL",
-                str(self._execute_timeout_seconds),
+                str(self._internal_command_timeout_seconds),
                 "du",
                 "-sb",
                 self._conversation_dir,
@@ -401,6 +437,316 @@ class DockerSandboxBackend(BaseSandbox):
     ) -> ExecuteResponse:
         """异步执行命令并支持取消容量等待"""
         return await self._run_async(lambda: self.execute(command, timeout=timeout))
+
+    @staticmethod
+    def _validate_shell_job_id(job_id: str) -> None:
+        """只接受 Runtime 生成的短随机 Shell Job 标识"""
+        if (
+            len(job_id) != 12
+            or not job_id.startswith("job_")
+            or any(character not in "0123456789abcdef" for character in job_id[4:])
+        ):
+            raise ValueError("Shell Job 标识无效")
+
+    def _shell_job_paths(self, job_id: str) -> tuple[str, str, str]:
+        """生成受控日志路径、虚拟路径和内部控制路径"""
+        self._validate_shell_job_id(job_id)
+        relative_log_path = f"large_tool_results/shell_jobs/{job_id}.log"
+        return (
+            posixpath.join(self._workspace_dir, relative_log_path),
+            relative_log_path,
+            posixpath.join(self._staging_dir, "shell_jobs", f"{job_id}.json"),
+        )
+
+    def _read_shell_job_control_unlocked(
+        self,
+        control_path: str,
+    ) -> dict[str, object] | None:
+        """以 root 身份读取模型不可见的 Shell Job 控制文件"""
+        result = self._container.exec_run(
+            [
+                "timeout",
+                "--signal=KILL",
+                str(self._internal_command_timeout_seconds),
+                "cat",
+                "--",
+                control_path,
+            ],
+            user="0",
+            privileged=True,
+            workdir="/workspace",
+        )
+        if result.exit_code != 0:
+            return None
+        raw_output = result.output or b""
+        output = (
+            raw_output.decode("utf-8", errors="replace")
+            if isinstance(raw_output, bytes)
+            else str(raw_output)
+        )
+        try:
+            parsed = json.loads(output)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    def _run_shell_job_unlocked(
+        self,
+        job_id: str,
+        command: str,
+        started_callback: Callable[[], None] | None,
+    ) -> SandboxShellJobExecution:
+        """启动包装进程并持续监控到业务命令终态"""
+        log_path, _, control_path = self._shell_job_paths(job_id)
+        if self._workspace_size_unlocked() > self._max_workspace_bytes:
+            return SandboxShellJobExecution(
+                status="failed",
+                error="Workspace storage limit exceeded; delete files before continuing",
+                workspace_limit_exceeded=True,
+            )
+
+        payload = base64.b64encode(
+            json.dumps(
+                {
+                    "workspace": self._workspace_dir,
+                    "staging": self._staging_dir,
+                    "job_id": job_id,
+                    "command": command,
+                    "owner_uid": self._execution_uid,
+                    "owner_gid": self._execution_gid,
+                    "file_mode": self._file_mode,
+                    "directory_mode": self._directory_mode,
+                    "umask": self._umask,
+                    "max_file_bytes": self._max_file_bytes,
+                },
+                separators=(",", ":"),
+            ).encode()
+        ).decode()
+        docker_client = self._container.client
+        if docker_client is None:
+            return SandboxShellJobExecution(
+                status="failed",
+                error="Docker 容器客户端不可用",
+            )
+        api_client = docker_client.api
+        diagnostics = bytearray()
+        started = False
+        started_notified = False
+        started_marker = _SHELL_JOB_STARTED_MARKER.encode()
+        output_stream: object | None = None
+        try:
+            created = api_client.exec_create(
+                self._container.id,
+                ["python3", "-c", _SHELL_JOB_WRAPPER_SCRIPT, payload],
+                stdout=True,
+                stderr=True,
+                user="0",
+                privileged=True,
+                environment={
+                    "HOME": f"{self._workspace_dir}/.home",
+                    "UV_CACHE_DIR": f"{self._workspace_dir}/.cache/uv",
+                    "XDG_CACHE_HOME": f"{self._workspace_dir}/.cache",
+                    "TMPDIR": f"{self._workspace_dir}/.tmp",
+                    "TMP": f"{self._workspace_dir}/.tmp",
+                    "TEMP": f"{self._workspace_dir}/.tmp",
+                    "DATAAGENT_CONVERSATION_ROOT": self._conversation_dir,
+                },
+                workdir=self._workspace_dir,
+            )
+            exec_id = created["Id"]
+            output_stream = api_client.exec_start(exec_id, stream=True, demux=False)
+            started = True
+            for chunk in output_stream:
+                if isinstance(chunk, tuple):
+                    raw_chunk = b"".join(
+                        item for item in chunk if isinstance(item, bytes)
+                    )
+                elif isinstance(chunk, int):
+                    raw_chunk = bytes([chunk])
+                elif isinstance(chunk, str):
+                    raw_chunk = chunk.encode()
+                else:
+                    raw_chunk = bytes(chunk)
+                if len(diagnostics) < 16_384:
+                    diagnostics.extend(raw_chunk[: 16_384 - len(diagnostics)])
+                if not started_notified and started_marker in diagnostics:
+                    started_notified = True
+                    diagnostics = bytearray(
+                        bytes(diagnostics).replace(started_marker, b"").strip()
+                    )
+                    if started_callback is not None:
+                        started_callback()
+            inspected = api_client.exec_inspect(exec_id)
+        except Exception as exc:  # noqa: BLE001
+            detail = self._hide_workspace(str(exc).strip())
+            return SandboxShellJobExecution(
+                status="interrupted" if started else "failed",
+                error=detail or type(exc).__name__,
+            )
+        finally:
+            if output_stream is not None:
+                close_stream = getattr(output_stream, "close", None)
+                if callable(close_stream):
+                    close_stream()
+                stream_response = getattr(output_stream, "_response", None)
+                if stream_response is not None:
+                    stream_response.close()
+
+        control = self._read_shell_job_control_unlocked(control_path)
+        if control is None:
+            diagnostic_text = diagnostics.decode("utf-8", errors="replace").strip()
+            detail = self._hide_workspace(diagnostic_text)
+            return SandboxShellJobExecution(
+                status="interrupted" if started else "failed",
+                error=detail or "Shell Job 未产生可读取的最终状态",
+            )
+        control_status = control.get("status")
+        exit_code = control.get("exit_code")
+        normalized_exit_code = exit_code if isinstance(exit_code, int) else None
+        output_truncated = control.get("output_truncated") is True
+        if control_status == "failed":
+            raw_error = control.get("error")
+            return SandboxShellJobExecution(
+                status="failed",
+                exit_code=normalized_exit_code,
+                output_truncated=output_truncated,
+                error=self._hide_workspace(raw_error if isinstance(raw_error, str) else None),
+            )
+        if control_status != "finished" or normalized_exit_code is None:
+            return SandboxShellJobExecution(
+                status="interrupted",
+                exit_code=normalized_exit_code,
+                output_truncated=output_truncated,
+                error="Shell Job 最终状态无效",
+            )
+
+        output_bytes, read_exit_code = self._read_limited_file_bytes_unlocked(
+            log_path,
+            _SHELL_JOB_INLINE_BYTES + 1,
+        )
+        inline_truncated = len(output_bytes) > _SHELL_JOB_INLINE_BYTES
+        if inline_truncated:
+            output_bytes = output_bytes[:_SHELL_JOB_INLINE_BYTES]
+        output = output_bytes.decode("utf-8", errors="replace")
+        if read_exit_code != 0:
+            output = ""
+        workspace_limit_exceeded = (
+            self._workspace_size_unlocked() > self._max_workspace_bytes
+        )
+        observed_exit_code = normalized_exit_code
+        if inspected.get("ExitCode") is None:
+            return SandboxShellJobExecution(
+                status="interrupted",
+                exit_code=observed_exit_code,
+                output=output,
+                output_inline_truncated=inline_truncated,
+                output_truncated=output_truncated,
+                workspace_limit_exceeded=workspace_limit_exceeded,
+                error="Shell Job 包装进程状态不可用",
+            )
+        return SandboxShellJobExecution(
+            status="completed" if observed_exit_code == 0 else "failed",
+            exit_code=observed_exit_code,
+            output=output,
+            output_inline_truncated=inline_truncated,
+            output_truncated=output_truncated,
+            workspace_limit_exceeded=workspace_limit_exceeded,
+        )
+
+    def run_shell_job(
+        self,
+        job_id: str,
+        command: str,
+        started_callback: Callable[[], None] | None = None,
+    ) -> SandboxShellJobExecution:
+        """执行无固定总时限的 Specialist Shell Job"""
+        self._validate_shell_job_id(job_id)
+        if not command.strip():
+            raise ValueError("Shell 命令不能为空")
+        try:
+            with self._operation():
+                return self._run_shell_job_unlocked(
+                    job_id,
+                    command,
+                    started_callback,
+                )
+        except Exception as exc:  # noqa: BLE001
+            detail = self._hide_workspace(str(exc).strip())
+            return SandboxShellJobExecution(
+                status="failed",
+                error=detail or type(exc).__name__,
+            )
+
+    async def arun_shell_job(
+        self,
+        job_id: str,
+        command: str,
+        started_callback: Callable[[], None] | None = None,
+    ) -> SandboxShellJobExecution:
+        """在线程中运行 Shell Job，并让监控单元独立于工具等待"""
+        return await self._run_async(
+            lambda: self.run_shell_job(
+                job_id,
+                command,
+                started_callback,
+            )
+        )
+
+    def cancel_shell_job(self, job_id: str) -> SandboxShellJobCancellation:
+        """先 TERM 后 KILL 终止 Shell Job 的整个进程组"""
+        _, _, control_path = self._shell_job_paths(job_id)
+        with self._operation():
+            result = self._container.exec_run(
+                [
+                    "timeout",
+                    "--signal=KILL",
+                    str(self._internal_command_timeout_seconds),
+                    "python3",
+                    "-c",
+                    _CANCEL_SHELL_JOB_SCRIPT,
+                    control_path,
+                    str(_SHELL_JOB_CANCEL_GRACE_SECONDS),
+                ],
+                user="0",
+                privileged=True,
+                workdir="/workspace",
+            )
+        raw_output = result.output or b""
+        output = (
+            raw_output.decode("utf-8", errors="replace")
+            if isinstance(raw_output, bytes)
+            else str(raw_output)
+        )
+        if result.exit_code != 0:
+            raise OSError(self._hide_workspace(output.strip()) or "取消 Shell Job 失败")
+        try:
+            response = json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise OSError("取消 Shell Job 的响应格式无效") from exc
+        return SandboxShellJobCancellation(
+            ready=response.get("ready") is True,
+            signal_sent=response.get("signal_sent") is True,
+            exited=response.get("exited") is True,
+        )
+
+    async def acancel_shell_job(self, job_id: str) -> SandboxShellJobCancellation:
+        """异步取消 Shell Job"""
+        return await asyncio.to_thread(self.cancel_shell_job, job_id)
+
+    def cleanup_shell_job_control(self, job_id: str) -> None:
+        """清除单次 Agent Run 的内部 Shell Job 控制文件"""
+        _, _, control_path = self._shell_job_paths(job_id)
+        with self._operation():
+            self._container.exec_run(
+                ["rm", "-f", "--", control_path],
+                user="0",
+                privileged=True,
+                workdir="/workspace",
+            )
+
+    async def acleanup_shell_job_control(self, job_id: str) -> None:
+        """异步清除 Shell Job 控制文件"""
+        await asyncio.to_thread(self.cleanup_shell_job_control, job_id)
 
     def execute_with_offload(
         self,
@@ -705,7 +1051,11 @@ class DockerSandboxBackend(BaseSandbox):
                 workdir="/workspace",
             )
 
-    def _read_file_bytes_unlocked(self, path: str) -> tuple[bytes, int | None]:
+    def _read_limited_file_bytes_unlocked(
+        self,
+        path: str,
+        max_bytes: int,
+    ) -> tuple[bytes, int | None]:
         """以会话 UID 限长读取文件，避免 Docker 守护进程绕过权限"""
         docker_client = self._container.client
         if docker_client is None:
@@ -716,10 +1066,10 @@ class DockerSandboxBackend(BaseSandbox):
             [
                 "timeout",
                 "--signal=KILL",
-                str(self._execute_timeout_seconds),
+                str(self._internal_command_timeout_seconds),
                 "head",
                 "-c",
-                str(self._max_file_bytes + 1),
+                str(max_bytes),
                 "--",
                 path,
             ],
@@ -753,6 +1103,13 @@ class DockerSandboxBackend(BaseSandbox):
                 stream_response.close()
         inspected = api_client.exec_inspect(exec_id)
         return bytes(output), inspected.get("ExitCode")
+
+    def _read_file_bytes_unlocked(self, path: str) -> tuple[bytes, int | None]:
+        """按单文件上限读取文件内容"""
+        return self._read_limited_file_bytes_unlocked(
+            path,
+            self._max_file_bytes + 1,
+        )
 
     def _file_size_unlocked(self, path: str) -> int:
         """读取文件字节数，不存在时返回零"""

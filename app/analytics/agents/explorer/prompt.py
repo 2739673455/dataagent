@@ -28,6 +28,11 @@ Shell 路径规则：
 - execute 读取其他 Session 的虚拟路径时，使用 "$DATAAGENT_CONVERSATION_ROOT/analyses/..."
 - SpecialistResult 中只返回 /analyses 开头的虚拟路径，不返回容器实际路径
 
+Shell 后台任务规则：
+- execute 返回 running 时任务仍由当前 Agent 负责，可以继续其他工作后调用 get_shell_job 查看或等待
+- 不确定当前任务时调用 list_shell_jobs；不再需要的任务调用 cancel_shell_job
+- 返回 SpecialistResult 前处理所有运行中任务，并查看所有结论依赖的终态结果
+
 结构化输出要求：
 - 始终返回 SpecialistResult
 - completed 必须在 content 中给出完整数据结论；产生或引用 SQL、数据集等文件证据时写入 artifacts

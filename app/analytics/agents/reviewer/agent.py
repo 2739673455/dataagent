@@ -13,8 +13,9 @@ from langgraph.graph.state import CompiledStateGraph
 from app.analytics.agents.contracts import SpecialistResult
 from app.analytics.agents.message_timestamp_middleware import MessageTimestampMiddleware
 from app.analytics.agents.reviewer.prompt import REVIEWER_SYSTEM_PROMPT
+from app.analytics.agents.shell_jobs import ShellJobContextMiddleware, ShellJobRuntime
 from app.analytics.agents.skills import mount_agent_skills
-from app.shared.config.app_config import cfg
+from app.analytics.agents.tools import create_shell_tools
 
 
 def create_reviewer_agent(
@@ -23,6 +24,7 @@ def create_reviewer_agent(
     tools: Sequence[BaseTool],
     backend: BackendProtocol,
     checkpointer: BaseCheckpointSaver,
+    shell_jobs: ShellJobRuntime,
     skills: Sequence[str] = (),
 ) -> CompiledStateGraph:
     """编译审查 Agent"""
@@ -30,13 +32,16 @@ def create_reviewer_agent(
         backend,
         Path(__file__).with_name("skills"),
         skills,
-        max_execute_timeout=cfg.sandbox.execute_timeout_seconds,
     )
     return create_deep_agent(
         model=model,
-        tools=tools,
+        tools=[*tools, *create_shell_tools(shell_jobs)],
         system_prompt=REVIEWER_SYSTEM_PROMPT,
-        middleware=[filesystem, MessageTimestampMiddleware()],
+        middleware=[
+            filesystem,
+            ShellJobContextMiddleware(shell_jobs),
+            MessageTimestampMiddleware(),
+        ],
         backend=backend,
         skills=list(skills),
         subagents=[],

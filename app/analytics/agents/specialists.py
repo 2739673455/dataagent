@@ -15,6 +15,7 @@ from langgraph.graph.state import CompiledStateGraph
 from app.analytics.agents.analyst.agent import create_analyst_agent
 from app.analytics.agents.explorer.agent import create_explorer_agent
 from app.analytics.agents.reviewer.agent import create_reviewer_agent
+from app.analytics.agents.shell_jobs import ShellJobRuntime
 from app.analytics.agents.skills import agent_skills_mount_path
 from app.analytics.agents.visualizer.agent import create_visualizer_agent
 from app.sandbox.manager import DockerSandboxManager
@@ -39,6 +40,9 @@ _RESERVED_MCP_TOOL_NAMES = frozenset(
         "glob",
         "grep",
         "execute",
+        "list_shell_jobs",
+        "get_shell_job",
+        "cancel_shell_job",
     }
 )
 
@@ -53,8 +57,17 @@ class SpecialistBuilder(Protocol):
         tools: Sequence[BaseTool],
         backend: BackendProtocol,
         checkpointer: BaseCheckpointSaver,
+        shell_jobs: ShellJobRuntime,
         skills: Sequence[str] = (),
     ) -> CompiledStateGraph: ...
+
+
+@dataclass(frozen=True, slots=True)
+class SpecialistAgentRun:
+    """一次 delegation 共用的 Agent 图和 Shell Job Runtime"""
+
+    agent: CompiledStateGraph
+    shell_jobs: ShellJobRuntime
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +147,7 @@ class SpecialistAgentFactory:
         self._sandbox = sandbox
         self._checkpointer = checkpointer
 
-    async def create(self, session_key: AgentSessionKey) -> CompiledStateGraph:
+    async def create(self, session_key: AgentSessionKey) -> SpecialistAgentRun:
         """为一次委派创建专业 Agent 运行图"""
         validate_agent_type(session_key.agent_type)
         definition = self._definitions[session_key.agent_type]
@@ -145,10 +158,13 @@ class SpecialistAgentFactory:
             session_key.agent_type,
             session_key.session_id,
         )
-        return definition.builder(
+        shell_jobs = ShellJobRuntime(backend)
+        agent = definition.builder(
             model=self._models[session_key.agent_type],
             tools=definition.tools,
             backend=backend,
             checkpointer=self._checkpointer,
+            shell_jobs=shell_jobs,
             skills=definition.skills,
         )
+        return SpecialistAgentRun(agent=agent, shell_jobs=shell_jobs)

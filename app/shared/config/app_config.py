@@ -151,7 +151,7 @@ class SandboxConfig(BaseModel):
     memory_limit: str
     nano_cpus: int = Field(gt=0)
     pids_limit: int = Field(gt=0)
-    execute_timeout_seconds: int = Field(default=120, gt=0, le=600)
+    internal_command_timeout_seconds: int = Field(default=60, gt=0, le=600)
     max_file_bytes: int = Field(gt=0)
     max_workspace_bytes: int = Field(gt=0)
     workspace_quota_mode: Literal["application", "volume_driver"]

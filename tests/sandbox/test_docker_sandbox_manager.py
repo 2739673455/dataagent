@@ -14,6 +14,7 @@ from docker.errors import ImageNotFound
 from pydantic import ValidationError
 
 from app.analytics.agents.manager import AgentManager
+from app.analytics.agents.shell_jobs import ShellJobResult, ShellJobRuntime
 from app.analytics.agents.skills import packaged_agent_skill_mounts
 from app.sandbox.archive import SandboxArchiveStore
 from app.sandbox.backend import DockerSandboxBackend
@@ -51,7 +52,7 @@ def build_sandbox_config(**updates: object) -> SandboxConfig:
         "nano_cpus": 1_000_000_000,
         "pids_limit": 64,
         "network_mode": "none",
-        "execute_timeout_seconds": 120,
+        "internal_command_timeout_seconds": 60,
         "max_file_bytes": 6 * 1024 * 1024,
         "max_workspace_bytes": 24 * 1024 * 1024,
         "workspace_quota_mode": "application",
@@ -454,9 +455,9 @@ class DockerSandboxManagerPolicyTest(unittest.TestCase):
         self.assertNotIn(registry_key, registry.sessions)
         write_registry.assert_called_once_with(container, registry)
 
-    def test_execute_timeout_is_clamped_to_sandbox_limit(self) -> None:
+    def test_internal_execute_timeout_is_clamped_to_sandbox_limit(self) -> None:
         backend = self._session_backend(
-            build_sandbox_config(execute_timeout_seconds=7),
+            build_sandbox_config(internal_command_timeout_seconds=7),
             uuid4(),
         )
         api_client = MagicMock()
@@ -472,6 +473,67 @@ class DockerSandboxManagerPolicyTest(unittest.TestCase):
 
         shell_command = api_client.exec_create.call_args.args[1]
         self.assertEqual(shell_command[:3], ["timeout", "--signal=KILL", "7"])
+
+    def test_shell_job_uses_unbounded_wrapper_and_reads_final_control(self) -> None:
+        backend = self._session_backend(build_sandbox_config(), uuid4())
+        api_client = MagicMock()
+        api_client.exec_create.return_value = {"Id": "shell-job-exec"}
+        api_client.exec_start.return_value = iter(())
+        api_client.exec_inspect.return_value = {"ExitCode": 0}
+        container = MagicMock()
+        container.id = "container-id"
+        container.client.api = api_client
+        backend._operation_local.container = container
+
+        with (
+            patch.object(
+                backend,
+                "_workspace_size_unlocked",
+                side_effect=[0, 0],
+            ),
+            patch.object(
+                backend,
+                "_read_shell_job_control_unlocked",
+                return_value={
+                    "status": "finished",
+                    "exit_code": 0,
+                    "output_truncated": False,
+                },
+            ),
+            patch.object(
+                backend,
+                "_read_limited_file_bytes_unlocked",
+                return_value=(b"done\n", 0),
+            ),
+        ):
+            result = backend.run_shell_job("job_1234abcd", "printf done")
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.output, "done\n")
+        create_call = api_client.exec_create.call_args
+        shell_command = create_call.args[1]
+        self.assertEqual(shell_command[:2], ["python3", "-c"])
+        self.assertNotIn("timeout", shell_command)
+        self.assertEqual(create_call.kwargs["user"], "0")
+        self.assertTrue(create_call.kwargs["privileged"])
+
+    def test_cancel_shell_job_runs_controlled_process_group_terminator(self) -> None:
+        backend = self._session_backend(build_sandbox_config(), uuid4())
+        container = MagicMock()
+        container.exec_run.return_value = SimpleNamespace(
+            exit_code=0,
+            output=b'{"ready":true,"signal_sent":true,"exited":true}\n',
+        )
+        backend._operation_local.container = container
+
+        result = backend.cancel_shell_job("job_1234abcd")
+
+        self.assertTrue(result.ready)
+        self.assertTrue(result.signal_sent)
+        self.assertTrue(result.exited)
+        command = container.exec_run.call_args.args[0]
+        self.assertIn("python3", command)
+        self.assertTrue(command[-2].endswith("/shell_jobs/job_1234abcd.json"))
 
     def test_resource_names_and_volume_options_are_namespaced(self) -> None:
 
@@ -945,6 +1007,66 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
             "/analyses/sales-decline/sessions/reviewer/sales-trend",
         )
         self.assertNotIn("/workspace/conversations", response.output)
+
+    async def test_shell_job_continues_after_foreground_wait_and_merges_output(
+        self,
+    ) -> None:
+        conversation_id = uuid4()
+        backend = await self.manager.get_session_backend(
+            self.user_id,
+            conversation_id,
+            "sales-decline",
+            "analyst",
+            "background",
+        )
+        runtime = ShellJobRuntime(backend, foreground_wait_seconds=0.05)
+
+        running = await runtime.execute(
+            "printf 'stdout\\n'; printf 'stderr\\n' >&2; sleep 0.2; printf 'done\\n'"
+        )
+        final = await runtime.get(running.job_id, wait_seconds=2)
+        self.assertIsInstance(final, ShellJobResult)
+        assert isinstance(final, ShellJobResult)
+        log = backend.read(final.output_path)
+        await runtime.cleanup()
+
+        self.assertEqual(running.status, "running")
+        self.assertEqual(final.status, "completed")
+        self.assertEqual(final.exit_code, 0)
+        self.assertIsNone(log.error)
+        self.assertIsNotNone(log.file_data)
+        assert log.file_data is not None
+        log_content = log.file_data["content"]
+        self.assertIn("stdout", log_content)
+        self.assertIn("stderr", log_content)
+        self.assertIn("done", log_content)
+
+    async def test_shell_job_cancel_terminates_child_process_group(self) -> None:
+        conversation_id = uuid4()
+        backend = await self.manager.get_session_backend(
+            self.user_id,
+            conversation_id,
+            "sales-decline",
+            "reviewer",
+            "cancel",
+        )
+        runtime = ShellJobRuntime(backend, foreground_wait_seconds=0.05)
+
+        running = await runtime.execute(
+            "sleep 300 & child=$!; printf '%s' \"$child\" > child.pid; wait"
+        )
+        cancelled = await runtime.cancel(running.job_id)
+        child_check = backend.execute(
+            "child=$(cat child.pid); "
+            "if [ -r \"/proc/$child/stat\" ]; then "
+            "state=$(cut -d ' ' -f 3 \"/proc/$child/stat\"); "
+            "[ \"$state\" = Z ] || exit 1; fi"
+        )
+        await runtime.cleanup()
+
+        self.assertEqual(running.status, "running")
+        self.assertEqual(cancelled.status, "cancelled")
+        self.assertEqual(child_check.exit_code, 0)
 
     async def test_session_cannot_read_another_conversation(self) -> None:
         first_conversation_id = uuid4()

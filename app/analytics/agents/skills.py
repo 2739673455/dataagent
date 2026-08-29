@@ -36,8 +36,6 @@ def mount_agent_skills(
     backend: BackendProtocol,
     skill_directory: Path,
     skills: Sequence[str],
-    *,
-    max_execute_timeout: int,
 ) -> tuple[BackendProtocol, FilesystemMiddleware]:
     """将当前 Agent 的内置技能只读挂载到会话 Backend"""
     permissions: list[FilesystemPermission] = []
@@ -68,8 +66,15 @@ def mount_agent_skills(
         )
     filesystem = FilesystemMiddleware(
         backend=resolved_backend,
-        tools="all",
-        max_execute_timeout=max_execute_timeout,
+        tools=[
+            "ls",
+            "read_file",
+            "write_file",
+            "edit_file",
+            "delete",
+            "glob",
+            "grep",
+        ],
         _permissions=permissions,
     )
     return resolved_backend, filesystem

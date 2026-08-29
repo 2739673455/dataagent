@@ -16,8 +16,9 @@ from app.analytics.agents.explorer.semantic_recall_middleware import (
     SemanticRecallExpansionMiddleware,
 )
 from app.analytics.agents.message_timestamp_middleware import MessageTimestampMiddleware
+from app.analytics.agents.shell_jobs import ShellJobContextMiddleware, ShellJobRuntime
 from app.analytics.agents.skills import mount_agent_skills
-from app.shared.config.app_config import cfg
+from app.analytics.agents.tools import create_shell_tools
 
 
 def create_explorer_agent(
@@ -26,6 +27,7 @@ def create_explorer_agent(
     tools: Sequence[BaseTool],
     backend: BackendProtocol,
     checkpointer: BaseCheckpointSaver,
+    shell_jobs: ShellJobRuntime,
     skills: Sequence[str] = (),
 ) -> CompiledStateGraph:
     """编译数据探索 Agent"""
@@ -33,15 +35,15 @@ def create_explorer_agent(
         backend,
         Path(__file__).with_name("skills"),
         skills,
-        max_execute_timeout=cfg.sandbox.execute_timeout_seconds,
     )
     return create_deep_agent(
         model=model,
-        tools=tools,
+        tools=[*tools, *create_shell_tools(shell_jobs)],
         system_prompt=EXPLORER_SYSTEM_PROMPT,
         middleware=[
             filesystem,
             SemanticRecallExpansionMiddleware(),
+            ShellJobContextMiddleware(shell_jobs),
             MessageTimestampMiddleware(),
         ],
         backend=backend,

@@ -32,6 +32,7 @@ from app.analytics.agents.contracts import (
     get_thread_id,
 )
 from app.analytics.agents.session_store import AgentSessionStore
+from app.analytics.agents.specialists import SpecialistAgentRun
 from app.shared.contracts.analysis import AgentSessionKey, validate_agent_type
 
 _STRUCTURED_RETRY_MESSAGE = """
@@ -63,7 +64,7 @@ class AgentSessionService:
     def __init__(
         self,
         *,
-        build_agent: Callable[[AgentSessionKey], Awaitable[CompiledStateGraph]],
+        build_agent: Callable[[AgentSessionKey], Awaitable[SpecialistAgentRun]],
         session_store: AgentSessionStore,
         user_id: int,
         conversation_id: UUID,
@@ -317,39 +318,19 @@ class AgentSessionService:
         activity_writer: SubagentActivityWriter | None,
     ) -> SpecialistResult:
         """调用专业 Agent 并允许一次纯结构化修正"""
-        agent = await self._build_agent(session_key)
-        context = DelegationMessageContext(delegation_id=delegation_id)
-        output = await self._stream_specialist(
-            agent,
-            {
-                "messages": [
-                    HumanMessage(
-                        content=request.message,
-                        additional_kwargs={
-                            DELEGATION_CONTEXT_KEY: context.model_dump(mode="json")
-                        },
-                    )
-                ]
-            },
-            config,
-            request,
-            delegation_id,
-            activity_writer,
-            emit_messages=True,
-        )
+        agent_run: SpecialistAgentRun | None = None
         try:
-            result = self._parse_specialist_result(output)
-            await self._validate_repair_targets(result, session_key)
-            await self._verify_result_artifacts(result, session_key)
-            return result
-        except (TypeError, ValueError, ValidationError):
-            retry_output = await self._stream_specialist(
-                agent,
+            agent_run = await self._build_agent(session_key)
+            context = DelegationMessageContext(delegation_id=delegation_id)
+            output = await self._stream_specialist(
+                agent_run.agent,
                 {
                     "messages": [
                         HumanMessage(
-                            content=_STRUCTURED_RETRY_MESSAGE,
-                            additional_kwargs={_INTERNAL_RETRY_KEY: True},
+                            content=request.message,
+                            additional_kwargs={
+                                DELEGATION_CONTEXT_KEY: context.model_dump(mode="json")
+                            },
                         )
                     ]
                 },
@@ -357,12 +338,47 @@ class AgentSessionService:
                 request,
                 delegation_id,
                 activity_writer,
-                emit_messages=False,
+                emit_messages=True,
             )
-            result = self._parse_specialist_result(retry_output)
-            await self._validate_repair_targets(result, session_key)
-            await self._verify_result_artifacts(result, session_key)
-            return result
+            try:
+                result = self._parse_specialist_result(output)
+                await self._validate_repair_targets(result, session_key)
+                await self._verify_result_artifacts(result, session_key)
+                return result
+            except (TypeError, ValueError, ValidationError):
+                retry_output = await self._stream_specialist(
+                    agent_run.agent,
+                    {
+                        "messages": [
+                            HumanMessage(
+                                content=_STRUCTURED_RETRY_MESSAGE,
+                                additional_kwargs={_INTERNAL_RETRY_KEY: True},
+                            )
+                        ]
+                    },
+                    config,
+                    request,
+                    delegation_id,
+                    activity_writer,
+                    emit_messages=False,
+                )
+                result = self._parse_specialist_result(retry_output)
+                await self._validate_repair_targets(result, session_key)
+                await self._verify_result_artifacts(result, session_key)
+                return result
+        finally:
+            if agent_run is not None:
+                await self._cleanup_agent_run(agent_run)
+
+    @staticmethod
+    async def _cleanup_agent_run(agent_run: SpecialistAgentRun) -> None:
+        """屏蔽调用方取消，确保释放 Session 锁前完成 Shell Job 清理"""
+        cleanup_task = asyncio.create_task(agent_run.shell_jobs.cleanup())
+        try:
+            await asyncio.shield(cleanup_task)
+        except asyncio.CancelledError:
+            await cleanup_task
+            raise
 
     @staticmethod
     def _is_public_activity_message(message: BaseMessage) -> bool:

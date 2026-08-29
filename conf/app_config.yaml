@@ -99,14 +99,14 @@ sandbox:
   ownership:
     redis_url: redis://127.0.0.1:6379/2
     lock_timeout_seconds: 60
-    wait_timeout_seconds: 300
+    wait_timeout_seconds: 60
     lease_seconds: 30
   image: dataagent-sandbox:latest
   network_mode: none # 运行时断网，依赖统一构建到沙箱镜像
   memory_limit: 2g
   nano_cpus: 2000000000 # 每个用户沙箱最多使用 2 个 CPU 核心
   pids_limit: 256
-  execute_timeout_seconds: 120 # 单次 Shell 命令的硬超时上限
+  internal_command_timeout_seconds: 60 # Sandbox 内部辅助命令硬超时
   max_file_bytes: 104857600
   max_workspace_bytes: 1073741824
   workspace_quota_mode: application # 生产环境应改为 volume_driver 并使用支持硬配额的卷驱动
@@ -114,7 +114,7 @@ sandbox:
   volume_driver_options: {}
   max_running_containers: 8 # 按部署机器容量调整，超出后等待或回收空闲容器
   max_capacity_waiters: 2048
-  capacity_wait_timeout_seconds: 300
+  capacity_wait_timeout_seconds: 60
   idle_stop_seconds: 600 # 空闲 10 分钟后停止容器
   idle_remove_seconds: 3600 # 空闲 1 小时后删除容器，但保留用户数据卷
   cleanup_interval_seconds: 60

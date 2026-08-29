@@ -40,7 +40,13 @@ celery_app.conf.update(
         Queue("lifecycle", routing_key="lifecycle"),
         Queue("lightweight", routing_key="lightweight"),
     ),
-    task_publish_retry=False,
+    task_publish_retry=True,
+    task_publish_retry_policy={
+        "max_retries": 3,
+        "interval_start": 0,
+        "interval_step": 0.2,
+        "interval_max": 1,
+    },
     task_reject_on_worker_lost=True,
     task_routes={
         "dataagent.analytics.generate_conversation_title": {

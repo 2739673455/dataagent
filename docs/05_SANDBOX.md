@@ -66,12 +66,16 @@ Agent 调用文件工具
 
 Agent 调用 execute
 → 在当前 Session workspace_dir 中运行命令
-→ 使用 Session UID 和对话 GID
-→ 应用命令超时
-→ 限制标准输出和捕获文件大小
-→ 超大输出写入工作区文件
-→ 返回执行状态和结果引用
+→ 受控包装进程以 Session UID 和对话 GID 启动独立进程组
+→ stdout 和 stderr 合并写入 large_tool_results/shell_jobs/{job_id}.log
+→ 前台固定等待 60 秒，未结束时返回 running 并继续后台执行
+→ 日志超过 max_file_bytes 后继续排空输出并标记 output_truncated
+→ get_shell_job 查看或等待，cancel_shell_job 先 TERM 后 KILL 整个进程组
 ```
+
+Specialist Shell Job 没有固定总执行时限。`internal_command_timeout_seconds` 只限制 `du`、限长文件读取、内部编辑脚本和产物检查等同步辅助命令。每个后台任务从启动到终态持续持有 Sandbox operation，因此空闲回收不会停止正在运行任务的容器。
+
+Shell Job Registry 只属于当前 Specialist Agent Run。Run 正常返回、失败或取消时会取消所有未结束任务、等待监控结束并删除 staging 控制文件；Session 工作区中的任务日志继续保留。
 
 容器根文件系统只读，`/workspace` 是持久化读写卷，`/tmp` 是 `nosuid,nodev` tmpfs。容器删除全部 capabilities、启用 `no-new-privileges`，并限制网络、CPU、内存和 PID。
 

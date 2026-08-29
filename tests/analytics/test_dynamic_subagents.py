@@ -37,9 +37,11 @@ from app.analytics.agents.contracts import (
 from app.analytics.agents.manager import AgentManager
 from app.analytics.agents.session_service import AgentSessionService
 from app.analytics.agents.session_store import AgentSessionStore
+from app.analytics.agents.shell_jobs import ShellJobRuntime
 from app.analytics.agents.skills import agent_skills_mount_path
 from app.analytics.agents.specialists import (
     SpecialistAgentFactory,
+    SpecialistAgentRun,
     SpecialistDefinition,
     build_specialist_definitions,
 )
@@ -308,9 +310,14 @@ def _service(
 
     graph = cast(CompiledStateGraph, fake)
 
-    async def build_agent(session_key: AgentSessionKey) -> CompiledStateGraph:
+    async def build_agent(session_key: AgentSessionKey) -> SpecialistAgentRun:
         del session_key
-        return graph
+        shell_jobs = MagicMock()
+        shell_jobs.cleanup = AsyncMock()
+        return SpecialistAgentRun(
+            agent=graph,
+            shell_jobs=cast(Any, shell_jobs),
+        )
 
     return AgentSessionService(
         build_agent=build_agent,
@@ -538,6 +545,9 @@ class DynamicSubagentContractTest(unittest.TestCase):
             "glob",
             "grep",
             "execute",
+            "list_shell_jobs",
+            "get_shell_job",
+            "cancel_shell_job",
         }
 
         with tempfile.TemporaryDirectory() as workspace:
@@ -549,6 +559,9 @@ class DynamicSubagentContractTest(unittest.TestCase):
                         tools=[],
                         backend=LocalShellBackend(root_dir=workspace),
                         checkpointer=InMemorySaver(),
+                        shell_jobs=ShellJobRuntime(
+                            cast(Any, LocalShellBackend(root_dir=workspace))
+                        ),
                         skills=definitions[cast(AgentType, agent_type)].skills,
                     )
 

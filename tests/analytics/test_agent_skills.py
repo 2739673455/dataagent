@@ -24,7 +24,6 @@ class AgentSkillsTest(unittest.TestCase):
             StateBackend(),
             skill_directory,
             [_ANALYST_SKILLS_PATH],
-            max_execute_timeout=1,
         )
         middleware = SkillsMiddleware(
             backend=backend,
@@ -50,7 +49,6 @@ class AgentSkillsTest(unittest.TestCase):
             StateBackend(),
             skill_directory,
             [_ANALYST_SKILLS_PATH],
-            max_execute_timeout=1,
         )
         skill_path = f"{_ANALYST_SKILLS_PATH}analysis/SKILL.md"
         original = backend.read(skill_path)
