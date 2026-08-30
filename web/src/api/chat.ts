@@ -40,7 +40,8 @@ async function streamErrorMessage(response: Response): Promise<string> {
 }
 
 async function consumeChatStream(
-  body: ChatStreamRequest,
+  url: string,
+  body: ChatStreamRequest | null,
   signal: AbortSignal,
   onEvent: (event: ChatStreamEvent) => void,
   retried = false
@@ -48,19 +49,19 @@ async function consumeChatStream(
   const accessToken = getAccessToken();
   if (!accessToken) throw new Error("登录状态已失效");
 
-  const response = await fetch(CHAT_API_ROUTES.stream, {
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       Accept: "text/event-stream",
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(body),
+    body: body === null ? undefined : JSON.stringify(body),
     signal,
   });
   if (response.status === 401 && !retried) {
     await refreshAccessToken();
-    return consumeChatStream(body, signal, onEvent, true);
+    return consumeChatStream(url, body, signal, onEvent, true);
   }
   if (!response.ok) {
     throw new Error(await streamErrorMessage(response));
@@ -162,6 +163,19 @@ export const chatApi = {
     signal: AbortSignal,
     onEvent: (event: ChatStreamEvent) => void
   ) {
-    return consumeChatStream({ conversation_id: conversationId, message }, signal, onEvent);
+    return consumeChatStream(
+      CHAT_API_ROUTES.stream,
+      { conversation_id: conversationId, message },
+      signal,
+      onEvent
+    );
+  },
+
+  resumeChat(
+    conversationId: string,
+    signal: AbortSignal,
+    onEvent: (event: ChatStreamEvent) => void
+  ) {
+    return consumeChatStream(CHAT_API_ROUTES.resume(conversationId), null, signal, onEvent);
   },
 };

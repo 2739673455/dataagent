@@ -175,6 +175,13 @@ class MessageListResponse(BaseModel):
 class SubagentMessageListResponse(BaseModel):
     """一次 Specialist delegation 的公开工作消息"""
 
+    status: Literal[
+        "running",
+        "completed",
+        "needs_repair",
+        "failed",
+        "cancelled",
+    ]
     messages: list[MessageResponse]
 
 

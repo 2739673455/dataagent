@@ -1,4 +1,4 @@
-import { ArrowUp, FileText, Paperclip, Square, X } from "lucide-react";
+import { ArrowUp, FileText, Paperclip, RotateCcw, Square, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
@@ -10,8 +10,10 @@ interface ChatComposerProps {
   disabled?: boolean;
   isUploading?: boolean;
   isStreaming?: boolean;
+  canResume?: boolean;
   onAttachmentsSelected: (files: File[]) => Promise<void> | void;
   onRemoveAttachment: (attachmentName: string) => void;
+  onResume: () => void;
   onStop: () => void;
   onSubmit: (value: string) => Promise<boolean>;
 }
@@ -40,8 +42,10 @@ export function ChatComposer({
   disabled = false,
   isUploading = false,
   isStreaming = false,
+  canResume = false,
   onAttachmentsSelected,
   onRemoveAttachment,
+  onResume,
   onStop,
   onSubmit,
 }: ChatComposerProps) {
@@ -186,21 +190,35 @@ export function ChatComposer({
                 <span>停止</span>
               </Button>
             ) : (
-              <Button
-                size="sm"
-                variant="default"
-                className="gap-1.5 px-3.5 text-xs"
-                disabled={
-                  disabled ||
-                  isUploading ||
-                  isSubmitting ||
-                  (!value.trim() && attachments.length === 0)
-                }
-                onClick={() => void handleSubmit()}
-              >
-                <ArrowUp className="h-4 w-4" />
-                <span>{isSubmitting ? "发送中" : "发送"}</span>
-              </Button>
+              <div className="flex items-center gap-2">
+                {canResume ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5 px-3.5 text-xs"
+                    disabled={disabled || isUploading || isSubmitting}
+                    onClick={onResume}
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    <span>继续执行</span>
+                  </Button>
+                ) : null}
+                <Button
+                  size="sm"
+                  variant="default"
+                  className="gap-1.5 px-3.5 text-xs"
+                  disabled={
+                    disabled ||
+                    isUploading ||
+                    isSubmitting ||
+                    (!value.trim() && attachments.length === 0)
+                  }
+                  onClick={() => void handleSubmit()}
+                >
+                  <ArrowUp className="h-4 w-4" />
+                  <span>{isSubmitting ? "发送中" : "发送"}</span>
+                </Button>
+              </div>
             )}
           </div>
         </div>

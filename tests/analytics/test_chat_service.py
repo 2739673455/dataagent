@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from app.analytics.agents.contracts import (
     MESSAGE_CREATED_AT_KEY,
     ConversationAgentRuntime,
+    DelegationActivityHistory,
     PlannerTurnContext,
     SubagentMessageActivity,
     SubagentStatusActivity,
@@ -251,6 +252,64 @@ class _TurnManagerStub:
 
 
 class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
+    async def test_resume_uses_pending_checkpoint_without_new_human_message(self) -> None:
+        planner = MagicMock()
+        received_inputs: list[object] = []
+
+        async def resume_stream(
+            input: object,
+            config: RunnableConfig,
+            **kwargs: Any,
+        ) -> AsyncIterator[dict[str, Any]]:
+            del config, kwargs
+            received_inputs.append(input)
+            yield {
+                "type": "updates",
+                "ns": (),
+                "data": {
+                    "model": {
+                        "messages": [
+                            AIMessage(
+                                id="resumed-final",
+                                content="恢复后的最终回答",
+                                response_metadata={"finish_reason": "stop"},
+                            )
+                        ]
+                    }
+                },
+            }
+
+        planner.astream = resume_stream
+        runtime_mock = MagicMock()
+        runtime_mock.planner = planner
+        runtime = cast(ConversationAgentRuntime, runtime_mock)
+        manager = _TurnManagerStub(
+            runtime,
+            PlannerTurnContext(
+                user_id=7,
+                conversation_id=_CONVERSATION_ID,
+                max_continuations=0,
+            ),
+        )
+
+        events = [
+            event
+            async for event in chat_service.resume_agent_turn(
+                manager,
+                7,
+                _CONVERSATION_ID,
+                asyncio.Event(),
+            )
+        ]
+
+        self.assertEqual(received_inputs, [None])
+        self.assertEqual(len(events), 1)
+        event = cast(chat_schema.ChatStreamMessageEvent, events[0])
+        part = event.message.parts[0]
+        self.assertIsInstance(part, chat_schema.TextContent)
+        assert isinstance(part, chat_schema.TextContent)
+        self.assertEqual(part.text, "恢复后的最终回答")
+
     async def test_repeated_finish_reason_reuses_turn_budget_and_hits_limit(
         self,
     ) -> None:
@@ -470,12 +529,15 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             )
 
             runtime = MagicMock()
-            runtime.session_service.get_delegation_messages = AsyncMock(
-                return_value=[reference]
+            runtime.session_service.get_delegation_activity = AsyncMock(
+                return_value=DelegationActivityHistory(
+                    messages=[reference],
+                    status="completed",
+                )
             )
             agents = MagicMock()
             agents.get_conversation_runtime = AsyncMock(return_value=runtime)
-            history = await chat_service.list_subagent_messages(
+            history = await chat_service.get_subagent_activity(
                 agents,
                 7,
                 _CONVERSATION_ID,
@@ -496,7 +558,8 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stream_part.content, detailed_content)
         self.assertIsNotNone(history)
         assert history is not None
-        history_part = history[0].parts[0]
+        self.assertEqual(history.status, "completed")
+        history_part = history.messages[0].parts[0]
         self.assertIsInstance(history_part, chat_schema.ToolResultPart)
         assert isinstance(history_part, chat_schema.ToolResultPart)
         self.assertEqual(history_part.content, detailed_content)

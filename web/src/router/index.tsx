@@ -37,17 +37,7 @@ export const router = createBrowserRouter([
     ),
   },
   {
-    path: ROUTES.chat,
-    element: (
-      <ProtectedRoute>
-        <SuspenseWrapper>
-          <ChatPage />
-        </SuspenseWrapper>
-      </ProtectedRoute>
-    ),
-  },
-  {
-    path: `${ROUTES.chat}/:conversationId`,
+    path: `${ROUTES.chat}/:conversationId?`,
     element: (
       <ProtectedRoute>
         <SuspenseWrapper>

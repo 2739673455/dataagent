@@ -8,6 +8,7 @@ import { useChatStore } from "@/stores/chatStore";
 import { ChatComposer } from "./components/ChatComposer";
 import { ChatMessages } from "./components/ChatMessages";
 import { ChatSidebar, ChatUserFooter } from "./components/ChatSidebar";
+import { getConversationExecutionStatus } from "./components/messages/displayModel";
 import { PreviewSidebar } from "./components/PreviewSidebar";
 import { useChatPreview } from "./hooks/useChatPreview";
 import { useChatStream } from "./hooks/useChatStream";
@@ -52,6 +53,7 @@ export default function ChatPage() {
     isUploadingAttachments,
     handleAttachmentsSelected,
     handleRemoveAttachment,
+    handleResume,
     handleSend,
     handleStop,
     abortConversationStream,
@@ -61,6 +63,11 @@ export default function ChatPage() {
     onNavigateToConversation: (id) => navigate(ROUTES.chatConversation(id)),
     onRedirectToAuth: (returnTo) => redirectToLogin(returnTo),
   });
+  const executionStatus = getConversationExecutionStatus(
+    routeConversationId,
+    currentMessages,
+    isStreaming
+  );
 
   const {
     isPreviewSidebarOpen,
@@ -140,8 +147,10 @@ export default function ChatPage() {
         </div>
 
         <div className="flex items-center gap-3 text-xs">
-          {isStreaming ? (
+          {executionStatus === "processing" ? (
             <span className="font-medium text-[#18181b]">处理中</span>
+          ) : executionStatus === "interrupted" ? (
+            <span className="text-[#71717a]">已中断</span>
           ) : (
             <span className="text-[#71717a]">就绪</span>
           )}
@@ -208,10 +217,12 @@ export default function ChatPage() {
           <div className="mx-auto w-full max-w-4xl">
             <ChatComposer
               attachments={attachments}
+              canResume={executionStatus === "interrupted"}
               isStreaming={isStreaming}
               isUploading={isUploadingAttachments}
               onAttachmentsSelected={handleAttachmentsSelected}
               onRemoveAttachment={handleRemoveAttachment}
+              onResume={handleResume}
               onStop={handleStop}
               onSubmit={handleSend}
             />

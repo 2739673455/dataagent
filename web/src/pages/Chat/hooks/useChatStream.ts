@@ -5,12 +5,7 @@ import { getApiErrorMessage } from "@/api/errors";
 import { getAccessToken } from "@/auth";
 import { sessionLifecycle } from "@/auth/sessionLifecycle";
 import { useChatStore } from "@/stores/chatStore";
-import type {
-  Attachment,
-  ChatStreamEvent,
-  MessageResponse,
-  UserMessageRequest,
-} from "@/types";
+import type { Attachment, ChatStreamEvent, MessageResponse, UserMessageRequest } from "@/types";
 
 function isImageFile(name: string) {
   return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
@@ -69,7 +64,7 @@ export function useChatStream({
   }, [abandonDraftConversation, routeConversationId]);
 
   const runStream = useCallback(
-    (conversationId: string, message: UserMessageRequest) => {
+    (conversationId: string, message: UserMessageRequest | null) => {
       const generation = sessionLifecycle.current();
       streamControllersRef.current.get(conversationId)?.abort();
       const controller = new AbortController();
@@ -91,8 +86,10 @@ export function useChatStream({
         }
       };
 
-      void chatApi
-        .streamChat(conversationId, message, controller.signal, onEvent)
+      const stream = message
+        ? chatApi.streamChat(conversationId, message, controller.signal, onEvent)
+        : chatApi.resumeChat(conversationId, controller.signal, onEvent);
+      void stream
         .catch((error: unknown) => {
           if (sessionLifecycle.isCurrent(generation)) {
             interruptRunningSubagents(conversationId);
@@ -136,6 +133,12 @@ export function useChatStream({
     if (!routeConversationId) return;
     streamControllersRef.current.get(routeConversationId)?.abort();
   }, [routeConversationId]);
+
+  const handleResume = useCallback(() => {
+    if (!routeConversationId) return;
+    markStreaming(routeConversationId);
+    runStream(routeConversationId, null);
+  }, [markStreaming, routeConversationId, runStream]);
 
   const abortConversationStream = useCallback((conversationId: string) => {
     streamControllersRef.current.get(conversationId)?.abort();
@@ -274,6 +277,7 @@ export function useChatStream({
     handleAttachmentsSelected,
     handleRemoveAttachment,
     handleSend,
+    handleResume,
     handleStop,
     abortConversationStream,
     clearAttachments,

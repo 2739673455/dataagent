@@ -18,6 +18,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.analytics.agents.contracts import (
     DELEGATION_CONTEXT_KEY,
+    DelegationActivityHistory,
     DelegationMessageContext,
     DelegationRequest,
     DelegationResult,
@@ -381,16 +382,40 @@ class AgentSessionService:
             raise
 
     @staticmethod
-    def _is_public_activity_message(message: BaseMessage) -> bool:
-        """筛除结构化协议消息，只保留可展示的 Agent 工作消息"""
+    def _is_structured_response_message(message: BaseMessage) -> bool:
+        """判断消息是否属于 SpecialistResult 结构化响应"""
         if isinstance(message, AIMessage):
-            return not any(
+            return any(
                 call.get("name") == _STRUCTURED_RESPONSE_TOOL_NAME
                 for call in message.tool_calls
             )
         if isinstance(message, ToolMessage):
-            return message.name != _STRUCTURED_RESPONSE_TOOL_NAME
+            return message.name == _STRUCTURED_RESPONSE_TOOL_NAME
         return False
+
+    @staticmethod
+    def _structured_response_status(
+        message: BaseMessage,
+    ) -> SubagentRunStatus | None:
+        """从结构化响应工具调用中读取本次 delegation 的终态"""
+        if not isinstance(message, AIMessage):
+            return None
+        for call in message.tool_calls:
+            if call.get("name") != _STRUCTURED_RESPONSE_TOOL_NAME:
+                continue
+            try:
+                return SpecialistResult.model_validate(call.get("args")).status
+            except ValidationError:
+                continue
+        return None
+
+    @classmethod
+    def _is_public_activity_message(cls, message: BaseMessage) -> bool:
+        """筛除结构化协议消息，只保留可展示的 Agent 工作消息"""
+        return not cls._is_structured_response_message(message) and isinstance(
+            message,
+            AIMessage | ToolMessage,
+        )
 
     async def _stream_specialist(
         self,
@@ -456,34 +481,25 @@ class AgentSessionService:
             raise RuntimeError("Specialist 执行未产生最终状态")
         return final_values
 
-    async def get_delegation_messages(
+    async def get_delegation_activity(
         self,
         analysis_id: str,
         agent_type: str,
         session_id: str,
         delegation_id: str,
-    ) -> list[BaseMessage] | None:
-        """通过 Specialist Agent 状态读取一次 delegation 的可展示消息"""
+    ) -> DelegationActivityHistory | None:
+        """通过 Specialist Agent 状态读取一次 delegation 的消息和状态"""
         context = DelegationMessageContext(delegation_id=delegation_id)
         session_key = self._build_session_key(analysis_id, agent_type, session_id)
-        agent_run = await self._build_agent(session_key)
-        try:
-            checkpointer = agent_run.agent.checkpointer
-            if not checkpointer:
-                raise RuntimeError("Specialist Agent 未配置 Checkpointer")
-            state_config = self.build_subagent_config(RunnableConfig(), session_key)
-            configurable = state_config.get("configurable")
-            if configurable is None:
-                raise RuntimeError("Specialist Agent 状态配置缺少 configurable")
-            configurable[CONFIG_KEY_CHECKPOINTER] = checkpointer
-            state = await agent_run.agent.aget_state(state_config)
-        finally:
-            await self._cleanup_agent_run(agent_run)
-        messages = state.values.get("messages")
+        state_values = await self._read_session_state(session_key)
+        messages = state_values.get("messages")
         if not isinstance(messages, list):
             return None
 
         found = False
+        has_later_delegation = False
+        has_structured_response = False
+        delegation_status: SubagentRunStatus | None = None
         result: list[BaseMessage] = []
         for message in messages:
             if not isinstance(message, BaseMessage):
@@ -499,16 +515,99 @@ class AgentSessionService:
                         break
                     continue
                 if found:
+                    has_later_delegation = True
                     break
                 found = message_context.delegation_id == context.delegation_id
                 continue
             if not found:
                 continue
             if message.additional_kwargs.get(_INTERNAL_RETRY_KEY) is True:
-                break
+                continue
+            if self._is_structured_response_message(message):
+                has_structured_response = True
+                delegation_status = (
+                    self._structured_response_status(message) or delegation_status
+                )
+                continue
             if self._is_public_activity_message(message):
                 result.append(message)
-        return result if found else None
+        if not found:
+            return None
+
+        with self._runtime_state_lock:
+            is_active = session_key.checkpoint_ns in self._active_sessions
+        structured_response = state_values.get("structured_response")
+        if not has_later_delegation and is_active:
+            status: SubagentRunStatus = "running"
+        elif delegation_status is not None:
+            status = delegation_status
+        elif has_structured_response:
+            status = "completed"
+        elif not has_later_delegation and isinstance(
+            structured_response,
+            SpecialistResult,
+        ):
+            status = structured_response.status
+        else:
+            status = "cancelled"
+        return DelegationActivityHistory(messages=result, status=status)
+
+    async def _read_session_state(
+        self,
+        session_key: AgentSessionKey,
+    ) -> Mapping[str, object]:
+        """读取 Specialist Agent 合并增量通道后的完整状态"""
+        agent_run = await self._build_agent(session_key)
+        try:
+            checkpointer = agent_run.agent.checkpointer
+            if not checkpointer:
+                raise RuntimeError("Specialist Agent 未配置 Checkpointer")
+            state_config = self.build_subagent_config(RunnableConfig(), session_key)
+            configurable = state_config.get("configurable")
+            if configurable is None:
+                raise RuntimeError("Specialist Agent 状态配置缺少 configurable")
+            configurable[CONFIG_KEY_CHECKPOINTER] = checkpointer
+            state = await agent_run.agent.aget_state(state_config)
+        finally:
+            await self._cleanup_agent_run(agent_run)
+        return cast(Mapping[str, object], state.values)
+
+    async def _get_replayed_delegation_result(
+        self,
+        request: DelegationRequest,
+        session_key: AgentSessionKey,
+        delegation_id: str,
+    ) -> DelegationResult | None:
+        """恢复 Planner 待执行工具时复用同一 delegation 的既有结果"""
+        state_values = await self._read_session_state(session_key)
+        structured_response = state_values.get("structured_response")
+        messages = state_values.get("messages")
+        if not isinstance(structured_response, SpecialistResult) or not isinstance(
+            messages,
+            list,
+        ):
+            return None
+
+        found = False
+        for message in messages:
+            if not isinstance(message, BaseMessage):
+                continue
+            raw_context = message.additional_kwargs.get(DELEGATION_CONTEXT_KEY)
+            if raw_context is not None:
+                try:
+                    message_context = DelegationMessageContext.model_validate(
+                        raw_context
+                    )
+                except ValidationError:
+                    continue
+                if found:
+                    return None
+                found = message_context.delegation_id == delegation_id
+        if not found:
+            return None
+        await self._validate_repair_targets(structured_response, session_key)
+        await self._verify_result_artifacts(structured_response, session_key)
+        return self._to_delegation_result(request, structured_response)
 
     @staticmethod
     def _to_delegation_result(
@@ -559,6 +658,19 @@ class AgentSessionService:
                     "当前 Conversation 的并行 Session 已满",
                 ),
             ):
+                replayed_result = await self._get_replayed_delegation_result(
+                    request,
+                    session_key,
+                    delegation_id,
+                )
+                if replayed_result is not None:
+                    self._write_status_activity(
+                        request,
+                        delegation_id,
+                        replayed_result.status,
+                        activity_writer,
+                    )
+                    return replayed_result
                 with self._runtime_state_lock:
                     self._active_sessions[session_key.checkpoint_ns] = datetime.now(UTC)
                 try:

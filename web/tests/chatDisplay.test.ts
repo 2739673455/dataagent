@@ -1,11 +1,80 @@
 import { describe, expect, test } from "vitest";
 import {
   buildDisplayItems,
+  getConversationExecutionStatus,
+  getExecutionStatus,
+  getToolResultStatus,
+  isToolResultFailure,
   groupDisplayItemsIntoTurns,
+  parseDelegationResult,
+  resolveDelegationRunStatus,
 } from "../src/pages/Chat/components/messages/displayModel";
 import type { MessageResponse } from "../src/types";
 
 describe("chat message display and turn grouping", () => {
+  test("detects explicit tool error status", () => {
+    expect(getToolResultStatus('{"status":"failed"}')).toBe("failed");
+    expect(isToolResultFailure('{"status":"error","message":"failed"}')).toBe(true);
+    expect(isToolResultFailure('{"status":"failed"}')).toBe(true);
+    expect(isToolResultFailure('{"status":"completed"}')).toBe(false);
+    expect(isToolResultFailure("plain text error")).toBe(false);
+    expect(isToolResultFailure(undefined)).toBe(false);
+  });
+
+  test("parses delegation failure reasons", () => {
+    expect(
+      parseDelegationResult(
+        JSON.stringify({
+          status: "failed",
+          content: "专家智能体会话执行失败",
+          failure_reasons: ["ConnectError: connection reset"],
+        })
+      )
+    ).toEqual({
+      status: "failed",
+      content: "专家智能体会话执行失败",
+      failureReasons: ["ConnectError: connection reset"],
+    });
+    expect(parseDelegationResult("plain text")).toBeNull();
+  });
+
+  test("keeps an interrupted delegation interrupted after activity history loads", () => {
+    expect(resolveDelegationRunStatus(undefined, false, true, "completed")).toBe("interrupted");
+    expect(resolveDelegationRunStatus('{"status":"failed"}', true, false, "completed")).toBe(
+      "failed"
+    );
+    expect(resolveDelegationRunStatus('{"status":"completed"}', true, false, "running")).toBe(
+      "completed"
+    );
+  });
+
+  test("distinguishes processing, completed, and interrupted execution", () => {
+    expect(getExecutionStatus(false, true)).toBe("processing");
+    expect(getExecutionStatus(true, false)).toBe("completed");
+    expect(getExecutionStatus(false, false)).toBe("interrupted");
+
+    const pendingMessages: MessageResponse[] = [
+      {
+        message_id: "u-pending",
+        role: "user",
+        parts: [{ type: "text", text: "继续分析" }],
+      },
+      {
+        message_id: "a-pending-tool",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool_call",
+            tool_call_id: "call-pending",
+            name: "delegation",
+            args: {},
+          },
+        ],
+      },
+    ];
+    expect(getConversationExecutionStatus("conv-1", pendingMessages, false)).toBe("interrupted");
+  });
+
   test("groups single direct response into turn with finalItem and no intermediate items", () => {
     const messages: MessageResponse[] = [
       {

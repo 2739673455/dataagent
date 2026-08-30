@@ -5,10 +5,15 @@ import type { Attachment, MessageResponse, SubagentRun } from "@/types";
 import { AttachmentChip } from "./AttachmentChip";
 import {
   buildDisplayItems,
+  type ExecutionStatus,
   formatToolResult,
+  getExecutionStatus,
   getMessagePartKey,
   getSubagentRunIdentity,
   getToolArgsPreview,
+  isToolResultFailure,
+  parseDelegationResult,
+  resolveDelegationRunStatus,
 } from "./displayModel";
 import { PartView } from "./MarkdownRenderer";
 import { MessageBubble } from "./MessageBubble";
@@ -86,6 +91,7 @@ export function GenericToolRunBar({
   const argsPreview = getToolArgsPreview(item.args);
   const hasAttachments = item.completed && (item.attachments?.length ?? 0) > 0;
   const isRunning = !item.completed && !item.interrupted;
+  const hasError = isToolResultFailure(item.result);
 
   return (
     <div className="my-1.5 font-mono text-xs">
@@ -104,7 +110,13 @@ export function GenericToolRunBar({
         <span
           className={cn(
             "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
-            isRunning ? "bg-[#a1a1aa] animate-pulse" : "bg-[#16a34a]"
+            isRunning
+              ? "bg-[#a1a1aa] animate-pulse"
+              : hasError
+                ? "bg-[#ef4444]"
+                : item.interrupted
+                  ? "bg-[#a1a1aa]"
+                  : "bg-[#16a34a]"
           )}
         />
         <span
@@ -168,6 +180,7 @@ export function GenericToolRunBar({
  * 主会话与 delegation 通用的过程折叠展示组件（无边框、左侧箭头、展开后向右缩进）
  */
 export function ExecutionProcessCollapse({
+  executionStatus,
   hasFinalItem,
   isStreaming,
   items,
@@ -175,6 +188,7 @@ export function ExecutionProcessCollapse({
   onOpenPreviewAttachment,
   subagentRuns = {},
 }: {
+  executionStatus?: Exclude<ExecutionStatus, "idle">;
   hasFinalItem: boolean;
   isStreaming: boolean;
   items: DisplayItem[];
@@ -190,7 +204,10 @@ export function ExecutionProcessCollapse({
   // 默认规则：若已有最终结果则收起，否则（执行中或未出最终结果）展开
   const isOpen = userToggledOpen ?? !hasFinalItem;
 
-  const isProcessing = isStreaming && !hasFinalItem;
+  const resolvedStatus = executionStatus ?? getExecutionStatus(hasFinalItem, isStreaming);
+  const isProcessing = resolvedStatus === "processing";
+  const isInterrupted = resolvedStatus === "interrupted";
+  const statusLabel = isProcessing ? "处理中" : isInterrupted ? "已中断" : "已完成";
   const toolCount = items.filter((i) => i.type === "tool_run").length;
 
   return (
@@ -201,7 +218,7 @@ export function ExecutionProcessCollapse({
         onClick={() => setUserToggledOpen(!isOpen)}
         className={cn(
           "flex items-center gap-1.5 py-1 text-left text-xs transition",
-          isProcessing
+          isProcessing || isInterrupted
             ? "text-[#71717a] hover:text-[#18181b]"
             : "text-[#16a34a] hover:text-[#15803d]"
         )}
@@ -212,13 +229,11 @@ export function ExecutionProcessCollapse({
             isOpen && "rotate-90"
           )}
         />
-        <span className={cn("font-medium", isProcessing && "shimmer-text")}>
-          {isProcessing ? "处理中" : "已完成"}
-        </span>
+        <span className={cn("font-medium", isProcessing && "shimmer-text")}>{statusLabel}</span>
         <span
           className={cn(
             "text-[11px]",
-            isProcessing ? "text-[#a1a1aa]" : "text-[#16a34a]/80"
+            isProcessing || isInterrupted ? "text-[#a1a1aa]" : "text-[#16a34a]/80"
           )}
         >
           共 {items.length} 步{toolCount > 0 ? ` · ${toolCount} 个工具` : ""}
@@ -319,10 +334,18 @@ function DelegationRunBarInternal({
   const instruction = typeof item.args?.message === "string" ? item.args.message : null;
   const hasAttachments = (item.attachments?.length ?? 0) > 0;
 
-  const runStatus =
-    subagentRun?.status ??
-    (item.completed ? "completed" : item.interrupted ? "interrupted" : "running");
+  const runStatus = resolveDelegationRunStatus(
+    item.result,
+    item.completed === true,
+    item.interrupted === true,
+    subagentRun?.status
+  );
   const isRunning = runStatus === "running";
+  const specialistExecutionStatus: Exclude<ExecutionStatus, "idle"> = isRunning
+    ? "processing"
+    : runStatus === "cancelled" || runStatus === "interrupted"
+      ? "interrupted"
+      : "completed";
 
   const loadHistory = useCallback(() => {
     if (!item.conversationId || !loadSubagentMessages || !identity) return;
@@ -371,21 +394,7 @@ function DelegationRunBarInternal({
     }
   }
 
-  // 尝试从 item.result 解析结构化委派输出（当无 message 流或作为兜底展示）
-  const parsedDelegationResult = (() => {
-    if (!item.result) return null;
-    try {
-      const parsed = JSON.parse(item.result);
-      if (typeof parsed === "object" && parsed !== null) {
-        return parsed as {
-          content?: string;
-          status?: string;
-        };
-      }
-    } catch {
-      // 非 JSON 字符串
-    }
-  })();
+  const parsedDelegationResult = parseDelegationResult(item.result);
 
   const agentType = typeof item.args?.agent_type === "string" ? item.args.agent_type : null;
   const displayName = agentType ? `${item.name}(${agentType})` : item.name;
@@ -418,7 +427,9 @@ function DelegationRunBarInternal({
               ? "bg-[#a1a1aa] animate-pulse"
               : runStatus === "failed"
                 ? "bg-[#ef4444]"
-                : "bg-[#16a34a]"
+                : specialistExecutionStatus === "interrupted"
+                  ? "bg-[#a1a1aa]"
+                  : "bg-[#16a34a]"
           )}
         />
         <span
@@ -457,6 +468,7 @@ function DelegationRunBarInternal({
           {/* 2. 中间处理过程展示（使用与外层完全相同的 ExecutionProcessCollapse 逻辑） */}
           {subagentIntermediateItems.length > 0 ? (
             <ExecutionProcessCollapse
+              executionStatus={specialistExecutionStatus}
               hasFinalItem={subagentFinalItem !== null || parsedDelegationResult !== null}
               isStreaming={isRunning}
               items={subagentIntermediateItems}
@@ -511,6 +523,19 @@ function DelegationRunBarInternal({
               <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded border border-[#e0e0da] bg-[#f0f0eb] p-2 text-[#27272a]">
                 {formatToolResult(item.result)}
               </pre>
+            </div>
+          ) : null}
+
+          {(parsedDelegationResult?.failureReasons.length ?? 0) > 0 ? (
+            <div className="space-y-1">
+              <p className="font-medium text-[#b91c1c]">失败原因</p>
+              <div className="p-2 text-xs leading-relaxed text-[#991b1b]">
+                {parsedDelegationResult?.failureReasons.map((reason) => (
+                  <p key={reason} className="whitespace-pre-wrap break-words">
+                    {reason.trimEnd()}
+                  </p>
+                ))}
+              </div>
             </div>
           ) : null}
         </div>

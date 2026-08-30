@@ -254,6 +254,14 @@ class DelegationResult(AgentResult):
     session_id: Identifier
 
 
+@dataclass(frozen=True, slots=True)
+class DelegationActivityHistory:
+    """一次 delegation 的公开消息和真实执行状态"""
+
+    messages: list[BaseMessage]
+    status: SubagentRunStatus
+
+
 class SessionSummary(StrictProtocolModel):
     """单个专业 Agent Session 的结构化摘要"""
 

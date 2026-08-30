@@ -306,7 +306,7 @@ async def list_messages(
     return result
 
 
-async def list_subagent_messages(
+async def get_subagent_activity(
     agents: AgentRuntimeManager,
     user_id: int,
     conversation_id: UUID,
@@ -314,31 +314,34 @@ async def list_subagent_messages(
     agent_type: str,
     session_id: str,
     delegation_id: str,
-) -> list[chat_schema.MessageResponse] | None:
-    """读取一次 Specialist delegation 的公开工作消息"""
+) -> chat_schema.SubagentMessageListResponse | None:
+    """读取一次 Specialist delegation 的公开工作消息和状态"""
     runtime = await agents.get_conversation_runtime(user_id, conversation_id)
-    messages = await runtime.session_service.get_delegation_messages(
+    activity = await runtime.session_service.get_delegation_activity(
         analysis_id,
         agent_type,
         session_id,
         delegation_id,
     )
-    if messages is None:
+    if activity is None:
         return None
     messages = await expand_semantic_recall_messages_for_display(
-        messages,
+        activity.messages,
         user_id,
         conversation_id,
     )
-    return [
-        schema
-        for message in messages
-        if (schema := _langchain_message_to_schema(message)) is not None
-    ]
+    return chat_schema.SubagentMessageListResponse(
+        status=activity.status,
+        messages=[
+            schema
+            for message in messages
+            if (schema := _langchain_message_to_schema(message)) is not None
+        ],
+    )
 
 
 async def _execute_agent(
-    input_messages: list[BaseMessage],
+    input_messages: list[BaseMessage] | None,
     runtime: ConversationAgentRuntime,
     turn_context: PlannerTurnContext,
 ) -> AsyncGenerator[StreamPart[Any, Any]]:
@@ -348,7 +351,7 @@ async def _execute_agent(
         turn_context.conversation_id,
     )
     async for chunk in runtime.planner.astream(
-        input={"messages": input_messages},
+        input={"messages": input_messages} if input_messages is not None else None,
         config=config,
         stream_mode=["updates", "custom"],
         version="v2",
@@ -356,24 +359,14 @@ async def _execute_agent(
         yield chunk
 
 
-async def run_agent_turn(
+async def _run_agent_turn(
     agents: AgentRuntimeManager,
     user_id: int,
     conversation_id: UUID,
-    user_message: chat_schema.UserMessageRequest,
+    input_messages: list[BaseMessage] | None,
     cancel: asyncio.Event,
 ) -> AsyncGenerator[chat_schema.ChatStreamEventPayload]:
-    """执行一轮 Agent 对话并流式返回响应"""
-    logger.info(
-        f"智能体回合开始: conversation_id={conversation_id}, "
-        f"parts={len(user_message.parts)}, "
-        f"attachments={len(user_message.attachments or ())}"
-    )
-
-    input_messages: list[BaseMessage] = [
-        _schema_to_human_message(user_message)
-    ]
-
+    """执行新回合或从待执行 Checkpoint 恢复同一回合"""
     runtime = await agents.get_conversation_runtime(user_id, conversation_id)
     async with agents.execution(
         user_id,
@@ -452,7 +445,62 @@ async def run_agent_turn(
             # 空增量会保留 Checkpointer 中的已有状态并继续生成
             input_messages = []
 
+
+async def run_agent_turn(
+    agents: AgentRuntimeManager,
+    user_id: int,
+    conversation_id: UUID,
+    user_message: chat_schema.UserMessageRequest,
+    cancel: asyncio.Event,
+) -> AsyncGenerator[chat_schema.ChatStreamEventPayload]:
+    """执行一轮 Agent 对话并流式返回响应"""
+    logger.info(
+        f"智能体回合开始: conversation_id={conversation_id}, "
+        f"parts={len(user_message.parts)}, "
+        f"attachments={len(user_message.attachments or ())}"
+    )
+    async for event in _run_agent_turn(
+        agents,
+        user_id,
+        conversation_id,
+        [_schema_to_human_message(user_message)],
+        cancel,
+    ):
+        yield event
+
     logger.info(f"智能体回合结束: conversation_id={conversation_id}")
+
+
+async def resume_agent_turn(
+    agents: AgentRuntimeManager,
+    user_id: int,
+    conversation_id: UUID,
+    cancel: asyncio.Event,
+) -> AsyncGenerator[chat_schema.ChatStreamEventPayload]:
+    """从 Planner 最新 Checkpoint 的待执行任务继续生成"""
+    logger.info(f"智能体回合恢复: conversation_id={conversation_id}")
+    async for event in _run_agent_turn(
+        agents,
+        user_id,
+        conversation_id,
+        None,
+        cancel,
+    ):
+        yield event
+    logger.info(f"智能体回合恢复结束: conversation_id={conversation_id}")
+
+
+async def can_resume_agent_turn(
+    agents: AgentRuntimeManager,
+    user_id: int,
+    conversation_id: UUID,
+) -> bool:
+    """检查 Planner 最新 Checkpoint 是否保留待执行任务"""
+    runtime = await agents.get_conversation_runtime(user_id, conversation_id)
+    state = await runtime.planner.aget_state(
+        build_planner_config(user_id, conversation_id)
+    )
+    return bool(state.next)
 
 
 class PlannerContinuationLimitError(RuntimeError):

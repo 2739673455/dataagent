@@ -19,3 +19,11 @@ class SubagentRunNotFoundError(ProblemError):
     type = "subagent-run-not-found"
     title = "子 Agent 执行记录不存在"
     status = HTTPStatus.NOT_FOUND
+
+
+class ConversationNotResumableError(ProblemError):
+    """表示会话当前没有可恢复的 Planner 待执行任务"""
+
+    type = "conversation-not-resumable"
+    title = "对话当前无法继续执行"
+    status = HTTPStatus.CONFLICT

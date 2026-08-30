@@ -338,6 +338,7 @@ export interface components {
     };
     "SubagentMessageListResponse": {
       "messages": Array<components["schemas"]["MessageResponse"]>;
+      "status": "running" | "completed" | "needs_repair" | "failed" | "cancelled";
     };
     "TableBatchDeleteRequest": {
       "tables": Array<string>;
@@ -676,6 +677,34 @@ export interface operations {
         "content": {
         "application/json": components["schemas"]["SubagentMessageListResponse"];
       };
+      };
+      "422": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+      "default": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+    };
+  };
+  "api_resume_chat_api_v1_chat__conversation_id__resume_post": {
+    "parameters": {
+      "path": {
+        "conversation_id": string;
+      };
+      "query"?: never;
+      "header"?: never;
+      "cookie"?: never;
+    };
+    "requestBody"?: never;
+    "responses": {
+      "200": {
+        "content": never;
       };
       "422": {
         "content": {
@@ -2317,6 +2346,9 @@ export interface paths {
   };
   "/api/v1/chat/update": {
     "post": operations["api_update_conversation_api_v1_chat_update_post"];
+  };
+  "/api/v1/chat/{conversation_id}/resume": {
+    "post": operations["api_resume_chat_api_v1_chat__conversation_id__resume_post"];
   };
   "/api/v1/chat/{conversation_id}/subagents/{analysis_id}/{agent_type}/{session_id}/runs/{delegation_id}/messages": {
     "get": operations["api_get_subagent_messages_api_v1_chat__conversation_id__subagents__analysis_id___agent_type___session_id__runs__delegation_id__messages_get"];

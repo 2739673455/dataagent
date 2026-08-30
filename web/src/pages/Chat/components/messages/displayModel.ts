@@ -5,6 +5,7 @@ import type {
   ImageContent,
   MessagePart,
   MessageResponse,
+  SubagentRunStatus,
   TextContent,
 } from "@/types";
 import type {
@@ -17,12 +18,29 @@ import type {
 
 export const TOOL_ARGS_PREVIEW_MAX_LENGTH = 80;
 
-export const AGENT_TYPES = new Set<AgentType>([
-  "explorer",
-  "analyst",
-  "reviewer",
-  "visualizer",
-]);
+export const AGENT_TYPES = new Set<AgentType>(["explorer", "analyst", "reviewer", "visualizer"]);
+
+export type ExecutionStatus = "idle" | "processing" | "completed" | "interrupted";
+
+export function getExecutionStatus(
+  hasFinalItem: boolean,
+  isStreaming: boolean
+): Exclude<ExecutionStatus, "idle"> {
+  if (isStreaming && !hasFinalItem) return "processing";
+  return hasFinalItem ? "completed" : "interrupted";
+}
+
+export function getConversationExecutionStatus(
+  conversationId: string | null,
+  messages: MessageResponse[],
+  isStreaming: boolean
+): ExecutionStatus {
+  if (isStreaming) return "processing";
+  const turns = groupDisplayItemsIntoTurns(buildDisplayItems(conversationId, messages, false));
+  const latestTurn = turns.at(-1);
+  if (!latestTurn?.userItem) return "idle";
+  return getExecutionStatus(latestTurn.finalItem !== null, false);
+}
 
 export function getMessageKey(message: MessageResponse): string {
   if (message.message_id != null) {
@@ -289,6 +307,77 @@ export function formatToolResult(result: string): string {
   } catch {
     return result;
   }
+}
+
+export function getToolResultStatus(result: string | undefined): string | null {
+  if (result === undefined) return null;
+  try {
+    const payload: unknown = JSON.parse(result);
+    if (
+      typeof payload === "object" &&
+      payload !== null &&
+      !Array.isArray(payload) &&
+      "status" in payload &&
+      typeof payload.status === "string"
+    ) {
+      return payload.status;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export interface DelegationResultPayload {
+  status: string | null;
+  content: string | null;
+  failureReasons: string[];
+}
+
+export function parseDelegationResult(result: string | undefined): DelegationResultPayload | null {
+  if (result === undefined) return null;
+  try {
+    const payload: unknown = JSON.parse(result);
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
+
+    const status =
+      "status" in payload && typeof payload.status === "string" ? payload.status : null;
+    const content =
+      "content" in payload && typeof payload.content === "string" ? payload.content : null;
+    const failureReasons =
+      "failure_reasons" in payload && Array.isArray(payload.failure_reasons)
+        ? [
+            ...new Set(
+              payload.failure_reasons.filter(
+                (reason): reason is string => typeof reason === "string" && reason.trim().length > 0
+              )
+            ),
+          ]
+        : [];
+
+    return { status, content, failureReasons };
+  } catch {
+    return null;
+  }
+}
+
+export function isToolResultFailure(result: string | undefined): boolean {
+  const status = getToolResultStatus(result);
+  return status === "error" || status === "failed";
+}
+
+export function resolveDelegationRunStatus(
+  result: string | undefined,
+  completed: boolean,
+  interrupted: boolean,
+  activityStatus: SubagentRunStatus | undefined
+): SubagentRunStatus {
+  const resultStatus = getToolResultStatus(result);
+  if (resultStatus === "error" || resultStatus === "failed") return "failed";
+  if (resultStatus === "completed" || resultStatus === "needs_repair") return resultStatus;
+  if (interrupted) return "interrupted";
+  if (activityStatus !== undefined) return activityStatus;
+  return completed ? "completed" : "running";
 }
 
 export function getSubagentRunIdentity(item: ToolRunDisplayItem): SubagentRunIdentity | null {

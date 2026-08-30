@@ -57,6 +57,7 @@ describe("subagent activity state", () => {
   test("loads historical run messages on demand and caches them", async () => {
     const getMessages = vi.spyOn(chatApi, "getSubagentMessages").mockResolvedValue({
       data: {
+        status: "completed",
         messages: [
           {
             message_id: "historical-message",

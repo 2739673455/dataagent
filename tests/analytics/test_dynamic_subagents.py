@@ -1176,7 +1176,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             {"delegation_id": "delegation-region"},
         )
 
-    async def test_get_delegation_messages_segments_checkpoint_history(self) -> None:
+    async def test_get_delegation_activity_segments_checkpoint_history(self) -> None:
         fake = _FakeAgent()
         namespace = "subagents/sales-decline/analyst/region"
         first_context = DelegationMessageContext(delegation_id="delegation-first")
@@ -1219,20 +1219,23 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         }
         service = _service(fake)
 
-        messages = await service.get_delegation_messages(
+        activity = await service.get_delegation_activity(
             "sales-decline",
             "analyst",
             "region",
             "delegation-first",
         )
-        missing = await service.get_delegation_messages(
+        missing = await service.get_delegation_activity(
             "sales-decline",
             "analyst",
             "region",
             "delegation-missing",
         )
 
-        self.assertEqual(messages, [first_ai, first_tool])
+        self.assertIsNotNone(activity)
+        assert activity is not None
+        self.assertEqual(activity.messages, [first_ai, first_tool])
+        self.assertEqual(activity.status, "completed")
         self.assertIsNone(missing)
         self.assertEqual(len(fake.state_configs), 2)
         self.assertTrue(
@@ -1241,6 +1244,74 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 for config in fake.state_configs
             )
         )
+
+    async def test_get_delegation_activity_keeps_unfinished_older_run_cancelled(
+        self,
+    ) -> None:
+        fake = _FakeAgent()
+        namespace = "subagents/sales-decline/analyst/region"
+        first_context = DelegationMessageContext(delegation_id="delegation-first")
+        second_context = DelegationMessageContext(delegation_id="delegation-second")
+        fake.state_values[namespace] = {
+            "messages": [
+                HumanMessage(
+                    content="first",
+                    additional_kwargs={
+                        DELEGATION_CONTEXT_KEY: first_context.model_dump(mode="json")
+                    },
+                ),
+                AIMessage(id="first-ai", content="尚未完成"),
+                HumanMessage(
+                    content="second",
+                    additional_kwargs={
+                        DELEGATION_CONTEXT_KEY: second_context.model_dump(mode="json")
+                    },
+                ),
+            ]
+        }
+        service = _service(fake)
+
+        activity = await service.get_delegation_activity(
+            "sales-decline",
+            "analyst",
+            "region",
+            "delegation-first",
+        )
+
+        self.assertIsNotNone(activity)
+        assert activity is not None
+        self.assertEqual(activity.messages, [AIMessage(id="first-ai", content="尚未完成")])
+        self.assertEqual(activity.status, "cancelled")
+
+    async def test_replayed_delegation_reuses_latest_structured_result(self) -> None:
+        fake = _FakeAgent()
+        namespace = "subagents/sales-decline/analyst/region"
+        context = DelegationMessageContext(delegation_id="delegation-replay")
+        fake.state_values[namespace] = {
+            "messages": [
+                HumanMessage(
+                    content="analyze",
+                    additional_kwargs={
+                        DELEGATION_CONTEXT_KEY: context.model_dump(mode="json")
+                    },
+                )
+            ],
+            "structured_response": SpecialistResult(
+                status="completed",
+                content="已完成的分析结果",
+            ),
+        }
+        service = _service(fake)
+
+        result = await service.execute_delegation(
+            _request("region"),
+            build_planner_config(12, _CONVERSATION_ID),
+            delegation_id="delegation-replay",
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.content, "已完成的分析结果")
+        self.assertEqual(fake.inputs, [])
         self.assertTrue(
             all(
                 config.get("configurable", {}).get(CONFIG_KEY_CHECKPOINTER)

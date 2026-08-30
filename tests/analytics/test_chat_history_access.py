@@ -81,7 +81,7 @@ class SubagentHistoryAccessTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.analytics.api.chat.router.chat_service.list_subagent_messages",
+                "app.analytics.api.chat.router.chat_service.get_subagent_activity",
                 new=AsyncMock(return_value=None),
             ),
             self.assertRaises(chat_error.SubagentRunNotFoundError),

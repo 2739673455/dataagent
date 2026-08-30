@@ -166,7 +166,6 @@ async def api_get_messages(
     conversation = await conversation_repo.get(user_id, conversation_id)
     if conversation is None:
         raise chat_error.ConversationNotFoundError
-
     messages = await chat_service.list_messages(
         agents,
         user_id,
@@ -198,7 +197,7 @@ async def api_get_subagent_messages(
     if conversation is None:
         raise chat_error.ConversationNotFoundError
     try:
-        messages = await chat_service.list_subagent_messages(
+        activity = await chat_service.get_subagent_activity(
             agents,
             user_id,
             conversation_id,
@@ -209,9 +208,9 @@ async def api_get_subagent_messages(
         )
     except ValueError as exc:
         raise chat_error.SubagentRunNotFoundError from exc
-    if messages is None:
+    if activity is None:
         raise chat_error.SubagentRunNotFoundError
-    return chat_schema.SubagentMessageListResponse(messages=messages)
+    return activity
 
 
 def _serialize_sse_event(event: chat_schema.ChatStreamEventPayload) -> str:
@@ -223,16 +222,25 @@ async def _stream_agent_response(
     agents: AgentManager,
     user_id: int,
     conversation_id: UUID,
-    user_message: chat_schema.UserMessageRequest,
+    user_message: chat_schema.UserMessageRequest | None,
 ) -> AsyncIterator[str]:
     """流式执行单轮 Agent 对话"""
     cancel = asyncio.Event()
-    responses = chat_service.run_agent_turn(
-        agents,
-        user_id,
-        conversation_id,
-        user_message,
-        cancel,
+    responses = (
+        chat_service.run_agent_turn(
+            agents,
+            user_id,
+            conversation_id,
+            user_message,
+            cancel,
+        )
+        if user_message is not None
+        else chat_service.resume_agent_turn(
+            agents,
+            user_id,
+            conversation_id,
+            cancel,
+        )
     )
     next_message_task: asyncio.Task[chat_schema.ChatStreamEventPayload] | None = None
     try:
@@ -352,6 +360,40 @@ async def api_stream_chat(
             user_id,
             body.conversation_id,
             body.message,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/{conversation_id}/resume", response_class=StreamingResponse)
+async def api_resume_chat(
+    conversation_id: UUID,
+    conversation_repo: ConversationPGRepoDep,
+    current_user: AnalysisUserDep,
+    agents: AgentManagerDep,
+) -> StreamingResponse:
+    """从中断的 Planner Checkpoint 继续当前用户回合"""
+    user_id = current_user.id
+    conversation = await conversation_repo.get(user_id, conversation_id)
+    if conversation is None:
+        raise chat_error.ConversationNotFoundError
+    if not await chat_service.can_resume_agent_turn(
+        agents,
+        user_id,
+        conversation_id,
+    ):
+        raise chat_error.ConversationNotResumableError
+    context.user_id_ctx.set(str(user_id))
+    return StreamingResponse(
+        _stream_agent_response(
+            agents,
+            user_id,
+            conversation_id,
+            None,
         ),
         media_type="text/event-stream",
         headers={

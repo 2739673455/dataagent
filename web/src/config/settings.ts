@@ -36,6 +36,7 @@ export const CHAT_API_ROUTES = {
   getAttachment: "/api/v1/chat/attachment/get",
   deleteAttachment: "/api/v1/chat/attachment/delete",
   stream: "/api/v1/chat/stream",
+  resume: (conversationId: string) => `/api/v1/chat/${encodeURIComponent(conversationId)}/resume`,
 } as const;
 
 // 开发服务器端口
