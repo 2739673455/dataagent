@@ -1247,13 +1247,14 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(fake.state_configs), 2)
         self.assertTrue(
             all(
-                config["configurable"]["checkpoint_ns"] == namespace
+                config.get("configurable", {}).get("checkpoint_ns") == namespace
                 for config in fake.state_configs
             )
         )
         self.assertTrue(
             all(
-                config["configurable"][CONFIG_KEY_CHECKPOINTER] is fake.checkpointer
+                config.get("configurable", {}).get(CONFIG_KEY_CHECKPOINTER)
+                is fake.checkpointer
                 for config in fake.state_configs
             )
         )

@@ -472,7 +472,10 @@ class AgentSessionService:
             if not checkpointer:
                 raise RuntimeError("Specialist Agent 未配置 Checkpointer")
             state_config = self.build_subagent_config(RunnableConfig(), session_key)
-            state_config["configurable"][CONFIG_KEY_CHECKPOINTER] = checkpointer
+            configurable = state_config.get("configurable")
+            if configurable is None:
+                raise RuntimeError("Specialist Agent 状态配置缺少 configurable")
+            configurable[CONFIG_KEY_CHECKPOINTER] = checkpointer
             state = await agent_run.agent.aget_state(state_config)
         finally:
             await self._cleanup_agent_run(agent_run)

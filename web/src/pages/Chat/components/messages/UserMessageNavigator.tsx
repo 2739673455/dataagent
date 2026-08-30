@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { formatMessageTime } from "./displayModel";
 import type { UserMessageNavigationItem } from "./types";
@@ -26,52 +27,99 @@ export function UserMessageQuickNavigation({
   items: UserMessageNavigationItem[];
   onNavigate: (key: string) => void;
 }) {
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const itemElementsRef = useRef<Map<string, HTMLDivElement>>(new Map());
+  const [hoveredTooltip, setHoveredTooltip] = useState<{
+    item: UserMessageNavigationItem;
+    top: number;
+    left: number;
+  } | null>(null);
+
+  // 当主视口激活项改变时，自动将左侧对应的指示条平滑滚动到可见区域中央
+  useEffect(() => {
+    if (!activeKey) return;
+    const targetElement = itemElementsRef.current.get(activeKey);
+    const container = scrollContainerRef.current;
+    if (!targetElement || !container) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const targetRect = targetElement.getBoundingClientRect();
+
+    if (targetRect.top < containerRect.top || targetRect.bottom > containerRect.bottom) {
+      targetElement.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [activeKey]);
+
   return (
     <nav
       aria-label="用户消息快速导航"
       className="absolute left-3 top-1/2 z-20 hidden -translate-y-1/2 xl:block"
     >
-      <div className="flex flex-col gap-1.5 py-2">
-        {items.map((item, index) => {
-          const tooltipPosition =
-            index < 2
-              ? "top-0"
-              : index >= items.length - 2
-                ? "bottom-0"
-                : "top-1/2 -translate-y-1/2";
+      <div
+        ref={scrollContainerRef}
+        className="flex max-h-[min(65vh,520px)] flex-col gap-1.5 overflow-y-auto overflow-x-hidden p-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        {items.map((item) => {
+          const isActive = activeKey === item.key;
           return (
-            <div key={item.key} className="group relative flex h-2.5 items-center">
+            <div
+              key={item.key}
+              ref={(el) => {
+                if (el) {
+                  itemElementsRef.current.set(item.key, el);
+                } else {
+                  itemElementsRef.current.delete(item.key);
+                }
+              }}
+              className="relative flex h-2.5 items-center"
+            >
               <button
                 type="button"
                 aria-label={`跳转到用户消息：${item.preview}`}
                 onClick={() => onNavigate(item.key)}
-                className="flex h-2.5 w-10 items-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#71717a]"
+                onMouseEnter={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  setHoveredTooltip({
+                    item,
+                    top: rect.top + rect.height / 2,
+                    left: rect.right + 12,
+                  });
+                }}
+                onMouseLeave={() => setHoveredTooltip(null)}
+                className="group flex h-2.5 w-10 items-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#71717a]"
               >
                 <span
                   className={cn(
-                    "block h-0.5 rounded-full transition-all duration-150 group-hover:h-1 group-hover:w-10",
-                    activeKey === item.key ? "w-10 bg-[#18181b]" : "w-8 bg-[#a1a1aa]"
+                    "block h-0.5 rounded-full transition-all duration-150 group-hover:h-1 group-hover:w-10 group-hover:bg-[#18181b]",
+                    isActive ? "w-10 bg-[#18181b]" : "w-7 bg-[#a1a1aa]"
                   )}
                 />
               </button>
-              <div
-                role="tooltip"
-                className={cn(
-                  "pointer-events-none invisible absolute left-full z-30 ml-3 w-72 rounded border border-[#d4d4ce] bg-[#ffffff] p-3 text-left opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100",
-                  tooltipPosition
-                )}
-              >
-                <div className="mb-1.5 text-[11px] text-[#71717a]">
-                  {formatMessageTime(item.createdAt) ?? "时间未记录"}
-                </div>
-                <div className="max-h-24 overflow-hidden whitespace-pre-wrap break-words text-xs leading-5 text-[#27272a]">
-                  {item.preview}
-                </div>
-              </div>
             </div>
           );
         })}
       </div>
+
+      {/* 悬浮预览气泡（Fixed 定位脱离局部滚动容器，避免被 overflow 裁剪） */}
+      {hoveredTooltip && (
+        <div
+          role="tooltip"
+          style={{
+            position: "fixed",
+            left: hoveredTooltip.left,
+            top: Math.max(64, Math.min(window.innerHeight - 80, hoveredTooltip.top)),
+            transform: "translateY(-50%)",
+          }}
+          className="pointer-events-none z-50 w-72 rounded border border-[#d4d4ce] bg-[#ffffff] p-3 text-left shadow-lg"
+        >
+          <div className="mb-1.5 text-[11px] text-[#71717a]">
+            {formatMessageTime(hoveredTooltip.item.createdAt) ?? "时间未记录"}
+          </div>
+          <div className="max-h-24 overflow-hidden whitespace-pre-wrap break-words text-xs leading-5 text-[#27272a]">
+            {hoveredTooltip.item.preview}
+          </div>
+        </div>
+      )}
     </nav>
   );
 }
