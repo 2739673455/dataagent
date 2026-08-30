@@ -9,7 +9,10 @@ from uuid import UUID
 
 from app.analytics.api.chat import schemas as chat_schema
 from app.analytics.services import chat as chat_service
-from app.analytics.services.contracts import AgentRuntimeManager
+from app.analytics.services.contracts import (
+    AgentRuntimeManager,
+    ConversationFileInspector,
+)
 from app.analytics.services.conversation_run import ConversationRunService
 
 _CONVERSATION_ID = UUID("00000000-0000-0000-0000-000000000321")
@@ -17,7 +20,10 @@ _CONVERSATION_ID = UUID("00000000-0000-0000-0000-000000000321")
 
 class ConversationRunServiceTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.service = ConversationRunService(cast(AgentRuntimeManager, object()))
+        self.service = ConversationRunService(
+            cast(AgentRuntimeManager, object()),
+            cast(ConversationFileInspector, object()),
+        )
         self.addAsyncCleanup(self.service.close)
 
     async def test_subscription_disconnect_does_not_cancel_run(self) -> None:

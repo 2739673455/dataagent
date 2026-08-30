@@ -30,7 +30,7 @@ agent_manager = AgentManager(
     sandbox_manager,
     conversation_tombstone_service,
 )
-conversation_run_service = ConversationRunService(agent_manager)
+conversation_run_service = ConversationRunService(agent_manager, sandbox_manager)
 conversation_lifecycle_service = build_conversation_lifecycle_service(
     langgraph_postgres_manager,
     analytics_postgres_client_manager,

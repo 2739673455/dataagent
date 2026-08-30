@@ -217,11 +217,22 @@ Agent 使用工作区
 → 校验文件位于当前会话且真实存在
 → delegation ToolMessage 暴露下载信息
 
+Planner 最终交付文件
+→ 只选择用户需要直接查看或下载的当前会话文件
+→ 在最终回答中使用独占一行的 `[[DATAAGENT_ARTIFACT:/sessions/...]]` 指令
+→ 文件无需预先出现在 delegation 的 artifacts 中
+→ 后端校验路径属于当前对话且文件真实可下载
+→ 实时和历史消息统一投影为附件
+→ 前端只渲染后端返回的附件，不解析模型文本
+
 用户下载或删除附件
 → 校验对话归属
 → 下载时推断 MIME type
 → 删除只允许 uploads 下的用户文件
 ```
+
+Planner 最终产物选择指令的格式、信任边界和验收标准见
+[Planner 最终产物交付指令](designs/PLANNER_ARTIFACT_DIRECTIVE.md)。
 
 ## 8. 生成和修复对话标题
 

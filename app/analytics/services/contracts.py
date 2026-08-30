@@ -32,6 +32,19 @@ class AgentRuntimeManager(Protocol):
         ...
 
 
+class ConversationFileInspector(Protocol):
+    """聊天消息投影所需的会话文件检查能力"""
+
+    async def is_downloadable_file(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        path: str,
+    ) -> bool:
+        """检查路径是否为当前会话可下载的普通文件"""
+        ...
+
+
 class ConversationLifecycleLockProvider(Protocol):
     """会话生命周期所需的跨进程锁能力"""
 

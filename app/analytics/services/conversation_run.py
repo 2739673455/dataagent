@@ -11,7 +11,10 @@ from loguru import logger
 
 from app.analytics.api.chat import schemas as chat_schema
 from app.analytics.services import chat as chat_service
-from app.analytics.services.contracts import AgentRuntimeManager
+from app.analytics.services.contracts import (
+    AgentRuntimeManager,
+    ConversationFileInspector,
+)
 
 type ConversationRunKey = tuple[int, UUID]
 type RunEvent = chat_schema.ChatStreamEventPayload
@@ -34,8 +37,13 @@ class ConversationRunAlreadyActiveError(RuntimeError):
 class ConversationRunService:
     """后台执行 Planner Run，并向任意数量的 SSE 连接发布事件"""
 
-    def __init__(self, agents: AgentRuntimeManager) -> None:
+    def __init__(
+        self,
+        agents: AgentRuntimeManager,
+        files: ConversationFileInspector,
+    ) -> None:
         self._agents = agents
+        self._files = files
         self._runs: dict[ConversationRunKey, _ConversationRun] = {}
         self._lock = asyncio.Lock()
 
@@ -130,6 +138,7 @@ class ConversationRunService:
         responses = (
             chat_service.run_agent_turn(
                 self._agents,
+                self._files,
                 user_id,
                 conversation_id,
                 user_message,
@@ -138,6 +147,7 @@ class ConversationRunService:
             if user_message is not None
             else chat_service.resume_agent_turn(
                 self._agents,
+                self._files,
                 user_id,
                 conversation_id,
                 run.cancel,

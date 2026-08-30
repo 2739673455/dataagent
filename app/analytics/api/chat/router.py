@@ -18,6 +18,7 @@ from app.analytics.api.dependencies import (
     AgentManagerDep,
     ConversationLifecycleServiceDep,
     ConversationRunServiceDep,
+    SandboxManagerDep,
 )
 from app.analytics.services import chat as chat_service
 from app.analytics.services.conversation_run import (
@@ -167,6 +168,7 @@ async def api_get_messages(
     conversation_repo: ConversationPGRepoDep,
     current_user: CurrentUserDep,
     agents: AgentManagerDep,
+    sandbox: SandboxManagerDep,
 ) -> chat_schema.MessageListResponse:
     """从 LangGraph 状态获取某个对话的所有消息"""
     user_id = current_user.id
@@ -175,6 +177,7 @@ async def api_get_messages(
         raise chat_error.ConversationNotFoundError
     messages = await chat_service.list_messages(
         agents,
+        sandbox,
         user_id,
         conversation_id,
     )

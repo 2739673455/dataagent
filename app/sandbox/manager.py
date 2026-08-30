@@ -1004,6 +1004,36 @@ class DockerSandboxManager:
         self._touch_user(user_id)
         return result
 
+    async def is_downloadable_file(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        path: str,
+    ) -> bool:
+        """检查用户会话目录中的文件是否可通过附件接口下载"""
+        normalized_path = normalize_attachment_path(path)
+        await self.init()
+        resources = self._get_conversation_resources(user_id, conversation_id)
+
+        def inspect() -> bool:
+            """在独占维护窗口中检查会话文件"""
+            with self._conversation_maintenance(
+                user_id,
+                conversation_id,
+                resources,
+            ):
+                container = self._get_or_create_storage_container_sync(user_id)
+                return self._archive.is_downloadable_file(
+                    container,
+                    conversation_id,
+                    normalized_path,
+                )
+
+        async with resources.user.lock:
+            result = await asyncio.to_thread(inspect)
+        self._touch_user(user_id)
+        return result
+
     async def delete_conversation(
         self,
         user_id: int,

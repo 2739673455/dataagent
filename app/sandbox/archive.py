@@ -674,6 +674,26 @@ class SandboxArchiveStore:
         relative_path: str,
     ) -> bool:
         """检查路径是否为当前会话可访问的普通文件"""
+        target = self._accessible_file(container, conversation_id, relative_path)
+        return target is not None
+
+    def is_downloadable_file(
+        self,
+        container: Container,
+        conversation_id: UUID,
+        relative_path: str,
+    ) -> bool:
+        """检查路径是否为当前会话可下载的普通文件"""
+        target = self._accessible_file(container, conversation_id, relative_path)
+        return target is not None and target.size <= self._max_file_bytes
+
+    def _accessible_file(
+        self,
+        container: Container,
+        conversation_id: UUID,
+        relative_path: str,
+    ) -> tarfile.TarInfo | None:
+        """读取当前会话可访问的普通文件条目"""
         conversation_uid = self.ensure_workspace(container, conversation_id)
         try:
             self._validate_target(
@@ -689,17 +709,19 @@ class SandboxArchiveStore:
                 relative_path,
             )
         except SandboxPathError:
-            return False
+            return None
         target = self.inspect_path(
             container,
             posixpath.join(SANDBOX_DATA_ROOT, str(conversation_id), relative_path),
         )
-        return bool(
+        if (
             target is not None
             and target.isreg()
             and target.uid in allowed_uids
             and target.gid == conversation_uid
-        )
+        ):
+            return target
+        return None
 
     def delete_conversation(
         self,

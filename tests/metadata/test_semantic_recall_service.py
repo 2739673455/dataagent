@@ -13,6 +13,7 @@ from uuid import uuid4
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.tools import StructuredTool
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 from langgraph.runtime import Runtime
@@ -774,15 +775,17 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             self.user_id,
             self.conversation_id,
             [
-                SemanticRecallResourceDeletion(
-                    query="本月收入",
-                    tables={
-                        "orders": {
-                            "columns": {"amount": {"values": ["paid"]}}
-                        }
-                    },
-                    metrics={"revenue": {}},
-                    query_experiences=[{"id": experience.id}],
+                SemanticRecallResourceDeletion.model_validate(
+                    {
+                        "query": "本月收入",
+                        "tables": {
+                            "orders": {
+                                "columns": {"amount": {"values": ["paid"]}}
+                            }
+                        },
+                        "metrics": {"revenue": {}},
+                        "query_experiences": [{"id": experience.id}],
+                    }
                 )
             ],
         )
@@ -797,9 +800,11 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             self.user_id,
             self.conversation_id,
             [
-                SemanticRecallResourceDeletion(
-                    query="本月收入",
-                    tables={"orders": {"columns": {"amount": {}}}},
+                SemanticRecallResourceDeletion.model_validate(
+                    {
+                        "query": "本月收入",
+                        "tables": {"orders": {"columns": {"amount": {}}}},
+                    }
                 )
             ],
         )
@@ -1025,7 +1030,9 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result["details"][0]["msg"], "query 不能为空")
 
     async def test_merge_same_query_reports_argument_detail(self) -> None:
-        result = await merge_recalls.coroutine(
+        coroutine = cast(StructuredTool, merge_recalls).coroutine
+        assert coroutine is not None
+        result = await coroutine(
             runtime=MagicMock(),
             target_query="本月收入",
             source_query="本月收入",
@@ -1090,7 +1097,9 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
                 return_value=recall_repository_context(repo),
             ),
         ):
-            result = await delete_recalls.coroutine(
+            coroutine = cast(StructuredTool, delete_recalls).coroutine
+            assert coroutine is not None
+            result = await coroutine(
                 runtime=runtime,
                 deletions=[
                     {
@@ -1134,7 +1143,9 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_delete_recalls_rejects_empty_deletions(self) -> None:
-        result = await delete_recalls.coroutine(
+        coroutine = cast(StructuredTool, delete_recalls).coroutine
+        assert coroutine is not None
+        result = await coroutine(
             runtime=MagicMock(),
             deletions=[],
         )

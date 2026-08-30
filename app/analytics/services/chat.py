@@ -1,5 +1,7 @@
 import asyncio
 import json
+import mimetypes
+import re
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
@@ -43,9 +45,18 @@ from app.analytics.agents.middleware.user_message_metadata import (
     UserMessageMetadata,
 )
 from app.analytics.api.chat import schemas as chat_schema
-from app.analytics.services.contracts import AgentRuntimeManager
+from app.analytics.services.contracts import (
+    AgentRuntimeManager,
+    ConversationFileInspector,
+)
+from app.sandbox.exceptions import SandboxPathError
+from app.sandbox.paths import normalize_attachment_path
 
 MESSAGE_PAYLOAD_KEY = "dataagent_message"
+_ARTIFACT_DIRECTIVE_PATTERN = re.compile(
+    r"^[ ]{0,3}\[\[DATAAGENT_ARTIFACT:(/sessions/[^\r\n]+?)\]\][\t ]*$"
+)
+_MARKDOWN_FENCE_PATTERN = re.compile(r"^[ ]{0,3}(?P<marker>`{3,}|~{3,})")
 
 
 def _message_created_at(message: BaseMessage) -> datetime | None:
@@ -90,6 +101,169 @@ def _content_to_parts(content: Any) -> list[chat_schema.MessagePart]:
                 chat_schema.ImageContent(type="image_url", image_url=image_url)
             )
     return parts
+
+
+def _transform_artifact_directives(
+    text: str,
+    removable_paths: set[str] | None = None,
+) -> tuple[str, list[str]]:
+    """查找非代码块独占行指令，并按需移除已验证指令"""
+    paths: list[str] = []
+    output: list[str] = []
+    fence_character: str | None = None
+    fence_length = 0
+
+    for line in text.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        fence_match = _MARKDOWN_FENCE_PATTERN.match(content)
+        if fence_character is None:
+            if fence_match is not None:
+                marker = fence_match.group("marker")
+                fence_character = marker[0]
+                fence_length = len(marker)
+                output.append(line)
+                continue
+        elif fence_match is not None:
+            marker = fence_match.group("marker")
+            suffix = content[fence_match.end() :]
+            if (
+                marker[0] == fence_character
+                and len(marker) >= fence_length
+                and not suffix.strip()
+            ):
+                fence_character = None
+                fence_length = 0
+            output.append(line)
+            continue
+
+        if fence_character is None:
+            directive_match = _ARTIFACT_DIRECTIVE_PATTERN.fullmatch(content)
+            if directive_match is not None:
+                path = directive_match.group(1)
+                paths.append(path)
+                if removable_paths is not None and path in removable_paths:
+                    continue
+        output.append(line)
+
+    return "".join(output), paths
+
+
+def _normalized_directive_path(path: str) -> str:
+    """将最终产物指令路径规范化为 Conversation 内相对路径"""
+    if not path.startswith("/sessions/"):
+        raise SandboxPathError(path)
+    normalized = normalize_attachment_path(path.removeprefix("/"))
+    if not normalized.startswith("sessions/") or f"/{normalized}" != path:
+        raise SandboxPathError(path)
+    return normalized
+
+
+def _is_final_assistant_message(message: BaseMessage) -> bool:
+    """判断消息是否可以承载 Planner 最终产物指令"""
+    if not isinstance(message, AIMessage) or message.tool_calls:
+        return False
+    finish_reason = message.response_metadata.get("finish_reason")
+    return finish_reason in {None, "stop"}
+
+
+async def _project_final_artifact_directives(
+    message: BaseMessage,
+    schema: chat_schema.MessageResponse,
+    files: ConversationFileInspector,
+    user_id: int,
+    conversation_id: UUID,
+) -> chat_schema.MessageResponse:
+    """把 Planner 最终消息中的有效文件指令投影为附件"""
+    if not _is_final_assistant_message(message):
+        return schema
+
+    candidate_paths: list[str] = []
+    for part in schema.parts:
+        if isinstance(part, chat_schema.TextContent):
+            _, paths = _transform_artifact_directives(part.text)
+            candidate_paths.extend(paths)
+    if not candidate_paths:
+        return schema
+
+    accepted_paths: set[str] = set()
+    attachments: list[chat_schema.Attachment] = []
+    seen_paths: set[str] = set()
+    for directive_path in candidate_paths:
+        try:
+            relative_path = _normalized_directive_path(directive_path)
+        except SandboxPathError:
+            logger.warning(
+                "最终产物指令路径无效: "
+                f"conversation_id={conversation_id}, path={directive_path!r}"
+            )
+            continue
+        if relative_path in seen_paths:
+            accepted_paths.add(directive_path)
+            continue
+        try:
+            downloadable = await files.is_downloadable_file(
+                user_id,
+                conversation_id,
+                relative_path,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "检查最终产物指令文件失败: "
+                f"conversation_id={conversation_id}, path={relative_path!r}"
+            )
+            continue
+        if not downloadable:
+            logger.warning(
+                "最终产物指令文件不可下载: "
+                f"conversation_id={conversation_id}, path={relative_path!r}"
+            )
+            continue
+        seen_paths.add(relative_path)
+        accepted_paths.add(directive_path)
+        media_type, _ = mimetypes.guess_type(relative_path)
+        attachments.append(
+            chat_schema.Attachment(
+                f_path=relative_path,
+                media_type=media_type,
+            )
+        )
+
+    if not accepted_paths:
+        return schema
+
+    parts: list[chat_schema.MessagePart] = []
+    for part in schema.parts:
+        if not isinstance(part, chat_schema.TextContent):
+            parts.append(part)
+            continue
+        cleaned, _ = _transform_artifact_directives(part.text, accepted_paths)
+        if cleaned:
+            parts.append(part.model_copy(update={"text": cleaned}))
+    return schema.model_copy(
+        update={
+            "parts": parts,
+            "attachments": attachments or None,
+        }
+    )
+
+
+async def _langchain_message_to_schema_with_artifacts(
+    message: BaseMessage,
+    files: ConversationFileInspector,
+    user_id: int,
+    conversation_id: UUID,
+) -> chat_schema.MessageResponse | None:
+    """转换消息，并为 Planner 最终回答解析文件交付指令"""
+    schema = _langchain_message_to_schema(message)
+    if schema is None:
+        return None
+    return await _project_final_artifact_directives(
+        message,
+        schema,
+        files,
+        user_id,
+        conversation_id,
+    )
 
 
 def _schema_from_metadata(
@@ -334,6 +508,7 @@ def _schema_to_human_message(
 
 async def list_messages(
     agents: AgentRuntimeManager,
+    files: ConversationFileInspector,
     user_id: int,
     conversation_id: UUID,
 ) -> list[chat_schema.MessageResponse]:
@@ -350,7 +525,12 @@ async def list_messages(
     for message in messages:
         if not isinstance(message, BaseMessage):
             continue
-        if schema := _langchain_message_to_schema(message):
+        if schema := await _langchain_message_to_schema_with_artifacts(
+            message,
+            files,
+            user_id,
+            conversation_id,
+        ):
             result.append(schema)
     return result
 
@@ -410,6 +590,7 @@ async def _execute_agent(
 
 async def _run_agent_turn(
     agents: AgentRuntimeManager,
+    files: ConversationFileInspector,
     user_id: int,
     conversation_id: UUID,
     input_messages: list[BaseMessage] | None,
@@ -464,7 +645,12 @@ async def _run_agent_turn(
                     if not isinstance(messages, list):
                         continue
                     for message in messages:
-                        if response := _langchain_message_to_schema(message):
+                        if response := await _langchain_message_to_schema_with_artifacts(
+                            message,
+                            files,
+                            user_id,
+                            conversation_id,
+                        ):
                             responses.append(response)
                 logger.debug(
                     f"智能体流式更新: conversation_id={conversation_id}, "
@@ -497,6 +683,7 @@ async def _run_agent_turn(
 
 async def run_agent_turn(
     agents: AgentRuntimeManager,
+    files: ConversationFileInspector,
     user_id: int,
     conversation_id: UUID,
     user_message: chat_schema.UserMessageRequest,
@@ -510,6 +697,7 @@ async def run_agent_turn(
     )
     async for event in _run_agent_turn(
         agents,
+        files,
         user_id,
         conversation_id,
         [_schema_to_human_message(user_message)],
@@ -522,6 +710,7 @@ async def run_agent_turn(
 
 async def resume_agent_turn(
     agents: AgentRuntimeManager,
+    files: ConversationFileInspector,
     user_id: int,
     conversation_id: UUID,
     cancel: asyncio.Event,
@@ -530,6 +719,7 @@ async def resume_agent_turn(
     logger.info(f"智能体回合恢复: conversation_id={conversation_id}")
     async for event in _run_agent_turn(
         agents,
+        files,
         user_id,
         conversation_id,
         None,

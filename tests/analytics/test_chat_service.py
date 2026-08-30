@@ -7,6 +7,7 @@ import json
 import unittest
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -41,6 +42,24 @@ from app.analytics.services import chat as chat_service
 from app.sandbox.paths import normalize_attachment_path
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
+
+
+class _FileInspectorStub:
+    """按用户、会话和路径返回可下载状态"""
+
+    def __init__(self, available: set[tuple[int, UUID, str]] | None = None) -> None:
+        self.available = available or set()
+        self.calls: list[tuple[int, UUID, str]] = []
+
+    async def is_downloadable_file(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        path: str,
+    ) -> bool:
+        call = (user_id, conversation_id, path)
+        self.calls.append(call)
+        return call in self.available
 
 
 class UserMessageRequestTest(unittest.TestCase):
@@ -297,6 +316,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
             event
             async for event in chat_service.resume_agent_turn(
                 manager,
+                _FileInspectorStub(),
                 7,
                 _CONVERSATION_ID,
                 asyncio.Event(),
@@ -350,6 +370,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         ):
             async for event in chat_service.run_agent_turn(
                 manager,
+                _FileInspectorStub(),
                 7,
                 _CONVERSATION_ID,
                 user_message,
@@ -391,6 +412,206 @@ def _delegation_payload() -> dict[str, object]:
 
 
 class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
+    async def test_final_artifact_directives_project_downloadable_session_files(
+        self,
+    ) -> None:
+        report_path = (
+            "/sessions/sales-review/visualizer/chart-1/report.html"
+        )
+        missing_path = (
+            "/sessions/sales-review/visualizer/chart-1/missing.csv"
+        )
+        code_path = "/sessions/sales-review/visualizer/chart-1/example.png"
+        message = AIMessage(
+            id="assistant-final",
+            content=(
+                "报告已生成。\n"
+                f"[[DATAAGENT_ARTIFACT:{report_path}]]\n"
+                f"[[DATAAGENT_ARTIFACT:{report_path}]]\n"
+                "```text\n"
+                f"[[DATAAGENT_ARTIFACT:{code_path}]]\n"
+                "```\n"
+                f"    [[DATAAGENT_ARTIFACT:{code_path}]]\n"
+                f"[[DATAAGENT_ARTIFACT:{missing_path}]]"
+            ),
+            response_metadata={"finish_reason": "stop"},
+        )
+        files = _FileInspectorStub(
+            {(7, _CONVERSATION_ID, report_path.removeprefix("/"))}
+        )
+
+        schema = await chat_service._langchain_message_to_schema_with_artifacts(
+            message,
+            files,
+            7,
+            _CONVERSATION_ID,
+        )
+
+        self.assertIsNotNone(schema)
+        assert schema is not None
+        self.assertEqual(len(schema.attachments or ()), 1)
+        attachment = (schema.attachments or [])[0]
+        self.assertEqual(attachment.f_path, report_path.removeprefix("/"))
+        self.assertEqual(attachment.media_type, "text/html")
+        rendered_text = "".join(
+            part.text
+            for part in schema.parts
+            if isinstance(part, chat_schema.TextContent)
+        )
+        self.assertNotIn(
+            f"[[DATAAGENT_ARTIFACT:{report_path}]]",
+            rendered_text,
+        )
+        self.assertIn(f"[[DATAAGENT_ARTIFACT:{code_path}]]", rendered_text)
+        self.assertIn(
+            f"    [[DATAAGENT_ARTIFACT:{code_path}]]",
+            rendered_text,
+        )
+        self.assertIn(f"[[DATAAGENT_ARTIFACT:{missing_path}]]", rendered_text)
+        self.assertEqual(
+            files.calls,
+            [
+                (7, _CONVERSATION_ID, report_path.removeprefix("/")),
+                (7, _CONVERSATION_ID, missing_path.removeprefix("/")),
+            ],
+        )
+
+    async def test_artifact_directives_only_apply_to_final_assistant_messages(
+        self,
+    ) -> None:
+        path = "/sessions/sales-review/explorer/source-1/result.csv"
+        message = AIMessage(
+            content=f"[[DATAAGENT_ARTIFACT:{path}]]",
+            tool_calls=[
+                {
+                    "id": "call-1",
+                    "name": "delegation",
+                    "args": {},
+                }
+            ],
+            response_metadata={"finish_reason": "tool_calls"},
+        )
+        files = _FileInspectorStub(
+            {(7, _CONVERSATION_ID, path.removeprefix("/"))}
+        )
+
+        schema = await chat_service._langchain_message_to_schema_with_artifacts(
+            message,
+            files,
+            7,
+            _CONVERSATION_ID,
+        )
+
+        self.assertIsNotNone(schema)
+        assert schema is not None
+        self.assertIsNone(schema.attachments)
+        self.assertEqual(files.calls, [])
+        text_part = schema.parts[0]
+        self.assertIsInstance(text_part, chat_schema.TextContent)
+        assert isinstance(text_part, chat_schema.TextContent)
+        self.assertEqual(text_part.text, f"[[DATAAGENT_ARTIFACT:{path}]]")
+
+    async def test_artifact_directive_file_check_is_scoped_to_conversation(
+        self,
+    ) -> None:
+        path = "/sessions/sales-review/analyst/main/final.csv"
+        other_conversation_id = UUID("660e8400-e29b-41d4-a716-446655440000")
+        message = AIMessage(
+            content=f"[[DATAAGENT_ARTIFACT:{path}]]",
+            response_metadata={"finish_reason": "stop"},
+        )
+        files = _FileInspectorStub(
+            {(7, other_conversation_id, path.removeprefix("/"))}
+        )
+
+        schema = await chat_service._langchain_message_to_schema_with_artifacts(
+            message,
+            files,
+            7,
+            _CONVERSATION_ID,
+        )
+
+        self.assertIsNotNone(schema)
+        assert schema is not None
+        self.assertIsNone(schema.attachments)
+        self.assertEqual(
+            files.calls,
+            [(7, _CONVERSATION_ID, path.removeprefix("/"))],
+        )
+        text_part = schema.parts[0]
+        self.assertIsInstance(text_part, chat_schema.TextContent)
+        assert isinstance(text_part, chat_schema.TextContent)
+        self.assertEqual(text_part.text, f"[[DATAAGENT_ARTIFACT:{path}]]")
+
+    async def test_history_and_live_stream_use_same_artifact_projection(self) -> None:
+        path = "/sessions/sales-review/analyst/main/final.csv"
+        message = AIMessage(
+            id="assistant-final",
+            content=f"结果见附件。\n[[DATAAGENT_ARTIFACT:{path}]]",
+            response_metadata={"finish_reason": "stop"},
+        )
+        planner = MagicMock()
+        planner.aget_state = AsyncMock(
+            return_value=SimpleNamespace(values={"messages": [message]})
+        )
+
+        async def stream_final_message(
+            *args: Any,
+            **kwargs: Any,
+        ) -> AsyncIterator[dict[str, Any]]:
+            del args, kwargs
+            yield {
+                "type": "updates",
+                "ns": (),
+                "data": {"model": {"messages": [message]}},
+            }
+
+        planner.astream = stream_final_message
+        runtime_mock = MagicMock()
+        runtime_mock.planner = planner
+        runtime = cast(ConversationAgentRuntime, runtime_mock)
+        manager = _TurnManagerStub(
+            runtime,
+            PlannerTurnContext(
+                user_id=7,
+                conversation_id=_CONVERSATION_ID,
+                max_continuations=0,
+            ),
+        )
+        files = _FileInspectorStub(
+            {(7, _CONVERSATION_ID, path.removeprefix("/"))}
+        )
+
+        history = await chat_service.list_messages(
+            manager,
+            files,
+            7,
+            _CONVERSATION_ID,
+        )
+        events = [
+            event
+            async for event in chat_service.run_agent_turn(
+                manager,
+                files,
+                7,
+                _CONVERSATION_ID,
+                chat_schema.UserMessageRequest(
+                    parts=[chat_schema.TextContent(type="text", text="分析")]
+                ),
+                asyncio.Event(),
+            )
+        ]
+
+        self.assertEqual(len(history), 1)
+        self.assertEqual(len(events), 1)
+        event = events[0]
+        self.assertIsInstance(event, chat_schema.ChatStreamMessageEvent)
+        assert isinstance(event, chat_schema.ChatStreamMessageEvent)
+        self.assertEqual(
+            history[0].model_dump(mode="json"),
+            event.message.model_dump(mode="json"),
+        )
+
     def test_eval_internal_delegations_are_projected_from_tool_metadata(self) -> None:
         payload = _delegation_payload()
         schema = chat_service._langchain_message_to_schema(
@@ -507,6 +728,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         ):
             async for event in chat_service.run_agent_turn(
                 manager,
+                _FileInspectorStub(),
                 7,
                 _CONVERSATION_ID,
                 chat_schema.UserMessageRequest(
@@ -669,6 +891,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         ):
             async for event in chat_service.run_agent_turn(
                 manager,
+                _FileInspectorStub(),
                 7,
                 _CONVERSATION_ID,
                 user_message,

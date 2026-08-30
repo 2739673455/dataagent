@@ -524,6 +524,32 @@ class DockerSandboxManagerPolicyTest(unittest.TestCase):
             [(scope.relative_workspace, session_uid, conversation_uid, 0o750)],
         )
 
+    def test_archive_downloadable_file_applies_file_size_limit(self) -> None:
+        store = SandboxArchiveStore(1024, 4096)
+        container = MagicMock()
+        conversation_id = uuid4()
+
+        with patch.object(
+            store,
+            "_accessible_file",
+            return_value=SimpleNamespace(size=1024),
+        ):
+            self.assertTrue(
+                store.is_downloadable_file(container, conversation_id, "report.csv")
+            )
+        with patch.object(
+            store,
+            "_accessible_file",
+            return_value=SimpleNamespace(size=1025),
+        ):
+            self.assertFalse(
+                store.is_downloadable_file(container, conversation_id, "report.csv")
+            )
+        with patch.object(store, "_accessible_file", return_value=None):
+            self.assertFalse(
+                store.is_downloadable_file(container, conversation_id, "report.csv")
+            )
+
     def test_internal_execute_timeout_is_clamped_to_sandbox_limit(self) -> None:
         backend = self._session_backend(
             build_sandbox_config(internal_command_timeout_seconds=7),
