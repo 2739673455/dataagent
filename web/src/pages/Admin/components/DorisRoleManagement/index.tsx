@@ -1,4 +1,4 @@
-import { Plus, RefreshCw, Shield, Trash2 } from "lucide-react";
+import { Plus, Shield, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -9,6 +9,7 @@ import {
   type RowPolicyResponse,
 } from "@/api/admin";
 import { getApiErrorMessage } from "@/api/errors";
+import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { Button } from "@/components/ui/button";
 import { AssetPermissionPanel } from "./AssetPermissionPanel";
 import { DorisRoleCreateDialog } from "./DorisRoleCreateDialog";
@@ -114,7 +115,7 @@ export function DorisRoleManagement() {
             <h2 className="flex items-center gap-1.5 text-base font-bold text-[#18181b]">
               <Shield className="h-4 w-4 text-[#52525b]" />
               <span>Doris 角色与查询身份 ({roles.length})</span>
-              {busy && <RefreshCw className="h-3 w-3 animate-spin text-[#71717a] ml-1" />}
+              {busy && <DotMatrixLoader className="ml-1 text-[#71717a]" />}
             </h2>
             <span className="rounded bg-[#f0f0eb] px-2 py-0.5 text-xs text-[#71717a]">
               默认角色：{roles.find((role) => role.is_default)?.name || "未分配"}

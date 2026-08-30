@@ -3,6 +3,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/api/errors";
 import { type MetricInfo, metaApi } from "@/api/meta";
+import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { Button } from "@/components/ui/button";
 import { MetricCreateDialog, MetricEditDialog } from "./MetricDialogs";
 import { parseMetricColumns, splitCsv } from "./utils";
@@ -122,9 +123,7 @@ export function MetricSection({
         <div className="flex items-center gap-2">
           <h2 className="flex items-center gap-1.5 text-base font-bold text-[#18181b]">
             <span>业务指标元数据({metrics.length})</span>
-            {syncing === "metric_semantic" && (
-              <RefreshCw className="h-3 w-3 animate-spin text-[#71717a] ml-1" />
-            )}
+            {syncing === "metric_semantic" && <DotMatrixLoader className="ml-1 text-[#71717a]" />}
           </h2>
           {selectedMetricNames.length > 0 && (
             <span className="rounded bg-[#ebebe6] px-2 py-0.5 text-xs text-[#52525b] font-mono">
@@ -145,9 +144,11 @@ export function MetricSection({
                 : `同步已选 ${selectedMetricNames.length} 个指标语义索引`
             }
           >
-            <RefreshCw
-              className={`h-3.5 w-3.5 mr-1 ${syncing === "metric_semantic" ? "animate-spin" : ""}`}
-            />
+            {syncing === "metric_semantic" ? (
+              <DotMatrixLoader className="mr-1" />
+            ) : (
+              <RefreshCw className="mr-1 h-3.5 w-3.5" />
+            )}
             {selectedMetricNames.length > 0
               ? `同步指标语义索引 (${selectedMetricNames.length})`
               : "同步指标语义索引"}

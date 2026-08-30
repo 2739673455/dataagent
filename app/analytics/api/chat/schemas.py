@@ -48,6 +48,7 @@ class ConversationResponse(BaseModel):
     conversation_id: UUID
     title: str
     update_at: datetime
+    running: bool
 
 
 class ConversationListResponse(BaseModel):
@@ -170,6 +171,12 @@ class MessageListResponse(BaseModel):
     """消息列表响应"""
 
     messages: list[MessageResponse]
+
+
+class ConversationRunStatusResponse(BaseModel):
+    """Conversation 后台 Planner Run 状态"""
+
+    running: bool
 
 
 class SubagentMessageListResponse(BaseModel):

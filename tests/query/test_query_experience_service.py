@@ -183,6 +183,9 @@ class FakePGRepo:
     async def record_failure(self, execution: QueryExecution) -> None:
         self.executions.append(execution)
 
+    async def record_execution(self, execution: QueryExecution) -> None:
+        self.executions.append(execution)
+
     async def get(self, experience_id: UUID) -> QueryExperience | None:
         return next(
             (item for item in self.experiences if item.id == experience_id),
@@ -521,6 +524,70 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(scheduler.enqueued, [(experience_id, 1)])
         self.assertEqual(index_repo.indexed, [])
         self.assertEqual(embedding_client.texts, [])
+
+    async def test_catalog_success_is_audited_without_creating_experience(self) -> None:
+        repo = FakePGRepo()
+        scheduler = FakeIndexScheduler()
+        service = build_service(
+            repo,
+            FakeIndexRepo(),
+            FakeEmbeddingClient(),
+            scheduler,
+        )
+        session_key = AgentSessionKey(
+            user_id=7,
+            conversation_id=uuid4(),
+            analysis_id="sales",
+            agent_type="explorer",
+            session_id="discovery",
+        )
+        details = SuccessfulQueryExecution(
+            session_key=session_key,
+            raw_sql="SHOW TABLES",
+            normalized_sql="SHOW TABLES",
+            validation=QueryValidationResult(
+                valid=True,
+                normalized_sql="SHOW TABLES",
+                query_kind="catalog",
+            ),
+            plan_estimate=None,
+            result=AnalysisQueryResult(
+                path="/sessions/sales/explorer/discovery/query.csv",
+                schema=[
+                    QueryResultColumn(
+                        name="Tables_in_analytics",
+                        type="string",
+                        nullable=False,
+                    )
+                ],
+                row_count=1,
+                time_range={},
+                sample=[{"Tables_in_analytics": "orders"}],
+            ),
+        )
+
+        experience_id = await service.record_success(
+            QueryExecutionContext(
+                session_key=session_key,
+                role_name="analyst",
+                authorization_epoch=AUTHORIZATION_EPOCH,
+                purpose="查看可用表",
+                tool_call_id="call-catalog",
+            ),
+            details,
+        )
+
+        self.assertIsNone(experience_id)
+        self.assertEqual(len(repo.executions), 1)
+        self.assertIsNone(repo.executions[0].experience_id)
+        validation = repo.executions[0].validation
+        assert validation is not None
+        self.assertEqual(
+            validation["query_kind"],
+            "catalog",
+        )
+        self.assertEqual(repo.experiences, [])
+        self.assertEqual(scheduler.enqueued, [])
 
     async def test_recall_disables_changed_assets_and_filters_latest_permissions(
         self,

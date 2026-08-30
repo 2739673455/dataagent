@@ -1,8 +1,9 @@
-import { Download, Eye, FileText, Loader2, Search, Upload, X } from "lucide-react";
+import { Download, Eye, FileText, Search, Upload, X } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/api/errors";
 import { type ImportMode, type MetaImportResponse, metaApi } from "@/api/meta";
+import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { Button } from "@/components/ui/button";
 
 interface YamlSectionProps {
@@ -222,7 +223,7 @@ export function YamlSection({ onDataReload }: YamlSectionProps) {
             className="h-8 text-xs"
           >
             {importing ? (
-              <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+              <DotMatrixLoader className="mr-1" />
             ) : dryRun ? (
               <Eye className="h-3.5 w-3.5 mr-1" />
             ) : (
@@ -244,7 +245,7 @@ export function YamlSection({ onDataReload }: YamlSectionProps) {
             className="h-8 text-xs"
           >
             {exporting ? (
-              <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+              <DotMatrixLoader className="mr-1" />
             ) : (
               <Download className="h-3.5 w-3.5 mr-1" />
             )}
@@ -272,7 +273,7 @@ export function YamlSection({ onDataReload }: YamlSectionProps) {
                     className="h-7 text-xs"
                   >
                     {importingStage === "import" ? (
-                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                      <DotMatrixLoader className="mr-1" />
                     ) : (
                       <Upload className="h-3 w-3 mr-1" />
                     )}

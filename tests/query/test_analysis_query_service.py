@@ -14,6 +14,7 @@ from app.query.models.execution import (
     QueryExecutionTimeoutError,
 )
 from app.query.models.validation import (
+    QueryKind,
     QueryTableRef,
     QueryValidationIssue,
     QueryValidationResult,
@@ -114,11 +115,16 @@ def make_session_key(conversation_id: UUID | None = None) -> AgentSessionKey:
     )
 
 
-def make_validation(*, physical_table: bool = False) -> QueryValidationResult:
+def make_validation(
+    *,
+    physical_table: bool = False,
+    query_kind: QueryKind = "business",
+) -> QueryValidationResult:
     """构造已经通过 Guard 的查询结果"""
     return QueryValidationResult(
         valid=True,
         normalized_sql="SELECT normalized",
+        query_kind=query_kind,
         tables=(
             [QueryTableRef(database="analytics", name="orders")]
             if physical_table
@@ -128,6 +134,30 @@ def make_validation(*, physical_table: bool = False) -> QueryValidationResult:
 
 
 class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
+    async def test_catalog_query_skips_explain_and_keeps_audit_details(self) -> None:
+        repo = FakeQueryRepo(
+            [QueryBatch(column_names=("table_name",), rows=(("orders",),))]
+        )
+        store = RecordingArtifactStore()
+        service = AnalysisQueryService(
+            repo,
+            store,
+            make_limits(),
+            make_options(),
+        )
+
+        details = await service.execute(
+            make_session_key(),
+            "SHOW TABLES",
+            make_validation(query_kind="catalog"),
+        )
+
+        self.assertIsNone(repo.explain_sql)
+        self.assertEqual(repo.sql, "SELECT normalized")
+        self.assertIsNone(details.plan_estimate)
+        self.assertEqual(details.validation.query_kind, "catalog")
+        self.assertEqual(details.result.sample, [{"table_name": "orders"}])
+
     async def test_query_propagates_repository_timeout(self) -> None:
         repo = TimingOutQueryRepo([])
         store = RecordingArtifactStore()

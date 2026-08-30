@@ -14,7 +14,7 @@ from app.identity.repositories.doris_role import DorisRoleRepository
 from app.identity.repositories.query_identity import DorisQueryIdentityPGRepo
 from app.identity.services.credential import DorisCredentialCipher
 from app.metadata.api.meta.router import router as meta_router
-from app.providers import agent_manager, sandbox_manager
+from app.providers import agent_manager, conversation_run_service, sandbox_manager
 from app.query.api.admin.router import router as query_experience_admin_router
 from app.query.repositories.doris import DorisQueryRepository
 from app.shared.clients.doris_client_manager import (
@@ -108,6 +108,7 @@ async def _lifespan(app: FastAPI):
     finally:
         # FastAPI 应用结束前执行
         logger.info("开始释放应用资源")
+        await conversation_run_service.close()
         await agent_manager.close()
         await sandbox_manager.close()
         await langgraph_postgres_manager.close()

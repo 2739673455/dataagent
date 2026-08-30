@@ -2,6 +2,7 @@ import { ChevronLeft } from "lucide-react";
 import { getAttachmentName } from "@/lib/utils";
 import type { Attachment, InteractiveTableArtifact } from "@/types";
 import { InteractiveTablePreview } from "./InteractiveTablePreview";
+import { AttachmentIconBadge } from "./messages/AttachmentChip";
 
 export function PreviewSidebar({
   activeHtmlPreviewUrl,
@@ -47,21 +48,27 @@ export function PreviewSidebar({
           }`}
         >
           {/* 产物选项卡 */}
-          <div className="flex gap-1.5 overflow-x-auto border-b border-[#d4d4ce] bg-[#fafaf8] px-2.5 py-1.5">
-            {previewAttachments.map((attachment) => (
-              <button
-                key={attachment.f_path}
-                type="button"
-                onClick={() => onSelectAttachmentPath(attachment.f_path)}
-                className={`shrink-0 rounded border px-2.5 py-1 text-xs transition ${
-                  activePreviewAttachment?.f_path === attachment.f_path
-                    ? "border-[#1e2024] bg-[#1e2024] text-[#ffffff]"
-                    : "border-[#d4d4ce] bg-[#ffffff] text-[#52525b] hover:bg-[#deded8] hover:text-[#18181b]"
-                }`}
-              >
-                {getAttachmentName(attachment.f_path)}
-              </button>
-            ))}
+          <div className="flex gap-1.5 overflow-x-auto border-b border-[#e5e5df] bg-[#fafaf8] px-2.5 py-1.5 font-mono text-xs">
+            {previewAttachments.map((attachment) => {
+              const isActive = activePreviewAttachment?.f_path === attachment.f_path;
+              return (
+                <button
+                  key={attachment.f_path}
+                  type="button"
+                  onClick={() => onSelectAttachmentPath(attachment.f_path)}
+                  className={`flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-xs transition ${
+                    isActive
+                      ? "border-[#1e2024] bg-[#1e2024] text-[#ffffff] shadow-xs"
+                      : "border-[#e4e4de] bg-[#ffffff] text-[#52525b] hover:border-[#b8b8b0] hover:bg-[#f4f4f0] hover:text-[#18181b]"
+                  }`}
+                >
+                  <AttachmentIconBadge attachment={attachment} size="sm" />
+                  <span className="max-w-[160px] truncate text-[11.5px]">
+                    {getAttachmentName(attachment.f_path)}
+                  </span>
+                </button>
+              );
+            })}
           </div>
           <div className="min-h-0 flex-1 bg-[#ffffff]">
             {activePreviewAttachment ? (

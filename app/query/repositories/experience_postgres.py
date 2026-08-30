@@ -115,6 +115,11 @@ class QueryExperiencePGRepo:
         self._session.add(execution)
         await self._session.flush()
 
+    async def record_execution(self, execution: QueryExecution) -> None:
+        """写入不参与经验聚合的成功执行"""
+        self._session.add(execution)
+        await self._session.flush()
+
     async def get(self, experience_id: UUID) -> QueryExperience | None:
         """读取一条经验及其资产"""
         return await self._session.scalar(

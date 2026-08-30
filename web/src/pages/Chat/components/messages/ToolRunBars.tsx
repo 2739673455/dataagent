@@ -1,5 +1,6 @@
-import { ChevronRight, Loader2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { ChevronRight } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { cn } from "@/lib/utils";
 import type { Attachment, MessageResponse, SubagentRun } from "@/types";
 import { AttachmentChip } from "./AttachmentChip";
@@ -24,6 +25,8 @@ import type {
   SubagentRunMap,
   ToolRunDisplayItem,
 } from "./types";
+
+const SPECIALIST_HISTORY_RETRY_COUNT = 3;
 
 export function ToolArgsView({ args }: { args?: Record<string, unknown> }) {
   if (!args || typeof args !== "object") return null;
@@ -115,7 +118,7 @@ export function GenericToolRunBar({
               : hasError
                 ? "bg-[#ef4444]"
                 : item.interrupted
-                  ? "bg-[#a1a1aa]"
+                  ? "bg-[#eab308]"
                   : "bg-[#16a34a]"
           )}
         />
@@ -160,7 +163,7 @@ export function GenericToolRunBar({
       )}
 
       {hasAttachments && (
-        <div className="mt-1.5 flex flex-wrap gap-2 px-1">
+        <div className="mt-2 flex flex-wrap gap-1.5">
           {(item.attachments ?? []).map((attachment) => (
             <AttachmentChip
               key={attachment.f_path}
@@ -218,9 +221,11 @@ export function ExecutionProcessCollapse({
         onClick={() => setUserToggledOpen(!isOpen)}
         className={cn(
           "flex items-center gap-1.5 py-1 text-left text-xs transition",
-          isProcessing || isInterrupted
+          isProcessing
             ? "text-[#71717a] hover:text-[#18181b]"
-            : "text-[#16a34a] hover:text-[#15803d]"
+            : isInterrupted
+              ? "text-[#a16207] hover:text-[#854d0e]"
+              : "text-[#16a34a] hover:text-[#15803d]"
         )}
       >
         <ChevronRight
@@ -233,7 +238,11 @@ export function ExecutionProcessCollapse({
         <span
           className={cn(
             "text-[11px]",
-            isProcessing || isInterrupted ? "text-[#a1a1aa]" : "text-[#16a34a]/80"
+            isProcessing
+              ? "text-[#a1a1aa]"
+              : isInterrupted
+                ? "text-[#a16207]/80"
+                : "text-[#16a34a]/80"
           )}
         >
           共 {items.length} 步{toolCount > 0 ? ` · ${toolCount} 个工具` : ""}
@@ -331,6 +340,7 @@ function DelegationRunBarInternal({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const historyRequestRef = useRef<Promise<void> | null>(null);
   const instruction = typeof item.args?.message === "string" ? item.args.message : null;
   const hasAttachments = (item.attachments?.length ?? 0) > 0;
 
@@ -348,11 +358,26 @@ function DelegationRunBarInternal({
       : "completed";
 
   const loadHistory = useCallback(() => {
-    if (!item.conversationId || !loadSubagentMessages || !identity) return;
+    if (!item.conversationId || !loadSubagentMessages || !identity || historyRequestRef.current) {
+      return;
+    }
+    const conversationId = item.conversationId;
     setHistoryError(null);
-    void loadSubagentMessages(item.conversationId, identity).catch(() => {
-      setHistoryError("加载 Specialist 工作详情失败，点击重试");
+    const request = (async () => {
+      for (let attempt = 0; attempt <= SPECIALIST_HISTORY_RETRY_COUNT; attempt += 1) {
+        try {
+          await loadSubagentMessages(conversationId, identity);
+          return;
+        } catch {
+          if (attempt === SPECIALIST_HISTORY_RETRY_COUNT) {
+            setHistoryError("加载执行过程失败，点击重试");
+          }
+        }
+      }
+    })().finally(() => {
+      historyRequestRef.current = null;
     });
+    historyRequestRef.current = request;
   }, [identity, item.conversationId, loadSubagentMessages]);
 
   useEffect(() => {
@@ -362,7 +387,8 @@ function DelegationRunBarInternal({
       loadSubagentMessages &&
       identity &&
       !subagentRun?.historyLoaded &&
-      !subagentRun?.historyLoading
+      !subagentRun?.historyLoading &&
+      !historyError
     ) {
       loadHistory();
     }
@@ -372,6 +398,7 @@ function DelegationRunBarInternal({
     loadHistory,
     loadSubagentMessages,
     identity,
+    historyError,
     subagentRun?.historyLoaded,
     subagentRun?.historyLoading,
   ]);
@@ -428,7 +455,7 @@ function DelegationRunBarInternal({
               : runStatus === "failed"
                 ? "bg-[#ef4444]"
                 : specialistExecutionStatus === "interrupted"
-                  ? "bg-[#a1a1aa]"
+                  ? "bg-[#eab308]"
                   : "bg-[#16a34a]"
           )}
         />
@@ -477,26 +504,25 @@ function DelegationRunBarInternal({
               subagentRuns={subagentRun ? { [item.toolCallId]: subagentRun } : {}}
             />
           ) : isRunning ? (
-            <div className="flex items-center gap-2 rounded border border-[#e0e0da] bg-[#f0f0eb] p-2 text-xs text-[#71717a]">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-[#18181b]" />
+            <div className="flex items-center gap-1.5 py-1 text-xs text-[#71717a]">
+              <DotMatrixLoader label="Specialist 正在执行" className="text-[#18181b]" />
               <span>Specialist 正在执行分析与计算...</span>
             </div>
           ) : subagentRun?.historyLoading ? (
-            <div className="flex items-center gap-2 rounded border border-[#e0e0da] bg-[#f0f0eb] p-2 text-xs text-[#71717a]">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-[#18181b]" />
+            <div className="flex items-center gap-1.5 py-1 text-xs text-[#71717a]">
+              <DotMatrixLoader label="正在加载执行过程" className="text-[#18181b]" />
               <span>正在加载执行过程...</span>
             </div>
-          ) : null}
-
-          {historyError && (
+          ) : historyError ? (
             <button
               type="button"
               onClick={loadHistory}
-              className="text-left text-[11px] text-[#b91c1c] underline underline-offset-2"
+              className="flex items-center gap-1.5 py-1 text-left text-xs text-[#b91c1c] transition hover:text-[#991b1b]"
             >
-              {historyError}
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#ef4444]" />
+              <span className="underline underline-offset-2">{historyError}</span>
             </button>
-          )}
+          ) : null}
 
           {/* 3. 结果（下面） */}
           {subagentFinalItem ? (
@@ -543,7 +569,7 @@ function DelegationRunBarInternal({
 
       {/* 产物附件 */}
       {hasAttachments && (
-        <div className="mt-1.5 flex flex-wrap gap-2 px-1">
+        <div className="mt-2 flex flex-wrap gap-1.5">
           {(item.attachments ?? []).map((attachment) => (
             <AttachmentChip
               key={attachment.f_path}

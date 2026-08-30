@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   buildDisplayItems,
+  getAttachmentFileType,
   getConversationExecutionStatus,
   getExecutionStatus,
   getToolResultStatus,
@@ -271,5 +272,29 @@ describe("chat message display and turn grouping", () => {
     const intermediateItems = subagentDisplayItems.slice(0, subagentDisplayItems.length - 1);
     expect(intermediateItems).toHaveLength(1);
     expect(intermediateItems[0].type).toBe("tool_run");
+  });
+
+  test("classifies attachment file types accurately", () => {
+    expect(getAttachmentFileType("gmv_category_daily_leaf.csv")).toBe("table");
+    expect(getAttachmentFileType("summary.xlsx")).toBe("table");
+    expect(getAttachmentFileType("result.parquet")).toBe("table");
+    expect(getAttachmentFileType("data.table.json")).toBe("table");
+    expect(
+      getAttachmentFileType("arbitrary_name.json", "application/vnd.dataagent.table+json")
+    ).toBe("table");
+
+    expect(getAttachmentFileType("prepare_gmv_data.py")).toBe("code");
+    expect(getAttachmentFileType("analysis.sql")).toBe("code");
+    expect(getAttachmentFileType("script.sh")).toBe("code");
+
+    expect(getAttachmentFileType("gmv_data_quality_check.json")).toBe("json");
+    expect(getAttachmentFileType("config.yaml")).toBe("json");
+
+    expect(getAttachmentFileType("gmv_data_metadata.md")).toBe("markdown");
+    expect(getAttachmentFileType("report.html")).toBe("html");
+    expect(getAttachmentFileType("chart.png")).toBe("image");
+    expect(getAttachmentFileType("archive.zip")).toBe("archive");
+    expect(getAttachmentFileType("notes.txt")).toBe("text");
+    expect(getAttachmentFileType("unknown.xyz")).toBe("generic");
   });
 });

@@ -1,4 +1,4 @@
-import { History, RefreshCw, Search, X } from "lucide-react";
+import { History, Search, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -8,6 +8,7 @@ import {
   type QueryExperienceStatus,
 } from "@/api/admin";
 import { getApiErrorMessage } from "@/api/errors";
+import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { Button } from "@/components/ui/button";
 import { ExperienceDetailDialog } from "./ExperienceDetailDialog";
 
@@ -74,7 +75,7 @@ export function QueryExperienceManagement() {
         <h2 className="flex items-center gap-1.5 text-base font-bold text-[#18181b]">
           <History className="h-4 w-4 text-[#52525b]" />
           查询经验 ({page?.total ?? 0})
-          {loading && <RefreshCw className="ml-1 h-3 w-3 animate-spin text-[#71717a]" />}
+          {loading && <DotMatrixLoader className="ml-1 text-[#71717a]" />}
         </h2>
         <div className="flex flex-wrap items-center gap-2">
           <select

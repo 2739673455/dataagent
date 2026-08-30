@@ -7,6 +7,7 @@ import type {
   ChatStreamRequest,
   ConversationListResponse,
   ConversationResponse,
+  ConversationRunStatusResponse,
   MessageListResponse,
   SubagentMessageListResponse,
   SubagentRunIdentity,
@@ -44,13 +45,14 @@ async function consumeChatStream(
   body: ChatStreamRequest | null,
   signal: AbortSignal,
   onEvent: (event: ChatStreamEvent) => void,
+  method: "GET" | "POST" = "POST",
   retried = false
 ): Promise<void> {
   const accessToken = getAccessToken();
   if (!accessToken) throw new Error("登录状态已失效");
 
   const response = await fetch(url, {
-    method: "POST",
+    method,
     headers: {
       Accept: "text/event-stream",
       Authorization: `Bearer ${accessToken}`,
@@ -61,7 +63,7 @@ async function consumeChatStream(
   });
   if (response.status === 401 && !retried) {
     await refreshAccessToken();
-    return consumeChatStream(url, body, signal, onEvent, true);
+    return consumeChatStream(url, body, signal, onEvent, method, true);
   }
   if (!response.ok) {
     throw new Error(await streamErrorMessage(response));
@@ -80,7 +82,13 @@ async function consumeChatStream(
     buffer = frames.pop() ?? "";
     for (const frame of frames) {
       const event = parseStreamEvent(frame);
-      if (event) onEvent(event);
+      if (event) {
+        onEvent(event);
+        if (event.type === "done") {
+          await reader.cancel();
+          return;
+        }
+      }
     }
     if (done) break;
   }
@@ -177,5 +185,27 @@ export const chatApi = {
     onEvent: (event: ChatStreamEvent) => void
   ) {
     return consumeChatStream(CHAT_API_ROUTES.resume(conversationId), null, signal, onEvent);
+  },
+
+  getRunStatus(conversationId: string) {
+    return appClient.get<ConversationRunStatusResponse>(CHAT_API_ROUTES.runStatus(conversationId));
+  },
+
+  subscribeRun(
+    conversationId: string,
+    signal: AbortSignal,
+    onEvent: (event: ChatStreamEvent) => void
+  ) {
+    return consumeChatStream(
+      CHAT_API_ROUTES.runEvents(conversationId),
+      null,
+      signal,
+      onEvent,
+      "GET"
+    );
+  },
+
+  stopRun(conversationId: string) {
+    return appClient.post(CHAT_API_ROUTES.stopRun(conversationId));
   },
 };

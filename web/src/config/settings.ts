@@ -37,6 +37,10 @@ export const CHAT_API_ROUTES = {
   deleteAttachment: "/api/v1/chat/attachment/delete",
   stream: "/api/v1/chat/stream",
   resume: (conversationId: string) => `/api/v1/chat/${encodeURIComponent(conversationId)}/resume`,
+  runStatus: (conversationId: string) => `/api/v1/chat/${encodeURIComponent(conversationId)}/run`,
+  runEvents: (conversationId: string) =>
+    `/api/v1/chat/${encodeURIComponent(conversationId)}/events`,
+  stopRun: (conversationId: string) => `/api/v1/chat/${encodeURIComponent(conversationId)}/stop`,
 } as const;
 
 // 开发服务器端口

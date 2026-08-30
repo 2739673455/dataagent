@@ -1,9 +1,10 @@
-import { Edit2, Plus, RefreshCw, Search, Trash2, Users, X } from "lucide-react";
+import { Edit2, Plus, Search, Trash2, Users, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { adminApi, type DorisRoleResponse, type UserListResponse } from "@/api/admin";
 import { getApiErrorMessage } from "@/api/errors";
 import { type UserResponse, useAuthStore } from "@/auth";
+import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { Button } from "@/components/ui/button";
 import {
   AdminDialogActions,
@@ -153,7 +154,7 @@ export function UserManagement() {
             <h2 className="flex items-center gap-1.5 text-base font-bold text-[#18181b]">
               <Users className="h-4 w-4 text-[#52525b]" />
               <span>用户账号与角色绑定 ({userTotal})</span>
-              {busy && <RefreshCw className="h-3 w-3 animate-spin text-[#71717a] ml-1" />}
+              {busy && <DotMatrixLoader className="ml-1 text-[#71717a]" />}
             </h2>
           </div>
           <div className="flex items-center gap-2">

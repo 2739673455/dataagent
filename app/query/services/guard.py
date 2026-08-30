@@ -15,6 +15,7 @@ from app.metadata.models.catalog import ColumnInfo, TableInfo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
 from app.query.models.validation import (
     QueryColumnRef,
+    QueryKind,
     QueryTableRef,
     QueryValidationIssue,
     QueryValidationResult,
@@ -114,6 +115,7 @@ _SAFE_ANONYMOUS_FUNCTIONS = frozenset(
         "now",
     }
 )
+_ALLOWED_CATALOG_TABLES = frozenset({"columns", "tables"})
 _COMPARISON_TYPES = (
     exp.EQ,
     exp.NEQ,
@@ -149,6 +151,11 @@ class QueryGuardService:
         expression, issues = self._parse_single_query(sql)
         if expression is None:
             return self._result(None, issues)
+
+        if isinstance(expression, exp.Show):
+            return self._check_show_tables(expression)
+        if self._references_information_schema(expression):
+            return self._check_information_schema_query(expression)
 
         issues.extend(self._check_readonly(expression))
         if issues:
@@ -209,6 +216,7 @@ class QueryGuardService:
         tables: list[QueryTableRef] | None = None,
         columns: list[QueryColumnRef] | None = None,
         output_columns: list[str] | None = None,
+        query_kind: QueryKind = "business",
     ) -> QueryValidationResult:
         """构造稳定排序并去重的校验结果"""
         distinct_issues = list(
@@ -220,6 +228,7 @@ class QueryGuardService:
         return QueryValidationResult(
             valid=not distinct_issues,
             normalized_sql=normalized_sql,
+            query_kind=query_kind,
             tables=tables or [],
             columns=columns or [],
             output_columns=output_columns or [],
@@ -257,6 +266,172 @@ class QueryGuardService:
                 )
             ]
         return cast(Expr, statements[0]), []
+
+    def _check_show_tables(self, expression: exp.Show) -> QueryValidationResult:
+        """仅允许查看当前业务数据库中当前角色可见的表"""
+        issues: list[QueryValidationIssue] = []
+        if str(expression.this).casefold() != "tables":
+            issues.append(
+                QueryValidationIssue(
+                    code="catalog_statement_not_allowed",
+                    message="目录查询仅允许 SHOW TABLES",
+                )
+            )
+        unsupported = sorted(
+            key
+            for key, value in expression.args.items()
+            if key not in {"this", "full", "db", "like", "json"}
+            and value is not None
+            and value is not False
+        )
+        if unsupported:
+            issues.append(
+                QueryValidationIssue(
+                    code="catalog_statement_not_allowed",
+                    message="SHOW TABLES 包含不支持的选项: " + ", ".join(unsupported),
+                )
+            )
+        database = expression.args.get("db")
+        if database is not None and (
+            not isinstance(database, exp.Identifier)
+            or database.name.casefold() != self._current_database.casefold()
+        ):
+            issues.append(
+                QueryValidationIssue(
+                    code="unknown_database",
+                    message=(
+                        "SHOW TABLES 只能查看当前业务数据库: "
+                        f"{self._current_database}"
+                    ),
+                )
+            )
+        return self._result(
+            expression.sql(dialect="doris", pretty=False) if not issues else None,
+            issues,
+            query_kind="catalog",
+        )
+
+    @staticmethod
+    def _references_information_schema(expression: Expr) -> bool:
+        """判断查询是否直接引用 information_schema"""
+        return any(
+            table.db.casefold() == "information_schema"
+            for table in expression.find_all(exp.Table)
+        )
+
+    def _check_information_schema_query(
+        self,
+        expression: Expr,
+    ) -> QueryValidationResult:
+        """校验当前数据库下受限的 Doris 系统目录查询"""
+        issues = self._check_readonly(expression)
+        if not isinstance(expression, exp.Select):
+            issues.append(
+                QueryValidationIssue(
+                    code="catalog_query_shape_not_allowed",
+                    message="information_schema 仅允许单层 SELECT 查询",
+                )
+            )
+            return self._result(None, issues, query_kind="catalog")
+
+        from_expression = expression.args.get("from_")
+        source = from_expression.this if from_expression is not None else None
+        physical_tables = list(expression.find_all(exp.Table))
+        if (
+            not isinstance(source, exp.Table)
+            or len(physical_tables) != 1
+            or expression.args.get("joins")
+            or expression.args.get("with_")
+        ):
+            issues.append(
+                QueryValidationIssue(
+                    code="catalog_query_shape_not_allowed",
+                    message=(
+                        "information_schema 仅允许直接查询一张系统目录表，"
+                        "不允许 JOIN、CTE 或子查询"
+                    ),
+                )
+            )
+        elif source.catalog:
+            issues.append(
+                QueryValidationIssue(
+                    code="catalog_not_allowed",
+                    message="information_schema 查询不允许指定 Catalog",
+                )
+            )
+        elif source.db.casefold() != "information_schema" or (
+            source.name.casefold() not in _ALLOWED_CATALOG_TABLES
+        ):
+            issues.append(
+                QueryValidationIssue(
+                    code="catalog_table_not_allowed",
+                    message="information_schema 仅允许查询 tables 或 columns",
+                )
+            )
+
+        if not self._has_current_database_filter(expression):
+            issues.append(
+                QueryValidationIssue(
+                    code="catalog_scope_required",
+                    message=(
+                        "information_schema 查询必须使用 "
+                        "table_schema = DATABASE() 或当前数据库名限制范围"
+                    ),
+                )
+            )
+
+        output_columns = list(expression.named_selects)
+        duplicate_outputs = self._duplicates(output_columns)
+        if duplicate_outputs:
+            issues.append(
+                QueryValidationIssue(
+                    code="duplicate_output_column",
+                    message=("查询输出列名不能重复: " + ", ".join(duplicate_outputs)),
+                )
+            )
+        return self._result(
+            expression.sql(dialect="doris", pretty=False) if not issues else None,
+            issues,
+            output_columns=output_columns,
+            query_kind="catalog",
+        )
+
+    def _has_current_database_filter(self, expression: exp.Select) -> bool:
+        """确认系统目录查询通过 AND 条件限定到当前数据库"""
+        where = expression.args.get("where")
+        if where is None:
+            return False
+
+        def terms(condition: Expr) -> list[Expr]:
+            if isinstance(condition, exp.Paren):
+                return terms(condition.this)
+            if isinstance(condition, exp.And):
+                return terms(condition.this) + terms(condition.expression)
+            return [condition]
+
+        for condition in terms(where.this):
+            if isinstance(condition, exp.Paren):
+                condition = condition.this
+            if not isinstance(condition, exp.EQ):
+                continue
+            for column, value in (
+                (condition.this, condition.expression),
+                (condition.expression, condition.this),
+            ):
+                if not (
+                    isinstance(column, exp.Column)
+                    and column.name.casefold() == "table_schema"
+                ):
+                    continue
+                if isinstance(value, exp.CurrentSchema):
+                    return True
+                if (
+                    isinstance(value, exp.Literal)
+                    and value.is_string
+                    and value.this.casefold() == self._current_database.casefold()
+                ):
+                    return True
+        return False
 
     @staticmethod
     def _check_readonly(expression: Expr) -> list[QueryValidationIssue]:

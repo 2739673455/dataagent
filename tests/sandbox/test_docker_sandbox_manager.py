@@ -455,6 +455,75 @@ class DockerSandboxManagerPolicyTest(unittest.TestCase):
         self.assertNotIn(registry_key, registry.sessions)
         write_registry.assert_called_once_with(container, registry)
 
+    def test_archive_accepts_session_owned_artifact_directory(self) -> None:
+        conversation_id = uuid4()
+        conversation_uid = 100_001
+        session_uid = 100_002
+        scope = SandboxSessionScope("sales-decline", "explorer", "base")
+        relative_path = f"{scope.relative_workspace}/query_result.csv"
+        workspace = f"/data/{conversation_id}"
+        registry = SimpleNamespace(
+            conversations={str(conversation_id): conversation_uid},
+            sessions={scope.registry_key(conversation_id): session_uid},
+        )
+        conversation_directory = SimpleNamespace(
+            isdir=lambda: True,
+            uid=conversation_uid,
+            gid=conversation_uid,
+        )
+        session_directory = SimpleNamespace(
+            isdir=lambda: True,
+            uid=session_uid,
+            gid=conversation_uid,
+        )
+        existing_paths = {
+            workspace: conversation_directory,
+            f"{workspace}/sessions": conversation_directory,
+            f"{workspace}/sessions/sales-decline": conversation_directory,
+            f"{workspace}/sessions/sales-decline/explorer": conversation_directory,
+            f"{workspace}/{scope.relative_workspace}": session_directory,
+        }
+        store = SandboxArchiveStore(1024, 4096)
+
+        with (
+            patch.object(store, "_load_registry", return_value=registry),
+            patch.object(
+                store,
+                "inspect_path",
+                side_effect=lambda _container, path: existing_paths.get(path),
+            ),
+        ):
+            directories, replaced_size = store._validate_target(
+                MagicMock(),
+                conversation_id,
+                conversation_uid,
+                relative_path,
+            )
+
+        self.assertEqual(directories, [])
+        self.assertEqual(replaced_size, 0)
+
+        existing_paths.pop(f"{workspace}/{scope.relative_workspace}")
+        with (
+            patch.object(store, "_load_registry", return_value=registry),
+            patch.object(
+                store,
+                "inspect_path",
+                side_effect=lambda _container, path: existing_paths.get(path),
+            ),
+        ):
+            directories, _ = store._validate_target(
+                MagicMock(),
+                conversation_id,
+                conversation_uid,
+                relative_path,
+            )
+
+        self.assertEqual(
+            directories,
+            [(scope.relative_workspace, session_uid, conversation_uid, 0o750)],
+        )
+
     def test_internal_execute_timeout_is_clamped_to_sandbox_limit(self) -> None:
         backend = self._session_backend(
             build_sandbox_config(internal_command_timeout_seconds=7),

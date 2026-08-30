@@ -3,6 +3,7 @@
 from app.analytics.agents.manager import AgentManager
 from app.analytics.agents.skills import packaged_agent_skill_mounts
 from app.analytics.providers import build_conversation_lifecycle_service
+from app.analytics.services.conversation_run import ConversationRunService
 from app.analytics.services.conversation_tombstone import (
     ConversationTombstoneService,
 )
@@ -29,6 +30,7 @@ agent_manager = AgentManager(
     sandbox_manager,
     conversation_tombstone_service,
 )
+conversation_run_service = ConversationRunService(agent_manager)
 conversation_lifecycle_service = build_conversation_lifecycle_service(
     langgraph_postgres_manager,
     analytics_postgres_client_manager,

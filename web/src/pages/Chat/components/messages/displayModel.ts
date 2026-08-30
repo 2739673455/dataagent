@@ -95,6 +95,53 @@ export function getUserMessagePreview(message: MessageDisplayItem["message"]): s
   return attachmentNames?.length ? `[附件] ${attachmentNames.join("、")}` : "空消息";
 }
 
+export type AttachmentFileType =
+  | "table"
+  | "code"
+  | "json"
+  | "markdown"
+  | "text"
+  | "html"
+  | "image"
+  | "archive"
+  | "generic";
+
+export function getAttachmentFileType(
+  filePath: string,
+  mediaType?: string | null
+): AttachmentFileType {
+  if (mediaType === "application/vnd.dataagent.table+json" || /\.table\.json$/i.test(filePath)) {
+    return "table";
+  }
+  const cleanPath = filePath.split("?")[0].split("#")[0];
+  const ext = cleanPath.split(".").pop()?.toLowerCase() || "";
+  if (["csv", "tsv", "xlsx", "xls", "parquet", "feather"].includes(ext)) {
+    return "table";
+  }
+  if (["py", "sql", "sh", "bash", "zsh", "r", "js", "ts", "jsx", "tsx"].includes(ext)) {
+    return "code";
+  }
+  if (["json", "yaml", "yml", "xml", "toml"].includes(ext)) {
+    return "json";
+  }
+  if (["md", "markdown"].includes(ext)) {
+    return "markdown";
+  }
+  if (["html", "htm"].includes(ext)) {
+    return "html";
+  }
+  if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"].includes(ext)) {
+    return "image";
+  }
+  if (["zip", "tar", "gz", "tgz", "7z", "rar", "bz2"].includes(ext)) {
+    return "archive";
+  }
+  if (["txt", "log", "pdf", "doc", "docx"].includes(ext)) {
+    return "text";
+  }
+  return "generic";
+}
+
 export function isImageAttachment(name: string): boolean {
   return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
 }

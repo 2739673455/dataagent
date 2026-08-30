@@ -519,7 +519,7 @@ class SandboxArchiveStore:
             info = self.inspect_path(container, current_path)
             directory_uid = (
                 session_uid
-                if session_uid is not None and index >= 5
+                if session_uid is not None and index >= 4
                 else conversation_uid
             )
             if info is None:
@@ -529,7 +529,7 @@ class SandboxArchiveStore:
                 continue
             allowed_uids = (
                 {conversation_uid, session_uid}
-                if session_uid is not None and index >= 5
+                if session_uid is not None and index >= 4
                 else {conversation_uid}
             )
             if (

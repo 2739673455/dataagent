@@ -179,7 +179,7 @@ def _run(ctx: RunContext, args: argparse.Namespace) -> None:
             )
         except Exception:
             logger.exception(
-                "业务月份生成失败，请执行 make init_db 后重新生成 period=%s",
+                "业务月份生成失败，请执行 make init-db 后重新生成 period=%s",
                 period.key,
             )
             raise

@@ -148,6 +148,8 @@ class ConversationTitleTest(unittest.IsolatedAsyncioTestCase):
 
         lifecycle = MagicMock()
         lifecycle.lock.side_effect = _unlocked
+        runs = MagicMock()
+        runs.start_turn = AsyncMock(return_value=MagicMock())
         with patch(
             "app.analytics.api.chat.router.enqueue_conversation_title",
         ) as enqueue_title:
@@ -156,7 +158,7 @@ class ConversationTitleTest(unittest.IsolatedAsyncioTestCase):
                 repository,
                 current_user,
                 lifecycle,
-                MagicMock(),
+                runs,
             )
 
         repository.claim_title_generation.assert_awaited_once_with(

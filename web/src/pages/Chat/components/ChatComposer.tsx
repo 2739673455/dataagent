@@ -1,9 +1,10 @@
-import { ArrowUp, FileText, Paperclip, RotateCcw, Square, X } from "lucide-react";
+import { ArrowUp, Paperclip, RotateCcw, Square, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { getAttachmentName } from "@/lib/utils";
 import type { Attachment } from "@/types";
+import { AttachmentIconBadge } from "./messages/AttachmentChip";
 
 interface ChatComposerProps {
   attachments?: Attachment[];
@@ -79,16 +80,6 @@ export function ChatComposer({
     }
   };
 
-  const isImageAttachment = (attachment: Attachment) => Boolean(attachment.preview_url);
-
-  const openPreview = (attachment: Attachment) => {
-    if (!attachment.preview_url) return;
-    setPreviewImage({
-      src: attachment.preview_url,
-      alt: getAttachmentName(attachment.f_path),
-    });
-  };
-
   return (
     <div className="relative font-mono">
       <div className="overflow-hidden rounded border border-[#d4d4ce] bg-[#ffffff] shadow-xs transition-colors focus-within:border-[#1e2024]">
@@ -105,36 +96,30 @@ export function ChatComposer({
         />
 
         {attachments.length > 0 ? (
-          <div className="flex flex-wrap gap-2 border-b border-[#e5e5df] bg-[#fafaf8] px-3.5 py-2">
+          <div className="flex flex-wrap gap-1.5 border-b border-[#e5e5df] bg-[#fafaf8] px-3 py-2">
             {attachments.map((attachment) => (
               <div
                 key={attachment.f_path}
-                className="flex items-center gap-2 rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 py-1 text-xs text-[#27272a]"
+                className="group inline-flex items-center gap-1.5 rounded-lg border border-[#e4e4de] bg-[#ffffff] py-1 pl-1.5 pr-1.5 font-mono text-xs shadow-[0_1px_2px_rgba(0,0,0,0.03)]"
               >
-                {isImageAttachment(attachment) ? (
-                  <button
-                    type="button"
-                    onClick={() => openPreview(attachment)}
-                    className="h-5 w-5 overflow-hidden rounded border border-[#d4d4ce]"
-                  >
-                    <img
-                      src={attachment.preview_url}
-                      alt={getAttachmentName(attachment.f_path)}
-                      className="h-full w-full object-cover"
-                    />
-                  </button>
-                ) : (
-                  <FileText className="h-3.5 w-3.5 text-[#52525b]" />
-                )}
-                <span className="max-w-[200px] truncate text-[11px]">
+                <AttachmentIconBadge
+                  attachment={attachment}
+                  onPreview={(src, alt) => setPreviewImage({ src, alt })}
+                  size="md"
+                />
+                <span
+                  className="max-w-[200px] sm:max-w-[260px] truncate text-[11.5px] font-medium text-[#27272a]"
+                  title={getAttachmentName(attachment.f_path)}
+                >
                   {getAttachmentName(attachment.f_path)}
                 </span>
                 <button
                   type="button"
                   onClick={() => onRemoveAttachment(attachment.f_path)}
-                  className="ml-1 text-[#71717a] hover:text-[#dc2626]"
+                  className="rounded p-0.5 text-[#71717a] transition hover:bg-[#ebebe5] hover:text-[#dc2626]"
+                  title="移除附件"
                 >
-                  <X className="h-3 w-3" />
+                  <X className="h-3.5 w-3.5" />
                 </button>
               </div>
             ))}

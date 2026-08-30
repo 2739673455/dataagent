@@ -181,7 +181,7 @@ def assert_empty(
             populated.append(name)
     if populated:
         names = ", ".join(sorted(populated))
-        raise ValueError(f"目标库不是空库，请先执行 make init_db: {names}")
+        raise ValueError(f"目标库不是空库，请先执行 make init-db: {names}")
 
 
 def load_rows(

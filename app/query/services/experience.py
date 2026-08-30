@@ -104,8 +104,13 @@ class QueryExperienceService:
         self,
         context: QueryExecutionContext,
         details: SuccessfulQueryExecution,
-    ) -> UUID:
+    ) -> UUID | None:
         """记录成功执行并增量更新相同结构的查询经验"""
+        if details.validation.query_kind == "catalog":
+            await self._record_catalog_success(context, details)
+            return None
+        if details.plan_estimate is None:
+            raise ValueError("业务查询成功记录缺少执行计划估算")
         sql_template, fingerprint = _build_sql_template(details.normalized_sql)
         tables = {item.name for item in details.validation.tables}
         columns = {(item.table, item.name) for item in details.validation.columns}
@@ -160,6 +165,40 @@ class QueryExperienceService:
             stored = await self._repo.record_success(execution, experience, assets)
         self._index_scheduler.enqueue(stored.id, stored.revision)
         return stored.id
+
+    async def _record_catalog_success(
+        self,
+        context: QueryExecutionContext,
+        details: SuccessfulQueryExecution,
+    ) -> None:
+        """仅审计成功目录查询，不生成可召回的业务查询经验"""
+        execution = QueryExecution(
+            user_id=context.session_key.user_id,
+            role_name=context.role_name,
+            authorization_epoch=context.authorization_epoch,
+            conversation_id=context.session_key.conversation_id,
+            analysis_id=context.session_key.analysis_id,
+            session_id=context.session_key.session_id,
+            tool_call_id=context.tool_call_id,
+            purpose=context.purpose,
+            raw_sql=details.raw_sql,
+            normalized_sql=details.normalized_sql,
+            status="succeeded",
+            validation=details.validation.model_dump(mode="json"),
+            result_summary={
+                "path": details.result.path,
+                "schema": [
+                    item.model_dump(mode="json") for item in details.result.schema
+                ],
+                "row_count": details.result.row_count,
+                "time_range": {
+                    key: value.model_dump(mode="json")
+                    for key, value in details.result.time_range.items()
+                },
+            },
+        )
+        async with self._repo.session.begin():
+            await self._repo.record_execution(execution)
 
     async def record_failure(
         self,

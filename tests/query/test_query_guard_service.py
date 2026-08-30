@@ -58,6 +58,54 @@ def make_guard() -> QueryGuardService:
 
 
 class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
+    async def test_allows_role_filtered_catalog_discovery_queries(self) -> None:
+        for sql in (
+            "SHOW TABLES",
+            "SHOW FULL TABLES FROM analytics LIKE 'order%'",
+            (
+                "SELECT table_name, table_type FROM information_schema.tables "
+                "WHERE table_schema = DATABASE() ORDER BY table_name"
+            ),
+            (
+                "SELECT table_name, column_name, data_type "
+                "FROM information_schema.columns "
+                "WHERE table_schema = 'analytics' AND table_name = 'orders' "
+                "ORDER BY ordinal_position"
+            ),
+        ):
+            with self.subTest(sql=sql):
+                result = await make_guard().check(sql)
+                self.assertTrue(result.valid, result.issues)
+                self.assertEqual(result.query_kind, "catalog")
+                self.assertEqual(result.tables, [])
+                self.assertEqual(result.columns, [])
+
+    async def test_rejects_catalog_queries_outside_discovery_allowlist(self) -> None:
+        cases = {
+            "SHOW DATABASES": "catalog_statement_not_allowed",
+            "SHOW TABLES FROM other_database": "unknown_database",
+            (
+                "SELECT * FROM information_schema.schemata "
+                "WHERE schema_name = DATABASE()"
+            ): "catalog_table_not_allowed",
+            "SELECT * FROM information_schema.tables": "catalog_scope_required",
+            (
+                "SELECT * FROM information_schema.tables "
+                "WHERE table_schema = DATABASE() OR 1 = 1"
+            ): "catalog_scope_required",
+            (
+                "SELECT c.column_name FROM information_schema.columns c "
+                "JOIN orders o ON c.table_name = 'orders' "
+                "WHERE c.table_schema = DATABASE()"
+            ): "catalog_query_shape_not_allowed",
+        }
+        for sql, issue_code in cases.items():
+            with self.subTest(sql=sql):
+                result = await make_guard().check(sql)
+                self.assertFalse(result.valid)
+                self.assertEqual(result.query_kind, "catalog")
+                self.assertIn(issue_code, {issue.code for issue in result.issues})
+
     async def test_accepts_qualified_cte_readonly_query(self) -> None:
         result = await make_guard().check(
             """

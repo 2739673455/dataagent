@@ -2,7 +2,7 @@
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from uuid import UUID
 
 from fastapi import APIRouter, Response, status
@@ -10,7 +10,6 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from app.analytics import errors as chat_error
-from app.analytics.agents.manager import AgentManager
 from app.analytics.api.chat import schemas as chat_schema
 from app.analytics.api.chat.dependencies import (
     ConversationPGRepoDep,
@@ -18,8 +17,12 @@ from app.analytics.api.chat.dependencies import (
 from app.analytics.api.dependencies import (
     AgentManagerDep,
     ConversationLifecycleServiceDep,
+    ConversationRunServiceDep,
 )
 from app.analytics.services import chat as chat_service
+from app.analytics.services.conversation_run import (
+    ConversationRunAlreadyActiveError as ActiveRunConflict,
+)
 from app.analytics.services.conversation_title import (
     initial_conversation_title,
 )
@@ -57,6 +60,7 @@ async def api_create_conversation(
         conversation_id=conversation.id,
         title=conversation.title,
         update_at=conversation.update_at,
+        running=False,
     )
 
 
@@ -137,10 +141,12 @@ async def api_update_conversation(
 async def api_get_conversations(
     conversation_repo: ConversationPGRepoDep,
     current_user: CurrentUserDep,
+    runs: ConversationRunServiceDep,
 ) -> chat_schema.ConversationListResponse:
     """获取所有对话"""
     user_id = current_user.id
     conversations = await conversation_repo.list_by_user(user_id)
+    running_conversation_ids = await runs.running_conversation_ids(user_id)
     logger.info(f"获取对话列表: conversation_ids={[item.id for item in conversations]}")
     return chat_schema.ConversationListResponse(
         conversations=[
@@ -148,6 +154,7 @@ async def api_get_conversations(
                 conversation_id=item.id,
                 title=item.title,
                 update_at=item.update_at,
+                running=item.id in running_conversation_ids,
             )
             for item in conversations
         ]
@@ -218,33 +225,14 @@ def _serialize_sse_event(event: chat_schema.ChatStreamEventPayload) -> str:
     return f"data: {event.model_dump_json()}\n\n"
 
 
-async def _stream_agent_response(
-    agents: AgentManager,
-    user_id: int,
+async def _stream_run_events(
     conversation_id: UUID,
-    user_message: chat_schema.UserMessageRequest | None,
+    events: AsyncGenerator[chat_schema.ChatStreamEventPayload],
 ) -> AsyncIterator[str]:
-    """流式执行单轮 Agent 对话"""
-    cancel = asyncio.Event()
-    responses = (
-        chat_service.run_agent_turn(
-            agents,
-            user_id,
-            conversation_id,
-            user_message,
-            cancel,
-        )
-        if user_message is not None
-        else chat_service.resume_agent_turn(
-            agents,
-            user_id,
-            conversation_id,
-            cancel,
-        )
-    )
-    next_message_task: asyncio.Task[chat_schema.ChatStreamEventPayload] | None = None
+    """把后台 Run 事件投影为 SSE；连接断开只取消当前订阅"""
+    next_message_task: asyncio.Future[chat_schema.ChatStreamEventPayload] | None = None
     try:
-        next_message_task = asyncio.create_task(anext(responses))
+        next_message_task = asyncio.ensure_future(anext(events))
         while True:
             done, _ = await asyncio.wait(
                 {next_message_task},
@@ -260,26 +248,16 @@ async def _stream_agent_response(
                 break
 
             yield _serialize_sse_event(event)
-            next_message_task = asyncio.create_task(anext(responses))
+            next_message_task = asyncio.ensure_future(anext(events))
     except asyncio.CancelledError:
-        logger.info(f"SSE 连接断开: conversation_id={conversation_id}")
+        logger.info(f"SSE 订阅断开: conversation_id={conversation_id}")
         raise
-    except Exception:  # noqa: BLE001
-        logger.exception(f"智能体执行异常: conversation_id={conversation_id}")
-        yield _serialize_sse_event(
-            chat_schema.ChatStreamErrorEvent(
-                type="error", content="模型调用失败，请稍后重试。"
-            )
-        )
-    else:
-        yield _serialize_sse_event(chat_schema.ChatStreamDoneEvent(type="done"))
     finally:
-        cancel.set()
         if next_message_task is not None and not next_message_task.done():
             next_message_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await next_message_task
-        await responses.aclose()
+        await events.aclose()
 
 
 @router.post(
@@ -302,9 +280,9 @@ async def api_stream_chat(
     conversation_repo: ConversationPGRepoDep,
     current_user: AnalysisUserDep,
     lifecycle: ConversationLifecycleServiceDep,
-    agents: AgentManagerDep,
+    runs: ConversationRunServiceDep,
 ) -> StreamingResponse:
-    """通过 SSE 执行单轮对话并流式返回 Agent 事件"""
+    """启动后台对话回合并订阅 Agent 事件"""
     user_id = current_user.id
     title_submission: tuple[UUID, str, str] | None = None
     async with lifecycle.lock(user_id, body.conversation_id):
@@ -354,12 +332,14 @@ async def api_stream_chat(
                 )
 
     context.user_id_ctx.set(str(user_id))
+    try:
+        events = await runs.start_turn(user_id, body.conversation_id, body.message)
+    except ActiveRunConflict as exc:
+        raise chat_error.ConversationRunAlreadyActiveError from exc
     return StreamingResponse(
-        _stream_agent_response(
-            agents,
-            user_id,
+        _stream_run_events(
             body.conversation_id,
-            body.message,
+            events,
         ),
         media_type="text/event-stream",
         headers={
@@ -375,6 +355,7 @@ async def api_resume_chat(
     conversation_repo: ConversationPGRepoDep,
     current_user: AnalysisUserDep,
     agents: AgentManagerDep,
+    runs: ConversationRunServiceDep,
 ) -> StreamingResponse:
     """从中断的 Planner Checkpoint 继续当前用户回合"""
     user_id = current_user.id
@@ -388,12 +369,14 @@ async def api_resume_chat(
     ):
         raise chat_error.ConversationNotResumableError
     context.user_id_ctx.set(str(user_id))
+    try:
+        events = await runs.resume_turn(user_id, conversation_id)
+    except ActiveRunConflict as exc:
+        raise chat_error.ConversationRunAlreadyActiveError from exc
     return StreamingResponse(
-        _stream_agent_response(
-            agents,
-            user_id,
+        _stream_run_events(
             conversation_id,
-            None,
+            events,
         ),
         media_type="text/event-stream",
         headers={
@@ -401,3 +384,57 @@ async def api_resume_chat(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get("/{conversation_id}/run")
+async def api_get_conversation_run_status(
+    conversation_id: UUID,
+    conversation_repo: ConversationPGRepoDep,
+    current_user: AnalysisUserDep,
+    runs: ConversationRunServiceDep,
+) -> chat_schema.ConversationRunStatusResponse:
+    """查询 Conversation 是否有正在后台执行的 Planner Run"""
+    user_id = current_user.id
+    if await conversation_repo.get(user_id, conversation_id) is None:
+        raise chat_error.ConversationNotFoundError
+    return chat_schema.ConversationRunStatusResponse(
+        running=await runs.is_running(user_id, conversation_id)
+    )
+
+
+@router.get("/{conversation_id}/events", response_class=StreamingResponse)
+async def api_subscribe_conversation_run(
+    conversation_id: UUID,
+    conversation_repo: ConversationPGRepoDep,
+    current_user: AnalysisUserDep,
+    runs: ConversationRunServiceDep,
+) -> StreamingResponse:
+    """订阅已经启动的后台 Planner Run"""
+    user_id = current_user.id
+    if await conversation_repo.get(user_id, conversation_id) is None:
+        raise chat_error.ConversationNotFoundError
+    context.user_id_ctx.set(str(user_id))
+    events = await runs.subscribe(user_id, conversation_id)
+    return StreamingResponse(
+        _stream_run_events(conversation_id, events),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/{conversation_id}/stop", status_code=status.HTTP_204_NO_CONTENT)
+async def api_stop_conversation_run(
+    conversation_id: UUID,
+    conversation_repo: ConversationPGRepoDep,
+    current_user: AnalysisUserDep,
+    runs: ConversationRunServiceDep,
+) -> Response:
+    """由用户显式停止 Conversation 当前的 Planner Run"""
+    user_id = current_user.id
+    if await conversation_repo.get(user_id, conversation_id) is None:
+        raise chat_error.ConversationNotFoundError
+    await runs.stop(user_id, conversation_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

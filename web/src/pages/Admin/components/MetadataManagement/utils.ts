@@ -66,5 +66,8 @@ export function parseMetricColumns(value: string): Array<{ t_name: string; c_nam
       }
       return null;
     })
-    .filter((col): col is { t_name: string; c_name: string } => col !== null && Boolean(col.t_name && col.c_name));
+    .filter(
+      (col): col is { t_name: string; c_name: string } =>
+        col !== null && Boolean(col.t_name && col.c_name)
+    );
 }

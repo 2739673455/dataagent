@@ -1,17 +1,14 @@
-import { Loader2 } from "lucide-react";
 import type { RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
+import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import type { Attachment, MessageResponse } from "@/types";
 import {
   buildDisplayItems,
   getUserMessagePreview,
   groupDisplayItemsIntoTurns,
 } from "./messages/displayModel";
-import { DotMatrixLoader } from "./messages/DotMatrixLoader";
 import { MessageBubble } from "./messages/MessageBubble";
-import {
-  ExecutionProcessCollapse,
-} from "./messages/ToolRunBars";
+import { ExecutionProcessCollapse } from "./messages/ToolRunBars";
 import type {
   SubagentRunIdentity,
   SubagentRunMap,
@@ -135,7 +132,7 @@ export function ChatMessages({
         ) : isLoading ? (
           <div className="flex h-full items-center justify-center">
             <div className="flex items-center gap-2 rounded border border-[#d4d4ce] bg-[#ffffff] px-4 py-2 text-xs text-[#52525b] shadow-xs">
-              <Loader2 className="h-4 w-4 animate-spin text-[#18181b]" />
+              <DotMatrixLoader label="正在获取会话消息" className="text-[#18181b]" />
               <span>正在获取会话消息...</span>
             </div>
           </div>

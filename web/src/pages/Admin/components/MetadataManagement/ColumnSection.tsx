@@ -3,6 +3,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/api/errors";
 import { type ColumnInfo, metaApi, type ValueIndexSyncRequestMode } from "@/api/meta";
+import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { Button } from "@/components/ui/button";
 import { ColumnCreateDialog, ColumnEditDialog, ValueIndexStatus } from "./ColumnDialogs";
 import { splitCsv } from "./utils";
@@ -144,7 +145,7 @@ export function ColumnSection({
             <span>
               表字段元数据[{selectedTable || "未选择"}]({columns.length})
             </span>
-            {loadingColumns && <RefreshCw className="h-3 w-3 animate-spin text-[#71717a] ml-1" />}
+            {loadingColumns && <DotMatrixLoader className="ml-1 text-[#71717a]" />}
           </h2>
           {selectedColumnNames.length > 0 && (
             <span className="rounded bg-[#ebebe6] px-2 py-0.5 text-xs text-[#52525b] font-mono">
@@ -167,9 +168,11 @@ export function ColumnSection({
                     : `同步已选 ${selectedColumnNames.length} 个字段语义索引`
                 }
               >
-                <RefreshCw
-                  className={`h-3.5 w-3.5 mr-1 ${syncing === "col_semantic" ? "animate-spin" : ""}`}
-                />
+                {syncing === "col_semantic" ? (
+                  <DotMatrixLoader className="mr-1" />
+                ) : (
+                  <RefreshCw className="mr-1 h-3.5 w-3.5" />
+                )}
                 {selectedColumnNames.length > 0
                   ? `同步语义索引 (${selectedColumnNames.length})`
                   : "同步语义索引"}
@@ -186,9 +189,11 @@ export function ColumnSection({
                     : `全量替换已选 ${selectedColumnNames.length} 个字段的取值索引`
                 }
               >
-                <RefreshCw
-                  className={`h-3.5 w-3.5 mr-1 ${syncing === "col_values_full" ? "animate-spin" : ""}`}
-                />
+                {syncing === "col_values_full" ? (
+                  <DotMatrixLoader className="mr-1" />
+                ) : (
+                  <RefreshCw className="mr-1 h-3.5 w-3.5" />
+                )}
                 {selectedColumnNames.length > 0
                   ? `全量同步取值索引 (${selectedColumnNames.length})`
                   : "全量同步取值索引"}
@@ -205,9 +210,11 @@ export function ColumnSection({
                     : `按水位增量同步已选 ${selectedColumnNames.length} 个字段，字段需要先完成全量同步`
                 }
               >
-                <RefreshCw
-                  className={`h-3.5 w-3.5 mr-1 ${syncing === "col_values_incremental" ? "animate-spin" : ""}`}
-                />
+                {syncing === "col_values_incremental" ? (
+                  <DotMatrixLoader className="mr-1" />
+                ) : (
+                  <RefreshCw className="mr-1 h-3.5 w-3.5" />
+                )}
                 {selectedColumnNames.length > 0
                   ? `增量同步取值索引 (${selectedColumnNames.length})`
                   : "增量同步取值索引"}

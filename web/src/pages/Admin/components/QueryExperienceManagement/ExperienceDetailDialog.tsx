@@ -1,8 +1,9 @@
-import { Ban, RefreshCw, Trash2 } from "lucide-react";
+import { Ban, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { adminApi, type QueryExperienceDetailResponse } from "@/api/admin";
 import { getApiErrorMessage } from "@/api/errors";
+import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { Button } from "@/components/ui/button";
 import { AdminEditorDialog } from "../AdminEditorDialog";
 import { ExperienceSourceExecutionList } from "./ExperienceSourceExecutionList";
@@ -72,7 +73,7 @@ export function ExperienceDetailDialog({ experienceId, onChanged, onClose }: Pro
     <AdminEditorDialog ariaLabel="查询经验详情" onClose={onClose} title="查询经验详情">
       {busy && !detail ? (
         <div className="flex items-center justify-center gap-2 py-12 text-[#71717a]">
-          <RefreshCw className="h-4 w-4 animate-spin" />
+          <DotMatrixLoader />
           加载中
         </div>
       ) : error && !detail ? (

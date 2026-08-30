@@ -1,8 +1,9 @@
-import { Check, MessageSquare, Pencil, Trash2, X } from "lucide-react";
+import { Check, Pencil, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/api/errors";
+import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { ROUTES } from "@/config/settings";
 import { cn } from "@/lib/utils";
 import type { ConversationResponse } from "@/types";
@@ -35,6 +36,7 @@ export function ConversationListItem({
   const [isRenaming, setIsRenaming] = useState(false);
 
   const timeStr = formatConversationTime(conversation.update_at);
+  const fullTitle = conversation.title || "新会话";
 
   const submitRename = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -109,26 +111,30 @@ export function ConversationListItem({
         <>
           <Link
             to={ROUTES.chatConversation(conversation.conversation_id)}
-            className="flex min-w-0 flex-1 items-center gap-2.5"
+            title={fullTitle}
+            className="flex min-w-0 flex-1 flex-col"
           >
-            <MessageSquare
-              className={cn("h-4 w-4 shrink-0", isActive ? "text-[#d4d4ce]" : "text-[#71717a]")}
-            />
-            <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-1.5">
+              {conversation.running && (
+                <DotMatrixLoader
+                  label="对话正在运行"
+                  className={isActive ? "text-[#ffffff]" : "text-[#52525b]"}
+                />
+              )}
               <p
                 className={cn(
-                  "truncate text-sm",
+                  "min-w-0 flex-1 truncate text-sm",
                   isActive ? "font-medium text-[#ffffff]" : "font-normal"
                 )}
               >
-                {conversation.title || "新会话"}
+                {fullTitle}
               </p>
-              {timeStr && (
-                <p className={cn("text-xs", isActive ? "text-[#a1a1aa]" : "text-[#8e8e93]")}>
-                  {timeStr}
-                </p>
-              )}
             </div>
+            {timeStr && (
+              <p className={cn("text-xs", isActive ? "text-[#a1a1aa]" : "text-[#8e8e93]")}>
+                {timeStr}
+              </p>
+            )}
           </Link>
           <button
             type="button"

@@ -36,11 +36,7 @@ export function MetricCreateDialog({
   if (!isOpen) return null;
 
   return (
-    <AdminEditorDialog
-      ariaLabel="添加指标元数据"
-      onClose={onClose}
-      title="添加指标元数据"
-    >
+    <AdminEditorDialog ariaLabel="添加指标元数据" onClose={onClose} title="添加指标元数据">
       <div className="space-y-3">
         <div>
           <label
@@ -104,9 +100,7 @@ export function MetricCreateDialog({
           />
         </div>
         <AdminDialogActions>
-          <AdminDialogCancelButton onClick={onClose}>
-            取消
-          </AdminDialogCancelButton>
+          <AdminDialogCancelButton onClick={onClose}>取消</AdminDialogCancelButton>
           <AdminDialogPrimaryButton
             disabled={savingMetric || !newMetricName.trim() || !newMetricDesc.trim()}
             onClick={() => void onSubmit()}
@@ -198,9 +192,7 @@ export function MetricEditDialog({
           />
         </div>
         <AdminDialogActions>
-          <AdminDialogCancelButton onClick={onClose}>
-            取消
-          </AdminDialogCancelButton>
+          <AdminDialogCancelButton onClick={onClose}>取消</AdminDialogCancelButton>
           <AdminDialogPrimaryButton
             disabled={savingMetric || !editMetricDesc.trim()}
             onClick={() => void onSubmit()}

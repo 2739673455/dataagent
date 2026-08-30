@@ -112,6 +112,54 @@ describe("session lifecycle", () => {
     }
   });
 
+  test("message refresh keeps events received while the snapshot request is pending", async () => {
+    const conversationId = "00000000-0000-4000-8000-000000000002";
+    const originalGetMessages = chatApi.getMessages;
+    const messages = deferred<Awaited<ReturnType<typeof chatApi.getMessages>>>();
+    chatApi.getMessages = () => messages.promise;
+
+    try {
+      useChatStore.getState().appendMessage(conversationId, {
+        message_id: "optimistic-user",
+        role: "user",
+        parts: [{ type: "text", text: "分析销售额" }],
+      });
+      const loading = useChatStore.getState().loadMessages(conversationId);
+      useChatStore.getState().appendMessage(conversationId, {
+        message_id: "live-assistant",
+        role: "assistant",
+        parts: [{ type: "text", text: "正在继续执行" }],
+      });
+      messages.resolve({
+        data: {
+          messages: [
+            {
+              message_id: "persisted-user",
+              role: "user",
+              parts: [{ type: "text", text: "分析销售额" }],
+            },
+            {
+              message_id: "persisted-assistant",
+              role: "assistant",
+              parts: [{ type: "text", text: "已经开始执行" }],
+            },
+          ],
+        },
+      } as Awaited<ReturnType<typeof chatApi.getMessages>>);
+      await loading;
+
+      const merged = useChatStore.getState().messagesByConversation[conversationId];
+      expect(merged.map((message) => message.message_id)).toEqual([
+        "persisted-user",
+        "persisted-assistant",
+        "live-assistant",
+      ]);
+    } finally {
+      chatApi.getMessages = originalGetMessages;
+      sessionLifecycle.transition();
+    }
+  });
+
   test("refresh commit requires the same generation and token", () => {
     const snapshot = {
       generation: sessionLifecycle.current(),

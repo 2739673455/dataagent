@@ -126,7 +126,7 @@ class SuccessfulQueryExecution:
     raw_sql: str
     normalized_sql: str
     validation: QueryValidationResult
-    plan_estimate: QueryPlanEstimate
+    plan_estimate: QueryPlanEstimate | None
     result: AnalysisQueryResult
 
 
@@ -212,11 +212,13 @@ class AnalysisQueryService:
         if not validation.valid or normalized_sql is None:
             raise QueryRejectedError(validation)
 
-        plan = await self._query_repo.explain(normalized_sql, self._limits)
-        estimate = _estimate_doris_query_plan(
-            plan,
-            require_scan=bool(validation.tables),
-        )
+        estimate: QueryPlanEstimate | None = None
+        if validation.query_kind == "business":
+            plan = await self._query_repo.explain(normalized_sql, self._limits)
+            estimate = _estimate_doris_query_plan(
+                plan,
+                require_scan=bool(validation.tables),
+            )
         relative_path = (
             f"sessions/{session_key.analysis_id}/{session_key.agent_type}/"
             f"{session_key.session_id}/query_{uuid4().hex}.csv"
@@ -255,8 +257,8 @@ class AnalysisQueryService:
             f"sql_fingerprint={sql_fingerprint}, "
             f"row_count={details.result.row_count}, "
             f"column_count={len(details.result.schema)}, "
-            f"scan_rows={details.plan_estimate.scan_rows}, "
-            f"scan_bytes={details.plan_estimate.scan_bytes}, "
+            f"scan_rows={details.plan_estimate.scan_rows if details.plan_estimate else None}, "
+            f"scan_bytes={details.plan_estimate.scan_bytes if details.plan_estimate else None}, "
             f"artifact_path={details.result.path}"
         )
         return details

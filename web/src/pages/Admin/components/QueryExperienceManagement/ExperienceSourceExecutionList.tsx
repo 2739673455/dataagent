@@ -1,7 +1,8 @@
-import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { adminApi, type QueryExperienceSourceExecutionListResponse } from "@/api/admin";
 import { getApiErrorMessage } from "@/api/errors";
+import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { Button } from "@/components/ui/button";
 
 const PAGE_SIZE = 10;
@@ -36,7 +37,7 @@ export function ExperienceSourceExecutionList({ experienceId }: { experienceId: 
     <section className="space-y-2">
       <div className="flex items-center justify-between">
         <h4 className="font-bold text-[#18181b]">来源执行记录 ({page?.total ?? 0})</h4>
-        {loading && <RefreshCw className="h-3 w-3 animate-spin text-[#71717a]" />}
+        {loading && <DotMatrixLoader className="text-[#71717a]" />}
       </div>
       {error ? (
         <div className="rounded border border-red-200 bg-red-50 p-2 text-red-700">{error}</div>

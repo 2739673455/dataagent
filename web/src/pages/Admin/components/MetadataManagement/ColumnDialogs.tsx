@@ -5,11 +5,7 @@ import {
   AdminDialogPrimaryButton,
   AdminEditorDialog,
 } from "../AdminEditorDialog";
-import {
-  formatDateTime,
-  formatValueIndexSyncDetails,
-  formatValueIndexSyncMode,
-} from "./utils";
+import { formatDateTime, formatValueIndexSyncDetails, formatValueIndexSyncMode } from "./utils";
 
 export function ValueIndexStatus({ column }: { column: ColumnInfo }) {
   if (!column.index_values) {
@@ -193,9 +189,7 @@ export function ColumnCreateDialog({
           </label>
         </div>
         <AdminDialogActions>
-          <AdminDialogCancelButton onClick={onClose}>
-            取消
-          </AdminDialogCancelButton>
+          <AdminDialogCancelButton onClick={onClose}>取消</AdminDialogCancelButton>
           <AdminDialogPrimaryButton
             disabled={savingColumn || !newColName.trim() || !newColDesc.trim()}
             onClick={() => void onSubmit()}
@@ -262,10 +256,7 @@ export function ColumnEditDialog({
           />
         </div>
         <div>
-          <label
-            htmlFor="edit-col-alias"
-            className="block text-xs font-medium text-[#71717a] mb-1"
-          >
+          <label htmlFor="edit-col-alias" className="block text-xs font-medium text-[#71717a] mb-1">
             同义别名（逗号分隔）
           </label>
           <input
@@ -324,9 +315,7 @@ export function ColumnEditDialog({
           </label>
         </div>
         <AdminDialogActions>
-          <AdminDialogCancelButton onClick={onClose}>
-            取消
-          </AdminDialogCancelButton>
+          <AdminDialogCancelButton onClick={onClose}>取消</AdminDialogCancelButton>
           <AdminDialogPrimaryButton
             disabled={savingColumn || !editColDesc.trim()}
             onClick={() => void onSubmit()}

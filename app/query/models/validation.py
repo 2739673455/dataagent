@@ -1,6 +1,10 @@
 """查询引用与 SQL 校验模型"""
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+type QueryKind = Literal["business", "catalog"]
 
 
 class QueryTableRef(BaseModel):
@@ -51,6 +55,7 @@ class QueryValidationResult(BaseModel):
 
     valid: bool
     normalized_sql: str | None
+    query_kind: QueryKind = "business"
     tables: list[QueryTableRef] = Field(default_factory=list)
     columns: list[QueryColumnRef] = Field(default_factory=list)
     output_columns: list[str] = Field(default_factory=list)

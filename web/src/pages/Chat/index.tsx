@@ -42,6 +42,12 @@ export default function ChatPage() {
   const currentMessages = routeConversationId
     ? (messagesByConversation[routeConversationId] ?? [])
     : [];
+  const currentConversationExists = routeConversationId
+    ? conversations.some((conversation) => conversation.conversation_id === routeConversationId)
+    : false;
+  const currentMessagesLoaded = routeConversationId
+    ? messagesByConversation[routeConversationId] !== undefined
+    : false;
   const currentSubagentRuns = routeConversationId
     ? (subagentRunsByConversation[routeConversationId] ?? {})
     : {};
@@ -99,13 +105,18 @@ export default function ChatPage() {
 
   // 切换到具体会话时按需加载历史消息
   useEffect(() => {
-    if (!routeConversationId) return;
-    if (messagesByConversation[routeConversationId] === undefined) {
-      void loadMessages(routeConversationId).catch((error) => {
+    if (!routeConversationId || !currentConversationExists || currentMessagesLoaded) return;
+
+    let active = true;
+    void loadMessages(routeConversationId).catch((error) => {
+      if (active) {
         toast.error(getApiErrorMessage(error, "加载历史消息失败"));
-      });
-    }
-  }, [loadMessages, messagesByConversation, routeConversationId]);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [currentConversationExists, currentMessagesLoaded, loadMessages, routeConversationId]);
 
   // 首次渲染历史消息时直接滚到底部
   useEffect(() => {
@@ -148,9 +159,9 @@ export default function ChatPage() {
 
         <div className="flex items-center gap-3 text-xs">
           {executionStatus === "processing" ? (
-            <span className="font-medium text-[#18181b]">处理中</span>
+            <span className="font-medium shimmer-text">处理中</span>
           ) : executionStatus === "interrupted" ? (
-            <span className="text-[#71717a]">已中断</span>
+            <span className="font-medium text-[#a16207]">已中断</span>
           ) : (
             <span className="text-[#71717a]">就绪</span>
           )}

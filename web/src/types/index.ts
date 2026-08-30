@@ -41,6 +41,7 @@ export type UploadAttachmentResponse = Omit<
 };
 
 export type ChatStreamRequest = ApiSchemas["ChatStreamRequest"];
+export type ConversationRunStatusResponse = ApiSchemas["ConversationRunStatusResponse"];
 
 export type ChatStreamEvent = ApiSchemas["ChatStreamEvent"];
 export type AgentType = ApiSchemas["AgentType"];

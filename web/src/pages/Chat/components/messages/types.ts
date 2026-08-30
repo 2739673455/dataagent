@@ -1,9 +1,4 @@
-import type {
-  AgentType,
-  Attachment,
-  MessagePart,
-  SubagentRun,
-} from "@/types";
+import type { AgentType, Attachment, MessagePart, SubagentRun } from "@/types";
 
 export type MessageDisplayItem = {
   key: string;

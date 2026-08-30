@@ -7,6 +7,11 @@ import { sessionLifecycle } from "@/auth/sessionLifecycle";
 import { useChatStore } from "@/stores/chatStore";
 import type { Attachment, ChatStreamEvent, MessageResponse, UserMessageRequest } from "@/types";
 
+type StreamConnectionMode =
+  | { type: "start"; message: UserMessageRequest }
+  | { type: "resume" }
+  | { type: "subscribe" };
+
 function isImageFile(name: string) {
   return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
 }
@@ -28,6 +33,7 @@ export function useChatStream({
   const appendSubagentMessage = useChatStore((state) => state.appendSubagentMessage);
   const updateSubagentStatus = useChatStore((state) => state.updateSubagentStatus);
   const loadConversations = useChatStore((state) => state.loadConversations);
+  const loadMessages = useChatStore((state) => state.loadMessages);
   const createConversation = useChatStore((state) => state.createConversation);
   const interruptRunningSubagents = useChatStore((state) => state.interruptRunningSubagents);
 
@@ -64,7 +70,7 @@ export function useChatStream({
   }, [abandonDraftConversation, routeConversationId]);
 
   const runStream = useCallback(
-    (conversationId: string, message: UserMessageRequest | null) => {
+    (conversationId: string, mode: StreamConnectionMode) => {
       const generation = sessionLifecycle.current();
       streamControllersRef.current.get(conversationId)?.abort();
       const controller = new AbortController();
@@ -86,17 +92,42 @@ export function useChatStream({
         }
       };
 
-      const stream = message
-        ? chatApi.streamChat(conversationId, message, controller.signal, onEvent)
-        : chatApi.resumeChat(conversationId, controller.signal, onEvent);
+      const stream = (async () => {
+        let nextMode = mode;
+        while (!controller.signal.aborted && !receivedDone) {
+          let connectionError: unknown = null;
+          try {
+            if (nextMode.type === "start") {
+              await chatApi.streamChat(
+                conversationId,
+                nextMode.message,
+                controller.signal,
+                onEvent
+              );
+            } else if (nextMode.type === "resume") {
+              await chatApi.resumeChat(conversationId, controller.signal, onEvent);
+            } else {
+              await chatApi.subscribeRun(conversationId, controller.signal, onEvent);
+            }
+          } catch (error) {
+            if (error instanceof DOMException && error.name === "AbortError") return;
+            connectionError = error;
+          }
+
+          if (controller.signal.aborted || receivedDone) return;
+          const status = await chatApi.getRunStatus(conversationId);
+          if (!status.data.running) {
+            if (connectionError) throw connectionError;
+            return;
+          }
+          nextMode = { type: "subscribe" };
+        }
+      })();
       void stream
         .catch((error: unknown) => {
-          if (sessionLifecycle.isCurrent(generation)) {
-            interruptRunningSubagents(conversationId);
-          }
           if (error instanceof DOMException && error.name === "AbortError") return;
           if (!sessionLifecycle.isCurrent(generation)) return;
-          toast.error(getApiErrorMessage(error, "聊天连接异常"));
+          toast.error(getApiErrorMessage(error, "聊天进度连接异常"));
         })
         .finally(() => {
           if (streamControllersRef.current.get(conversationId) === controller) {
@@ -105,6 +136,7 @@ export function useChatStream({
               if (!receivedDone) interruptRunningSubagents(conversationId);
               unmarkStreaming(conversationId);
               void loadConversations();
+              void loadMessages(conversationId);
             }
           }
         });
@@ -114,10 +146,36 @@ export function useChatStream({
       appendSubagentMessage,
       interruptRunningSubagents,
       loadConversations,
+      loadMessages,
       unmarkStreaming,
       updateSubagentStatus,
     ]
   );
+
+  // 刷新页面或重新进入会话时，恢复对仍在后台执行的 Run 的事件订阅
+  useEffect(() => {
+    if (!routeConversationId || streamControllersRef.current.has(routeConversationId)) return;
+    let active = true;
+    void chatApi
+      .getRunStatus(routeConversationId)
+      .then((response) => {
+        if (
+          !active ||
+          !response.data.running ||
+          streamControllersRef.current.has(routeConversationId)
+        ) {
+          return;
+        }
+        markStreaming(routeConversationId);
+        runStream(routeConversationId, { type: "subscribe" });
+      })
+      .catch((error) => {
+        if (active) toast.error(getApiErrorMessage(error, "获取对话运行状态失败"));
+      });
+    return () => {
+      active = false;
+    };
+  }, [markStreaming, routeConversationId, runStream]);
 
   // 卸载时取消所有进行中的请求
   useEffect(() => {
@@ -129,15 +187,24 @@ export function useChatStream({
     };
   }, [abandonDraftConversation]);
 
-  const handleStop = useCallback(() => {
+  const handleStop = useCallback(async () => {
     if (!routeConversationId) return;
+    try {
+      await chatApi.stopRun(routeConversationId);
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "停止对话执行失败"));
+      return;
+    }
     streamControllersRef.current.get(routeConversationId)?.abort();
-  }, [routeConversationId]);
+    interruptRunningSubagents(routeConversationId);
+    unmarkStreaming(routeConversationId);
+    void loadMessages(routeConversationId);
+  }, [interruptRunningSubagents, loadMessages, routeConversationId, unmarkStreaming]);
 
   const handleResume = useCallback(() => {
     if (!routeConversationId) return;
     markStreaming(routeConversationId);
-    runStream(routeConversationId, null);
+    runStream(routeConversationId, { type: "resume" });
   }, [markStreaming, routeConversationId, runStream]);
 
   const abortConversationStream = useCallback((conversationId: string) => {
@@ -236,6 +303,7 @@ export function useChatStream({
           conversation_id: conversationId,
           title: value.trim().slice(0, 64) || "新对话",
           update_at: new Date().toISOString(),
+          running: false,
         });
       }
 
@@ -250,7 +318,7 @@ export function useChatStream({
       if (routeConversationId !== conversationId) {
         onNavigateToConversation(conversationId);
       }
-      runStream(conversationId, requestMessage);
+      runStream(conversationId, { type: "start", message: requestMessage });
       return true;
     } catch (error) {
       if (sessionLifecycle.isCurrent(generation)) {

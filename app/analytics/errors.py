@@ -27,3 +27,11 @@ class ConversationNotResumableError(ProblemError):
     type = "conversation-not-resumable"
     title = "对话当前无法继续执行"
     status = HTTPStatus.CONFLICT
+
+
+class ConversationRunAlreadyActiveError(ProblemError):
+    """表示目标对话已有正在执行的 Planner Run"""
+
+    type = "conversation-run-already-active"
+    title = "对话正在执行"
+    status = HTTPStatus.CONFLICT

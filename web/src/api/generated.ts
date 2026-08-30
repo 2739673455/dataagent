@@ -108,8 +108,12 @@ export interface components {
     };
     "ConversationResponse": {
       "conversation_id": string;
+      "running": boolean;
       "title": string;
       "update_at": string;
+    };
+    "ConversationRunStatusResponse": {
+      "running": boolean;
     };
     "CreateConversationRequest": {
       "initial_message"?: (string | null);
@@ -600,6 +604,36 @@ export interface operations {
       };
     };
   };
+  "api_get_conversation_run_status_api_v1_chat__conversation_id__run_get": {
+    "parameters": {
+      "path": {
+        "conversation_id": string;
+      };
+      "query"?: never;
+      "header"?: never;
+      "cookie"?: never;
+    };
+    "requestBody"?: never;
+    "responses": {
+      "200": {
+        "content": {
+        "application/json": components["schemas"]["ConversationRunStatusResponse"];
+      };
+      };
+      "422": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+      "default": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+    };
+  };
   "api_get_conversations_api_v1_chat_ls_get": {
     "parameters": {
       "path"?: never;
@@ -720,6 +754,34 @@ export interface operations {
       };
     };
   };
+  "api_stop_conversation_run_api_v1_chat__conversation_id__stop_post": {
+    "parameters": {
+      "path": {
+        "conversation_id": string;
+      };
+      "query"?: never;
+      "header"?: never;
+      "cookie"?: never;
+    };
+    "requestBody"?: never;
+    "responses": {
+      "204": {
+        "content": never;
+      };
+      "422": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+      "default": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+    };
+  };
   "api_stream_chat_api_v1_chat_stream_post": {
     "parameters": {
       "path"?: never;
@@ -736,6 +798,34 @@ export interface operations {
         "application/json": components["schemas"]["ChatStreamEvent"];
         "text/event-stream": components["schemas"]["ChatStreamEvent"];
       };
+      };
+      "422": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+      "default": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+    };
+  };
+  "api_subscribe_conversation_run_api_v1_chat__conversation_id__events_get": {
+    "parameters": {
+      "path": {
+        "conversation_id": string;
+      };
+      "query"?: never;
+      "header"?: never;
+      "cookie"?: never;
+    };
+    "requestBody"?: never;
+    "responses": {
+      "200": {
+        "content": never;
       };
       "422": {
         "content": {
@@ -2347,8 +2437,17 @@ export interface paths {
   "/api/v1/chat/update": {
     "post": operations["api_update_conversation_api_v1_chat_update_post"];
   };
+  "/api/v1/chat/{conversation_id}/events": {
+    "get": operations["api_subscribe_conversation_run_api_v1_chat__conversation_id__events_get"];
+  };
   "/api/v1/chat/{conversation_id}/resume": {
     "post": operations["api_resume_chat_api_v1_chat__conversation_id__resume_post"];
+  };
+  "/api/v1/chat/{conversation_id}/run": {
+    "get": operations["api_get_conversation_run_status_api_v1_chat__conversation_id__run_get"];
+  };
+  "/api/v1/chat/{conversation_id}/stop": {
+    "post": operations["api_stop_conversation_run_api_v1_chat__conversation_id__stop_post"];
   };
   "/api/v1/chat/{conversation_id}/subagents/{analysis_id}/{agent_type}/{session_id}/runs/{delegation_id}/messages": {
     "get": operations["api_get_subagent_messages_api_v1_chat__conversation_id__subagents__analysis_id___agent_type___session_id__runs__delegation_id__messages_get"];

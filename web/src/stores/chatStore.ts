@@ -62,9 +62,14 @@ function createSubagentRun(
 }
 
 function messageAlreadyExists(messages: MessageResponse[], message: MessageResponse): boolean {
-  return (
-    message.message_id != null &&
-    messages.some((candidate) => candidate.message_id === message.message_id)
+  if (message.message_id != null) {
+    return messages.some((candidate) => candidate.message_id === message.message_id);
+  }
+  return messages.some(
+    (candidate) =>
+      candidate.message_id == null &&
+      candidate.role === message.role &&
+      JSON.stringify(candidate.parts) === JSON.stringify(message.parts)
   );
 }
 
@@ -148,12 +153,20 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       const response = await chatApi.getMessages(conversationId);
       const messages = response.data.messages;
       if (sessionLifecycle.isCurrent(generation)) {
-        set((state) => ({
-          messagesByConversation: {
-            ...state.messagesByConversation,
-            [conversationId]: messages,
-          },
-        }));
+        set((state) => {
+          const merged = [...messages];
+          for (const current of state.messagesByConversation[conversationId] ?? []) {
+            if (current.role !== "user" && !messageAlreadyExists(merged, current)) {
+              merged.push(current);
+            }
+          }
+          return {
+            messagesByConversation: {
+              ...state.messagesByConversation,
+              [conversationId]: merged,
+            },
+          };
+        });
       }
       return messages;
     } finally {
@@ -175,12 +188,16 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     }),
 
   appendMessage: (conversationId, message) =>
-    set((state) => ({
-      messagesByConversation: {
-        ...state.messagesByConversation,
-        [conversationId]: [...(state.messagesByConversation[conversationId] ?? []), message],
-      },
-    })),
+    set((state) => {
+      const current = state.messagesByConversation[conversationId] ?? [];
+      if (messageAlreadyExists(current, message)) return state;
+      return {
+        messagesByConversation: {
+          ...state.messagesByConversation,
+          [conversationId]: [...current, message],
+        },
+      };
+    }),
 
   appendSubagentMessage: (conversationId, event) =>
     set((state) => {
@@ -328,6 +345,11 @@ export const useChatStore = create<ChatState>()((set, get) => ({
 
   markStreaming: (conversationId) =>
     set((state) => ({
+      conversations: state.conversations.map((conversation) =>
+        conversation.conversation_id === conversationId
+          ? { ...conversation, running: true }
+          : conversation
+      ),
       streamingConversations: new Set([...state.streamingConversations, conversationId]),
     })),
 
@@ -335,7 +357,14 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     set((state) => {
       const next = new Set(state.streamingConversations);
       next.delete(conversationId);
-      return { streamingConversations: next };
+      return {
+        conversations: state.conversations.map((conversation) =>
+          conversation.conversation_id === conversationId
+            ? { ...conversation, running: false }
+            : conversation
+        ),
+        streamingConversations: next,
+      };
     }),
 
   reset: () => set(emptyChatState()),

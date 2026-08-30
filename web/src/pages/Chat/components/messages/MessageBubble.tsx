@@ -27,7 +27,7 @@ export function MessageBubble({
         <div className="px-1 py-1">
           <div className="space-y-1.5">
             {message.attachments?.length ? (
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-1.5">
                 {message.attachments.map((attachment) => (
                   <AttachmentChip
                     key={attachment.f_path}

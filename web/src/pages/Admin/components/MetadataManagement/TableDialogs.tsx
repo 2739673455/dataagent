@@ -57,10 +57,7 @@ export function TableCreateDialog({
       <div className="space-y-3">
         <div className="relative">
           <div className="flex items-center justify-between mb-1">
-            <label
-              htmlFor="metadata-new-table-name"
-              className="text-xs font-medium text-[#71717a]"
-            >
+            <label htmlFor="metadata-new-table-name" className="text-xs font-medium text-[#71717a]">
               表名称
             </label>
             {loadingSourceTables ? (
@@ -68,9 +65,7 @@ export function TableCreateDialog({
                 正在检索 Doris 物理表...
               </span>
             ) : sourceTables.length > 0 ? (
-              <span className="text-[10px] text-[#71717a]">
-                共 {sourceTables.length} 张物理表
-              </span>
+              <span className="text-[10px] text-[#71717a]">共 {sourceTables.length} 张物理表</span>
             ) : null}
           </div>
           <div className="relative">
@@ -179,9 +174,7 @@ export function TableCreateDialog({
           </p>
         </div>
         <AdminDialogActions>
-          <AdminDialogCancelButton onClick={onClose}>
-            取消
-          </AdminDialogCancelButton>
+          <AdminDialogCancelButton onClick={onClose}>取消</AdminDialogCancelButton>
           <AdminDialogPrimaryButton
             disabled={savingTable || !newTableName.trim() || !newTableDesc.trim()}
             onClick={() => void onSubmit()}
@@ -278,9 +271,7 @@ export function TableEditDialog({
           </p>
         </div>
         <AdminDialogActions>
-          <AdminDialogCancelButton onClick={onClose}>
-            取消
-          </AdminDialogCancelButton>
+          <AdminDialogCancelButton onClick={onClose}>取消</AdminDialogCancelButton>
           <AdminDialogPrimaryButton
             disabled={savingTable || !editTableDesc.trim()}
             onClick={() => void onSubmit()}
