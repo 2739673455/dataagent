@@ -1,7 +1,7 @@
 """Planner Agent 构造器"""
 
 from collections.abc import Sequence
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from deepagents import FilesystemMiddleware, create_deep_agent
 from deepagents.backends.protocol import BackendProtocol
@@ -25,7 +25,7 @@ from app.analytics.agents.tools import create_image_view_request_tool
 
 from .prompt import build_planner_system_prompt
 
-type InterpreterMode = Literal["thread", "turn", "call"]
+_INTERPRETER_PTC = ("delegation", "list_sessions", "delete_session")
 
 
 def create_planner_agent(
@@ -34,14 +34,12 @@ def create_planner_agent(
     tools: Sequence[BaseTool],
     backend: BackendProtocol,
     checkpointer: BaseCheckpointSaver,
-    interpreter_mode: InterpreterMode | None,
-    interpreter_ptc: Sequence[str | BaseTool],
     interpreter_memory_limit_bytes: int,
 ) -> CompiledStateGraph:
     """使用显式解释器配置编译 Planner Agent"""
     interpreter = CodeInterpreterMiddleware(
-        mode=interpreter_mode,
-        ptc=list(interpreter_ptc),
+        mode="thread",
+        ptc=list(_INTERPRETER_PTC),
         timeout=float("inf"),
         memory_limit=interpreter_memory_limit_bytes,
         max_ptc_calls=None,

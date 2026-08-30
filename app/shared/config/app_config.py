@@ -111,7 +111,6 @@ class LifecycleConfig(BaseModel):
     """跨存储资源生命周期配置"""
 
     draft_ttl_minutes: int = Field(gt=0)
-    cleanup_interval_seconds: int = Field(gt=0)
     cleanup_batch_size: int = Field(gt=0, le=1000)
     user_deletion_retry_seconds: int = Field(gt=0)
 
@@ -225,7 +224,6 @@ class LMConfigCfg(BaseModel):
 class OrchestrationConfig(BaseModel):
     """动态专业 Agent 编排限制"""
 
-    mode: Literal["dynamic_subagents"]
     max_parallel_sessions: int = Field(gt=0)
     max_continuations: int = Field(ge=0)
 
@@ -233,8 +231,6 @@ class OrchestrationConfig(BaseModel):
 class InterpreterConfig(BaseModel):
     """Planner 内嵌解释器配置"""
 
-    mode: Literal["thread"]
-    ptc: list[Literal["delegation", "list_sessions", "delete_session"]]
     memory_limit_bytes: int = Field(gt=0)
 
 

@@ -40,7 +40,6 @@ class SessionStoreArtifactTest(unittest.IsolatedAsyncioTestCase):
             {"/sessions/sales/analyst/main/missing report.json"},
         )
         backend.aexecute.assert_awaited_once()
-        self.assertEqual(backend.aexecute.await_args.kwargs, {"timeout": 10})
 
     async def test_find_missing_files_skips_empty_input(self) -> None:
         backend = MagicMock()

@@ -25,7 +25,6 @@ class FakePersistenceManager:
 def build_config() -> LifecycleConfig:
     return LifecycleConfig(
         draft_ttl_minutes=60,
-        cleanup_interval_seconds=30,
         cleanup_batch_size=100,
         user_deletion_retry_seconds=10,
     )

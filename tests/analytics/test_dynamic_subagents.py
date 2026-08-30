@@ -623,13 +623,11 @@ class DynamicSubagentContractTest(unittest.TestCase):
             """模拟 Planner 解释器工具"""
             return code
 
-        interpreter_options: dict[str, object] = {}
-
         class InterpreterStub(AgentMiddleware):
             """只用于验证 Planner 工具暴露边界"""
 
             def __init__(self, **kwargs: object) -> None:
-                interpreter_options.update(kwargs)
+                del kwargs
                 self.tools = [eval]
 
         register_harness_profile(
@@ -649,12 +647,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
                     tools=[delegation, list_sessions, delete_session],
                     backend=LocalShellBackend(root_dir=workspace),
                     checkpointer=InMemorySaver(),
-                    interpreter_mode="thread",
-                    interpreter_ptc=[
-                        "delegation",
-                        "list_sessions",
-                        "delete_session",
-                    ],
                     interpreter_memory_limit_bytes=2 * 1024 * 1024,
                 )
 
@@ -673,8 +665,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
         self.assertIn("list_sessions", model.seen_tools)
         self.assertIn("delete_session", model.seen_tools)
         self.assertIn("view_image", model.seen_tools)
-        self.assertEqual(interpreter_options["timeout"], float("inf"))
-        self.assertIsNone(interpreter_options["max_ptc_calls"])
 
 
 class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):

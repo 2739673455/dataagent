@@ -1,171 +1,156 @@
-# 应用基础配置
-port: 7000
+port: 7000 # 后端 HTTP 服务监听端口
 
-cors_origins: []
+cors_origins: [] # 允许跨域访问后端的前端 Origin 列表
 
-log:
+log: # 应用日志输出配置
   level: INFO # 日志级别 (DEBUG, INFO, WARNING, ERROR, CRITICAL)
   rotation: 10MB # 日志文件滚动大小
 
-# 数据连接与检索配置
-doris:
-  host: 127.0.0.1
-  port: 9030
-  user: atguigu
-  password: ${oc.env:DORIS_ADMIN_PASSWORD}
-  database: ecommerce
+doris: # Doris 管理连接，用于角色权限管理等平台操作
+  host: 127.0.0.1 # 数据服务主机地址
+  port: 9030 # 数据服务连接端口
+  user: atguigu # 连接账号
+  password: ${oc.env:DORIS_ADMIN_PASSWORD} # 连接密码，使用环境变量注入
+  database: ecommerce # 默认连接数据库
 
-auth_postgresql:
+auth_postgresql: # 用户、令牌、Doris 角色投影和注销任务数据库
   host: 127.0.0.1
   port: 5432
   user: atguigu
   password: ${oc.env:POSTGRES_PASSWORD}
   database: auth
 
-meta_postgresql:
+meta_postgresql: # 元数据、查询经验、执行记录和召回快照数据库
   host: 127.0.0.1
   port: 5432
   user: atguigu
   password: ${oc.env:POSTGRES_PASSWORD}
   database: meta
 
-langgraph_postgresql:
+langgraph_postgresql: # Conversation 目录、删除墓碑和 LangGraph Checkpoint 数据库
   host: 127.0.0.1
   port: 5432
   user: atguigu
   password: ${oc.env:POSTGRES_PASSWORD}
   database: langgraph
 
-doris_credentials:
-  encryption_key: ${oc.env:DORIS_CREDENTIAL_ENCRYPTION_KEY}
+doris_credentials: # Doris 查询身份密码的应用侧加密配置
+  encryption_key: ${oc.env:DORIS_CREDENTIAL_ENCRYPTION_KEY} # Fernet 密钥
 
-elasticsearch:
+elasticsearch: # 语义检索使用的 Elasticsearch 连接和索引名称
   host: 127.0.0.1
   port: 9200
-  column_index: data-agent-column
-  metric_index: data-agent-metric
-  value_index: data-agent-value
-  query_experience_index: data-agent-query-experience
-  embedding_size: 1024
+  column_index: data-agent-column # 元数据字段语义索引
+  metric_index: data-agent-metric # 指标语义索引
+  value_index: data-agent-value # 字段取值语义索引
+  query_experience_index: data-agent-query-experience # 查询经验语义索引
+  embedding_size: 1024 # 索引向量维度，必须与嵌入模型输出一致
 
-embedding:
-  base_url: https://api.siliconflow.cn/v1
-  api_key: ${oc.env:SILICONFLOW_API_KEY}
-  model: BAAI/bge-m3
-  timeout: 30.0
+embedding: # 文本向量化服务配置
+  base_url: https://api.siliconflow.cn/v1 # OpenAI 兼容 API 地址
+  api_key: ${oc.env:SILICONFLOW_API_KEY} # API 密钥，使用环境变量注入
+  model: BAAI/bge-m3 # 嵌入模型标识
+  timeout: 30.0 # 单次嵌入请求超时，单位为秒
 
-# 元数据索引配置
-metadata_index:
-  value_lookback_seconds: 300
+metadata_index: # 元数据索引同步策略
+  value_lookback_seconds: 300 # 增量取值索引同步的回看窗口，单位为秒
 
-# 后台任务配置
-task_queue:
-  broker_url: redis://127.0.0.1:6379/0
-  result_backend: redis://127.0.0.1:6379/1
-  result_expires_seconds: 86400
-  task_time_limit_seconds: 3600
-  task_soft_time_limit_seconds: 3300
-  worker_prefetch_multiplier: 1
-  value_index_sync_time: "08:00"
-  lifecycle_schedule_seconds: 300
-  query_experience_repair_seconds: 300
+task_queue: # Celery 队列、任务生命周期和定时调度配置
+  broker_url: redis://127.0.0.1:6379/0 # Celery Broker 地址
+  result_backend: redis://127.0.0.1:6379/1 # Celery 任务结果存储地址
+  result_expires_seconds: 86400 # 任务结果保留时间，单位为秒
+  task_time_limit_seconds: 3600 # 单个任务硬时间上限，单位为秒
+  task_soft_time_limit_seconds: 3300 # 单个任务软时间上限，单位为秒
+  worker_prefetch_multiplier: 1 # 每个 Worker Process 预取的任务数量
+  value_index_sync_time: "08:00" # 每日取值索引调度时间，使用本地 HH:MM
+  lifecycle_schedule_seconds: 300 # 草稿和 Conversation 生命周期扫描间隔，单位为秒
+  query_experience_repair_seconds: 300 # 查询经验索引修复调度间隔，单位为秒
 
-# 身份与生命周期配置
-auth:
-  jwt_secret: ${oc.env:JWT_SECRET}
-  jwt_algorithm: HS256
-  issuer: dataagent
-  access_token_minutes: 15
-  refresh_token_days: 30
-  password_min_length: 6
+auth: # 登录令牌和密码策略
+  jwt_secret: ${oc.env:JWT_SECRET} # JWT 签名密钥，使用环境变量注入
+  jwt_algorithm: HS256 # JWT 签名算法
+  issuer: dataagent # JWT 签发者标识
+  access_token_minutes: 15 # Access Token 有效期，单位为分钟
+  refresh_token_days: 30 # Refresh Token 有效期，单位为天
+  password_min_length: 6 # 用户密码最小字符数
 
-lifecycle:
-  draft_ttl_minutes: 1440
-  cleanup_interval_seconds: 300
-  cleanup_batch_size: 100
-  user_deletion_retry_seconds: 60
+lifecycle: # 跨存储 Conversation 和用户资源清理策略
+  draft_ttl_minutes: 1440 # 未完成草稿保留时间，单位为分钟
+  cleanup_batch_size: 100 # 单次清理或任务领取的最大记录数
+  user_deletion_retry_seconds: 60 # 用户注销失败后的重新调度间隔，单位为秒
 
-# 查询与沙箱配置
-query:
-  data_source: doris
-  timeout_seconds: 300
-  memory_limit_bytes: 1073741824
-  batch_size: 100
-  sample_rows: 5
-  query_experience_vector_score_threshold: 0.65
+query: # Agent 只读 SQL 执行和查询经验召回配置
+  data_source: doris # SQL 查询数据源标识
+  timeout_seconds: 300 # 单条 SQL 执行超时，单位为秒
+  memory_limit_bytes: 1073741824 # 单条 SQL 在 Doris 中的内存上限，单位为字节
+  batch_size: 100 # 服务端游标每批读取的结果行数
+  sample_rows: 5 # 查询结果摘要保留的样例行数
+  query_experience_vector_score_threshold: 0.65 # 查询经验向量召回最低相似度
 
-sandbox:
+sandbox: # 每用户 Docker 沙箱及其持久化数据卷配置
   deployment_namespace: local # 同一 Docker 主机上的部署实例必须使用不同命名空间
-  ownership:
-    redis_url: redis://127.0.0.1:6379/2
-    lock_timeout_seconds: 60
-    wait_timeout_seconds: 60
-    lease_seconds: 30
-  image: dataagent-sandbox:latest
+  ownership: # 跨 API 和 Worker 进程的沙箱所有权协调
+    redis_url: redis://127.0.0.1:6379/2 # 所有权锁、租约和活动状态 Redis 地址
+    lock_timeout_seconds: 60 # 分布式锁租期，持锁期间自动续期，单位为秒
+    wait_timeout_seconds: 60 # 等待锁、维护或活跃操作结束的上限，单位为秒
+    lease_seconds: 30 # 普通沙箱操作租约时长，执行期间自动续期，单位为秒
+  image: dataagent-sandbox:latest # 用户沙箱使用的 Docker 镜像
   network_mode: none # 运行时断网，依赖统一构建到沙箱镜像
-  memory_limit: 2g
+  memory_limit: 2g # 单个用户容器的 Docker 内存限制
   nano_cpus: 2000000000 # 每个用户沙箱最多使用 2 个 CPU 核心
-  pids_limit: 256
+  pids_limit: 256 # 单个用户容器允许的最大进程数
   internal_command_timeout_seconds: 60 # Sandbox 内部辅助命令硬超时
-  max_file_bytes: 104857600
-  max_workspace_bytes: 1073741824
+  max_file_bytes: 104857600 # 单个工作区文件上限，单位为字节
+  max_workspace_bytes: 1073741824 # 单个 Conversation 工作区容量上限，单位为字节
   workspace_quota_mode: application # 生产环境应改为 volume_driver 并使用支持硬配额的卷驱动
-  volume_driver: local
-  volume_driver_options: {}
+  volume_driver: local # 用户持久化数据卷使用的 Docker Volume Driver
+  volume_driver_options: {} # Volume Driver 参数，支持配置字段占位符
   max_running_containers: 8 # 按部署机器容量调整，超出后等待或回收空闲容器
-  max_capacity_waiters: 2048
-  capacity_wait_timeout_seconds: 60
+  max_capacity_waiters: 2048 # 部署实例允许排队等待容器容量的请求数
+  capacity_wait_timeout_seconds: 60 # 单个请求等待容器容量的上限，单位为秒
   idle_stop_seconds: 600 # 空闲 10 分钟后停止容器
   idle_remove_seconds: 3600 # 空闲 1 小时后删除容器，但保留用户数据卷
-  cleanup_interval_seconds: 60
-  cleanup_failure_alert_threshold: 3
-  stop_containers_on_shutdown: true
+  cleanup_interval_seconds: 60 # 沙箱空闲资源扫描间隔，单位为秒
+  cleanup_failure_alert_threshold: 3 # 连续清理失败达到该次数后记录告警
+  stop_containers_on_shutdown: true # 服务关闭时是否停止本实例管理的用户容器
 
-# 模型与智能体配置
-lm_config:
-  active: deepseek-v4-flash-openrouter
-  models:
-    deepseek-v4-flash-openrouter:
-      model_provider: openai
-      model: deepseek/deepseek-v4-flash-0731
-      base_url: https://openrouter.ai/api/v1
-      api_key: ${oc.env:OPENROUTER_API_KEY}
-      params: {}
-      profile:
+lm_config: # 可用语言模型集合及默认模型
+  active: deepseek-v4-flash-openrouter # Planner 和默认 Specialist 使用的模型配置名
+  models: # 按配置名声明可用语言模型
+    deepseek-v4-flash-openrouter: # 模型配置名，可由 active 或 Specialist 引用
+      model_provider: openai # LangChain 模型供应商类型
+      model: deepseek/deepseek-v4-flash-0731 # 供应商侧模型标识
+      base_url: https://openrouter.ai/api/v1 # 模型供应商 API 地址
+      api_key: ${oc.env:OPENROUTER_API_KEY} # 模型供应商 API 密钥
+      params: {} # 传给模型客户端的附加初始化参数
+      profile: # 模型能力描述和上下文限制
         max_input_tokens: 1048576 # 模型上下文长度，用于计算对话压缩阈值
-    qwen3.6-plus-openrouter:
+    qwen3.6-plus-openrouter: # 第二个可选模型配置
       model_provider: openai
       model: qwen/qwen3.8-flash
       base_url: https://openrouter.ai/api/v1
       api_key: ${oc.env:OPENROUTER_API_KEY}
       params: {}
       profile:
-        max_input_tokens: 1000000 # 模型上下文长度，用于计算对话压缩阈值
+        max_input_tokens: 1000000
 
-agent:
-  orchestration:
-    mode: dynamic_subagents
-    max_parallel_sessions: 8
-    max_continuations: 3
-  interpreter:
-    mode: thread
-    ptc:
-      - delegation
-      - list_sessions
-      - delete_session
-    memory_limit_bytes: 67108864
-  specialists:
-    explorer:
+agent: # Planner 和 Specialist 运行时配置
+  orchestration: # 动态 Specialist 编排限制
+    max_parallel_sessions: 8 # 同一 Conversation 同时执行的 Specialist Session 上限
+    max_continuations: 3 # 单个用户回合允许 Planner 自动续写的最大次数
+  interpreter: # Planner 内嵌 QuickJS 解释器配置
+    memory_limit_bytes: 67108864 # QuickJS Heap 内存上限，单位为字节
+  specialists: # 各 Specialist 的模型选择，default 表示跟随 lm_config.active
+    explorer: # 数据发现 Specialist
+      model: default # Specialist 使用的语言模型配置名
+    analyst: # 数据分析 Specialist
       model: default
-    analyst:
+    reviewer: # 结果审查 Specialist
       model: default
-    reviewer:
-      model: default
-    visualizer:
+    visualizer: # 可视化 Specialist
       model: default
 
-# 外部工具配置
 mcp: # 格式参考：https://docs.langchain.com/oss/python/langchain/mcp#transports
-  tavily:
-    transport: streamable_http
-    url: https://mcp.tavily.com/mcp/?tavilyApiKey=${oc.env:TAVILY_API_KEY}
+  tavily: # MCP 服务配置名
+    transport: streamable_http # MCP 连接传输方式
+    url: https://mcp.tavily.com/mcp/?tavilyApiKey=${oc.env:TAVILY_API_KEY} # MCP 服务地址
