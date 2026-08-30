@@ -160,6 +160,47 @@ describe("session lifecycle", () => {
     }
   });
 
+  test("background message sync does not replace the chat area with loading state", async () => {
+    const conversationId = "00000000-0000-4000-8000-000000000003";
+    const originalGetMessages = chatApi.getMessages;
+    const messages = deferred<Awaited<ReturnType<typeof chatApi.getMessages>>>();
+    chatApi.getMessages = () => messages.promise;
+
+    try {
+      useChatStore.getState().appendMessage(conversationId, {
+        message_id: "live-answer",
+        role: "assistant",
+        parts: [{ type: "text", text: "实时生成的回答" }],
+      });
+
+      const syncing = useChatStore.getState().syncMessages(conversationId);
+      expect(useChatStore.getState().isLoadingMessages).toBe(false);
+      expect(useChatStore.getState().messagesByConversation[conversationId]).toHaveLength(1);
+
+      messages.resolve({
+        data: {
+          messages: [
+            {
+              message_id: "live-answer",
+              role: "assistant",
+              parts: [{ type: "text", text: "完整持久化回答" }],
+            },
+          ],
+        },
+      } as Awaited<ReturnType<typeof chatApi.getMessages>>);
+      await syncing;
+
+      expect(useChatStore.getState().isLoadingMessages).toBe(false);
+      expect(useChatStore.getState().messagesByConversation[conversationId][0].parts[0]).toEqual({
+        type: "text",
+        text: "完整持久化回答",
+      });
+    } finally {
+      chatApi.getMessages = originalGetMessages;
+      sessionLifecycle.transition();
+    }
+  });
+
   test("refresh commit requires the same generation and token", () => {
     const snapshot = {
       generation: sessionLifecycle.current(),

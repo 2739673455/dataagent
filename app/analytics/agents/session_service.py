@@ -10,7 +10,13 @@ from threading import Lock as ThreadLock
 from typing import cast
 from uuid import UUID, uuid4
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    HumanMessage,
+    ToolMessage,
+)
 from langchain_core.runnables import RunnableConfig
 from langgraph.constants import CONFIG_KEY_CHECKPOINTER
 from langgraph.graph.state import CompiledStateGraph
@@ -18,6 +24,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.analytics.agents.contracts import (
     DELEGATION_CONTEXT_KEY,
+    MESSAGE_CREATED_AT_KEY,
     DelegationActivityHistory,
     DelegationMessageContext,
     DelegationRequest,
@@ -30,8 +37,10 @@ from app.analytics.agents.contracts import (
     SpecialistResult,
     SubagentActivityWriter,
     SubagentMessageActivity,
+    SubagentMessageDeltaActivity,
     SubagentRunStatus,
     SubagentStatusActivity,
+    SubagentThinkingDeltaActivity,
     get_thread_id,
 )
 from app.analytics.agents.session_store import AgentSessionStore
@@ -341,9 +350,7 @@ class AgentSessionService:
         )
         artifact_paths = {artifact.path for artifact in result.artifacts}
         invalid_artifacts = sorted(
-            path
-            for path in artifact_paths
-            if not path.startswith(session_prefix)
+            path for path in artifact_paths if not path.startswith(session_prefix)
         )
         if invalid_artifacts:
             raise ValueError(
@@ -462,6 +469,52 @@ class AgentSessionService:
             AIMessage | ToolMessage,
         )
 
+    @staticmethod
+    def _reasoning_content(message: BaseMessage) -> str | None:
+        """读取模型返回的完整思考或思考增量"""
+        reasoning = message.additional_kwargs.get("reasoning_content")
+        if not isinstance(reasoning, str) or not reasoning:
+            return None
+        return reasoning
+
+    @staticmethod
+    def _text_content(message: BaseMessage) -> str | None:
+        """读取模型消息中的正文文本或正文增量"""
+        content = message.content
+        if isinstance(content, str):
+            return content or None
+        if not isinstance(content, list):
+            return None
+        text_parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                text_parts.append(item)
+            elif (
+                isinstance(item, dict)
+                and item.get("type") in {"text", "output_text"}
+                and isinstance(item.get("text"), str)
+            ):
+                text_parts.append(item["text"])
+        text = "".join(text_parts)
+        return text or None
+
+    @classmethod
+    def _reasoning_only_message(cls, message: AIMessage) -> AIMessage | None:
+        """将结构化协议响应投影为只含思考的公开消息"""
+        reasoning = cls._reasoning_content(message)
+        if reasoning is None:
+            return None
+        additional_kwargs: dict[str, object] = {"reasoning_content": reasoning}
+        created_at = message.additional_kwargs.get(MESSAGE_CREATED_AT_KEY)
+        if created_at is not None:
+            additional_kwargs[MESSAGE_CREATED_AT_KEY] = created_at
+        return AIMessage(
+            id=message.id,
+            content="",
+            additional_kwargs=additional_kwargs,
+            response_metadata=message.response_metadata,
+        )
+
     async def _stream_specialist(
         self,
         agent: CompiledStateGraph,
@@ -476,10 +529,12 @@ class AgentSessionService:
         """执行 Specialist 并把节点消息投影为当前 Planner 的活动流"""
         final_values: Mapping[str, object] | None = None
         emitted_message_ids: set[str] = set()
+        thinking_message_ids: set[str] = set()
+        text_message_ids: set[str] = set()
         async for part in agent.astream(
             input_state,
             config=config,
-            stream_mode=["updates", "values"],
+            stream_mode=["updates", "values", "messages"],
             version="v2",
         ):
             if not isinstance(part, Mapping):
@@ -488,6 +543,47 @@ class AgentSessionService:
             data = part.get("data")
             if part_type == "values" and isinstance(data, Mapping):
                 final_values = data
+                continue
+            if (
+                emit_messages
+                and activity_writer is not None
+                and part_type == "messages"
+                and isinstance(data, tuple)
+                and len(data) == 2
+            ):
+                message, _metadata = data
+                if isinstance(message, AIMessageChunk):
+                    if message.id is None:
+                        continue
+                    message_id = str(message.id)
+                    if reasoning := self._reasoning_content(message):
+                        reset = message_id not in thinking_message_ids
+                        thinking_message_ids.add(message_id)
+                        activity_writer(
+                            SubagentThinkingDeltaActivity(
+                                delegation_id=delegation_id,
+                                analysis_id=request.analysis_id,
+                                agent_type=request.agent_type,
+                                session_id=request.session_id,
+                                message_id=message_id,
+                                delta=reasoning,
+                                reset=reset,
+                            )
+                        )
+                    if text := self._text_content(message):
+                        reset = message_id not in text_message_ids
+                        text_message_ids.add(message_id)
+                        activity_writer(
+                            SubagentMessageDeltaActivity(
+                                delegation_id=delegation_id,
+                                analysis_id=request.analysis_id,
+                                agent_type=request.agent_type,
+                                session_id=request.session_id,
+                                message_id=message_id,
+                                delta=text,
+                                reset=reset,
+                            )
+                        )
                 continue
             if (
                 not emit_messages
@@ -507,19 +603,27 @@ class AgentSessionService:
                 for message in messages:
                     if not isinstance(message, BaseMessage):
                         continue
-                    if not self._is_public_activity_message(message):
-                        continue
-                    if message.id is not None:
-                        if message.id in emitted_message_ids:
+                    public_message = message
+                    if self._is_structured_response_message(message):
+                        if not isinstance(message, AIMessage):
                             continue
-                        emitted_message_ids.add(message.id)
+                        reasoning_message = self._reasoning_only_message(message)
+                        if reasoning_message is None:
+                            continue
+                        public_message = reasoning_message
+                    elif not self._is_public_activity_message(message):
+                        continue
+                    if public_message.id is not None:
+                        if public_message.id in emitted_message_ids:
+                            continue
+                        emitted_message_ids.add(public_message.id)
                     activity_writer(
                         SubagentMessageActivity(
                             delegation_id=delegation_id,
                             analysis_id=request.analysis_id,
                             agent_type=request.agent_type,
                             session_id=request.session_id,
-                            message=message,
+                            message=public_message,
                         )
                     )
         if final_values is None:
@@ -573,6 +677,10 @@ class AgentSessionService:
                 delegation_status = (
                     self._structured_response_status(message) or delegation_status
                 )
+                if isinstance(message, AIMessage):
+                    reasoning_message = self._reasoning_only_message(message)
+                    if reasoning_message is not None:
+                        result.append(reasoning_message)
                 continue
             if self._is_public_activity_message(message):
                 result.append(message)

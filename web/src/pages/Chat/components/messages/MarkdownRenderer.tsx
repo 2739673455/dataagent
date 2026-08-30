@@ -1,10 +1,11 @@
-import { Check, Copy } from "lucide-react";
+import { Check, ChevronRight, Copy } from "lucide-react";
 import type React from "react";
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { cn } from "@/lib/utils";
-import type { MessagePart } from "@/types";
+import type { MessagePart, ThinkingContent } from "@/types";
 
 const IsInsidePreContext = createContext(false);
 
@@ -95,9 +96,14 @@ export function MarkdownCode({
   );
 }
 
-export function MarkdownText({ text }: { text: string }) {
+export function MarkdownText({ text, className }: { text: string; className?: string }) {
   return (
-    <div className="font-mono text-sm leading-relaxed text-[#1e2024] [&>*:last-child]:mb-0">
+    <div
+      className={cn(
+        "font-mono text-sm leading-relaxed text-[#1e2024] [&>*:last-child]:mb-0",
+        className
+      )}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -173,6 +179,46 @@ export function MarkdownText({ text }: { text: string }) {
   );
 }
 
+function ThinkingView({ part }: { part: ThinkingContent }) {
+  const [open, setOpen] = useState(part.status === "streaming");
+
+  useEffect(() => {
+    setOpen(part.status === "streaming");
+  }, [part.status]);
+
+  const label =
+    part.status === "streaming"
+      ? "思考中"
+      : part.status === "interrupted"
+        ? "思考已中断"
+        : "思考过程";
+
+  return (
+    <div className="my-1 text-[#71717a]">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="flex items-center gap-1.5 py-0.5 text-xs transition-colors hover:text-[#3f3f46]"
+      >
+        <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")} />
+        {part.status === "streaming" ? (
+          <DotMatrixLoader className="text-[#71717a]" label="模型正在思考" />
+        ) : null}
+        <span>{label}</span>
+      </button>
+      {open ? (
+        <div className="ml-[7px] mt-1 border-l border-[#d4d4ce] pl-4">
+          <MarkdownText
+            text={part.text}
+            className="text-[13px] text-[#6f6f78] [&_*]:!text-[#6f6f78] [&_h1]:!text-sm [&_h2]:!text-[13px] [&_h3]:!text-[13px]"
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function PartView({
   part,
   onPreview,
@@ -210,6 +256,10 @@ export function PartView({
         <img src={part.image_url} alt="asset" className="max-h-72 rounded object-cover" />
       </button>
     );
+  }
+
+  if (part.type === "thinking") {
+    return <ThinkingView part={part} />;
   }
 
   return null;

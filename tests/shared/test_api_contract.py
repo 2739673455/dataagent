@@ -32,9 +32,13 @@ class ApiContractTests(unittest.TestCase):
         self.assertIn("type", schemas["TextContent"]["required"])
         for event_name in (
             "ChatStreamMessageEvent",
+            "ChatStreamThinkingEvent",
+            "ChatStreamMessageDeltaEvent",
             "ChatStreamErrorEvent",
             "ChatStreamDoneEvent",
             "ChatStreamSubagentMessageEvent",
+            "ChatStreamSubagentThinkingEvent",
+            "ChatStreamSubagentMessageDeltaEvent",
             "ChatStreamSubagentStatusEvent",
         ):
             self.assertIn("type", schemas[event_name]["required"])
@@ -68,7 +72,7 @@ class ApiContractTests(unittest.TestCase):
             stream_response["content"]["text/event-stream"]["schema"],
         )
         self.assertEqual(
-            5,
+            9,
             len(schemas["ChatStreamEvent"]["oneOf"]),
         )
 

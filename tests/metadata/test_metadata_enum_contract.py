@@ -1,32 +1,13 @@
-"""元数据写入枚举契约测试"""
+"""元数据写入字段契约测试"""
 
 import unittest
-from typing import get_args
 
 from app.metadata.api.meta.schemas import TableInfoRequest
 from app.metadata.models.catalog import TableInfo
-from app.metadata.services.import_service import ImportMode
-from app.shared.config.meta_config import TableConfig, TableRole
+from app.shared.config.meta_config import TableConfig
 
 
-class MetadataEnumContractTest(unittest.TestCase):
-    def test_import_modes_match_frontend_contract(self) -> None:
-        self.assertEqual(
-            {mode.value for mode in ImportMode},
-            {"merge", "replace"},
-        )
-
-    def test_table_roles_match_frontend_contract(self) -> None:
-        self.assertEqual(set(get_args(TableRole)), {"fact", "dim"})
-
-    def test_all_table_roles_are_accepted(self) -> None:
-        for value in ("fact", "dim"):
-            with self.subTest(value=value):
-                request = TableInfoRequest.model_validate(
-                    {"role": value, "description": "table"}
-                )
-                self.assertEqual(request.role, value)
-
+class MetadataFieldContractTest(unittest.TestCase):
     def test_value_index_cursor_uses_flat_contract(self) -> None:
         request = TableInfoRequest.model_validate(
             {

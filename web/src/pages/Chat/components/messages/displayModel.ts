@@ -7,6 +7,7 @@ import type {
   MessageResponse,
   SubagentRunStatus,
   TextContent,
+  ThinkingContent,
 } from "@/types";
 import type {
   ChatTurn,
@@ -56,6 +57,8 @@ export function getMessagePartKey(part: MessagePart): string {
       return `text-${part.text}`;
     case "image_url":
       return `image-${part.image_url}`;
+    case "thinking":
+      return "thinking";
     case "tool_call":
       return `tool-call-${part.tool_call_id}-${part.name}`;
     case "tool_result":
@@ -167,7 +170,7 @@ export function buildDisplayItems(
   const toolRuns = new Map<string, ToolRunDisplayItem>();
 
   for (const message of messages) {
-    const regularParts: Array<TextContent | ImageContent> = [];
+    const regularParts: Array<TextContent | ImageContent | ThinkingContent> = [];
     const toolParts: Array<Extract<MessagePart, { type: "tool_call" | "tool_result" }>> = [];
 
     for (const part of message.parts) {
@@ -180,6 +183,11 @@ export function buildDisplayItems(
 
       if (part.type === "image_url") {
         regularParts.push(part);
+        continue;
+      }
+
+      if (part.type === "thinking") {
+        if (part.text) regularParts.push(part);
         continue;
       }
 
@@ -198,6 +206,7 @@ export function buildDisplayItems(
           key: getMessageKey(message),
           conversationId,
           createdAt: message.created_at,
+          finishReason: message.finish_reason,
           role: message.role,
           attachments: message.attachments,
           parts: regularParts,
@@ -293,14 +302,12 @@ export function buildEvalDelegationItems(
       toolCallId: run.delegationId,
       conversationId: parent.conversationId,
       name: "delegation",
-      args:
-        existing?.args ??
-        {
-          analysis_id: run.analysisId,
-          agent_type: run.agentType,
-          session_id: run.sessionId,
-          message: run.instruction ?? "",
-        },
+      args: existing?.args ?? {
+        analysis_id: run.analysisId,
+        agent_type: run.agentType,
+        session_id: run.sessionId,
+        message: run.instruction ?? "",
+      },
       result: existing?.result,
       completed: existing?.completed === true || completed,
       interrupted: run.status === "cancelled" || run.status === "interrupted",
@@ -323,7 +330,16 @@ export function groupDisplayItemsIntoTurns(displayItems: DisplayItem[]): ChatTur
 
     if (currentAssistantItems.length > 0) {
       const lastItem = currentAssistantItems[currentAssistantItems.length - 1];
-      if (lastItem.type === "message" && lastItem.message.role === "assistant") {
+      const hasVisibleAnswer =
+        lastItem.type === "message" &&
+        ((lastItem.message.attachments?.length ?? 0) > 0 ||
+          lastItem.message.parts.some((part) => part.type !== "thinking"));
+      if (
+        lastItem.type === "message" &&
+        lastItem.message.role === "assistant" &&
+        lastItem.message.finishReason !== "interrupted" &&
+        hasVisibleAnswer
+      ) {
         finalItem = lastItem;
         intermediateItems = currentAssistantItems.slice(0, currentAssistantItems.length - 1);
       } else {

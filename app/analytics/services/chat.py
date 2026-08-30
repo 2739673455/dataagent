@@ -10,6 +10,7 @@ from uuid import UUID
 
 from langchain_core.messages import (
     AIMessage,
+    AIMessageChunk,
     BaseMessage,
     ChatMessage,
     HumanMessage,
@@ -29,7 +30,9 @@ from app.analytics.agents.contracts import (
     PlannerTurnContext,
     SubagentActivity,
     SubagentMessageActivity,
+    SubagentMessageDeltaActivity,
     SubagentStatusActivity,
+    SubagentThinkingDeltaActivity,
     build_planner_config,
 )
 from app.analytics.agents.explorer.semantic_recall_middleware import (
@@ -101,6 +104,24 @@ def _content_to_parts(content: Any) -> list[chat_schema.MessagePart]:
                 chat_schema.ImageContent(type="image_url", image_url=image_url)
             )
     return parts
+
+
+def _reasoning_content(message: BaseMessage) -> str | None:
+    """读取模型供应商返回的完整思考或思考增量"""
+    reasoning = message.additional_kwargs.get("reasoning_content")
+    if not isinstance(reasoning, str) or not reasoning:
+        return None
+    return reasoning
+
+
+def _text_content(message: BaseMessage) -> str | None:
+    """读取模型消息中的正文文本或正文增量"""
+    text = "".join(
+        part.text
+        for part in _content_to_parts(message.content)
+        if isinstance(part, chat_schema.TextContent)
+    )
+    return text or None
 
 
 def _transform_artifact_directives(
@@ -363,8 +384,7 @@ def _langchain_message_to_schema(
                                 )
                                 for artifact in record.result.artifacts
                             ]
-                            if record.result is not None
-                            and record.result.artifacts
+                            if record.result is not None and record.result.artifacts
                             else None
                         ),
                     )
@@ -404,6 +424,15 @@ def _langchain_message_to_schema(
 
     parts = _content_to_parts(message.content)
     if isinstance(message, AIMessage):
+        if reasoning := _reasoning_content(message):
+            parts.insert(
+                0,
+                chat_schema.ThinkingContent(
+                    type="thinking",
+                    text=reasoning,
+                    status="complete",
+                ),
+            )
         parts.extend(
             chat_schema.ToolCallPart(
                 type="tool_call",
@@ -448,6 +477,32 @@ async def _subagent_activity_to_event(
             agent_type=activity.agent_type,
             session_id=activity.session_id,
             message=message,
+            parent_tool_call_id=activity.parent_tool_call_id,
+            instruction=activity.instruction,
+        )
+    if isinstance(activity, SubagentThinkingDeltaActivity):
+        return chat_schema.ChatStreamSubagentThinkingEvent(
+            type="subagent_thinking",
+            delegation_id=activity.delegation_id,
+            analysis_id=activity.analysis_id,
+            agent_type=activity.agent_type,
+            session_id=activity.session_id,
+            message_id=activity.message_id,
+            delta=activity.delta,
+            reset=activity.reset,
+            parent_tool_call_id=activity.parent_tool_call_id,
+            instruction=activity.instruction,
+        )
+    if isinstance(activity, SubagentMessageDeltaActivity):
+        return chat_schema.ChatStreamSubagentMessageDeltaEvent(
+            type="subagent_message_delta",
+            delegation_id=activity.delegation_id,
+            analysis_id=activity.analysis_id,
+            agent_type=activity.agent_type,
+            session_id=activity.session_id,
+            message_id=activity.message_id,
+            delta=activity.delta,
+            reset=activity.reset,
             parent_tool_call_id=activity.parent_tool_call_id,
             instruction=activity.instruction,
         )
@@ -582,7 +637,7 @@ async def _execute_agent(
     async for chunk in runtime.planner.astream(
         input={"messages": input_messages} if input_messages is not None else None,
         config=config,
-        stream_mode=["updates", "custom"],
+        stream_mode=["updates", "custom", "messages"],
         version="v2",
     ):
         yield chunk
@@ -604,6 +659,8 @@ async def _run_agent_turn(
         runtime=runtime,
     ) as turn_context:
         continuation_count = 0
+        thinking_message_ids: set[str] = set()
+        text_message_ids: set[str] = set()
         while True:
             last_finish_reason: str | None = None
 
@@ -620,7 +677,12 @@ async def _run_agent_turn(
                     activity = chunk.get("data")
                     if isinstance(
                         activity,
-                        (SubagentMessageActivity, SubagentStatusActivity),
+                        (
+                            SubagentMessageActivity,
+                            SubagentMessageDeltaActivity,
+                            SubagentThinkingDeltaActivity,
+                            SubagentStatusActivity,
+                        ),
                     ):
                         event = await _subagent_activity_to_event(
                             activity,
@@ -629,6 +691,36 @@ async def _run_agent_turn(
                         )
                         if event is not None:
                             yield event
+                    continue
+                if chunk.get("type") == "messages":
+                    data = chunk.get("data")
+                    if not isinstance(data, tuple) or len(data) != 2:
+                        continue
+                    message, _metadata = data
+                    if not isinstance(message, AIMessageChunk):
+                        continue
+                    reasoning = _reasoning_content(message)
+                    if message.id is None:
+                        continue
+                    message_id = str(message.id)
+                    if reasoning is not None:
+                        reset = message_id not in thinking_message_ids
+                        thinking_message_ids.add(message_id)
+                        yield chat_schema.ChatStreamThinkingEvent(
+                            type="thinking",
+                            message_id=message_id,
+                            delta=reasoning,
+                            reset=reset,
+                        )
+                    if text := _text_content(message):
+                        reset = message_id not in text_message_ids
+                        text_message_ids.add(message_id)
+                        yield chat_schema.ChatStreamMessageDeltaEvent(
+                            type="message_delta",
+                            message_id=message_id,
+                            delta=text,
+                            reset=reset,
+                        )
                     continue
                 if chunk.get("type") != "updates":
                     continue
@@ -645,11 +737,14 @@ async def _run_agent_turn(
                     if not isinstance(messages, list):
                         continue
                     for message in messages:
-                        if response := await _langchain_message_to_schema_with_artifacts(
-                            message,
-                            files,
-                            user_id,
-                            conversation_id,
+                        if (
+                            response
+                            := await _langchain_message_to_schema_with_artifacts(
+                                message,
+                                files,
+                                user_id,
+                                conversation_id,
+                            )
                         ):
                             responses.append(response)
                 logger.debug(

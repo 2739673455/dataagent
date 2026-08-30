@@ -139,7 +139,12 @@ class SemanticRecallResourceDeletion(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    query: str
+    query: str = Field(
+        description=(
+            "待删除资源所属的稳定 query 业务键，必须与 recall_context 使用的 query "
+            "完全一致"
+        )
+    )
     tables: dict[SemanticResourceName, SemanticRecallTableDeletion] = Field(
         default_factory=dict
     )

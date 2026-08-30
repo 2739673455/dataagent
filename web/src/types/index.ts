@@ -21,6 +21,7 @@ export interface InteractiveTableArtifact {
 
 export type TextContent = ApiSchemas["TextContent"];
 export type ImageContent = ApiSchemas["ImageContent"];
+export type ThinkingContent = ApiSchemas["ThinkingContent"];
 export type UserMessagePart = ApiSchemas["UserMessageRequest"]["parts"][number];
 export type MessagePart = ApiSchemas["MessageResponse"]["parts"][number];
 export type EvalDelegationResponse = ApiSchemas["EvalDelegationResponse"];
@@ -54,6 +55,13 @@ export type SubagentMessageListResponse = Omit<
 };
 export type SubagentStatusEvent = Extract<ChatStreamEvent, { type: "subagent_status" }>;
 export type SubagentMessageEvent = Extract<ChatStreamEvent, { type: "subagent_message" }>;
+export type ThinkingEvent = Extract<ChatStreamEvent, { type: "thinking" }>;
+export type MessageDeltaEvent = Extract<ChatStreamEvent, { type: "message_delta" }>;
+export type SubagentThinkingEvent = Extract<ChatStreamEvent, { type: "subagent_thinking" }>;
+export type SubagentMessageDeltaEvent = Extract<
+  ChatStreamEvent,
+  { type: "subagent_message_delta" }
+>;
 export type SubagentRunStatus = SubagentStatusEvent["status"] | "interrupted";
 
 export interface SubagentRunIdentity {

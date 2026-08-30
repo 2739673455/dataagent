@@ -81,7 +81,15 @@ def _tool_error_response(
 @tool
 async def recall_context(
     runtime: ToolRuntime,
-    query: Annotated[str, "用于标识当前查询并检索历史 SQL 经验的完整数据问题"],
+    query: Annotated[
+        str,
+        (
+            "当前会话内召回上下文的稳定业务键，作用类似主键。为一个数据任务"
+            "填写完整且固定的数据问题；后续补充检索必须原样复用，只调整 terms "
+            "和 resource_types。同一 query 的历次召回结果会累计合并，修改 query "
+            "会创建独立上下文"
+        ),
+    ],
     resource_types: Annotated[
         list[Literal["column", "metric", "value"]],
         "必须选择需要检索的资源类型：字段、指标或字段值，可多选",
@@ -92,10 +100,11 @@ async def recall_context(
     ],
     limit_per_type: Annotated[int, "每类直接候选的最大数量，范围 1 到 20"] = 5,
 ) -> dict[str, Any]:
-    """检索语义资源和三条历史 SQL 经验，保存并返回本次召回记录
+    """按稳定 query 业务键累计召回语义资源，并检索三条历史 SQL 经验
 
-    query 只用于标识持续上下文和检索历史经验，terms 专门用于语义资源检索
-    同一 query 的多次检索会累积语义资源
+    一个 query 在当前会话内对应一个持续召回上下文。同一数据任务的后续调用原样
+    复用 query，新的 terms 和 resource_types 召回结果会合入该上下文的已有结果。
+    terms 仅描述本次需要补充检索的字段、指标或字段值。
     """
     try:
         query = normalize_semantic_recall_query(query)
@@ -155,9 +164,7 @@ async def recall_context(
                 recall_repo,
                 authorization_filter,
                 query_experience_role_name=asset_policy.role_name,
-                query_experience_authorization_epoch=(
-                    asset_policy.authorization_epoch
-                ),
+                query_experience_authorization_epoch=(asset_policy.authorization_epoch),
             )
             cached = await recall_service.get_fresh_query_experiences(
                 user_id,
@@ -199,9 +206,7 @@ async def recall_context(
                 recall_repo,
                 authorization_filter,
                 query_experience_role_name=asset_policy.role_name,
-                query_experience_authorization_epoch=(
-                    asset_policy.authorization_epoch
-                ),
+                query_experience_authorization_epoch=(asset_policy.authorization_epoch),
             ).record(
                 user_id,
                 conversation_id,
@@ -231,7 +236,7 @@ async def list_recalls(
     runtime: ToolRuntime,
     limit: Annotated[int, "返回最近记录的数量，范围 1 到 100"] = 20,
 ) -> dict[str, Any]:
-    """列出当前会话中每个 query 的最新召回记录"""
+    """列出当前会话中每个 query 业务键对应的最新累计召回记录"""
     if not 1 <= limit <= 100:
         return {
             "status": "error",
@@ -260,9 +265,12 @@ async def list_recalls(
 @tool
 async def get_recall(
     runtime: ToolRuntime,
-    query: Annotated[str, "需要读取的查询业务键"],
+    query: Annotated[
+        str,
+        "需要读取的稳定 query 业务键，必须与 recall_context 使用的 query 完全一致",
+    ],
 ) -> dict[str, Any]:
-    """按 query 读取当前会话的最新召回记录"""
+    """按 query 业务键读取当前会话的最新累计召回记录"""
     try:
         query = normalize_semantic_recall_query(query)
     except ValueError as exc:
@@ -291,8 +299,14 @@ async def get_recall(
 @tool
 async def merge_recalls(
     runtime: ToolRuntime,
-    target_query: Annotated[str, "接收元数据并保留的目标 query"],
-    source_query: Annotated[str, "提供元数据并在合并后删除的来源 query"],
+    target_query: Annotated[
+        str,
+        "接收累计结果并继续保留的目标 query 业务键",
+    ],
+    source_query: Annotated[
+        str,
+        "提供累计结果并在合并完成后删除的来源 query 业务键",
+    ],
 ) -> dict[str, Any]:
     """合并来源 query 的语义资源并删除来源，查询经验只保留目标结果"""
     try:

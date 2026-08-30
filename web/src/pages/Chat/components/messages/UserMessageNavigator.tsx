@@ -47,7 +47,12 @@ export function UserMessageQuickNavigation({
     const targetRect = targetElement.getBoundingClientRect();
 
     if (targetRect.top < containerRect.top || targetRect.bottom > containerRect.bottom) {
-      targetElement.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      const targetTop =
+        container.scrollTop +
+        targetRect.top -
+        containerRect.top -
+        (container.clientHeight - targetRect.height) / 2;
+      container.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
     }
   }, [activeKey]);
 

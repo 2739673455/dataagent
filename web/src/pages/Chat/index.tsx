@@ -29,6 +29,7 @@ export default function ChatPage() {
   const user = useAuthStore((state) => state.user);
 
   const messageViewportRef = useRef<HTMLDivElement | null>(null);
+  const initiallyScrolledConversationRef = useRef<string | null>(null);
 
   // 校验有效 UUID 格式的 conversationId
   const routeConversationId = (() => {
@@ -118,13 +119,19 @@ export default function ChatPage() {
     };
   }, [currentConversationExists, currentMessagesLoaded, loadMessages, routeConversationId]);
 
-  // 首次渲染历史消息时直接滚到底部
+  // 每次进入一个会话并首次渲染消息时直接滚到底部
   useEffect(() => {
-    if (!routeConversationId || isLoadingMessages) return;
+    if (!routeConversationId) {
+      initiallyScrolledConversationRef.current = null;
+      return;
+    }
+    if (isLoadingMessages) return;
     if (currentMessageCount < 1) return;
+    if (initiallyScrolledConversationRef.current === routeConversationId) return;
 
     const frameId = window.requestAnimationFrame(() => {
       scrollToBottom("auto");
+      initiallyScrolledConversationRef.current = routeConversationId;
     });
     return () => window.cancelAnimationFrame(frameId);
   }, [currentMessageCount, isLoadingMessages, routeConversationId, scrollToBottom]);

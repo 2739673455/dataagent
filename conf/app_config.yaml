@@ -115,17 +115,25 @@ sandbox: # 每用户 Docker 沙箱及其持久化数据卷配置
   stop_containers_on_shutdown: true # 服务关闭时是否停止本实例管理的用户容器
 
 lm_config: # 可用语言模型集合及默认模型
-  active: deepseek-v4-flash-openrouter # Planner 和默认 Specialist 使用的模型配置名
+  active: deepseek-deepseek-v4-flash # Planner 和默认 Specialist 使用的模型配置名
   models: # 按配置名声明可用语言模型
-    deepseek-v4-flash-openrouter: # 模型配置名，可由 active 或 Specialist 引用
-      model_provider: openai # LangChain 模型供应商类型
-      model: deepseek/deepseek-v4-flash-0731 # 供应商侧模型标识
-      base_url: https://openrouter.ai/api/v1 # 模型供应商 API 地址
-      api_key: ${oc.env:OPENROUTER_API_KEY} # 模型供应商 API 密钥
+    deepseek-deepseek-v4-flash: # 模型配置名，可由 active 或 Specialist 引用
+      model_provider: deepseek # 使用 LangChain DeepSeek 专用适配器
+      model: deepseek-v4-flash # 供应商侧模型标识
+      base_url: https://api.deepseek.com # 模型供应商 API 地址
+      api_key: ${oc.env:DEEPSEEK_API_KEY} # 模型供应商 API 密钥
       params: {} # 传给模型客户端的附加初始化参数
       profile: # 模型能力描述和上下文限制
         max_input_tokens: 1048576 # 模型上下文长度，用于计算对话压缩阈值
-    qwen3.6-plus-openrouter: # 第二个可选模型配置
+    openrouter-deepseek-v4-flash:
+      model_provider: openai
+      model: deepseek/deepseek-v4-flash-0731
+      base_url: https://openrouter.ai/api/v1
+      api_key: ${oc.env:OPENROUTER_API_KEY}
+      params: {}
+      profile:
+        max_input_tokens: 1048576
+    openrouter-qwen3.8-flash:
       model_provider: openai
       model: qwen/qwen3.8-flash
       base_url: https://openrouter.ai/api/v1

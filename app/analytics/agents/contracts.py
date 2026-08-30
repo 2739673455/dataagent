@@ -109,6 +109,36 @@ class SubagentMessageActivity:
 
 
 @dataclass(frozen=True, slots=True)
+class SubagentThinkingDeltaActivity:
+    """一次 Specialist 模型调用产生的思考增量"""
+
+    delegation_id: str
+    analysis_id: str
+    agent_type: AgentType
+    session_id: str
+    message_id: str
+    delta: str
+    reset: bool = False
+    parent_tool_call_id: str | None = None
+    instruction: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SubagentMessageDeltaActivity:
+    """一次 Specialist 模型调用产生的正文增量"""
+
+    delegation_id: str
+    analysis_id: str
+    agent_type: AgentType
+    session_id: str
+    message_id: str
+    delta: str
+    reset: bool = False
+    parent_tool_call_id: str | None = None
+    instruction: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SubagentStatusActivity:
     """一次 Specialist 执行的状态变化"""
 
@@ -121,7 +151,12 @@ class SubagentStatusActivity:
     instruction: str | None = None
 
 
-type SubagentActivity = SubagentMessageActivity | SubagentStatusActivity
+type SubagentActivity = (
+    SubagentMessageActivity
+    | SubagentThinkingDeltaActivity
+    | SubagentMessageDeltaActivity
+    | SubagentStatusActivity
+)
 type SubagentActivityWriter = Callable[[SubagentActivity], None]
 
 

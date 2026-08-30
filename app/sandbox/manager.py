@@ -831,7 +831,10 @@ class DockerSandboxManager:
                 resources,
                 resources.mutation_lock,
             ):
-                container = self._get_or_create_storage_container_sync(user_id)
+                container = self._get_running_container_sync(
+                    user_id,
+                    resources.user.start_lock,
+                )
                 return self._archive.delete_session(
                     container,
                     conversation_id,

@@ -176,6 +176,52 @@ class AttachmentCapabilityTest(unittest.IsolatedAsyncioTestCase):
         writer.assert_not_awaited()
         get_backend.assert_not_awaited()
 
+    async def test_delete_session_starts_container_before_workspace_cleanup(
+        self,
+    ) -> None:
+        manager = build_sandbox_manager(build_sandbox_config())
+        conversation_id = uuid4()
+        container = MagicMock()
+
+        async def run_inline(function: Callable[[], bool]) -> bool:
+            return function()
+
+        with (
+            patch.object(manager, "init", AsyncMock()),
+            patch("app.sandbox.manager.asyncio.to_thread", side_effect=run_inline),
+            patch.object(
+                manager,
+                "_get_running_container_sync",
+                return_value=container,
+            ) as get_running_container,
+            patch.object(
+                manager,
+                "_get_or_create_storage_container_sync",
+            ) as get_storage_container,
+            patch.object(
+                manager._archive,
+                "delete_session",
+                return_value=True,
+            ) as delete_workspace,
+        ):
+            deleted = await manager.delete_session(
+                7,
+                conversation_id,
+                "sales-decline",
+                "explorer",
+                "source",
+            )
+
+        self.assertTrue(deleted)
+        get_running_container.assert_called_once()
+        self.assertEqual(get_running_container.call_args.args[0], 7)
+        get_storage_container.assert_not_called()
+        delete_workspace.assert_called_once_with(
+            container,
+            conversation_id,
+            SandboxSessionScope("sales-decline", "explorer", "source"),
+        )
+
 
 class SandboxConfigTest(unittest.TestCase):
     def test_accepts_ordered_size_limits(self) -> None:
@@ -397,9 +443,7 @@ class DockerSandboxManagerPolicyTest(unittest.TestCase):
         conversation_id = uuid4()
         backend = self._session_backend(build_sandbox_config(), conversation_id)
         own_virtual_path = "/sessions/sales-decline/analyst/region/result.json"
-        sibling_virtual_path = (
-            "/sessions/sales-decline/explorer/base/dataset.csv"
-        )
+        sibling_virtual_path = "/sessions/sales-decline/explorer/base/dataset.csv"
         conversation_root = f"/data/{conversation_id}"
 
         self.assertEqual(
@@ -419,9 +463,7 @@ class DockerSandboxManagerPolicyTest(unittest.TestCase):
         with self.assertRaises(SandboxPathError):
             backend._resolve_mutation_path("/uploads/input.csv")
 
-        other_conversation_path = (
-            f"/data/{uuid4()}/sessions/private.json"
-        )
+        other_conversation_path = f"/data/{uuid4()}/sessions/private.json"
         self.assertTrue(
             backend._resolve_path(other_conversation_path).startswith(
                 f"{conversation_root}/"
@@ -1085,6 +1127,33 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(recreated.read("old.txt").error)
         self.assertIsNone(recreated.write("new.txt", "new state").error)
 
+    async def test_delete_session_starts_never_started_container(self) -> None:
+        conversation_id = uuid4()
+        await self.manager.get_session_backend(
+            self.user_id,
+            conversation_id,
+            "sales-decline",
+            "explorer",
+            "source",
+        )
+        container = self.manager._get_existing_container_sync(self.user_id)
+        self.assertIsNotNone(container)
+        assert container is not None
+        container.reload()
+        self.assertNotEqual(container.status, "running")
+
+        deleted = await self.manager.delete_session(
+            self.user_id,
+            conversation_id,
+            "sales-decline",
+            "explorer",
+            "source",
+        )
+
+        container.reload()
+        self.assertTrue(deleted)
+        self.assertEqual(container.status, "running")
+
     async def test_session_execute_reports_virtual_working_directory(self) -> None:
         conversation_id = uuid4()
         backend = await self.manager.get_session_backend(
@@ -1154,9 +1223,9 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         cancelled = await runtime.cancel(running.job_id)
         child_check = backend.execute(
             "child=$(cat child.pid); "
-            "if [ -r \"/proc/$child/stat\" ]; then "
+            'if [ -r "/proc/$child/stat" ]; then '
             "state=$(cut -d ' ' -f 3 \"/proc/$child/stat\"); "
-            "[ \"$state\" = Z ] || exit 1; fi"
+            '[ "$state" = Z ] || exit 1; fi'
         )
         await runtime.cleanup()
 
@@ -1183,9 +1252,7 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIsNone(first.write("secret.txt", "CONVERSATION_SECRET").error)
 
-        virtual_read = second.read(
-            "/sessions/sales-decline/explorer/base/secret.txt"
-        )
+        virtual_read = second.read("/sessions/sales-decline/explorer/base/secret.txt")
         direct_read = second.execute(f"cat {first.workspace_dir}/secret.txt")
 
         self.assertIsNotNone(virtual_read.error)

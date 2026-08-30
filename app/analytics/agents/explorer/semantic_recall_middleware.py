@@ -122,33 +122,49 @@ async def _load_recall_records(
     user_id: int,
     conversation_id: UUID,
     references: list[tuple[int, SemanticRecallReference]],
-) -> dict[str, SemanticRecallRecord]:
-    """按 query 批量加载当前用户可见的语义召回记录"""
+) -> tuple[dict[str, SemanticRecallRecord], set[str]]:
+    """逐个 query 加载召回记录，并隔离已失效的引用"""
     async with semantic_recall_repository() as repo:
         service = await create_authorized_semantic_recall_service(user_id, repo)
         records: dict[str, SemanticRecallRecord] = {}
+        missing_queries: set[str] = set()
         for _, reference in references:
-            if reference.query not in records:
+            if reference.query in records or reference.query in missing_queries:
+                continue
+            try:
                 records[reference.query] = await service.get(
                     user_id,
                     conversation_id,
                     reference.query,
                 )
-    return records
+            except SemanticQueriesNotFoundError as exc:
+                missing_queries.add(reference.query)
+                missing_queries.update(exc.queries)
+    return records, missing_queries
 
 
 def _replace_reference_content(
     messages: list[Any],
     references: list[tuple[int, SemanticRecallReference]],
     records: dict[str, SemanticRecallRecord],
+    missing_queries: set[str],
 ) -> list[Any]:
-    """使用已授权召回内容替换消息副本中的引用"""
+    """分别使用已授权内容或失效错误替换消息副本中的引用"""
     expanded = list(messages)
     for index, reference in references:
         message = expanded[index]
-        expanded[index] = message.model_copy(
-            update={"content": _expanded_content(records[reference.query])}
-        )
+        if reference.query in missing_queries:
+            content = json.dumps(
+                {
+                    "status": "error",
+                    "message": "未找到指定的语义召回记录",
+                    "queries": [reference.query],
+                },
+                ensure_ascii=False,
+            )
+        else:
+            content = _expanded_content(records[reference.query])
+        expanded[index] = message.model_copy(update={"content": content})
     return expanded
 
 
@@ -167,11 +183,20 @@ async def expand_semantic_recall_messages_for_display(
     if not references:
         return messages
     try:
-        records = await _load_recall_records(user_id, conversation_id, references)
+        records, missing_queries = await _load_recall_records(
+            user_id,
+            conversation_id,
+            references,
+        )
     except Exception:  # noqa: BLE001
         logger.exception("公开消息中的语义召回展开失败")
         return messages
-    return _replace_reference_content(messages, references, records)
+    return _replace_reference_content(
+        messages,
+        references,
+        records,
+        missing_queries,
+    )
 
 
 class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
@@ -200,24 +225,11 @@ class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
         messages = list(request.messages)
         try:
             user_id, conversation_id = resolve_semantic_recall_identity(get_config())
-            records = await _load_recall_records(
+            records, missing_queries = await _load_recall_records(
                 user_id,
                 conversation_id,
                 references,
             )
-        except SemanticQueriesNotFoundError as exc:
-            expanded_error = json.dumps(
-                {
-                    "status": "error",
-                    "message": "未找到指定的语义召回记录",
-                    "queries": exc.queries,
-                },
-                ensure_ascii=False,
-            )
-            for index, _ in references:
-                message = messages[index]
-                messages[index] = message.model_copy(update={"content": expanded_error})
-            return await handler(request.override(messages=messages))
         except Exception:  # noqa: BLE001
             logger.exception("语义召回展开失败")
             expanded_error = json.dumps(
@@ -232,5 +244,10 @@ class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
                 messages[index] = message.model_copy(update={"content": expanded_error})
             return await handler(request.override(messages=messages))
 
-        messages = _replace_reference_content(messages, references, records)
+        messages = _replace_reference_content(
+            messages,
+            references,
+            records,
+            missing_queries,
+        )
         return await handler(request.override(messages=messages))

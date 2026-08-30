@@ -15,7 +15,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    HumanMessage,
+    ToolMessage,
+)
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
@@ -35,8 +41,11 @@ from app.analytics.agents.contracts import (
     EvalDelegationRecord,
     RepairRequest,
     SpecialistResult,
+    SubagentActivity,
     SubagentMessageActivity,
+    SubagentMessageDeltaActivity,
     SubagentStatusActivity,
+    SubagentThinkingDeltaActivity,
     build_planner_config,
 )
 from app.analytics.agents.manager import AgentManager
@@ -119,10 +128,12 @@ class _FakeAgent:
         delay: float = 0,
         output: object | None = None,
         stream_messages: list[BaseMessage] | None = None,
+        stream_chunks: list[AIMessageChunk] | None = None,
     ) -> None:
         self.delay = delay
         self.output = output
         self.stream_messages = stream_messages or []
+        self.stream_chunks = stream_chunks or []
         self.active = 0
         self.max_active = 0
         self.active_by_namespace: Counter[str] = Counter()
@@ -195,6 +206,12 @@ class _FakeAgent:
         """使用 v2 values 事件模拟 CompiledStateGraph 流"""
         del kwargs
         output = await self.ainvoke(input, config)
+        for message in self.stream_chunks:
+            yield {
+                "type": "messages",
+                "ns": (),
+                "data": (message, {"langgraph_node": "model"}),
+            }
         for message in self.stream_messages:
             node_name = "tools" if isinstance(message, ToolMessage) else "model"
             yield {
@@ -730,7 +747,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         from app.analytics.agents.planner.tools import create_delegation_tool
 
         service = MagicMock(spec=AgentSessionService)
-        activities: list[SubagentMessageActivity | SubagentStatusActivity] = []
+        activities: list[SubagentActivity] = []
         result = DelegationResult(
             status="completed",
             analysis_id="sales",
@@ -744,9 +761,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             _: RunnableConfig,
             *,
             delegation_id: str,
-            activity_writer: Callable[
-                [SubagentMessageActivity | SubagentStatusActivity], None
-            ],
+            activity_writer: Callable[[SubagentActivity], None],
         ) -> DelegationResult:
             activity_writer(
                 SubagentStatusActivity(
@@ -866,10 +881,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                     content="region complete",
                     artifacts=[
                         ArtifactReference(
-                            path=(
-                                "/sessions/sales-decline/analyst/"
-                                "region/result.json"
-                            )
+                            path=("/sessions/sales-decline/analyst/region/result.json")
                         )
                     ],
                 )
@@ -1120,10 +1132,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_artifact_verification_batches_all_paths(self) -> None:
         artifacts = [
             ArtifactReference(
-                path=(
-                    "/sessions/sales-decline/analyst/region/"
-                    f"result_{index}.json"
-                )
+                path=(f"/sessions/sales-decline/analyst/region/result_{index}.json")
             )
             for index in range(50)
         ]
@@ -1270,7 +1279,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         service = _service(fake)
         config = build_planner_config(12, _CONVERSATION_ID)
-        activities: list[SubagentMessageActivity | SubagentStatusActivity] = []
+        activities: list[SubagentActivity] = []
 
         result = await service.execute_delegation(
             _request("region"),
@@ -1305,6 +1314,52 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             task_message.additional_kwargs[DELEGATION_CONTEXT_KEY],
             {"delegation_id": "delegation-region"},
         )
+
+    async def test_delegation_emits_incremental_reasoning_activity(self) -> None:
+        fake = _FakeAgent(
+            stream_chunks=[
+                AIMessageChunk(
+                    id="specialist-answer",
+                    content="",
+                    additional_kwargs={"reasoning_content": "先检查"},
+                ),
+                AIMessageChunk(
+                    id="specialist-answer",
+                    content="",
+                    additional_kwargs={"reasoning_content": "表结构"},
+                ),
+                AIMessageChunk(id="specialist-answer", content="开始查询"),
+            ]
+        )
+        service = _service(fake)
+        activities: list[SubagentActivity] = []
+
+        await service.execute_delegation(
+            _request("region"),
+            build_planner_config(12, _CONVERSATION_ID),
+            delegation_id="delegation-region",
+            activity_writer=activities.append,
+        )
+
+        thinking = [
+            activity
+            for activity in activities
+            if isinstance(activity, SubagentThinkingDeltaActivity)
+        ]
+        self.assertEqual(
+            [activity.delta for activity in thinking], ["先检查", "表结构"]
+        )
+        self.assertEqual([activity.reset for activity in thinking], [True, False])
+        self.assertTrue(
+            all(activity.message_id == "specialist-answer" for activity in thinking)
+        )
+        message_deltas = [
+            activity
+            for activity in activities
+            if isinstance(activity, SubagentMessageDeltaActivity)
+        ]
+        self.assertEqual([activity.delta for activity in message_deltas], ["开始查询"])
+        self.assertTrue(message_deltas[0].reset)
 
     async def test_get_delegation_activity_segments_checkpoint_history(self) -> None:
         fake = _FakeAgent()
@@ -1410,8 +1465,58 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(activity)
         assert activity is not None
-        self.assertEqual(activity.messages, [AIMessage(id="first-ai", content="尚未完成")])
+        self.assertEqual(
+            activity.messages, [AIMessage(id="first-ai", content="尚未完成")]
+        )
         self.assertEqual(activity.status, "cancelled")
+
+    async def test_get_delegation_activity_keeps_structured_response_reasoning(
+        self,
+    ) -> None:
+        fake = _FakeAgent()
+        namespace = "subagents/sales-decline/analyst/region"
+        fake.state_values[namespace] = {
+            "messages": [
+                HumanMessage(
+                    content="review",
+                    additional_kwargs={
+                        DELEGATION_CONTEXT_KEY: DelegationMessageContext(
+                            delegation_id="delegation-first"
+                        ).model_dump(mode="json")
+                    },
+                ),
+                AIMessage(
+                    id="structured-response",
+                    content="",
+                    additional_kwargs={"reasoning_content": "检查完成，准备返回结果。"},
+                    tool_calls=[
+                        {
+                            "id": "structured-call",
+                            "name": "SpecialistResult",
+                            "args": {"status": "completed", "content": "完成"},
+                        }
+                    ],
+                ),
+            ]
+        }
+
+        activity = await _service(fake).get_delegation_activity(
+            "sales-decline",
+            "analyst",
+            "region",
+            "delegation-first",
+        )
+
+        assert activity is not None
+        self.assertEqual(activity.status, "completed")
+        self.assertEqual(len(activity.messages), 1)
+        reasoning_message = cast(AIMessage, activity.messages[0])
+        self.assertEqual(reasoning_message.id, "structured-response")
+        self.assertEqual(reasoning_message.tool_calls, [])
+        self.assertEqual(
+            reasoning_message.additional_kwargs["reasoning_content"],
+            "检查完成，准备返回结果。",
+        )
 
     async def test_replayed_delegation_reuses_latest_structured_result(self) -> None:
         fake = _FakeAgent()
@@ -1454,7 +1559,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         fake = _FakeAgent(delay=0.05)
         service = _service(fake)
         config = build_planner_config(12, _CONVERSATION_ID)
-        activities: list[SubagentMessageActivity | SubagentStatusActivity] = []
+        activities: list[SubagentActivity] = []
 
         active = asyncio.create_task(
             service.execute_delegation(_request("region"), config)
@@ -1482,7 +1587,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         fake = _FakeAgent(delay=0.2)
         service = _service(fake)
         config = build_planner_config(12, _CONVERSATION_ID)
-        activities: list[SubagentMessageActivity | SubagentStatusActivity] = []
+        activities: list[SubagentActivity] = []
 
         task = asyncio.create_task(
             service.execute_delegation(

@@ -6,15 +6,36 @@ import {
   getConversationExecutionStatus,
   getExecutionStatus,
   getToolResultStatus,
-  isToolResultFailure,
   groupDisplayItemsIntoTurns,
+  isToolResultFailure,
   parseDelegationResult,
   resolveDelegationRunStatus,
 } from "../src/pages/Chat/components/messages/displayModel";
-import type { MessageResponse } from "../src/types";
 import type { ToolRunDisplayItem } from "../src/pages/Chat/components/messages/types";
+import type { MessageResponse } from "../src/types";
 
 describe("chat message display and turn grouping", () => {
+  test("keeps a reasoning-only assistant message out of the final answer slot", () => {
+    const messages: MessageResponse[] = [
+      {
+        message_id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "分析数据" }],
+      },
+      {
+        message_id: "assistant-1",
+        role: "assistant",
+        parts: [{ type: "thinking", text: "正在定位数据", status: "interrupted" }],
+      },
+    ];
+
+    const turns = groupDisplayItemsIntoTurns(buildDisplayItems("conv-1", messages, false));
+
+    expect(turns[0].finalItem).toBeNull();
+    expect(turns[0].intermediateItems).toHaveLength(1);
+    expect(getConversationExecutionStatus("conv-1", messages, false)).toBe("interrupted");
+  });
+
   test("restores eval internal delegations and merges live activity", () => {
     const messages: MessageResponse[] = [
       {
@@ -79,10 +100,7 @@ describe("chat message display and turn grouping", () => {
     });
 
     expect(parent.evalDelegations).toHaveLength(1);
-    expect(nested.map((item) => item.toolCallId)).toEqual([
-      "ptc-delegation-1",
-      "ptc-delegation-2",
-    ]);
+    expect(nested.map((item) => item.toolCallId)).toEqual(["ptc-delegation-1", "ptc-delegation-2"]);
     expect(nested[0].completed).toBe(true);
     expect(nested[1].completed).toBe(false);
     expect(nested[1].args?.message).toBe("计算销售指标");

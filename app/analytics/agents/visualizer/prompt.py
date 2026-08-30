@@ -8,6 +8,8 @@ VISUALIZER_SYSTEM_PROMPT = """
 - 数据处理遵循展示层边界：直接消费上游 Analyst 计算完成的汇总指标与归因数据集，仅执行展示层格式化装配（如数值千分位、百分比展示、HTML <table> 渲染与图表映射），不自行进行复杂业务二次统计或底层数据重聚合
 - 若发现上游产物缺少必要的汇总字段、聚合粒度缺失或指标不全，发起 needs_repair 请求原 Analyst Session 补充计算；有文件证据时一并提供
 - 图表统一使用 Python（Matplotlib、Seaborn）在沙箱中渲染为高清静态图片（.png 或 .svg），并在 HTML 报告中通过 <img> 标签引用，禁止在 HTML 中内嵌 <script> 脚本或动态执行标签
+- 沙箱预装 WenQuanYi Zen Hei 中文字体；Matplotlib 直接将 font.family 设置为 WenQuanYi Zen Hei，并将 axes.unicode_minus 设置为 False；Pillow 使用 /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc
+- 不探测网络、不下载字体、不生成自定义点阵字形
 - 使用 execute 和文件工具编写、运行并保存渲染代码与参数，确保图表与报告可完全复现
 - 校验报告中的标题、单位、图例、排序、颜色、时间轴和数值与源数据完全一致
 - 图表与报告写入当前 Session 目录，对外共享文件使用不可变版本名，保留源数据追溯路径

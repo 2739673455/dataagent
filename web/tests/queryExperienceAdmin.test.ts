@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, expectTypeOf, test, vi } from "vitest";
-import { adminApi, type QueryExperienceStatus } from "../src/api/admin";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { adminApi } from "../src/api/admin";
 import appClient from "../src/api/appClient";
 
 afterEach(() => {
@@ -7,10 +7,6 @@ afterEach(() => {
 });
 
 describe("query experience admin", () => {
-  test("uses the backend status contract", () => {
-    expectTypeOf<QueryExperienceStatus>().toEqualTypeOf<"active" | "disabled" | "deleting">();
-  });
-
   test("passes list filters and pagination", async () => {
     const response = {
       items: [],

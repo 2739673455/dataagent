@@ -8,6 +8,7 @@ from deepagents import (
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 
+from app.analytics.deepseek_model import DataAgentChatDeepSeek
 from app.shared.config import app_config
 
 
@@ -23,13 +24,19 @@ def create_configured_model(model_name: str) -> BaseChatModel:
             general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
         ),
     )
+    model_kwargs = {
+        "model": model_cfg.model,
+        "base_url": model_cfg.base_url,
+        "api_key": model_cfg.api_key,
+        "profile": model_cfg.profile,
+        "request_timeout": 30,
+        "max_retries": 3,
+        "streaming": True,
+        **model_cfg.params,
+    }
+    if model_cfg.model_provider == "deepseek":
+        return DataAgentChatDeepSeek(**model_kwargs)
     return init_chat_model(
         model_provider=model_cfg.model_provider,
-        model=model_cfg.model,
-        base_url=model_cfg.base_url,
-        api_key=model_cfg.api_key,
-        profile=model_cfg.profile,
-        request_timeout=30,
-        max_retries=3,
-        **model_cfg.params,
+        **model_kwargs,
     )

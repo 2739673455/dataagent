@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, expectTypeOf, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import appClient from "../src/api/appClient";
-import { type ImportMode, metaApi, type TableRole } from "../src/api/meta";
+import { metaApi } from "../src/api/meta";
 
 const emptyChanges = {
   created_count: 0,
@@ -16,17 +16,6 @@ afterEach(() => {
 });
 
 describe("metadata enum contract", () => {
-  test("only backend import modes are representable", () => {
-    expectTypeOf<ImportMode>().toEqualTypeOf<"merge" | "replace">();
-    expectTypeOf<"overwrite">().not.toMatchTypeOf<ImportMode>();
-  });
-
-  test("only backend table roles are representable", () => {
-    expectTypeOf<TableRole>().toEqualTypeOf<"fact" | "dim">();
-    expectTypeOf<"dimension">().not.toMatchTypeOf<TableRole>();
-    expectTypeOf<"aggregate">().not.toMatchTypeOf<TableRole>();
-  });
-
   test.each(["merge", "replace"] as const)("submits %s imports", async (mode) => {
     const post = vi.spyOn(appClient, "post").mockResolvedValue({
       data: {

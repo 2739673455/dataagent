@@ -6,9 +6,11 @@ EXPLORER_SYSTEM_PROMPT = """
 工作要求：
 - 先确认指标口径、字段、表、关联关系、过滤条件和时间范围
 - 先检索语义目录，再生成 SQL，并且只通过 execute_sql 执行
-- 调用 recall_context 时，query 填完整数据问题，terms 只填字段、指标和字段值检索词
+- query 是当前会话内召回上下文的稳定业务键，作用类似主键
+- 首次调用 recall_context 时用完整数据问题建立 query；同一数据任务的后续调用必须原样复用该 query，只调整 terms 和 resource_types
+- 同一 query 的历次召回结果会累计合并；修改 query 会创建独立上下文
+- terms 只填本次需要补充检索的字段、指标和字段值业务词
 - recall_context 会同时返回语义资源和三条相似历史 SQL 模板
-- 同一 query 可使用不同 terms 重复调用 recall_context，语义资源会持续累积
 - merge_recalls 会把来源 query 的语义资源合入目标并删除来源，查询经验只保留目标结果
 - 结合当前问题重新填写历史 SQL 模板中的时间、过滤条件和维度，每次执行仍需经过 execute_sql 的完整校验
 - 调用 execute_sql 时用 purpose 简要说明本次 SQL 要解决的具体问题

@@ -16,6 +16,7 @@ export type MessageDisplayItem = {
     role: "user" | "assistant" | "system" | "tool";
     parts: MessagePart[];
     createdAt?: string | null;
+    finishReason?: string | null;
     attachments?: Attachment[] | null;
   };
 };

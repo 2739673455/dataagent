@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 from langchain.agents.middleware.types import ModelResponse
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from pydantic import ValidationError
 
@@ -24,7 +24,9 @@ from app.analytics.agents.contracts import (
     DelegationActivityHistory,
     PlannerTurnContext,
     SubagentMessageActivity,
+    SubagentMessageDeltaActivity,
     SubagentStatusActivity,
+    SubagentThinkingDeltaActivity,
 )
 from app.analytics.agents.middleware.message_timestamp import (
     MessageTimestampMiddleware,
@@ -195,6 +197,28 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn(MESSAGE_CREATED_AT_KEY, response_message.additional_kwargs)
 
+    async def test_reasoning_content_is_projected_as_completed_thinking(self) -> None:
+        response = chat_service._langchain_message_to_schema(
+            AIMessage(
+                id="answer-1",
+                content="最终回答",
+                additional_kwargs={"reasoning_content": "先核对数据，再回答。"},
+            )
+        )
+
+        assert response is not None
+        self.assertEqual(
+            response.parts,
+            [
+                chat_schema.ThinkingContent(
+                    type="thinking",
+                    text="先核对数据，再回答。",
+                    status="complete",
+                ),
+                chat_schema.TextContent(type="text", text="最终回答"),
+            ],
+        )
+
 
 class _RepeatingPlanner:
     """重复返回同一 finish reason 并记录 Planner 配置"""
@@ -272,7 +296,107 @@ class _TurnManagerStub:
 
 
 class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
-    async def test_resume_uses_pending_checkpoint_without_new_human_message(self) -> None:
+    async def test_planner_reasoning_streams_incrementally_then_is_completed(
+        self,
+    ) -> None:
+        planner = MagicMock()
+
+        async def stream_reasoning(
+            *args: Any, **kwargs: Any
+        ) -> AsyncIterator[dict[str, Any]]:
+            del args, kwargs
+            for delta in ("先定位", "数据源"):
+                yield {
+                    "type": "messages",
+                    "ns": (),
+                    "data": (
+                        AIMessageChunk(
+                            id="answer-1",
+                            content="",
+                            additional_kwargs={"reasoning_content": delta},
+                        ),
+                        {"langgraph_node": "model"},
+                    ),
+                }
+            for delta in ("完", "成"):
+                yield {
+                    "type": "messages",
+                    "ns": (),
+                    "data": (
+                        AIMessageChunk(
+                            id="answer-1",
+                            content=delta,
+                        ),
+                        {"langgraph_node": "model"},
+                    ),
+                }
+            yield {
+                "type": "updates",
+                "ns": (),
+                "data": {
+                    "model": {
+                        "messages": [
+                            AIMessage(
+                                id="answer-1",
+                                content="完成",
+                                additional_kwargs={"reasoning_content": "先定位数据源"},
+                                response_metadata={"finish_reason": "stop"},
+                            )
+                        ]
+                    }
+                },
+            }
+
+        planner.astream = stream_reasoning
+        runtime_mock = MagicMock()
+        runtime_mock.planner = planner
+        runtime = cast(ConversationAgentRuntime, runtime_mock)
+        manager = _TurnManagerStub(
+            runtime,
+            PlannerTurnContext(
+                user_id=7,
+                conversation_id=_CONVERSATION_ID,
+                max_continuations=0,
+            ),
+        )
+
+        events = [
+            event
+            async for event in chat_service.resume_agent_turn(
+                manager,
+                _FileInspectorStub(),
+                7,
+                _CONVERSATION_ID,
+                asyncio.Event(),
+            )
+        ]
+
+        self.assertEqual(
+            [type(event) for event in events],
+            [
+                chat_schema.ChatStreamThinkingEvent,
+                chat_schema.ChatStreamThinkingEvent,
+                chat_schema.ChatStreamMessageDeltaEvent,
+                chat_schema.ChatStreamMessageDeltaEvent,
+                chat_schema.ChatStreamMessageEvent,
+            ],
+        )
+        first = cast(chat_schema.ChatStreamThinkingEvent, events[0])
+        second = cast(chat_schema.ChatStreamThinkingEvent, events[1])
+        first_text = cast(chat_schema.ChatStreamMessageDeltaEvent, events[2])
+        second_text = cast(chat_schema.ChatStreamMessageDeltaEvent, events[3])
+        final = cast(chat_schema.ChatStreamMessageEvent, events[4])
+        self.assertTrue(first.reset)
+        self.assertFalse(second.reset)
+        self.assertEqual(first.delta + second.delta, "先定位数据源")
+        self.assertTrue(first_text.reset)
+        self.assertFalse(second_text.reset)
+        self.assertEqual(first_text.delta + second_text.delta, "完成")
+        self.assertEqual(final.message.parts[0].type, "thinking")
+
+    async def test_resume_uses_pending_checkpoint_without_new_human_message(
+        self,
+    ) -> None:
         planner = MagicMock()
         received_inputs: list[object] = []
 
@@ -399,9 +523,7 @@ def _delegation_payload() -> dict[str, object]:
         "content": "Chart generated",
         "artifacts": [
             {
-                "path": (
-                    "/sessions/sales-review/visualizer/chart-1/report.html"
-                ),
+                "path": ("/sessions/sales-review/visualizer/chart-1/report.html"),
                 "media_type": "text/html",
                 "description": "Interactive report",
             }
@@ -415,12 +537,8 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
     async def test_final_artifact_directives_project_downloadable_session_files(
         self,
     ) -> None:
-        report_path = (
-            "/sessions/sales-review/visualizer/chart-1/report.html"
-        )
-        missing_path = (
-            "/sessions/sales-review/visualizer/chart-1/missing.csv"
-        )
+        report_path = "/sessions/sales-review/visualizer/chart-1/report.html"
+        missing_path = "/sessions/sales-review/visualizer/chart-1/missing.csv"
         code_path = "/sessions/sales-review/visualizer/chart-1/example.png"
         message = AIMessage(
             id="assistant-final",
@@ -491,9 +609,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             ],
             response_metadata={"finish_reason": "tool_calls"},
         )
-        files = _FileInspectorStub(
-            {(7, _CONVERSATION_ID, path.removeprefix("/"))}
-        )
+        files = _FileInspectorStub({(7, _CONVERSATION_ID, path.removeprefix("/"))})
 
         schema = await chat_service._langchain_message_to_schema_with_artifacts(
             message,
@@ -520,9 +636,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             content=f"[[DATAAGENT_ARTIFACT:{path}]]",
             response_metadata={"finish_reason": "stop"},
         )
-        files = _FileInspectorStub(
-            {(7, other_conversation_id, path.removeprefix("/"))}
-        )
+        files = _FileInspectorStub({(7, other_conversation_id, path.removeprefix("/"))})
 
         schema = await chat_service._langchain_message_to_schema_with_artifacts(
             message,
@@ -578,9 +692,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 max_continuations=0,
             ),
         )
-        files = _FileInspectorStub(
-            {(7, _CONVERSATION_ID, path.removeprefix("/"))}
-        )
+        files = _FileInspectorStub({(7, _CONVERSATION_ID, path.removeprefix("/"))})
 
         history = await chat_service.list_messages(
             manager,
@@ -697,6 +809,36 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             yield {
                 "type": "custom",
                 "ns": (),
+                "data": SubagentThinkingDeltaActivity(
+                    delegation_id="delegation-1",
+                    analysis_id="sales-review",
+                    agent_type="explorer",
+                    session_id="source-1",
+                    message_id="specialist-1",
+                    delta="先检查数据",
+                    reset=True,
+                    parent_tool_call_id="eval-call",
+                    instruction="定位销售数据",
+                ),
+            }
+            yield {
+                "type": "custom",
+                "ns": (),
+                "data": SubagentMessageDeltaActivity(
+                    delegation_id="delegation-1",
+                    analysis_id="sales-review",
+                    agent_type="explorer",
+                    session_id="source-1",
+                    message_id="specialist-1",
+                    delta="正在检查数据",
+                    reset=True,
+                    parent_tool_call_id="eval-call",
+                    instruction="定位销售数据",
+                ),
+            }
+            yield {
+                "type": "custom",
+                "ns": (),
                 "data": SubagentMessageActivity(
                     delegation_id="delegation-1",
                     analysis_id="sales-review",
@@ -738,10 +880,19 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             ):
                 events.append(event)
 
-        self.assertEqual(len(events), 2)
+        self.assertEqual(len(events), 4)
         self.assertIsInstance(events[0], chat_schema.ChatStreamSubagentStatusEvent)
-        self.assertIsInstance(events[1], chat_schema.ChatStreamSubagentMessageEvent)
-        message_event = cast(chat_schema.ChatStreamSubagentMessageEvent, events[1])
+        self.assertIsInstance(events[1], chat_schema.ChatStreamSubagentThinkingEvent)
+        self.assertIsInstance(
+            events[2], chat_schema.ChatStreamSubagentMessageDeltaEvent
+        )
+        self.assertIsInstance(events[3], chat_schema.ChatStreamSubagentMessageEvent)
+        thinking_event = cast(chat_schema.ChatStreamSubagentThinkingEvent, events[1])
+        self.assertEqual(thinking_event.delta, "先检查数据")
+        self.assertTrue(thinking_event.reset)
+        delta_event = cast(chat_schema.ChatStreamSubagentMessageDeltaEvent, events[2])
+        self.assertEqual(delta_event.delta, "正在检查数据")
+        message_event = cast(chat_schema.ChatStreamSubagentMessageEvent, events[3])
         self.assertEqual(message_event.delegation_id, "delegation-1")
         self.assertEqual(message_event.message.parts[0].type, "text")
         status_event = cast(chat_schema.ChatStreamSubagentStatusEvent, events[0])

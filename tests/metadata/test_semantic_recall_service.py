@@ -1631,6 +1631,95 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("paid", display_content)
         self.assertIn("SELECT status", display_content)
 
+    async def test_missing_reference_does_not_hide_successful_current_turn_recall(
+        self,
+    ) -> None:
+        repo = InMemorySemanticRecallRepo()
+        conversation_id = uuid4()
+        service = SemanticRecallContextService(
+            recall_repo(repo),
+            build_authorization_filter(_FULL_DATABASE_GRANT),
+            query_experience_role_name=None,
+            query_experience_authorization_epoch=None,
+        )
+        current_record = await service.record(
+            7,
+            conversation_id,
+            "当前有效问题",
+            build_request("收入", ["column"]),
+            build_response("recall_current", "收入", score=0.8, reason="收入"),
+            [],
+            datetime.now(UTC),
+        )
+        missing_reference = ToolMessage(
+            tool_call_id="missing_call",
+            name="recall_context",
+            content=json.dumps({"status": "stored", "query": "已删除问题"}),
+        )
+        current_reference = ToolMessage(
+            tool_call_id="current_call",
+            name="recall_context",
+            content=json.dumps(semantic_recall_reference(current_record)),
+        )
+        messages = [
+            HumanMessage(content="继续探索"),
+            missing_reference,
+            current_reference,
+        ]
+        request = ModelRequest(
+            model=GenericFakeChatModel(messages=iter([AIMessage(content="ok")])),
+            messages=messages,
+            runtime=Runtime(),
+        )
+        seen_messages: list[object] = []
+
+        async def handler(model_request: ModelRequest[Any]) -> ModelResponse[Any]:
+            seen_messages.extend(model_request.messages)
+            return ModelResponse(result=[AIMessage(content="ok")])
+
+        with (
+            patch(
+                "app.analytics.agents.explorer.semantic_recall_middleware.get_config",
+                return_value={
+                    "configurable": {
+                        "user_id": 7,
+                        "conversation_id": str(conversation_id),
+                    }
+                },
+            ),
+            patch(
+                "app.analytics.agents.explorer.semantic_recall_middleware."
+                "create_authorized_semantic_recall_service",
+                new=AsyncMock(return_value=service),
+            ),
+            patch(
+                "app.analytics.agents.explorer.semantic_recall_middleware."
+                "semantic_recall_repository",
+                side_effect=lambda: recall_repository_context(repo),
+            ),
+        ):
+            await SemanticRecallExpansionMiddleware().awrap_model_call(
+                request,
+                handler,
+            )
+            display_messages = await expand_semantic_recall_messages_for_display(
+                [missing_reference, current_reference],
+                7,
+                conversation_id,
+            )
+
+        model_missing = json.loads(str(getattr(seen_messages[1], "content", "")))
+        model_current = json.loads(str(getattr(seen_messages[2], "content", "")))
+        self.assertEqual(model_missing["status"], "error")
+        self.assertEqual(model_missing["queries"], ["已删除问题"])
+        self.assertEqual(model_current["query"], "当前有效问题")
+        self.assertIn("orders", model_current["tables"])
+
+        display_missing = json.loads(str(display_messages[0].content))
+        display_current = json.loads(str(display_messages[1].content))
+        self.assertEqual(display_missing["queries"], ["已删除问题"])
+        self.assertEqual(display_current["query"], "当前有效问题")
+
     async def test_get_tool_writes_only_recall_reference_to_state(self) -> None:
         repo = InMemorySemanticRecallRepo()
         service = SemanticRecallContextService(

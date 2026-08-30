@@ -48,7 +48,87 @@ export function ChatMessages({
   const displayItems = buildDisplayItems(conversationId, messages, isStreaming);
   const turns = groupDisplayItemsIntoTurns(displayItems);
   const messageElementsRef = useRef(new Map<string, HTMLDivElement>());
+  const shouldStickToBottomRef = useRef(false);
+  const navigationTargetTopRef = useRef<number | null>(null);
   const [activeUserMessageKey, setActiveUserMessageKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!conversationId || !viewport) return;
+
+    const bottomThreshold = 48;
+    navigationTargetTopRef.current = null;
+    shouldStickToBottomRef.current =
+      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= bottomThreshold;
+    let previousScrollTop = viewport.scrollTop;
+    let animationFrame: number | null = null;
+
+    const cancelPendingFollow = () => {
+      if (animationFrame === null) return;
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = null;
+    };
+    const stopFollowing = () => {
+      shouldStickToBottomRef.current = false;
+      cancelPendingFollow();
+    };
+    const updateStickiness = () => {
+      const currentScrollTop = viewport.scrollTop;
+      const currentScrollHeight = viewport.scrollHeight;
+      const scrollDelta = currentScrollTop - previousScrollTop;
+      const isScrollingUp = scrollDelta < 0;
+      const isScrollingDown = scrollDelta > 0;
+      const isAtBottom =
+        currentScrollHeight - currentScrollTop - viewport.clientHeight <= bottomThreshold;
+      previousScrollTop = currentScrollTop;
+      const navigationTargetTop = navigationTargetTopRef.current;
+      if (navigationTargetTop !== null) {
+        if (Math.abs(currentScrollTop - navigationTargetTop) <= 1) {
+          navigationTargetTopRef.current = null;
+        }
+        return;
+      }
+      if (isScrollingUp) {
+        stopFollowing();
+        return;
+      }
+      if (isScrollingDown && isAtBottom) shouldStickToBottomRef.current = true;
+    };
+    const handleWheel = (event: WheelEvent) => {
+      navigationTargetTopRef.current = null;
+      if (event.deltaY < 0) stopFollowing();
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      navigationTargetTopRef.current = null;
+      if (event.button === 1) stopFollowing();
+    };
+    const followContentGrowth = () => {
+      if (!shouldStickToBottomRef.current || animationFrame !== null) return;
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = null;
+        if (!shouldStickToBottomRef.current) return;
+        viewport.scrollTo({ top: viewport.scrollHeight, behavior: "auto" });
+      });
+    };
+
+    const observer = new MutationObserver(followContentGrowth);
+    observer.observe(viewport, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+    viewport.addEventListener("scroll", updateStickiness, { passive: true });
+    viewport.addEventListener("wheel", handleWheel, { passive: true });
+    viewport.addEventListener("pointerdown", handlePointerDown, { passive: true });
+
+    return () => {
+      observer.disconnect();
+      viewport.removeEventListener("scroll", updateStickiness);
+      viewport.removeEventListener("wheel", handleWheel);
+      viewport.removeEventListener("pointerdown", handlePointerDown);
+      cancelPendingFollow();
+    };
+  }, [conversationId, viewportRef]);
 
   const userMessageNavigationItems = turns.flatMap<UserMessageNavigationItem>((turn) =>
     turn.userItem
@@ -90,10 +170,25 @@ export function ChatMessages({
   }, [conversationId, isLoading, userMessageNavigationItems.length, viewportRef]);
 
   const navigateToUserMessage = (key: string) => {
+    const viewport = viewportRef.current;
     const element = messageElementsRef.current.get(key);
-    if (!element) return;
+    if (!viewport || !element) return;
+
+    shouldStickToBottomRef.current = false;
     setActiveUserMessageKey(key);
-    element.scrollIntoView({ behavior: "smooth", block: "start" });
+    const viewportRect = viewport.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+    const desiredTop = viewport.scrollTop + elementRect.top - viewportRect.top - 16;
+    const targetTop = Math.min(
+      Math.max(0, desiredTop),
+      Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+    );
+    navigationTargetTopRef.current =
+      Math.abs(viewport.scrollTop - targetTop) > 1 ? targetTop : null;
+    viewport.scrollTo({
+      top: targetTop,
+      behavior: "smooth",
+    });
   };
 
   return (

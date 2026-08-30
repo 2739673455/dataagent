@@ -30,10 +30,14 @@ export function useChatStream({
   const unmarkStreaming = useChatStore((state) => state.unmarkStreaming);
   const ensureConversation = useChatStore((state) => state.ensureConversation);
   const appendMessage = useChatStore((state) => state.appendMessage);
+  const appendThinking = useChatStore((state) => state.appendThinking);
+  const appendMessageDelta = useChatStore((state) => state.appendMessageDelta);
   const appendSubagentMessage = useChatStore((state) => state.appendSubagentMessage);
+  const appendSubagentMessageDelta = useChatStore((state) => state.appendSubagentMessageDelta);
+  const appendSubagentThinking = useChatStore((state) => state.appendSubagentThinking);
   const updateSubagentStatus = useChatStore((state) => state.updateSubagentStatus);
   const loadConversations = useChatStore((state) => state.loadConversations);
-  const loadMessages = useChatStore((state) => state.loadMessages);
+  const syncMessages = useChatStore((state) => state.syncMessages);
   const createConversation = useChatStore((state) => state.createConversation);
   const interruptRunningSubagents = useChatStore((state) => state.interruptRunningSubagents);
 
@@ -81,8 +85,16 @@ export function useChatStream({
         if (!sessionLifecycle.isCurrent(generation)) return;
         if (event.type === "message") {
           appendMessage(conversationId, event.message);
+        } else if (event.type === "thinking") {
+          appendThinking(conversationId, event);
+        } else if (event.type === "message_delta") {
+          appendMessageDelta(conversationId, event);
         } else if (event.type === "subagent_message") {
           appendSubagentMessage(conversationId, event);
+        } else if (event.type === "subagent_message_delta") {
+          appendSubagentMessageDelta(conversationId, event);
+        } else if (event.type === "subagent_thinking") {
+          appendSubagentThinking(conversationId, event);
         } else if (event.type === "subagent_status") {
           updateSubagentStatus(conversationId, event);
         } else if (event.type === "error") {
@@ -136,17 +148,23 @@ export function useChatStream({
               if (!receivedDone) interruptRunningSubagents(conversationId);
               unmarkStreaming(conversationId);
               void loadConversations();
-              void loadMessages(conversationId);
+              void syncMessages(conversationId).catch((error) => {
+                toast.error(getApiErrorMessage(error, "同步最终消息失败"));
+              });
             }
           }
         });
     },
     [
       appendMessage,
+      appendMessageDelta,
+      appendThinking,
       appendSubagentMessage,
+      appendSubagentMessageDelta,
+      appendSubagentThinking,
       interruptRunningSubagents,
       loadConversations,
-      loadMessages,
+      syncMessages,
       unmarkStreaming,
       updateSubagentStatus,
     ]
@@ -198,8 +216,10 @@ export function useChatStream({
     streamControllersRef.current.get(routeConversationId)?.abort();
     interruptRunningSubagents(routeConversationId);
     unmarkStreaming(routeConversationId);
-    void loadMessages(routeConversationId);
-  }, [interruptRunningSubagents, loadMessages, routeConversationId, unmarkStreaming]);
+    void syncMessages(routeConversationId).catch((error) => {
+      toast.error(getApiErrorMessage(error, "同步停止后的消息失败"));
+    });
+  }, [interruptRunningSubagents, routeConversationId, syncMessages, unmarkStreaming]);
 
   const handleResume = useCallback(() => {
     if (!routeConversationId) return;

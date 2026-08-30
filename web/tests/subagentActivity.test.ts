@@ -11,6 +11,106 @@ afterEach(() => {
 });
 
 describe("subagent activity state", () => {
+  test("accumulates replay-safe reasoning and replaces it with the completed message", () => {
+    const store = useChatStore.getState();
+    const first = {
+      type: "thinking" as const,
+      message_id: "planner-answer",
+      delta: "先检查",
+      reset: true,
+    };
+    const second = { ...first, delta: "数据", reset: false };
+
+    store.appendThinking(conversationId, first);
+    store.appendThinking(conversationId, second);
+    store.appendThinking(conversationId, first);
+    store.appendThinking(conversationId, second);
+    const firstText = {
+      type: "message_delta" as const,
+      message_id: "planner-answer",
+      delta: "完",
+      reset: true,
+    };
+    const secondText = { ...firstText, delta: "成", reset: false };
+    store.appendMessageDelta(conversationId, firstText);
+    store.appendMessageDelta(conversationId, secondText);
+    store.appendMessageDelta(conversationId, firstText);
+    store.appendMessageDelta(conversationId, secondText);
+
+    let messages = useChatStore.getState().messagesByConversation[conversationId];
+    expect(messages).toHaveLength(1);
+    expect(messages[0].parts[0]).toEqual({
+      type: "thinking",
+      text: "先检查数据",
+      status: "complete",
+    });
+    expect(messages[0].parts[1]).toEqual({ type: "text", text: "完成" });
+    expect(messages[0].finish_reason).toBe("streaming");
+
+    store.appendMessage(conversationId, {
+      message_id: "planner-answer",
+      role: "assistant",
+      parts: [
+        { type: "thinking", text: "先检查数据", status: "complete" },
+        { type: "text", text: "完成" },
+      ],
+    });
+
+    messages = useChatStore.getState().messagesByConversation[conversationId];
+    expect(messages).toHaveLength(1);
+    expect(messages[0].parts).toHaveLength(2);
+    expect(messages[0].parts[0]).toMatchObject({ status: "complete" });
+  });
+
+  test("tracks specialist reasoning inside its delegation and settles it at terminal status", () => {
+    const store = useChatStore.getState();
+    store.appendSubagentThinking(conversationId, {
+      type: "subagent_thinking",
+      delegation_id: "call-reasoning",
+      analysis_id: "sales",
+      agent_type: "reviewer",
+      session_id: "review",
+      message_id: "review-answer",
+      delta: "复核指标",
+      reset: true,
+      parent_tool_call_id: "eval-call",
+    });
+    store.appendSubagentMessageDelta(conversationId, {
+      type: "subagent_message_delta",
+      delegation_id: "call-reasoning",
+      analysis_id: "sales",
+      agent_type: "reviewer",
+      session_id: "review",
+      message_id: "review-answer",
+      delta: "开始输出结论",
+      reset: true,
+      parent_tool_call_id: "eval-call",
+    });
+    store.updateSubagentStatus(conversationId, {
+      type: "subagent_status",
+      delegation_id: "call-reasoning",
+      analysis_id: "sales",
+      agent_type: "reviewer",
+      session_id: "review",
+      status: "completed",
+      parent_tool_call_id: "eval-call",
+    });
+
+    const run =
+      useChatStore.getState().subagentRunsByConversation[conversationId]["call-reasoning"];
+    expect(run.parentToolCallId).toBe("eval-call");
+    expect(run.messages[0].parts[0]).toEqual({
+      type: "thinking",
+      text: "复核指标",
+      status: "complete",
+    });
+    expect(run.messages[0].parts[1]).toEqual({
+      type: "text",
+      text: "开始输出结论",
+    });
+    expect(run.messages[0].finish_reason).toBe("stop");
+  });
+
   test("keeps parallel delegations isolated and deduplicates messages", () => {
     const store = useChatStore.getState();
     store.updateSubagentStatus(conversationId, {

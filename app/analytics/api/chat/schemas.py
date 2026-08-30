@@ -75,6 +75,19 @@ class ImageContent(BaseModel):
     image_url: str = Field(..., description="图片链接")
 
 
+class ThinkingContent(BaseModel):
+    """模型生成回答前的思考内容"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["thinking"]
+    text: str = Field(..., description="思考内容")
+    status: Literal["streaming", "complete", "interrupted"] = Field(
+        default="complete",
+        description="思考生成状态",
+    )
+
+
 class ToolCallPart(BaseModel):
     """消息中的工具调用内容"""
 
@@ -100,7 +113,7 @@ UserMessagePart = Annotated[
     Field(discriminator="type"),
 ]
 MessagePart = Annotated[
-    TextContent | ImageContent | ToolCallPart | ToolResultPart,
+    TextContent | ImageContent | ThinkingContent | ToolCallPart | ToolResultPart,
     Field(discriminator="type"),
 ]
 
@@ -215,6 +228,30 @@ class ChatStreamMessageEvent(BaseModel):
     message: MessageResponse = Field(..., description="消息内容")
 
 
+class ChatStreamThinkingEvent(BaseModel):
+    """Planner 模型思考增量事件"""
+
+    type: Literal["thinking"]
+    message_id: str = Field(..., description="所属 assistant 消息ID")
+    delta: str = Field(..., description="本次新增的思考文本")
+    reset: bool = Field(
+        default=False,
+        description="是否在追加本增量前清空该消息已有思考文本",
+    )
+
+
+class ChatStreamMessageDeltaEvent(BaseModel):
+    """Planner assistant 正文增量事件"""
+
+    type: Literal["message_delta"]
+    message_id: str = Field(..., description="所属 assistant 消息ID")
+    delta: str = Field(..., description="本次新增的正文文本")
+    reset: bool = Field(
+        default=False,
+        description="是否在追加本增量前清空该消息已有正文文本",
+    )
+
+
 class ChatStreamErrorEvent(BaseModel):
     """SSE 错误事件"""
 
@@ -241,6 +278,42 @@ class ChatStreamSubagentMessageEvent(BaseModel):
     instruction: str | None = None
 
 
+class ChatStreamSubagentThinkingEvent(BaseModel):
+    """Specialist 模型思考增量事件"""
+
+    type: Literal["subagent_thinking"]
+    delegation_id: str
+    analysis_id: str
+    agent_type: AgentType
+    session_id: str
+    message_id: str = Field(..., description="所属 assistant 消息ID")
+    delta: str = Field(..., description="本次新增的思考文本")
+    reset: bool = Field(
+        default=False,
+        description="是否在追加本增量前清空该消息已有思考文本",
+    )
+    parent_tool_call_id: str | None = None
+    instruction: str | None = None
+
+
+class ChatStreamSubagentMessageDeltaEvent(BaseModel):
+    """Specialist assistant 正文增量事件"""
+
+    type: Literal["subagent_message_delta"]
+    delegation_id: str
+    analysis_id: str
+    agent_type: AgentType
+    session_id: str
+    message_id: str = Field(..., description="所属 assistant 消息ID")
+    delta: str = Field(..., description="本次新增的正文文本")
+    reset: bool = Field(
+        default=False,
+        description="是否在追加本增量前清空该消息已有正文文本",
+    )
+    parent_tool_call_id: str | None = None
+    instruction: str | None = None
+
+
 class ChatStreamSubagentStatusEvent(BaseModel):
     """Specialist 执行状态事件"""
 
@@ -262,9 +335,13 @@ class ChatStreamSubagentStatusEvent(BaseModel):
 
 ChatStreamEventPayload = Annotated[
     ChatStreamMessageEvent
+    | ChatStreamThinkingEvent
+    | ChatStreamMessageDeltaEvent
     | ChatStreamErrorEvent
     | ChatStreamDoneEvent
     | ChatStreamSubagentMessageEvent
+    | ChatStreamSubagentThinkingEvent
+    | ChatStreamSubagentMessageDeltaEvent
     | ChatStreamSubagentStatusEvent,
     Field(discriminator="type"),
 ]

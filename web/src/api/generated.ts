@@ -43,7 +43,13 @@ export interface components {
       "content": string;
       "type": "error";
     };
-    "ChatStreamEvent": (components["schemas"]["ChatStreamMessageEvent"] | components["schemas"]["ChatStreamErrorEvent"] | components["schemas"]["ChatStreamDoneEvent"] | components["schemas"]["ChatStreamSubagentMessageEvent"] | components["schemas"]["ChatStreamSubagentStatusEvent"]);
+    "ChatStreamEvent": (components["schemas"]["ChatStreamMessageEvent"] | components["schemas"]["ChatStreamThinkingEvent"] | components["schemas"]["ChatStreamMessageDeltaEvent"] | components["schemas"]["ChatStreamErrorEvent"] | components["schemas"]["ChatStreamDoneEvent"] | components["schemas"]["ChatStreamSubagentMessageEvent"] | components["schemas"]["ChatStreamSubagentThinkingEvent"] | components["schemas"]["ChatStreamSubagentMessageDeltaEvent"] | components["schemas"]["ChatStreamSubagentStatusEvent"]);
+    "ChatStreamMessageDeltaEvent": {
+      "delta": string;
+      "message_id": string;
+      "reset"?: boolean;
+      "type": "message_delta";
+    };
     "ChatStreamMessageEvent": {
       "message": components["schemas"]["MessageResponse"];
       "type": "message";
@@ -51,6 +57,18 @@ export interface components {
     "ChatStreamRequest": {
       "conversation_id": string;
       "message": components["schemas"]["UserMessageRequest"];
+    };
+    "ChatStreamSubagentMessageDeltaEvent": {
+      "agent_type": components["schemas"]["AgentType"];
+      "analysis_id": string;
+      "delegation_id": string;
+      "delta": string;
+      "instruction"?: (string | null);
+      "message_id": string;
+      "parent_tool_call_id"?: (string | null);
+      "reset"?: boolean;
+      "session_id": string;
+      "type": "subagent_message_delta";
     };
     "ChatStreamSubagentMessageEvent": {
       "agent_type": components["schemas"]["AgentType"];
@@ -71,6 +89,24 @@ export interface components {
       "session_id": string;
       "status": "running" | "completed" | "needs_repair" | "failed" | "cancelled";
       "type": "subagent_status";
+    };
+    "ChatStreamSubagentThinkingEvent": {
+      "agent_type": components["schemas"]["AgentType"];
+      "analysis_id": string;
+      "delegation_id": string;
+      "delta": string;
+      "instruction"?: (string | null);
+      "message_id": string;
+      "parent_tool_call_id"?: (string | null);
+      "reset"?: boolean;
+      "session_id": string;
+      "type": "subagent_thinking";
+    };
+    "ChatStreamThinkingEvent": {
+      "delta": string;
+      "message_id": string;
+      "reset"?: boolean;
+      "type": "thinking";
     };
     "ColumnBatchDeleteRequest": {
       "columns": Array<components["schemas"]["ColumnReference"]>;
@@ -204,7 +240,7 @@ export interface components {
       "eval_delegations"?: (Array<components["schemas"]["EvalDelegationResponse"]> | null);
       "finish_reason"?: (string | null);
       "message_id"?: (string | null);
-      "parts": Array<(components["schemas"]["TextContent"] | components["schemas"]["ImageContent"] | components["schemas"]["ToolCallPart"] | components["schemas"]["ToolResultPart"])>;
+      "parts": Array<(components["schemas"]["TextContent"] | components["schemas"]["ImageContent"] | components["schemas"]["ThinkingContent"] | components["schemas"]["ToolCallPart"] | components["schemas"]["ToolResultPart"])>;
       "role": "user" | "assistant" | "tool" | "system";
     };
     "MetaImportResponse": {
@@ -400,6 +436,11 @@ export interface components {
     "TextContent": {
       "text": string;
       "type": "text";
+    };
+    "ThinkingContent": {
+      "status"?: "streaming" | "complete" | "interrupted";
+      "text": string;
+      "type": "thinking";
     };
     "TokenResponse": {
       "access_token": string;
