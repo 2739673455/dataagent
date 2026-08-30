@@ -5,6 +5,7 @@ import { adminApi, type DorisRoleResponse, type UserListResponse } from "@/api/a
 import { getApiErrorMessage } from "@/api/errors";
 import { type UserResponse, useAuthStore } from "@/auth";
 import { DotMatrixLoader } from "@/components/DotMatrixLoader";
+import { PaginationControls } from "@/components/PaginationControls";
 import { Button } from "@/components/ui/button";
 import {
   AdminDialogActions,
@@ -22,7 +23,6 @@ export function UserManagement() {
   const [roles, setRoles] = useState<DorisRoleResponse[]>([]);
   const [userOffset, setUserOffset] = useState(0);
   const [userTotal, setUserTotal] = useState(0);
-  const [userHasMore, setUserHasMore] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [isCreatingUser, setIsCreatingUser] = useState(false);
@@ -38,7 +38,6 @@ export function UserManagement() {
   const applyUserPage = useCallback((page: UserListResponse) => {
     setUsers(page.users);
     setUserTotal(page.total);
-    setUserHasMore(page.has_more);
   }, []);
 
   const loadData = useCallback(async () => {
@@ -287,30 +286,12 @@ export function UserManagement() {
             共 {userTotal} 位用户，当前显示 {userTotal ? userOffset + 1 : 0}–
             {Math.min(userOffset + users.length, userTotal)}
           </span>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy || userOffset === 0}
-              onClick={() => setUserOffset(Math.max(0, userOffset - USER_PAGE_SIZE))}
-              className="h-7 text-xs"
-            >
-              上一页
-            </Button>
-            <span className="min-w-20 text-center text-[#52525b]">
-              第 {Math.floor(userOffset / USER_PAGE_SIZE) + 1} /{" "}
-              {Math.max(1, Math.ceil(userTotal / USER_PAGE_SIZE))} 页
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy || !userHasMore}
-              onClick={() => setUserOffset(userOffset + USER_PAGE_SIZE)}
-              className="h-7 text-xs"
-            >
-              下一页
-            </Button>
-          </div>
+          <PaginationControls
+            currentPage={Math.floor(userOffset / USER_PAGE_SIZE) + 1}
+            totalPages={Math.max(1, Math.ceil(userTotal / USER_PAGE_SIZE))}
+            disabled={busy}
+            onPageChange={(nextPage) => setUserOffset((nextPage - 1) * USER_PAGE_SIZE)}
+          />
         </div>
       </section>
 

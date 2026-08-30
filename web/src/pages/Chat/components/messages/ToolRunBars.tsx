@@ -1,11 +1,12 @@
 import { ChevronRight } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { cn } from "@/lib/utils";
 import type { Attachment, MessageResponse, SubagentRun } from "@/types";
 import { AttachmentChip } from "./AttachmentChip";
 import {
   buildDisplayItems,
+  buildEvalDelegationItems,
   type ExecutionStatus,
   formatToolResult,
   getExecutionStatus,
@@ -85,9 +86,11 @@ export function ToolArgsView({ args }: { args?: Record<string, unknown> }) {
  */
 export function GenericToolRunBar({
   item,
+  nestedContent,
   onOpenPreviewAttachment,
 }: {
   item: ToolRunDisplayItem;
+  nestedContent?: ReactNode;
   onOpenPreviewAttachment?: (attachment: Attachment) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -124,7 +127,7 @@ export function GenericToolRunBar({
         />
         <span
           className={cn(
-            "inline-flex items-baseline gap-1.5 min-w-0 max-w-full truncate",
+            "inline-flex min-w-0 max-w-full items-baseline truncate",
             isRunning && "shimmer-text"
           )}
         >
@@ -133,7 +136,7 @@ export function GenericToolRunBar({
           </span>
           {argsPreview ? (
             <span
-              className={cn("truncate text-[11px]", !isRunning && "text-[#71717a]")}
+              className={cn("ml-4 truncate text-[11px]", !isRunning && "text-[#71717a]")}
               title={argsPreview}
             >
               {argsPreview}
@@ -151,6 +154,7 @@ export function GenericToolRunBar({
               <ToolArgsView args={item.args} />
             </div>
           ) : null}
+          {nestedContent}
           {item.result !== undefined ? (
             <div className="space-y-1">
               <p className="font-medium text-[#71717a]">输出</p>
@@ -271,6 +275,33 @@ export function ExecutionProcessCollapse({
                   loadSubagentMessages={loadSubagentMessages}
                   onOpenPreviewAttachment={onOpenPreviewAttachment}
                   subagentRun={subagentRuns[item.toolCallId]}
+                />
+              );
+            }
+
+            if (item.name === "eval") {
+              const nestedDelegations = buildEvalDelegationItems(item, subagentRuns);
+              return (
+                <GenericToolRunBar
+                  key={item.key}
+                  item={item}
+                  onOpenPreviewAttachment={onOpenPreviewAttachment}
+                  nestedContent={
+                    nestedDelegations.length > 0 ? (
+                      <div className="space-y-1">
+                        <p className="font-medium text-[#71717a]">内部委派</p>
+                        {nestedDelegations.map((delegation) => (
+                          <DelegationToolRunBar
+                            key={delegation.key}
+                            item={delegation}
+                            loadSubagentMessages={loadSubagentMessages}
+                            onOpenPreviewAttachment={onOpenPreviewAttachment}
+                            subagentRun={subagentRuns[delegation.toolCallId]}
+                          />
+                        ))}
+                      </div>
+                    ) : undefined
+                  }
                 />
               );
             }
@@ -461,7 +492,7 @@ function DelegationRunBarInternal({
         />
         <span
           className={cn(
-            "inline-flex items-baseline gap-1.5 min-w-0 max-w-full truncate",
+            "inline-flex min-w-0 max-w-full items-baseline truncate",
             isRunning && "shimmer-text"
           )}
         >
@@ -470,7 +501,7 @@ function DelegationRunBarInternal({
           </span>
           {delegationArgsPreview ? (
             <span
-              className={cn("truncate text-[11px]", !isRunning && "text-[#71717a]")}
+              className={cn("ml-4 truncate text-[11px]", !isRunning && "text-[#71717a]")}
               title={delegationArgsPreview}
             >
               {delegationArgsPreview}

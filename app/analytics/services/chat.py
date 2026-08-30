@@ -19,9 +19,11 @@ from loguru import logger
 from pydantic import ValidationError
 
 from app.analytics.agents.contracts import (
+    EVAL_DELEGATIONS_KEY,
     MESSAGE_CREATED_AT_KEY,
     ConversationAgentRuntime,
     DelegationResult,
+    EvalDelegationRecord,
     PlannerTurnContext,
     SubagentActivity,
     SubagentMessageActivity,
@@ -152,6 +154,48 @@ def _langchain_message_to_schema(
     if stored_schema := _schema_from_metadata(message):
         return stored_schema
     if isinstance(message, ToolMessage):
+        eval_delegations: list[chat_schema.EvalDelegationResponse] | None = None
+        raw_eval_delegations = message.additional_kwargs.get(EVAL_DELEGATIONS_KEY)
+        if isinstance(raw_eval_delegations, list):
+            try:
+                records = [
+                    EvalDelegationRecord.model_validate(item)
+                    for item in raw_eval_delegations
+                ]
+            except ValidationError:
+                logger.warning(
+                    f"eval 内部委派元数据无效: message_id={message.id}, "
+                    f"tool_call_id={message.tool_call_id}"
+                )
+            else:
+                eval_delegations = [
+                    chat_schema.EvalDelegationResponse(
+                        delegation_id=record.delegation_id,
+                        analysis_id=record.analysis_id,
+                        agent_type=record.agent_type,
+                        session_id=record.session_id,
+                        message=record.message,
+                        result=(
+                            record.result.model_dump(mode="json")
+                            if record.result is not None
+                            else None
+                        ),
+                        attachments=(
+                            [
+                                chat_schema.Attachment(
+                                    f_path=artifact.path.removeprefix("/"),
+                                    media_type=artifact.media_type,
+                                    description=artifact.description,
+                                )
+                                for artifact in record.result.artifacts
+                            ]
+                            if record.result is not None
+                            and record.result.artifacts
+                            else None
+                        ),
+                    )
+                    for record in records
+                ]
         return chat_schema.MessageResponse(
             message_id=message.id,
             created_at=_message_created_at(message),
@@ -165,6 +209,7 @@ def _langchain_message_to_schema(
                 )
             ],
             attachments=_delegation_result_attachments(message) or None,
+            eval_delegations=eval_delegations,
         )
 
     if isinstance(message, AIMessage):
@@ -229,6 +274,8 @@ async def _subagent_activity_to_event(
             agent_type=activity.agent_type,
             session_id=activity.session_id,
             message=message,
+            parent_tool_call_id=activity.parent_tool_call_id,
+            instruction=activity.instruction,
         )
     if isinstance(activity, SubagentStatusActivity):
         return chat_schema.ChatStreamSubagentStatusEvent(
@@ -238,6 +285,8 @@ async def _subagent_activity_to_event(
             agent_type=activity.agent_type,
             session_id=activity.session_id,
             status=activity.status,
+            parent_tool_call_id=activity.parent_tool_call_id,
+            instruction=activity.instruction,
         )
     return None
 

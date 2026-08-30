@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   buildDisplayItems,
+  buildEvalDelegationItems,
   getAttachmentFileType,
   getConversationExecutionStatus,
   getExecutionStatus,
@@ -11,8 +12,82 @@ import {
   resolveDelegationRunStatus,
 } from "../src/pages/Chat/components/messages/displayModel";
 import type { MessageResponse } from "../src/types";
+import type { ToolRunDisplayItem } from "../src/pages/Chat/components/messages/types";
 
 describe("chat message display and turn grouping", () => {
+  test("restores eval internal delegations and merges live activity", () => {
+    const messages: MessageResponse[] = [
+      {
+        message_id: "eval-call-message",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool_call",
+            tool_call_id: "eval-call",
+            name: "eval",
+            args: { code: "await tools.delegation({})" },
+          },
+        ],
+      },
+      {
+        message_id: "eval-result-message",
+        role: "tool",
+        parts: [
+          {
+            type: "tool_result",
+            tool_call_id: "eval-call",
+            name: "eval",
+            content: "done",
+          },
+        ],
+        eval_delegations: [
+          {
+            delegation_id: "ptc-delegation-1",
+            analysis_id: "sales",
+            agent_type: "explorer",
+            session_id: "source",
+            message: "定位销售数据",
+            result: {
+              status: "completed",
+              analysis_id: "sales",
+              agent_type: "explorer",
+              session_id: "source",
+              content: "完成",
+              artifacts: [],
+              repair_requests: [],
+              failure_reasons: [],
+            },
+          },
+        ],
+      },
+    ];
+
+    const parent = buildDisplayItems("conv-1", messages, false)[0] as ToolRunDisplayItem;
+    const nested = buildEvalDelegationItems(parent, {
+      "ptc-delegation-2": {
+        delegationId: "ptc-delegation-2",
+        analysisId: "sales",
+        agentType: "analyst",
+        sessionId: "metrics",
+        parentToolCallId: "eval-call",
+        instruction: "计算销售指标",
+        status: "running",
+        messages: [],
+        historyLoaded: false,
+        historyLoading: false,
+      },
+    });
+
+    expect(parent.evalDelegations).toHaveLength(1);
+    expect(nested.map((item) => item.toolCallId)).toEqual([
+      "ptc-delegation-1",
+      "ptc-delegation-2",
+    ]);
+    expect(nested[0].completed).toBe(true);
+    expect(nested[1].completed).toBe(false);
+    expect(nested[1].args?.message).toBe("计算销售指标");
+  });
+
   test("detects explicit tool error status", () => {
     expect(getToolResultStatus('{"status":"failed"}')).toBe("failed");
     expect(isToolResultFailure('{"status":"error","message":"failed"}')).toBe(true);

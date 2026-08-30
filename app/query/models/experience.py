@@ -19,6 +19,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.shared.database.base import MetaBase
 
+QUERY_EXPERIENCE_PURPOSE_LIMIT = 5
+
 
 class QueryExperience(MetaBase):
     """按角色和 SQL 结构聚合的共享查询经验"""
@@ -128,7 +130,7 @@ class QueryExperience(MetaBase):
             self.purposes = [
                 *[item for item in self.purposes if item != purpose],
                 purpose,
-            ][-20:]
+            ][-QUERY_EXPERIENCE_PURPOSE_LIMIT:]
         self.sql_template = sql_template
         self.revision += 1
         if self.disabled_reason == "metadata_changed":

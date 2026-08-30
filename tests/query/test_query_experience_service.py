@@ -15,6 +15,7 @@ from app.query.models.execution import (
     QueryResultColumn,
 )
 from app.query.models.experience import (
+    QUERY_EXPERIENCE_PURPOSE_LIMIT,
     QueryExperience,
     QueryExperienceAsset,
 )
@@ -422,6 +423,30 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(experience.authorization_epoch, next_epoch)
         self.assertEqual(experience.purposes, ["按渠道统计订单金额"])
+
+    def test_successful_reexecution_keeps_only_semantic_retrieval_purposes(
+        self,
+    ) -> None:
+        experience = build_experience(
+            table_name="orders",
+            column_name="amount",
+            meta_version=1,
+        )
+
+        for index in range(QUERY_EXPERIENCE_PURPOSE_LIMIT + 1):
+            experience.refresh_from_success(
+                purpose=f"查询目的 {index}",
+                authorization_epoch=experience.authorization_epoch,
+                sql_template=experience.sql_template,
+            )
+
+        self.assertEqual(
+            experience.purposes,
+            [
+                f"查询目的 {index}"
+                for index in range(1, QUERY_EXPERIENCE_PURPOSE_LIMIT + 1)
+            ],
+        )
 
     def test_sql_template_redacts_literals_and_has_stable_fingerprint(self) -> None:
         first_template, first_fingerprint = _build_sql_template(
@@ -900,6 +925,9 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         await service.sync_index(experience.id, experience.revision)
 
         self.assertEqual(index_repo.indexed[0]["revision"], experience.revision)
+        self.assertEqual(index_repo.indexed[0]["text"], "统计订单金额")
+        self.assertNotIn("orders", cast(str, index_repo.indexed[0]["text"]))
+        self.assertNotIn("amount", cast(str, index_repo.indexed[0]["text"]))
         self.assertEqual(experience.indexed_revision, experience.revision)
 
     async def test_sync_failure_does_not_advance_indexed_revision(self) -> None:

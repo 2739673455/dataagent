@@ -24,6 +24,7 @@ from app.analytics.agents.contracts import (
     DelegationResult,
     DeleteSessionRequest,
     DeleteSessionResult,
+    EvalDelegationRecord,
     ListSessionsResult,
     SessionSummary,
     SpecialistResult,
@@ -84,7 +85,51 @@ class AgentSessionService:
         self._parallelism = asyncio.Semaphore(max_parallel_sessions)
         self._session_query_parallelism = asyncio.Semaphore(max_parallel_sessions)
         self._active_sessions: dict[str, datetime] = {}
+        self._eval_delegations: dict[str, dict[str, EvalDelegationRecord]] = {}
         self._runtime_state_lock = ThreadLock()
+
+    def begin_eval_delegation(
+        self,
+        parent_tool_call_id: str,
+        delegation_id: str,
+        request: DelegationRequest,
+    ) -> None:
+        """登记一次由 eval 发起、尚未完成的内部委派"""
+        record = EvalDelegationRecord(
+            delegation_id=delegation_id,
+            analysis_id=request.analysis_id,
+            agent_type=request.agent_type,
+            session_id=request.session_id,
+            message=request.message,
+        )
+        with self._runtime_state_lock:
+            self._eval_delegations.setdefault(parent_tool_call_id, {})[
+                delegation_id
+            ] = record
+
+    def finish_eval_delegation(
+        self,
+        parent_tool_call_id: str,
+        delegation_id: str,
+        result: DelegationResult,
+    ) -> None:
+        """把 eval 内部委派的最终结果写入待持久化记录"""
+        with self._runtime_state_lock:
+            records = self._eval_delegations.get(parent_tool_call_id)
+            if records is None or delegation_id not in records:
+                return
+            records[delegation_id] = records[delegation_id].model_copy(
+                update={"result": result}
+            )
+
+    def take_eval_delegations(
+        self,
+        parent_tool_call_id: str,
+    ) -> list[EvalDelegationRecord]:
+        """取出并清除一个 eval 收集到的内部委派记录"""
+        with self._runtime_state_lock:
+            records = self._eval_delegations.pop(parent_tool_call_id, {})
+        return list(records.values())
 
     async def _is_existing_session(self, session_key: AgentSessionKey) -> bool:
         """从活跃执行或持久化 Checkpoint 识别 Session"""
@@ -810,3 +855,4 @@ class AgentSessionService:
         self._session_locks.clear()
         with self._runtime_state_lock:
             self._active_sessions.clear()
+            self._eval_delegations.clear()

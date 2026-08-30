@@ -2,7 +2,8 @@
 
 import unittest
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, ClassVar, cast
+from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -22,8 +23,29 @@ from app.shared.errors.exc_handlers import (
 
 
 class _Service:
+    disabled_ids: ClassVar[list[UUID]] = []
+    deleted_ids: ClassVar[list[UUID]] = []
+
     async def list_overviews(self, **_: object) -> tuple[list[object], int]:
         return [], 0
+
+    async def disable_experiences(
+        self,
+        experience_ids: list[UUID],
+        *,
+        operator_id: int,
+    ) -> None:
+        del operator_id
+        type(self).disabled_ids = experience_ids
+
+    async def request_deletions(
+        self,
+        experience_ids: list[UUID],
+        *,
+        operator_id: int,
+    ) -> None:
+        del operator_id
+        type(self).deleted_ids = experience_ids
 
 
 def _user(*, is_admin: bool) -> AuthenticatedUser:
@@ -67,6 +89,27 @@ def _app(*, is_admin: bool) -> FastAPI:
 
 
 class QueryExperienceAdminApiTest(unittest.IsolatedAsyncioTestCase):
+    async def test_admin_can_batch_disable_and_delete_experiences(self) -> None:
+        first_id = uuid4()
+        second_id = uuid4()
+        async with AsyncClient(
+            transport=ASGITransport(app=_app(is_admin=True)),
+            base_url="http://test",
+        ) as client:
+            disable_response = await client.post(
+                "/api/v1/admin/query-experiences/batch-disable",
+                json={"experience_ids": [str(first_id), str(second_id)]},
+            )
+            delete_response = await client.post(
+                "/api/v1/admin/query-experiences/batch-delete",
+                json={"experience_ids": [str(first_id)]},
+            )
+
+        self.assertEqual(disable_response.status_code, 204)
+        self.assertEqual(delete_response.status_code, 204)
+        self.assertEqual(_Service.disabled_ids, [first_id, second_id])
+        self.assertEqual(_Service.deleted_ids, [first_id])
+
     async def test_admin_can_list_experiences(self) -> None:
         async with AsyncClient(
             transport=ASGITransport(app=_app(is_admin=True)),

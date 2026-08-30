@@ -1,5 +1,6 @@
-import { ChevronLeft, ChevronRight, Download, Filter, Table } from "lucide-react";
+import { Download, Filter, Table } from "lucide-react";
 import { useMemo, useState } from "react";
+import { PaginationControls } from "@/components/PaginationControls";
 import { Button } from "@/components/ui/button";
 import type { InteractiveTableArtifact } from "@/types";
 
@@ -197,31 +198,11 @@ export function InteractiveTablePreview({ artifact }: { artifact: InteractiveTab
       {/* 底部翻页栏 */}
       <div className="flex items-center justify-between border-t border-[#d4d4ce] bg-[#fafaf8] px-3 py-1.5 text-xs text-[#71717a]">
         <span>匹配 {filteredRows.length} 条记录</span>
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setPage(Math.max(0, safePage - 1))}
-            disabled={safePage === 0}
-            className="h-6 px-2 text-xs"
-          >
-            <ChevronLeft className="h-3 w-3 mr-0.5" />
-            上一页
-          </Button>
-          <span className="text-xs text-[#27272a]">
-            第 {safePage + 1} / {pageCount} 页
-          </span>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setPage(Math.min(pageCount - 1, safePage + 1))}
-            disabled={safePage >= pageCount - 1}
-            className="h-6 px-2 text-xs"
-          >
-            下一页
-            <ChevronRight className="h-3 w-3 ml-0.5" />
-          </Button>
-        </div>
+        <PaginationControls
+          currentPage={safePage + 1}
+          totalPages={pageCount}
+          onPageChange={(nextPage) => setPage(nextPage - 1)}
+        />
       </div>
     </div>
   );

@@ -1,9 +1,8 @@
-import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { adminApi, type QueryExperienceSourceExecutionListResponse } from "@/api/admin";
 import { getApiErrorMessage } from "@/api/errors";
 import { DotMatrixLoader } from "@/components/DotMatrixLoader";
-import { Button } from "@/components/ui/button";
+import { PaginationControls } from "@/components/PaginationControls";
 
 const PAGE_SIZE = 10;
 
@@ -49,7 +48,7 @@ export function ExperienceSourceExecutionList({ experienceId }: { experienceId: 
                 <th className="px-2 py-1.5">查询目的</th>
                 <th className="px-2 py-1.5">用户</th>
                 <th className="px-2 py-1.5">分析 / 会话</th>
-                <th className="px-2 py-1.5">行数</th>
+                <th className="px-2 py-1.5">查询结果行数</th>
                 <th className="px-2 py-1.5">执行时间</th>
               </tr>
             </thead>
@@ -73,27 +72,13 @@ export function ExperienceSourceExecutionList({ experienceId }: { experienceId: 
           暂无来源执行记录
         </div>
       )}
-      <div className="flex justify-end gap-1.5">
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-6 px-1.5"
-          disabled={loading || offset === 0}
-          onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-        >
-          <ChevronLeft className="h-3 w-3" />
-          上一页
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-6 px-1.5"
-          disabled={loading || !page?.has_more}
-          onClick={() => setOffset(offset + PAGE_SIZE)}
-        >
-          下一页
-          <ChevronRight className="h-3 w-3" />
-        </Button>
+      <div className="flex justify-end">
+        <PaginationControls
+          currentPage={Math.floor(offset / PAGE_SIZE) + 1}
+          totalPages={Math.max(1, Math.ceil((page?.total ?? 0) / PAGE_SIZE))}
+          disabled={loading}
+          onPageChange={(nextPage) => setOffset((nextPage - 1) * PAGE_SIZE)}
+        />
       </div>
     </section>
   );

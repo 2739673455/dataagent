@@ -111,6 +111,37 @@ class QueryExperienceManagementService:
             )
         return overview
 
+    async def disable_experiences(
+        self,
+        experience_ids: list[UUID],
+        *,
+        operator_id: int,
+    ) -> None:
+        """在同一事务中批量标记查询经验为管理员禁用。"""
+        unique_ids = list(dict.fromkeys(experience_ids))
+        changed_revisions: dict[UUID, int] = {}
+        async with self._repo.session.begin():
+            for experience_id in unique_ids:
+                experience, changed = await self._repo.disable_manually(
+                    experience_id,
+                    operator_id,
+                )
+                if experience is None:
+                    raise query_error.QueryExperienceNotFoundError
+                if experience.status == "deleting":
+                    raise query_error.QueryExperienceStateConflictError(
+                        detail="删除中的查询经验不能禁用"
+                    )
+                if changed:
+                    changed_revisions[experience_id] = experience.revision
+        for experience_id, revision in changed_revisions.items():
+            self._index_scheduler.enqueue(experience_id, revision)
+        logger.info(
+            "管理员批量禁用查询经验: "
+            f"operator_id={operator_id}, experience_ids={unique_ids}, "
+            f"changed_count={len(changed_revisions)}"
+        )
+
     async def request_deletion(
         self,
         experience_id: UUID,
@@ -138,4 +169,31 @@ class QueryExperienceManagementService:
         return QueryExperienceDeletionResult(
             id=experience_id,
             deletion_requested_at=requested_at,
+        )
+
+    async def request_deletions(
+        self,
+        experience_ids: list[UUID],
+        *,
+        operator_id: int,
+    ) -> None:
+        """在同一事务中批量提交查询经验删除请求。"""
+        unique_ids = list(dict.fromkeys(experience_ids))
+        changed_revisions: dict[UUID, int] = {}
+        async with self._repo.session.begin():
+            for experience_id in unique_ids:
+                experience, changed = await self._repo.request_deletion(
+                    experience_id,
+                    operator_id,
+                )
+                if experience is None:
+                    raise query_error.QueryExperienceNotFoundError
+                if changed:
+                    changed_revisions[experience_id] = experience.revision
+        for experience_id, revision in changed_revisions.items():
+            self._index_scheduler.enqueue(experience_id, revision)
+        logger.info(
+            "管理员批量删除查询经验: "
+            f"operator_id={operator_id}, experience_ids={unique_ids}, "
+            f"changed_count={len(changed_revisions)}"
         )

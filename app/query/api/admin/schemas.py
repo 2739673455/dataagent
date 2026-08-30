@@ -4,14 +4,23 @@ from datetime import datetime
 from typing import Literal, Self, cast
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.query.models.execution import QueryExecution
+from app.query.models.experience import QUERY_EXPERIENCE_PURPOSE_LIMIT
 from app.query.repositories.experience_postgres import QueryExperienceOverview
 from app.query.services.experience_management import QueryExperienceDeletionResult
 
 type QueryExperienceStatus = Literal["active", "disabled", "deleting"]
 type QueryExperienceDisabledReason = Literal["metadata_changed", "admin"]
+
+
+class QueryExperienceBatchRequest(BaseModel):
+    """批量管理查询经验请求。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    experience_ids: list[UUID] = Field(min_length=1, max_length=100)
 
 
 class QueryExperienceOverviewResponse(BaseModel):
@@ -97,7 +106,7 @@ class QueryExperienceDetailResponse(QueryExperienceOverviewResponse):
         experience = overview.experience
         return cls(
             **summary.model_dump(),
-            purposes=experience.purposes,
+            purposes=experience.purposes[-QUERY_EXPERIENCE_PURPOSE_LIMIT:],
             sql_template=experience.sql_template,
             fingerprint=experience.fingerprint,
             disabled_by_user_id=experience.disabled_by_user_id,

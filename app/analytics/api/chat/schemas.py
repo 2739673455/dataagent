@@ -140,6 +140,18 @@ class UserMessageRequest(BaseModel):
         return self
 
 
+class EvalDelegationResponse(BaseModel):
+    """eval 内部发起的一次专业 Agent 委派"""
+
+    delegation_id: str
+    analysis_id: str
+    agent_type: AgentType
+    session_id: str
+    message: str
+    result: dict[str, object] | None = None
+    attachments: list[Attachment] | None = None
+
+
 class MessageResponse(BaseModel):
     """返回给客户端的消息"""
 
@@ -149,6 +161,10 @@ class MessageResponse(BaseModel):
     parts: list[MessagePart] = Field(..., description="消息片段")
     attachments: list[Attachment] | None = Field(default=None, description="附件列表")
     finish_reason: FinishReason | None = Field(default=None, description="完成原因")
+    eval_delegations: list[EvalDelegationResponse] | None = Field(
+        default=None,
+        description="eval 内部发起的专业 Agent 委派",
+    )
 
 
 class ChatStreamRequest(BaseModel):
@@ -221,6 +237,8 @@ class ChatStreamSubagentMessageEvent(BaseModel):
     agent_type: AgentType
     session_id: str
     message: MessageResponse
+    parent_tool_call_id: str | None = None
+    instruction: str | None = None
 
 
 class ChatStreamSubagentStatusEvent(BaseModel):
@@ -231,6 +249,8 @@ class ChatStreamSubagentStatusEvent(BaseModel):
     analysis_id: str
     agent_type: AgentType
     session_id: str
+    parent_tool_call_id: str | None = None
+    instruction: str | None = None
     status: Literal[
         "running",
         "completed",

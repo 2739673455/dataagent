@@ -50,4 +50,18 @@ describe("query experience admin", () => {
     expect(post).toHaveBeenCalledWith("/api/v1/admin/query-experiences/experience-id/disable");
     expect(remove).toHaveBeenCalledWith("/api/v1/admin/query-experiences/experience-id");
   });
+
+  test("calls batch disable and delete endpoints", async () => {
+    const post = vi.spyOn(appClient, "post").mockResolvedValue({ data: {} });
+
+    await adminApi.disableQueryExperiences(["first", "second"]);
+    await adminApi.deleteQueryExperiences(["second"]);
+
+    expect(post).toHaveBeenNthCalledWith(1, "/api/v1/admin/query-experiences/batch-disable", {
+      experience_ids: ["first", "second"],
+    });
+    expect(post).toHaveBeenNthCalledWith(2, "/api/v1/admin/query-experiences/batch-delete", {
+      experience_ids: ["second"],
+    });
+  });
 });

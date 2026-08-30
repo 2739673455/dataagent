@@ -195,6 +195,7 @@ class ConversationAgentRuntimeFactory:
             tools=planner_tools,
             backend=backend,
             checkpointer=checkpointer,
+            session_service=session_service,
             interpreter_memory_limit_bytes=interpreter.memory_limit_bytes,
         )
 

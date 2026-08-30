@@ -21,6 +21,7 @@ export type QueryExperienceSourceExecutionListResponse =
   ApiSchemas["QueryExperienceSourceExecutionListResponse"];
 export type QueryExperienceListResponse = ApiSchemas["QueryExperienceListResponse"];
 export type QueryExperienceStatus = ApiSchemas["QueryExperienceStatus"];
+type QueryExperienceBatchRequest = ApiSchemas["QueryExperienceBatchRequest"];
 
 type DorisRoleListResponse = ApiSchemas["DorisRoleListResponse"];
 type DropRowPolicyRequest = ApiSchemas["DropRowPolicyRequest"];
@@ -161,11 +162,23 @@ export const adminApi = {
     return response.data;
   },
 
+  async disableQueryExperiences(experienceIds: string[]): Promise<void> {
+    await appClient.post("/api/v1/admin/query-experiences/batch-disable", {
+      experience_ids: experienceIds,
+    } satisfies QueryExperienceBatchRequest);
+  },
+
   async deleteQueryExperience(id: string): Promise<QueryExperienceDeletionResponse> {
     const response = await appClient.delete<QueryExperienceDeletionResponse>(
       `/api/v1/admin/query-experiences/${id}`
     );
     return response.data;
+  },
+
+  async deleteQueryExperiences(experienceIds: string[]): Promise<void> {
+    await appClient.post("/api/v1/admin/query-experiences/batch-delete", {
+      experience_ids: experienceIds,
+    } satisfies QueryExperienceBatchRequest);
   },
 
   async grantSelect(role: string, request: SelectGrantRequest): Promise<void> {

@@ -46,6 +46,32 @@ async def list_query_experiences(
     )
 
 
+@router.post("/batch-disable", status_code=http_status.HTTP_204_NO_CONTENT)
+async def disable_query_experiences(
+    body: schemas.QueryExperienceBatchRequest,
+    current_admin: AdminUserDep,
+    service: QueryExperienceManagementServiceDep,
+) -> None:
+    """管理员批量禁用查询经验。"""
+    await service.disable_experiences(
+        body.experience_ids,
+        operator_id=current_admin.id,
+    )
+
+
+@router.post("/batch-delete", status_code=http_status.HTTP_204_NO_CONTENT)
+async def delete_query_experiences(
+    body: schemas.QueryExperienceBatchRequest,
+    current_admin: AdminUserDep,
+    service: QueryExperienceManagementServiceDep,
+) -> None:
+    """管理员批量提交查询经验删除请求。"""
+    await service.request_deletions(
+        body.experience_ids,
+        operator_id=current_admin.id,
+    )
+
+
 @router.get(
     "/{experience_id}",
     response_model=schemas.QueryExperienceDetailResponse,

@@ -1,4 +1,10 @@
-import type { AgentType, Attachment, MessagePart, SubagentRun } from "@/types";
+import type {
+  Attachment,
+  EvalDelegationResponse,
+  MessagePart,
+  SubagentRun,
+  SubagentRunIdentity,
+} from "@/types";
 
 export type MessageDisplayItem = {
   key: string;
@@ -26,6 +32,7 @@ export type ToolRunDisplayItem = {
   attachments?: Attachment[] | null;
   conversationId?: string | null;
   createdAt?: string | null;
+  evalDelegations?: EvalDelegationResponse[] | null;
 };
 
 export type DisplayItem = MessageDisplayItem | ToolRunDisplayItem;
@@ -37,12 +44,7 @@ export type ChatTurn = {
   finalItem: MessageDisplayItem | null;
 };
 
-export type SubagentRunIdentity = {
-  delegationId: string;
-  analysisId: string;
-  agentType: AgentType;
-  sessionId: string;
-};
+export type { SubagentRunIdentity };
 
 export type SubagentRunMap = Record<string, SubagentRun>;
 

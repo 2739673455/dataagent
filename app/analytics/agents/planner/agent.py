@@ -12,6 +12,9 @@ from langchain_quickjs import CodeInterpreterMiddleware
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
+from app.analytics.agents.middleware.eval_delegations import (
+    EvalDelegationMiddleware,
+)
 from app.analytics.agents.middleware.message_timestamp import (
     MessageTimestampMiddleware,
 )
@@ -21,6 +24,7 @@ from app.analytics.agents.middleware.user_message_attachments import (
 from app.analytics.agents.middleware.user_message_metadata import (
     UserMessageMetadataMiddleware,
 )
+from app.analytics.agents.session_service import AgentSessionService
 from app.analytics.agents.tools import create_image_view_request_tool
 
 from .prompt import build_planner_system_prompt
@@ -34,6 +38,7 @@ def create_planner_agent(
     tools: Sequence[BaseTool],
     backend: BackendProtocol,
     checkpointer: BaseCheckpointSaver,
+    session_service: AgentSessionService,
     interpreter_memory_limit_bytes: int,
 ) -> CompiledStateGraph:
     """使用显式解释器配置编译 Planner Agent"""
@@ -55,6 +60,7 @@ def create_planner_agent(
         middleware=cast(
             "Sequence[AgentMiddleware[Any, Any, Any]]",
             [
+                EvalDelegationMiddleware(session_service),
                 filesystem,
                 interpreter,
                 UserMessageMetadataMiddleware(),

@@ -15,6 +15,7 @@ from app.metadata.models.search import SearchHit
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
 from app.query.models.execution import QueryExecution, QueryExecutionStatus
 from app.query.models.experience import (
+    QUERY_EXPERIENCE_PURPOSE_LIMIT,
     QueryExperience,
     QueryExperienceAsset,
 )
@@ -534,15 +535,7 @@ class QueryExperienceService:
 
     @staticmethod
     def _experience_text(experience: QueryExperience) -> str:
-        """构造不含历史字面量和结果样本的索引文本"""
-        asset_names = [
-            (
-                f"{asset.table_name}.{asset.column_name}"
-                if asset.column_name is not None
-                else asset.table_name
-            )
-            for asset in experience.assets
-        ]
-        return "\n".join([*sorted(set(asset_names)), *experience.purposes[-5:]])[
-            :_INDEX_TEXT_MAX_CHARS
-        ]
+        """仅使用查询目的构造经验索引文本。"""
+        return "\n".join(
+            experience.purposes[-QUERY_EXPERIENCE_PURPOSE_LIMIT:]
+        )[:_INDEX_TEXT_MAX_CHARS]

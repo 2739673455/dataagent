@@ -207,6 +207,8 @@ export const useChatStore = create<ChatState>()((set, get) => ({
         analysisId: event.analysis_id,
         agentType: event.agent_type,
         sessionId: event.session_id,
+        parentToolCallId: event.parent_tool_call_id,
+        instruction: event.instruction,
       };
       const current = conversationRuns[event.delegation_id] ?? createSubagentRun(identity);
       if (messageAlreadyExists(current.messages, event.message)) return state;
@@ -233,6 +235,8 @@ export const useChatStore = create<ChatState>()((set, get) => ({
         analysisId: event.analysis_id,
         agentType: event.agent_type,
         sessionId: event.session_id,
+        parentToolCallId: event.parent_tool_call_id,
+        instruction: event.instruction,
       };
       const current = conversationRuns[event.delegation_id] ?? createSubagentRun(identity);
       return {

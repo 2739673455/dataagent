@@ -8,6 +8,7 @@ interface AdminEditorDialogProps {
   children: ReactNode;
   onClose: () => void;
   title: ReactNode;
+  wide?: boolean;
 }
 
 interface AdminDialogHeaderProps {
@@ -63,7 +64,13 @@ export function AdminDialogPrimaryButton({ children, disabled, onClick }: AdminD
   );
 }
 
-export function AdminEditorDialog({ ariaLabel, children, onClose, title }: AdminEditorDialogProps) {
+export function AdminEditorDialog({
+  ariaLabel,
+  children,
+  onClose,
+  title,
+  wide = false,
+}: AdminEditorDialogProps) {
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -87,7 +94,9 @@ export function AdminEditorDialog({ ariaLabel, children, onClose, title }: Admin
       }}
       role="dialog"
     >
-      <div className="max-h-[calc(100vh-2rem)] w-full max-w-xl overflow-y-auto rounded-lg border border-[#d4d4ce] bg-[#fafaf8] p-5 text-xs shadow-xl">
+      <div
+        className={`max-h-[calc(100vh-2rem)] w-full ${wide ? "max-w-6xl" : "max-w-xl"} overflow-y-auto rounded-lg border border-[#d4d4ce] bg-[#fafaf8] p-5 text-xs shadow-xl`}
+      >
         <AdminDialogHeader onClose={onClose}>{title}</AdminDialogHeader>
         {children}
       </div>

@@ -36,14 +36,16 @@ class _Scheduler:
 
 
 class _Repo:
-    def __init__(self, experience: QueryExperience | None) -> None:
+    def __init__(
+        self,
+        experience: QueryExperience | list[QueryExperience] | None,
+    ) -> None:
         self.session = _Session()
-        self.experience = experience
+        experiences = experience if isinstance(experience, list) else [experience]
+        self.experiences = {item.id: item for item in experiences if item is not None}
 
     async def get(self, experience_id: UUID) -> QueryExperience | None:
-        if self.experience is not None and self.experience.id == experience_id:
-            return self.experience
-        return None
+        return self.experiences.get(experience_id)
 
     async def get_overview(
         self,
@@ -121,6 +123,42 @@ def _service(
 
 
 class QueryExperienceManagementServiceTest(unittest.IsolatedAsyncioTestCase):
+    async def test_batch_disable_updates_unique_experiences(self) -> None:
+        first = _experience()
+        second = _experience()
+        scheduler = _Scheduler()
+        service = _service(_Repo([first, second]), scheduler)
+
+        await service.disable_experiences(
+            [first.id, second.id, first.id],
+            operator_id=7,
+        )
+
+        self.assertEqual(first.status, "disabled")
+        self.assertEqual(second.status, "disabled")
+        self.assertEqual(
+            scheduler.enqueued,
+            [(first.id, first.revision), (second.id, second.revision)],
+        )
+
+    async def test_batch_delete_submits_unique_experiences(self) -> None:
+        first = _experience()
+        second = _experience()
+        scheduler = _Scheduler()
+        service = _service(_Repo([first, second]), scheduler)
+
+        await service.request_deletions(
+            [first.id, second.id, first.id],
+            operator_id=7,
+        )
+
+        self.assertEqual(first.status, "deleting")
+        self.assertEqual(second.status, "deleting")
+        self.assertEqual(
+            scheduler.enqueued,
+            [(first.id, first.revision), (second.id, second.revision)],
+        )
+
     async def test_admin_disable_is_idempotent(self) -> None:
         experience = _experience()
         repo = _Repo(experience)

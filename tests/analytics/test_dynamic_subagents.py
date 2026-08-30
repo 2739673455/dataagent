@@ -25,11 +25,14 @@ from pydantic import Field, ValidationError
 
 from app.analytics.agents.contracts import (
     DELEGATION_CONTEXT_KEY,
+    EVAL_DELEGATIONS_KEY,
     ArtifactReference,
     ConversationAgentRuntime,
     DelegationMessageContext,
     DelegationRequest,
+    DelegationResult,
     DeleteSessionRequest,
+    EvalDelegationRecord,
     RepairRequest,
     SpecialistResult,
     SubagentMessageActivity,
@@ -37,6 +40,7 @@ from app.analytics.agents.contracts import (
     build_planner_config,
 )
 from app.analytics.agents.manager import AgentManager
+from app.analytics.agents.middleware.eval_delegations import EvalDelegationMiddleware
 from app.analytics.agents.session_service import AgentSessionService
 from app.analytics.agents.session_store import AgentSessionStore
 from app.analytics.agents.shell_jobs import ShellJobRuntime
@@ -647,6 +651,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
                     tools=[delegation, list_sessions, delete_session],
                     backend=LocalShellBackend(root_dir=workspace),
                     checkpointer=InMemorySaver(),
+                    session_service=_service(_FakeAgent()),
                     interpreter_memory_limit_bytes=2 * 1024 * 1024,
                 )
 
@@ -669,6 +674,131 @@ class DynamicSubagentContractTest(unittest.TestCase):
 
 class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
     """验证 Session 隔离、并发和修补限制"""
+
+    def test_collects_eval_delegations_until_parent_result_is_persisted(
+        self,
+    ) -> None:
+        service = _service(_FakeAgent())
+        request = DelegationRequest(
+            analysis_id="sales",
+            agent_type="explorer",
+            session_id="source",
+            message="定位销售数据",
+        )
+        result = service._failed_result(request, "执行失败", "RuntimeError: failed")
+
+        service.begin_eval_delegation("eval-1", "ptc-delegation-1", request)
+        service.finish_eval_delegation("eval-1", "ptc-delegation-1", result)
+
+        records = service.take_eval_delegations("eval-1")
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].message, "定位销售数据")
+        self.assertEqual(records[0].result, result)
+        self.assertEqual(service.take_eval_delegations("eval-1"), [])
+
+    async def test_eval_middleware_persists_collected_delegations(self) -> None:
+        service = MagicMock(spec=AgentSessionService)
+        service.take_eval_delegations.return_value = [
+            EvalDelegationRecord(
+                delegation_id="ptc-delegation-1",
+                analysis_id="sales",
+                agent_type="explorer",
+                session_id="source",
+                message="定位销售数据",
+            )
+        ]
+        middleware = EvalDelegationMiddleware(service)
+        request = cast(
+            Any,
+            SimpleNamespace(tool_call={"name": "eval", "id": "eval-1"}),
+        )
+
+        async def handler(_: object) -> ToolMessage:
+            return ToolMessage(content="done", tool_call_id="eval-1", name="eval")
+
+        response = await middleware.awrap_tool_call(request, cast(Any, handler))
+
+        self.assertIsInstance(response, ToolMessage)
+        assert isinstance(response, ToolMessage)
+        records = response.additional_kwargs[EVAL_DELEGATIONS_KEY]
+        self.assertEqual(records[0]["delegation_id"], "ptc-delegation-1")
+        service.take_eval_delegations.assert_called_once_with("eval-1")
+
+    async def test_ptc_delegation_emits_activity_linked_to_parent_eval(self) -> None:
+        from langchain.tools import ToolRuntime
+
+        from app.analytics.agents.planner.tools import create_delegation_tool
+
+        service = MagicMock(spec=AgentSessionService)
+        activities: list[SubagentMessageActivity | SubagentStatusActivity] = []
+        result = DelegationResult(
+            status="completed",
+            analysis_id="sales",
+            agent_type="explorer",
+            session_id="source",
+            content="定位完成",
+        )
+
+        async def execute(
+            request: DelegationRequest,
+            _: RunnableConfig,
+            *,
+            delegation_id: str,
+            activity_writer: Callable[
+                [SubagentMessageActivity | SubagentStatusActivity], None
+            ],
+        ) -> DelegationResult:
+            activity_writer(
+                SubagentStatusActivity(
+                    delegation_id=delegation_id,
+                    analysis_id=request.analysis_id,
+                    agent_type=request.agent_type,
+                    session_id=request.session_id,
+                    status="running",
+                )
+            )
+            return result
+
+        service.execute_delegation = AsyncMock(side_effect=execute)
+        runtime = ToolRuntime(
+            state={
+                "messages": [
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "eval-1",
+                                "name": "eval",
+                                "args": {"code": "await tools.delegation({})"},
+                            }
+                        ],
+                    )
+                ]
+            },
+            context=None,
+            config=build_planner_config(12, _CONVERSATION_ID),
+            stream_writer=activities.append,
+            tool_call_id="ptc_delegation_a1b2c3d4",
+            store=None,
+        )
+        delegation_tool = create_delegation_tool(service)
+
+        await cast(Any, delegation_tool).coroutine(
+            runtime=runtime,
+            analysis_id="sales",
+            agent_type="explorer",
+            session_id="source",
+            message="定位销售数据",
+        )
+
+        service.begin_eval_delegation.assert_called_once()
+        service.finish_eval_delegation.assert_called_once_with(
+            "eval-1",
+            "ptc_delegation_a1b2c3d4",
+            result,
+        )
+        self.assertEqual(activities[0].parent_tool_call_id, "eval-1")
+        self.assertEqual(activities[0].instruction, "定位销售数据")
 
     async def test_specialist_factory_builds_a_fresh_agent_per_call(self) -> None:
         built_agents: list[CompiledStateGraph] = []

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { formatMessageTime } from "./displayModel";
 import type { UserMessageNavigationItem } from "./types";
@@ -100,26 +101,28 @@ export function UserMessageQuickNavigation({
         })}
       </div>
 
-      {/* 悬浮预览气泡（Fixed 定位脱离局部滚动容器，避免被 overflow 裁剪） */}
-      {hoveredTooltip && (
-        <div
-          role="tooltip"
-          style={{
-            position: "fixed",
-            left: hoveredTooltip.left,
-            top: Math.max(64, Math.min(window.innerHeight - 80, hoveredTooltip.top)),
-            transform: "translateY(-50%)",
-          }}
-          className="pointer-events-none z-50 w-72 rounded border border-[#d4d4ce] bg-[#ffffff] p-3 text-left shadow-lg"
-        >
-          <div className="mb-1.5 text-[11px] text-[#71717a]">
-            {formatMessageTime(hoveredTooltip.item.createdAt) ?? "时间未记录"}
-          </div>
-          <div className="max-h-24 overflow-hidden whitespace-pre-wrap break-words text-xs leading-5 text-[#27272a]">
-            {hoveredTooltip.item.preview}
-          </div>
-        </div>
-      )}
+      {hoveredTooltip
+        ? createPortal(
+            <div
+              role="tooltip"
+              style={{
+                position: "fixed",
+                left: hoveredTooltip.left,
+                top: Math.max(64, Math.min(window.innerHeight - 80, hoveredTooltip.top)),
+                transform: "translateY(-50%)",
+              }}
+              className="pointer-events-none z-[100] w-72 rounded border border-[#d4d4ce] bg-[#ffffff] p-3 text-left shadow-lg"
+            >
+              <div className="mb-1.5 text-[11px] text-[#71717a]">
+                {formatMessageTime(hoveredTooltip.item.createdAt) ?? "时间未记录"}
+              </div>
+              <div className="max-h-24 overflow-hidden whitespace-pre-wrap break-words text-xs leading-5 text-[#27272a]">
+                {hoveredTooltip.item.preview}
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </nav>
   );
 }

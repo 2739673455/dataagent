@@ -87,7 +87,7 @@ export default function AdminPage() {
             }`}
           >
             <History className="h-4 w-4" />
-            <span>查询经验</span>
+            <span>查询经验管理</span>
           </button>
         </div>
 

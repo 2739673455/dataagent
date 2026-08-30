@@ -44,7 +44,7 @@ export function ChatUserFooter({ user, onChangePassword, onLogout }: ChatUserFoo
   return (
     <div className="p-3 bg-[#e4e4df] h-full flex flex-col justify-center">
       <div className="mb-2.5 flex items-start gap-2.5 rounded border border-[#d4d4ce] bg-[#ffffff] p-2.5 text-xs">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-[#ebebe6] text-[#27272a]">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center text-[#27272a]">
           <User className="h-4 w-4" />
         </div>
         <div className="min-w-0 flex-1">

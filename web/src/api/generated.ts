@@ -56,7 +56,9 @@ export interface components {
       "agent_type": components["schemas"]["AgentType"];
       "analysis_id": string;
       "delegation_id": string;
+      "instruction"?: (string | null);
       "message": components["schemas"]["MessageResponse"];
+      "parent_tool_call_id"?: (string | null);
       "session_id": string;
       "type": "subagent_message";
     };
@@ -64,6 +66,8 @@ export interface components {
       "agent_type": components["schemas"]["AgentType"];
       "analysis_id": string;
       "delegation_id": string;
+      "instruction"?: (string | null);
+      "parent_tool_call_id"?: (string | null);
       "session_id": string;
       "status": "running" | "completed" | "needs_repair" | "failed" | "cancelled";
       "type": "subagent_status";
@@ -168,6 +172,17 @@ export interface components {
       "policy_name": string;
       "table_name": string;
     };
+    "EvalDelegationResponse": {
+      "agent_type": components["schemas"]["AgentType"];
+      "analysis_id": string;
+      "attachments"?: (Array<components["schemas"]["Attachment"]> | null);
+      "delegation_id": string;
+      "message": string;
+      "result"?: ({
+        [key: string]: unknown;
+      } | null);
+      "session_id": string;
+    };
     "ImageContent": {
       "image_url": string;
       "type": "image_url";
@@ -186,6 +201,7 @@ export interface components {
     "MessageResponse": {
       "attachments"?: (Array<components["schemas"]["Attachment"]> | null);
       "created_at"?: (string | null);
+      "eval_delegations"?: (Array<components["schemas"]["EvalDelegationResponse"]> | null);
       "finish_reason"?: (string | null);
       "message_id"?: (string | null);
       "parts": Array<(components["schemas"]["TextContent"] | components["schemas"]["ImageContent"] | components["schemas"]["ToolCallPart"] | components["schemas"]["ToolResultPart"])>;
@@ -230,6 +246,9 @@ export interface components {
       "database": string;
       "kind": "table" | "column";
       "table": string;
+    };
+    "QueryExperienceBatchRequest": {
+      "experience_ids": Array<string>;
     };
     "QueryExperienceDeletionResponse": {
       "deletion_requested_at": string;
@@ -1161,6 +1180,34 @@ export interface operations {
       };
     };
   };
+  "delete_query_experiences_api_v1_admin_query_experiences_batch_delete_post": {
+    "parameters": {
+      "path"?: never;
+      "query"?: never;
+      "header"?: never;
+      "cookie"?: never;
+    };
+    "requestBody": {
+      "application/json": components["schemas"]["QueryExperienceBatchRequest"];
+    };
+    "responses": {
+      "204": {
+        "content": never;
+      };
+      "422": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+      "default": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+    };
+  };
   "delete_tables_api_v1_meta_tables_batch_delete_post": {
     "parameters": {
       "path"?: never;
@@ -1232,6 +1279,34 @@ export interface operations {
         "content": {
         "application/json": components["schemas"]["QueryExperienceDetailResponse"];
       };
+      };
+      "422": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+      "default": {
+        "content": {
+        "application/json": components["schemas"]["ProblemDetails"];
+        "application/problem+json": components["schemas"]["ProblemDetails"];
+      };
+      };
+    };
+  };
+  "disable_query_experiences_api_v1_admin_query_experiences_batch_disable_post": {
+    "parameters": {
+      "path"?: never;
+      "query"?: never;
+      "header"?: never;
+      "cookie"?: never;
+    };
+    "requestBody": {
+      "application/json": components["schemas"]["QueryExperienceBatchRequest"];
+    };
+    "responses": {
+      "204": {
+        "content": never;
       };
       "422": {
         "content": {
@@ -2367,6 +2442,12 @@ export interface paths {
   };
   "/api/v1/admin/query-experiences": {
     "get": operations["list_query_experiences_api_v1_admin_query_experiences_get"];
+  };
+  "/api/v1/admin/query-experiences/batch-delete": {
+    "post": operations["delete_query_experiences_api_v1_admin_query_experiences_batch_delete_post"];
+  };
+  "/api/v1/admin/query-experiences/batch-disable": {
+    "post": operations["disable_query_experiences_api_v1_admin_query_experiences_batch_disable_post"];
   };
   "/api/v1/admin/query-experiences/{experience_id}": {
     "get": operations["get_query_experience_api_v1_admin_query_experiences__experience_id__get"];

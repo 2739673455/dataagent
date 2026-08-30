@@ -13,6 +13,7 @@ import type {
   DisplayItem,
   MessageDisplayItem,
   SubagentRunIdentity,
+  SubagentRunMap,
   ToolRunDisplayItem,
 } from "./types";
 
@@ -225,6 +226,7 @@ export function buildDisplayItems(
         existing.name = part.name || existing.name;
         existing.result = part.content;
         existing.attachments = message.attachments;
+        existing.evalDelegations = message.eval_delegations;
         existing.completed = true;
         continue;
       }
@@ -237,6 +239,7 @@ export function buildDisplayItems(
         name: part.name,
         result: part.content,
         attachments: message.attachments,
+        evalDelegations: message.eval_delegations,
         completed: true,
       });
     }
@@ -252,6 +255,59 @@ export function buildDisplayItems(
   }
 
   return items;
+}
+
+export function buildEvalDelegationItems(
+  parent: ToolRunDisplayItem,
+  subagentRuns: SubagentRunMap
+): ToolRunDisplayItem[] {
+  const items = new Map<string, ToolRunDisplayItem>();
+
+  for (const record of parent.evalDelegations ?? []) {
+    items.set(record.delegation_id, {
+      key: `tool-run-${record.delegation_id}`,
+      type: "tool_run",
+      toolCallId: record.delegation_id,
+      conversationId: parent.conversationId,
+      name: "delegation",
+      args: {
+        analysis_id: record.analysis_id,
+        agent_type: record.agent_type,
+        session_id: record.session_id,
+        message: record.message,
+      },
+      result: record.result == null ? undefined : JSON.stringify(record.result),
+      attachments: record.attachments,
+      completed: record.result != null,
+      interrupted: record.result == null,
+    });
+  }
+
+  for (const run of Object.values(subagentRuns)) {
+    if (run.parentToolCallId !== parent.toolCallId) continue;
+    const existing = items.get(run.delegationId);
+    const completed = run.status !== "running";
+    items.set(run.delegationId, {
+      key: `tool-run-${run.delegationId}`,
+      type: "tool_run",
+      toolCallId: run.delegationId,
+      conversationId: parent.conversationId,
+      name: "delegation",
+      args:
+        existing?.args ??
+        {
+          analysis_id: run.analysisId,
+          agent_type: run.agentType,
+          session_id: run.sessionId,
+          message: run.instruction ?? "",
+        },
+      result: existing?.result,
+      completed: existing?.completed === true || completed,
+      interrupted: run.status === "cancelled" || run.status === "interrupted",
+    });
+  }
+
+  return [...items.values()];
 }
 
 export function groupDisplayItemsIntoTurns(displayItems: DisplayItem[]): ChatTurn[] {

@@ -17,6 +17,7 @@ from langchain_core.runnables import RunnableConfig
 from pydantic import ValidationError
 
 from app.analytics.agents.contracts import (
+    EVAL_DELEGATIONS_KEY,
     MESSAGE_CREATED_AT_KEY,
     ConversationAgentRuntime,
     DelegationActivityHistory,
@@ -390,6 +391,35 @@ def _delegation_payload() -> dict[str, object]:
 
 
 class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
+    def test_eval_internal_delegations_are_projected_from_tool_metadata(self) -> None:
+        payload = _delegation_payload()
+        schema = chat_service._langchain_message_to_schema(
+            ToolMessage(
+                id="eval-result",
+                content="done",
+                name="eval",
+                tool_call_id="eval-call",
+                additional_kwargs={
+                    EVAL_DELEGATIONS_KEY: [
+                        {
+                            "delegation_id": "ptc-delegation-1",
+                            "analysis_id": "sales-review",
+                            "agent_type": "visualizer",
+                            "session_id": "chart-1",
+                            "message": "生成销售图表",
+                            "result": payload,
+                        }
+                    ]
+                },
+            )
+        )
+
+        self.assertIsNotNone(schema)
+        assert schema is not None and schema.eval_delegations is not None
+        self.assertEqual(schema.eval_delegations[0].delegation_id, "ptc-delegation-1")
+        self.assertEqual(schema.eval_delegations[0].message, "生成销售图表")
+        self.assertEqual(schema.eval_delegations[0].result, payload)
+
     def test_large_subagent_tool_payloads_are_preserved(self) -> None:
         call_schema = chat_service._langchain_message_to_schema(
             AIMessage(
@@ -439,6 +469,8 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                     agent_type="explorer",
                     session_id="source-1",
                     status="running",
+                    parent_tool_call_id="eval-call",
+                    instruction="定位销售数据",
                 ),
             }
             yield {
@@ -490,6 +522,9 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         message_event = cast(chat_schema.ChatStreamSubagentMessageEvent, events[1])
         self.assertEqual(message_event.delegation_id, "delegation-1")
         self.assertEqual(message_event.message.parts[0].type, "text")
+        status_event = cast(chat_schema.ChatStreamSubagentStatusEvent, events[0])
+        self.assertEqual(status_event.parent_tool_call_id, "eval-call")
+        self.assertEqual(status_event.instruction, "定位销售数据")
 
     async def test_semantic_recall_result_is_expanded_in_stream_and_history(
         self,

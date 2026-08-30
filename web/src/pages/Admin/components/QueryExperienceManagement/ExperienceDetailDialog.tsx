@@ -1,16 +1,12 @@
-import { Ban, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { toast } from "sonner";
 import { adminApi, type QueryExperienceDetailResponse } from "@/api/admin";
 import { getApiErrorMessage } from "@/api/errors";
 import { DotMatrixLoader } from "@/components/DotMatrixLoader";
-import { Button } from "@/components/ui/button";
 import { AdminEditorDialog } from "../AdminEditorDialog";
 import { ExperienceSourceExecutionList } from "./ExperienceSourceExecutionList";
 
 interface Props {
   experienceId: string;
-  onChanged: () => void;
   onClose: () => void;
 }
 
@@ -18,7 +14,7 @@ function formatTime(value: string | null): string {
   return value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "-";
 }
 
-export function ExperienceDetailDialog({ experienceId, onChanged, onClose }: Props) {
+export function ExperienceDetailDialog({ experienceId, onClose }: Props) {
   const [detail, setDetail] = useState<QueryExperienceDetailResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -39,38 +35,8 @@ export function ExperienceDetailDialog({ experienceId, onChanged, onClose }: Pro
     void load();
   }, [load]);
 
-  const disableExperience = async () => {
-    if (!detail || !window.confirm("确定禁用这条查询经验吗？禁用后不会再被语义召回。")) return;
-    setBusy(true);
-    setError(null);
-    try {
-      setDetail(await adminApi.disableQueryExperience(detail.id));
-      toast.success("查询经验已禁用");
-      onChanged();
-    } catch (reason) {
-      setError(getApiErrorMessage(reason, "禁用查询经验失败"));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const deleteExperience = async () => {
-    if (!detail || !window.confirm("确定永久删除这条查询经验吗？来源执行审计会继续保留。")) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await adminApi.deleteQueryExperience(detail.id);
-      toast.success("查询经验删除请求已提交");
-      onChanged();
-      onClose();
-    } catch (reason) {
-      setError(getApiErrorMessage(reason, "删除查询经验失败"));
-      setBusy(false);
-    }
-  };
-
   return (
-    <AdminEditorDialog ariaLabel="查询经验详情" onClose={onClose} title="查询经验详情">
+    <AdminEditorDialog ariaLabel="查询经验详情" onClose={onClose} title="查询经验详情" wide>
       {busy && !detail ? (
         <div className="flex items-center justify-center gap-2 py-12 text-[#71717a]">
           <DotMatrixLoader />
@@ -130,7 +96,9 @@ export function ExperienceDetailDialog({ experienceId, onChanged, onClose }: Pro
           </section>
 
           <section>
-            <h4 className="mb-1 font-bold text-[#18181b]">查询目的 ({detail.purposes.length})</h4>
+            <h4 className="mb-1 font-bold text-[#18181b]">
+              用于语义检索的查询目的 ({detail.purposes.length})
+            </h4>
             <ul className="max-h-28 list-disc space-y-1 overflow-y-auto rounded border border-[#d4d4ce] bg-white p-2 pl-6">
               {detail.purposes.map((purpose) => (
                 <li key={purpose}>{purpose}</li>
@@ -152,33 +120,6 @@ export function ExperienceDetailDialog({ experienceId, onChanged, onClose }: Pro
           </section>
 
           <ExperienceSourceExecutionList experienceId={detail.id} />
-
-          <div className="flex justify-end gap-2 border-t border-[#e5e5df] pt-3">
-            {detail.status === "active" && (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={busy}
-                onClick={() => void disableExperience()}
-              >
-                <Ban className="mr-1 h-3.5 w-3.5" />
-                禁用
-              </Button>
-            )}
-            {detail.status !== "deleting" ? (
-              <Button
-                variant="destructive"
-                size="sm"
-                disabled={busy}
-                onClick={() => void deleteExperience()}
-              >
-                <Trash2 className="mr-1 h-3.5 w-3.5" />
-                删除
-              </Button>
-            ) : (
-              <span className="self-center text-[#71717a]">删除中</span>
-            )}
-          </div>
         </div>
       ) : null}
     </AdminEditorDialog>
