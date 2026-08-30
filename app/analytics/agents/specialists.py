@@ -43,6 +43,7 @@ _RESERVED_MCP_TOOL_NAMES = frozenset(
         "list_shell_jobs",
         "get_shell_job",
         "cancel_shell_job",
+        "view_image",
     }
 )
 
@@ -59,7 +60,9 @@ class SpecialistBuilder(Protocol):
         checkpointer: BaseCheckpointSaver,
         shell_jobs: ShellJobRuntime,
         skills: Sequence[str] = (),
-    ) -> CompiledStateGraph: ...
+    ) -> CompiledStateGraph:
+        """使用统一依赖构造一个可执行的专业 Agent 图。"""
+        ...
 
 
 @dataclass(frozen=True, slots=True)

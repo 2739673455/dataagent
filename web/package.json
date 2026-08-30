@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "contract:check": "uv run --directory .. python scripts/generate_openapi_types.py --check",
-    "contract:generate": "uv run --directory .. python scripts/generate_openapi_types.py",
+    "contract:check": "uv run --directory .. python scripts/development/generate_openapi_types.py --check",
+    "contract:generate": "uv run --directory .. python scripts/development/generate_openapi_types.py",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",

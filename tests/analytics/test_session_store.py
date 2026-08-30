@@ -24,18 +24,21 @@ class SessionStoreArtifactTest(unittest.IsolatedAsyncioTestCase):
             return_value=MagicMock(
                 exit_code=0,
                 truncated=False,
-                output="/analyses/sales/missing report.json\0",
+                output="/sessions/sales/analyst/main/missing report.json\0",
             )
         )
         store = self._store(backend)
         paths = {
-            "/analyses/sales/existing.json",
-            "/analyses/sales/missing report.json",
+            "/sessions/sales/analyst/main/existing.json",
+            "/sessions/sales/analyst/main/missing report.json",
         }
 
         missing = await store.find_missing_files(paths)
 
-        self.assertEqual(missing, {"/analyses/sales/missing report.json"})
+        self.assertEqual(
+            missing,
+            {"/sessions/sales/analyst/main/missing report.json"},
+        )
         backend.aexecute.assert_awaited_once()
         self.assertEqual(backend.aexecute.await_args.kwargs, {"timeout": 10})
 

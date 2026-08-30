@@ -22,13 +22,13 @@ from app.sandbox.exceptions import (
     SandboxStorageLimitError,
 )
 from app.sandbox.paths import (
+    SANDBOX_DATA_ROOT,
     SANDBOX_STAGING_ROOT,
-    SANDBOX_WORKSPACE_ROOT,
     SandboxSessionScope,
 )
 
-_SANDBOX_UID_REGISTRY = "/workspace/.dataagent-uids.json"
-_UID_REGISTRY_VERSION = 2
+_SANDBOX_UID_REGISTRY = f"{SANDBOX_DATA_ROOT}/.dataagent-uids.json"
+_UID_REGISTRY_VERSION = 3
 _MIN_SANDBOX_UID = 100_000
 _MAX_SANDBOX_UID = 2_147_483_646
 _ARCHIVE_SPOOL_BYTES = 8 * 1024 * 1024
@@ -175,7 +175,7 @@ class SandboxArchiveStore:
         ).encode()
         self.put(
             container,
-            "/workspace",
+            SANDBOX_DATA_ROOT,
             [],
             [
                 (
@@ -193,10 +193,10 @@ class SandboxArchiveStore:
     def _validate_session_key(key: str) -> str:
         """校验并规范化 UID 注册表中的 Session 键"""
         parts = PurePosixPath(key).parts
-        if len(parts) != 6 or parts[1] != "analyses" or parts[3] != "sessions":
+        if len(parts) != 5 or parts[1] != "sessions":
             raise ValueError("沙箱 Session UID 键无效")
         conversation_id = UUID(parts[0])
-        return SandboxSessionScope(parts[2], parts[4], parts[5]).registry_key(
+        return SandboxSessionScope(parts[2], parts[3], parts[4]).registry_key(
             conversation_id
         )
 
@@ -260,9 +260,8 @@ class SandboxArchiveStore:
         """创建会话工作区并返回稳定 UID"""
         self.put(
             container,
-            "/workspace",
+            SANDBOX_DATA_ROOT,
             [
-                (PurePosixPath(SANDBOX_WORKSPACE_ROOT).name, 0, 0, 0o711),
                 (PurePosixPath(SANDBOX_STAGING_ROOT).name, 0, 0, 0o700),
             ],
             [],
@@ -278,7 +277,7 @@ class SandboxArchiveStore:
             registry.conversations[key] = conversation_uid
             self._write_registry(container, registry)
 
-        target_path = f"{SANDBOX_WORKSPACE_ROOT}/{conversation_id}"
+        target_path = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
         existing = self.inspect_path(container, target_path)
         if existing is not None and (
             not existing.isdir() or existing.uid != conversation_uid
@@ -288,7 +287,7 @@ class SandboxArchiveStore:
         conversation_name = str(conversation_id)
         self.put(
             container,
-            SANDBOX_WORKSPACE_ROOT,
+            SANDBOX_DATA_ROOT,
             [
                 (conversation_name, conversation_uid, conversation_uid, 0o750),
                 (
@@ -351,7 +350,7 @@ class SandboxArchiveStore:
         conversation_name = str(conversation_id)
         session_relative = scope.relative_workspace
         session_path = posixpath.join(
-            SANDBOX_WORKSPACE_ROOT,
+            SANDBOX_DATA_ROOT,
             conversation_name,
             session_relative,
         )
@@ -363,16 +362,15 @@ class SandboxArchiveStore:
         ):
             raise RuntimeError("Agent Session 工作区所有者无效")
 
-        analysis_root = f"analyses/{scope.analysis_id}"
-        sessions_root = f"{analysis_root}/sessions"
-        agent_root = f"{sessions_root}/{scope.agent_type}"
+        sessions_root = "sessions"
+        analysis_root = f"{sessions_root}/{scope.analysis_id}"
+        agent_root = f"{analysis_root}/{scope.agent_type}"
         self.put(
             container,
-            f"{SANDBOX_WORKSPACE_ROOT}/{conversation_name}",
+            f"{SANDBOX_DATA_ROOT}/{conversation_name}",
             [
-                ("analyses", conversation_uid, conversation_uid, 0o750),
-                (analysis_root, conversation_uid, conversation_uid, 0o750),
                 (sessions_root, conversation_uid, conversation_uid, 0o750),
+                (analysis_root, conversation_uid, conversation_uid, 0o750),
                 (agent_root, conversation_uid, conversation_uid, 0o750),
                 (session_relative, session_uid, conversation_uid, 0o750),
                 (f"{session_relative}/.home", session_uid, conversation_uid, 0o700),
@@ -410,7 +408,7 @@ class SandboxArchiveStore:
         registry_key = scope.registry_key(conversation_id)
         session_uid = registry.sessions.get(registry_key)
         session_path = posixpath.join(
-            SANDBOX_WORKSPACE_ROOT,
+            SANDBOX_DATA_ROOT,
             str(conversation_id),
             scope.relative_workspace,
         )
@@ -435,7 +433,7 @@ class SandboxArchiveStore:
             ["rm", "-rf", "--", *targets],
             user="0",
             privileged=True,
-            workdir="/workspace",
+            workdir=SANDBOX_DATA_ROOT,
         )
         if result.exit_code != 0:
             raw_output = result.output or b""
@@ -458,12 +456,12 @@ class SandboxArchiveStore:
     ) -> int | None:
         """返回与产物路径精确绑定的 Session UID"""
         parts = PurePosixPath(relative_path).parts
-        if len(parts) < 3 or parts[0] != "analyses" or parts[2] != "sessions":
+        if not parts or parts[0] != "sessions":
             return None
-        if len(parts) < 6:
+        if len(parts) < 5:
             raise SandboxPathError(relative_path)
         try:
-            scope = SandboxSessionScope(parts[1], parts[3], parts[4])
+            scope = SandboxSessionScope(parts[1], parts[2], parts[3])
         except ValueError as exc:
             raise SandboxPathError(relative_path) from exc
         session_uid = registry.sessions.get(scope.registry_key(conversation_id))
@@ -497,7 +495,7 @@ class SandboxArchiveStore:
         relative_path: str,
     ) -> tuple[list[tuple[str, int, int, int]], int]:
         """校验文件路径并返回待创建目录和被替换大小"""
-        workspace = f"{SANDBOX_WORKSPACE_ROOT}/{conversation_id}"
+        workspace = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
         registry = self._load_registry(container)
         session_uid = self._registered_session_uid(
             registry,
@@ -564,7 +562,7 @@ class SandboxArchiveStore:
         conversation_uid: int,
     ) -> int:
         """流式统计会话工作区普通文件大小"""
-        workspace = f"{SANDBOX_WORKSPACE_ROOT}/{conversation_id}"
+        workspace = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
         registry = self._load_registry(container)
         session_prefix = f"{conversation_id}/"
         allowed_uids = {
@@ -617,7 +615,7 @@ class SandboxArchiveStore:
             raise SandboxStorageLimitError(
                 f"工作区容量超出限制: {projected_size} > {self._max_workspace_bytes}"
             )
-        workspace = f"{SANDBOX_WORKSPACE_ROOT}/{conversation_id}"
+        workspace = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
         self.put(
             container,
             workspace,
@@ -653,7 +651,7 @@ class SandboxArchiveStore:
         self._validate_target(
             container, conversation_id, conversation_uid, relative_path
         )
-        workspace = f"{SANDBOX_WORKSPACE_ROOT}/{conversation_id}"
+        workspace = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
         content, member = self.read_file(
             container,
             posixpath.join(workspace, relative_path),
@@ -694,7 +692,7 @@ class SandboxArchiveStore:
             return False
         target = self.inspect_path(
             container,
-            posixpath.join(SANDBOX_WORKSPACE_ROOT, str(conversation_id), relative_path),
+            posixpath.join(SANDBOX_DATA_ROOT, str(conversation_id), relative_path),
         )
         return bool(
             target is not None
@@ -715,12 +713,12 @@ class SandboxArchiveStore:
                 "rm",
                 "-rf",
                 "--",
-                f"{SANDBOX_WORKSPACE_ROOT}/{conversation_id}",
+                f"{SANDBOX_DATA_ROOT}/{conversation_id}",
                 posixpath.join(SANDBOX_STAGING_ROOT, str(conversation_id)),
             ],
             user="0",
             privileged=True,
-            workdir="/workspace",
+            workdir=SANDBOX_DATA_ROOT,
         )
         if result.exit_code != 0:
             raw_output = result.output or b""

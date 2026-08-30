@@ -6,8 +6,8 @@ from uuid import UUID
 
 from app.sandbox.exceptions import SandboxPathError
 
-SANDBOX_WORKSPACE_ROOT = "/workspace/conversations"
-SANDBOX_STAGING_ROOT = "/workspace/.dataagent-staging"
+SANDBOX_DATA_ROOT = "/data"
+SANDBOX_STAGING_ROOT = "/data/.dataagent-staging"
 USER_ATTACHMENT_ROOT = "uploads"
 _PATH_MAX_BYTES = 4096
 _PATH_COMPONENT_MAX_BYTES = 255
@@ -29,8 +29,8 @@ class SandboxReadonlyMount:
         if (
             not target.is_absolute()
             or target == PurePosixPath("/")
-            or target == PurePosixPath("/workspace")
-            or target.is_relative_to(PurePosixPath("/workspace"))
+            or target == PurePosixPath(SANDBOX_DATA_ROOT)
+            or target.is_relative_to(PurePosixPath(SANDBOX_DATA_ROOT))
             or target == PurePosixPath("/tmp")
             or target.is_relative_to(PurePosixPath("/tmp"))
         ):
@@ -69,9 +69,7 @@ class SandboxSessionScope:
     @property
     def relative_workspace(self) -> str:
         """生成 conversation 根目录下的 Session 路径"""
-        return (
-            f"analyses/{self.analysis_id}/sessions/{self.agent_type}/{self.session_id}"
-        )
+        return f"sessions/{self.analysis_id}/{self.agent_type}/{self.session_id}"
 
     def registry_key(self, conversation_id: UUID) -> str:
         """生成 UID 注册表中的稳定 Session 键"""

@@ -23,23 +23,35 @@ from app.shared.contracts.analysis import AgentSessionKey
 class AgentSessionStore(Protocol):
     """SessionService 使用的外部状态访问协议"""
 
-    async def list_namespaces(self, analysis_id: str | None) -> list[str]: ...
+    async def list_namespaces(self, analysis_id: str | None) -> list[str]:
+        """列出指定 Analysis 或整个 Conversation 的 Session namespace。"""
+        ...
 
     async def load_checkpoint(
         self,
         session_key: AgentSessionKey,
-    ) -> Mapping[str, object] | None: ...
+    ) -> Mapping[str, object] | None:
+        """读取指定 Session 的最新 Checkpoint。"""
+        ...
 
-    async def delete_checkpoint(self, session_key: AgentSessionKey) -> bool: ...
+    async def delete_checkpoint(self, session_key: AgentSessionKey) -> bool:
+        """删除指定 Session 的完整 Checkpoint namespace。"""
+        ...
 
-    async def delete_workspace(self, session_key: AgentSessionKey) -> bool: ...
+    async def delete_workspace(self, session_key: AgentSessionKey) -> bool:
+        """删除指定 Session 的独立工作区。"""
+        ...
 
-    async def find_missing_files(self, paths: Collection[str]) -> set[str]: ...
+    async def find_missing_files(self, paths: Collection[str]) -> set[str]:
+        """返回当前 Conversation 工作区中不存在的文件路径。"""
+        ...
 
     def lock(
         self,
         session_key: AgentSessionKey,
-    ) -> AbstractAsyncContextManager[None]: ...
+    ) -> AbstractAsyncContextManager[None]:
+        """创建指定 Session 的非阻塞执行锁上下文。"""
+        ...
 
 
 class PostgresSandboxSessionStore:

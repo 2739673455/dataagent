@@ -141,12 +141,12 @@ class AttachmentRouterTest(unittest.IsolatedAsyncioTestCase):
         )
         self.conversation_repo.update.assert_awaited_once_with(self.conversation)
 
-    async def test_analysis_artifact_remains_downloadable(self) -> None:
+    async def test_session_artifact_remains_downloadable(self) -> None:
         download = AsyncMock(return_value=b"verified artifact")
         self.sandbox.download_file = download
         response = await api_get_attachment(
             conversation_id=self.conversation_id,
-            f_path="analyses/run/report.csv",
+            f_path="sessions/run/analyst/main/report.csv",
             conversation_repo=self.conversation_repo,
             current_user=self.user,
             lifecycle=self.lifecycle,
@@ -156,7 +156,7 @@ class AttachmentRouterTest(unittest.IsolatedAsyncioTestCase):
         download.assert_awaited_once_with(
             7,
             self.conversation_id,
-            "analyses/run/report.csv",
+            "sessions/run/analyst/main/report.csv",
         )
         self.assertEqual(response.body, b"verified artifact")
 

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { adminApi, type DorisRoleResponse, type UserListResponse } from "@/api/admin";
 import { getApiErrorMessage } from "@/api/errors";
-import { useAuthStore, type UserResponse } from "@/auth";
+import { type UserResponse, useAuthStore } from "@/auth";
 import { Button } from "@/components/ui/button";
 import {
   AdminDialogActions,

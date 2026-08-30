@@ -32,19 +32,6 @@ class AgentRuntimeManager(Protocol):
         ...
 
 
-class ConversationFileReader(Protocol):
-    """聊天附件读取所需的最小沙箱能力"""
-
-    async def download_file(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        path: str,
-    ) -> bytes:
-        """读取会话沙箱中的文件"""
-        ...
-
-
 class ConversationLifecycleLockProvider(Protocol):
     """会话生命周期所需的跨进程锁能力"""
 

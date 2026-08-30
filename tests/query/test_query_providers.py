@@ -53,7 +53,7 @@ class QueryProvidersTest(unittest.IsolatedAsyncioTestCase):
             session_id="query",
         )
         query_result = AnalysisQueryResult(
-            path="/analyses/a/sessions/explorer/s/query.csv",
+            path="/sessions/a/explorer/s/query.csv",
             schema=[],
             row_count=0,
             time_range={},

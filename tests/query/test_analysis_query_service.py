@@ -273,7 +273,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.path, f"/{path}")
         self.assertTrue(
             result.path.startswith(
-                "/analyses/sales-drop-2026/sessions/explorer/orders-v1/query_"
+                "/sessions/sales-drop-2026/explorer/orders-v1/query_"
             )
         )
         rows = list(csv.reader(io.StringIO(content.decode())))

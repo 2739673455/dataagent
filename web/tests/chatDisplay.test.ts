@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   buildDisplayItems,
   groupDisplayItemsIntoTurns,
-} from "../src/pages/Chat/components/ChatMessages";
+} from "../src/pages/Chat/components/messages/displayModel";
 import type { MessageResponse } from "../src/types";
 
 describe("chat message display and turn grouping", () => {

@@ -1,4 +1,4 @@
-"""测量停止态沙箱附件上传的 Archive 配额扫描成本"""
+"""测量停止态沙箱附件上传的 Archive 配额扫描成本。"""
 
 from __future__ import annotations
 

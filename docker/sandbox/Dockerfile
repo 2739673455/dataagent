@@ -41,13 +41,13 @@ RUN cd /opt/dataagent-node \
     && npm cache clean --force
 
 RUN useradd --create-home --uid 1000 sandbox \
-    && mkdir -p /workspace/conversations \
-    && chmod 0711 /workspace/conversations \
-    && chown -R sandbox:sandbox /workspace
+    && mkdir -p /data \
+    && chmod 0711 /data \
+    && chown -R sandbox:sandbox /data
 
 ENV NODE_PATH=/opt/dataagent-node/node_modules
 
 USER sandbox
-WORKDIR /workspace
+WORKDIR /data
 
 CMD ["sleep", "infinity"]

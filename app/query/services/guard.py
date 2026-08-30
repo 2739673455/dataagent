@@ -686,6 +686,7 @@ class QueryGuardService:
         """判断比较操作的两侧分别只引用前置来源和当前右侧来源"""
 
         def source_side(operand: Expr) -> str | None:
+            """判断一个比较操作数仅引用 Join 的哪一侧来源。"""
             aliases = {
                 column.table.casefold()
                 for column in operand.find_all(exp.Column)

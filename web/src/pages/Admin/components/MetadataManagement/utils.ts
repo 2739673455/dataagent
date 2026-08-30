@@ -52,3 +52,19 @@ export function splitCsv(value: string): string[] {
     .map((s) => s.trim())
     .filter(Boolean);
 }
+
+// 解析指标关联的数据列
+export function parseMetricColumns(value: string): Array<{ t_name: string; c_name: string }> {
+  return splitCsv(value)
+    .map((item) => {
+      const parts = item.split(".");
+      if (parts.length >= 2) {
+        return {
+          t_name: parts[0].trim(),
+          c_name: parts.slice(1).join(".").trim(),
+        };
+      }
+      return null;
+    })
+    .filter((col): col is { t_name: string; c_name: string } => col !== null && Boolean(col.t_name && col.c_name));
+}

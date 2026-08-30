@@ -1,8 +1,8 @@
 import { authApi } from "@/auth/api";
 import {
   isRefreshSnapshotCurrent,
-  sessionLifecycle,
   type RefreshSnapshot,
+  sessionLifecycle,
 } from "@/auth/sessionLifecycle";
 import { useAuthStore } from "@/auth/store";
 import { clearTokens, getAccessToken, getRefreshToken, setTokens } from "@/auth/token";

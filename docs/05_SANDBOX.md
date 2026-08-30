@@ -27,12 +27,12 @@ Sandbox
 → 启动容器
 
 第一次访问某个对话
-→ 在 /workspace/conversations/{conversation_id} 创建目录
+→ 在 /data/{conversation_id} 创建目录
 → 为对话分配稳定 UID/GID
 → 写入卷内 UID 注册表
 
 第一次访问某个专业 Agent Session
-→ 创建 analyses/{analysis_id}/sessions/{agent_type}/{session_id}
+→ 创建 sessions/{analysis_id}/{agent_type}/{session_id}
 → 为 Session 分配独立执行 UID
 → 使用对话 GID 设置组读取权限
 → 返回绑定该目录的 DockerSandboxBackend
@@ -43,14 +43,14 @@ Sandbox
 工作区结构：
 
 ```text
-/workspace/conversations/{conversation_id}
+/data/{conversation_id}
 → uploads
-→ analyses/{analysis_id}/sessions/{agent_type}/{session_id}
+→ sessions/{analysis_id}/{agent_type}/{session_id}
 
-/workspace/.dataagent-staging
+/data/.dataagent-staging
 → 文件安全提交暂存区
 
-/workspace/.dataagent-activity.json
+/data/.dataagent-activity.json
 → 最近活动时间
 ```
 
@@ -77,7 +77,7 @@ Specialist Shell Job 没有固定总执行时限。`internal_command_timeout_sec
 
 Shell Job Registry 只属于当前 Specialist Agent Run。Run 正常返回、失败或取消时会取消所有未结束任务、等待监控结束并删除 staging 控制文件；Session 工作区中的任务日志继续保留。
 
-容器根文件系统只读，`/workspace` 是持久化读写卷，`/tmp` 是 `nosuid,nodev` tmpfs。容器删除全部 capabilities、启用 `no-new-privileges`，并限制网络、CPU、内存和 PID。
+容器根文件系统只读，`/data` 是持久化读写卷，`/tmp` 是 `nosuid,nodev` tmpfs。容器删除全部 capabilities、启用 `no-new-privileges`，并限制网络、CPU、内存和 PID。
 
 ## 3. 上传、下载和保存产物
 
@@ -203,7 +203,7 @@ cleanup 失败
 ```text
 应用收集 app/analytics/agents/{agent}/skills
 → 校验源目录和 /skills/{agent} 目标路径
-→ 拒绝重复、嵌套或位于 /workspace、/tmp 的目标
+→ 拒绝重复、嵌套或位于 /data、/tmp 的目标
 → 以 Docker bind mount mode=ro 挂载
 → 在 Agent CompositeBackend 中路由 Skill 路径
 

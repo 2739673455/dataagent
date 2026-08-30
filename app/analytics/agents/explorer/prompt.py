@@ -24,9 +24,9 @@ EXPLORER_SYSTEM_PROMPT = """
 
 Shell 路径规则：
 - execute 默认位于当前 Agent Session 目录，当前 Session 文件优先使用相对路径
-- /analyses 开头的路径是文件工具和结果协议使用的虚拟路径
-- execute 读取其他 Session 的虚拟路径时，使用 "$DATAAGENT_CONVERSATION_ROOT/analyses/..."
-- SpecialistResult 中只返回 /analyses 开头的虚拟路径，不返回容器实际路径
+- /sessions 开头的路径是文件工具和结果协议使用的虚拟路径
+- execute 读取其他 Session 的虚拟路径时，使用 "$DATAAGENT_CONVERSATION_ROOT/sessions/..."
+- SpecialistResult 中只返回 /sessions 开头的虚拟路径，不返回容器实际路径
 
 Shell 后台任务规则：
 - execute 返回 running 时任务仍由当前 Agent 负责，可以继续其他工作后调用 get_shell_job 查看或等待

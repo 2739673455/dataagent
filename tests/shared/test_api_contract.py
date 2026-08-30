@@ -3,7 +3,10 @@
 import unittest
 
 from main import app
-from scripts.generate_openapi_types import OUTPUT_PATH, _render_openapi_types
+from scripts.development.generate_openapi_types import (
+    OUTPUT_PATH,
+    _render_openapi_types,
+)
 
 
 class ApiContractTests(unittest.TestCase):

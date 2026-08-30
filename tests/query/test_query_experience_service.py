@@ -477,7 +477,7 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
                 scan_bytes=800,
             ),
             result=AnalysisQueryResult(
-                path="/analyses/sales/sessions/explorer/orders/query.csv",
+                path="/sessions/sales/explorer/orders/query.csv",
                 schema=[
                     QueryResultColumn(name="amount", type="integer", nullable=False)
                 ],

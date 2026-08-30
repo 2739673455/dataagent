@@ -1,6 +1,6 @@
 import { Database, Trash2, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import { adminApi, type AssetGrantResponse } from "@/api/admin";
+import { type AssetGrantResponse, adminApi } from "@/api/admin";
 import { Button } from "@/components/ui/button";
 
 function splitColumns(value: string): string[] {

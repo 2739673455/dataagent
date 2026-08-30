@@ -42,8 +42,8 @@ from app.sandbox.concurrency import LifecycleGuard
 from app.sandbox.exceptions import SandboxPathError, SandboxStorageLimitError
 from app.sandbox.ownership import SandboxOwnership
 from app.sandbox.paths import (
+    SANDBOX_DATA_ROOT,
     SANDBOX_STAGING_ROOT,
-    SANDBOX_WORKSPACE_ROOT,
     SandboxSessionScope,
 )
 from app.sandbox.scripts import (
@@ -57,7 +57,6 @@ from app.shared.config.app_config import SandboxConfig
 
 _ResultT = TypeVar("_ResultT")
 _SANDBOX_STAGING_ROOT = SANDBOX_STAGING_ROOT
-_SANDBOX_WORKSPACE_ROOT = SANDBOX_WORKSPACE_ROOT
 _SHELL_JOB_INLINE_BYTES = 80_000
 _SHELL_JOB_CANCEL_GRACE_SECONDS = 1.0
 
@@ -109,7 +108,7 @@ class DockerSandboxBackend(BaseSandbox):
         """初始化会话级 Docker 沙箱后端"""
         self._user_id = user_id
         self._conversation_id = conversation_id
-        self._conversation_dir = f"{_SANDBOX_WORKSPACE_ROOT}/{conversation_id}"
+        self._conversation_dir = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
         self._session_scope = session_scope
         self._workspace_dir = (
             posixpath.join(
@@ -380,7 +379,7 @@ class DockerSandboxBackend(BaseSandbox):
             ],
             user="0",
             privileged=True,
-            workdir="/workspace",
+            workdir=SANDBOX_DATA_ROOT,
         )
         raw_output = result.output or b""
         output = (
@@ -474,7 +473,7 @@ class DockerSandboxBackend(BaseSandbox):
             ],
             user="0",
             privileged=True,
-            workdir="/workspace",
+            workdir=SANDBOX_DATA_ROOT,
         )
         if result.exit_code != 0:
             return None
@@ -709,7 +708,7 @@ class DockerSandboxBackend(BaseSandbox):
                 ],
                 user="0",
                 privileged=True,
-                workdir="/workspace",
+                workdir=SANDBOX_DATA_ROOT,
             )
         raw_output = result.output or b""
         output = (
@@ -741,7 +740,7 @@ class DockerSandboxBackend(BaseSandbox):
                 ["rm", "-f", "--", control_path],
                 user="0",
                 privileged=True,
-                workdir="/workspace",
+                workdir=SANDBOX_DATA_ROOT,
             )
 
     async def acleanup_shell_job_control(self, job_id: str) -> None:
@@ -1033,7 +1032,7 @@ class DockerSandboxBackend(BaseSandbox):
                 ["python3", "-c", _COMMIT_UPLOAD_SCRIPT, payload],
                 user="0",
                 privileged=True,
-                workdir="/workspace",
+                workdir=SANDBOX_DATA_ROOT,
             )
             if commit_result.exit_code != 0:
                 raw_output = commit_result.output or b""
@@ -1048,7 +1047,7 @@ class DockerSandboxBackend(BaseSandbox):
                 ["rm", "-f", "--", staging_path],
                 user="0",
                 privileged=True,
-                workdir="/workspace",
+                workdir=SANDBOX_DATA_ROOT,
             )
 
     def _read_limited_file_bytes_unlocked(

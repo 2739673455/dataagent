@@ -77,6 +77,47 @@
     padding: 0;
     gap: 0;
   }
+
+  @keyframes text-shimmer {
+    0% {
+      background-position: 100% 0;
+    }
+    100% {
+      background-position: -100% 0;
+    }
+  }
+
+  .shimmer-text {
+    background: linear-gradient(
+      90deg,
+      #18181b 0%,
+      #18181b 25%,
+      #a1a1aa 50%,
+      #18181b 75%,
+      #18181b 100%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    display: inline-block;
+    animation: text-shimmer 2.2s infinite linear;
+  }
+
+  @keyframes matrix-dot-gap {
+    0% {
+      opacity: 0.08;
+      transform: scale(0.6);
+    }
+    12.5% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
 }
 
 [data-sonner-toast] {

@@ -37,5 +37,8 @@ def build_planner_system_prompt() -> str:
 - Agent 之间只传绝对路径、Schema、行数、时间范围、版本和摘要
 - 涉及数据计算或文件证据的结论必须能追溯到 artifacts
 
+格式规范：
+- 输出结构树、状态流程图或多行 ASCII/Unicode 示意图时，必须整体包裹在单个 Markdown 代码块（```）中，禁止按行零散添加行内反引号。
+
 优先复用当前对话已经存在的 analysis_id 和 Session。仅在用户提出新的独立分析目标时创建新 analysis_id。
 """.strip()

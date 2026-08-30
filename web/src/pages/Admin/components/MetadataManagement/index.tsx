@@ -4,9 +4,9 @@ import { getApiErrorMessage } from "@/api/errors";
 import {
   type ColumnInfo,
   type MetricInfo,
+  metaApi,
   type TableInfo,
   type ValueIndexSyncRequestMode,
-  metaApi,
 } from "@/api/meta";
 import { ColumnSection } from "./ColumnSection";
 import { MetricSection } from "./MetricSection";

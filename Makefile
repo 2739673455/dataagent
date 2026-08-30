@@ -1,8 +1,9 @@
-.PHONY: help start run worker beat init-db bootstrap-admin clean
+.PHONY: help start run web worker beat init-db bootstrap-admin clean
 
 help:
-	@echo "make start           - 启动后端、Celery Worker 和 Celery Beat"
+	@echo "make start           - 启动前端、后端、Celery Worker 和 Celery Beat"
 	@echo "make run             - 启动后端服务"
+	@echo "make web             - 启动前端开发服务"
 	@echo "make worker          - 启动 Celery Worker"
 	@echo "make beat            - 启动 Celery Beat"
 	@echo "make init-db         - 初始化数据库"
@@ -10,10 +11,13 @@ help:
 	@echo "make clean           - 清理临时文件"
 
 start:
-	$(MAKE) --no-print-directory -j3 run worker beat
+	$(MAKE) --no-print-directory -j4 run web worker beat
 
 run:
 	uv run main.py
+
+web:
+	npm --prefix web run dev
 
 worker:
 	uv run celery --app app.shared.tasks.celery_app:celery_app worker -l INFO

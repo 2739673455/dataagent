@@ -12,10 +12,16 @@ from langchain_quickjs import CodeInterpreterMiddleware
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
-from app.analytics.agents.message_timestamp_middleware import MessageTimestampMiddleware
-from app.analytics.agents.user_message_metadata import (
+from app.analytics.agents.middleware.message_timestamp import (
+    MessageTimestampMiddleware,
+)
+from app.analytics.agents.middleware.user_message_attachments import (
+    UserMessageAttachmentMiddleware,
+)
+from app.analytics.agents.middleware.user_message_metadata import (
     UserMessageMetadataMiddleware,
 )
+from app.analytics.agents.tools import create_image_view_request_tool
 
 from .prompt import build_planner_system_prompt
 
@@ -46,7 +52,7 @@ def create_planner_agent(
     )
     return create_deep_agent(
         model=model,
-        tools=tools,
+        tools=[*tools, create_image_view_request_tool()],
         system_prompt=build_planner_system_prompt(),
         middleware=cast(
             "Sequence[AgentMiddleware[Any, Any, Any]]",
@@ -54,6 +60,7 @@ def create_planner_agent(
                 filesystem,
                 interpreter,
                 UserMessageMetadataMiddleware(),
+                UserMessageAttachmentMiddleware(backend),
                 MessageTimestampMiddleware(),
             ],
         ),

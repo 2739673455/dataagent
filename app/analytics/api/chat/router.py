@@ -18,7 +18,6 @@ from app.analytics.api.chat.dependencies import (
 from app.analytics.api.dependencies import (
     AgentManagerDep,
     ConversationLifecycleServiceDep,
-    SandboxManagerDep,
 )
 from app.analytics.services import chat as chat_service
 from app.analytics.services.conversation_title import (
@@ -29,7 +28,6 @@ from app.analytics.tasks import (
     enqueue_conversation_title,
 )
 from app.identity.api.auth.dependencies import AnalysisUserDep, CurrentUserDep
-from app.sandbox.manager import DockerSandboxManager
 from app.shared.contracts.analysis import AgentType
 from app.shared.observability import context
 
@@ -223,7 +221,6 @@ def _serialize_sse_event(event: chat_schema.ChatStreamEventPayload) -> str:
 
 async def _stream_agent_response(
     agents: AgentManager,
-    sandbox: DockerSandboxManager,
     user_id: int,
     conversation_id: UUID,
     user_message: chat_schema.UserMessageRequest,
@@ -232,7 +229,6 @@ async def _stream_agent_response(
     cancel = asyncio.Event()
     responses = chat_service.run_agent_turn(
         agents,
-        sandbox,
         user_id,
         conversation_id,
         user_message,
@@ -299,7 +295,6 @@ async def api_stream_chat(
     current_user: AnalysisUserDep,
     lifecycle: ConversationLifecycleServiceDep,
     agents: AgentManagerDep,
-    sandbox: SandboxManagerDep,
 ) -> StreamingResponse:
     """通过 SSE 执行单轮对话并流式返回 Agent 事件"""
     user_id = current_user.id
@@ -354,7 +349,6 @@ async def api_stream_chat(
     return StreamingResponse(
         _stream_agent_response(
             agents,
-            sandbox,
             user_id,
             body.conversation_id,
             body.message,

@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
+from langgraph.constants import CONFIG_KEY_CHECKPOINTER
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ValidationError
 
@@ -289,19 +290,18 @@ class AgentSessionService:
     ) -> None:
         """验证结论产物实际存在于当前工作区"""
         session_prefix = (
-            f"/analyses/{session_key.analysis_id}/sessions/{session_key.agent_type}/"
+            f"/sessions/{session_key.analysis_id}/{session_key.agent_type}/"
             f"{session_key.session_id}/"
         )
-        shared_prefix = f"/analyses/{session_key.analysis_id}/shared/"
         artifact_paths = {artifact.path for artifact in result.artifacts}
         invalid_artifacts = sorted(
             path
             for path in artifact_paths
-            if not path.startswith((session_prefix, shared_prefix))
+            if not path.startswith(session_prefix)
         )
         if invalid_artifacts:
             raise ValueError(
-                f"产物路径超出当前分析范围: {', '.join(invalid_artifacts)}"
+                f"产物路径超出当前 Session: {', '.join(invalid_artifacts)}"
             )
         paths = artifact_paths
 
@@ -463,18 +463,20 @@ class AgentSessionService:
         session_id: str,
         delegation_id: str,
     ) -> list[BaseMessage] | None:
-        """从 Session Checkpoint 读取一次 delegation 的可展示消息"""
+        """通过 Specialist Agent 状态读取一次 delegation 的可展示消息"""
         context = DelegationMessageContext(delegation_id=delegation_id)
         session_key = self._build_session_key(analysis_id, agent_type, session_id)
-        checkpoint = await self._session_store.load_checkpoint(session_key)
-        if checkpoint is None:
-            return None
-        channel_values = checkpoint.get("channel_values")
-        messages = (
-            channel_values.get("messages")
-            if isinstance(channel_values, Mapping)
-            else None
-        )
+        agent_run = await self._build_agent(session_key)
+        try:
+            checkpointer = agent_run.agent.checkpointer
+            if not checkpointer:
+                raise RuntimeError("Specialist Agent 未配置 Checkpointer")
+            state_config = self.build_subagent_config(RunnableConfig(), session_key)
+            state_config["configurable"][CONFIG_KEY_CHECKPOINTER] = checkpointer
+            state = await agent_run.agent.aget_state(state_config)
+        finally:
+            await self._cleanup_agent_run(agent_run)
+        messages = state.values.get("messages")
         if not isinstance(messages, list):
             return None
 

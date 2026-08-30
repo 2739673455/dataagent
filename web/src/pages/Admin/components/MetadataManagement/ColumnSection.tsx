@@ -4,18 +4,8 @@ import { toast } from "sonner";
 import { getApiErrorMessage } from "@/api/errors";
 import { type ColumnInfo, metaApi, type ValueIndexSyncRequestMode } from "@/api/meta";
 import { Button } from "@/components/ui/button";
-import {
-  AdminDialogActions,
-  AdminDialogCancelButton,
-  AdminDialogPrimaryButton,
-  AdminEditorDialog,
-} from "../AdminEditorDialog";
-import {
-  formatDateTime,
-  formatValueIndexSyncDetails,
-  formatValueIndexSyncMode,
-  splitCsv,
-} from "./utils";
+import { ColumnCreateDialog, ColumnEditDialog, ValueIndexStatus } from "./ColumnDialogs";
+import { splitCsv } from "./utils";
 
 interface ColumnSectionProps {
   selectedTable: string | null;
@@ -28,58 +18,6 @@ interface ColumnSectionProps {
   onSyncColumnIndexes: () => Promise<void>;
   onSyncColumnValues: (mode: ValueIndexSyncRequestMode) => Promise<void>;
   onReloadColumns: (tableName: string) => Promise<void>;
-}
-
-// 渲染字段取值索引的紧凑状态与悬停详情
-function ValueIndexStatus({ column }: { column: ColumnInfo }) {
-  if (!column.index_values) {
-    return (
-      <span className="inline-flex items-center rounded bg-[#e5e5df] px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap text-[#71717a]">
-        未开启
-      </span>
-    );
-  }
-
-  const state = column.value_index_state;
-  const modeLabel = formatValueIndexSyncMode(state?.last_sync_mode);
-  const lastSuccess = state?.last_synced_at
-    ? state.status === "succeeded"
-      ? formatDateTime(state.last_synced_at)
-      : `上次${modeLabel} · ${formatDateTime(state.last_synced_at)}`
-    : null;
-
-  return (
-    <div
-      className="flex flex-col items-start gap-1"
-      title={state ? formatValueIndexSyncDetails(state) : "尚未执行取值索引同步"}
-    >
-      <div className="flex items-center gap-1">
-        <span className="inline-flex items-center rounded bg-[#1e2024] px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap text-[#ffffff]">
-          已开启
-        </span>
-        {state?.status === "syncing" ? (
-          <span className="inline-flex animate-pulse items-center rounded bg-[#e5e5df] px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap text-[#52525b]">
-            同步中
-          </span>
-        ) : state?.status === "failed" ? (
-          <span className="inline-flex items-center rounded bg-[#fee2e2] px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap text-[#b91c1c]">
-            同步失败
-          </span>
-        ) : state?.last_sync_mode ? (
-          <span className="inline-flex items-center rounded bg-[#deded8] px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap text-[#52525b]">
-            上次{modeLabel}
-          </span>
-        ) : null}
-      </div>
-      {lastSuccess ? (
-        <span className="text-[9px] text-[#71717a] font-mono whitespace-nowrap leading-tight">
-          {lastSuccess}
-        </span>
-      ) : (
-        <span className="text-[10px] text-[#a1a1aa] font-mono whitespace-nowrap">未同步</span>
-      )}
-    </div>
-  );
 }
 
 export function ColumnSection({
@@ -114,15 +52,15 @@ export function ColumnSection({
   const handleBatchDeleteColumns = async () => {
     if (!selectedTable || selectedColumnNames.length === 0) return;
     const confirmed = window.confirm(
-      `确认批量删除选中的 ${selectedColumnNames.length} 个字段吗？\n此操作将同时删除对应的语义索引与枚举取值索引。`
+      `确认批量删除表 ${selectedTable} 下选中的 ${selectedColumnNames.length} 个字段吗？\n这将同时删除对应的取值索引及语义索引。`
     );
     if (!confirmed) return;
     setIsBatchDeleting(true);
     try {
       await metaApi.deleteColumns(
-        selectedColumnNames.map((cName) => ({
+        selectedColumnNames.map((colName) => ({
           t_name: selectedTable,
-          c_name: cName,
+          c_name: colName,
         }))
       );
       toast.success(`已成功删除 ${selectedColumnNames.length} 个字段`);
@@ -316,235 +254,61 @@ export function ColumnSection({
         </div>
       </div>
 
-      {isCreatingColumn && (
-        <AdminEditorDialog
-          ariaLabel={`添加字段元数据 ${selectedTable || "未选择"}`}
-          onClose={() => setIsCreatingColumn(false)}
-          title={`添加字段元数据: ${selectedTable}`}
-        >
-          <div className="space-y-3">
-            <div>
-              <label
-                htmlFor="new-col-name"
-                className="block text-xs font-medium text-[#71717a] mb-1"
-              >
-                字段名称
-              </label>
-              <input
-                id="new-col-name"
-                value={newColName}
-                onChange={(e) => setNewColName(e.target.value)}
-                placeholder="如：order_id"
-                className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="new-col-desc"
-                className="block text-xs font-medium text-[#71717a] mb-1"
-              >
-                字段描述
-              </label>
-              <textarea
-                id="new-col-desc"
-                value={newColDesc}
-                onChange={(e) => setNewColDesc(e.target.value)}
-                placeholder="字段业务含义说明"
-                rows={2}
-                className="w-full rounded border border-[#d4d4ce] bg-[#ffffff] p-2 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="new-col-alias"
-                className="block text-xs font-medium text-[#71717a] mb-1"
-              >
-                同义别名（逗号分隔）
-              </label>
-              <input
-                id="new-col-alias"
-                value={newColAlias}
-                onChange={(e) => setNewColAlias(e.target.value)}
-                placeholder="别名1, 别名2"
-                className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-              />
-            </div>
-            <div className="grid gap-3">
-              <div>
-                <label
-                  htmlFor="new-col-ref-table"
-                  className="block text-xs font-medium text-[#71717a] mb-1"
-                >
-                  关联引用表
-                </label>
-                <input
-                  id="new-col-ref-table"
-                  value={newColRefTable}
-                  onChange={(e) => setNewColRefTable(e.target.value)}
-                  placeholder="如：dim_user"
-                  className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="new-col-ref-column"
-                  className="block text-xs font-medium text-[#71717a] mb-1"
-                >
-                  关联引用列
-                </label>
-                <input
-                  id="new-col-ref-column"
-                  value={newColRefColumn}
-                  onChange={(e) => setNewColRefColumn(e.target.value)}
-                  placeholder="如：id"
-                  className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-                />
-              </div>
-            </div>
-            <div className="flex items-center">
-              <label
-                htmlFor="new-col-index-values"
-                className="flex cursor-pointer items-center gap-1.5 text-xs text-[#52525b]"
-              >
-                <input
-                  type="checkbox"
-                  id="new-col-index-values"
-                  checked={newColIndexValues}
-                  onChange={(e) => setNewColIndexValues(e.target.checked)}
-                  className="h-4 w-4 rounded accent-[#1e2024]"
-                />
-                <span>开启取值索引</span>
-              </label>
-            </div>
-            <AdminDialogActions>
-              <AdminDialogCancelButton onClick={() => setIsCreatingColumn(false)}>
-                取消
-              </AdminDialogCancelButton>
-              <AdminDialogPrimaryButton
-                disabled={savingColumn || !newColName.trim() || !newColDesc.trim()}
-                onClick={() => void handleCreateColumn()}
-              >
-                {savingColumn ? "正在添加..." : "确认添加字段"}
-              </AdminDialogPrimaryButton>
-            </AdminDialogActions>
-          </div>
-        </AdminEditorDialog>
-      )}
+      <ColumnCreateDialog
+        isOpen={isCreatingColumn}
+        newColAlias={newColAlias}
+        newColDesc={newColDesc}
+        newColIndexValues={newColIndexValues}
+        newColName={newColName}
+        newColRefColumn={newColRefColumn}
+        newColRefTable={newColRefTable}
+        onClose={() => setIsCreatingColumn(false)}
+        onSubmit={handleCreateColumn}
+        savingColumn={savingColumn}
+        selectedTable={selectedTable}
+        setNewColAlias={setNewColAlias}
+        setNewColDesc={setNewColDesc}
+        setNewColIndexValues={setNewColIndexValues}
+        setNewColName={setNewColName}
+        setNewColRefColumn={setNewColRefColumn}
+        setNewColRefTable={setNewColRefTable}
+      />
 
-      {editingColumn && (
-        <AdminEditorDialog
-          ariaLabel={`编辑字段元数据 ${editingColumn.name}`}
-          onClose={() => setEditingColumn(null)}
-          title={`编辑字段元数据: ${editingColumn.name}`}
-        >
-          <div className="space-y-3">
-            <div>
-              <label
-                htmlFor="edit-col-desc"
-                className="block text-xs font-medium text-[#71717a] mb-1"
-              >
-                字段描述
-              </label>
-              <textarea
-                id="edit-col-desc"
-                value={editColDesc}
-                onChange={(e) => setEditColDesc(e.target.value)}
-                placeholder="字段业务含义说明"
-                rows={2}
-                className="w-full rounded border border-[#d4d4ce] bg-[#ffffff] p-2 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="edit-col-alias"
-                className="block text-xs font-medium text-[#71717a] mb-1"
-              >
-                同义别名（逗号分隔）
-              </label>
-              <input
-                id="edit-col-alias"
-                value={editColAlias}
-                onChange={(e) => setEditColAlias(e.target.value)}
-                placeholder="别名1, 别名2"
-                className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-              />
-            </div>
-            <div className="grid gap-3">
-              <div>
-                <label
-                  htmlFor="edit-col-ref-table"
-                  className="block text-xs font-medium text-[#71717a] mb-1"
-                >
-                  关联引用表
-                </label>
-                <input
-                  id="edit-col-ref-table"
-                  value={editColRefTable}
-                  onChange={(e) => setEditColRefTable(e.target.value)}
-                  placeholder="如：dim_user"
-                  className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="edit-col-ref-column"
-                  className="block text-xs font-medium text-[#71717a] mb-1"
-                >
-                  关联引用列
-                </label>
-                <input
-                  id="edit-col-ref-column"
-                  value={editColRefColumn}
-                  onChange={(e) => setEditColRefColumn(e.target.value)}
-                  placeholder="如：id"
-                  className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-                />
-              </div>
-            </div>
-            <div className="flex items-center">
-              <label
-                htmlFor="edit-col-index-values"
-                className="flex cursor-pointer items-center gap-1.5 text-xs text-[#52525b]"
-              >
-                <input
-                  type="checkbox"
-                  id="edit-col-index-values"
-                  checked={editColIndexValues}
-                  onChange={(e) => setEditColIndexValues(e.target.checked)}
-                  className="h-4 w-4 rounded accent-[#1e2024]"
-                />
-                <span>开启取值索引</span>
-              </label>
-            </div>
-            <AdminDialogActions>
-              <AdminDialogCancelButton onClick={() => setEditingColumn(null)}>
-                取消
-              </AdminDialogCancelButton>
-              <AdminDialogPrimaryButton
-                disabled={savingColumn || !editColDesc.trim()}
-                onClick={() => void handleSaveColumn()}
-              >
-                {savingColumn ? "保存中..." : "保存字段元数据"}
-              </AdminDialogPrimaryButton>
-            </AdminDialogActions>
-          </div>
-        </AdminEditorDialog>
-      )}
+      <ColumnEditDialog
+        editColAlias={editColAlias}
+        editColDesc={editColDesc}
+        editColIndexValues={editColIndexValues}
+        editColRefColumn={editColRefColumn}
+        editColRefTable={editColRefTable}
+        editingColumn={editingColumn}
+        onClose={() => setEditingColumn(null)}
+        onSubmit={handleSaveColumn}
+        savingColumn={savingColumn}
+        setEditColAlias={setEditColAlias}
+        setEditColDesc={setEditColDesc}
+        setEditColIndexValues={setEditColIndexValues}
+        setEditColRefColumn={setEditColRefColumn}
+        setEditColRefTable={setEditColRefTable}
+      />
 
       <div className="mt-4 rounded border border-[#d4d4ce]">
-        {columns.length === 0 ? (
+        {!selectedTable ? (
           <div className="py-12 text-center text-xs text-[#71717a]">
-            {selectedTable ? "该表暂未配置任何字段元数据" : "请先选择数据表"}
+            请在上方选择一个数据表以查看和配置其字段元数据
+          </div>
+        ) : columns.length === 0 ? (
+          <div className="py-12 text-center text-xs text-[#71717a]">
+            该表暂无字段元数据，可点击右上角“添加字段”进行创建
           </div>
         ) : (
           <div className="max-h-[410px] overflow-auto">
             <table className="w-full min-w-[760px] table-fixed text-left text-xs font-mono">
               <colgroup>
                 <col className="w-[44px]" />
-                <col className="w-[20%]" />
-                <col className="w-[25%]" />
-                <col className="w-[25%]" />
-                <col className="w-[120px]" />
+                <col className="w-[18%]" />
+                <col className="w-[28%]" />
+                <col className="w-[18%]" />
+                <col className="w-[16%]" />
                 <col className="w-[140px]" />
                 <col className="w-[84px]" />
               </colgroup>
@@ -573,16 +337,16 @@ export function ColumnSection({
                     />
                   </th>
                   <th className="px-3.5 py-2.5 font-medium whitespace-nowrap bg-[#f4f4f0]">
-                    字段名称 / 类型
+                    字段名称
                   </th>
                   <th className="px-3.5 py-2.5 font-medium whitespace-nowrap bg-[#f4f4f0]">
-                    描述与别名
+                    业务描述
                   </th>
                   <th className="px-3.5 py-2.5 font-medium whitespace-nowrap bg-[#f4f4f0]">
-                    关联引用
+                    同义别名
                   </th>
                   <th className="px-3.5 py-2.5 font-medium whitespace-nowrap bg-[#f4f4f0]">
-                    语义索引
+                    引用关系
                   </th>
                   <th className="px-3.5 py-2.5 font-medium whitespace-nowrap bg-[#f4f4f0]">
                     取值索引
@@ -594,84 +358,65 @@ export function ColumnSection({
               </thead>
               <tbody className="divide-y divide-[#f0f0eb]">
                 {columns.map((col) => {
-                  const isSelected = selectedColumnNames.includes(col.name);
+                  const isChecked = selectedColumnNames.includes(col.name);
                   return (
                     <tr
                       key={col.name}
                       className={`hover:bg-[#fafaf8] transition-colors ${
-                        isSelected ? "bg-[#f4f4f0]/60" : ""
+                        isChecked ? "bg-[#fafaf8]" : ""
                       }`}
                     >
-                      <td className="px-3.5 py-2.5 align-top text-center">
+                      <td className="px-3.5 py-2.5 align-middle text-center">
                         <input
                           type="checkbox"
                           aria-label={`选择字段 ${col.name}`}
-                          checked={isSelected}
+                          checked={isChecked}
                           onChange={() => onToggleSelectColumn(col.name)}
                           className="h-3.5 w-3.5 rounded border-[#d4d4ce] accent-[#1e2024] cursor-pointer align-middle"
                         />
                       </td>
-                      <td className="px-3.5 py-2.5 align-top">
-                        <div className="font-semibold text-[#18181b] break-all leading-tight">
+                      <td className="px-3.5 py-2.5 align-middle font-semibold text-[#18181b]">
+                        <span className="truncate block" title={col.name}>
                           {col.name}
-                        </div>
-                        <div className="text-[10px] text-[#71717a] font-mono mt-0.5 break-all">
-                          {col.type || "-"}
-                        </div>
+                        </span>
                       </td>
-                      <td className="px-3.5 py-2.5 align-top text-xs">
-                        <div className="text-[#27272a] leading-relaxed break-words">
-                          {col.description || "-"}
-                        </div>
-                        {col.alias && col.alias.length > 0 && (
-                          <div className="mt-1 flex flex-wrap gap-1">
+                      <td className="px-3.5 py-2.5 align-middle text-[#71717a] text-xs break-words">
+                        <span className="line-clamp-2 leading-relaxed" title={col.description}>
+                          {col.description}
+                        </span>
+                      </td>
+                      <td className="px-3.5 py-2.5 align-middle text-xs">
+                        {col.alias?.length ? (
+                          <div className="flex flex-wrap gap-1">
                             {col.alias.map((a) => (
                               <span
                                 key={a}
-                                className="rounded bg-[#deded8] px-1.5 py-0.5 text-[10px] text-[#52525b] whitespace-nowrap"
+                                className="rounded bg-[#f0f0eb] px-1.5 py-0.5 text-[10px] text-[#52525b]"
                               >
                                 {a}
                               </span>
                             ))}
                           </div>
+                        ) : (
+                          <span className="text-[#a1a1aa]">-</span>
                         )}
                       </td>
-                      <td className="px-3.5 py-2.5 align-top">
-                        {col.reference_t_name && col.reference_c_name ? (
-                          <span className="inline-block max-w-full rounded bg-[#ebebe6] px-1.5 py-0.5 text-[11px] font-mono text-[#27272a] break-all leading-tight">
-                            <span className="text-[#52525b]">{col.reference_t_name}</span>
-                            <span className="font-bold text-[#18181b] mx-0.5 text-xs">.</span>
-                            <span className="font-semibold text-[#18181b]">
-                              {col.reference_c_name}
-                            </span>
+                      <td className="px-3.5 py-2.5 align-middle text-xs text-[#71717a]">
+                        {col.reference_t_name ? (
+                          <span
+                            className="font-mono text-[11px] truncate block"
+                            title={`${col.reference_t_name}.${col.reference_c_name || ""}`}
+                          >
+                            {col.reference_t_name}.{col.reference_c_name}
                           </span>
                         ) : (
                           <span className="text-[#a1a1aa]">-</span>
                         )}
                       </td>
-                      <td className="px-3.5 py-2.5 align-top">
-                        <div className="flex flex-col gap-1 items-start">
-                          {col.index_version === col.meta_version && col.meta_version > 0 ? (
-                            <span
-                              className="inline-flex items-center rounded bg-[#1e2024] text-[#ffffff] px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap font-mono"
-                              title={`语义索引版本与数据版本一致 (v${col.meta_version})`}
-                            >
-                              已同步 (v{col.meta_version})
-                            </span>
-                          ) : (
-                            <span
-                              className="inline-flex items-center rounded bg-[#e5e5df] text-[#71717a] px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap font-mono"
-                              title={`语义索引版本 v${col.index_version} 落后于数据版本 v${col.meta_version}`}
-                            >
-                              待同步 (v{col.index_version}/v{col.meta_version})
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-3.5 py-2.5 align-top">
+                      <td className="px-3.5 py-2.5 align-middle">
                         <ValueIndexStatus column={col} />
                       </td>
-                      <td className="px-3.5 py-2.5 align-top text-right whitespace-nowrap">
+                      <td className="px-3.5 py-2.5 align-middle text-right whitespace-nowrap">
                         <div className="inline-flex items-center justify-end gap-1.5 whitespace-nowrap">
                           <Button
                             variant="outline"

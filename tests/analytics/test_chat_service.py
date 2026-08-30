@@ -23,10 +23,14 @@ from app.analytics.agents.contracts import (
     SubagentMessageActivity,
     SubagentStatusActivity,
 )
-from app.analytics.agents.message_timestamp_middleware import (
+from app.analytics.agents.middleware.message_timestamp import (
     MessageTimestampMiddleware,
 )
-from app.analytics.agents.user_message_metadata import (
+from app.analytics.agents.middleware.user_message_attachments import (
+    USER_MESSAGE_ATTACHMENTS_KEY,
+    UserMessageAttachments,
+)
+from app.analytics.agents.middleware.user_message_metadata import (
     USER_MESSAGE_METADATA_KEY,
     UserMessageMetadata,
 )
@@ -94,13 +98,10 @@ class UserMessageRequestTest(unittest.TestCase):
 
 class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
     async def test_user_message_creation_time_is_persisted(self) -> None:
-        message = await chat_service._schema_to_human_message(
-            MagicMock(),
+        message = chat_service._schema_to_human_message(
             chat_schema.UserMessageRequest(
                 parts=[chat_schema.TextContent(type="text", text="analyze")]
             ),
-            7,
-            _CONVERSATION_ID,
         )
 
         metadata = chat_schema.MessageResponse.model_validate(
@@ -115,13 +116,10 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
     async def test_private_user_message_metadata_is_not_exposed_by_api_schema(
         self,
     ) -> None:
-        message = await chat_service._schema_to_human_message(
-            MagicMock(),
+        message = chat_service._schema_to_human_message(
             chat_schema.UserMessageRequest(
                 parts=[chat_schema.TextContent(type="text", text="analyze")]
             ),
-            7,
-            _CONVERSATION_ID,
         )
 
         response = chat_service._langchain_message_to_schema(message)
@@ -132,6 +130,38 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(USER_MESSAGE_METADATA_KEY, payload)
         self.assertIsNotNone(payload["created_at"])
         self.assertNotIn("<message_metadata>", json.dumps(payload))
+
+    async def test_attachment_references_are_private_and_content_stays_raw(
+        self,
+    ) -> None:
+        message = chat_service._schema_to_human_message(
+            chat_schema.UserMessageRequest(
+                parts=[chat_schema.TextContent(type="text", text="analyze")],
+                attachments=[
+                    chat_schema.AttachmentReference(f_path="uploads/report.csv"),
+                    chat_schema.AttachmentReference(f_path="uploads/chart.png"),
+                ],
+            )
+        )
+
+        self.assertEqual(message.content, [{"type": "text", "text": "analyze"}])
+        private_attachments = UserMessageAttachments.model_validate(
+            message.additional_kwargs[USER_MESSAGE_ATTACHMENTS_KEY]
+        )
+        self.assertEqual(
+            [item.f_path for item in private_attachments.attachments],
+            ["uploads/report.csv", "uploads/chart.png"],
+        )
+        response = chat_service._langchain_message_to_schema(message)
+        assert response is not None
+        self.assertEqual(
+            [item.f_path for item in response.attachments or ()],
+            ["uploads/report.csv", "uploads/chart.png"],
+        )
+        self.assertNotIn(
+            USER_MESSAGE_ATTACHMENTS_KEY,
+            response.model_dump(mode="json"),
+        )
 
     async def test_model_response_creation_time_is_persisted(self) -> None:
         middleware = MessageTimestampMiddleware()
@@ -251,7 +281,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 chat_service,
                 "_schema_to_human_message",
-                new=AsyncMock(return_value=HumanMessage(content="analyze")),
+                new=MagicMock(return_value=HumanMessage(content="analyze")),
             ),
             self.assertRaisesRegex(
                 chat_service.PlannerContinuationLimitError,
@@ -260,7 +290,6 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         ):
             async for event in chat_service.run_agent_turn(
                 manager,
-                MagicMock(),
                 7,
                 _CONVERSATION_ID,
                 user_message,
@@ -290,7 +319,7 @@ def _delegation_payload() -> dict[str, object]:
         "artifacts": [
             {
                 "path": (
-                    "/analyses/sales-review/sessions/visualizer/chart-1/report.html"
+                    "/sessions/sales-review/visualizer/chart-1/report.html"
                 ),
                 "media_type": "text/html",
                 "description": "Interactive report",
@@ -383,11 +412,10 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(
             chat_service,
             "_schema_to_human_message",
-            new=AsyncMock(return_value=HumanMessage(content="analyze")),
+            new=MagicMock(return_value=HumanMessage(content="analyze")),
         ):
             async for event in chat_service.run_agent_turn(
                 manager,
-                MagicMock(),
                 7,
                 _CONVERSATION_ID,
                 chat_schema.UserMessageRequest(
@@ -494,7 +522,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         attachment = (schema.attachments or [])[0]
         self.assertEqual(
             attachment.f_path,
-            "analyses/sales-review/sessions/visualizer/chart-1/report.html",
+            "sessions/sales-review/visualizer/chart-1/report.html",
         )
         self.assertEqual(attachment.media_type, "text/html")
         self.assertEqual(attachment.description, "Interactive report")
@@ -538,12 +566,11 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 chat_service,
                 "_schema_to_human_message",
-                new=AsyncMock(return_value=HumanMessage(content="analyze")),
+                new=MagicMock(return_value=HumanMessage(content="analyze")),
             ),
         ):
             async for event in chat_service.run_agent_turn(
                 manager,
-                MagicMock(),
                 7,
                 _CONVERSATION_ID,
                 user_message,
@@ -559,7 +586,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
 
     def test_invalid_delegation_artifact_payload_is_not_exposed(self) -> None:
         payload = _delegation_payload()
-        payload["artifacts"] = [{"path": "/analyses/../secret"}]
+        payload["artifacts"] = [{"path": "/sessions/../secret"}]
         message = ToolMessage(
             id="message-1",
             name="delegation",
@@ -577,7 +604,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         payload = _delegation_payload()
         payload["artifacts"] = [
             {
-                "path": "/analyses/sales-review/sessions/visualizer/chart-1/report.html ",
+                "path": "/sessions/sales-review/visualizer/chart-1/report.html ",
                 "media_type": "text/html",
                 "description": "Interactive report",
             }

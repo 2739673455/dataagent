@@ -157,7 +157,6 @@ class ConversationTitleTest(unittest.IsolatedAsyncioTestCase):
                 current_user,
                 lifecycle,
                 MagicMock(),
-                MagicMock(),
             )
 
         repository.claim_title_generation.assert_awaited_once_with(

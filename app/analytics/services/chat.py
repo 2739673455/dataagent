@@ -1,7 +1,5 @@
 import asyncio
-import base64
 import json
-import mimetypes
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
@@ -33,17 +31,18 @@ from app.analytics.agents.contracts import (
 from app.analytics.agents.explorer.semantic_recall_middleware import (
     expand_semantic_recall_messages_for_display,
 )
-from app.analytics.agents.user_message_metadata import (
+from app.analytics.agents.middleware.user_message_attachments import (
+    USER_MESSAGE_ATTACHMENTS_KEY,
+    UserMessageAttachment,
+    UserMessageAttachments,
+)
+from app.analytics.agents.middleware.user_message_metadata import (
     USER_MESSAGE_METADATA_KEY,
     UserMessageMetadata,
 )
 from app.analytics.api.chat import schemas as chat_schema
-from app.analytics.services.contracts import (
-    AgentRuntimeManager,
-    ConversationFileReader,
-)
+from app.analytics.services.contracts import AgentRuntimeManager
 
-_IMAGE_SUFFIXES = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 MESSAGE_PAYLOAD_KEY = "dataagent_message"
 
 
@@ -243,114 +242,11 @@ async def _subagent_activity_to_event(
     return None
 
 
-async def _build_image_data_url(
-    sandbox: ConversationFileReader,
-    user_id: int,
-    conversation_id: UUID,
-    attachment: chat_schema.AttachmentReference,
-) -> str:
-    """读取沙箱中的图片附件，并转换为 data URL"""
-    mime_type, _ = mimetypes.guess_type(attachment.f_path)
-    if not mime_type:
-        mime_type = "application/octet-stream"
-
-    content = await sandbox.download_file(
-        user_id,
-        conversation_id,
-        attachment.f_path,
-    )
-    encoded = base64.b64encode(content).decode("ascii")
-    return f"data:{mime_type};base64,{encoded}"
-
-
-def _append_prompt(
-    content_parts: list[dict[str, Any]],
-    header: str,
-    lines: list[str],
-) -> None:
-    """向 content_parts 追加提示文本，与已有内容间用换行符分隔"""
-    prefix = "\n\n" if content_parts else ""
-    content_parts.append(
-        chat_schema.TextContent(
-            type="text", text=prefix + header + "\n" + "\n".join(lines)
-        ).model_dump()
-    )
-
-
-async def _process_attachments(
-    sandbox: ConversationFileReader,
-    content_parts: list[dict[str, Any]],
-    attachments: list[chat_schema.AttachmentReference],
-    user_id: int,
-    conversation_id: UUID,
-) -> None:
-    """处理附件：文件追加提示文本，图片转换为 base64 data URL"""
-    images: list[chat_schema.AttachmentReference] = []
-    documents: list[chat_schema.AttachmentReference] = []
-
-    for attachment in attachments:
-        suffix = (
-            attachment.f_path.rsplit(".", 1)[-1].lower()
-            if "." in attachment.f_path
-            else ""
-        )
-        (images if suffix in _IMAGE_SUFFIXES else documents).append(attachment)
-
-    if documents:
-        _append_prompt(
-            content_parts,
-            "用户上传的以下文件已保存到当前工作区，可直接读取：",
-            [f"- 文件：`{attachment.f_path}`" for attachment in documents],
-        )
-
-    if not images:
-        return
-
-    lost: list[str] = []
-    for attachment in images:
-        try:
-            content_parts.append(
-                chat_schema.ImageContent(
-                    type="image_url",
-                    image_url=await _build_image_data_url(
-                        sandbox,
-                        user_id,
-                        conversation_id,
-                        attachment,
-                    ),
-                ).model_dump()
-            )
-        except OSError:
-            logger.warning(
-                "附件图片不可用: "
-                f"conversation_id={conversation_id}, file={attachment.f_path}"
-            )
-            lost.append(f"- 图片：`{attachment.f_path}`")
-    if lost:
-        _append_prompt(
-            content_parts,
-            "用户之前上传了一些图片，但图片当前已不存在：",
-            lost,
-        )
-
-
-async def _schema_to_human_message(
-    sandbox: ConversationFileReader,
+def _schema_to_human_message(
     message: chat_schema.UserMessageRequest,
-    user_id: int,
-    conversation_id: UUID,
 ) -> HumanMessage:
     """将用户消息转换为 LangChain 消息"""
     content_parts = [part.model_dump() for part in message.parts]
-
-    if message.attachments:
-        await _process_attachments(
-            sandbox,
-            content_parts,
-            message.attachments,
-            user_id,
-            conversation_id,
-        )
 
     stored_parts: list[chat_schema.MessagePart] = [*message.parts]
     received_at = datetime.now(UTC)
@@ -367,15 +263,23 @@ async def _schema_to_human_message(
             else None
         ),
     ).model_dump(mode="json", exclude={"message_id"})
+    additional_kwargs: dict[str, Any] = {
+        MESSAGE_PAYLOAD_KEY: metadata,
+        USER_MESSAGE_METADATA_KEY: UserMessageMetadata(
+            received_at=received_at
+        ).model_dump(mode="json"),
+    }
+    if message.attachments:
+        additional_kwargs[USER_MESSAGE_ATTACHMENTS_KEY] = UserMessageAttachments(
+            attachments=[
+                UserMessageAttachment(f_path=attachment.f_path)
+                for attachment in message.attachments
+            ]
+        ).model_dump(mode="json")
     return HumanMessage(
         id=str(uuid.uuid4()),
         content=cast(list[str | dict[Any, Any]], content_parts),
-        additional_kwargs={
-            MESSAGE_PAYLOAD_KEY: metadata,
-            USER_MESSAGE_METADATA_KEY: UserMessageMetadata(
-                received_at=received_at
-            ).model_dump(mode="json"),
-        },
+        additional_kwargs=additional_kwargs,
     )
 
 
@@ -454,7 +358,6 @@ async def _execute_agent(
 
 async def run_agent_turn(
     agents: AgentRuntimeManager,
-    sandbox: ConversationFileReader,
     user_id: int,
     conversation_id: UUID,
     user_message: chat_schema.UserMessageRequest,
@@ -468,12 +371,7 @@ async def run_agent_turn(
     )
 
     input_messages: list[BaseMessage] = [
-        await _schema_to_human_message(
-            sandbox,
-            user_message,
-            user_id,
-            conversation_id,
-        )
+        _schema_to_human_message(user_message)
     ]
 
     runtime = await agents.get_conversation_runtime(user_id, conversation_id)

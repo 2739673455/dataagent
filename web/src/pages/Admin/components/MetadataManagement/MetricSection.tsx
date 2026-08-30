@@ -4,13 +4,8 @@ import { toast } from "sonner";
 import { getApiErrorMessage } from "@/api/errors";
 import { type MetricInfo, metaApi } from "@/api/meta";
 import { Button } from "@/components/ui/button";
-import {
-  AdminDialogActions,
-  AdminDialogCancelButton,
-  AdminDialogPrimaryButton,
-  AdminEditorDialog,
-} from "../AdminEditorDialog";
-import { splitCsv } from "./utils";
+import { MetricCreateDialog, MetricEditDialog } from "./MetricDialogs";
+import { parseMetricColumns, splitCsv } from "./utils";
 
 interface MetricSectionProps {
   metrics: MetricInfo[];
@@ -63,29 +58,19 @@ export function MetricSection({
     }
   };
 
-  const parseColumns = (input: string) => {
-    return splitCsv(input).map((item) => {
-      const parts = item.split(".");
-      if (parts.length >= 2) {
-        return { t_name: parts[0].trim(), c_name: parts[1].trim() };
-      }
-      return { t_name: "", c_name: parts[0].trim() };
-    });
-  };
-
   const handleCreateMetric = async () => {
     if (!newMetricName.trim() || !newMetricDesc.trim()) {
-      toast.error("指标名称和口径说明不能为空");
+      toast.error("指标名称和业务口径说明不能为空");
       return;
     }
     setSavingMetric(true);
     try {
       await metaApi.upsertMetric(newMetricName.trim(), {
         description: newMetricDesc.trim(),
-        relevant_columns: parseColumns(newMetricColumns),
+        relevant_columns: parseMetricColumns(newMetricColumns),
         alias: splitCsv(newMetricAlias),
       });
-      toast.success(`业务指标 ${newMetricName.trim()} 添加成功`);
+      toast.success(`指标 ${newMetricName.trim()} 添加成功`);
       setIsCreatingMetric(false);
       await onReloadCatalog();
     } catch (error) {
@@ -101,10 +86,10 @@ export function MetricSection({
     try {
       await metaApi.upsertMetric(editingMetric.name, {
         description: editMetricDesc.trim(),
-        relevant_columns: parseColumns(editMetricColumns),
+        relevant_columns: parseMetricColumns(editMetricColumns),
         alias: splitCsv(editMetricAlias),
       });
-      toast.success(`业务指标 ${editingMetric.name} 更新成功`);
+      toast.success(`指标 ${editingMetric.name} 更新成功`);
       setEditingMetric(null);
       await onReloadCatalog();
     } catch (error) {
@@ -115,11 +100,11 @@ export function MetricSection({
   };
 
   const handleDeleteMetric = async (metricName: string) => {
-    if (!window.confirm(`确定删除业务指标 ${metricName} 吗？此操作不可逆。`)) return;
+    if (!window.confirm(`确定删除指标 ${metricName} 吗？此操作不可逆。`)) return;
     setDeletingMetric(metricName);
     try {
       await metaApi.deleteMetrics([metricName]);
-      toast.success(`业务指标 ${metricName} 已删除`);
+      toast.success(`指标 ${metricName} 已删除`);
       await onReloadCatalog();
     } catch (error) {
       toast.error(getApiErrorMessage(error, "删除指标失败"));
@@ -136,11 +121,14 @@ export function MetricSection({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e5e5df] pb-3 shrink-0">
         <div className="flex items-center gap-2">
           <h2 className="flex items-center gap-1.5 text-base font-bold text-[#18181b]">
-            <span>指标元数据({metrics.length})</span>
+            <span>业务指标元数据({metrics.length})</span>
+            {syncing === "metric_semantic" && (
+              <RefreshCw className="h-3 w-3 animate-spin text-[#71717a] ml-1" />
+            )}
           </h2>
           {selectedMetricNames.length > 0 && (
             <span className="rounded bg-[#ebebe6] px-2 py-0.5 text-xs text-[#52525b] font-mono">
-              已选 {selectedMetricNames.length} 项
+              已选 {selectedMetricNames.length} 指标
             </span>
           )}
         </div>
@@ -202,156 +190,33 @@ export function MetricSection({
         </div>
       </div>
 
-      {isCreatingMetric && (
-        <AdminEditorDialog
-          ariaLabel="添加指标元数据"
-          onClose={() => setIsCreatingMetric(false)}
-          title="添加指标元数据"
-        >
-          <div className="space-y-3">
-            <div>
-              <label
-                htmlFor="new-metric-name"
-                className="block text-xs font-medium text-[#71717a] mb-1"
-              >
-                指标名称
-              </label>
-              <input
-                id="new-metric-name"
-                value={newMetricName}
-                onChange={(e) => setNewMetricName(e.target.value)}
-                placeholder="如：gmv_total"
-                className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="new-metric-desc"
-                className="block text-xs font-medium text-[#71717a] mb-1"
-              >
-                业务口径说明
-              </label>
-              <textarea
-                id="new-metric-desc"
-                value={newMetricDesc}
-                onChange={(e) => setNewMetricDesc(e.target.value)}
-                placeholder="指标的业务统计口径、计算公式与业务含义"
-                rows={2}
-                className="w-full rounded border border-[#d4d4ce] bg-[#ffffff] p-2 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="new-metric-columns"
-                className="block text-xs font-medium text-[#71717a] mb-1"
-              >
-                关联数据列（逗号分隔）
-              </label>
-              <input
-                id="new-metric-columns"
-                value={newMetricColumns}
-                onChange={(e) => setNewMetricColumns(e.target.value)}
-                placeholder="ods_orders.pay_amount"
-                className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="new-metric-alias"
-                className="block text-xs font-medium text-[#71717a] mb-1"
-              >
-                同义别名（逗号分隔）
-              </label>
-              <input
-                id="new-metric-alias"
-                value={newMetricAlias}
-                onChange={(e) => setNewMetricAlias(e.target.value)}
-                placeholder="别名1, 别名2"
-                className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-              />
-            </div>
-            <AdminDialogActions>
-              <AdminDialogCancelButton onClick={() => setIsCreatingMetric(false)}>
-                取消
-              </AdminDialogCancelButton>
-              <AdminDialogPrimaryButton
-                disabled={savingMetric || !newMetricName.trim() || !newMetricDesc.trim()}
-                onClick={() => void handleCreateMetric()}
-              >
-                {savingMetric ? "正在添加..." : "确认添加指标"}
-              </AdminDialogPrimaryButton>
-            </AdminDialogActions>
-          </div>
-        </AdminEditorDialog>
-      )}
+      <MetricCreateDialog
+        isOpen={isCreatingMetric}
+        newMetricAlias={newMetricAlias}
+        newMetricColumns={newMetricColumns}
+        newMetricDesc={newMetricDesc}
+        newMetricName={newMetricName}
+        onClose={() => setIsCreatingMetric(false)}
+        onSubmit={handleCreateMetric}
+        savingMetric={savingMetric}
+        setNewMetricAlias={setNewMetricAlias}
+        setNewMetricColumns={setNewMetricColumns}
+        setNewMetricDesc={setNewMetricDesc}
+        setNewMetricName={setNewMetricName}
+      />
 
-      {editingMetric && (
-        <AdminEditorDialog
-          ariaLabel={`编辑指标元数据 ${editingMetric.name}`}
-          onClose={() => setEditingMetric(null)}
-          title={`编辑指标元数据: ${editingMetric.name}`}
-        >
-          <div className="space-y-3">
-            <div>
-              <label
-                htmlFor="edit-metric-desc"
-                className="block text-xs font-medium text-[#71717a] mb-1"
-              >
-                业务口径说明
-              </label>
-              <textarea
-                id="edit-metric-desc"
-                value={editMetricDesc}
-                onChange={(e) => setEditMetricDesc(e.target.value)}
-                placeholder="指标的业务统计口径、计算公式与业务含义"
-                rows={2}
-                className="w-full rounded border border-[#d4d4ce] bg-[#ffffff] p-2 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="edit-metric-columns"
-                className="block text-xs font-medium text-[#71717a] mb-1"
-              >
-                关联数据列（逗号分隔）
-              </label>
-              <input
-                id="edit-metric-columns"
-                value={editMetricColumns}
-                onChange={(e) => setEditMetricColumns(e.target.value)}
-                placeholder="ods_orders.pay_amount"
-                className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="edit-metric-alias"
-                className="block text-xs font-medium text-[#71717a] mb-1"
-              >
-                同义别名（逗号分隔）
-              </label>
-              <input
-                id="edit-metric-alias"
-                value={editMetricAlias}
-                onChange={(e) => setEditMetricAlias(e.target.value)}
-                placeholder="别名1, 别名2"
-                className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-              />
-            </div>
-            <AdminDialogActions>
-              <AdminDialogCancelButton onClick={() => setEditingMetric(null)}>
-                取消
-              </AdminDialogCancelButton>
-              <AdminDialogPrimaryButton
-                disabled={savingMetric || !editMetricDesc.trim()}
-                onClick={() => void handleSaveMetric()}
-              >
-                {savingMetric ? "保存中..." : "保存指标元数据"}
-              </AdminDialogPrimaryButton>
-            </AdminDialogActions>
-          </div>
-        </AdminEditorDialog>
-      )}
+      <MetricEditDialog
+        editMetricAlias={editMetricAlias}
+        editMetricColumns={editMetricColumns}
+        editMetricDesc={editMetricDesc}
+        editingMetric={editingMetric}
+        onClose={() => setEditingMetric(null)}
+        onSubmit={handleSaveMetric}
+        savingMetric={savingMetric}
+        setEditMetricAlias={setEditMetricAlias}
+        setEditMetricColumns={setEditMetricColumns}
+        setEditMetricDesc={setEditMetricDesc}
+      />
 
       <div className="mt-4 rounded border border-[#d4d4ce]">
         {metrics.length === 0 ? (
@@ -449,39 +314,31 @@ export function MetricSection({
                               <span className="font-semibold text-[#18181b]">{c.c_name}</span>
                             </span>
                           ))}
+                          {!metric.relevant_columns?.length && (
+                            <span className="text-[#a1a1aa]">-</span>
+                          )}
                         </div>
                       </td>
                       <td className="px-3.5 py-2.5 align-top text-xs">
-                        <div className="flex flex-wrap gap-1 max-w-full">
-                          {metric.alias?.map((a) => (
-                            <span
-                              key={a}
-                              className="inline-block max-w-full rounded bg-[#deded8] px-1.5 py-0.5 text-[10px] text-[#52525b] break-all whitespace-normal"
-                            >
-                              {a}
-                            </span>
-                          ))}
-                        </div>
+                        {metric.alias?.length ? (
+                          <div className="flex flex-wrap gap-1">
+                            {metric.alias.map((a) => (
+                              <span
+                                key={a}
+                                className="rounded bg-[#f0f0eb] px-1.5 py-0.5 text-[10px] text-[#52525b]"
+                              >
+                                {a}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-[#a1a1aa]">-</span>
+                        )}
                       </td>
                       <td className="px-3.5 py-2.5 align-top">
-                        <div className="flex flex-col gap-1 items-start">
-                          {metric.index_version === metric.meta_version &&
-                          metric.meta_version > 0 ? (
-                            <span
-                              className="inline-flex items-center rounded bg-[#1e2024] text-[#ffffff] px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap font-mono"
-                              title={`语义索引版本与数据版本一致 (v${metric.meta_version})`}
-                            >
-                              已同步 (v{metric.meta_version})
-                            </span>
-                          ) : (
-                            <span
-                              className="inline-flex items-center rounded bg-[#e5e5df] text-[#71717a] px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap font-mono"
-                              title={`语义索引版本 v${metric.index_version} 落后于数据版本 v${metric.meta_version}`}
-                            >
-                              待同步 (v{metric.index_version}/v{metric.meta_version})
-                            </span>
-                          )}
-                        </div>
+                        <span className="inline-flex items-center rounded bg-[#1e2024] px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap text-[#ffffff]">
+                          已同步
+                        </span>
                       </td>
                       <td className="px-3.5 py-2.5 align-top text-right whitespace-nowrap">
                         <div className="inline-flex items-center justify-end gap-1.5 whitespace-nowrap">

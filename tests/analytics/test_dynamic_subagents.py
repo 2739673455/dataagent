@@ -9,6 +9,7 @@ import unittest
 from collections import Counter
 from collections.abc import AsyncGenerator, Awaitable, Callable, Collection
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
@@ -18,6 +19,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMe
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
+from langgraph.constants import CONFIG_KEY_CHECKPOINTER
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import Field, ValidationError
 
@@ -126,6 +128,9 @@ class _FakeAgent:
         self.persisted_sessions: set[str] = set()
         self.workspace_sessions: set[str] = set()
         self.checkpoints: dict[str, dict[str, object]] = {}
+        self.state_values: dict[str, dict[str, object]] = {}
+        self.state_configs: list[RunnableConfig] = []
+        self.checkpointer = object()
 
     async def ainvoke(
         self,
@@ -152,7 +157,7 @@ class _FakeAgent:
             else:
                 configurable = config.get("configurable", {})
                 artifact_path = (
-                    f"/analyses/{configurable['analysis_id']}/sessions/"
+                    f"/sessions/{configurable['analysis_id']}/"
                     f"{configurable['agent_type']}/{configurable['session_id']}/"
                     "result.json"
                 )
@@ -195,6 +200,17 @@ class _FakeAgent:
             }
         values = output if isinstance(output, dict) else {"structured_response": output}
         yield {"type": "values", "ns": (), "data": values}
+
+    async def aget_state(self, config: RunnableConfig) -> Any:
+        """模拟 CompiledStateGraph 对增量通道完成恢复后的状态读取。"""
+        self.state_configs.append(config)
+        namespace = str(config.get("configurable", {}).get("checkpoint_ns"))
+        values = self.state_values.get(namespace)
+        if values is None:
+            checkpoint = self.checkpoints.get(namespace, {})
+            channel_values = checkpoint.get("channel_values")
+            values = channel_values if isinstance(channel_values, dict) else {}
+        return SimpleNamespace(values=values)
 
 
 class _DistributedLockRegistry:
@@ -364,7 +380,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
         )
         self.assertEqual(
             key.workspace_dir,
-            "/analyses/sales-decline_2026/sessions/analyst/product-category",
+            "/sessions/sales-decline_2026/analyst/product-category",
         )
 
     def test_agent_session_key_rejects_unsafe_identifier(self) -> None:
@@ -548,6 +564,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
             "list_shell_jobs",
             "get_shell_job",
             "cancel_shell_job",
+            "view_image",
         }
 
         with tempfile.TemporaryDirectory() as workspace:
@@ -655,6 +672,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
         self.assertIn("delegation", model.seen_tools)
         self.assertIn("list_sessions", model.seen_tools)
         self.assertIn("delete_session", model.seen_tools)
+        self.assertIn("view_image", model.seen_tools)
         self.assertEqual(interpreter_options["timeout"], float("inf"))
         self.assertIsNone(interpreter_options["max_ptc_calls"])
 
@@ -729,7 +747,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                     artifacts=[
                         ArtifactReference(
                             path=(
-                                "/analyses/sales-decline/sessions/analyst/"
+                                "/sessions/sales-decline/analyst/"
                                 "region/result.json"
                             )
                         )
@@ -983,7 +1001,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         artifacts = [
             ArtifactReference(
                 path=(
-                    "/analyses/sales-decline/sessions/analyst/region/"
+                    "/sessions/sales-decline/analyst/region/"
                     f"result_{index}.json"
                 )
             )
@@ -1026,7 +1044,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         result = await service.execute_delegation(_request("region"), config)
 
         self.assertEqual(result.status, "failed")
-        self.assertIn("超出当前分析范围", result.failure_reasons[0])
+        self.assertIn("超出当前 Session", result.failure_reasons[0])
         self.assertEqual(len(fake.configs), 2)
 
     async def test_unknown_repair_target_is_rejected(self) -> None:
@@ -1183,34 +1201,31 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         second_ai = AIMessage(id="second-ai", content="第二轮分析")
         fake.checkpoints[namespace] = {
             "ts": "2026-08-29T12:00:00+00:00",
-            "channel_values": {
-                "messages": [
-                    HumanMessage(
-                        content="first",
-                        additional_kwargs={
-                            DELEGATION_CONTEXT_KEY: first_context.model_dump(
-                                mode="json"
-                            )
-                        },
-                    ),
-                    first_ai,
-                    first_tool,
-                    ToolMessage(
-                        content="private structured result",
-                        name="SpecialistResult",
-                        tool_call_id="structured-call",
-                    ),
-                    HumanMessage(
-                        content="second",
-                        additional_kwargs={
-                            DELEGATION_CONTEXT_KEY: second_context.model_dump(
-                                mode="json"
-                            )
-                        },
-                    ),
-                    second_ai,
-                ]
-            },
+            "channel_values": {},
+        }
+        fake.state_values[namespace] = {
+            "messages": [
+                HumanMessage(
+                    content="first",
+                    additional_kwargs={
+                        DELEGATION_CONTEXT_KEY: first_context.model_dump(mode="json")
+                    },
+                ),
+                first_ai,
+                first_tool,
+                ToolMessage(
+                    content="private structured result",
+                    name="SpecialistResult",
+                    tool_call_id="structured-call",
+                ),
+                HumanMessage(
+                    content="second",
+                    additional_kwargs={
+                        DELEGATION_CONTEXT_KEY: second_context.model_dump(mode="json")
+                    },
+                ),
+                second_ai,
+            ]
         }
         service = _service(fake)
 
@@ -1229,6 +1244,19 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(messages, [first_ai, first_tool])
         self.assertIsNone(missing)
+        self.assertEqual(len(fake.state_configs), 2)
+        self.assertTrue(
+            all(
+                config["configurable"]["checkpoint_ns"] == namespace
+                for config in fake.state_configs
+            )
+        )
+        self.assertTrue(
+            all(
+                config["configurable"][CONFIG_KEY_CHECKPOINTER] is fake.checkpointer
+                for config in fake.state_configs
+            )
+        )
 
     async def test_delegation_conflict_emits_failed_status(self) -> None:
         fake = _FakeAgent(delay=0.05)

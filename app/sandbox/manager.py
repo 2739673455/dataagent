@@ -32,6 +32,7 @@ from app.sandbox.exceptions import (
 )
 from app.sandbox.ownership import SandboxOwnership
 from app.sandbox.paths import (
+    SANDBOX_DATA_ROOT,
     SandboxReadonlyMount,
     SandboxSessionScope,
     normalize_attachment_path,
@@ -44,7 +45,7 @@ _USER_LABEL = "dataagent.sandbox.user_id"
 _QUOTA_MODE_LABEL = "dataagent.sandbox.quota_mode"
 _QUOTA_BYTES_LABEL = "dataagent.sandbox.quota_bytes"
 _CONTAINER_SPEC_LABEL = "dataagent.sandbox.spec"
-_SANDBOX_ACTIVITY_FILE = "/workspace/.dataagent-activity.json"
+_SANDBOX_ACTIVITY_FILE = f"{SANDBOX_DATA_ROOT}/.dataagent-activity.json"
 _ACTIVITY_FILE_VERSION = 1
 
 
@@ -303,7 +304,7 @@ class DockerSandboxManager:
             "init": True,
             "read_only": True,
             "user": "1000:1000",
-            "working_dir": "/workspace",
+            "working_dir": SANDBOX_DATA_ROOT,
             "tmpfs": {"/tmp": "rw,nosuid,nodev,size=256m"},
             "cap_drop": ["ALL"],
             "security_opt": ["no-new-privileges:true"],
@@ -327,11 +328,11 @@ class DockerSandboxManager:
     def _container_spec_digest(self, image_id: str) -> str:
         """计算完整容器运行和存储规格的稳定摘要"""
         spec_payload = {
-            "layout_version": 5,
+            "layout_version": 6,
             "image_id": image_id,
             "runtime": self._runtime_container_spec(),
             "workspace_mount": {
-                "target": "/workspace",
+                "target": SANDBOX_DATA_ROOT,
                 "mode": "rw",
             },
             "readonly_mounts": [
@@ -396,7 +397,7 @@ class DockerSandboxManager:
             self._config.image,
             name=self._container_name(user_id),
             volumes={
-                volume.name: {"bind": "/workspace", "mode": "rw"},
+                volume.name: {"bind": SANDBOX_DATA_ROOT, "mode": "rw"},
                 **self._readonly_mount_volumes(),
             },
             labels={
@@ -703,7 +704,7 @@ class DockerSandboxManager:
         ).encode()
         self._archive.put(
             container,
-            "/workspace",
+            SANDBOX_DATA_ROOT,
             [],
             [
                 (

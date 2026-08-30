@@ -11,10 +11,18 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
 from app.analytics.agents.contracts import SpecialistResult
-from app.analytics.agents.message_timestamp_middleware import MessageTimestampMiddleware
+from app.analytics.agents.middleware.message_timestamp import (
+    MessageTimestampMiddleware,
+)
+from app.analytics.agents.middleware.user_message_attachments import (
+    UserMessageAttachmentMiddleware,
+)
 from app.analytics.agents.shell_jobs import ShellJobContextMiddleware, ShellJobRuntime
 from app.analytics.agents.skills import mount_agent_skills
-from app.analytics.agents.tools import create_shell_tools
+from app.analytics.agents.tools import (
+    create_image_view_request_tool,
+    create_shell_tools,
+)
 from app.analytics.agents.visualizer.prompt import VISUALIZER_SYSTEM_PROMPT
 
 
@@ -35,10 +43,15 @@ def create_visualizer_agent(
     )
     return create_deep_agent(
         model=model,
-        tools=[*tools, *create_shell_tools(shell_jobs)],
+        tools=[
+            *tools,
+            create_image_view_request_tool(),
+            *create_shell_tools(shell_jobs),
+        ],
         system_prompt=VISUALIZER_SYSTEM_PROMPT,
         middleware=[
             filesystem,
+            UserMessageAttachmentMiddleware(backend),
             ShellJobContextMiddleware(shell_jobs),
             MessageTimestampMiddleware(),
         ],

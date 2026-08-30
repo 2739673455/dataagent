@@ -35,7 +35,7 @@ def make_runtime() -> ToolRuntime:
 class ExecuteSqlToolTest(unittest.IsolatedAsyncioTestCase):
     async def test_forwards_tool_context_to_query_handler(self) -> None:
         query_result = AnalysisQueryResult(
-            path="/analyses/a/sessions/explorer/s/query.csv",
+            path="/sessions/a/explorer/s/query.csv",
             schema=[],
             row_count=0,
             time_range={},

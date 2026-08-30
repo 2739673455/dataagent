@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, expectTypeOf, test, vi } from "vitest";
 import appClient from "../src/api/appClient";
-import { metaApi, type ImportMode, type TableRole } from "../src/api/meta";
+import { type ImportMode, metaApi, type TableRole } from "../src/api/meta";
 
 const emptyChanges = {
   created_count: 0,

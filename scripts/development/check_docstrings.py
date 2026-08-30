@@ -6,7 +6,7 @@ import ast
 from collections.abc import Iterable
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOTS = (
     PROJECT_ROOT / "app",
     PROJECT_ROOT / "scripts",

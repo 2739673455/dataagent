@@ -1,6 +1,6 @@
-import type { UserResponse } from "@/auth";
 import appClient from "@/api/appClient";
 import type { components } from "@/api/generated";
+import type { UserResponse } from "@/auth";
 
 type ApiSchemas = components["schemas"];
 

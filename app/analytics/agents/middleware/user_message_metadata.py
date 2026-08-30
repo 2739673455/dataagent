@@ -1,4 +1,4 @@
-"""用户消息的模型可见私有元数据"""
+"""用户消息私有元数据的模型请求投影"""
 
 from __future__ import annotations
 
@@ -62,6 +62,7 @@ def _read_user_message_metadata(
 
 
 def _metadata_content_block(metadata: UserMessageMetadata) -> dict[str, str]:
+    """将私有元数据编码为供模型读取的文本内容块。"""
     payload = json.dumps(
         metadata.model_dump(mode="json"),
         ensure_ascii=False,
@@ -97,6 +98,7 @@ def project_user_message_for_model(message: BaseMessage) -> BaseMessage:
 
 
 def _project_request(request: ModelRequest[Any]) -> ModelRequest[Any]:
+    """返回仅在本次模型调用中投影私有元数据的请求副本。"""
     messages = [project_user_message_for_model(message) for message in request.messages]
     return request.override(messages=cast("list[AnyMessage]", messages))
 

@@ -218,9 +218,8 @@ class AnalysisQueryService:
             require_scan=bool(validation.tables),
         )
         relative_path = (
-            f"analyses/{session_key.analysis_id}/sessions/"
-            f"{session_key.agent_type}/{session_key.session_id}/"
-            f"query_{uuid4().hex}.csv"
+            f"sessions/{session_key.analysis_id}/{session_key.agent_type}/"
+            f"{session_key.session_id}/query_{uuid4().hex}.csv"
         )
         with tempfile.TemporaryFile(mode="w+b") as temporary_file:
             summary = await self._execute_to_csv(

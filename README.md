@@ -68,7 +68,7 @@
 - **数据库侧权限校验**：应用启动时逐一通过 `SHOW GRANTS` 检查查询账号只绑定预期角色、仅具备只读权限、可见目标数据库并可使用指定 Workload Group。
 - **查询前资源守卫**：在读取数据前执行 `EXPLAIN`，校验扫描行数和扫描字节估算，估算缺失或超限时拒绝执行；查询会话同时设置 workload group、超时、内存和单元格限制。
 - **有界流式输出**：服务端游标分批读取，强制最大行数与 UTF-8 输出字节数，并防护 CSV 公式注入；超时或取消时作废当前连接。
-- **会话产物**：CSV 写入 `/analyses/{analysis_id}/sessions/{agent_type}/{session_id}/query_{uuid}.csv`，Agent 仅接收路径、Schema、行数、时间范围和少量样例。
+- **会话产物**：CSV 写入 `/sessions/{analysis_id}/{agent_type}/{session_id}/query_{uuid}.csv`，Agent 仅接收路径、Schema、行数、时间范围和少量样例。
 
 ### 10. Dynamic Subagents 与多 Agent 体系
 - **Planner 协调智能体**：Planner 通过结构化 `delegation` 请求拆分任务、并行调度专业 Agent 并汇总可追溯结果；自动续写次数与并行 Session 数受服务端硬限制，连续重复的修补请求会被服务端终止。
@@ -77,7 +77,7 @@
 - **按 Agent 聚合代码**：`app/analytics/agents` 包含 Planner 和四个专业 Agent，每个 Agent 目录聚合自己的构造器与 Prompt；跨 Agent 协议、注册表和 Session 管理位于公共层，平台级数据查询工具归属于 `explorer` Agent。
 - **专业 Agent 通用执行能力**：归因、审查和可视化 Agent 使用 DeepAgents 内置的 Shell 与文件工具，在各自 Session 沙箱中编写、运行、修改和验证代码。算法与核验方法由 Agent 根据数据和业务问题自主选择，代码、参数和结果作为产物保留。
 - **Session-aware 状态管理**：各 Session 使用 `subagents/{analysis_id}/{agent_type}/{session_id}` 作为 `checkpoint_ns`，状态保存在 PostgreSQL，支持并行分析、服务重启后续接和删除墓碑。
-- **产物边界**：Session 产物限定在 `/analyses/{analysis_id}/sessions/{agent_type}/{session_id}/`，共享证据可放入 `/analyses/{analysis_id}/shared/`；结构化结果返回前会校验路径和文件存在性，用户附件上传与删除不能改写该系统目录，会话整体删除仍会统一清理产物。
+- **产物边界**：Session 产物限定在 `/sessions/{analysis_id}/{agent_type}/{session_id}/`；结构化结果返回前会校验路径和文件存在性，用户附件上传与删除不能改写该系统目录，会话整体删除仍会统一清理产物。
 
 ---
 
@@ -168,15 +168,15 @@ make beat
 
 ## 前后端协议与文档检查
 
-后端 FastAPI OpenAPI 是 HTTP 请求、响应和错误结构的协议源。`scripts/generate_openapi_types.py` 将组件 Schema、路由参数和响应生成到 `web/src/api/generated.ts`，前端业务类型直接引用该文件。生成文件不手工修改。
+后端 FastAPI OpenAPI 是 HTTP 请求、响应和错误结构的协议源。`scripts/development/generate_openapi_types.py` 将组件 Schema、路由参数和响应生成到 `web/src/api/generated.ts`，前端业务类型直接引用该文件。生成文件不手工修改。
 
 ```bash
 # 后端 Schema 变化后重新生成
-uv run python scripts/generate_openapi_types.py
+uv run python scripts/development/generate_openapi_types.py
 
 # 提交前检查协议和文档链接
-uv run python scripts/generate_openapi_types.py --check
-uv run python scripts/check_doc_links.py
+uv run python scripts/development/generate_openapi_types.py --check
+uv run python scripts/development/check_doc_links.py
 
 # 也可从前端目录运行协议检查
 cd web

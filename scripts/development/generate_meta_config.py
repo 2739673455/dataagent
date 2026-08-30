@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
+ROOT_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_DDL_PATH = ROOT_DIR / "dbmock" / "scripts" / "sql" / "ecommerce.sql"
 DEFAULT_OUTPUT_PATH = ROOT_DIR / "conf" / "meta_config.yaml"
 

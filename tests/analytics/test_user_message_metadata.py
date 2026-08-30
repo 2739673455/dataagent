@@ -11,7 +11,7 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from pydantic import ValidationError
 
-from app.analytics.agents.user_message_metadata import (
+from app.analytics.agents.middleware.user_message_metadata import (
     USER_MESSAGE_METADATA_KEY,
     UserMessageMetadata,
     UserMessageMetadataMiddleware,

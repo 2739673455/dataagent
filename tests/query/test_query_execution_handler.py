@@ -33,7 +33,7 @@ def make_session_key() -> AgentSessionKey:
 def make_success(session_key: AgentSessionKey) -> SuccessfulQueryExecution:
     """构造一次成功查询的完整信息"""
     result = AnalysisQueryResult(
-        path="/analyses/a/sessions/explorer/s/query.csv",
+        path="/sessions/a/explorer/s/query.csv",
         schema=[],
         row_count=0,
         time_range={},

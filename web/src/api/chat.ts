@@ -1,6 +1,6 @@
-import { getAccessToken, refreshAccessToken } from "@/auth";
 import { getProblemDetailsMessage } from "@/api/errors";
 import type { components } from "@/api/generated";
+import { getAccessToken, refreshAccessToken } from "@/auth";
 import { CHAT_API_ROUTES } from "@/config/settings";
 import type {
   ChatStreamEvent,

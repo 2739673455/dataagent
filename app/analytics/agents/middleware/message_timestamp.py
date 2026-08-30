@@ -1,4 +1,4 @@
-"""模型响应消息创建时间中间件"""
+"""模型响应消息创建时间 Middleware"""
 
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime

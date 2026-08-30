@@ -193,7 +193,7 @@ Agent 使用 Skill
 → 文件中间件和 Docker 挂载共同拒绝写入 Skill
 
 Agent 使用工作区
-→ 只能写 analyses/{analysis_id}/sessions/{agent_type}/{session_id}
+→ 只能写 sessions/{analysis_id}/{agent_type}/{session_id}
 → 可以读取同一会话其他 Session 的产物
 → 下游 Agent 用代码继续处理上游文件
 ```
