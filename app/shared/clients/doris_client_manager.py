@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 from dataclasses import dataclass
 
+from pydantic import SecretStr
 from sqlalchemy import URL
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
@@ -24,7 +25,7 @@ class DorisClientManager:
         return URL.create(
             drivername="mysql+asyncmy",
             username=self._db_config.user,
-            password=self._db_config.password,
+            password=self._db_config.password.get_secret_value(),
             host=self._db_config.host,
             port=self._db_config.port,
             database=self._db_config.database,
@@ -88,7 +89,7 @@ class DorisQueryClientRegistry:
                     host=self._endpoint.host,
                     port=self._endpoint.port,
                     user=query_user,
-                    password=password,
+                    password=SecretStr(password),
                     database=self._endpoint.database,
                 )
             )

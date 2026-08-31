@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Self
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from pydantic import SecretStr
+
 from app.identity import errors as auth_error
 from app.identity.models.account import RefreshToken, User
 from app.identity.repositories.auth import AuthPGRepo
@@ -49,7 +51,7 @@ class AsyncSessionStub:
 def build_config() -> AuthConfig:
     """构造测试认证配置"""
     return AuthConfig(
-        jwt_secret="a-secure-test-key-with-at-least-32-characters",
+        jwt_secret=SecretStr("a-secure-test-key-with-at-least-32-characters"),
         jwt_algorithm="HS256",
         issuer="dataagent-test",
         access_token_minutes=15,
@@ -173,6 +175,7 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
         self.password_manager = MagicMock()
         self.password_manager.hash = AsyncMock(return_value="hashed-password")
         self.password_manager.verify = AsyncMock(return_value=True)
+        self.password_manager.verify_dummy_password = AsyncMock()
         self.now = datetime.now(UTC).replace(microsecond=0)
         self.service = AuthService(
             self.repo,
@@ -245,6 +248,18 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(auth_error.InvalidCredentialsError):
             await self.service.login("analyst@example.com", "wrong")
 
+        self.repo.add_refresh_token.assert_not_awaited()
+
+    async def test_unknown_user_runs_dummy_password_verification(self) -> None:
+        self.repo.get_user_by_username_for_update.return_value = None
+
+        with self.assertRaises(auth_error.InvalidCredentialsError):
+            await self.service.login("unknown", "candidate-password")
+
+        self.password_manager.verify_dummy_password.assert_awaited_once_with(
+            "candidate-password"
+        )
+        self.password_manager.verify.assert_not_awaited()
         self.repo.add_refresh_token.assert_not_awaited()
 
     async def test_change_password_updates_hash_and_revokes_refresh_tokens(

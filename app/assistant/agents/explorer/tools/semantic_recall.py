@@ -375,9 +375,9 @@ async def delete_recalls(
 
     normalized_deletions: list[SemanticRecallResourceDeletion] = []
     seen_queries: set[str] = set()
-    for index, deletion in enumerate(deletions):
+    for index, raw_deletion in enumerate(deletions):
         try:
-            deletion = SemanticRecallResourceDeletion.model_validate(deletion)
+            deletion = SemanticRecallResourceDeletion.model_validate(raw_deletion)
         except ValidationError as exc:
             details: list[dict[str, Any]] = []
             for detail in exc.errors(include_url=False):

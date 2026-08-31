@@ -5,13 +5,13 @@ from uuid import uuid4
 
 from fastapi import UploadFile
 
+from app.assistant.api.attachment import errors as attachment_error
 from app.assistant.api.attachment.router import (
     api_delete_attachment,
     api_get_attachment,
     api_upload_attachment,
 )
 from app.assistant.api.chat.schemas import DeleteAttachmentRequest
-from app.sandbox import errors as attachment_error
 from app.sandbox.exceptions import SandboxPathError, SandboxStorageLimitError
 
 

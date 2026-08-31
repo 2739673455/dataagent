@@ -404,9 +404,7 @@ def _parse_ecommerce_schema(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]
         tail = statement[closing_index + 1 :]
         table_comment_match = re.search(r"\bCOMMENT\s+'([^']*)'", tail, re.DOTALL)
         table_comment = (
-            table_comment_match.group(1).strip()
-            if table_comment_match
-            else table_name
+            table_comment_match.group(1).strip() if table_comment_match else table_name
         )
         columns = []
         for definition in _split_columns(body):
@@ -463,7 +461,11 @@ def _reference(
         target = ("dim_date", "date_key")
     else:
         target = REFERENCE_COLUMNS.get(column_name)
-    if target is None or target not in column_keys or target == (table_name, column_name):
+    if (
+        target is None
+        or target not in column_keys
+        or target == (table_name, column_name)
+    ):
         return None
     return target
 
@@ -490,121 +492,1049 @@ def _build_metrics() -> list[dict[str, Any]]:
     """构建常用综合电商业务指标"""
     m = _metric
     return [
-        m("页面浏览量", "页面访问事件行数，公式为 COUNT(page_view_id)", ["dwd_traffic_page_view_di.page_view_id", "dwd_traffic_page_view_di.biz_date"], ["PV", "浏览量", "访问量"]),
-        m("访客数", "按用户优先、匿名设备兜底去重的访问主体数，公式为 COUNT(DISTINCT COALESCE(user_id, device_id))", ["dwd_traffic_page_view_di.user_id", "dwd_traffic_page_view_di.device_id", "dwd_traffic_page_view_di.biz_date"], ["UV", "独立访客数"]),
-        m("会话数", "客户端会话数量，公式为 COUNT(DISTINCT session_id)", ["dwd_traffic_session_di.session_id", "dwd_traffic_session_di.biz_date"], ["访问次数", "Session数"]),
-        m("活跃用户数", "发生会话的登录用户数，排除游客，公式为 COUNT(DISTINCT user_id)", ["dwd_traffic_session_di.user_id", "dwd_traffic_session_di.biz_date"], ["活跃会员数"]),
-        m("跳出率", "跳出会话数除以全部会话数，跳出会话取 is_bounce=1", ["dwd_traffic_session_di.is_bounce", "dwd_traffic_session_di.session_id"], ["会话跳出率"]),
-        m("平均会话时长", "会话持续秒数的平均值，公式为 AVG(session_duration_sec)", ["dwd_traffic_session_di.session_duration_sec"], ["平均访问时长"]),
-        m("会话平均浏览深度", "页面浏览量除以会话数，也可取会话表 page_view_count 的平均值", ["dwd_traffic_session_di.page_view_count", "dwd_traffic_session_di.session_id"], ["平均访问深度", "每次访问页数"]),
-        m("人均浏览量", "页面浏览量除以访客数", ["dwd_traffic_page_view_di.page_view_id", "dwd_traffic_page_view_di.user_id", "dwd_traffic_page_view_di.device_id"], ["人均PV"]),
-        m("平均页面停留时长", "页面停留秒数的平均值，公式为 AVG(stay_duration_sec)", ["dwd_traffic_page_view_di.stay_duration_sec"], ["平均停留时间"]),
-        m("搜索次数", "搜索请求数量，公式为 COUNT(search_detail_id)", ["dwd_traffic_search_di.search_detail_id", "dwd_traffic_search_di.biz_date"], ["搜索量", "搜索PV"]),
-        m("搜索用户数", "发起搜索的登录用户去重数，公式为 COUNT(DISTINCT user_id)", ["dwd_traffic_search_di.user_id", "dwd_traffic_search_di.biz_date"], ["搜索UV"]),
-        m("搜索无结果率", "无结果搜索次数除以搜索次数，取 is_no_result=1", ["dwd_traffic_search_di.is_no_result", "dwd_traffic_search_di.search_detail_id"], ["零结果率"]),
-        m("搜索点击次数", "搜索结果点击事件数，公式为 COUNT(search_click_id)", ["dwd_traffic_search_click_di.search_click_id", "dwd_traffic_search_click_di.biz_date"], ["搜索点击量"]),
-        m("搜索点击率", "产生至少一次点击的搜索请求数除以成功搜索请求数", ["dwd_traffic_search_di.search_detail_id", "dwd_traffic_search_di.is_search_success", "dwd_traffic_search_click_di.search_detail_id"], ["搜索CTR"]),
-        m("平均搜索点击位次", "搜索点击结果位次的平均值，数值越小表示结果排序越靠前", ["dwd_traffic_search_click_di.click_rank"], ["平均点击排名"]),
-        m("加购次数", "购物车事件类型为加入的事件数", ["dwd_interaction_cart_event_di.cart_event_id", "dwd_interaction_cart_event_di.cart_event_type", "dwd_interaction_cart_event_di.biz_date"], ["加购量", "加入购物车次数"]),
-        m("加购用户数", "发生加入购物车事件的去重用户数", ["dwd_interaction_cart_event_di.user_id", "dwd_interaction_cart_event_di.cart_event_type"], ["加购UV"]),
-        m("加购件数", "加入事件中正向商品数量变化量之和", ["dwd_interaction_cart_event_di.sku_qty_delta", "dwd_interaction_cart_event_di.cart_event_type"], ["加购商品数"]),
-        m("购物车删除次数", "购物车事件类型为删除的事件数", ["dwd_interaction_cart_event_di.cart_event_id", "dwd_interaction_cart_event_di.cart_event_type"], ["删购次数"]),
-        m("购物车清空次数", "购物车事件类型为清空的事件数", ["dwd_interaction_cart_event_di.cart_event_id", "dwd_interaction_cart_event_di.cart_event_type"], ["清空购物车次数"]),
-        m("购物车放弃率", "发生加购但未产生订单的会话数除以发生加购的会话数", ["dwd_interaction_cart_event_di.session_id", "dwd_interaction_cart_event_di.cart_event_type", "dwd_trade_order_detail_di.source_session_id"], ["弃购率"]),
-        m("收藏次数", "收藏事件类型为收藏的事件数", ["dwd_interaction_favor_event_di.favor_event_id", "dwd_interaction_favor_event_di.favor_event_type", "dwd_interaction_favor_event_di.biz_date"], ["收藏量"]),
-        m("收藏用户数", "发生收藏事件的去重用户数", ["dwd_interaction_favor_event_di.user_id", "dwd_interaction_favor_event_di.favor_event_type"], ["收藏UV"]),
-        m("取消收藏率", "取消收藏事件数除以收藏事件数", ["dwd_interaction_favor_event_di.favor_event_type", "dwd_interaction_favor_event_di.favor_event_id"], ["取消收藏比例"]),
-        m("下单订单数", "下单明细中的去重订单数，公式为 COUNT(DISTINCT order_id)", ["dwd_trade_order_detail_di.order_id", "dwd_trade_order_detail_di.biz_date"], ["订单数", "下单量"]),
-        m("下单用户数", "产生订单的去重用户数，公式为 COUNT(DISTINCT user_id)", ["dwd_trade_order_detail_di.user_id", "dwd_trade_order_detail_di.biz_date"], ["购买用户数", "下单UV"]),
-        m("订单明细数", "订单商品明细行数，公式为 COUNT(order_detail_id)", ["dwd_trade_order_detail_di.order_detail_id"], ["订单行数"]),
-        m("销量", "订单明细购买件数之和，公式为 SUM(sku_qty)", ["dwd_trade_order_detail_di.sku_qty", "dwd_trade_order_detail_di.biz_date"], ["销售件数", "销售数量"]),
-        m("下单GMV", "下单口径应收金额之和，包含之后取消的订单，公式为 SUM(receivable_amount)", ["dwd_trade_order_detail_di.receivable_amount", "dwd_trade_order_detail_di.biz_date"], ["GMV", "下单金额", "成交总额"]),
-        m("有效GMV", "排除最终状态为 CANCELLED 的订单后，应收金额之和", ["dwd_trade_order_detail_di.order_id", "dwd_trade_order_detail_di.receivable_amount", "dwd_trade_order_status_event_di.after_order_status", "dwd_trade_order_status_event_di.event_time"], ["有效成交额"]),
-        m("商品销售额", "优惠前商品销售金额之和，公式为 SUM(sale_amount)", ["dwd_trade_order_detail_di.sale_amount"], ["销售额", "商品金额"]),
-        m("实付金额", "支付状态为 SUCCESS 的支付尝试对应订单明细分摊金额之和", ["dwd_trade_pay_order_detail_di.allocated_pay_amount", "dwd_trade_pay_order_detail_di.pay_detail_id", "dwd_trade_pay_status_event_di.pay_detail_id", "dwd_trade_pay_status_event_di.after_pay_status"], ["支付金额", "实付GMV"]),
-        m("净支付金额", "实付金额减去退款打款状态为 SUCCESS 的退款金额", ["dwd_trade_pay_order_detail_di.allocated_pay_amount", "dwd_trade_pay_status_event_di.after_pay_status", "dwd_trade_refund_pay_detail_di.refund_amount", "dwd_trade_refund_pay_status_event_di.after_refund_pay_status"], ["净GMV", "净收入"]),
-        m("客单价", "有效GMV除以有效订单数，按订单粒度先聚合避免明细重复", ["dwd_trade_order_detail_di.order_id", "dwd_trade_order_detail_di.receivable_amount", "dwd_trade_order_status_event_di.after_order_status"], ["AOV", "平均订单金额"]),
-        m("件单价", "有效GMV除以销量", ["dwd_trade_order_detail_di.receivable_amount", "dwd_trade_order_detail_di.sku_qty", "dwd_trade_order_status_event_di.after_order_status"], ["平均每件成交价"]),
-        m("连带率", "销量除以订单数，表示每笔订单平均购买件数", ["dwd_trade_order_detail_di.sku_qty", "dwd_trade_order_detail_di.order_id"], ["件单量", "订单连带率"]),
-        m("支付订单数", "存在 SUCCESS 支付状态的去重订单数", ["dwd_trade_pay_status_event_di.pay_detail_id", "dwd_trade_pay_status_event_di.after_pay_status", "dwd_trade_pay_order_detail_di.pay_detail_id", "dwd_trade_pay_order_detail_di.order_id"], ["已支付订单数"]),
-        m("支付用户数", "存在 SUCCESS 支付尝试的去重用户数", ["dwd_trade_pay_detail_di.user_id", "dwd_trade_pay_detail_di.pay_detail_id", "dwd_trade_pay_status_event_di.after_pay_status"], ["支付UV"]),
-        m("支付成功率", "最终状态为 SUCCESS 的支付尝试数除以全部支付尝试数", ["dwd_trade_pay_detail_di.pay_detail_id", "dwd_trade_pay_status_event_di.pay_detail_id", "dwd_trade_pay_status_event_di.after_pay_status"], ["付款成功率"]),
-        m("支付转化率", "支付订单数除以下单订单数", ["dwd_trade_order_detail_di.order_id", "dwd_trade_pay_order_detail_di.order_id", "dwd_trade_pay_status_event_di.after_pay_status"], ["下单支付转化率"]),
-        m("订单取消数", "最终订单状态为 CANCELLED 的去重订单数", ["dwd_trade_order_status_event_di.order_id", "dwd_trade_order_status_event_di.after_order_status", "dwd_trade_order_status_event_di.event_time"], ["取消订单数"]),
-        m("订单取消率", "最终状态为 CANCELLED 的订单数除以下单订单数", ["dwd_trade_order_detail_di.order_id", "dwd_trade_order_status_event_di.after_order_status"], ["取消率"]),
-        m("首购订单数", "is_first_order=1 的去重订单数", ["dwd_trade_order_detail_di.order_id", "dwd_trade_order_detail_di.is_first_order"], ["新客订单数", "首单数"]),
-        m("首购订单占比", "首购订单数除以下单订单数", ["dwd_trade_order_detail_di.order_id", "dwd_trade_order_detail_di.is_first_order"], ["新客订单占比"]),
-        m("毛利额", "有效订单应收金额减去标准成本金额，排除取消订单", ["dwd_trade_order_detail_di.receivable_amount", "dwd_trade_order_detail_di.cost_amount", "dwd_trade_order_status_event_di.after_order_status"], ["销售毛利"]),
-        m("毛利率", "毛利额除以有效GMV", ["dwd_trade_order_detail_di.receivable_amount", "dwd_trade_order_detail_di.cost_amount", "dwd_trade_order_status_event_di.after_order_status"], ["销售毛利率"]),
-        m("总优惠金额", "活动、优惠券和积分优惠分摊金额之和", ["dwd_trade_order_detail_di.activity_discount_amount", "dwd_trade_order_detail_di.coupon_discount_amount", "dwd_trade_order_detail_di.points_discount_amount"], ["优惠总额"]),
-        m("综合优惠率", "总优惠金额除以优惠前销售金额", ["dwd_trade_order_detail_di.activity_discount_amount", "dwd_trade_order_detail_di.coupon_discount_amount", "dwd_trade_order_detail_di.points_discount_amount", "dwd_trade_order_detail_di.sale_amount"], ["折扣率", "优惠深度"]),
-        m("活动优惠金额", "订单明细活动优惠分摊金额之和", ["dwd_trade_order_detail_activity_di.promotion_discount_amount"], ["促销优惠金额", "活动减免"]),
-        m("优惠券优惠金额", "订单明细优惠券优惠分摊金额之和", ["dwd_trade_order_detail_coupon_di.coupon_discount_amount"], ["券优惠金额", "优惠券抵扣"]),
-        m("积分优惠金额", "订单明细积分优惠分摊金额之和", ["dwd_trade_order_detail_di.points_discount_amount"], ["积分抵扣金额"]),
-        m("运费收入", "订单明细运费分摊金额之和", ["dwd_trade_order_detail_di.freight_amount"], ["运费金额"]),
-        m("风险订单率", "is_risk_order=1 的订单数除以下单订单数", ["dwd_trade_order_detail_di.order_id", "dwd_trade_order_detail_di.is_risk_order"], ["风控订单占比"]),
-        m("跨境订单率", "is_cross_border=1 的订单数除以下单订单数", ["dwd_trade_order_detail_di.order_id", "dwd_trade_order_detail_di.is_cross_border"], ["跨境订单占比"]),
-        m("活动订单数", "至少命中一条促销活动的去重订单数", ["dwd_trade_order_detail_activity_di.order_id", "dwd_trade_order_detail_activity_di.promotion_id"], ["促销订单数"]),
-        m("活动订单占比", "活动订单数除以下单订单数", ["dwd_trade_order_detail_activity_di.order_id", "dwd_trade_order_detail_di.order_id"], ["促销渗透率"]),
-        m("优惠券领取量", "用户券事件类型为领取的事件数", ["dwd_marketing_user_coupon_event_di.user_coupon_event_id", "dwd_marketing_user_coupon_event_di.coupon_event_type"], ["领券数", "发券领取量"]),
-        m("优惠券领取用户数", "领取优惠券的去重用户数", ["dwd_marketing_user_coupon_event_di.user_id", "dwd_marketing_user_coupon_event_di.coupon_event_type"], ["领券用户数"]),
-        m("优惠券使用量", "用户券事件类型为使用的事件数", ["dwd_marketing_user_coupon_event_di.user_coupon_id", "dwd_marketing_user_coupon_event_di.coupon_event_type"], ["用券数"]),
-        m("优惠券使用率", "使用的用户券实例数除以领取的用户券实例数", ["dwd_marketing_user_coupon_event_di.user_coupon_id", "dwd_marketing_user_coupon_event_di.coupon_event_type"], ["领券核销率", "券核销率"]),
-        m("正向包裹数", "delivery_direction 为正向的物流包裹数", ["dwd_trade_delivery_di.delivery_id", "dwd_trade_delivery_di.delivery_direction", "dwd_trade_delivery_di.biz_date"], ["发货包裹数"]),
-        m("发货订单数", "物流状态达到 SHIPPED 的去重订单数", ["dwd_trade_delivery_di.delivery_id", "dwd_trade_delivery_di.order_id", "dwd_trade_delivery_status_event_di.delivery_id", "dwd_trade_delivery_status_event_di.after_delivery_status"], ["已发货订单数"]),
-        m("签收订单数", "物流状态达到 SIGNED 的去重订单数", ["dwd_trade_delivery_di.delivery_id", "dwd_trade_delivery_di.order_id", "dwd_trade_delivery_status_event_di.delivery_id", "dwd_trade_delivery_status_event_di.after_delivery_status"], ["已签收订单数"]),
-        m("订单履约率", "已签收订单数除以支付订单数", ["dwd_trade_delivery_di.order_id", "dwd_trade_delivery_status_event_di.after_delivery_status", "dwd_trade_pay_order_detail_di.order_id", "dwd_trade_pay_status_event_di.after_pay_status"], ["签收率"]),
-        m("平均发货时长", "包裹创建时间减去订单创建时间的平均小时数，仅统计正向包裹", ["dwd_trade_order_detail_di.order_id", "dwd_trade_order_detail_di.order_create_time", "dwd_trade_delivery_di.order_id", "dwd_trade_delivery_di.delivery_create_time", "dwd_trade_delivery_di.delivery_direction"], ["平均出库时长", "下单到发货时长"]),
-        m("平均配送时长", "SIGNED 事件时间减去包裹创建时间的平均小时数，仅统计正向包裹", ["dwd_trade_delivery_di.delivery_id", "dwd_trade_delivery_di.delivery_create_time", "dwd_trade_delivery_di.delivery_direction", "dwd_trade_delivery_status_event_di.delivery_id", "dwd_trade_delivery_status_event_di.after_delivery_status", "dwd_trade_delivery_status_event_di.event_time"], ["平均物流时长", "发货到签收时长"]),
-        m("拆包率", "正向包裹数大于1的订单数除以有正向包裹的订单数", ["dwd_trade_delivery_di.order_id", "dwd_trade_delivery_di.delivery_id", "dwd_trade_delivery_di.delivery_direction"], ["订单拆包率"]),
-        m("平均包裹重量", "正向包裹重量的平均值", ["dwd_trade_delivery_di.package_weight_kg", "dwd_trade_delivery_di.delivery_direction"], ["平均物流重量"]),
-        m("逆向包裹数", "delivery_direction 为逆向的物流包裹数", ["dwd_trade_delivery_di.delivery_id", "dwd_trade_delivery_di.delivery_direction"], ["退货包裹数"]),
-        m("退款申请数", "退款申请明细数量，公式为 COUNT(refund_detail_id)", ["dwd_trade_refund_detail_di.refund_detail_id", "dwd_trade_refund_detail_di.biz_date"], ["退款单数", "退款笔数"]),
-        m("退款申请金额", "申请退款总金额之和", ["dwd_trade_refund_detail_di.refund_apply_amount"], ["申请退款金额"]),
-        m("退款成功数", "退款打款最终状态为 SUCCESS 的去重退款明细数", ["dwd_trade_refund_pay_detail_di.refund_detail_id", "dwd_trade_refund_pay_detail_di.refund_pay_detail_id", "dwd_trade_refund_pay_status_event_di.refund_pay_detail_id", "dwd_trade_refund_pay_status_event_di.after_refund_pay_status"], ["成功退款单数"]),
-        m("退款成功金额", "退款打款最终状态为 SUCCESS 的退款金额之和", ["dwd_trade_refund_pay_detail_di.refund_amount", "dwd_trade_refund_pay_detail_di.refund_pay_detail_id", "dwd_trade_refund_pay_status_event_di.after_refund_pay_status"], ["退款金额", "实际退款金额"]),
-        m("退款率", "退款申请涉及的去重订单明细数除以订单明细数", ["dwd_trade_refund_detail_di.order_detail_id", "dwd_trade_order_detail_di.order_detail_id"], ["售后退款率"]),
-        m("退款金额率", "退款成功金额除以实付金额", ["dwd_trade_refund_pay_detail_di.refund_amount", "dwd_trade_refund_pay_status_event_di.after_refund_pay_status", "dwd_trade_pay_order_detail_di.allocated_pay_amount", "dwd_trade_pay_status_event_di.after_pay_status"], ["退款金额占比"]),
-        m("退款审核通过率", "最终审核状态为 APPROVED 的退款明细数除以退款申请数", ["dwd_trade_refund_status_event_di.refund_detail_id", "dwd_trade_refund_status_event_di.after_refund_status"], ["退款通过率"]),
-        m("质量问题退款率", "is_quality_issue=1 的退款申请数除以退款申请数", ["dwd_trade_refund_detail_di.refund_detail_id", "dwd_trade_refund_detail_di.is_quality_issue"], ["质量退款占比"]),
-        m("退货率", "need_return_goods=1 的退款申请数除以订单明细数", ["dwd_trade_refund_detail_di.order_detail_id", "dwd_trade_refund_detail_di.need_return_goods", "dwd_trade_order_detail_di.order_detail_id"], ["商品退货率"]),
-        m("平均退款处理时长", "退款打款 SUCCESS 时间减去退款申请时间的平均小时数", ["dwd_trade_refund_detail_di.refund_detail_id", "dwd_trade_refund_detail_di.apply_time", "dwd_trade_refund_pay_detail_di.refund_detail_id", "dwd_trade_refund_pay_status_event_di.after_refund_pay_status", "dwd_trade_refund_pay_status_event_di.event_time"], ["平均退款时长"]),
-        m("评价数", "初评内容数量，排除追评避免重复计算评价主题", ["dwd_service_comment_detail_di.comment_detail_id", "dwd_service_comment_detail_di.comment_type", "dwd_service_comment_detail_di.biz_date"], ["评论数", "评价量"]),
-        m("评价率", "产生初评的去重订单明细数除以已签收订单明细数", ["dwd_service_comment_detail_di.order_detail_id", "dwd_service_comment_detail_di.comment_type", "dwd_trade_delivery_item_di.order_detail_id", "dwd_trade_delivery_status_event_di.after_delivery_status"], ["评论率"]),
-        m("好评率", "初评中综合评分为4或5的评价数除以有评分初评数", ["dwd_service_comment_detail_di.comment_level", "dwd_service_comment_detail_di.comment_type"], ["正向评价率"]),
-        m("差评率", "初评中综合评分为1或2的评价数除以有评分初评数", ["dwd_service_comment_detail_di.comment_level", "dwd_service_comment_detail_di.comment_type"], ["负向评价率"]),
-        m("平均评分", "有评分初评的综合评分平均值", ["dwd_service_comment_detail_di.comment_level", "dwd_service_comment_detail_di.comment_type"], ["平均星级"]),
-        m("有图评价率", "初评中 image_count 大于0的评价数除以初评数", ["dwd_service_comment_detail_di.image_count", "dwd_service_comment_detail_di.comment_type"], ["晒图率"]),
-        m("追评率", "存在追评的评价主题数除以初评主题数", ["dwd_service_comment_detail_di.comment_id", "dwd_service_comment_detail_di.comment_type"], ["追加评价率"]),
-        m("平均服务评分", "初评服务评分的平均值", ["dwd_service_comment_detail_di.service_score", "dwd_service_comment_detail_di.comment_type"], ["服务评分"]),
-        m("平均物流评分", "初评物流评分的平均值", ["dwd_service_comment_detail_di.logistics_score", "dwd_service_comment_detail_di.comment_type"], ["物流评分"]),
-        m("期末在手库存", "查询周期最后一个快照日的在手库存数量之和", ["dwd_inventory_daily_snapshot_df.on_hand_qty", "dwd_inventory_daily_snapshot_df.biz_date"], ["在手库存", "现货库存"]),
-        m("期末可用库存", "查询周期最后一个快照日的可用库存数量之和", ["dwd_inventory_daily_snapshot_df.available_qty", "dwd_inventory_daily_snapshot_df.biz_date"], ["可售库存", "可用库存"]),
-        m("期末预占库存", "查询周期最后一个快照日的预占库存数量之和", ["dwd_inventory_daily_snapshot_df.reserved_qty", "dwd_inventory_daily_snapshot_df.biz_date"], ["锁定库存"]),
-        m("期末在途库存", "查询周期最后一个快照日的在途库存数量之和", ["dwd_inventory_daily_snapshot_df.in_transit_qty", "dwd_inventory_daily_snapshot_df.biz_date"], ["在途数量"]),
-        m("期末库存金额", "查询周期最后一个快照日的库存成本金额之和", ["dwd_inventory_daily_snapshot_df.inventory_cost_amount", "dwd_inventory_daily_snapshot_df.biz_date"], ["库存价值", "库存成本"]),
-        m("零库存SKU数", "查询周期最后一个快照日 available_qty=0 的去重 SKU 数", ["dwd_inventory_daily_snapshot_df.sku_id", "dwd_inventory_daily_snapshot_df.available_qty", "dwd_inventory_daily_snapshot_df.biz_date"], ["缺货SKU数"]),
-        m("缺货率", "查询周期最后一个快照日 available_qty=0 的 SKU 仓库记录数除以全部 SKU 仓库记录数", ["dwd_inventory_daily_snapshot_df.sku_id", "dwd_inventory_daily_snapshot_df.warehouse_id", "dwd_inventory_daily_snapshot_df.available_qty", "dwd_inventory_daily_snapshot_df.biz_date"], ["库存缺货率"]),
-        m("库存预警SKU数", "查询周期最后一个快照日可用库存不高于 SKU 预警阈值的去重 SKU 数", ["dwd_inventory_daily_snapshot_df.sku_id", "dwd_inventory_daily_snapshot_df.available_qty", "dim_sku_info_zip.sku_id", "dim_sku_info_zip.warning_stock_qty"], ["低库存SKU数"]),
-        m("入库数量", "库存事件中 on_hand_qty_delta 大于0的数量之和", ["dwd_inventory_change_di.on_hand_qty_delta", "dwd_inventory_change_di.change_type", "dwd_inventory_change_di.biz_date"], ["入库量"]),
-        m("出库数量", "库存事件中 on_hand_qty_delta 小于0的绝对值之和", ["dwd_inventory_change_di.on_hand_qty_delta", "dwd_inventory_change_di.change_type", "dwd_inventory_change_di.biz_date"], ["出库量"]),
-        m("库存周转率", "查询周期出库成本除以日均库存成本金额", ["dwd_inventory_change_di.total_cost_delta", "dwd_inventory_change_di.on_hand_qty_delta", "dwd_inventory_daily_snapshot_df.inventory_cost_amount", "dwd_inventory_daily_snapshot_df.biz_date"], ["存货周转率"]),
-        m("库存周转天数", "查询周期天数除以库存周转率", ["dwd_inventory_change_di.total_cost_delta", "dwd_inventory_daily_snapshot_df.inventory_cost_amount", "dwd_inventory_daily_snapshot_df.biz_date"], ["存货周转天数"]),
-        m("注册用户数", "当前有效用户维度中排除未知成员后的去重用户数", ["dim_user_info_zip.user_id", "dim_user_info_zip.is_current", "dim_user_info_zip.is_deleted"], ["累计用户数", "会员数"]),
-        m("新增注册用户数", "注册时间落在查询周期内的去重用户数", ["dim_user_info_zip.user_id", "dim_user_info_zip.register_time"], ["新增用户数", "新注册用户"]),
-        m("VIP用户数", "当前用户版本中 is_vip=1 的去重用户数", ["dim_user_info_zip.user_id", "dim_user_info_zip.is_vip", "dim_user_info_zip.is_current"], ["VIP会员数"]),
-        m("沉默流失用户数", "当前用户状态为沉默或流失的去重用户数", ["dim_user_info_zip.user_id", "dim_user_info_zip.user_status", "dim_user_info_zip.is_current"], ["不活跃用户数"]),
-        m("日活跃用户数", "按业务日统计发生会话的去重登录用户数", ["dwd_traffic_session_di.user_id", "dwd_traffic_session_di.biz_date"], ["DAU"]),
-        m("月活跃用户数", "按自然月统计发生会话的去重登录用户数", ["dwd_traffic_session_di.user_id", "dwd_traffic_session_di.biz_date"], ["MAU"]),
-        m("用户活跃粘性", "日活跃用户数除以月活跃用户数，按月计算日均 DAU/MAU", ["dwd_traffic_session_di.user_id", "dwd_traffic_session_di.biz_date"], ["DAU/MAU", "活跃度"]),
-        m("复购用户数", "查询周期内产生至少2个去重订单的用户数", ["dwd_trade_order_detail_di.user_id", "dwd_trade_order_detail_di.order_id", "dwd_trade_order_detail_di.biz_date"], ["重复购买用户数"]),
-        m("复购率", "复购用户数除以下单用户数", ["dwd_trade_order_detail_di.user_id", "dwd_trade_order_detail_di.order_id", "dwd_trade_order_detail_di.biz_date"], ["重复购买率"]),
-        m("在售SPU数", "当前有效 SPU 维度中状态为在售的去重 SPU 数", ["dim_spu_info_zip.spu_id", "dim_spu_info_zip.spu_status", "dim_spu_info_zip.is_current"], ["有效商品款数"]),
-        m("在售SKU数", "当前有效 SKU 维度中状态为在售的去重 SKU 数", ["dim_sku_info_zip.sku_id", "dim_sku_info_zip.sku_status", "dim_sku_info_zip.is_current"], ["有效商品数"]),
-        m("动销SKU数", "查询周期内产生有效销量的去重 SKU 数", ["dwd_trade_order_detail_di.sku_id", "dwd_trade_order_detail_di.sku_qty", "dwd_trade_order_detail_di.biz_date", "dwd_trade_order_status_event_di.after_order_status"], ["有销量SKU数"]),
-        m("SKU动销率", "动销 SKU 数除以查询周期内在售 SKU 数", ["dwd_trade_order_detail_di.sku_id", "dwd_trade_order_status_event_di.after_order_status", "dim_sku_info_zip.sku_id", "dim_sku_info_zip.sku_status"], ["商品动销率"]),
-        m("新增SPU数", "上架时间落在查询周期内的去重 SPU 数", ["dim_spu_info_zip.spu_id", "dim_spu_info_zip.on_shelf_time"], ["上新SPU数", "新品数"]),
-        m("平均成交单价", "有效GMV除以销量", ["dwd_trade_order_detail_di.receivable_amount", "dwd_trade_order_detail_di.sku_qty", "dwd_trade_order_status_event_di.after_order_status"], ["ASP", "平均销售单价"]),
+        m(
+            "页面浏览量",
+            "页面访问事件行数，公式为 COUNT(page_view_id)",
+            [
+                "dwd_traffic_page_view_di.page_view_id",
+                "dwd_traffic_page_view_di.biz_date",
+            ],
+            ["PV", "浏览量", "访问量"],
+        ),
+        m(
+            "访客数",
+            "按用户优先、匿名设备兜底去重的访问主体数，公式为 COUNT(DISTINCT COALESCE(user_id, device_id))",
+            [
+                "dwd_traffic_page_view_di.user_id",
+                "dwd_traffic_page_view_di.device_id",
+                "dwd_traffic_page_view_di.biz_date",
+            ],
+            ["UV", "独立访客数"],
+        ),
+        m(
+            "会话数",
+            "客户端会话数量，公式为 COUNT(DISTINCT session_id)",
+            ["dwd_traffic_session_di.session_id", "dwd_traffic_session_di.biz_date"],
+            ["访问次数", "Session数"],
+        ),
+        m(
+            "活跃用户数",
+            "发生会话的登录用户数，排除游客，公式为 COUNT(DISTINCT user_id)",
+            ["dwd_traffic_session_di.user_id", "dwd_traffic_session_di.biz_date"],
+            ["活跃会员数"],
+        ),
+        m(
+            "跳出率",
+            "跳出会话数除以全部会话数，跳出会话取 is_bounce=1",
+            ["dwd_traffic_session_di.is_bounce", "dwd_traffic_session_di.session_id"],
+            ["会话跳出率"],
+        ),
+        m(
+            "平均会话时长",
+            "会话持续秒数的平均值，公式为 AVG(session_duration_sec)",
+            ["dwd_traffic_session_di.session_duration_sec"],
+            ["平均访问时长"],
+        ),
+        m(
+            "会话平均浏览深度",
+            "页面浏览量除以会话数，也可取会话表 page_view_count 的平均值",
+            [
+                "dwd_traffic_session_di.page_view_count",
+                "dwd_traffic_session_di.session_id",
+            ],
+            ["平均访问深度", "每次访问页数"],
+        ),
+        m(
+            "人均浏览量",
+            "页面浏览量除以访客数",
+            [
+                "dwd_traffic_page_view_di.page_view_id",
+                "dwd_traffic_page_view_di.user_id",
+                "dwd_traffic_page_view_di.device_id",
+            ],
+            ["人均PV"],
+        ),
+        m(
+            "平均页面停留时长",
+            "页面停留秒数的平均值，公式为 AVG(stay_duration_sec)",
+            ["dwd_traffic_page_view_di.stay_duration_sec"],
+            ["平均停留时间"],
+        ),
+        m(
+            "搜索次数",
+            "搜索请求数量，公式为 COUNT(search_detail_id)",
+            [
+                "dwd_traffic_search_di.search_detail_id",
+                "dwd_traffic_search_di.biz_date",
+            ],
+            ["搜索量", "搜索PV"],
+        ),
+        m(
+            "搜索用户数",
+            "发起搜索的登录用户去重数，公式为 COUNT(DISTINCT user_id)",
+            ["dwd_traffic_search_di.user_id", "dwd_traffic_search_di.biz_date"],
+            ["搜索UV"],
+        ),
+        m(
+            "搜索无结果率",
+            "无结果搜索次数除以搜索次数，取 is_no_result=1",
+            [
+                "dwd_traffic_search_di.is_no_result",
+                "dwd_traffic_search_di.search_detail_id",
+            ],
+            ["零结果率"],
+        ),
+        m(
+            "搜索点击次数",
+            "搜索结果点击事件数，公式为 COUNT(search_click_id)",
+            [
+                "dwd_traffic_search_click_di.search_click_id",
+                "dwd_traffic_search_click_di.biz_date",
+            ],
+            ["搜索点击量"],
+        ),
+        m(
+            "搜索点击率",
+            "产生至少一次点击的搜索请求数除以成功搜索请求数",
+            [
+                "dwd_traffic_search_di.search_detail_id",
+                "dwd_traffic_search_di.is_search_success",
+                "dwd_traffic_search_click_di.search_detail_id",
+            ],
+            ["搜索CTR"],
+        ),
+        m(
+            "平均搜索点击位次",
+            "搜索点击结果位次的平均值，数值越小表示结果排序越靠前",
+            ["dwd_traffic_search_click_di.click_rank"],
+            ["平均点击排名"],
+        ),
+        m(
+            "加购次数",
+            "购物车事件类型为加入的事件数",
+            [
+                "dwd_interaction_cart_event_di.cart_event_id",
+                "dwd_interaction_cart_event_di.cart_event_type",
+                "dwd_interaction_cart_event_di.biz_date",
+            ],
+            ["加购量", "加入购物车次数"],
+        ),
+        m(
+            "加购用户数",
+            "发生加入购物车事件的去重用户数",
+            [
+                "dwd_interaction_cart_event_di.user_id",
+                "dwd_interaction_cart_event_di.cart_event_type",
+            ],
+            ["加购UV"],
+        ),
+        m(
+            "加购件数",
+            "加入事件中正向商品数量变化量之和",
+            [
+                "dwd_interaction_cart_event_di.sku_qty_delta",
+                "dwd_interaction_cart_event_di.cart_event_type",
+            ],
+            ["加购商品数"],
+        ),
+        m(
+            "购物车删除次数",
+            "购物车事件类型为删除的事件数",
+            [
+                "dwd_interaction_cart_event_di.cart_event_id",
+                "dwd_interaction_cart_event_di.cart_event_type",
+            ],
+            ["删购次数"],
+        ),
+        m(
+            "购物车清空次数",
+            "购物车事件类型为清空的事件数",
+            [
+                "dwd_interaction_cart_event_di.cart_event_id",
+                "dwd_interaction_cart_event_di.cart_event_type",
+            ],
+            ["清空购物车次数"],
+        ),
+        m(
+            "购物车放弃率",
+            "发生加购但未产生订单的会话数除以发生加购的会话数",
+            [
+                "dwd_interaction_cart_event_di.session_id",
+                "dwd_interaction_cart_event_di.cart_event_type",
+                "dwd_trade_order_detail_di.source_session_id",
+            ],
+            ["弃购率"],
+        ),
+        m(
+            "收藏次数",
+            "收藏事件类型为收藏的事件数",
+            [
+                "dwd_interaction_favor_event_di.favor_event_id",
+                "dwd_interaction_favor_event_di.favor_event_type",
+                "dwd_interaction_favor_event_di.biz_date",
+            ],
+            ["收藏量"],
+        ),
+        m(
+            "收藏用户数",
+            "发生收藏事件的去重用户数",
+            [
+                "dwd_interaction_favor_event_di.user_id",
+                "dwd_interaction_favor_event_di.favor_event_type",
+            ],
+            ["收藏UV"],
+        ),
+        m(
+            "取消收藏率",
+            "取消收藏事件数除以收藏事件数",
+            [
+                "dwd_interaction_favor_event_di.favor_event_type",
+                "dwd_interaction_favor_event_di.favor_event_id",
+            ],
+            ["取消收藏比例"],
+        ),
+        m(
+            "下单订单数",
+            "下单明细中的去重订单数，公式为 COUNT(DISTINCT order_id)",
+            [
+                "dwd_trade_order_detail_di.order_id",
+                "dwd_trade_order_detail_di.biz_date",
+            ],
+            ["订单数", "下单量"],
+        ),
+        m(
+            "下单用户数",
+            "产生订单的去重用户数，公式为 COUNT(DISTINCT user_id)",
+            ["dwd_trade_order_detail_di.user_id", "dwd_trade_order_detail_di.biz_date"],
+            ["购买用户数", "下单UV"],
+        ),
+        m(
+            "订单明细数",
+            "订单商品明细行数，公式为 COUNT(order_detail_id)",
+            ["dwd_trade_order_detail_di.order_detail_id"],
+            ["订单行数"],
+        ),
+        m(
+            "销量",
+            "订单明细购买件数之和，公式为 SUM(sku_qty)",
+            ["dwd_trade_order_detail_di.sku_qty", "dwd_trade_order_detail_di.biz_date"],
+            ["销售件数", "销售数量"],
+        ),
+        m(
+            "下单GMV",
+            "下单口径应收金额之和，包含之后取消的订单，公式为 SUM(receivable_amount)",
+            [
+                "dwd_trade_order_detail_di.receivable_amount",
+                "dwd_trade_order_detail_di.biz_date",
+            ],
+            ["GMV", "下单金额", "成交总额"],
+        ),
+        m(
+            "有效GMV",
+            "排除最终状态为 CANCELLED 的订单后，应收金额之和",
+            [
+                "dwd_trade_order_detail_di.order_id",
+                "dwd_trade_order_detail_di.receivable_amount",
+                "dwd_trade_order_status_event_di.after_order_status",
+                "dwd_trade_order_status_event_di.event_time",
+            ],
+            ["有效成交额"],
+        ),
+        m(
+            "商品销售额",
+            "优惠前商品销售金额之和，公式为 SUM(sale_amount)",
+            ["dwd_trade_order_detail_di.sale_amount"],
+            ["销售额", "商品金额"],
+        ),
+        m(
+            "实付金额",
+            "支付状态为 SUCCESS 的支付尝试对应订单明细分摊金额之和",
+            [
+                "dwd_trade_pay_order_detail_di.allocated_pay_amount",
+                "dwd_trade_pay_order_detail_di.pay_detail_id",
+                "dwd_trade_pay_status_event_di.pay_detail_id",
+                "dwd_trade_pay_status_event_di.after_pay_status",
+            ],
+            ["支付金额", "实付GMV"],
+        ),
+        m(
+            "净支付金额",
+            "实付金额减去退款打款状态为 SUCCESS 的退款金额",
+            [
+                "dwd_trade_pay_order_detail_di.allocated_pay_amount",
+                "dwd_trade_pay_status_event_di.after_pay_status",
+                "dwd_trade_refund_pay_detail_di.refund_amount",
+                "dwd_trade_refund_pay_status_event_di.after_refund_pay_status",
+            ],
+            ["净GMV", "净收入"],
+        ),
+        m(
+            "客单价",
+            "有效GMV除以有效订单数，按订单粒度先聚合避免明细重复",
+            [
+                "dwd_trade_order_detail_di.order_id",
+                "dwd_trade_order_detail_di.receivable_amount",
+                "dwd_trade_order_status_event_di.after_order_status",
+            ],
+            ["AOV", "平均订单金额"],
+        ),
+        m(
+            "件单价",
+            "有效GMV除以销量",
+            [
+                "dwd_trade_order_detail_di.receivable_amount",
+                "dwd_trade_order_detail_di.sku_qty",
+                "dwd_trade_order_status_event_di.after_order_status",
+            ],
+            ["平均每件成交价"],
+        ),
+        m(
+            "连带率",
+            "销量除以订单数，表示每笔订单平均购买件数",
+            ["dwd_trade_order_detail_di.sku_qty", "dwd_trade_order_detail_di.order_id"],
+            ["件单量", "订单连带率"],
+        ),
+        m(
+            "支付订单数",
+            "存在 SUCCESS 支付状态的去重订单数",
+            [
+                "dwd_trade_pay_status_event_di.pay_detail_id",
+                "dwd_trade_pay_status_event_di.after_pay_status",
+                "dwd_trade_pay_order_detail_di.pay_detail_id",
+                "dwd_trade_pay_order_detail_di.order_id",
+            ],
+            ["已支付订单数"],
+        ),
+        m(
+            "支付用户数",
+            "存在 SUCCESS 支付尝试的去重用户数",
+            [
+                "dwd_trade_pay_detail_di.user_id",
+                "dwd_trade_pay_detail_di.pay_detail_id",
+                "dwd_trade_pay_status_event_di.after_pay_status",
+            ],
+            ["支付UV"],
+        ),
+        m(
+            "支付成功率",
+            "最终状态为 SUCCESS 的支付尝试数除以全部支付尝试数",
+            [
+                "dwd_trade_pay_detail_di.pay_detail_id",
+                "dwd_trade_pay_status_event_di.pay_detail_id",
+                "dwd_trade_pay_status_event_di.after_pay_status",
+            ],
+            ["付款成功率"],
+        ),
+        m(
+            "支付转化率",
+            "支付订单数除以下单订单数",
+            [
+                "dwd_trade_order_detail_di.order_id",
+                "dwd_trade_pay_order_detail_di.order_id",
+                "dwd_trade_pay_status_event_di.after_pay_status",
+            ],
+            ["下单支付转化率"],
+        ),
+        m(
+            "订单取消数",
+            "最终订单状态为 CANCELLED 的去重订单数",
+            [
+                "dwd_trade_order_status_event_di.order_id",
+                "dwd_trade_order_status_event_di.after_order_status",
+                "dwd_trade_order_status_event_di.event_time",
+            ],
+            ["取消订单数"],
+        ),
+        m(
+            "订单取消率",
+            "最终状态为 CANCELLED 的订单数除以下单订单数",
+            [
+                "dwd_trade_order_detail_di.order_id",
+                "dwd_trade_order_status_event_di.after_order_status",
+            ],
+            ["取消率"],
+        ),
+        m(
+            "首购订单数",
+            "is_first_order=1 的去重订单数",
+            [
+                "dwd_trade_order_detail_di.order_id",
+                "dwd_trade_order_detail_di.is_first_order",
+            ],
+            ["新客订单数", "首单数"],
+        ),
+        m(
+            "首购订单占比",
+            "首购订单数除以下单订单数",
+            [
+                "dwd_trade_order_detail_di.order_id",
+                "dwd_trade_order_detail_di.is_first_order",
+            ],
+            ["新客订单占比"],
+        ),
+        m(
+            "毛利额",
+            "有效订单应收金额减去标准成本金额，排除取消订单",
+            [
+                "dwd_trade_order_detail_di.receivable_amount",
+                "dwd_trade_order_detail_di.cost_amount",
+                "dwd_trade_order_status_event_di.after_order_status",
+            ],
+            ["销售毛利"],
+        ),
+        m(
+            "毛利率",
+            "毛利额除以有效GMV",
+            [
+                "dwd_trade_order_detail_di.receivable_amount",
+                "dwd_trade_order_detail_di.cost_amount",
+                "dwd_trade_order_status_event_di.after_order_status",
+            ],
+            ["销售毛利率"],
+        ),
+        m(
+            "总优惠金额",
+            "活动、优惠券和积分优惠分摊金额之和",
+            [
+                "dwd_trade_order_detail_di.activity_discount_amount",
+                "dwd_trade_order_detail_di.coupon_discount_amount",
+                "dwd_trade_order_detail_di.points_discount_amount",
+            ],
+            ["优惠总额"],
+        ),
+        m(
+            "综合优惠率",
+            "总优惠金额除以优惠前销售金额",
+            [
+                "dwd_trade_order_detail_di.activity_discount_amount",
+                "dwd_trade_order_detail_di.coupon_discount_amount",
+                "dwd_trade_order_detail_di.points_discount_amount",
+                "dwd_trade_order_detail_di.sale_amount",
+            ],
+            ["折扣率", "优惠深度"],
+        ),
+        m(
+            "活动优惠金额",
+            "订单明细活动优惠分摊金额之和",
+            ["dwd_trade_order_detail_activity_di.promotion_discount_amount"],
+            ["促销优惠金额", "活动减免"],
+        ),
+        m(
+            "优惠券优惠金额",
+            "订单明细优惠券优惠分摊金额之和",
+            ["dwd_trade_order_detail_coupon_di.coupon_discount_amount"],
+            ["券优惠金额", "优惠券抵扣"],
+        ),
+        m(
+            "积分优惠金额",
+            "订单明细积分优惠分摊金额之和",
+            ["dwd_trade_order_detail_di.points_discount_amount"],
+            ["积分抵扣金额"],
+        ),
+        m(
+            "运费收入",
+            "订单明细运费分摊金额之和",
+            ["dwd_trade_order_detail_di.freight_amount"],
+            ["运费金额"],
+        ),
+        m(
+            "风险订单率",
+            "is_risk_order=1 的订单数除以下单订单数",
+            [
+                "dwd_trade_order_detail_di.order_id",
+                "dwd_trade_order_detail_di.is_risk_order",
+            ],
+            ["风控订单占比"],
+        ),
+        m(
+            "跨境订单率",
+            "is_cross_border=1 的订单数除以下单订单数",
+            [
+                "dwd_trade_order_detail_di.order_id",
+                "dwd_trade_order_detail_di.is_cross_border",
+            ],
+            ["跨境订单占比"],
+        ),
+        m(
+            "活动订单数",
+            "至少命中一条促销活动的去重订单数",
+            [
+                "dwd_trade_order_detail_activity_di.order_id",
+                "dwd_trade_order_detail_activity_di.promotion_id",
+            ],
+            ["促销订单数"],
+        ),
+        m(
+            "活动订单占比",
+            "活动订单数除以下单订单数",
+            [
+                "dwd_trade_order_detail_activity_di.order_id",
+                "dwd_trade_order_detail_di.order_id",
+            ],
+            ["促销渗透率"],
+        ),
+        m(
+            "优惠券领取量",
+            "用户券事件类型为领取的事件数",
+            [
+                "dwd_marketing_user_coupon_event_di.user_coupon_event_id",
+                "dwd_marketing_user_coupon_event_di.coupon_event_type",
+            ],
+            ["领券数", "发券领取量"],
+        ),
+        m(
+            "优惠券领取用户数",
+            "领取优惠券的去重用户数",
+            [
+                "dwd_marketing_user_coupon_event_di.user_id",
+                "dwd_marketing_user_coupon_event_di.coupon_event_type",
+            ],
+            ["领券用户数"],
+        ),
+        m(
+            "优惠券使用量",
+            "用户券事件类型为使用的事件数",
+            [
+                "dwd_marketing_user_coupon_event_di.user_coupon_id",
+                "dwd_marketing_user_coupon_event_di.coupon_event_type",
+            ],
+            ["用券数"],
+        ),
+        m(
+            "优惠券使用率",
+            "使用的用户券实例数除以领取的用户券实例数",
+            [
+                "dwd_marketing_user_coupon_event_di.user_coupon_id",
+                "dwd_marketing_user_coupon_event_di.coupon_event_type",
+            ],
+            ["领券核销率", "券核销率"],
+        ),
+        m(
+            "正向包裹数",
+            "delivery_direction 为正向的物流包裹数",
+            [
+                "dwd_trade_delivery_di.delivery_id",
+                "dwd_trade_delivery_di.delivery_direction",
+                "dwd_trade_delivery_di.biz_date",
+            ],
+            ["发货包裹数"],
+        ),
+        m(
+            "发货订单数",
+            "物流状态达到 SHIPPED 的去重订单数",
+            [
+                "dwd_trade_delivery_di.delivery_id",
+                "dwd_trade_delivery_di.order_id",
+                "dwd_trade_delivery_status_event_di.delivery_id",
+                "dwd_trade_delivery_status_event_di.after_delivery_status",
+            ],
+            ["已发货订单数"],
+        ),
+        m(
+            "签收订单数",
+            "物流状态达到 SIGNED 的去重订单数",
+            [
+                "dwd_trade_delivery_di.delivery_id",
+                "dwd_trade_delivery_di.order_id",
+                "dwd_trade_delivery_status_event_di.delivery_id",
+                "dwd_trade_delivery_status_event_di.after_delivery_status",
+            ],
+            ["已签收订单数"],
+        ),
+        m(
+            "订单履约率",
+            "已签收订单数除以支付订单数",
+            [
+                "dwd_trade_delivery_di.order_id",
+                "dwd_trade_delivery_status_event_di.after_delivery_status",
+                "dwd_trade_pay_order_detail_di.order_id",
+                "dwd_trade_pay_status_event_di.after_pay_status",
+            ],
+            ["签收率"],
+        ),
+        m(
+            "平均发货时长",
+            "包裹创建时间减去订单创建时间的平均小时数，仅统计正向包裹",
+            [
+                "dwd_trade_order_detail_di.order_id",
+                "dwd_trade_order_detail_di.order_create_time",
+                "dwd_trade_delivery_di.order_id",
+                "dwd_trade_delivery_di.delivery_create_time",
+                "dwd_trade_delivery_di.delivery_direction",
+            ],
+            ["平均出库时长", "下单到发货时长"],
+        ),
+        m(
+            "平均配送时长",
+            "SIGNED 事件时间减去包裹创建时间的平均小时数，仅统计正向包裹",
+            [
+                "dwd_trade_delivery_di.delivery_id",
+                "dwd_trade_delivery_di.delivery_create_time",
+                "dwd_trade_delivery_di.delivery_direction",
+                "dwd_trade_delivery_status_event_di.delivery_id",
+                "dwd_trade_delivery_status_event_di.after_delivery_status",
+                "dwd_trade_delivery_status_event_di.event_time",
+            ],
+            ["平均物流时长", "发货到签收时长"],
+        ),
+        m(
+            "拆包率",
+            "正向包裹数大于1的订单数除以有正向包裹的订单数",
+            [
+                "dwd_trade_delivery_di.order_id",
+                "dwd_trade_delivery_di.delivery_id",
+                "dwd_trade_delivery_di.delivery_direction",
+            ],
+            ["订单拆包率"],
+        ),
+        m(
+            "平均包裹重量",
+            "正向包裹重量的平均值",
+            [
+                "dwd_trade_delivery_di.package_weight_kg",
+                "dwd_trade_delivery_di.delivery_direction",
+            ],
+            ["平均物流重量"],
+        ),
+        m(
+            "逆向包裹数",
+            "delivery_direction 为逆向的物流包裹数",
+            [
+                "dwd_trade_delivery_di.delivery_id",
+                "dwd_trade_delivery_di.delivery_direction",
+            ],
+            ["退货包裹数"],
+        ),
+        m(
+            "退款申请数",
+            "退款申请明细数量，公式为 COUNT(refund_detail_id)",
+            [
+                "dwd_trade_refund_detail_di.refund_detail_id",
+                "dwd_trade_refund_detail_di.biz_date",
+            ],
+            ["退款单数", "退款笔数"],
+        ),
+        m(
+            "退款申请金额",
+            "申请退款总金额之和",
+            ["dwd_trade_refund_detail_di.refund_apply_amount"],
+            ["申请退款金额"],
+        ),
+        m(
+            "退款成功数",
+            "退款打款最终状态为 SUCCESS 的去重退款明细数",
+            [
+                "dwd_trade_refund_pay_detail_di.refund_detail_id",
+                "dwd_trade_refund_pay_detail_di.refund_pay_detail_id",
+                "dwd_trade_refund_pay_status_event_di.refund_pay_detail_id",
+                "dwd_trade_refund_pay_status_event_di.after_refund_pay_status",
+            ],
+            ["成功退款单数"],
+        ),
+        m(
+            "退款成功金额",
+            "退款打款最终状态为 SUCCESS 的退款金额之和",
+            [
+                "dwd_trade_refund_pay_detail_di.refund_amount",
+                "dwd_trade_refund_pay_detail_di.refund_pay_detail_id",
+                "dwd_trade_refund_pay_status_event_di.after_refund_pay_status",
+            ],
+            ["退款金额", "实际退款金额"],
+        ),
+        m(
+            "退款率",
+            "退款申请涉及的去重订单明细数除以订单明细数",
+            [
+                "dwd_trade_refund_detail_di.order_detail_id",
+                "dwd_trade_order_detail_di.order_detail_id",
+            ],
+            ["售后退款率"],
+        ),
+        m(
+            "退款金额率",
+            "退款成功金额除以实付金额",
+            [
+                "dwd_trade_refund_pay_detail_di.refund_amount",
+                "dwd_trade_refund_pay_status_event_di.after_refund_pay_status",
+                "dwd_trade_pay_order_detail_di.allocated_pay_amount",
+                "dwd_trade_pay_status_event_di.after_pay_status",
+            ],
+            ["退款金额占比"],
+        ),
+        m(
+            "退款审核通过率",
+            "最终审核状态为 APPROVED 的退款明细数除以退款申请数",
+            [
+                "dwd_trade_refund_status_event_di.refund_detail_id",
+                "dwd_trade_refund_status_event_di.after_refund_status",
+            ],
+            ["退款通过率"],
+        ),
+        m(
+            "质量问题退款率",
+            "is_quality_issue=1 的退款申请数除以退款申请数",
+            [
+                "dwd_trade_refund_detail_di.refund_detail_id",
+                "dwd_trade_refund_detail_di.is_quality_issue",
+            ],
+            ["质量退款占比"],
+        ),
+        m(
+            "退货率",
+            "need_return_goods=1 的退款申请数除以订单明细数",
+            [
+                "dwd_trade_refund_detail_di.order_detail_id",
+                "dwd_trade_refund_detail_di.need_return_goods",
+                "dwd_trade_order_detail_di.order_detail_id",
+            ],
+            ["商品退货率"],
+        ),
+        m(
+            "平均退款处理时长",
+            "退款打款 SUCCESS 时间减去退款申请时间的平均小时数",
+            [
+                "dwd_trade_refund_detail_di.refund_detail_id",
+                "dwd_trade_refund_detail_di.apply_time",
+                "dwd_trade_refund_pay_detail_di.refund_detail_id",
+                "dwd_trade_refund_pay_status_event_di.after_refund_pay_status",
+                "dwd_trade_refund_pay_status_event_di.event_time",
+            ],
+            ["平均退款时长"],
+        ),
+        m(
+            "评价数",
+            "初评内容数量，排除追评避免重复计算评价主题",
+            [
+                "dwd_service_comment_detail_di.comment_detail_id",
+                "dwd_service_comment_detail_di.comment_type",
+                "dwd_service_comment_detail_di.biz_date",
+            ],
+            ["评论数", "评价量"],
+        ),
+        m(
+            "评价率",
+            "产生初评的去重订单明细数除以已签收订单明细数",
+            [
+                "dwd_service_comment_detail_di.order_detail_id",
+                "dwd_service_comment_detail_di.comment_type",
+                "dwd_trade_delivery_item_di.order_detail_id",
+                "dwd_trade_delivery_status_event_di.after_delivery_status",
+            ],
+            ["评论率"],
+        ),
+        m(
+            "好评率",
+            "初评中综合评分为4或5的评价数除以有评分初评数",
+            [
+                "dwd_service_comment_detail_di.comment_level",
+                "dwd_service_comment_detail_di.comment_type",
+            ],
+            ["正向评价率"],
+        ),
+        m(
+            "差评率",
+            "初评中综合评分为1或2的评价数除以有评分初评数",
+            [
+                "dwd_service_comment_detail_di.comment_level",
+                "dwd_service_comment_detail_di.comment_type",
+            ],
+            ["负向评价率"],
+        ),
+        m(
+            "平均评分",
+            "有评分初评的综合评分平均值",
+            [
+                "dwd_service_comment_detail_di.comment_level",
+                "dwd_service_comment_detail_di.comment_type",
+            ],
+            ["平均星级"],
+        ),
+        m(
+            "有图评价率",
+            "初评中 image_count 大于0的评价数除以初评数",
+            [
+                "dwd_service_comment_detail_di.image_count",
+                "dwd_service_comment_detail_di.comment_type",
+            ],
+            ["晒图率"],
+        ),
+        m(
+            "追评率",
+            "存在追评的评价主题数除以初评主题数",
+            [
+                "dwd_service_comment_detail_di.comment_id",
+                "dwd_service_comment_detail_di.comment_type",
+            ],
+            ["追加评价率"],
+        ),
+        m(
+            "平均服务评分",
+            "初评服务评分的平均值",
+            [
+                "dwd_service_comment_detail_di.service_score",
+                "dwd_service_comment_detail_di.comment_type",
+            ],
+            ["服务评分"],
+        ),
+        m(
+            "平均物流评分",
+            "初评物流评分的平均值",
+            [
+                "dwd_service_comment_detail_di.logistics_score",
+                "dwd_service_comment_detail_di.comment_type",
+            ],
+            ["物流评分"],
+        ),
+        m(
+            "期末在手库存",
+            "查询周期最后一个快照日的在手库存数量之和",
+            [
+                "dwd_inventory_daily_snapshot_df.on_hand_qty",
+                "dwd_inventory_daily_snapshot_df.biz_date",
+            ],
+            ["在手库存", "现货库存"],
+        ),
+        m(
+            "期末可用库存",
+            "查询周期最后一个快照日的可用库存数量之和",
+            [
+                "dwd_inventory_daily_snapshot_df.available_qty",
+                "dwd_inventory_daily_snapshot_df.biz_date",
+            ],
+            ["可售库存", "可用库存"],
+        ),
+        m(
+            "期末预占库存",
+            "查询周期最后一个快照日的预占库存数量之和",
+            [
+                "dwd_inventory_daily_snapshot_df.reserved_qty",
+                "dwd_inventory_daily_snapshot_df.biz_date",
+            ],
+            ["锁定库存"],
+        ),
+        m(
+            "期末在途库存",
+            "查询周期最后一个快照日的在途库存数量之和",
+            [
+                "dwd_inventory_daily_snapshot_df.in_transit_qty",
+                "dwd_inventory_daily_snapshot_df.biz_date",
+            ],
+            ["在途数量"],
+        ),
+        m(
+            "期末库存金额",
+            "查询周期最后一个快照日的库存成本金额之和",
+            [
+                "dwd_inventory_daily_snapshot_df.inventory_cost_amount",
+                "dwd_inventory_daily_snapshot_df.biz_date",
+            ],
+            ["库存价值", "库存成本"],
+        ),
+        m(
+            "零库存SKU数",
+            "查询周期最后一个快照日 available_qty=0 的去重 SKU 数",
+            [
+                "dwd_inventory_daily_snapshot_df.sku_id",
+                "dwd_inventory_daily_snapshot_df.available_qty",
+                "dwd_inventory_daily_snapshot_df.biz_date",
+            ],
+            ["缺货SKU数"],
+        ),
+        m(
+            "缺货率",
+            "查询周期最后一个快照日 available_qty=0 的 SKU 仓库记录数除以全部 SKU 仓库记录数",
+            [
+                "dwd_inventory_daily_snapshot_df.sku_id",
+                "dwd_inventory_daily_snapshot_df.warehouse_id",
+                "dwd_inventory_daily_snapshot_df.available_qty",
+                "dwd_inventory_daily_snapshot_df.biz_date",
+            ],
+            ["库存缺货率"],
+        ),
+        m(
+            "库存预警SKU数",
+            "查询周期最后一个快照日可用库存不高于 SKU 预警阈值的去重 SKU 数",
+            [
+                "dwd_inventory_daily_snapshot_df.sku_id",
+                "dwd_inventory_daily_snapshot_df.available_qty",
+                "dim_sku_info_zip.sku_id",
+                "dim_sku_info_zip.warning_stock_qty",
+            ],
+            ["低库存SKU数"],
+        ),
+        m(
+            "入库数量",
+            "库存事件中 on_hand_qty_delta 大于0的数量之和",
+            [
+                "dwd_inventory_change_di.on_hand_qty_delta",
+                "dwd_inventory_change_di.change_type",
+                "dwd_inventory_change_di.biz_date",
+            ],
+            ["入库量"],
+        ),
+        m(
+            "出库数量",
+            "库存事件中 on_hand_qty_delta 小于0的绝对值之和",
+            [
+                "dwd_inventory_change_di.on_hand_qty_delta",
+                "dwd_inventory_change_di.change_type",
+                "dwd_inventory_change_di.biz_date",
+            ],
+            ["出库量"],
+        ),
+        m(
+            "库存周转率",
+            "查询周期出库成本除以日均库存成本金额",
+            [
+                "dwd_inventory_change_di.total_cost_delta",
+                "dwd_inventory_change_di.on_hand_qty_delta",
+                "dwd_inventory_daily_snapshot_df.inventory_cost_amount",
+                "dwd_inventory_daily_snapshot_df.biz_date",
+            ],
+            ["存货周转率"],
+        ),
+        m(
+            "库存周转天数",
+            "查询周期天数除以库存周转率",
+            [
+                "dwd_inventory_change_di.total_cost_delta",
+                "dwd_inventory_daily_snapshot_df.inventory_cost_amount",
+                "dwd_inventory_daily_snapshot_df.biz_date",
+            ],
+            ["存货周转天数"],
+        ),
+        m(
+            "注册用户数",
+            "当前有效用户维度中排除未知成员后的去重用户数",
+            [
+                "dim_user_info_zip.user_id",
+                "dim_user_info_zip.is_current",
+                "dim_user_info_zip.is_deleted",
+            ],
+            ["累计用户数", "会员数"],
+        ),
+        m(
+            "新增注册用户数",
+            "注册时间落在查询周期内的去重用户数",
+            ["dim_user_info_zip.user_id", "dim_user_info_zip.register_time"],
+            ["新增用户数", "新注册用户"],
+        ),
+        m(
+            "VIP用户数",
+            "当前用户版本中 is_vip=1 的去重用户数",
+            [
+                "dim_user_info_zip.user_id",
+                "dim_user_info_zip.is_vip",
+                "dim_user_info_zip.is_current",
+            ],
+            ["VIP会员数"],
+        ),
+        m(
+            "沉默流失用户数",
+            "当前用户状态为沉默或流失的去重用户数",
+            [
+                "dim_user_info_zip.user_id",
+                "dim_user_info_zip.user_status",
+                "dim_user_info_zip.is_current",
+            ],
+            ["不活跃用户数"],
+        ),
+        m(
+            "日活跃用户数",
+            "按业务日统计发生会话的去重登录用户数",
+            ["dwd_traffic_session_di.user_id", "dwd_traffic_session_di.biz_date"],
+            ["DAU"],
+        ),
+        m(
+            "月活跃用户数",
+            "按自然月统计发生会话的去重登录用户数",
+            ["dwd_traffic_session_di.user_id", "dwd_traffic_session_di.biz_date"],
+            ["MAU"],
+        ),
+        m(
+            "用户活跃粘性",
+            "日活跃用户数除以月活跃用户数，按月计算日均 DAU/MAU",
+            ["dwd_traffic_session_di.user_id", "dwd_traffic_session_di.biz_date"],
+            ["DAU/MAU", "活跃度"],
+        ),
+        m(
+            "复购用户数",
+            "查询周期内产生至少2个去重订单的用户数",
+            [
+                "dwd_trade_order_detail_di.user_id",
+                "dwd_trade_order_detail_di.order_id",
+                "dwd_trade_order_detail_di.biz_date",
+            ],
+            ["重复购买用户数"],
+        ),
+        m(
+            "复购率",
+            "复购用户数除以下单用户数",
+            [
+                "dwd_trade_order_detail_di.user_id",
+                "dwd_trade_order_detail_di.order_id",
+                "dwd_trade_order_detail_di.biz_date",
+            ],
+            ["重复购买率"],
+        ),
+        m(
+            "在售SPU数",
+            "当前有效 SPU 维度中状态为在售的去重 SPU 数",
+            [
+                "dim_spu_info_zip.spu_id",
+                "dim_spu_info_zip.spu_status",
+                "dim_spu_info_zip.is_current",
+            ],
+            ["有效商品款数"],
+        ),
+        m(
+            "在售SKU数",
+            "当前有效 SKU 维度中状态为在售的去重 SKU 数",
+            [
+                "dim_sku_info_zip.sku_id",
+                "dim_sku_info_zip.sku_status",
+                "dim_sku_info_zip.is_current",
+            ],
+            ["有效商品数"],
+        ),
+        m(
+            "动销SKU数",
+            "查询周期内产生有效销量的去重 SKU 数",
+            [
+                "dwd_trade_order_detail_di.sku_id",
+                "dwd_trade_order_detail_di.sku_qty",
+                "dwd_trade_order_detail_di.biz_date",
+                "dwd_trade_order_status_event_di.after_order_status",
+            ],
+            ["有销量SKU数"],
+        ),
+        m(
+            "SKU动销率",
+            "动销 SKU 数除以查询周期内在售 SKU 数",
+            [
+                "dwd_trade_order_detail_di.sku_id",
+                "dwd_trade_order_status_event_di.after_order_status",
+                "dim_sku_info_zip.sku_id",
+                "dim_sku_info_zip.sku_status",
+            ],
+            ["商品动销率"],
+        ),
+        m(
+            "新增SPU数",
+            "上架时间落在查询周期内的去重 SPU 数",
+            ["dim_spu_info_zip.spu_id", "dim_spu_info_zip.on_shelf_time"],
+            ["上新SPU数", "新品数"],
+        ),
+        m(
+            "平均成交单价",
+            "有效GMV除以销量",
+            [
+                "dwd_trade_order_detail_di.receivable_amount",
+                "dwd_trade_order_detail_di.sku_qty",
+                "dwd_trade_order_status_event_di.after_order_status",
+            ],
+            ["ASP", "平均销售单价"],
+        ),
     ]
 
 
@@ -623,6 +1553,7 @@ def _build_config(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]:
     tables = []
     for table_name in TABLE_ORDER:
         source = schema[table_name]
+        role = "fact" if table_name.startswith("dwd_") else "dim"
         columns = []
         for column in source["columns"]:
             target = _reference(table_name, column["name"], column_keys)
@@ -636,14 +1567,15 @@ def _build_config(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]:
                 item["reference_t_name"] = target[0]
                 item["reference_c_name"] = target[1]
             columns.append(item)
-        tables.append(
-            {
-                "name": table_name,
-                "role": "fact" if table_name.startswith("dwd_") else "dim",
-                "description": f"{source['comment']}，{TABLE_GRAINS[table_name]}",
-                "columns": columns,
-            }
-        )
+        table_config = {
+            "name": table_name,
+            "role": role,
+            "description": f"{source['comment']}，{TABLE_GRAINS[table_name]}",
+            "columns": columns,
+        }
+        if role == "dim" and (table_name, "dw_update_time") in column_keys:
+            table_config["value_index_cursor_column"] = "dw_update_time"
+        tables.append(table_config)
     metrics = _build_metrics()
     missing_metric_columns = sorted(
         {

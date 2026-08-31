@@ -16,16 +16,16 @@ from app.query.models.validation import QueryValidationResult
 from app.query.repositories.doris import DorisQueryRepository
 from app.query.repositories.experience_index import QueryExperienceESRepo
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
+from app.query.services.contracts import QueryExperienceIndexScheduler
 from app.query.services.execution_handler import QueryExecutionHandler
 from app.query.services.executor import (
     AnalysisQueryService,
     QueryArtifactStore,
     SuccessfulQueryExecution,
 )
-from app.query.services.experience import (
-    QueryExecutionContext,
-    QueryExperienceIndexScheduler,
-    QueryExperienceService,
+from app.query.services.experience import QueryExecutionContext, QueryExperienceService
+from app.query.services.experience_invalidation import (
+    QueryExperienceInvalidationService,
 )
 from app.query.services.guard import QueryGuardService
 from app.query.services.principal import QueryPrincipalService, ResolvedQueryPrincipal
@@ -50,6 +50,20 @@ def build_query_experience_service(
         repo=QueryExperiencePGRepo(session=session),
         index_repo=QueryExperienceESRepo(client=es_client_manager.get_client()),
         embedding_client=embedding_client_manager.get_client(),
+        index_scheduler=index_scheduler,
+        data_source=cfg.query.data_source,
+        database_name=cfg.doris.database,
+    )
+
+
+def build_query_experience_invalidation_service(
+    session: AsyncSession,
+    *,
+    index_scheduler: QueryExperienceIndexScheduler = query_experience_index_scheduler,
+) -> QueryExperienceInvalidationService:
+    """创建不依赖 Elasticsearch 和 Embedding 的查询经验失效服务"""
+    return QueryExperienceInvalidationService(
+        repo=QueryExperiencePGRepo(session=session),
         index_scheduler=index_scheduler,
         data_source=cfg.query.data_source,
         database_name=cfg.doris.database,
@@ -103,15 +117,15 @@ class DefaultQueryExecutionRuntime:
         principal: ResolvedQueryPrincipal,
     ) -> AnalysisQueryService:
         """创建仅持有 Doris 和产物存储依赖的执行器"""
-        connection_provider = await query_doris_client_registry.get_or_create(
-            principal.role_name,
-            principal.query_user,
-            principal.password,
-        )
         limits = QueryExecutionLimits(
             workload_group=principal.workload_group,
             timeout_seconds=cfg.query.timeout_seconds,
             memory_limit_bytes=cfg.query.memory_limit_bytes,
+        )
+        connection_provider = await query_doris_client_registry.get_or_create(
+            principal.role_name,
+            principal.query_user,
+            principal.password,
         )
         return AnalysisQueryService(
             DorisQueryRepository(connection_provider),

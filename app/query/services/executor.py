@@ -237,7 +237,7 @@ class AnalysisQueryService:
             )
         result = AnalysisQueryResult(
             path=f"/{PurePosixPath(relative_path)}",
-            schema=summary.schema,
+            columns=summary.columns,
             row_count=summary.row_count,
             time_range=summary.time_range,
             sample=summary.sample,
@@ -256,7 +256,7 @@ class AnalysisQueryService:
             f"analysis_id={session_key.analysis_id}, "
             f"sql_fingerprint={sql_fingerprint}, "
             f"row_count={details.result.row_count}, "
-            f"column_count={len(details.result.schema)}, "
+            f"column_count={len(details.result.columns)}, "
             f"scan_rows={details.plan_estimate.scan_rows if details.plan_estimate else None}, "
             f"scan_bytes={details.plan_estimate.scan_bytes if details.plan_estimate else None}, "
             f"artifact_path={details.result.path}"
@@ -305,7 +305,7 @@ class AnalysisQueryService:
             raise QueryResultShapeError("数据库未返回有效的结果元数据")
         temporary_file.flush()
         return _QuerySummary(
-            schema=[
+            columns=[
                 QueryResultColumn(
                     name=name,
                     type=stats.inferred_type or "unknown",
@@ -336,7 +336,7 @@ class AnalysisQueryService:
 class _QuerySummary:
     """临时文件写入结束后的内存摘要"""
 
-    schema: list[QueryResultColumn]
+    columns: list[QueryResultColumn]
     row_count: int
     time_range: dict[str, QueryTimeRange]
     sample: list[dict[str, Any]]

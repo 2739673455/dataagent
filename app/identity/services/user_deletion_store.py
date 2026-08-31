@@ -21,7 +21,7 @@ class PostgresUserDeletionStateStore:
             async with session.begin():
                 await repo.lock_security_mutation()
                 user = await repo.get_user_by_id_for_update(user_id)
-                task = await repo.get_user_deletion_task(user_id)
+                task = await repo.get_user_deletion_task_for_update(user_id)
                 if user is None:
                     if task is not None and task.status == "completed":
                         return False
@@ -45,7 +45,8 @@ class PostgresUserDeletionStateStore:
             repo = AuthPGRepo(session)
             async with session.begin():
                 await repo.lock_security_mutation()
-                task = await repo.get_user_deletion_task(user_id)
+                # complete 与失败回写可能来自不同 Worker；行锁保证终态不会被迟到的失败覆盖。
+                task = await repo.get_user_deletion_task_for_update(user_id)
                 if task is None:
                     raise RuntimeError("用户注销任务记录不存在")
                 user = await repo.get_user_by_id_for_update(user_id)
@@ -64,7 +65,7 @@ class PostgresUserDeletionStateStore:
         async with self._postgres.session() as session:
             repo = AuthPGRepo(session)
             async with session.begin():
-                task = await repo.get_user_deletion_task(user_id)
+                task = await repo.get_user_deletion_task_for_update(user_id)
                 if task is not None and task.status != "completed":
                     await repo.record_user_deletion_failure(
                         task,

@@ -248,9 +248,7 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(result.valid, result.issues)
 
     async def test_defers_expression_type_compatibility_to_doris(self) -> None:
-        result = await make_guard().check(
-            "SELECT amount = 'not-a-number' FROM orders"
-        )
+        result = await make_guard().check("SELECT amount = 'not-a-number' FROM orders")
 
         self.assertTrue(result.valid, result.issues)
 

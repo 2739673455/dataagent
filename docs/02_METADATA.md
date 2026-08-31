@@ -283,6 +283,7 @@ metadata Celery 任务
 → 每日到期取值索引调度
 
 代码
+→ app/metadata/config.py
 → app/metadata/models
 → app/metadata/api/meta
 → app/metadata/services/catalog.py、import_service.py、index.py

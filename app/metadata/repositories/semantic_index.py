@@ -48,8 +48,7 @@ class SemanticIndexDeltaRepo:
             source={"includes": _SOURCE_FIELDS},
             size=1000,
         )
-        body = result.body if hasattr(result, "body") else result
-        hits = cast(dict[str, Any], body).get("hits", {}).get("hits", [])
+        hits = cast(dict[str, Any], result.body).get("hits", {}).get("hits", [])
         documents: list[SemanticIndexDocument] = []
         for hit in hits:
             source = hit.get("_source")
@@ -130,8 +129,7 @@ class SemanticIndexDeltaRepo:
                 if source is not None:
                     operations.append(source)
             result = await self._client.bulk(operations=operations, refresh=False)
-            body = result.body if hasattr(result, "body") else result
-            payload = cast(dict[str, Any], body)
+            payload = cast(dict[str, Any], result.body)
             if payload.get("errors"):
                 failures = [
                     item

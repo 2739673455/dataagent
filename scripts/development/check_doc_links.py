@@ -32,9 +32,7 @@ def _check_document_links(paths: Iterable[Path] | None = None) -> list[str]:
             if not target_path.exists():
                 line_number = content.count("\n", 0, match.start()) + 1
                 relative_document = document_path.relative_to(ROOT_DIR)
-                broken_links.append(
-                    f"{relative_document}:{line_number}: {raw_target}"
-                )
+                broken_links.append(f"{relative_document}:{line_number}: {raw_target}")
     return broken_links
 
 

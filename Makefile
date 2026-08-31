@@ -29,7 +29,7 @@ init-db:
 	uv run scripts/init_db.py
 
 bootstrap-admin:
-	uv run -m scripts.bootstrap_admin -u 123 -e 123@123.com -p 123123
+	uv run -m scripts.bootstrap_admin
 
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true

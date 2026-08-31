@@ -79,10 +79,7 @@ def _render_schema(schema: Any, indent: int = 0) -> str:
     schema_type = schema.get("type")
     if isinstance(schema_type, list):
         rendered = _unique(
-            [
-                _render_schema({**schema, "type": item}, indent)
-                for item in schema_type
-            ]
+            [_render_schema({**schema, "type": item}, indent) for item in schema_type]
         )
         return f"({' | '.join(rendered)})"
     if schema_type == "null":
@@ -98,7 +95,11 @@ def _render_schema(schema: Any, indent: int = 0) -> str:
 
     properties = schema.get("properties")
     additional = schema.get("additionalProperties")
-    if schema_type == "object" or isinstance(properties, Mapping) or additional is not None:
+    if (
+        schema_type == "object"
+        or isinstance(properties, Mapping)
+        or additional is not None
+    ):
         lines = ["{"]
         child_indent = "  " * (indent + 1)
         required = set(schema.get("required", []))
@@ -155,9 +156,9 @@ def _render_parameters(
         parameter_indent = "  " * (indent + 2)
         values = sorted(groups[location], key=lambda item: str(item.get("name", "")))
         if not values:
-            lines.append(f'{location_indent}{_quote(location)}?: never;')
+            lines.append(f"{location_indent}{_quote(location)}?: never;")
             continue
-        lines.append(f'{location_indent}{_quote(location)}: {{')
+        lines.append(f"{location_indent}{_quote(location)}: {{")
         for parameter in values:
             name = str(parameter["name"])
             optional = "" if parameter.get("required") else "?"
@@ -193,9 +194,7 @@ def _render_operation(
     """渲染一个 OpenAPI 操作的参数、请求体和响应"""
     parameters = [*path_parameters, *operation.get("parameters", [])]
     lines = ["{"]
-    lines.append(
-        f'    "parameters": {_render_parameters(document, parameters, 2)};'
-    )
+    lines.append(f'    "parameters": {_render_parameters(document, parameters, 2)};')
 
     request_body = _resolve(document, operation.get("requestBody"))
     if isinstance(request_body, Mapping):
@@ -215,7 +214,7 @@ def _render_operation(
                 if isinstance(response, Mapping)
                 else "never"
             )
-            lines.append(f'      {_quote(str(status_code))}: {{')
+            lines.append(f"      {_quote(str(status_code))}: {{")
             lines.append(f'        "content": {content};')
             lines.append("      };")
     lines.append("    };")

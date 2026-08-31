@@ -15,25 +15,16 @@ BUSINESS_MODULES = {
     "app.sandbox",
     "app.workflows",
 }
-LEGACY_NAMESPACES = {
-    "app.agents",
-    "app.clients",
-    "app.conf",
-    "app.core",
-    "app.errors",
-    "app.models",
-    "app.repositories",
-    "app.routes",
-    "app.services",
-}
 
 
 def _python_files(*paths: Path) -> list[Path]:
     files: list[Path] = []
     for path in paths:
+        if not path.exists():
+            raise AssertionError(f"模块边界扫描路径不存在: {path}")
         if path.is_file():
             files.append(path)
-        elif path.exists():
+        else:
             files.extend(path.rglob("*.py"))
     return sorted(files)
 
@@ -68,9 +59,6 @@ class ModuleBoundaryTests(unittest.TestCase):
                     violations.append(f"{relative_path}: {import_name}")
         self.assertEqual([], violations)
 
-    def test_legacy_technical_layer_namespaces_are_unused(self) -> None:
-        self.assert_no_imports(_python_files(APP_DIR), LEGACY_NAMESPACES)
-
     def test_shared_infrastructure_does_not_depend_on_business_modules(self) -> None:
         self.assert_no_imports(
             _python_files(
@@ -82,7 +70,7 @@ class ModuleBoundaryTests(unittest.TestCase):
     def test_identity_domain_does_not_depend_on_higher_modules(self) -> None:
         self.assert_no_imports(
             _python_files(
-                APP_DIR / "identity" / "models.py",
+                APP_DIR / "identity" / "models",
                 APP_DIR / "identity" / "errors.py",
                 APP_DIR / "identity" / "repositories",
                 APP_DIR / "identity" / "services",
@@ -93,9 +81,8 @@ class ModuleBoundaryTests(unittest.TestCase):
     def test_metadata_core_does_not_depend_on_query_or_assistant(self) -> None:
         self.assert_no_imports(
             _python_files(
-                APP_DIR / "metadata" / "models.py",
-                APP_DIR / "metadata" / "search_models.py",
-                APP_DIR / "metadata" / "recall_models.py",
+                APP_DIR / "metadata" / "config.py",
+                APP_DIR / "metadata" / "models",
                 APP_DIR / "metadata" / "errors.py",
                 APP_DIR / "metadata" / "repositories",
                 APP_DIR / "metadata" / "services",

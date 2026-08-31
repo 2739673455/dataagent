@@ -49,9 +49,7 @@ class SemanticRecallPGRepo:
             query_experiences_retrieved_at=response_payload[
                 "query_experiences_retrieved_at"
             ],
-            query_experience_role_name=response_payload[
-                "query_experience_role_name"
-            ],
+            query_experience_role_name=response_payload["query_experience_role_name"],
             query_experience_authorization_epoch=response_payload[
                 "query_experience_authorization_epoch"
             ],
@@ -84,9 +82,7 @@ class SemanticRecallPGRepo:
                     "query_experiences_retrieved_at": (
                         record.query_experiences_retrieved_at.isoformat()
                     ),
-                    "query_experience_role_name": (
-                        record.query_experience_role_name
-                    ),
+                    "query_experience_role_name": (record.query_experience_role_name),
                     "query_experience_authorization_epoch": (
                         str(record.query_experience_authorization_epoch)
                         if record.query_experience_authorization_epoch is not None
@@ -108,11 +104,7 @@ class SemanticRecallPGRepo:
         """在当前事务内锁定一个会话查询的持续上下文"""
         await self._session.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
-            {
-                "lock_key": (
-                    f"semantic-recall:{user_id}:{conversation_id}:{query}"
-                )
-            },
+            {"lock_key": (f"semantic-recall:{user_id}:{conversation_id}:{query}")},
         )
 
     async def get_latest_by_query(

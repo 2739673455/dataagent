@@ -1,6 +1,7 @@
 """Elasticsearch 组合字段资源键授权过滤测试"""
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 from app.metadata.models.catalog import ColumnInfo, ValueInfo, column_resource_key
@@ -34,11 +35,15 @@ class ElasticsearchResourceKeyFilterTest(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.client = MagicMock()
-        self.client.bulk = AsyncMock(return_value={"errors": False})
-        self.client.delete_by_query = AsyncMock(
-            return_value={"deleted": 0, "failures": []}
+        self.client.bulk = AsyncMock(
+            return_value=SimpleNamespace(body={"errors": False})
         )
-        self.client.search = AsyncMock(return_value={"hits": {"hits": []}})
+        self.client.delete_by_query = AsyncMock(
+            return_value=SimpleNamespace(body={"deleted": 0, "failures": []})
+        )
+        self.client.search = AsyncMock(
+            return_value=SimpleNamespace(body={"hits": {"hits": []}})
+        )
         self.client.indices = MagicMock()
         self.client.indices.exists = AsyncMock(return_value=True)
         self.client.indices.put_mapping = AsyncMock()
@@ -131,10 +136,9 @@ class ElasticsearchResourceKeyFilterTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(operations[1]["doc"]["payload"], {"type": "DECIMAL"})
 
     async def test_reconcile_deletes_only_other_value_generations(self) -> None:
-        self.client.delete_by_query.return_value = {
-            "deleted": 4,
-            "failures": [],
-        }
+        self.client.delete_by_query.return_value = SimpleNamespace(
+            body={"deleted": 4, "failures": []}
+        )
 
         deleted_count = await ValueESRepo(self.client).delete_other_generations(
             "orders",

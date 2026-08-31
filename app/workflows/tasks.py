@@ -86,8 +86,7 @@ async def _process_user_deletion(user_id: int) -> None:
         started_at = datetime.now(UTC)
         await state_store.extend_claim(
             user_id,
-            lease_until=started_at
-            + timedelta(seconds=TASK_VISIBILITY_TIMEOUT_SECONDS),
+            lease_until=started_at + timedelta(seconds=TASK_VISIBILITY_TIMEOUT_SECONDS),
         )
         await service.process(user_id)
     finally:
@@ -123,8 +122,7 @@ async def _dispatch_due_user_deletions() -> int:
         claimed_at = datetime.now(UTC)
         user_ids = await state_store.claim_due_user_ids(
             claimed_at,
-            lease_until=claimed_at
-            + timedelta(seconds=TASK_VISIBILITY_TIMEOUT_SECONDS),
+            lease_until=claimed_at + timedelta(seconds=TASK_VISIBILITY_TIMEOUT_SECONDS),
             limit=cfg.lifecycle.cleanup_batch_size,
         )
         dispatched_count = 0
@@ -141,9 +139,7 @@ async def _dispatch_due_user_deletions() -> int:
                     + timedelta(seconds=cfg.lifecycle.user_deletion_retry_seconds),
                 )
                 failed_count += 1
-                logger.exception(
-                    f"提交用户注销任务失败并释放领取: user_id={user_id}"
-                )
+                logger.exception(f"提交用户注销任务失败并释放领取: user_id={user_id}")
             else:
                 dispatched_count += 1
         logger.info(

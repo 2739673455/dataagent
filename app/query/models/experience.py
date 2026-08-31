@@ -1,5 +1,6 @@
 """查询经验聚合与检索模型"""
 
+from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID, uuid4
 
@@ -179,3 +180,13 @@ class QueryExperienceAsset(MetaBase):
             "column_name",
         ),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class QueryExperienceOverview:
+    """查询经验及其资产、执行聚合统计"""
+
+    experience: QueryExperience
+    asset_count: int
+    execution_count: int
+    last_executed_at: datetime | None

@@ -48,9 +48,9 @@ Explorer 提交 purpose 和 SQL
   → 校验各批次列名和结果形状一致
 → 流式写临时 CSV
   → 转义表格公式注入值
-  → 统计 schema、nullable、time_range 和 sample
+  → 统计 columns、nullable、time_range 和 sample
 → 原子保存为当前 Explorer Session 下的 query_<uuid>.csv
-→ 返回 path、schema、row_count、time_range 和 sample
+→ 返回 path、columns、row_count、time_range 和 sample
 ```
 
 查询受 Doris 查询超时和内存限制。完整结果只保存在沙箱 CSV 中，工具响应只返回路径和有限摘要。
@@ -102,7 +102,7 @@ SQL 成功并提交 CSV
 
 经验已经存在
 → 更新 authorization_epoch 和 sql_template
-→ 最近最多保留 20 个不同 purpose
+→ 最近最多保留 5 个不同 purpose
 → 替换表和字段资产快照
 → 增加 revision
 → metadata_changed 禁用恢复为 active
@@ -242,7 +242,9 @@ Celery
 → app/query/services/guard.py
 → app/query/services/executor.py
 → app/query/services/execution_handler.py
+→ app/query/services/contracts.py
 → app/query/services/experience.py
+→ app/query/services/experience_invalidation.py
 → app/query/services/experience_management.py
 → app/query/api/admin
 → app/query/tasks.py

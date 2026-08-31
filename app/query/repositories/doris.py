@@ -1,7 +1,6 @@
 """受控 Doris 分析查询访问"""
 
 import asyncio
-import inspect
 import re
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from typing import Protocol
@@ -16,6 +15,7 @@ from app.query.models.execution import (
     QueryExecutionOptions,
     QueryExecutionTimeoutError,
 )
+from app.shared.contracts.doris import DORIS_WORKLOAD_GROUP_PATTERN
 
 _PRIVILEGE_PATTERN = re.compile(
     r"\b(?:node|admin|grant|select|load|alter|create|drop|usage|show_view)_priv\b"
@@ -70,7 +70,7 @@ class DorisQueryRepository:
         expected_role: str,
     ) -> None:
         """启动前确认查询账号仅绑定预期角色且可见目标数据库"""
-        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", workload_group) is None:
+        if re.fullmatch(DORIS_WORKLOAD_GROUP_PATTERN, workload_group) is None:
             raise ValueError("Doris Workload Group 标识无效")
         if not database.strip():
             raise ValueError("Doris 查询数据库名不能为空")
@@ -200,9 +200,7 @@ class DorisQueryRepository:
                     if not yielded:
                         yield QueryBatch(column_names=column_names, rows=())
                 finally:
-                    close_result = result.close()
-                    if inspect.isawaitable(close_result):
-                        await close_result
+                    await result.close()
             except asyncio.CancelledError:
                 await connection.invalidate()
                 raise

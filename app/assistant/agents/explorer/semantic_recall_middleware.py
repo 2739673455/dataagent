@@ -62,7 +62,7 @@ def semantic_recall_payload(
             column["values"] = values
         table["columns"][item.name] = column
 
-    payload = {
+    return {
         "query": record.query,
         "metrics": {
             item.name: {
@@ -91,7 +91,6 @@ def semantic_recall_payload(
             for experience in record.query_experiences
         ],
     }
-    return payload
 
 
 def _expanded_content(record: SemanticRecallRecord) -> str:

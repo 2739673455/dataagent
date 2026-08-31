@@ -7,6 +7,7 @@ from typing import Any
 from loguru import logger
 
 from app.metadata import errors as meta_error
+from app.metadata.config import MetaConfig
 from app.metadata.models.catalog import (
     COLUMN_EXAMPLE_LIMIT,
     ColumnInfo,
@@ -23,7 +24,6 @@ from app.metadata.services.contracts import (
     MetadataSemanticIndexScheduler,
 )
 from app.metadata.services.index import MetaIndexService
-from app.shared.config.meta_config import MetaConfig
 
 
 class ImportMode(StrEnum):

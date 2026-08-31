@@ -75,7 +75,7 @@ FastAPI Web 进程
   → 注册 /api/v1 路由
   → 初始化 PostgreSQL、Doris、Elasticsearch、Embedding 和 LangGraph
   → 初始化 Docker 沙箱和 AgentManager
-  → 校验 Doris 查询身份只读权限
+  → 检查 Doris 查询身份只读权限，漂移时记录警告
   → 关闭时按依赖顺序释放资源
 
 Celery Worker

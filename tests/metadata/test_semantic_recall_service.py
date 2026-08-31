@@ -661,9 +661,7 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
         latest = build_response("recall_b", "收入", score=0.2, reason="new")
         latest.metrics[0].description = "最新收入定义"
         latest.metrics[0].alias = ["最新指标别名"]
-        latest.metrics[0].relevant_columns = [
-            {"t_name": "orders", "c_name": "status"}
-        ]
+        latest.metrics[0].relevant_columns = [{"t_name": "orders", "c_name": "status"}]
         latest.metrics[0].meta_version = 2
         latest.metrics[0].index_version = 1
         latest.metrics[0].index_status = "stale"
@@ -779,9 +777,7 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
                     {
                         "query": "本月收入",
                         "tables": {
-                            "orders": {
-                                "columns": {"amount": {"values": ["paid"]}}
-                            }
+                            "orders": {"columns": {"amount": {"values": ["paid"]}}}
                         },
                         "metrics": {"revenue": {}},
                         "query_experiences": [{"id": experience.id}],
@@ -1040,12 +1036,15 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "error")
         self.assertEqual(result["message"], "语义召回请求无效")
-        self.assertEqual(result["details"], [
-            {
-                "loc": ["source_query"],
-                "msg": "目标 query 和来源 query 不能相同",
-            }
-        ])
+        self.assertEqual(
+            result["details"],
+            [
+                {
+                    "loc": ["source_query"],
+                    "msg": "目标 query 和来源 query 不能相同",
+                }
+            ],
+        )
 
     async def test_delete_recalls_accepts_hierarchical_resource_selectors(
         self,
@@ -1059,9 +1058,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             "本月收入",
             score=0.8,
             reason="收入",
-        ).model_copy(
-            update={"metrics": [], "columns": [], "values": [], "tables": []}
-        )
+        ).model_copy(update={"metrics": [], "columns": [], "values": [], "tables": []})
         final_record = SemanticRecallRecord(
             user_id=7,
             conversation_id=conversation_id,
@@ -1106,11 +1103,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
                         "query": " 本月收入 ",
                         "tables": {
                             "customers": {},
-                            "orders": {
-                                "columns": {
-                                    "status": {"values": ["paid"]}
-                                }
-                            },
+                            "orders": {"columns": {"status": {"values": ["paid"]}}},
                         },
                         "metrics": {"revenue": {}},
                         "query_experiences": [{"id": str(experience_id)}],
@@ -1155,9 +1148,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             {
                 "status": "error",
                 "message": "删除请求无效",
-                "details": [
-                    {"loc": ["deletions"], "msg": "至少需要一个删除项"}
-                ],
+                "details": [{"loc": ["deletions"], "msg": "至少需要一个删除项"}],
             },
         )
 
@@ -1261,9 +1252,12 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             set(payload["query_experiences"][0]["assets"][0]),
             {"kind", "database", "table", "column"},
         )
+
         def keys(value: object) -> set[str]:
             if isinstance(value, dict):
-                return set(value) | set().union(*(keys(item) for item in value.values()))
+                return set(value) | set().union(
+                    *(keys(item) for item in value.values())
+                )
             if isinstance(value, list):
                 return set().union(*(keys(item) for item in value))
             return set()
@@ -1446,14 +1440,16 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(
-            [call.kwargs["query"] for call in experience_service.recall.await_args_list],
+            [
+                call.kwargs["query"]
+                for call in experience_service.recall.await_args_list
+            ],
             ["统计本月订单收入", "统计今日订单收入"],
         )
         self.assertTrue(
             all(
                 call.kwargs["role_name"] == "analyst"
-                and call.kwargs["authorization_epoch"]
-                == policy.authorization_epoch
+                and call.kwargs["authorization_epoch"] == policy.authorization_epoch
                 for call in experience_service.recall.await_args_list
             )
         )
@@ -1474,9 +1470,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             {
                 "status": "error",
                 "message": "语义资源召回失败",
-                "details": [
-                    {"type": "RuntimeError", "msg": "resource recall down"}
-                ],
+                "details": [{"type": "RuntimeError", "msg": "resource recall down"}],
             },
         )
         second_stored = await repo.get_latest_by_query(

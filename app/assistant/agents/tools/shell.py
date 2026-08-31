@@ -44,7 +44,9 @@ def create_shell_tools(runtime: ShellJobRuntime) -> tuple[BaseTool, ...]:
     @tool("get_shell_job")
     async def get_shell_job(
         runtime_context: ToolRuntime,
-        job_id: Annotated[str, Field(min_length=1, description="execute 返回的 job_id")],
+        job_id: Annotated[
+            str, Field(min_length=1, description="execute 返回的 job_id")
+        ],
         wait_seconds: Annotated[
             float,
             Field(ge=0, description="最多等待任务结束的秒数，0 表示立即返回"),
@@ -57,13 +59,12 @@ def create_shell_tools(runtime: ShellJobRuntime) -> tuple[BaseTool, ...]:
     @tool("cancel_shell_job")
     async def cancel_shell_job(
         runtime_context: ToolRuntime,
-        job_id: Annotated[str, Field(min_length=1, description="execute 返回的 job_id")],
+        job_id: Annotated[
+            str, Field(min_length=1, description="execute 返回的 job_id")
+        ],
     ) -> dict[str, Any]:
         """取消一个 Shell Job，并终止命令所属的整个进程组。"""
         del runtime_context
         return _dump(await runtime.cancel(job_id))
 
     return execute, list_shell_jobs, get_shell_job, cancel_shell_job
-
-
-__all__ = ["create_shell_tools"]

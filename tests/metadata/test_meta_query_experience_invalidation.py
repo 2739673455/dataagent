@@ -4,6 +4,7 @@ import unittest
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.metadata.config import MetaConfig, TableConfig
 from app.metadata.models.catalog import ColumnInfo, MetricInfo, TableInfo
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
@@ -14,7 +15,6 @@ from app.metadata.services.contracts import (
 )
 from app.metadata.services.import_service import ImportMode, MetaImportService
 from app.metadata.services.index import MetaIndexService
-from app.shared.config.meta_config import MetaConfig, TableConfig
 from app.shared.tasks.submission import TaskSubmission
 from tests.identity.test_auth_service import AsyncSessionStub
 

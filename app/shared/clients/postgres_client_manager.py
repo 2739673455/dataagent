@@ -35,7 +35,7 @@ class PostgresClientManager:
         return URL.create(
             drivername="postgresql+psycopg",
             username=self._db_config.user,
-            password=self._db_config.password,
+            password=self._db_config.password.get_secret_value(),
             host=self._db_config.host,
             port=self._db_config.port,
             database=self._db_config.database,

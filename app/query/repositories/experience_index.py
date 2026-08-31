@@ -163,8 +163,7 @@ class QueryExperienceESRepo:
     @staticmethod
     def _hits(result: Any) -> list[SearchHit[UUID]]:
         """解析 Elasticsearch 查询经验命中"""
-        body = result.body if hasattr(result, "body") else result
-        payload = cast(dict[str, Any], body)
+        payload = cast(dict[str, Any], result.body)
         hits: list[SearchHit[UUID]] = []
         for hit in payload.get("hits", {}).get("hits", []):
             try:

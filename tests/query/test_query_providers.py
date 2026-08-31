@@ -4,13 +4,20 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.identity.services.authorization import AssetAccessPolicy
 from app.query.models.execution import AnalysisQueryResult
 from app.query.models.validation import QueryValidationResult
-from app.query.providers import build_query_execution_handler
+from app.query.providers import (
+    build_query_execution_handler,
+    build_query_experience_invalidation_service,
+)
 from app.query.services.executor import QueryPlanEstimate, SuccessfulQueryExecution
+from app.query.services.experience_invalidation import (
+    QueryExperienceInvalidationService,
+)
 from app.query.services.principal import ResolvedQueryPrincipal
 from app.shared.contracts.analysis import AgentSessionKey
 
@@ -18,6 +25,41 @@ provider_module = importlib.import_module("app.query.providers")
 
 
 class QueryProvidersTest(unittest.IsolatedAsyncioTestCase):
+    def test_invalidation_factory_does_not_require_search_clients(self) -> None:
+        session = MagicMock(spec=AsyncSession)
+        scheduler = MagicMock()
+
+        service = build_query_experience_invalidation_service(
+            session,
+            index_scheduler=scheduler,
+        )
+
+        self.assertIsInstance(service, QueryExperienceInvalidationService)
+
+    async def test_invalid_workload_group_is_rejected_before_client_creation(
+        self,
+    ) -> None:
+        runtime = provider_module.DefaultQueryExecutionRuntime(MagicMock())
+        principal = ResolvedQueryPrincipal(
+            role_name="dataagent_standard",
+            authorization_epoch=uuid4(),
+            query_user="standard_readonly",
+            password="query_password",
+            workload_group="readonly'; DROP ROLE admin; --",
+        )
+
+        with (
+            patch.object(
+                provider_module.query_doris_client_registry,
+                "get_or_create",
+                new=AsyncMock(),
+            ) as get_or_create,
+            self.assertRaises(ValidationError),
+        ):
+            await runtime.create_executor(principal)
+
+        get_or_create.assert_not_awaited()
+
     async def test_server_selected_profile_builds_query_limits(self) -> None:
         session = MagicMock(spec=AsyncSession)
         active_sessions = {"auth": 0, "meta": 0}
@@ -54,7 +96,7 @@ class QueryProvidersTest(unittest.IsolatedAsyncioTestCase):
         )
         query_result = AnalysisQueryResult(
             path="/sessions/a/explorer/s/query.csv",
-            schema=[],
+            columns=[],
             row_count=0,
             time_range={},
             sample=[],
@@ -71,6 +113,7 @@ class QueryProvidersTest(unittest.IsolatedAsyncioTestCase):
             ),
             result=query_result,
         )
+
         async def execute_query(*_: object) -> SuccessfulQueryExecution:
             self.assertEqual(active_sessions, {"auth": 0, "meta": 0})
             return details

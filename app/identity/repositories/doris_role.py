@@ -10,9 +10,10 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.identity.models.doris import DorisRowPolicy
+from app.shared.contracts.doris import DORIS_IDENTIFIER_PATTERN
 
-_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_$.-]{0,127}$")
 _USER_IDENTITY_PATTERN = re.compile(r"'(?:\\.|''|[^'])*'@'(?:\\.|''|[^'])*'")
+_GENERATED_PASSWORD_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class DorisWorkloadGroupNotFoundError(RuntimeError):
@@ -60,7 +61,7 @@ class DorisRoleRepository:
     @staticmethod
     def quote_identifier(identifier: str) -> str:
         """校验并引用 Doris 标识符"""
-        if _IDENTIFIER_PATTERN.fullmatch(identifier) is None:
+        if re.fullmatch(DORIS_IDENTIFIER_PATTERN, identifier) is None:
             raise ValueError("Doris 标识符无效")
         return f"`{identifier}`"
 
@@ -78,7 +79,7 @@ class DorisRoleRepository:
     @staticmethod
     def quote_user(user_name: str) -> str:
         """校验并引用 Doris 用户名"""
-        if _IDENTIFIER_PATTERN.fullmatch(user_name) is None:
+        if re.fullmatch(DORIS_IDENTIFIER_PATTERN, user_name) is None:
             raise ValueError("Doris 用户名格式无效")
         return f"'{user_name}'"
 
@@ -146,8 +147,8 @@ class DorisRoleRepository:
         """创建 Doris 角色、查询用户及 Workload Group 授权"""
         role = self.quote_role(role_name)
         role_literal = self.quote_role_literal(role_name)
-        self.quote_user(query_user)
-        if not password or not password.isascii() or "'" in password:
+        user_literal = self.quote_user(query_user)
+        if _GENERATED_PASSWORD_PATTERN.fullmatch(password) is None:
             raise ValueError("生成的 Doris 密码格式无效")
         role_created = False
         try:
@@ -159,6 +160,7 @@ class DorisRoleRepository:
             )
             await self._create_query_user(
                 query_user=query_user,
+                user_literal=user_literal,
                 password=password,
                 role_literal=role_literal,
             )
@@ -336,14 +338,14 @@ class DorisRoleRepository:
         self,
         *,
         query_user: str,
+        user_literal: str,
         password: str,
         role_literal: str,
     ) -> None:
         """创建查询用户并识别用户名冲突"""
-        user = self.quote_user(query_user)
         try:
             await self._execute(
-                f"CREATE USER {user} IDENTIFIED BY '{password}' "
+                f"CREATE USER {user_literal} IDENTIFIED BY '{password}' "
                 f"DEFAULT ROLE {role_literal}"
             )
         except OperationalError as exc:

@@ -40,7 +40,7 @@ class LangGraphPostgresManager:
             host=self._db_config.host,
             port=self._db_config.port,
             user=self._db_config.user,
-            password=self._db_config.password,
+            password=self._db_config.password.get_secret_value(),
             dbname=self._db_config.database,
         )
 
@@ -113,6 +113,8 @@ class LangGraphPostgresManager:
         await local_lock.acquire()
         try:
             async with advisory_pool.connection() as connection:
+                # PostgreSQL advisory lock 绑定数据库连接；必须在同一专用连接上持锁
+                # 到调用方退出，并在归还连接池前显式解锁。
                 cursor = await connection.execute(
                     "SELECT pg_try_advisory_lock(%s) AS acquired",
                     (lock_key,),

@@ -20,6 +20,12 @@ class SourceDorisRepo:
             raise ValueError(f"数据库标识符无效: {identifier}")
         return self._connection.dialect.identifier_preparer.quote_identifier(identifier)
 
+    @staticmethod
+    def _validate_positive_limit(value: int, name: str) -> None:
+        """校验只能作为 SQL 整数字面量写入的分页参数"""
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{name} 必须为正整数")
+
     async def list_tables(self) -> list[str]:
         """查询当前 Doris 数据库中全部物理表名"""
         result = await self._connection.execute(
@@ -96,6 +102,7 @@ class SourceDorisRepo:
         column_identifier = self._quote_identifier(column_name)
         sql = f"select distinct {column_identifier} from {table_identifier}"
         if limit is not None:
+            self._validate_positive_limit(limit, "limit")
             sql = f"{sql} limit {limit}"
         result = await self._connection.execute(text(sql))
         return list(result.scalars().fetchall())
@@ -109,6 +116,7 @@ class SourceDorisRepo:
         """批量获取指定表中多个字段的样例取值"""
         if not column_names:
             return {}
+        self._validate_positive_limit(limit, "limit")
         table_identifier = self._quote_identifier(table_name)
         quoted_cols = [self._quote_identifier(c) for c in column_names]
         sql = f"select {', '.join(quoted_cols)} from {table_identifier} limit {limit}"
@@ -129,6 +137,7 @@ class SourceDorisRepo:
         batch_size: int = 1000,
     ) -> AsyncIterator[list[Any]]:
         """流式分批读取字段的去重取值"""
+        self._validate_positive_limit(batch_size, "batch_size")
         table_identifier = self._quote_identifier(table_name)
         column_identifier = self._quote_identifier(column_name)
         sql = f"select distinct {column_identifier} from {table_identifier}"
@@ -162,6 +171,7 @@ class SourceDorisRepo:
         batch_size: int = 1000,
     ) -> AsyncIterator[list[Any]]:
         """按闭区间水位窗口分批读取字段去重取值"""
+        self._validate_positive_limit(batch_size, "batch_size")
         table_identifier = self._quote_identifier(table_name)
         column_identifier = self._quote_identifier(column_name)
         cursor_identifier = self._quote_identifier(cursor_column)

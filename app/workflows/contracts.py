@@ -29,6 +29,7 @@ class UserDeletionStateStore(Protocol):
         """记录注销失败并安排重试"""
         ...
 
+
 class UserSandboxCleaner(Protocol):
     """用户注销所需的沙箱清理能力"""
 

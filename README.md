@@ -32,10 +32,10 @@
 ### 4. 会话级语义召回管理（Semantic Recall）
 - **召回快照持久化**：每次语义检索请求与结果自动保存为会话级召回快照（`SemanticRecallRecord`），与查询执行和查询经验统一存储在元数据 PostgreSQL。
 - **召回记录生命周期管理**：
-  - **列表查看（`list_semantic_recalls`）**：按会话分页查看历史召回摘要及各类型候选数量。
-  - **详情获取（`get_semantic_recall`）**：获取单条召回快照的完整参数、命中结果与关联上下文。
-  - **多轮合并（`merge_semantic_recalls`）**：支持将多轮检索产物去重合并并保存为新快照，便于多步骤分析沉淀上下文。
-  - **记录清理（`delete_semantic_recalls`）**：支持批量删除无用的召回记录。
+  - **列表查看（`list_recalls`）**：按会话分页查看历史召回摘要及各类型候选数量。
+  - **详情获取（`get_recall`）**：获取单条召回快照的完整参数、命中结果与关联上下文。
+  - **多轮合并（`merge_recalls`）**：支持将多轮检索产物去重合并并保存为新快照，便于多步骤分析沉淀上下文。
+  - **记录清理（`delete_recalls`）**：支持批量删除无用的召回记录。
 - **Agent 工具集成**：将语义检索与召回管理封装为标准 LangChain 工具，供大模型在规划阶段调用。
 
 ### 5. 智能体运行时与会话对话系统
@@ -66,9 +66,9 @@
 - **执行前完整校验**：工具首先使用 `sqlglot` 按 Doris / MySQL 方言检查语法、单条只读约束、资产权限、表、字段、别名、CTE、类型和 JOIN；失败时不连接 Doris，直接返回 `sql_validation_failed`、问题列表和修正提示。
 - **稳定查询身份**：PostgreSQL 动态保存 Doris 角色、共享查询用户、加密密码和 Workload Group；服务端按 `users.doris_role_name` 解密凭据并按需创建独立连接池，客户端不能指定查询身份。
 - **数据库侧权限校验**：应用启动时逐一通过 `SHOW GRANTS` 检查查询账号只绑定预期角色、仅具备只读权限、可见目标数据库并可使用指定 Workload Group。
-- **查询前资源守卫**：在读取数据前执行 `EXPLAIN`，校验扫描行数和扫描字节估算，估算缺失或超限时拒绝执行；查询会话同时设置 workload group、超时、内存和单元格限制。
-- **有界流式输出**：服务端游标分批读取，强制最大行数与 UTF-8 输出字节数，并防护 CSV 公式注入；超时或取消时作废当前连接。
-- **会话产物**：CSV 写入 `/sessions/{analysis_id}/{agent_type}/{session_id}/query_{uuid}.csv`，Agent 仅接收路径、Schema、行数、时间范围和少量样例。
+- **查询前资源守卫**：在读取数据前执行 `EXPLAIN`，要求 ScanNode 提供有效的扫描行数和扫描字节估算并记录到执行审计；查询会话同时设置 workload group、超时和内存限制。
+- **受控流式输出**：服务端游标分批读取并防护 CSV 公式注入；查询受 Doris 超时和内存限制，超时或取消时作废当前连接，产物保存仍受沙箱文件和工作区容量限制。
+- **会话产物**：CSV 写入 `/sessions/{analysis_id}/{agent_type}/{session_id}/query_{uuid}.csv`，Agent 仅接收路径、字段信息、行数、时间范围和少量样例。
 
 ### 10. Dynamic Subagents 与多 Agent 体系
 - **Planner 协调智能体**：Planner 通过结构化 `delegation` 请求拆分任务、并行调度专业 Agent 并汇总可追溯结果；自动续写次数与并行 Session 数受服务端硬限制，连续重复的修补请求会被服务端终止。
@@ -90,62 +90,40 @@
 - `JWT_SECRET`：至少 32 字符的高强度随机值，生产环境由密钥管理系统注入。
 - `DORIS_ADMIN_PASSWORD`：平台内部 Doris 管理账号密码，用于元数据读取和管理员权限操作，不进入 Agent 查询路径。
 - `DORIS_CREDENTIAL_ENCRYPTION_KEY`：加密 PostgreSQL 中 Doris 查询用户密码的 Fernet 密钥。丢失该密钥后无法恢复已有查询身份凭据。
-- `ADMIN_USERNAME`、`ADMIN_EMAIL`、`ADMIN_PASSWORD`：管理员引导凭据（未通过 CLI 传入时读取）。
+- `ADMIN_USERNAME`、`ADMIN_EMAIL`、`ADMIN_PASSWORD`：管理员引导凭据。用户名和邮箱可由 CLI 覆盖；密码只从环境读取，避免进入进程参数和 Shell 历史。
 
 ### 2. Doris 角色、稳定查询身份与 Workload Group
 
 - `doris` 配置使用平台内部管理账号。该账号读取元数据并执行 Doris 用户、角色、SELECT 权限和 Row Policy 管理；部署时限制来源地址并妥善托管 `DORIS_ADMIN_PASSWORD`。
 - 管理员通过 `POST /api/v1/admin/doris-roles` 创建角色。服务端生成随机查询密码，在 Doris 创建角色与唯一查询用户，把 Workload Group 的 `USAGE_PRIV` 授予角色，并只将密文保存到 `doris_query_identities`。API 不接收或返回查询密码。
 - 新角色创建后保持普通状态。管理员可通过 `PUT /api/v1/admin/doris-roles/{role}/default` 设置新用户默认角色，通过 `DELETE /api/v1/admin/doris-roles/default` 恢复为“未分配”。默认角色可以删除，仍被用户引用的角色不能删除。
-- 查询用户不授予导入、建表、修改、删除、授权或节点管理权限。应用启动时逐个检查已登记身份只绑定预期角色、有效权限只读、目标库可见和 Workload Group 可用，任一项不符合时拒绝启动。
+- 查询用户不授予导入、建表、修改、删除、授权或节点管理权限。应用启动时逐个检查已登记身份只绑定预期角色、有效权限只读、目标库可见和 Workload Group 可用；检查失败会记录警告并继续启动，实际查询仍在身份解析和 Doris 权限边界失败。
 - 管理员 API 可直接操作 Doris：`GET|POST /api/v1/admin/doris-roles` 与 `DELETE /api/v1/admin/doris-roles/{role}` 管理查询身份，`GET|POST|DELETE /api/v1/admin/doris-roles/{role}/select-grants` 管理库、表、列 SELECT 权限，`GET|POST|DELETE /api/v1/admin/doris-roles/{role}/row-policies` 管理行策略。
 - 平台管理员登录后可从聊天侧栏进入 `/admin`，在同一页面调整用户唯一 Doris 角色、平台管理员身份、SELECT 权限和 Row Policy。
 - SELECT 授权必须通过管理员 API 修改，使 Doris 权限与应用侧语义检索投影同步。外部 DBA 修改后需要通过同一 API重放对应授权目标。
 
 - 平台只管理自身创建的 Doris 角色和查询身份，已有 Doris 原生角色保持在平台管理边界之外。
 
-旧 PostgreSQL 表不会被 SQLAlchemy `create_all` 自动改列或补外键。完成全部角色接入并确认现有用户、授权投影引用的角色都已存在后，执行一次结构收口：
+### 3. 管理员引导
 
-```sql
-ALTER TABLE users ALTER COLUMN doris_role_name DROP NOT NULL;
-ALTER TABLE users
-  ADD CONSTRAINT fk_users_doris_query_identity
-  FOREIGN KEY (doris_role_name)
-  REFERENCES doris_query_identities(role_name)
-  ON DELETE RESTRICT;
-ALTER TABLE doris_role_asset_grants
-  ADD CONSTRAINT fk_asset_grants_doris_query_identity
-  FOREIGN KEY (role_name)
-  REFERENCES doris_query_identities(role_name)
-  ON DELETE CASCADE;
-```
-
-### 3. Elasticsearch 索引升级
-
-从未包含 `resource_key` 的旧版本升级时，必须通过元数据同步接口对全部字段语义索引和启用枚举索引的字段执行一次全量重同步。重同步会同时删除新资源键文档和旧的 `t_name` / `c_name` 文档，再写入可用于资产白名单过滤的新文档；全量同步完成前，受限用户不会命中缺少资源键的旧文档。
-
-### 4. 管理员引导
-
-完成 `conf/.env` 和 PostgreSQL 配置后，显式执行幂等的管理员引导工具（优先读取命令行参数，未传入时回退读取环境变量）：
+完成 `conf/.env` 和 PostgreSQL 配置后，显式执行幂等的管理员引导工具。工具会读取 `conf/.env` 和进程环境；用户名、邮箱可由命令行覆盖，密码只读取 `ADMIN_PASSWORD`：
 
 ```bash
-# 通过命令行参数传入
-uv run python -m scripts.bootstrap_admin -u admin -e admin@example.com -p 'replace-with-a-strong-password'
-
-# 或通过环境变量传入
-ADMIN_USERNAME=admin \
-ADMIN_EMAIL=admin@example.com \
-ADMIN_PASSWORD='replace-with-a-strong-password' \
+# 使用 conf/.env 中的全部引导凭据
 uv run python -m scripts.bootstrap_admin
+
+# 通过环境变量提供密码，并覆盖用户名和邮箱
+ADMIN_PASSWORD='replace-with-a-strong-password' \
+uv run python -m scripts.bootstrap_admin -u admin -e admin@example.com
 ```
 
 首次引导管理员可以暂时没有数据角色，平台管理员身份也不会映射成 Doris 管理角色。管理员登录 `/admin` 创建第一个 Doris 角色后，将其分配给需要查询数据的用户；第一个角色自动成为缺省角色。平台管理员通过 `POST /api/v1/admin/users` 创建用户，通过 `PUT /api/v1/admin/users/{user_id}/doris-role` 替换用户唯一 Doris 角色，通过 `PUT /api/v1/admin/users/{user_id}/administrator` 管理平台管理员身份。元数据 REST 接口全部要求平台管理员身份。
 
-### 5. 授权撤销与历史留存
+### 4. 授权撤销与历史留存
 
 Doris 角色或 SELECT 权限变更会立即作用于新的目录读取、语义检索、召回读取和 SQL 校验，Row Policy 由 Doris 自动追加到实际查询。已写入用户会话的历史消息与分析产物按会话留存策略保存，仍由原会话所有者读取；需要同时清除历史副本时，删除对应会话以级联清理 Checkpoint 和 Docker 工作区。
 
-### 6. 启动、前端代理与 Docker 部署边界
+### 5. 启动、前端代理与 Docker 部署边界
 
 ```bash
 docker compose -f docker/compose.yml up -d

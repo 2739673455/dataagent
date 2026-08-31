@@ -7,7 +7,7 @@ import json
 import threading
 import time
 from collections.abc import Generator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
@@ -692,7 +692,7 @@ class DockerSandboxManager:
         activity_at = self._last_activity_timestamp(user_id)
         with self._activity_lock:
             persisted_at = self._last_persisted_activity.get(user_id, 0.0)
-        if activity_at <= 0 or not force and activity_at <= persisted_at:
+        if activity_at <= 0 or (not force and activity_at <= persisted_at):
             return
         content = json.dumps(
             {
@@ -1089,16 +1089,12 @@ class DockerSandboxManager:
             ):
                 self._ownership.mark_user_deleted(user_id)
                 client = self._get_client()
-                try:
+                with suppress(NotFound):
                     client.containers.get(self._container_name(user_id)).remove(
                         force=True
                     )
-                except NotFound:
-                    pass
-                try:
+                with suppress(NotFound):
                     client.volumes.get(self._volume_name(user_id)).remove(force=True)
-                except NotFound:
-                    pass
 
         async with resources.lock:
             resources.guard.mark_deleted()

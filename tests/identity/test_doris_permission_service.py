@@ -411,6 +411,20 @@ class DorisRoleRepositoryWorkloadGroupTest(unittest.IsolatedAsyncioTestCase):
 class DorisRoleRepositoryIdentityTest(unittest.IsolatedAsyncioTestCase):
     """验证 Doris 查询身份创建 SQL 与补偿边界"""
 
+    async def test_rejects_password_outside_generated_urlsafe_alphabet(self) -> None:
+        repo = DorisRoleRepository(MagicMock())
+        repo._execute = AsyncMock()  # pyright: ignore[reportPrivateUsage]
+
+        with self.assertRaisesRegex(ValueError, "密码格式无效"):
+            await repo.create_role_identity(
+                role_name="sales",
+                query_user="sales_query",
+                password="unsafe\\password",
+                workload_group="normal",
+            )
+
+        repo._execute.assert_not_awaited()  # pyright: ignore[reportPrivateUsage]
+
     async def test_create_role_identity_uses_role_literal_for_default_role(
         self,
     ) -> None:

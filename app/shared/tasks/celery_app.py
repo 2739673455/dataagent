@@ -10,8 +10,8 @@ TASK_VISIBILITY_TIMEOUT_SECONDS = cfg.task_queue.task_time_limit_seconds + 300
 
 celery_app = Celery(
     "dataagent",
-    broker=cfg.task_queue.broker_url,
-    backend=cfg.task_queue.result_backend,
+    broker=cfg.task_queue.broker_url.get_secret_value(),
+    backend=cfg.task_queue.result_backend.get_secret_value(),
     include=[
         "app.assistant.tasks",
         "app.metadata.tasks",

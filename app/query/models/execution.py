@@ -19,6 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.shared.contracts.doris import DORIS_WORKLOAD_GROUP_PATTERN
 from app.shared.database.base import MetaBase
 
 type QueryExecutionStatus = Literal["rejected", "failed", "succeeded"]
@@ -36,7 +37,7 @@ class QueryExecutionLimits(BaseModel):
     workload_group: str = Field(
         min_length=1,
         max_length=128,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+        pattern=DORIS_WORKLOAD_GROUP_PATTERN,
     )
     timeout_seconds: int = Field(gt=0)
     memory_limit_bytes: int = Field(gt=0)
@@ -81,22 +82,13 @@ class QueryTimeRange(BaseModel):
 class AnalysisQueryResult(BaseModel):
     """写入会话沙箱后的查询结果摘要"""
 
-    model_config = ConfigDict(
-        frozen=True,
-        extra="forbid",
-        serialize_by_alias=True,
-    )
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     path: str
-    result_schema: list[QueryResultColumn] = Field(alias="schema")
+    columns: list[QueryResultColumn]
     row_count: int
     time_range: dict[str, QueryTimeRange]
     sample: list[dict[str, Any]]
-
-    @property
-    def schema(self) -> list[QueryResultColumn]:  # pyright: ignore[reportIncompatibleMethodOverride]
-        """返回查询结果字段信息"""
-        return self.result_schema
 
 
 class QueryExecution(MetaBase):

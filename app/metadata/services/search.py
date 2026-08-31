@@ -436,11 +436,8 @@ class SemanticResourceRecallService:
 
     async def _retrieve(self, context: _RecallContext) -> None:
         """按请求类型执行确定顺序的多路召回"""
-        if (
-            context.selects_any("column")
-            and context.catalog.columns
-            or context.selects_any("metric")
-            and context.catalog.metrics
+        if (context.selects_any("column") and context.catalog.columns) or (
+            context.selects_any("metric") and context.catalog.metrics
         ):
             await self._collect_fulltext_matches(context)
             await self._collect_vector_matches(context)
@@ -651,12 +648,12 @@ class SemanticResourceRecallService:
         results = await asyncio.gather(
             *(
                 self._run_index_query(
-                        self._value_repo.search_hits(
-                            term,
-                            allowed_columns=allowed_columns,
-                            limit=context.search_limit,
-                        )
+                    self._value_repo.search_hits(
+                        term,
+                        allowed_columns=allowed_columns,
+                        limit=context.search_limit,
                     )
+                )
                 for term in context.request.terms
             ),
             return_exceptions=True,

@@ -81,11 +81,8 @@ class FairCapacityLimiter:
                 with self._condition:
                     if self._closed:
                         raise SandboxCapacityClosedError("Docker 沙箱容量限制器已关闭")
-                    if (
-                        waiter is not None
-                        and waiter.cancelled
-                        or cancel_event is not None
-                        and cancel_event.is_set()
+                    if (waiter is not None and waiter.cancelled) or (
+                        cancel_event is not None and cancel_event.is_set()
                     ):
                         raise SandboxCapacityCancelledError(
                             "Docker 沙箱容量排队等待已取消"

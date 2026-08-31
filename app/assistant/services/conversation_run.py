@@ -76,7 +76,11 @@ class ConversationRunService:
         run.subscribers.add(queue)
         async with self._lock:
             existing = self._runs.get(key)
-            if existing is not None and existing.task is not None and not existing.task.done():
+            if (
+                existing is not None
+                and existing.task is not None
+                and not existing.task.done()
+            ):
                 raise ConversationRunAlreadyActiveError
             self._runs[key] = run
             run.task = asyncio.create_task(
@@ -113,7 +117,9 @@ class ConversationRunService:
             return {
                 conversation_id
                 for (run_user_id, conversation_id), run in self._runs.items()
-                if run_user_id == user_id and run.task is not None and not run.task.done()
+                if run_user_id == user_id
+                and run.task is not None
+                and not run.task.done()
             }
 
     async def stop(self, user_id: int, conversation_id: UUID) -> bool:
@@ -177,6 +183,8 @@ class ConversationRunService:
     async def _publish(self, run: _ConversationRun, event: RunEvent) -> None:
         """按产生顺序缓存事件并广播给所有当前订阅者"""
         async with self._lock:
+            # 缓存快照与订阅登记共用一把锁：订阅者要么从 replay 得到该事件，
+            # 要么已进入 subscribers 接收实时事件，不能漏收或重复接收。
             run.events.append(event)
             subscribers = tuple(run.subscribers)
         for queue in subscribers:

@@ -91,8 +91,7 @@ class ValueESRepo:
                     }
                 )
             result = await self._client.bulk(operations=operations, refresh=False)
-            body = result.body if hasattr(result, "body") else result
-            if body.get("errors"):
+            if result.body.get("errors"):
                 raise RuntimeError("Elasticsearch 批量写入存在失败项")
 
     async def refresh(self) -> None:
@@ -158,6 +157,7 @@ class ValueESRepo:
             min_score=score_threshold,
             size=limit,
         )
+        payload = result.body
         return [
             SearchHit(
                 item=ValueInfo(
@@ -167,7 +167,7 @@ class ValueESRepo:
                 ),
                 score=float(hit.get("_score") or 0.0),
             )
-            for hit in result["hits"]["hits"]
+            for hit in payload["hits"]["hits"]
         ]
 
     @staticmethod
@@ -192,7 +192,7 @@ class ValueESRepo:
     @staticmethod
     def _deleted_count(result: Any) -> int:
         """校验按查询删除结果并返回删除数量"""
-        body = result.body if hasattr(result, "body") else result
+        body = result.body
         if body.get("failures"):
             raise RuntimeError("Elasticsearch 批量删除取值索引存在失败项")
         return int(body.get("deleted") or 0)

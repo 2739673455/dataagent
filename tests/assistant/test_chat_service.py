@@ -119,6 +119,19 @@ class UserMessageRequestTest(unittest.TestCase):
         self.assertEqual(message.attachments[0].f_path, "uploads/report.csv")
 
 
+class ChatMutationRequestTest(unittest.TestCase):
+    def test_delete_conversations_requires_at_least_one_id(self) -> None:
+        with self.assertRaises(ValidationError):
+            chat_schema.DeleteConversationRequest(conversation_ids=[])
+
+    def test_delete_attachment_requires_a_path(self) -> None:
+        with self.assertRaises(ValidationError):
+            chat_schema.DeleteAttachmentRequest(
+                conversation_id=_CONVERSATION_ID,
+                f_path="",
+            )
+
+
 class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
     async def test_user_message_creation_time_is_persisted(self) -> None:
         message = chat_service._schema_to_human_message(

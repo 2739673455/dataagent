@@ -190,6 +190,29 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
                 {"role": ["sales", "finance"]}
             )
 
+    def test_create_role_rejects_workload_group_unsupported_by_query_runtime(
+        self,
+    ) -> None:
+        with self.assertRaises(ValidationError):
+            schemas.CreateDorisRoleRequest(
+                role="sales",
+                description="Sales",
+                query_user="sales_query",
+                workload_group="group$name",
+            )
+
+    def test_update_user_requires_a_non_null_update(self) -> None:
+        invalid_payloads = ({}, {"username": None}, {"is_admin": None})
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload), self.assertRaises(ValidationError):
+                schemas.UpdateUserRequest.model_validate(payload)
+
+    def test_update_user_allows_null_to_clear_doris_role(self) -> None:
+        request = schemas.UpdateUserRequest(doris_role=None)
+
+        self.assertEqual(request.model_fields_set, {"doris_role"})
+        self.assertIsNone(request.doris_role)
+
     async def test_create_user_endpoint(self) -> None:
         service = MagicMock()
         user = build_user(user_id=12, doris_role="sales")
@@ -274,6 +297,23 @@ class AdminRoleRouteTest(unittest.IsolatedAsyncioTestCase):
             username="new_name",
             email="new_email@example.com",
             password="new_password_123",
+        )
+
+    async def test_update_user_endpoint_preserves_explicit_role_clear(self) -> None:
+        service = MagicMock()
+        service.update_user = AsyncMock(return_value=build_user(user_id=12))
+
+        await update_user(
+            12,
+            schemas.UpdateUserRequest(doris_role=None),
+            MagicMock(),
+            service,
+        )
+
+        service.update_user.assert_awaited_once_with(
+            12,
+            doris_role=None,
+            update_doris_role=True,
         )
 
 

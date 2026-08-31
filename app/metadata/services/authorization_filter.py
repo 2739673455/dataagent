@@ -241,19 +241,22 @@ class MetadataAuthorizationFilter:
         for item in response.columns:
             if (item.t_name, item.name) not in allowed_column_keys:
                 denied_warnings.add(
-                    "字段语义索引状态为 "
-                    f"{item.index_status}: {item.t_name}.{item.name}"
+                    f"字段语义索引状态为 {item.index_status}: {item.t_name}.{item.name}"
                 )
         for item in response.metrics:
             if item.name not in allowed_metric_names:
-                denied_warnings.add(f"指标语义索引状态为 {item.index_status}: {item.name}")
+                denied_warnings.add(
+                    f"指标语义索引状态为 {item.index_status}: {item.name}"
+                )
         for item in response.values:
             if (item.t_name, item.c_name) not in allowed_value_column_keys:
                 denied_warnings.add(
                     "字段取值索引状态为 "
                     f"{item.sync_status or '未知'}: {item.t_name}.{item.c_name}"
                 )
-        return [warning for warning in response.warnings if warning not in denied_warnings]
+        return [
+            warning for warning in response.warnings if warning not in denied_warnings
+        ]
 
     def _semantic_metric_is_allowed(
         self,

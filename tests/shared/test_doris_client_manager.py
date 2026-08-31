@@ -1,6 +1,8 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from pydantic import SecretStr
+
 from app.shared.clients.doris_client_manager import DorisQueryClientRegistry
 from app.shared.config.app_config import DBConfig
 
@@ -11,7 +13,7 @@ class DorisQueryClientRegistryTest(unittest.IsolatedAsyncioTestCase):
             host="doris.internal",
             port=9030,
             user="dataagent_admin",
-            password="admin_password",
+            password=SecretStr("admin_password"),
             database="ecommerce",
         )
 
@@ -40,7 +42,10 @@ class DorisQueryClientRegistryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(connection_config.host, self.endpoint.host)
         self.assertEqual(connection_config.database, self.endpoint.database)
         self.assertEqual(connection_config.user, "sales_query")
-        self.assertEqual(connection_config.password, "query_password")
+        self.assertEqual(
+            connection_config.password.get_secret_value(),
+            "query_password",
+        )
         self.assertIs(selected, manager)
         self.assertIs(repeated, manager)
         manager.init.assert_called_once_with()

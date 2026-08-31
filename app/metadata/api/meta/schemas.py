@@ -6,13 +6,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.metadata.models.search import RequestedValueIndexSyncMode
-from app.shared.config.meta_config import (
+from app.metadata.config import (
     MetadataAlias,
     MetadataDescription,
     MetadataName,
     TableRole,
 )
+from app.metadata.models.search import RequestedValueIndexSyncMode
 
 
 class MetaRequestModel(BaseModel):

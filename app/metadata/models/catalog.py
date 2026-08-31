@@ -57,7 +57,7 @@ def serialize_column_examples(examples: list[Any]) -> list[Any]:
             serialized.append(float(value))
         else:
             serialized.append(value)
-    return sorted(serialized, key=lambda value: str(value))
+    return sorted(serialized, key=str)
 
 
 def _version_column(default: int, comment: str) -> Mapped[int]:
@@ -105,6 +105,8 @@ class ColumnInfo(MetaBase):
     """字段信息"""
 
     __tablename__ = "column_info"
+    # Repository 在查询后批量填充索引状态；保持非 ORM relationship，避免序列化
+    # 阶段触发 AsyncSession 无法安全执行的隐式懒加载。
     __allow_unmapped__ = True
 
     __table_args__ = (
@@ -228,6 +230,7 @@ class MetricInfo(MetaBase):
     """指标信息"""
 
     __tablename__ = "metric_info"
+    # 相关字段由 Repository 批量投影，原因同 ColumnInfo.value_index_state。
     __allow_unmapped__ = True
 
     name: Mapped[str] = mapped_column(String(256), primary_key=True, comment="指标名称")

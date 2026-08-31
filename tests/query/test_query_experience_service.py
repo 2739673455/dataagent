@@ -2,6 +2,7 @@
 
 import unittest
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
@@ -34,6 +35,9 @@ from app.query.services.experience import (
     QueryExecutionContext,
     QueryExperienceService,
     _build_sql_template,
+)
+from app.query.services.experience_invalidation import (
+    QueryExperienceInvalidationService,
 )
 from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.contracts.analysis import AgentSessionKey
@@ -288,6 +292,18 @@ def build_service(
     )
 
 
+def build_invalidation_service(
+    repo: FakePGRepo,
+    scheduler: FakeIndexScheduler | None = None,
+) -> QueryExperienceInvalidationService:
+    return QueryExperienceInvalidationService(
+        repo=cast(QueryExperiencePGRepo, repo),
+        index_scheduler=scheduler or FakeIndexScheduler(),
+        data_source="doris",
+        database_name="analytics",
+    )
+
+
 def build_experience(
     *,
     table_name: str,
@@ -506,7 +522,7 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             ),
             result=AnalysisQueryResult(
                 path="/sessions/sales/explorer/orders/query.csv",
-                schema=[
+                columns=[
                     QueryResultColumn(name="amount", type="integer", nullable=False)
                 ],
                 row_count=3,
@@ -578,7 +594,7 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             plan_estimate=None,
             result=AnalysisQueryResult(
                 path="/sessions/sales/explorer/discovery/query.csv",
-                schema=[
+                columns=[
                     QueryResultColumn(
                         name="Tables_in_analytics",
                         type="string",
@@ -845,14 +861,8 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             meta_version=1,
         )
         repo.experiences = [invalid, retained]
-        index_repo = FakeIndexRepo()
         scheduler = FakeIndexScheduler()
-        service = build_service(
-            repo,
-            index_repo,
-            FakeEmbeddingClient(),
-            scheduler,
-        )
+        service = build_invalidation_service(repo, scheduler)
 
         invalidated_ids = await service.invalidate_assets(
             table_names={"orders"},
@@ -874,8 +884,9 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         repo.experiences = [invalid]
         index_repo = FakeIndexRepo()
         service = build_service(repo, index_repo, FakeEmbeddingClient())
+        invalidator = build_invalidation_service(repo)
 
-        await service.invalidate_assets(
+        await invalidator.invalidate_assets(
             table_names={"orders"},
             column_keys=set(),
         )
@@ -963,7 +974,8 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
         index_repo = FakeIndexRepo()
         index_repo.delete_error = RuntimeError("index unavailable")
         service = build_service(repo, index_repo, FakeEmbeddingClient())
-        await service.invalidate_assets(
+        invalidator = build_invalidation_service(repo)
+        await invalidator.invalidate_assets(
             table_names={"orders"},
             column_keys=set(),
         )
@@ -998,10 +1010,9 @@ class QueryExperienceServiceTest(unittest.IsolatedAsyncioTestCase):
             await service.sync_index(experience.id, experience.revision)
 
         self.assertEqual(repo.experiences, [experience])
-        self.assertEqual(
-            await service.pending_index_repairs(limit=10),
-            {experience.id: experience.revision},
-        )
+        async with repo.session.begin():
+            pending = await repo.list_pending_index_repairs(limit=10)
+        self.assertEqual(pending, {experience.id: experience.revision})
 
 
 class QueryExperienceESRepoTest(unittest.IsolatedAsyncioTestCase):
@@ -1059,14 +1070,16 @@ class QueryExperienceESRepoTest(unittest.IsolatedAsyncioTestCase):
         client = MagicMock()
         client.indices.exists = AsyncMock(return_value=True)
         client.search = AsyncMock(
-            return_value={
-                "hits": {
-                    "hits": [
-                        {"_id": str(experience_id), "_score": 0.8},
-                        {"_id": "invalid", "_score": 1},
-                    ]
+            return_value=SimpleNamespace(
+                body={
+                    "hits": {
+                        "hits": [
+                            {"_id": str(experience_id), "_score": 0.8},
+                            {"_id": "invalid", "_score": 1},
+                        ]
+                    }
                 }
-            }
+            )
         )
         repo = QueryExperienceESRepo(cast(Any, client))
 

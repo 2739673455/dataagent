@@ -4,7 +4,9 @@ from typing import Annotated, Any, Literal, cast
 
 import dotenv
 from omegaconf import OmegaConf
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+
+from app.shared.contracts.analysis import AGENT_TYPES
 
 # 路径常量
 ROOT_DIR = Path(__file__).parents[3]
@@ -12,65 +14,71 @@ CONFIG_DIR = ROOT_DIR / "conf"
 CONFIG_FILE = CONFIG_DIR / "app_config.yaml"
 
 
+class AppConfigModel(BaseModel):
+    """拒绝未知字段的应用配置基类"""
+
+    model_config = ConfigDict(extra="forbid")
+
+
 # 应用基础配置
-class LogCfg(BaseModel):
+class LogCfg(AppConfigModel):
     """日志配置"""
 
-    level: str
-    rotation: str
+    level: str = Field(min_length=1)
+    rotation: str = Field(min_length=1)
 
 
 # 数据连接与检索配置
-class DBConfig(BaseModel):
+class DBConfig(AppConfigModel):
     """数据库连接配置"""
 
-    host: str
-    port: int
-    user: str
-    password: str
-    database: str
+    host: str = Field(min_length=1)
+    port: int = Field(ge=1, le=65535)
+    user: str = Field(min_length=1)
+    password: SecretStr = Field(min_length=1)
+    database: str = Field(min_length=1)
 
 
-class DorisCredentialConfig(BaseModel):
+class DorisCredentialConfig(AppConfigModel):
     """Doris 查询身份凭据加密配置"""
 
     encryption_key: SecretStr = Field(min_length=44, max_length=44)
 
 
-class ESConfig(BaseModel):
+class ESConfig(AppConfigModel):
     """Elasticsearch 连接与索引配置"""
 
-    host: str
-    port: int
-    column_index: str
-    metric_index: str
-    value_index: str
-    query_experience_index: str
-    embedding_size: int
+    host: str = Field(min_length=1)
+    port: int = Field(ge=1, le=65535)
+    column_index: str = Field(min_length=1)
+    metric_index: str = Field(min_length=1)
+    value_index: str = Field(min_length=1)
+    query_experience_index: str = Field(min_length=1)
+    embedding_size: int = Field(gt=0)
 
 
-class EmbeddingConfig(BaseModel):
+class EmbeddingConfig(AppConfigModel):
     """嵌入模型服务配置"""
 
-    base_url: str
-    api_key: str | None
-    model: str
-    timeout: float
+    base_url: str = Field(min_length=1)
+    api_key: SecretStr | None
+    model: str = Field(min_length=1)
+    timeout: float = Field(gt=0)
 
 
 # 元数据索引配置
-class MetadataIndexConfig(BaseModel):
+class MetadataIndexConfig(AppConfigModel):
     """元数据索引同步策略配置"""
 
     value_lookback_seconds: int = Field(gt=0)
 
 
 # 后台任务配置
-class TaskQueueConfig(BaseModel):
+class TaskQueueConfig(AppConfigModel):
     """Celery 任务队列配置"""
 
-    broker_url: str = Field(min_length=1)
-    result_backend: str = Field(min_length=1)
+    broker_url: SecretStr = Field(min_length=1)
+    result_backend: SecretStr = Field(min_length=1)
     result_expires_seconds: int = Field(gt=0)
     task_time_limit_seconds: int = Field(gt=0)
     task_soft_time_limit_seconds: int = Field(gt=0)
@@ -96,10 +104,10 @@ class TaskQueueConfig(BaseModel):
 
 
 # 身份与生命周期配置
-class AuthConfig(BaseModel):
+class AuthConfig(AppConfigModel):
     """认证令牌与密码策略配置"""
 
-    jwt_secret: str = Field(min_length=32)
+    jwt_secret: SecretStr = Field(min_length=32)
     jwt_algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
     issuer: str = Field(min_length=1)
     access_token_minutes: int = Field(gt=0)
@@ -107,7 +115,7 @@ class AuthConfig(BaseModel):
     password_min_length: int = Field(ge=6, le=128)
 
 
-class LifecycleConfig(BaseModel):
+class LifecycleConfig(AppConfigModel):
     """跨存储资源生命周期配置"""
 
     draft_ttl_minutes: int = Field(gt=0)
@@ -116,7 +124,7 @@ class LifecycleConfig(BaseModel):
 
 
 # 查询与沙箱配置
-class QueryConfig(BaseModel):
+class QueryConfig(AppConfigModel):
     """只读分析查询配置"""
 
     data_source: str = Field(min_length=1)
@@ -127,16 +135,16 @@ class QueryConfig(BaseModel):
     query_experience_vector_score_threshold: float = Field(ge=0, le=1)
 
 
-class SandboxOwnershipConfig(BaseModel):
+class SandboxOwnershipConfig(AppConfigModel):
     """沙箱跨进程所有权配置"""
 
-    redis_url: str = Field(min_length=1)
+    redis_url: SecretStr = Field(min_length=1)
     lock_timeout_seconds: float = Field(gt=0)
     wait_timeout_seconds: float = Field(gt=0)
     lease_seconds: float = Field(gt=0)
 
 
-class SandboxConfig(BaseModel):
+class SandboxConfig(AppConfigModel):
     """本地 Docker 沙箱配置"""
 
     deployment_namespace: str = Field(
@@ -145,9 +153,9 @@ class SandboxConfig(BaseModel):
         pattern=r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
     )
     ownership: SandboxOwnershipConfig
-    image: str
+    image: str = Field(min_length=1)
     network_mode: Literal["none", "bridge"]
-    memory_limit: str
+    memory_limit: str = Field(min_length=1)
     nano_cpus: int = Field(gt=0)
     pids_limit: int = Field(gt=0)
     internal_command_timeout_seconds: int = Field(default=60, gt=0, le=600)
@@ -203,44 +211,51 @@ class SandboxConfig(BaseModel):
 
 
 # 模型与智能体配置
-class ModelCfg(BaseModel):
+class ModelCfg(AppConfigModel):
     """语言模型配置"""
 
-    model_provider: str
-    model: str
-    base_url: str
-    api_key: str
+    model_provider: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    base_url: str = Field(min_length=1)
+    api_key: SecretStr = Field(min_length=1)
     params: dict[str, Any]
     profile: dict[str, Any]
 
 
-class LMConfigCfg(BaseModel):
+class LMConfigCfg(AppConfigModel):
     """语言模型集合与激活项配置"""
 
-    active: str
+    active: str = Field(min_length=1)
     models: dict[str, ModelCfg]
 
+    @model_validator(mode="after")
+    def validate_active_model(self) -> "LMConfigCfg":
+        """要求默认模型引用已声明的模型配置"""
+        if self.active not in self.models:
+            raise ValueError(f"lm_config.active 引用了未知模型: {self.active}")
+        return self
 
-class OrchestrationConfig(BaseModel):
+
+class OrchestrationConfig(AppConfigModel):
     """动态专业 Agent 编排限制"""
 
     max_parallel_sessions: int = Field(gt=0)
     max_continuations: int = Field(ge=0)
 
 
-class InterpreterConfig(BaseModel):
+class InterpreterConfig(AppConfigModel):
     """Planner 内嵌解释器配置"""
 
     memory_limit_bytes: int = Field(gt=0)
 
 
-class SpecialistConfig(BaseModel):
+class SpecialistConfig(AppConfigModel):
     """专业 Agent 模型选择"""
 
     model: str = Field(min_length=1)
 
 
-class AgentConfig(BaseModel):
+class AgentConfig(AppConfigModel):
     """多 Agent 运行时配置"""
 
     orchestration: OrchestrationConfig
@@ -252,46 +267,46 @@ class AgentConfig(BaseModel):
 
 
 # 外部工具配置
-class SSEMCPCfg(BaseModel):
+class SSEMCPCfg(AppConfigModel):
     """SSE 传输方式的 MCP 服务配置"""
 
     transport: Literal["sse"]
-    url: str
-    headers: dict[str, str] | None = None
-    timeout: float | None = None
-    sse_read_timeout: float | None = None
+    url: SecretStr = Field(min_length=1)
+    headers: dict[str, SecretStr] | None = None
+    timeout: float | None = Field(default=None, gt=0)
+    sse_read_timeout: float | None = Field(default=None, gt=0)
     session_kwargs: dict[str, Any] | None = None
 
 
-class StdioMCPCfg(BaseModel):
+class StdioMCPCfg(AppConfigModel):
     """标准输入输出传输方式的 MCP 服务配置"""
 
     transport: Literal["stdio"]
-    command: str
+    command: str = Field(min_length=1)
     args: list[str] = Field(default_factory=list)
-    env: dict[str, str] | None = None
+    env: dict[str, SecretStr] | None = None
     cwd: str | None = None
     encoding: str | None = None
     encoding_error_handler: Literal["strict", "ignore", "replace"] | None = None
     session_kwargs: dict[str, Any] | None = None
 
 
-class WebsocketMCPCfg(BaseModel):
+class WebsocketMCPCfg(AppConfigModel):
     """WebSocket 传输方式的 MCP 服务配置"""
 
     transport: Literal["websocket"]
-    url: str
+    url: SecretStr = Field(min_length=1)
     session_kwargs: dict[str, Any] | None = None
 
 
-class StreamableHttpMCPCfg(BaseModel):
+class StreamableHttpMCPCfg(AppConfigModel):
     """可流式 HTTP 传输方式的 MCP 服务配置"""
 
     transport: Literal["streamable_http"]
-    url: str
-    headers: dict[str, str] | None = None
-    timeout: timedelta | None = None
-    sse_read_timeout: timedelta | None = None
+    url: SecretStr = Field(min_length=1)
+    headers: dict[str, SecretStr] | None = None
+    timeout: timedelta | None = Field(default=None, gt=timedelta(0))
+    sse_read_timeout: timedelta | None = Field(default=None, gt=timedelta(0))
     terminate_on_close: bool | None = None
     session_kwargs: dict[str, Any] | None = None
 
@@ -302,11 +317,11 @@ MCPCfg = Annotated[
 ]
 
 
-class Cfg(BaseModel):
+class Cfg(AppConfigModel):
     """应用全局配置"""
 
     # 应用基础配置
-    port: int
+    port: int = Field(ge=1, le=65535)
     cors_origins: list[str]
     log: LogCfg
 
@@ -339,6 +354,22 @@ class Cfg(BaseModel):
 
     # 外部工具配置
     mcp: dict[str, MCPCfg]
+
+    @model_validator(mode="after")
+    def validate_agent_models(self) -> "Cfg":
+        """要求所有专业 Agent 均显式配置且引用可用模型"""
+        required_specialists = set(AGENT_TYPES)
+        configured_specialists = set(self.agent.specialists)
+        missing = sorted(required_specialists - configured_specialists)
+        if missing:
+            raise ValueError("agent.specialists 缺少配置: " + ", ".join(missing))
+        for agent_type, specialist in self.agent.specialists.items():
+            if specialist.model not in {"default", *self.lm_config.models}:
+                raise ValueError(
+                    f"agent.specialists.{agent_type}.model 引用了未知模型: "
+                    f"{specialist.model}"
+                )
+        return self
 
 
 def _load_config() -> Cfg:

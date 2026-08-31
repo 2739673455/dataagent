@@ -287,8 +287,8 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(repo.explain_sql, "SELECT normalized")
         self.assertEqual(repo.sql, "SELECT normalized")
         self.assertEqual(result.row_count, 3)
-        self.assertEqual(result.schema[1].type, "decimal")
-        self.assertTrue(result.schema[1].nullable)
+        self.assertEqual(result.columns[1].type, "decimal")
+        self.assertTrue(result.columns[1].nullable)
         self.assertEqual(
             result.time_range["created_at"].model_dump(),
             {
@@ -384,8 +384,8 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         ).result
 
         self.assertEqual(result.row_count, 0)
-        self.assertEqual(result.schema[0].type, "unknown")
-        self.assertTrue(result.schema[0].nullable)
+        self.assertEqual(result.columns[0].type, "unknown")
+        self.assertTrue(result.columns[0].nullable)
         self.assertEqual(store.uploads[0][3], b"id\n")
 
     async def test_invalid_validation_never_requests_doris_repository(self) -> None:

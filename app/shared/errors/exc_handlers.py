@@ -82,10 +82,7 @@ def _validation_error_handler(
 
 def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     """统一处理 FastAPI 与 Starlette HTTP 异常"""
-    if isinstance(exc.detail, str):
-        detail = exc.detail
-    else:
-        detail = "请求处理失败"
+    detail = exc.detail if isinstance(exc.detail, str) else "请求处理失败"
     try:
         title = HTTPStatus(exc.status_code).phrase
     except ValueError:

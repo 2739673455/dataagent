@@ -133,7 +133,9 @@ class ShellJobRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("command", context["finished_unreviewed"][0])
         await runtime.cleanup()
 
-    async def test_get_timeout_returns_running_and_unknown_job_is_explicit(self) -> None:
+    async def test_get_timeout_returns_running_and_unknown_job_is_explicit(
+        self,
+    ) -> None:
         backend = _FakeShellBackend(blocked=True)
         runtime = _runtime(backend)
         running = await runtime.execute("long command")

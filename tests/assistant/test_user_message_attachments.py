@@ -52,7 +52,9 @@ def _user_message(
     )
 
 
-def _blocks(message: HumanMessage | ToolMessage, block_type: str) -> list[dict[str, Any]]:
+def _blocks(
+    message: HumanMessage | ToolMessage, block_type: str
+) -> list[dict[str, Any]]:
     if not isinstance(message.content, list):
         return []
     return [
@@ -113,9 +115,7 @@ class UserMessageAttachmentProjectionTest(unittest.IsolatedAsyncioTestCase):
             captured.append(projected)
             return ModelResponse(result=[])
 
-        middleware = UserMessageAttachmentMiddleware(
-            cast(BackendProtocol, backend)
-        )
+        middleware = UserMessageAttachmentMiddleware(cast(BackendProtocol, backend))
         await middleware.awrap_model_call(request, handler)
 
         self.assertEqual(backend.downloaded, [["uploads/current.png"]])
@@ -160,9 +160,7 @@ class UserMessageAttachmentProjectionTest(unittest.IsolatedAsyncioTestCase):
             captured.append(projected)
             return ModelResponse(result=[])
 
-        middleware = UserMessageAttachmentMiddleware(
-            cast(BackendProtocol, backend)
-        )
+        middleware = UserMessageAttachmentMiddleware(cast(BackendProtocol, backend))
         await middleware.awrap_model_call(request, handler)
 
         projected_tool = cast(ToolMessage, captured[0].messages[1])
@@ -187,9 +185,7 @@ class UserMessageAttachmentProjectionTest(unittest.IsolatedAsyncioTestCase):
             captured.append(projected)
             return ModelResponse(result=[])
 
-        middleware = UserMessageAttachmentMiddleware(
-            cast(BackendProtocol, backend)
-        )
+        middleware = UserMessageAttachmentMiddleware(cast(BackendProtocol, backend))
         await middleware.awrap_model_call(request, handler)
 
         projected = cast(HumanMessage, captured[0].messages[0])

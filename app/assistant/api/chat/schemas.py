@@ -19,6 +19,8 @@ from app.shared.contracts.analysis import AgentType
 class CreateConversationRequest(BaseModel):
     """创建对话请求"""
 
+    model_config = ConfigDict(extra="forbid")
+
     is_draft: bool = Field(default=False, description="是否创建草稿对话")
     initial_message: str | None = Field(
         default=None,
@@ -29,11 +31,19 @@ class CreateConversationRequest(BaseModel):
 class DeleteConversationRequest(BaseModel):
     """删除对话请求"""
 
-    conversation_ids: list[UUID] = Field(..., description="对话ID列表")
+    model_config = ConfigDict(extra="forbid")
+
+    conversation_ids: list[UUID] = Field(
+        ...,
+        min_length=1,
+        description="对话ID列表",
+    )
 
 
 class UpdateConversationRequest(BaseModel):
     """更新对话请求"""
+
+    model_config = ConfigDict(extra="forbid")
 
     conversation_id: UUID = Field(..., description="对话ID")
     title: Annotated[
@@ -192,8 +202,10 @@ class ChatStreamRequest(BaseModel):
 class DeleteAttachmentRequest(BaseModel):
     """删除附件请求"""
 
+    model_config = ConfigDict(extra="forbid")
+
     conversation_id: UUID = Field(..., description="对话ID")
-    f_path: str = Field(..., description="工作区内的文件路径")
+    f_path: str = Field(..., min_length=1, description="工作区内的文件路径")
 
 
 class MessageListResponse(BaseModel):

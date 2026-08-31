@@ -1,11 +1,17 @@
 """管理员接口请求与响应模型"""
 
-import re
 from datetime import datetime
 from typing import Any, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 
 from app.identity.api.auth.schemas import UserResponse
 from app.identity.models.doris import (
@@ -14,39 +20,46 @@ from app.identity.models.doris import (
     DorisRowPolicy,
     normalize_doris_role_name,
 )
+from app.identity.services.account_validation import (
+    EMAIL_MAX_LENGTH,
+    PASSWORD_MAX_LENGTH,
+    USERNAME_MAX_LENGTH,
+    USERNAME_MIN_LENGTH,
+    validate_email,
+    validate_username,
+)
 from app.identity.services.doris_permission import DorisRoleStatus
-
-_IDENTIFIER_PATTERN = r"^[A-Za-z_][A-Za-z0-9_$.-]{0,127}$"
-_USERNAME_PATTERN = r"^[a-z0-9_.-]{3,64}$"
-_EMAIL_PATTERN = r"^[^\s@]+@[^\s@]+\.[^\s@]+$"
+from app.shared.contracts.doris import (
+    DORIS_IDENTIFIER_PATTERN,
+    DORIS_WORKLOAD_GROUP_PATTERN,
+)
 
 
 class CreateUserRequest(BaseModel):
     """管理员创建用户请求"""
 
-    username: str = Field(min_length=3, max_length=64)
-    email: str = Field(min_length=3, max_length=320)
-    password: SecretStr = Field(min_length=6, max_length=128)
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(
+        min_length=USERNAME_MIN_LENGTH,
+        max_length=USERNAME_MAX_LENGTH,
+    )
+    email: str = Field(min_length=3, max_length=EMAIL_MAX_LENGTH)
+    password: SecretStr = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
     doris_role: str | None = Field(default=None, max_length=64)
     is_admin: bool = False
 
     @field_validator("username")
     @classmethod
-    def validate_username(cls, username: str) -> str:
+    def normalize_username(cls, username: str) -> str:
         """规范化并校验用户名"""
-        normalized = username.strip().casefold()
-        if not re.match(_USERNAME_PATTERN, normalized):
-            raise ValueError("用户名只能包含小写字母、数字、点、下划线和连字符")
-        return normalized
+        return validate_username(username)
 
     @field_validator("email")
     @classmethod
-    def validate_email(cls, email: str) -> str:
+    def normalize_email(cls, email: str) -> str:
         """规范化并校验邮箱"""
-        normalized = email.strip().casefold()
-        if not re.match(_EMAIL_PATTERN, normalized):
-            raise ValueError("邮箱地址格式无效")
-        return normalized
+        return validate_email(email)
 
     @field_validator("doris_role")
     @classmethod
@@ -58,39 +71,59 @@ class CreateUserRequest(BaseModel):
 class UpdateUserRequest(BaseModel):
     """管理员更新用户信息请求"""
 
-    username: str | None = Field(default=None, min_length=3, max_length=64)
-    email: str | None = Field(default=None, min_length=3, max_length=320)
-    password: SecretStr | None = Field(default=None, min_length=6, max_length=128)
+    model_config = ConfigDict(extra="forbid")
+
+    username: str | None = Field(
+        default=None,
+        min_length=USERNAME_MIN_LENGTH,
+        max_length=USERNAME_MAX_LENGTH,
+    )
+    email: str | None = Field(default=None, min_length=3, max_length=EMAIL_MAX_LENGTH)
+    password: SecretStr | None = Field(
+        default=None,
+        min_length=1,
+        max_length=PASSWORD_MAX_LENGTH,
+    )
     doris_role: str | None = Field(default=None)
     is_admin: bool | None = Field(default=None)
 
     @field_validator("username")
     @classmethod
-    def validate_username(cls, username: str | None) -> str | None:
+    def normalize_username(cls, username: str | None) -> str | None:
         """规范化并校验用户名"""
         if username is None:
             return None
-        normalized = username.strip().casefold()
-        if not re.match(_USERNAME_PATTERN, normalized):
-            raise ValueError("用户名只能包含小写字母、数字、点、下划线和连字符")
-        return normalized
+        return validate_username(username)
 
     @field_validator("email")
     @classmethod
-    def validate_email(cls, email: str | None) -> str | None:
+    def normalize_email(cls, email: str | None) -> str | None:
         """规范化并校验邮箱"""
         if email is None:
             return None
-        normalized = email.strip().casefold()
-        if not re.match(_EMAIL_PATTERN, normalized):
-            raise ValueError("邮箱地址格式无效")
-        return normalized
+        return validate_email(email)
 
     @field_validator("doris_role")
     @classmethod
     def normalize_role(cls, role: str | None) -> str | None:
         """校验 Doris 角色名"""
         return normalize_doris_role_name(role) if role else None
+
+    @model_validator(mode="after")
+    def validate_updates(self) -> Self:
+        """要求至少更新一个字段，并限制空值只用于清除 Doris 角色"""
+        if not self.model_fields_set:
+            raise ValueError("至少需要提供一个待更新字段")
+
+        nullable_updates = {"username", "email", "password", "is_admin"}
+        null_fields = [
+            field_name
+            for field_name in nullable_updates & self.model_fields_set
+            if getattr(self, field_name) is None
+        ]
+        if null_fields:
+            raise ValueError(f"更新字段不能为 null: {', '.join(sorted(null_fields))}")
+        return self
 
 
 class DorisRoleResponse(BaseModel):
@@ -160,17 +193,19 @@ class DorisExistingRoleListResponse(BaseModel):
 class CreateDorisRoleRequest(BaseModel):
     """创建 Doris 角色及稳定查询身份请求"""
 
+    model_config = ConfigDict(extra="forbid")
+
     role: str = Field(min_length=1, max_length=64)
     description: str = Field(min_length=1, max_length=256)
     query_user: str = Field(
         min_length=1,
         max_length=128,
-        pattern=_IDENTIFIER_PATTERN,
+        pattern=DORIS_IDENTIFIER_PATTERN,
     )
     workload_group: str = Field(
         min_length=1,
         max_length=128,
-        pattern=_IDENTIFIER_PATTERN,
+        pattern=DORIS_WORKLOAD_GROUP_PATTERN,
     )
 
     @field_validator("role")
@@ -202,6 +237,8 @@ class UserListResponse(BaseModel):
 class SetUserDorisRoleRequest(BaseModel):
     """设置用户唯一 Doris 角色请求"""
 
+    model_config = ConfigDict(extra="forbid")
+
     role: str = Field(min_length=1, max_length=64)
 
     @field_validator("role")
@@ -214,17 +251,21 @@ class SetUserDorisRoleRequest(BaseModel):
 class SetUserAdministratorRequest(BaseModel):
     """设置平台管理员请求"""
 
+    model_config = ConfigDict(extra="forbid")
+
     is_admin: bool
 
 
 class SelectGrantRequest(BaseModel):
     """Doris SELECT 授权或回收请求"""
 
+    model_config = ConfigDict(extra="forbid")
+
     table_name: str | None = Field(
         default=None,
         min_length=1,
         max_length=128,
-        pattern=_IDENTIFIER_PATTERN,
+        pattern=DORIS_IDENTIFIER_PATTERN,
     )
     columns: list[str] = Field(default_factory=list, max_length=256)
 
@@ -283,15 +324,17 @@ class AssetGrantListResponse(BaseModel):
 class RowPolicyRequest(BaseModel):
     """创建 Doris 行策略请求"""
 
+    model_config = ConfigDict(extra="forbid")
+
     policy_name: str = Field(
         min_length=1,
         max_length=128,
-        pattern=_IDENTIFIER_PATTERN,
+        pattern=DORIS_IDENTIFIER_PATTERN,
     )
     table_name: str = Field(
         min_length=1,
         max_length=128,
-        pattern=_IDENTIFIER_PATTERN,
+        pattern=DORIS_IDENTIFIER_PATTERN,
     )
     policy_type: Literal["RESTRICTIVE", "PERMISSIVE"] = "RESTRICTIVE"
     predicate: str = Field(min_length=1, max_length=4096)
@@ -300,15 +343,17 @@ class RowPolicyRequest(BaseModel):
 class DropRowPolicyRequest(BaseModel):
     """删除 Doris 行策略请求"""
 
+    model_config = ConfigDict(extra="forbid")
+
     policy_name: str = Field(
         min_length=1,
         max_length=128,
-        pattern=_IDENTIFIER_PATTERN,
+        pattern=DORIS_IDENTIFIER_PATTERN,
     )
     table_name: str = Field(
         min_length=1,
         max_length=128,
-        pattern=_IDENTIFIER_PATTERN,
+        pattern=DORIS_IDENTIFIER_PATTERN,
     )
 
 

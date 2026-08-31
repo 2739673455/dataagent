@@ -5,6 +5,7 @@ from uuid import UUID
 from loguru import logger
 
 from app.query.providers import build_query_experience_service
+from app.query.repositories.experience_postgres import QueryExperiencePGRepo
 from app.query.task_scheduler import query_experience_index_scheduler
 from app.shared.clients.embedding_client_manager import embedding_client_manager
 from app.shared.clients.es_client_manager import es_client_manager
@@ -61,22 +62,18 @@ def sync_index_task(
 
 async def _repair_indexes() -> int:
     """扫描索引版本落后的查询经验并提交补偿任务"""
-    embedding_client_manager.init()
-    es_client_manager.init()
     meta_postgres_client_manager.init()
     try:
-        async with meta_postgres_client_manager.session() as session:
-            pending = await build_query_experience_service(
-                session
-            ).pending_index_repairs(limit=_REPAIR_BATCH_SIZE)
+        async with meta_postgres_client_manager.session() as session, session.begin():
+            pending = await QueryExperiencePGRepo(session).list_pending_index_repairs(
+                limit=_REPAIR_BATCH_SIZE
+            )
         for experience_id, revision in pending.items():
             query_experience_index_scheduler.enqueue(experience_id, revision)
         logger.info(f"查询经验索引补偿扫描完成: dispatched_count={len(pending)}")
         return len(pending)
     finally:
         await meta_postgres_client_manager.close()
-        await es_client_manager.close()
-        await embedding_client_manager.close()
 
 
 @celery_app.task(name="dataagent.query.repair_indexes")

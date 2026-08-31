@@ -3,21 +3,29 @@
 from datetime import datetime
 from typing import Self
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from app.identity.models.account import User
+from app.identity.services.account_validation import (
+    EMAIL_MAX_LENGTH,
+    PASSWORD_MAX_LENGTH,
+)
 from app.identity.services.auth import AuthenticatedUser, TokenPair
 
 
 class LoginRequest(BaseModel):
     """用户登录请求"""
 
-    identifier: str = Field(min_length=1, max_length=320)
-    password: SecretStr = Field(min_length=1, max_length=128)
+    model_config = ConfigDict(extra="forbid")
+
+    identifier: str = Field(min_length=1, max_length=EMAIL_MAX_LENGTH)
+    password: SecretStr = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
 
 
 class RefreshRequest(BaseModel):
     """刷新令牌请求"""
+
+    model_config = ConfigDict(extra="forbid")
 
     refresh_token: str = Field(min_length=1, max_length=8192)
 
@@ -29,8 +37,10 @@ class LogoutRequest(RefreshRequest):
 class ChangePasswordRequest(BaseModel):
     """修改当前用户密码请求"""
 
-    current_password: SecretStr = Field(min_length=1, max_length=128)
-    new_password: SecretStr = Field(min_length=1, max_length=128)
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: SecretStr = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
+    new_password: SecretStr = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
 
 
 class UserResponse(BaseModel):

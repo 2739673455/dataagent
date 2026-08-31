@@ -3,7 +3,7 @@
 import asyncio
 import hashlib
 from dataclasses import asdict, dataclass
-from typing import Protocol, cast
+from typing import cast
 from uuid import UUID, uuid4
 
 from loguru import logger
@@ -22,6 +22,7 @@ from app.query.models.experience import (
 from app.query.models.validation import QueryValidationResult
 from app.query.repositories.experience_index import QueryExperienceESRepo
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
+from app.query.services.contracts import QueryExperienceIndexScheduler
 from app.query.services.executor import SuccessfulQueryExecution
 from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.config.app_config import cfg
@@ -37,14 +38,6 @@ from app.shared.contracts.query_experience import (
 _SEARCH_POOL_SIZE = 100
 _RRF_K = 60
 _INDEX_TEXT_MAX_CHARS = 8000
-
-
-class QueryExperienceIndexScheduler(Protocol):
-    """查询经验索引任务调度能力"""
-
-    def enqueue(self, experience_id: UUID, revision: int) -> None:
-        """提交指定经验版本的索引同步任务"""
-        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,8 +146,8 @@ class QueryExperienceService:
                 plan_estimate=asdict(details.plan_estimate),
                 result_summary={
                     "path": details.result.path,
-                    "schema": [
-                        item.model_dump(mode="json") for item in details.result.schema
+                    "columns": [
+                        item.model_dump(mode="json") for item in details.result.columns
                     ],
                     "row_count": details.result.row_count,
                     "time_range": {
@@ -188,8 +181,8 @@ class QueryExperienceService:
             validation=details.validation.model_dump(mode="json"),
             result_summary={
                 "path": details.result.path,
-                "schema": [
-                    item.model_dump(mode="json") for item in details.result.schema
+                "columns": [
+                    item.model_dump(mode="json") for item in details.result.columns
                 ],
                 "row_count": details.result.row_count,
                 "time_range": {
@@ -231,36 +224,6 @@ class QueryExperienceService:
         )
         async with self._repo.session.begin():
             await self._repo.record_failure(execution)
-
-    async def invalidate_assets(
-        self,
-        *,
-        table_names: set[str],
-        column_keys: set[tuple[str, str]],
-    ) -> list[UUID]:
-        """禁用引用已变化元数据的经验并删除搜索索引"""
-        resource_keys = {
-            asset_resource_key(
-                self._data_source,
-                self._database_name,
-                table_name,
-            )
-            for table_name in table_names
-        }
-        resource_keys.update(
-            asset_resource_key(
-                self._data_source,
-                self._database_name,
-                table_name,
-                column_name,
-            )
-            for table_name, column_name in column_keys
-        )
-        async with self._repo.session.begin():
-            revisions = await self._repo.disable_for_changed_resources(resource_keys)
-        for experience_id, revision in revisions.items():
-            self._index_scheduler.enqueue(experience_id, revision)
-        return list(revisions)
 
     async def recall(
         self,
@@ -411,26 +374,19 @@ class QueryExperienceService:
             )
         else:
             text = self._experience_text(experience)
-            embeddings = await self._embedding_client.aembed_documents([text])
-            if len(embeddings) != 1:
-                raise ValueError("查询经验向量生成数量不匹配")
+            embedding = (await self._embedding_client.aembed_documents([text]))[0]
             await self._index_repo.index(
                 experience.id,
                 revision=revision,
                 role_name=experience.role_name,
                 authorization_epoch=experience.authorization_epoch,
                 text=text,
-                embedding=embeddings[0],
+                embedding=embedding,
             )
 
         async with self._repo.session.begin():
             await self._repo.mark_indexes_synced({experience.id: revision})
         return revision
-
-    async def pending_index_repairs(self, *, limit: int) -> dict[UUID, int]:
-        """读取待补偿的查询经验索引版本"""
-        async with self._repo.session.begin():
-            return await self._repo.list_pending_index_repairs(limit=limit)
 
     async def _semantic_recall(
         self,
@@ -450,12 +406,10 @@ class QueryExperienceService:
         )
         vector_task: asyncio.Task[list[SearchHit[UUID]]] | None = None
         try:
-            embeddings = await self._embedding_client.aembed_documents([query])
-            if len(embeddings) != 1:
-                raise ValueError("查询经验检索向量生成数量不匹配")
+            embedding = (await self._embedding_client.aembed_documents([query]))[0]
             vector_task = asyncio.create_task(
                 self._index_repo.search_vector(
-                    embeddings[0],
+                    embedding,
                     role_name=role_name,
                     authorization_epoch=authorization_epoch,
                     limit=_SEARCH_POOL_SIZE,
@@ -536,6 +490,6 @@ class QueryExperienceService:
     @staticmethod
     def _experience_text(experience: QueryExperience) -> str:
         """仅使用查询目的构造经验索引文本。"""
-        return "\n".join(
-            experience.purposes[-QUERY_EXPERIENCE_PURPOSE_LIMIT:]
-        )[:_INDEX_TEXT_MAX_CHARS]
+        return "\n".join(experience.purposes[-QUERY_EXPERIENCE_PURPOSE_LIMIT:])[
+            :_INDEX_TEXT_MAX_CHARS
+        ]

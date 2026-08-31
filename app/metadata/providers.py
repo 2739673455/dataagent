@@ -5,10 +5,11 @@ from app.metadata.repositories.metric_index import MetricESRepo
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
 from app.metadata.repositories.value_index import ValueESRepo
+from app.metadata.services.catalog import MetaCatalogService
 from app.metadata.services.import_service import MetaImportService
 from app.metadata.services.index import MetaIndexService
 from app.metadata.task_scheduler import CeleryMetadataSemanticIndexScheduler
-from app.query.providers import build_query_experience_service
+from app.query.providers import build_query_experience_invalidation_service
 from app.shared.clients.embedding_client_manager import embedding_client_manager
 from app.shared.clients.es_client_manager import es_client_manager
 
@@ -38,6 +39,24 @@ def build_meta_import_service(
         meta_repo=meta_repo,
         source_repo=source_repo,
         meta_index_service=build_meta_index_service(meta_repo, source_repo),
-        asset_invalidator=build_query_experience_service(meta_repo.session),
+        asset_invalidator=build_query_experience_invalidation_service(
+            meta_repo.session
+        ),
+        semantic_index_scheduler=CeleryMetadataSemanticIndexScheduler(),
+    )
+
+
+def build_meta_catalog_service(
+    meta_repo: MetaPGRepo,
+    source_repo: SourceDorisRepo,
+) -> MetaCatalogService:
+    """创建元数据目录管理服务"""
+    return MetaCatalogService(
+        meta_repo=meta_repo,
+        source_repo=source_repo,
+        meta_index_service=build_meta_index_service(meta_repo, source_repo),
+        asset_invalidator=build_query_experience_invalidation_service(
+            meta_repo.session
+        ),
         semantic_index_scheduler=CeleryMetadataSemanticIndexScheduler(),
     )

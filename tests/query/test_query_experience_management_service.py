@@ -6,11 +6,8 @@ from typing import Any, cast
 from uuid import UUID, uuid4
 
 from app.query import errors as query_error
-from app.query.models.experience import QueryExperience
-from app.query.repositories.experience_postgres import (
-    QueryExperienceOverview,
-    QueryExperiencePGRepo,
-)
+from app.query.models.experience import QueryExperience, QueryExperienceOverview
+from app.query.repositories.experience_postgres import QueryExperiencePGRepo
 from app.query.services.experience_management import QueryExperienceManagementService
 
 

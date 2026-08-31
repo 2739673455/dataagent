@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
 from uuid import UUID
 
 from loguru import logger
@@ -17,7 +16,7 @@ from app.identity.models.doris import (
     asset_resource_key,
     normalize_doris_role_name,
 )
-from app.identity.repositories.auth import _UNSET, AuthPGRepo
+from app.identity.repositories.auth import AuthPGRepo
 from app.identity.repositories.doris_role import (
     DorisQueryUserAlreadyExistsError,
     DorisRoleAlreadyExistsError,
@@ -27,18 +26,15 @@ from app.identity.repositories.doris_role import (
     role_users_from_row,
 )
 from app.identity.repositories.query_identity import DorisQueryIdentityPGRepo
-from app.identity.services.auth import (
-    _EMAIL_PATTERN,
-    _MAX_EMAIL_LENGTH,
-    _MAX_PASSWORD_LENGTH,
-    _USERNAME_PATTERN,
-    Argon2PasswordManager,
-    AuthenticatedUser,
-    PasswordManager,
+from app.identity.services.account_validation import (
+    validate_email,
+    validate_password_length,
+    validate_username,
 )
+from app.identity.services.auth import AuthenticatedUser, PasswordManager
 from app.identity.services.contracts import QueryClientInvalidator
 from app.identity.services.credential import DorisCredentialCipher
-from app.shared.config.app_config import AuthConfig, cfg
+from app.shared.config.app_config import AuthConfig
 
 
 @dataclass(frozen=True)
@@ -208,8 +204,8 @@ class DorisRoleManagementService:
         doris_repo: DorisRoleRepository,
         cipher: DorisCredentialCipher,
         client_registry: QueryClientInvalidator,
-        password_manager: PasswordManager | None = None,
-        auth_config: AuthConfig | None = None,
+        password_manager: PasswordManager,
+        auth_config: AuthConfig,
     ) -> None:
         """初始化 Doris 角色、凭据和用户绑定管理依赖"""
         if repo.session is not identity_repo.session:
@@ -219,8 +215,8 @@ class DorisRoleManagementService:
         self._doris_repo = doris_repo
         self._cipher = cipher
         self._client_registry = client_registry
-        self._password_manager = password_manager or Argon2PasswordManager()
-        self._auth_config = auth_config or cfg.auth
+        self._password_manager = password_manager
+        self._auth_config = auth_config
 
     async def list_workload_groups(self) -> tuple[str, ...]:
         """列出创建角色时可选择的 Doris 工作组"""
@@ -377,6 +373,32 @@ class DorisRoleManagementService:
         total = await self._repo.count_users(query=normalized_query)
         return users, total
 
+    @staticmethod
+    def _validated_username(username: str) -> str:
+        """校验管理员写入的用户名并转换错误协议"""
+        try:
+            return validate_username(username)
+        except ValueError as exc:
+            raise auth_error.InvalidUserMutationError(detail=str(exc)) from exc
+
+    @staticmethod
+    def _validated_email(email: str) -> str:
+        """校验管理员写入的邮箱并转换错误协议"""
+        try:
+            return validate_email(email)
+        except ValueError as exc:
+            raise auth_error.InvalidUserMutationError(detail=str(exc)) from exc
+
+    def _validate_password(self, password: str) -> None:
+        """校验管理员写入的密码并转换错误协议"""
+        try:
+            validate_password_length(
+                password,
+                min_length=self._auth_config.password_min_length,
+            )
+        except ValueError as exc:
+            raise auth_error.WeakPasswordError(detail=str(exc)) from exc
+
     async def create_user(
         self,
         *,
@@ -387,21 +409,9 @@ class DorisRoleManagementService:
         is_admin: bool = False,
     ) -> User:
         """平台管理员创建新用户"""
-        normalized_username = username.strip().casefold()
-        if not _USERNAME_PATTERN.match(normalized_username):
-            raise auth_error.InvalidUserMutationError(
-                detail="用户名只能包含小写字母、数字、点、下划线和连字符"
-            )
-        normalized_email = email.strip().casefold()
-        if (
-            not _EMAIL_PATTERN.match(normalized_email)
-            or len(normalized_email) > _MAX_EMAIL_LENGTH
-        ):
-            raise auth_error.InvalidUserMutationError(detail="邮箱地址格式无效")
-        if len(password) < self._auth_config.password_min_length:
-            raise auth_error.WeakPasswordError
-        if len(password) > _MAX_PASSWORD_LENGTH:
-            raise auth_error.InvalidUserMutationError(detail="密码超出最大长度限制")
+        normalized_username = self._validated_username(username)
+        normalized_email = self._validated_email(email)
+        self._validate_password(password)
 
         normalized_role = normalize_doris_role_name(doris_role) if doris_role else None
         password_hash = await self._password_manager.hash(password)
@@ -487,37 +497,28 @@ class DorisRoleManagementService:
         username: str | None = None,
         email: str | None = None,
         password: str | None = None,
-        doris_role: Any = _UNSET,
+        doris_role: str | None = None,
+        update_doris_role: bool = False,
         is_admin: bool | None = None,
     ) -> User:
         """管理员更新指定用户的基础信息、角色、权限或密码并吊销已有令牌"""
+        if doris_role is not None and not update_doris_role:
+            raise ValueError("设置 Doris 角色时必须显式启用角色更新")
         normalized_username: str | None = None
         if username is not None:
-            normalized_username = username.strip().casefold()
-            if not _USERNAME_PATTERN.match(normalized_username):
-                raise auth_error.InvalidUserMutationError(
-                    detail="用户名只能包含小写字母、数字、点、下划线和连字符"
-                )
+            normalized_username = self._validated_username(username)
 
         normalized_email: str | None = None
         if email is not None:
-            normalized_email = email.strip().casefold()
-            if (
-                not _EMAIL_PATTERN.match(normalized_email)
-                or len(normalized_email) > _MAX_EMAIL_LENGTH
-            ):
-                raise auth_error.InvalidUserMutationError(detail="邮箱地址格式无效")
+            normalized_email = self._validated_email(email)
 
         password_hash: str | None = None
         if password is not None:
-            if len(password) < self._auth_config.password_min_length:
-                raise auth_error.WeakPasswordError
-            if len(password) > _MAX_PASSWORD_LENGTH:
-                raise auth_error.InvalidUserMutationError(detail="密码超出最大长度限制")
+            self._validate_password(password)
             password_hash = await self._password_manager.hash(password)
 
         normalized_doris_role: str | None = None
-        if doris_role is not _UNSET and doris_role:
+        if update_doris_role and doris_role:
             normalized_doris_role = normalize_doris_role_name(doris_role)
 
         now = datetime.now(UTC)
@@ -558,15 +559,13 @@ class DorisRoleManagementService:
                     if existing_email is not None and existing_email.id != user.id:
                         raise auth_error.EmailAlreadyExistsError
 
-                target_doris_role = (
-                    normalized_doris_role if doris_role is not _UNSET else _UNSET
-                )
                 await self._repo.update_user(
                     user,
                     username=normalized_username,
                     email=normalized_email,
                     password_hash=password_hash,
-                    doris_role=target_doris_role,
+                    doris_role=normalized_doris_role,
+                    update_doris_role=update_doris_role,
                     is_admin=is_admin,
                 )
                 await self._repo.revoke_user_refresh_tokens(user.id, now)

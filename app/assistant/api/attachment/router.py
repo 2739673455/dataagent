@@ -10,6 +10,7 @@ from fastapi.responses import Response
 from loguru import logger
 
 from app.assistant import errors as chat_error
+from app.assistant.api.attachment import errors as attachment_error
 from app.assistant.api.chat import schemas as chat_schema
 from app.assistant.api.chat.dependencies import ConversationPGRepoDep
 from app.assistant.api.dependencies import (
@@ -17,7 +18,6 @@ from app.assistant.api.dependencies import (
     SandboxManagerDep,
 )
 from app.identity.api.auth.dependencies import AnalysisUserDep, CurrentUserDep
-from app.sandbox import errors as attachment_error
 from app.sandbox.exceptions import (
     SandboxFileTooLargeError,
     SandboxPathError,
@@ -118,7 +118,7 @@ async def api_get_attachment(
     except SandboxPathError:
         raise attachment_error.PathTraversalError from None
     except FileNotFoundError:
-        raise attachment_error.AttachmentNotFoundError(detail=f_path)
+        raise attachment_error.AttachmentNotFoundError(detail=f_path) from None
     except SandboxFileTooLargeError:
         raise attachment_error.AttachmentTooLargeError from None
 

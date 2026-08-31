@@ -15,7 +15,7 @@ def create_sandbox_manager(
     """按调用进程创建带 Redis 协调的沙箱管理器"""
     ownership_config = config.ownership
     ownership = RedisSandboxOwnership(
-        ownership_config.redis_url,
+        ownership_config.redis_url.get_secret_value(),
         config.deployment_namespace,
         lock_timeout_seconds=ownership_config.lock_timeout_seconds,
         wait_timeout_seconds=ownership_config.wait_timeout_seconds,

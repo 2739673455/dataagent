@@ -27,7 +27,7 @@ from app.assistant.agents.middleware.user_message_metadata import (
 from app.assistant.agents.session_service import AgentSessionService
 from app.assistant.agents.tools import create_image_view_request_tool
 
-from .prompt import build_planner_system_prompt
+from .prompt import PLANNER_SYSTEM_PROMPT
 
 _INTERPRETER_PTC = ("delegation", "list_sessions", "delete_session")
 
@@ -56,7 +56,7 @@ def create_planner_agent(
     return create_deep_agent(
         model=model,
         tools=[*tools, create_image_view_request_tool()],
-        system_prompt=build_planner_system_prompt(),
+        system_prompt=PLANNER_SYSTEM_PROMPT,
         middleware=cast(
             "Sequence[AgentMiddleware[Any, Any, Any]]",
             [

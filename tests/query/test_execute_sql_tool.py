@@ -36,7 +36,7 @@ class ExecuteSqlToolTest(unittest.IsolatedAsyncioTestCase):
     async def test_forwards_tool_context_to_query_handler(self) -> None:
         query_result = AnalysisQueryResult(
             path="/sessions/a/explorer/s/query.csv",
-            schema=[],
+            columns=[],
             row_count=0,
             time_range={},
             sample=[],
@@ -68,6 +68,8 @@ class ExecuteSqlToolTest(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(result["status"], "success")
+        self.assertIn("columns", result)
+        self.assertNotIn("schema", result)
 
     async def test_validation_failure_returns_actionable_error(self) -> None:
         validation = QueryValidationResult(

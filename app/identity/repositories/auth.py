@@ -1,7 +1,6 @@
 """PostgreSQL 认证身份与 Doris 权限投影访问"""
 
 from datetime import datetime
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy import delete, func, or_, select, text, update
@@ -13,7 +12,6 @@ from app.identity.models.doris import DorisRoleAssetGrant
 from app.identity.models.lifecycle import UserDeletionTask
 
 _SECURITY_MUTATION_LOCK_KEY = 0x444154414147454E
-_UNSET = object()
 
 
 class AuthPGRepo:
@@ -143,7 +141,8 @@ class AuthPGRepo:
         username: str | None = None,
         email: str | None = None,
         password_hash: str | None = None,
-        doris_role: Any = _UNSET,
+        doris_role: str | None,
+        update_doris_role: bool,
         is_admin: bool | None = None,
     ) -> None:
         """更新用户基础信息、角色与凭据"""
@@ -153,7 +152,7 @@ class AuthPGRepo:
             user.email = email
         if password_hash is not None:
             user.password_hash = password_hash
-        if doris_role is not _UNSET:
+        if update_doris_role:
             user.doris_role_name = doris_role
         if is_admin is not None:
             user.is_admin = is_admin
@@ -230,6 +229,17 @@ class AuthPGRepo:
     ) -> UserDeletionTask | None:
         """按用户读取注销任务"""
         return await self._session.get(UserDeletionTask, user_id)
+
+    async def get_user_deletion_task_for_update(
+        self,
+        user_id: int,
+    ) -> UserDeletionTask | None:
+        """按用户读取并锁定待修改的注销任务"""
+        return await self._session.get(
+            UserDeletionTask,
+            user_id,
+            with_for_update=True,
+        )
 
     async def enqueue_user_deletion(
         self,

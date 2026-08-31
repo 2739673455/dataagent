@@ -45,7 +45,7 @@ class UserDeletionService:
 
     async def process(self, user_id: int) -> None:
         """幂等执行一个用户的跨存储注销清理"""
-        if await self._is_completed(user_id):
+        if await self._state_store.is_completed(user_id):
             logger.info(f"用户注销清理已完成，跳过重复任务: user_id={user_id}")
             return
         logger.info(f"开始用户注销清理编排: user_id={user_id}")
@@ -63,10 +63,6 @@ class UserDeletionService:
                 f"user_id={user_id}, error_type={type(exc).__name__}"
             )
             raise
-
-    async def _is_completed(self, user_id: int) -> bool:
-        """检查用户注销任务是否已经完成"""
-        return await self._state_store.is_completed(user_id)
 
     async def _record_failure(self, user_id: int, exc: Exception) -> None:
         """记录注销失败原因和下一次重试时间"""

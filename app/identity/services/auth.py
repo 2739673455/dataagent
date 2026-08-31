@@ -3,7 +3,6 @@
 import asyncio
 import hashlib
 import hmac
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -19,13 +18,14 @@ from sqlalchemy.exc import IntegrityError
 from app.identity import errors as auth_error
 from app.identity.models.account import RefreshToken, User
 from app.identity.repositories.auth import AuthPGRepo
+from app.identity.services.account_validation import (
+    validate_email,
+    validate_password_length,
+    validate_username,
+)
 from app.shared.config.app_config import AuthConfig
 
 ARGON2_MAX_CONCURRENCY = 2
-_USERNAME_PATTERN = re.compile(r"^[a-z0-9_.-]{3,64}$")
-_EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
-_MAX_EMAIL_LENGTH = 320
-_MAX_PASSWORD_LENGTH = 128
 
 
 class PasswordManager(Protocol):
@@ -37,6 +37,10 @@ class PasswordManager(Protocol):
 
     async def verify(self, password: str, password_hash: str) -> bool:
         """异步校验密码与哈希是否匹配"""
+        ...
+
+    async def verify_dummy_password(self, password: str) -> None:
+        """为未知账号执行等价密码校验"""
         ...
 
 
@@ -65,8 +69,8 @@ class Argon2PasswordManager:
                 password_hash,
             )
 
-    async def consume_dummy_verification(self, password: str) -> None:
-        """为不存在的用户执行等价密码计算"""
+    async def verify_dummy_password(self, password: str) -> None:
+        """为未知账号执行等价密码校验，避免暴露账号是否存在"""
         await self.verify(password, self._dummy_hash)
 
 
@@ -146,6 +150,7 @@ class JWTCodec:
     def __init__(self, config: AuthConfig) -> None:
         """绑定 JWT 签名与生命周期配置"""
         self._config = config
+        self._secret = config.jwt_secret.get_secret_value()
 
     def issue_access_token(self, user: User, now: datetime) -> str:
         """签发短期访问令牌"""
@@ -160,7 +165,7 @@ class JWTCodec:
         }
         return jwt.encode(
             payload,
-            self._config.jwt_secret,
+            self._secret,
             algorithm=self._config.jwt_algorithm,
         )
 
@@ -182,7 +187,7 @@ class JWTCodec:
                 "exp": now + timedelta(days=self._config.refresh_token_days),
                 "iss": self._config.issuer,
             },
-            self._config.jwt_secret,
+            self._secret,
             algorithm=self._config.jwt_algorithm,
         )
 
@@ -203,7 +208,15 @@ class JWTCodec:
         payload = self._decode(
             token,
             "refresh",
-            required_claims={"sub", "jti", "family_id", "token_type", "iat", "exp", "iss"},
+            required_claims={
+                "sub",
+                "jti",
+                "family_id",
+                "token_type",
+                "iat",
+                "exp",
+                "iss",
+            },
         )
         return RefreshTokenClaims(
             user_id=self._parse_user_id(payload),
@@ -222,7 +235,7 @@ class JWTCodec:
         try:
             payload = jwt.decode(
                 token,
-                self._config.jwt_secret,
+                self._secret,
                 algorithms=[self._config.jwt_algorithm],
                 issuer=self._config.issuer,
                 leeway=5,
@@ -266,6 +279,7 @@ class JWTCodec:
             return UUID(str(payload[key]))
         except (KeyError, TypeError, ValueError) as exc:
             raise auth_error.InvalidTokenError(detail=f"令牌 {key} 声明无效") from exc
+
 
 class AccessTokenAuthenticator:
     """使用独立只读会话认证访问令牌"""
@@ -312,10 +326,12 @@ class AuthService:
         password: str,
     ) -> BootstrapAdminResult:
         """使用显式凭据幂等创建或确认管理员"""
-        normalized_username = self.normalize_username(username)
-        normalized_email = self.normalize_email(email)
-        self._validate_new_identity(normalized_username, normalized_email)
-        self._validate_password(password)
+        normalized_username = validate_username(username)
+        normalized_email = validate_email(email)
+        validate_password_length(
+            password,
+            min_length=self._config.password_min_length,
+        )
         password_hash = await self._password_manager.hash(password)
 
         try:
@@ -383,13 +399,7 @@ class AuthService:
                 else await self._repo.get_user_by_username_for_update(normalized)
             )
             if user is None:
-                consume_dummy = getattr(
-                    self._password_manager,
-                    "consume_dummy_verification",
-                    None,
-                )
-                if consume_dummy is not None:
-                    await consume_dummy(password)
+                await self._password_manager.verify_dummy_password(password)
                 raise auth_error.InvalidCredentialsError
             if not await self._password_manager.verify(password, user.password_hash):
                 raise auth_error.InvalidCredentialsError
@@ -462,7 +472,10 @@ class AuthService:
     ) -> None:
         """验证当前密码、更新哈希并吊销全部既有令牌"""
         try:
-            self._validate_password(new_password)
+            validate_password_length(
+                new_password,
+                min_length=self._config.password_min_length,
+            )
         except ValueError as exc:
             raise auth_error.WeakPasswordError(detail=str(exc)) from exc
         if hmac.compare_digest(current_password, new_password):
@@ -521,28 +534,3 @@ class AuthService:
     def digest_token(token: str) -> str:
         """计算令牌的不可逆存储摘要"""
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-    @staticmethod
-    def normalize_username(username: str) -> str:
-        """规范化用户名"""
-        return username.strip().casefold()
-
-    @staticmethod
-    def normalize_email(email: str) -> str:
-        """规范化邮箱"""
-        return email.strip().casefold()
-
-    def _validate_password(self, password: str) -> None:
-        """校验新密码长度边界"""
-        if len(password) < self._config.password_min_length:
-            raise ValueError(f"密码长度不能少于 {self._config.password_min_length} 位")
-        if len(password) > _MAX_PASSWORD_LENGTH:
-            raise ValueError(f"密码长度不能超过 {_MAX_PASSWORD_LENGTH} 位")
-
-    @staticmethod
-    def _validate_new_identity(username: str, email: str) -> None:
-        """校验注册与管理员引导使用的规范化身份"""
-        if _USERNAME_PATTERN.fullmatch(username) is None:
-            raise ValueError("用户名格式无效")
-        if len(email) > _MAX_EMAIL_LENGTH or _EMAIL_PATTERN.fullmatch(email) is None:
-            raise ValueError("邮箱格式无效")

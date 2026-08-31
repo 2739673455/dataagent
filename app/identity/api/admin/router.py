@@ -251,6 +251,7 @@ async def update_user(
         kwargs["password"] = body.password.get_secret_value() if body.password else None
     if "doris_role" in body.model_fields_set:
         kwargs["doris_role"] = body.doris_role
+        kwargs["update_doris_role"] = True
     if "is_admin" in body.model_fields_set:
         kwargs["is_admin"] = body.is_admin
 

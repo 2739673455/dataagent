@@ -737,15 +737,13 @@ async def _run_agent_turn(
                     if not isinstance(messages, list):
                         continue
                     for message in messages:
-                        if (
-                            response
-                            := await _langchain_message_to_schema_with_artifacts(
-                                message,
-                                files,
-                                user_id,
-                                conversation_id,
-                            )
-                        ):
+                        response = await _langchain_message_to_schema_with_artifacts(
+                            message,
+                            files,
+                            user_id,
+                            conversation_id,
+                        )
+                        if response is not None:
                             responses.append(response)
                 logger.debug(
                     f"智能体流式更新: conversation_id={conversation_id}, "

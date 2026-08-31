@@ -8,11 +8,9 @@ from loguru import logger
 
 from app.query import errors as query_error
 from app.query.models.execution import QueryExecution
-from app.query.repositories.experience_postgres import (
-    QueryExperienceOverview,
-    QueryExperiencePGRepo,
-)
-from app.query.services.experience import QueryExperienceIndexScheduler
+from app.query.models.experience import QueryExperienceOverview
+from app.query.repositories.experience_postgres import QueryExperiencePGRepo
+from app.query.services.contracts import QueryExperienceIndexScheduler
 
 
 @dataclass(frozen=True, slots=True)

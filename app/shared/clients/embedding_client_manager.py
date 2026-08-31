@@ -28,7 +28,11 @@ class RemoteEmbeddingClient:
         self._client = httpx.AsyncClient(
             base_url=config.base_url.rstrip("/"),
             timeout=config.timeout,
-            headers=self._build_headers(config.api_key),
+            headers=self._build_headers(
+                config.api_key.get_secret_value()
+                if config.api_key is not None
+                else None
+            ),
         )
 
     @staticmethod
@@ -64,17 +68,9 @@ class RemoteEmbeddingClient:
         if not isinstance(data, list):
             raise TypeError("Embedding 响应缺失 data 列表")
 
-        if data and all(isinstance(item, dict) and "index" in item for item in data):
-            data = sorted(data, key=lambda item: item["index"])
-
-        embeddings: list[list[float]] = []
-        for item in data:
-            if not isinstance(item, dict):
-                raise TypeError("Embedding 响应数据项必须为对象")
-            embedding = item.get("embedding")
-            if not isinstance(embedding, list):
-                raise TypeError("Embedding 响应数据项缺失 embedding 列表")
-            embeddings.append([float(value) for value in embedding])
+        embeddings: list[list[float]] = [
+            item["embedding"] for item in sorted(data, key=lambda item: item["index"])
+        ]
 
         if len(embeddings) != expected_count:
             raise ValueError(

@@ -50,6 +50,15 @@ class SourceDorisRepoTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(values, [100, 200])
 
+    async def test_rejects_non_positive_literal_limit_before_query(self) -> None:
+        connection = _connection()
+        repo = SourceDorisRepo(cast(AsyncConnection, connection))
+
+        with self.assertRaisesRegex(ValueError, "limit 必须为正整数"):
+            await repo.get_column_values("orders", "amount", limit=0)
+
+        connection.execute.assert_not_awaited()
+
     async def test_sample_values_reads_special_columns_by_position(self) -> None:
         connection = _connection()
         result = MagicMock()
@@ -131,3 +140,12 @@ class SourceDorisRepoTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(parameters, {"lower_bound": 100, "upper_bound": 200})
         self.assertEqual(batches, [["已支付", "已完成"], ["已取消"]])
+
+    async def test_rejects_non_positive_stream_batch_size(self) -> None:
+        connection = _connection()
+        repo = SourceDorisRepo(cast(AsyncConnection, connection))
+
+        with self.assertRaisesRegex(ValueError, "batch_size 必须为正整数"):
+            await anext(repo.iter_column_value_batches("orders", "amount", 0))
+
+        connection.stream_scalars.assert_not_awaited()

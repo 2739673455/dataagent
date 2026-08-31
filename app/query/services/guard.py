@@ -300,8 +300,7 @@ class QueryGuardService:
                 QueryValidationIssue(
                     code="unknown_database",
                     message=(
-                        "SHOW TABLES 只能查看当前业务数据库: "
-                        f"{self._current_database}"
+                        f"SHOW TABLES 只能查看当前业务数据库: {self._current_database}"
                     ),
                 )
             )
@@ -410,13 +409,14 @@ class QueryGuardService:
             return [condition]
 
         for condition in terms(where.this):
-            if isinstance(condition, exp.Paren):
-                condition = condition.this
-            if not isinstance(condition, exp.EQ):
+            candidate = (
+                condition.this if isinstance(condition, exp.Paren) else condition
+            )
+            if not isinstance(candidate, exp.EQ):
                 continue
             for column, value in (
-                (condition.this, condition.expression),
-                (condition.expression, condition.this),
+                (candidate.this, candidate.expression),
+                (candidate.expression, candidate.this),
             ):
                 if not (
                     isinstance(column, exp.Column)

@@ -23,14 +23,15 @@ from app.identity.api.auth.dependencies import (
 )
 from app.metadata import errors as meta_error
 from app.metadata.api.meta import schemas
+from app.metadata.config import MetaConfig, MetadataName
 from app.metadata.models.catalog import (
     ColumnKey,
     ColumnReference,
     MetricInfo,
 )
 from app.metadata.providers import (
+    build_meta_catalog_service,
     build_meta_import_service,
-    build_meta_index_service,
 )
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
@@ -40,7 +41,6 @@ from app.metadata.services.import_service import (
     MetaImportService,
     ResourceChanges,
 )
-from app.metadata.task_scheduler import CeleryMetadataSemanticIndexScheduler
 from app.metadata.tasks import (
     enqueue_column_indexes,
     enqueue_column_values,
@@ -49,10 +49,8 @@ from app.metadata.tasks import (
     enqueue_table_indexes,
     enqueue_table_values,
 )
-from app.query.providers import build_query_experience_service
 from app.shared.clients.doris_client_manager import admin_doris_client_manager
 from app.shared.clients.postgres_client_manager import meta_postgres_client_manager
-from app.shared.config.meta_config import MetaConfig, MetadataName
 from app.shared.tasks.schemas import TaskAcceptedResponse
 
 router = APIRouter(tags=["meta"])
@@ -69,16 +67,7 @@ async def _get_meta_catalog_service(
     ):
         meta_repo = MetaPGRepo(session=meta_session)
         source_repo = SourceDorisRepo(connection=source_connection)
-        yield MetaCatalogService(
-            meta_repo=meta_repo,
-            source_repo=source_repo,
-            meta_index_service=build_meta_index_service(
-                meta_repo=meta_repo,
-                source_repo=source_repo,
-            ),
-            asset_invalidator=build_query_experience_service(meta_session),
-            semantic_index_scheduler=CeleryMetadataSemanticIndexScheduler(),
-        )
+        yield build_meta_catalog_service(meta_repo, source_repo)
 
 
 async def _get_meta_import_service() -> AsyncGenerator[MetaImportService]:

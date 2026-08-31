@@ -62,9 +62,14 @@ async def _verify_doris_query_identities() -> None:
     )
     async with auth_postgres_client_manager.session() as session:
         identities = await DorisQueryIdentityPGRepo(session).list_all()
-    await DorisRoleRepository(admin_doris_client_manager).verify_configured_roles(
-        tuple(identity.role_name for identity in identities)
-    )
+    try:
+        await DorisRoleRepository(admin_doris_client_manager).verify_configured_roles(
+            tuple(identity.role_name for identity in identities)
+        )
+    except Exception as exc:  # noqa: BLE001
+        # 管理员需要应用保持可用以修复 Doris 侧配置；实际查询仍会在身份解析和
+        # Doris 权限边界失败，因此启动检查只负责暴露漂移，不放宽查询权限。
+        logger.warning(f"Doris 查询角色完整性校验未通过，应用继续启动: {exc}")
     for identity in identities:
         try:
             manager = await query_doris_client_registry.get_or_create(
@@ -79,12 +84,13 @@ async def _verify_doris_query_identities() -> None:
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                f"Doris 角色 '{identity.role_name}' 未完成目标库表授权或校验未通过: {exc}"
+                f"Doris 角色 '{identity.role_name}' 未完成目标库表授权或校验未通过，"
+                f"应用继续启动: {exc}"
             )
 
 
 @asynccontextmanager
-async def _lifespan(app: FastAPI):
+async def _lifespan(_app: FastAPI):
     """初始化并释放应用进程持有的共享资源"""
     try:
         # FastAPI 应用启动前执行

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import math
 import secrets
@@ -36,9 +37,7 @@ type ShellJobStatus = Literal[
     "interrupted",
 ]
 
-_TERMINAL_STATUSES = frozenset(
-    {"completed", "failed", "cancelled", "interrupted"}
-)
+_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled", "interrupted"})
 _FOREGROUND_WAIT_SECONDS = 60.0
 _CLEANUP_WAIT_SECONDS = 8.0
 
@@ -220,10 +219,7 @@ class ShellJobRuntime:
             if record.status in _TERMINAL_STATUSES:
                 record.done.set()
                 return
-            if (
-                record.cancel_confirmed
-                and execution.status in {"completed", "failed"}
-            ):
+            if record.cancel_confirmed and execution.status in {"completed", "failed"}:
                 status: ShellJobStatus = "cancelled"
             else:
                 status = execution.status
@@ -334,13 +330,11 @@ class ShellJobRuntime:
                 return self._not_found(job_id)
             is_terminal = record.status in _TERMINAL_STATUSES
         if not is_terminal and wait_seconds > 0:
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(
                     asyncio.shield(record.done.wait()),
                     timeout=wait_seconds,
                 )
-            except TimeoutError:
-                pass
         with self._lock:
             if record.status in _TERMINAL_STATUSES:
                 record.reviewed_at = datetime.now(UTC)
@@ -407,13 +401,11 @@ class ShellJobRuntime:
                 record.cancel_resolved.set()
                 is_terminal = record.status in _TERMINAL_STATUSES
             if cancellation.exited and not is_terminal:
-                try:
+                with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(
                         asyncio.shield(record.done.wait()),
                         timeout=2.0,
                     )
-                except TimeoutError:
-                    pass
             if caller_cancelled:
                 raise asyncio.CancelledError
         with self._lock:

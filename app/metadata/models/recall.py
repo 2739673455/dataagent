@@ -110,8 +110,8 @@ class SemanticRecallTableDeletion(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    columns: dict[SemanticResourceName, SemanticRecallColumnDeletion] | None = (
-        Field(default=None, min_length=1)
+    columns: dict[SemanticResourceName, SemanticRecallColumnDeletion] | None = Field(
+        default=None, min_length=1
     )
 
     @property

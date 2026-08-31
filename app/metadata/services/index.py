@@ -342,6 +342,8 @@ class MetaIndexService:
         """执行单字段取值索引状态机"""
         run_id = uuid.uuid4()
         started_at = datetime.now(UTC)
+        # 长时间的 Doris/Elasticsearch I/O 不能占用 PostgreSQL 事务。登记、提交和
+        # 失败各自重取事务级锁，并以 run_id 校验所有权，防止旧任务覆盖新运行。
         async with self._meta_repo.session.begin():
             await self._meta_repo.acquire_index_lock(
                 "value",
@@ -659,8 +661,6 @@ class MetaIndexService:
         for index in range(0, len(texts), self._embedding_batch_size):
             batch = texts[index : index + self._embedding_batch_size]
             embeddings.extend(await self._embedding_client.aembed_documents(batch))
-        if len(embeddings) != len(texts):
-            raise ValueError("语义索引向量生成数量不匹配")
         return embeddings
 
     @staticmethod

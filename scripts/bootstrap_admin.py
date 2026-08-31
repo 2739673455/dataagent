@@ -3,10 +3,14 @@
 import argparse
 import asyncio
 import os
+from pathlib import Path
+
+import dotenv
 
 _USERNAME_ENV = "ADMIN_USERNAME"
 _EMAIL_ENV = "ADMIN_EMAIL"
 _PASSWORD_ENV = "ADMIN_PASSWORD"
+_ENV_FILE = Path(__file__).resolve().parents[1] / "conf" / ".env"
 
 
 def _parse_args() -> argparse.Namespace:
@@ -19,7 +23,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("-h", "--help", action="help", help="显示此帮助信息并退出")
     parser.add_argument("-u", "--username", help="管理员用户名", default=None)
     parser.add_argument("-e", "--email", help="管理员邮箱", default=None)
-    parser.add_argument("-p", "--password", help="管理员初始密码", default=None)
     return parser.parse_args()
 
 
@@ -36,13 +39,21 @@ def _resolve_value(cli_val: str | None, env_name: str) -> str:
 async def _bootstrap_admin() -> None:
     """创建或幂等确认显式凭据对应的管理员"""
     args = _parse_args()
+    dotenv.load_dotenv(_ENV_FILE)
     username = _resolve_value(args.username, _USERNAME_ENV)
     email = _resolve_value(args.email, _EMAIL_ENV)
-    password = _resolve_value(args.password, _PASSWORD_ENV)
+    password = _resolve_value(None, _PASSWORD_ENV)
 
+    # 配置模块会立即解析全量应用环境变量；先处理 CLI 和引导凭据，确保
+    # --help 与缺参错误不依赖数据库、模型或沙箱配置。
     from app.identity.repositories.auth import AuthPGRepo
-    from app.identity.services.auth import Argon2PasswordManager, AuthService
-    from app.shared.clients.postgres_client_manager import auth_postgres_client_manager
+    from app.identity.services.auth import (
+        Argon2PasswordManager,
+        AuthService,
+    )
+    from app.shared.clients.postgres_client_manager import (
+        auth_postgres_client_manager,
+    )
     from app.shared.config.app_config import cfg
 
     auth_postgres_client_manager.init()

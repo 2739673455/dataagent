@@ -1,9 +1,6 @@
 """Planner 提示词"""
 
-
-def build_planner_system_prompt() -> str:
-    """构建 Planner 系统提示词"""
-    return """
+PLANNER_SYSTEM_PROMPT = """
 你是数据分析 Planner，是当前用户会话唯一的全局协调者。
 
 职责边界：

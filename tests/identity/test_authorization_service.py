@@ -21,7 +21,7 @@ from app.identity.services.authorization import (
     DorisRoleManagementService,
 )
 from app.shared.clients.doris_client_manager import DorisQueryClientRegistry
-from tests.identity.test_auth_service import AsyncSessionStub, build_user
+from tests.identity.test_auth_service import AsyncSessionStub, build_config, build_user
 
 
 def query_identity(
@@ -139,6 +139,7 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
             self.cipher,
             self.registry,
             self.password_manager,
+            build_config(),
         )
 
     def test_rejects_postgres_repositories_from_different_sessions(self) -> None:
@@ -370,8 +371,8 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         user = await self.service().create_user(
-            username="new_operator",
-            email="operator@example.com",
+            username=" NEW_OPERATOR ",
+            email=" Operator@Example.COM ",
             password="password123",
             doris_role="sales",
             is_admin=False,
@@ -382,6 +383,39 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(user.doris_role_name, "sales")
         self.assertFalse(user.is_admin)
         self.repo.add_user.assert_awaited_once()
+
+    async def test_create_user_rejects_invalid_normalized_identity(self) -> None:
+        for username, email in (
+            ("invalid user", "operator@example.com"),
+            ("new_operator", "invalid-email"),
+        ):
+            with (
+                self.subTest(username=username, email=email),
+                self.assertRaises(auth_error.InvalidUserMutationError),
+            ):
+                await self.service().create_user(
+                    username=username,
+                    email=email,
+                    password="password123",
+                )
+
+        self.password_manager.hash.assert_not_awaited()
+
+    async def test_create_user_maps_password_policy_failures_consistently(
+        self,
+    ) -> None:
+        for password in ("short", "x" * 129):
+            with (
+                self.subTest(password_length=len(password)),
+                self.assertRaises(auth_error.WeakPasswordError),
+            ):
+                await self.service().create_user(
+                    username="new_operator",
+                    email="operator@example.com",
+                    password=password,
+                )
+
+        self.password_manager.hash.assert_not_awaited()
 
     async def test_create_user_stays_unassigned_without_default_role(self) -> None:
         self.repo.get_user_by_username = AsyncMock(return_value=None)
@@ -447,6 +481,7 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
         updated = await self.service().update_user(
             user_id=user.id,
             doris_role="sales",
+            update_doris_role=True,
         )
 
         self.assertEqual(updated.id, user.id)
@@ -457,5 +492,28 @@ class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
             email=None,
             password_hash=None,
             doris_role="sales",
+            update_doris_role=True,
+            is_admin=None,
+        )
+
+    async def test_update_user_can_explicitly_clear_doris_role(self) -> None:
+        user = build_user(user_id=15, doris_role="sales")
+        self.repo.get_user_by_id = AsyncMock(return_value=user)
+        self.repo.update_user = AsyncMock()
+
+        await self.service().update_user(
+            user_id=user.id,
+            doris_role=None,
+            update_doris_role=True,
+        )
+
+        self.identity_repo.get.assert_not_awaited()
+        self.repo.update_user.assert_awaited_once_with(
+            user,
+            username=None,
+            email=None,
+            password_hash=None,
+            doris_role=None,
+            update_doris_role=True,
             is_admin=None,
         )

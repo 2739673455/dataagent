@@ -220,9 +220,7 @@ def _remove_semantic_resources(
         if item.t_name not in removed_tables
         and (item.t_name, item.name) not in removed_columns
     ]
-    remaining_column_keys = {
-        (item.t_name, item.name) for item in remaining_columns
-    }
+    remaining_column_keys = {(item.t_name, item.name) for item in remaining_columns}
     remaining_values = [
         item
         for item in response.values
@@ -518,9 +516,7 @@ class SemanticRecallContextService:
         return [
             experience
             for experience in experiences
-            if self._authorization_filter.query_experience_is_allowed(
-                experience.assets
-            )
+            if self._authorization_filter.query_experience_is_allowed(experience.assets)
         ]
 
     def _matches_query_experience_scope(self, record: SemanticRecallRecord) -> bool:
@@ -584,9 +580,7 @@ class SemanticRecallContextService:
                 continue
 
             response = _remove_semantic_resources(record.response, deletion)
-            removed_experience_ids = {
-                item.id for item in deletion.query_experiences
-            }
+            removed_experience_ids = {item.id for item in deletion.query_experiences}
             query_experiences = [
                 experience
                 for experience in record.query_experiences

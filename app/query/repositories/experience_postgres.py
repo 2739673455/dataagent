@@ -1,6 +1,5 @@
 """查询执行历史与经验 PostgreSQL 数据访问"""
 
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -14,17 +13,11 @@ from app.metadata.models.catalog import (
     TableInfo,
 )
 from app.query.models.execution import QueryExecution
-from app.query.models.experience import QueryExperience, QueryExperienceAsset
-
-
-@dataclass(frozen=True, slots=True)
-class QueryExperienceOverview:
-    """查询经验及其资产、执行聚合统计。"""
-
-    experience: QueryExperience
-    asset_count: int
-    execution_count: int
-    last_executed_at: datetime | None
+from app.query.models.experience import (
+    QueryExperience,
+    QueryExperienceAsset,
+    QueryExperienceOverview,
+)
 
 
 class QueryExperiencePGRepo:
@@ -198,7 +191,7 @@ class QueryExperiencePGRepo:
             .returning(QueryExperience.id, QueryExperience.revision)
         )
         await self._session.flush()
-        return {experience_id: revision for experience_id, revision in result.tuples()}
+        return dict(result.tuples())
 
     async def list_overviews(
         self,
@@ -417,7 +410,7 @@ class QueryExperiencePGRepo:
             .order_by(QueryExperience.updated_at)
             .limit(limit)
         )
-        return {experience_id: revision for experience_id, revision in result.tuples()}
+        return dict(result.tuples())
 
     async def current_asset_versions(
         self,

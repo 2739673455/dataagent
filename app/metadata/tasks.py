@@ -7,6 +7,7 @@ from typing import Any
 
 from loguru import logger
 
+from app.metadata.config import MetaConfig
 from app.metadata.models.search import (
     RequestedValueIndexSyncMode,
     SemanticIndexSyncResult,
@@ -24,7 +25,6 @@ from app.shared.clients.embedding_client_manager import embedding_client_manager
 from app.shared.clients.es_client_manager import es_client_manager
 from app.shared.clients.postgres_client_manager import meta_postgres_client_manager
 from app.shared.config.app_config import cfg
-from app.shared.config.meta_config import MetaConfig
 from app.shared.tasks.celery_app import celery_app
 from app.shared.tasks.runner import run_async
 from app.shared.tasks.submission import TaskSubmission

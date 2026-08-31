@@ -61,6 +61,18 @@ _SHELL_JOB_INLINE_BYTES = 80_000
 _SHELL_JOB_CANCEL_GRACE_SECONDS = 1.0
 
 
+def _close_exec_stream(stream: object) -> None:
+    """关闭 Docker exec 流及其底层 HTTP 响应"""
+    close_stream = getattr(stream, "close", None)
+    if callable(close_stream):
+        close_stream()
+    # Docker SDK 的可取消流持有 Response；显式关闭它可在提前取消时及时归还连接。
+    response = getattr(stream, "_response", None)
+    close_response = getattr(response, "close", None)
+    if callable(close_response):
+        close_response()
+
+
 @dataclass(frozen=True, slots=True)
 class SandboxShellJobExecution:
     """Sandbox Shell Job 的最终执行信息"""
@@ -344,20 +356,9 @@ class DockerSandboxBackend(BaseSandbox):
         output_stream = api_client.exec_start(exec_id, stream=True, demux=False)
         try:
             for chunk in output_stream:
-                if isinstance(chunk, tuple):
-                    chunk = b"".join(item for item in chunk if isinstance(item, bytes))
-                elif isinstance(chunk, int):
-                    chunk = bytes([chunk])
-                elif isinstance(chunk, str):
-                    chunk = chunk.encode()
                 output_buffer.extend(chunk)
         finally:
-            close_stream = getattr(output_stream, "close", None)
-            if callable(close_stream):
-                close_stream()
-            stream_response = getattr(output_stream, "_response", None)
-            if stream_response is not None:
-                stream_response.close()
+            _close_exec_stream(output_stream)
 
         inspected = api_client.exec_inspect(exec_id)
         output = output_buffer.decode("utf-8", errors="replace")
@@ -555,17 +556,7 @@ class DockerSandboxBackend(BaseSandbox):
             exec_id = created["Id"]
             output_stream = api_client.exec_start(exec_id, stream=True, demux=False)
             started = True
-            for chunk in output_stream:
-                if isinstance(chunk, tuple):
-                    raw_chunk = b"".join(
-                        item for item in chunk if isinstance(item, bytes)
-                    )
-                elif isinstance(chunk, int):
-                    raw_chunk = bytes([chunk])
-                elif isinstance(chunk, str):
-                    raw_chunk = chunk.encode()
-                else:
-                    raw_chunk = bytes(chunk)
+            for raw_chunk in output_stream:
                 if len(diagnostics) < 16_384:
                     diagnostics.extend(raw_chunk[: 16_384 - len(diagnostics)])
                 if not started_notified and started_marker in diagnostics:
@@ -584,12 +575,7 @@ class DockerSandboxBackend(BaseSandbox):
             )
         finally:
             if output_stream is not None:
-                close_stream = getattr(output_stream, "close", None)
-                if callable(close_stream):
-                    close_stream()
-                stream_response = getattr(output_stream, "_response", None)
-                if stream_response is not None:
-                    stream_response.close()
+                _close_exec_stream(output_stream)
 
         control = self._read_shell_job_control_unlocked(control_path)
         if control is None:
@@ -609,7 +595,9 @@ class DockerSandboxBackend(BaseSandbox):
                 status="failed",
                 exit_code=normalized_exit_code,
                 output_truncated=output_truncated,
-                error=self._hide_workspace(raw_error if isinstance(raw_error, str) else None),
+                error=self._hide_workspace(
+                    raw_error if isinstance(raw_error, str) else None
+                ),
             )
         if control_status != "finished" or normalized_exit_code is None:
             return SandboxShellJobExecution(
@@ -1083,23 +1071,9 @@ class DockerSandboxBackend(BaseSandbox):
         output_stream = api_client.exec_start(exec_id, stream=True, demux=False)
         try:
             for chunk in output_stream:
-                if isinstance(chunk, tuple):
-                    output.extend(
-                        b"".join(item for item in chunk if isinstance(item, bytes))
-                    )
-                elif isinstance(chunk, int):
-                    output.append(chunk)
-                elif isinstance(chunk, str):
-                    output.extend(chunk.encode())
-                else:
-                    output.extend(chunk)
+                output.extend(chunk)
         finally:
-            close_stream = getattr(output_stream, "close", None)
-            if callable(close_stream):
-                close_stream()
-            stream_response = getattr(output_stream, "_response", None)
-            if stream_response is not None:
-                stream_response.close()
+            _close_exec_stream(output_stream)
         inspected = api_client.exec_inspect(exec_id)
         return bytes(output), inspected.get("ExitCode")
 

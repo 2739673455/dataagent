@@ -23,16 +23,17 @@ Shared
 → 读取 conf/app_config.yaml
 → 解析环境变量插值
 → 使用 Pydantic 构造 Cfg
+→ 拒绝根配置和嵌套配置中的未知字段
 → 校验每个配置项的类型和范围
 → 校验跨配置约束
   → Celery soft timeout 小于 hard timeout
-  → query 输出上限不超过 sandbox 文件上限
-  → sandbox 各级字节上限递增
+  → sandbox 单文件上限不超过工作区上限
   → idle_stop 小于 idle_remove
+  → 默认模型和各 Specialist 引用已声明模型
 → 配置无效时阻止进程启动
 ```
 
-配置覆盖 PostgreSQL、Doris、Elasticsearch、Embedding、认证、查询、元数据索引、Celery、生命周期、沙箱、模型、Agent 和 MCP。
+配置覆盖 PostgreSQL、Doris、Elasticsearch、Embedding、认证、查询、元数据索引、Celery、生命周期、沙箱、模型、Agent 和 MCP。数据库密码、JWT 密钥、Embedding 密钥、模型密钥、Redis/Celery URL 以及 MCP URL、Header 和进程环境值使用 `SecretStr` 保存，仅在外部客户端边界解包。
 
 ## 2. 管理外部客户端生命周期
 

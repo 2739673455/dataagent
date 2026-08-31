@@ -48,7 +48,7 @@ testpaths = ["tests"]
 venv = ".venv"
 venvPath = "."
 reportDeprecated = "warning"
-include = ["app", "tests"]
+include = ["app", "main.py", "scripts", "tests"]
 exclude = [
   "**/.*",
   "**/__pycache__",

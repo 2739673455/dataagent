@@ -82,7 +82,7 @@ class UserDeletionServiceTest(unittest.IsolatedAsyncioTestCase):
         repo = MagicMock(spec=AuthPGRepo)
         repo.lock_security_mutation = AsyncMock()
         repo.get_user_by_id_for_update = AsyncMock(return_value=user)
-        repo.get_user_deletion_task = AsyncMock(return_value=None)
+        repo.get_user_deletion_task_for_update = AsyncMock(return_value=None)
         repo.set_user_active = AsyncMock()
         repo.revoke_user_refresh_tokens = AsyncMock()
         repo.enqueue_user_deletion = AsyncMock()
@@ -103,7 +103,44 @@ class UserDeletionServiceTest(unittest.IsolatedAsyncioTestCase):
             user.id,
             requested_at,
         )
+        repo.get_user_deletion_task_for_update.assert_awaited_once_with(user.id)
         self.assertTrue(submitted)
+
+    async def test_repository_locks_deletion_task_before_mutation(self) -> None:
+        session = MagicMock()
+        task = MagicMock()
+        session.get = AsyncMock(return_value=task)
+        repo = AuthPGRepo(session)
+
+        selected = await repo.get_user_deletion_task_for_update(8)
+
+        self.assertIs(selected, task)
+        session.get.assert_awaited_once_with(ANY, 8, with_for_update=True)
+
+    async def test_late_failure_cannot_overwrite_completed_deletion(self) -> None:
+        auth_postgres = MagicMock()
+        store = PostgresUserDeletionStateStore(auth_postgres)
+        session = MagicMock()
+        session.begin.return_value = AsyncContextStub()
+        auth_postgres.session.return_value = AsyncContextStub(session)
+        repo = MagicMock(spec=AuthPGRepo)
+        repo.get_user_deletion_task_for_update = AsyncMock(
+            return_value=MagicMock(status="completed")
+        )
+        repo.record_user_deletion_failure = AsyncMock()
+
+        with patch(
+            "app.identity.services.user_deletion_store.AuthPGRepo",
+            return_value=repo,
+        ):
+            await store.record_failure(
+                8,
+                error="RuntimeError: delayed",
+                next_attempt_at=datetime.now(UTC),
+            )
+
+        repo.get_user_deletion_task_for_update.assert_awaited_once_with(8)
+        repo.record_user_deletion_failure.assert_not_awaited()
 
     async def test_state_store_atomically_claims_due_tasks(self) -> None:
         auth_postgres = MagicMock()
@@ -194,9 +231,7 @@ class UserDeletionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(submitted)
 
     async def test_process_cleans_each_storage_then_completes_task(self) -> None:
-        service, state_store, conversations, sandbox = (
-            self.build_service()
-        )
+        service, state_store, conversations, sandbox = self.build_service()
 
         await service.process(8)
 

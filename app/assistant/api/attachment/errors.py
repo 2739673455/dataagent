@@ -1,4 +1,4 @@
-"""沙箱 HTTP 业务错误"""
+"""附件接口错误"""
 
 from http import HTTPStatus
 

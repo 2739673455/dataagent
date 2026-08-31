@@ -21,6 +21,4 @@ class ConversationTombstone(AssistantBase):
         nullable=False,
     )
 
-    __table_args__ = (
-        Index("ix_conversation_tombstones_user", "user_id"),
-    )
+    __table_args__ = (Index("ix_conversation_tombstones_user", "user_id"),)

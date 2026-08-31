@@ -217,7 +217,9 @@ def _project_messages(
                         content.append(
                             _attachment_error_block(
                                 attachment.f_path,
-                                str(response.error) if response is not None else "unavailable",
+                                str(response.error)
+                                if response is not None
+                                else "unavailable",
                             )
                         )
             projected.append(message.model_copy(update={"content": cast(Any, content)}))
@@ -241,7 +243,9 @@ def _project_messages(
                     view_content.append(
                         _attachment_error_block(
                             image_request.f_path,
-                            str(response.error) if response is not None else "unavailable",
+                            str(response.error)
+                            if response is not None
+                            else "unavailable",
                         )
                     )
                 projected.append(

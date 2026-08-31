@@ -27,7 +27,7 @@ def create_configured_model(model_name: str) -> BaseChatModel:
     model_kwargs = {
         "model": model_cfg.model,
         "base_url": model_cfg.base_url,
-        "api_key": model_cfg.api_key,
+        "api_key": model_cfg.api_key.get_secret_value(),
         "profile": model_cfg.profile,
         "request_timeout": 30,
         "max_retries": 3,

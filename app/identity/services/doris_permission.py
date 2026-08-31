@@ -136,9 +136,10 @@ class DorisPermissionService:
                 )
                 doris_changed = True
                 result: list[DorisRoleAssetGrant] = []
-                for asset, persisted in zip(assets, existing, strict=True):
-                    if persisted is None:
-                        persisted = await self._auth_repo.add_asset_grant(
+                for asset, current_grant in zip(assets, existing, strict=True):
+                    persisted_grant = current_grant
+                    if persisted_grant is None:
+                        persisted_grant = await self._auth_repo.add_asset_grant(
                             DorisRoleAssetGrant(
                                 role_name=role,
                                 scope=asset.scope.value,
@@ -149,7 +150,7 @@ class DorisPermissionService:
                                 resource_key=asset.resource_key,
                             )
                         )
-                    result.append(persisted)
+                    result.append(persisted_grant)
                 return result
         except IntegrityError as exc:
             if doris_changed:
@@ -161,6 +162,8 @@ class DorisPermissionService:
                 )
             raise auth_error.AssetGrantAlreadyExistsError from exc
         except BaseException:
+            # Doris 变更不参与 PostgreSQL 回滚；取消任务也必须进入补偿，否则实际
+            # 权限会与应用侧可见性投影分离。
             if doris_changed:
                 await self._compensate_select(
                     grant=False,

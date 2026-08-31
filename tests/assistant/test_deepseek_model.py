@@ -1,11 +1,15 @@
 """DeepSeek thinking 工具调用协议测试。"""
 
+from unittest.mock import patch
+
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableBinding
 from langchain_core.tools import tool
 from pydantic import SecretStr
 
 from app.assistant.deepseek_model import DataAgentChatDeepSeek
+from app.assistant.model_factory import create_configured_model
+from app.shared.config.app_config import cfg
 
 
 def _model(*, thinking_disabled: bool = False) -> DataAgentChatDeepSeek:
@@ -73,3 +77,11 @@ def test_non_thinking_mode_keeps_forced_tool_choice() -> None:
 
     assert isinstance(bound, RunnableBinding)
     assert bound.kwargs["tool_choice"] == "required"
+
+
+def test_model_factory_unwraps_api_key_at_client_boundary() -> None:
+    with patch("app.assistant.model_factory.DataAgentChatDeepSeek") as model_class:
+        create_configured_model(cfg.lm_config.active)
+
+    api_key = model_class.call_args.kwargs["api_key"]
+    assert isinstance(api_key, str)

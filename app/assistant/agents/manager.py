@@ -115,7 +115,7 @@ class AgentManager:
         """获取会话级 Agent 运行时，不存在时按需创建"""
         await self.init()
         conversation_key = (user_id, conversation_id)
-        if await self._conversation_is_deleted(user_id, conversation_id):
+        if await self._tombstones.exists(user_id, conversation_id):
             async with self._state_lock:
                 self._deleted_conversation_keys.add(conversation_key)
             raise RuntimeError("该会话已被删除")
@@ -176,7 +176,8 @@ class AgentManager:
             runtime = self._conversation_runtimes.pop(conversation_key, None)
         if runtime is not None:
             runtime.session_service.clear()
-        await self._mark_conversation_deleted(user_id, conversation_id)
+        # 先持久化墓碑再删除 Checkpoint，避免其他进程在删除窗口重建会话状态。
+        await self._tombstones.save(user_id, conversation_id)
         await self._persistence_manager.delete_thread(
             get_thread_id(user_id, conversation_id)
         )
@@ -205,22 +206,6 @@ class AgentManager:
             self._deleted_conversation_keys = {
                 key for key in self._deleted_conversation_keys if key[0] != user_id
             }
-
-    async def _conversation_is_deleted(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-    ) -> bool:
-        """从关系表查询跨进程删除墓碑"""
-        return await self._tombstones.exists(user_id, conversation_id)
-
-    async def _mark_conversation_deleted(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-    ) -> None:
-        """在删除 Checkpoint 前写入持久化墓碑"""
-        await self._tombstones.save(user_id, conversation_id)
 
     @asynccontextmanager
     async def execution(

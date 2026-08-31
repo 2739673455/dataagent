@@ -103,13 +103,7 @@ class ColumnESRepo:
     async def delete(self, t_name: str, c_name: str) -> None:
         """删除字段对应的全部语义索引文档"""
         await self._delete_by_filter(
-            [
-                {
-                    "term": {
-                        "resource_key": column_resource_key(t_name, c_name)
-                    }
-                }
-            ]
+            [{"term": {"resource_key": column_resource_key(t_name, c_name)}}]
         )
 
     async def search_vector_hits(
@@ -173,8 +167,7 @@ class ColumnESRepo:
             knn=knn,
             size=limit,
         )
-        body = result.body if hasattr(result, "body") else result
-        return cast(dict[str, Any], body)
+        return cast(dict[str, Any], result.body)
 
     async def _text_search(
         self,
@@ -223,8 +216,7 @@ class ColumnESRepo:
             query=text_query,
             size=limit,
         )
-        body = result.body if hasattr(result, "body") else result
-        return cast(dict[str, Any], body)
+        return cast(dict[str, Any], result.body)
 
     @staticmethod
     def _column_filter(allowed_columns: frozenset[ColumnKey]) -> dict[str, Any]:
