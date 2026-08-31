@@ -10,6 +10,7 @@ import {
   isToolResultFailure,
   parseDelegationResult,
   resolveDelegationRunStatus,
+  splitFinalAssistantMessage,
 } from "../src/pages/Chat/components/messages/displayModel";
 import type { ToolRunDisplayItem } from "../src/pages/Chat/components/messages/types";
 import type { MessageResponse } from "../src/types";
@@ -144,6 +145,7 @@ describe("chat message display and turn grouping", () => {
 
   test("distinguishes processing, completed, and interrupted execution", () => {
     expect(getExecutionStatus(false, true)).toBe("processing");
+    expect(getExecutionStatus(true, true)).toBe("processing");
     expect(getExecutionStatus(true, false)).toBe("completed");
     expect(getExecutionStatus(false, false)).toBe("interrupted");
 
@@ -287,6 +289,42 @@ describe("chat message display and turn grouping", () => {
     });
   });
 
+  test("moves thinking from the final assistant message into the execution process", () => {
+    const messages: MessageResponse[] = [
+      {
+        message_id: "u-final-thinking",
+        role: "user",
+        parts: [{ type: "text", text: "总结结果" }],
+      },
+      {
+        message_id: "a-final-thinking",
+        role: "assistant",
+        finish_reason: "stop",
+        parts: [
+          { type: "thinking", text: "正在组织最终结论", status: "complete" },
+          { type: "text", text: "最终结论已经生成" },
+        ],
+      },
+    ];
+
+    const turns = groupDisplayItemsIntoTurns(buildDisplayItems("conv-1", messages, false));
+
+    expect(turns[0].intermediateItems).toHaveLength(1);
+    expect(turns[0].intermediateItems[0]).toMatchObject({
+      key: "message-a-final-thinking-thinking",
+      type: "message",
+      message: {
+        parts: [{ type: "thinking", text: "正在组织最终结论", status: "complete" }],
+      },
+    });
+    expect(turns[0].finalItem).toMatchObject({
+      key: "message-a-final-thinking",
+      message: {
+        parts: [{ type: "text", text: "最终结论已经生成" }],
+      },
+    });
+  });
+
   test("keeps intermediate tools open during streaming when no final message has arrived yet", () => {
     const messages: MessageResponse[] = [
       {
@@ -320,6 +358,56 @@ describe("chat message display and turn grouping", () => {
     expect(turns[0].finalItem).toBeNull();
     expect(turns[0].intermediateItems).toHaveLength(1);
     expect(turns[0].intermediateItems[0].type).toBe("tool_run");
+  });
+
+  test("keeps a streaming planner draft in the execution process", () => {
+    const messages: MessageResponse[] = [
+      {
+        message_id: "u-streaming",
+        role: "user",
+        parts: [{ type: "text", text: "继续分析" }],
+      },
+      {
+        message_id: "a-streaming",
+        role: "assistant",
+        finish_reason: "streaming",
+        parts: [
+          { type: "thinking", text: "正在判断下一步", status: "streaming" },
+          { type: "text", text: "当前完成了一部分计算" },
+        ],
+      },
+    ];
+
+    const turns = groupDisplayItemsIntoTurns(buildDisplayItems("conv-1", messages, true));
+
+    expect(turns[0].finalItem).toBeNull();
+    expect(turns[0].intermediateItems).toHaveLength(1);
+    expect(turns[0].intermediateItems[0].key).toBe("message-a-streaming");
+  });
+
+  test("keeps a complete-looking latest planner message in process while the run is active", () => {
+    const messages: MessageResponse[] = [
+      {
+        message_id: "u-active",
+        role: "user",
+        parts: [{ type: "text", text: "继续分析" }],
+      },
+      {
+        message_id: "a-active",
+        role: "assistant",
+        finish_reason: "stop",
+        parts: [{ type: "text", text: "当前模型调用已经生成完毕" }],
+      },
+    ];
+    const items = buildDisplayItems("conv-1", messages, true);
+
+    const activeTurns = groupDisplayItemsIntoTurns(items, false);
+    expect(activeTurns[0].finalItem).toBeNull();
+    expect(activeTurns[0].intermediateItems[0].key).toBe("message-a-active");
+
+    const completedTurns = groupDisplayItemsIntoTurns(items, true);
+    expect(completedTurns[0].finalItem?.key).toBe("message-a-active");
+    expect(completedTurns[0].intermediateItems).toEqual([]);
   });
 
   test("subagent internal activity separates subagent tools from subagent final conclusion", () => {
@@ -365,6 +453,47 @@ describe("chat message display and turn grouping", () => {
     const intermediateItems = subagentDisplayItems.slice(0, subagentDisplayItems.length - 1);
     expect(intermediateItems).toHaveLength(1);
     expect(intermediateItems[0].type).toBe("tool_run");
+  });
+
+  test("keeps a streaming specialist message in the execution process until the run completes", () => {
+    const items = buildDisplayItems(
+      "conv-1",
+      [
+        {
+          message_id: "specialist-draft",
+          role: "assistant",
+          finish_reason: "streaming",
+          parts: [{ type: "text", text: "正在整理查询结果" }],
+        },
+      ],
+      true
+    );
+
+    expect(splitFinalAssistantMessage(items, false)).toEqual({
+      finalItem: null,
+      intermediateItems: items,
+    });
+    expect(splitFinalAssistantMessage(items, true)).toEqual({
+      finalItem: null,
+      intermediateItems: items,
+    });
+
+    const completedItems = buildDisplayItems(
+      "conv-1",
+      [
+        {
+          message_id: "specialist-draft",
+          role: "assistant",
+          finish_reason: "stop",
+          parts: [{ type: "text", text: "正在整理查询结果" }],
+        },
+      ],
+      false
+    );
+    expect(splitFinalAssistantMessage(completedItems, true)).toEqual({
+      finalItem: completedItems[0],
+      intermediateItems: [],
+    });
   });
 
   test("classifies attachment file types accurately", () => {

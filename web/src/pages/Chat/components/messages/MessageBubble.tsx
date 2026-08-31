@@ -20,26 +20,27 @@ export function MessageBubble({
     src: string;
     alt: string;
   } | null>(null);
+  const attachmentChips = message.attachments?.length ? (
+    <div className="flex flex-wrap gap-1.5">
+      {message.attachments.map((attachment) => (
+        <AttachmentChip
+          key={attachment.f_path}
+          attachment={attachment}
+          conversationId={message.conversationId}
+          isUser={isUser}
+          onPreview={(src, alt) => setPreviewImage({ src, alt })}
+          onOpenPreviewAttachment={onOpenPreviewAttachment}
+        />
+      ))}
+    </div>
+  ) : null;
 
   return (
     <>
       <div className="my-2 font-mono">
         <div className="px-1 py-1">
           <div className="space-y-1.5">
-            {message.attachments?.length ? (
-              <div className="flex flex-wrap gap-1.5">
-                {message.attachments.map((attachment) => (
-                  <AttachmentChip
-                    key={attachment.f_path}
-                    attachment={attachment}
-                    conversationId={message.conversationId}
-                    isUser={isUser}
-                    onPreview={(src, alt) => setPreviewImage({ src, alt })}
-                    onOpenPreviewAttachment={onOpenPreviewAttachment}
-                  />
-                ))}
-              </div>
-            ) : null}
+            {isUser ? attachmentChips : null}
 
             {message.parts.map((part) => (
               <PartView
@@ -50,6 +51,8 @@ export function MessageBubble({
                 isUser={isUser}
               />
             ))}
+
+            {isUser ? null : attachmentChips}
           </div>
 
           {createdAt ? (

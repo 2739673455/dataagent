@@ -16,16 +16,11 @@ import {
   isToolResultFailure,
   parseDelegationResult,
   resolveDelegationRunStatus,
+  splitFinalAssistantMessage,
 } from "./displayModel";
 import { PartView } from "./MarkdownRenderer";
 import { MessageBubble } from "./MessageBubble";
-import type {
-  DisplayItem,
-  MessageDisplayItem,
-  SubagentRunIdentity,
-  SubagentRunMap,
-  ToolRunDisplayItem,
-} from "./types";
+import type { DisplayItem, SubagentRunIdentity, SubagentRunMap, ToolRunDisplayItem } from "./types";
 
 const SPECIALIST_HISTORY_RETRY_COUNT = 3;
 
@@ -439,18 +434,8 @@ function DelegationRunBarInternal({
     ? buildDisplayItems(item.conversationId ?? null, subagentRun.messages, isRunning)
     : [];
 
-  let subagentFinalItem: MessageDisplayItem | null = null;
-  let subagentIntermediateItems: DisplayItem[] = [];
-
-  if (subagentDisplayItems.length > 0) {
-    const lastItem = subagentDisplayItems[subagentDisplayItems.length - 1];
-    if (lastItem.type === "message" && lastItem.message.role === "assistant") {
-      subagentFinalItem = lastItem;
-      subagentIntermediateItems = subagentDisplayItems.slice(0, subagentDisplayItems.length - 1);
-    } else {
-      subagentIntermediateItems = subagentDisplayItems;
-    }
-  }
+  const { finalItem: subagentFinalItem, intermediateItems: subagentIntermediateItems } =
+    splitFinalAssistantMessage(subagentDisplayItems, !isRunning);
 
   const parsedDelegationResult = parseDelegationResult(item.result);
 

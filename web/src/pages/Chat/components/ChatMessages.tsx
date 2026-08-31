@@ -46,7 +46,7 @@ export function ChatMessages({
   viewportRef,
 }: ChatMessagesProps) {
   const displayItems = buildDisplayItems(conversationId, messages, isStreaming);
-  const turns = groupDisplayItemsIntoTurns(displayItems);
+  const turns = groupDisplayItemsIntoTurns(displayItems, !isStreaming);
   const messageElementsRef = useRef(new Map<string, HTMLDivElement>());
   const shouldStickToBottomRef = useRef(false);
   const navigationTargetTopRef = useRef<number | null>(null);

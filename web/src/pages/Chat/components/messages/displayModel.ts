@@ -28,7 +28,7 @@ export function getExecutionStatus(
   hasFinalItem: boolean,
   isStreaming: boolean
 ): Exclude<ExecutionStatus, "idle"> {
-  if (isStreaming && !hasFinalItem) return "processing";
+  if (isStreaming) return "processing";
   return hasFinalItem ? "completed" : "interrupted";
 }
 
@@ -317,35 +317,78 @@ export function buildEvalDelegationItems(
   return [...items.values()];
 }
 
-export function groupDisplayItemsIntoTurns(displayItems: DisplayItem[]): ChatTurn[] {
+export function splitFinalAssistantMessage(
+  items: DisplayItem[],
+  allowFinalMessage = true
+): {
+  finalItem: MessageDisplayItem | null;
+  intermediateItems: DisplayItem[];
+} {
+  if (!allowFinalMessage || items.length === 0) {
+    return { finalItem: null, intermediateItems: [...items] };
+  }
+
+  const lastItem = items[items.length - 1];
+  const hasVisibleAnswer =
+    lastItem.type === "message" &&
+    ((lastItem.message.attachments?.length ?? 0) > 0 ||
+      lastItem.message.parts.some((part) => part.type !== "thinking"));
+  if (
+    lastItem.type !== "message" ||
+    lastItem.message.role !== "assistant" ||
+    lastItem.message.finishReason === "streaming" ||
+    lastItem.message.finishReason === "interrupted" ||
+    !hasVisibleAnswer
+  ) {
+    return { finalItem: null, intermediateItems: [...items] };
+  }
+
+  const thinkingParts = lastItem.message.parts.filter((part) => part.type === "thinking");
+  if (thinkingParts.length === 0) {
+    return {
+      finalItem: lastItem,
+      intermediateItems: items.slice(0, items.length - 1),
+    };
+  }
+
+  const thinkingItemKey = `${lastItem.key}-thinking`;
+  const thinkingItem: MessageDisplayItem = {
+    ...lastItem,
+    key: thinkingItemKey,
+    message: {
+      ...lastItem.message,
+      key: thinkingItemKey,
+      attachments: null,
+      parts: thinkingParts,
+    },
+  };
+  return {
+    finalItem: {
+      ...lastItem,
+      message: {
+        ...lastItem.message,
+        parts: lastItem.message.parts.filter((part) => part.type !== "thinking"),
+      },
+    },
+    intermediateItems: [...items.slice(0, items.length - 1), thinkingItem],
+  };
+}
+
+export function groupDisplayItemsIntoTurns(
+  displayItems: DisplayItem[],
+  allowLatestTurnFinalMessage = true
+): ChatTurn[] {
   const turns: ChatTurn[] = [];
   let currentUserItem: MessageDisplayItem | null = null;
   let currentAssistantItems: DisplayItem[] = [];
 
-  const flushTurn = () => {
+  const flushTurn = (allowFinalMessage = true) => {
     if (!currentUserItem && currentAssistantItems.length === 0) return;
 
-    let finalItem: MessageDisplayItem | null = null;
-    let intermediateItems: DisplayItem[] = [];
-
-    if (currentAssistantItems.length > 0) {
-      const lastItem = currentAssistantItems[currentAssistantItems.length - 1];
-      const hasVisibleAnswer =
-        lastItem.type === "message" &&
-        ((lastItem.message.attachments?.length ?? 0) > 0 ||
-          lastItem.message.parts.some((part) => part.type !== "thinking"));
-      if (
-        lastItem.type === "message" &&
-        lastItem.message.role === "assistant" &&
-        lastItem.message.finishReason !== "interrupted" &&
-        hasVisibleAnswer
-      ) {
-        finalItem = lastItem;
-        intermediateItems = currentAssistantItems.slice(0, currentAssistantItems.length - 1);
-      } else {
-        intermediateItems = [...currentAssistantItems];
-      }
-    }
+    const { finalItem, intermediateItems } = splitFinalAssistantMessage(
+      currentAssistantItems,
+      allowFinalMessage
+    );
 
     const turnId =
       currentUserItem?.key ??
@@ -371,7 +414,7 @@ export function groupDisplayItemsIntoTurns(displayItems: DisplayItem[]): ChatTur
     }
   }
 
-  flushTurn();
+  flushTurn(allowLatestTurnFinalMessage);
   return turns;
 }
 

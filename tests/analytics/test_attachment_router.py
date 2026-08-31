@@ -149,7 +149,6 @@ class AttachmentRouterTest(unittest.IsolatedAsyncioTestCase):
             f_path="sessions/run/analyst/main/report.csv",
             conversation_repo=self.conversation_repo,
             current_user=self.user,
-            lifecycle=self.lifecycle,
             sandbox=self.sandbox,
         )
 

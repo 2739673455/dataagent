@@ -101,28 +101,26 @@ async def api_get_attachment(
     f_path: str,
     conversation_repo: ConversationPGRepoDep,
     current_user: CurrentUserDep,
-    lifecycle: ConversationLifecycleServiceDep,
     sandbox: SandboxManagerDep,
 ) -> Response:
     """获取当前会话工作区中的附件文件"""
     user_id = current_user.id
-    async with lifecycle.lock(user_id, conversation_id):
-        conversation = await conversation_repo.get(user_id, conversation_id)
-        if conversation is None:
-            raise chat_error.ConversationNotFoundError
+    conversation = await conversation_repo.get(user_id, conversation_id)
+    if conversation is None:
+        raise chat_error.ConversationNotFoundError
 
-        try:
-            content = await sandbox.download_file(
-                user_id,
-                conversation_id,
-                f_path,
-            )
-        except SandboxPathError:
-            raise attachment_error.PathTraversalError from None
-        except FileNotFoundError:
-            raise attachment_error.AttachmentNotFoundError(detail=f_path)
-        except SandboxFileTooLargeError:
-            raise attachment_error.AttachmentTooLargeError from None
+    try:
+        content = await sandbox.download_file(
+            user_id,
+            conversation_id,
+            f_path,
+        )
+    except SandboxPathError:
+        raise attachment_error.PathTraversalError from None
+    except FileNotFoundError:
+        raise attachment_error.AttachmentNotFoundError(detail=f_path)
+    except SandboxFileTooLargeError:
+        raise attachment_error.AttachmentTooLargeError from None
 
     # 获取文件 MIME 类型
     media_type, _ = mimetypes.guess_type(f_path)

@@ -123,7 +123,7 @@ export function AttachmentIconBadge({
     };
   }, [attachment.f_path, attachment.preview_url, conversationId, isImage]);
 
-  const badgeSizeClass = size === "sm" ? "h-5 w-5" : "h-5.5 w-5.5";
+  const badgeSizeClass = size === "sm" ? "h-5 w-5" : "h-6 w-6";
   const iconSizeClass = size === "sm" ? "h-3 w-3" : "h-3.5 w-3.5";
 
   if (imageUrl && isImage) {
