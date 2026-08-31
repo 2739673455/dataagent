@@ -155,8 +155,6 @@ agent: # Planner 和 Specialist 运行时配置
       model: default
     reviewer: # 结果审查 Specialist
       model: default
-    visualizer: # 可视化 Specialist
-      model: default
 
 mcp: # 格式参考：https://docs.langchain.com/oss/python/langchain/mcp#transports
   tavily: # MCP 服务配置名

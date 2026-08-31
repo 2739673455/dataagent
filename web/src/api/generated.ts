@@ -3,7 +3,7 @@
 
 export interface components {
   "schemas": {
-    "AgentType": "explorer" | "analyst" | "reviewer" | "visualizer";
+    "AgentType": "explorer" | "analyst" | "reviewer";
     "AssetGrantListResponse": {
       "grants": Array<components["schemas"]["AssetGrantResponse"]>;
     };
@@ -755,7 +755,7 @@ export interface operations {
   "api_get_subagent_messages_api_v1_chat__conversation_id__subagents__analysis_id___agent_type___session_id__runs__delegation_id__messages_get": {
     "parameters": {
       "path": {
-        "agent_type": "explorer" | "analyst" | "reviewer" | "visualizer";
+        "agent_type": "explorer" | "analyst" | "reviewer";
         "analysis_id": string;
         "conversation_id": string;
         "delegation_id": string;

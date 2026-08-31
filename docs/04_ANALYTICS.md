@@ -52,9 +52,8 @@ Analytics
 → 向 Planner 根 checkpoint 写入 HumanMessage
 → Planner 分解任务并调用 delegation
 → Explorer 检索目录并执行 SQL
-→ Analyst 读取查询结果并完成分析
-→ Reviewer 检查数据、方法、证据和结论
-→ Visualizer 生成图表、表格或报告
+→ Analyst 读取查询结果，完成分析、图表和自包含 HTML 报告
+→ Reviewer 检查数据、方法、证据、结论和报告内容
 → Planner 汇总专业结果和附件
 → 通过 SSE 返回 message、error 和 done 事件
 ```
@@ -106,7 +105,7 @@ failed
 → 必须包含 failure_reasons
 ```
 
-四类 Agent 的职责和能力：
+三类 Agent 的职责和能力：
 
 ```text
 Explorer
@@ -117,18 +116,15 @@ Explorer
 Analyst
 → 读取 Explorer CSV
 → 执行数据质量、描述、对比、分解、下钻和根因分析
-→ 使用 Analyst 数据分析 Skill
+→ 生成图表、展示表格和自包含 HTML 报告
+→ 按任务使用独立的 Analysis Skill 和 Visualization Skill
 
 Reviewer
 → 审查上游数据、口径、计算、证据和结论
 → 发现问题时发起 RepairRequest
-
-Visualizer
-→ 读取已审查数据和结论
-→ 生成图表、表格和下载报告
 ```
 
-四类 Specialist 都使用 `execute`、`list_shell_jobs`、`get_shell_job` 和 `cancel_shell_job`。`execute` 前台固定等待 60 秒；超时后任务留在当前 Agent Run 后台继续运行。每次 Specialist 模型调用前，`ShellJobContextMiddleware` 把运行中任务和未查看终态任务作为临时 `<shell_jobs>` 系统指令附加到请求副本。该区块不写入消息、Checkpoint 或 SSE 活动流。
+三类 Specialist 都使用 `execute`、`list_shell_jobs`、`get_shell_job` 和 `cancel_shell_job`。`execute` 前台固定等待 60 秒；超时后任务留在当前 Agent Run 后台继续运行。每次 Specialist 模型调用前，`ShellJobContextMiddleware` 把运行中任务和未查看终态任务作为临时 `<shell_jobs>` 系统指令附加到请求副本。该区块不写入消息、Checkpoint 或 SSE 活动流。
 
 Shell 工具的 AIMessage 和 ToolMessage 沿用现有子 Agent 活动流。Specialist 返回最终结果前应处理运行中任务；Agent Run 的 `finally` 清理负责兜底终止遗留进程，完成后才释放 Session 锁。
 
@@ -219,6 +215,9 @@ Agent 使用工作区
 
 Planner 最终交付文件
 → 只选择用户需要直接查看或下载的当前会话文件
+→ 最终报告或综合报告只交付 Analyst 生成的自包含 HTML
+→ Markdown 仅作为内部分析和审查证据，不作为最终报告
+→ PNG、SVG、CSV、Parquet 等可以作为 HTML 报告的配套附件
 → 在最终回答中使用独占一行的 `[[DATAAGENT_ARTIFACT:/sessions/...]]` 指令
 → 文件无需预先出现在 delegation 的 artifacts 中
 → 后端校验路径属于当前对话且文件真实可下载
@@ -230,9 +229,6 @@ Planner 最终交付文件
 → 下载时推断 MIME type
 → 删除只允许 uploads 下的用户文件
 ```
-
-Planner 最终产物选择指令的格式、信任边界和验收标准见
-[Planner 最终产物交付指令](designs/PLANNER_ARTIFACT_DIRECTIVE.md)。
 
 ## 8. 生成和修复对话标题
 

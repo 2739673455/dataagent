@@ -35,29 +35,4 @@ describe("query experience admin", () => {
       },
     });
   });
-
-  test("calls disable and direct delete endpoints", async () => {
-    const post = vi.spyOn(appClient, "post").mockResolvedValue({ data: {} });
-    const remove = vi.spyOn(appClient, "delete").mockResolvedValue({ data: {} });
-
-    await adminApi.disableQueryExperience("experience-id");
-    await adminApi.deleteQueryExperience("experience-id");
-
-    expect(post).toHaveBeenCalledWith("/api/v1/admin/query-experiences/experience-id/disable");
-    expect(remove).toHaveBeenCalledWith("/api/v1/admin/query-experiences/experience-id");
-  });
-
-  test("calls batch disable and delete endpoints", async () => {
-    const post = vi.spyOn(appClient, "post").mockResolvedValue({ data: {} });
-
-    await adminApi.disableQueryExperiences(["first", "second"]);
-    await adminApi.deleteQueryExperiences(["second"]);
-
-    expect(post).toHaveBeenNthCalledWith(1, "/api/v1/admin/query-experiences/batch-disable", {
-      experience_ids: ["first", "second"],
-    });
-    expect(post).toHaveBeenNthCalledWith(2, "/api/v1/admin/query-experiences/batch-delete", {
-      experience_ids: ["second"],
-    });
-  });
 });

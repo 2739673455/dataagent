@@ -17,7 +17,6 @@ from app.analytics.agents.explorer.agent import create_explorer_agent
 from app.analytics.agents.reviewer.agent import create_reviewer_agent
 from app.analytics.agents.shell_jobs import ShellJobRuntime
 from app.analytics.agents.skills import agent_skills_mount_path
-from app.analytics.agents.visualizer.agent import create_visualizer_agent
 from app.sandbox.manager import DockerSandboxManager
 from app.shared.contracts.analysis import (
     AGENT_TYPES,
@@ -125,7 +124,6 @@ def build_specialist_definitions(
             skills=(agent_skills_mount_path("analyst"),),
         ),
         "reviewer": SpecialistDefinition(builder=create_reviewer_agent),
-        "visualizer": SpecialistDefinition(builder=create_visualizer_agent),
     }
 
 

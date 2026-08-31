@@ -246,7 +246,7 @@ class AgentConfig(BaseModel):
     orchestration: OrchestrationConfig
     interpreter: InterpreterConfig
     specialists: dict[
-        Literal["explorer", "analyst", "reviewer", "visualizer"],
+        Literal["explorer", "analyst", "reviewer"],
         SpecialistConfig,
     ]
 

@@ -518,12 +518,12 @@ def _delegation_payload() -> dict[str, object]:
     return {
         "status": "completed",
         "analysis_id": "sales-review",
-        "agent_type": "visualizer",
+        "agent_type": "analyst",
         "session_id": "chart-1",
         "content": "Chart generated",
         "artifacts": [
             {
-                "path": ("/sessions/sales-review/visualizer/chart-1/report.html"),
+                "path": ("/sessions/sales-review/analyst/chart-1/report.html"),
                 "media_type": "text/html",
                 "description": "Interactive report",
             }
@@ -537,9 +537,9 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
     async def test_final_artifact_directives_project_downloadable_session_files(
         self,
     ) -> None:
-        report_path = "/sessions/sales-review/visualizer/chart-1/report.html"
-        missing_path = "/sessions/sales-review/visualizer/chart-1/missing.csv"
-        code_path = "/sessions/sales-review/visualizer/chart-1/example.png"
+        report_path = "/sessions/sales-review/analyst/chart-1/report.html"
+        missing_path = "/sessions/sales-review/analyst/chart-1/missing.csv"
+        code_path = "/sessions/sales-review/analyst/chart-1/example.png"
         message = AIMessage(
             id="assistant-final",
             content=(
@@ -737,7 +737,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                         {
                             "delegation_id": "ptc-delegation-1",
                             "analysis_id": "sales-review",
-                            "agent_type": "visualizer",
+                            "agent_type": "analyst",
                             "session_id": "chart-1",
                             "message": "生成销售图表",
                             "result": payload,
@@ -993,7 +993,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         attachment = (schema.attachments or [])[0]
         self.assertEqual(
             attachment.f_path,
-            "sessions/sales-review/visualizer/chart-1/report.html",
+            "sessions/sales-review/analyst/chart-1/report.html",
         )
         self.assertEqual(attachment.media_type, "text/html")
         self.assertEqual(attachment.description, "Interactive report")
@@ -1076,7 +1076,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         payload = _delegation_payload()
         payload["artifacts"] = [
             {
-                "path": "/sessions/sales-review/visualizer/chart-1/report.html ",
+                "path": "/sessions/sales-review/analyst/chart-1/report.html ",
                 "media_type": "text/html",
                 "description": "Interactive report",
             }

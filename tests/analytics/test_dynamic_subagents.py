@@ -499,10 +499,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
             definitions["reviewer"].tool_names,
             set(),
         )
-        self.assertEqual(
-            definitions["visualizer"].tool_names,
-            set(),
-        )
 
     def test_specialist_definitions_assign_analysis_skill_only_to_analyst(
         self,
@@ -521,7 +517,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
         )
         self.assertEqual(definitions["explorer"].skills, ())
         self.assertEqual(definitions["reviewer"].skills, ())
-        self.assertEqual(definitions["visualizer"].skills, ())
 
     def test_specialist_definitions_require_explorer_data_tools(self) -> None:
         with self.assertRaisesRegex(ValueError, "Explorer 缺少必需工具"):
@@ -555,7 +550,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
         from app.analytics.agents.analyst.agent import create_analyst_agent
         from app.analytics.agents.explorer.agent import create_explorer_agent
         from app.analytics.agents.reviewer.agent import create_reviewer_agent
-        from app.analytics.agents.visualizer.agent import create_visualizer_agent
 
         register_harness_profile(
             "recordingchatmodel",
@@ -567,7 +561,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
             "explorer": create_explorer_agent,
             "analyst": create_analyst_agent,
             "reviewer": create_reviewer_agent,
-            "visualizer": create_visualizer_agent,
         }
         definitions = build_specialist_definitions(
             [recall_context, execute_sql],

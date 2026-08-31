@@ -9,14 +9,12 @@ type AgentType = Literal[
     "explorer",
     "analyst",
     "reviewer",
-    "visualizer",
 ]
 
 AGENT_TYPES: tuple[AgentType, ...] = (
     "explorer",
     "analyst",
     "reviewer",
-    "visualizer",
 )
 
 IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")

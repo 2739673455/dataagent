@@ -171,9 +171,8 @@ Docker Named Volume
 → metadata 召回字段、字段值、指标和查询经验上下文
 → Explorer execute_sql
 → query 解析身份、Guard、EXPLAIN、执行和 CSV 落盘
-→ Analyst 读取 CSV 并分析
+→ Analyst 读取 CSV，完成分析、图表和自包含 HTML 报告
 → Reviewer 审查证据和结论
-→ Visualizer 生成图表或报告
 → Planner 汇总最终回答
 
 元数据变更

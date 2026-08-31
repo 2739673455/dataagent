@@ -20,8 +20,6 @@ import type {
 
 export const TOOL_ARGS_PREVIEW_MAX_LENGTH = 80;
 
-export const AGENT_TYPES = new Set<AgentType>(["explorer", "analyst", "reviewer", "visualizer"]);
-
 export type ExecutionStatus = "idle" | "processing" | "completed" | "interrupted";
 
 export function getExecutionStatus(
@@ -550,7 +548,7 @@ export function getSubagentRunIdentity(item: ToolRunDisplayItem): SubagentRunIde
   if (
     typeof analysisId !== "string" ||
     typeof agentType !== "string" ||
-    !AGENT_TYPES.has(agentType as AgentType) ||
+    agentType.length === 0 ||
     typeof sessionId !== "string"
   ) {
     return null;
