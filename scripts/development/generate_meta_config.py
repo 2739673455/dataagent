@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ import yaml
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_DDL_PATH = ROOT_DIR / "dbmock" / "scripts" / "sql" / "ecommerce.sql"
 DEFAULT_OUTPUT_PATH = ROOT_DIR / "conf" / "meta_config.yaml"
+GENERATED_HEADER = "# 由 scripts/development/generate_meta_config.py 根据 Doris DDL 与语义规则生成，请勿手工编辑。\n"
 
 TABLE_ORDER = (
     "dim_date",
@@ -171,13 +173,11 @@ INDEX_VALUE_COLUMNS = {
     "seller_status",
     "category_name",
     "category_level",
-    "category_path",
     "root_category_name",
     "brand_name",
     "brand_alias",
     "channel_code",
     "channel_name",
-    "channel_type",
     "page_name",
     "page_type",
     "region_name",
@@ -203,8 +203,6 @@ INDEX_VALUE_COLUMNS = {
     "coupon_status",
     "client_type",
     "os_type",
-    "search_keyword",
-    "normalized_keyword",
     "search_source",
     "cart_event_type",
     "cart_source",
@@ -259,6 +257,7 @@ REFERENCE_COLUMNS = {
     "sku_id": ("dim_sku_info_zip", "sku_id"),
     "warehouse_sk": ("dim_warehouse_info_zip", "warehouse_sk"),
     "warehouse_id": ("dim_warehouse_info_zip", "warehouse_id"),
+    "country_code": ("dim_geo_region_zip", "country_code"),
     "region_sk": ("dim_geo_region_zip", "region_sk"),
     "region_code": ("dim_geo_region_zip", "region_code"),
     "province_code": ("dim_geo_region_zip", "province_code"),
@@ -292,7 +291,7 @@ REFERENCE_COLUMNS = {
     "payment_type_code": ("dim_payment_type", "payment_type_code"),
     "logistics_company_sk": ("dim_logistics_company", "logistics_company_sk"),
     "logistics_company_id": ("dim_logistics_company", "logistics_company_id"),
-    "tag_id": ("dim_user_tag_info", "tag_id"),
+    "user_tag_sk": ("dim_user_tag_info", "user_tag_sk"),
     "promotion_version_sk": ("dim_promotion_rule_version", "promotion_version_sk"),
     "promotion_id": ("dim_promotion_rule_version", "promotion_id"),
     "coupon_template_version_sk": (
@@ -315,11 +314,86 @@ REFERENCE_COLUMNS = {
         "dwd_trade_refund_pay_detail_di",
         "refund_pay_detail_id",
     ),
-    "comment_id": ("dwd_service_comment_detail_di", "comment_id"),
     "parent_comment_detail_id": (
         "dwd_service_comment_detail_di",
         "comment_detail_id",
     ),
+}
+
+EVENT_CONTEXT_COLUMNS = {
+    "dwd_marketing_user_coupon_event_di": (
+        "user_coupon_id",
+        "event_seq_no",
+        "event_time",
+    ),
+    "dwd_trade_order_status_event_di": ("order_id", "event_seq_no", "event_time"),
+    "dwd_trade_pay_status_event_di": (
+        "pay_detail_id",
+        "event_seq_no",
+        "event_time",
+    ),
+    "dwd_trade_delivery_status_event_di": (
+        "delivery_id",
+        "event_seq_no",
+        "event_time",
+    ),
+    "dwd_trade_refund_status_event_di": (
+        "refund_detail_id",
+        "event_seq_no",
+        "event_time",
+    ),
+    "dwd_trade_refund_pay_status_event_di": (
+        "refund_pay_detail_id",
+        "event_seq_no",
+        "event_time",
+    ),
+}
+
+# 这些连接键会随指标涉及的表自动补入 relevant_columns。指标召回结果必须给出
+# 可执行的连接路径，不能依赖模型从同名业务字段猜测多事实表之间的关系。
+METRIC_JOIN_COLUMNS = {
+    ("dwd_traffic_search_di", "dwd_traffic_search_click_di"): (
+        ("search_detail_id", "search_detail_id"),
+    ),
+    ("dwd_interaction_cart_event_di", "dwd_trade_order_detail_di"): (
+        ("session_id", "source_session_id"),
+    ),
+    ("dwd_trade_order_detail_di", "dwd_trade_order_status_event_di"): (
+        ("order_id", "order_id"),
+    ),
+    ("dwd_trade_pay_detail_di", "dwd_trade_pay_status_event_di"): (
+        ("pay_detail_id", "pay_detail_id"),
+    ),
+    ("dwd_trade_pay_order_detail_di", "dwd_trade_pay_status_event_di"): (
+        ("pay_detail_id", "pay_detail_id"),
+    ),
+    ("dwd_trade_order_detail_di", "dwd_trade_pay_order_detail_di"): (
+        ("order_id", "order_id"),
+    ),
+    ("dwd_trade_delivery_di", "dwd_trade_delivery_status_event_di"): (
+        ("delivery_id", "delivery_id"),
+    ),
+    ("dwd_trade_order_detail_di", "dwd_trade_delivery_di"): (("order_id", "order_id"),),
+    ("dwd_trade_delivery_di", "dwd_trade_pay_order_detail_di"): (
+        ("order_id", "order_id"),
+    ),
+    ("dwd_trade_refund_detail_di", "dwd_trade_refund_pay_detail_di"): (
+        ("refund_detail_id", "refund_detail_id"),
+    ),
+    ("dwd_trade_refund_pay_detail_di", "dwd_trade_refund_pay_status_event_di"): (
+        ("refund_pay_detail_id", "refund_pay_detail_id"),
+    ),
+    ("dwd_trade_refund_detail_di", "dwd_trade_order_detail_di"): (
+        ("order_detail_id", "order_detail_id"),
+    ),
+    ("dwd_service_comment_detail_di", "dwd_trade_delivery_item_di"): (
+        ("order_detail_id", "order_detail_id"),
+    ),
+    ("dwd_trade_delivery_item_di", "dwd_trade_delivery_status_event_di"): (
+        ("delivery_id", "delivery_id"),
+    ),
+    ("dwd_inventory_daily_snapshot_df", "dim_sku_info_zip"): (("sku_id", "sku_id"),),
+    ("dwd_trade_order_detail_di", "dim_sku_info_zip"): (("sku_id", "sku_id"),),
 }
 
 
@@ -449,6 +523,54 @@ def _index_values(column: dict[str, str]) -> bool:
     )
 
 
+def _normalize_description(value: str) -> str:
+    """把 DDL 短注释整理为可直接召回的完整语义说明。"""
+    description = re.sub(r"\s+", " ", value).strip()
+    description = description.replace(
+        "Type 1一致性维度",
+        "覆盖型一致性维度（SCD Type 1）",
+    )
+    description = re.sub(r"格式(?=[A-Za-z0-9])", "格式为 ", description)
+    description = re.sub(r"(\d+)表示", r"\1 表示", description)
+
+    if ":" in description:
+        label, raw_options = description.split(":", 1)
+        options = raw_options.strip()
+        numbered = [re.fullmatch(r"(\d+)(.+)", item) for item in options.split()]
+        if numbered and all(match is not None for match in numbered):
+            description = f"{label}，" + "，".join(
+                f"{match.group(1)} 表示{match.group(2)}"
+                for match in numbered
+                if match is not None
+            )
+        elif "/" in options:
+            values = [item.strip() for item in options.split("/") if item.strip()]
+            description = f"{label}，取值包括" + "、".join(
+                f"“{item}”" for item in values
+            )
+
+    if not description.endswith(("。", "！", "？")):
+        description += "。"
+    return description
+
+
+def _normalize_aliases(
+    name: str,
+    description: str,
+    aliases: list[str],
+) -> list[str]:
+    """保留真正提供同义信息的别名，并维持声明顺序。"""
+    description_text = description.removesuffix("。")
+    excluded = {name, description_text}
+    return list(
+        dict.fromkeys(
+            alias.strip()
+            for alias in aliases
+            if alias.strip() and alias.strip() not in excluded
+        )
+    )
+
+
 def _reference(
     table_name: str,
     column_name: str,
@@ -477,14 +599,65 @@ def _metric(
     alias: list[str],
 ) -> dict[str, Any]:
     """构造业务指标的配置字典。"""
+    normalized_description = _normalize_description(description)
     return {
         "name": name,
-        "description": description,
+        "description": normalized_description,
         "relevant_columns": [
             {"t_name": value.split(".", 1)[0], "c_name": value.split(".", 1)[1]}
             for value in columns
         ],
-        "alias": alias,
+        "alias": _normalize_aliases(name, normalized_description, alias),
+    }
+
+
+def _enrich_metric_context(
+    metric: dict[str, Any],
+    schema: dict[str, Any],
+) -> dict[str, Any]:
+    """补齐指标计算所需的时间、状态与连接上下文。"""
+    references = [
+        (reference["t_name"], reference["c_name"])
+        for reference in metric["relevant_columns"]
+    ]
+    referenced_tables = list(dict.fromkeys(t_name for t_name, _ in references))
+    schema_columns = {
+        t_name: {column["name"] for column in table["columns"]}
+        for t_name, table in schema.items()
+    }
+
+    def add(t_name: str, c_name: str) -> None:
+        reference = (t_name, c_name)
+        if c_name not in schema_columns[t_name]:
+            raise ValueError(f"指标上下文字段不存在: {t_name}.{c_name}")
+        if reference not in references:
+            references.append(reference)
+
+    for t_name in referenced_tables:
+        for c_name in (
+            "biz_date",
+            "effective_start_time",
+            "effective_end_time",
+            "is_current",
+            "is_deleted",
+        ):
+            if c_name in schema_columns[t_name]:
+                add(t_name, c_name)
+        for c_name in EVENT_CONTEXT_COLUMNS.get(t_name, ()):
+            add(t_name, c_name)
+
+    referenced_table_set = set(referenced_tables)
+    for (left_table, right_table), join_columns in METRIC_JOIN_COLUMNS.items():
+        if {left_table, right_table} <= referenced_table_set:
+            for left_column, right_column in join_columns:
+                add(left_table, left_column)
+                add(right_table, right_column)
+
+    return {
+        **metric,
+        "relevant_columns": [
+            {"t_name": t_name, "c_name": c_name} for t_name, c_name in references
+        ],
     }
 
 
@@ -503,7 +676,7 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "访客数",
-            "按用户优先、匿名设备兜底去重的访问主体数，公式为 COUNT(DISTINCT COALESCE(user_id, device_id))",
+            "登录访问按 user_id、游客访问按 device_id 区分主体，两个标识需加类型前缀后再去重",
             [
                 "dwd_traffic_page_view_di.user_id",
                 "dwd_traffic_page_view_di.device_id",
@@ -639,7 +812,7 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "购物车删除次数",
-            "购物车事件类型为删除的事件数",
+            "cart_event_type='移除' 的购物车事件数",
             [
                 "dwd_interaction_cart_event_di.cart_event_id",
                 "dwd_interaction_cart_event_di.cart_event_type",
@@ -731,7 +904,7 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "有效GMV",
-            "排除最终状态为 CANCELLED 的订单后，应收金额之和",
+            "按 order_id 取 event_seq_no 最大的最终状态，排除 CANCELLED 后汇总订单明细应收金额",
             [
                 "dwd_trade_order_detail_di.order_id",
                 "dwd_trade_order_detail_di.receivable_amount",
@@ -748,7 +921,7 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "实付金额",
-            "支付状态为 SUCCESS 的支付尝试对应订单明细分摊金额之和",
+            "按 pay_detail_id 取 event_seq_no 最大的最终状态，仅汇总 SUCCESS 支付尝试的订单明细分摊金额",
             [
                 "dwd_trade_pay_order_detail_di.allocated_pay_amount",
                 "dwd_trade_pay_order_detail_di.pay_detail_id",
@@ -759,7 +932,7 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "净支付金额",
-            "实付金额减去退款打款状态为 SUCCESS 的退款金额",
+            "最终状态为 SUCCESS 的实付金额减去最终打款状态为 SUCCESS 的退款金额，两侧分别聚合后相减",
             [
                 "dwd_trade_pay_order_detail_di.allocated_pay_amount",
                 "dwd_trade_pay_status_event_di.after_pay_status",
@@ -770,7 +943,7 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "客单价",
-            "有效GMV除以有效订单数，按订单粒度先聚合避免明细重复",
+            "有效 GMV 除以有效订单数，先按 order_id 聚合并取最终订单状态，避免状态事件和订单明细相乘",
             [
                 "dwd_trade_order_detail_di.order_id",
                 "dwd_trade_order_detail_di.receivable_amount",
@@ -780,13 +953,13 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "件单价",
-            "有效GMV除以销量",
+            "有效 GMV 除以有效销量，按 order_id 取最终订单状态并排除 CANCELLED",
             [
                 "dwd_trade_order_detail_di.receivable_amount",
                 "dwd_trade_order_detail_di.sku_qty",
                 "dwd_trade_order_status_event_di.after_order_status",
             ],
-            ["平均每件成交价"],
+            ["平均每件成交价", "平均成交单价", "ASP", "平均销售单价"],
         ),
         m(
             "连带率",
@@ -807,7 +980,7 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "支付用户数",
-            "存在 SUCCESS 支付尝试的去重用户数",
+            "按 pay_detail_id 取最终状态后，状态为 SUCCESS 的去重 user_id 数",
             [
                 "dwd_trade_pay_detail_di.user_id",
                 "dwd_trade_pay_detail_di.pay_detail_id",
@@ -817,7 +990,7 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "支付成功率",
-            "最终状态为 SUCCESS 的支付尝试数除以全部支付尝试数",
+            "按 pay_detail_id 取 event_seq_no 最大的最终状态，SUCCESS 支付尝试数除以全部支付尝试数",
             [
                 "dwd_trade_pay_detail_di.pay_detail_id",
                 "dwd_trade_pay_status_event_di.pay_detail_id",
@@ -827,7 +1000,7 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "支付转化率",
-            "支付订单数除以下单订单数",
+            "最终支付状态为 SUCCESS 的去重 order_id 数除以下单去重 order_id 数",
             [
                 "dwd_trade_order_detail_di.order_id",
                 "dwd_trade_pay_order_detail_di.order_id",
@@ -837,7 +1010,7 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "订单取消数",
-            "最终订单状态为 CANCELLED 的去重订单数",
+            "按 order_id 取 event_seq_no 最大的最终状态，统计状态为 CANCELLED 的去重订单数",
             [
                 "dwd_trade_order_status_event_di.order_id",
                 "dwd_trade_order_status_event_di.after_order_status",
@@ -847,7 +1020,7 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "订单取消率",
-            "最终状态为 CANCELLED 的订单数除以下单订单数",
+            "按 order_id 取最终状态后，CANCELLED 订单数除以下单去重订单数",
             [
                 "dwd_trade_order_detail_di.order_id",
                 "dwd_trade_order_status_event_di.after_order_status",
@@ -1043,7 +1216,7 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "订单履约率",
-            "已签收订单数除以支付订单数",
+            "出现 SIGNED 物流状态的去重 order_id 数除以最终支付状态为 SUCCESS 的去重 order_id 数",
             [
                 "dwd_trade_delivery_di.order_id",
                 "dwd_trade_delivery_status_event_di.after_delivery_status",
@@ -1054,22 +1227,24 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "平均发货时长",
-            "包裹创建时间减去订单创建时间的平均小时数，仅统计正向包裹",
+            "正向包裹首次 SHIPPED 事件时间减去订单创建时间的平均小时数",
             [
                 "dwd_trade_order_detail_di.order_id",
                 "dwd_trade_order_detail_di.order_create_time",
                 "dwd_trade_delivery_di.order_id",
-                "dwd_trade_delivery_di.delivery_create_time",
+                "dwd_trade_delivery_di.delivery_id",
                 "dwd_trade_delivery_di.delivery_direction",
+                "dwd_trade_delivery_status_event_di.delivery_id",
+                "dwd_trade_delivery_status_event_di.after_delivery_status",
+                "dwd_trade_delivery_status_event_di.event_time",
             ],
             ["平均出库时长", "下单到发货时长"],
         ),
         m(
             "平均配送时长",
-            "SIGNED 事件时间减去包裹创建时间的平均小时数，仅统计正向包裹",
+            "正向包裹首次 SIGNED 事件时间减去首次 SHIPPED 事件时间的平均小时数",
             [
                 "dwd_trade_delivery_di.delivery_id",
-                "dwd_trade_delivery_di.delivery_create_time",
                 "dwd_trade_delivery_di.delivery_direction",
                 "dwd_trade_delivery_status_event_di.delivery_id",
                 "dwd_trade_delivery_status_event_di.after_delivery_status",
@@ -1133,7 +1308,7 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "退款成功金额",
-            "退款打款最终状态为 SUCCESS 的退款金额之和",
+            "按 refund_pay_detail_id 取最终状态，仅汇总状态为 SUCCESS 的退款打款金额",
             [
                 "dwd_trade_refund_pay_detail_di.refund_amount",
                 "dwd_trade_refund_pay_detail_di.refund_pay_detail_id",
@@ -1152,7 +1327,7 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "退款金额率",
-            "退款成功金额除以实付金额",
+            "最终打款状态为 SUCCESS 的退款金额除以最终支付状态为 SUCCESS 的实付金额，两侧分别聚合后相除",
             [
                 "dwd_trade_refund_pay_detail_di.refund_amount",
                 "dwd_trade_refund_pay_status_event_di.after_refund_pay_status",
@@ -1213,7 +1388,7 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "评价率",
-            "产生初评的去重订单明细数除以已签收订单明细数",
+            "产生初评的去重 order_detail_id 数除以所属包裹出现 SIGNED 状态的去重 order_detail_id 数",
             [
                 "dwd_service_comment_detail_di.order_detail_id",
                 "dwd_service_comment_detail_di.comment_type",
@@ -1332,7 +1507,7 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "零库存SKU数",
-            "查询周期最后一个快照日 available_qty=0 的去重 SKU 数",
+            "查询周期最后一个快照日按 sku_id 汇总所有仓库 available_qty，统计汇总值为 0 的 SKU 数",
             [
                 "dwd_inventory_daily_snapshot_df.sku_id",
                 "dwd_inventory_daily_snapshot_df.available_qty",
@@ -1384,7 +1559,7 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "库存周转率",
-            "查询周期出库成本除以日均库存成本金额",
+            "查询周期负向 total_cost_delta 的绝对值之和除以日均库存成本；日均库存先按 biz_date 汇总再求平均",
             [
                 "dwd_inventory_change_di.total_cost_delta",
                 "dwd_inventory_change_di.on_hand_qty_delta",
@@ -1395,7 +1570,7 @@ def _build_metrics() -> list[dict[str, Any]]:
         ),
         m(
             "库存周转天数",
-            "查询周期天数除以库存周转率",
+            "查询周期自然日数除以库存周转率，库存周转率为 0 时返回空值",
             [
                 "dwd_inventory_change_di.total_cost_delta",
                 "dwd_inventory_daily_snapshot_df.inventory_cost_amount",
@@ -1525,16 +1700,6 @@ def _build_metrics() -> list[dict[str, Any]]:
             ["dim_spu_info_zip.spu_id", "dim_spu_info_zip.on_shelf_time"],
             ["上新SPU数", "新品数"],
         ),
-        m(
-            "平均成交单价",
-            "有效GMV除以销量",
-            [
-                "dwd_trade_order_detail_di.receivable_amount",
-                "dwd_trade_order_detail_di.sku_qty",
-                "dwd_trade_order_status_event_di.after_order_status",
-            ],
-            ["ASP", "平均销售单价"],
-        ),
     ]
 
 
@@ -1550,17 +1715,45 @@ def _build_config(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]:
         for table_name, table in schema.items()
         for column in table["columns"]
     }
+    column_names = {column_name for _, column_name in column_keys}
+    unused_column_rules = sorted(
+        (set(COLUMN_ALIASES) | INDEX_VALUE_COLUMNS) - column_names
+    )
+    if unused_column_rules:
+        raise ValueError(f"字段语义规则未被使用: {unused_column_rules}")
+    invalid_reference_targets = sorted(
+        (column_name, *target)
+        for column_name, target in REFERENCE_COLUMNS.items()
+        if target not in column_keys
+    )
+    if invalid_reference_targets:
+        raise ValueError(f"字段引用规则目标不存在: {invalid_reference_targets}")
+    used_reference_rules = {
+        column["name"]
+        for table_name, table in schema.items()
+        for column in table["columns"]
+        if _reference(table_name, column["name"], column_keys) is not None
+    }
+    unused_reference_rules = sorted(set(REFERENCE_COLUMNS) - used_reference_rules)
+    if unused_reference_rules:
+        raise ValueError(f"字段引用规则未被使用: {unused_reference_rules}")
+
     tables = []
     for table_name in TABLE_ORDER:
         source = schema[table_name]
-        role = "fact" if table_name.startswith("dwd_") else "dim"
+        role = "fact" if table_name.startswith(("bridge_", "dwd_")) else "dim"
         columns = []
         for column in source["columns"]:
             target = _reference(table_name, column["name"], column_keys)
+            description = _normalize_description(column["comment"])
             item: dict[str, Any] = {
                 "name": column["name"],
-                "description": column["comment"],
-                "alias": COLUMN_ALIASES.get(column["name"], []),
+                "description": description,
+                "alias": _normalize_aliases(
+                    column["name"],
+                    description,
+                    COLUMN_ALIASES.get(column["name"], []),
+                ),
                 "index_values": _index_values(column),
             }
             if target is not None:
@@ -1570,13 +1763,32 @@ def _build_config(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]:
         table_config = {
             "name": table_name,
             "role": role,
-            "description": f"{source['comment']}，{TABLE_GRAINS[table_name]}",
+            "description": _normalize_description(
+                f"{source['comment']}，{TABLE_GRAINS[table_name]}"
+            ),
             "columns": columns,
         }
         if role == "dim" and (table_name, "dw_update_time") in column_keys:
             table_config["value_index_cursor_column"] = "dw_update_time"
         tables.append(table_config)
-    metrics = _build_metrics()
+    metrics = [_enrich_metric_context(metric, schema) for metric in _build_metrics()]
+    metric_table_sets = [
+        {reference["t_name"] for reference in metric["relevant_columns"]}
+        for metric in metrics
+    ]
+    unused_event_contexts = sorted(
+        set(EVENT_CONTEXT_COLUMNS) - set().union(*metric_table_sets)
+    )
+    unused_join_contexts = sorted(
+        pair
+        for pair in METRIC_JOIN_COLUMNS
+        if not any(set(pair) <= table_names for table_names in metric_table_sets)
+    )
+    if unused_event_contexts or unused_join_contexts:
+        raise ValueError(
+            "指标上下文规则未被使用: "
+            f"events={unused_event_contexts}, joins={unused_join_contexts}"
+        )
     missing_metric_columns = sorted(
         {
             (reference["t_name"], reference["c_name"])
@@ -1590,33 +1802,62 @@ def _build_config(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]:
     metric_names = [metric["name"] for metric in metrics]
     if len(metric_names) != len(set(metric_names)):
         raise ValueError("指标名称重复")
+    metric_terms: dict[str, str] = {}
+    for metric in metrics:
+        for term in [metric["name"], *metric["alias"]]:
+            owner = metric_terms.setdefault(term, metric["name"])
+            if owner != metric["name"]:
+                raise ValueError(
+                    f"指标名称或别名存在歧义: {term} 同时属于 {owner} 和 {metric['name']}"
+                )
     return {"tables": tables, "metrics": metrics}
 
 
-def main() -> None:
+def _render_config(config: dict[str, Any]) -> str:
+    """渲染带来源声明的稳定 YAML 文本。"""
+    return GENERATED_HEADER + yaml.dump(
+        config,
+        Dumper=IndentDumper,
+        allow_unicode=True,
+        sort_keys=False,
+        width=120,
+    )
+
+
+def main() -> int:
     """解析命令行参数并生成元数据 YAML 配置。"""
     parser = argparse.ArgumentParser(description="生成电商数仓语义元数据配置")
     parser.add_argument("--ddl", type=Path, default=DEFAULT_DDL_PATH)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="检查已提交配置是否与 DDL 和语义规则一致",
+    )
     args = parser.parse_args()
     config = _build_config(args.ddl.resolve())
+    rendered = _render_config(config)
+    if args.check:
+        if (
+            not args.output.exists()
+            or args.output.read_text(encoding="utf-8") != rendered
+        ):
+            print(
+                "语义元数据配置已过期，请重新运行生成命令",
+                file=sys.stderr,
+            )
+            return 1
+        return 0
+
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(
-        yaml.dump(
-            config,
-            Dumper=IndentDumper,
-            allow_unicode=True,
-            sort_keys=False,
-            width=120,
-        ),
-        encoding="utf-8",
-    )
+    args.output.write_text(rendered, encoding="utf-8")
     print(
         f"元数据配置生成完成 tables={len(config['tables'])} "
         f"columns={sum(len(table['columns']) for table in config['tables'])} "
         f"metrics={len(config['metrics'])} output={args.output}"
     )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -96,6 +96,19 @@ dry_run=false
 → 失效受影响的查询经验
 ```
 
+开发环境的基线目录 `conf/meta_config.yaml` 由
+`scripts/development/generate_meta_config.py` 生成。生成器以 Doris DDL 提供的物理表、字段和原始注释为基础，再应用语义规则：表粒度与角色、字段别名、取值索引范围、外键引用，以及指标口径所需的时间、状态事件和连接字段。生成文件不手工修改。
+
+```bash
+# 重新生成基线目录。
+uv run python scripts/development/generate_meta_config.py
+
+# 检查已提交文件是否与 DDL 和语义规则一致。
+uv run python scripts/development/generate_meta_config.py --check
+```
+
+原始搜索词等高基数或可能包含敏感内容的事实字段不进入全局取值索引。状态、类型和业务实体名称等受控字段才开启 `index_values`。
+
 ## 4. 同步字段和指标语义索引
 
 ```text
