@@ -1,4 +1,4 @@
-"""跨分析模块共享的会话标识"""
+"""跨模块共享的分析任务与 Agent Session 标识"""
 
 import re
 from dataclasses import dataclass

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 
 from app.shared.config.app_config import DBConfig, cfg
-from app.shared.database.base import AnalyticsBase, AuthBase, MetaBase
+from app.shared.database.base import AssistantBase, AuthBase, MetaBase
 
 
 class PostgresClientManager:
@@ -96,7 +96,7 @@ meta_postgres_client_manager = PostgresClientManager(
     cfg.meta_postgresql,
     MetaBase,
 )
-analytics_postgres_client_manager = PostgresClientManager(
+assistant_postgres_client_manager = PostgresClientManager(
     cfg.langgraph_postgresql,
-    AnalyticsBase,
+    AssistantBase,
 )

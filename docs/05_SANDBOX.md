@@ -201,7 +201,7 @@ cleanup 失败
 ## 8. 挂载只读 Agent Skill
 
 ```text
-应用收集 app/analytics/agents/{agent}/skills
+应用收集 app/assistant/agents/{agent}/skills
 → 校验源目录和 /skills/{agent} 目标路径
 → 拒绝重复、嵌套或位于 /data、/tmp 的目标
 → 以 Docker bind mount mode=ro 挂载

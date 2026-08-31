@@ -13,7 +13,7 @@ celery_app = Celery(
     broker=cfg.task_queue.broker_url,
     backend=cfg.task_queue.result_backend,
     include=[
-        "app.analytics.tasks",
+        "app.assistant.tasks",
         "app.metadata.tasks",
         "app.query.tasks",
         "app.workflows.tasks",
@@ -51,11 +51,11 @@ celery_app.conf.update(
     },
     task_reject_on_worker_lost=True,
     task_routes={
-        "dataagent.analytics.generate_conversation_title": {
+        "dataagent.assistant.generate_conversation_title": {
             "queue": "lightweight",
             "routing_key": "lightweight",
         },
-        "dataagent.analytics.*": {
+        "dataagent.assistant.*": {
             "queue": "lifecycle",
             "routing_key": "lifecycle",
         },
@@ -89,11 +89,11 @@ celery_app.conf.beat_schedule = {
         ),
     },
     "lifecycle-periodic-dispatch": {
-        "task": "dataagent.analytics.cleanup_expired_drafts",
+        "task": "dataagent.assistant.cleanup_expired_drafts",
         "schedule": cfg.task_queue.lifecycle_schedule_seconds,
     },
     "conversation-title-repair": {
-        "task": "dataagent.analytics.repair_conversation_titles",
+        "task": "dataagent.assistant.repair_conversation_titles",
         "schedule": cfg.task_queue.lifecycle_schedule_seconds,
     },
     "user-deletion-recovery": {

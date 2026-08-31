@@ -11,5 +11,5 @@ class MetaBase(DeclarativeBase):
     """元数据 ORM 声明基类"""
 
 
-class AnalyticsBase(DeclarativeBase):
-    """分析运行数据 ORM 声明基类"""
+class AssistantBase(DeclarativeBase):
+    """助手运行数据 ORM 声明基类"""

@@ -42,7 +42,7 @@ def build_record(
             tzinfo=datetime.UTC,
         ),
         "level": SimpleNamespace(name="ERROR"),
-        "name": "app.analytics.services.chat",
+        "name": "app.assistant.services.chat",
         "function": "stream",
         "line": 100,
         "message": "Request failed",
@@ -63,7 +63,7 @@ class TestLogJsonFormatter(unittest.TestCase):
         self.assertEqual(parsed["level"], "ERROR")
         self.assertEqual(
             parsed["location"],
-            "app.analytics.services.chat:stream:100",
+            "app.assistant.services.chat:stream:100",
         )
         self.assertEqual(parsed["message"], "Request failed")
         self.assertNotIn("_json_line", parsed)
@@ -141,7 +141,7 @@ class TestLogJsonFormatter(unittest.TestCase):
         self.assertEqual(parsed["message"], "Request failed")
         self.assertEqual(
             parsed["location"],
-            "app.analytics.services.chat:stream:100",
+            "app.assistant.services.chat:stream:100",
         )
 
     def test_json_formatter_places_context_after_core_fields(self) -> None:

@@ -22,8 +22,8 @@ class TaskQueueConfigTest(unittest.TestCase):
             scheduled_tasks,
             {
                 "dataagent.metadata.dispatch_value_indexes",
-                "dataagent.analytics.cleanup_expired_drafts",
-                "dataagent.analytics.repair_conversation_titles",
+                "dataagent.assistant.cleanup_expired_drafts",
+                "dataagent.assistant.repair_conversation_titles",
                 "dataagent.workflows.dispatch_due_user_deletions",
                 "dataagent.query.repair_indexes",
             },
@@ -49,8 +49,8 @@ class TaskQueueConfigTest(unittest.TestCase):
             {
                 "dataagent.metadata.sync_column_indexes",
                 "dataagent.query.sync_index",
-                "dataagent.analytics.generate_conversation_title",
-                "dataagent.analytics.delete_conversation_resources",
+                "dataagent.assistant.generate_conversation_title",
+                "dataagent.assistant.delete_conversation_resources",
                 "dataagent.workflows.delete_user",
             }.issubset(registered)
         )

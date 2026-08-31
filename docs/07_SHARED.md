@@ -38,7 +38,7 @@ Shared
 
 ```text
 FastAPI lifespan 启动
-→ 初始化认证、元数据和分析 PostgreSQL manager
+→ 初始化认证、元数据和助手 PostgreSQL manager
 → 初始化 Doris 管理连接和角色查询连接 registry
 → 初始化 Elasticsearch 和 Embedding client
 → 初始化 LangGraph PostgreSQL
@@ -62,7 +62,7 @@ Celery Worker 在任务进程中重新初始化所需客户端，不复用 fork 
 SQLAlchemy 模型选择 Base
 → identity 使用 AuthBase
 → metadata、语义召回快照和 query 使用 MetaBase
-→ analytics 使用 AnalyticsBase
+→ assistant 使用 AssistantBase
 → LangGraph 使用自身 schema
 
 跨模块传递数据
@@ -112,15 +112,15 @@ HTTP 请求进入 Trace middleware
 ```text
 Celery 启动
 → 使用 Redis broker 和 result backend
-→ 加载 analytics、metadata、query 和 workflows tasks
+→ 加载 assistant、metadata、query 和 workflows tasks
 → 只接受 JSON 参数和结果
 → 声明 default、metadata-index、lifecycle、lightweight 队列
 → 禁止自动创建未知队列
 
 提交任务
 → metadata.* 和 query.* 路由 metadata-index
-→ analytics.generate_conversation_title 路由 lightweight
-→ 其他 analytics.* 和 workflows.* 路由 lifecycle
+→ assistant.generate_conversation_title 路由 lightweight
+→ 其他 assistant.* 和 workflows.* 路由 lifecycle
 → 未匹配任务路由 default
 
 Worker 执行任务
@@ -138,8 +138,8 @@ Worker 执行任务
 → metadata.dispatch_value_indexes
 
 每 lifecycle_schedule_seconds
-→ analytics.cleanup_expired_drafts
-→ analytics.repair_conversation_titles
+→ assistant.cleanup_expired_drafts
+→ assistant.repair_conversation_titles
 
 每 user_deletion_retry_seconds
 → workflows.dispatch_due_user_deletions 原子领取并提交到期注销任务

@@ -4,10 +4,10 @@ from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 
-from app.analytics.agents.manager import AgentManager
-from app.analytics.agents.skills import packaged_agent_skill_mounts
-from app.analytics.providers import build_conversation_lifecycle_service
-from app.analytics.services.conversation_tombstone import (
+from app.assistant.agents.manager import AgentManager
+from app.assistant.agents.skills import packaged_agent_skill_mounts
+from app.assistant.providers import build_conversation_lifecycle_service
+from app.assistant.services.conversation_tombstone import (
     ConversationTombstoneService,
 )
 from app.identity.services.user_deletion_store import PostgresUserDeletionStateStore
@@ -15,7 +15,7 @@ from app.sandbox.providers import create_sandbox_manager
 from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
-from app.shared.database.base import AnalyticsBase, AuthBase, MetaBase
+from app.shared.database.base import AssistantBase, AuthBase, MetaBase
 from app.shared.tasks.celery_app import (
     TASK_VISIBILITY_TIMEOUT_SECONDS,
     celery_app,
@@ -43,9 +43,9 @@ def enqueue_user_deletion(user_id: int) -> TaskSubmission:
 async def _process_user_deletion(user_id: int) -> None:
     """初始化跨存储资源并处理单个用户注销任务"""
     auth_postgres = PostgresClientManager(cfg.auth_postgresql, AuthBase)
-    analytics_postgres = PostgresClientManager(
+    assistant_postgres = PostgresClientManager(
         cfg.langgraph_postgresql,
-        AnalyticsBase,
+        AssistantBase,
     )
     meta_postgres = PostgresClientManager(
         cfg.meta_postgresql,
@@ -59,11 +59,11 @@ async def _process_user_deletion(user_id: int) -> None:
     agents = AgentManager(
         persistence,
         sandbox,
-        ConversationTombstoneService(analytics_postgres),
+        ConversationTombstoneService(assistant_postgres),
     )
     conversations = build_conversation_lifecycle_service(
         persistence,
-        analytics_postgres,
+        assistant_postgres,
         meta_postgres,
         agents,
         sandbox,
@@ -78,7 +78,7 @@ async def _process_user_deletion(user_id: int) -> None:
     )
 
     auth_postgres.init()
-    analytics_postgres.init()
+    assistant_postgres.init()
     meta_postgres.init()
     await persistence.init()
     await sandbox.init(start_cleanup=False)
@@ -95,7 +95,7 @@ async def _process_user_deletion(user_id: int) -> None:
         await sandbox.disconnect()
         await persistence.close()
         await meta_postgres.close()
-        await analytics_postgres.close()
+        await assistant_postgres.close()
         await auth_postgres.close()
 
 

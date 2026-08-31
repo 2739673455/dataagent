@@ -4,7 +4,7 @@ import unittest
 
 from app.metadata.models.recall import SemanticRecallSnapshot
 from app.query.models.execution import QueryExecution
-from app.shared.database.base import AnalyticsBase, MetaBase
+from app.shared.database.base import AssistantBase, MetaBase
 
 
 class SemanticRecallStorageContractTest(unittest.TestCase):
@@ -15,7 +15,7 @@ class SemanticRecallStorageContractTest(unittest.TestCase):
         self.assertIs(QueryExecution.metadata, MetaBase.metadata)
         self.assertNotIn(
             SemanticRecallSnapshot.__tablename__,
-            AnalyticsBase.metadata.tables,
+            AssistantBase.metadata.tables,
         )
 
 

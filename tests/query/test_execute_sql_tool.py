@@ -6,7 +6,7 @@ from uuid import UUID
 from langchain.tools import ToolRuntime
 from pydantic import BaseModel
 
-from app.analytics.agents.explorer.tools.execute_sql import create_execute_sql_tool
+from app.assistant.agents.explorer.tools.execute_sql import create_execute_sql_tool
 from app.query.models.execution import AnalysisQueryResult
 from app.query.models.validation import QueryValidationIssue, QueryValidationResult
 from app.query.services.execution_handler import QueryExecutionHandler

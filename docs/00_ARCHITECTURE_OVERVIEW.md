@@ -23,7 +23,7 @@ DataAgent
   → 检索查询经验
   → 失效和修复查询经验
   → 管理员查看、禁用和删除查询经验
-→ analytics 分析
+→ assistant 智能助手
   → 管理对话和消息
   → 执行一轮多 Agent 分析
   → 委派、恢复和修补专业 Agent Session
@@ -56,8 +56,8 @@ metadata
 → docs/02_METADATA.md
 query
 → docs/03_QUERY.md
-analytics
-→ docs/04_ANALYTICS.md
+assistant
+→ docs/04_ASSISTANT.md
 sandbox
 → docs/05_SANDBOX.md
 workflows
@@ -105,9 +105,9 @@ Celery Beat
 → /meta
   → metadata 目录与索引任务管理
 → /chat
-  → analytics 对话、消息和 SSE 分析
+  → assistant 对话、消息和 SSE 流
 → /chat/attachment
-  → analytics + sandbox 附件管理
+  → assistant + sandbox 附件管理
 → /tasks
   → shared Celery 任务状态
 ```
@@ -128,12 +128,12 @@ Celery Beat
 → query
   → 查询执行、查询经验、经验资产
 
-分析 PostgreSQL
-→ analytics
+助手 PostgreSQL
+→ assistant
   → 对话、删除墓碑
 
 LangGraph PostgreSQL
-→ analytics
+→ assistant
   → Planner 与专业 Agent checkpoint、消息和状态
 
 Elasticsearch
@@ -165,7 +165,7 @@ Docker Named Volume
 
 ```text
 用户问题
-→ analytics 创建 Planner turn
+→ assistant 创建 Planner turn
 → Planner delegation
 → Explorer recall_context
 → metadata 召回字段、字段值、指标和查询经验上下文
@@ -190,10 +190,10 @@ Docker Named Volume
 → query 经验按 role_name + authorization_epoch 隔离
 
 对话删除
-→ analytics 写墓碑并阻止新运行
+→ assistant 写墓碑并阻止新运行
 → Celery 删除 LangGraph 状态和召回快照
 → sandbox 删除会话目录
-→ analytics 删除对话记录
+→ assistant 删除对话记录
 
 用户注销
 → identity 禁用用户并记录注销任务

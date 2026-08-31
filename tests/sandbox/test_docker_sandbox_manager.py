@@ -13,9 +13,9 @@ from uuid import UUID, uuid4
 from docker.errors import ImageNotFound
 from pydantic import ValidationError
 
-from app.analytics.agents.manager import AgentManager
-from app.analytics.agents.shell_jobs import ShellJobResult, ShellJobRuntime
-from app.analytics.agents.skills import packaged_agent_skill_mounts
+from app.assistant.agents.manager import AgentManager
+from app.assistant.agents.shell_jobs import ShellJobResult, ShellJobRuntime
+from app.assistant.agents.skills import packaged_agent_skill_mounts
 from app.sandbox.archive import SandboxArchiveStore
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.capacity import FairCapacityLimiter

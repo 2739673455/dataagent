@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 
-from app.analytics.services.conversation_lifecycle import (
+from app.assistant.services.conversation_lifecycle import (
     ConversationLifecycleService,
 )
 from app.identity import errors as auth_error

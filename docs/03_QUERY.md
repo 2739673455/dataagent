@@ -246,5 +246,5 @@ Celery
 → app/query/services/experience_management.py
 → app/query/api/admin
 → app/query/tasks.py
-→ app/analytics/agents/explorer/tools/execute_sql.py
+→ app/assistant/agents/explorer/tools/execute_sql.py
 ```

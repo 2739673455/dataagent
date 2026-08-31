@@ -31,7 +31,7 @@ Workflows
 Worker 接收 user_id
 → 查询注销任务状态
 → completed 时幂等返回
-→ 调用 analytics 删除用户全部对话
+→ 调用 assistant 删除用户全部对话
   → 删除 LangGraph 状态
   → 删除语义召回快照
   → 删除每个会话沙箱目录

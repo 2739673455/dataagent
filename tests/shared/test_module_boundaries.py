@@ -11,7 +11,7 @@ BUSINESS_MODULES = {
     "app.identity",
     "app.metadata",
     "app.query",
-    "app.analytics",
+    "app.assistant",
     "app.sandbox",
     "app.workflows",
 }
@@ -90,7 +90,7 @@ class ModuleBoundaryTests(unittest.TestCase):
             BUSINESS_MODULES - {"app.identity"},
         )
 
-    def test_metadata_core_does_not_depend_on_query_or_analytics(self) -> None:
+    def test_metadata_core_does_not_depend_on_query_or_assistant(self) -> None:
         self.assert_no_imports(
             _python_files(
                 APP_DIR / "metadata" / "models.py",
@@ -102,16 +102,16 @@ class ModuleBoundaryTests(unittest.TestCase):
             ),
             {
                 "app.query",
-                "app.analytics",
+                "app.assistant",
                 "app.sandbox",
                 "app.workflows",
             },
         )
 
-    def test_query_module_does_not_depend_on_analytics_or_workflows(self) -> None:
+    def test_query_module_does_not_depend_on_assistant_or_workflows(self) -> None:
         self.assert_no_imports(
             _python_files(APP_DIR / "query"),
-            {"app.analytics", "app.sandbox", "app.workflows"},
+            {"app.assistant", "app.sandbox", "app.workflows"},
         )
 
     def test_sandbox_module_remains_a_low_level_runtime(self) -> None:
