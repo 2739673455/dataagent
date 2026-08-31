@@ -1,4 +1,4 @@
-"""字段值索引访问"""
+"""字段值索引访问。"""
 
 import json
 import uuid
@@ -12,7 +12,7 @@ from app.shared.config.app_config import cfg
 
 
 def _value_document_id(value_info: ValueInfo) -> str:
-    """生成无歧义且稳定的字段取值文档编号"""
+    """生成无歧义且稳定的字段取值文档编号。"""
     identity = json.dumps(
         ["value", value_info.t_name, value_info.c_name, value_info.value],
         ensure_ascii=False,
@@ -22,7 +22,7 @@ def _value_document_id(value_info: ValueInfo) -> str:
 
 
 class ValueESRepo:
-    """字段取值索引存储"""
+    """字段取值索引存储。"""
 
     _index_name = cfg.elasticsearch.value_index
     _index_mappings: ClassVar[dict[str, Any]] = {
@@ -41,11 +41,11 @@ class ValueESRepo:
     }
 
     def __init__(self, client: AsyncElasticsearch) -> None:
-        """初始化字段取值索引存储"""
+        """初始化字段取值索引存储。"""
         self._client = client
 
     async def ensure_index(self) -> None:
-        """确保字段取值索引存在"""
+        """确保字段取值索引存在。"""
         if await self._client.indices.exists(index=self._index_name):
             await self._client.indices.put_mapping(
                 index=self._index_name,
@@ -65,7 +65,7 @@ class ValueESRepo:
         generation: str,
         batch_size: int = 500,
     ) -> None:
-        """按稳定编号批量覆盖字段取值索引"""
+        """按稳定编号批量覆盖字段取值索引。"""
         for i in range(0, len(value_infos), batch_size):
             batch = value_infos[i : i + batch_size]
             operations = []
@@ -95,11 +95,11 @@ class ValueESRepo:
                 raise RuntimeError("Elasticsearch 批量写入存在失败项")
 
     async def refresh(self) -> None:
-        """刷新字段取值索引"""
+        """刷新字段取值索引。"""
         await self._client.indices.refresh(index=self._index_name)
 
     async def delete_by_column(self, t_name: str, c_name: str) -> int:
-        """删除字段对应的全部取值"""
+        """删除字段对应的全部取值。"""
         if not await self._client.indices.exists(index=self._index_name):
             return 0
         result = await self._client.delete_by_query(
@@ -116,7 +116,7 @@ class ValueESRepo:
         c_name: str,
         generation: str,
     ) -> int:
-        """删除字段下未进入当前全量同步代次的取值"""
+        """删除字段下未进入当前全量同步代次的取值。"""
         if not await self._client.indices.exists(index=self._index_name):
             return 0
         result = await self._client.delete_by_query(
@@ -142,7 +142,7 @@ class ValueESRepo:
         score_threshold: float = 0.6,
         limit: int = 5,
     ) -> list[SearchHit[ValueInfo]]:
-        """根据关键词检索字段取值并保留命中分数"""
+        """根据关键词检索字段取值并保留命中分数。"""
         query: dict[str, Any] = {"match": {"value": keyword}}
         if allowed_columns is not None:
             query = {
@@ -172,7 +172,7 @@ class ValueESRepo:
 
     @staticmethod
     def _column_filter(allowed_columns: frozenset[ColumnKey]) -> dict[str, Any]:
-        """构造字段值所属表字段白名单"""
+        """构造字段值所属表字段白名单。"""
         if not allowed_columns:
             raise ValueError("allowed_columns 列表不能为空")
         return {
@@ -186,12 +186,12 @@ class ValueESRepo:
 
     @staticmethod
     def _resource_query(t_name: str, c_name: str) -> dict[str, Any]:
-        """构造字段资源过滤条件"""
+        """构造字段资源过滤条件。"""
         return {"term": {"resource_key": column_resource_key(t_name, c_name)}}
 
     @staticmethod
     def _deleted_count(result: Any) -> int:
-        """校验按查询删除结果并返回删除数量"""
+        """校验按查询删除结果并返回删除数量。"""
         body = result.body
         if body.get("failures"):
             raise RuntimeError("Elasticsearch 批量删除取值索引存在失败项")

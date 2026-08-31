@@ -1,4 +1,4 @@
-"""Docker 沙箱持久工作区归档操作"""
+"""Docker 沙箱持久工作区归档操作。"""
 
 import hashlib
 import io
@@ -36,28 +36,28 @@ _ARCHIVE_SPOOL_BYTES = 8 * 1024 * 1024
 
 @dataclass(slots=True)
 class _UidRegistry:
-    """持久化 conversation 和 Agent Session 的 Linux UID"""
+    """持久化 conversation 和 Agent Session 的 Linux UID。"""
 
     conversations: dict[str, int]
     sessions: dict[str, int]
 
 
 class _IteratorReader(io.RawIOBase):
-    """将 Docker archive 字节迭代器适配为 tarfile 可读取的流"""
+    """将 Docker archive 字节迭代器适配为 tarfile 可读取的流。"""
 
     def __init__(self, chunks: Any) -> None:
-        """绑定 Docker archive 返回的字节块迭代器"""
+        """绑定 Docker archive 返回的字节块迭代器。"""
         super().__init__()
         self._chunks = chunks
         self._buffer = bytearray()
         self._finished = False
 
     def readable(self) -> bool:
-        """声明该适配器支持读取"""
+        """声明该适配器支持读取。"""
         return True
 
     def readinto(self, target: Any) -> int:
-        """将迭代器数据填充到目标缓冲区"""
+        """将迭代器数据填充到目标缓冲区。"""
         if self.closed:
             return 0
         view = memoryview(target).cast("B")
@@ -72,7 +72,7 @@ class _IteratorReader(io.RawIOBase):
         return size
 
     def close(self) -> None:
-        """关闭底层字节迭代器和读取流"""
+        """关闭底层字节迭代器和读取流。"""
         close_chunks = getattr(self._chunks, "close", None)
         if callable(close_chunks):
             close_chunks()
@@ -80,10 +80,10 @@ class _IteratorReader(io.RawIOBase):
 
 
 class SandboxArchiveStore:
-    """管理停止或运行容器中的持久工作区和文件归档"""
+    """管理停止或运行容器中的持久工作区和文件归档。"""
 
     def __init__(self, max_file_bytes: int, max_workspace_bytes: int) -> None:
-        """初始化文件和工作区容量限制"""
+        """初始化文件和工作区容量限制。"""
         self._max_file_bytes = max_file_bytes
         self._max_workspace_bytes = max_workspace_bytes
 
@@ -93,7 +93,7 @@ class SandboxArchiveStore:
         container: Container,
         path: str,
     ) -> Generator[tarfile.TarFile, None, None]:
-        """流式打开容器中的 archive"""
+        """流式打开容器中的 archive。"""
         chunks, _ = container.get_archive(path)
         raw_reader = _IteratorReader(iter(chunks))
         buffered_reader = io.BufferedReader(raw_reader)
@@ -104,7 +104,7 @@ class SandboxArchiveStore:
             buffered_reader.close()
 
     def inspect_path(self, container: Container, path: str) -> tarfile.TarInfo | None:
-        """读取容器路径对应的首个 archive 条目"""
+        """读取容器路径对应的首个 archive 条目。"""
         try:
             with self.open_archive(container, path) as archive:
                 return next(iter(archive), None)
@@ -117,7 +117,7 @@ class SandboxArchiveStore:
         path: str,
         max_bytes: int,
     ) -> tuple[bytes, tarfile.TarInfo]:
-        """从容器读取一个限长普通文件"""
+        """从容器读取一个限长普通文件。"""
         with self.open_archive(container, path) as archive:
             member = next(iter(archive), None)
             if member is None or not member.isreg():
@@ -141,7 +141,7 @@ class SandboxArchiveStore:
         directories: list[tuple[str, int, int, int]],
         files: list[tuple[str, int, int, int, BinaryIO, int]],
     ) -> None:
-        """构造受控 tar 并写入容器"""
+        """构造受控 tar 并写入容器。"""
         with tempfile.SpooledTemporaryFile(max_size=_ARCHIVE_SPOOL_BYTES) as buffer:
             with tarfile.open(fileobj=buffer, mode="w") as archive:
                 for name, owner_uid, owner_gid, mode in directories:
@@ -163,7 +163,7 @@ class SandboxArchiveStore:
                 raise OSError(f"写入 Docker 归档失败: {base_path}")
 
     def _write_registry(self, container: Container, registry: _UidRegistry) -> None:
-        """将 UID 注册表持久化到用户数据卷"""
+        """将 UID 注册表持久化到用户数据卷。"""
         content = json.dumps(
             {
                 "version": _UID_REGISTRY_VERSION,
@@ -191,7 +191,7 @@ class SandboxArchiveStore:
 
     @staticmethod
     def _validate_session_key(key: str) -> str:
-        """校验并规范化 UID 注册表中的 Session 键"""
+        """校验并规范化 UID 注册表中的 Session 键。"""
         parts = PurePosixPath(key).parts
         if len(parts) != 5 or parts[1] != "sessions":
             raise ValueError("沙箱 Session UID 键无效")
@@ -202,7 +202,7 @@ class SandboxArchiveStore:
 
     @staticmethod
     def _validate_registry(registry: _UidRegistry) -> None:
-        """校验 conversation 和 Session UID 全局唯一"""
+        """校验 conversation 和 Session UID 全局唯一。"""
         values = [*registry.conversations.values(), *registry.sessions.values()]
         if len(values) != len(set(values)):
             raise RuntimeError("沙箱 UID 注册表包含重复的 UID")
@@ -210,7 +210,7 @@ class SandboxArchiveStore:
             raise RuntimeError("沙箱 UID 注册表包含无效的 UID")
 
     def _load_registry(self, container: Container) -> _UidRegistry:
-        """读取当前格式的 UID 注册表"""
+        """读取当前格式的 UID 注册表。"""
         try:
             content, member = self.read_file(
                 container,
@@ -247,7 +247,7 @@ class SandboxArchiveStore:
 
     @staticmethod
     def _allocate_uid(seed: bytes, used_uids: set[int]) -> int:
-        """根据稳定种子确定性分配未使用的 Linux UID"""
+        """根据稳定种子确定性分配未使用的 Linux UID。"""
         uid_range = _MAX_SANDBOX_UID - _MIN_SANDBOX_UID + 1
         for attempt in range(uid_range):
             digest = hashlib.blake2s(seed + attempt.to_bytes(8, "big")).digest()
@@ -257,7 +257,7 @@ class SandboxArchiveStore:
         raise RuntimeError("沙箱 UID 分配范围已耗尽")
 
     def ensure_workspace(self, container: Container, conversation_id: UUID) -> int:
-        """创建会话工作区并返回稳定 UID"""
+        """创建会话工作区并返回稳定 UID。"""
         self.put(
             container,
             SANDBOX_DATA_ROOT,
@@ -334,7 +334,7 @@ class SandboxArchiveStore:
         conversation_id: UUID,
         scope: SandboxSessionScope,
     ) -> tuple[int, int]:
-        """创建 Agent Session 目录并返回 conversation/session UID"""
+        """创建 Agent Session 目录并返回 conversation/session UID。"""
         conversation_uid = self.ensure_workspace(container, conversation_id)
         registry = self._load_registry(container)
         registry_key = scope.registry_key(conversation_id)
@@ -403,7 +403,7 @@ class SandboxArchiveStore:
         conversation_id: UUID,
         scope: SandboxSessionScope,
     ) -> bool:
-        """删除 Agent Session 工作区、暂存目录和 UID 映射"""
+        """删除 Agent Session 工作区、暂存目录和 UID 映射。"""
         registry = self._load_registry(container)
         registry_key = scope.registry_key(conversation_id)
         session_uid = registry.sessions.get(registry_key)
@@ -454,7 +454,7 @@ class SandboxArchiveStore:
         conversation_id: UUID,
         relative_path: str,
     ) -> int | None:
-        """返回与产物路径精确绑定的 Session UID"""
+        """返回与产物路径精确绑定的 Session UID。"""
         parts = PurePosixPath(relative_path).parts
         if not parts or parts[0] != "sessions":
             return None
@@ -476,7 +476,7 @@ class SandboxArchiveStore:
         conversation_uid: int,
         relative_path: str,
     ) -> set[int]:
-        """返回给定会话文件路径允许使用的属主 UID"""
+        """返回给定会话文件路径允许使用的属主 UID。"""
         allowed = {conversation_uid}
         session_uid = self._registered_session_uid(
             registry,
@@ -494,7 +494,7 @@ class SandboxArchiveStore:
         conversation_uid: int,
         relative_path: str,
     ) -> tuple[list[tuple[str, int, int, int]], int]:
-        """校验文件路径并返回待创建目录和被替换大小"""
+        """校验文件路径并返回待创建目录和被替换大小。"""
         workspace = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
         registry = self._load_registry(container)
         session_uid = self._registered_session_uid(
@@ -561,7 +561,7 @@ class SandboxArchiveStore:
         conversation_id: UUID,
         conversation_uid: int,
     ) -> int:
-        """流式统计会话工作区普通文件大小"""
+        """流式统计会话工作区普通文件大小。"""
         workspace = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
         registry = self._load_registry(container)
         session_prefix = f"{conversation_id}/"
@@ -591,7 +591,7 @@ class SandboxArchiveStore:
         relative_path: str,
         content: BinaryIO,
     ) -> None:
-        """上传并校验会话文件"""
+        """上传并校验会话文件。"""
         conversation_uid = self.ensure_workspace(container, conversation_id)
         content.seek(0, io.SEEK_END)
         size = content.tell()
@@ -646,7 +646,7 @@ class SandboxArchiveStore:
         conversation_id: UUID,
         relative_path: str,
     ) -> bytes:
-        """下载并校验会话文件"""
+        """下载并校验会话文件。"""
         conversation_uid = self.ensure_workspace(container, conversation_id)
         self._validate_target(
             container, conversation_id, conversation_uid, relative_path
@@ -673,7 +673,7 @@ class SandboxArchiveStore:
         conversation_id: UUID,
         relative_path: str,
     ) -> bool:
-        """检查路径是否为当前会话可访问的普通文件"""
+        """检查路径是否为当前会话可访问的普通文件。"""
         target = self._accessible_file(container, conversation_id, relative_path)
         return target is not None
 
@@ -683,7 +683,7 @@ class SandboxArchiveStore:
         conversation_id: UUID,
         relative_path: str,
     ) -> bool:
-        """检查路径是否为当前会话可下载的普通文件"""
+        """检查路径是否为当前会话可下载的普通文件。"""
         target = self._accessible_file(container, conversation_id, relative_path)
         return target is not None and target.size <= self._max_file_bytes
 
@@ -693,7 +693,7 @@ class SandboxArchiveStore:
         conversation_id: UUID,
         relative_path: str,
     ) -> tarfile.TarInfo | None:
-        """读取当前会话可访问的普通文件条目"""
+        """读取当前会话可访问的普通文件条目。"""
         conversation_uid = self.ensure_workspace(container, conversation_id)
         try:
             self._validate_target(
@@ -728,7 +728,7 @@ class SandboxArchiveStore:
         container: Container,
         conversation_id: UUID,
     ) -> None:
-        """删除会话工作区并更新 UID 注册表"""
+        """删除会话工作区并更新 UID 注册表。"""
         self.ensure_workspace(container, conversation_id)
         result = container.exec_run(
             [

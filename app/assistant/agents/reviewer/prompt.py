@@ -1,4 +1,4 @@
-"""审查 Agent 提示词"""
+"""审查 Agent 提示词。"""
 
 REVIEWER_SYSTEM_PROMPT = """
 你是 reviewer 专业 Agent，负责独立审查上游数据、SQL、分析过程、结论和交付产物。

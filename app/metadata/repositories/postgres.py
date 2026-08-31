@@ -1,4 +1,4 @@
-"""PostgreSQL 元数据访问"""
+"""PostgreSQL 元数据访问。"""
 
 from datetime import datetime
 from uuid import UUID
@@ -18,15 +18,15 @@ from app.metadata.models.catalog import (
 
 
 class MetaPGRepo:
-    """PostgreSQL 元数据存储"""
+    """PostgreSQL 元数据存储。"""
 
     def __init__(self, session: AsyncSession) -> None:
-        """初始化元数据存储"""
+        """初始化元数据存储。"""
         self._session = session
 
     @property
     def session(self) -> AsyncSession:
-        """返回当前存储绑定的数据库会话"""
+        """返回当前存储绑定的数据库会话。"""
         return self._session
 
     async def upsert_table_info(
@@ -35,7 +35,7 @@ class MetaPGRepo:
         *,
         force_version_increment: bool = False,
     ) -> bool:
-        """新增或更新表信息"""
+        """新增或更新表信息。"""
         existing = await self._session.get(TableInfo, table_info.name)
         changed = force_version_increment or (
             table_info.metadata_snapshot() != existing.metadata_snapshot()
@@ -67,7 +67,7 @@ class MetaPGRepo:
         *,
         force_version_increment: bool = False,
     ) -> bool:
-        """新增或更新字段信息"""
+        """新增或更新字段信息。"""
         changed = await self._prepare_column_versions(
             column_info,
             force_version_increment,
@@ -80,7 +80,7 @@ class MetaPGRepo:
         column_infos: list[ColumnInfo],
         force_version_increment_keys: set[tuple[str, str]] | None = None,
     ) -> None:
-        """批量写入字段信息并在目标字段创建后设置引用"""
+        """批量写入字段信息并在目标字段创建后设置引用。"""
         if not column_infos:
             return
         force_version_increment_keys = force_version_increment_keys or set()
@@ -115,7 +115,7 @@ class MetaPGRepo:
         *,
         force_version_increment: bool = False,
     ) -> bool:
-        """新增或更新指标信息及字段关联"""
+        """新增或更新指标信息及字段关联。"""
         existing = await self._session.get(MetricInfo, metric_info.name)
         if existing:
             await self._load_metric_references([existing])
@@ -146,7 +146,7 @@ class MetaPGRepo:
         return changed
 
     async def acquire_index_lock(self, resource_type: str, resource_key: str) -> None:
-        """在当前事务中获取索引资源级互斥锁"""
+        """在当前事务中获取索引资源级互斥锁。"""
         await self._session.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
             {"lock_key": f"metadata-index:{resource_type}:{resource_key}"},
@@ -158,7 +158,7 @@ class MetaPGRepo:
         c_name: str,
         target_version: int,
     ) -> bool:
-        """元数据版本未变化时确认字段语义索引版本"""
+        """元数据版本未变化时确认字段语义索引版本。"""
         result = await self._session.execute(
             update(ColumnInfo)
             .where(
@@ -176,7 +176,7 @@ class MetaPGRepo:
         metric_name: str,
         target_version: int,
     ) -> bool:
-        """元数据版本未变化时确认指标语义索引版本"""
+        """元数据版本未变化时确认指标语义索引版本。"""
         result = await self._session.execute(
             update(MetricInfo)
             .where(
@@ -189,12 +189,12 @@ class MetaPGRepo:
         return result.scalar_one_or_none() is not None
 
     async def list_table_infos(self) -> list[TableInfo]:
-        """获取全部表信息"""
+        """获取全部表信息。"""
         result = await self._session.scalars(select(TableInfo).order_by(TableInfo.name))
         return list(result.all())
 
     async def list_column_infos(self) -> list[ColumnInfo]:
-        """获取全部字段信息"""
+        """获取全部字段信息。"""
         result = await self._session.scalars(
             select(ColumnInfo).order_by(ColumnInfo.t_name, ColumnInfo.name)
         )
@@ -208,7 +208,7 @@ class MetaPGRepo:
         *,
         index_values: bool | None = None,
     ) -> list[ColumnInfo]:
-        """根据多个表名获取字段信息"""
+        """根据多个表名获取字段信息。"""
         unique_table_names = list(dict.fromkeys(table_names))
         if not unique_table_names:
             return []
@@ -223,7 +223,7 @@ class MetaPGRepo:
         return column_infos
 
     async def list_metric_infos(self) -> list[MetricInfo]:
-        """获取全部指标信息"""
+        """获取全部指标信息。"""
         result = await self._session.scalars(
             select(MetricInfo).order_by(MetricInfo.name)
         )
@@ -238,7 +238,7 @@ class MetaPGRepo:
         stale_before: datetime,
         limit: int,
     ) -> list[tuple[str, str]]:
-        """领取每日增量同步或需要清理的取值索引字段"""
+        """领取每日增量同步或需要清理的取值索引字段。"""
         await self.acquire_index_lock("scheduler", "value-index-dispatch")
         result = await self._session.execute(
             select(ColumnInfo, TableInfo, ValueIndexSyncState)
@@ -304,7 +304,7 @@ class MetaPGRepo:
         error: str,
         failed_at: datetime,
     ) -> None:
-        """释放发布失败且尚未开始运行的取值索引任务"""
+        """释放发布失败且尚未开始运行的取值索引任务。"""
         if not column_keys:
             return
         await self._session.execute(
@@ -329,7 +329,7 @@ class MetaPGRepo:
         t_name: str,
         c_name: str,
     ) -> ValueIndexSyncState | None:
-        """获取字段取值索引同步状态"""
+        """获取字段取值索引同步状态。"""
         return await self._session.get(ValueIndexSyncState, (t_name, c_name))
 
     async def begin_value_index_sync(
@@ -341,7 +341,7 @@ class MetaPGRepo:
         generation: UUID | None,
         started_at: datetime,
     ) -> ValueIndexSyncState:
-        """登记当前字段取值索引运行所有权"""
+        """登记当前字段取值索引运行所有权。"""
         state = await self.get_value_index_state(t_name, c_name)
         if state is None:
             state = ValueIndexSyncState(
@@ -379,7 +379,7 @@ class MetaPGRepo:
         full_sync: bool,
         incremental_sync: bool,
     ) -> bool:
-        """由当前运行提交水位、代次和成功时间"""
+        """由当前运行提交水位、代次和成功时间。"""
         values: dict[str, object] = {
             "cursor_value": cursor_value,
             "status": "succeeded",
@@ -414,7 +414,7 @@ class MetaPGRepo:
         error: str,
         failed_at: datetime,
     ) -> bool:
-        """由当前运行记录字段取值索引失败状态"""
+        """由当前运行记录字段取值索引失败状态。"""
         result = await self._session.execute(
             update(ValueIndexSyncState)
             .where(
@@ -434,7 +434,7 @@ class MetaPGRepo:
         return result.scalar_one_or_none() is not None
 
     async def delete_value_index_state(self, t_name: str, c_name: str) -> None:
-        """删除字段取值索引同步状态"""
+        """删除字段取值索引同步状态。"""
         await self._session.execute(
             delete(ValueIndexSyncState).where(
                 ValueIndexSyncState.t_name == t_name,
@@ -446,7 +446,7 @@ class MetaPGRepo:
         self,
         column_infos: list[ColumnInfo],
     ) -> None:
-        """批量加载字段取值索引同步状态"""
+        """批量加载字段取值索引同步状态。"""
         if not column_infos:
             return
         keys = [(item.t_name, item.name) for item in column_infos]
@@ -462,7 +462,7 @@ class MetaPGRepo:
             )
 
     async def _load_metric_references(self, metric_infos: list[MetricInfo]) -> None:
-        """加载指标关联字段"""
+        """加载指标关联字段。"""
         references_by_metric: dict[str, list[ColumnReference]] = {
             metric_info.name: [] for metric_info in metric_infos
         }
@@ -488,7 +488,7 @@ class MetaPGRepo:
             metric_info.relevant_columns = references_by_metric[metric_info.name]
 
     async def delete_metric_infos(self, metric_names: list[str]) -> None:
-        """删除指标信息及字段关联"""
+        """删除指标信息及字段关联。"""
         if not metric_names:
             return
         await self._session.execute(
@@ -499,7 +499,7 @@ class MetaPGRepo:
         )
 
     async def delete_column_infos(self, column_keys: list[tuple[str, str]]) -> None:
-        """删除字段信息及指标关联"""
+        """删除字段信息及指标关联。"""
         if not column_keys:
             return
         key_columns = tuple_(ColumnMetric.t_name, ColumnMetric.c_name)
@@ -512,7 +512,7 @@ class MetaPGRepo:
         )
 
     async def delete_table_infos(self, table_names: list[str]) -> None:
-        """删除表信息"""
+        """删除表信息。"""
         if not table_names:
             return
         await self._session.execute(
@@ -520,7 +520,7 @@ class MetaPGRepo:
         )
 
     async def get_column_info(self, t_name: str, c_name: str) -> ColumnInfo:
-        """根据表名和字段名获取字段信息"""
+        """根据表名和字段名获取字段信息。"""
         result = await self._session.get(ColumnInfo, (t_name, c_name))
         if result:
             result.value_index_state = await self.get_value_index_state(t_name, c_name)
@@ -530,14 +530,14 @@ class MetaPGRepo:
         )
 
     async def get_table_info(self, t_name: str) -> TableInfo:
-        """根据表名获取表信息"""
+        """根据表名获取表信息。"""
         result = await self._session.get(TableInfo, t_name)
         if result:
             return result
         raise meta_error.MetadataNotFoundError(detail=f"未找到表元数据: {t_name}")
 
     async def get_metric_info(self, metric_name: str) -> MetricInfo:
-        """根据指标名获取指标信息"""
+        """根据指标名获取指标信息。"""
         result = await self._session.get(MetricInfo, metric_name)
         if result:
             await self._load_metric_references([result])
@@ -551,7 +551,7 @@ class MetaPGRepo:
         column_info: ColumnInfo,
         force_version_increment: bool,
     ) -> bool:
-        """根据字段元数据变化设置版本"""
+        """根据字段元数据变化设置版本。"""
         existing = await self._session.get(
             ColumnInfo,
             (column_info.t_name, column_info.name),
@@ -574,7 +574,7 @@ class MetaPGRepo:
         existing: TableInfo | ColumnInfo | MetricInfo | None,
         changed: bool,
     ) -> None:
-        """设置元数据版本并保留已有索引版本"""
+        """设置元数据版本并保留已有索引版本。"""
         item.meta_version = (
             1 if existing is None else existing.meta_version + int(changed)
         )

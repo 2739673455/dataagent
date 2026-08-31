@@ -1,4 +1,4 @@
-"""Explorer Agent 语义召回运行时依赖"""
+"""Explorer Agent 语义召回运行时依赖。"""
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -21,7 +21,7 @@ from app.shared.config.app_config import cfg
 def resolve_semantic_recall_identity(
     config: RunnableConfig,
 ) -> tuple[int, UUID]:
-    """从服务端运行配置解析会话身份"""
+    """从服务端运行配置解析会话身份。"""
     configurable = config.get("configurable", {})
     user_id = configurable.get("user_id")
     raw_conversation_id = configurable.get("conversation_id")
@@ -32,7 +32,7 @@ def resolve_semantic_recall_identity(
 
 @asynccontextmanager
 async def semantic_recall_repository() -> AsyncGenerator[SemanticRecallPGRepo]:
-    """创建带短事务边界的语义召回数据访问"""
+    """创建带短事务边界的语义召回数据访问。"""
     async with (
         meta_postgres_client_manager.session() as session,
         session.begin(),
@@ -44,7 +44,7 @@ async def create_authorized_semantic_recall_service(
     user_id: int,
     repo: SemanticRecallPGRepo,
 ) -> SemanticRecallContextService:
-    """使用用户最新资产权限创建召回服务"""
+    """使用用户最新资产权限创建召回服务。"""
     async with auth_postgres_client_manager.session() as auth_session:
         policy = await AuthorizationService(AuthPGRepo(auth_session)).get_asset_policy(
             user_id

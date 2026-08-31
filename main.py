@@ -56,7 +56,7 @@ _ERROR_RESPONSES = {
 
 
 async def _verify_doris_query_identities() -> None:
-    """校验数据库中全部查询身份的 Doris 权限"""
+    """校验数据库中全部查询身份的 Doris 权限。"""
     cipher = DorisCredentialCipher(
         cfg.doris_credentials.encryption_key.get_secret_value()
     )
@@ -91,9 +91,9 @@ async def _verify_doris_query_identities() -> None:
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
-    """初始化并释放应用进程持有的共享资源"""
+    """初始化并释放应用进程持有的共享资源。"""
     try:
-        # FastAPI 应用启动前执行
+        # FastAPI 应用启动前执行。
         logger.info("开始初始化应用资源")
         embedding_client_manager.init()
         es_client_manager.init()
@@ -112,7 +112,7 @@ async def _lifespan(_app: FastAPI):
 
         yield
     finally:
-        # FastAPI 应用结束前执行
+        # FastAPI 应用结束前执行。
         logger.info("开始释放应用资源")
         await conversation_run_service.close()
         await agent_manager.close()
@@ -129,7 +129,7 @@ async def _lifespan(_app: FastAPI):
 
 
 def _register_routes(app: FastAPI) -> None:
-    """注册接口"""
+    """注册接口。"""
     app.include_router(auth_router, prefix="/api/v1/auth")
     app.include_router(admin_router, prefix="/api/v1/admin")
     app.include_router(
@@ -146,7 +146,7 @@ def _register_routes(app: FastAPI) -> None:
 
 
 def _register_middlewares(app: FastAPI) -> None:
-    """注册中间件"""
+    """注册中间件。"""
     app.middleware("http")(trace.middleware)
     app.add_middleware(
         CORSMiddleware,
@@ -158,7 +158,7 @@ def _register_middlewares(app: FastAPI) -> None:
 
 
 def _create_app() -> FastAPI:
-    """创建并组装 FastAPI 应用"""
+    """创建并组装 FastAPI 应用。"""
     setup_logger()
     app = FastAPI(lifespan=_lifespan, responses=_ERROR_RESPONSES)
     _register_middlewares(app)

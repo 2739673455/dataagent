@@ -1,4 +1,4 @@
-"""模块化单体依赖边界测试"""
+"""模块化单体依赖边界测试。"""
 
 import ast
 import unittest

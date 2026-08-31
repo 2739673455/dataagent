@@ -1,4 +1,4 @@
-"""认证接口请求与响应模型"""
+"""认证接口请求与响应模型。"""
 
 from datetime import datetime
 from typing import Self
@@ -14,7 +14,7 @@ from app.identity.services.auth import AuthenticatedUser, TokenPair
 
 
 class LoginRequest(BaseModel):
-    """用户登录请求"""
+    """用户登录请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -23,7 +23,7 @@ class LoginRequest(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    """刷新令牌请求"""
+    """刷新令牌请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -31,11 +31,11 @@ class RefreshRequest(BaseModel):
 
 
 class LogoutRequest(RefreshRequest):
-    """退出登录请求"""
+    """退出登录请求。"""
 
 
 class ChangePasswordRequest(BaseModel):
-    """修改当前用户密码请求"""
+    """修改当前用户密码请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -44,7 +44,7 @@ class ChangePasswordRequest(BaseModel):
 
 
 class UserResponse(BaseModel):
-    """用户公开信息"""
+    """用户公开信息。"""
 
     id: int
     username: str
@@ -56,7 +56,7 @@ class UserResponse(BaseModel):
 
     @classmethod
     def from_user(cls, user: User | AuthenticatedUser) -> Self:
-        """从用户实体或认证快照构造响应"""
+        """从用户实体或认证快照构造响应。"""
         return cls(
             id=user.id,
             username=user.username,
@@ -69,7 +69,7 @@ class UserResponse(BaseModel):
 
 
 class TokenResponse(BaseModel):
-    """认证令牌响应"""
+    """认证令牌响应。"""
 
     access_token: str
     refresh_token: str
@@ -80,7 +80,7 @@ class TokenResponse(BaseModel):
 
     @classmethod
     def from_result(cls, user: User, token_pair: TokenPair) -> Self:
-        """从认证结果构造响应"""
+        """从认证结果构造响应。"""
         return cls(
             access_token=token_pair.access_token,
             refresh_token=token_pair.refresh_token,

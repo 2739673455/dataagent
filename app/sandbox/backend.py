@@ -1,4 +1,4 @@
-"""DeepAgents Docker 沙箱 Backend"""
+"""DeepAgents Docker 沙箱 Backend。"""
 
 import asyncio
 import base64
@@ -62,7 +62,7 @@ _SHELL_JOB_CANCEL_GRACE_SECONDS = 1.0
 
 
 def _close_exec_stream(stream: object) -> None:
-    """关闭 Docker exec 流及其底层 HTTP 响应"""
+    """关闭 Docker exec 流及其底层 HTTP 响应。"""
     close_stream = getattr(stream, "close", None)
     if callable(close_stream):
         close_stream()
@@ -75,7 +75,7 @@ def _close_exec_stream(stream: object) -> None:
 
 @dataclass(frozen=True, slots=True)
 class SandboxShellJobExecution:
-    """Sandbox Shell Job 的最终执行信息"""
+    """Sandbox Shell Job 的最终执行信息。"""
 
     status: Literal["completed", "failed", "interrupted"]
     exit_code: int | None = None
@@ -88,7 +88,7 @@ class SandboxShellJobExecution:
 
 @dataclass(frozen=True, slots=True)
 class SandboxShellJobCancellation:
-    """Sandbox 进程组取消结果"""
+    """Sandbox 进程组取消结果。"""
 
     ready: bool
     signal_sent: bool
@@ -96,7 +96,7 @@ class SandboxShellJobCancellation:
 
 
 class DockerSandboxBackend(BaseSandbox):
-    """将一个用户容器中的会话目录暴露为虚拟文件系统"""
+    """将一个用户容器中的会话目录暴露为虚拟文件系统。"""
 
     enable_capture_offload = True
 
@@ -117,7 +117,7 @@ class DockerSandboxBackend(BaseSandbox):
         session_scope: SandboxSessionScope | None = None,
         execution_uid: int | None = None,
     ) -> None:
-        """初始化会话级 Docker 沙箱后端"""
+        """初始化会话级 Docker 沙箱后端。"""
         self._user_id = user_id
         self._conversation_id = conversation_id
         self._conversation_dir = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
@@ -157,7 +157,7 @@ class DockerSandboxBackend(BaseSandbox):
 
     @property
     def _container(self) -> Container:
-        """获取当前操作持有的容器实例"""
+        """获取当前操作持有的容器实例。"""
         container = getattr(self._operation_local, "container", None)
         if container is None:
             raise RuntimeError("Docker 容器仅在操作期间可用")
@@ -165,7 +165,7 @@ class DockerSandboxBackend(BaseSandbox):
 
     @property
     def id(self) -> str:
-        """获取沙箱后端唯一标识"""
+        """获取沙箱后端唯一标识。"""
         scope = (
             f":{self._session_scope.relative_workspace}"
             if self._session_scope is not None
@@ -175,11 +175,11 @@ class DockerSandboxBackend(BaseSandbox):
 
     @property
     def workspace_dir(self) -> str:
-        """获取会话在容器中的实际工作目录"""
+        """获取会话在容器中的实际工作目录。"""
         return self._workspace_dir
 
     def _resolve_path(self, path: str) -> str:
-        """将虚拟路径映射到当前会话目录"""
+        """将虚拟路径映射到当前会话目录。"""
         if "\x00" in path or path.startswith("~"):
             raise SandboxPathError(path)
 
@@ -198,7 +198,7 @@ class DockerSandboxBackend(BaseSandbox):
         return posixpath.join(self._workspace_dir, *parts)
 
     def _resolve_mutation_path(self, path: str) -> str:
-        """只允许修改当前 Agent Session 工作区"""
+        """只允许修改当前 Agent Session 工作区。"""
         resolved_path = self._resolve_path(path)
         if self._session_scope is not None and not (
             resolved_path == self._workspace_dir
@@ -208,7 +208,7 @@ class DockerSandboxBackend(BaseSandbox):
         return resolved_path
 
     def _to_virtual_path(self, path: str) -> str:
-        """将容器路径还原为 Agent 可见的虚拟路径"""
+        """将容器路径还原为 Agent 可见的虚拟路径。"""
         if path == self._conversation_dir:
             return "/"
         prefix = f"{self._conversation_dir}/"
@@ -220,7 +220,7 @@ class DockerSandboxBackend(BaseSandbox):
         return path
 
     def _hide_workspace(self, message: str | None) -> str | None:
-        """从错误信息中隐藏容器工作目录"""
+        """从错误信息中隐藏容器工作目录。"""
         if message is None:
             return None
         return message.replace(self._conversation_dir, "").replace(
@@ -229,11 +229,11 @@ class DockerSandboxBackend(BaseSandbox):
         )
 
     def _map_file_info(self, info: FileInfo) -> FileInfo:
-        """转换文件信息中的路径"""
+        """转换文件信息中的路径。"""
         return FileInfo(**{**info, "path": self._to_virtual_path(info["path"])})
 
     def _map_grep_match(self, match: GrepMatch) -> GrepMatch:
-        """转换搜索结果中的路径"""
+        """转换搜索结果中的路径。"""
         return GrepMatch(**{**match, "path": self._to_virtual_path(match["path"])})
 
     @contextmanager
@@ -243,7 +243,7 @@ class DockerSandboxBackend(BaseSandbox):
         *,
         mutation: bool = False,
     ) -> Generator[str | None, None, None]:
-        """解析路径并进入沙箱操作窗口"""
+        """解析路径并进入沙箱操作窗口。"""
         try:
             resolved_path = (
                 self._resolve_mutation_path(path)
@@ -258,7 +258,7 @@ class DockerSandboxBackend(BaseSandbox):
 
     @contextmanager
     def _operation(self) -> Generator[None, None, None]:
-        """在资源生命周期保护下执行沙箱操作"""
+        """在资源生命周期保护下执行沙箱操作。"""
         self._touch()
         existing_container = getattr(self._operation_local, "container", None)
         cancel_event = getattr(self._operation_local, "cancel_event", None)
@@ -287,11 +287,11 @@ class DockerSandboxBackend(BaseSandbox):
         self,
         operation: Callable[[], _ResultT],
     ) -> _ResultT:
-        """在线程中运行同步操作并向容量等待传播任务取消"""
+        """在线程中运行同步操作并向容量等待传播任务取消。"""
         cancel_event = threading.Event()
 
         def run() -> _ResultT:
-            """在线程本地上下文中执行可取消操作"""
+            """在线程本地上下文中执行可取消操作。"""
             self._operation_local.cancel_event = cancel_event
             try:
                 return operation()
@@ -312,7 +312,7 @@ class DockerSandboxBackend(BaseSandbox):
         *,
         timeout: int | None = None,
     ) -> ExecuteResponse:
-        """流式执行命令并限制宿主机保留的输出"""
+        """流式执行命令并限制宿主机保留的输出。"""
         effective_timeout = self._internal_command_timeout_seconds
         if timeout is not None and timeout > 0:
             effective_timeout = min(timeout, self._internal_command_timeout_seconds)
@@ -368,7 +368,7 @@ class DockerSandboxBackend(BaseSandbox):
         )
 
     def _workspace_size_unlocked(self) -> int:
-        """读取当前会话目录占用的字节数"""
+        """读取当前会话目录占用的字节数。"""
         result = self._container.exec_run(
             [
                 "timeout",
@@ -401,7 +401,7 @@ class DockerSandboxBackend(BaseSandbox):
         incoming_bytes: int,
         replaced_bytes: int = 0,
     ) -> None:
-        """校验写入后工作区不会超过容量限制"""
+        """校验写入后工作区不会超过容量限制。"""
         projected_size = (
             self._workspace_size_unlocked() - replaced_bytes + incoming_bytes
         )
@@ -416,7 +416,7 @@ class DockerSandboxBackend(BaseSandbox):
         *,
         timeout: int | None = None,
     ) -> ExecuteResponse:
-        """在用户容器的当前会话目录中执行命令"""
+        """在用户容器的当前会话目录中执行命令。"""
         with self._operation():
             if self._workspace_size_unlocked() > self._max_workspace_bytes:
                 return ExecuteResponse(
@@ -435,12 +435,12 @@ class DockerSandboxBackend(BaseSandbox):
         *,
         timeout: int | None = None,
     ) -> ExecuteResponse:
-        """异步执行命令并支持取消容量等待"""
+        """异步执行命令并支持取消容量等待。"""
         return await self._run_async(lambda: self.execute(command, timeout=timeout))
 
     @staticmethod
     def _validate_shell_job_id(job_id: str) -> None:
-        """只接受 Runtime 生成的短随机 Shell Job 标识"""
+        """只接受 Runtime 生成的短随机 Shell Job 标识。"""
         if (
             len(job_id) != 12
             or not job_id.startswith("job_")
@@ -449,7 +449,7 @@ class DockerSandboxBackend(BaseSandbox):
             raise ValueError("Shell Job 标识无效")
 
     def _shell_job_paths(self, job_id: str) -> tuple[str, str, str]:
-        """生成受控日志路径、虚拟路径和内部控制路径"""
+        """生成受控日志路径、虚拟路径和内部控制路径。"""
         self._validate_shell_job_id(job_id)
         relative_log_path = f"large_tool_results/shell_jobs/{job_id}.log"
         return (
@@ -462,7 +462,7 @@ class DockerSandboxBackend(BaseSandbox):
         self,
         control_path: str,
     ) -> dict[str, object] | None:
-        """以 root 身份读取模型不可见的 Shell Job 控制文件"""
+        """以 root 身份读取模型不可见的 Shell Job 控制文件。"""
         result = self._container.exec_run(
             [
                 "timeout",
@@ -496,7 +496,7 @@ class DockerSandboxBackend(BaseSandbox):
         command: str,
         started_callback: Callable[[], None] | None,
     ) -> SandboxShellJobExecution:
-        """启动包装进程并持续监控到业务命令终态"""
+        """启动包装进程并持续监控到业务命令终态。"""
         log_path, _, control_path = self._shell_job_paths(job_id)
         if self._workspace_size_unlocked() > self._max_workspace_bytes:
             return SandboxShellJobExecution(
@@ -646,7 +646,7 @@ class DockerSandboxBackend(BaseSandbox):
         command: str,
         started_callback: Callable[[], None] | None = None,
     ) -> SandboxShellJobExecution:
-        """执行无固定总时限的 Specialist Shell Job"""
+        """执行无固定总时限的 Specialist Shell Job。"""
         self._validate_shell_job_id(job_id)
         if not command.strip():
             raise ValueError("Shell 命令不能为空")
@@ -670,7 +670,7 @@ class DockerSandboxBackend(BaseSandbox):
         command: str,
         started_callback: Callable[[], None] | None = None,
     ) -> SandboxShellJobExecution:
-        """在线程中运行 Shell Job，并让监控单元独立于工具等待"""
+        """在线程中运行 Shell Job，并让监控单元独立于工具等待。"""
         return await self._run_async(
             lambda: self.run_shell_job(
                 job_id,
@@ -680,7 +680,7 @@ class DockerSandboxBackend(BaseSandbox):
         )
 
     def cancel_shell_job(self, job_id: str) -> SandboxShellJobCancellation:
-        """先 TERM 后 KILL 终止 Shell Job 的整个进程组"""
+        """先 TERM 后 KILL 终止 Shell Job 的整个进程组。"""
         _, _, control_path = self._shell_job_paths(job_id)
         with self._operation():
             result = self._container.exec_run(
@@ -717,11 +717,11 @@ class DockerSandboxBackend(BaseSandbox):
         )
 
     async def acancel_shell_job(self, job_id: str) -> SandboxShellJobCancellation:
-        """异步取消 Shell Job"""
+        """异步取消 Shell Job。"""
         return await asyncio.to_thread(self.cancel_shell_job, job_id)
 
     def cleanup_shell_job_control(self, job_id: str) -> None:
-        """清除单次 Agent Run 的内部 Shell Job 控制文件"""
+        """清除单次 Agent Run 的内部 Shell Job 控制文件。"""
         _, _, control_path = self._shell_job_paths(job_id)
         with self._operation():
             self._container.exec_run(
@@ -732,7 +732,7 @@ class DockerSandboxBackend(BaseSandbox):
             )
 
     async def acleanup_shell_job_control(self, job_id: str) -> None:
-        """异步清除 Shell Job 控制文件"""
+        """异步清除 Shell Job 控制文件。"""
         await asyncio.to_thread(self.cleanup_shell_job_control, job_id)
 
     def execute_with_offload(
@@ -744,7 +744,7 @@ class DockerSandboxBackend(BaseSandbox):
         max_capture_bytes: int | None = None,
         timeout: int | None = None,
     ) -> ExecuteOffloadResult:
-        """在会话目录中卸载大命令输出，并复用单文件容量上限"""
+        """在会话目录中卸载大命令输出，并复用单文件容量上限。"""
         capture_limit = min(
             max_capture_bytes or self._max_file_bytes,
             self._max_file_bytes,
@@ -758,7 +758,7 @@ class DockerSandboxBackend(BaseSandbox):
         )
 
     def ls(self, path: str) -> LsResult:
-        """列出当前会话目录内容"""
+        """列出当前会话目录内容。"""
         with self._resolved_operation(path) as resolved_path:
             if resolved_path is None:
                 return LsResult(error=INVALID_PATH)
@@ -773,11 +773,11 @@ class DockerSandboxBackend(BaseSandbox):
             )
 
     async def als(self, path: str) -> LsResult:
-        """异步列出当前会话目录内容"""
+        """异步列出当前会话目录内容。"""
         return await self._run_async(lambda: self.ls(path))
 
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
-        """读取当前会话文件"""
+        """读取当前会话文件。"""
         with self._resolved_operation(file_path) as resolved_path:
             if resolved_path is None:
                 return ReadResult(error=INVALID_PATH)
@@ -791,11 +791,11 @@ class DockerSandboxBackend(BaseSandbox):
         offset: int = 0,
         limit: int = 2000,
     ) -> ReadResult:
-        """异步读取当前会话文件"""
+        """异步读取当前会话文件。"""
         return await self._run_async(lambda: self.read(file_path, offset, limit))
 
     def write(self, file_path: str, content: str) -> WriteResult:
-        """写入当前会话文件"""
+        """写入当前会话文件。"""
         with self._resolved_operation(file_path, mutation=True) as resolved_path:
             if resolved_path is None:
                 return WriteResult(error=INVALID_PATH)
@@ -806,7 +806,7 @@ class DockerSandboxBackend(BaseSandbox):
             )
 
     async def awrite(self, file_path: str, content: str) -> WriteResult:
-        """异步写入当前会话文件"""
+        """异步写入当前会话文件。"""
         return await self._run_async(lambda: self.write(file_path, content))
 
     def edit(
@@ -816,7 +816,7 @@ class DockerSandboxBackend(BaseSandbox):
         new_string: str,
         replace_all: bool = False,
     ) -> EditResult:
-        """编辑当前会话文件"""
+        """编辑当前会话文件。"""
         with self._resolved_operation(file_path, mutation=True) as resolved_path:
             if resolved_path is None:
                 return EditResult(error=INVALID_PATH)
@@ -840,7 +840,7 @@ class DockerSandboxBackend(BaseSandbox):
         new_string: str,
         replace_all: bool,
     ) -> EditResult:
-        """通过会话目录内的临时文件安全编辑文本"""
+        """通过会话目录内的临时文件安全编辑文本。"""
         token = secrets.token_hex(10)
         old_path = self._resolve_mutation_path(f".deepagents_tmp/{token}.old")
         new_path = self._resolve_mutation_path(f".deepagents_tmp/{token}.new")
@@ -891,7 +891,7 @@ class DockerSandboxBackend(BaseSandbox):
         new_string: str,
         replace_all: bool = False,
     ) -> EditResult:
-        """异步编辑当前会话文件"""
+        """异步编辑当前会话文件。"""
         return await self._run_async(
             lambda: self.edit(
                 file_path,
@@ -902,7 +902,7 @@ class DockerSandboxBackend(BaseSandbox):
         )
 
     def delete(self, file_path: str) -> DeleteResult:
-        """删除当前会话文件或目录"""
+        """删除当前会话文件或目录。"""
         with self._resolved_operation(file_path, mutation=True) as resolved_path:
             if resolved_path is None:
                 return DeleteResult(error=INVALID_PATH)
@@ -914,7 +914,7 @@ class DockerSandboxBackend(BaseSandbox):
             )
 
     async def adelete(self, file_path: str) -> DeleteResult:
-        """异步删除当前会话文件或目录"""
+        """异步删除当前会话文件或目录。"""
         return await self._run_async(lambda: self.delete(file_path))
 
     def grep(
@@ -925,7 +925,7 @@ class DockerSandboxBackend(BaseSandbox):
         *,
         max_count: int | None = None,
     ) -> GrepResult:
-        """搜索当前会话文件内容"""
+        """搜索当前会话文件内容。"""
         with self._resolved_operation(path or "/") as resolved_path:
             if resolved_path is None:
                 return GrepResult(error=INVALID_PATH)
@@ -953,7 +953,7 @@ class DockerSandboxBackend(BaseSandbox):
         *,
         max_count: int | None = None,
     ) -> GrepResult:
-        """异步搜索当前会话文件内容"""
+        """异步搜索当前会话文件内容。"""
         return await self._run_async(
             lambda: self.grep(
                 pattern,
@@ -964,7 +964,7 @@ class DockerSandboxBackend(BaseSandbox):
         )
 
     def glob(self, pattern: str, path: str | None = None) -> GlobResult:
-        """匹配当前会话中的文件"""
+        """匹配当前会话中的文件。"""
         with self._resolved_operation(path or "/") as resolved_path:
             if resolved_path is None:
                 return GlobResult(error=INVALID_PATH)
@@ -980,11 +980,11 @@ class DockerSandboxBackend(BaseSandbox):
             )
 
     async def aglob(self, pattern: str, path: str | None = None) -> GlobResult:
-        """异步匹配当前会话中的文件"""
+        """异步匹配当前会话中的文件。"""
         return await self._run_async(lambda: self.glob(pattern, path))
 
     def _put_archive(self, path: str, content: BinaryIO, size: int) -> None:
-        """先写入受保护的暂存目录，再提交到当前可写根"""
+        """先写入受保护的暂存目录，再提交到当前可写根。"""
         relative_target = posixpath.relpath(path, self._workspace_dir)
         if relative_target == "." or relative_target.startswith("../"):
             raise SandboxPathError(path)
@@ -1043,7 +1043,7 @@ class DockerSandboxBackend(BaseSandbox):
         path: str,
         max_bytes: int,
     ) -> tuple[bytes, int | None]:
-        """以会话 UID 限长读取文件，避免 Docker 守护进程绕过权限"""
+        """以会话 UID 限长读取文件，避免 Docker 守护进程绕过权限。"""
         docker_client = self._container.client
         if docker_client is None:
             raise RuntimeError("Docker 容器客户端不可用")
@@ -1078,14 +1078,14 @@ class DockerSandboxBackend(BaseSandbox):
         return bytes(output), inspected.get("ExitCode")
 
     def _read_file_bytes_unlocked(self, path: str) -> tuple[bytes, int | None]:
-        """按单文件上限读取文件内容"""
+        """按单文件上限读取文件内容。"""
         return self._read_limited_file_bytes_unlocked(
             path,
             self._max_file_bytes + 1,
         )
 
     def _file_size_unlocked(self, path: str) -> int:
-        """读取文件字节数，不存在时返回零"""
+        """读取文件字节数，不存在时返回零。"""
         result = self._execute_unlocked(
             f"if [ -f {shlex.quote(path)} ]; then stat -c %s -- {shlex.quote(path)}; else printf 0; fi"
         )
@@ -1097,7 +1097,7 @@ class DockerSandboxBackend(BaseSandbox):
             raise OSError(f"文件大小响应格式无效: {path}") from exc
 
     def upload_fileobj(self, path: str, content: BinaryIO) -> FileUploadResponse:
-        """上传文件对象到当前会话"""
+        """上传文件对象到当前会话。"""
         try:
             resolved_path = self._resolve_mutation_path(path)
             with self._operation(), self._mutation_lock:
@@ -1124,7 +1124,7 @@ class DockerSandboxBackend(BaseSandbox):
         return FileUploadResponse(path=path)
 
     def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
-        """批量上传字节内容到当前会话"""
+        """批量上传字节内容到当前会话。"""
         return [
             self.upload_fileobj(path, io.BytesIO(content)) for path, content in files
         ]
@@ -1133,11 +1133,11 @@ class DockerSandboxBackend(BaseSandbox):
         self,
         files: list[tuple[str, bytes]],
     ) -> list[FileUploadResponse]:
-        """异步批量上传字节内容到当前会话"""
+        """异步批量上传字节内容到当前会话。"""
         return await self._run_async(lambda: self.upload_files(files))
 
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
-        """批量下载当前会话文件"""
+        """批量下载当前会话文件。"""
         responses: list[FileDownloadResponse] = []
         with self._operation():
             for path in paths:
@@ -1220,11 +1220,11 @@ class DockerSandboxBackend(BaseSandbox):
         self,
         paths: list[str],
     ) -> list[FileDownloadResponse]:
-        """异步批量下载当前会话文件"""
+        """异步批量下载当前会话文件。"""
         return await self._run_async(lambda: self.download_files(paths))
 
     def is_file(self, path: str) -> bool:
-        """检查当前会话路径是否为文件"""
+        """检查当前会话路径是否为文件。"""
         resolved_path = self._resolve_path(path)
         with self._operation():
             result = self._execute_unlocked(f"test -f {shlex.quote(resolved_path)}")

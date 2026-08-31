@@ -1,4 +1,4 @@
-"""查询经验全文与向量索引访问"""
+"""查询经验全文与向量索引访问。"""
 
 from typing import Any, ClassVar, cast
 from uuid import UUID
@@ -10,7 +10,7 @@ from app.shared.config.app_config import cfg
 
 
 class QueryExperienceESRepo:
-    """查询经验用途文本的混合检索索引"""
+    """查询经验用途文本的混合检索索引。"""
 
     _index_name = cfg.elasticsearch.query_experience_index
     _index_mappings: ClassVar[dict[str, Any]] = {
@@ -34,11 +34,11 @@ class QueryExperienceESRepo:
     }
 
     def __init__(self, client: AsyncElasticsearch) -> None:
-        """绑定查询经验使用的 Elasticsearch 客户端"""
+        """绑定查询经验使用的 Elasticsearch 客户端。"""
         self._client = client
 
     async def ensure_index(self) -> None:
-        """确保查询经验索引存在"""
+        """确保查询经验索引存在。"""
         if not await self._client.indices.exists(index=self._index_name):
             await self._client.indices.create(
                 index=self._index_name,
@@ -55,7 +55,7 @@ class QueryExperienceESRepo:
         text: str,
         embedding: list[float],
     ) -> None:
-        """按外部版本顺序覆盖查询经验索引文档"""
+        """按外部版本顺序覆盖查询经验索引文档。"""
         await self.ensure_index()
         try:
             await self._client.index(
@@ -75,7 +75,7 @@ class QueryExperienceESRepo:
             return
 
     async def delete(self, experience_id: UUID, *, revision: int) -> None:
-        """按外部版本顺序删除查询经验索引文档"""
+        """按外部版本顺序删除查询经验索引文档。"""
         await self.ensure_index()
         try:
             await self._client.delete(
@@ -96,7 +96,7 @@ class QueryExperienceESRepo:
         authorization_epoch: UUID,
         limit: int,
     ) -> list[SearchHit[UUID]]:
-        """按任务文本执行全文检索"""
+        """按任务文本执行全文检索。"""
         if not await self._client.indices.exists(index=self._index_name):
             return []
         result = await self._client.search(
@@ -128,7 +128,7 @@ class QueryExperienceESRepo:
         limit: int,
         min_score: float,
     ) -> list[SearchHit[UUID]]:
-        """按任务向量执行语义检索"""
+        """按任务向量执行语义检索。"""
         if not await self._client.indices.exists(index=self._index_name):
             return []
         result = await self._client.search(
@@ -154,7 +154,7 @@ class QueryExperienceESRepo:
         role_name: str,
         authorization_epoch: UUID,
     ) -> list[dict[str, Any]]:
-        """构造角色和权限纪元一致的索引过滤条件"""
+        """构造角色和权限纪元一致的索引过滤条件。"""
         return [
             {"term": {"role_name": role_name}},
             {"term": {"authorization_epoch": str(authorization_epoch)}},
@@ -162,7 +162,7 @@ class QueryExperienceESRepo:
 
     @staticmethod
     def _hits(result: Any) -> list[SearchHit[UUID]]:
-        """解析 Elasticsearch 查询经验命中"""
+        """解析 Elasticsearch 查询经验命中。"""
         payload = cast(dict[str, Any], result.body)
         hits: list[SearchHit[UUID]] = []
         for hit in payload.get("hits", {}).get("hits", []):

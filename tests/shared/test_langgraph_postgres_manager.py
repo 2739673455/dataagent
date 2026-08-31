@@ -1,4 +1,4 @@
-"""LangGraph PostgreSQL namespace 存储能力测试"""
+"""LangGraph PostgreSQL namespace 存储能力测试。"""
 
 from __future__ import annotations
 
@@ -92,7 +92,7 @@ class _Pool:
 
 
 class LangGraphNamespaceStoreTest(unittest.IsolatedAsyncioTestCase):
-    """验证 namespace 查询与删除严格限制在线程和 namespace 内"""
+    """验证 namespace 查询与删除严格限制在线程和 namespace 内。"""
 
     def setUp(self) -> None:
         self.pool = _Pool()
@@ -130,7 +130,7 @@ class LangGraphNamespaceStoreTest(unittest.IsolatedAsyncioTestCase):
     "requires PostgreSQL integration environment",
 )
 class LangGraphNamespaceStoreIntegrationTest(unittest.IsolatedAsyncioTestCase):
-    """使用真实 LangGraph 表验证 namespace 物理删除边界"""
+    """使用真实 LangGraph 表验证 namespace 物理删除边界。"""
 
     async def asyncSetUp(self) -> None:
         self.manager = LangGraphPostgresManager(cfg.langgraph_postgresql)

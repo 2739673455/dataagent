@@ -1,4 +1,4 @@
-"""Celery 队列和周期任务配置测试"""
+"""Celery 队列和周期任务配置测试。"""
 
 import unittest
 

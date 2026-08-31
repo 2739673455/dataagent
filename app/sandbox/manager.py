@@ -1,4 +1,4 @@
-"""Docker 沙箱资源与工作区管理"""
+"""Docker 沙箱资源与工作区管理。"""
 
 import asyncio
 import hashlib
@@ -51,7 +51,7 @@ _ACTIVITY_FILE_VERSION = 1
 
 @dataclass(frozen=True, slots=True)
 class DockerSandboxHealth:
-    """Docker 沙箱管理器健康状态"""
+    """Docker 沙箱管理器健康状态。"""
 
     cleanup_task_running: bool
     last_cleanup_started_at: float | None
@@ -64,7 +64,7 @@ class DockerSandboxHealth:
 
 @dataclass(frozen=True, slots=True)
 class _UserResources:
-    """一个用户对应的进程内并发资源"""
+    """一个用户对应的进程内并发资源。"""
 
     lock: asyncio.Lock
     guard: LifecycleGuard
@@ -73,7 +73,7 @@ class _UserResources:
 
 @dataclass(frozen=True, slots=True)
 class _ConversationResources:
-    """一个会话对应的完整进程内并发资源"""
+    """一个会话对应的完整进程内并发资源。"""
 
     user: _UserResources
     guard: LifecycleGuard
@@ -81,7 +81,7 @@ class _ConversationResources:
 
 
 class DockerSandboxManager:
-    """管理每个用户唯一的本地 Docker 沙箱"""
+    """管理每个用户唯一的本地 Docker 沙箱。"""
 
     def __init__(
         self,
@@ -89,7 +89,7 @@ class DockerSandboxManager:
         ownership: SandboxOwnership,
         readonly_mounts: Sequence[SandboxReadonlyMount],
     ) -> None:
-        """初始化 Docker 沙箱管理器"""
+        """初始化 Docker 沙箱管理器。"""
         self._config = sandbox_config
         self._ownership = ownership
         self._readonly_mounts = tuple(
@@ -137,13 +137,13 @@ class DockerSandboxManager:
         self._ownership_started = False
 
     def _get_client(self) -> docker.DockerClient:
-        """获取已初始化的 Docker 客户端"""
+        """获取已初始化的 Docker 客户端。"""
         if self._client is None:
             raise RuntimeError("Docker 沙箱管理器尚未初始化")
         return self._client
 
     def _init_sync(self) -> None:
-        """连接 Docker 并加载沙箱镜像"""
+        """连接 Docker 并加载沙箱镜像。"""
         client = docker.from_env()
         try:
             client.ping()
@@ -167,7 +167,7 @@ class DockerSandboxManager:
         self._client = client
 
     async def init(self, *, start_cleanup: bool = True) -> None:
-        """初始化 Docker 沙箱管理器"""
+        """初始化 Docker 沙箱管理器。"""
         async with self._init_lock:
             if not self._ownership_started:
                 await asyncio.to_thread(self._ownership.start_runtime)
@@ -187,7 +187,7 @@ class DockerSandboxManager:
                 )
 
     def _get_user_resources(self, user_id: int) -> _UserResources:
-        """获取用户级并发控制资源"""
+        """获取用户级并发控制资源。"""
         with self._resource_lock:
             return _UserResources(
                 lock=self._user_locks.setdefault(user_id, asyncio.Lock()),
@@ -200,7 +200,7 @@ class DockerSandboxManager:
         user_id: int,
         conversation_id: UUID,
     ) -> _ConversationResources:
-        """获取用户和会话的完整并发控制资源"""
+        """获取用户和会话的完整并发控制资源。"""
         with self._resource_lock:
             user = self._get_user_resources(user_id)
             return _ConversationResources(
@@ -223,7 +223,7 @@ class DockerSandboxManager:
         resources: _ConversationResources,
         mutation_lock: threading.RLock | None = None,
     ) -> Generator[None, None, None]:
-        """在跨进程和进程内保护下独占维护会话"""
+        """在跨进程和进程内保护下独占维护会话。"""
         with (
             self._ownership.user_maintenance(user_id),
             self._ownership.conversation_maintenance(user_id, conversation_id),
@@ -239,7 +239,7 @@ class DockerSandboxManager:
                     yield
 
     def _touch_user(self, user_id: int) -> None:
-        """记录用户沙箱最近活动时间"""
+        """记录用户沙箱最近活动时间。"""
         activity_at = time.time()
         with self._activity_lock:
             self._last_activity[user_id] = activity_at
@@ -247,28 +247,28 @@ class DockerSandboxManager:
         self._capacity.notify_waiters()
 
     def _last_activity_timestamp(self, user_id: int) -> float:
-        """获取用户最近活动时间戳"""
+        """获取用户最近活动时间戳。"""
         with self._activity_lock:
             local_activity = self._last_activity.get(user_id, 0.0)
         return max(local_activity, self._ownership.last_activity(user_id))
 
     def _idle_seconds(self, user_id: int) -> float:
-        """获取用户沙箱持续空闲的秒数"""
+        """获取用户沙箱持续空闲的秒数。"""
         last_activity = self._last_activity_timestamp(user_id)
         if last_activity <= 0:
             return 0.0
         return max(0.0, time.time() - last_activity)
 
     def _container_name(self, user_id: int) -> str:
-        """构造用户容器名称"""
+        """构造用户容器名称。"""
         return f"dataagent-{self._config.deployment_namespace}-sandbox-user-{user_id}"
 
     def _volume_name(self, user_id: int) -> str:
-        """构造用户数据卷名称"""
+        """构造用户数据卷名称。"""
         return f"{self._container_name(user_id)}-data"
 
     def _resource_labels(self, user_id: int) -> dict[str, str]:
-        """构造容器和卷的归属标签"""
+        """构造容器和卷的归属标签。"""
         return {
             _DEPLOYMENT_LABEL: self._config.deployment_namespace,
             _USER_LABEL: str(user_id),
@@ -277,7 +277,7 @@ class DockerSandboxManager:
         }
 
     def _container_filters(self) -> dict[str, str | list[str] | bool]:
-        """构造当前部署实例的 Docker 资源过滤条件"""
+        """构造当前部署实例的 Docker 资源过滤条件。"""
         return {
             "label": [
                 f"{_DEPLOYMENT_LABEL}={self._config.deployment_namespace}",
@@ -286,7 +286,7 @@ class DockerSandboxManager:
         }
 
     def _volume_driver_options(self, user_id: int) -> dict[str, str]:
-        """渲染用户卷驱动参数"""
+        """渲染用户卷驱动参数。"""
         fields = {
             "deployment_namespace": self._config.deployment_namespace,
             "user_id": user_id,
@@ -298,7 +298,7 @@ class DockerSandboxManager:
         }
 
     def _runtime_container_spec(self) -> dict[str, Any]:
-        """返回创建容器使用的完整运行规格"""
+        """返回创建容器使用的完整运行规格。"""
         return {
             "command": ["sleep", "infinity"],
             "init": True,
@@ -316,7 +316,7 @@ class DockerSandboxManager:
         }
 
     def _readonly_mount_volumes(self) -> dict[str, dict[str, str]]:
-        """构造宿主机只读目录的 Docker 挂载参数"""
+        """构造宿主机只读目录的 Docker 挂载参数。"""
         return {
             str(mount.source): {
                 "bind": mount.target.as_posix(),
@@ -326,7 +326,7 @@ class DockerSandboxManager:
         }
 
     def _container_spec_digest(self, image_id: str) -> str:
-        """计算完整容器运行和存储规格的稳定摘要"""
+        """计算完整容器运行和存储规格的稳定摘要。"""
         spec_payload = {
             "layout_version": 6,
             "image_id": image_id,
@@ -355,7 +355,7 @@ class DockerSandboxManager:
         ).hexdigest()
 
     def _get_or_create_volume(self, user_id: int):
-        """获取用户数据卷并校验归属"""
+        """获取用户数据卷并校验归属。"""
         client = self._get_client()
         volume_name = self._volume_name(user_id)
         try:
@@ -387,7 +387,7 @@ class DockerSandboxManager:
         return volume
 
     def _create_container(self, user_id: int) -> Container:
-        """创建保持停止状态的用户容器"""
+        """创建保持停止状态的用户容器。"""
         client = self._get_client()
         volume = self._get_or_create_volume(user_id)
         if self._container_spec is None:
@@ -410,7 +410,7 @@ class DockerSandboxManager:
         return container
 
     def _get_or_create_storage_container_sync(self, user_id: int) -> Container:
-        """获取或创建容器，但不启动容器"""
+        """获取或创建容器，但不启动容器。"""
         if user_id < 0:
             raise ValueError("user_id 不能为负数")
         name = self._container_name(user_id)
@@ -432,7 +432,7 @@ class DockerSandboxManager:
             return existing_container
 
     def _get_existing_container_sync(self, user_id: int) -> Container | None:
-        """获取已存在的用户容器"""
+        """获取已存在的用户容器。"""
         name = self._container_name(user_id)
         try:
             container = self._get_client().containers.get(name)
@@ -447,7 +447,7 @@ class DockerSandboxManager:
         return container
 
     def _mark_user_not_running(self, user_id: int) -> None:
-        """释放用户占用的全局运行槽位"""
+        """释放用户占用的全局运行槽位。"""
         self._capacity.mark_not_running(user_id)
 
     def _complete_running_reservation(
@@ -456,11 +456,11 @@ class DockerSandboxManager:
         *,
         running: bool,
     ) -> None:
-        """完成或回滚运行槽位预留"""
+        """完成或回滚运行槽位预留。"""
         self._capacity.complete_reservation(user_id, running=running)
 
     def _running_containers_sync(self) -> list[tuple[int, Container]]:
-        """读取 Docker 中当前部署的运行容器"""
+        """读取 Docker 中当前部署的运行容器。"""
         running: list[tuple[int, Container]] = []
         containers = self._get_client().containers.list(
             all=True,
@@ -478,13 +478,13 @@ class DockerSandboxManager:
         return running
 
     def _synchronize_capacity_sync(self) -> list[tuple[int, Container]]:
-        """使用 Docker 实际状态刷新当前进程容量视图"""
+        """使用 Docker 实际状态刷新当前进程容量视图。"""
         running = self._running_containers_sync()
         self._capacity.synchronize([user_id for user_id, _ in running])
         return running
 
     def _try_evict_idle_user_sync(self, user_id: int) -> bool:
-        """尝试跨进程安全地停止一个空闲用户容器"""
+        """尝试跨进程安全地停止一个空闲用户容器。"""
         with self._resource_lock:
             user_guard = self._user_guards.setdefault(user_id, LifecycleGuard())
             start_lock = self._start_locks.setdefault(user_id, threading.Lock())
@@ -509,7 +509,7 @@ class DockerSandboxManager:
         user_id: int,
         cancel_event: threading.Event | None = None,
     ) -> bool:
-        """等待并预留当前进程的运行容器槽位"""
+        """等待并预留当前进程的运行容器槽位。"""
         return self._capacity.acquire(
             user_id,
             self._last_activity_timestamp,
@@ -523,7 +523,7 @@ class DockerSandboxManager:
         start_lock: threading.Lock,
         cancel_event: threading.Event | None = None,
     ) -> Container:
-        """获取用户容器并在跨进程容量保护下按需启动"""
+        """获取用户容器并在跨进程容量保护下按需启动。"""
         deadline = time.monotonic() + self._config.capacity_wait_timeout_seconds
         while True:
             with self._ownership.capacity():
@@ -569,7 +569,7 @@ class DockerSandboxManager:
                 time.sleep(0.25)
 
     def _reconcile_running_containers_sync(self) -> None:
-        """启动时登记已有容器并安全收敛到运行上限"""
+        """启动时登记已有容器并安全收敛到运行上限。"""
         containers = self._get_client().containers.list(
             all=True,
             filters=self._container_filters(),
@@ -640,7 +640,7 @@ class DockerSandboxManager:
 
     @staticmethod
     def _parse_docker_timestamp(value: object) -> float:
-        """解析 Docker 返回的 RFC3339 时间戳"""
+        """解析 Docker 返回的 RFC3339 时间戳。"""
         if not isinstance(value, str) or not value or value.startswith("0001-"):
             return 0.0
         try:
@@ -652,7 +652,7 @@ class DockerSandboxManager:
             return 0.0
 
     def _recover_activity_timestamp_sync(self, container: Container) -> float:
-        """从持久文件或 Docker 状态恢复最近活动时间"""
+        """从持久文件或 Docker 状态恢复最近活动时间。"""
         now = time.time()
         try:
             content, member = self._archive.read_file(
@@ -688,7 +688,7 @@ class DockerSandboxManager:
         *,
         force: bool = False,
     ) -> None:
-        """将内存活动时间写入用户持久卷"""
+        """将内存活动时间写入用户持久卷。"""
         activity_at = self._last_activity_timestamp(user_id)
         with self._activity_lock:
             persisted_at = self._last_persisted_activity.get(user_id, 0.0)
@@ -729,7 +729,7 @@ class DockerSandboxManager:
         scope: SandboxSessionScope | None,
         execution_uid: int | None,
     ) -> DockerSandboxBackend:
-        """使用已准备的工作区构造沙箱后端"""
+        """使用已准备的工作区构造沙箱后端。"""
         return DockerSandboxBackend(
             user_id,
             conversation_id,
@@ -756,12 +756,12 @@ class DockerSandboxManager:
         conversation_id: UUID,
         scope: SandboxSessionScope | None = None,
     ) -> DockerSandboxBackend:
-        """准备工作区并创建普通或 Session 后端"""
+        """准备工作区并创建普通或 Session 后端。"""
         await self.init()
         resources = self._get_conversation_resources(user_id, conversation_id)
 
         def prepare() -> tuple[int, int | None]:
-            """在独占维护窗口中准备工作区"""
+            """在独占维护窗口中准备工作区。"""
             with self._conversation_maintenance(
                 user_id,
                 conversation_id,
@@ -795,7 +795,7 @@ class DockerSandboxManager:
         user_id: int,
         conversation_id: UUID,
     ) -> DockerSandboxBackend:
-        """获取用户指定会话的沙箱后端"""
+        """获取用户指定会话的沙箱后端。"""
         return await self._prepare_backend(user_id, conversation_id)
 
     async def get_session_backend(
@@ -806,7 +806,7 @@ class DockerSandboxManager:
         agent_type: str,
         session_id: str,
     ) -> DockerSandboxBackend:
-        """获取独立 Linux 身份的专业 Agent Session 后端"""
+        """获取独立 Linux 身份的专业 Agent Session 后端。"""
         scope = SandboxSessionScope(analysis_id, agent_type, session_id)
         return await self._prepare_backend(user_id, conversation_id, scope)
 
@@ -818,13 +818,13 @@ class DockerSandboxManager:
         agent_type: str,
         session_id: str,
     ) -> bool:
-        """幂等删除专业 Agent Session 的全部沙箱资源"""
+        """幂等删除专业 Agent Session 的全部沙箱资源。"""
         scope = SandboxSessionScope(analysis_id, agent_type, session_id)
         await self.init()
         resources = self._get_conversation_resources(user_id, conversation_id)
 
         def delete() -> bool:
-            """在独占维护窗口中删除 Session 沙箱资源"""
+            """在独占维护窗口中删除 Session 沙箱资源。"""
             with self._conversation_maintenance(
                 user_id,
                 conversation_id,
@@ -854,7 +854,7 @@ class DockerSandboxManager:
         content: BinaryIO,
         resources: _ConversationResources,
     ) -> None:
-        """使用 Docker Archive API 上传附件，不启动容器"""
+        """使用 Docker Archive API 上传附件，不启动容器。"""
         with self._conversation_maintenance(
             user_id,
             conversation_id,
@@ -876,7 +876,7 @@ class DockerSandboxManager:
         normalized_path: str,
         resources: _ConversationResources,
     ) -> bytes:
-        """使用 Docker Archive API 下载附件，不启动容器"""
+        """使用 Docker Archive API 下载附件，不启动容器。"""
         with self._conversation_maintenance(user_id, conversation_id, resources):
             container = self._get_or_create_storage_container_sync(user_id)
             return self._archive.download_file(
@@ -892,7 +892,7 @@ class DockerSandboxManager:
         normalized_path: str,
         content: BinaryIO,
     ) -> None:
-        """将已校验路径的文件对象写入用户会话目录"""
+        """将已校验路径的文件对象写入用户会话目录。"""
         await self.init()
         resources = self._get_conversation_resources(user_id, conversation_id)
         async with resources.user.lock:
@@ -913,7 +913,7 @@ class DockerSandboxManager:
         path: str,
         content: BinaryIO,
     ) -> None:
-        """写入可信系统分析产物"""
+        """写入可信系统分析产物。"""
         await self._upload_normalized_file(
             user_id,
             conversation_id,
@@ -928,7 +928,7 @@ class DockerSandboxManager:
         path: str,
         content: BinaryIO,
     ) -> str:
-        """上传用户可变附件并返回规范化路径"""
+        """上传用户可变附件并返回规范化路径。"""
         normalized_path = normalize_user_attachment_path(path)
         await self._upload_normalized_file(
             user_id,
@@ -944,7 +944,7 @@ class DockerSandboxManager:
         conversation_id: UUID,
         path: str,
     ) -> bytes:
-        """下载用户会话目录中的文件"""
+        """下载用户会话目录中的文件。"""
         normalized_path = normalize_attachment_path(path)
         await self.init()
         resources = self._get_conversation_resources(user_id, conversation_id)
@@ -968,7 +968,7 @@ class DockerSandboxManager:
         conversation_id: UUID,
         path: str,
     ) -> None:
-        """删除用户可变附件"""
+        """删除用户可变附件。"""
         normalized_path = normalize_user_attachment_path(path)
         backend = await self.get_backend(user_id, conversation_id)
         if not await asyncio.to_thread(backend.is_file, normalized_path):
@@ -983,13 +983,13 @@ class DockerSandboxManager:
         conversation_id: UUID,
         path: str,
     ) -> bool:
-        """检查用户会话目录中的文件是否存在"""
+        """检查用户会话目录中的文件是否存在。"""
         normalized_path = normalize_attachment_path(path)
         await self.init()
         resources = self._get_conversation_resources(user_id, conversation_id)
 
         def inspect() -> bool:
-            """在独占维护窗口中检查会话文件"""
+            """在独占维护窗口中检查会话文件。"""
             with self._conversation_maintenance(
                 user_id,
                 conversation_id,
@@ -1013,13 +1013,13 @@ class DockerSandboxManager:
         conversation_id: UUID,
         path: str,
     ) -> bool:
-        """检查用户会话目录中的文件是否可通过附件接口下载"""
+        """检查用户会话目录中的文件是否可通过附件接口下载。"""
         normalized_path = normalize_attachment_path(path)
         await self.init()
         resources = self._get_conversation_resources(user_id, conversation_id)
 
         def inspect() -> bool:
-            """在独占维护窗口中检查会话文件"""
+            """在独占维护窗口中检查会话文件。"""
             with self._conversation_maintenance(
                 user_id,
                 conversation_id,
@@ -1042,12 +1042,12 @@ class DockerSandboxManager:
         user_id: int,
         conversation_id: UUID,
     ) -> None:
-        """删除用户沙箱中的会话目录"""
+        """删除用户沙箱中的会话目录。"""
         await self.init()
         resources = self._get_conversation_resources(user_id, conversation_id)
 
         def delete() -> None:
-            """删除会话工作区并更新 UID 注册表"""
+            """删除会话工作区并更新 UID 注册表。"""
             with (
                 self._ownership.user_maintenance(user_id),
                 self._ownership.conversation_maintenance(
@@ -1075,12 +1075,12 @@ class DockerSandboxManager:
         self._touch_user(user_id)
 
     async def delete_user_sandbox(self, user_id: int) -> None:
-        """删除用户容器及其持久化数据卷"""
+        """删除用户容器及其持久化数据卷。"""
         await self.init()
         resources = self._get_user_resources(user_id)
 
         def delete() -> None:
-            """删除用户容器和持久化数据卷"""
+            """删除用户容器和持久化数据卷。"""
             with (
                 self._ownership.user_maintenance(user_id),
                 self._ownership.user_mutation(user_id),
@@ -1114,7 +1114,7 @@ class DockerSandboxManager:
         await asyncio.to_thread(self._ownership.forget_user, user_id)
 
     def health(self) -> DockerSandboxHealth:
-        """返回可供健康检查和监控采集的状态快照"""
+        """返回可供健康检查和监控采集的状态快照。"""
         cleanup_task = self._cleanup_task
         with self._health_lock:
             return DockerSandboxHealth(
@@ -1134,7 +1134,7 @@ class DockerSandboxManager:
         started_at: float,
         errors: list[str],
     ) -> None:
-        """记录一次清理周期的健康状态"""
+        """记录一次清理周期的健康状态。"""
         with self._health_lock:
             self._last_cleanup_started_at = started_at
             self._last_cleanup_completed_at = time.time()
@@ -1152,7 +1152,7 @@ class DockerSandboxManager:
             )
 
     async def _run_cleanup_cycle(self) -> None:
-        """执行一个带用户级错误隔离的清理周期"""
+        """执行一个带用户级错误隔离的清理周期。"""
         started_at = time.time()
         errors: list[str] = []
         try:
@@ -1185,7 +1185,7 @@ class DockerSandboxManager:
         self._record_cleanup_result(started_at, errors)
 
     async def _cleanup_idle_containers(self) -> None:
-        """定期停止或删除空闲容器，并始终保留数据卷"""
+        """定期停止或删除空闲容器，并始终保留数据卷。"""
         while True:
             try:
                 await asyncio.sleep(self._config.cleanup_interval_seconds)
@@ -1199,7 +1199,7 @@ class DockerSandboxManager:
                 self._record_cleanup_result(started_at, [error])
 
     def _managed_user_ids_sync(self) -> set[int]:
-        """列出 Docker 中已有的用户沙箱"""
+        """列出 Docker 中已有的用户沙箱。"""
         user_ids: set[int] = set()
         containers = self._get_client().containers.list(
             all=True,
@@ -1221,7 +1221,7 @@ class DockerSandboxManager:
         user_guard: LifecycleGuard,
         start_lock: threading.Lock,
     ) -> None:
-        """在没有活跃操作时停止或删除空闲用户容器"""
+        """在没有活跃操作时停止或删除空闲用户容器。"""
         with (
             self._ownership.user_maintenance(user_id),
             user_guard.try_maintenance() as acquired,
@@ -1252,7 +1252,7 @@ class DockerSandboxManager:
                     logger.info(f"停止空闲 Docker 沙箱: user_id={user_id}")
 
     def _finalize_containers_sync(self) -> None:
-        """持久化活动时间并按配置停止运行中容器"""
+        """持久化活动时间并按配置停止运行中容器。"""
         containers = self._get_client().containers.list(
             all=True,
             filters=self._container_filters(),
@@ -1303,15 +1303,15 @@ class DockerSandboxManager:
                 continue
 
     async def close(self) -> None:
-        """停止后台任务并关闭 Docker 客户端"""
+        """停止后台任务并关闭 Docker 客户端。"""
         await self._close(finalize_containers=True)
 
     async def disconnect(self) -> None:
-        """释放短生命周期管理器且保留运行中的沙箱容器"""
+        """释放短生命周期管理器且保留运行中的沙箱容器。"""
         await self._close(finalize_containers=False)
 
     async def _close(self, *, finalize_containers: bool) -> None:
-        """按调用场景释放 Docker 管理资源"""
+        """按调用场景释放 Docker 管理资源。"""
         self._capacity.close()
         cleanup_task = self._cleanup_task
         self._cleanup_task = None
@@ -1321,7 +1321,7 @@ class DockerSandboxManager:
         client = self._client
 
         def release_runtime() -> None:
-            """释放运行时租约并按需终止残留容器"""
+            """释放运行时租约并按需终止残留容器。"""
             if not self._ownership_started:
                 return
             with self._ownership.release_runtime() as last_runtime:

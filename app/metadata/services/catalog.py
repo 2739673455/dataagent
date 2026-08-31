@@ -1,4 +1,4 @@
-"""元数据目录管理服务"""
+"""元数据目录管理服务。"""
 
 from typing import cast
 
@@ -30,7 +30,7 @@ from app.shared.tasks.submission import TaskSubmission
 
 
 class MetaCatalogService:
-    """管理表、字段和指标元数据"""
+    """管理表、字段和指标元数据。"""
 
     def __init__(
         self,
@@ -40,7 +40,7 @@ class MetaCatalogService:
         asset_invalidator: MetadataAssetInvalidator,
         semantic_index_scheduler: MetadataSemanticIndexScheduler,
     ) -> None:
-        """初始化元数据目录管理服务"""
+        """初始化元数据目录管理服务。"""
         self._meta_repo = meta_repo
         self._source_repo = source_repo
         self._meta_index_service = meta_index_service
@@ -48,22 +48,22 @@ class MetaCatalogService:
         self._semantic_index_scheduler = semantic_index_scheduler
 
     async def list_table_infos(self) -> list[TableInfo]:
-        """查询全部表元数据"""
+        """查询全部表元数据。"""
         return await self._meta_repo.list_table_infos()
 
     async def list_source_tables(self) -> list[str]:
-        """查询底层 Doris 数据库物理表清单"""
+        """查询底层 Doris 数据库物理表清单。"""
         return await self._source_repo.list_tables()
 
     async def list_column_infos(self, t_name: str) -> list[ColumnInfo]:
-        """查询表下全部字段元数据"""
+        """查询表下全部字段元数据。"""
         await self._meta_repo.get_table_info(t_name)
         return await self._meta_repo.list_column_infos_by_table_names(
             table_names=[t_name]
         )
 
     async def list_metric_infos(self) -> list[MetricInfo]:
-        """查询全部指标元数据"""
+        """查询全部指标元数据。"""
         return await self._meta_repo.list_metric_infos()
 
     async def upsert_table_info(
@@ -73,7 +73,7 @@ class MetaCatalogService:
         description: str,
         value_index_cursor_column: str | None = None,
     ) -> None:
-        """新增或更新表元数据"""
+        """新增或更新表元数据。"""
         if not await self._source_repo.table_exists(t_name):
             raise meta_error.InvalidMetadataError(detail=f"源表不存在: {t_name}")
         primary_key_columns = await self._source_repo.get_primary_key_columns(t_name)
@@ -114,7 +114,7 @@ class MetaCatalogService:
         reference_t_name: str | None = None,
         reference_c_name: str | None = None,
     ) -> TaskSubmission | None:
-        """新增或更新字段元数据"""
+        """新增或更新字段元数据。"""
         if not await self._source_repo.table_exists(t_name):
             raise meta_error.InvalidMetadataError(detail=f"源表不存在: {t_name}")
         column_types = await self._source_repo.get_column_types(t_name)
@@ -184,7 +184,7 @@ class MetaCatalogService:
         self,
         metric_info: MetricInfo,
     ) -> TaskSubmission | None:
-        """新增或更新指标元数据"""
+        """新增或更新指标元数据。"""
         async with self._meta_repo.session.begin():
             relevant_column_keys = sorted(
                 dict.fromkeys(
@@ -213,7 +213,7 @@ class MetaCatalogService:
         return None
 
     async def delete_tables(self, table_names: list[str]) -> None:
-        """删除多个表及其字段元数据和索引"""
+        """删除多个表及其字段元数据和索引。"""
         unique_table_names = list(dict.fromkeys(table_names))
         if not unique_table_names:
             return
@@ -237,7 +237,7 @@ class MetaCatalogService:
         )
 
     async def delete_columns(self, column_keys: list[tuple[str, str]]) -> None:
-        """删除多个字段元数据和索引"""
+        """删除多个字段元数据和索引。"""
         unique_keys = list(dict.fromkeys(column_keys))
         if not unique_keys:
             return
@@ -255,7 +255,7 @@ class MetaCatalogService:
         )
 
     async def delete_metrics(self, metric_names: list[str]) -> None:
-        """删除多个指标元数据和索引"""
+        """删除多个指标元数据和索引。"""
         unique_names = list(dict.fromkeys(metric_names))
         if not unique_names:
             return
@@ -271,7 +271,7 @@ class MetaCatalogService:
         column_keys: list[tuple[str, str]],
         column_infos: list[ColumnInfo],
     ) -> None:
-        """校验待删除字段未被保留元数据引用"""
+        """校验待删除字段未被保留元数据引用。"""
         deleted_keys = set(column_keys)
         dependent_columns = sorted(
             (column_info.t_name, column_info.name)
@@ -307,7 +307,7 @@ class MetaCatalogService:
             )
 
     async def export_metadata(self) -> MetaConfig:
-        """导出可重新导入的元数据配置"""
+        """导出可重新导入的元数据配置。"""
         table_infos = await self._meta_repo.list_table_infos()
         column_infos = await self._meta_repo.list_column_infos()
         metric_infos = await self._meta_repo.list_metric_infos()

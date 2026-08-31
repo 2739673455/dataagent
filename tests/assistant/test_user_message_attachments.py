@@ -1,4 +1,4 @@
-"""用户消息附件模型投影测试"""
+"""用户消息附件模型投影测试。"""
 
 from __future__ import annotations
 

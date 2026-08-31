@@ -1,4 +1,4 @@
-"""审查 Agent 构造器"""
+"""审查 Agent 构造器。"""
 
 from collections.abc import Sequence
 from pathlib import Path
@@ -35,7 +35,7 @@ def create_reviewer_agent(
     shell_jobs: ShellJobRuntime,
     skills: Sequence[str] = (),
 ) -> CompiledStateGraph:
-    """编译审查 Agent"""
+    """编译审查 Agent。"""
     backend, filesystem = mount_agent_skills(
         backend,
         Path(__file__).with_name("skills"),

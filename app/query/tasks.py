@@ -1,4 +1,4 @@
-"""查询经验索引后台任务"""
+"""查询经验索引后台任务。"""
 
 from uuid import UUID
 
@@ -17,7 +17,7 @@ _REPAIR_BATCH_SIZE = 500
 
 
 async def _sync_index(experience_id: UUID, revision: int) -> int:
-    """初始化任务资源并同步指定查询经验索引"""
+    """初始化任务资源并同步指定查询经验索引。"""
     embedding_client_manager.init()
     es_client_manager.init()
     meta_postgres_client_manager.init()
@@ -44,7 +44,7 @@ async def _sync_index(experience_id: UUID, revision: int) -> int:
 def sync_index_task(
     self: object, experience_id: str, revision: int
 ) -> dict[str, object]:
-    """同步一条查询经验索引并自动重试"""
+    """同步一条查询经验索引并自动重试。"""
     del self
     logger.info(
         f"开始同步查询经验索引: experience_id={experience_id}, revision={revision}"
@@ -61,7 +61,7 @@ def sync_index_task(
 
 
 async def _repair_indexes() -> int:
-    """扫描索引版本落后的查询经验并提交补偿任务"""
+    """扫描索引版本落后的查询经验并提交补偿任务。"""
     meta_postgres_client_manager.init()
     try:
         async with meta_postgres_client_manager.session() as session, session.begin():
@@ -78,5 +78,5 @@ async def _repair_indexes() -> int:
 
 @celery_app.task(name="dataagent.query.repair_indexes")
 def repair_indexes_task() -> dict[str, int]:
-    """提交一批待补偿的查询经验索引任务"""
+    """提交一批待补偿的查询经验索引任务。"""
     return {"dispatched_count": run_async(_repair_indexes())}

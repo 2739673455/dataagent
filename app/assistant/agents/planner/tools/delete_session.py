@@ -1,4 +1,4 @@
-"""专业 Agent Session 删除工具"""
+"""专业 Agent Session 删除工具。"""
 
 from typing import Annotated
 
@@ -13,7 +13,7 @@ from app.shared.contracts.analysis import AgentType
 
 
 def create_delete_session_tool(service: AgentSessionService) -> BaseTool:
-    """创建绑定当前用户 Conversation 的 Session 删除 Tool"""
+    """创建绑定当前用户 Conversation 的 Session 删除 Tool。"""
 
     @tool("delete_session")
     async def delete_session(
@@ -21,7 +21,7 @@ def create_delete_session_tool(service: AgentSessionService) -> BaseTool:
         agent_type: Annotated[AgentType, "待删除的专业 Agent 类型"],
         session_id: Annotated[str, "待删除的专业 Session 标识"],
     ) -> dict[str, object]:
-        """幂等删除专业 Agent Session 的 Checkpoint 和沙箱资源"""
+        """幂等删除专业 Agent Session 的 Checkpoint 和沙箱资源。"""
         try:
             request = DeleteSessionRequest(
                 analysis_id=analysis_id,

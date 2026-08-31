@@ -1,4 +1,4 @@
-"""对话管理、语义召回与 Agent SSE 流式交互路由"""
+"""对话管理、语义召回与 Agent SSE 流式交互路由。"""
 
 import asyncio
 import contextlib
@@ -45,7 +45,7 @@ async def api_create_conversation(
     conversation_repo: ConversationPGRepoDep,
     current_user: AnalysisUserDep,
 ) -> chat_schema.ConversationResponse:
-    """创建新对话"""
+    """创建新对话。"""
     user_id = current_user.id
     async with conversation_repo.session.begin():
         conversation = await conversation_repo.create(
@@ -71,7 +71,7 @@ async def api_delete_conversations(
     current_user: CurrentUserDep,
     lifecycle: ConversationLifecycleServiceDep,
 ) -> None:
-    """删除对话"""
+    """删除对话。"""
     user_id = current_user.id
 
     for conversation_id in body.conversation_ids:
@@ -99,7 +99,7 @@ async def api_delete_draft_conversation(
     current_user: CurrentUserDep,
     lifecycle: ConversationLifecycleServiceDep,
 ) -> Response:
-    """幂等删除当前用户主动放弃的草稿会话"""
+    """幂等删除当前用户主动放弃的草稿会话。"""
     requested = await lifecycle.request_conversation_deletion(
         current_user.id,
         conversation_id,
@@ -121,11 +121,11 @@ async def api_update_conversation(
     conversation_repo: ConversationPGRepoDep,
     current_user: CurrentUserDep,
 ) -> None:
-    """修改对话信息"""
+    """修改对话信息。"""
     user_id = current_user.id
 
     async with conversation_repo.session.begin():
-        # 检查对话是否存在且属于当前用户
+        # 检查对话是否存在且属于当前用户。
         conversation = await conversation_repo.get(user_id, body.conversation_id)
         if conversation is None:
             raise chat_error.ConversationNotFoundError
@@ -144,7 +144,7 @@ async def api_get_conversations(
     current_user: CurrentUserDep,
     runs: ConversationRunServiceDep,
 ) -> chat_schema.ConversationListResponse:
-    """获取所有对话"""
+    """获取所有对话。"""
     user_id = current_user.id
     conversations = await conversation_repo.list_by_user(user_id)
     running_conversation_ids = await runs.running_conversation_ids(user_id)
@@ -170,7 +170,7 @@ async def api_get_messages(
     agents: AgentManagerDep,
     sandbox: SandboxManagerDep,
 ) -> chat_schema.MessageListResponse:
-    """从 LangGraph 状态获取某个对话的所有消息"""
+    """从 LangGraph 状态获取某个对话的所有消息。"""
     user_id = current_user.id
     conversation = await conversation_repo.get(user_id, conversation_id)
     if conversation is None:
@@ -201,7 +201,7 @@ async def api_get_subagent_messages(
     current_user: CurrentUserDep,
     agents: AgentManagerDep,
 ) -> chat_schema.SubagentMessageListResponse:
-    """读取一次 Specialist delegation 的公开工作消息"""
+    """读取一次 Specialist delegation 的公开工作消息。"""
     user_id = current_user.id
     conversation = await conversation_repo.get(user_id, conversation_id)
     if conversation is None:
@@ -224,7 +224,7 @@ async def api_get_subagent_messages(
 
 
 def _serialize_sse_event(event: chat_schema.ChatStreamEventPayload) -> str:
-    """将聊天事件序列化为 SSE 数据帧"""
+    """将聊天事件序列化为 SSE 数据帧。"""
     return f"data: {event.model_dump_json()}\n\n"
 
 
@@ -232,7 +232,7 @@ async def _stream_run_events(
     conversation_id: UUID,
     events: AsyncGenerator[chat_schema.ChatStreamEventPayload],
 ) -> AsyncIterator[str]:
-    """把后台 Run 事件投影为 SSE；连接断开只取消当前订阅"""
+    """把后台 Run 事件投影为 SSE；连接断开只取消当前订阅。"""
     next_message_task: asyncio.Future[chat_schema.ChatStreamEventPayload] | None = None
     try:
         next_message_task = asyncio.ensure_future(anext(events))
@@ -285,7 +285,7 @@ async def api_stream_chat(
     lifecycle: ConversationLifecycleServiceDep,
     runs: ConversationRunServiceDep,
 ) -> StreamingResponse:
-    """启动后台对话回合并订阅 Agent 事件"""
+    """启动后台对话回合并订阅 Agent 事件。"""
     user_id = current_user.id
     title_submission: tuple[UUID, str, str] | None = None
     async with lifecycle.lock(user_id, body.conversation_id):
@@ -360,7 +360,7 @@ async def api_resume_chat(
     agents: AgentManagerDep,
     runs: ConversationRunServiceDep,
 ) -> StreamingResponse:
-    """从中断的 Planner Checkpoint 继续当前用户回合"""
+    """从中断的 Planner Checkpoint 继续当前用户回合。"""
     user_id = current_user.id
     conversation = await conversation_repo.get(user_id, conversation_id)
     if conversation is None:
@@ -396,7 +396,7 @@ async def api_get_conversation_run_status(
     current_user: AnalysisUserDep,
     runs: ConversationRunServiceDep,
 ) -> chat_schema.ConversationRunStatusResponse:
-    """查询 Conversation 是否有正在后台执行的 Planner Run"""
+    """查询 Conversation 是否有正在后台执行的 Planner Run。"""
     user_id = current_user.id
     if await conversation_repo.get(user_id, conversation_id) is None:
         raise chat_error.ConversationNotFoundError
@@ -412,7 +412,7 @@ async def api_subscribe_conversation_run(
     current_user: AnalysisUserDep,
     runs: ConversationRunServiceDep,
 ) -> StreamingResponse:
-    """订阅已经启动的后台 Planner Run"""
+    """订阅已经启动的后台 Planner Run。"""
     user_id = current_user.id
     if await conversation_repo.get(user_id, conversation_id) is None:
         raise chat_error.ConversationNotFoundError
@@ -435,7 +435,7 @@ async def api_stop_conversation_run(
     current_user: AnalysisUserDep,
     runs: ConversationRunServiceDep,
 ) -> Response:
-    """由用户显式停止 Conversation 当前的 Planner Run"""
+    """由用户显式停止 Conversation 当前的 Planner Run。"""
     user_id = current_user.id
     if await conversation_repo.get(user_id, conversation_id) is None:
         raise chat_error.ConversationNotFoundError

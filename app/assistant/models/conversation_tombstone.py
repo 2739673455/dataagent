@@ -1,4 +1,4 @@
-"""会话删除墓碑关系模型"""
+"""会话删除墓碑关系模型。"""
 
 from datetime import datetime
 from uuid import UUID
@@ -10,7 +10,7 @@ from app.shared.database.base import AssistantBase
 
 
 class ConversationTombstone(AssistantBase):
-    """阻止已删除会话被跨进程任务重新创建的持久化标记"""
+    """阻止已删除会话被跨进程任务重新创建的持久化标记。"""
 
     __tablename__ = "conversation_tombstones"
 

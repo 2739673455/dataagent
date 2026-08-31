@@ -1,4 +1,4 @@
-"""Planner 专用工具"""
+"""Planner 专用工具。"""
 
 from .delegation import create_delegation_tool
 from .delete_session import create_delete_session_tool

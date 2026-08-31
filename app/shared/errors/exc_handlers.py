@@ -1,4 +1,4 @@
-"""FastAPI 全局异常处理器"""
+"""FastAPI 全局异常处理器。"""
 
 from collections.abc import Mapping
 from http import HTTPStatus
@@ -20,7 +20,7 @@ def _build_response(
     *,
     headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
-    """构造 Problem Details 错误响应"""
+    """构造 Problem Details 错误响应。"""
     return JSONResponse(
         status_code=exc.status,
         content=exc.to_problem(instance=request.url.path),
@@ -30,7 +30,7 @@ def _build_response(
 
 
 def _log_problem(exc: ProblemError, source: Exception) -> None:
-    """按响应状态记录异常"""
+    """按响应状态记录异常。"""
     context = {
         "problem_type": exc.type,
         "status": exc.status,
@@ -44,7 +44,7 @@ def _log_problem(exc: ProblemError, source: Exception) -> None:
 
 
 def _problem_error_handler(request: Request, exc: ProblemError) -> JSONResponse:
-    """处理应用预期异常"""
+    """处理应用预期异常。"""
     _log_problem(exc, exc)
     retry_after = exc.extensions.get("retry_after_seconds")
     headers = (
@@ -60,7 +60,7 @@ def _problem_error_handler(request: Request, exc: ProblemError) -> JSONResponse:
 def _validation_error_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
-    """处理请求参数校验异常"""
+    """处理请求参数校验异常。"""
     errors: list[dict[str, Any]] = [
         {
             "type": error["type"],
@@ -81,7 +81,7 @@ def _validation_error_handler(
 
 
 def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-    """统一处理 FastAPI 与 Starlette HTTP 异常"""
+    """统一处理 FastAPI 与 Starlette HTTP 异常。"""
     detail = exc.detail if isinstance(exc.detail, str) else "请求处理失败"
     try:
         title = HTTPStatus(exc.status_code).phrase
@@ -101,14 +101,14 @@ def _http_exception_handler(request: Request, exc: HTTPException) -> JSONRespons
 
 
 def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """处理所有未捕获异常且不向客户端泄露内部信息"""
+    """处理所有未捕获异常且不向客户端泄露内部信息。"""
     problem = ProblemError()
     _log_problem(problem, exc)
     return _build_response(request, problem)
 
 
 def register_exception_handlers(app: FastAPI) -> None:
-    """注册全局异常处理器"""
+    """注册全局异常处理器。"""
     app.add_exception_handler(
         ProblemError,
         cast(ExceptionHandler, _problem_error_handler),

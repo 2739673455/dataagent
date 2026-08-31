@@ -1,4 +1,4 @@
-"""用户生命周期模型"""
+"""用户生命周期模型。"""
 
 from datetime import datetime
 
@@ -18,7 +18,7 @@ from app.shared.database.base import AuthBase
 
 
 class UserDeletionTask(AuthBase):
-    """跨存储用户注销任务"""
+    """跨存储用户注销任务。"""
 
     __tablename__ = "user_deletion_tasks"
 

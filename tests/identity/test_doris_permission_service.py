@@ -1,4 +1,4 @@
-"""Doris 角色权限管理服务测试"""
+"""Doris 角色权限管理服务测试。"""
 
 import unittest
 from unittest.mock import AsyncMock, MagicMock, call
@@ -26,7 +26,7 @@ from tests.identity.test_auth_service import AsyncSessionStub
 
 
 def query_identity() -> DorisQueryIdentity:
-    """构造稳定 Doris 查询身份"""
+    """构造稳定 Doris 查询身份。"""
     return DorisQueryIdentity(
         role_name="sales",
         description="销售角色",
@@ -38,7 +38,7 @@ def query_identity() -> DorisQueryIdentity:
 
 
 class DorisPermissionServiceTest(unittest.IsolatedAsyncioTestCase):
-    """验证 Doris 授权与应用可见性投影同步"""
+    """验证 Doris 授权与应用可见性投影同步。"""
 
     def setUp(self) -> None:
         self.auth_repo = MagicMock(spec=AuthPGRepo)
@@ -341,7 +341,7 @@ class DorisPermissionServiceTest(unittest.IsolatedAsyncioTestCase):
 
 
 class DorisRoleRepositoryIdentifierTest(unittest.TestCase):
-    """验证 Doris 管理 SQL 的标识符边界"""
+    """验证 Doris 管理 SQL 的标识符边界。"""
 
     def test_identifiers_are_quoted_and_injection_is_rejected(self) -> None:
         self.assertEqual(
@@ -362,7 +362,7 @@ class DorisRoleRepositoryIdentifierTest(unittest.TestCase):
 
 
 class DorisRoleRepositoryWorkloadGroupTest(unittest.IsolatedAsyncioTestCase):
-    """验证 Doris 工作组查询边界"""
+    """验证 Doris 工作组查询边界。"""
 
     async def test_lists_and_checks_workload_groups_with_parameterized_sql(
         self,
@@ -409,7 +409,7 @@ class DorisRoleRepositoryWorkloadGroupTest(unittest.IsolatedAsyncioTestCase):
 
 
 class DorisRoleRepositoryIdentityTest(unittest.IsolatedAsyncioTestCase):
-    """验证 Doris 查询身份创建 SQL 与补偿边界"""
+    """验证 Doris 查询身份创建 SQL 与补偿边界。"""
 
     async def test_rejects_password_outside_generated_urlsafe_alphabet(self) -> None:
         repo = DorisRoleRepository(MagicMock())

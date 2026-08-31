@@ -1,4 +1,4 @@
-"""Planner 与专业 Agent 的会话级生命周期管理"""
+"""Planner 与专业 Agent 的会话级生命周期管理。"""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ _DEFAULT_MAX_CACHED_RUNTIMES = 128
 
 
 class AgentManager:
-    """管理 Conversation Agent 运行时的缓存、执行和删除生命周期"""
+    """管理 Conversation Agent 运行时的缓存、执行和删除生命周期。"""
 
     def __init__(
         self,
@@ -39,7 +39,7 @@ class AgentManager:
         tombstones: ConversationTombstoneService,
         max_cached_runtimes: int = _DEFAULT_MAX_CACHED_RUNTIMES,
     ) -> None:
-        """初始化 Agent 管理器"""
+        """初始化 Agent 管理器。"""
         if max_cached_runtimes <= 0:
             raise ValueError("max_cached_runtimes 必须为正整数")
         self._persistence_manager = persistence_manager
@@ -63,7 +63,7 @@ class AgentManager:
         self._state_lock = asyncio.Lock()
 
     async def init(self) -> None:
-        """初始化运行时工厂持有的共享模型和工具"""
+        """初始化运行时工厂持有的共享模型和工具。"""
         await self._runtime_factory.init()
 
     async def _build_and_cache_conversation_runtime(
@@ -72,7 +72,7 @@ class AgentManager:
         user_id: int,
         conversation_id: UUID,
     ) -> ConversationAgentRuntime:
-        """构建会话级 Agent 运行时并写入缓存"""
+        """构建会话级 Agent 运行时并写入缓存。"""
         current_task = asyncio.current_task()
         try:
             runtime = await self._runtime_factory.create(
@@ -112,7 +112,7 @@ class AgentManager:
         user_id: int,
         conversation_id: UUID,
     ) -> ConversationAgentRuntime:
-        """获取会话级 Agent 运行时，不存在时按需创建"""
+        """获取会话级 Agent 运行时，不存在时按需创建。"""
         await self.init()
         conversation_key = (user_id, conversation_id)
         if await self._tombstones.exists(user_id, conversation_id):
@@ -142,7 +142,7 @@ class AgentManager:
         user_id: int,
         conversation_id: UUID,
     ) -> None:
-        """阻止新回合并取消当前进程中的会话任务"""
+        """阻止新回合并取消当前进程中的会话任务。"""
         conversation_key = (user_id, conversation_id)
         async with self._state_lock:
             self._deleted_conversation_keys.add(conversation_key)
@@ -157,7 +157,7 @@ class AgentManager:
             await asyncio.gather(*run_tasks, return_exceptions=True)
 
     async def delete_agent(self, user_id: int, conversation_id: UUID) -> None:
-        """删除会话 Agent 集合及 Planner 和全部 SubAgent namespace"""
+        """删除会话 Agent 集合及 Planner 和全部 SubAgent namespace。"""
         await self.cancel_agent_execution(user_id, conversation_id)
         async with self._persistence_manager.advisory_lock(
             conversation_lifecycle_lock_name(user_id, conversation_id),
@@ -169,7 +169,7 @@ class AgentManager:
         user_id: int,
         conversation_id: UUID,
     ) -> None:
-        """在调用方持有会话生命周期锁时删除 Agent 和持久化状态"""
+        """在调用方持有会话生命周期锁时删除 Agent 和持久化状态。"""
         conversation_key = (user_id, conversation_id)
         await self.cancel_agent_execution(user_id, conversation_id)
         async with self._state_lock:
@@ -183,7 +183,7 @@ class AgentManager:
         )
 
     async def delete_user_agents(self, user_id: int) -> None:
-        """取消用户全部 Agent 并清理孤立线程和删除墓碑"""
+        """取消用户全部 Agent 并清理孤立线程和删除墓碑。"""
         async with self._state_lock:
             conversation_keys = {
                 key
@@ -215,7 +215,7 @@ class AgentManager:
         *,
         runtime: ConversationAgentRuntime,
     ) -> AsyncGenerator[PlannerTurnContext, None]:
-        """登记完整用户回合并建立共享运行状态"""
+        """登记完整用户回合并建立共享运行状态。"""
         current_task = asyncio.current_task()
         if current_task is None:
             raise RuntimeError("Agent 执行必须在 asyncio 任务上下文中进行")
@@ -245,7 +245,7 @@ class AgentManager:
                         self._conversation_run_tasks.pop(conversation_key, None)
 
     async def close(self) -> None:
-        """释放 Agent 集合和未完成任务"""
+        """释放 Agent 集合和未完成任务。"""
         async with self._state_lock:
             build_tasks = list(self._runtime_build_tasks.values())
             run_tasks = [

@@ -1,4 +1,4 @@
-"""前后端 OpenAPI 协议测试"""
+"""前后端 OpenAPI 协议测试。"""
 
 import unittest
 from uuid import uuid4

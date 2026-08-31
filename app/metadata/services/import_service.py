@@ -1,4 +1,4 @@
-"""元数据批量导入服务"""
+"""元数据批量导入服务。"""
 
 from dataclasses import dataclass
 from enum import StrEnum
@@ -27,7 +27,7 @@ from app.metadata.services.index import MetaIndexService
 
 
 class ImportMode(StrEnum):
-    """元数据导入模式"""
+    """元数据导入模式。"""
 
     MERGE = "merge"
     REPLACE = "replace"
@@ -35,7 +35,7 @@ class ImportMode(StrEnum):
 
 @dataclass(frozen=True)
 class ResourceChanges[T]:
-    """单类元数据变更"""
+    """单类元数据变更。"""
 
     created: list[T]
     updated: list[T]
@@ -44,7 +44,7 @@ class ResourceChanges[T]:
 
 @dataclass(frozen=True)
 class MetaImportResult:
-    """元数据导入结果"""
+    """元数据导入结果。"""
 
     mode: ImportMode
     dry_run: bool
@@ -54,7 +54,7 @@ class MetaImportResult:
 
 
 class MetaImportService:
-    """从配置批量导入元数据"""
+    """从配置批量导入元数据。"""
 
     def __init__(
         self,
@@ -64,7 +64,7 @@ class MetaImportService:
         asset_invalidator: MetadataAssetInvalidator,
         semantic_index_scheduler: MetadataSemanticIndexScheduler,
     ) -> None:
-        """初始化元数据批量导入服务"""
+        """初始化元数据批量导入服务。"""
         self._meta_repo = meta_repo
         self._source_repo = source_repo
         self._meta_index_service = meta_index_service
@@ -77,7 +77,7 @@ class MetaImportService:
         mode: ImportMode,
         dry_run: bool,
     ) -> MetaImportResult:
-        """校验并批量导入元数据"""
+        """校验并批量导入元数据。"""
         if not meta_config.tables and not meta_config.metrics:
             raise meta_error.InvalidMetadataError(detail="元数据导入文档不能为空")
 
@@ -206,7 +206,7 @@ class MetaImportService:
         self,
         meta_config: MetaConfig,
     ) -> tuple[list[TableInfo], list[ColumnInfo], list[MetricInfo]]:
-        """校验业务数据并构造元数据实体"""
+        """校验业务数据并构造元数据实体。"""
         table_infos: list[TableInfo] = []
         column_infos: list[ColumnInfo] = []
 
@@ -293,7 +293,7 @@ class MetaImportService:
 
     @staticmethod
     def _index_tables(items: list[TableInfo]) -> dict[str, TableInfo]:
-        """按表名索引实体并校验重名"""
+        """按表名索引实体并校验重名。"""
         indexed: dict[str, TableInfo] = {}
         for item in items:
             if item.name in indexed:
@@ -305,7 +305,7 @@ class MetaImportService:
 
     @staticmethod
     def _index_columns(items: list[ColumnInfo]) -> dict[ColumnKey, ColumnInfo]:
-        """按表名和字段名索引实体并校验重名"""
+        """按表名和字段名索引实体并校验重名。"""
         indexed: dict[ColumnKey, ColumnInfo] = {}
         for item in items:
             key = (item.t_name, item.name)
@@ -318,7 +318,7 @@ class MetaImportService:
 
     @staticmethod
     def _index_metrics(items: list[MetricInfo]) -> dict[str, MetricInfo]:
-        """按指标名索引实体并校验重名"""
+        """按指标名索引实体并校验重名。"""
         indexed: dict[str, MetricInfo] = {}
         for item in items:
             if item.name in indexed:
@@ -333,7 +333,7 @@ class MetaImportService:
         column_infos: list[ColumnInfo],
         available_columns: set[ColumnKey],
     ) -> None:
-        """校验外键字段引用的目标字段"""
+        """校验外键字段引用的目标字段。"""
         for column_info in column_infos:
             if not column_info.reference_t_name:
                 continue
@@ -362,7 +362,7 @@ class MetaImportService:
         metric_infos: list[MetricInfo],
         available_columns: set[ColumnKey],
     ) -> None:
-        """校验指标关联的字段"""
+        """校验指标关联的字段。"""
         for metric_info in metric_infos:
             relevant_columns = {
                 (reference["t_name"], reference["c_name"])
@@ -383,7 +383,7 @@ class MetaImportService:
         imported: dict[T, tuple[Any, ...]],
         mode: ImportMode,
     ) -> ResourceChanges[T]:
-        """计算单类元数据的新增、更新和删除主键"""
+        """计算单类元数据的新增、更新和删除主键。"""
         existing_keys = set(existing)
         imported_keys = set(imported)
         return ResourceChanges(
@@ -404,7 +404,7 @@ class MetaImportService:
     def _table_snapshots(
         table_infos: dict[str, TableInfo],
     ) -> dict[str, tuple[Any, ...]]:
-        """生成表元数据比较快照"""
+        """生成表元数据比较快照。"""
         return {
             t_name: item.metadata_snapshot() for t_name, item in table_infos.items()
         }
@@ -413,7 +413,7 @@ class MetaImportService:
     def _column_snapshots(
         column_infos: dict[ColumnKey, ColumnInfo],
     ) -> dict[ColumnKey, tuple[Any, ...]]:
-        """生成字段元数据比较快照"""
+        """生成字段元数据比较快照。"""
         return {
             column_key: item.metadata_snapshot()
             for column_key, item in column_infos.items()
@@ -423,7 +423,7 @@ class MetaImportService:
     def _metric_snapshots(
         metric_infos: dict[str, MetricInfo],
     ) -> dict[str, tuple[Any, ...]]:
-        """生成指标元数据比较快照"""
+        """生成指标元数据比较快照。"""
         return {
             metric_name: item.metadata_snapshot()
             for metric_name, item in metric_infos.items()

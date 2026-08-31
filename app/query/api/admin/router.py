@@ -1,4 +1,4 @@
-"""查询经验管理路由"""
+"""查询经验管理路由。"""
 
 from typing import Annotated, Literal
 from uuid import UUID

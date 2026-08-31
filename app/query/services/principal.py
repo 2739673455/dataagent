@@ -1,4 +1,4 @@
-"""按用户唯一 Doris 角色选择稳定共享查询身份"""
+"""按用户唯一 Doris 角色选择稳定共享查询身份。"""
 
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -10,36 +10,36 @@ from app.identity.models.doris import DorisQueryIdentity
 
 
 class QueryPrincipalUserProvider(Protocol):
-    """查询身份解析所需的用户读取能力"""
+    """查询身份解析所需的用户读取能力。"""
 
     async def get_user_by_id(self, user_id: int) -> User | None:
-        """按主键读取查询发起用户"""
+        """按主键读取查询发起用户。"""
         ...
 
 
 class QueryIdentityProvider(Protocol):
-    """查询身份解析所需的角色身份读取能力"""
+    """查询身份解析所需的角色身份读取能力。"""
 
     async def get(self, role_name: str) -> DorisQueryIdentity | None:
-        """读取 Doris 角色对应的查询身份"""
+        """读取 Doris 角色对应的查询身份。"""
         ...
 
 
 class QueryCredentialDecryptor(Protocol):
-    """查询身份解析所需的凭据解密能力"""
+    """查询身份解析所需的凭据解密能力。"""
 
     def decrypt(self, encrypted_password: str) -> str:
-        """解密 Doris 查询用户密码"""
+        """解密 Doris 查询用户密码。"""
         ...
 
 
 class QueryPrincipalNotConfiguredError(RuntimeError):
-    """用户没有可用的稳定查询身份"""
+    """用户没有可用的稳定查询身份。"""
 
 
 @dataclass(frozen=True, slots=True)
 class ResolvedQueryPrincipal:
-    """服务端选择的稳定查询身份"""
+    """服务端选择的稳定查询身份。"""
 
     role_name: str
     authorization_epoch: UUID
@@ -49,7 +49,7 @@ class ResolvedQueryPrincipal:
 
 
 class QueryPrincipalService:
-    """根据用户当前角色解析查询身份"""
+    """根据用户当前角色解析查询身份。"""
 
     def __init__(
         self,
@@ -57,13 +57,13 @@ class QueryPrincipalService:
         identity_provider: QueryIdentityProvider,
         cipher: QueryCredentialDecryptor,
     ) -> None:
-        """绑定用户、查询身份和凭据解密依赖"""
+        """绑定用户、查询身份和凭据解密依赖。"""
         self._user_provider = user_provider
         self._identity_provider = identity_provider
         self._cipher = cipher
 
     async def resolve(self, user_id: int) -> ResolvedQueryPrincipal:
-        """选择用户唯一 Doris 角色对应的查询身份"""
+        """选择用户唯一 Doris 角色对应的查询身份。"""
         user = await self._user_provider.get_user_by_id(user_id)
         if user is None:
             raise auth_error.UserNotFoundError

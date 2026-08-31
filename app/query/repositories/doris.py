@@ -1,4 +1,4 @@
-"""受控 Doris 分析查询访问"""
+"""受控 Doris 分析查询访问。"""
 
 import asyncio
 import re
@@ -31,22 +31,22 @@ _ALLOWED_READONLY_PRIVILEGES = {
 
 
 class DorisReadonlyPrivilegeError(RuntimeError):
-    """Doris 查询账号包含写入或管理权限"""
+    """Doris 查询账号包含写入或管理权限。"""
 
 
 class DorisConnectionProvider(Protocol):
-    """按查询创建 Doris 异步连接的最小接口"""
+    """按查询创建 Doris 异步连接的最小接口。"""
 
     def connection(self) -> AsyncConnection:
-        """返回可作为异步上下文管理器使用的 Doris 连接"""
+        """返回可作为异步上下文管理器使用的 Doris 连接。"""
         ...
 
 
 class DorisQueryRepository:
-    """使用服务端游标分批读取 Doris 查询结果"""
+    """使用服务端游标分批读取 Doris 查询结果。"""
 
     def __init__(self, connection_provider: DorisConnectionProvider) -> None:
-        """初始化 Doris 查询存储"""
+        """初始化 Doris 查询存储。"""
         self._connection_provider = connection_provider
 
     @staticmethod
@@ -54,7 +54,7 @@ class DorisQueryRepository:
         connection: AsyncConnection,
         limits: QueryExecutionLimits,
     ) -> None:
-        """设置当前连接的 Doris 查询资源限制"""
+        """设置当前连接的 Doris 查询资源限制。"""
         await connection.execute(
             text(f"SET workload_group = '{limits.workload_group}'")
         )
@@ -69,7 +69,7 @@ class DorisQueryRepository:
         database: str,
         expected_role: str,
     ) -> None:
-        """启动前确认查询账号仅绑定预期角色且可见目标数据库"""
+        """启动前确认查询账号仅绑定预期角色且可见目标数据库。"""
         if re.fullmatch(DORIS_WORKLOAD_GROUP_PATTERN, workload_group) is None:
             raise ValueError("Doris Workload Group 标识无效")
         if not database.strip():
@@ -96,7 +96,7 @@ class DorisQueryRepository:
         rows: Sequence[Mapping[str, object]],
         expected_role: str,
     ) -> None:
-        """校验 SHOW GRANTS 返回的当前账号合并权限"""
+        """校验 SHOW GRANTS 返回的当前账号合并权限。"""
         if not rows:
             raise DorisReadonlyPrivilegeError("Doris 查询账号未返回有效的授权信息")
         tokens: set[str] = set()
@@ -137,7 +137,7 @@ class DorisQueryRepository:
 
     @staticmethod
     def _is_timeout_error(exc: BaseException) -> bool:
-        """判断是否为 Doris 查询超时异常"""
+        """判断是否为 Doris 查询超时异常。"""
         if isinstance(exc, TimeoutError):
             return True
         message = str(exc).lower()
@@ -145,7 +145,7 @@ class DorisQueryRepository:
 
     @staticmethod
     def _literal_sql(sql: str):
-        """构造不把 SQL 字符串内冒号解释为绑定参数的语句"""
+        """构造不把 SQL 字符串内冒号解释为绑定参数的语句。"""
         return text(sql.replace(":", r"\:"))
 
     async def explain(
@@ -153,7 +153,7 @@ class DorisQueryRepository:
         sql: str,
         limits: QueryExecutionLimits,
     ) -> tuple[str, ...]:
-        """在实际读取数据前编译受限查询计划"""
+        """在实际读取数据前编译受限查询计划。"""
         async with self._connection_provider.connection() as connection:
             try:
                 await self._apply_session_limits(connection, limits)
@@ -177,7 +177,7 @@ class DorisQueryRepository:
         limits: QueryExecutionLimits,
         options: QueryExecutionOptions,
     ) -> AsyncGenerator[QueryBatch]:
-        """设置会话限制并流式返回查询结果分区"""
+        """设置会话限制并流式返回查询结果分区。"""
         async with self._connection_provider.connection() as connection:
             try:
                 await self._apply_session_limits(connection, limits)

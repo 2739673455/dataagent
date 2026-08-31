@@ -1,4 +1,4 @@
-"""用户认证与令牌生命周期服务"""
+"""用户认证与令牌生命周期服务。"""
 
 import asyncio
 import hashlib
@@ -29,26 +29,26 @@ ARGON2_MAX_CONCURRENCY = 2
 
 
 class PasswordManager(Protocol):
-    """异步密码哈希接口"""
+    """异步密码哈希接口。"""
 
     async def hash(self, password: str) -> str:
-        """异步计算密码哈希"""
+        """异步计算密码哈希。"""
         ...
 
     async def verify(self, password: str, password_hash: str) -> bool:
-        """异步校验密码与哈希是否匹配"""
+        """异步校验密码与哈希是否匹配。"""
         ...
 
     async def verify_dummy_password(self, password: str) -> None:
-        """为未知账号执行等价密码校验"""
+        """为未知账号执行等价密码校验。"""
         ...
 
 
 class Argon2PasswordManager:
-    """基于 Argon2id 的异步密码哈希实现"""
+    """基于 Argon2id 的异步密码哈希实现。"""
 
     def __init__(self, *, max_concurrency: int = ARGON2_MAX_CONCURRENCY) -> None:
-        """初始化 Argon2id 哈希器和并发限制"""
+        """初始化 Argon2id 哈希器和并发限制。"""
         if max_concurrency <= 0:
             raise ValueError("max_concurrency 必须为正整数")
         self._password_hash = PasswordHash.recommended()
@@ -56,12 +56,12 @@ class Argon2PasswordManager:
         self._semaphore = asyncio.Semaphore(max_concurrency)
 
     async def hash(self, password: str) -> str:
-        """在线程池计算密码哈希"""
+        """在线程池计算密码哈希。"""
         async with self._semaphore:
             return await to_thread.run_sync(self._password_hash.hash, password)
 
     async def verify(self, password: str, password_hash: str) -> bool:
-        """在线程池校验密码"""
+        """在线程池校验密码。"""
         async with self._semaphore:
             return await to_thread.run_sync(
                 self._password_hash.verify,
@@ -70,13 +70,13 @@ class Argon2PasswordManager:
             )
 
     async def verify_dummy_password(self, password: str) -> None:
-        """为未知账号执行等价密码校验，避免暴露账号是否存在"""
+        """为未知账号执行等价密码校验，避免暴露账号是否存在。"""
         await self.verify(password, self._dummy_hash)
 
 
 @dataclass(frozen=True)
 class AccessTokenClaims:
-    """已验证的访问令牌载荷"""
+    """已验证的访问令牌载荷。"""
 
     user_id: int
     auth_version: int
@@ -84,7 +84,7 @@ class AccessTokenClaims:
 
 @dataclass(frozen=True)
 class RefreshTokenClaims:
-    """已验证的刷新令牌载荷"""
+    """已验证的刷新令牌载荷。"""
 
     user_id: int
     token_id: UUID
@@ -93,7 +93,7 @@ class RefreshTokenClaims:
 
 @dataclass(frozen=True)
 class TokenPair:
-    """访问令牌与刷新令牌"""
+    """访问令牌与刷新令牌。"""
 
     access_token: str
     refresh_token: str
@@ -103,7 +103,7 @@ class TokenPair:
 
 @dataclass(frozen=True)
 class BootstrapAdminResult:
-    """管理员引导创建结果"""
+    """管理员引导创建结果。"""
 
     user: User
     created: bool
@@ -112,7 +112,7 @@ class BootstrapAdminResult:
 
 @dataclass(frozen=True, slots=True)
 class AuthenticatedUser:
-    """脱离数据库会话的认证用户快照"""
+    """脱离数据库会话的认证用户快照。"""
 
     id: int
     username: str
@@ -125,7 +125,7 @@ class AuthenticatedUser:
 
     @classmethod
     def from_user(cls, user: User) -> "AuthenticatedUser":
-        """从持久化用户创建不可变快照"""
+        """从持久化用户创建不可变快照。"""
         return cls(
             id=user.id,
             username=user.username,
@@ -139,21 +139,21 @@ class AuthenticatedUser:
 
 
 def _ensure_active_user(user: User) -> None:
-    """确保用户仍可登录"""
+    """确保用户仍可登录。"""
     if not user.is_active:
         raise auth_error.InactiveUserError
 
 
 class JWTCodec:
-    """应用 JWT 编解码器"""
+    """应用 JWT 编解码器。"""
 
     def __init__(self, config: AuthConfig) -> None:
-        """绑定 JWT 签名与生命周期配置"""
+        """绑定 JWT 签名与生命周期配置。"""
         self._config = config
         self._secret = config.jwt_secret.get_secret_value()
 
     def issue_access_token(self, user: User, now: datetime) -> str:
-        """签发短期访问令牌"""
+        """签发短期访问令牌。"""
         expires_at = now + timedelta(minutes=self._config.access_token_minutes)
         payload: dict[str, Any] = {
             "sub": str(user.id),
@@ -176,7 +176,7 @@ class JWTCodec:
         family_id: UUID,
         now: datetime,
     ) -> str:
-        """签发长期刷新令牌"""
+        """签发长期刷新令牌。"""
         return jwt.encode(
             {
                 "sub": str(user_id),
@@ -192,7 +192,7 @@ class JWTCodec:
         )
 
     def decode_access_token(self, token: str) -> AccessTokenClaims:
-        """校验并解析访问令牌"""
+        """校验并解析访问令牌。"""
         payload = self._decode(
             token,
             "access",
@@ -204,7 +204,7 @@ class JWTCodec:
         )
 
     def decode_refresh_token(self, token: str) -> RefreshTokenClaims:
-        """校验并解析刷新令牌"""
+        """校验并解析刷新令牌。"""
         payload = self._decode(
             token,
             "refresh",
@@ -231,7 +231,7 @@ class JWTCodec:
         *,
         required_claims: set[str],
     ) -> dict[str, Any]:
-        """验证 JWT 签名、标准声明与令牌类型"""
+        """验证 JWT 签名、标准声明与令牌类型。"""
         try:
             payload = jwt.decode(
                 token,
@@ -249,7 +249,7 @@ class JWTCodec:
 
     @staticmethod
     def _parse_user_id(payload: dict[str, Any]) -> int:
-        """解析用户主键声明"""
+        """解析用户主键声明。"""
         try:
             user_id = int(payload["sub"])
         except (KeyError, TypeError, ValueError) as exc:
@@ -260,7 +260,7 @@ class JWTCodec:
 
     @staticmethod
     def _parse_auth_version(payload: dict[str, Any]) -> int:
-        """解析认证版本声明"""
+        """解析认证版本声明。"""
         value = payload.get("auth_version")
         if isinstance(value, bool) or not isinstance(value, (int, str)):
             raise auth_error.InvalidTokenError(detail="令牌鉴权版本无效")
@@ -274,7 +274,7 @@ class JWTCodec:
 
     @staticmethod
     def _parse_uuid(payload: dict[str, Any], key: str) -> UUID:
-        """解析 UUID 声明"""
+        """解析 UUID 声明。"""
         try:
             return UUID(str(payload[key]))
         except (KeyError, TypeError, ValueError) as exc:
@@ -282,15 +282,15 @@ class JWTCodec:
 
 
 class AccessTokenAuthenticator:
-    """使用独立只读会话认证访问令牌"""
+    """使用独立只读会话认证访问令牌。"""
 
     def __init__(self, repo: AuthPGRepo, config: AuthConfig) -> None:
-        """初始化访问令牌编解码器和用户仓储"""
+        """初始化访问令牌编解码器和用户仓储。"""
         self._repo = repo
         self._codec = JWTCodec(config)
 
     async def authenticate(self, access_token: str) -> AuthenticatedUser:
-        """校验访问令牌并返回脱离会话的用户快照"""
+        """校验访问令牌并返回脱离会话的用户快照。"""
         claims = self._codec.decode_access_token(access_token)
         user = await self._repo.get_user_by_id(claims.user_id)
         if user is None:
@@ -302,7 +302,7 @@ class AccessTokenAuthenticator:
 
 
 class AuthService:
-    """管理员引导、登录与令牌生命周期服务"""
+    """管理员引导、登录与令牌生命周期服务。"""
 
     def __init__(
         self,
@@ -312,7 +312,7 @@ class AuthService:
         *,
         now: Callable[[], datetime] | None = None,
     ) -> None:
-        """初始化认证仓储、密码哈希器和令牌编解码器"""
+        """初始化认证仓储、密码哈希器和令牌编解码器。"""
         self._repo = repo
         self._config = config
         self._password_manager = password_manager
@@ -325,7 +325,7 @@ class AuthService:
         email: str,
         password: str,
     ) -> BootstrapAdminResult:
-        """使用显式凭据幂等创建或确认管理员"""
+        """使用显式凭据幂等创建或确认管理员。"""
         normalized_username = validate_username(username)
         normalized_email = validate_email(email)
         validate_password_length(
@@ -390,7 +390,7 @@ class AuthService:
             ) from exc
 
     async def login(self, identifier: str, password: str) -> tuple[User, TokenPair]:
-        """校验账号密码并签发令牌对"""
+        """校验账号密码并签发令牌对。"""
         normalized = identifier.strip().casefold()
         async with self._repo.session.begin():
             user = (
@@ -409,7 +409,7 @@ class AuthService:
         return user, token_pair
 
     async def refresh(self, refresh_token: str) -> tuple[User, TokenPair]:
-        """轮换刷新令牌并签发新令牌对"""
+        """轮换刷新令牌并签发新令牌对。"""
         claims = self._codec.decode_refresh_token(refresh_token)
         token_digest = self.digest_token(refresh_token)
         now = self._now()
@@ -449,7 +449,7 @@ class AuthService:
         return loaded_user, token_pair
 
     async def logout(self, refresh_token: str) -> None:
-        """吊销刷新令牌所属的完整令牌族"""
+        """吊销刷新令牌所属的完整令牌族。"""
         claims = self._codec.decode_refresh_token(refresh_token)
         token_digest = self.digest_token(refresh_token)
         async with self._repo.session.begin():
@@ -470,7 +470,7 @@ class AuthService:
         current_password: str,
         new_password: str,
     ) -> None:
-        """验证当前密码、更新哈希并吊销全部既有令牌"""
+        """验证当前密码、更新哈希并吊销全部既有令牌。"""
         try:
             validate_password_length(
                 new_password,
@@ -503,7 +503,7 @@ class AuthService:
         *,
         refresh_token_id: UUID | None = None,
     ) -> TokenPair:
-        """签发并持久化一个令牌对"""
+        """签发并持久化一个令牌对。"""
         now = self._now()
         access_token = self._codec.issue_access_token(user, now)
         token_id = refresh_token_id or uuid4()
@@ -532,5 +532,5 @@ class AuthService:
 
     @staticmethod
     def digest_token(token: str) -> str:
-        """计算令牌的不可逆存储摘要"""
+        """计算令牌的不可逆存储摘要。"""
         return hashlib.sha256(token.encode("utf-8")).hexdigest()

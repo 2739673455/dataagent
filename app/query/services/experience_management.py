@@ -1,4 +1,4 @@
-"""查询经验管理用例"""
+"""查询经验管理用例。"""
 
 from dataclasses import dataclass
 from datetime import datetime

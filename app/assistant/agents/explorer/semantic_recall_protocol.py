@@ -1,4 +1,4 @@
-"""Explorer 语义召回的持久化消息协议"""
+"""Explorer 语义召回的持久化消息协议。"""
 
 import json
 from dataclasses import dataclass
@@ -13,7 +13,7 @@ _REFERENCE_TOOLS = frozenset({"recall_context", "get_recall", "merge_recalls"})
 
 @dataclass(frozen=True, slots=True)
 class SemanticRecallReference:
-    """描述一条待展开的持久化语义召回记录"""
+    """描述一条待展开的持久化语义召回记录。"""
 
     query: str
 
@@ -21,7 +21,7 @@ class SemanticRecallReference:
 def semantic_recall_reference(
     record: SemanticRecallRecord,
 ) -> dict[str, Any]:
-    """构造只含持久化记录引用的工具结果"""
+    """构造只含持久化记录引用的工具结果。"""
     return {
         "status": "stored",
         "query": record.query,
@@ -31,7 +31,7 @@ def semantic_recall_reference(
 def parse_semantic_recall_reference(
     message: ToolMessage,
 ) -> SemanticRecallReference | None:
-    """解析受控的语义召回引用消息"""
+    """解析受控的语义召回引用消息。"""
     if message.name not in _REFERENCE_TOOLS or not isinstance(message.content, str):
         return None
     try:

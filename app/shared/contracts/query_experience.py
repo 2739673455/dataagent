@@ -1,4 +1,4 @@
-"""查询经验检索结果契约"""
+"""查询经验检索结果契约。"""
 
 from typing import Literal
 from uuid import UUID
@@ -11,7 +11,7 @@ QueryExperienceRecallStatus = Literal["success", "partial", "failed"]
 
 
 class QueryAssetSnapshot(BaseModel):
-    """查询经验返回的资产引用"""
+    """查询经验返回的资产引用。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -23,7 +23,7 @@ class QueryAssetSnapshot(BaseModel):
 
 
 class QueryExperienceRecallResult(BaseModel):
-    """提供给 Explorer 的紧凑查询经验"""
+    """提供给 Explorer 的紧凑查询经验。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -34,7 +34,7 @@ class QueryExperienceRecallResult(BaseModel):
 
 
 class QueryExperienceRecall(BaseModel):
-    """一次查询经验召回的结果及检索通道状态"""
+    """一次查询经验召回的结果及检索通道状态。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

@@ -1,4 +1,4 @@
-"""取值索引周期调度筛选测试"""
+"""取值索引周期调度筛选测试。"""
 
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -13,7 +13,7 @@ from app.metadata.repositories.postgres import MetaPGRepo
 
 
 def build_table(name: str, *, incremental: bool) -> TableInfo:
-    """构造表级取值同步配置"""
+    """构造表级取值同步配置。"""
     return TableInfo(
         name=name,
         role="fact",
@@ -24,7 +24,7 @@ def build_table(name: str, *, incremental: bool) -> TableInfo:
 
 
 def build_column(table_name: str, *, enabled: bool = True) -> ColumnInfo:
-    """构造字段元数据"""
+    """构造字段元数据。"""
     return ColumnInfo(
         t_name=table_name,
         name="status",
@@ -43,7 +43,7 @@ def build_state(
     status: str = "succeeded",
     full_synced_at: datetime | None = None,
 ) -> ValueIndexSyncState:
-    """构造字段取值同步状态"""
+    """构造字段取值同步状态。"""
     return ValueIndexSyncState(
         t_name=table_name,
         c_name="status",

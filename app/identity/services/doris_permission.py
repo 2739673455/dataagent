@@ -1,4 +1,4 @@
-"""Doris 数据角色权限管理服务"""
+"""Doris 数据角色权限管理服务。"""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -25,7 +25,7 @@ from app.identity.services.authorization import AssetIdentity
 
 @dataclass(frozen=True, slots=True)
 class DorisRoleStatus:
-    """配置角色在 Doris 中的实时状态"""
+    """配置角色在 Doris 中的实时状态。"""
 
     name: str
     description: str
@@ -38,14 +38,14 @@ class DorisRoleStatus:
 
 @dataclass(frozen=True, slots=True)
 class _SelectGrantTarget:
-    """描述一次可直接提交给 Doris 的 SELECT 权限目标"""
+    """描述一次可直接提交给 Doris 的 SELECT 权限目标。"""
 
     table_name: str | None
     columns: tuple[str, ...]
 
 
 class DorisPermissionService:
-    """通过独立管理账号维护 Doris 角色的细粒度权限"""
+    """通过独立管理账号维护 Doris 角色的细粒度权限。"""
 
     def __init__(
         self,
@@ -57,7 +57,7 @@ class DorisPermissionService:
         catalog: str,
         database: str,
     ) -> None:
-        """初始化 Doris 权限操作和 PostgreSQL 投影依赖"""
+        """初始化 Doris 权限操作和 PostgreSQL 投影依赖。"""
         if auth_repo.session is not identity_repo.session:
             raise ValueError("认证存储与查询身份存储必须共享同一数据库会话")
         self._auth_repo = auth_repo
@@ -68,7 +68,7 @@ class DorisPermissionService:
         self._database = database
 
     async def list_roles(self) -> list[DorisRoleStatus]:
-        """合并配置角色与 Doris 实时授权状态"""
+        """合并配置角色与 Doris 实时授权状态。"""
         live_rows = await self._doris_repo.list_roles()
         live_by_name = {
             role_name: row
@@ -96,7 +96,7 @@ class DorisPermissionService:
         table_name: str | None,
         columns: Sequence[str],
     ) -> list[DorisRoleAssetGrant]:
-        """授予角色库、表或列 SELECT 权限并更新可见性投影"""
+        """授予角色库、表或列 SELECT 权限并更新可见性投影。"""
         role = self._normalize_role(role_name)
         normalized_columns = self._normalize_columns(columns)
         assets = self._assets(table_name, normalized_columns)
@@ -180,7 +180,7 @@ class DorisPermissionService:
         table_name: str | None,
         columns: Sequence[str],
     ) -> None:
-        """回收角色库、表或列 SELECT 权限并删除可见性投影"""
+        """回收角色库、表或列 SELECT 权限并删除可见性投影。"""
         role = self._normalize_role(role_name)
         normalized_columns = self._normalize_columns(columns)
         assets = self._assets(table_name, normalized_columns)
@@ -223,7 +223,7 @@ class DorisPermissionService:
             raise
 
     async def revoke_all_select(self, role_name: str) -> int:
-        """回收角色在当前数据库中的全部 SELECT 权限并清空投影"""
+        """回收角色在当前数据库中的全部 SELECT 权限并清空投影。"""
         role = self._normalize_role(role_name)
         revoked_targets: list[_SelectGrantTarget] = []
         try:
@@ -259,7 +259,7 @@ class DorisPermissionService:
             raise
 
     async def list_row_policies(self, role_name: str) -> list[DorisRowPolicy]:
-        """读取角色在 Doris 中的实时行策略"""
+        """读取角色在 Doris 中的实时行策略。"""
         role = await self._require_role(role_name)
         return await self._doris_repo.list_role_row_policies(role)
 
@@ -272,7 +272,7 @@ class DorisPermissionService:
         policy_type: Literal["RESTRICTIVE", "PERMISSIVE"],
         predicate: str,
     ) -> None:
-        """校验并创建绑定到角色的 Doris 行策略"""
+        """校验并创建绑定到角色的 Doris 行策略。"""
         role = self._normalize_role(role_name)
         columns = await self._doris_repo.list_table_columns(
             self._database,
@@ -318,7 +318,7 @@ class DorisPermissionService:
         policy_name: str,
         table_name: str,
     ) -> None:
-        """删除绑定到角色的 Doris 行策略"""
+        """删除绑定到角色的 Doris 行策略。"""
         role = self._normalize_role(role_name)
         policies = await self._doris_repo.list_role_row_policies(role)
         original = next(
@@ -360,14 +360,14 @@ class DorisPermissionService:
             raise
 
     async def _require_role(self, role_name: str) -> str:
-        """要求角色存在于稳定查询身份配置"""
+        """要求角色存在于稳定查询身份配置。"""
         normalized = self._normalize_role(role_name)
         await self._require_role_exists(normalized)
         return normalized
 
     @staticmethod
     def _normalize_role(role_name: str) -> str:
-        """规范化 Doris 角色名"""
+        """规范化 Doris 角色名。"""
         try:
             return normalize_doris_role_name(role_name)
         except ValueError as exc:
@@ -376,7 +376,7 @@ class DorisPermissionService:
             ) from exc
 
     async def _require_role_exists(self, role_name: str) -> None:
-        """要求规范化角色已配置"""
+        """要求规范化角色已配置。"""
         identity = await self._identity_repo.get(role_name)
         if identity is None:
             raise auth_error.RoleNotFoundError
@@ -397,7 +397,7 @@ class DorisPermissionService:
         table_name: str | None,
         columns: Sequence[str],
     ) -> None:
-        """在 PostgreSQL 投影失败时尽力恢复 Doris 权限"""
+        """在 PostgreSQL 投影失败时尽力恢复 Doris 权限。"""
         operation = (
             self._doris_repo.grant_select if grant else self._doris_repo.revoke_select
         )
@@ -419,7 +419,7 @@ class DorisPermissionService:
         table_name: str | None,
         columns: Sequence[str],
     ) -> None:
-        """校验表和字段均存在于配置数据库"""
+        """校验表和字段均存在于配置数据库。"""
         if table_name is None:
             if columns:
                 raise auth_error.InvalidDorisPermissionError(
@@ -443,7 +443,7 @@ class DorisPermissionService:
         table_name: str | None,
         columns: Sequence[str],
     ) -> tuple[AssetIdentity, ...]:
-        """将授权目标转换为可见性投影资产"""
+        """将授权目标转换为可见性投影资产。"""
         if table_name is None:
             return (AssetIdentity(self._data_source, self._database),)
         if not columns:
@@ -462,7 +462,7 @@ class DorisPermissionService:
     def _group_select_grant_targets(
         grants: Sequence[DorisRoleAssetGrant],
     ) -> tuple[_SelectGrantTarget, ...]:
-        """将权限投影合并为数据库、整表和字段级 Doris 回收目标"""
+        """将权限投影合并为数据库、整表和字段级 Doris 回收目标。"""
         has_database_grant = False
         table_grants: set[str] = set()
         column_grants: dict[str, set[str]] = {}
@@ -501,7 +501,7 @@ class DorisPermissionService:
 
     @staticmethod
     def _normalize_columns(columns: Sequence[str]) -> tuple[str, ...]:
-        """校验字段列表无重复"""
+        """校验字段列表无重复。"""
         normalized = tuple(column.strip() for column in columns)
         if any(not column for column in normalized):
             raise auth_error.InvalidDorisPermissionError(detail="列名不能为空")
@@ -515,7 +515,7 @@ class DorisPermissionService:
         table_name: str,
         allowed_columns: Sequence[str],
     ) -> str:
-        """将行策略限制为目标表上的单个布尔表达式"""
+        """将行策略限制为目标表上的单个布尔表达式。"""
         normalized = predicate.strip()
         if not normalized:
             raise auth_error.InvalidDorisPermissionError(

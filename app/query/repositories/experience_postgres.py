@@ -1,4 +1,4 @@
-"""查询执行历史与经验 PostgreSQL 数据访问"""
+"""查询执行历史与经验 PostgreSQL 数据访问。"""
 
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -21,15 +21,15 @@ from app.query.models.experience import (
 
 
 class QueryExperiencePGRepo:
-    """持久化查询执行审计和角色级聚合经验"""
+    """持久化查询执行审计和角色级聚合经验。"""
 
     def __init__(self, session: AsyncSession) -> None:
-        """绑定当前请求使用的异步数据库会话"""
+        """绑定当前请求使用的异步数据库会话。"""
         self._session = session
 
     @property
     def session(self) -> AsyncSession:
-        """返回当前存储绑定的数据库会话"""
+        """返回当前存储绑定的数据库会话。"""
         return self._session
 
     async def record_success(
@@ -38,7 +38,7 @@ class QueryExperiencePGRepo:
         experience: QueryExperience,
         assets: list[QueryExperienceAsset],
     ) -> QueryExperience:
-        """原子写入成功执行并更新相同 SQL 指纹的经验"""
+        """原子写入成功执行并更新相同 SQL 指纹的经验。"""
         now = datetime.now(UTC)
         proposed_id = experience.id or uuid4()
         statement = (
@@ -104,17 +104,17 @@ class QueryExperiencePGRepo:
         return stored
 
     async def record_failure(self, execution: QueryExecution) -> None:
-        """写入拒绝或失败的 SQL 尝试"""
+        """写入拒绝或失败的 SQL 尝试。"""
         self._session.add(execution)
         await self._session.flush()
 
     async def record_execution(self, execution: QueryExecution) -> None:
-        """写入不参与经验聚合的成功执行"""
+        """写入不参与经验聚合的成功执行。"""
         self._session.add(execution)
         await self._session.flush()
 
     async def get(self, experience_id: UUID) -> QueryExperience | None:
-        """读取一条经验及其资产"""
+        """读取一条经验及其资产。"""
         return await self._session.scalar(
             select(QueryExperience)
             .options(selectinload(QueryExperience.assets))
@@ -148,7 +148,7 @@ class QueryExperiencePGRepo:
         self,
         resource_keys: set[str],
     ) -> dict[UUID, int]:
-        """禁用引用指定元数据资产的全部有效经验"""
+        """禁用引用指定元数据资产的全部有效经验。"""
         if not resource_keys:
             return {}
         experience_ids = list(
@@ -170,7 +170,7 @@ class QueryExperiencePGRepo:
         self,
         experience_ids: set[UUID] | list[UUID],
     ) -> dict[UUID, int]:
-        """因元数据变化禁用指定经验并返回新版本"""
+        """因元数据变化禁用指定经验并返回新版本。"""
         if not experience_ids:
             return {}
         now = datetime.now(UTC)
@@ -386,7 +386,7 @@ class QueryExperiencePGRepo:
         return deleted_id is not None
 
     async def mark_indexes_synced(self, revisions: dict[UUID, int]) -> None:
-        """记录经验搜索投影已同步到指定版本"""
+        """记录经验搜索投影已同步到指定版本。"""
         for experience_id, revision in revisions.items():
             await self._session.execute(
                 update(QueryExperience)
@@ -403,7 +403,7 @@ class QueryExperiencePGRepo:
         *,
         limit: int,
     ) -> dict[UUID, int]:
-        """列出全部尚未同步到当前版本的查询经验"""
+        """列出全部尚未同步到当前版本的查询经验。"""
         result = await self._session.execute(
             select(QueryExperience.id, QueryExperience.revision)
             .where(QueryExperience.indexed_revision < QueryExperience.revision)
@@ -416,7 +416,7 @@ class QueryExperiencePGRepo:
         self,
         experiences: list[QueryExperience],
     ) -> dict[str, int]:
-        """批量读取经验资产当前对应的元数据版本"""
+        """批量读取经验资产当前对应的元数据版本。"""
         table_names = {
             asset.table_name
             for experience in experiences
@@ -455,7 +455,7 @@ class QueryExperiencePGRepo:
         table_names: set[str],
         column_keys: set[tuple[str, str]],
     ) -> tuple[dict[str, int], dict[tuple[str, str], int]]:
-        """批量读取指定表和字段的当前元数据版本"""
+        """批量读取指定表和字段的当前元数据版本。"""
         table_versions: dict[str, int] = {}
         column_versions: dict[tuple[str, str], int] = {}
         if table_names:

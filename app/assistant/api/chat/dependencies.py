@@ -1,4 +1,4 @@
-"""聊天接口依赖"""
+"""聊天接口依赖。"""
 
 from typing import Annotated
 
@@ -17,7 +17,7 @@ async def _get_conversation_pg_repo(
         Depends(assistant_postgres_client_manager.get_session),
     ],
 ) -> ConversationPGRepo:
-    """创建会话目录数据访问"""
+    """创建会话目录数据访问。"""
     return ConversationPGRepo(session)
 
 

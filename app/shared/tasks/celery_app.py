@@ -1,4 +1,4 @@
-"""Celery 应用与队列配置"""
+"""Celery 应用与队列配置。"""
 
 from celery import Celery
 from celery.schedules import crontab

@@ -1,4 +1,4 @@
-"""MCP 连接配置边界测试"""
+"""MCP 连接配置边界测试。"""
 
 import unittest
 from types import SimpleNamespace

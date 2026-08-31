@@ -1,4 +1,4 @@
-"""PostgreSQL 会话目录数据访问"""
+"""PostgreSQL 会话目录数据访问。"""
 
 from datetime import UTC, datetime
 from uuid import UUID
@@ -10,15 +10,15 @@ from app.assistant.models.conversation import Conversation
 
 
 class ConversationPGRepo:
-    """使用关系表存储会话目录"""
+    """使用关系表存储会话目录。"""
 
     def __init__(self, session: AsyncSession) -> None:
-        """绑定当前操作使用的异步数据库会话"""
+        """绑定当前操作使用的异步数据库会话。"""
         self._session = session
 
     @property
     def session(self) -> AsyncSession:
-        """返回当前数据访问绑定的数据库会话"""
+        """返回当前数据访问绑定的数据库会话。"""
         return self._session
 
     async def create(
@@ -29,7 +29,7 @@ class ConversationPGRepo:
         is_draft: bool = False,
         title_pending: bool = True,
     ) -> Conversation:
-        """创建会话目录信息"""
+        """创建会话目录信息。"""
         now = datetime.now(UTC)
         conversation = Conversation(
             user_id=user_id,
@@ -50,7 +50,7 @@ class ConversationPGRepo:
         *,
         include_deleting: bool = False,
     ) -> Conversation | None:
-        """获取当前用户的会话目录信息"""
+        """获取当前用户的会话目录信息。"""
         statement = select(Conversation).where(
             Conversation.user_id == user_id,
             Conversation.id == conversation_id,
@@ -68,7 +68,7 @@ class ConversationPGRepo:
         is_draft: bool | None = None,
         deletion_requested_at: datetime | None = None,
     ) -> Conversation:
-        """更新会话目录信息和最后活动时间"""
+        """更新会话目录信息和最后活动时间。"""
         conversation.update_at = datetime.now(UTC)
         if title is not None:
             conversation.title = title
@@ -88,7 +88,7 @@ class ConversationPGRepo:
         title: str,
         source: str,
     ) -> Conversation:
-        """记录首次标题生成输入并占用生成状态"""
+        """记录首次标题生成输入并占用生成状态。"""
         now = datetime.now(UTC)
         conversation.title = title
         conversation.title_pending = True
@@ -105,7 +105,7 @@ class ConversationPGRepo:
         *,
         title: str,
     ) -> Conversation:
-        """完成标题生成并清理补偿输入"""
+        """完成标题生成并清理补偿输入。"""
         conversation.title = title
         conversation.title_pending = False
         conversation.title_source = None
@@ -120,7 +120,7 @@ class ConversationPGRepo:
         *,
         include_deleting: bool = False,
     ) -> list[Conversation]:
-        """按最后活动时间倒序获取用户的全部会话"""
+        """按最后活动时间倒序获取用户的全部会话。"""
         statement = select(Conversation).where(Conversation.user_id == user_id)
         if not include_deleting:
             statement = statement.where(Conversation.deletion_requested_at.is_(None))
@@ -130,7 +130,7 @@ class ConversationPGRepo:
         return list(result)
 
     async def list_by_user(self, user_id: int) -> list[Conversation]:
-        """按最后活动时间倒序获取用户的正式会话"""
+        """按最后活动时间倒序获取用户的正式会话。"""
         result = await self._session.scalars(
             select(Conversation)
             .where(
@@ -148,7 +148,7 @@ class ConversationPGRepo:
         *,
         limit: int,
     ) -> list[Conversation]:
-        """跨用户列出最后活动时间已过期的草稿"""
+        """跨用户列出最后活动时间已过期的草稿。"""
         result = await self._session.scalars(
             select(Conversation)
             .where(
@@ -162,7 +162,7 @@ class ConversationPGRepo:
         return list(result)
 
     async def list_pending_deletions(self, *, limit: int) -> list[Conversation]:
-        """跨用户列出已写入墓碑且待物理清理的会话"""
+        """跨用户列出已写入墓碑且待物理清理的会话。"""
         result = await self._session.scalars(
             select(Conversation)
             .where(Conversation.deletion_requested_at.is_not(None))
@@ -177,7 +177,7 @@ class ConversationPGRepo:
         *,
         limit: int,
     ) -> list[Conversation]:
-        """跨用户列出需要重新提交的标题生成任务"""
+        """跨用户列出需要重新提交的标题生成任务。"""
         result = await self._session.scalars(
             select(Conversation)
             .where(
@@ -193,7 +193,7 @@ class ConversationPGRepo:
         return list(result)
 
     async def delete(self, user_id: int, conversation_id: UUID) -> None:
-        """删除会话目录信息"""
+        """删除会话目录信息。"""
         await self._session.execute(
             delete(Conversation).where(
                 Conversation.user_id == user_id,

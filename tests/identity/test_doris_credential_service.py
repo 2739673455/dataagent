@@ -1,4 +1,4 @@
-"""Doris 查询凭据加密测试"""
+"""Doris 查询凭据加密测试。"""
 
 import unittest
 

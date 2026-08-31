@@ -1,4 +1,4 @@
-"""查询经验管理用例测试"""
+"""查询经验管理用例测试。"""
 
 import unittest
 from datetime import UTC, datetime

@@ -14,7 +14,7 @@ from app.query.services.executor import QueryRejectedError
 
 
 def make_runtime() -> ToolRuntime:
-    """构造数据查询工具运行上下文"""
+    """构造数据查询工具运行上下文。"""
     return ToolRuntime(
         state={"messages": []},
         context=None,

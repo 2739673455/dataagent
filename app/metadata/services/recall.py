@@ -1,4 +1,4 @@
-"""语义召回记录管理服务"""
+"""语义召回记录管理服务。"""
 
 import uuid
 from collections.abc import Callable
@@ -26,16 +26,16 @@ _QUERY_EXPERIENCE_CACHE_TTL = timedelta(days=1)
 
 
 class SemanticQueriesNotFoundError(Exception):
-    """一个或多个查询业务键不存在"""
+    """一个或多个查询业务键不存在。"""
 
     def __init__(self, queries: list[str]) -> None:
-        """初始化未找到的查询业务键"""
+        """初始化未找到的查询业务键。"""
         self.queries = queries
         super().__init__(", ".join(queries))
 
 
 def _stable_union[T](groups: list[list[T]]) -> list[T]:
-    """稳定合并可哈希值列表"""
+    """稳定合并可哈希值列表。"""
     result: list[T] = []
     seen: set[T] = set()
     for group in groups:
@@ -51,7 +51,7 @@ def _group_items[ItemT, KeyT](
     groups: list[list[ItemT]],
     key: Callable[[ItemT], KeyT],
 ) -> list[list[ItemT]]:
-    """按资源主键稳定聚合多个召回结果"""
+    """按资源主键稳定聚合多个召回结果。"""
     grouped: dict[KeyT, list[ItemT]] = {}
     for items in groups:
         for item in items:
@@ -62,7 +62,7 @@ def _group_items[ItemT, KeyT](
 def _merge_metrics(
     responses: list[SemanticResourceRecallResponse],
 ) -> list[SemanticMetricRecallResult]:
-    """按指标主键保留最新元数据快照"""
+    """按指标主键保留最新元数据快照。"""
     return sorted(
         (
             max(
@@ -79,14 +79,14 @@ def _merge_metrics(
 
 
 def _column_score(item: SemanticColumnRecallResult) -> float:
-    """将关系补充字段的空排名转换为可比较分数"""
+    """将关系补充字段的空排名转换为可比较分数。"""
     return item.rank_score if item.rank_score is not None else float("-inf")
 
 
 def _merge_columns(
     responses: list[SemanticResourceRecallResponse],
 ) -> list[SemanticColumnRecallResult]:
-    """按字段联合主键保留最新元数据快照"""
+    """按字段联合主键保留最新元数据快照。"""
     result = [
         max(
             matches,
@@ -106,7 +106,7 @@ def _merge_columns(
 def _merge_values(
     responses: list[SemanticResourceRecallResponse],
 ) -> list[SemanticValueRecallResult]:
-    """合并字段值结果并保留最高排名"""
+    """合并字段值结果并保留最高排名。"""
     result: list[SemanticValueRecallResult] = []
     groups = _group_items(
         [item.values for item in responses],
@@ -125,7 +125,7 @@ def _merge_values(
 def _merge_tables(
     responses: list[SemanticResourceRecallResponse],
 ) -> list[SemanticTableContext]:
-    """按元数据版本合并表上下文"""
+    """按元数据版本合并表上下文。"""
     groups = _group_items([item.tables for item in responses], lambda x: x.name)
     return sorted(
         (max(matches, key=lambda item: item.meta_version) for matches in groups),
@@ -139,7 +139,7 @@ def _merge_semantic_recall_responses(
     *,
     refresh_request: SemanticResourceRecallRequest | None = None,
 ) -> SemanticResourceRecallResponse:
-    """生成多个召回结果的去重合并快照"""
+    """生成多个召回结果的去重合并快照。"""
     if len(responses) < 2:
         raise ValueError("至少需要两个召回响应")
     failures = _merge_failures(responses, refresh_request)
@@ -161,7 +161,7 @@ def _merge_failures(
     responses: list[SemanticResourceRecallResponse],
     refresh_request: SemanticResourceRecallRequest | None,
 ) -> list[SemanticRecallFailure]:
-    """合并失败范围，并在本次成功覆盖时清除旧失败"""
+    """合并失败范围，并在本次成功覆盖时清除旧失败。"""
     failures = _stable_union([response.failures for response in responses])
     if refresh_request is None:
         return failures
@@ -179,7 +179,7 @@ def _failure_is_refreshed(
     failure: SemanticRecallFailure,
     request: SemanticResourceRecallRequest,
 ) -> bool:
-    """判断本次请求是否覆盖了一个旧失败范围"""
+    """判断本次请求是否覆盖了一个旧失败范围。"""
     if failure.resource_type not in request.resource_types:
         return False
     if failure.resource_type == "value" and failure.channel != "fulltext":
@@ -191,7 +191,7 @@ def _remove_semantic_resources(
     response: SemanticResourceRecallResponse,
     deletion: SemanticRecallResourceDeletion,
 ) -> SemanticResourceRecallResponse:
-    """移除资源并保持字段、指标、表上下文之间的一致性"""
+    """移除资源并保持字段、指标、表上下文之间的一致性。"""
     removed_tables = {
         table_name
         for table_name, table_deletion in deletion.tables.items()
@@ -280,7 +280,7 @@ def _remove_semantic_resources(
 
 
 class SemanticRecallContextService:
-    """记录、查询、合并和删除会话级语义召回"""
+    """记录、查询、合并和删除会话级语义召回。"""
 
     def __init__(
         self,
@@ -290,7 +290,7 @@ class SemanticRecallContextService:
         query_experience_role_name: str | None,
         query_experience_authorization_epoch: UUID | None,
     ) -> None:
-        """初始化召回管理服务"""
+        """初始化召回管理服务。"""
         self._repo = repo
         self._authorization_filter = authorization_filter
         self._query_experience_role_name = query_experience_role_name
@@ -308,7 +308,7 @@ class SemanticRecallContextService:
         query_experiences: list[QueryExperienceRecallResult],
         query_experiences_retrieved_at: datetime,
     ) -> SemanticRecallRecord:
-        """将一次检索结果增量合入 query 的持续上下文"""
+        """将一次检索结果增量合入 query 的持续上下文。"""
         now = datetime.now(UTC)
         await self._repo.acquire_query_lock(user_id, conversation_id, query)
         previous = await self._repo.get_latest_by_query(
@@ -351,7 +351,7 @@ class SemanticRecallContextService:
         authorization_epoch: UUID | None,
         now: datetime | None = None,
     ) -> tuple[list[QueryExperienceRecallResult], datetime] | None:
-        """读取当前查询在一天有效期内的查询经验结果"""
+        """读取当前查询在一天有效期内的查询经验结果。"""
         record = await self._repo.get_latest_by_query(
             user_id,
             conversation_id,
@@ -384,7 +384,7 @@ class SemanticRecallContextService:
         conversation_id: UUID,
         query: str,
     ) -> SemanticRecallRecord:
-        """按 query 获取最新召回记录，不存在时给出明确错误"""
+        """按 query 获取最新召回记录，不存在时给出明确错误。"""
         record = await self._repo.get_latest_by_query(
             user_id,
             conversation_id,
@@ -402,7 +402,7 @@ class SemanticRecallContextService:
         limit: int,
         offset: int = 0,
     ) -> list[SemanticRecallRecord]:
-        """列出会话召回记录"""
+        """列出会话召回记录。"""
         if limit <= 0:
             raise ValueError("limit 必须为正整数")
         if offset < 0:
@@ -424,7 +424,7 @@ class SemanticRecallContextService:
         target_query: str,
         source_query: str,
     ) -> SemanticRecallRecord:
-        """将来源 query 的语义资源吸收到目标并删除来源"""
+        """将来源 query 的语义资源吸收到目标并删除来源。"""
         if target_query == source_query:
             raise ValueError("目标 query 和来源 query 不能相同")
 
@@ -494,7 +494,7 @@ class SemanticRecallContextService:
         self,
         record: SemanticRecallRecord,
     ) -> SemanticRecallRecord:
-        """按当前策略生成召回记录的安全读取副本"""
+        """按当前策略生成召回记录的安全读取副本。"""
         response = self._authorization_filter.filter_recall_response(record.response)
         query_experiences = (
             self._filter_query_experiences(record.query_experiences)
@@ -512,7 +512,7 @@ class SemanticRecallContextService:
         self,
         experiences: list[QueryExperienceRecallResult],
     ) -> list[QueryExperienceRecallResult]:
-        """移除包含当前用户不可见资产的查询经验"""
+        """移除包含当前用户不可见资产的查询经验。"""
         return [
             experience
             for experience in experiences
@@ -520,7 +520,7 @@ class SemanticRecallContextService:
         ]
 
     def _matches_query_experience_scope(self, record: SemanticRecallRecord) -> bool:
-        """判断持久化经验缓存是否属于当前角色授权代次"""
+        """判断持久化经验缓存是否属于当前角色授权代次。"""
         return (
             record.query_experience_role_name == self._query_experience_role_name
             and record.query_experience_authorization_epoch
@@ -533,7 +533,7 @@ class SemanticRecallContextService:
         conversation_id: UUID,
         deletions: list[SemanticRecallResourceDeletion],
     ) -> list[SemanticRecallRecord]:
-        """按 query 删除资源并返回各 query 的最终上下文"""
+        """按 query 删除资源并返回各 query 的最终上下文。"""
         loaded: list[tuple[SemanticRecallResourceDeletion, SemanticRecallRecord]] = []
         missing: list[str] = []
         for query in sorted(deletion.query for deletion in deletions):

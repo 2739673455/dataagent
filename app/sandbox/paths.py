@@ -1,4 +1,4 @@
-"""沙箱工作区路径模型与校验"""
+"""沙箱工作区路径模型与校验。"""
 
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -15,13 +15,13 @@ _PATH_COMPONENT_MAX_BYTES = 255
 
 @dataclass(frozen=True, slots=True)
 class SandboxReadonlyMount:
-    """一个暴露给沙箱容器的宿主机只读目录"""
+    """一个暴露给沙箱容器的宿主机只读目录。"""
 
     source: Path
     target: PurePosixPath
 
     def __post_init__(self) -> None:
-        """规范化源目录并校验容器目标路径"""
+        """规范化源目录并校验容器目标路径。"""
         source = self.source.resolve(strict=True)
         if not source.is_dir():
             raise ValueError(f"沙箱只读挂载源不是目录: {source}")
@@ -40,14 +40,14 @@ class SandboxReadonlyMount:
 
 @dataclass(frozen=True, slots=True)
 class SandboxSessionScope:
-    """定位一个专业 Agent Session 工作区"""
+    """定位一个专业 Agent Session 工作区。"""
 
     analysis_id: str
     agent_type: str
     session_id: str
 
     def __post_init__(self) -> None:
-        """校验 Agent Session 路径字段可安全用于工作区"""
+        """校验 Agent Session 路径字段可安全用于工作区。"""
         for field_name, value in (
             ("analysis_id", self.analysis_id),
             ("agent_type", self.agent_type),
@@ -68,16 +68,16 @@ class SandboxSessionScope:
 
     @property
     def relative_workspace(self) -> str:
-        """生成 conversation 根目录下的 Session 路径"""
+        """生成 conversation 根目录下的 Session 路径。"""
         return f"sessions/{self.analysis_id}/{self.agent_type}/{self.session_id}"
 
     def registry_key(self, conversation_id: UUID) -> str:
-        """生成 UID 注册表中的稳定 Session 键"""
+        """生成 UID 注册表中的稳定 Session 键。"""
         return f"{conversation_id}/{self.relative_workspace}"
 
 
 def normalize_attachment_path(path: str) -> str:
-    """校验并规范化会话内的附件相对路径"""
+    """校验并规范化会话内的附件相对路径。"""
     encoded_path = path.encode("utf-8", errors="surrogatepass")
     if (
         not path
@@ -98,7 +98,7 @@ def normalize_attachment_path(path: str) -> str:
 
 
 def normalize_user_attachment_path(path: str) -> str:
-    """将用户可变附件路径限制在统一上传目录"""
+    """将用户可变附件路径限制在统一上传目录。"""
     normalized_path = normalize_attachment_path(path)
     if PurePosixPath(normalized_path).parts[0] == USER_ATTACHMENT_ROOT:
         return normalized_path

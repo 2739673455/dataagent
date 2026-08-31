@@ -1,4 +1,4 @@
-"""语义召回引用的模型请求临时展开"""
+"""语义召回引用的模型请求临时展开。"""
 
 import json
 from collections.abc import Awaitable, Callable
@@ -30,7 +30,7 @@ from app.metadata.services.recall import SemanticQueriesNotFoundError
 def semantic_recall_payload(
     record: SemanticRecallRecord,
 ) -> dict[str, Any]:
-    """投影模型执行 SQL 所需的元数据和历史经验"""
+    """投影模型执行 SQL 所需的元数据和历史经验。"""
     response = record.response
     values_by_column: dict[tuple[str, str], list[str]] = {}
     for item in response.values:
@@ -94,14 +94,14 @@ def semantic_recall_payload(
 
 
 def _expanded_content(record: SemanticRecallRecord) -> str:
-    """序列化模型可见的语义召回上下文"""
+    """序列化模型可见的语义召回上下文。"""
     return json.dumps(semantic_recall_payload(record), ensure_ascii=False)
 
 
 def _current_turn_references(
     messages: list[Any],
 ) -> list[tuple[int, SemanticRecallReference]]:
-    """提取当前用户回合产生的语义召回引用"""
+    """提取当前用户回合产生的语义召回引用。"""
     last_human_index = -1
     for index, message in enumerate(messages):
         if isinstance(message, HumanMessage) and not message.additional_kwargs.get(
@@ -122,7 +122,7 @@ async def _load_recall_records(
     conversation_id: UUID,
     references: list[tuple[int, SemanticRecallReference]],
 ) -> tuple[dict[str, SemanticRecallRecord], set[str]]:
-    """逐个 query 加载召回记录，并隔离已失效的引用"""
+    """逐个 query 加载召回记录，并隔离已失效的引用。"""
     async with semantic_recall_repository() as repo:
         service = await create_authorized_semantic_recall_service(user_id, repo)
         records: dict[str, SemanticRecallRecord] = {}
@@ -148,7 +148,7 @@ def _replace_reference_content(
     records: dict[str, SemanticRecallRecord],
     missing_queries: set[str],
 ) -> list[Any]:
-    """分别使用已授权内容或失效错误替换消息副本中的引用"""
+    """分别使用已授权内容或失效错误替换消息副本中的引用。"""
     expanded = list(messages)
     for index, reference in references:
         message = expanded[index]
@@ -172,7 +172,7 @@ async def expand_semantic_recall_messages_for_display(
     user_id: int,
     conversation_id: UUID,
 ) -> list[Any]:
-    """在公开消息投影中展开语义召回引用，不修改持久化消息"""
+    """在公开消息投影中展开语义召回引用，不修改持久化消息。"""
     references = [
         (index, reference)
         for index, message in enumerate(messages)
@@ -199,14 +199,14 @@ async def expand_semantic_recall_messages_for_display(
 
 
 class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
-    """仅在当前模型请求中展开已授权的召回记录"""
+    """仅在当前模型请求中展开已授权的召回记录。"""
 
     def wrap_model_call(
         self,
         request: ModelRequest[Any],
         handler: Callable[[ModelRequest[Any]], ModelResponse[Any]],
     ) -> ModelResponse[Any]:
-        """拒绝需要异步数据读取的同步模型调用"""
+        """拒绝需要异步数据读取的同步模型调用。"""
         if _current_turn_references(request.messages):
             raise RuntimeError("语义召回展开需要异步执行")
         return handler(request)
@@ -216,7 +216,7 @@ class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
         request: ModelRequest[Any],
         handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
     ) -> ModelResponse[Any]:
-        """在异步模型调用前展开当前回合的语义召回引用"""
+        """在异步模型调用前展开当前回合的语义召回引用。"""
         references = _current_turn_references(request.messages)
         if not references:
             return await handler(request)

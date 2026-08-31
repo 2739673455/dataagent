@@ -1,4 +1,4 @@
-"""管理员接口请求与响应模型"""
+"""管理员接口请求与响应模型。"""
 
 from datetime import datetime
 from typing import Any, Literal, Self
@@ -36,7 +36,7 @@ from app.shared.contracts.doris import (
 
 
 class CreateUserRequest(BaseModel):
-    """管理员创建用户请求"""
+    """管理员创建用户请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -52,24 +52,24 @@ class CreateUserRequest(BaseModel):
     @field_validator("username")
     @classmethod
     def normalize_username(cls, username: str) -> str:
-        """规范化并校验用户名"""
+        """规范化并校验用户名。"""
         return validate_username(username)
 
     @field_validator("email")
     @classmethod
     def normalize_email(cls, email: str) -> str:
-        """规范化并校验邮箱"""
+        """规范化并校验邮箱。"""
         return validate_email(email)
 
     @field_validator("doris_role")
     @classmethod
     def normalize_role(cls, role: str | None) -> str | None:
-        """校验 Doris 角色名"""
+        """校验 Doris 角色名。"""
         return normalize_doris_role_name(role) if role else None
 
 
 class UpdateUserRequest(BaseModel):
-    """管理员更新用户信息请求"""
+    """管理员更新用户信息请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -90,7 +90,7 @@ class UpdateUserRequest(BaseModel):
     @field_validator("username")
     @classmethod
     def normalize_username(cls, username: str | None) -> str | None:
-        """规范化并校验用户名"""
+        """规范化并校验用户名。"""
         if username is None:
             return None
         return validate_username(username)
@@ -98,7 +98,7 @@ class UpdateUserRequest(BaseModel):
     @field_validator("email")
     @classmethod
     def normalize_email(cls, email: str | None) -> str | None:
-        """规范化并校验邮箱"""
+        """规范化并校验邮箱。"""
         if email is None:
             return None
         return validate_email(email)
@@ -106,12 +106,12 @@ class UpdateUserRequest(BaseModel):
     @field_validator("doris_role")
     @classmethod
     def normalize_role(cls, role: str | None) -> str | None:
-        """校验 Doris 角色名"""
+        """校验 Doris 角色名。"""
         return normalize_doris_role_name(role) if role else None
 
     @model_validator(mode="after")
     def validate_updates(self) -> Self:
-        """要求至少更新一个字段，并限制空值只用于清除 Doris 角色"""
+        """要求至少更新一个字段，并限制空值只用于清除 Doris 角色。"""
         if not self.model_fields_set:
             raise ValueError("至少需要提供一个待更新字段")
 
@@ -127,7 +127,7 @@ class UpdateUserRequest(BaseModel):
 
 
 class DorisRoleResponse(BaseModel):
-    """Doris 数据角色响应"""
+    """Doris 数据角色响应。"""
 
     name: str
     description: str
@@ -139,7 +139,7 @@ class DorisRoleResponse(BaseModel):
 
     @classmethod
     def from_status(cls, role: DorisRoleStatus) -> Self:
-        """从实时角色状态构造响应"""
+        """从实时角色状态构造响应。"""
         return cls(
             name=role.name,
             description=role.description,
@@ -152,7 +152,7 @@ class DorisRoleResponse(BaseModel):
 
     @classmethod
     def from_entity(cls, identity: DorisQueryIdentity) -> Self:
-        """从持久化查询身份构造响应"""
+        """从持久化查询身份构造响应。"""
         return cls(
             name=identity.role_name,
             description=identity.description,
@@ -165,19 +165,19 @@ class DorisRoleResponse(BaseModel):
 
 
 class DorisRoleListResponse(BaseModel):
-    """Doris 数据角色列表"""
+    """Doris 数据角色列表。"""
 
     roles: list[DorisRoleResponse]
 
 
 class DorisWorkloadGroupListResponse(BaseModel):
-    """Doris 工作组列表响应"""
+    """Doris 工作组列表响应。"""
 
     workload_groups: list[str]
 
 
 class DorisExistingRoleResponse(BaseModel):
-    """Doris 已有角色响应"""
+    """Doris 已有角色响应。"""
 
     name: str
     managed: bool
@@ -185,13 +185,13 @@ class DorisExistingRoleResponse(BaseModel):
 
 
 class DorisExistingRoleListResponse(BaseModel):
-    """Doris 已有角色列表响应"""
+    """Doris 已有角色列表响应。"""
 
     roles: list[DorisExistingRoleResponse]
 
 
 class CreateDorisRoleRequest(BaseModel):
-    """创建 Doris 角色及稳定查询身份请求"""
+    """创建 Doris 角色及稳定查询身份请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -211,13 +211,13 @@ class CreateDorisRoleRequest(BaseModel):
     @field_validator("role")
     @classmethod
     def normalize_role(cls, role: str) -> str:
-        """校验 Doris 角色名"""
+        """校验 Doris 角色名。"""
         return normalize_doris_role_name(role)
 
     @field_validator("description")
     @classmethod
     def normalize_description(cls, description: str) -> str:
-        """规范化角色说明"""
+        """规范化角色说明。"""
         normalized = description.strip()
         if not normalized:
             raise ValueError("角色描述不能为空")
@@ -225,7 +225,7 @@ class CreateDorisRoleRequest(BaseModel):
 
 
 class UserListResponse(BaseModel):
-    """用户列表响应"""
+    """用户列表响应。"""
 
     users: list[UserResponse]
     total: int = Field(ge=0)
@@ -235,7 +235,7 @@ class UserListResponse(BaseModel):
 
 
 class SetUserDorisRoleRequest(BaseModel):
-    """设置用户唯一 Doris 角色请求"""
+    """设置用户唯一 Doris 角色请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -244,12 +244,12 @@ class SetUserDorisRoleRequest(BaseModel):
     @field_validator("role")
     @classmethod
     def normalize_role(cls, role: str) -> str:
-        """校验 Doris 角色名"""
+        """校验 Doris 角色名。"""
         return normalize_doris_role_name(role)
 
 
 class SetUserAdministratorRequest(BaseModel):
-    """设置平台管理员请求"""
+    """设置平台管理员请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -257,7 +257,7 @@ class SetUserAdministratorRequest(BaseModel):
 
 
 class SelectGrantRequest(BaseModel):
-    """Doris SELECT 授权或回收请求"""
+    """Doris SELECT 授权或回收请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -272,7 +272,7 @@ class SelectGrantRequest(BaseModel):
     @field_validator("columns")
     @classmethod
     def validate_columns(cls, columns: list[str]) -> list[str]:
-        """校验列名且拒绝重复"""
+        """校验列名且拒绝重复。"""
         if len(set(columns)) != len(columns):
             raise ValueError("列名不能重复")
         for column in columns:
@@ -282,14 +282,14 @@ class SelectGrantRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_scope(self) -> Self:
-        """校验库、表和列授权层级"""
+        """校验库、表和列授权层级。"""
         if self.table_name is None and self.columns:
             raise ValueError("指定列权限时必须提供表名")
         return self
 
 
 class AssetGrantResponse(BaseModel):
-    """Doris SELECT 权限投影响应"""
+    """Doris SELECT 权限投影响应。"""
 
     id: UUID
     role: str
@@ -302,7 +302,7 @@ class AssetGrantResponse(BaseModel):
 
     @classmethod
     def from_entity(cls, grant: DorisRoleAssetGrant) -> Self:
-        """从权限投影实体构造响应"""
+        """从权限投影实体构造响应。"""
         return cls(
             id=grant.id,
             role=grant.role_name,
@@ -316,13 +316,13 @@ class AssetGrantResponse(BaseModel):
 
 
 class AssetGrantListResponse(BaseModel):
-    """Doris SELECT 权限投影列表"""
+    """Doris SELECT 权限投影列表。"""
 
     grants: list[AssetGrantResponse]
 
 
 class RowPolicyRequest(BaseModel):
-    """创建 Doris 行策略请求"""
+    """创建 Doris 行策略请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -341,7 +341,7 @@ class RowPolicyRequest(BaseModel):
 
 
 class DropRowPolicyRequest(BaseModel):
-    """删除 Doris 行策略请求"""
+    """删除 Doris 行策略请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -358,7 +358,7 @@ class DropRowPolicyRequest(BaseModel):
 
 
 class RowPolicyResponse(BaseModel):
-    """Doris 实时行策略"""
+    """Doris 实时行策略。"""
 
     policy_name: str
     catalog_name: str
@@ -369,7 +369,7 @@ class RowPolicyResponse(BaseModel):
 
     @classmethod
     def from_model(cls, policy: DorisRowPolicy) -> Self:
-        """从行策略模型构造响应"""
+        """从行策略模型构造响应。"""
         return cls(
             policy_name=policy.policy_name,
             catalog_name=policy.catalog_name,
@@ -381,6 +381,6 @@ class RowPolicyResponse(BaseModel):
 
 
 class RowPolicyListResponse(BaseModel):
-    """Doris 实时行策略列表"""
+    """Doris 实时行策略列表。"""
 
     policies: list[RowPolicyResponse]

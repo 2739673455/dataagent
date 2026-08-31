@@ -1,4 +1,4 @@
-"""沙箱跨进程所有权协调"""
+"""沙箱跨进程所有权协调。"""
 
 from __future__ import annotations
 
@@ -32,25 +32,25 @@ return 0
 
 
 class SandboxOwnership(Protocol):
-    """沙箱运行时需要的跨进程协调接口"""
+    """沙箱运行时需要的跨进程协调接口。"""
 
     def start_runtime(self) -> None:
-        """登记当前进程的沙箱运行时租约"""
+        """登记当前进程的沙箱运行时租约。"""
         ...
 
     @contextmanager
     def release_runtime(self) -> Generator[bool, None, None]:
-        """释放运行时租约并返回是否已无存活运行时"""
+        """释放运行时租约并返回是否已无存活运行时。"""
         ...
 
     @contextmanager
     def capacity(self) -> Generator[None, None, None]:
-        """串行化沙箱容量检查与创建"""
+        """串行化沙箱容量检查与创建。"""
         ...
 
     @contextmanager
     def user_mutation(self, user_id: int) -> Generator[None, None, None]:
-        """串行化指定用户的沙箱结构变更"""
+        """串行化指定用户的沙箱结构变更。"""
         ...
 
     def assert_available(
@@ -58,7 +58,7 @@ class SandboxOwnership(Protocol):
         user_id: int,
         conversation_id: UUID | None = None,
     ) -> None:
-        """确认用户或会话沙箱未被标记删除"""
+        """确认用户或会话沙箱未被标记删除。"""
         ...
 
     def mark_conversation_deleted(
@@ -66,11 +66,11 @@ class SandboxOwnership(Protocol):
         user_id: int,
         conversation_id: UUID,
     ) -> None:
-        """记录会话沙箱删除墓碑"""
+        """记录会话沙箱删除墓碑。"""
         ...
 
     def mark_user_deleted(self, user_id: int) -> None:
-        """记录用户沙箱删除墓碑"""
+        """记录用户沙箱删除墓碑。"""
         ...
 
     @contextmanager
@@ -79,7 +79,7 @@ class SandboxOwnership(Protocol):
         user_id: int,
         conversation_id: UUID,
     ) -> Generator[None, None, None]:
-        """登记一个支持同线程重入的会话沙箱操作"""
+        """登记一个支持同线程重入的会话沙箱操作。"""
         ...
 
     @contextmanager
@@ -88,36 +88,36 @@ class SandboxOwnership(Protocol):
         user_id: int,
         conversation_id: UUID,
     ) -> Generator[None, None, None]:
-        """等待会话操作结束并独占维护窗口"""
+        """等待会话操作结束并独占维护窗口。"""
         ...
 
     @contextmanager
     def user_maintenance(self, user_id: int) -> Generator[None, None, None]:
-        """等待用户操作结束并独占维护窗口"""
+        """等待用户操作结束并独占维护窗口。"""
         ...
 
     def touch(self, user_id: int, activity_at: float) -> None:
-        """更新用户沙箱的最后活动时间"""
+        """更新用户沙箱的最后活动时间。"""
         ...
 
     def last_activity(self, user_id: int) -> float:
-        """读取用户沙箱的最后活动时间"""
+        """读取用户沙箱的最后活动时间。"""
         ...
 
     def forget_user(self, user_id: int) -> None:
-        """清除用户沙箱的活动记录"""
+        """清除用户沙箱的活动记录。"""
         ...
 
     def close(self) -> None:
-        """关闭协调器持有的外部资源"""
+        """关闭协调器持有的外部资源。"""
         ...
 
 
 class LocalSandboxOwnership:
-    """单进程测试和受控运行场景使用的所有权协调器"""
+    """单进程测试和受控运行场景使用的所有权协调器。"""
 
     def __init__(self) -> None:
-        """初始化进程内锁、活动计数和删除墓碑"""
+        """初始化进程内锁、活动计数和删除墓碑。"""
         self._condition = threading.Condition()
         self._capacity_lock = threading.RLock()
         self._mutation_locks: defaultdict[int, threading.RLock] = defaultdict(
@@ -135,23 +135,23 @@ class LocalSandboxOwnership:
         self._local = threading.local()
 
     def start_runtime(self) -> None:
-        """在本地协调模式下完成空运行时登记"""
+        """在本地协调模式下完成空运行时登记。"""
         return
 
     @contextmanager
     def release_runtime(self) -> Generator[bool, None, None]:
-        """释放本地运行时并报告当前为最后一个运行时"""
+        """释放本地运行时并报告当前为最后一个运行时。"""
         yield True
 
     @contextmanager
     def capacity(self) -> Generator[None, None, None]:
-        """独占执行本进程的容量检查与创建"""
+        """独占执行本进程的容量检查与创建。"""
         with self._capacity_lock:
             yield
 
     @contextmanager
     def user_mutation(self, user_id: int) -> Generator[None, None, None]:
-        """独占执行指定用户的沙箱结构变更"""
+        """独占执行指定用户的沙箱结构变更。"""
         with self._mutation_locks[user_id]:
             yield
 
@@ -160,7 +160,7 @@ class LocalSandboxOwnership:
         user_id: int,
         conversation_id: UUID | None = None,
     ) -> None:
-        """检查本地删除墓碑并拒绝已删除沙箱"""
+        """检查本地删除墓碑并拒绝已删除沙箱。"""
         with self._condition:
             if user_id in self._deleted_users:
                 raise SandboxDeletedError("用户沙箱已被删除")
@@ -175,12 +175,12 @@ class LocalSandboxOwnership:
         user_id: int,
         conversation_id: UUID,
     ) -> None:
-        """在内存中记录会话删除墓碑"""
+        """在内存中记录会话删除墓碑。"""
         with self._condition:
             self._deleted_conversations.add((user_id, conversation_id))
 
     def mark_user_deleted(self, user_id: int) -> None:
-        """在内存中记录用户删除墓碑"""
+        """在内存中记录用户删除墓碑。"""
         with self._condition:
             self._deleted_users.add(user_id)
 
@@ -190,7 +190,7 @@ class LocalSandboxOwnership:
         user_id: int,
         conversation_id: UUID,
     ) -> Generator[None, None, None]:
-        """登记进程内会话操作并维护活动计数"""
+        """登记进程内会话操作并维护活动计数。"""
         key = (user_id, conversation_id)
         depths = getattr(self._local, "operation_depths", None)
         if depths is None:
@@ -229,7 +229,7 @@ class LocalSandboxOwnership:
         user_id: int,
         conversation_id: UUID,
     ) -> Generator[None, None, None]:
-        """阻止新会话操作并等待已有操作结束"""
+        """阻止新会话操作并等待已有操作结束。"""
         key = (user_id, conversation_id)
         with self._condition:
             while key in self._conversation_maintenance:
@@ -246,7 +246,7 @@ class LocalSandboxOwnership:
 
     @contextmanager
     def user_maintenance(self, user_id: int) -> Generator[None, None, None]:
-        """阻止新用户操作并等待已有操作结束"""
+        """阻止新用户操作并等待已有操作结束。"""
         with self._condition:
             while user_id in self._user_maintenance:
                 self._condition.wait()
@@ -261,27 +261,27 @@ class LocalSandboxOwnership:
                 self._condition.notify_all()
 
     def touch(self, user_id: int, activity_at: float) -> None:
-        """在内存中更新用户最后活动时间"""
+        """在内存中更新用户最后活动时间。"""
         with self._condition:
             self._activity[user_id] = activity_at
 
     def last_activity(self, user_id: int) -> float:
-        """读取内存中的用户最后活动时间"""
+        """读取内存中的用户最后活动时间。"""
         with self._condition:
             return self._activity.get(user_id, 0.0)
 
     def forget_user(self, user_id: int) -> None:
-        """清除内存中的用户活动记录"""
+        """清除内存中的用户活动记录。"""
         with self._condition:
             self._activity.pop(user_id, None)
 
     def close(self) -> None:
-        """完成本地协调器的空资源关闭"""
+        """完成本地协调器的空资源关闭。"""
         return
 
 
 class RedisSandboxOwnership:
-    """使用 Redis 协调同一部署中的 API 和 Celery 进程"""
+    """使用 Redis 协调同一部署中的 API 和 Celery 进程。"""
 
     def __init__(
         self,
@@ -292,7 +292,7 @@ class RedisSandboxOwnership:
         wait_timeout_seconds: float,
         lease_seconds: float = 30.0,
     ) -> None:
-        """初始化 Redis 键空间、锁参数和运行时租约"""
+        """初始化 Redis 键空间、锁参数和运行时租约。"""
         self._redis = Redis.from_url(redis_url, decode_responses=True)
         self._prefix = f"dataagent:sandbox:{deployment_namespace}"
         self._lock_timeout_seconds = lock_timeout_seconds
@@ -307,12 +307,12 @@ class RedisSandboxOwnership:
         self._operation_leases_lock = threading.Lock()
 
     def _key(self, suffix: str) -> str:
-        """构造当前部署隔离的 Redis 键"""
+        """构造当前部署隔离的 Redis 键。"""
         return f"{self._prefix}:{suffix}"
 
     @contextmanager
     def _lock(self, suffix: str) -> Generator[None, None, None]:
-        """获取支持后台续期的 Redis 分布式锁"""
+        """获取支持后台续期的 Redis 分布式锁。"""
         lock = self._redis.lock(
             self._key(f"lock:{suffix}"),
             timeout=self._lock_timeout_seconds,
@@ -325,7 +325,7 @@ class RedisSandboxOwnership:
         renewal_failed = threading.Event()
 
         def renew() -> None:
-            """定期延长当前分布式锁的有效期"""
+            """定期延长当前分布式锁的有效期。"""
             interval = max(1.0, self._lock_timeout_seconds / 3)
             while not stop.wait(interval):
                 try:
@@ -352,7 +352,7 @@ class RedisSandboxOwnership:
 
     @contextmanager
     def _short_lock(self, suffix: str) -> Generator[None, None, None]:
-        """获取只保护短时 Redis 事务的分布式锁"""
+        """获取只保护短时 Redis 事务的分布式锁。"""
         lock = self._redis.lock(
             self._key(f"lock:{suffix}"),
             timeout=self._lock_timeout_seconds,
@@ -368,11 +368,11 @@ class RedisSandboxOwnership:
                 lock.release()
 
     def _runtimes_key(self) -> str:
-        """返回活跃沙箱运行时集合的 Redis 键"""
+        """返回活跃沙箱运行时集合的 Redis 键。"""
         return self._key("active:runtimes")
 
     def _renew_leases(self) -> None:
-        """续期当前运行时及其全部活跃操作"""
+        """续期当前运行时及其全部活跃操作。"""
         with self._operation_leases_lock:
             operation_leases = tuple(self._operation_leases.items())
             expires_at = time.time() + self._lease_seconds
@@ -389,7 +389,7 @@ class RedisSandboxOwnership:
                 )
 
     def _renew_runtime(self) -> None:
-        """循环续期当前进程的运行时租约"""
+        """循环续期当前进程的运行时租约。"""
         stop = self._runtime_stop
         if stop is None:
             return
@@ -398,7 +398,7 @@ class RedisSandboxOwnership:
             self._renew_leases()
 
     def start_runtime(self) -> None:
-        """登记当前进程并启动运行时租约续期线程"""
+        """登记当前进程并启动运行时租约续期线程。"""
         if self._runtime_stop is not None:
             return
         with self._short_lock("runtimes"):
@@ -417,7 +417,7 @@ class RedisSandboxOwnership:
 
     @contextmanager
     def release_runtime(self) -> Generator[bool, None, None]:
-        """停止续期并释放当前进程的运行时租约"""
+        """停止续期并释放当前进程的运行时租约。"""
         stop = self._runtime_stop
         renewal = self._runtime_renewal
         self._runtime_stop = None
@@ -433,18 +433,18 @@ class RedisSandboxOwnership:
 
     @contextmanager
     def capacity(self) -> Generator[None, None, None]:
-        """通过分布式锁串行化全局容量操作"""
+        """通过分布式锁串行化全局容量操作。"""
         with self._lock("capacity"):
             yield
 
     @contextmanager
     def user_mutation(self, user_id: int) -> Generator[None, None, None]:
-        """通过分布式锁串行化用户沙箱变更"""
+        """通过分布式锁串行化用户沙箱变更。"""
         with self._lock(f"user:{user_id}:mutation"):
             yield
 
     def _deleted_user_key(self, user_id: int) -> str:
-        """构造用户删除墓碑键"""
+        """构造用户删除墓碑键。"""
         return self._key(f"deleted:user:{user_id}")
 
     def _deleted_conversation_key(
@@ -452,7 +452,7 @@ class RedisSandboxOwnership:
         user_id: int,
         conversation_id: UUID,
     ) -> str:
-        """构造会话删除墓碑键"""
+        """构造会话删除墓碑键。"""
         return self._key(f"deleted:conversation:{user_id}:{conversation_id}")
 
     def assert_available(
@@ -460,7 +460,7 @@ class RedisSandboxOwnership:
         user_id: int,
         conversation_id: UUID | None = None,
     ) -> None:
-        """从 Redis 墓碑检查用户和会话是否可用"""
+        """从 Redis 墓碑检查用户和会话是否可用。"""
         keys = [self._deleted_user_key(user_id)]
         if conversation_id is not None:
             keys.append(self._deleted_conversation_key(user_id, conversation_id))
@@ -477,18 +477,18 @@ class RedisSandboxOwnership:
         user_id: int,
         conversation_id: UUID,
     ) -> None:
-        """持久化会话删除墓碑"""
+        """持久化会话删除墓碑。"""
         self._redis.set(
             self._deleted_conversation_key(user_id, conversation_id),
             "1",
         )
 
     def mark_user_deleted(self, user_id: int) -> None:
-        """持久化用户删除墓碑"""
+        """持久化用户删除墓碑。"""
         self._redis.set(self._deleted_user_key(user_id), "1")
 
     def _active_user_key(self, user_id: int) -> str:
-        """构造用户活跃操作集合键"""
+        """构造用户活跃操作集合键。"""
         return self._key(f"active:user:{user_id}")
 
     def _active_conversation_key(
@@ -496,11 +496,11 @@ class RedisSandboxOwnership:
         user_id: int,
         conversation_id: UUID,
     ) -> str:
-        """构造会话活跃操作集合键"""
+        """构造会话活跃操作集合键。"""
         return self._key(f"active:conversation:{user_id}:{conversation_id}")
 
     def _prune_active(self, key: str) -> int:
-        """清除过期活动租约并返回剩余数量"""
+        """清除过期活动租约并返回剩余数量。"""
         now = time.time()
         pipe = self._redis.pipeline(transaction=True)
         pipe.zremrangebyscore(key, "-inf", now)
@@ -516,7 +516,7 @@ class RedisSandboxOwnership:
         user_active_key: str,
         conversation_active_key: str,
     ) -> None:
-        """原子检查维护和删除状态并登记操作租约"""
+        """原子检查维护和删除状态并登记操作租约。"""
         deadline = time.monotonic() + self._wait_timeout_seconds
         keys = (
             self._deleted_user_key(user_id),
@@ -560,7 +560,7 @@ class RedisSandboxOwnership:
         user_id: int,
         conversation_id: UUID,
     ) -> Generator[None, None, None]:
-        """登记并续期一个跨进程会话沙箱操作"""
+        """登记并续期一个跨进程会话沙箱操作。"""
         key = (user_id, conversation_id)
         depths = getattr(self._local, "operation_depths", None)
         if depths is None:
@@ -613,7 +613,7 @@ class RedisSandboxOwnership:
             pipe.execute()
 
     def _wait_for_idle(self, key: str, label: str) -> None:
-        """等待指定活动租约集合清空"""
+        """等待指定活动租约集合清空。"""
         deadline = time.monotonic() + self._wait_timeout_seconds
         while self._prune_active(key):
             if time.monotonic() >= deadline:
@@ -626,7 +626,7 @@ class RedisSandboxOwnership:
         user_id: int,
         conversation_id: UUID,
     ) -> Generator[None, None, None]:
-        """独占会话入口并等待跨进程操作结束"""
+        """独占会话入口并等待跨进程操作结束。"""
         label = f"conversation:{user_id}:{conversation_id}"
         with self._lock(f"{label}:gate"):
             self._wait_for_idle(
@@ -637,27 +637,27 @@ class RedisSandboxOwnership:
 
     @contextmanager
     def user_maintenance(self, user_id: int) -> Generator[None, None, None]:
-        """独占用户入口并等待跨进程操作结束"""
+        """独占用户入口并等待跨进程操作结束。"""
         label = f"user:{user_id}"
         with self._lock(f"{label}:gate"):
             self._wait_for_idle(self._active_user_key(user_id), label)
             yield
 
     def touch(self, user_id: int, activity_at: float) -> None:
-        """将用户最后活动时间写入 Redis"""
+        """将用户最后活动时间写入 Redis。"""
         self._redis.set(self._key(f"activity:{user_id}"), activity_at)
 
     def last_activity(self, user_id: int) -> float:
-        """从 Redis 读取用户最后活动时间"""
+        """从 Redis 读取用户最后活动时间。"""
         value = self._redis.get(self._key(f"activity:{user_id}"))
         if isinstance(value, (bytes, str, int, float)):
             return float(value)
         return 0.0
 
     def forget_user(self, user_id: int) -> None:
-        """删除 Redis 中的用户活动记录"""
+        """删除 Redis 中的用户活动记录。"""
         self._redis.delete(self._key(f"activity:{user_id}"))
 
     def close(self) -> None:
-        """关闭 Redis 客户端连接"""
+        """关闭 Redis 客户端连接。"""
         self._redis.close()

@@ -1,4 +1,4 @@
-"""查询执行配置、结果与持久化模型"""
+"""查询执行配置、结果与持久化模型。"""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -26,11 +26,11 @@ type QueryExecutionStatus = Literal["rejected", "failed", "succeeded"]
 
 
 class QueryExecutionTimeoutError(RuntimeError):
-    """Doris 查询执行超时"""
+    """Doris 查询执行超时。"""
 
 
 class QueryExecutionLimits(BaseModel):
-    """Doris 单次查询资源限制"""
+    """Doris 单次查询资源限制。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -44,7 +44,7 @@ class QueryExecutionLimits(BaseModel):
 
 
 class QueryExecutionOptions(BaseModel):
-    """Doris 查询流式处理与结果摘要选项"""
+    """Doris 查询流式处理与结果摘要选项。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -54,14 +54,14 @@ class QueryExecutionOptions(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class QueryBatch:
-    """Doris 服务端游标返回的一批结果"""
+    """Doris 服务端游标返回的一批结果。"""
 
     column_names: tuple[str, ...]
     rows: tuple[tuple[Any, ...], ...]
 
 
 class QueryResultColumn(BaseModel):
-    """查询结果字段信息"""
+    """查询结果字段信息。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -71,7 +71,7 @@ class QueryResultColumn(BaseModel):
 
 
 class QueryTimeRange(BaseModel):
-    """时间字段在结果集中的取值范围"""
+    """时间字段在结果集中的取值范围。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -80,7 +80,7 @@ class QueryTimeRange(BaseModel):
 
 
 class AnalysisQueryResult(BaseModel):
-    """写入会话沙箱后的查询结果摘要"""
+    """写入会话沙箱后的查询结果摘要。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -92,7 +92,7 @@ class AnalysisQueryResult(BaseModel):
 
 
 class QueryExecution(MetaBase):
-    """一次 SQL 尝试"""
+    """一次 SQL 尝试。"""
 
     __tablename__ = "query_executions"
 

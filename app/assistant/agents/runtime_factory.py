@@ -1,4 +1,4 @@
-"""Conversation 级 Agent 运行时装配"""
+"""Conversation 级 Agent 运行时装配。"""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ from app.shared.contracts.analysis import AGENT_TYPES, AgentType
 
 @dataclass(frozen=True, slots=True)
 class _SharedAgentResources:
-    """跨 Conversation 复用的模型和专业 Agent 定义"""
+    """跨 Conversation 复用的模型和专业 Agent 定义。"""
 
     planner_model: BaseChatModel
     specialist_models: dict[AgentType, BaseChatModel]
@@ -60,7 +60,7 @@ class _SharedAgentResources:
 
 
 class ConversationAgentRuntimeFactory:
-    """初始化共享能力并装配 Conversation 级 Agent 运行时"""
+    """初始化共享能力并装配 Conversation 级 Agent 运行时。"""
 
     def __init__(
         self,
@@ -68,7 +68,7 @@ class ConversationAgentRuntimeFactory:
         sandbox: DockerSandboxManager,
         tombstones: ConversationTombstoneService,
     ) -> None:
-        """保存运行时依赖，模型和工具在首次使用时初始化"""
+        """保存运行时依赖，模型和工具在首次使用时初始化。"""
         self._persistence = persistence
         self._sandbox = sandbox
         self._tombstones = tombstones
@@ -76,7 +76,7 @@ class ConversationAgentRuntimeFactory:
         self._resources: _SharedAgentResources | None = None
 
     async def init(self) -> None:
-        """初始化所有 Conversation 共享的模型和专业 Agent 能力"""
+        """初始化所有 Conversation 共享的模型和专业 Agent 能力。"""
         if self._resources is not None:
             return
         async with self._init_lock:
@@ -125,7 +125,7 @@ class ConversationAgentRuntimeFactory:
         user_id: int,
         conversation_id: UUID,
     ) -> ConversationAgentRuntime:
-        """装配一个隔离的 Conversation Agent 运行时"""
+        """装配一个隔离的 Conversation Agent 运行时。"""
         await self.init()
         resources = self._resources
         if resources is None:
@@ -183,7 +183,7 @@ class ConversationAgentRuntimeFactory:
         backend: BackendProtocol,
         checkpointer: BaseCheckpointSaver,
     ) -> CompiledStateGraph:
-        """构建绑定 Session 生命周期工具的 Planner"""
+        """构建绑定 Session 生命周期工具的 Planner。"""
         planner_tools = [
             create_delegation_tool(session_service),
             create_list_sessions_tool(session_service),
@@ -200,5 +200,5 @@ class ConversationAgentRuntimeFactory:
         )
 
     def close(self) -> None:
-        """释放当前进程持有的共享 Agent 配置"""
+        """释放当前进程持有的共享 Agent 配置。"""
         self._resources = None

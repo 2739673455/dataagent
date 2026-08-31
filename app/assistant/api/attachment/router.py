@@ -1,4 +1,4 @@
-"""会话附件上传、下载与删除路由"""
+"""会话附件上传、下载与删除路由。"""
 
 import mimetypes
 from typing import Annotated
@@ -36,15 +36,15 @@ async def api_upload_attachment(
     conversation_id: Annotated[UUID, Form()],
     file: Annotated[UploadFile, File()],
 ) -> chat_schema.UploadAttachmentResponse:
-    """上传附件到当前会话工作区"""
+    """上传附件到当前会话工作区。"""
     user_id = current_user.id
     async with lifecycle.lock(user_id, conversation_id):
-        # 检查对话是否存在且属于当前用户
+        # 检查对话是否存在且属于当前用户。
         conversation = await conversation_repo.get(user_id, conversation_id)
         if conversation is None:
             raise chat_error.ConversationNotFoundError
 
-        # 获取文件名
+        # 获取文件名。
         f_path = file.filename or "upload"
         try:
             f_path = await sandbox.upload_user_attachment(
@@ -75,7 +75,7 @@ async def api_delete_attachment(
     lifecycle: ConversationLifecycleServiceDep,
     sandbox: SandboxManagerDep,
 ) -> None:
-    """删除当前会话工作区中的附件"""
+    """删除当前会话工作区中的附件。"""
     user_id = current_user.id
     async with lifecycle.lock(user_id, body.conversation_id):
         conversation = await conversation_repo.get(user_id, body.conversation_id)
@@ -103,7 +103,7 @@ async def api_get_attachment(
     current_user: CurrentUserDep,
     sandbox: SandboxManagerDep,
 ) -> Response:
-    """获取当前会话工作区中的附件文件"""
+    """获取当前会话工作区中的附件文件。"""
     user_id = current_user.id
     conversation = await conversation_repo.get(user_id, conversation_id)
     if conversation is None:
@@ -122,7 +122,7 @@ async def api_get_attachment(
     except SandboxFileTooLargeError:
         raise attachment_error.AttachmentTooLargeError from None
 
-    # 获取文件 MIME 类型
+    # 获取文件 MIME 类型。
     media_type, _ = mimetypes.guess_type(f_path)
 
     logger.info(f"获取附件: conversation_id={conversation_id}, file={f_path}")

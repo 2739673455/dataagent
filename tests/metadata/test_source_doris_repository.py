@@ -1,4 +1,4 @@
-"""Doris 业务数据存储测试"""
+"""Doris 业务数据存储测试。"""
 
 import unittest
 from typing import cast

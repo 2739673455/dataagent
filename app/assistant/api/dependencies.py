@@ -1,4 +1,4 @@
-"""Assistant 模块运行时依赖"""
+"""Assistant 模块运行时依赖。"""
 
 from typing import Annotated
 
@@ -17,22 +17,22 @@ from app.sandbox.manager import DockerSandboxManager
 
 
 def _get_agent_manager() -> AgentManager:
-    """获取应用级 Agent 管理器"""
+    """获取应用级 Agent 管理器。"""
     return agent_manager
 
 
 def _get_sandbox_manager() -> DockerSandboxManager:
-    """获取应用级沙箱管理器"""
+    """获取应用级沙箱管理器。"""
     return sandbox_manager
 
 
 def _get_conversation_lifecycle_service() -> ConversationLifecycleService:
-    """获取应用级会话生命周期服务"""
+    """获取应用级会话生命周期服务。"""
     return conversation_lifecycle_service
 
 
 def _get_conversation_run_service() -> ConversationRunService:
-    """获取应用级 Conversation Run 管理器"""
+    """获取应用级 Conversation Run 管理器。"""
     return conversation_run_service
 
 

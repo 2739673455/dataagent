@@ -1,4 +1,4 @@
-"""元数据检索索引增量同步服务测试"""
+"""元数据检索索引增量同步服务测试。"""
 
 import unittest
 from dataclasses import replace
@@ -25,7 +25,7 @@ def build_service(
     embedding_client: MagicMock | None = None,
     value_repo: MagicMock | None = None,
 ) -> MetaIndexService:
-    """构造元数据检索索引同步服务"""
+    """构造元数据检索索引同步服务。"""
     meta_repo = meta_repo or MagicMock(spec=MetaPGRepo)
     meta_repo.session = AsyncSessionStub()
     return MetaIndexService(
@@ -50,7 +50,7 @@ def build_column(
     *,
     index_values: bool = False,
 ) -> ColumnInfo:
-    """构造字段信息"""
+    """构造字段信息。"""
     return ColumnInfo(
         t_name=t_name,
         name=c_name,
@@ -63,7 +63,7 @@ def build_column(
 
 
 def build_state(now: datetime) -> ValueIndexSyncState:
-    """构造已成功同步的取值索引状态"""
+    """构造已成功同步的取值索引状态。"""
     return ValueIndexSyncState(
         t_name="orders",
         c_name="status",

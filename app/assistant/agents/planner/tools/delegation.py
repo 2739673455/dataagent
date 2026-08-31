@@ -1,4 +1,4 @@
-"""专业 Agent 委派工具"""
+"""专业 Agent 委派工具。"""
 
 from dataclasses import replace
 from typing import Annotated, cast
@@ -22,7 +22,7 @@ _PTC_DELEGATION_ID_PREFIX = "ptc_delegation_"
 
 
 def _parent_eval_tool_call_id(runtime: ToolRuntime) -> str | None:
-    """从 QuickJS PTC 的派生运行时中定位父 eval 工具调用"""
+    """从 QuickJS PTC 的派生运行时中定位父 eval 工具调用。"""
     tool_call_id = runtime.tool_call_id
     if not tool_call_id or not tool_call_id.startswith(_PTC_DELEGATION_ID_PREFIX):
         return None
@@ -39,7 +39,7 @@ def _parent_eval_tool_call_id(runtime: ToolRuntime) -> str | None:
 
 
 def create_delegation_tool(service: AgentSessionService) -> BaseTool:
-    """创建只绑定当前用户会话的 delegation Tool"""
+    """创建只绑定当前用户会话的 delegation Tool。"""
 
     @tool("delegation")
     async def delegation(
@@ -61,7 +61,7 @@ def create_delegation_tool(service: AgentSessionService) -> BaseTool:
             "交给专业 Agent 的完整目标、输入产物路径和约束",
         ],
     ) -> dict[str, object]:
-        """创建或恢复专业 Agent Session 并返回可验证的结构化结果"""
+        """创建或恢复专业 Agent Session 并返回可验证的结构化结果。"""
         try:
             request = DelegationRequest(
                 analysis_id=analysis_id,

@@ -1,4 +1,4 @@
-"""Doris 单角色授权策略测试"""
+"""Doris 单角色授权策略测试。"""
 
 import unittest
 from unittest.mock import AsyncMock, MagicMock
@@ -29,7 +29,7 @@ def query_identity(
     *,
     default: bool = False,
 ) -> DorisQueryIdentity:
-    """构造 Doris 查询身份"""
+    """构造 Doris 查询身份。"""
     return DorisQueryIdentity(
         role_name=role,
         description="测试角色",
@@ -41,7 +41,7 @@ def query_identity(
 
 
 class AssetAccessPolicyTest(unittest.TestCase):
-    """验证层级授权的访问与目录可见语义"""
+    """验证层级授权的访问与目录可见语义。"""
 
     def test_column_grant_makes_table_visible_without_allowing_whole_table(
         self,
@@ -66,7 +66,7 @@ class AssetAccessPolicyTest(unittest.TestCase):
 
 
 class AuthorizationServiceTest(unittest.IsolatedAsyncioTestCase):
-    """验证唯一 Doris 角色授权策略构建"""
+    """验证唯一 Doris 角色授权策略构建。"""
 
     async def test_admin_still_uses_assigned_doris_role_policy(self) -> None:
         repo = MagicMock(spec=AuthPGRepo)
@@ -112,7 +112,7 @@ class AuthorizationServiceTest(unittest.IsolatedAsyncioTestCase):
 
 
 class DorisRoleManagementServiceTest(unittest.IsolatedAsyncioTestCase):
-    """验证用户唯一角色与管理员安全边界"""
+    """验证用户唯一角色与管理员安全边界。"""
 
     def setUp(self) -> None:
         self.repo = MagicMock(spec=AuthPGRepo)

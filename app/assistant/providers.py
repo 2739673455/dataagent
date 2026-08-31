@@ -1,4 +1,4 @@
-"""Assistant 应用服务依赖组装"""
+"""Assistant 应用服务依赖组装。"""
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -17,7 +17,7 @@ from app.shared.config.app_config import LifecycleConfig
 async def _conversation_repository(
     postgres: PostgresClientManager,
 ) -> AsyncGenerator[ConversationPGRepo]:
-    """创建带事务边界的会话目录数据访问"""
+    """创建带事务边界的会话目录数据访问。"""
     async with postgres.session() as session, session.begin():
         yield ConversationPGRepo(session)
 
@@ -26,7 +26,7 @@ async def _conversation_repository(
 async def _semantic_recall_repository(
     postgres: PostgresClientManager,
 ) -> AsyncGenerator[SemanticRecallPGRepo]:
-    """创建带事务边界的语义召回数据访问"""
+    """创建带事务边界的语义召回数据访问。"""
     async with postgres.session() as session, session.begin():
         yield SemanticRecallPGRepo(session)
 
@@ -39,7 +39,7 @@ def build_conversation_lifecycle_service(
     sandbox: DockerSandboxManager,
     config: LifecycleConfig,
 ) -> ConversationLifecycleService:
-    """组装会话跨存储生命周期服务"""
+    """组装会话跨存储生命周期服务。"""
     return ConversationLifecycleService(
         lambda: _conversation_repository(assistant_postgres),
         lambda: _semantic_recall_repository(meta_postgres),

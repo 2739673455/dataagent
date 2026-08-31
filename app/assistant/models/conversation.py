@@ -1,4 +1,4 @@
-"""会话目录关系模型"""
+"""会话目录关系模型。"""
 
 from datetime import datetime
 from uuid import UUID, uuid4
@@ -10,7 +10,7 @@ from app.shared.database.base import AssistantBase
 
 
 class Conversation(AssistantBase):
-    """助手会话目录"""
+    """助手会话目录。"""
 
     __tablename__ = "conversations"
 

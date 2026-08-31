@@ -1,4 +1,4 @@
-"""Doris 单角色查询身份解析测试"""
+"""Doris 单角色查询身份解析测试。"""
 
 import unittest
 from unittest.mock import AsyncMock, MagicMock
@@ -12,7 +12,7 @@ from tests.identity.test_auth_service import build_user
 
 
 def identity(role: str, user: str) -> DorisQueryIdentity:
-    """构造持久化查询身份"""
+    """构造持久化查询身份。"""
     return DorisQueryIdentity(
         role_name=role,
         description=role,
@@ -24,7 +24,7 @@ def identity(role: str, user: str) -> DorisQueryIdentity:
 
 
 class QueryPrincipalServiceTest(unittest.IsolatedAsyncioTestCase):
-    """验证用户只能选择其唯一角色的共享查询账号"""
+    """验证用户只能选择其唯一角色的共享查询账号。"""
 
     async def test_exact_role_selects_and_decrypts_query_identity(self) -> None:
         user = build_user(doris_role="sales")

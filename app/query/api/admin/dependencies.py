@@ -1,4 +1,4 @@
-"""查询经验管理接口依赖"""
+"""查询经验管理接口依赖。"""
 
 from typing import Annotated
 

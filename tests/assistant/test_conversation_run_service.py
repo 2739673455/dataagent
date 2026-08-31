@@ -1,4 +1,4 @@
-"""Conversation Run 与 SSE 订阅解耦测试"""
+"""Conversation Run 与 SSE 订阅解耦测试。"""
 
 import asyncio
 import unittest

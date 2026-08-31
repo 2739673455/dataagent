@@ -1,4 +1,4 @@
-"""历史会话管理权限与标题协议测试"""
+"""历史会话管理权限与标题协议测试。"""
 
 import unittest
 from typing import get_type_hints
@@ -21,7 +21,7 @@ from app.identity.api.auth.dependencies import AnalysisUserDep, CurrentUserDep
 
 
 class ChatHistoryAccessTest(unittest.TestCase):
-    """验证历史数据管理不依赖可用 Doris 角色"""
+    """验证历史数据管理不依赖可用 Doris 角色。"""
 
     def test_title_is_trimmed_and_limited(self) -> None:
         conversation_id = uuid4()

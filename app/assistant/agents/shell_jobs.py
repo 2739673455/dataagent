@@ -1,4 +1,4 @@
-"""Specialist 单次 Agent Run 的 Shell Job 运行时"""
+"""Specialist 单次 Agent Run 的 Shell Job 运行时。"""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ _CLEANUP_WAIT_SECONDS = 8.0
 
 
 class ShellJobResult(BaseModel):
-    """Shell Job 对模型公开的当前或最终结果"""
+    """Shell Job 对模型公开的当前或最终结果。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -63,7 +63,7 @@ class ShellJobResult(BaseModel):
 
 
 class ShellJobSummary(BaseModel):
-    """Shell Job 列表项"""
+    """Shell Job 列表项。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -81,7 +81,7 @@ class ShellJobSummary(BaseModel):
 
 
 class ShellJobError(BaseModel):
-    """Shell Job 工具的稳定错误结构"""
+    """Shell Job 工具的稳定错误结构。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -92,7 +92,7 @@ class ShellJobError(BaseModel):
 
 @dataclass(slots=True)
 class _ShellJobRecord:
-    """Registry 内部保存的单个 Shell Job 可变记录"""
+    """Registry 内部保存的单个 Shell Job 可变记录。"""
 
     job_id: str
     command: str
@@ -117,13 +117,13 @@ class _ShellJobRecord:
 
 
 def _elapsed_seconds(record: _ShellJobRecord, now: datetime | None = None) -> float:
-    """计算任务从实际启动到当前或终态的耗时"""
+    """计算任务从实际启动到当前或终态的耗时。"""
     endpoint = record.finished_at or now or datetime.now(UTC)
     return round(max(0.0, (endpoint - record.started_at).total_seconds()), 3)
 
 
 class ShellJobRuntime:
-    """协调当前 Specialist Agent Run 独占的 Shell Job"""
+    """协调当前 Specialist Agent Run 独占的 Shell Job。"""
 
     def __init__(
         self,
@@ -131,7 +131,7 @@ class ShellJobRuntime:
         *,
         foreground_wait_seconds: float = _FOREGROUND_WAIT_SECONDS,
     ) -> None:
-        """绑定 Session Sandbox，并配置仅供测试缩短的前台等待时间"""
+        """绑定 Session Sandbox，并配置仅供测试缩短的前台等待时间。"""
         if not math.isfinite(foreground_wait_seconds) or foreground_wait_seconds < 0:
             raise ValueError("foreground_wait_seconds 必须是非负有限数")
         self._backend = backend
@@ -142,7 +142,7 @@ class ShellJobRuntime:
         self._closing = False
 
     def _new_job_id(self) -> str:
-        """生成当前 Registry 中唯一的模型可见标识"""
+        """生成当前 Registry 中唯一的模型可见标识。"""
         with self._lock:
             while True:
                 job_id = f"job_{secrets.token_hex(4)}"
@@ -155,7 +155,7 @@ class ShellJobRuntime:
         *,
         include_output: bool,
     ) -> ShellJobResult:
-        """从内部记录生成稳定公开结果"""
+        """从内部记录生成稳定公开结果。"""
         return ShellJobResult(
             job_id=record.job_id,
             status=record.status,
@@ -174,7 +174,7 @@ class ShellJobRuntime:
 
     @staticmethod
     def _summary(record: _ShellJobRecord) -> ShellJobSummary:
-        """从内部记录生成列表摘要"""
+        """从内部记录生成列表摘要。"""
         return ShellJobSummary(
             job_id=record.job_id,
             status=record.status,
@@ -190,11 +190,11 @@ class ShellJobRuntime:
         )
 
     async def _monitor(self, record: _ShellJobRecord) -> None:
-        """持有独立监控任务并把 Backend 结果提交为单一终态"""
+        """持有独立监控任务并把 Backend 结果提交为单一终态。"""
         loop = asyncio.get_running_loop()
 
         def started_callback() -> None:
-            """把监控线程观察到的实际启动事件投递回事件循环"""
+            """把监控线程观察到的实际启动事件投递回事件循环。"""
             loop.call_soon_threadsafe(self._mark_started, record)
 
         try:
@@ -234,7 +234,7 @@ class ShellJobRuntime:
             record.done.set()
 
     def _mark_started(self, record: _ShellJobRecord) -> None:
-        """在事件循环线程提交 Backend 已实际启动命令的状态"""
+        """在事件循环线程提交 Backend 已实际启动命令的状态。"""
         with self._lock:
             if record.started.is_set() or record.status in _TERMINAL_STATUSES:
                 return
@@ -243,7 +243,7 @@ class ShellJobRuntime:
 
     @staticmethod
     async def _wait_until_started_or_done(record: _ShellJobRecord) -> None:
-        """等待命令实际启动；启动失败时由终态事件提前结束等待"""
+        """等待命令实际启动；启动失败时由终态事件提前结束等待。"""
         started_wait = asyncio.create_task(record.started.wait())
         done_wait = asyncio.create_task(record.done.wait())
         waits = {started_wait, done_wait}
@@ -260,7 +260,7 @@ class ShellJobRuntime:
                 await asyncio.gather(*pending, return_exceptions=True)
 
     async def execute(self, command: str) -> ShellJobResult:
-        """立即启动命令，固定等待后返回终态或后台句柄"""
+        """立即启动命令，固定等待后返回终态或后台句柄。"""
         if not command.strip():
             raise ValueError("Shell 命令不能为空")
         with self._lock:
@@ -297,7 +297,7 @@ class ShellJobRuntime:
             return self._result(record, include_output=True)
 
     def list(self, *, include_reviewed: bool = False) -> list[ShellJobSummary]:
-        """列出运行中及默认尚未查看的任务，不改变 reviewed 状态"""
+        """列出运行中及默认尚未查看的任务，不改变 reviewed 状态。"""
         with self._lock:
             records = sorted(self._records.values(), key=lambda item: item.started_at)
             return [
@@ -309,7 +309,7 @@ class ShellJobRuntime:
             ]
 
     def _not_found(self, job_id: str) -> ShellJobError:
-        """构造不泄露其他 Run 信息的未找到结果"""
+        """构造不泄露其他 Run 信息的未找到结果。"""
         return ShellJobError(
             code="job_not_found",
             message=f"当前 Agent Run 中不存在 Shell Job: {job_id}",
@@ -321,7 +321,7 @@ class ShellJobRuntime:
         *,
         wait_seconds: float = 0,
     ) -> ShellJobResult | ShellJobError:
-        """立即查看任务，或在指定时限内等待其终态"""
+        """立即查看任务，或在指定时限内等待其终态。"""
         if not math.isfinite(wait_seconds) or wait_seconds < 0:
             raise ValueError("wait_seconds 必须是非负有限数")
         with self._lock:
@@ -346,7 +346,7 @@ class ShellJobRuntime:
         *,
         review_terminal: bool,
     ) -> ShellJobResult | ShellJobError:
-        """串行提交一次进程组取消请求并处理自然结束竞态"""
+        """串行提交一次进程组取消请求并处理自然结束竞态。"""
         with self._lock:
             record = self._records.get(job_id)
             if record is None:
@@ -414,11 +414,11 @@ class ShellJobRuntime:
             return self._result(record, include_output=False)
 
     async def cancel(self, job_id: str) -> ShellJobResult | ShellJobError:
-        """取消任务并在已确认终态时标记为已查看"""
+        """取消任务并在已确认终态时标记为已查看。"""
         return await self._cancel(job_id, review_terminal=True)
 
     def model_context(self) -> dict[str, list[dict[str, object]]]:
-        """构造不含命令正文和日志正文的模型临时状态"""
+        """构造不含命令正文和日志正文的模型临时状态。"""
         running: list[dict[str, object]] = []
         finished_unreviewed: list[dict[str, object]] = []
         with self._lock:
@@ -458,7 +458,7 @@ class ShellJobRuntime:
         }
 
     async def cleanup(self) -> None:
-        """在 Agent Run 结束前取消任务、等待监控并清空 Registry"""
+        """在 Agent Run 结束前取消任务、等待监控并清空 Registry。"""
         async with self._cleanup_lock:
             with self._lock:
                 if self._closing and not self._records:
@@ -521,7 +521,7 @@ def _append_shell_context(
     request: ModelRequest[Any],
     context: dict[str, list[dict[str, object]]],
 ) -> ModelRequest[Any]:
-    """只在请求副本的系统消息中附加 Shell Job 状态"""
+    """只在请求副本的系统消息中附加 Shell Job 状态。"""
     if not context["running"] and not context["finished_unreviewed"]:
         return request
     payload = json.dumps(context, ensure_ascii=False, separators=(",", ":"))
@@ -540,10 +540,10 @@ def _append_shell_context(
 
 
 class ShellJobContextMiddleware(AgentMiddleware[Any, Any, Any]):
-    """在单次模型请求副本中附加当前 Shell Job 状态"""
+    """在单次模型请求副本中附加当前 Shell Job 状态。"""
 
     def __init__(self, runtime: ShellJobRuntime) -> None:
-        """绑定与四个 Shell 工具共享的 Run 级 Runtime"""
+        """绑定与四个 Shell 工具共享的 Run 级 Runtime。"""
         self._runtime = runtime
 
     def wrap_model_call(
@@ -551,7 +551,7 @@ class ShellJobContextMiddleware(AgentMiddleware[Any, Any, Any]):
         request: ModelRequest[Any],
         handler: Callable[[ModelRequest[Any]], ModelResponse[Any]],
     ) -> ModelResponse[Any]:
-        """投影同步模型请求"""
+        """投影同步模型请求。"""
         return handler(_append_shell_context(request, self._runtime.model_context()))
 
     async def awrap_model_call(
@@ -559,7 +559,7 @@ class ShellJobContextMiddleware(AgentMiddleware[Any, Any, Any]):
         request: ModelRequest[Any],
         handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
     ) -> ModelResponse[Any]:
-        """投影异步模型请求"""
+        """投影异步模型请求。"""
         return await handler(
             _append_shell_context(request, self._runtime.model_context())
         )

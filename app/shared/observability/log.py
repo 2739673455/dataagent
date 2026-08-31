@@ -20,7 +20,7 @@ _JSON_LINE_KEY = "_json_line"
 
 
 def _build_log_payload(record: Record) -> dict[str, Any]:
-    """构造结构化日志载荷"""
+    """构造结构化日志载荷。"""
     name = record.get("name") or ""
     function = record.get("function") or ""
     line = record.get("line") or ""
@@ -64,7 +64,7 @@ def _build_log_payload(record: Record) -> dict[str, Any]:
 
 
 def _json_formatter(record: Record) -> str:
-    """序列化单行 JSON 且不追加 Loguru 异常文本"""
+    """序列化单行 JSON 且不追加 Loguru 异常文本。"""
     record["extra"][_JSON_LINE_KEY] = json.dumps(
         _build_log_payload(record),
         ensure_ascii=False,
@@ -74,7 +74,7 @@ def _json_formatter(record: Record) -> str:
 
 
 def _console_formatter(record: Record) -> str:
-    """按白名单渲染控制台上下文与原生异常"""
+    """按白名单渲染控制台上下文与原生异常。"""
     template = (
         "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
         "<level>{level:^8}</level> | "
@@ -98,7 +98,7 @@ def _console_formatter(record: Record) -> str:
 
 @cache
 def setup_logger() -> None:
-    """初始化日志配置"""
+    """初始化日志配置。"""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     logger.configure(
         handlers=[

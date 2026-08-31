@@ -1,4 +1,4 @@
-"""PostgreSQL 客户端管理"""
+"""PostgreSQL 客户端管理。"""
 
 from collections.abc import AsyncIterator
 
@@ -16,14 +16,14 @@ from app.shared.database.base import AssistantBase, AuthBase, MetaBase
 
 
 class PostgresClientManager:
-    """PostgreSQL 客户端管理器"""
+    """PostgreSQL 客户端管理器。"""
 
     def __init__(
         self,
         db_config: DBConfig,
         base: type[DeclarativeBase],
     ) -> None:
-        """初始化 PostgreSQL 客户端管理器"""
+        """初始化 PostgreSQL 客户端管理器。"""
         self._db_config = db_config
         self._base = base
         self._engine: AsyncEngine | None = None
@@ -31,7 +31,7 @@ class PostgresClientManager:
 
     @property
     def _url(self) -> URL:
-        """获取异步数据库连接 URL"""
+        """获取异步数据库连接 URL。"""
         return URL.create(
             drivername="postgresql+psycopg",
             username=self._db_config.user,
@@ -42,7 +42,7 @@ class PostgresClientManager:
         )
 
     def init(self) -> None:
-        """初始化数据库引擎和会话工厂"""
+        """初始化数据库引擎和会话工厂。"""
         self._engine = create_async_engine(
             self._url,
             echo=False,
@@ -59,29 +59,29 @@ class PostgresClientManager:
         )
 
     def _get_session_maker(self) -> async_sessionmaker[AsyncSession]:
-        """获取数据库会话工厂"""
+        """获取数据库会话工厂。"""
         if self._session_maker is None:
             raise RuntimeError("PostgreSQL 客户端管理器尚未初始化")
         return self._session_maker
 
     def session(self) -> AsyncSession:
-        """创建数据库会话"""
+        """创建数据库会话。"""
         return self._get_session_maker()()
 
     async def get_session(self) -> AsyncIterator[AsyncSession]:
-        """获取 FastAPI 请求级数据库会话"""
+        """获取 FastAPI 请求级数据库会话。"""
         async with self.session() as db_session:
             yield db_session
 
     async def close(self) -> None:
-        """关闭数据库引擎并释放资源"""
+        """关闭数据库引擎并释放资源。"""
         if self._engine is not None:
             await self._engine.dispose()
         self._engine = None
         self._session_maker = None
 
     async def init_tables(self) -> None:
-        """根据当前 ORM 模型创建尚未存在的数据表"""
+        """根据当前 ORM 模型创建尚未存在的数据表。"""
         if self._engine is None:
             raise RuntimeError("PostgreSQL 客户端管理器尚未初始化")
         async with self._engine.begin() as connection:

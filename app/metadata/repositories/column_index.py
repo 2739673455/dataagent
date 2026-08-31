@@ -1,4 +1,4 @@
-"""字段语义索引访问"""
+"""字段语义索引访问。"""
 
 from typing import Any, ClassVar, cast
 
@@ -20,7 +20,7 @@ from app.shared.config.app_config import cfg
 
 
 class ColumnESRepo:
-    """字段全文与向量索引存储"""
+    """字段全文与向量索引存储。"""
 
     _index_name = cfg.elasticsearch.column_index
     _exact_text_boosts: ClassVar[dict[SemanticTextType, float]] = {
@@ -61,7 +61,7 @@ class ColumnESRepo:
     }
 
     def __init__(self, client: AsyncElasticsearch) -> None:
-        """初始化字段语义索引存储"""
+        """初始化字段语义索引存储。"""
         self._client = client
         self._delta_repo = SemanticIndexDeltaRepo(
             client,
@@ -70,7 +70,7 @@ class ColumnESRepo:
         )
 
     async def ensure_index(self) -> None:
-        """确保字段语义索引存在"""
+        """确保字段语义索引存在。"""
         if await self._client.indices.exists(index=self._index_name):
             await self._client.indices.put_mapping(
                 index=self._index_name,
@@ -91,17 +91,17 @@ class ColumnESRepo:
         self,
         resource_key: str,
     ) -> list[SemanticIndexDocument]:
-        """读取字段当前语义索引文档"""
+        """读取字段当前语义索引文档。"""
         return await self._delta_repo.list_documents(
             {"term": {"resource_key": resource_key}}
         )
 
     async def apply_delta(self, delta: SemanticIndexDelta) -> None:
-        """应用字段语义索引差量"""
+        """应用字段语义索引差量。"""
         await self._delta_repo.apply_delta(delta)
 
     async def delete(self, t_name: str, c_name: str) -> None:
-        """删除字段对应的全部语义索引文档"""
+        """删除字段对应的全部语义索引文档。"""
         await self._delete_by_filter(
             [{"term": {"resource_key": column_resource_key(t_name, c_name)}}]
         )
@@ -114,7 +114,7 @@ class ColumnESRepo:
         score_threshold: float = 0.6,
         limit: int = 5,
     ) -> list[SearchHit[ColumnInfo]]:
-        """根据向量检索字段并保留命中分数"""
+        """根据向量检索字段并保留命中分数。"""
         result = await self._vector_search(
             embedding,
             score_threshold,
@@ -130,12 +130,12 @@ class ColumnESRepo:
         allowed_columns: frozenset[ColumnKey] | None,
         limit: int = 5,
     ) -> list[SearchHit[ColumnInfo]]:
-        """根据关键词检索字段并保留命中分数"""
+        """根据关键词检索字段并保留命中分数。"""
         result = await self._text_search(query, limit, allowed_columns)
         return self._hits(result)
 
     async def _delete_by_filter(self, filters: list[dict[str, Any]]) -> None:
-        """按过滤条件删除字段语义索引文档"""
+        """按过滤条件删除字段语义索引文档。"""
         if not await self._client.indices.exists(index=self._index_name):
             return
         await self._client.delete_by_query(
@@ -152,7 +152,7 @@ class ColumnESRepo:
         limit: int,
         allowed_columns: frozenset[ColumnKey] | None,
     ) -> dict[str, Any]:
-        """执行字段向量检索"""
+        """执行字段向量检索。"""
         knn: dict[str, Any] = {
             "field": "embedding",
             "query_vector": embedding,
@@ -175,7 +175,7 @@ class ColumnESRepo:
         limit: int,
         allowed_columns: frozenset[ColumnKey] | None,
     ) -> dict[str, Any]:
-        """执行字段全文检索"""
+        """执行字段全文检索。"""
         exact_queries = [
             {
                 "bool": {
@@ -220,7 +220,7 @@ class ColumnESRepo:
 
     @staticmethod
     def _column_filter(allowed_columns: frozenset[ColumnKey]) -> dict[str, Any]:
-        """构造表字段联合白名单过滤条件"""
+        """构造表字段联合白名单过滤条件。"""
         if not allowed_columns:
             raise ValueError("allowed_columns 列表不能为空")
         return {
@@ -234,7 +234,7 @@ class ColumnESRepo:
 
     @staticmethod
     def _hits(result: dict[str, Any]) -> list[SearchHit[ColumnInfo]]:
-        """将 Elasticsearch 命中转换为字段结果"""
+        """将 Elasticsearch 命中转换为字段结果。"""
         return [
             SearchHit(
                 item=ColumnInfo(**hit["_source"]["payload"]),

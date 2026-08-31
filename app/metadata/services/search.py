@@ -1,4 +1,4 @@
-"""确定性的元数据语义资源召回服务"""
+"""确定性的元数据语义资源召回服务。"""
 
 import asyncio
 import uuid
@@ -49,7 +49,7 @@ ValueSyncStatus = Literal["syncing", "succeeded", "failed"]
 
 
 def _index_status(item: ColumnInfo | MetricInfo) -> SemanticIndexStatus:
-    """根据元数据和索引版本判断索引状态"""
+    """根据元数据和索引版本判断索引状态。"""
     if item.index_version <= 0:
         return "missing"
     if item.index_version < item.meta_version:
@@ -60,19 +60,19 @@ def _index_status(item: ColumnInfo | MetricInfo) -> SemanticIndexStatus:
 def _has_semantic_index_match(
     match_reasons: list[SemanticMatchReason],
 ) -> bool:
-    """判断候选是否来自全文或向量语义索引"""
+    """判断候选是否来自全文或向量语义索引。"""
     return any(reason.match_type in {"fulltext", "vector"} for reason in match_reasons)
 
 
 @dataclass(slots=True)
 class _CandidateScore:
-    """候选资源的融合分数和命中依据"""
+    """候选资源的融合分数和命中依据。"""
 
     score: float = 0.0
     reasons: list[SemanticMatchReason] = field(default_factory=list)
 
     def add(self, score: float, reason: SemanticMatchReason) -> None:
-        """累计分数并稳定去重命中依据"""
+        """累计分数并稳定去重命中依据。"""
         self.score += score
         if reason not in self.reasons:
             self.reasons.append(reason)
@@ -80,7 +80,7 @@ class _CandidateScore:
 
 @dataclass(slots=True)
 class _ColumnContext:
-    """待返回字段及其引入原因"""
+    """待返回字段及其引入原因。"""
 
     info: ColumnInfo
     inclusion_reasons: list[str]
@@ -88,14 +88,14 @@ class _ColumnContext:
     match_reasons: list[SemanticMatchReason] = field(default_factory=list)
 
     def add_reason(self, reason: str) -> None:
-        """稳定去重字段引入原因"""
+        """稳定去重字段引入原因。"""
         if reason not in self.inclusion_reasons:
             self.inclusion_reasons.append(reason)
 
 
 @dataclass(frozen=True, slots=True)
 class _SemanticCatalog:
-    """语义召回使用的完整元数据目录"""
+    """语义召回使用的完整元数据目录。"""
 
     tables: dict[str, TableInfo]
     columns: dict[ColumnKey, ColumnInfo]
@@ -104,7 +104,7 @@ class _SemanticCatalog:
 
 @dataclass(slots=True)
 class _RecallContext:
-    """单次语义召回的输入、目录和可变状态"""
+    """单次语义召回的输入、目录和可变状态。"""
 
     request: SemanticResourceRecallRequest
     catalog: _SemanticCatalog
@@ -116,14 +116,14 @@ class _RecallContext:
 
     @property
     def search_limit(self) -> int:
-        """计算索引层候选扩召数量"""
+        """计算索引层候选扩召数量。"""
         return min(
             60,
             self.request.limit_per_type * _INDEX_SEARCH_LIMIT_MULTIPLIER,
         )
 
     def selects_any(self, *resource_types: SemanticResourceType) -> bool:
-        """判断本次请求是否选择任一资源类型"""
+        """判断本次请求是否选择任一资源类型。"""
         return any(
             resource_type in self.request.resource_types
             for resource_type in resource_types
@@ -138,7 +138,7 @@ class _RecallContext:
         channel: Literal["fulltext", "vector"],
         term: str | None = None,
     ) -> None:
-        """记录检索失败范围并保留任务取消语义"""
+        """记录检索失败范围并保留任务取消语义。"""
         if isinstance(error, asyncio.CancelledError):
             raise error
         if not isinstance(error, Exception):
@@ -160,7 +160,7 @@ class _RecallContext:
 
 @dataclass(frozen=True, slots=True)
 class _RankedCandidates:
-    """三类资源的融合排名结果"""
+    """三类资源的融合排名结果。"""
 
     columns: list[tuple[ColumnKey, float, list[SemanticMatchReason]]]
     metrics: list[tuple[str, float, list[SemanticMatchReason]]]
@@ -169,14 +169,14 @@ class _RankedCandidates:
 
 
 class _ColumnContextBuilder:
-    """根据融合候选构建字段、表和一层主外键上下文"""
+    """根据融合候选构建字段、表和一层主外键上下文。"""
 
     def __init__(
         self,
         catalog: _SemanticCatalog,
         warnings: list[str],
     ) -> None:
-        """初始化语义目录、告警集合和字段上下文缓存"""
+        """初始化语义目录、告警集合和字段上下文缓存。"""
         self._catalog = catalog
         self._warnings = warnings
         self._contexts: dict[ColumnKey, _ColumnContext] = {}
@@ -191,7 +191,7 @@ class _ColumnContextBuilder:
         list[SemanticTableContext],
         bool,
     ]:
-        """按直接候选、依赖字段和外键上下文顺序构建字段上下文"""
+        """按直接候选、依赖字段和外键上下文顺序构建字段上下文。"""
         self._add_ranked_resources(ranked)
         self._add_foreign_key_context()
         self._add_primary_keys()
@@ -215,7 +215,7 @@ class _ColumnContextBuilder:
         *,
         counts_toward_limit: bool = True,
     ) -> None:
-        """添加字段上下文并合并引入原因"""
+        """添加字段上下文并合并引入原因。"""
         column_info = self._catalog.columns.get(key)
         if column_info is None:
             return
@@ -242,7 +242,7 @@ class _ColumnContextBuilder:
             self._ranked_context_count += 1
 
     def _add_ranked_resources(self, ranked: _RankedCandidates) -> None:
-        """添加直接字段、指标依赖字段和值所属字段"""
+        """添加直接字段、指标依赖字段和值所属字段。"""
         for key, rank_score, match_reasons in ranked.columns:
             self._add_column(key, "direct_match", rank_score, match_reasons)
         for metric_name, _, _ in ranked.metrics:
@@ -259,7 +259,7 @@ class _ColumnContextBuilder:
             )
 
     def _add_primary_keys(self) -> None:
-        """为参与结果的表补充主键字段"""
+        """为参与结果的表补充主键字段。"""
         for t_name in sorted(self._participating_tables()):
             table_info = self._catalog.tables.get(t_name)
             if table_info is None:
@@ -272,7 +272,7 @@ class _ColumnContextBuilder:
                 )
 
     def _add_foreign_key_context(self) -> None:
-        """补充参与表的一层外键字段和目标字段"""
+        """补充参与表的一层外键字段和目标字段。"""
         participating_tables = self._participating_tables()
         foreign_keys = sorted(
             (
@@ -301,7 +301,7 @@ class _ColumnContextBuilder:
             )
 
     def _build_column_results(self) -> list[SemanticColumnRecallResult]:
-        """将字段上下文转换为响应模型"""
+        """将字段上下文转换为响应模型。"""
         results: list[SemanticColumnRecallResult] = []
         for context in self._contexts.values():
             column_info = context.info
@@ -336,7 +336,7 @@ class _ColumnContextBuilder:
         return results
 
     def _build_table_contexts(self) -> list[SemanticTableContext]:
-        """根据最终字段集合构建表上下文"""
+        """根据最终字段集合构建表上下文。"""
         return [
             SemanticTableContext(
                 name=table_info.name,
@@ -350,12 +350,12 @@ class _ColumnContextBuilder:
         ]
 
     def _participating_tables(self) -> set[str]:
-        """返回当前字段上下文涉及的表"""
+        """返回当前字段上下文涉及的表。"""
         return {context.info.t_name for context in self._contexts.values()}
 
 
 class SemanticResourceRecallService:
-    """聚合元数据、语义索引和字段值索引"""
+    """聚合元数据、语义索引和字段值索引。"""
 
     def __init__(
         self,
@@ -369,7 +369,7 @@ class SemanticResourceRecallService:
         database_name: str,
         max_concurrent_index_queries: int = _DEFAULT_INDEX_QUERY_CONCURRENCY,
     ) -> None:
-        """初始化元数据语义资源召回服务"""
+        """初始化元数据语义资源召回服务。"""
         if max_concurrent_index_queries <= 0:
             raise ValueError("max_concurrent_index_queries 必须为正整数")
         self._embedding_client = embedding_client
@@ -388,7 +388,7 @@ class SemanticResourceRecallService:
         self,
         request: SemanticResourceRecallRequest,
     ) -> SemanticResourceRecallResponse:
-        """按加载目录、执行召回和构建响应三个阶段完成语义资源召回"""
+        """按加载目录、执行召回和构建响应三个阶段完成语义资源召回。"""
         context = await self._create_context(request)
         await self._retrieve(context)
         return self._build_response(context)
@@ -397,7 +397,7 @@ class SemanticResourceRecallService:
         self,
         request: SemanticResourceRecallRequest,
     ) -> _RecallContext:
-        """加载完整元数据并创建单次检索上下文"""
+        """加载完整元数据并创建单次检索上下文。"""
         table_infos = await self._meta_repo.list_table_infos()
         column_infos = await self._meta_repo.list_column_infos()
         metric_infos = await self._meta_repo.list_metric_infos()
@@ -435,7 +435,7 @@ class SemanticResourceRecallService:
         )
 
     async def _retrieve(self, context: _RecallContext) -> None:
-        """按请求类型执行确定顺序的多路召回"""
+        """按请求类型执行确定顺序的多路召回。"""
         if (context.selects_any("column") and context.catalog.columns) or (
             context.selects_any("metric") and context.catalog.metrics
         ):
@@ -448,7 +448,7 @@ class SemanticResourceRecallService:
         self,
         context: _RecallContext,
     ) -> None:
-        """收集字段和指标全文命中"""
+        """收集字段和指标全文命中。"""
         if context.selects_any("column") and context.catalog.columns:
             allowed_columns = frozenset(context.catalog.columns)
             results = await asyncio.gather(
@@ -497,7 +497,7 @@ class SemanticResourceRecallService:
         self,
         context: _RecallContext,
     ) -> None:
-        """收集字段和指标向量命中"""
+        """收集字段和指标向量命中。"""
         try:
             embeddings = await self._embedding_client.aembed_documents(
                 context.request.terms
@@ -573,7 +573,7 @@ class SemanticResourceRecallService:
         backend_name: str,
         match_type: Literal["fulltext", "vector"],
     ) -> None:
-        """校验并融合每个检索词的字段索引命中"""
+        """校验并融合每个检索词的字段索引命中。"""
         for term, result in zip(context.request.terms, results, strict=True):
             if isinstance(result, BaseException):
                 context.record_backend_failure(
@@ -609,7 +609,7 @@ class SemanticResourceRecallService:
         backend_name: str,
         match_type: Literal["fulltext", "vector"],
     ) -> None:
-        """校验并融合每个检索词的指标索引命中"""
+        """校验并融合每个检索词的指标索引命中。"""
         for term, result in zip(context.request.terms, results, strict=True):
             if isinstance(result, BaseException):
                 context.record_backend_failure(
@@ -643,7 +643,7 @@ class SemanticResourceRecallService:
         self,
         context: _RecallContext,
     ) -> None:
-        """收集字段值全文索引命中"""
+        """收集字段值全文索引命中。"""
         allowed_columns = frozenset(context.catalog.columns)
         results = await asyncio.gather(
             *(
@@ -689,7 +689,7 @@ class SemanticResourceRecallService:
         self,
         context: _RecallContext,
     ) -> SemanticResourceRecallResponse:
-        """融合候选排名并组装最终语义召回响应"""
+        """融合候选排名并组装最终语义召回响应。"""
         ranked = self._rank_context(context)
         metric_results = self._build_metric_results(ranked.metrics, context)
         value_results = self._build_value_results(ranked.values, context)
@@ -715,7 +715,7 @@ class SemanticResourceRecallService:
         )
 
     def _rank_context(self, context: _RecallContext) -> _RankedCandidates:
-        """对三类候选执行类型内融合排名"""
+        """对三类候选执行类型内融合排名。"""
         columns, columns_truncated = self._rank_candidates(
             context.column_scores,
             context.request.limit_per_type,
@@ -742,7 +742,7 @@ class SemanticResourceRecallService:
         score: float,
         reason: SemanticMatchReason,
     ) -> None:
-        """新增或合并候选资源分数"""
+        """新增或合并候选资源分数。"""
         scores.setdefault(key, _CandidateScore()).add(score, reason)
 
     @staticmethod
@@ -753,7 +753,7 @@ class SemanticResourceRecallService:
         list[tuple[CandidateKeyT, float, list[SemanticMatchReason]]],
         bool,
     ]:
-        """按融合分数排序并归一化为类型内排名分数"""
+        """按融合分数排序并归一化为类型内排名分数。"""
         ordered = sorted(
             scores.items(),
             key=lambda item: (-item[1].score, str(item[0])),
@@ -776,7 +776,7 @@ class SemanticResourceRecallService:
         ranked_metrics: list[tuple[str, float, list[SemanticMatchReason]]],
         context: _RecallContext,
     ) -> list[SemanticMetricRecallResult]:
-        """构建指标检索响应"""
+        """构建指标检索响应。"""
         results: list[SemanticMetricRecallResult] = []
         for name, rank_score, match_reasons in ranked_metrics:
             metric_info = context.catalog.metrics[name]
@@ -809,7 +809,7 @@ class SemanticResourceRecallService:
         ranked_values: list[tuple[ValueKey, float, list[SemanticMatchReason]]],
         context: _RecallContext,
     ) -> list[SemanticValueRecallResult]:
-        """构建字段值检索响应"""
+        """构建字段值检索响应。"""
         results: list[SemanticValueRecallResult] = []
         warned_columns: set[ColumnKey] = set()
         for (t_name, c_name, value), rank_score, match_reasons in ranked_values:
@@ -838,20 +838,20 @@ class SemanticResourceRecallService:
 
     @staticmethod
     def _rrf_score(rank: int) -> float:
-        """计算倒数排名融合分数"""
+        """计算倒数排名融合分数。"""
         return 1 / (_RRF_K + rank)
 
     async def _run_index_query(
         self,
         operation: Awaitable[IndexResultT],
     ) -> IndexResultT:
-        """限制当前服务实例的索引查询并发量"""
+        """限制当前服务实例的索引查询并发量。"""
         async with self._index_query_semaphore:
             return await operation
 
     @staticmethod
     def _value_sync_status(status: str | None) -> ValueSyncStatus | None:
-        """将数据库字段值同步状态收窄到响应枚举"""
+        """将数据库字段值同步状态收窄到响应枚举。"""
         if status in {"syncing", "succeeded", "failed"}:
             return cast(ValueSyncStatus, status)
         return None

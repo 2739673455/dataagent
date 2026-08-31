@@ -1,4 +1,4 @@
-"""会话生命周期编排测试"""
+"""会话生命周期编排测试。"""
 
 import unittest
 from collections.abc import AsyncGenerator
@@ -46,7 +46,7 @@ def build_conversation(*, is_draft: bool, updated_at: datetime) -> Conversation:
 async def conversation_repository(
     repository: MagicMock,
 ) -> AsyncGenerator[MagicMock]:
-    """提供测试使用的会话数据访问上下文"""
+    """提供测试使用的会话数据访问上下文。"""
     yield repository
 
 
@@ -54,7 +54,7 @@ async def conversation_repository(
 async def recall_repository(
     repository: MagicMock,
 ) -> AsyncGenerator[MagicMock]:
-    """提供测试使用的语义召回数据访问上下文"""
+    """提供测试使用的语义召回数据访问上下文。"""
     yield repository
 
 

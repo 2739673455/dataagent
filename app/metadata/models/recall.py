@@ -1,4 +1,4 @@
-"""语义召回记录模型"""
+"""语义召回记录模型。"""
 
 from datetime import datetime
 from typing import Annotated, Any
@@ -23,7 +23,7 @@ SemanticResourceName = Annotated[
 
 
 def normalize_semantic_recall_query(query: str) -> str:
-    """校验并清理查询业务键"""
+    """校验并清理查询业务键。"""
     normalized = query.strip()
     if not normalized:
         raise ValueError("query 不能为空")
@@ -33,7 +33,7 @@ def normalize_semantic_recall_query(query: str) -> str:
 
 
 class SemanticRecallSnapshot(MetaBase):
-    """语义召回持久化快照"""
+    """语义召回持久化快照。"""
 
     __tablename__ = "semantic_recall_snapshots"
 
@@ -75,7 +75,7 @@ class SemanticRecallSnapshot(MetaBase):
 
 
 class SemanticRecallRecord(BaseModel):
-    """一次独立检索或多次检索的合并快照"""
+    """一次独立检索或多次检索的合并快照。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -93,7 +93,7 @@ class SemanticRecallRecord(BaseModel):
 
 
 class SemanticRecallColumnDeletion(BaseModel):
-    """一个字段或其部分字段值的删除选择器"""
+    """一个字段或其部分字段值的删除选择器。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -101,12 +101,12 @@ class SemanticRecallColumnDeletion(BaseModel):
 
     @property
     def deletes_entire_column(self) -> bool:
-        """未指定字段值时删除整个字段"""
+        """未指定字段值时删除整个字段。"""
         return self.values is None
 
 
 class SemanticRecallTableDeletion(BaseModel):
-    """一张表或其中部分字段的删除选择器"""
+    """一张表或其中部分字段的删除选择器。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -116,12 +116,12 @@ class SemanticRecallTableDeletion(BaseModel):
 
     @property
     def deletes_entire_table(self) -> bool:
-        """未指定字段时删除整张表"""
+        """未指定字段时删除整张表。"""
         return self.columns is None
 
 
 class SemanticRecallQueryExperienceDeletion(BaseModel):
-    """一条查询经验的删除选择器"""
+    """一条查询经验的删除选择器。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -129,13 +129,13 @@ class SemanticRecallQueryExperienceDeletion(BaseModel):
 
 
 class SemanticRecallMetricDeletion(BaseModel):
-    """一个指标的删除选择器"""
+    """一个指标的删除选择器。"""
 
     model_config = ConfigDict(extra="forbid")
 
 
 class SemanticRecallResourceDeletion(BaseModel):
-    """一个 query 内待删除的语义上下文资源树"""
+    """一个 query 内待删除的语义上下文资源树。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -157,7 +157,7 @@ class SemanticRecallResourceDeletion(BaseModel):
 
     @property
     def deletes_entire_query(self) -> bool:
-        """未指定资源时删除整个 query 上下文"""
+        """未指定资源时删除整个 query 上下文。"""
         return not any(
             (
                 self.tables,

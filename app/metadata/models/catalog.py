@@ -1,4 +1,4 @@
-"""元数据目录模型"""
+"""元数据目录模型。"""
 
 import json
 from dataclasses import dataclass
@@ -26,7 +26,7 @@ from app.shared.database.base import MetaBase
 
 
 class ColumnReference(TypedDict):
-    """字段联合主键引用"""
+    """字段联合主键引用。"""
 
     t_name: str
     c_name: str
@@ -39,7 +39,7 @@ COLUMN_EXAMPLE_LIMIT = 10
 
 
 def column_resource_key(t_name: str, c_name: str) -> str:
-    """生成无歧义的表字段联合资源键"""
+    """生成无歧义的表字段联合资源键。"""
     return json.dumps(
         [t_name, c_name],
         ensure_ascii=False,
@@ -48,7 +48,7 @@ def column_resource_key(t_name: str, c_name: str) -> str:
 
 
 def serialize_column_examples(examples: list[Any]) -> list[Any]:
-    """将字段示例转换为可序列化值"""
+    """将字段示例转换为可序列化值。"""
     serialized: list[Any] = []
     for value in examples:
         if isinstance(value, (datetime, date)):
@@ -61,7 +61,7 @@ def serialize_column_examples(examples: list[Any]) -> list[Any]:
 
 
 def _version_column(default: int, comment: str) -> Mapped[int]:
-    """创建版本字段"""
+    """创建版本字段。"""
     return mapped_column(
         Integer,
         nullable=False,
@@ -72,7 +72,7 @@ def _version_column(default: int, comment: str) -> Mapped[int]:
 
 
 class TableInfo(MetaBase):
-    """表信息"""
+    """表信息。"""
 
     __tablename__ = "table_info"
 
@@ -92,7 +92,7 @@ class TableInfo(MetaBase):
     meta_version: Mapped[int] = _version_column(1, "元数据版本")
 
     def metadata_snapshot(self) -> tuple[Any, ...]:
-        """生成元数据内容快照"""
+        """生成元数据内容快照。"""
         return (
             self.role,
             self.primary_key_columns,
@@ -102,7 +102,7 @@ class TableInfo(MetaBase):
 
 
 class ColumnInfo(MetaBase):
-    """字段信息"""
+    """字段信息。"""
 
     __tablename__ = "column_info"
     # Repository 在查询后批量填充索引状态；保持非 ORM relationship，避免序列化
@@ -148,7 +148,7 @@ class ColumnInfo(MetaBase):
     value_index_state: "ValueIndexSyncState | None" = None
 
     def metadata_snapshot(self) -> tuple[Any, ...]:
-        """生成元数据内容快照"""
+        """生成元数据内容快照。"""
         return (
             self.type,
             self.description,
@@ -161,7 +161,7 @@ class ColumnInfo(MetaBase):
 
 
 class ValueIndexSyncState(MetaBase):
-    """字段取值索引增量同步状态"""
+    """字段取值索引增量同步状态。"""
 
     __tablename__ = "value_index_sync_state"
 
@@ -194,7 +194,7 @@ class ValueIndexSyncState(MetaBase):
 
     @property
     def last_synced_at(self) -> datetime | None:
-        """返回最近一次成功的增量或全量同步时间"""
+        """返回最近一次成功的增量或全量同步时间。"""
         timestamps = [
             timestamp
             for timestamp in (
@@ -207,7 +207,7 @@ class ValueIndexSyncState(MetaBase):
 
     @property
     def last_sync_mode(self) -> Literal["full", "incremental"] | None:
-        """返回最近一次成功同步的模式"""
+        """返回最近一次成功同步的模式。"""
         if self.last_full_synced_at is None:
             return "incremental" if self.last_incremental_synced_at else None
         if self.last_incremental_synced_at is None:
@@ -219,7 +219,7 @@ class ValueIndexSyncState(MetaBase):
 
 @dataclass
 class ValueInfo:
-    """字段取值信息"""
+    """字段取值信息。"""
 
     value: str
     t_name: str
@@ -227,7 +227,7 @@ class ValueInfo:
 
 
 class MetricInfo(MetaBase):
-    """指标信息"""
+    """指标信息。"""
 
     __tablename__ = "metric_info"
     # 相关字段由 Repository 批量投影，原因同 ColumnInfo.value_index_state。
@@ -250,7 +250,7 @@ class MetricInfo(MetaBase):
         meta_version: int = 1,
         index_version: int = 0,
     ) -> None:
-        """初始化指标元数据及其关联字段引用"""
+        """初始化指标元数据及其关联字段引用。"""
         self.name = name
         self.description = description
         self.alias = alias
@@ -259,7 +259,7 @@ class MetricInfo(MetaBase):
         self.index_version = index_version
 
     def metadata_snapshot(self) -> tuple[Any, ...]:
-        """生成元数据内容快照"""
+        """生成元数据内容快照。"""
         return (
             self.description,
             tuple(
@@ -273,7 +273,7 @@ class MetricInfo(MetaBase):
 
 
 class ColumnMetric(MetaBase):
-    """字段与指标关联"""
+    """字段与指标关联。"""
 
     __tablename__ = "column_metric"
 

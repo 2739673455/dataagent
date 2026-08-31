@@ -1,4 +1,4 @@
-"""Agent 历史图片查看请求工具"""
+"""Agent 历史图片查看请求工具。"""
 
 from typing import Annotated
 

@@ -1,4 +1,4 @@
-"""认证接口有界速率限制测试"""
+"""认证接口有界速率限制测试。"""
 
 import asyncio
 import unittest
@@ -27,7 +27,7 @@ from app.shared.errors.exc_handlers import (
 
 
 class FakeClock:
-    """可推进的单调时钟"""
+    """可推进的单调时钟。"""
 
     def __init__(self) -> None:
         self.now = 0.0
@@ -36,7 +36,7 @@ class FakeClock:
         return self.now
 
     def advance(self, seconds: float) -> None:
-        """推进测试时钟"""
+        """推进测试时钟。"""
         self.now += seconds
 
 
@@ -46,7 +46,7 @@ def build_limiter(
     max_keys: int = 100,
     clock: FakeClock | None = None,
 ) -> BoundedRateLimiter:
-    """构造测试限流器"""
+    """构造测试限流器。"""
     return BoundedRateLimiter(
         RateLimitRule(limit, 60),
         max_keys=max_keys,
@@ -55,7 +55,7 @@ def build_limiter(
 
 
 class BoundedRateLimiterTest(unittest.IsolatedAsyncioTestCase):
-    """验证限流窗口、并发安全和键容量"""
+    """验证限流窗口、并发安全和键容量。"""
 
     async def test_window_limit_is_atomic_under_concurrency(self) -> None:
         limiter = build_limiter(5)
@@ -93,7 +93,7 @@ class BoundedRateLimiterTest(unittest.IsolatedAsyncioTestCase):
 
 
 class AuthRateLimitServiceTest(unittest.IsolatedAsyncioTestCase):
-    """验证认证攻击维度相互隔离且同时生效"""
+    """验证认证攻击维度相互隔离且同时生效。"""
 
     async def test_login_is_limited_by_ip_across_identifiers(self) -> None:
         service = AuthRateLimitService(
@@ -117,7 +117,7 @@ class AuthRateLimitServiceTest(unittest.IsolatedAsyncioTestCase):
 
 
 class AuthRateLimitRouterTest(unittest.IsolatedAsyncioTestCase):
-    """验证认证路由返回 RFC Problem 429 响应"""
+    """验证认证路由返回 RFC Problem 429 响应。"""
 
     def test_public_auth_router_has_no_admin_bootstrap_endpoint(self) -> None:
         paths = {route.path for route in router.routes if isinstance(route, APIRoute)}
@@ -126,7 +126,7 @@ class AuthRateLimitRouterTest(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     def build_app(service: MagicMock, limiter: AuthRateLimitService) -> FastAPI:
-        """构造替换认证服务和限流器的测试应用"""
+        """构造替换认证服务和限流器的测试应用。"""
         app = FastAPI()
         register_exception_handlers(app)
 

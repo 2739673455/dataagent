@@ -1,4 +1,4 @@
-"""元数据导入导出配置模型"""
+"""元数据导入导出配置模型。"""
 
 from typing import Annotated, Literal
 
@@ -20,13 +20,13 @@ MetadataAlias = Annotated[
 
 
 class MetaConfigModel(BaseModel):
-    """元数据配置模型基类"""
+    """元数据配置模型基类。"""
 
     model_config = ConfigDict(extra="forbid")
 
 
 class ColumnConfig(MetaConfigModel):
-    """字段元数据配置"""
+    """字段元数据配置。"""
 
     name: MetadataName
     description: MetadataDescription
@@ -37,14 +37,14 @@ class ColumnConfig(MetaConfigModel):
 
     @model_validator(mode="after")
     def validate_reference(self) -> "ColumnConfig":
-        """校验字段引用必须同时包含表名和字段名"""
+        """校验字段引用必须同时包含表名和字段名。"""
         if (self.reference_t_name is None) != (self.reference_c_name is None):
             raise ValueError("引用表名和引用字段名必须同时提供")
         return self
 
 
 class TableConfig(MetaConfigModel):
-    """表元数据配置"""
+    """表元数据配置。"""
 
     name: MetadataName
     role: TableRole
@@ -54,14 +54,14 @@ class TableConfig(MetaConfigModel):
 
 
 class ColumnReferenceConfig(MetaConfigModel):
-    """字段联合主键引用"""
+    """字段联合主键引用。"""
 
     t_name: MetadataName
     c_name: MetadataName
 
 
 class MetricConfig(MetaConfigModel):
-    """指标元数据配置"""
+    """指标元数据配置。"""
 
     name: MetadataName
     description: MetadataDescription
@@ -73,7 +73,7 @@ class MetricConfig(MetaConfigModel):
 
 
 class MetaConfig(MetaConfigModel):
-    """元数据导入导出配置"""
+    """元数据导入导出配置。"""
 
     tables: list[TableConfig] = Field(default_factory=list)
     metrics: list[MetricConfig] = Field(default_factory=list)

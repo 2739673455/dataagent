@@ -1,4 +1,4 @@
-"""会话标题初始化与后台生成测试"""
+"""会话标题初始化与后台生成测试。"""
 
 from __future__ import annotations
 

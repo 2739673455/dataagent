@@ -1,4 +1,4 @@
-"""元数据取值索引手动同步接口测试"""
+"""元数据取值索引手动同步接口测试。"""
 
 import unittest
 from unittest.mock import MagicMock, patch
@@ -11,10 +11,10 @@ from app.shared.tasks.submission import TaskSubmission
 
 
 class MetaValueSyncRoutesTest(unittest.IsolatedAsyncioTestCase):
-    """校验管理员选择的取值同步模式会传入后台任务"""
+    """校验管理员选择的取值同步模式会传入后台任务。"""
 
     async def test_table_incremental_mode_is_submitted(self) -> None:
-        """表取值增量同步模式应原样传给任务提交器"""
+        """表取值增量同步模式应原样传给任务提交器。"""
         body = schemas.TableValueIndexSyncRequest(
             tables=["orders"],
             mode="incremental",
@@ -31,7 +31,7 @@ class MetaValueSyncRoutesTest(unittest.IsolatedAsyncioTestCase):
         enqueue.assert_called_once_with(["orders"], mode="incremental")
 
     async def test_column_full_mode_is_submitted(self) -> None:
-        """字段取值全量同步模式应原样传给任务提交器"""
+        """字段取值全量同步模式应原样传给任务提交器。"""
         body = schemas.ColumnValueIndexSyncRequest(
             columns=[schemas.ColumnReference(t_name="orders", c_name="status")],
             mode="full",
@@ -48,7 +48,7 @@ class MetaValueSyncRoutesTest(unittest.IsolatedAsyncioTestCase):
         enqueue.assert_called_once_with([("orders", "status")], mode="full")
 
     def test_manual_value_sync_mode_is_required(self) -> None:
-        """手动取值同步请求必须明确指定同步模式"""
+        """手动取值同步请求必须明确指定同步模式。"""
         with self.assertRaises(ValidationError):
             schemas.TableValueIndexSyncRequest.model_validate({"tables": ["orders"]})
 

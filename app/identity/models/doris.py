@@ -1,4 +1,4 @@
-"""Doris 查询身份与权限投影模型"""
+"""Doris 查询身份与权限投影模型。"""
 
 import hashlib
 import json
@@ -29,7 +29,7 @@ DORIS_ROLE_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
 
 
 def normalize_doris_role_name(value: str) -> str:
-    """校验并规范化 Doris 角色名"""
+    """校验并规范化 Doris 角色名。"""
     normalized = value.strip()
     if DORIS_ROLE_NAME_PATTERN.fullmatch(normalized) is None:
         raise ValueError("Doris 角色名称格式无效")
@@ -42,7 +42,7 @@ def asset_resource_key(
     table_name: str | None = None,
     column_name: str | None = None,
 ) -> str:
-    """生成层级数据资产的稳定资源键"""
+    """生成层级数据资产的稳定资源键。"""
     canonical = json.dumps(
         [data_source, database_name, table_name, column_name],
         ensure_ascii=False,
@@ -52,7 +52,7 @@ def asset_resource_key(
 
 
 class AssetScope(StrEnum):
-    """数据资产授权粒度"""
+    """数据资产授权粒度。"""
 
     DATA_SOURCE = "data_source"
     DATABASE = "database"
@@ -62,7 +62,7 @@ class AssetScope(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class DorisRowPolicy:
-    """Doris 角色当前生效的行级过滤策略"""
+    """Doris 角色当前生效的行级过滤策略。"""
 
     policy_name: str
     catalog_name: str
@@ -73,7 +73,7 @@ class DorisRowPolicy:
 
 
 class DorisQueryIdentity(AuthBase):
-    """Doris 数据角色对应的稳定共享查询身份"""
+    """Doris 数据角色对应的稳定共享查询身份。"""
 
     __tablename__ = "doris_query_identities"
 
@@ -119,7 +119,7 @@ class DorisQueryIdentity(AuthBase):
 
 
 class DorisRoleAssetGrant(AuthBase):
-    """Doris 角色 SELECT 权限的应用侧可见性投影"""
+    """Doris 角色 SELECT 权限的应用侧可见性投影。"""
 
     __tablename__ = "doris_role_asset_grants"
 

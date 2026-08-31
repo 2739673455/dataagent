@@ -1,4 +1,4 @@
-"""应用运行时依赖组装入口"""
+"""应用运行时依赖组装入口。"""
 
 from app.assistant.agents.manager import AgentManager
 from app.assistant.agents.skills import packaged_agent_skill_mounts

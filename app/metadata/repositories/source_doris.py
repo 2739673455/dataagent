@@ -1,4 +1,4 @@
-"""Doris 业务数据访问"""
+"""Doris 业务数据访问。"""
 
 from collections.abc import AsyncIterator
 from typing import Any
@@ -8,26 +8,26 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 
 class SourceDorisRepo:
-    """Doris 业务数据存储"""
+    """Doris 业务数据存储。"""
 
     def __init__(self, connection: AsyncConnection) -> None:
-        """初始化 Doris 业务数据存储"""
+        """初始化 Doris 业务数据存储。"""
         self._connection = connection
 
     def _quote_identifier(self, identifier: str) -> str:
-        """使用当前数据库方言安全引用标识符"""
+        """使用当前数据库方言安全引用标识符。"""
         if not identifier or "\x00" in identifier:
             raise ValueError(f"数据库标识符无效: {identifier}")
         return self._connection.dialect.identifier_preparer.quote_identifier(identifier)
 
     @staticmethod
     def _validate_positive_limit(value: int, name: str) -> None:
-        """校验只能作为 SQL 整数字面量写入的分页参数"""
+        """校验只能作为 SQL 整数字面量写入的分页参数。"""
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError(f"{name} 必须为正整数")
 
     async def list_tables(self) -> list[str]:
-        """查询当前 Doris 数据库中全部物理表名"""
+        """查询当前 Doris 数据库中全部物理表名。"""
         result = await self._connection.execute(
             text(
                 """
@@ -42,7 +42,7 @@ class SourceDorisRepo:
         return list(result.scalars().fetchall())
 
     async def table_exists(self, table_name: str) -> bool:
-        """判断当前 Doris 数据库中是否存在指定表"""
+        """判断当前 Doris 数据库中是否存在指定表。"""
         result = await self._connection.execute(
             text(
                 """
@@ -59,7 +59,7 @@ class SourceDorisRepo:
         return bool(result.scalar())
 
     async def get_primary_key_columns(self, table_name: str) -> list[str]:
-        """按定义顺序获取 Doris UNIQUE KEY 字段作为逻辑主键"""
+        """按定义顺序获取 Doris UNIQUE KEY 字段作为逻辑主键。"""
         result = await self._connection.execute(
             text(
                 """
@@ -76,7 +76,7 @@ class SourceDorisRepo:
         return list(result.scalars().fetchall())
 
     async def get_column_types(self, table_name: str) -> dict[str, str]:
-        """获取表的字段类型"""
+        """获取表的字段类型。"""
         result = await self._connection.execute(
             text(
                 """
@@ -97,7 +97,7 @@ class SourceDorisRepo:
         column_name: str,
         limit: int | None = None,
     ) -> list[Any]:
-        """获取字段的去重取值"""
+        """获取字段的去重取值。"""
         table_identifier = self._quote_identifier(table_name)
         column_identifier = self._quote_identifier(column_name)
         sql = f"select distinct {column_identifier} from {table_identifier}"
@@ -113,7 +113,7 @@ class SourceDorisRepo:
         column_names: list[str],
         limit: int = 5,
     ) -> dict[str, list[Any]]:
-        """批量获取指定表中多个字段的样例取值"""
+        """批量获取指定表中多个字段的样例取值。"""
         if not column_names:
             return {}
         self._validate_positive_limit(limit, "limit")
@@ -136,7 +136,7 @@ class SourceDorisRepo:
         column_name: str,
         batch_size: int = 1000,
     ) -> AsyncIterator[list[Any]]:
-        """流式分批读取字段的去重取值"""
+        """流式分批读取字段的去重取值。"""
         self._validate_positive_limit(batch_size, "batch_size")
         table_identifier = self._quote_identifier(table_name)
         column_identifier = self._quote_identifier(column_name)
@@ -153,7 +153,7 @@ class SourceDorisRepo:
         table_name: str,
         cursor_column: str,
     ) -> Any | None:
-        """读取字段取值增量同步的固定游标上界"""
+        """读取字段取值增量同步的固定游标上界。"""
         table_identifier = self._quote_identifier(table_name)
         cursor_identifier = self._quote_identifier(cursor_column)
         result = await self._connection.execute(
@@ -170,7 +170,7 @@ class SourceDorisRepo:
         upper_bound: Any,
         batch_size: int = 1000,
     ) -> AsyncIterator[list[Any]]:
-        """按闭区间水位窗口分批读取字段去重取值"""
+        """按闭区间水位窗口分批读取字段去重取值。"""
         self._validate_positive_limit(batch_size, "batch_size")
         table_identifier = self._quote_identifier(table_name)
         column_identifier = self._quote_identifier(column_name)

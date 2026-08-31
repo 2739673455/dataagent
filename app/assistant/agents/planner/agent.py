@@ -1,4 +1,4 @@
-"""Planner Agent 构造器"""
+"""Planner Agent 构造器。"""
 
 from collections.abc import Sequence
 from typing import Any, cast
@@ -41,7 +41,7 @@ def create_planner_agent(
     session_service: AgentSessionService,
     interpreter_memory_limit_bytes: int,
 ) -> CompiledStateGraph:
-    """使用显式解释器配置编译 Planner Agent"""
+    """使用显式解释器配置编译 Planner Agent。"""
     interpreter = CodeInterpreterMiddleware(
         mode="thread",
         ptc=list(_INTERPRETER_PTC),

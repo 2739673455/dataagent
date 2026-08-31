@@ -1,4 +1,4 @@
-"""跨存储用户注销后台任务"""
+"""跨存储用户注销后台任务。"""
 
 from datetime import UTC, datetime, timedelta
 
@@ -26,7 +26,7 @@ from app.workflows.user_deletion import UserDeletionService
 
 
 def enqueue_user_deletion(user_id: int) -> TaskSubmission:
-    """提交用户注销清理任务"""
+    """提交用户注销清理任务。"""
     task = celery_app.send_task(
         "dataagent.workflows.delete_user",
         args=[user_id],
@@ -41,7 +41,7 @@ def enqueue_user_deletion(user_id: int) -> TaskSubmission:
 
 
 async def _process_user_deletion(user_id: int) -> None:
-    """初始化跨存储资源并处理单个用户注销任务"""
+    """初始化跨存储资源并处理单个用户注销任务。"""
     auth_postgres = PostgresClientManager(cfg.auth_postgresql, AuthBase)
     assistant_postgres = PostgresClientManager(
         cfg.langgraph_postgresql,
@@ -106,7 +106,7 @@ async def _process_user_deletion(user_id: int) -> None:
     max_retries=3,
 )
 def delete_user_task(user_id: int) -> dict[str, object]:
-    """执行用户跨存储注销清理"""
+    """执行用户跨存储注销清理。"""
     logger.info(f"开始执行用户跨存储注销清理: user_id={user_id}")
     run_async(_process_user_deletion(user_id))
     logger.info(f"用户跨存储注销清理完成: user_id={user_id}")
@@ -114,7 +114,7 @@ def delete_user_task(user_id: int) -> dict[str, object]:
 
 
 async def _dispatch_due_user_deletions() -> int:
-    """原子领取到期注销记录并向生命周期队列提交任务"""
+    """原子领取到期注销记录并向生命周期队列提交任务。"""
     auth_postgres = PostgresClientManager(cfg.auth_postgresql, AuthBase)
     auth_postgres.init()
     try:
@@ -154,5 +154,5 @@ async def _dispatch_due_user_deletions() -> int:
 
 @celery_app.task(name="dataagent.workflows.dispatch_due_user_deletions")
 def dispatch_due_user_deletions_task() -> dict[str, int]:
-    """提交已到重试时间的用户注销任务"""
+    """提交已到重试时间的用户注销任务。"""
     return {"dispatched_count": run_async(_dispatch_due_user_deletions())}

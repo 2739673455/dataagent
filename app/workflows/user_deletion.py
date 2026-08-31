@@ -1,4 +1,4 @@
-"""跨存储用户注销编排"""
+"""跨存储用户注销编排。"""
 
 from datetime import UTC, datetime, timedelta
 
@@ -16,7 +16,7 @@ from app.workflows.contracts import (
 
 
 class UserDeletionService:
-    """协调认证库、会话库、元数据库、索引和沙箱的用户注销"""
+    """协调认证库、会话库、元数据库、索引和沙箱的用户注销。"""
 
     def __init__(
         self,
@@ -25,14 +25,14 @@ class UserDeletionService:
         conversations: ConversationLifecycleService,
         config: LifecycleConfig,
     ) -> None:
-        """绑定用户注销涉及的各存储和生命周期服务"""
+        """绑定用户注销涉及的各存储和生命周期服务。"""
         self._state_store = state_store
         self._sandbox = sandbox
         self._conversations = conversations
         self._config = config
 
     async def request_deletion(self, user_id: int, *, operator_id: int) -> bool:
-        """禁用目标用户并持久化注销任务"""
+        """禁用目标用户并持久化注销任务。"""
         if user_id == operator_id:
             raise auth_error.InvalidUserMutationError(
                 detail="不能注销当前操作的管理员账号"
@@ -44,7 +44,7 @@ class UserDeletionService:
         return submitted
 
     async def process(self, user_id: int) -> None:
-        """幂等执行一个用户的跨存储注销清理"""
+        """幂等执行一个用户的跨存储注销清理。"""
         if await self._state_store.is_completed(user_id):
             logger.info(f"用户注销清理已完成，跳过重复任务: user_id={user_id}")
             return
@@ -65,7 +65,7 @@ class UserDeletionService:
             raise
 
     async def _record_failure(self, user_id: int, exc: Exception) -> None:
-        """记录注销失败原因和下一次重试时间"""
+        """记录注销失败原因和下一次重试时间。"""
         now = datetime.now(UTC)
         next_attempt_at = now + timedelta(
             seconds=self._config.user_deletion_retry_seconds

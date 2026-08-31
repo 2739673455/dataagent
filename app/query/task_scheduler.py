@@ -1,4 +1,4 @@
-"""查询经验索引 Celery 调度器"""
+"""查询经验索引 Celery 调度器。"""
 
 from uuid import UUID
 
@@ -8,10 +8,10 @@ from app.shared.tasks.celery_app import celery_app
 
 
 class CeleryQueryExperienceIndexScheduler:
-    """通过 Celery 提交查询经验索引任务"""
+    """通过 Celery 提交查询经验索引任务。"""
 
     def enqueue(self, experience_id: UUID, revision: int) -> None:
-        """提交指定经验版本的索引同步任务"""
+        """提交指定经验版本的索引同步任务。"""
         try:
             celery_app.send_task(
                 "dataagent.query.sync_index",

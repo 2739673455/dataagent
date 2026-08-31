@@ -63,7 +63,7 @@ _MARKDOWN_FENCE_PATTERN = re.compile(r"^[ ]{0,3}(?P<marker>`{3,}|~{3,})")
 
 
 def _message_created_at(message: BaseMessage) -> datetime | None:
-    """读取消息创建时间"""
+    """读取消息创建时间。"""
     value = message.additional_kwargs.get(MESSAGE_CREATED_AT_KEY)
     if isinstance(value, datetime):
         return value
@@ -76,7 +76,7 @@ def _message_created_at(message: BaseMessage) -> datetime | None:
 
 
 def _content_to_parts(content: Any) -> list[chat_schema.MessagePart]:
-    """将 LangChain 消息内容转换为接口消息片段"""
+    """将 LangChain 消息内容转换为接口消息片段。"""
     if isinstance(content, str):
         return [chat_schema.TextContent(type="text", text=content)]
     if not isinstance(content, list):
@@ -107,7 +107,7 @@ def _content_to_parts(content: Any) -> list[chat_schema.MessagePart]:
 
 
 def _reasoning_content(message: BaseMessage) -> str | None:
-    """读取模型供应商返回的完整思考或思考增量"""
+    """读取模型供应商返回的完整思考或思考增量。"""
     reasoning = message.additional_kwargs.get("reasoning_content")
     if not isinstance(reasoning, str) or not reasoning:
         return None
@@ -115,7 +115,7 @@ def _reasoning_content(message: BaseMessage) -> str | None:
 
 
 def _text_content(message: BaseMessage) -> str | None:
-    """读取模型消息中的正文文本或正文增量"""
+    """读取模型消息中的正文文本或正文增量。"""
     text = "".join(
         part.text
         for part in _content_to_parts(message.content)
@@ -128,7 +128,7 @@ def _transform_artifact_directives(
     text: str,
     removable_paths: set[str] | None = None,
 ) -> tuple[str, list[str]]:
-    """查找非代码块独占行指令，并按需移除已验证指令"""
+    """查找非代码块独占行指令，并按需移除已验证指令。"""
     paths: list[str] = []
     output: list[str] = []
     fence_character: str | None = None
@@ -170,7 +170,7 @@ def _transform_artifact_directives(
 
 
 def _normalized_directive_path(path: str) -> str:
-    """将最终产物指令路径规范化为 Conversation 内相对路径"""
+    """将最终产物指令路径规范化为 Conversation 内相对路径。"""
     if not path.startswith("/sessions/"):
         raise SandboxPathError(path)
     normalized = normalize_attachment_path(path.removeprefix("/"))
@@ -180,7 +180,7 @@ def _normalized_directive_path(path: str) -> str:
 
 
 def _is_final_assistant_message(message: BaseMessage) -> bool:
-    """判断消息是否可以承载 Planner 最终产物指令"""
+    """判断消息是否可以承载 Planner 最终产物指令。"""
     if not isinstance(message, AIMessage) or message.tool_calls:
         return False
     finish_reason = message.response_metadata.get("finish_reason")
@@ -194,7 +194,7 @@ async def _project_final_artifact_directives(
     user_id: int,
     conversation_id: UUID,
 ) -> chat_schema.MessageResponse:
-    """把 Planner 最终消息中的有效文件指令投影为附件"""
+    """把 Planner 最终消息中的有效文件指令投影为附件。"""
     if not _is_final_assistant_message(message):
         return schema
 
@@ -274,7 +274,7 @@ async def _langchain_message_to_schema_with_artifacts(
     user_id: int,
     conversation_id: UUID,
 ) -> chat_schema.MessageResponse | None:
-    """转换消息，并为 Planner 最终回答解析文件交付指令"""
+    """转换消息，并为 Planner 最终回答解析文件交付指令。"""
     schema = _langchain_message_to_schema(message)
     if schema is None:
         return None
@@ -290,7 +290,7 @@ async def _langchain_message_to_schema_with_artifacts(
 def _schema_from_metadata(
     message: BaseMessage,
 ) -> chat_schema.MessageResponse | None:
-    """从 LangGraph 消息元数据恢复用户原始消息"""
+    """从 LangGraph 消息元数据恢复用户原始消息。"""
     payload = message.additional_kwargs.get(MESSAGE_PAYLOAD_KEY)
     if not isinstance(payload, dict):
         return None
@@ -305,7 +305,7 @@ def _schema_from_metadata(
 def _delegation_result_attachments(
     message: ToolMessage,
 ) -> list[chat_schema.Attachment]:
-    """从委派结果的稳定协议中提取可下载产物"""
+    """从委派结果的稳定协议中提取可下载产物。"""
     if message.name != "delegation":
         return []
     content = message.content
@@ -345,7 +345,7 @@ def _delegation_result_attachments(
 def _langchain_message_to_schema(
     message: BaseMessage,
 ) -> chat_schema.MessageResponse | None:
-    """将 LangChain 消息转换为接口消息"""
+    """将 LangChain 消息转换为接口消息。"""
     if stored_schema := _schema_from_metadata(message):
         return stored_schema
     if isinstance(message, ToolMessage):
@@ -460,7 +460,7 @@ async def _subagent_activity_to_event(
     user_id: int,
     conversation_id: UUID,
 ) -> chat_schema.ChatStreamEventPayload | None:
-    """把受信任的 Agent 内部活动投影为公开聊天事件"""
+    """把受信任的 Agent 内部活动投影为公开聊天事件。"""
     if isinstance(activity, SubagentMessageActivity):
         expanded = await expand_semantic_recall_messages_for_display(
             [activity.message],
@@ -523,7 +523,7 @@ async def _subagent_activity_to_event(
 def _schema_to_human_message(
     message: chat_schema.UserMessageRequest,
 ) -> HumanMessage:
-    """将用户消息转换为 LangChain 消息"""
+    """将用户消息转换为 LangChain 消息。"""
     content_parts = [part.model_dump() for part in message.parts]
 
     stored_parts: list[chat_schema.MessagePart] = [*message.parts]
@@ -567,7 +567,7 @@ async def list_messages(
     user_id: int,
     conversation_id: UUID,
 ) -> list[chat_schema.MessageResponse]:
-    """从 LangGraph 最新线程状态读取消息"""
+    """从 LangGraph 最新线程状态读取消息。"""
     runtime = await agents.get_conversation_runtime(user_id, conversation_id)
     state = await runtime.planner.aget_state(
         build_planner_config(user_id, conversation_id)
@@ -599,7 +599,7 @@ async def get_subagent_activity(
     session_id: str,
     delegation_id: str,
 ) -> chat_schema.SubagentMessageListResponse | None:
-    """读取一次 Specialist delegation 的公开工作消息和状态"""
+    """读取一次 Specialist delegation 的公开工作消息和状态。"""
     runtime = await agents.get_conversation_runtime(user_id, conversation_id)
     activity = await runtime.session_service.get_delegation_activity(
         analysis_id,
@@ -629,7 +629,7 @@ async def _execute_agent(
     runtime: ConversationAgentRuntime,
     turn_context: PlannerTurnContext,
 ) -> AsyncGenerator[StreamPart[Any, Any]]:
-    """执行 Agent 并流式返回原始更新"""
+    """执行 Agent 并流式返回原始更新。"""
     config = build_planner_config(
         turn_context.user_id,
         turn_context.conversation_id,
@@ -651,7 +651,7 @@ async def _run_agent_turn(
     input_messages: list[BaseMessage] | None,
     cancel: asyncio.Event,
 ) -> AsyncGenerator[chat_schema.ChatStreamEventPayload]:
-    """执行新回合或从待执行 Checkpoint 恢复同一回合"""
+    """执行新回合或从待执行 Checkpoint 恢复同一回合。"""
     runtime = await agents.get_conversation_runtime(user_id, conversation_id)
     async with agents.execution(
         user_id,
@@ -770,7 +770,7 @@ async def _run_agent_turn(
                 )
 
             continuation_count += 1
-            # 空增量会保留 Checkpointer 中的已有状态并继续生成
+            # 空增量会保留 Checkpointer 中的已有状态并继续生成。
             input_messages = []
 
 
@@ -782,7 +782,7 @@ async def run_agent_turn(
     user_message: chat_schema.UserMessageRequest,
     cancel: asyncio.Event,
 ) -> AsyncGenerator[chat_schema.ChatStreamEventPayload]:
-    """执行一轮 Agent 对话并流式返回响应"""
+    """执行一轮 Agent 对话并流式返回响应。"""
     logger.info(
         f"智能体回合开始: conversation_id={conversation_id}, "
         f"parts={len(user_message.parts)}, "
@@ -808,7 +808,7 @@ async def resume_agent_turn(
     conversation_id: UUID,
     cancel: asyncio.Event,
 ) -> AsyncGenerator[chat_schema.ChatStreamEventPayload]:
-    """从 Planner 最新 Checkpoint 的待执行任务继续生成"""
+    """从 Planner 最新 Checkpoint 的待执行任务继续生成。"""
     logger.info(f"智能体回合恢复: conversation_id={conversation_id}")
     async for event in _run_agent_turn(
         agents,
@@ -827,7 +827,7 @@ async def can_resume_agent_turn(
     user_id: int,
     conversation_id: UUID,
 ) -> bool:
-    """检查 Planner 最新 Checkpoint 是否保留待执行任务"""
+    """检查 Planner 最新 Checkpoint 是否保留待执行任务。"""
     runtime = await agents.get_conversation_runtime(user_id, conversation_id)
     state = await runtime.planner.aget_state(
         build_planner_config(user_id, conversation_id)
@@ -836,10 +836,10 @@ async def can_resume_agent_turn(
 
 
 class PlannerContinuationLimitError(RuntimeError):
-    """Planner 自动续写次数超过服务端硬限制"""
+    """Planner 自动续写次数超过服务端硬限制。"""
 
     def __init__(self, max_continuations: int, finish_reason: str) -> None:
-        """初始化包含续写上限和结束原因的异常"""
+        """初始化包含续写上限和结束原因的异常。"""
         self.max_continuations = max_continuations
         self.finish_reason = finish_reason
         super().__init__(

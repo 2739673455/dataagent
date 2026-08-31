@@ -1,4 +1,4 @@
-"""认证依赖会话边界测试"""
+"""认证依赖会话边界测试。"""
 
 import unittest
 from contextlib import asynccontextmanager

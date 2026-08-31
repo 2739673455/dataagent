@@ -1,4 +1,4 @@
-"""查询应用服务依赖组装"""
+"""查询应用服务依赖组装。"""
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,7 +45,7 @@ def build_query_experience_service(
     *,
     index_scheduler: QueryExperienceIndexScheduler = query_experience_index_scheduler,
 ) -> QueryExperienceService:
-    """创建查询经验记录、检索与索引维护服务"""
+    """创建查询经验记录、检索与索引维护服务。"""
     return QueryExperienceService(
         repo=QueryExperiencePGRepo(session=session),
         index_repo=QueryExperienceESRepo(client=es_client_manager.get_client()),
@@ -61,7 +61,7 @@ def build_query_experience_invalidation_service(
     *,
     index_scheduler: QueryExperienceIndexScheduler = query_experience_index_scheduler,
 ) -> QueryExperienceInvalidationService:
-    """创建不依赖 Elasticsearch 和 Embedding 的查询经验失效服务"""
+    """创建不依赖 Elasticsearch 和 Embedding 的查询经验失效服务。"""
     return QueryExperienceInvalidationService(
         repo=QueryExperiencePGRepo(session=session),
         index_scheduler=index_scheduler,
@@ -71,10 +71,10 @@ def build_query_experience_invalidation_service(
 
 
 class DefaultQueryExecutionRuntime:
-    """使用阶段化短会话提供查询用例运行环境"""
+    """使用阶段化短会话提供查询用例运行环境。"""
 
     def __init__(self, artifact_store: QueryArtifactStore) -> None:
-        """绑定查询产物存储和静态执行配置"""
+        """绑定查询产物存储和静态执行配置。"""
         self._artifact_store = artifact_store
         self._credential_cipher = DorisCredentialCipher(
             cfg.doris_credentials.encryption_key.get_secret_value()
@@ -88,7 +88,7 @@ class DefaultQueryExecutionRuntime:
         self,
         user_id: int,
     ) -> tuple[ResolvedQueryPrincipal, AssetAccessPolicy]:
-        """在单个认证会话中解析身份和资产策略"""
+        """在单个认证会话中解析身份和资产策略。"""
         async with auth_postgres_client_manager.session() as session:
             auth_repo = AuthPGRepo(session)
             principal = await QueryPrincipalService(
@@ -104,7 +104,7 @@ class DefaultQueryExecutionRuntime:
         sql: str,
         policy: AssetAccessPolicy,
     ) -> QueryValidationResult:
-        """在独立元数据会话中校验 SQL"""
+        """在独立元数据会话中校验 SQL。"""
         async with meta_postgres_client_manager.session() as session:
             return await QueryGuardService(
                 MetaPGRepo(session),
@@ -116,7 +116,7 @@ class DefaultQueryExecutionRuntime:
         self,
         principal: ResolvedQueryPrincipal,
     ) -> AnalysisQueryService:
-        """创建仅持有 Doris 和产物存储依赖的执行器"""
+        """创建仅持有 Doris 和产物存储依赖的执行器。"""
         limits = QueryExecutionLimits(
             workload_group=principal.workload_group,
             timeout_seconds=cfg.query.timeout_seconds,
@@ -139,7 +139,7 @@ class DefaultQueryExecutionRuntime:
         context: QueryExecutionContext,
         details: SuccessfulQueryExecution,
     ) -> None:
-        """使用独立元数据会话记录成功事实"""
+        """使用独立元数据会话记录成功事实。"""
         async with meta_postgres_client_manager.session() as session:
             await build_query_experience_service(session).record_success(
                 context,
@@ -156,7 +156,7 @@ class DefaultQueryExecutionRuntime:
         error_detail: str,
         validation: QueryValidationResult | None = None,
     ) -> None:
-        """使用独立元数据会话记录失败事实"""
+        """使用独立元数据会话记录失败事实。"""
         async with meta_postgres_client_manager.session() as session:
             await build_query_experience_service(session).record_failure(
                 context,
@@ -171,5 +171,5 @@ class DefaultQueryExecutionRuntime:
 def build_query_execution_handler(
     artifact_store: QueryArtifactStore,
 ) -> QueryExecutionHandler:
-    """组装身份解析、受控执行和历史记录完整查询用例"""
+    """组装身份解析、受控执行和历史记录完整查询用例。"""
     return QueryExecutionHandler(DefaultQueryExecutionRuntime(artifact_store))

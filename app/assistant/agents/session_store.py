@@ -1,4 +1,4 @@
-"""专业 Agent Session 的持久化与工作区访问"""
+"""专业 Agent Session 的持久化与工作区访问。"""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from app.shared.contracts.analysis import AgentSessionKey
 
 
 class AgentSessionStore(Protocol):
-    """SessionService 使用的外部状态访问协议"""
+    """SessionService 使用的外部状态访问协议。"""
 
     async def list_namespaces(self, analysis_id: str | None) -> list[str]:
         """列出指定 Analysis 或整个 Conversation 的 Session namespace。"""
@@ -55,7 +55,7 @@ class AgentSessionStore(Protocol):
 
 
 class PostgresSandboxSessionStore:
-    """绑定一个 Conversation 的 Checkpoint、锁和 Sandbox 操作"""
+    """绑定一个 Conversation 的 Checkpoint、锁和 Sandbox 操作。"""
 
     def __init__(
         self,
@@ -67,7 +67,7 @@ class PostgresSandboxSessionStore:
         sandbox: DockerSandboxManager,
         conversation_backend: DockerSandboxBackend,
     ) -> None:
-        """初始化 Conversation 级状态访问上下文"""
+        """初始化 Conversation 级状态访问上下文。"""
         self._user_id = user_id
         self._conversation_id = conversation_id
         self._thread_id = get_thread_id(user_id, conversation_id)
@@ -77,7 +77,7 @@ class PostgresSandboxSessionStore:
         self._conversation_backend = conversation_backend
 
     async def list_namespaces(self, analysis_id: str | None) -> list[str]:
-        """列出当前 Conversation 的专业 Session namespace"""
+        """列出当前 Conversation 的专业 Session namespace。"""
         prefix = (
             f"subagents/{analysis_id}/" if analysis_id is not None else "subagents/"
         )
@@ -90,7 +90,7 @@ class PostgresSandboxSessionStore:
         self,
         session_key: AgentSessionKey,
     ) -> Mapping[str, object] | None:
-        """读取专业 Session 的最新 Checkpoint"""
+        """读取专业 Session 的最新 Checkpoint。"""
         checkpoint = await self._checkpointer.aget_tuple(
             RunnableConfig(
                 configurable={
@@ -102,14 +102,14 @@ class PostgresSandboxSessionStore:
         return checkpoint.checkpoint if checkpoint is not None else None
 
     async def delete_checkpoint(self, session_key: AgentSessionKey) -> bool:
-        """删除专业 Session 的完整 Checkpoint namespace"""
+        """删除专业 Session 的完整 Checkpoint namespace。"""
         return await self._persistence.delete_checkpoint_namespace(
             self._thread_id,
             session_key.checkpoint_ns,
         )
 
     async def delete_workspace(self, session_key: AgentSessionKey) -> bool:
-        """删除专业 Session 的独立工作区"""
+        """删除专业 Session 的独立工作区。"""
         return await self._sandbox.delete_session(
             self._user_id,
             self._conversation_id,
@@ -119,7 +119,7 @@ class PostgresSandboxSessionStore:
         )
 
     async def find_missing_files(self, paths: Collection[str]) -> set[str]:
-        """批量返回当前 Conversation 工作区中不存在的文件"""
+        """批量返回当前 Conversation 工作区中不存在的文件。"""
         if not paths:
             return set()
         arguments = " ".join(shlex.quote(path) for path in sorted(paths))
@@ -139,7 +139,7 @@ class PostgresSandboxSessionStore:
         self,
         session_key: AgentSessionKey,
     ) -> AbstractAsyncContextManager[None]:
-        """获取专业 Session 的跨进程互斥锁"""
+        """获取专业 Session 的跨进程互斥锁。"""
         return self._persistence.advisory_lock(
             f"specialist:{self._thread_id}:{session_key.checkpoint_ns}",
         )

@@ -1,4 +1,4 @@
-"""PostgreSQL 认证身份与 Doris 权限投影访问"""
+"""PostgreSQL 认证身份与 Doris 权限投影访问。"""
 
 from datetime import datetime
 from uuid import UUID
@@ -15,26 +15,26 @@ _SECURITY_MUTATION_LOCK_KEY = 0x444154414147454E
 
 
 class AuthPGRepo:
-    """PostgreSQL 认证身份与 Doris 权限投影存储"""
+    """PostgreSQL 认证身份与 Doris 权限投影存储。"""
 
     def __init__(self, session: AsyncSession) -> None:
-        """绑定当前请求使用的异步数据库会话"""
+        """绑定当前请求使用的异步数据库会话。"""
         self._session = session
 
     @property
     def session(self) -> AsyncSession:
-        """返回当前存储绑定的数据库会话"""
+        """返回当前存储绑定的数据库会话。"""
         return self._session
 
     async def lock_security_mutation(self) -> None:
-        """串行化用户身份与跨数据库权限变更"""
+        """串行化用户身份与跨数据库权限变更。"""
         await self._session.execute(
             text("SELECT pg_advisory_xact_lock(:lock_key)"),
             {"lock_key": _SECURITY_MUTATION_LOCK_KEY},
         )
 
     async def count_admins(self) -> int:
-        """统计当前平台管理员数量"""
+        """统计当前平台管理员数量。"""
         return int(
             await self._session.scalar(
                 select(func.count(User.id)).where(
@@ -46,18 +46,18 @@ class AuthPGRepo:
         )
 
     async def add_user(self, user: User) -> User:
-        """新增用户并分配主键"""
+        """新增用户并分配主键。"""
         self._session.add(user)
         await self._session.flush()
         return user
 
     async def delete_user(self, user: User) -> None:
-        """删除用户记录"""
+        """删除用户记录。"""
         await self._session.delete(user)
         await self._session.flush()
 
     async def get_user_by_id(self, user_id: int) -> User | None:
-        """按主键读取用户"""
+        """按主键读取用户。"""
         return await self._session.scalar(
             select(User)
             .where(User.id == user_id)
@@ -65,29 +65,29 @@ class AuthPGRepo:
         )
 
     async def get_user_by_id_for_update(self, user_id: int) -> User | None:
-        """锁定并按主键读取用户"""
+        """锁定并按主键读取用户。"""
         return await self._session.scalar(
             select(User).where(User.id == user_id).with_for_update()
         )
 
     async def get_user_by_email_for_update(self, email: str) -> User | None:
-        """锁定并按规范化邮箱读取用户"""
+        """锁定并按规范化邮箱读取用户。"""
         return await self._session.scalar(
             select(User).where(User.email == email).with_for_update()
         )
 
     async def get_user_by_username_for_update(self, username: str) -> User | None:
-        """锁定并按规范化用户名读取用户"""
+        """锁定并按规范化用户名读取用户。"""
         return await self._session.scalar(
             select(User).where(User.username == username).with_for_update()
         )
 
     async def get_user_by_email(self, email: str) -> User | None:
-        """按规范化邮箱读取用户"""
+        """按规范化邮箱读取用户。"""
         return await self._session.scalar(select(User).where(User.email == email))
 
     async def get_user_by_username(self, username: str) -> User | None:
-        """按规范化用户名读取用户"""
+        """按规范化用户名读取用户。"""
         return await self._session.scalar(select(User).where(User.username == username))
 
     async def list_users(
@@ -97,7 +97,7 @@ class AuthPGRepo:
         offset: int,
         query: str | None = None,
     ) -> list[User]:
-        """分页读取用户，支持用户名与邮箱搜索"""
+        """分页读取用户，支持用户名与邮箱搜索。"""
         stmt = select(User)
         if query:
             stmt = stmt.where(
@@ -112,7 +112,7 @@ class AuthPGRepo:
         return list(result)
 
     async def count_users(self, *, query: str | None = None) -> int:
-        """统计用户总量，支持用户名与邮箱搜索"""
+        """统计用户总量，支持用户名与邮箱搜索。"""
         stmt = select(func.count(User.id))
         if query:
             stmt = stmt.where(
@@ -124,12 +124,12 @@ class AuthPGRepo:
         return int(await self._session.scalar(stmt) or 0)
 
     async def set_user_active(self, user: User, is_active: bool) -> None:
-        """设置用户启用状态"""
+        """设置用户启用状态。"""
         user.is_active = is_active
         await self._session.flush()
 
     async def set_user_password(self, user: User, password_hash: str) -> None:
-        """更新密码哈希并推进认证版本"""
+        """更新密码哈希并推进认证版本。"""
         user.password_hash = password_hash
         user.auth_version += 1
         await self._session.flush()
@@ -145,7 +145,7 @@ class AuthPGRepo:
         update_doris_role: bool,
         is_admin: bool | None = None,
     ) -> None:
-        """更新用户基础信息、角色与凭据"""
+        """更新用户基础信息、角色与凭据。"""
         if username is not None:
             user.username = username
         if email is not None:
@@ -160,17 +160,17 @@ class AuthPGRepo:
         await self._session.flush()
 
     async def set_user_doris_role(self, user: User, role_name: str) -> None:
-        """替换用户唯一 Doris 角色"""
+        """替换用户唯一 Doris 角色。"""
         user.doris_role_name = role_name
         await self._session.flush()
 
     async def set_user_admin(self, user: User, is_admin: bool) -> None:
-        """设置平台管理员标志"""
+        """设置平台管理员标志。"""
         user.is_admin = is_admin
         await self._session.flush()
 
     async def add_refresh_token(self, token: RefreshToken) -> None:
-        """保存刷新令牌"""
+        """保存刷新令牌。"""
         self._session.add(token)
         await self._session.flush()
 
@@ -178,7 +178,7 @@ class AuthPGRepo:
         self,
         token_id: UUID,
     ) -> RefreshToken | None:
-        """锁定并读取刷新令牌"""
+        """锁定并读取刷新令牌。"""
         return await self._session.scalar(
             select(RefreshToken).where(RefreshToken.id == token_id).with_for_update()
         )
@@ -189,7 +189,7 @@ class AuthPGRepo:
         replacement_id: UUID,
         revoked_at: datetime,
     ) -> None:
-        """标记刷新令牌已轮换"""
+        """标记刷新令牌已轮换。"""
         current.revoked_at = revoked_at
         current.replaced_by_id = replacement_id
 
@@ -198,7 +198,7 @@ class AuthPGRepo:
         family_id: UUID,
         revoked_at: datetime,
     ) -> None:
-        """吊销令牌族中全部有效令牌"""
+        """吊销令牌族中全部有效令牌。"""
         await self._session.execute(
             update(RefreshToken)
             .where(
@@ -213,7 +213,7 @@ class AuthPGRepo:
         user_id: int,
         revoked_at: datetime,
     ) -> None:
-        """吊销用户的全部有效刷新令牌"""
+        """吊销用户的全部有效刷新令牌。"""
         await self._session.execute(
             update(RefreshToken)
             .where(
@@ -227,14 +227,14 @@ class AuthPGRepo:
         self,
         user_id: int,
     ) -> UserDeletionTask | None:
-        """按用户读取注销任务"""
+        """按用户读取注销任务。"""
         return await self._session.get(UserDeletionTask, user_id)
 
     async def get_user_deletion_task_for_update(
         self,
         user_id: int,
     ) -> UserDeletionTask | None:
-        """按用户读取并锁定待修改的注销任务"""
+        """按用户读取并锁定待修改的注销任务。"""
         return await self._session.get(
             UserDeletionTask,
             user_id,
@@ -246,7 +246,7 @@ class AuthPGRepo:
         user_id: int,
         now: datetime,
     ) -> None:
-        """新增或重新调度用户注销任务"""
+        """新增或重新调度用户注销任务。"""
         await self._session.execute(
             insert(UserDeletionTask)
             .values(
@@ -275,7 +275,7 @@ class AuthPGRepo:
         lease_until: datetime,
         limit: int,
     ) -> list[UserDeletionTask]:
-        """原子领取到期且未完成的用户注销任务"""
+        """原子领取到期且未完成的用户注销任务。"""
         result = await self._session.scalars(
             select(UserDeletionTask)
             .where(
@@ -298,7 +298,7 @@ class AuthPGRepo:
         *,
         lease_until: datetime,
     ) -> bool:
-        """延长一个未完成用户注销任务的领取租约"""
+        """延长一个未完成用户注销任务的领取租约。"""
         task = await self._session.get(
             UserDeletionTask,
             user_id,
@@ -317,7 +317,7 @@ class AuthPGRepo:
         error: str,
         next_attempt_at: datetime,
     ) -> None:
-        """记录注销失败并安排下一次重试"""
+        """记录注销失败并安排下一次重试。"""
         task.attempt_count += 1
         task.last_error = error[:4000]
         task.next_attempt_at = next_attempt_at
@@ -328,7 +328,7 @@ class AuthPGRepo:
         task: UserDeletionTask,
         now: datetime,
     ) -> None:
-        """标记用户注销任务完成"""
+        """标记用户注销任务完成。"""
         task.status = "completed"
         task.last_error = None
         task.updated_at = now
@@ -338,7 +338,7 @@ class AuthPGRepo:
         self,
         role_name: str,
     ) -> list[DorisRoleAssetGrant]:
-        """读取指定 Doris 角色的权限投影"""
+        """读取指定 Doris 角色的权限投影。"""
         result = await self._session.scalars(
             select(DorisRoleAssetGrant)
             .where(DorisRoleAssetGrant.role_name == role_name)
@@ -352,7 +352,7 @@ class AuthPGRepo:
         scope: str,
         resource_key: str,
     ) -> DorisRoleAssetGrant | None:
-        """按角色和资产键读取权限投影"""
+        """按角色和资产键读取权限投影。"""
         return await self._session.scalar(
             select(DorisRoleAssetGrant).where(
                 DorisRoleAssetGrant.role_name == role_name,
@@ -365,18 +365,18 @@ class AuthPGRepo:
         self,
         grant: DorisRoleAssetGrant,
     ) -> DorisRoleAssetGrant:
-        """新增 Doris 权限投影"""
+        """新增 Doris 权限投影。"""
         self._session.add(grant)
         await self._session.flush()
         return grant
 
     async def delete_asset_grant(self, grant: DorisRoleAssetGrant) -> None:
-        """删除 Doris 权限投影"""
+        """删除 Doris 权限投影。"""
         await self._session.delete(grant)
         await self._session.flush()
 
     async def delete_role_asset_grants(self, role_name: str) -> None:
-        """删除指定 Doris 角色的全部权限投影"""
+        """删除指定 Doris 角色的全部权限投影。"""
         await self._session.execute(
             delete(DorisRoleAssetGrant).where(
                 DorisRoleAssetGrant.role_name == role_name

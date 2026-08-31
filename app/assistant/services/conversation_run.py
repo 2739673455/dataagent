@@ -1,4 +1,4 @@
-"""与客户端连接解耦的 Conversation Agent 执行管理"""
+"""与客户端连接解耦的 Conversation Agent 执行管理。"""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ type RunEvent = chat_schema.ChatStreamEventPayload
 
 @dataclass(slots=True)
 class _ConversationRun:
-    """一个独立于 SSE 订阅者生命周期的 Planner Run"""
+    """一个独立于 SSE 订阅者生命周期的 Planner Run。"""
 
     cancel: asyncio.Event = field(default_factory=asyncio.Event)
     events: list[RunEvent] = field(default_factory=list)
@@ -31,11 +31,11 @@ class _ConversationRun:
 
 
 class ConversationRunAlreadyActiveError(RuntimeError):
-    """同一 Conversation 已经存在运行中的 Planner Run"""
+    """同一 Conversation 已经存在运行中的 Planner Run。"""
 
 
 class ConversationRunService:
-    """后台执行 Planner Run，并向任意数量的 SSE 连接发布事件"""
+    """后台执行 Planner Run，并向任意数量的 SSE 连接发布事件。"""
 
     def __init__(
         self,
@@ -53,7 +53,7 @@ class ConversationRunService:
         conversation_id: UUID,
         user_message: chat_schema.UserMessageRequest,
     ) -> AsyncGenerator[RunEvent]:
-        """启动新用户回合并返回首个事件订阅"""
+        """启动新用户回合并返回首个事件订阅。"""
         return await self._start(user_id, conversation_id, user_message)
 
     async def resume_turn(
@@ -61,7 +61,7 @@ class ConversationRunService:
         user_id: int,
         conversation_id: UUID,
     ) -> AsyncGenerator[RunEvent]:
-        """后台恢复中断回合并返回首个事件订阅"""
+        """后台恢复中断回合并返回首个事件订阅。"""
         return await self._start(user_id, conversation_id, None)
 
     async def _start(
@@ -94,7 +94,7 @@ class ConversationRunService:
         user_id: int,
         conversation_id: UUID,
     ) -> AsyncGenerator[RunEvent]:
-        """订阅当前 Run；Run 已结束时立即返回 done"""
+        """订阅当前 Run；Run 已结束时立即返回 done。"""
         key = (user_id, conversation_id)
         queue: asyncio.Queue[RunEvent | None] = asyncio.Queue()
         async with self._lock:
@@ -106,13 +106,13 @@ class ConversationRunService:
         return self._consume(run, queue, replay)
 
     async def is_running(self, user_id: int, conversation_id: UUID) -> bool:
-        """返回指定 Conversation 是否存在后台 Planner Run"""
+        """返回指定 Conversation 是否存在后台 Planner Run。"""
         async with self._lock:
             run = self._runs.get((user_id, conversation_id))
             return run is not None and run.task is not None and not run.task.done()
 
     async def running_conversation_ids(self, user_id: int) -> set[UUID]:
-        """返回指定用户当前仍在后台执行的 Conversation ID"""
+        """返回指定用户当前仍在后台执行的 Conversation ID。"""
         async with self._lock:
             return {
                 conversation_id
@@ -123,7 +123,7 @@ class ConversationRunService:
             }
 
     async def stop(self, user_id: int, conversation_id: UUID) -> bool:
-        """显式停止指定 Conversation 的 Planner Run"""
+        """显式停止指定 Conversation 的 Planner Run。"""
         async with self._lock:
             run = self._runs.get((user_id, conversation_id))
             if run is None or run.task is None or run.task.done():
@@ -181,7 +181,7 @@ class ConversationRunService:
                 await self._finish(key, run)
 
     async def _publish(self, run: _ConversationRun, event: RunEvent) -> None:
-        """按产生顺序缓存事件并广播给所有当前订阅者"""
+        """按产生顺序缓存事件并广播给所有当前订阅者。"""
         async with self._lock:
             # 缓存快照与订阅登记共用一把锁：订阅者要么从 replay 得到该事件，
             # 要么已进入 subscribers 接收实时事件，不能漏收或重复接收。
@@ -191,7 +191,7 @@ class ConversationRunService:
             queue.put_nowait(event)
 
     async def _finish(self, key: ConversationRunKey, run: _ConversationRun) -> None:
-        """结束 Run 并通知订阅者关闭事件流"""
+        """结束 Run 并通知订阅者关闭事件流。"""
         done = chat_schema.ChatStreamDoneEvent(type="done")
         async with self._lock:
             if self._runs.get(key) is run:
@@ -208,7 +208,7 @@ class ConversationRunService:
         queue: asyncio.Queue[RunEvent | None],
         replay: tuple[RunEvent, ...],
     ) -> AsyncGenerator[RunEvent]:
-        """读取一次订阅；订阅取消只移除订阅者，不影响后台 Run"""
+        """读取一次订阅；订阅取消只移除订阅者，不影响后台 Run。"""
         try:
             for event in replay:
                 yield event
@@ -222,11 +222,11 @@ class ConversationRunService:
                 run.subscribers.discard(queue)
 
     async def _completed_subscription(self) -> AsyncGenerator[RunEvent]:
-        """构造已结束 Run 的空订阅"""
+        """构造已结束 Run 的空订阅。"""
         yield chat_schema.ChatStreamDoneEvent(type="done")
 
     async def close(self) -> None:
-        """应用停止时取消进程内全部后台 Run"""
+        """应用停止时取消进程内全部后台 Run。"""
         async with self._lock:
             runs = tuple(self._runs.values())
             tasks = tuple(

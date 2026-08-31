@@ -1,4 +1,4 @@
-"""跨存储用户注销编排测试"""
+"""跨存储用户注销编排测试。"""
 
 import unittest
 from datetime import UTC, datetime

@@ -1,4 +1,4 @@
-"""分析 Agent 提示词"""
+"""分析 Agent 提示词。"""
 
 ANALYST_SYSTEM_PROMPT = """
 你是 analyst 专业 Agent，负责基于已有数据产物完成统计分析、归因与维度下钻，并将结论制作成准确的图表、展示表格和自包含 HTML 报告。

@@ -1,4 +1,4 @@
-"""元数据导入与索引同步后台任务"""
+"""元数据导入与索引同步后台任务。"""
 
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
@@ -35,7 +35,7 @@ _PERIODIC_BATCH_SIZE = 50
 async def _run_with_metadata_resources[T](
     operation: Callable[[MetaPGRepo, SourceDorisRepo], Awaitable[T]],
 ) -> T:
-    """初始化元数据任务资源并执行指定异步操作"""
+    """初始化元数据任务资源并执行指定异步操作。"""
     embedding_client_manager.init()
     es_client_manager.init()
     meta_postgres_client_manager.init()
@@ -59,7 +59,7 @@ async def _run_with_metadata_resources[T](
 def _column_semantic_results(
     results: dict[tuple[str, str], SemanticIndexSyncResult],
 ) -> list[dict[str, Any]]:
-    """将字段语义索引同步结果转换为任务响应结构"""
+    """将字段语义索引同步结果转换为任务响应结构。"""
     return [
         {"t_name": t_name, "c_name": c_name, **asdict(result)}
         for (t_name, c_name), result in results.items()
@@ -69,7 +69,7 @@ def _column_semantic_results(
 def _column_value_results(
     results: dict[tuple[str, str], ValueIndexSyncResult],
 ) -> list[dict[str, Any]]:
-    """将字段取值索引同步结果转换为任务响应结构"""
+    """将字段取值索引同步结果转换为任务响应结构。"""
     return [
         {"t_name": t_name, "c_name": c_name, **asdict(result)}
         for (t_name, c_name), result in results.items()
@@ -79,7 +79,7 @@ def _column_value_results(
 def _metric_semantic_results(
     results: dict[str, SemanticIndexSyncResult],
 ) -> list[dict[str, Any]]:
-    """将指标语义索引同步结果转换为任务响应结构"""
+    """将指标语义索引同步结果转换为任务响应结构。"""
     return [
         {"metric_name": metric_name, **asdict(result)}
         for metric_name, result in results.items()
@@ -87,15 +87,15 @@ def _metric_semantic_results(
 
 
 def _format_key(key: str | tuple[str, str]) -> str:
-    """将元数据资源键格式化为可序列化文本"""
+    """将元数据资源键格式化为可序列化文本。"""
     return ".".join(key) if isinstance(key, tuple) else key
 
 
 def _import_result(result: MetaImportResult) -> dict[str, Any]:
-    """汇总元数据导入结果中的各类资源变更"""
+    """汇总元数据导入结果中的各类资源变更。"""
 
     def changes(value: Any) -> dict[str, Any]:
-        """统计单类资源的新增、更新和删除明细"""
+        """统计单类资源的新增、更新和删除明细。"""
         return {
             "created_count": len(value.created),
             "updated_count": len(value.updated),
@@ -115,7 +115,7 @@ def _import_result(result: MetaImportResult) -> dict[str, Any]:
 
 
 def _submit(name: str, args: list[Any]) -> TaskSubmission:
-    """向元数据索引队列提交指定 Celery 任务"""
+    """向元数据索引队列提交指定 Celery 任务。"""
     task = celery_app.send_task(
         name,
         args=args,
@@ -128,7 +128,7 @@ def _submit(name: str, args: list[Any]) -> TaskSubmission:
 
 
 def enqueue_table_indexes(table_names: list[str]) -> TaskSubmission:
-    """提交多个表的字段语义索引同步任务"""
+    """提交多个表的字段语义索引同步任务。"""
     return _submit("dataagent.metadata.sync_table_indexes", [table_names])
 
 
@@ -137,7 +137,7 @@ def enqueue_table_values(
     *,
     mode: RequestedValueIndexSyncMode,
 ) -> TaskSubmission:
-    """提交多个表的字段取值索引同步任务"""
+    """提交多个表的字段取值索引同步任务。"""
     return _submit(
         "dataagent.metadata.sync_table_values",
         [table_names, mode],
@@ -145,7 +145,7 @@ def enqueue_table_values(
 
 
 def enqueue_column_indexes(column_keys: list[tuple[str, str]]) -> TaskSubmission:
-    """提交指定字段的语义索引同步任务"""
+    """提交指定字段的语义索引同步任务。"""
     return _submit("dataagent.metadata.sync_column_indexes", [column_keys])
 
 
@@ -154,7 +154,7 @@ def enqueue_column_values(
     *,
     mode: RequestedValueIndexSyncMode,
 ) -> TaskSubmission:
-    """提交指定字段的取值索引同步任务"""
+    """提交指定字段的取值索引同步任务。"""
     return _submit(
         "dataagent.metadata.sync_column_values",
         [column_keys, mode],
@@ -162,7 +162,7 @@ def enqueue_column_values(
 
 
 def enqueue_metric_indexes(metric_names: list[str]) -> TaskSubmission:
-    """提交指定指标的语义索引同步任务"""
+    """提交指定指标的语义索引同步任务。"""
     return _submit("dataagent.metadata.sync_metric_indexes", [metric_names])
 
 
@@ -170,7 +170,7 @@ def enqueue_import(
     meta_config: MetaConfig,
     mode: ImportMode,
 ) -> TaskSubmission:
-    """提交元数据配置导入任务"""
+    """提交元数据配置导入任务。"""
     return _submit(
         "dataagent.metadata.import",
         [meta_config.model_dump(mode="json"), mode.value],
@@ -185,7 +185,7 @@ def enqueue_import(
     max_retries=3,
 )
 def sync_table_indexes_task(table_names: list[str]) -> dict[str, Any]:
-    """执行多个表的字段语义索引同步"""
+    """执行多个表的字段语义索引同步。"""
     logger.info(
         "开始执行表字段语义索引同步任务: "
         f"table_count={len(table_names)}, tables={table_names[:20]}, "
@@ -193,7 +193,7 @@ def sync_table_indexes_task(table_names: list[str]) -> dict[str, Any]:
     )
 
     async def operation(meta_repo: MetaPGRepo, source_repo: SourceDorisRepo) -> Any:
-        """使用任务级仓储执行表字段语义索引同步"""
+        """使用任务级仓储执行表字段语义索引同步。"""
         return await build_meta_index_service(
             meta_repo, source_repo
         ).sync_table_indexes(table_names)
@@ -219,7 +219,7 @@ def sync_table_values_task(
     table_names: list[str],
     mode: RequestedValueIndexSyncMode,
 ) -> dict[str, Any]:
-    """执行多个表的字段取值索引同步"""
+    """执行多个表的字段取值索引同步。"""
     logger.info(
         "开始执行表字段取值索引同步任务: "
         f"table_count={len(table_names)}, mode={mode}, "
@@ -227,7 +227,7 @@ def sync_table_values_task(
     )
 
     async def operation(meta_repo: MetaPGRepo, source_repo: SourceDorisRepo) -> Any:
-        """使用任务级仓储执行表字段取值索引同步"""
+        """使用任务级仓储执行表字段取值索引同步。"""
         return await build_meta_index_service(meta_repo, source_repo).sync_table_values(
             table_names,
             mode=mode,
@@ -250,7 +250,7 @@ def sync_table_values_task(
     max_retries=3,
 )
 def sync_column_indexes_task(column_keys: list[list[str]]) -> dict[str, Any]:
-    """执行指定字段的语义索引同步"""
+    """执行指定字段的语义索引同步。"""
     keys = [(t_name, c_name) for t_name, c_name in column_keys]
     logger.info(
         "开始执行字段语义索引同步任务: "
@@ -259,7 +259,7 @@ def sync_column_indexes_task(column_keys: list[list[str]]) -> dict[str, Any]:
     )
 
     async def operation(meta_repo: MetaPGRepo, source_repo: SourceDorisRepo) -> Any:
-        """使用任务级仓储执行字段语义索引同步"""
+        """使用任务级仓储执行字段语义索引同步。"""
         return await build_meta_index_service(
             meta_repo, source_repo
         ).sync_column_indexes(keys)
@@ -285,7 +285,7 @@ def sync_column_values_task(
     column_keys: list[list[str]],
     mode: RequestedValueIndexSyncMode,
 ) -> dict[str, Any]:
-    """执行指定字段的取值索引同步"""
+    """执行指定字段的取值索引同步。"""
     keys = [(t_name, c_name) for t_name, c_name in column_keys]
     logger.info(
         "开始执行字段取值索引同步任务: "
@@ -294,7 +294,7 @@ def sync_column_values_task(
     )
 
     async def operation(meta_repo: MetaPGRepo, source_repo: SourceDorisRepo) -> Any:
-        """使用任务级仓储执行字段取值索引同步"""
+        """使用任务级仓储执行字段取值索引同步。"""
         return await build_meta_index_service(
             meta_repo, source_repo
         ).sync_column_values(
@@ -319,7 +319,7 @@ def sync_column_values_task(
     max_retries=3,
 )
 def sync_metric_indexes_task(metric_names: list[str]) -> dict[str, Any]:
-    """执行指定指标的语义索引同步"""
+    """执行指定指标的语义索引同步。"""
     logger.info(
         "开始执行指标语义索引同步任务: "
         f"metric_count={len(metric_names)}, metrics={metric_names[:20]}, "
@@ -327,7 +327,7 @@ def sync_metric_indexes_task(metric_names: list[str]) -> dict[str, Any]:
     )
 
     async def operation(meta_repo: MetaPGRepo, source_repo: SourceDorisRepo) -> Any:
-        """使用任务级仓储执行指标语义索引同步"""
+        """使用任务级仓储执行指标语义索引同步。"""
         return await build_meta_index_service(
             meta_repo, source_repo
         ).sync_metric_indexes(metric_names)
@@ -350,7 +350,7 @@ def sync_metric_indexes_task(metric_names: list[str]) -> dict[str, Any]:
     max_retries=3,
 )
 def import_metadata_task(payload: dict[str, Any], mode: str) -> dict[str, Any]:
-    """执行元数据配置导入并返回变更摘要"""
+    """执行元数据配置导入并返回变更摘要。"""
     logger.info(
         "开始执行元数据导入任务: "
         f"mode={mode}, table_count={len(payload.get('tables', []))}, "
@@ -358,7 +358,7 @@ def import_metadata_task(payload: dict[str, Any], mode: str) -> dict[str, Any]:
     )
 
     async def operation(meta_repo: MetaPGRepo, source_repo: SourceDorisRepo) -> Any:
-        """使用任务级仓储执行元数据导入"""
+        """使用任务级仓储执行元数据导入。"""
         return await build_meta_import_service(meta_repo, source_repo).import_metadata(
             MetaConfig.model_validate(payload),
             ImportMode(mode),
@@ -376,7 +376,7 @@ def import_metadata_task(payload: dict[str, Any], mode: str) -> dict[str, Any]:
 
 
 async def _dispatch_value_indexes() -> dict[str, int]:
-    """提交到达每日执行时间的字段取值增量同步任务"""
+    """提交到达每日执行时间的字段取值增量同步任务。"""
     now = datetime.now(UTC)
     stale_before = now - timedelta(seconds=cfg.task_queue.task_time_limit_seconds + 300)
     meta_postgres_client_manager.init()
@@ -423,5 +423,5 @@ async def _dispatch_value_indexes() -> dict[str, int]:
 
 @celery_app.task(name="dataagent.metadata.dispatch_value_indexes")
 def dispatch_value_indexes_task() -> dict[str, int]:
-    """提交每日字段取值增量同步任务"""
+    """提交每日字段取值增量同步任务。"""
     return run_async(_dispatch_value_indexes())

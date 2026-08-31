@@ -1,4 +1,4 @@
-"""HTTP 请求追踪上下文测试"""
+"""HTTP 请求追踪上下文测试。"""
 
 import unittest
 

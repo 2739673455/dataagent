@@ -1,4 +1,4 @@
-"""Embedding 响应解析测试"""
+"""Embedding 响应解析测试。"""
 
 import unittest
 

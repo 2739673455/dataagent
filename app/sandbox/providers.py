@@ -1,4 +1,4 @@
-"""沙箱资源组装入口"""
+"""沙箱资源组装入口。"""
 
 from collections.abc import Sequence
 
@@ -12,7 +12,7 @@ def create_sandbox_manager(
     config: SandboxConfig,
     readonly_mounts: Sequence[SandboxReadonlyMount],
 ) -> DockerSandboxManager:
-    """按调用进程创建带 Redis 协调的沙箱管理器"""
+    """按调用进程创建带 Redis 协调的沙箱管理器。"""
     ownership_config = config.ownership
     ownership = RedisSandboxOwnership(
         ownership_config.redis_url.get_secret_value(),

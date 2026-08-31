@@ -1,4 +1,4 @@
-"""元数据语义召回模型"""
+"""元数据语义召回模型。"""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -16,7 +16,7 @@ RequestedValueIndexSyncMode = Literal["full", "incremental"]
 
 @dataclass(frozen=True, slots=True)
 class SearchHit[SearchItemT]:
-    """索引命中及原始分数"""
+    """索引命中及原始分数。"""
 
     item: SearchItemT
     score: float
@@ -24,7 +24,7 @@ class SearchHit[SearchItemT]:
 
 @dataclass(frozen=True, slots=True)
 class SemanticIndexDocument:
-    """一条可差量比较的语义索引文档"""
+    """一条可差量比较的语义索引文档。"""
 
     id: str
     resource_key: str
@@ -39,7 +39,7 @@ class SemanticIndexDocument:
 
 @dataclass(frozen=True, slots=True)
 class SemanticIndexDelta:
-    """一个元数据资源的语义索引变更集"""
+    """一个元数据资源的语义索引变更集。"""
 
     create: list[SemanticIndexDocument]
     update: list[SemanticIndexDocument]
@@ -49,7 +49,7 @@ class SemanticIndexDelta:
 
 @dataclass(frozen=True, slots=True)
 class SemanticIndexSyncResult:
-    """语义索引差量同步统计"""
+    """语义索引差量同步统计。"""
 
     created_count: int
     updated_count: int
@@ -62,7 +62,7 @@ class SemanticIndexSyncResult:
 
 @dataclass(frozen=True, slots=True)
 class ValueIndexSyncResult:
-    """取值索引水位同步统计"""
+    """取值索引水位同步统计。"""
 
     mode: ValueIndexSyncMode
     read_value_count: int
@@ -73,7 +73,7 @@ class ValueIndexSyncResult:
 
 
 class SemanticResourceRecallRequest(BaseModel):
-    """语义资源召回请求"""
+    """语义资源召回请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -87,7 +87,7 @@ class SemanticResourceRecallRequest(BaseModel):
     @field_validator("terms")
     @classmethod
     def normalize_string_list(cls, values: list[str]) -> list[str]:
-        """清理并稳定去重字符串列表"""
+        """清理并稳定去重字符串列表。"""
         normalized = list(
             dict.fromkeys(value.strip() for value in values if value.strip())
         )
@@ -100,12 +100,12 @@ class SemanticResourceRecallRequest(BaseModel):
     def deduplicate_resource_types(
         cls, values: list[SemanticResourceType]
     ) -> list[SemanticResourceType]:
-        """稳定去重资源类型"""
+        """稳定去重资源类型。"""
         return list(dict.fromkeys(values))
 
 
 class SemanticMatchReason(BaseModel):
-    """一次索引命中的结构化依据"""
+    """一次索引命中的结构化依据。"""
 
     model_config = ConfigDict(frozen=True)
 
@@ -115,7 +115,7 @@ class SemanticMatchReason(BaseModel):
 
 
 class SemanticRecallFailure(BaseModel):
-    """一次资源检索通道的失败范围"""
+    """一次资源检索通道的失败范围。"""
 
     model_config = ConfigDict(frozen=True)
 
@@ -125,7 +125,7 @@ class SemanticRecallFailure(BaseModel):
 
 
 class SemanticMetricRecallResult(BaseModel):
-    """指标语义召回结果"""
+    """指标语义召回结果。"""
 
     name: str
     description: str
@@ -139,7 +139,7 @@ class SemanticMetricRecallResult(BaseModel):
 
 
 class SemanticColumnRecallResult(BaseModel):
-    """字段语义召回结果"""
+    """字段语义召回结果。"""
 
     t_name: str
     name: str
@@ -158,7 +158,7 @@ class SemanticColumnRecallResult(BaseModel):
 
 
 class SemanticValueRecallResult(BaseModel):
-    """字段取值语义召回结果"""
+    """字段取值语义召回结果。"""
 
     value: str
     t_name: str
@@ -170,7 +170,7 @@ class SemanticValueRecallResult(BaseModel):
 
 
 class SemanticTableContext(BaseModel):
-    """表语义上下文"""
+    """表语义上下文。"""
 
     name: str
     role: str
@@ -180,7 +180,7 @@ class SemanticTableContext(BaseModel):
 
 
 class SemanticResourceRecallResponse(BaseModel):
-    """语义目录召回响应"""
+    """语义目录召回响应。"""
 
     status: Literal["success", "partial"]
     recall_id: str

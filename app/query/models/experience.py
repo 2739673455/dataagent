@@ -1,4 +1,4 @@
-"""查询经验聚合与检索模型"""
+"""查询经验聚合与检索模型。"""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -24,7 +24,7 @@ QUERY_EXPERIENCE_PURPOSE_LIMIT = 5
 
 
 class QueryExperience(MetaBase):
-    """按角色和 SQL 结构聚合的共享查询经验"""
+    """按角色和 SQL 结构聚合的共享查询经验。"""
 
     __tablename__ = "query_experiences"
 
@@ -143,7 +143,7 @@ class QueryExperience(MetaBase):
 
 
 class QueryExperienceAsset(MetaBase):
-    """查询经验关联的表或字段元数据快照"""
+    """查询经验关联的表或字段元数据快照。"""
 
     __tablename__ = "query_experience_assets"
 
@@ -184,7 +184,7 @@ class QueryExperienceAsset(MetaBase):
 
 @dataclass(frozen=True, slots=True)
 class QueryExperienceOverview:
-    """查询经验及其资产、执行聚合统计"""
+    """查询经验及其资产、执行聚合统计。"""
 
     experience: QueryExperience
     asset_count: int

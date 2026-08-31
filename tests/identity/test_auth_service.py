@@ -1,4 +1,4 @@
-"""用户认证与令牌生命周期服务测试"""
+"""用户认证与令牌生命周期服务测试。"""
 
 import asyncio
 import unittest
@@ -23,7 +23,7 @@ DEFAULT_ROLE = "dataagent_default"
 
 
 class AsyncSessionStub:
-    """测试用异步会话"""
+    """测试用异步会话。"""
 
     def __init__(self) -> None:
         self.active = False
@@ -49,7 +49,7 @@ class AsyncSessionStub:
 
 
 def build_config() -> AuthConfig:
-    """构造测试认证配置"""
+    """构造测试认证配置。"""
     return AuthConfig(
         jwt_secret=SecretStr("a-secure-test-key-with-at-least-32-characters"),
         jwt_algorithm="HS256",
@@ -66,7 +66,7 @@ def build_user(
     is_admin: bool = False,
     doris_role: str | None = DEFAULT_ROLE,
 ) -> User:
-    """构造用户实体"""
+    """构造用户实体。"""
     return User(
         id=user_id,
         username="analyst",
@@ -82,7 +82,7 @@ def build_user(
 
 
 def build_repo() -> MagicMock:
-    """构造认证存储测试替身"""
+    """构造认证存储测试替身。"""
     repo = MagicMock(spec=AuthPGRepo)
     repo.lock_security_mutation = AsyncMock()
     repo.get_user_by_username = AsyncMock()
@@ -103,7 +103,7 @@ def build_repo() -> MagicMock:
 
 
 class JWTCodecTest(unittest.TestCase):
-    """验证 JWT 签名、有效期与令牌类型隔离"""
+    """验证 JWT 签名、有效期与令牌类型隔离。"""
 
     def setUp(self) -> None:
         self.codec = JWTCodec(build_config())
@@ -129,7 +129,7 @@ class JWTCodecTest(unittest.TestCase):
 
 
 class Argon2PasswordManagerTest(unittest.IsolatedAsyncioTestCase):
-    """验证密码使用 Argon2id 哈希"""
+    """验证密码使用 Argon2id 哈希。"""
 
     async def test_hash_and_verify(self) -> None:
         async def run_inline(function, *args):
@@ -166,7 +166,7 @@ class Argon2PasswordManagerTest(unittest.IsolatedAsyncioTestCase):
 
 
 class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
-    """验证管理员引导与刷新令牌轮换"""
+    """验证管理员引导与刷新令牌轮换。"""
 
     async def asyncSetUp(self) -> None:
         self.repo = build_repo()

@@ -20,7 +20,7 @@ from app.shared.contracts.analysis import AgentSessionKey
 
 
 def make_session_key() -> AgentSessionKey:
-    """构造查询会话业务键"""
+    """构造查询会话业务键。"""
     return AgentSessionKey(
         user_id=7,
         conversation_id=uuid4(),
@@ -31,7 +31,7 @@ def make_session_key() -> AgentSessionKey:
 
 
 def make_success(session_key: AgentSessionKey) -> SuccessfulQueryExecution:
-    """构造一次成功查询的完整信息"""
+    """构造一次成功查询的完整信息。"""
     result = AnalysisQueryResult(
         path="/sessions/a/explorer/s/query.csv",
         columns=[],
@@ -54,7 +54,7 @@ class QueryExecutionHandlerTest(unittest.IsolatedAsyncioTestCase):
         self,
         execution_service: AnalysisQueryService,
     ) -> tuple[QueryExecutionHandler, MagicMock]:
-        """使用查询运行环境替身构造查询处理器"""
+        """使用查询运行环境替身构造查询处理器。"""
         principal = ResolvedQueryPrincipal(
             role_name="dataagent_standard",
             authorization_epoch=uuid4(),

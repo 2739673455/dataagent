@@ -1,4 +1,4 @@
-"""认证接口的进程内有界速率限制"""
+"""认证接口的进程内有界速率限制。"""
 
 import asyncio
 import hashlib
@@ -21,13 +21,13 @@ IDENTIFIER_RATE_LIMIT_MAX_KEYS = 50_000
 
 @dataclass(frozen=True)
 class RateLimitRule:
-    """固定时间窗口内的请求上限"""
+    """固定时间窗口内的请求上限。"""
 
     limit: int
     window_seconds: float
 
     def __post_init__(self) -> None:
-        """校验限流阈值和时间窗口"""
+        """校验限流阈值和时间窗口。"""
         if self.limit <= 0:
             raise ValueError("限流阈值必须为正整数")
         if self.window_seconds <= 0:
@@ -36,14 +36,14 @@ class RateLimitRule:
 
 @dataclass
 class _RateBucket:
-    """单个限流键的请求时间队列"""
+    """单个限流键的请求时间队列。"""
 
     timestamps: deque[float] = field(default_factory=deque)
     last_seen: float = 0
 
 
 class BoundedRateLimiter:
-    """按最近使用顺序限制键数量的滑动窗口限流器"""
+    """按最近使用顺序限制键数量的滑动窗口限流器。"""
 
     def __init__(
         self,
@@ -52,7 +52,7 @@ class BoundedRateLimiter:
         max_keys: int,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        """初始化限流规则、容量上限和时间源"""
+        """初始化限流规则、容量上限和时间源。"""
         if max_keys <= 0:
             raise ValueError("max_keys 必须为正整数")
         self._rule = rule
@@ -63,11 +63,11 @@ class BoundedRateLimiter:
 
     @property
     def tracked_keys(self) -> int:
-        """返回当前跟踪的限流键数量"""
+        """返回当前跟踪的限流键数量。"""
         return len(self._buckets)
 
     async def consume(self, key: str) -> None:
-        """消费一次请求额度"""
+        """消费一次请求额度。"""
         key_digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
         async with self._lock:
             now = self._clock()
@@ -97,7 +97,7 @@ class BoundedRateLimiter:
             bucket.timestamps.append(now)
 
     def _remove_expired_buckets(self, cutoff: float) -> None:
-        """从最近最少使用端清除过期键"""
+        """从最近最少使用端清除过期键。"""
         while self._buckets:
             key, bucket = next(iter(self._buckets.items()))
             if bucket.last_seen > cutoff:
@@ -106,12 +106,12 @@ class BoundedRateLimiter:
 
     @staticmethod
     def _prune_timestamps(bucket: _RateBucket, cutoff: float) -> None:
-        """清除滑动窗口外的请求记录"""
+        """清除滑动窗口外的请求记录。"""
         while bucket.timestamps and bucket.timestamps[0] <= cutoff:
             bucket.timestamps.popleft()
 
     def _capacity_retry_after(self, now: float) -> int:
-        """计算最早限流键自然过期前的等待时间"""
+        """计算最早限流键自然过期前的等待时间。"""
         oldest = next(iter(self._buckets.values()))
         return max(
             1,
@@ -120,7 +120,7 @@ class BoundedRateLimiter:
 
 
 class AuthRateLimitService:
-    """按认证入口和攻击维度隔离的限流服务"""
+    """按认证入口和攻击维度隔离的限流服务。"""
 
     def __init__(
         self,
@@ -129,7 +129,7 @@ class AuthRateLimitService:
         login_identifier: BoundedRateLimiter | None = None,
         refresh_ip: BoundedRateLimiter | None = None,
     ) -> None:
-        """初始化登录与刷新入口的独立限流器"""
+        """初始化登录与刷新入口的独立限流器。"""
         self._login_ip = login_ip or BoundedRateLimiter(
             RateLimitRule(LOGIN_IP_RATE_LIMIT, LOGIN_RATE_WINDOW_SECONDS),
             max_keys=IP_RATE_LIMIT_MAX_KEYS,
@@ -144,20 +144,20 @@ class AuthRateLimitService:
         )
 
     async def check_login(self, client_ip: str, identifier: str) -> None:
-        """同时限制登录来源 IP 与账号标识"""
+        """同时限制登录来源 IP 与账号标识。"""
         await self._login_ip.consume(self._normalize_ip(client_ip))
         await self._login_identifier.consume(self._normalize_identifier(identifier))
 
     async def check_refresh(self, client_ip: str) -> None:
-        """限制单个来源 IP 的令牌刷新频率"""
+        """限制单个来源 IP 的令牌刷新频率。"""
         await self._refresh_ip.consume(self._normalize_ip(client_ip))
 
     @staticmethod
     def _normalize_ip(client_ip: str) -> str:
-        """规范化客户端地址限流键"""
+        """规范化客户端地址限流键。"""
         return client_ip.strip().casefold() or "unknown"
 
     @staticmethod
     def _normalize_identifier(identifier: str) -> str:
-        """规范化登录账号限流键"""
+        """规范化登录账号限流键。"""
         return identifier.strip().casefold()

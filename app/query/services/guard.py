@@ -1,4 +1,4 @@
-"""只读分析 SQL 的确定性安全校验"""
+"""只读分析 SQL 的确定性安全校验。"""
 
 import re
 from dataclasses import dataclass
@@ -23,20 +23,20 @@ from app.query.models.validation import (
 
 
 class QueryCatalogRepository(Protocol):
-    """查询校验所需的元数据目录接口"""
+    """查询校验所需的元数据目录接口。"""
 
     async def list_table_infos(self) -> list[TableInfo]:
-        """列出参与查询校验的表元数据"""
+        """列出参与查询校验的表元数据。"""
         ...
 
     async def list_column_infos(self) -> list[ColumnInfo]:
-        """列出参与查询校验的字段元数据"""
+        """列出参与查询校验的字段元数据。"""
         ...
 
 
 @dataclass(frozen=True, slots=True)
 class _Catalog:
-    """一次校验使用的元数据目录快照"""
+    """一次校验使用的元数据目录快照。"""
 
     table_names: dict[str, str]
     columns: dict[str, dict[str, ColumnInfo]]
@@ -44,7 +44,7 @@ class _Catalog:
 
     @property
     def sqlglot_schema(self) -> dict[str, dict[str, str]]:
-        """构造 sqlglot 单数据库字段类型映射"""
+        """构造 sqlglot 单数据库字段类型映射。"""
         return {
             self.table_names[table_key]: {
                 column.name: column.type for column in columns.values()
@@ -128,7 +128,7 @@ _COMPARISON_TYPES = (
 
 
 class QueryGuardService:
-    """解析 SQL 并校验只读、元数据、关联和资产权限"""
+    """解析 SQL 并校验只读、元数据、关联和资产权限。"""
 
     def __init__(
         self,
@@ -137,7 +137,7 @@ class QueryGuardService:
         data_source: str,
         current_database: str,
     ) -> None:
-        """初始化查询安全服务"""
+        """初始化查询安全服务。"""
         self._catalog_repo = catalog_repo
         self._data_source = data_source
         self._current_database = current_database
@@ -147,7 +147,7 @@ class QueryGuardService:
         sql: str,
         policy: AssetAccessPolicy | None = None,
     ) -> QueryValidationResult:
-        """返回 SQL 的完整安全检查结果"""
+        """返回 SQL 的完整安全检查结果。"""
         expression, issues = self._parse_single_query(sql)
         if expression is None:
             return self._result(None, issues)
@@ -218,7 +218,7 @@ class QueryGuardService:
         output_columns: list[str] | None = None,
         query_kind: QueryKind = "business",
     ) -> QueryValidationResult:
-        """构造稳定排序并去重的校验结果"""
+        """构造稳定排序并去重的校验结果。"""
         distinct_issues = list(
             {
                 (issue.code, issue.message, issue.table, issue.column): issue
@@ -239,7 +239,7 @@ class QueryGuardService:
     def _parse_single_query(
         sql: str,
     ) -> tuple[Expr | None, list[QueryValidationIssue]]:
-        """解析且限制输入中只有一条有效语句"""
+        """解析且限制输入中只有一条有效语句。"""
         if not sql.strip():
             return None, [
                 QueryValidationIssue(code="empty_sql", message="SQL 语句不能为空")
@@ -268,7 +268,7 @@ class QueryGuardService:
         return cast(Expr, statements[0]), []
 
     def _check_show_tables(self, expression: exp.Show) -> QueryValidationResult:
-        """仅允许查看当前业务数据库中当前角色可见的表"""
+        """仅允许查看当前业务数据库中当前角色可见的表。"""
         issues: list[QueryValidationIssue] = []
         if str(expression.this).casefold() != "tables":
             issues.append(
@@ -312,7 +312,7 @@ class QueryGuardService:
 
     @staticmethod
     def _references_information_schema(expression: Expr) -> bool:
-        """判断查询是否直接引用 information_schema"""
+        """判断查询是否直接引用 information_schema。"""
         return any(
             table.db.casefold() == "information_schema"
             for table in expression.find_all(exp.Table)
@@ -322,7 +322,7 @@ class QueryGuardService:
         self,
         expression: Expr,
     ) -> QueryValidationResult:
-        """校验当前数据库下受限的 Doris 系统目录查询"""
+        """校验当前数据库下受限的 Doris 系统目录查询。"""
         issues = self._check_readonly(expression)
         if not isinstance(expression, exp.Select):
             issues.append(
@@ -396,7 +396,7 @@ class QueryGuardService:
         )
 
     def _has_current_database_filter(self, expression: exp.Select) -> bool:
-        """确认系统目录查询通过 AND 条件限定到当前数据库"""
+        """确认系统目录查询通过 AND 条件限定到当前数据库。"""
         where = expression.args.get("where")
         if where is None:
             return False
@@ -435,7 +435,7 @@ class QueryGuardService:
 
     @staticmethod
     def _check_readonly(expression: Expr) -> list[QueryValidationIssue]:
-        """检查语句类型、危险节点和有副作用的函数"""
+        """检查语句类型、危险节点和有副作用的函数。"""
         issues: list[QueryValidationIssue] = []
         if not isinstance(expression, exp.Query) or expression.find(exp.Select) is None:
             issues.append(
@@ -485,7 +485,7 @@ class QueryGuardService:
         self,
         policy: AssetAccessPolicy | None,
     ) -> _Catalog:
-        """读取一次一致且已按用户授权收窄的目录快照"""
+        """读取一次一致且已按用户授权收窄的目录快照。"""
         table_infos = await self._catalog_repo.list_table_infos()
         column_infos = await self._catalog_repo.list_column_infos()
         restricted_star_tables: frozenset[str] = frozenset()
@@ -534,7 +534,7 @@ class QueryGuardService:
         tables: list[QueryTableRef],
         star_tables: set[str],
     ) -> list[QueryValidationIssue]:
-        """字段级授权不允许通过星号扩展隐藏字段"""
+        """字段级授权不允许通过星号扩展隐藏字段。"""
         table_refs = {table.qualified_name.casefold(): table for table in tables}
         issues: list[QueryValidationIssue] = []
         for table_key in sorted(star_tables):
@@ -561,7 +561,7 @@ class QueryGuardService:
         expression: Expr,
         catalog: _Catalog,
     ) -> tuple[list[QueryTableRef], set[str], list[QueryValidationIssue]]:
-        """区分物理表与 CTE 并解析星号涉及的物理表"""
+        """区分物理表与 CTE 并解析星号涉及的物理表。"""
         table_refs: dict[str, QueryTableRef] = {}
         star_tables: set[str] = set()
         issues: list[QueryValidationIssue] = []
@@ -596,7 +596,7 @@ class QueryGuardService:
         catalog: _Catalog,
         issues: list[QueryValidationIssue] | None = None,
     ) -> dict[str, QueryTableRef]:
-        """解析作用域别名对应的物理表"""
+        """解析作用域别名对应的物理表。"""
         sources: dict[str, QueryTableRef] = {}
         for alias, (_, source) in scope.selected_sources.items():
             if not isinstance(source, exp.Table):
@@ -639,7 +639,7 @@ class QueryGuardService:
         expression: Expr,
         catalog: _Catalog,
     ) -> exp.Query:
-        """基于元数据补全并验证字段、别名和 CTE 引用"""
+        """基于元数据补全并验证字段、别名和 CTE 引用。"""
         schema = catalog.sqlglot_schema
         if self._current_database:
             schema = {self._current_database: schema}
@@ -665,7 +665,7 @@ class QueryGuardService:
         catalog: _Catalog,
         error: OptimizeError,
     ) -> QueryValidationIssue:
-        """把 sqlglot 字段解析错误转换为稳定错误码"""
+        """把 sqlglot 字段解析错误转换为稳定错误码。"""
         message = str(error)
         match = re.search(r"Column ['\"]([^'\"]+)", message)
         column_name = match.group(1) if match else None
@@ -690,7 +690,7 @@ class QueryGuardService:
         catalog: _Catalog,
         column_name: str,
     ) -> bool:
-        """判断未限定字段是否同时存在于多个当前作用域来源"""
+        """判断未限定字段是否同时存在于多个当前作用域来源。"""
         column_key = column_name.casefold()
         for scope in traverse_scope(expression):
             if not any(
@@ -716,7 +716,7 @@ class QueryGuardService:
         expression: Expr,
         catalog: _Catalog,
     ) -> list[QueryColumnRef]:
-        """收集字段血缘中直接引用的物理字段"""
+        """收集字段血缘中直接引用的物理字段。"""
         references: dict[str, QueryColumnRef] = {}
         for scope in traverse_scope(expression):
             physical_sources = self._physical_sources(scope, catalog)
@@ -744,7 +744,7 @@ class QueryGuardService:
 
     @classmethod
     def _check_joins(cls, expression: Expr) -> list[QueryValidationIssue]:
-        """检查 JOIN 条件包含左右来源且避免隐式笛卡尔积"""
+        """检查 JOIN 条件包含左右来源且避免隐式笛卡尔积。"""
         issues: list[QueryValidationIssue] = []
         for scope in traverse_scope(expression):
             if not isinstance(scope.expression, exp.Select):
@@ -806,7 +806,7 @@ class QueryGuardService:
         left_aliases: set[str],
         right_alias: str,
     ) -> bool:
-        """确认 JOIN 条件的布尔分支包含跨来源比较"""
+        """确认 JOIN 条件的布尔分支包含跨来源比较。"""
         if isinstance(condition, exp.Paren):
             return cls._join_condition_links_sources(
                 condition.this,
@@ -858,7 +858,7 @@ class QueryGuardService:
         left_aliases: set[str],
         right_alias: str,
     ) -> bool:
-        """判断比较操作的两侧分别只引用前置来源和当前右侧来源"""
+        """判断比较操作的两侧分别只引用前置来源和当前右侧来源。"""
 
         def source_side(operand: Expr) -> str | None:
             """判断一个比较操作数仅引用 Join 的哪一侧来源。"""
@@ -885,7 +885,7 @@ class QueryGuardService:
         columns: list[QueryColumnRef],
         star_tables: set[str],
     ) -> list[QueryValidationIssue]:
-        """逐个检查星号表和显式物理字段的资产权限"""
+        """逐个检查星号表和显式物理字段的资产权限。"""
         issues: list[QueryValidationIssue] = []
         columns_by_table: dict[str, list[QueryColumnRef]] = {}
         for column in columns:
@@ -934,7 +934,7 @@ class QueryGuardService:
 
     @staticmethod
     def _duplicates(names: list[str]) -> list[str]:
-        """返回忽略大小写后的重复输出名"""
+        """返回忽略大小写后的重复输出名。"""
         seen: set[str] = set()
         duplicates: dict[str, str] = {}
         for name in names:

@@ -1,4 +1,4 @@
-"""初始化 PostgreSQL 数据库"""
+"""初始化 PostgreSQL 数据库。"""
 
 import logging
 from pathlib import Path
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class PostgresInitializer:
-    """PostgreSQL 数据库初始化器"""
+    """PostgreSQL 数据库初始化器。"""
 
     def __init__(
         self,
@@ -30,14 +30,14 @@ class PostgresInitializer:
         user: str,
         password: str,
     ) -> None:
-        """初始化 PostgreSQL 连接配置"""
+        """初始化 PostgreSQL 连接配置。"""
         self._host = host
         self._port = port
         self._user = user
         self._password = password
 
     def delete_db(self, db_name: str) -> None:
-        """数据库存在时删除数据库"""
+        """数据库存在时删除数据库。"""
         try:
             with (
                 psycopg.connect(
@@ -67,7 +67,7 @@ class PostgresInitializer:
             raise
 
     def create_db(self, db_name: str) -> None:
-        """数据库不存在时创建数据库"""
+        """数据库不存在时创建数据库。"""
         try:
             with (
                 psycopg.connect(

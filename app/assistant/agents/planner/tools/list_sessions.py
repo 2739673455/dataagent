@@ -1,4 +1,4 @@
-"""专业 Agent Session 查询工具"""
+"""专业 Agent Session 查询工具。"""
 
 from typing import Annotated
 
@@ -12,7 +12,7 @@ from app.assistant.agents.session_service import AgentSessionService
 
 
 def create_list_sessions_tool(service: AgentSessionService) -> BaseTool:
-    """创建绑定当前用户 Conversation 的 Session 查询 Tool"""
+    """创建绑定当前用户 Conversation 的 Session 查询 Tool。"""
 
     @tool("list_sessions")
     async def list_sessions(
@@ -22,7 +22,7 @@ def create_list_sessions_tool(service: AgentSessionService) -> BaseTool:
             "可选分析标识；省略时查询当前 Conversation 的全部专业 Session",
         ] = None,
     ) -> dict[str, object]:
-        """查询已有专业 Agent Session 的最新持久化状态"""
+        """查询已有专业 Agent Session 的最新持久化状态。"""
         del runtime
         try:
             request = ListSessionsRequest(analysis_id=analysis_id)

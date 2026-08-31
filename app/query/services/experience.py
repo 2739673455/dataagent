@@ -1,4 +1,4 @@
-"""查询执行记录、经验聚合与权限感知检索"""
+"""查询执行记录、经验聚合与权限感知检索。"""
 
 import asyncio
 import hashlib
@@ -42,7 +42,7 @@ _INDEX_TEXT_MAX_CHARS = 8000
 
 @dataclass(frozen=True, slots=True)
 class QueryExecutionContext:
-    """SQL 工具提供的用户、角色和任务上下文"""
+    """SQL 工具提供的用户、角色和任务上下文。"""
 
     session_key: AgentSessionKey
     role_name: str
@@ -53,14 +53,14 @@ class QueryExecutionContext:
 
 @dataclass(frozen=True, slots=True)
 class _QueryExperienceSemanticRecall:
-    """查询经验索引通道的内部融合结果"""
+    """查询经验索引通道的内部融合结果。"""
 
     status: QueryExperienceRecallStatus
     ranks: dict[UUID, float]
 
 
 def _build_sql_template(sql: str) -> tuple[str, str]:
-    """将 SQL 字面量替换为参数并生成稳定结构指纹"""
+    """将 SQL 字面量替换为参数并生成稳定结构指纹。"""
     expression = parse_one(sql, read="doris")
     parameter_index = 0
     for node in list(expression.walk()):
@@ -74,7 +74,7 @@ def _build_sql_template(sql: str) -> tuple[str, str]:
 
 
 class QueryExperienceService:
-    """记录查询事实并检索经过当前权限校验的经验"""
+    """记录查询事实并检索经过当前权限校验的经验。"""
 
     def __init__(
         self,
@@ -86,7 +86,7 @@ class QueryExperienceService:
         data_source: str,
         database_name: str,
     ) -> None:
-        """绑定查询经验存储、检索和索引调度依赖"""
+        """绑定查询经验存储、检索和索引调度依赖。"""
         self._repo = repo
         self._index_repo = index_repo
         self._embedding_client = embedding_client
@@ -99,7 +99,7 @@ class QueryExperienceService:
         context: QueryExecutionContext,
         details: SuccessfulQueryExecution,
     ) -> UUID | None:
-        """记录成功执行并增量更新相同结构的查询经验"""
+        """记录成功执行并增量更新相同结构的查询经验。"""
         if details.validation.query_kind == "catalog":
             await self._record_catalog_success(context, details)
             return None
@@ -165,7 +165,7 @@ class QueryExperienceService:
         context: QueryExecutionContext,
         details: SuccessfulQueryExecution,
     ) -> None:
-        """仅审计成功目录查询，不生成可召回的业务查询经验"""
+        """仅审计成功目录查询，不生成可召回的业务查询经验。"""
         execution = QueryExecution(
             user_id=context.session_key.user_id,
             role_name=context.role_name,
@@ -204,7 +204,7 @@ class QueryExperienceService:
         error_detail: str,
         validation: QueryValidationResult | None = None,
     ) -> None:
-        """记录被 Guard 拒绝或执行失败的 SQL"""
+        """记录被 Guard 拒绝或执行失败的 SQL。"""
         execution = QueryExecution(
             user_id=context.session_key.user_id,
             role_name=context.role_name,
@@ -234,7 +234,7 @@ class QueryExperienceService:
         query: str,
         limit: int,
     ) -> QueryExperienceRecall:
-        """按混合语义排名检索查询经验"""
+        """按混合语义排名检索查询经验。"""
         semantic_recall = await self._semantic_recall(
             query,
             role_name=role_name,
@@ -307,7 +307,7 @@ class QueryExperienceService:
         table_versions: dict[str, int],
         column_versions: dict[tuple[str, str], int],
     ) -> list[QueryExperienceAsset]:
-        """按校验血缘构造带元数据版本的经验资产快照"""
+        """按校验血缘构造带元数据版本的经验资产快照。"""
         assets = [
             QueryExperienceAsset(
                 experience_id=experience_id,
@@ -346,7 +346,7 @@ class QueryExperienceService:
         return assets
 
     async def sync_index(self, experience_id: UUID, requested_revision: int) -> int:
-        """幂等同步一条查询经验的当前索引投影"""
+        """幂等同步一条查询经验的当前索引投影。"""
         async with self._repo.session.begin():
             experience = await self._repo.get(experience_id)
         if experience is None:
@@ -395,7 +395,7 @@ class QueryExperienceService:
         role_name: str,
         authorization_epoch: UUID,
     ) -> _QueryExperienceSemanticRecall:
-        """分别召回全文和向量候选，并融合可用通道"""
+        """分别召回全文和向量候选，并融合可用通道。"""
         text_task = asyncio.create_task(
             self._index_repo.search_text(
                 query,
@@ -446,7 +446,7 @@ class QueryExperienceService:
         task: asyncio.Task[list[SearchHit[UUID]]],
         channel: str,
     ) -> list[SearchHit[UUID]] | None:
-        """等待单个检索通道，保留另一路的结果"""
+        """等待单个检索通道，保留另一路的结果。"""
         try:
             return await task
         except asyncio.CancelledError:
@@ -460,7 +460,7 @@ class QueryExperienceService:
         experience: QueryExperience,
         authorization_filter: MetadataAuthorizationFilter,
     ) -> QueryExperienceRecallResult | None:
-        """将已通过有效性检查的经验转换为模型可用结果"""
+        """将已通过有效性检查的经验转换为模型可用结果。"""
         assets = [
             QueryAssetSnapshot(
                 kind=cast(QueryAssetKind, asset.kind),

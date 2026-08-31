@@ -1,4 +1,4 @@
-"""专业 Agent 内置技能挂载"""
+"""专业 Agent 内置技能挂载。"""
 
 from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
@@ -15,12 +15,12 @@ AGENT_SKILLS_MOUNT_ROOT = PurePosixPath("/skills")
 
 
 def agent_skills_mount_path(agent_type: AgentType) -> str:
-    """返回指定 Agent 的技能挂载路径"""
+    """返回指定 Agent 的技能挂载路径。"""
     return f"{AGENT_SKILLS_MOUNT_ROOT}/{agent_type}/"
 
 
 def packaged_agent_skill_mounts() -> tuple[SandboxReadonlyMount, ...]:
-    """收集随应用发布且需要暴露给沙箱的 Agent 技能目录"""
+    """收集随应用发布且需要暴露给沙箱的 Agent 技能目录。"""
     agents_directory = Path(__file__).parent
     return tuple(
         SandboxReadonlyMount(
@@ -37,7 +37,7 @@ def mount_agent_skills(
     skill_directory: Path,
     skills: Sequence[str],
 ) -> tuple[BackendProtocol, FilesystemMiddleware]:
-    """将当前 Agent 的内置技能只读挂载到会话 Backend"""
+    """将当前 Agent 的内置技能只读挂载到会话 Backend。"""
     permissions: list[FilesystemPermission] = []
     resolved_backend = backend
     if skills:

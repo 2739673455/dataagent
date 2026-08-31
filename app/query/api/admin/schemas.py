@@ -1,4 +1,4 @@
-"""查询经验管理接口协议"""
+"""查询经验管理接口协议。"""
 
 from datetime import datetime
 from typing import Literal, Self, cast

@@ -1,4 +1,4 @@
-"""检查项目 Markdown 文档中的本地链接"""
+"""检查项目 Markdown 文档中的本地链接。"""
 
 import re
 from collections.abc import Iterable
@@ -11,12 +11,12 @@ _EXTERNAL_SCHEMES = {"http", "https", "mailto", "data"}
 
 
 def _documentation_files() -> list[Path]:
-    """返回需要检查的项目文档"""
+    """返回需要检查的项目文档。"""
     return [ROOT_DIR / "README.md", *sorted((ROOT_DIR / "docs").rglob("*.md"))]
 
 
 def _check_document_links(paths: Iterable[Path] | None = None) -> list[str]:
-    """返回全部失效本地链接"""
+    """返回全部失效本地链接。"""
     broken_links: list[str] = []
     for document_path in paths or _documentation_files():
         content = document_path.read_text()
@@ -37,7 +37,7 @@ def _check_document_links(paths: Iterable[Path] | None = None) -> list[str]:
 
 
 def main() -> None:
-    """执行文档链接检查"""
+    """执行文档链接检查。"""
     broken_links = _check_document_links()
     if broken_links:
         details = "\n".join(broken_links)

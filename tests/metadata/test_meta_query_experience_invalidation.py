@@ -1,4 +1,4 @@
-"""元数据变更触发查询经验失效测试"""
+"""元数据变更触发查询经验失效测试。"""
 
 import unittest
 from typing import cast

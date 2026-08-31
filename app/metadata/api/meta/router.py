@@ -1,4 +1,4 @@
-"""元数据管理与索引同步路由"""
+"""元数据管理与索引同步路由。"""
 
 from collections.abc import AsyncGenerator
 from typing import Annotated
@@ -60,7 +60,7 @@ MetadataPath = Annotated[MetadataName, Path()]
 async def _get_meta_catalog_service(
     _: AdminUserDep,
 ) -> AsyncGenerator[MetaCatalogService]:
-    """为平台管理员创建完整元数据目录服务"""
+    """为平台管理员创建完整元数据目录服务。"""
     async with (
         meta_postgres_client_manager.session() as meta_session,
         admin_doris_client_manager.connection() as source_connection,
@@ -71,7 +71,7 @@ async def _get_meta_catalog_service(
 
 
 async def _get_meta_import_service() -> AsyncGenerator[MetaImportService]:
-    """创建请求级元数据导入服务"""
+    """创建请求级元数据导入服务。"""
     async with (
         meta_postgres_client_manager.session() as meta_session,
         admin_doris_client_manager.connection() as source_connection,
@@ -92,14 +92,14 @@ MetaImportServiceDep = Annotated[
 
 
 def _format_resource_key(key: str | ColumnKey) -> str:
-    """将资源主键转换为响应文本"""
+    """将资源主键转换为响应文本。"""
     return ".".join(key) if isinstance(key, tuple) else key
 
 
 def _to_import_changes[T: (str, tuple[str, str])](
     changes: ResourceChanges[T],
 ) -> schemas.ResourceImportChanges:
-    """转换元数据导入变更响应"""
+    """转换元数据导入变更响应。"""
     return schemas.ResourceImportChanges(
         created_count=len(changes.created),
         updated_count=len(changes.updated),
@@ -111,7 +111,7 @@ def _to_import_changes[T: (str, tuple[str, str])](
 
 
 async def _load_yaml(file: UploadFile) -> MetaConfig:
-    """读取并校验上传的 YAML 元数据配置"""
+    """读取并校验上传的 YAML 元数据配置。"""
     try:
         content = await file.read()
     finally:
@@ -153,7 +153,7 @@ async def import_metadata(
     mode: Annotated[ImportMode, Query(description="导入模式")] = ImportMode.MERGE,
     dry_run: Annotated[bool, Query(description="仅预览变更")] = False,
 ) -> schemas.MetaImportResponse | TaskAcceptedResponse:
-    """从 YAML 文件批量导入元数据"""
+    """从 YAML 文件批量导入元数据。"""
     meta_config = await _load_yaml(file=file)
     if not dry_run:
         submission = enqueue_import(meta_config, mode)
@@ -187,7 +187,7 @@ async def export_metadata(
     service: MetaCatalogServiceDep,
     current_admin: AdminUserDep,
 ) -> Response:
-    """以 YAML 格式导出全部元数据"""
+    """以 YAML 格式导出全部元数据。"""
     meta_config = await service.export_metadata()
     logger.info(
         f"管理员导出元数据: operator_id={current_admin.id}, "
@@ -210,7 +210,7 @@ async def list_table_infos(
     service: MetaCatalogServiceDep,
     _: AdminUserDep,
 ) -> list[schemas.TableInfoResponse]:
-    """查询全部表元数据"""
+    """查询全部表元数据。"""
     return [
         schemas.TableInfoResponse.model_validate(table_info)
         for table_info in await service.list_table_infos()
@@ -222,7 +222,7 @@ async def list_source_tables(
     service: MetaCatalogServiceDep,
     _: AdminUserDep,
 ) -> list[str]:
-    """查询底层 Doris 数据源中的所有物理表名"""
+    """查询底层 Doris 数据源中的所有物理表名。"""
     return await service.list_source_tables()
 
 
@@ -235,7 +235,7 @@ async def list_column_infos(
     service: MetaCatalogServiceDep,
     _: AdminUserDep,
 ) -> list[schemas.ColumnInfoResponse]:
-    """查询表下全部字段元数据"""
+    """查询表下全部字段元数据。"""
     return [
         schemas.ColumnInfoResponse.model_validate(column_info)
         for column_info in await service.list_column_infos(t_name=t_name)
@@ -247,7 +247,7 @@ async def list_metric_infos(
     service: MetaCatalogServiceDep,
     _: AdminUserDep,
 ) -> list[schemas.MetricInfoResponse]:
-    """查询全部指标元数据"""
+    """查询全部指标元数据。"""
     return [
         schemas.MetricInfoResponse.model_validate(metric_info)
         for metric_info in await service.list_metric_infos()
@@ -261,7 +261,7 @@ async def upsert_table_info(
     service: MetaCatalogServiceDep,
     current_admin: AdminUserDep,
 ) -> None:
-    """新增或更新表元数据"""
+    """新增或更新表元数据。"""
     await service.upsert_table_info(
         t_name=t_name,
         role=body.role,
@@ -287,7 +287,7 @@ async def upsert_column_info(
     service: MetaCatalogServiceDep,
     current_admin: AdminUserDep,
 ) -> schemas.SemanticIndexUpsertResponse:
-    """新增或更新字段元数据"""
+    """新增或更新字段元数据。"""
     submission = await service.upsert_column_info(
         t_name=t_name,
         c_name=c_name,
@@ -319,7 +319,7 @@ async def upsert_metric_info(
     service: MetaCatalogServiceDep,
     current_admin: AdminUserDep,
 ) -> schemas.SemanticIndexUpsertResponse:
-    """新增或更新指标元数据"""
+    """新增或更新指标元数据。"""
     submission = await service.upsert_metric_info(
         metric_info=MetricInfo(
             name=metric_name,
@@ -352,7 +352,7 @@ async def delete_tables(
     service: MetaCatalogServiceDep,
     current_admin: AdminUserDep,
 ) -> None:
-    """批量删除表及其字段元数据和索引"""
+    """批量删除表及其字段元数据和索引。"""
     await service.delete_tables(table_names=body.tables)
     logger.info(
         f"管理员批量删除表元数据: operator_id={current_admin.id}, tables={body.tables}"
@@ -365,7 +365,7 @@ async def delete_columns(
     service: MetaCatalogServiceDep,
     current_admin: AdminUserDep,
 ) -> None:
-    """批量删除字段元数据和索引"""
+    """批量删除字段元数据和索引。"""
     await service.delete_columns(
         column_keys=[(column.t_name, column.c_name) for column in body.columns]
     )
@@ -381,7 +381,7 @@ async def delete_metrics(
     service: MetaCatalogServiceDep,
     current_admin: AdminUserDep,
 ) -> None:
-    """批量删除指标元数据和索引"""
+    """批量删除指标元数据和索引。"""
     await service.delete_metrics(metric_names=body.metrics)
     logger.info(
         f"管理员批量删除指标元数据: operator_id={current_admin.id}, "
@@ -394,7 +394,7 @@ async def sync_table_indexes(
     body: schemas.TableIndexSyncRequest,
     current_admin: AdminUserDep,
 ) -> TaskAcceptedResponse:
-    """同步多个表的全部字段语义索引"""
+    """同步多个表的全部字段语义索引。"""
     submission = enqueue_table_indexes(body.tables)
     logger.info(
         f"管理员提交表字段语义索引同步任务: operator_id={current_admin.id}, "
@@ -408,7 +408,7 @@ async def sync_table_values(
     body: schemas.TableValueIndexSyncRequest,
     current_admin: AdminUserDep,
 ) -> TaskAcceptedResponse:
-    """同步多个表中已开启字段的取值索引"""
+    """同步多个表中已开启字段的取值索引。"""
     submission = enqueue_table_values(body.tables, mode=body.mode)
     logger.info(
         f"管理员提交表字段取值索引同步任务: operator_id={current_admin.id}, "
@@ -422,7 +422,7 @@ async def sync_column_indexes(
     body: schemas.ColumnIndexSyncRequest,
     current_admin: AdminUserDep,
 ) -> TaskAcceptedResponse:
-    """同步多个字段的语义索引"""
+    """同步多个字段的语义索引。"""
     submission = enqueue_column_indexes(
         [(column.t_name, column.c_name) for column in body.columns]
     )
@@ -439,7 +439,7 @@ async def sync_column_values(
     body: schemas.ColumnValueIndexSyncRequest,
     current_admin: AdminUserDep,
 ) -> TaskAcceptedResponse:
-    """同步多个已开启字段的取值索引"""
+    """同步多个已开启字段的取值索引。"""
     submission = enqueue_column_values(
         [(column.t_name, column.c_name) for column in body.columns],
         mode=body.mode,
@@ -457,7 +457,7 @@ async def sync_metric_indexes(
     body: schemas.MetricIndexSyncRequest,
     current_admin: AdminUserDep,
 ) -> TaskAcceptedResponse:
-    """同步多个指标的语义索引"""
+    """同步多个指标的语义索引。"""
     submission = enqueue_metric_indexes(body.metrics)
     logger.info(
         f"管理员提交指标语义索引同步任务: operator_id={current_admin.id}, "

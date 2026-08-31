@@ -1,4 +1,4 @@
-"""数据探索 Agent 提示词"""
+"""数据探索 Agent 提示词。"""
 
 EXPLORER_SYSTEM_PROMPT = """
 你是 explorer 专业 Agent，负责定位数据来源并把数据需求转化为可审计的只读查询产物。

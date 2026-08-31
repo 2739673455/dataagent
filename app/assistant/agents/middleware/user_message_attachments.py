@@ -32,32 +32,32 @@ _IMAGE_SUFFIXES = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 
 
 class UserMessageAttachment(StrictProtocolModel):
-    """一项用户消息附件引用"""
+    """一项用户消息附件引用。"""
 
     f_path: NonEmptyText
 
 
 class UserMessageAttachments(StrictProtocolModel):
-    """一条用户消息持久化的附件引用"""
+    """一条用户消息持久化的附件引用。"""
 
     attachments: list[UserMessageAttachment] = Field(default_factory=list)
 
 
 class ImageViewRequest(StrictProtocolModel):
-    """请求 Middleware 在下一次模型调用前临时加载一张图片"""
+    """请求 Middleware 在下一次模型调用前临时加载一张图片。"""
 
     type: Literal["image_view_request"] = "image_view_request"
     f_path: NonEmptyText
 
 
 def is_image_path(path: str) -> bool:
-    """根据扩展名判断工作区路径是否为支持的图片"""
+    """根据扩展名判断工作区路径是否为支持的图片。"""
     suffix = path.rsplit(".", 1)[-1].lower() if "." in path else ""
     return suffix in _IMAGE_SUFFIXES
 
 
 def _model_workspace_path(path: str) -> str:
-    """把持久化的相对附件路径投影为所有 Agent 都能读取的会话绝对路径"""
+    """把持久化的相对附件路径投影为所有 Agent 都能读取的会话绝对路径。"""
     return path if path.startswith("/") else f"/{path}"
 
 
@@ -74,7 +74,7 @@ def _read_attachments(message: HumanMessage) -> UserMessageAttachments | None:
 
 
 def _read_image_view_request(message: ToolMessage) -> ImageViewRequest | None:
-    """读取 view_image 工具持久化的图片加载请求"""
+    """读取 view_image 工具持久化的图片加载请求。"""
     if message.name != IMAGE_VIEW_TOOL_NAME or not isinstance(message.content, str):
         return None
     try:
@@ -257,7 +257,7 @@ def _project_messages(
 
 
 class UserMessageAttachmentMiddleware(AgentMiddleware[Any, Any, Any]):
-    """临时展开用户附件，并消费 view_image 产生的图片加载请求"""
+    """临时展开用户附件，并消费 view_image 产生的图片加载请求。"""
 
     def __init__(self, backend: BackendProtocol) -> None:
         """绑定用于读取当前 Agent 工作区文件的后端。"""
@@ -268,7 +268,7 @@ class UserMessageAttachmentMiddleware(AgentMiddleware[Any, Any, Any]):
         request: ModelRequest[Any],
         handler: Callable[[ModelRequest[Any]], ModelResponse[Any]],
     ) -> ModelResponse[Any]:
-        """同步读取当前需要查看的图片并投影模型请求"""
+        """同步读取当前需要查看的图片并投影模型请求。"""
         paths = _download_paths(request.messages)
         responses = self._backend.download_files(paths) if paths else []
         messages = _project_messages(request.messages, responses)
@@ -279,7 +279,7 @@ class UserMessageAttachmentMiddleware(AgentMiddleware[Any, Any, Any]):
         request: ModelRequest[Any],
         handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
     ) -> ModelResponse[Any]:
-        """异步读取当前需要查看的图片并投影模型请求"""
+        """异步读取当前需要查看的图片并投影模型请求。"""
         paths = _download_paths(request.messages)
         responses = await self._backend.adownload_files(paths) if paths else []
         messages = _project_messages(request.messages, responses)

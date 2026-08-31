@@ -1,4 +1,4 @@
-"""Specialist Shell Job 工具"""
+"""Specialist Shell Job 工具。"""
 
 from typing import Annotated, Any
 
@@ -10,12 +10,12 @@ from app.assistant.agents.shell_jobs import ShellJobRuntime
 
 
 def _dump(result: BaseModel) -> dict[str, Any]:
-    """把公开结果模型转换为紧凑 JSON 字典"""
+    """把公开结果模型转换为紧凑 JSON 字典。"""
     return result.model_dump(mode="json", exclude_none=True)
 
 
 def create_shell_tools(runtime: ShellJobRuntime) -> tuple[BaseTool, ...]:
-    """创建绑定当前 Agent Run Registry 的四个 Shell 工具"""
+    """创建绑定当前 Agent Run Registry 的四个 Shell 工具。"""
 
     @tool("execute")
     async def execute(

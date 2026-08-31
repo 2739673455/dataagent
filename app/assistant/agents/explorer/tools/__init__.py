@@ -1,4 +1,4 @@
-"""数据探索 Agent 工具"""
+"""数据探索 Agent 工具。"""
 
 from app.assistant.agents.explorer.tools.execute_sql import create_execute_sql_tool
 from app.assistant.agents.explorer.tools.semantic_recall import (

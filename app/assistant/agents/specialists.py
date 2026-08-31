@@ -1,4 +1,4 @@
-"""专业 Agent 的能力定义与实例创建"""
+"""专业 Agent 的能力定义与实例创建。"""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ _RESERVED_MCP_TOOL_NAMES = frozenset(
 
 
 class SpecialistBuilder(Protocol):
-    """所有专业 Agent 构造器共享的调用协议"""
+    """所有专业 Agent 构造器共享的调用协议。"""
 
     def __call__(
         self,
@@ -66,7 +66,7 @@ class SpecialistBuilder(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class SpecialistAgentRun:
-    """一次 delegation 共用的 Agent 图和 Shell Job Runtime"""
+    """一次 delegation 共用的 Agent 图和 Shell Job Runtime。"""
 
     agent: CompiledStateGraph
     shell_jobs: ShellJobRuntime
@@ -74,7 +74,7 @@ class SpecialistAgentRun:
 
 @dataclass(frozen=True, slots=True)
 class SpecialistDefinition:
-    """一种专业 Agent 的构造器及其专属能力"""
+    """一种专业 Agent 的构造器及其专属能力。"""
 
     builder: SpecialistBuilder
     tools: tuple[BaseTool, ...] = ()
@@ -82,7 +82,7 @@ class SpecialistDefinition:
 
     @property
     def tool_names(self) -> frozenset[str]:
-        """返回显式分配给该 Agent 的工具名"""
+        """返回显式分配给该 Agent 的工具名。"""
         return frozenset(tool.name for tool in self.tools)
 
 
@@ -90,7 +90,7 @@ def build_specialist_definitions(
     explorer_tools: Iterable[BaseTool],
     explorer_mcp_tools: Iterable[BaseTool],
 ) -> dict[AgentType, SpecialistDefinition]:
-    """构造专业 Agent 定义，并将数据访问能力限定给 Explorer"""
+    """构造专业 Agent 定义，并将数据访问能力限定给 Explorer。"""
     builtin_tools = tuple(explorer_tools)
     mcp_tools = tuple(explorer_mcp_tools)
     tools_by_name: dict[str, BaseTool] = {}
@@ -128,7 +128,7 @@ def build_specialist_definitions(
 
 
 class SpecialistAgentFactory:
-    """按 Session 创建绑定专属 Sandbox 的专业 Agent"""
+    """按 Session 创建绑定专属 Sandbox 的专业 Agent。"""
 
     def __init__(
         self,
@@ -137,7 +137,7 @@ class SpecialistAgentFactory:
         sandbox: DockerSandboxManager,
         checkpointer: BaseCheckpointSaver,
     ) -> None:
-        """绑定专业能力、模型和运行时依赖"""
+        """绑定专业能力、模型和运行时依赖。"""
         expected_types = set(AGENT_TYPES)
         if set(definitions) != expected_types:
             raise ValueError("专业 Agent 定义必须覆盖所有 Agent 类型")
@@ -149,7 +149,7 @@ class SpecialistAgentFactory:
         self._checkpointer = checkpointer
 
     async def create(self, session_key: AgentSessionKey) -> SpecialistAgentRun:
-        """为一次委派创建专业 Agent 运行图"""
+        """为一次委派创建专业 Agent 运行图。"""
         validate_agent_type(session_key.agent_type)
         definition = self._definitions[session_key.agent_type]
         backend = await self._sandbox.get_session_backend(

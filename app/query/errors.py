@@ -1,4 +1,4 @@
-"""查询模块业务错误"""
+"""查询模块业务错误。"""
 
 from http import HTTPStatus
 

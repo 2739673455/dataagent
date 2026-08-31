@@ -1,4 +1,4 @@
-"""根据电商数仓 DDL 生成语义元数据配置"""
+"""根据电商数仓 DDL 生成语义元数据配置。"""
 
 from __future__ import annotations
 
@@ -324,19 +324,19 @@ REFERENCE_COLUMNS = {
 
 
 class IndentDumper(yaml.SafeDumper):
-    """让 YAML 列表使用常规缩进"""
+    """让 YAML 列表使用常规缩进。"""
 
     def increase_indent(self, flow: bool = False, indentless: bool = False):
-        """强制序列列表项使用缩进格式"""
+        """强制序列列表项使用缩进格式。"""
         return super().increase_indent(flow, False)
 
     def ignore_aliases(self, data: Any) -> bool:
-        """禁用 YAML 锚点和别名输出"""
+        """禁用 YAML 锚点和别名输出。"""
         return True
 
 
 def _matching_parenthesis(sql: str, opening_index: int) -> int:
-    """查找 SQL 表定义起始括号对应的结束位置"""
+    """查找 SQL 表定义起始括号对应的结束位置。"""
     depth = 0
     in_string = False
     index = opening_index
@@ -359,7 +359,7 @@ def _matching_parenthesis(sql: str, opening_index: int) -> int:
 
 
 def _split_columns(body: str) -> list[str]:
-    """按顶层逗号拆分 DDL 字段定义"""
+    """按顶层逗号拆分 DDL 字段定义。"""
     parts: list[str] = []
     start = 0
     depth = 0
@@ -386,7 +386,7 @@ def _split_columns(body: str) -> list[str]:
 
 
 def _parse_ecommerce_schema(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]:
-    """解析电商 DDL 中的表、字段和注释"""
+    """解析电商 DDL 中的表、字段和注释。"""
     sql = ddl_path.read_text(encoding="utf-8")
     result: dict[str, Any] = {}
     for statement in sql.split(";"):
@@ -442,7 +442,7 @@ def _parse_ecommerce_schema(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]
 
 
 def _index_values(column: dict[str, str]) -> bool:
-    """判断字段是否默认开启取值索引"""
+    """判断字段是否默认开启取值索引。"""
     name = column["name"]
     return name in INDEX_VALUE_COLUMNS or name.endswith(
         ("_status", "_type", "_scene", "_source", "_group", "_domain", "_mode")
@@ -454,7 +454,7 @@ def _reference(
     column_name: str,
     column_keys: set[tuple[str, str]],
 ) -> tuple[str, str] | None:
-    """推断字段在现有元数据中的关联引用"""
+    """推断字段在现有元数据中的关联引用。"""
     if column_name == "biz_date":
         target = ("dim_date", "full_date")
     elif column_name.endswith("_date_key"):
@@ -476,7 +476,7 @@ def _metric(
     columns: list[str],
     alias: list[str],
 ) -> dict[str, Any]:
-    """构造业务指标的配置字典"""
+    """构造业务指标的配置字典。"""
     return {
         "name": name,
         "description": description,
@@ -489,7 +489,7 @@ def _metric(
 
 
 def _build_metrics() -> list[dict[str, Any]]:
-    """构建常用综合电商业务指标"""
+    """构建常用综合电商业务指标。"""
     m = _metric
     return [
         m(
@@ -1539,7 +1539,7 @@ def _build_metrics() -> list[dict[str, Any]]:
 
 
 def _build_config(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]:
-    """构建完整元数据配置并校验所有引用"""
+    """构建完整元数据配置并校验所有引用。"""
     schema = _parse_ecommerce_schema(ddl_path)
     if set(schema) != set(TABLE_ORDER):
         missing = sorted(set(TABLE_ORDER) - set(schema))
@@ -1594,7 +1594,7 @@ def _build_config(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]:
 
 
 def main() -> None:
-    """解析命令行参数并生成元数据 YAML 配置"""
+    """解析命令行参数并生成元数据 YAML 配置。"""
     parser = argparse.ArgumentParser(description="生成电商数仓语义元数据配置")
     parser.add_argument("--ddl", type=Path, default=DEFAULT_DDL_PATH)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)

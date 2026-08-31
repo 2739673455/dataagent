@@ -1,4 +1,4 @@
-"""会话标题与生命周期后台任务"""
+"""会话标题与生命周期后台任务。"""
 
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -27,7 +27,7 @@ from app.shared.tasks.submission import TaskSubmission
 
 
 def _submit(name: str, args: list[object], *, queue: str) -> TaskSubmission:
-    """向指定队列提交助手后台任务"""
+    """向指定队列提交助手后台任务。"""
     task = celery_app.send_task(
         name,
         args=args,
@@ -47,7 +47,7 @@ def enqueue_conversation_title(
     expected_title: str,
     user_text: str,
 ) -> TaskSubmission:
-    """提交会话标题生成任务"""
+    """提交会话标题生成任务。"""
     return _submit(
         "dataagent.assistant.generate_conversation_title",
         [user_id, str(conversation_id), expected_title, user_text],
@@ -59,7 +59,7 @@ def enqueue_conversation_deletion(
     user_id: int,
     conversation_id: UUID,
 ) -> TaskSubmission:
-    """提交会话物理资源删除任务"""
+    """提交会话物理资源删除任务。"""
     return _submit(
         "dataagent.assistant.delete_conversation_resources",
         [user_id, str(conversation_id)],
@@ -68,7 +68,7 @@ def enqueue_conversation_deletion(
 
 
 async def _repair_conversation_titles() -> int:
-    """扫描超时的标题生成记录并重新提交任务"""
+    """扫描超时的标题生成记录并重新提交任务。"""
     assistant_postgres = PostgresClientManager(
         cfg.langgraph_postgresql,
         AssistantBase,
@@ -100,7 +100,7 @@ async def _repair_conversation_titles() -> int:
 
 @celery_app.task(name="dataagent.assistant.repair_conversation_titles")
 def repair_conversation_titles_task() -> dict[str, int]:
-    """重新提交丢失或超时的会话标题任务"""
+    """重新提交丢失或超时的会话标题任务。"""
     return {"dispatched_count": run_async(_repair_conversation_titles())}
 
 
@@ -110,7 +110,7 @@ async def _generate_conversation_title(
     expected_title: str,
     user_text: str,
 ) -> None:
-    """创建短生命周期资源并生成单个会话标题"""
+    """创建短生命周期资源并生成单个会话标题。"""
     assistant_postgres = PostgresClientManager(
         cfg.langgraph_postgresql,
         AssistantBase,
@@ -145,7 +145,7 @@ def generate_conversation_title_task(
     expected_title: str,
     user_text: str,
 ) -> dict[str, object]:
-    """生成会话标题并进行条件更新"""
+    """生成会话标题并进行条件更新。"""
     logger.info(
         f"开始生成会话标题: user_id={user_id}, conversation_id={conversation_id}"
     )
@@ -166,7 +166,7 @@ def generate_conversation_title_task(
 async def _run_with_lifecycle_service[T](
     operation: Callable[[ConversationLifecycleService], Awaitable[T]],
 ) -> T:
-    """初始化会话生命周期资源并执行指定操作"""
+    """初始化会话生命周期资源并执行指定操作。"""
     persistence = LangGraphPostgresManager(cfg.langgraph_postgresql)
     assistant_postgres = PostgresClientManager(
         cfg.langgraph_postgresql,
@@ -218,14 +218,14 @@ def delete_conversation_resources_task(
     user_id: int,
     conversation_id: str,
 ) -> dict[str, object]:
-    """物理删除会话跨存储资源"""
+    """物理删除会话跨存储资源。"""
     identifier = UUID(conversation_id)
     logger.info(
         f"开始删除会话物理资源: user_id={user_id}, conversation_id={conversation_id}"
     )
 
     async def operation(service: ConversationLifecycleService) -> bool:
-        """删除指定会话的全部物理资源"""
+        """删除指定会话的全部物理资源。"""
         return await service.delete_conversation_resources(user_id, identifier)
 
     deleted = run_async(_run_with_lifecycle_service(operation))
@@ -245,11 +245,11 @@ def delete_conversation_resources_task(
     max_retries=3,
 )
 def cleanup_expired_drafts_task() -> dict[str, int]:
-    """清理一批过期草稿和已有墓碑的会话"""
+    """清理一批过期草稿和已有墓碑的会话。"""
     logger.info("开始清理过期草稿和待删除会话")
 
     async def operation(service: ConversationLifecycleService) -> tuple[int, int]:
-        """清理待删除会话和过期草稿"""
+        """清理待删除会话和过期草稿。"""
         pending = await service.cleanup_pending_deletions()
         drafts = await service.cleanup_expired_drafts()
         return pending, drafts

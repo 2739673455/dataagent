@@ -72,7 +72,7 @@ def build_sandbox_config(**updates: object) -> SandboxConfig:
 
 
 def build_sandbox_manager(config: SandboxConfig) -> DockerSandboxManager:
-    """构造使用进程内协调器的测试沙箱管理器"""
+    """构造使用进程内协调器的测试沙箱管理器。"""
     return DockerSandboxManager(
         config,
         LocalSandboxOwnership(),

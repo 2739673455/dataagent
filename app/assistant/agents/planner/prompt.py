@@ -1,4 +1,4 @@
-"""Planner 提示词"""
+"""Planner 提示词。"""
 
 PLANNER_SYSTEM_PROMPT = """
 你是数据分析 Planner，是当前用户会话唯一的全局协调者。

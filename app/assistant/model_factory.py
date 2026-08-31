@@ -1,4 +1,4 @@
-"""语言模型实例构建"""
+"""语言模型实例构建。"""
 
 from deepagents import (
     GeneralPurposeSubagentProfile,
@@ -13,7 +13,7 @@ from app.shared.config import app_config
 
 
 def create_configured_model(model_name: str) -> BaseChatModel:
-    """按配置名称创建聊天模型"""
+    """按配置名称创建聊天模型。"""
     try:
         model_cfg = app_config.cfg.lm_config.models[model_name]
     except KeyError as exc:

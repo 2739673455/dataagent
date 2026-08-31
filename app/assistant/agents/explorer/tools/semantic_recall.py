@@ -1,4 +1,4 @@
-"""Explorer 语义资源召回与记录管理工具"""
+"""Explorer 语义资源召回与记录管理工具。"""
 
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
@@ -57,7 +57,7 @@ def _invalid_query_response(
     *,
     message: str,
 ) -> dict[str, Any]:
-    """构造 query 业务键校验失败的工具响应"""
+    """构造 query 业务键校验失败的工具响应。"""
     return {
         "status": "error",
         "message": message,
@@ -69,7 +69,7 @@ def _tool_error_response(
     message: str,
     error: Exception,
 ) -> dict[str, Any]:
-    """构造包含异常类别和原因的工具错误响应"""
+    """构造包含异常类别和原因的工具错误响应。"""
     detail = str(error).strip() or "异常未提供详情"
     return {
         "status": "error",
@@ -227,7 +227,7 @@ async def recall_context(
 
 
 def _record_summary(record: Any) -> dict[str, Any]:
-    """构造供后续 get_recall 使用的最小记录引用"""
+    """构造供后续 get_recall 使用的最小记录引用。"""
     return {"query": record.query}
 
 
@@ -236,7 +236,7 @@ async def list_recalls(
     runtime: ToolRuntime,
     limit: Annotated[int, "返回最近记录的数量，范围 1 到 100"] = 20,
 ) -> dict[str, Any]:
-    """列出当前会话中每个 query 业务键对应的最新累计召回记录"""
+    """列出当前会话中每个 query 业务键对应的最新累计召回记录。"""
     if not 1 <= limit <= 100:
         return {
             "status": "error",
@@ -270,7 +270,7 @@ async def get_recall(
         "需要读取的稳定 query 业务键，必须与 recall_context 使用的 query 完全一致",
     ],
 ) -> dict[str, Any]:
-    """按 query 业务键读取当前会话的最新累计召回记录"""
+    """按 query 业务键读取当前会话的最新累计召回记录。"""
     try:
         query = normalize_semantic_recall_query(query)
     except ValueError as exc:
@@ -308,7 +308,7 @@ async def merge_recalls(
         "提供累计结果并在合并完成后删除的来源 query 业务键",
     ],
 ) -> dict[str, Any]:
-    """合并来源 query 的语义资源并删除来源，查询经验只保留目标结果"""
+    """合并来源 query 的语义资源并删除来源，查询经验只保留目标结果。"""
     try:
         target_query = normalize_semantic_recall_query(target_query)
     except ValueError as exc:
@@ -365,7 +365,7 @@ async def delete_recalls(
         ),
     ],
 ) -> dict[str, Any]:
-    """删除当前会话 query 的全部上下文或其中指定资源"""
+    """删除当前会话 query 的全部上下文或其中指定资源。"""
     if not deletions:
         return {
             "status": "error",

@@ -1,4 +1,4 @@
-"""Elasticsearch 组合字段资源键授权过滤测试"""
+"""Elasticsearch 组合字段资源键授权过滤测试。"""
 
 import unittest
 from types import SimpleNamespace
@@ -14,7 +14,7 @@ from app.metadata.repositories.value_index import (
 
 
 def build_column() -> ColumnInfo:
-    """构造字段索引测试实体"""
+    """构造字段索引测试实体。"""
     return ColumnInfo(
         t_name="orders.eu",
         name="amount.total",
@@ -31,7 +31,7 @@ def build_column() -> ColumnInfo:
 
 
 class ElasticsearchResourceKeyFilterTest(unittest.IsolatedAsyncioTestCase):
-    """验证索引资源键写入、映射升级和大白名单查询"""
+    """验证索引资源键写入、映射升级和大白名单查询。"""
 
     def setUp(self) -> None:
         self.client = MagicMock()

@@ -10,7 +10,7 @@ from app.shared.config.app_config import MCPCfg
 
 
 def _connection_config(mcp_cfg: MCPCfg) -> Connection:
-    """在 MCP 客户端边界解包连接凭据"""
+    """在 MCP 客户端边界解包连接凭据。"""
     connection = mcp_cfg.model_dump(exclude_none=True)
     url = connection.get("url")
     if isinstance(url, SecretStr):
@@ -28,7 +28,7 @@ def _connection_config(mcp_cfg: MCPCfg) -> Connection:
 
 
 async def get_mcp_tools() -> list[BaseTool]:
-    """初始化 MCP 客户端并返回所有 MCP 工具"""
+    """初始化 MCP 客户端并返回所有 MCP 工具。"""
     connections: dict[str, Connection] = {
         name: _connection_config(mcp_cfg)
         for name, mcp_cfg in app_config.cfg.mcp.items()

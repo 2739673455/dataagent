@@ -15,7 +15,7 @@ from tests.sandbox.test_docker_sandbox_manager import build_sandbox_config
 
 
 def _assert_threads_stopped(*threads: threading.Thread) -> None:
-    """等待测试线程退出，避免失败路径阻塞测试进程"""
+    """等待测试线程退出，避免失败路径阻塞测试进程。"""
     for thread in threads:
         if thread.ident is not None:
             thread.join(timeout=1)
@@ -23,7 +23,7 @@ def _assert_threads_stopped(*threads: threading.Thread) -> None:
 
 
 def _redis_ownership(redis: MagicMock) -> RedisSandboxOwnership:
-    """构造使用模拟 Redis 客户端的 ownership"""
+    """构造使用模拟 Redis 客户端的 ownership。"""
     with patch("app.sandbox.ownership.Redis.from_url", return_value=redis):
         return RedisSandboxOwnership(
             "redis://localhost/0",
@@ -297,7 +297,7 @@ def test_redis_maintenance_coordinates_independent_runtimes() -> None:
     namespace = f"ownership-test-{uuid4().hex}"
 
     def create_ownership() -> RedisSandboxOwnership:
-        """构造共享测试命名空间的真实 Redis ownership"""
+        """构造共享测试命名空间的真实 Redis ownership。"""
         return RedisSandboxOwnership(
             "redis://127.0.0.1:6379/15",
             namespace,
@@ -318,24 +318,24 @@ def test_redis_maintenance_coordinates_independent_runtimes() -> None:
     waiting_maintenance_started = threading.Event()
 
     def maintain() -> None:
-        """持有目标 Conversation 的维护窗口"""
+        """持有目标 Conversation 的维护窗口。"""
         with first.conversation_maintenance(7, conversation_id):
             maintenance_started.set()
             release_maintenance.wait(timeout=2)
 
     def operate_on_target() -> None:
-        """等待目标 Conversation 维护完成后进入操作"""
+        """等待目标 Conversation 维护完成后进入操作。"""
         with second.operation(7, conversation_id):
             target_operation_started.set()
 
     def hold_operation() -> None:
-        """持有目标 Conversation 的活跃操作租约"""
+        """持有目标 Conversation 的活跃操作租约。"""
         with first.operation(7, conversation_id):
             active_operation_started.set()
             release_active_operation.wait(timeout=2)
 
     def wait_for_operation() -> None:
-        """等待目标 Conversation 活跃操作结束后进入维护"""
+        """等待目标 Conversation 活跃操作结束后进入维护。"""
         with second.conversation_maintenance(7, conversation_id):
             waiting_maintenance_started.set()
 

@@ -1,4 +1,4 @@
-"""语义索引差量读写原语"""
+"""语义索引差量读写原语。"""
 
 from typing import Any, cast
 
@@ -22,7 +22,7 @@ _SOURCE_FIELDS = [
 
 
 class SemanticIndexDeltaRepo:
-    """为字段和指标索引提供统一差量操作"""
+    """为字段和指标索引提供统一差量操作。"""
 
     def __init__(
         self,
@@ -30,7 +30,7 @@ class SemanticIndexDeltaRepo:
         index_name: str,
         error_resource: str,
     ) -> None:
-        """绑定 Elasticsearch 客户端、索引名称和错误资源类型"""
+        """绑定 Elasticsearch 客户端、索引名称和错误资源类型。"""
         self._client = client
         self._index_name = index_name
         self._error_resource = error_resource
@@ -39,7 +39,7 @@ class SemanticIndexDeltaRepo:
         self,
         query: dict[str, Any],
     ) -> list[SemanticIndexDocument]:
-        """读取一个资源下参与差量比较的全部文档"""
+        """读取一个资源下参与差量比较的全部文档。"""
         if not await self._client.indices.exists(index=self._index_name):
             return []
         result = await self._client.search(
@@ -84,7 +84,7 @@ class SemanticIndexDeltaRepo:
         *,
         batch_size: int = 100,
     ) -> None:
-        """混合执行语义文档新增、更新和删除"""
+        """混合执行语义文档新增、更新和删除。"""
         actions: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
         for document in delta.create:
             if document.embedding is None:
@@ -151,7 +151,7 @@ class SemanticIndexDeltaRepo:
         *,
         include_embedding: bool,
     ) -> dict[str, Any]:
-        """构造语义索引文档源数据"""
+        """构造语义索引文档源数据。"""
         source = {
             "resource_key": document.resource_key,
             "text": document.text,

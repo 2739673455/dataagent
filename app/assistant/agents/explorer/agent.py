@@ -1,4 +1,4 @@
-"""数据探索 Agent 构造器"""
+"""数据探索 Agent 构造器。"""
 
 from collections.abc import Sequence
 from pathlib import Path
@@ -38,7 +38,7 @@ def create_explorer_agent(
     shell_jobs: ShellJobRuntime,
     skills: Sequence[str] = (),
 ) -> CompiledStateGraph:
-    """编译数据探索 Agent"""
+    """编译数据探索 Agent。"""
     backend, filesystem = mount_agent_skills(
         backend,
         Path(__file__).with_name("skills"),

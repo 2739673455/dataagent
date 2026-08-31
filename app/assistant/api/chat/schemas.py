@@ -1,4 +1,4 @@
-"""聊天接口的请求与响应模型"""
+"""聊天接口的请求与响应模型。"""
 
 from datetime import datetime
 from typing import Annotated, Literal, Self
@@ -17,7 +17,7 @@ from app.shared.contracts.analysis import AgentType
 
 
 class CreateConversationRequest(BaseModel):
-    """创建对话请求"""
+    """创建对话请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -29,7 +29,7 @@ class CreateConversationRequest(BaseModel):
 
 
 class DeleteConversationRequest(BaseModel):
-    """删除对话请求"""
+    """删除对话请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -41,7 +41,7 @@ class DeleteConversationRequest(BaseModel):
 
 
 class UpdateConversationRequest(BaseModel):
-    """更新对话请求"""
+    """更新对话请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -53,7 +53,7 @@ class UpdateConversationRequest(BaseModel):
 
 
 class ConversationResponse(BaseModel):
-    """对话响应"""
+    """对话响应。"""
 
     conversation_id: UUID
     title: str
@@ -62,13 +62,13 @@ class ConversationResponse(BaseModel):
 
 
 class ConversationListResponse(BaseModel):
-    """对话列表响应"""
+    """对话列表响应。"""
 
     conversations: list[ConversationResponse]
 
 
 class TextContent(BaseModel):
-    """消息中的文本内容"""
+    """消息中的文本内容。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -77,7 +77,7 @@ class TextContent(BaseModel):
 
 
 class ImageContent(BaseModel):
-    """消息中的图片内容"""
+    """消息中的图片内容。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -86,7 +86,7 @@ class ImageContent(BaseModel):
 
 
 class ThinkingContent(BaseModel):
-    """模型生成回答前的思考内容"""
+    """模型生成回答前的思考内容。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -99,7 +99,7 @@ class ThinkingContent(BaseModel):
 
 
 class ToolCallPart(BaseModel):
-    """消息中的工具调用内容"""
+    """消息中的工具调用内容。"""
 
     type: Literal["tool_call"]
     tool_call_id: str = Field(..., description="工具调用ID")
@@ -108,7 +108,7 @@ class ToolCallPart(BaseModel):
 
 
 class ToolResultPart(BaseModel):
-    """消息中的工具结果内容"""
+    """消息中的工具结果内容。"""
 
     type: Literal["tool_result"]
     tool_call_id: str = Field(..., description="工具调用ID")
@@ -129,7 +129,7 @@ MessagePart = Annotated[
 
 
 class Attachment(BaseModel):
-    """附件"""
+    """附件。"""
 
     f_path: str = Field(..., description="工作区内的文件路径")
     media_type: str | None = Field(default=None, description="附件媒体类型")
@@ -137,7 +137,7 @@ class Attachment(BaseModel):
 
 
 class AttachmentReference(BaseModel):
-    """用户消息引用的已上传附件"""
+    """用户消息引用的已上传附件。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -145,7 +145,7 @@ class AttachmentReference(BaseModel):
 
 
 class UserMessageRequest(BaseModel):
-    """用户提交给 Agent 的消息"""
+    """用户提交给 Agent 的消息。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -157,14 +157,14 @@ class UserMessageRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_content(self) -> Self:
-        """校验消息至少包含一个片段或附件"""
+        """校验消息至少包含一个片段或附件。"""
         if not self.parts and not self.attachments:
             raise ValueError("消息内容或附件不能为空")
         return self
 
 
 class EvalDelegationResponse(BaseModel):
-    """eval 内部发起的一次专业 Agent 委派"""
+    """eval 内部发起的一次专业 Agent 委派。"""
 
     delegation_id: str
     analysis_id: str
@@ -176,7 +176,7 @@ class EvalDelegationResponse(BaseModel):
 
 
 class MessageResponse(BaseModel):
-    """返回给客户端的消息"""
+    """返回给客户端的消息。"""
 
     message_id: str | None = Field(default=None, description="LangGraph 消息ID")
     created_at: datetime | None = Field(default=None, description="消息创建时间")
@@ -191,7 +191,7 @@ class MessageResponse(BaseModel):
 
 
 class ChatStreamRequest(BaseModel):
-    """SSE 聊天请求"""
+    """SSE 聊天请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -200,7 +200,7 @@ class ChatStreamRequest(BaseModel):
 
 
 class DeleteAttachmentRequest(BaseModel):
-    """删除附件请求"""
+    """删除附件请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -209,19 +209,19 @@ class DeleteAttachmentRequest(BaseModel):
 
 
 class MessageListResponse(BaseModel):
-    """消息列表响应"""
+    """消息列表响应。"""
 
     messages: list[MessageResponse]
 
 
 class ConversationRunStatusResponse(BaseModel):
-    """Conversation 后台 Planner Run 状态"""
+    """Conversation 后台 Planner Run 状态。"""
 
     running: bool
 
 
 class SubagentMessageListResponse(BaseModel):
-    """一次 Specialist delegation 的公开工作消息"""
+    """一次 Specialist delegation 的公开工作消息。"""
 
     status: Literal[
         "running",
@@ -234,14 +234,14 @@ class SubagentMessageListResponse(BaseModel):
 
 
 class ChatStreamMessageEvent(BaseModel):
-    """SSE 消息事件"""
+    """SSE 消息事件。"""
 
     type: Literal["message"]
     message: MessageResponse = Field(..., description="消息内容")
 
 
 class ChatStreamThinkingEvent(BaseModel):
-    """Planner 模型思考增量事件"""
+    """Planner 模型思考增量事件。"""
 
     type: Literal["thinking"]
     message_id: str = Field(..., description="所属 assistant 消息ID")
@@ -253,7 +253,7 @@ class ChatStreamThinkingEvent(BaseModel):
 
 
 class ChatStreamMessageDeltaEvent(BaseModel):
-    """Planner assistant 正文增量事件"""
+    """Planner assistant 正文增量事件。"""
 
     type: Literal["message_delta"]
     message_id: str = Field(..., description="所属 assistant 消息ID")
@@ -265,20 +265,20 @@ class ChatStreamMessageDeltaEvent(BaseModel):
 
 
 class ChatStreamErrorEvent(BaseModel):
-    """SSE 错误事件"""
+    """SSE 错误事件。"""
 
     type: Literal["error"]
     content: str = Field(..., description="错误信息")
 
 
 class ChatStreamDoneEvent(BaseModel):
-    """SSE 完成事件"""
+    """SSE 完成事件。"""
 
     type: Literal["done"]
 
 
 class ChatStreamSubagentMessageEvent(BaseModel):
-    """Specialist 执行期间产生的公开消息事件"""
+    """Specialist 执行期间产生的公开消息事件。"""
 
     type: Literal["subagent_message"]
     delegation_id: str
@@ -291,7 +291,7 @@ class ChatStreamSubagentMessageEvent(BaseModel):
 
 
 class ChatStreamSubagentThinkingEvent(BaseModel):
-    """Specialist 模型思考增量事件"""
+    """Specialist 模型思考增量事件。"""
 
     type: Literal["subagent_thinking"]
     delegation_id: str
@@ -309,7 +309,7 @@ class ChatStreamSubagentThinkingEvent(BaseModel):
 
 
 class ChatStreamSubagentMessageDeltaEvent(BaseModel):
-    """Specialist assistant 正文增量事件"""
+    """Specialist assistant 正文增量事件。"""
 
     type: Literal["subagent_message_delta"]
     delegation_id: str
@@ -327,7 +327,7 @@ class ChatStreamSubagentMessageDeltaEvent(BaseModel):
 
 
 class ChatStreamSubagentStatusEvent(BaseModel):
-    """Specialist 执行状态事件"""
+    """Specialist 执行状态事件。"""
 
     type: Literal["subagent_status"]
     delegation_id: str
@@ -360,10 +360,10 @@ ChatStreamEventPayload = Annotated[
 
 
 class ChatStreamEvent(RootModel[ChatStreamEventPayload]):
-    """单个 SSE data 帧的 JSON 事件"""
+    """单个 SSE data 帧的 JSON 事件。"""
 
 
 class UploadAttachmentResponse(BaseModel):
-    """上传附件响应"""
+    """上传附件响应。"""
 
     attachment: Attachment = Field(..., description="上传后的附件信息")

@@ -1,4 +1,4 @@
-"""查询引用与 SQL 校验模型"""
+"""查询引用与 SQL 校验模型。"""
 
 from typing import Literal
 
@@ -8,7 +8,7 @@ type QueryKind = Literal["business", "catalog"]
 
 
 class QueryTableRef(BaseModel):
-    """查询引用的数据表"""
+    """查询引用的数据表。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -17,12 +17,12 @@ class QueryTableRef(BaseModel):
 
     @property
     def qualified_name(self) -> str:
-        """返回包含数据库名的表标识"""
+        """返回包含数据库名的表标识。"""
         return f"{self.database}.{self.name}" if self.database else self.name
 
 
 class QueryColumnRef(BaseModel):
-    """查询引用的物理字段"""
+    """查询引用的物理字段。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -32,13 +32,13 @@ class QueryColumnRef(BaseModel):
 
     @property
     def qualified_name(self) -> str:
-        """返回包含数据库名和表名的字段标识"""
+        """返回包含数据库名和表名的字段标识。"""
         prefix = f"{self.database}." if self.database else ""
         return f"{prefix}{self.table}.{self.name}"
 
 
 class QueryValidationIssue(BaseModel):
-    """一项确定性的 SQL 校验问题"""
+    """一项确定性的 SQL 校验问题。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -49,7 +49,7 @@ class QueryValidationIssue(BaseModel):
 
 
 class QueryValidationResult(BaseModel):
-    """SQL 安全检查结果"""
+    """SQL 安全检查结果。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -63,7 +63,7 @@ class QueryValidationResult(BaseModel):
 
     @model_validator(mode="after")
     def validate_status(self) -> "QueryValidationResult":
-        """保证校验状态和问题列表一致"""
+        """保证校验状态和问题列表一致。"""
         if self.valid == bool(self.issues):
             raise ValueError("valid 必须与 issues 是否为空保持相反状态")
         if self.valid and self.normalized_sql is None:

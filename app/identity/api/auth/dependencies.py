@@ -1,4 +1,4 @@
-"""认证与授权接口依赖"""
+"""认证与授权接口依赖。"""
 
 from collections.abc import AsyncGenerator
 from functools import lru_cache
@@ -41,7 +41,7 @@ SessionDep = Annotated[
 
 
 def _get_query_identity_repo(session: SessionDep) -> DorisQueryIdentityPGRepo:
-    """创建请求级 Doris 查询身份访问"""
+    """创建请求级 Doris 查询身份访问。"""
     return DorisQueryIdentityPGRepo(session)
 
 
@@ -53,7 +53,7 @@ QueryIdentityRepoDep = Annotated[
 
 @lru_cache(maxsize=1)
 def _get_password_manager() -> Argon2PasswordManager:
-    """创建进程级密码哈希器"""
+    """创建进程级密码哈希器。"""
     return Argon2PasswordManager()
 
 
@@ -64,7 +64,7 @@ def _get_auth_service(
         Depends(_get_password_manager),
     ],
 ) -> AuthService:
-    """创建请求级认证服务"""
+    """创建请求级认证服务。"""
     return AuthService(
         AuthPGRepo(session),
         cfg.auth,
@@ -77,7 +77,7 @@ AuthServiceDep = Annotated[AuthService, Depends(_get_auth_service)]
 
 @lru_cache(maxsize=1)
 def _get_auth_rate_limit_service() -> AuthRateLimitService:
-    """创建进程级认证限流服务"""
+    """创建进程级认证限流服务。"""
     return AuthRateLimitService()
 
 
@@ -89,7 +89,7 @@ _bearer = HTTPBearer(auto_error=False)
 
 
 def get_client_ip(request: Request) -> str:
-    """读取 ASGI 连接提供的客户端地址"""
+    """读取 ASGI 连接提供的客户端地址。"""
     return request.client.host if request.client is not None else "unknown"
 
 
@@ -99,7 +99,7 @@ async def _get_current_user(
         Depends(_bearer),
     ],
 ) -> AuthenticatedUser:
-    """解析 Bearer Token 并加载当前用户"""
+    """解析 Bearer Token 并加载当前用户。"""
     if credentials is None or credentials.scheme.casefold() != "bearer":
         raise auth_error.AuthenticationRequiredError
     async with auth_postgres_client_manager.session() as session:
@@ -113,7 +113,7 @@ CurrentUserDep = Annotated[AuthenticatedUser, Depends(_get_current_user)]
 
 
 async def _require_admin(current_user: CurrentUserDep) -> AuthenticatedUser:
-    """要求当前用户是平台管理员"""
+    """要求当前用户是平台管理员。"""
     AuthorizationService.require_admin(current_user)
     return current_user
 
@@ -125,7 +125,7 @@ async def _require_analysis_access(
     current_user: CurrentUserDep,
     identity_repo: QueryIdentityRepoDep,
 ) -> AuthenticatedUser:
-    """要求当前用户可创建和执行分析"""
+    """要求当前用户可创建和执行分析。"""
     identity = (
         await identity_repo.get(current_user.doris_role_name)
         if current_user.doris_role_name is not None
@@ -139,7 +139,7 @@ AnalysisUserDep = Annotated[AuthenticatedUser, Depends(_require_analysis_access)
 
 
 async def _get_role_management_service() -> AsyncGenerator[DorisRoleManagementService]:
-    """创建独立会话的 Doris 角色管理服务"""
+    """创建独立会话的 Doris 角色管理服务。"""
     async with auth_postgres_client_manager.session() as session:
         yield DorisRoleManagementService(
             AuthPGRepo(session),
@@ -159,7 +159,7 @@ DorisRoleManagementServiceDep = Annotated[
 
 
 def _get_user_deletion_service() -> UserDeletionService:
-    """获取进程级跨存储用户注销服务"""
+    """获取进程级跨存储用户注销服务。"""
     return user_deletion_service
 
 
@@ -170,7 +170,7 @@ UserDeletionServiceDep = Annotated[
 
 
 async def _get_doris_permission_service() -> AsyncGenerator[DorisPermissionService]:
-    """创建 Doris 权限管理服务"""
+    """创建 Doris 权限管理服务。"""
     async with auth_postgres_client_manager.session() as session:
         yield DorisPermissionService(
             AuthPGRepo(session),
@@ -190,7 +190,7 @@ DorisPermissionServiceDep = Annotated[
 
 @lru_cache(maxsize=1)
 def _get_doris_credential_cipher() -> DorisCredentialCipher:
-    """创建进程级 Doris 查询凭据加密器"""
+    """创建进程级 Doris 查询凭据加密器。"""
     return DorisCredentialCipher(
         cfg.doris_credentials.encryption_key.get_secret_value()
     )

@@ -162,10 +162,3 @@ npm run contract:check
 ```
 
 CI 会独立运行协议差异检查、API 契约测试和文档本地链接检查。
-
----
-
-## 后续规划与待办 (TODO)
-
-- [ ] **Token 消耗记录与成本监控**：接入 Langfuse，实现全链路 Trace 追踪与细粒度 Token 消耗统计
-- [ ] **评估与测试体系**：构建面向 Agent 数据分析问答与 SQL 生成效果的端到端 Benchmark 评测基准

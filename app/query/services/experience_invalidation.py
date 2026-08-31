@@ -1,4 +1,4 @@
-"""元数据变化触发的查询经验失效"""
+"""元数据变化触发的查询经验失效。"""
 
 from uuid import UUID
 
@@ -8,7 +8,7 @@ from app.query.services.contracts import QueryExperienceIndexScheduler
 
 
 class QueryExperienceInvalidationService:
-    """禁用引用已变化元数据的查询经验并安排索引同步"""
+    """禁用引用已变化元数据的查询经验并安排索引同步。"""
 
     def __init__(
         self,
@@ -29,7 +29,7 @@ class QueryExperienceInvalidationService:
         table_names: set[str],
         column_keys: set[tuple[str, str]],
     ) -> list[UUID]:
-        """禁用引用指定元数据资产的经验并提交其新版本"""
+        """禁用引用指定元数据资产的经验并提交其新版本。"""
         resource_keys = {
             asset_resource_key(
                 self._data_source,

@@ -1,4 +1,4 @@
-"""使用 CLI 参数或环境变量引导平台管理员"""
+"""使用 CLI 参数或环境变量引导平台管理员。"""
 
 import argparse
 import asyncio
@@ -14,7 +14,7 @@ _ENV_FILE = Path(__file__).resolve().parents[1] / "conf" / ".env"
 
 
 def _parse_args() -> argparse.Namespace:
-    """解析命令行参数"""
+    """解析命令行参数。"""
     parser = argparse.ArgumentParser(
         description="DataAgent 平台初始管理员引导工具",
         formatter_class=lambda prog: argparse.HelpFormatter(prog, max_help_position=32),
@@ -27,7 +27,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _resolve_value(cli_val: str | None, env_name: str) -> str:
-    """按 CLI -> 环境变量 的优先级获取非空配置值"""
+    """按 CLI -> 环境变量 的优先级获取非空配置值。"""
     if cli_val and cli_val.strip():
         return cli_val.strip()
     env_val = os.environ.get(env_name, "").strip()
@@ -37,7 +37,7 @@ def _resolve_value(cli_val: str | None, env_name: str) -> str:
 
 
 async def _bootstrap_admin() -> None:
-    """创建或幂等确认显式凭据对应的管理员"""
+    """创建或幂等确认显式凭据对应的管理员。"""
     args = _parse_args()
     dotenv.load_dotenv(_ENV_FILE)
     username = _resolve_value(args.username, _USERNAME_ENV)

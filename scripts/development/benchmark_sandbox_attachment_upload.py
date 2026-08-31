@@ -23,7 +23,7 @@ _BENCHMARK_WORKSPACE_BYTES = 32 * 1024 * 1024
 
 @dataclass(frozen=True, slots=True)
 class BenchmarkResult:
-    """记录单个附件配额基准场景的结果"""
+    """记录单个附件配额基准场景的结果。"""
 
     scenario: str
     file_count: int
@@ -34,19 +34,19 @@ class BenchmarkResult:
 
 
 class _CountingContainer:
-    """统计 Docker Archive API 返回的压缩包字节数"""
+    """统计 Docker Archive API 返回的压缩包字节数。"""
 
     def __init__(self, container: Any) -> None:
-        """绑定实际 Docker 容器"""
+        """绑定实际 Docker 容器。"""
         self._container = container
         self.archive_bytes = 0
 
     def get_archive(self, path: str) -> tuple[Iterator[bytes], dict[str, Any]]:
-        """代理 Archive 读取并累计传输字节"""
+        """代理 Archive 读取并累计传输字节。"""
         chunks, metadata = self._container.get_archive(path)
 
         def count() -> Iterator[bytes]:
-            """逐块统计并转发 Archive 内容"""
+            """逐块统计并转发 Archive 内容。"""
             for chunk in chunks:
                 self.archive_bytes += len(chunk)
                 yield chunk
@@ -55,7 +55,7 @@ class _CountingContainer:
 
 
 def _benchmark_manager() -> DockerSandboxManager:
-    """构造使用独立 Docker 命名空间的基准管理器"""
+    """构造使用独立 Docker 命名空间的基准管理器。"""
     sandbox_config = cfg.sandbox.model_copy(
         update={
             "deployment_namespace": f"sandbox-bench-{os.getpid()}",
@@ -69,7 +69,7 @@ def _benchmark_manager() -> DockerSandboxManager:
 
 
 def _populate_small_files(backend: Any, file_count: int) -> None:
-    """在当前 Conversation 中生成指定数量的小文件"""
+    """在当前 Conversation 中生成指定数量的小文件。"""
     code = (
         "from pathlib import Path\n"
         "root = Path('benchmark-small-files')\n"
@@ -83,7 +83,7 @@ def _populate_small_files(backend: Any, file_count: int) -> None:
 
 
 def _populate_near_limit_files(backend: Any) -> None:
-    """创建接近基准工作区容量限制的大文件"""
+    """创建接近基准工作区容量限制的大文件。"""
     target_bytes = (_BENCHMARK_WORKSPACE_BYTES - 2 * 1024 * 1024) // 2
     response = backend.execute(
         f"truncate -s {target_bytes} benchmark-large-a.bin benchmark-large-b.bin"
@@ -93,7 +93,7 @@ def _populate_near_limit_files(backend: Any) -> None:
 
 
 def _stop_container(manager: DockerSandboxManager, user_id: int) -> Any:
-    """停止基准容器并释放本地运行容量"""
+    """停止基准容器并释放本地运行容量。"""
     container = manager._get_existing_container_sync(user_id)
     if container is None:
         raise RuntimeError("基准容器不存在")
@@ -115,7 +115,7 @@ async def _run_scenario(
     *,
     near_limit: bool = False,
 ) -> BenchmarkResult:
-    """运行单个停止态附件上传基准场景"""
+    """运行单个停止态附件上传基准场景。"""
     conversation_id = uuid4()
     backend = await manager.get_backend(user_id, conversation_id)
     try:
@@ -163,7 +163,7 @@ async def _run_scenario(
 
 
 async def _run() -> list[BenchmarkResult]:
-    """依次运行文档要求的三个基准场景"""
+    """依次运行文档要求的三个基准场景。"""
     manager = _benchmark_manager()
     user_id = 2_100_000_000 + os.getpid()
     await manager.init(start_cleanup=False)
@@ -185,7 +185,7 @@ async def _run() -> list[BenchmarkResult]:
 
 
 def main() -> int:
-    """运行基准并以 JSON 输出测量结果"""
+    """运行基准并以 JSON 输出测量结果。"""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.parse_args()
     print(json.dumps([asdict(result) for result in asyncio.run(_run())], indent=2))

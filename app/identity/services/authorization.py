@@ -1,4 +1,4 @@
-"""RBAC 与数据资产白名单授权服务"""
+"""RBAC 与数据资产白名单授权服务。"""
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -39,7 +39,7 @@ from app.shared.config.app_config import AuthConfig
 
 @dataclass(frozen=True)
 class AssetIdentity:
-    """层级化数据资产标识"""
+    """层级化数据资产标识。"""
 
     data_source: str
     database_name: str | None = None
@@ -47,7 +47,7 @@ class AssetIdentity:
     column_name: str | None = None
 
     def __post_init__(self) -> None:
-        """校验资产层级字段之间的依赖关系"""
+        """校验资产层级字段之间的依赖关系。"""
         values = (
             self.data_source,
             self.database_name,
@@ -68,7 +68,7 @@ class AssetIdentity:
 
     @property
     def scope(self) -> AssetScope:
-        """返回资产层级"""
+        """返回资产层级。"""
         if self.column_name is not None:
             return AssetScope.COLUMN
         if self.table_name is not None:
@@ -79,7 +79,7 @@ class AssetIdentity:
 
     @property
     def resource_key(self) -> str:
-        """返回无歧义的持久化资源键"""
+        """返回无歧义的持久化资源键。"""
         return asset_resource_key(
             self.data_source,
             self.database_name,
@@ -88,7 +88,7 @@ class AssetIdentity:
         )
 
     def encompasses(self, other: "AssetIdentity") -> bool:
-        """判断当前授权是否覆盖目标资产"""
+        """判断当前授权是否覆盖目标资产。"""
         own_parts = (
             self.data_source,
             self.database_name,
@@ -109,7 +109,7 @@ class AssetIdentity:
 
 @dataclass(frozen=True)
 class AssetAccessPolicy:
-    """用户资产访问策略快照"""
+    """用户资产访问策略快照。"""
 
     user_id: int
     role_name: str | None = None
@@ -117,25 +117,25 @@ class AssetAccessPolicy:
     grants: frozenset[AssetIdentity] = frozenset()
 
     def allows(self, asset: AssetIdentity) -> bool:
-        """判断是否拥有目标资产的完整访问权"""
+        """判断是否拥有目标资产的完整访问权。"""
         return any(grant.encompasses(asset) for grant in self.grants)
 
     def is_visible(self, asset: AssetIdentity) -> bool:
-        """判断资产或其任一下级资产是否可见"""
+        """判断资产或其任一下级资产是否可见。"""
         return self.allows(asset) or any(
             asset.encompasses(grant) for grant in self.grants
         )
 
 
 class AuthorizationService:
-    """为检索与 SQL 守卫提供用户授权策略"""
+    """为检索与 SQL 守卫提供用户授权策略。"""
 
     def __init__(self, repo: AuthPGRepo) -> None:
-        """绑定认证授权投影仓储"""
+        """绑定认证授权投影仓储。"""
         self._repo = repo
 
     async def get_asset_policy(self, user_id: int) -> AssetAccessPolicy:
-        """构建用户当前资产访问策略"""
+        """构建用户当前资产访问策略。"""
         user = await self._repo.get_user_by_id(user_id)
         if user is None:
             raise auth_error.UserNotFoundError
@@ -158,7 +158,7 @@ class AuthorizationService:
 
     @staticmethod
     def require_admin(user: AuthenticatedUser) -> None:
-        """要求用户是平台管理员"""
+        """要求用户是平台管理员。"""
         if not user.is_admin:
             raise auth_error.PermissionDeniedError(detail="需要平台管理员权限")
 
@@ -167,13 +167,13 @@ class AuthorizationService:
         user: AuthenticatedUser,
         identity: DorisQueryIdentity | None,
     ) -> None:
-        """要求用户绑定了 Doris 查询身份"""
+        """要求用户绑定了 Doris 查询身份。"""
         if user.doris_role_name is None or identity is None:
             raise auth_error.PermissionDeniedError(detail="分配的 Doris 角色不可用")
 
     @staticmethod
     def _grant_identity(grant: DorisRoleAssetGrant) -> AssetIdentity:
-        """将持久化授权转换为资产标识"""
+        """将持久化授权转换为资产标识。"""
         identity = AssetIdentity(
             data_source=grant.data_source,
             database_name=grant.database_name,
@@ -187,7 +187,7 @@ class AuthorizationService:
 
 @dataclass(frozen=True, slots=True)
 class DorisExistingRoleDescriptor:
-    """Doris 中已存在的角色及平台管理状态"""
+    """Doris 中已存在的角色及平台管理状态。"""
 
     name: str
     managed: bool
@@ -195,7 +195,7 @@ class DorisExistingRoleDescriptor:
 
 
 class DorisRoleManagementService:
-    """平台管理员维护用户与 Doris 角色绑定"""
+    """平台管理员维护用户与 Doris 角色绑定。"""
 
     def __init__(
         self,
@@ -207,7 +207,7 @@ class DorisRoleManagementService:
         password_manager: PasswordManager,
         auth_config: AuthConfig,
     ) -> None:
-        """初始化 Doris 角色、凭据和用户绑定管理依赖"""
+        """初始化 Doris 角色、凭据和用户绑定管理依赖。"""
         if repo.session is not identity_repo.session:
             raise ValueError("认证存储与查询身份存储必须共享同一数据库会话")
         self._repo = repo
@@ -219,11 +219,11 @@ class DorisRoleManagementService:
         self._auth_config = auth_config
 
     async def list_workload_groups(self) -> tuple[str, ...]:
-        """列出创建角色时可选择的 Doris 工作组"""
+        """列出创建角色时可选择的 Doris 工作组。"""
         return await self._doris_repo.list_workload_groups()
 
     async def list_existing_roles(self) -> list[DorisExistingRoleDescriptor]:
-        """列出 Doris 原生角色并标记平台管理状态"""
+        """列出 Doris 原生角色并标记平台管理状态。"""
         rows = await self._doris_repo.list_roles()
         managed_names = {
             identity.role_name for identity in await self._identity_repo.list_all()
@@ -247,7 +247,7 @@ class DorisRoleManagementService:
         query_user: str,
         workload_group: str,
     ) -> DorisQueryIdentity:
-        """创建 Doris 角色及唯一稳定查询身份"""
+        """创建 Doris 角色及唯一稳定查询身份。"""
         role = normalize_doris_role_name(role_name)
         self._doris_repo.quote_identifier(query_user)
         self._doris_repo.quote_identifier(workload_group)
@@ -304,7 +304,7 @@ class DorisRoleManagementService:
             raise
 
     async def _require_workload_group(self, workload_group: str) -> None:
-        """要求 Doris 工作组存在"""
+        """要求 Doris 工作组存在。"""
         if not await self._doris_repo.workload_group_exists(workload_group):
             raise self._workload_group_not_found(workload_group)
 
@@ -312,13 +312,13 @@ class DorisRoleManagementService:
     def _workload_group_not_found(
         workload_group: str,
     ) -> auth_error.WorkloadGroupNotFoundError:
-        """构造可返回客户端的工作组不存在异常"""
+        """构造可返回客户端的工作组不存在异常。"""
         return auth_error.WorkloadGroupNotFoundError(
             detail=f"Doris 工作组 {workload_group} 不存在，请选择已创建的工作组"
         )
 
     async def set_default_role(self, role_name: str) -> DorisQueryIdentity:
-        """替换新用户使用的缺省 Doris 角色"""
+        """替换新用户使用的缺省 Doris 角色。"""
         role = normalize_doris_role_name(role_name)
         async with self._repo.session.begin():
             await self._repo.lock_security_mutation()
@@ -331,13 +331,13 @@ class DorisRoleManagementService:
             return identity
 
     async def clear_default_role(self) -> None:
-        """清除新用户使用的缺省 Doris 角色"""
+        """清除新用户使用的缺省 Doris 角色。"""
         async with self._repo.session.begin():
             await self._repo.lock_security_mutation()
             await self._identity_repo.clear_default()
 
     async def delete_role(self, role_name: str) -> None:
-        """删除未被用户使用的 Doris 查询身份和角色"""
+        """删除未被用户使用的 Doris 查询身份和角色。"""
         role = normalize_doris_role_name(role_name)
         async with self._repo.session.begin():
             await self._repo.lock_security_mutation()
@@ -361,7 +361,7 @@ class DorisRoleManagementService:
         offset: int,
         query: str | None = None,
     ) -> tuple[list[User], int]:
-        """分页列出用户与角色并返回总量"""
+        """分页列出用户与角色并返回总量。"""
         normalized_query = query.strip() if query is not None else None
         if normalized_query == "":
             normalized_query = None
@@ -375,7 +375,7 @@ class DorisRoleManagementService:
 
     @staticmethod
     def _validated_username(username: str) -> str:
-        """校验管理员写入的用户名并转换错误协议"""
+        """校验管理员写入的用户名并转换错误协议。"""
         try:
             return validate_username(username)
         except ValueError as exc:
@@ -383,14 +383,14 @@ class DorisRoleManagementService:
 
     @staticmethod
     def _validated_email(email: str) -> str:
-        """校验管理员写入的邮箱并转换错误协议"""
+        """校验管理员写入的邮箱并转换错误协议。"""
         try:
             return validate_email(email)
         except ValueError as exc:
             raise auth_error.InvalidUserMutationError(detail=str(exc)) from exc
 
     def _validate_password(self, password: str) -> None:
-        """校验管理员写入的密码并转换错误协议"""
+        """校验管理员写入的密码并转换错误协议。"""
         try:
             validate_password_length(
                 password,
@@ -408,7 +408,7 @@ class DorisRoleManagementService:
         doris_role: str | None = None,
         is_admin: bool = False,
     ) -> User:
-        """平台管理员创建新用户"""
+        """平台管理员创建新用户。"""
         normalized_username = self._validated_username(username)
         normalized_email = self._validated_email(email)
         self._validate_password(password)
@@ -455,7 +455,7 @@ class DorisRoleManagementService:
         user_id: int,
         role_name: str,
     ) -> User:
-        """替换用户唯一 Doris 角色并吊销已有刷新令牌"""
+        """替换用户唯一 Doris 角色并吊销已有刷新令牌。"""
         normalized_role = normalize_doris_role_name(role_name)
         now = datetime.now(UTC)
         async with self._repo.session.begin():
@@ -474,7 +474,7 @@ class DorisRoleManagementService:
             return updated
 
     async def set_user_admin(self, user_id: int, is_admin: bool) -> User:
-        """设置平台管理员标志并保护最后一位管理员"""
+        """设置平台管理员标志并保护最后一位管理员。"""
         now = datetime.now(UTC)
         async with self._repo.session.begin():
             await self._repo.lock_security_mutation()
@@ -501,7 +501,7 @@ class DorisRoleManagementService:
         update_doris_role: bool = False,
         is_admin: bool | None = None,
     ) -> User:
-        """管理员更新指定用户的基础信息、角色、权限或密码并吊销已有令牌"""
+        """管理员更新指定用户的基础信息、角色、权限或密码并吊销已有令牌。"""
         if doris_role is not None and not update_doris_role:
             raise ValueError("设置 Doris 角色时必须显式启用角色更新")
         normalized_username: str | None = None
@@ -580,7 +580,7 @@ class DorisRoleManagementService:
         self,
         role_name: str,
     ) -> list[DorisRoleAssetGrant]:
-        """列出 Doris 角色的 SELECT 权限投影"""
+        """列出 Doris 角色的 SELECT 权限投影。"""
         normalized_name = normalize_doris_role_name(role_name)
         if await self._identity_repo.get(normalized_name) is None:
             raise auth_error.RoleNotFoundError

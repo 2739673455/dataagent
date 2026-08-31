@@ -1,4 +1,4 @@
-"""指标语义索引访问"""
+"""指标语义索引访问。"""
 
 from typing import Any, ClassVar, cast
 
@@ -16,7 +16,7 @@ from app.shared.config.app_config import cfg
 
 
 class MetricESRepo:
-    """指标全文与向量索引存储"""
+    """指标全文与向量索引存储。"""
 
     _index_name = cfg.elasticsearch.metric_index
     _exact_text_boosts: ClassVar[dict[SemanticTextType, float]] = {
@@ -56,7 +56,7 @@ class MetricESRepo:
     }
 
     def __init__(self, client: AsyncElasticsearch) -> None:
-        """初始化指标语义索引存储"""
+        """初始化指标语义索引存储。"""
         self._client = client
         self._delta_repo = SemanticIndexDeltaRepo(
             client,
@@ -65,7 +65,7 @@ class MetricESRepo:
         )
 
     async def ensure_index(self) -> None:
-        """确保指标语义索引存在"""
+        """确保指标语义索引存在。"""
         if await self._client.indices.exists(index=self._index_name):
             await self._client.indices.put_mapping(
                 index=self._index_name,
@@ -86,17 +86,17 @@ class MetricESRepo:
         self,
         resource_key: str,
     ) -> list[SemanticIndexDocument]:
-        """读取指标当前语义索引文档"""
+        """读取指标当前语义索引文档。"""
         return await self._delta_repo.list_documents(
             {"term": {"resource_key": resource_key}}
         )
 
     async def apply_delta(self, delta: SemanticIndexDelta) -> None:
-        """应用指标语义索引差量"""
+        """应用指标语义索引差量。"""
         await self._delta_repo.apply_delta(delta)
 
     async def delete(self, metric_name: str) -> None:
-        """删除指标对应的全部语义索引文档"""
+        """删除指标对应的全部语义索引文档。"""
         await self._delete_by_filter([{"term": {"resource_key": metric_name}}])
 
     async def search_vector_hits(
@@ -107,7 +107,7 @@ class MetricESRepo:
         score_threshold: float = 0.6,
         limit: int = 5,
     ) -> list[SearchHit[MetricInfo]]:
-        """根据向量检索指标并保留命中分数"""
+        """根据向量检索指标并保留命中分数。"""
         result = await self._vector_search(
             embedding,
             score_threshold,
@@ -123,12 +123,12 @@ class MetricESRepo:
         allowed_metrics: frozenset[str] | None,
         limit: int = 5,
     ) -> list[SearchHit[MetricInfo]]:
-        """根据关键词检索指标并保留命中分数"""
+        """根据关键词检索指标并保留命中分数。"""
         result = await self._text_search(query, limit, allowed_metrics)
         return self._hits(result)
 
     async def _delete_by_filter(self, filters: list[dict[str, Any]]) -> None:
-        """按过滤条件删除指标语义索引文档"""
+        """按过滤条件删除指标语义索引文档。"""
         if not await self._client.indices.exists(index=self._index_name):
             return
         await self._client.delete_by_query(
@@ -145,7 +145,7 @@ class MetricESRepo:
         limit: int,
         allowed_metrics: frozenset[str] | None,
     ) -> dict[str, Any]:
-        """执行指标向量检索"""
+        """执行指标向量检索。"""
         knn: dict[str, Any] = {
             "field": "embedding",
             "query_vector": embedding,
@@ -168,7 +168,7 @@ class MetricESRepo:
         limit: int,
         allowed_metrics: frozenset[str] | None,
     ) -> dict[str, Any]:
-        """执行指标全文检索"""
+        """执行指标全文检索。"""
         exact_queries = [
             {
                 "bool": {
@@ -213,14 +213,14 @@ class MetricESRepo:
 
     @staticmethod
     def _metric_filter(allowed_metrics: frozenset[str]) -> dict[str, Any]:
-        """构造指标名称白名单过滤条件"""
+        """构造指标名称白名单过滤条件。"""
         if not allowed_metrics:
             raise ValueError("allowed_metrics 列表不能为空")
         return {"terms": {"resource_key": sorted(allowed_metrics)}}
 
     @staticmethod
     def _hits(result: dict[str, Any]) -> list[SearchHit[MetricInfo]]:
-        """将 Elasticsearch 命中转换为指标结果"""
+        """将 Elasticsearch 命中转换为指标结果。"""
         return [
             SearchHit(
                 item=MetricInfo(**hit["_source"]["payload"]),

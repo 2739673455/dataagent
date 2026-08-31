@@ -1,4 +1,4 @@
-"""平台用户与认证令牌模型"""
+"""平台用户与认证令牌模型。"""
 
 from datetime import datetime
 from uuid import UUID, uuid4
@@ -10,7 +10,7 @@ from app.shared.database.base import AuthBase
 
 
 class User(AuthBase):
-    """平台用户"""
+    """平台用户。"""
 
     __tablename__ = "users"
 
@@ -54,7 +54,7 @@ class User(AuthBase):
 
 
 class RefreshToken(AuthBase):
-    """可轮换的刷新令牌记录"""
+    """可轮换的刷新令牌记录。"""
 
     __tablename__ = "refresh_tokens"
 

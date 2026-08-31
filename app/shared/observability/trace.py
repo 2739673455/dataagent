@@ -7,7 +7,7 @@ from app.shared.observability import context
 
 
 def _get_client_ip(request: Request) -> str:
-    """获取 IP 地址"""
+    """获取 IP 地址。"""
     # 转发头只进入日志上下文；认证限流使用 ASGI peer 地址，不能信任客户端自报值。
     if forwarded := request.headers.get("X-Forwarded-For"):
         return forwarded.split(",")[0].strip()
@@ -17,7 +17,7 @@ def _get_client_ip(request: Request) -> str:
 
 
 async def middleware(request: Request, call_next: Callable) -> Response:
-    """追踪中间件"""
+    """追踪中间件。"""
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
     trace_id = request.headers.get("X-Trace-ID", request_id)
     request_id_token = context.request_id_ctx.set(request_id)

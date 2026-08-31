@@ -1,4 +1,4 @@
-"""专业 Agent Session 的持久化委派与并发控制"""
+"""专业 Agent Session 的持久化委派与并发控制。"""
 
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ async def _acquire_nowait(
     guard: asyncio.Lock | asyncio.Semaphore,
     busy_message: str,
 ) -> AsyncGenerator[None, None]:
-    """立即竞争进程内并发许可，已占用时直接失败"""
+    """立即竞争进程内并发许可，已占用时直接失败。"""
     if guard.locked():
         raise RuntimeError(busy_message)
     await guard.acquire()
@@ -71,7 +71,7 @@ async def _acquire_nowait(
 
 
 class AgentSessionService:
-    """绑定一个用户会话并安全调用专业 Agent"""
+    """绑定一个用户会话并安全调用专业 Agent。"""
 
     def __init__(
         self,
@@ -82,7 +82,7 @@ class AgentSessionService:
         conversation_id: UUID,
         max_parallel_sessions: int,
     ) -> None:
-        """初始化会话身份、并发控制和执行限制"""
+        """初始化会话身份、并发控制和执行限制。"""
         if max_parallel_sessions <= 0:
             raise ValueError("max_parallel_sessions 必须为正整数")
 
@@ -103,7 +103,7 @@ class AgentSessionService:
         delegation_id: str,
         request: DelegationRequest,
     ) -> None:
-        """登记一次由 eval 发起、尚未完成的内部委派"""
+        """登记一次由 eval 发起、尚未完成的内部委派。"""
         record = EvalDelegationRecord(
             delegation_id=delegation_id,
             analysis_id=request.analysis_id,
@@ -122,7 +122,7 @@ class AgentSessionService:
         delegation_id: str,
         result: DelegationResult,
     ) -> None:
-        """把 eval 内部委派的最终结果写入待持久化记录"""
+        """把 eval 内部委派的最终结果写入待持久化记录。"""
         with self._runtime_state_lock:
             records = self._eval_delegations.get(parent_tool_call_id)
             if records is None or delegation_id not in records:
@@ -135,20 +135,20 @@ class AgentSessionService:
         self,
         parent_tool_call_id: str,
     ) -> list[EvalDelegationRecord]:
-        """取出并清除一个 eval 收集到的内部委派记录"""
+        """取出并清除一个 eval 收集到的内部委派记录。"""
         with self._runtime_state_lock:
             records = self._eval_delegations.pop(parent_tool_call_id, {})
         return list(records.values())
 
     async def _is_existing_session(self, session_key: AgentSessionKey) -> bool:
-        """从活跃执行或持久化 Checkpoint 识别 Session"""
+        """从活跃执行或持久化 Checkpoint 识别 Session。"""
         with self._runtime_state_lock:
             if session_key.checkpoint_ns in self._active_sessions:
                 return True
         return await self._session_store.load_checkpoint(session_key) is not None
 
     def _parse_session_namespace(self, checkpoint_ns: str) -> AgentSessionKey | None:
-        """把受控专业 Session namespace 还原为身份键"""
+        """把受控专业 Session namespace 还原为身份键。"""
         parts = checkpoint_ns.split("/")
         if len(parts) != 4 or parts[0] != "subagents":
             return None
@@ -165,7 +165,7 @@ class AgentSessionService:
 
     @staticmethod
     def _checkpoint_updated_at(checkpoint: Mapping[str, object]) -> datetime | None:
-        """读取 Checkpoint 的 UTC 更新时间"""
+        """读取 Checkpoint 的 UTC 更新时间。"""
         timestamp = checkpoint.get("ts")
         if not isinstance(timestamp, str):
             return None
@@ -181,7 +181,7 @@ class AgentSessionService:
         content: str,
         reason: str,
     ) -> DelegationResult:
-        """构造符合协议的失败结果"""
+        """构造符合协议的失败结果。"""
         return DelegationResult(
             status="failed",
             analysis_id=request.analysis_id,
@@ -197,7 +197,7 @@ class AgentSessionService:
         agent_type: str,
         session_id: str,
     ) -> AgentSessionKey:
-        """把受控标识绑定到当前用户会话"""
+        """把受控标识绑定到当前用户会话。"""
         return AgentSessionKey(
             user_id=self._user_id,
             conversation_id=self._conversation_id,
@@ -211,7 +211,7 @@ class AgentSessionService:
         parent_config: RunnableConfig,
         session_key: AgentSessionKey,
     ) -> RunnableConfig:
-        """复制父配置并替换为专业 Session namespace"""
+        """复制父配置并替换为专业 Session namespace。"""
         config = dict(parent_config)
         parent_configurable = {
             key: value
@@ -236,7 +236,7 @@ class AgentSessionService:
 
     @staticmethod
     def _parse_specialist_result(output: object) -> SpecialistResult:
-        """从 LangGraph 输出提取并严格校验结构化结果"""
+        """从 LangGraph 输出提取并严格校验结构化结果。"""
         candidate: object = output
         if isinstance(output, Mapping) and "structured_response" in output:
             candidate = output["structured_response"]
@@ -247,7 +247,7 @@ class AgentSessionService:
         return SpecialistResult.model_validate(candidate)
 
     async def list_sessions(self, analysis_id: str | None) -> ListSessionsResult:
-        """查询当前 Conversation 内的专业 Agent Session"""
+        """查询当前 Conversation 内的专业 Agent Session。"""
         namespaces = await self._session_store.list_namespaces(analysis_id)
         with self._runtime_state_lock:
             active_sessions = dict(self._active_sessions)
@@ -260,7 +260,7 @@ class AgentSessionService:
                 all_namespaces.add(namespace)
 
         async def load_summary(checkpoint_ns: str) -> SessionSummary | None:
-            """读取单个 Session 的最新持久化状态并叠加活跃状态"""
+            """读取单个 Session 的最新持久化状态并叠加活跃状态。"""
             session_key = self._parse_session_namespace(checkpoint_ns)
             if session_key is None or (
                 analysis_id is not None and session_key.analysis_id != analysis_id
@@ -321,7 +321,7 @@ class AgentSessionService:
         result: SpecialistResult,
         session_key: AgentSessionKey,
     ) -> None:
-        """只允许修补同 Analysis 内已存在的其他 Session"""
+        """只允许修补同 Analysis 内已存在的其他 Session。"""
         for request in result.repair_requests:
             target_key = AgentSessionKey(
                 user_id=session_key.user_id,
@@ -343,7 +343,7 @@ class AgentSessionService:
         result: SpecialistResult,
         session_key: AgentSessionKey,
     ) -> None:
-        """验证结论产物实际存在于当前工作区"""
+        """验证结论产物实际存在于当前工作区。"""
         session_prefix = (
             f"/sessions/{session_key.analysis_id}/{session_key.agent_type}/"
             f"{session_key.session_id}/"
@@ -370,7 +370,7 @@ class AgentSessionService:
         delegation_id: str,
         activity_writer: SubagentActivityWriter | None,
     ) -> SpecialistResult:
-        """调用专业 Agent 并允许一次纯结构化修正"""
+        """调用专业 Agent 并允许一次纯结构化修正。"""
         agent_run: SpecialistAgentRun | None = None
         try:
             agent_run = await self._build_agent(session_key)
@@ -425,7 +425,7 @@ class AgentSessionService:
 
     @staticmethod
     async def _cleanup_agent_run(agent_run: SpecialistAgentRun) -> None:
-        """屏蔽调用方取消，确保释放 Session 锁前完成 Shell Job 清理"""
+        """屏蔽调用方取消，确保释放 Session 锁前完成 Shell Job 清理。"""
         cleanup_task = asyncio.create_task(agent_run.shell_jobs.cleanup())
         try:
             await asyncio.shield(cleanup_task)
@@ -435,7 +435,7 @@ class AgentSessionService:
 
     @staticmethod
     def _is_structured_response_message(message: BaseMessage) -> bool:
-        """判断消息是否属于 SpecialistResult 结构化响应"""
+        """判断消息是否属于 SpecialistResult 结构化响应。"""
         if isinstance(message, AIMessage):
             return any(
                 call.get("name") == _STRUCTURED_RESPONSE_TOOL_NAME
@@ -449,7 +449,7 @@ class AgentSessionService:
     def _structured_response_status(
         message: BaseMessage,
     ) -> SubagentRunStatus | None:
-        """从结构化响应工具调用中读取本次 delegation 的终态"""
+        """从结构化响应工具调用中读取本次 delegation 的终态。"""
         if not isinstance(message, AIMessage):
             return None
         for call in message.tool_calls:
@@ -463,7 +463,7 @@ class AgentSessionService:
 
     @classmethod
     def _is_public_activity_message(cls, message: BaseMessage) -> bool:
-        """筛除结构化协议消息，只保留可展示的 Agent 工作消息"""
+        """筛除结构化协议消息，只保留可展示的 Agent 工作消息。"""
         return not cls._is_structured_response_message(message) and isinstance(
             message,
             AIMessage | ToolMessage,
@@ -471,7 +471,7 @@ class AgentSessionService:
 
     @staticmethod
     def _reasoning_content(message: BaseMessage) -> str | None:
-        """读取模型返回的完整思考或思考增量"""
+        """读取模型返回的完整思考或思考增量。"""
         reasoning = message.additional_kwargs.get("reasoning_content")
         if not isinstance(reasoning, str) or not reasoning:
             return None
@@ -479,7 +479,7 @@ class AgentSessionService:
 
     @staticmethod
     def _text_content(message: BaseMessage) -> str | None:
-        """读取模型消息中的正文文本或正文增量"""
+        """读取模型消息中的正文文本或正文增量。"""
         content = message.content
         if isinstance(content, str):
             return content or None
@@ -500,7 +500,7 @@ class AgentSessionService:
 
     @classmethod
     def _reasoning_only_message(cls, message: AIMessage) -> AIMessage | None:
-        """将结构化协议响应投影为只含思考的公开消息"""
+        """将结构化协议响应投影为只含思考的公开消息。"""
         reasoning = cls._reasoning_content(message)
         if reasoning is None:
             return None
@@ -526,7 +526,7 @@ class AgentSessionService:
         *,
         emit_messages: bool,
     ) -> Mapping[str, object]:
-        """执行 Specialist 并把节点消息投影为当前 Planner 的活动流"""
+        """执行 Specialist 并把节点消息投影为当前 Planner 的活动流。"""
         final_values: Mapping[str, object] | None = None
         emitted_message_ids: set[str] = set()
         thinking_message_ids: set[str] = set()
@@ -637,7 +637,7 @@ class AgentSessionService:
         session_id: str,
         delegation_id: str,
     ) -> DelegationActivityHistory | None:
-        """通过 Specialist Agent 状态读取一次 delegation 的消息和状态"""
+        """通过 Specialist Agent 状态读取一次 delegation 的消息和状态。"""
         context = DelegationMessageContext(delegation_id=delegation_id)
         session_key = self._build_session_key(analysis_id, agent_type, session_id)
         state_values = await self._read_session_state(session_key)
@@ -709,7 +709,7 @@ class AgentSessionService:
         self,
         session_key: AgentSessionKey,
     ) -> Mapping[str, object]:
-        """读取 Specialist Agent 合并增量通道后的完整状态"""
+        """读取 Specialist Agent 合并增量通道后的完整状态。"""
         agent_run = await self._build_agent(session_key)
         try:
             checkpointer = agent_run.agent.checkpointer
@@ -731,7 +731,7 @@ class AgentSessionService:
         session_key: AgentSessionKey,
         delegation_id: str,
     ) -> DelegationResult | None:
-        """恢复 Planner 待执行工具时复用同一 delegation 的既有结果"""
+        """恢复 Planner 待执行工具时复用同一 delegation 的既有结果。"""
         state_values = await self._read_session_state(session_key)
         structured_response = state_values.get("structured_response")
         messages = state_values.get("messages")
@@ -767,7 +767,7 @@ class AgentSessionService:
         request: DelegationRequest,
         result: SpecialistResult,
     ) -> DelegationResult:
-        """补充 Session 身份并生成委派结果"""
+        """补充 Session 身份并生成委派结果。"""
         return DelegationResult(
             status=result.status,
             analysis_id=request.analysis_id,
@@ -787,7 +787,7 @@ class AgentSessionService:
         delegation_id: str | None = None,
         activity_writer: SubagentActivityWriter | None = None,
     ) -> DelegationResult:
-        """创建或恢复一个专业 Agent Session"""
+        """创建或恢复一个专业 Agent Session。"""
         delegation_id = DelegationMessageContext(
             delegation_id=delegation_id or uuid4().hex
         ).delegation_id
@@ -897,7 +897,7 @@ class AgentSessionService:
         status: SubagentRunStatus,
         activity_writer: SubagentActivityWriter | None,
     ) -> None:
-        """在存在活动订阅时发送 Specialist 状态"""
+        """在存在活动订阅时发送 Specialist 状态。"""
         if activity_writer is None:
             return
         activity_writer(
@@ -914,7 +914,7 @@ class AgentSessionService:
         self,
         request: DeleteSessionRequest,
     ) -> DeleteSessionResult:
-        """幂等删除专业 Agent Session 的持久化与沙箱状态"""
+        """幂等删除专业 Agent Session 的持久化与沙箱状态。"""
         session_key = self._build_session_key(
             request.analysis_id,
             request.agent_type,
@@ -959,7 +959,7 @@ class AgentSessionService:
         )
 
     def clear(self) -> None:
-        """清除无运行任务时的 Session 内存状态"""
+        """清除无运行任务时的 Session 内存状态。"""
         self._session_locks.clear()
         with self._runtime_state_lock:
             self._active_sessions.clear()

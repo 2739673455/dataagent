@@ -1,4 +1,4 @@
-"""应用异常与 RFC 9457 Problem Details 响应模型"""
+"""应用异常与 RFC 9457 Problem Details 响应模型。"""
 
 from collections.abc import Mapping
 from http import HTTPStatus
@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict
 
 
 class ProblemDetails(BaseModel):
-    """RFC 9457 错误响应协议"""
+    """RFC 9457 错误响应协议。"""
 
     model_config = ConfigDict(extra="allow")
 
@@ -20,7 +20,7 @@ class ProblemDetails(BaseModel):
 
 
 class ProblemError(Exception):
-    """可由全局处理器转换为 Problem Details 响应的应用异常"""
+    """可由全局处理器转换为 Problem Details 响应的应用异常。"""
 
     type: str = "internal-server-error"
     title: str = "服务器内部错误"
@@ -35,7 +35,7 @@ class ProblemError(Exception):
         status: int | None = None,
         extensions: Mapping[str, Any] | None = None,
     ) -> None:
-        """构造可序列化为 Problem Details 的应用异常"""
+        """构造可序列化为 Problem Details 的应用异常。"""
         self.title = title or self.title
         self.detail = detail
         self.extensions = dict(extensions or {})
@@ -51,7 +51,7 @@ class ProblemError(Exception):
         *,
         instance: str | None = None,
     ) -> dict[str, Any]:
-        """转换为响应体"""
+        """转换为响应体。"""
         payload: dict[str, Any] = dict(self.extensions)
         payload.update(
             {

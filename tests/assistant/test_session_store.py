@@ -1,4 +1,4 @@
-"""专业 Agent Session Store 测试"""
+"""专业 Agent Session Store 测试。"""
 
 import unittest
 from unittest.mock import AsyncMock, MagicMock

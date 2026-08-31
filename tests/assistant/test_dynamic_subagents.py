@@ -1,4 +1,4 @@
-"""Dynamic Subagents 协议和 Session 编排单元测试"""
+"""Dynamic Subagents 协议和 Session 编排单元测试。"""
 
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
 
 
 class RecordingChatModel(BaseChatModel):
-    """记录模型请求实际可见的 Tool"""
+    """记录模型请求实际可见的 Tool。"""
 
     seen_tools: list[str] = Field(default_factory=list)
 
@@ -105,19 +105,19 @@ class RecordingChatModel(BaseChatModel):
 
 @tool
 def recall_context(query: str) -> str:
-    """检索测试语义资源"""
+    """检索测试语义资源。"""
     return query
 
 
 @tool
 def execute_sql(sql: str) -> str:
-    """执行测试 SQL"""
+    """执行测试 SQL。"""
     return sql
 
 
 @tool
 def mcp_web_search(query: str) -> str:
-    """模拟 MCP 搜索工具"""
+    """模拟 MCP 搜索工具。"""
     return query
 
 
@@ -203,7 +203,7 @@ class _FakeAgent:
         config: RunnableConfig,
         **kwargs: Any,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """使用 v2 values 事件模拟 CompiledStateGraph 流"""
+        """使用 v2 values 事件模拟 CompiledStateGraph 流。"""
         del kwargs
         output = await self.ainvoke(input, config)
         for message in self.stream_chunks:
@@ -384,7 +384,7 @@ def _request(
 
 
 class DynamicSubagentContractTest(unittest.TestCase):
-    """验证公开协议和专业 Agent 注册约束"""
+    """验证公开协议和专业 Agent 注册约束。"""
 
     def test_agent_session_key_builds_isolated_namespace(self) -> None:
         key = AgentSessionKey(
@@ -525,7 +525,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
     def test_specialist_definitions_reject_reserved_mcp_tool_names(self) -> None:
         @tool("execute")
         def conflicting_mcp_tool(command: str) -> str:
-            """模拟与 Shell 工具冲突的 MCP 工具"""
+            """模拟与 Shell 工具冲突的 MCP 工具。"""
             return command
 
         with self.assertRaisesRegex(ValueError, "冲突"):
@@ -619,26 +619,26 @@ class DynamicSubagentContractTest(unittest.TestCase):
 
         @tool
         def delegation(message: str) -> str:
-            """委派测试专业 Agent"""
+            """委派测试专业 Agent。"""
             return message
 
         @tool
         def list_sessions() -> str:
-            """查询测试专业 Session"""
+            """查询测试专业 Session。"""
             return "[]"
 
         @tool
         def delete_session(session_id: str) -> str:
-            """删除测试专业 Session"""
+            """删除测试专业 Session。"""
             return session_id
 
         @tool
         def eval(code: str) -> str:
-            """模拟 Planner 解释器工具"""
+            """模拟 Planner 解释器工具。"""
             return code
 
         class InterpreterStub(AgentMiddleware):
-            """只用于验证 Planner 工具暴露边界"""
+            """只用于验证 Planner 工具暴露边界。"""
 
             def __init__(self, **kwargs: object) -> None:
                 del kwargs
@@ -683,7 +683,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
 
 
 class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
-    """验证 Session 隔离、并发和修补限制"""
+    """验证 Session 隔离、并发和修补限制。"""
 
     def test_collects_eval_delegations_until_parent_result_is_persisted(
         self,
@@ -1720,7 +1720,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         @tool
         def forbidden_tool() -> str:
-            """模拟未加入 PTC 白名单的 Agent Tool"""
+            """模拟未加入 PTC 白名单的 Agent Tool。"""
             return "must not be callable"
 
         middleware = CodeInterpreterMiddleware(

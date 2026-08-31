@@ -1,4 +1,4 @@
-"""平台管理员、用户 Doris 角色与细粒度权限路由"""
+"""平台管理员、用户 Doris 角色与细粒度权限路由。"""
 
 from typing import Annotated, Any
 
@@ -30,7 +30,7 @@ async def list_doris_roles(
     _: AdminUserDep,
     service: DorisPermissionServiceDep,
 ) -> schemas.DorisRoleListResponse:
-    """列出可分配角色及 Doris 实时授权状态"""
+    """列出可分配角色及 Doris 实时授权状态。"""
     roles = await service.list_roles()
     return schemas.DorisRoleListResponse(
         roles=[schemas.DorisRoleResponse.from_status(role) for role in roles]
@@ -45,7 +45,7 @@ async def list_doris_workload_groups(
     _: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> schemas.DorisWorkloadGroupListResponse:
-    """列出创建角色时可使用的 Doris 工作组"""
+    """列出创建角色时可使用的 Doris 工作组。"""
     workload_groups = await service.list_workload_groups()
     return schemas.DorisWorkloadGroupListResponse(workload_groups=list(workload_groups))
 
@@ -58,7 +58,7 @@ async def list_existing_doris_roles(
     _: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> schemas.DorisExistingRoleListResponse:
-    """只读列出 Doris 中已存在的角色"""
+    """只读列出 Doris 中已存在的角色。"""
     roles = await service.list_existing_roles()
     return schemas.DorisExistingRoleListResponse(
         roles=[
@@ -82,7 +82,7 @@ async def create_doris_role(
     current_admin: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> schemas.DorisRoleResponse:
-    """创建 Doris 角色、查询用户和加密凭据"""
+    """创建 Doris 角色、查询用户和加密凭据。"""
     identity = await service.create_role(
         role_name=body.role,
         description=body.description,
@@ -106,7 +106,7 @@ async def set_default_doris_role(
     current_admin: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> schemas.DorisRoleResponse:
-    """设置新用户使用的缺省 Doris 角色"""
+    """设置新用户使用的缺省 Doris 角色。"""
     identity = await service.set_default_role(role)
     logger.info(
         f"管理员设置默认 Doris 角色: operator_id={current_admin.id}, role={role}"
@@ -122,7 +122,7 @@ async def clear_default_doris_role(
     current_admin: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> Response:
-    """清除新用户使用的缺省 Doris 角色"""
+    """清除新用户使用的缺省 Doris 角色。"""
     await service.clear_default_role()
     logger.info(f"管理员清除默认 Doris 角色: operator_id={current_admin.id}")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -137,7 +137,7 @@ async def delete_doris_role(
     current_admin: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> Response:
-    """删除未使用的 Doris 角色和查询用户"""
+    """删除未使用的 Doris 角色和查询用户。"""
     await service.delete_role(role)
     logger.info(f"管理员删除 Doris 角色: operator_id={current_admin.id}, role={role}")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -151,7 +151,7 @@ async def list_users(
     offset: Annotated[int, Query(ge=0)] = 0,
     query: Annotated[str | None, Query(max_length=128)] = None,
 ) -> schemas.UserListResponse:
-    """分页列出用户、管理员标志与唯一 Doris 角色"""
+    """分页列出用户、管理员标志与唯一 Doris 角色。"""
     users, total = await service.list_users(limit=limit, offset=offset, query=query)
     return schemas.UserListResponse(
         users=[schemas.UserResponse.from_user(user) for user in users],
@@ -172,7 +172,7 @@ async def create_user(
     current_admin: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> schemas.UserResponse:
-    """平台管理员创建新用户"""
+    """平台管理员创建新用户。"""
     user = await service.create_user(
         username=body.username,
         email=body.email,
@@ -197,7 +197,7 @@ async def delete_user(
     current_admin: AdminUserDep,
     service: UserDeletionServiceDep,
 ) -> Response:
-    """平台管理员删除指定用户"""
+    """平台管理员删除指定用户。"""
     await service.request_deletion(user_id, operator_id=current_admin.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -209,7 +209,7 @@ async def set_user_doris_role(
     current_admin: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> schemas.UserResponse:
-    """替换指定用户唯一 Doris 数据角色"""
+    """替换指定用户唯一 Doris 数据角色。"""
     user = await service.set_user_doris_role(user_id, body.role)
     logger.info(
         f"管理员修改用户 Doris 角色: operator_id={current_admin.id}, "
@@ -225,7 +225,7 @@ async def set_user_administrator(
     current_admin: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> schemas.UserResponse:
-    """设置或撤销平台管理员身份"""
+    """设置或撤销平台管理员身份。"""
     user = await service.set_user_admin(user_id, body.is_admin)
     logger.info(
         f"管理员修改用户管理员权限: operator_id={current_admin.id}, "
@@ -241,7 +241,7 @@ async def update_user(
     current_admin: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> schemas.UserResponse:
-    """平台管理员修改指定用户信息、角色、权限或密码"""
+    """平台管理员修改指定用户信息、角色、权限或密码。"""
     kwargs: dict[str, Any] = {}
     if "username" in body.model_fields_set:
         kwargs["username"] = body.username
@@ -272,7 +272,7 @@ async def list_select_grants(
     _: AdminUserDep,
     service: DorisRoleManagementServiceDep,
 ) -> schemas.AssetGrantListResponse:
-    """列出角色用于检索前置过滤的 SELECT 权限投影"""
+    """列出角色用于检索前置过滤的 SELECT 权限投影。"""
     grants = await service.list_asset_grants(role)
     return schemas.AssetGrantListResponse(
         grants=[schemas.AssetGrantResponse.from_entity(grant) for grant in grants]
@@ -290,7 +290,7 @@ async def grant_select(
     current_admin: AdminUserDep,
     service: DorisPermissionServiceDep,
 ) -> schemas.AssetGrantListResponse:
-    """直接向 Doris 角色授予库、表或列 SELECT 权限"""
+    """直接向 Doris 角色授予库、表或列 SELECT 权限。"""
     grants = await service.grant_select(
         role,
         table_name=body.table_name,
@@ -315,7 +315,7 @@ async def revoke_select(
     current_admin: AdminUserDep,
     service: DorisPermissionServiceDep,
 ) -> Response:
-    """直接从 Doris 角色回收库、表或列 SELECT 权限"""
+    """直接从 Doris 角色回收库、表或列 SELECT 权限。"""
     await service.revoke_select(
         role,
         table_name=body.table_name,
@@ -337,7 +337,7 @@ async def revoke_all_select(
     current_admin: AdminUserDep,
     service: DorisPermissionServiceDep,
 ) -> Response:
-    """回收角色在当前数据库中的全部 SELECT 权限"""
+    """回收角色在当前数据库中的全部 SELECT 权限。"""
     revoked_count = await service.revoke_all_select(role)
     logger.info(
         f"管理员清空 Doris SELECT 权限: operator_id={current_admin.id}, "
@@ -355,7 +355,7 @@ async def list_row_policies(
     _: AdminUserDep,
     service: DorisPermissionServiceDep,
 ) -> schemas.RowPolicyListResponse:
-    """直接读取 Doris 角色的全部行策略"""
+    """直接读取 Doris 角色的全部行策略。"""
     policies = await service.list_row_policies(role)
     return schemas.RowPolicyListResponse(
         policies=[schemas.RowPolicyResponse.from_model(policy) for policy in policies]
@@ -372,7 +372,7 @@ async def create_row_policy(
     current_admin: AdminUserDep,
     service: DorisPermissionServiceDep,
 ) -> Response:
-    """直接为 Doris 角色创建行级过滤策略"""
+    """直接为 Doris 角色创建行级过滤策略。"""
     await service.create_row_policy(
         role,
         policy_name=body.policy_name,
@@ -398,7 +398,7 @@ async def drop_row_policy(
     current_admin: AdminUserDep,
     service: DorisPermissionServiceDep,
 ) -> Response:
-    """直接删除 Doris 角色的行级过滤策略"""
+    """直接删除 Doris 角色的行级过滤策略。"""
     await service.drop_row_policy(
         role,
         policy_name=body.policy_name,

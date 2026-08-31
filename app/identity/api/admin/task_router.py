@@ -1,4 +1,4 @@
-"""管理员后台任务状态查询接口"""
+"""管理员后台任务状态查询接口。"""
 
 from celery.result import AsyncResult
 from fastapi import APIRouter
@@ -15,7 +15,7 @@ async def get_task_status(
     task_id: str,
     _: AdminUserDep,
 ) -> TaskStatusResponse:
-    """查询后台任务状态和结果"""
+    """查询后台任务状态和结果。"""
     task = AsyncResult(task_id, app=celery_app)
     result = task.result if task.successful() else None
     error = str(task.result) if task.failed() else None

@@ -1,4 +1,4 @@
-"""沙箱内受控文件操作脚本"""
+"""沙箱内受控文件操作脚本。"""
 
 _SHELL_JOB_STARTED_MARKER = "__DATAAGENT_SHELL_JOB_STARTED__"
 

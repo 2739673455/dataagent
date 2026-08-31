@@ -1,4 +1,4 @@
-"""元数据检索索引增量同步服务"""
+"""元数据检索索引增量同步服务。"""
 
 import hashlib
 import json
@@ -40,7 +40,7 @@ _SEMANTIC_PREPROCESS_VERSION = "v1"
 
 
 class MetaIndexService:
-    """同步字段、字段值和指标检索索引"""
+    """同步字段、字段值和指标检索索引。"""
 
     _embedding_batch_size = 64
 
@@ -53,7 +53,7 @@ class MetaIndexService:
         embedding_client: EmbeddingClient,
         value_repo: ValueESRepo,
     ) -> None:
-        """初始化元数据检索索引同步服务"""
+        """初始化元数据检索索引同步服务。"""
         self._meta_repo = meta_repo
         self._source_repo = source_repo
         self._column_repo = column_repo
@@ -65,7 +65,7 @@ class MetaIndexService:
         self,
         column_keys: list[ColumnKey],
     ) -> dict[ColumnKey, SemanticIndexSyncResult]:
-        """差量同步多个字段的语义索引"""
+        """差量同步多个字段的语义索引。"""
         results: dict[ColumnKey, SemanticIndexSyncResult] = {}
         for t_name, c_name in dict.fromkeys(column_keys):
             resource_key = column_resource_key(t_name, c_name)
@@ -88,7 +88,7 @@ class MetaIndexService:
         self,
         metric_names: list[str],
     ) -> dict[str, SemanticIndexSyncResult]:
-        """差量同步多个指标的语义索引"""
+        """差量同步多个指标的语义索引。"""
         results: dict[str, SemanticIndexSyncResult] = {}
         for metric_name in dict.fromkeys(metric_names):
             async with self._meta_repo.session.begin():
@@ -111,7 +111,7 @@ class MetaIndexService:
         *,
         mode: RequestedValueIndexSyncMode,
     ) -> dict[ColumnKey, ValueIndexSyncResult]:
-        """按水位或全量校准模式同步多个字段取值"""
+        """按水位或全量校准模式同步多个字段取值。"""
         results: dict[ColumnKey, ValueIndexSyncResult] = {}
         for column_key in dict.fromkeys(column_keys):
             results[column_key] = await self._sync_column_value_index(
@@ -124,7 +124,7 @@ class MetaIndexService:
         self,
         table_names: list[str],
     ) -> dict[ColumnKey, SemanticIndexSyncResult]:
-        """同步多个表下全部字段的语义索引"""
+        """同步多个表下全部字段的语义索引。"""
         column_keys = await self._get_column_keys_by_table_names(table_names)
         return await self.sync_column_indexes(column_keys)
 
@@ -134,7 +134,7 @@ class MetaIndexService:
         *,
         mode: RequestedValueIndexSyncMode,
     ) -> dict[ColumnKey, ValueIndexSyncResult]:
-        """同步多个表下已开启字段的取值索引"""
+        """同步多个表下已开启字段的取值索引。"""
         column_keys = await self._get_column_keys_by_table_names(
             table_names,
             index_values=True,
@@ -150,7 +150,7 @@ class MetaIndexService:
         *,
         index_values: bool | None = None,
     ) -> list[ColumnKey]:
-        """根据多个表名获取字段键"""
+        """根据多个表名获取字段键。"""
         async with self._meta_repo.session.begin():
             column_infos = await self._meta_repo.list_column_infos_by_table_names(
                 table_names,
@@ -159,13 +159,13 @@ class MetaIndexService:
         return [(column_info.t_name, column_info.name) for column_info in column_infos]
 
     async def delete_column_indexes(self, column_keys: list[ColumnKey]) -> None:
-        """删除多个字段的语义和取值索引"""
+        """删除多个字段的语义和取值索引。"""
         for t_name, c_name in dict.fromkeys(column_keys):
             await self._column_repo.delete(t_name, c_name)
             await self._value_repo.delete_by_column(t_name, c_name)
 
     async def delete_metric_indexes(self, metric_names: list[str]) -> None:
-        """删除多个指标的语义索引"""
+        """删除多个指标的语义索引。"""
         for metric_name in dict.fromkeys(metric_names):
             await self._metric_repo.delete(metric_name)
 
@@ -173,7 +173,7 @@ class MetaIndexService:
         self,
         column_info: ColumnInfo,
     ) -> SemanticIndexSyncResult:
-        """差量替换字段内部发生变化的语义文档"""
+        """差量替换字段内部发生变化的语义文档。"""
         await self._column_repo.ensure_index()
         resource_key = column_resource_key(column_info.t_name, column_info.name)
         payload = self._column_payload(column_info)
@@ -197,7 +197,7 @@ class MetaIndexService:
         self,
         metric_info: MetricInfo,
     ) -> SemanticIndexSyncResult:
-        """差量替换指标内部发生变化的语义文档"""
+        """差量替换指标内部发生变化的语义文档。"""
         await self._metric_repo.ensure_index()
         payload = self._metric_payload(metric_info)
         targets = self._target_semantic_documents(
@@ -219,7 +219,7 @@ class MetaIndexService:
         targets: list[SemanticIndexDocument],
         current: list[SemanticIndexDocument],
     ) -> tuple[SemanticIndexDelta, int]:
-        """计算文档差异并只补充必要的向量"""
+        """计算文档差异并只补充必要的向量。"""
         current_by_id = {document.id: document for document in current}
         target_ids = {document.id for document in targets}
         create: list[SemanticIndexDocument] = []
@@ -288,7 +288,7 @@ class MetaIndexService:
         description: str,
         aliases: list[str],
     ) -> list[SemanticIndexDocument]:
-        """生成规范化、去重且编号稳定的目标文档"""
+        """生成规范化、去重且编号稳定的目标文档。"""
         entries: dict[str, SemanticTextType] = {}
         source_texts: list[tuple[str, SemanticTextType]] = [
             (name, "name"),
@@ -339,7 +339,7 @@ class MetaIndexService:
         *,
         requested_mode: RequestedValueIndexSyncMode,
     ) -> ValueIndexSyncResult:
-        """执行单字段取值索引状态机"""
+        """执行单字段取值索引状态机。"""
         run_id = uuid.uuid4()
         started_at = datetime.now(UTC)
         # 长时间的 Doris/Elasticsearch I/O 不能占用 PostgreSQL 事务。登记、提交和
@@ -449,7 +449,7 @@ class MetaIndexService:
         cursor_column: str | None,
         generation: uuid.UUID,
     ) -> ValueIndexSyncResult:
-        """执行字段取值索引全量替换"""
+        """执行字段取值索引全量替换。"""
         upper_bound = (
             await self._source_repo.get_value_sync_upper_bound(
                 column_info.t_name,
@@ -494,7 +494,7 @@ class MetaIndexService:
         cursor_column: str | None,
         generation: uuid.UUID,
     ) -> ValueIndexSyncResult:
-        """执行固定上界和重叠窗口的日常水位同步"""
+        """执行固定上界和重叠窗口的日常水位同步。"""
         if cursor_column is None or state.cursor_value is None:
             raise RuntimeError("字段取值增量同步缺少已提交水位")
         upper_bound = await self._source_repo.get_value_sync_upper_bound(
@@ -543,7 +543,7 @@ class MetaIndexService:
         column_info: ColumnInfo,
         generation: uuid.UUID,
     ) -> int:
-        """序列化并写入 Doris 返回的分批去重取值"""
+        """序列化并写入 Doris 返回的分批去重取值。"""
         count = 0
         async for values in batches:
             value_infos = [
@@ -564,7 +564,7 @@ class MetaIndexService:
         self,
         column_info: ColumnInfo,
     ) -> ValueIndexSyncResult:
-        """清理已关闭字段的取值索引与同步状态"""
+        """清理已关闭字段的取值索引与同步状态。"""
         removed_count = await self._value_repo.delete_by_column(
             column_info.t_name,
             column_info.name,
@@ -589,7 +589,7 @@ class MetaIndexService:
         *,
         requested_mode: RequestedValueIndexSyncMode,
     ) -> ValueIndexSyncMode:
-        """校验请求模式所需状态并选择同步模式"""
+        """校验请求模式所需状态并选择同步模式。"""
         if requested_mode == "full":
             return "full"
         if state is None or state.current_generation is None:
@@ -600,7 +600,7 @@ class MetaIndexService:
 
     @staticmethod
     def _column_payload(column_info: ColumnInfo) -> dict[str, Any]:
-        """构造顺序稳定的字段语义索引载荷"""
+        """构造顺序稳定的字段语义索引载荷。"""
         return {
             "t_name": column_info.t_name,
             "name": column_info.name,
@@ -617,7 +617,7 @@ class MetaIndexService:
 
     @staticmethod
     def _metric_payload(metric_info: MetricInfo) -> dict[str, Any]:
-        """构造顺序稳定的指标语义索引载荷"""
+        """构造顺序稳定的指标语义索引载荷。"""
         return {
             "name": metric_info.name,
             "description": metric_info.description,
@@ -636,7 +636,7 @@ class MetaIndexService:
         embedded_count: int,
         target_version: int,
     ) -> SemanticIndexSyncResult:
-        """汇总语义索引差量统计"""
+        """汇总语义索引差量统计。"""
         return SemanticIndexSyncResult(
             created_count=len(delta.create),
             updated_count=len(delta.update),
@@ -649,14 +649,14 @@ class MetaIndexService:
 
     @staticmethod
     def _embedding_revision() -> str:
-        """生成当前嵌入模型和预处理规则版本"""
+        """生成当前嵌入模型和预处理规则版本。"""
         return (
             f"openai-compatible:{cfg.embedding.model}:"
             f"{cfg.elasticsearch.embedding_size}:{_SEMANTIC_PREPROCESS_VERSION}"
         )
 
     async def _embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """分批生成文本向量"""
+        """分批生成文本向量。"""
         embeddings: list[list[float]] = []
         for index in range(0, len(texts), self._embedding_batch_size):
             batch = texts[index : index + self._embedding_batch_size]
@@ -665,7 +665,7 @@ class MetaIndexService:
 
     @staticmethod
     def _serialize_cursor(value: Any) -> dict[str, object]:
-        """将 Doris 类型化游标转换为 JSON 状态"""
+        """将 Doris 类型化游标转换为 JSON 状态。"""
         if isinstance(value, datetime):
             return {"type": "datetime", "value": value.isoformat()}
         if isinstance(value, date):
@@ -684,7 +684,7 @@ class MetaIndexService:
 
     @staticmethod
     def _deserialize_cursor(payload: dict[str, Any]) -> Any:
-        """恢复 JSON 状态中的 Doris 类型化游标"""
+        """恢复 JSON 状态中的 Doris 类型化游标。"""
         cursor_type = payload.get("type")
         value = payload.get("value")
         if cursor_type == "datetime" and isinstance(value, str):
@@ -705,7 +705,7 @@ class MetaIndexService:
 
     @staticmethod
     def _lookback_lower_bound(cursor: Any, lookback_seconds: int) -> Any:
-        """对时间游标应用回看窗口并重放其他类型边界"""
+        """对时间游标应用回看窗口并重放其他类型边界。"""
         if isinstance(cursor, datetime):
             return cursor - timedelta(seconds=lookback_seconds)
         if isinstance(cursor, date):
@@ -715,7 +715,7 @@ class MetaIndexService:
 
     @staticmethod
     def _serialize_value(value: Any) -> str:
-        """将字段取值转换为索引文本"""
+        """将字段取值转换为索引文本。"""
         if isinstance(value, (datetime, date)):
             return value.isoformat()
         return str(value)

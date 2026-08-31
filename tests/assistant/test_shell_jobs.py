@@ -1,4 +1,4 @@
-"""Specialist Shell Job Runtime 与模型上下文测试"""
+"""Specialist Shell Job Runtime 与模型上下文测试。"""
 
 from __future__ import annotations
 

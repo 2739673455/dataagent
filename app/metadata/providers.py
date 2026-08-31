@@ -1,4 +1,4 @@
-"""元数据应用服务组装"""
+"""元数据应用服务组装。"""
 
 from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
@@ -18,7 +18,7 @@ def build_meta_index_service(
     meta_repo: MetaPGRepo,
     source_repo: SourceDorisRepo,
 ) -> MetaIndexService:
-    """创建元数据索引同步服务"""
+    """创建元数据索引同步服务。"""
     client = es_client_manager.get_client()
     return MetaIndexService(
         meta_repo=meta_repo,
@@ -34,7 +34,7 @@ def build_meta_import_service(
     meta_repo: MetaPGRepo,
     source_repo: SourceDorisRepo,
 ) -> MetaImportService:
-    """创建元数据批量导入服务"""
+    """创建元数据批量导入服务。"""
     return MetaImportService(
         meta_repo=meta_repo,
         source_repo=source_repo,
@@ -50,7 +50,7 @@ def build_meta_catalog_service(
     meta_repo: MetaPGRepo,
     source_repo: SourceDorisRepo,
 ) -> MetaCatalogService:
-    """创建元数据目录管理服务"""
+    """创建元数据目录管理服务。"""
     return MetaCatalogService(
         meta_repo=meta_repo,
         source_repo=source_repo,

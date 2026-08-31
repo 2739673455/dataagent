@@ -1,4 +1,4 @@
-"""Planner 专用工具测试"""
+"""Planner 专用工具测试。"""
 
 import unittest
 from typing import Any, cast
@@ -14,7 +14,7 @@ from app.assistant.agents.planner.tools import (
 
 
 def make_runtime() -> ToolRuntime:
-    """构造仅供工具调用的最小运行时"""
+    """构造仅供工具调用的最小运行时。"""
     return ToolRuntime(
         state={},
         context=None,
@@ -26,7 +26,7 @@ def make_runtime() -> ToolRuntime:
 
 
 class PlannerToolsTest(unittest.IsolatedAsyncioTestCase):
-    """验证 Planner 工具将入口错误转为结构化结果"""
+    """验证 Planner 工具将入口错误转为结构化结果。"""
 
     async def test_invalid_request_returns_validation_details(self) -> None:
         tool = create_delegation_tool(MagicMock())

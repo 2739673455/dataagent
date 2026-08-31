@@ -1,4 +1,4 @@
-"""应用启动安全校验行为测试"""
+"""应用启动安全校验行为测试。"""
 
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch

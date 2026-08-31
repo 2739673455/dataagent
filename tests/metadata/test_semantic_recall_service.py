@@ -1,4 +1,4 @@
-"""语义召回记录管理测试"""
+"""语义召回记录管理测试。"""
 
 import json
 import unittest
@@ -69,10 +69,10 @@ _CONFIGURED_DATABASE_GRANT = AssetIdentity("doris", "ecommerce")
 
 
 class InMemorySemanticRecallRepo:
-    """为服务与工具单元测试提供进程内召回仓储"""
+    """为服务与工具单元测试提供进程内召回仓储。"""
 
     def __init__(self) -> None:
-        """初始化空召回记录集合"""
+        """初始化空召回记录集合。"""
         self.records: dict[tuple[int, object, str], SemanticRecallRecord] = {}
 
     async def acquire_query_lock(
@@ -85,7 +85,7 @@ class InMemorySemanticRecallRepo:
         del user_id, conversation_id, query
 
     async def save(self, record: SemanticRecallRecord) -> None:
-        """保存召回记录"""
+        """保存召回记录。"""
         self.records[
             (record.user_id, record.conversation_id, record.response.recall_id)
         ] = record
@@ -96,7 +96,7 @@ class InMemorySemanticRecallRepo:
         conversation_id: object,
         query: str,
     ) -> SemanticRecallRecord | None:
-        """获取指定 query 的最新召回记录"""
+        """获取指定 query 的最新召回记录。"""
         records = [
             record
             for (owner_id, owner_conversation_id, _), record in self.records.items()
@@ -118,7 +118,7 @@ class InMemorySemanticRecallRepo:
         limit: int,
         offset: int = 0,
     ) -> list[SemanticRecallRecord]:
-        """按创建时间倒序列出每个 query 的最新召回记录"""
+        """按创建时间倒序列出每个 query 的最新召回记录。"""
         latest_by_query: dict[str, SemanticRecallRecord] = {}
         for (owner_id, owner_conversation_id, _), record in self.records.items():
             if owner_id != user_id or owner_conversation_id != conversation_id:
@@ -142,7 +142,7 @@ class InMemorySemanticRecallRepo:
         conversation_id: object,
         query: str,
     ) -> bool:
-        """删除 query 的全部召回记录"""
+        """删除 query 的全部召回记录。"""
         keys = [
             key
             for key, record in self.records.items()
@@ -153,7 +153,7 @@ class InMemorySemanticRecallRepo:
         return bool(keys)
 
     async def delete_all(self, user_id: int, conversation_id: object) -> None:
-        """删除会话全部召回记录"""
+        """删除会话全部召回记录。"""
         self.records = {
             key: value
             for key, value in self.records.items()
@@ -162,7 +162,7 @@ class InMemorySemanticRecallRepo:
 
 
 def recall_repo(repo: InMemorySemanticRecallRepo) -> SemanticRecallPGRepo:
-    """将测试仓储收窄为服务声明的具体仓储类型"""
+    """将测试仓储收窄为服务声明的具体仓储类型。"""
     return cast(SemanticRecallPGRepo, repo)
 
 
@@ -170,13 +170,13 @@ def recall_repo(repo: InMemorySemanticRecallRepo) -> SemanticRecallPGRepo:
 async def recall_repository_context(
     repo: InMemorySemanticRecallRepo,
 ) -> AsyncGenerator[SemanticRecallPGRepo]:
-    """模拟工具使用的短事务召回仓储上下文"""
+    """模拟工具使用的短事务召回仓储上下文。"""
     yield recall_repo(repo)
 
 
 @asynccontextmanager
 async def object_context(value: Any) -> AsyncGenerator[Any, None]:
-    """为工具依赖提供简单异步上下文"""
+    """为工具依赖提供简单异步上下文。"""
     yield value
 
 
@@ -185,7 +185,7 @@ def build_query_experience(
     table: str = "orders",
     column: str = "amount",
 ) -> QueryExperienceRecallResult:
-    """构造紧凑查询经验结果"""
+    """构造紧凑查询经验结果。"""
     return QueryExperienceRecallResult(
         id=uuid4(),
         purpose="查询订单收入",
@@ -206,7 +206,7 @@ def build_request(
     query: str,
     resource_types: list[SemanticResourceType],
 ) -> SemanticResourceRecallRequest:
-    """构造组合检索请求"""
+    """构造组合检索请求。"""
     return SemanticResourceRecallRequest(
         terms=[query],
         resource_types=resource_types,
@@ -220,7 +220,7 @@ def build_response(
     score: float,
     reason: str,
 ) -> SemanticResourceRecallResponse:
-    """构造包含重复资源的测试召回响应"""
+    """构造包含重复资源的测试召回响应。"""
     match_reason = SemanticMatchReason(
         match_type="fulltext",
         term=reason,
@@ -290,7 +290,7 @@ def build_response(
 def build_authorization_filter(
     *grants: AssetIdentity,
 ) -> MetadataAuthorizationFilter:
-    """构造召回测试的资产授权过滤器"""
+    """构造召回测试的资产授权过滤器。"""
     return MetadataAuthorizationFilter(
         AssetAccessPolicy(
             user_id=7,
@@ -302,7 +302,7 @@ def build_authorization_filter(
 
 
 class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
-    """验证召回记录生命周期和会话隔离"""
+    """验证召回记录生命周期和会话隔离。"""
 
     async def asyncSetUp(self) -> None:
         self.repo = InMemorySemanticRecallRepo()
@@ -951,7 +951,7 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
 
 
 class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
-    """验证模型可见参数和工具运行时注入"""
+    """验证模型可见参数和工具运行时注入。"""
 
     def test_runtime_is_hidden_from_tool_call_schema(self) -> None:
         for semantic_tool in (recall_context, list_recalls):

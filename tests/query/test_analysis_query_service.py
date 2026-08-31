@@ -120,7 +120,7 @@ def make_validation(
     physical_table: bool = False,
     query_kind: QueryKind = "business",
 ) -> QueryValidationResult:
-    """构造已经通过 Guard 的查询结果"""
+    """构造已经通过 Guard 的查询结果。"""
     return QueryValidationResult(
         valid=True,
         normalized_sql="SELECT normalized",

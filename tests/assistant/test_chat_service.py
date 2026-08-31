@@ -1,4 +1,4 @@
-"""聊天回合与 Planner 自动续写测试"""
+"""聊天回合与 Planner 自动续写测试。"""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
 
 
 class _FileInspectorStub:
-    """按用户、会话和路径返回可下载状态"""
+    """按用户、会话和路径返回可下载状态。"""
 
     def __init__(self, available: set[tuple[int, UUID, str]] | None = None) -> None:
         self.available = available or set()
@@ -234,7 +234,7 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
 
 
 class _RepeatingPlanner:
-    """重复返回同一 finish reason 并记录 Planner 配置"""
+    """重复返回同一 finish reason 并记录 Planner 配置。"""
 
     def __init__(self, finish_reason: str) -> None:
         self.finish_reason = finish_reason
@@ -268,7 +268,7 @@ class _RepeatingPlanner:
 
 
 class _TurnManagerStub:
-    """记录一个聊天回合进入的执行上下文次数"""
+    """记录一个聊天回合进入的执行上下文次数。"""
 
     def __init__(
         self,

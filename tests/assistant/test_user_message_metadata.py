@@ -1,4 +1,4 @@
-"""用户消息模型元数据投影测试"""
+"""用户消息模型元数据投影测试。"""
 
 from __future__ import annotations
 

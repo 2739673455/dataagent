@@ -1,4 +1,4 @@
-"""PostgreSQL advisory lock 的连接池竞争单元测试"""
+"""PostgreSQL advisory lock 的连接池竞争单元测试。"""
 
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ class _FakePool:
 
 
 class AdvisoryLockTest(unittest.IsolatedAsyncioTestCase):
-    """验证咨询锁竞争立即失败并正确释放连接"""
+    """验证咨询锁竞争立即失败并正确释放连接。"""
 
     async def test_cross_worker_conflict_fails_immediately(self) -> None:
         pool = _FakePool(size=2)

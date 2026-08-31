@@ -1,4 +1,4 @@
-"""元数据语义资源召回服务测试"""
+"""元数据语义资源召回服务测试。"""
 
 import asyncio
 import unittest
@@ -28,7 +28,7 @@ def build_table(
     name: str = "orders",
     primary_key_columns: list[str] | None = None,
 ) -> TableInfo:
-    """构造测试表元数据"""
+    """构造测试表元数据。"""
     return TableInfo(
         name=name,
         role="fact",
@@ -46,7 +46,7 @@ def build_column(
     reference_t_name: str | None = None,
     reference_c_name: str | None = None,
 ) -> ColumnInfo:
-    """构造测试字段元数据"""
+    """构造测试字段元数据。"""
     column_info = ColumnInfo(
         t_name=t_name,
         name=name,
@@ -78,7 +78,7 @@ def build_column(
 
 
 def build_metric() -> MetricInfo:
-    """构造测试指标元数据"""
+    """构造测试指标元数据。"""
     return MetricInfo(
         name="revenue",
         description="收入",
@@ -90,7 +90,7 @@ def build_metric() -> MetricInfo:
 
 
 class SemanticResourceRecallServiceTest(unittest.IsolatedAsyncioTestCase):
-    """验证阶段化检索编排和资源类型选择"""
+    """验证阶段化检索编排和资源类型选择。"""
 
     async def asyncSetUp(self) -> None:
         self.table = build_table()
@@ -130,7 +130,7 @@ class SemanticResourceRecallServiceTest(unittest.IsolatedAsyncioTestCase):
         self,
         *grants: AssetIdentity,
     ) -> SemanticResourceRecallService:
-        """构造字段白名单受限的检索服务"""
+        """构造字段白名单受限的检索服务。"""
         return SemanticResourceRecallService(
             embedding_client=self.embedding_client,
             column_repo=self.column_repo,
