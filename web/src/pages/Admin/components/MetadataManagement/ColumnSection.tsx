@@ -6,6 +6,8 @@ import { type ColumnInfo, metaApi, type ValueIndexSyncRequestMode } from "@/api/
 import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { Button } from "@/components/ui/button";
 import { ColumnCreateDialog, ColumnEditDialog, ValueIndexStatus } from "./ColumnDialogs";
+import { ColumnReferenceBadge } from "./ColumnReferenceBadge";
+import { SemanticIndexStatus } from "./SemanticIndexStatus";
 import { splitCsv } from "./utils";
 
 interface ColumnSectionProps {
@@ -309,13 +311,14 @@ export function ColumnSection({
           </div>
         ) : (
           <div className="max-h-[410px] overflow-auto">
-            <table className="w-full min-w-[760px] table-fixed text-left text-xs font-mono">
+            <table className="w-full min-w-[900px] table-fixed text-left text-xs font-mono">
               <colgroup>
                 <col className="w-[44px]" />
-                <col className="w-[18%]" />
-                <col className="w-[28%]" />
-                <col className="w-[18%]" />
                 <col className="w-[16%]" />
+                <col className="w-[24%]" />
+                <col className="w-[16%]" />
+                <col className="w-[16%]" />
+                <col className="w-[125px]" />
                 <col className="w-[140px]" />
                 <col className="w-[84px]" />
               </colgroup>
@@ -354,6 +357,9 @@ export function ColumnSection({
                   </th>
                   <th className="px-3.5 py-2.5 font-medium whitespace-nowrap bg-[#f4f4f0]">
                     引用关系
+                  </th>
+                  <th className="px-3.5 py-2.5 font-medium whitespace-nowrap bg-[#f4f4f0]">
+                    语义索引
                   </th>
                   <th className="px-3.5 py-2.5 font-medium whitespace-nowrap bg-[#f4f4f0]">
                     取值索引
@@ -408,17 +414,21 @@ export function ColumnSection({
                           <span className="text-[#a1a1aa]">-</span>
                         )}
                       </td>
-                      <td className="px-3.5 py-2.5 align-middle text-xs text-[#71717a]">
-                        {col.reference_t_name ? (
-                          <span
-                            className="font-mono text-[11px] truncate block"
-                            title={`${col.reference_t_name}.${col.reference_c_name || ""}`}
-                          >
-                            {col.reference_t_name}.{col.reference_c_name}
-                          </span>
+                      <td className="px-3.5 py-2.5 align-middle text-xs">
+                        {col.reference_t_name && col.reference_c_name ? (
+                          <ColumnReferenceBadge
+                            columnName={col.reference_c_name}
+                            tableName={col.reference_t_name}
+                          />
                         ) : (
                           <span className="text-[#a1a1aa]">-</span>
                         )}
+                      </td>
+                      <td className="px-3.5 py-2.5 align-middle">
+                        <SemanticIndexStatus
+                          indexVersion={col.index_version}
+                          metaVersion={col.meta_version}
+                        />
                       </td>
                       <td className="px-3.5 py-2.5 align-middle">
                         <ValueIndexStatus column={col} />

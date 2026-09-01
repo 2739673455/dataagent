@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="2400" height="5600" viewBox="0 0 2400 5600" role="img" aria-labelledby="title desc">
 <title id="title">掌柜问数完整查询流程</title>
-<desc id="desc">根据尚硅谷大模型项目之掌柜问数文档，以统计去年广东省各城市销售总额为例，展示关键词抽取、并行召回、信息合并、基于数仓角色的表列行权限过滤、SQL 生成、校验、修正、执行和业务正确性反思</desc>
+<desc id="desc">以统计去年广东省各城市销售总额为例，展示语义检索请求生成、并行召回、信息合并、基于数仓角色的表列行权限过滤、SQL 生成、校验、修正、执行和业务正确性反思</desc>
 <defs>
   <linearGradient id="page-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F8FAFC"/><stop offset="1" stop-color="#ECFDF5"/></linearGradient>
   <linearGradient id="question-bg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#312E81"/><stop offset=".55" stop-color="#4F46E5"/><stop offset="1" stop-color="#6366F1"/></linearGradient>
@@ -105,25 +105,25 @@
 <text x="965" y="264" class="chip-text" text-anchor="middle">分组：city_name（各城市）</text>
 <rect x="1145" y="238" width="335" height="38" rx="19" class="chip-white"/>
 <text x="1312.5" y="264" class="chip-text" text-anchor="middle">指标：销售额 / 销售总额</text>
-<g aria-label="节点 1 抽取关键词">
+<g aria-label="节点 1 生成检索请求">
 <rect x="400" y="350" width="1600" height="320" rx="20" class="card"/>
 <path d="M420 350H1980Q2000 350 2000 370V414H400V370Q400 350 420 350Z" fill="#4F46E5"/>
 <circle cx="434" cy="382" r="20" fill="#FFFFFF" opacity=".96"/>
 <text x="434" y="389" class="node-number" text-anchor="middle">1</text>
-<text x="470" y="391" class="node-title" >抽取关键词</text>
-<text x="1980" y="389" class="node-subtitle" text-anchor="end">Jieba</text>
+<text x="470" y="391" class="node-title" >生成检索请求</text>
+<text x="1980" y="389" class="node-subtitle" text-anchor="end">Explorer Agent</text>
 </g>
 <text x="435" y="460" class="label" >处理</text>
-<text x="535" y="460" class="body" >使用 jieba.analyse.extract_tags（TF-IDF）按指定词性抽取关键词，并保留原始问题</text>
+<text x="535" y="460" class="body" >模型保留完整业务问题作为 query，并生成用于语义召回的 terms 和 resource_types</text>
 <text x="435" y="505" class="label" >示例输出</text>
 <rect x="535" y="478" width="1415" height="60" rx="12" class="code-light"/>
-<text x="560" y="516" class="mono-blue" >keywords = [&quot;去年&quot;, &quot;广东省&quot;, &quot;城市&quot;, &quot;销售总额&quot;, &quot;统计去年广东省各城市的销售总额&quot;]</text>
+<text x="560" y="516" class="mono-blue" >terms = [&quot;销售总额&quot;, &quot;广东省&quot;, &quot;城市&quot;]; resource_types = [&quot;metric&quot;, &quot;column&quot;, &quot;value&quot;]</text>
 <rect x="435" y="555" width="735" height="95" rx="14" class="mini mini-blue"/>
-<text x="453" y="586" class="mini-title mini-title-blue" >TF-IDF 简介</text>
-<text x="453" y="616" class="mini-body" ><tspan x="453" dy="0">TF：当前文本词频；IDF：词越少见权重越高</tspan><tspan x="453" dy="23">关键词权重 = TF × IDF</tspan></text>
+<text x="453" y="586" class="mini-title mini-title-blue" >召回上下文主键</text>
+<text x="453" y="616" class="mini-body" ><tspan x="453" dy="0">query 使用完整业务问题建立召回上下文</tspan><tspan x="453" dy="23">后续补充检索必须复用同一 query</tspan></text>
 <rect x="1190" y="555" width="760" height="95" rx="14" class="mini mini-teal"/>
-<text x="1208" y="586" class="mini-title mini-title-teal" >关键词抽取的实现</text>
-<text x="1208" y="616" class="mini-body" ><tspan x="1208" dy="0">分词 → 过滤停用词/词性 → 归一化 TF × 内置 IDF</tspan><tspan x="1208" dy="23">未登录词取 IDF 中位数；按权重降序返回前 topK 个词</tspan></text>
+<text x="1208" y="586" class="mini-title mini-title-teal" >补充检索规则</text>
+<text x="1208" y="616" class="mini-body" ><tspan x="1208" dy="0">terms 表达需要召回的指标、字段或字段值</tspan><tspan x="1208" dy="23">补充检索只调整 terms 和 resource_types</tspan></text>
 <text x="80" y="728" class="section-title" >并行召回</text>
 <g aria-label="节点 2 召回字段">
 <rect x="75" y="770" width="710" height="690" rx="20" class="card"/>

@@ -307,7 +307,7 @@ export function MetadataManagement() {
         onReloadColumns={loadColumns}
       />
 
-      {/* 4. 业务指标元数据 */}
+      {/* 4. 指标元数据。 */}
       <MetricSection
         metrics={metrics}
         selectedMetricNames={selectedMetricNames}

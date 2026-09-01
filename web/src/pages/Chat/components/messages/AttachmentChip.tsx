@@ -9,6 +9,7 @@ import {
   FileSpreadsheet,
   FileText,
   Globe,
+  X,
 } from "lucide-react";
 import { type ComponentType, useEffect, useState } from "react";
 import { chatApi } from "@/api/chat";
@@ -169,17 +170,20 @@ export function AttachmentChip({
   isUser,
   onPreview,
   onOpenPreviewAttachment,
+  onRemove,
 }: {
   attachment: Attachment;
   conversationId?: string | null;
   isUser: boolean;
   onPreview?: (src: string, alt: string) => void;
   onOpenPreviewAttachment?: (attachment: Attachment) => void;
+  onRemove?: () => void;
 }) {
   const [isDownloading, setIsDownloading] = useState(false);
   const isHtml = isHtmlAttachment(attachment.f_path);
   const isTable = isInteractiveTableAttachment(attachment);
   const isPreviewable = isHtml || isTable;
+  const canPreview = isPreviewable && onOpenPreviewAttachment !== undefined;
   const fileName = getAttachmentName(attachment.f_path);
 
   const handleDownload = async () => {
@@ -201,8 +205,8 @@ export function AttachmentChip({
   };
 
   const handlePrimaryClick = () => {
-    if (isPreviewable) {
-      onOpenPreviewAttachment?.(attachment);
+    if (canPreview) {
+      onOpenPreviewAttachment(attachment);
     } else if (conversationId) {
       void handleDownload();
     }
@@ -224,17 +228,13 @@ export function AttachmentChip({
         size="md"
       />
 
-      {isPreviewable || conversationId ? (
+      {canPreview || conversationId ? (
         <button
           type="button"
           onClick={handlePrimaryClick}
           className="max-w-[220px] sm:max-w-[280px] truncate text-left text-[11.5px] font-medium text-[#27272a] transition-colors group-hover:text-[#09090b] hover:underline"
           title={
-            isPreviewable
-              ? `点击预览 ${fileName}`
-              : conversationId
-                ? `点击下载 ${fileName}`
-                : fileName
+            canPreview ? `点击预览 ${fileName}` : conversationId ? `点击下载 ${fileName}` : fileName
           }
         >
           {fileName}
@@ -249,7 +249,7 @@ export function AttachmentChip({
       )}
 
       <div className="flex items-center gap-0.5 ml-0.5 shrink-0">
-        {isPreviewable && (
+        {canPreview && (
           <button
             type="button"
             onClick={() => onOpenPreviewAttachment?.(attachment)}
@@ -273,6 +273,17 @@ export function AttachmentChip({
             ) : (
               <Download className="h-3 w-3" />
             )}
+          </button>
+        )}
+
+        {onRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="rounded p-0.5 text-[#71717a] transition hover:bg-[#ebebe5] hover:text-[#dc2626]"
+            title="移除附件"
+          >
+            <X className="h-3.5 w-3.5" />
           </button>
         )}
       </div>

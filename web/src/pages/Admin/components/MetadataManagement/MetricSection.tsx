@@ -5,7 +5,9 @@ import { getApiErrorMessage } from "@/api/errors";
 import { type MetricInfo, metaApi } from "@/api/meta";
 import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { Button } from "@/components/ui/button";
+import { ColumnReferenceBadge } from "./ColumnReferenceBadge";
 import { MetricCreateDialog, MetricEditDialog } from "./MetricDialogs";
+import { SemanticIndexStatus } from "./SemanticIndexStatus";
 import { parseMetricColumns, splitCsv } from "./utils";
 
 interface MetricSectionProps {
@@ -122,7 +124,7 @@ export function MetricSection({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e5e5df] pb-3 shrink-0">
         <div className="flex items-center gap-2">
           <h2 className="flex items-center gap-1.5 text-base font-bold text-[#18181b]">
-            <span>业务指标元数据({metrics.length})</span>
+            <span>指标元数据({metrics.length})</span>
             {syncing === "metric_semantic" && <DotMatrixLoader className="ml-1 text-[#71717a]" />}
           </h2>
           {selectedMetricNames.length > 0 && (
@@ -221,7 +223,7 @@ export function MetricSection({
 
       <div className="mt-4 rounded border border-[#d4d4ce]">
         {metrics.length === 0 ? (
-          <div className="py-12 text-center text-xs text-[#71717a]">暂无业务指标元数据</div>
+          <div className="py-12 text-center text-xs text-[#71717a]">暂无指标元数据</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] table-fixed text-left text-xs font-mono">
@@ -306,14 +308,11 @@ export function MetricSection({
                       <td className="px-3.5 py-2.5 align-top text-xs">
                         <div className="flex flex-wrap gap-1 max-w-full">
                           {metric.relevant_columns?.map((c) => (
-                            <span
+                            <ColumnReferenceBadge
                               key={`${c.t_name}.${c.c_name}`}
-                              className="inline-block max-w-full rounded bg-[#ebebe6] px-1.5 py-0.5 text-[10px] font-mono text-[#27272a] break-all leading-tight"
-                            >
-                              <span className="text-[#52525b]">{c.t_name}</span>
-                              <span className="font-bold text-[#18181b] mx-0.5 text-xs">.</span>
-                              <span className="font-semibold text-[#18181b]">{c.c_name}</span>
-                            </span>
+                              columnName={c.c_name}
+                              tableName={c.t_name}
+                            />
                           ))}
                           {!metric.relevant_columns?.length && (
                             <span className="text-[#a1a1aa]">-</span>
@@ -337,9 +336,10 @@ export function MetricSection({
                         )}
                       </td>
                       <td className="px-3.5 py-2.5 align-top">
-                        <span className="inline-flex items-center rounded bg-[#1e2024] px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap text-[#ffffff]">
-                          已同步
-                        </span>
+                        <SemanticIndexStatus
+                          indexVersion={metric.index_version}
+                          metaVersion={metric.meta_version}
+                        />
                       </td>
                       <td className="px-3.5 py-2.5 align-top text-right whitespace-nowrap">
                         <div className="inline-flex items-center justify-end gap-1.5 whitespace-nowrap">

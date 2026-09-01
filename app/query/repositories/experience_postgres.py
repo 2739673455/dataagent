@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Text, cast, delete, func, or_, select, tuple_, update
+from sqlalchemy import delete, exists, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -206,15 +206,30 @@ class QueryExperiencePGRepo:
         filters = []
         if role_name is not None:
             filters.append(QueryExperience.role_name == role_name)
-        if status is not None:
+        if status is None:
+            filters.append(QueryExperience.status != "deleting")
+        else:
             filters.append(QueryExperience.status == status)
         if query is not None:
-            pattern = f"%{query}%"
+            purpose_values = (
+                func.json_array_elements_text(QueryExperience.purposes)
+                .table_valued("value")
+                .alias("purpose")
+            )
             filters.append(
                 or_(
-                    QueryExperience.sql_template.ilike(pattern),
-                    QueryExperience.fingerprint.ilike(pattern),
-                    cast(QueryExperience.purposes, Text).ilike(pattern),
+                    QueryExperience.sql_template.icontains(query, autoescape=True),
+                    QueryExperience.fingerprint.icontains(query, autoescape=True),
+                    exists(
+                        select(1)
+                        .select_from(purpose_values)
+                        .where(
+                            purpose_values.c.value.icontains(
+                                query,
+                                autoescape=True,
+                            )
+                        )
+                    ),
                 )
             )
 

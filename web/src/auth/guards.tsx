@@ -1,9 +1,9 @@
 import { useEffect } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { toast } from "sonner";
-import { AuthLoadingScreen } from "@/auth/AuthLoadingScreen";
 import { checkAuth } from "@/auth/session";
 import { useAuthStore } from "@/auth/store";
+import { PageLoadingScreen } from "@/components/PageLoadingScreen";
 import { ROUTES } from "@/config/settings";
 
 // 认证与权限校验的基础守卫
@@ -26,7 +26,7 @@ function RequireAuth({
   }, [isLoading]);
 
   if (isLoading) {
-    return <AuthLoadingScreen />;
+    return <PageLoadingScreen message="正在验证登录状态..." />;
   }
 
   if (!isAuthenticated) {

@@ -7,6 +7,8 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
+from sqlalchemy.dialects import postgresql
+
 from app.identity.models.doris import asset_resource_key
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
 from app.metadata.models.search import SearchHit
@@ -1103,6 +1105,55 @@ class QueryExperienceESRepoTest(unittest.IsolatedAsyncioTestCase):
                 {"term": {"authorization_epoch": str(AUTHORIZATION_EPOCH)}},
             ],
         )
+
+
+class QueryExperiencePGRepoTest(unittest.IsolatedAsyncioTestCase):
+    async def test_list_search_decodes_purposes_and_escapes_wildcards(self) -> None:
+        session = MagicMock()
+        session.scalar = AsyncMock(return_value=0)
+        result = MagicMock()
+        result.all.return_value = []
+        session.execute = AsyncMock(return_value=result)
+        repo = QueryExperiencePGRepo(cast(Any, session))
+
+        await repo.list_overviews(
+            limit=20,
+            offset=0,
+            role_name=None,
+            status=None,
+            query="类目_%",
+        )
+
+        statement = session.scalar.await_args.args[0]
+        compiled = statement.compile(dialect=postgresql.dialect())
+        sql = str(compiled)
+        self.assertIn("json_array_elements_text(query_experiences.purposes)", sql)
+        self.assertNotIn("CAST(query_experiences.purposes AS TEXT)", sql)
+        self.assertEqual(
+            sum(value == "类目/_/%" for value in compiled.params.values()),
+            3,
+        )
+
+    async def test_list_hides_deleting_experiences_by_default(self) -> None:
+        session = MagicMock()
+        session.scalar = AsyncMock(return_value=0)
+        result = MagicMock()
+        result.all.return_value = []
+        session.execute = AsyncMock(return_value=result)
+        repo = QueryExperiencePGRepo(cast(Any, session))
+
+        await repo.list_overviews(
+            limit=20,
+            offset=0,
+            role_name=None,
+            status=None,
+            query=None,
+        )
+
+        statement = session.scalar.await_args.args[0]
+        compiled = statement.compile(dialect=postgresql.dialect())
+        self.assertIn("query_experiences.status !=", str(compiled))
+        self.assertIn("deleting", compiled.params.values())
 
 
 if __name__ == "__main__":

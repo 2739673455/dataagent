@@ -60,8 +60,8 @@ export function ChatMessages({
     navigationTargetTopRef.current = null;
     shouldStickToBottomRef.current =
       viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= bottomThreshold;
-    let previousScrollTop = viewport.scrollTop;
     let animationFrame: number | null = null;
+    let touchY: number | null = null;
 
     const cancelPendingFollow = () => {
       if (animationFrame === null) return;
@@ -73,14 +73,12 @@ export function ChatMessages({
       cancelPendingFollow();
     };
     const updateStickiness = () => {
+      // 内容折叠和程序化定位也会触发 scroll；这里只负责在回到底部时恢复跟随，
+      // 停止跟随必须来自下面的滚轮、触摸或滚动条操作。
       const currentScrollTop = viewport.scrollTop;
       const currentScrollHeight = viewport.scrollHeight;
-      const scrollDelta = currentScrollTop - previousScrollTop;
-      const isScrollingUp = scrollDelta < 0;
-      const isScrollingDown = scrollDelta > 0;
       const isAtBottom =
         currentScrollHeight - currentScrollTop - viewport.clientHeight <= bottomThreshold;
-      previousScrollTop = currentScrollTop;
       const navigationTargetTop = navigationTargetTopRef.current;
       if (navigationTargetTop !== null) {
         if (Math.abs(currentScrollTop - navigationTargetTop) <= 1) {
@@ -88,11 +86,7 @@ export function ChatMessages({
         }
         return;
       }
-      if (isScrollingUp) {
-        stopFollowing();
-        return;
-      }
-      if (isScrollingDown && isAtBottom) shouldStickToBottomRef.current = true;
+      if (isAtBottom) shouldStickToBottomRef.current = true;
     };
     const handleWheel = (event: WheelEvent) => {
       navigationTargetTopRef.current = null;
@@ -100,7 +94,20 @@ export function ChatMessages({
     };
     const handlePointerDown = (event: PointerEvent) => {
       navigationTargetTopRef.current = null;
-      if (event.button === 1) stopFollowing();
+      const scrollbarStart = viewport.getBoundingClientRect().left + viewport.clientWidth;
+      if (event.button === 1 || event.clientX >= scrollbarStart) stopFollowing();
+    };
+    const handleTouchStart = (event: TouchEvent) => {
+      touchY = event.touches[0]?.clientY ?? null;
+    };
+    const handleTouchMove = (event: TouchEvent) => {
+      const currentTouchY = event.touches[0]?.clientY;
+      if (currentTouchY === undefined) return;
+      if (touchY !== null && currentTouchY > touchY) stopFollowing();
+      touchY = currentTouchY;
+    };
+    const handleTouchEnd = () => {
+      touchY = null;
     };
     const followContentGrowth = () => {
       if (!shouldStickToBottomRef.current || animationFrame !== null) return;
@@ -120,12 +127,18 @@ export function ChatMessages({
     viewport.addEventListener("scroll", updateStickiness, { passive: true });
     viewport.addEventListener("wheel", handleWheel, { passive: true });
     viewport.addEventListener("pointerdown", handlePointerDown, { passive: true });
+    viewport.addEventListener("touchstart", handleTouchStart, { passive: true });
+    viewport.addEventListener("touchmove", handleTouchMove, { passive: true });
+    viewport.addEventListener("touchend", handleTouchEnd, { passive: true });
 
     return () => {
       observer.disconnect();
       viewport.removeEventListener("scroll", updateStickiness);
       viewport.removeEventListener("wheel", handleWheel);
       viewport.removeEventListener("pointerdown", handlePointerDown);
+      viewport.removeEventListener("touchstart", handleTouchStart);
+      viewport.removeEventListener("touchmove", handleTouchMove);
+      viewport.removeEventListener("touchend", handleTouchEnd);
       cancelPendingFollow();
     };
   }, [conversationId, viewportRef]);
@@ -233,8 +246,9 @@ export function ChatMessages({
           </div>
         ) : (
           <div className="mx-auto w-full max-w-4xl space-y-3">
-            {turns.map((turn) => {
-              const isTurnStreaming = isStreaming && turn.finalItem === null;
+            {turns.map((turn, turnIndex) => {
+              const isTurnStreaming =
+                isStreaming && turnIndex === turns.length - 1 && turn.finalItem === null;
               return (
                 <div key={turn.turnId} className="space-y-1">
                   {turn.userItem && (

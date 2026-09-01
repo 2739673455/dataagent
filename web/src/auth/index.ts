@@ -1,4 +1,3 @@
-export { AuthLoadingScreen } from "@/auth/AuthLoadingScreen";
 export { AdminRoute, ProtectedRoute } from "@/auth/guards";
 export {
   changePassword,

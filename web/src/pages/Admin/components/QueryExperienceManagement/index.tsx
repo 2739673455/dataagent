@@ -21,8 +21,6 @@ const STATUS_LABELS: Record<QueryExperienceStatus, string> = {
   deleting: "删除中",
 };
 
-type QueryExperienceFilterStatus = Exclude<QueryExperienceStatus, "deleting">;
-
 function formatTime(value: string): string {
   return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }
@@ -32,7 +30,7 @@ export function QueryExperienceManagement() {
   const [roles, setRoles] = useState<DorisRoleResponse[]>([]);
   const [offset, setOffset] = useState(0);
   const [roleName, setRoleName] = useState("");
-  const [status, setStatus] = useState<QueryExperienceFilterStatus | "">("");
+  const [status, setStatus] = useState<QueryExperienceStatus | "">("");
   const [query, setQuery] = useState("");
   const [selectedExperienceId, setSelectedExperienceId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -197,15 +195,14 @@ export function QueryExperienceManagement() {
             aria-label="查询经验状态筛选"
             value={status}
             onChange={(event) =>
-              changeFilter(() =>
-                setStatus(event.target.value as QueryExperienceFilterStatus | "")
-              )
+              changeFilter(() => setStatus(event.target.value as QueryExperienceStatus | ""))
             }
             className="h-7 rounded border border-[#d4d4ce] bg-white px-2 text-xs"
           >
-            <option value="">全部状态</option>
+            <option value="">有效与已禁用</option>
             <option value="active">有效</option>
             <option value="disabled">已禁用</option>
+            <option value="deleting">删除中</option>
           </select>
           <div className="relative w-64">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#a1a1aa]" />

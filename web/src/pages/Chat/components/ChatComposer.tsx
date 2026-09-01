@@ -1,10 +1,9 @@
-import { ArrowUp, Paperclip, RotateCcw, Square, X } from "lucide-react";
+import { ArrowUp, Paperclip, RotateCcw, Square } from "lucide-react";
 import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
-import { getAttachmentName } from "@/lib/utils";
 import type { Attachment } from "@/types";
-import { AttachmentIconBadge } from "./messages/AttachmentChip";
+import { AttachmentChip } from "./messages/AttachmentChip";
 
 interface ChatComposerProps {
   attachments?: Attachment[];
@@ -98,30 +97,13 @@ export function ChatComposer({
         {attachments.length > 0 ? (
           <div className="flex flex-wrap gap-1.5 border-b border-[#e5e5df] bg-[#fafaf8] px-3 py-2">
             {attachments.map((attachment) => (
-              <div
+              <AttachmentChip
                 key={attachment.f_path}
-                className="group inline-flex items-center gap-1.5 rounded-lg border border-[#e4e4de] bg-[#ffffff] py-1 pl-1.5 pr-1.5 font-mono text-xs shadow-[0_1px_2px_rgba(0,0,0,0.03)]"
-              >
-                <AttachmentIconBadge
-                  attachment={attachment}
-                  onPreview={(src, alt) => setPreviewImage({ src, alt })}
-                  size="md"
-                />
-                <span
-                  className="max-w-[200px] sm:max-w-[260px] truncate text-[11.5px] font-medium text-[#27272a]"
-                  title={getAttachmentName(attachment.f_path)}
-                >
-                  {getAttachmentName(attachment.f_path)}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => onRemoveAttachment(attachment.f_path)}
-                  className="rounded p-0.5 text-[#71717a] transition hover:bg-[#ebebe5] hover:text-[#dc2626]"
-                  title="移除附件"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
+                attachment={attachment}
+                isUser={false}
+                onPreview={(src, alt) => setPreviewImage({ src, alt })}
+                onRemove={() => onRemoveAttachment(attachment.f_path)}
+              />
             ))}
           </div>
         ) : null}
