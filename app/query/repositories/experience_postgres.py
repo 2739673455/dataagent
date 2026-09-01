@@ -191,7 +191,7 @@ class QueryExperiencePGRepo:
             .returning(QueryExperience.id, QueryExperience.revision)
         )
         await self._session.flush()
-        return dict(result.tuples())
+        return {experience_id: revision for experience_id, revision in result.tuples()}
 
     async def list_overviews(
         self,
@@ -425,7 +425,7 @@ class QueryExperiencePGRepo:
             .order_by(QueryExperience.updated_at)
             .limit(limit)
         )
-        return dict(result.tuples())
+        return {experience_id: revision for experience_id, revision in result.tuples()}
 
     async def current_asset_versions(
         self,

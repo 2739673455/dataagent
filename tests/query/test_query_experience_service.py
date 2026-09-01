@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.engine import IteratorResult
+from sqlalchemy.engine.result import SimpleResultMetaData
 
 from app.identity.models.doris import asset_resource_key
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
@@ -1108,6 +1110,37 @@ class QueryExperienceESRepoTest(unittest.IsolatedAsyncioTestCase):
 
 
 class QueryExperiencePGRepoTest(unittest.IsolatedAsyncioTestCase):
+    async def test_disable_for_metadata_change_converts_returned_rows(self) -> None:
+        experience_id = uuid4()
+        session = MagicMock()
+        session.execute = AsyncMock(
+            return_value=IteratorResult(
+                SimpleResultMetaData(["id", "revision"]),
+                iter([(experience_id, 3)]),
+            )
+        )
+        session.flush = AsyncMock()
+        repo = QueryExperiencePGRepo(cast(Any, session))
+
+        revisions = await repo.disable_for_metadata_change({experience_id})
+
+        self.assertEqual(revisions, {experience_id: 3})
+
+    async def test_list_pending_index_repairs_converts_result_rows(self) -> None:
+        experience_id = uuid4()
+        session = MagicMock()
+        session.execute = AsyncMock(
+            return_value=IteratorResult(
+                SimpleResultMetaData(["id", "revision"]),
+                iter([(experience_id, 4)]),
+            )
+        )
+        repo = QueryExperiencePGRepo(cast(Any, session))
+
+        revisions = await repo.list_pending_index_repairs(limit=10)
+
+        self.assertEqual(revisions, {experience_id: 4})
+
     async def test_list_search_decodes_purposes_and_escapes_wildcards(self) -> None:
         session = MagicMock()
         session.scalar = AsyncMock(return_value=0)
