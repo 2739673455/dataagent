@@ -21,6 +21,7 @@ from app.assistant.agents.explorer.semantic_recall_protocol import (
 from app.identity.repositories.auth import AuthPGRepo
 from app.identity.services.authorization import AuthorizationService
 from app.metadata.models.recall import (
+    SemanticRecallRecord,
     SemanticRecallResourceDeletion,
     normalize_semantic_recall_query,
 )
@@ -226,9 +227,13 @@ async def recall_context(
     return semantic_recall_reference(record)
 
 
-def _record_summary(record: Any) -> dict[str, Any]:
+def _record_summary(record: SemanticRecallRecord) -> dict[str, Any]:
     """构造供后续 get_recall 使用的最小记录引用。"""
-    return {"query": record.query}
+    return {
+        "query": record.query,
+        "created_at": record.created_at.isoformat(),
+        "updated_at": record.updated_at.isoformat(),
+    }
 
 
 @tool

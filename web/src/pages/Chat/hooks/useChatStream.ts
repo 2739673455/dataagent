@@ -303,12 +303,19 @@ export function useChatStream({
             ? attachments.map((attachment) => ({ f_path: attachment.f_path }))
             : undefined,
       };
+      // preview_url 只属于编辑器持有的本地 Blob。已发送消息从服务端读取附件，
+      // 这样发送后释放 Blob 不会破坏消息中的图片缩略图。
+      const messageAttachments = attachments.map((attachment) => ({
+        f_path: attachment.f_path,
+        media_type: attachment.media_type,
+        description: attachment.description,
+      }));
       const userMessage: MessageResponse = {
         message_id: crypto.randomUUID(),
         created_at: new Date().toISOString(),
         role: "user",
         parts: requestMessage.parts,
-        attachments: attachments.length > 0 ? attachments : undefined,
+        attachments: messageAttachments.length > 0 ? messageAttachments : undefined,
       };
 
       let conversationId = routeConversationId ?? draftConversationId;

@@ -55,6 +55,7 @@ class SemanticRecallPGRepo:
             ],
             source_queries=snapshot.source_queries,
             created_at=snapshot.created_at,
+            updated_at=snapshot.updated_at,
         )
 
     async def save(self, record: SemanticRecallRecord) -> None:
@@ -91,6 +92,7 @@ class SemanticRecallPGRepo:
                 },
                 source_queries=record.source_queries,
                 created_at=record.created_at,
+                updated_at=record.updated_at,
             )
         )
         await self._session.flush()
@@ -122,7 +124,7 @@ class SemanticRecallPGRepo:
                 SemanticRecallSnapshot.query == query,
             )
             .order_by(
-                SemanticRecallSnapshot.created_at.desc(),
+                SemanticRecallSnapshot.updated_at.desc(),
                 SemanticRecallSnapshot.recall_id.desc(),
             )
             .limit(1)
@@ -137,7 +139,7 @@ class SemanticRecallPGRepo:
         limit: int,
         offset: int = 0,
     ) -> list[SemanticRecallRecord]:
-        """按创建时间倒序列出会话中每个 query 的最新快照。"""
+        """按更新时间倒序列出会话中每个 query 的最新快照。"""
         latest = (
             select(SemanticRecallSnapshot)
             .where(
@@ -147,7 +149,7 @@ class SemanticRecallPGRepo:
             .distinct(SemanticRecallSnapshot.query)
             .order_by(
                 SemanticRecallSnapshot.query,
-                SemanticRecallSnapshot.created_at.desc(),
+                SemanticRecallSnapshot.updated_at.desc(),
                 SemanticRecallSnapshot.recall_id.desc(),
             )
             .subquery()
@@ -157,7 +159,7 @@ class SemanticRecallPGRepo:
             await self._session.scalars(
                 select(latest_snapshot)
                 .order_by(
-                    latest_snapshot.created_at.desc(),
+                    latest_snapshot.updated_at.desc(),
                     latest_snapshot.recall_id.desc(),
                 )
                 .limit(limit)

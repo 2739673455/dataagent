@@ -53,23 +53,27 @@ class SemanticRecallSnapshot(MetaBase):
         DateTime(timezone=True),
         nullable=False,
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
     __table_args__ = (
         Index(
-            "ix_semantic_recall_snapshots_conversation_created",
+            "ix_semantic_recall_snapshots_conversation_updated",
             "user_id",
             "conversation_id",
-            "created_at",
+            "updated_at",
         ),
         Index(
             "ix_semantic_recall_snapshots_user",
             "user_id",
         ),
         Index(
-            "ix_semantic_recall_snapshots_query_created",
+            "ix_semantic_recall_snapshots_query_updated",
             "user_id",
             "conversation_id",
             "query",
-            "created_at",
+            "updated_at",
         ),
     )
 
@@ -90,6 +94,7 @@ class SemanticRecallRecord(BaseModel):
     query_experience_authorization_epoch: UUID | None
     source_queries: list[str]
     created_at: datetime
+    updated_at: datetime
 
 
 class SemanticRecallColumnDeletion(BaseModel):

@@ -161,12 +161,12 @@ Explorer 调用 recall_context
 → SemanticRecallExpansionMiddleware 查找当前 HumanMessage 后的召回引用
 → 按 query 读取最新 SemanticRecallRecord
 → 使用当前用户授权再次过滤
-→ 投影为 tables、columns、values、metrics 和 query_experiences
+→ 投影为 created_at、updated_at、tables、columns、values、metrics 和 query_experiences
 → 临时替换本次 ModelRequest 中的工具消息
 → 不把展开内容写回 LangGraph 历史
 ```
 
-同一 HumanMessage 后的多轮 Assistant/Tool 循环持续看到本轮引用。新的 HumanMessage 开始后，Explorer 可以调用 `get_recall` 重新引用之前的 query。
+`created_at` 固定为 query 持续上下文的首次创建时间；追加召回、合并或资源删除生成新快照时保留该值，并更新 `updated_at`。同一 HumanMessage 后的多轮 Assistant/Tool 循环持续看到本轮引用。新的 HumanMessage 开始后，Explorer 可以调用 `get_recall` 重新引用之前的 query。
 
 ```text
 Explorer 调用 execute_sql

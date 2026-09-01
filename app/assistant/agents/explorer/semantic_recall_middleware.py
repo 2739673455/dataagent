@@ -64,6 +64,8 @@ def semantic_recall_payload(
 
     return {
         "query": record.query,
+        "created_at": record.created_at.isoformat(),
+        "updated_at": record.updated_at.isoformat(),
         "metrics": {
             item.name: {
                 "description": item.description,

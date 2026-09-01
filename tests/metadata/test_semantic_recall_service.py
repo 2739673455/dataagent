@@ -106,7 +106,7 @@ class InMemorySemanticRecallRepo:
         ]
         return max(
             records,
-            key=lambda record: (record.created_at, record.response.recall_id),
+            key=lambda record: (record.updated_at, record.response.recall_id),
             default=None,
         )
 
@@ -118,20 +118,20 @@ class InMemorySemanticRecallRepo:
         limit: int,
         offset: int = 0,
     ) -> list[SemanticRecallRecord]:
-        """按创建时间倒序列出每个 query 的最新召回记录。"""
+        """按更新时间倒序列出每个 query 的最新召回记录。"""
         latest_by_query: dict[str, SemanticRecallRecord] = {}
         for (owner_id, owner_conversation_id, _), record in self.records.items():
             if owner_id != user_id or owner_conversation_id != conversation_id:
                 continue
             current = latest_by_query.get(record.query)
-            if current is None or (record.created_at, record.response.recall_id) > (
-                current.created_at,
+            if current is None or (record.updated_at, record.response.recall_id) > (
+                current.updated_at,
                 current.response.recall_id,
             ):
                 latest_by_query[record.query] = record
         records = sorted(
             latest_by_query.values(),
-            key=lambda record: (record.created_at, record.response.recall_id),
+            key=lambda record: (record.updated_at, record.response.recall_id),
             reverse=True,
         )
         return records[offset : offset + limit]
@@ -399,6 +399,11 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_list_and_get_use_latest_snapshot_for_each_query(self) -> None:
         await self._record("recall_a", "本月收入", 0.4, "first")
+        first = await self.service.get(
+            self.user_id,
+            self.conversation_id,
+            "本月收入",
+        )
         await self._record("recall_b", "本月收入", 0.8, "second")
 
         records = await self.service.list(
@@ -417,6 +422,8 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             ["recall_b"],
         )
         self.assertEqual(record.response.recall_id, "recall_b")
+        self.assertEqual(record.created_at, first.created_at)
+        self.assertGreaterEqual(record.updated_at, first.updated_at)
 
     async def test_successful_refresh_clears_matching_failure(self) -> None:
         failed = build_response("recall_a", "本月收入", score=0.4, reason="first")
@@ -1059,6 +1066,8 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             score=0.8,
             reason="收入",
         ).model_copy(update={"metrics": [], "columns": [], "values": [], "tables": []})
+        created_at = datetime.now(UTC)
+        updated_at = datetime.now(UTC)
         final_record = SemanticRecallRecord(
             user_id=7,
             conversation_id=conversation_id,
@@ -1070,7 +1079,8 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             query_experience_role_name=None,
             query_experience_authorization_epoch=None,
             source_queries=[],
-            created_at=datetime.now(UTC),
+            created_at=created_at,
+            updated_at=updated_at,
         )
         service.delete = AsyncMock(return_value=[final_record])
         runtime = SimpleNamespace(
@@ -1127,6 +1137,8 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
                 "recalls": [
                     {
                         "query": "本月收入",
+                        "created_at": created_at.isoformat(),
+                        "updated_at": updated_at.isoformat(),
                         "metrics": {},
                         "tables": {},
                         "query_experiences": [],
@@ -1189,7 +1201,14 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         expanded = json.loads(_expanded_content(merged))
 
         self.assertEqual(merged.source_queries, ["订单金额"])
-        self.assertEqual(summary, {"query": "本月收入"})
+        self.assertEqual(
+            summary,
+            {
+                "query": "本月收入",
+                "created_at": merged.created_at.isoformat(),
+                "updated_at": merged.updated_at.isoformat(),
+            },
+        )
         self.assertNotIn("source_queries", expanded)
 
     async def test_model_payload_only_contains_metadata_and_query_experiences(
@@ -1217,9 +1236,18 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             set(payload),
-            {"query", "metrics", "tables", "query_experiences"},
+            {
+                "query",
+                "created_at",
+                "updated_at",
+                "metrics",
+                "tables",
+                "query_experiences",
+            },
         )
         self.assertEqual(payload["query"], "本月收入")
+        self.assertEqual(payload["created_at"], record.created_at.isoformat())
+        self.assertEqual(payload["updated_at"], record.updated_at.isoformat())
         self.assertEqual(
             set(payload["metrics"]["revenue"]),
             {"description", "alias", "relevant_columns"},
@@ -1277,7 +1305,6 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             "warnings",
             "truncated",
             "query_experiences_retrieved_at",
-            "created_at",
         }
         self.assertTrue(forbidden_fields.isdisjoint(keys(payload)))
         self.assertEqual(record.response.columns[0].meta_version, 1)

@@ -309,7 +309,6 @@ class SemanticRecallContextService:
         query_experiences_retrieved_at: datetime,
     ) -> SemanticRecallRecord:
         """将一次检索结果增量合入 query 的持续上下文。"""
-        now = datetime.now(UTC)
         await self._repo.acquire_query_lock(user_id, conversation_id, query)
         previous = await self._repo.get_latest_by_query(
             user_id,
@@ -323,6 +322,8 @@ class SemanticRecallContextService:
                 [previous.response, response],
                 refresh_request=request,
             )
+        # 每次追加都会写入新快照；query 的创建时间跨快照保持不变，更新时间决定最新版本。
+        now = datetime.now(UTC)
         record = SemanticRecallRecord(
             user_id=user_id,
             conversation_id=conversation_id,
@@ -336,7 +337,8 @@ class SemanticRecallContextService:
                 self._query_experience_authorization_epoch
             ),
             source_queries=(previous.source_queries if previous is not None else []),
-            created_at=now,
+            created_at=(previous.created_at if previous is not None else now),
+            updated_at=now,
         )
         await self._repo.save(record)
         return record
@@ -484,7 +486,8 @@ class SemanticRecallContextService:
                 target_record.query_experience_authorization_epoch
             ),
             source_queries=absorbed_queries,
-            created_at=now,
+            created_at=target_record.created_at,
+            updated_at=now,
         )
         await self._repo.save(merged)
         await self._repo.delete_by_query(user_id, conversation_id, source_query)
@@ -573,7 +576,7 @@ class SemanticRecallContextService:
                                 }
                             ),
                             "query_experiences": [],
-                            "created_at": datetime.now(UTC),
+                            "updated_at": datetime.now(UTC),
                         }
                     )
                 )
@@ -599,7 +602,7 @@ class SemanticRecallContextService:
                         update={"recall_id": f"recall_{uuid.uuid4().hex}"}
                     ),
                     "query_experiences": query_experiences,
-                    "created_at": datetime.now(UTC),
+                    "updated_at": datetime.now(UTC),
                 }
             )
             await self._repo.save(updated_record)

@@ -70,7 +70,11 @@ _MARKDOWN_FENCE_PATTERN = re.compile(r"^[ ]{0,3}(?P<marker>`{3,}|~{3,})")
 
 
 def _normalize_finish_reason(value: object) -> str | None:
-    """还原流式消息元数据中被重复拼接的已知结束原因。"""
+    """还原流式消息元数据中被重复拼接的已知结束原因。
+
+    LangChain 合并流式 Chunk 时会拼接重复出现的字符串元数据，例如两个
+    ``stop`` 可能变成 ``stopstop``。未知供应商值保持原样，避免掩盖新状态。
+    """
     if not isinstance(value, str):
         return None
     for reason in _KNOWN_FINISH_REASONS:
