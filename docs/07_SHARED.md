@@ -30,10 +30,13 @@ Shared
   → sandbox 单文件上限不超过工作区上限
   → idle_stop 小于 idle_remove
   → 默认模型和各 Specialist 引用已声明模型
+  → 模型 Profile 只配置 image_inputs 和 max_input_tokens
+  → Responses 模型使用 LangChain OpenAI 原生客户端或 DeepSeek 专属适配
+  → 工厂只为支持图片输入的 Responses 模型派生 image_tool_message
 → 配置无效时阻止进程启动
 ```
 
-配置覆盖 PostgreSQL、Doris、Elasticsearch、Embedding、认证、查询、元数据索引、Celery、生命周期、沙箱、模型、Agent 和 MCP。数据库密码、JWT 密钥、Embedding 密钥、模型密钥、Redis/Celery URL 以及 MCP URL、Header 和进程环境值使用 `SecretStr` 保存，仅在外部客户端边界解包。
+配置覆盖 PostgreSQL、Doris、Elasticsearch、Embedding、认证、查询、元数据索引、Celery、生命周期、沙箱、模型、Agent 和 MCP。每个聊天模型显式声明 `chat_completions` 或 `responses` 协议，调用失败时不自动切换协议。数据库密码、JWT 密钥、Embedding 密钥、模型密钥、Redis/Celery URL 以及 MCP URL、Header 和进程环境值使用 `SecretStr` 保存，仅在外部客户端边界解包。
 
 ## 2. 管理外部客户端生命周期
 

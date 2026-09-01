@@ -51,6 +51,31 @@ class AppConfigInvariantTest(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "active 引用了未知模型"):
             Cfg.model_validate(values)
 
+    def test_language_model_params_cannot_override_managed_fields(self) -> None:
+        values = cfg.model_dump(mode="python")
+        values["lm_config"]["models"][cfg.lm_config.active]["params"] = {"store": True}
+
+        with self.assertRaisesRegex(ValidationError, "模型配置字段: store"):
+            Cfg.model_validate(values)
+
+    def test_language_model_profile_rejects_unknown_capabilities(self) -> None:
+        values = cfg.model_dump(mode="python")
+        values["lm_config"]["models"][cfg.lm_config.active]["profile"][
+            "supports_images"
+        ] = True
+
+        with self.assertRaisesRegex(ValidationError, "supports_images"):
+            Cfg.model_validate(values)
+
+    def test_responses_api_rejects_unknown_langchain_provider(self) -> None:
+        values = cfg.model_dump(mode="python")
+        values["lm_config"]["models"][cfg.lm_config.active]["model_provider"] = (
+            "anthropic"
+        )
+
+        with self.assertRaisesRegex(ValidationError, "deepseek 或 openai"):
+            Cfg.model_validate(values)
+
     def test_every_specialist_requires_an_explicit_configuration(self) -> None:
         values = cfg.model_dump(mode="python")
         values["agent"]["specialists"].pop("reviewer")

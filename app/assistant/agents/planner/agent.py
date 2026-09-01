@@ -25,7 +25,7 @@ from app.assistant.agents.middleware.user_message_metadata import (
     UserMessageMetadataMiddleware,
 )
 from app.assistant.agents.session_service import AgentSessionService
-from app.assistant.agents.tools import create_image_view_request_tool
+from app.assistant.agents.tools import create_view_image_tools
 
 from .prompt import PLANNER_SYSTEM_PROMPT
 
@@ -55,7 +55,7 @@ def create_planner_agent(
     )
     return create_deep_agent(
         model=model,
-        tools=[*tools, create_image_view_request_tool()],
+        tools=[*tools, *create_view_image_tools(model)],
         system_prompt=PLANNER_SYSTEM_PROMPT,
         middleware=cast(
             "Sequence[AgentMiddleware[Any, Any, Any]]",

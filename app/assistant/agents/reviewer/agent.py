@@ -21,8 +21,8 @@ from app.assistant.agents.reviewer.prompt import REVIEWER_SYSTEM_PROMPT
 from app.assistant.agents.shell_jobs import ShellJobContextMiddleware, ShellJobRuntime
 from app.assistant.agents.skills import mount_agent_skills
 from app.assistant.agents.tools import (
-    create_image_view_request_tool,
     create_shell_tools,
+    create_view_image_tools,
 )
 
 
@@ -45,7 +45,7 @@ def create_reviewer_agent(
         model=model,
         tools=[
             *tools,
-            create_image_view_request_tool(),
+            *create_view_image_tools(model),
             *create_shell_tools(shell_jobs),
         ],
         system_prompt=REVIEWER_SYSTEM_PROMPT,

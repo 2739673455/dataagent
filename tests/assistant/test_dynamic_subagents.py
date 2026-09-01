@@ -584,7 +584,12 @@ class DynamicSubagentContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as workspace:
             for agent_type, builder in builders.items():
                 with self.subTest(agent_type=agent_type):
-                    model = RecordingChatModel()
+                    model = RecordingChatModel(
+                        profile={
+                            "image_inputs": True,
+                            "image_tool_message": True,
+                        },
+                    )
                     graph = builder(
                         model=model,
                         tools=[],
@@ -650,7 +655,12 @@ class DynamicSubagentContractTest(unittest.TestCase):
                 general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)
             ),
         )
-        model = RecordingChatModel()
+        model = RecordingChatModel(
+            profile={
+                "image_inputs": True,
+                "image_tool_message": True,
+            },
+        )
         with tempfile.TemporaryDirectory() as workspace:
             with patch(
                 "app.assistant.agents.planner.agent.CodeInterpreterMiddleware",

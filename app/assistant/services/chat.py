@@ -56,10 +56,28 @@ from app.sandbox.exceptions import SandboxPathError
 from app.sandbox.paths import normalize_attachment_path
 
 MESSAGE_PAYLOAD_KEY = "dataagent_message"
+_KNOWN_FINISH_REASONS = (
+    "content_filter",
+    "function_call",
+    "tool_calls",
+    "length",
+    "stop",
+)
 _ARTIFACT_DIRECTIVE_PATTERN = re.compile(
     r"^[ ]{0,3}\[\[DATAAGENT_ARTIFACT:(/sessions/[^\r\n]+?)\]\][\t ]*$"
 )
 _MARKDOWN_FENCE_PATTERN = re.compile(r"^[ ]{0,3}(?P<marker>`{3,}|~{3,})")
+
+
+def _normalize_finish_reason(value: object) -> str | None:
+    """还原流式消息元数据中被重复拼接的已知结束原因。"""
+    if not isinstance(value, str):
+        return None
+    for reason in _KNOWN_FINISH_REASONS:
+        repeat_count, remainder = divmod(len(value), len(reason))
+        if repeat_count > 1 and remainder == 0 and value == reason * repeat_count:
+            return reason
+    return value
 
 
 def _message_created_at(message: BaseMessage) -> datetime | None:
@@ -183,7 +201,9 @@ def _is_final_assistant_message(message: BaseMessage) -> bool:
     """判断消息是否可以承载 Planner 最终产物指令。"""
     if not isinstance(message, AIMessage) or message.tool_calls:
         return False
-    finish_reason = message.response_metadata.get("finish_reason")
+    finish_reason = _normalize_finish_reason(
+        message.response_metadata.get("finish_reason")
+    )
     return finish_reason in {None, "stop"}
 
 
@@ -448,9 +468,8 @@ def _langchain_message_to_schema(
         created_at=_message_created_at(message),
         role=role,
         parts=parts,
-        finish_reason=cast(
-            chat_schema.FinishReason | None,
-            message.response_metadata.get("finish_reason"),
+        finish_reason=_normalize_finish_reason(
+            message.response_metadata.get("finish_reason")
         ),
     )
 
@@ -751,7 +770,9 @@ async def _run_agent_turn(
                     f"messages={len(responses)}"
                 )
                 for response in responses:
-                    last_finish_reason = response.finish_reason
+                    last_finish_reason = _normalize_finish_reason(
+                        response.finish_reason
+                    )
                     yield chat_schema.ChatStreamMessageEvent(
                         type="message",
                         message=response,

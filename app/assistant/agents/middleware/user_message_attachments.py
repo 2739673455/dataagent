@@ -6,7 +6,7 @@ import base64
 import json
 import mimetypes
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from deepagents.backends.protocol import BackendProtocol, FileDownloadResponse
 from langchain.agents.middleware.types import (
@@ -19,16 +19,17 @@ from loguru import logger
 from pydantic import Field, ValidationError
 
 from app.assistant.agents.contracts import NonEmptyText, StrictProtocolModel
-from app.assistant.agents.middleware.user_message_metadata import (
-    USER_MESSAGE_METADATA_KEY,
+from app.assistant.agents.tools.view_image import (
+    IMAGE_VIEW_TOOL_NAME,
+    ImageViewRequest,
+    is_supported_image_path,
+    supports_view_image_tool,
 )
 
 USER_MESSAGE_ATTACHMENTS_KEY = "dataagent_user_message_attachments"
-IMAGE_VIEW_TOOL_NAME = "view_image"
 
 _ATTACHMENTS_TAG = "user_message_attachments"
 _ATTACHMENT_ERROR_TAG = "attachment_error"
-_IMAGE_SUFFIXES = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
 
 
 class UserMessageAttachment(StrictProtocolModel):
@@ -41,19 +42,6 @@ class UserMessageAttachments(StrictProtocolModel):
     """一条用户消息持久化的附件引用。"""
 
     attachments: list[UserMessageAttachment] = Field(default_factory=list)
-
-
-class ImageViewRequest(StrictProtocolModel):
-    """请求 Middleware 在下一次模型调用前临时加载一张图片。"""
-
-    type: Literal["image_view_request"] = "image_view_request"
-    f_path: NonEmptyText
-
-
-def is_image_path(path: str) -> bool:
-    """根据扩展名判断工作区路径是否为支持的图片。"""
-    suffix = path.rsplit(".", 1)[-1].lower() if "." in path else ""
-    return suffix in _IMAGE_SUFFIXES
 
 
 def _model_workspace_path(path: str) -> str:
@@ -88,20 +76,27 @@ def _read_image_view_request(message: ToolMessage) -> ImageViewRequest | None:
 
 def _attachment_context_block(
     attachments: UserMessageAttachments,
+    *,
+    image_inputs_enabled: bool,
 ) -> dict[str, str]:
-    """生成向模型说明附件路径和查看工具的上下文块。"""
+    """生成向模型说明附件路径和图片能力的上下文块。"""
     files: list[dict[str, str]] = []
     images: list[dict[str, str]] = []
     for attachment in attachments.attachments:
         item = {"path": _model_workspace_path(attachment.f_path)}
-        if is_image_path(attachment.f_path):
-            item["tool"] = IMAGE_VIEW_TOOL_NAME
+        if is_supported_image_path(attachment.f_path):
             images.append(item)
         else:
             item["tool"] = "read_file"
             files.append(item)
+    context: dict[str, Any] = {"files": files, "images": images}
+    if images and not image_inputs_enabled:
+        context["image_notice"] = (
+            "当前模型的图片识别功能未开启，图片不会被自动加载。"
+            "请勿根据文件名推测图片内容。"
+        )
     payload = json.dumps(
-        {"files": files, "images": images},
+        context,
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -125,13 +120,24 @@ def _attachment_error_block(path: str, error: str) -> dict[str, str]:
 
 
 def _image_content_block(path: str, content: bytes) -> dict[str, str]:
-    """将图片字节编码为模型多模态消息内容块。"""
+    """将图片字节编码为 LangChain 标准图片内容块。"""
     mime_type, _ = mimetypes.guess_type(path)
     encoded = base64.b64encode(content).decode("ascii")
     return {
-        "type": "image_url",
-        "image_url": f"data:{mime_type or 'application/octet-stream'};base64,{encoded}",
+        "type": "image",
+        "base64": encoded,
+        "mime_type": mime_type or "application/octet-stream",
     }
+
+
+def _image_view_error_block(path: str, error: str) -> dict[str, str]:
+    """生成 view_image 工具读取失败时的文本结果。"""
+    payload = json.dumps(
+        {"status": "error", "path": path, "error": error},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return {"type": "text", "text": payload}
 
 
 def _content_list(message: BaseMessage) -> list[str | dict[str, Any]] | None:
@@ -150,51 +156,60 @@ def _downloaded_content(
     return {response.path: response for response in responses}
 
 
-def _download_paths(messages: list[AnyMessage]) -> list[str]:
-    """收集本次模型调用需要临时加载的去重图片路径。"""
-    latest_user_index = max(
+def _latest_user_index(messages: list[AnyMessage]) -> int:
+    """定位当前模型上下文中的最后一条用户消息。"""
+    return max(
         (
             index
             for index, message in enumerate(messages)
             if isinstance(message, HumanMessage)
-            and USER_MESSAGE_METADATA_KEY in message.additional_kwargs
         ),
         default=-1,
     )
+
+
+def _download_paths(
+    messages: list[AnyMessage],
+    *,
+    load_user_images: bool,
+    load_tool_images: bool,
+) -> list[str]:
+    """收集本次模型调用需要临时加载的去重图片路径。"""
+    latest_user_index = _latest_user_index(messages)
     paths: list[str] = []
-    if latest_user_index >= 0:
-        latest = cast(HumanMessage, messages[latest_user_index])
-        metadata = _read_attachments(latest)
-        if metadata is not None:
-            paths.extend(
-                item.f_path
-                for item in metadata.attachments
-                if is_image_path(item.f_path)
-            )
-    paths.extend(
-        image_request.f_path
-        for message in messages[latest_user_index + 1 :]
-        if isinstance(message, ToolMessage)
-        and (image_request := _read_image_view_request(message)) is not None
-    )
+    if load_user_images:
+        for message in messages:
+            if not isinstance(message, HumanMessage):
+                continue
+            metadata = _read_attachments(message)
+            if metadata is not None:
+                paths.extend(
+                    item.f_path
+                    for item in metadata.attachments
+                    if is_supported_image_path(item.f_path)
+                )
+    if load_tool_images:
+        # view_image 的图片只属于最新用户回合后的工具续轮。重新展开更早回合的
+        # 请求会让已经完成的图片在之后每次模型调用中重复进入上下文。
+        paths.extend(
+            image_request.f_path
+            for message in messages[latest_user_index + 1 :]
+            if isinstance(message, ToolMessage)
+            and (image_request := _read_image_view_request(message)) is not None
+        )
     return list(dict.fromkeys(paths))
 
 
 def _project_messages(
     messages: list[AnyMessage],
     responses: Sequence[FileDownloadResponse],
+    *,
+    project_user_images: bool,
+    project_tool_images: bool,
 ) -> list[AnyMessage]:
     """将附件说明和已加载图片投影到本次模型消息副本。"""
     downloaded = _downloaded_content(responses)
-    latest_user_index = max(
-        (
-            index
-            for index, message in enumerate(messages)
-            if isinstance(message, HumanMessage)
-            and USER_MESSAGE_METADATA_KEY in message.additional_kwargs
-        ),
-        default=-1,
-    )
+    latest_user_index = _latest_user_index(messages)
     projected: list[AnyMessage] = []
     for index, message in enumerate(messages):
         if isinstance(message, HumanMessage):
@@ -203,10 +218,15 @@ def _project_messages(
             if metadata is None or content is None:
                 projected.append(message)
                 continue
-            content.append(_attachment_context_block(metadata))
-            if index == latest_user_index:
+            content.append(
+                _attachment_context_block(
+                    metadata,
+                    image_inputs_enabled=project_user_images,
+                )
+            )
+            if project_user_images:
                 for attachment in metadata.attachments:
-                    if not is_image_path(attachment.f_path):
+                    if not is_supported_image_path(attachment.f_path):
                         continue
                     response = downloaded.get(attachment.f_path)
                     if response is not None and response.content is not None:
@@ -225,11 +245,15 @@ def _project_messages(
             projected.append(message.model_copy(update={"content": cast(Any, content)}))
             continue
 
-        if isinstance(message, ToolMessage) and index > latest_user_index:
+        if (
+            project_tool_images
+            and isinstance(message, ToolMessage)
+            and index > latest_user_index
+        ):
             image_request = _read_image_view_request(message)
             if image_request is not None:
                 response = downloaded.get(image_request.f_path)
-                view_content: list[dict[str, str]] = [
+                view_content: list[dict[str, Any]] = [
                     {
                         "type": "text",
                         "text": f"图片路径：`{image_request.f_path}`",
@@ -241,7 +265,7 @@ def _project_messages(
                     )
                 else:
                     view_content.append(
-                        _attachment_error_block(
+                        _image_view_error_block(
                             image_request.f_path,
                             str(response.error)
                             if response is not None
@@ -254,6 +278,15 @@ def _project_messages(
                 continue
         projected.append(message)
     return projected
+
+
+def _image_projection_options(request: ModelRequest[Any]) -> tuple[bool, bool]:
+    """计算用户消息图片和工具图片的投影策略。"""
+    profile = request.model.profile
+    return (
+        bool(profile and profile.get("image_inputs")),
+        supports_view_image_tool(request.model),
+    )
 
 
 class UserMessageAttachmentMiddleware(AgentMiddleware[Any, Any, Any]):
@@ -269,9 +302,19 @@ class UserMessageAttachmentMiddleware(AgentMiddleware[Any, Any, Any]):
         handler: Callable[[ModelRequest[Any]], ModelResponse[Any]],
     ) -> ModelResponse[Any]:
         """同步读取当前需要查看的图片并投影模型请求。"""
-        paths = _download_paths(request.messages)
+        user_images, tool_images = _image_projection_options(request)
+        paths = _download_paths(
+            request.messages,
+            load_user_images=user_images,
+            load_tool_images=tool_images,
+        )
         responses = self._backend.download_files(paths) if paths else []
-        messages = _project_messages(request.messages, responses)
+        messages = _project_messages(
+            request.messages,
+            responses,
+            project_user_images=user_images,
+            project_tool_images=tool_images,
+        )
         return handler(request.override(messages=messages))
 
     async def awrap_model_call(
@@ -280,7 +323,17 @@ class UserMessageAttachmentMiddleware(AgentMiddleware[Any, Any, Any]):
         handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
     ) -> ModelResponse[Any]:
         """异步读取当前需要查看的图片并投影模型请求。"""
-        paths = _download_paths(request.messages)
+        user_images, tool_images = _image_projection_options(request)
+        paths = _download_paths(
+            request.messages,
+            load_user_images=user_images,
+            load_tool_images=tool_images,
+        )
         responses = await self._backend.adownload_files(paths) if paths else []
-        messages = _project_messages(request.messages, responses)
+        messages = _project_messages(
+            request.messages,
+            responses,
+            project_user_images=user_images,
+            project_tool_images=tool_images,
+        )
         return await handler(request.override(messages=messages))

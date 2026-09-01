@@ -62,6 +62,8 @@ Assistant
 
 Planner 可以在 QuickJS 中通过 Programmatic Tool Calling 调用白名单工具，并用 `Promise.all` 并行委派独立分支。并行 Session 和继续执行次数受配置限制。
 
+每项模型配置通过 `api_protocol` 显式选择 `chat_completions` 或 `responses`。Responses 模型固定 `store=false` 和 `use_previous_response_id=false`，会话历史继续由 LangGraph checkpoint 管理。DeepSeek Responses 适配器会在工具续轮中完整重放无状态 API 要求的明文 reasoning item。协议调用失败时直接返回错误，不跨协议重试。
+
 ## 3. 委派和恢复专业 Agent Session
 
 ```text
@@ -205,7 +207,10 @@ Agent 使用工作区
 → 返回附件路径
 
 附件进入模型
-→ 图片按需要转换为模型图像内容
+→ `profile.image_inputs=true` 时，每次调用都重新加载当前上下文中所有 HumanMessage 的图片
+→ Responses API 额外向 Agent 提供 view_image，用于读取工作区或仅保留路径引用的图片
+→ view_image 只持久化工作区路径，下一次模型调用临时加载图片工具结果
+→ `profile.image_inputs=false` 时只提供附件路径，并明确告知模型图片不会自动加载
 → 文档和数据文件以沙箱路径提供给 Agent
 
 专业 Agent 返回 artifact
