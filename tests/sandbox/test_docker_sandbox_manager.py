@@ -1,6 +1,7 @@
 import asyncio
 import io
 import os
+import shlex
 import threading
 import time
 import unittest
@@ -13,9 +14,9 @@ from uuid import UUID, uuid4
 from docker.errors import ImageNotFound
 from pydantic import ValidationError
 
+from app.assistant.agents.filesystem import packaged_skill_readonly_mounts
 from app.assistant.agents.manager import AgentManager
 from app.assistant.agents.shell_jobs import ShellJobResult, ShellJobRuntime
-from app.assistant.agents.skills import packaged_agent_skill_mounts
 from app.sandbox.archive import SandboxArchiveStore
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.capacity import FairCapacityLimiter
@@ -32,8 +33,12 @@ from app.sandbox.manager import DockerSandboxManager
 from app.sandbox.ownership import LocalSandboxOwnership
 from app.sandbox.paths import (
     SandboxSessionScope,
+    conversation_relative_path,
     normalize_attachment_path,
+    normalize_sandbox_absolute_path,
+    normalize_sandbox_path,
     normalize_user_attachment_path,
+    resolve_sandbox_path,
 )
 from app.shared.config.app_config import SandboxConfig
 
@@ -76,7 +81,7 @@ def build_sandbox_manager(config: SandboxConfig) -> DockerSandboxManager:
     return DockerSandboxManager(
         config,
         LocalSandboxOwnership(),
-        packaged_agent_skill_mounts(),
+        packaged_skill_readonly_mounts(),
     )
 
 
@@ -127,6 +132,47 @@ class NormalizeAttachmentPathTest(unittest.TestCase):
             "uploads/sessions/report.csv",
         )
 
+    def test_sandbox_paths_follow_shell_relative_and_absolute_rules(self) -> None:
+        workspace = "/data/conversation/sessions/run/analyst/main"
+        self.assertEqual(
+            resolve_sandbox_path("reports/summary.csv", workspace),
+            f"{workspace}/reports/summary.csv",
+        )
+        self.assertEqual(
+            resolve_sandbox_path("../shared.csv", workspace),
+            "/data/conversation/sessions/run/analyst/shared.csv",
+        )
+        self.assertEqual(
+            resolve_sandbox_path("/skills/analysis/SKILL.md", workspace),
+            "/skills/analysis/SKILL.md",
+        )
+        self.assertEqual(normalize_sandbox_path("./report.csv"), "report.csv")
+        for path in ("", "reports\\summary.csv", "line\nbreak.csv", "~/file"):
+            with self.subTest(path=path), self.assertRaises(SandboxPathError):
+                normalize_sandbox_path(path)
+
+    def test_conversation_path_is_projected_to_public_relative_path(self) -> None:
+        conversation_id = uuid4()
+        root = f"/data/{conversation_id}"
+        self.assertEqual(
+            conversation_relative_path(f"{root}/uploads/chart.png", conversation_id),
+            "uploads/chart.png",
+        )
+        self.assertEqual(
+            conversation_relative_path(
+                f"{root}/sessions/run/analyst/main/report.csv",
+                conversation_id,
+            ),
+            "sessions/run/analyst/main/report.csv",
+        )
+        self.assertEqual(
+            normalize_sandbox_absolute_path(f"{root}/reports/../uploads/chart.png"),
+            f"{root}/uploads/chart.png",
+        )
+        for path in ("uploads/chart.png", "/skills/analysis/SKILL.md", f"{root}/x"):
+            with self.subTest(path=path), self.assertRaises(SandboxPathError):
+                conversation_relative_path(path, conversation_id)
+
 
 class AttachmentCapabilityTest(unittest.IsolatedAsyncioTestCase):
     async def test_system_writer_allows_session_path(self) -> None:
@@ -175,6 +221,30 @@ class AttachmentCapabilityTest(unittest.IsolatedAsyncioTestCase):
 
         writer.assert_not_awaited()
         get_backend.assert_not_awaited()
+
+    async def test_delete_attachment_uses_conversation_relative_path(
+        self,
+    ) -> None:
+        manager = build_sandbox_manager(build_sandbox_config())
+        backend = SimpleNamespace(
+            is_file=MagicMock(return_value=True),
+            adelete=AsyncMock(return_value=SimpleNamespace(error=None)),
+        )
+
+        async def run_inline(function: Callable[..., object], *args: object) -> object:
+            return function(*args)
+
+        with (
+            patch.object(manager, "get_backend", AsyncMock(return_value=backend)),
+            patch(
+                "app.sandbox.manager.asyncio.to_thread",
+                side_effect=run_inline,
+            ),
+        ):
+            await manager.delete_user_attachment(7, uuid4(), "chart.png")
+
+        backend.is_file.assert_called_once_with("uploads/chart.png")
+        backend.adelete.assert_awaited_once_with("uploads/chart.png")
 
     async def test_delete_session_starts_container_before_workspace_cleanup(
         self,
@@ -439,36 +509,54 @@ class DockerSandboxManagerPolicyTest(unittest.TestCase):
             execution_uid=100_002,
         )
 
-    def test_session_backend_maps_reads_and_scopes_mutations(self) -> None:
+    def test_session_backend_resolves_shell_paths_and_scopes_mutations(self) -> None:
         conversation_id = uuid4()
         backend = self._session_backend(build_sandbox_config(), conversation_id)
-        own_virtual_path = "/sessions/sales-decline/analyst/region/result.json"
-        sibling_virtual_path = "/sessions/sales-decline/explorer/base/dataset.csv"
         conversation_root = f"/data/{conversation_id}"
+        own_path = f"{backend.workspace_dir}/result.json"
+        sibling_path = (
+            f"{conversation_root}/sessions/sales-decline/explorer/base/dataset.csv"
+        )
 
         self.assertEqual(
             backend._resolve_path("result.json"),
-            f"{conversation_root}{own_virtual_path}",
+            own_path,
         )
+        self.assertEqual(backend._resolve_path(sibling_path), sibling_path)
         self.assertEqual(
-            backend._resolve_path(sibling_virtual_path),
-            f"{conversation_root}{sibling_virtual_path}",
-        )
-        self.assertEqual(
-            backend._resolve_mutation_path(own_virtual_path),
-            f"{conversation_root}{own_virtual_path}",
+            backend._resolve_mutation_path("result.json"),
+            own_path,
         )
         with self.assertRaises(SandboxPathError):
-            backend._resolve_mutation_path(sibling_virtual_path)
+            backend._resolve_mutation_path(sibling_path)
         with self.assertRaises(SandboxPathError):
-            backend._resolve_mutation_path("/uploads/input.csv")
+            backend._resolve_mutation_path(f"{conversation_root}/uploads/input.csv")
 
-        other_conversation_path = f"/data/{uuid4()}/sessions/private.json"
-        self.assertTrue(
-            backend._resolve_path(other_conversation_path).startswith(
-                f"{conversation_root}/"
-            )
+        self.assertEqual(
+            backend._resolve_path("/scripts/analyze.py"), "/scripts/analyze.py"
         )
+        other_path = f"/data/{uuid4()}/sessions/private.json"
+        self.assertEqual(backend._resolve_path(other_path), other_path)
+
+    def test_write_resolves_relative_path_before_upload(self) -> None:
+        backend = self._session_backend(build_sandbox_config(), uuid4())
+        path = "result.txt"
+
+        with (
+            patch.object(backend, "_write_preflight", return_value=None),
+            patch.object(
+                backend,
+                "upload_fileobj",
+                return_value=SimpleNamespace(error=None),
+            ) as upload,
+        ):
+            result = backend.write(path, "result")
+
+        expected_path = f"{backend.workspace_dir}/{path}"
+        self.assertEqual(result.path, expected_path)
+        uploaded_path, uploaded_content = upload.call_args.args
+        self.assertEqual(uploaded_path, expected_path)
+        self.assertEqual(uploaded_content.read(), b"result")
 
     def test_archive_delete_session_removes_workspace_staging_and_uid(self) -> None:
         conversation_id = uuid4()
@@ -921,6 +1009,13 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
     async def test_user_mutations_are_scoped_away_from_analysis_artifact(self) -> None:
         conversation_id = uuid4()
         artifact_path = "sessions/run/analyst/main/report.csv"
+        await self.manager.get_session_backend(
+            self.user_id,
+            conversation_id,
+            "run",
+            "analyst",
+            "main",
+        )
         await self.manager.write_artifact(
             self.user_id,
             conversation_id,
@@ -1048,23 +1143,24 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
             "analyst",
             "region",
         )
-        artifact_path = "/sessions/sales-decline/explorer/base/dataset.csv"
+        artifact_path = f"{explorer.workspace_dir}/dataset.csv"
+        public_path = conversation_relative_path(artifact_path, conversation_id)
 
-        write_result = explorer.write("dataset.csv", "region,sales\neast,42\n")
+        write_result = explorer.write(artifact_path, "region,sales\neast,42\n")
         self.assertIsNone(write_result.error)
         self.assertEqual(write_result.path, artifact_path)
         self.assertTrue(
             await self.manager.is_file(
                 self.user_id,
                 conversation_id,
-                artifact_path.lstrip("/"),
+                public_path,
             )
         )
         self.assertEqual(
             await self.manager.download_file(
                 self.user_id,
                 conversation_id,
-                artifact_path.lstrip("/"),
+                public_path,
             ),
             b"region,sales\neast,42\n",
         )
@@ -1073,10 +1169,7 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(read_result.file_data)
         assert read_result.file_data is not None
         self.assertIn("east,42", read_result.file_data["content"])
-        shell_artifact_path = (
-            '"$DATAAGENT_CONVERSATION_ROOT/'
-            'sessions/sales-decline/explorer/base/dataset.csv"'
-        )
+        shell_artifact_path = shlex.quote(artifact_path)
         shell_read = analyst.execute(f"cat {shell_artifact_path}")
         self.assertEqual(shell_read.exit_code, 0)
         self.assertIn("east,42", shell_read.output)
@@ -1089,7 +1182,7 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         removal = analyst.execute(f"rm -f {shell_artifact_path}")
         self.assertNotEqual(overwrite.exit_code, 0)
         self.assertNotEqual(removal.exit_code, 0)
-        preserved = explorer.read("dataset.csv")
+        preserved = explorer.read(artifact_path)
         self.assertIsNone(preserved.error)
         self.assertIsNotNone(preserved.file_data)
         assert preserved.file_data is not None
@@ -1106,7 +1199,9 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
             "analyst",
             "region",
         )
-        self.assertIsNone(backend.write("old.txt", "old state").error)
+        old_path = "old.txt"
+        new_path = "new.txt"
+        self.assertIsNone(backend.write(old_path, "old state").error)
 
         deleted = await self.manager.delete_session(
             self.user_id,
@@ -1124,8 +1219,8 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(deleted)
-        self.assertIsNotNone(recreated.read("old.txt").error)
-        self.assertIsNone(recreated.write("new.txt", "new state").error)
+        self.assertIsNotNone(recreated.read(old_path).error)
+        self.assertIsNone(recreated.write(new_path, "new state").error)
 
     async def test_delete_session_starts_never_started_container(self) -> None:
         conversation_id = uuid4()
@@ -1154,7 +1249,7 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(deleted)
         self.assertEqual(container.status, "running")
 
-    async def test_session_execute_reports_virtual_working_directory(self) -> None:
+    async def test_session_execute_reports_container_working_directory(self) -> None:
         conversation_id = uuid4()
         backend = await self.manager.get_session_backend(
             self.user_id,
@@ -1169,9 +1264,8 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.exit_code, 0)
         self.assertEqual(
             response.output.strip(),
-            "/sessions/sales-decline/reviewer/sales-trend",
+            backend.workspace_dir,
         )
-        self.assertNotIn(f"/data/{conversation_id}", response.output)
 
     async def test_shell_job_continues_after_foreground_wait_and_merges_output(
         self,
@@ -1250,12 +1344,15 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
             "analyst",
             "region",
         )
-        self.assertIsNone(first.write("secret.txt", "CONVERSATION_SECRET").error)
+        first_path = f"{first.workspace_dir}/secret.txt"
+        self.assertIsNone(first.write(first_path, "CONVERSATION_SECRET").error)
 
-        virtual_read = second.read("/sessions/sales-decline/explorer/base/secret.txt")
+        isolated_read = second.read(
+            f"{second.conversation_dir}/sessions/sales-decline/explorer/base/secret.txt"
+        )
         direct_read = second.execute(f"cat {first.workspace_dir}/secret.txt")
 
-        self.assertIsNotNone(virtual_read.error)
+        self.assertIsNotNone(isolated_read.error)
         self.assertNotEqual(direct_read.exit_code, 0)
         self.assertNotIn("CONVERSATION_SECRET", direct_read.output)
 
@@ -1383,7 +1480,7 @@ class DockerSandboxIntegrationTest(unittest.IsolatedAsyncioTestCase):
             *(
                 asyncio.to_thread(
                     quota_backend.upload_fileobj,
-                    f"parallel-{index}.bin",
+                    f"/parallel-{index}.bin",
                     io.BytesIO(b"z" * (5 * 1024 * 1024)),
                 )
                 for index in range(5)

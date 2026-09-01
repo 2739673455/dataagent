@@ -215,6 +215,7 @@ class ModelProfileCfg(AppConfigModel):
     """应用实际使用的语言模型能力。"""
 
     image_inputs: bool
+    structured_output: bool
     max_input_tokens: int = Field(gt=0)
 
 

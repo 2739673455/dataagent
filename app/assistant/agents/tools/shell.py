@@ -22,7 +22,13 @@ def create_shell_tools(runtime: ShellJobRuntime) -> tuple[BaseTool, ...]:
         runtime_context: ToolRuntime,
         command: Annotated[
             str,
-            Field(min_length=1, description="在当前 Session 工作目录执行的 Shell 命令"),
+            Field(
+                min_length=1,
+                description=(
+                    "在当前 Session 工作目录执行的 Shell 命令；相对路径从该目录"
+                    "解析，绝对路径直接使用。"
+                ),
+            ),
         ],
     ) -> dict[str, Any]:
         """启动 Shell 命令；前台等待 60 秒后仍未结束时返回后台 job_id。"""

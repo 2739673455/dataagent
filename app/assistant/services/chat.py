@@ -48,12 +48,13 @@ from app.assistant.agents.middleware.user_message_metadata import (
     UserMessageMetadata,
 )
 from app.assistant.api.chat import schemas as chat_schema
+from app.assistant.message_content import reasoning_text
 from app.assistant.services.contracts import (
     AgentRuntimeManager,
     ConversationFileInspector,
 )
 from app.sandbox.exceptions import SandboxPathError
-from app.sandbox.paths import normalize_attachment_path
+from app.sandbox.paths import conversation_relative_path
 
 MESSAGE_PAYLOAD_KEY = "dataagent_message"
 _KNOWN_FINISH_REASONS = (
@@ -64,7 +65,7 @@ _KNOWN_FINISH_REASONS = (
     "stop",
 )
 _ARTIFACT_DIRECTIVE_PATTERN = re.compile(
-    r"^[ ]{0,3}\[\[DATAAGENT_ARTIFACT:(/sessions/[^\r\n]+?)\]\][\t ]*$"
+    r"^[ ]{0,3}\[\[DATAAGENT_ARTIFACT:(/[^\r\n]+?)\]\][\t ]*$"
 )
 _MARKDOWN_FENCE_PATTERN = re.compile(r"^[ ]{0,3}(?P<marker>`{3,}|~{3,})")
 
@@ -128,14 +129,6 @@ def _content_to_parts(content: Any) -> list[chat_schema.MessagePart]:
     return parts
 
 
-def _reasoning_content(message: BaseMessage) -> str | None:
-    """读取模型供应商返回的完整思考或思考增量。"""
-    reasoning = message.additional_kwargs.get("reasoning_content")
-    if not isinstance(reasoning, str) or not reasoning:
-        return None
-    return reasoning
-
-
 def _text_content(message: BaseMessage) -> str | None:
     """读取模型消息中的正文文本或正文增量。"""
     text = "".join(
@@ -191,12 +184,10 @@ def _transform_artifact_directives(
     return "".join(output), paths
 
 
-def _normalized_directive_path(path: str) -> str:
+def _normalized_directive_path(path: str, conversation_id: UUID) -> str:
     """将最终产物指令路径规范化为 Conversation 内相对路径。"""
-    if not path.startswith("/sessions/"):
-        raise SandboxPathError(path)
-    normalized = normalize_attachment_path(path.removeprefix("/"))
-    if not normalized.startswith("sessions/") or f"/{normalized}" != path:
+    normalized = conversation_relative_path(path, conversation_id)
+    if not normalized.startswith("sessions/"):
         raise SandboxPathError(path)
     return normalized
 
@@ -235,7 +226,10 @@ async def _project_final_artifact_directives(
     seen_paths: set[str] = set()
     for directive_path in candidate_paths:
         try:
-            relative_path = _normalized_directive_path(directive_path)
+            relative_path = _normalized_directive_path(
+                directive_path,
+                conversation_id,
+            )
         except SandboxPathError:
             logger.warning(
                 "最终产物指令路径无效: "
@@ -299,7 +293,7 @@ async def _langchain_message_to_schema_with_artifacts(
     conversation_id: UUID,
 ) -> chat_schema.MessageResponse | None:
     """转换消息，并为 Planner 最终回答解析文件交付指令。"""
-    schema = _langchain_message_to_schema(message)
+    schema = _langchain_message_to_schema(message, conversation_id)
     if schema is None:
         return None
     return await _project_final_artifact_directives(
@@ -328,6 +322,7 @@ def _schema_from_metadata(
 
 def _delegation_result_attachments(
     message: ToolMessage,
+    conversation_id: UUID,
 ) -> list[chat_schema.Attachment]:
     """从委派结果的稳定协议中提取可下载产物。"""
     if message.name != "delegation":
@@ -356,18 +351,29 @@ def _delegation_result_attachments(
             f"tool_call_id={message.tool_call_id}"
         )
         return []
-    return [
-        chat_schema.Attachment(
-            f_path=artifact.path.removeprefix("/"),
-            media_type=artifact.media_type,
-            description=artifact.description,
+    attachments: list[chat_schema.Attachment] = []
+    for artifact in result.artifacts:
+        try:
+            path = conversation_relative_path(artifact.path, conversation_id)
+        except SandboxPathError:
+            logger.warning(
+                "委派结果产物路径超出当前 Conversation: "
+                f"message_id={message.id}, path={artifact.path!r}"
+            )
+            continue
+        attachments.append(
+            chat_schema.Attachment(
+                f_path=path,
+                media_type=artifact.media_type,
+                description=artifact.description,
+            )
         )
-        for artifact in result.artifacts
-    ]
+    return attachments
 
 
 def _langchain_message_to_schema(
     message: BaseMessage,
+    conversation_id: UUID,
 ) -> chat_schema.MessageResponse | None:
     """将 LangChain 消息转换为接口消息。"""
     if stored_schema := _schema_from_metadata(message):
@@ -402,7 +408,10 @@ def _langchain_message_to_schema(
                         attachments=(
                             [
                                 chat_schema.Attachment(
-                                    f_path=artifact.path.removeprefix("/"),
+                                    f_path=conversation_relative_path(
+                                        artifact.path,
+                                        conversation_id,
+                                    ),
                                     media_type=artifact.media_type,
                                     description=artifact.description,
                                 )
@@ -426,7 +435,9 @@ def _langchain_message_to_schema(
                     content=str(message.content),
                 )
             ],
-            attachments=_delegation_result_attachments(message) or None,
+            attachments=(
+                _delegation_result_attachments(message, conversation_id) or None
+            ),
             eval_delegations=eval_delegations,
         )
 
@@ -448,7 +459,7 @@ def _langchain_message_to_schema(
 
     parts = _content_to_parts(message.content)
     if isinstance(message, AIMessage):
-        if reasoning := _reasoning_content(message):
+        if reasoning := reasoning_text(message):
             parts.insert(
                 0,
                 chat_schema.ThinkingContent(
@@ -490,7 +501,7 @@ async def _subagent_activity_to_event(
             user_id,
             conversation_id,
         )
-        message = _langchain_message_to_schema(expanded[0])
+        message = _langchain_message_to_schema(expanded[0], conversation_id)
         if message is None:
             return None
         return chat_schema.ChatStreamSubagentMessageEvent(
@@ -642,7 +653,8 @@ async def get_subagent_activity(
         messages=[
             schema
             for message in messages
-            if (schema := _langchain_message_to_schema(message)) is not None
+            if (schema := _langchain_message_to_schema(message, conversation_id))
+            is not None
         ],
     )
 
@@ -722,7 +734,7 @@ async def _run_agent_turn(
                     message, _metadata = data
                     if not isinstance(message, AIMessageChunk):
                         continue
-                    reasoning = _reasoning_content(message)
+                    reasoning = reasoning_text(message)
                     if message.id is None:
                         continue
                     message_id = str(message.id)

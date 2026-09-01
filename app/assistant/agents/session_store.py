@@ -125,7 +125,7 @@ class PostgresSandboxSessionStore:
         arguments = " ".join(shlex.quote(path) for path in sorted(paths))
         command = (
             f"set -- {arguments}; "
-            'for path do [ -f "${path#/}" ] || printf \'%s\\0\' "$path"; done'
+            'for path do [ -f "$path" ] || printf \'%s\\0\' "$path"; done'
         )
         result = await self._conversation_backend.aexecute(
             command,

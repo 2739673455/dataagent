@@ -6,7 +6,6 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
-from deepagents.backends.protocol import BackendProtocol
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -17,6 +16,7 @@ from app.assistant.agents.explorer.agent import create_explorer_agent
 from app.assistant.agents.reviewer.agent import create_reviewer_agent
 from app.assistant.agents.shell_jobs import ShellJobRuntime
 from app.assistant.agents.skills import agent_skills_mount_path
+from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.manager import DockerSandboxManager
 from app.shared.contracts.analysis import (
     AGENT_TYPES,
@@ -55,7 +55,7 @@ class SpecialistBuilder(Protocol):
         *,
         model: BaseChatModel,
         tools: Sequence[BaseTool],
-        backend: BackendProtocol,
+        backend: DockerSandboxBackend,
         checkpointer: BaseCheckpointSaver,
         shell_jobs: ShellJobRuntime,
         skills: Sequence[str] = (),

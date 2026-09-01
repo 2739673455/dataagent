@@ -1,7 +1,7 @@
 import type { RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import { DotMatrixLoader } from "@/components/DotMatrixLoader";
-import type { Attachment, MessageResponse } from "@/types";
+import type { MessageResponse } from "@/types";
 import {
   buildDisplayItems,
   getUserMessagePreview,
@@ -30,7 +30,6 @@ export interface ChatMessagesProps {
     conversationId: string,
     run: SubagentRunIdentity
   ) => Promise<MessageResponse[]>;
-  onOpenPreviewAttachment?: (attachment: Attachment) => void;
   viewportRef: RefObject<HTMLDivElement | null>;
 }
 
@@ -42,7 +41,6 @@ export function ChatMessages({
   messages,
   subagentRuns,
   loadSubagentMessages,
-  onOpenPreviewAttachment,
   viewportRef,
 }: ChatMessagesProps) {
   const displayItems = buildDisplayItems(conversationId, messages, isStreaming);
@@ -263,10 +261,7 @@ export function ChatMessages({
                       data-user-message-key={turn.userItem.key}
                       className="scroll-mt-4"
                     >
-                      <MessageBubble
-                        message={turn.userItem.message}
-                        onOpenPreviewAttachment={onOpenPreviewAttachment}
-                      />
+                      <MessageBubble message={turn.userItem.message} />
                     </div>
                   )}
 
@@ -276,17 +271,11 @@ export function ChatMessages({
                       isStreaming={isTurnStreaming}
                       items={turn.intermediateItems}
                       loadSubagentMessages={loadSubagentMessages}
-                      onOpenPreviewAttachment={onOpenPreviewAttachment}
                       subagentRuns={subagentRuns}
                     />
                   )}
 
-                  {turn.finalItem && (
-                    <MessageBubble
-                      message={turn.finalItem.message}
-                      onOpenPreviewAttachment={onOpenPreviewAttachment}
-                    />
-                  )}
+                  {turn.finalItem && <MessageBubble message={turn.finalItem.message} />}
 
                   {turn.userItem &&
                     turn.intermediateItems.length === 0 &&

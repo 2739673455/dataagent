@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from itertools import islice
-from pathlib import PurePosixPath
 from typing import Any, BinaryIO, Protocol
 from uuid import UUID, uuid4
 
@@ -29,11 +28,14 @@ from app.query.models.execution import (
     QueryTimeRange,
 )
 from app.query.models.validation import QueryValidationResult
+from app.sandbox.paths import SandboxSessionScope
 from app.shared.contracts.analysis import AgentSessionKey
 
 _SAMPLE_STRING_MAX_CHARS = 512
 _SAMPLE_COLLECTION_MAX_ITEMS = 20
 _SAMPLE_MAX_DEPTH = 4
+_QUERY_ARTIFACT_STEM_MAX_BYTES = 120
+_QUERY_ARTIFACT_UNIQUE_SUFFIX_LENGTH = 4
 _PLAN_NODE_PATTERN = re.compile(r"(?:^|\s|\|)\d+\s*:\s*([A-Za-z][A-Za-z0-9_]*)")
 _PLAN_UNNUMBERED_NODE_PATTERN = re.compile(
     r"\b([A-Za-z][A-Za-z0-9_]*(?:Node|_NODE))\b",
@@ -199,6 +201,8 @@ class AnalysisQueryService:
         session_key: AgentSessionKey,
         sql: str,
         validation: QueryValidationResult,
+        *,
+        purpose: str,
     ) -> SuccessfulQueryExecution:
         """执行已校验查询，返回完整的成功执行信息。"""
         sql_fingerprint = hashlib.sha256(sql.encode("utf-8")).hexdigest()[:16]
@@ -221,7 +225,7 @@ class AnalysisQueryService:
             )
         relative_path = (
             f"sessions/{session_key.analysis_id}/{session_key.agent_type}/"
-            f"{session_key.session_id}/query_{uuid4().hex}.csv"
+            f"{session_key.session_id}/{_query_artifact_filename(purpose)}"
         )
         with tempfile.TemporaryFile(mode="w+b") as temporary_file:
             summary = await self._execute_to_csv(
@@ -235,8 +239,13 @@ class AnalysisQueryService:
                 relative_path,
                 temporary_file,
             )
+        workspace = SandboxSessionScope(
+            session_key.analysis_id,
+            session_key.agent_type,
+            session_key.session_id,
+        ).workspace_path(session_key.conversation_id)
         result = AnalysisQueryResult(
-            path=f"/{PurePosixPath(relative_path)}",
+            path=f"{workspace}/{relative_path.rsplit('/', 1)[-1]}",
             columns=summary.columns,
             row_count=summary.row_count,
             time_range=summary.time_range,
@@ -340,6 +349,34 @@ class _QuerySummary:
     row_count: int
     time_range: dict[str, QueryTimeRange]
     sample: list[dict[str, Any]]
+
+
+def _query_artifact_filename(purpose: str) -> str:
+    """将查询目的转换为安全、可辨识且不会覆盖旧产物的 CSV 文件名。"""
+    normalized = unicodedata.normalize("NFKC", purpose).strip()
+    stem_parts: list[str] = []
+    separator_pending = False
+    for character in normalized:
+        if character.isalnum():
+            if separator_pending and stem_parts:
+                stem_parts.append("_")
+            stem_parts.append(character)
+            separator_pending = False
+        else:
+            separator_pending = True
+
+    stem = "".join(stem_parts).rstrip("_") or "query_result"
+    encoded_size = 0
+    truncated: list[str] = []
+    for character in stem:
+        character_size = len(character.encode("utf-8"))
+        if encoded_size + character_size > _QUERY_ARTIFACT_STEM_MAX_BYTES:
+            break
+        truncated.append(character)
+        encoded_size += character_size
+    safe_stem = "".join(truncated).rstrip("_") or "query_result"
+    unique_suffix = uuid4().hex[:_QUERY_ARTIFACT_UNIQUE_SUFFIX_LENGTH]
+    return f"{safe_stem}_{unique_suffix}.csv"
 
 
 def _estimate_doris_query_plan(

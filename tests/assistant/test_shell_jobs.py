@@ -30,6 +30,7 @@ class _FakeShellBackend:
         *,
         blocked: bool = False,
     ) -> None:
+        self.workspace_dir = "/data/conversation/sessions/analysis/analyst/session"
         self.result = result or SandboxShellJobExecution(
             status="completed",
             exit_code=0,
@@ -214,7 +215,11 @@ class ShellJobContextMiddlewareTest(unittest.TestCase):
                 {
                     "job_id": "job_12345678",
                     "status": "running",
-                    "output_path": "large_tool_results/shell_jobs/job_12345678.log",
+                    "output_path": (
+                        "/data/conversation/sessions/analysis/analyst/session/"
+                        "large_tool_results/"
+                        "shell_jobs/job_12345678.log"
+                    ),
                 }
             ],
             "finished_unreviewed": [],

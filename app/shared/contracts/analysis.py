@@ -58,8 +58,3 @@ class AgentSessionKey:
     def checkpoint_ns(self) -> str:
         """生成受控的 Checkpoint namespace。"""
         return f"subagents/{self.analysis_id}/{self.agent_type}/{self.session_id}"
-
-    @property
-    def workspace_dir(self) -> str:
-        """生成专业 Agent Session 的虚拟工作目录。"""
-        return f"/sessions/{self.analysis_id}/{self.agent_type}/{self.session_id}"

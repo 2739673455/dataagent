@@ -20,6 +20,10 @@ from pydantic import (
     model_validator,
 )
 
+from app.sandbox.paths import (
+    conversation_workspace_path,
+    normalize_sandbox_path,
+)
 from app.shared.contracts.analysis import IDENTIFIER_PATTERN, AgentType
 
 if TYPE_CHECKING:
@@ -65,7 +69,7 @@ def build_planner_config(user_id: int, conversation_id: UUID) -> RunnableConfig:
             "checkpoint_ns": "",
             "user_id": user_id,
             "conversation_id": str(conversation_id),
-            "workspace_dir": "/",
+            "workspace_dir": conversation_workspace_path(conversation_id),
         }
     )
 
@@ -233,15 +237,8 @@ class ArtifactReference(StrictProtocolModel):
     @field_validator("path")
     @classmethod
     def validate_sandbox_path(cls, value: str) -> str:
-        """只接受规范化的沙箱绝对路径。"""
-        if not value.startswith("/"):
-            raise ValueError("产物路径必须是绝对沙箱路径")
-        segments = value.split("/")
-        if any(segment in {".", ".."} for segment in segments):
-            raise ValueError("产物路径不能包含相对路径点段")
-        if "//" in value or "\x00" in value:
-            raise ValueError("产物路径必须是规范化路径")
-        return value
+        """接受按当前 Session 解析的相对路径或容器绝对路径。"""
+        return normalize_sandbox_path(value)
 
 
 class RepairRequest(StrictProtocolModel):

@@ -1,19 +1,12 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import type { Attachment } from "@/types";
 import { AttachmentChip } from "./AttachmentChip";
 import { formatMessageTime, getMessagePartKey } from "./displayModel";
 import { ImagePreview } from "./ImagePreview";
 import { PartView } from "./MarkdownRenderer";
 import type { MessageDisplayItem } from "./types";
 
-export function MessageBubble({
-  message,
-  onOpenPreviewAttachment,
-}: {
-  message: MessageDisplayItem["message"];
-  onOpenPreviewAttachment?: (attachment: Attachment) => void;
-}) {
+export function MessageBubble({ message }: { message: MessageDisplayItem["message"] }) {
   const isUser = message.role === "user";
   const createdAt = formatMessageTime(message.createdAt);
   const [previewImage, setPreviewImage] = useState<{
@@ -28,8 +21,6 @@ export function MessageBubble({
           attachment={attachment}
           conversationId={message.conversationId}
           isUser={isUser}
-          onPreview={(src, alt) => setPreviewImage({ src, alt })}
-          onOpenPreviewAttachment={onOpenPreviewAttachment}
         />
       ))}
     </div>

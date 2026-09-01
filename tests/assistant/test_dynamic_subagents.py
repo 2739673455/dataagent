@@ -60,15 +60,20 @@ from app.assistant.agents.specialists import (
     SpecialistDefinition,
     build_specialist_definitions,
 )
+from app.assistant.agents.structured_output import specialist_response_format
 from app.shared.contracts.analysis import AGENT_TYPES, AgentSessionKey, AgentType
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
+_CONVERSATION_ROOT = f"/data/{_CONVERSATION_ID}"
 
 
 class RecordingChatModel(BaseChatModel):
     """记录模型请求实际可见的 Tool。"""
 
     seen_tools: list[str] = Field(default_factory=list)
+    seen_tool_choice: str | None = None
+    seen_bind_kwargs: dict[str, Any] = Field(default_factory=dict)
+    response_content: str = "done"
 
     @property
     def _llm_type(self) -> str:
@@ -81,7 +86,8 @@ class RecordingChatModel(BaseChatModel):
         tool_choice: str | None = None,
         **kwargs: Any,
     ) -> Any:
-        del tool_choice, kwargs
+        self.seen_tool_choice = tool_choice
+        self.seen_bind_kwargs = kwargs
         self.seen_tools = [
             tool_item.get("name", "")
             if isinstance(tool_item, dict)
@@ -99,7 +105,9 @@ class RecordingChatModel(BaseChatModel):
     ) -> ChatResult:
         del messages, stop, run_manager, kwargs
         return ChatResult(
-            generations=[ChatGeneration(message=AIMessage(content="done"))]
+            generations=[
+                ChatGeneration(message=AIMessage(content=self.response_content))
+            ]
         )
 
 
@@ -171,11 +179,7 @@ class _FakeAgent:
                 output = self.output
             else:
                 configurable = config.get("configurable", {})
-                artifact_path = (
-                    f"/sessions/{configurable['analysis_id']}/"
-                    f"{configurable['agent_type']}/{configurable['session_id']}/"
-                    "result.json"
-                )
+                artifact_path = f"{configurable['workspace_dir']}/result.json"
                 output = {
                     "structured_response": SpecialistResult(
                         status="completed",
@@ -399,10 +403,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
             key.checkpoint_ns,
             "subagents/sales-decline_2026/analyst/product-category",
         )
-        self.assertEqual(
-            key.workspace_dir,
-            "/sessions/sales-decline_2026/analyst/product-category",
-        )
 
     def test_agent_session_key_rejects_unsafe_identifier(self) -> None:
         identifiers = (
@@ -473,6 +473,40 @@ class DynamicSubagentContractTest(unittest.TestCase):
                 content="missing input",
                 repair_requests=[],
             )
+
+    def test_specialist_profile_selects_native_structured_output(self) -> None:
+        from langchain.agents import create_agent
+
+        expected = SpecialistResult(
+            status="completed",
+            content="analysis complete",
+        )
+        model = RecordingChatModel(
+            profile={"structured_output": True},
+            response_content=expected.model_dump_json(),
+        )
+        agent = create_agent(
+            model=model,
+            tools=[execute_sql],
+            response_format=specialist_response_format(model),
+        )
+
+        state = agent.invoke({"messages": [HumanMessage(content="analyze")]})
+
+        self.assertEqual(state["structured_response"], expected)
+        self.assertNotIn("SpecialistResult", model.seen_tools)
+        self.assertIsNone(model.seen_tool_choice)
+        self.assertEqual(
+            model.seen_bind_kwargs["response_format"]["type"],
+            "json_schema",
+        )
+        self.assertEqual(
+            model.seen_bind_kwargs["response_format"]["json_schema"]["name"],
+            "SpecialistResult",
+        )
+        self.assertTrue(
+            model.seen_bind_kwargs["response_format"]["json_schema"]["strict"]
+        )
 
     def test_specialist_definitions_assign_data_tools_only_to_explorer(self) -> None:
         definitions = build_specialist_definitions(
@@ -590,14 +624,15 @@ class DynamicSubagentContractTest(unittest.TestCase):
                             "image_tool_message": True,
                         },
                     )
+                    shell_backend = LocalShellBackend(root_dir=workspace)
+                    cast(Any, shell_backend).workspace_dir = workspace
+                    cast(Any, shell_backend).conversation_dir = workspace
                     graph = builder(
                         model=model,
                         tools=[],
-                        backend=LocalShellBackend(root_dir=workspace),
+                        backend=cast(Any, shell_backend),
                         checkpointer=InMemorySaver(),
-                        shell_jobs=ShellJobRuntime(
-                            cast(Any, LocalShellBackend(root_dir=workspace))
-                        ),
+                        shell_jobs=ShellJobRuntime(cast(Any, shell_backend)),
                         skills=definitions[cast(AgentType, agent_type)].skills,
                     )
 
@@ -662,6 +697,8 @@ class DynamicSubagentContractTest(unittest.TestCase):
             },
         )
         with tempfile.TemporaryDirectory() as workspace:
+            backend = LocalShellBackend(root_dir=workspace)
+            cast(Any, backend).conversation_dir = workspace
             with patch(
                 "app.assistant.agents.planner.agent.CodeInterpreterMiddleware",
                 InterpreterStub,
@@ -669,7 +706,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
                 graph = create_planner_agent(
                     model=model,
                     tools=[delegation, list_sessions, delete_session],
-                    backend=LocalShellBackend(root_dir=workspace),
+                    backend=cast(Any, backend),
                     checkpointer=InMemorySaver(),
                     session_service=_service(_FakeAgent()),
                     interpreter_memory_limit_bytes=2 * 1024 * 1024,
@@ -836,7 +873,24 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             agent_type: model for agent_type in AGENT_TYPES
         }
         sandbox = MagicMock()
-        sandbox.get_session_backend = AsyncMock(return_value=MagicMock())
+
+        async def get_session_backend(
+            user_id: int,
+            conversation_id: UUID,
+            analysis_id: str,
+            agent_type: AgentType,
+            session_id: str,
+        ) -> MagicMock:
+            del user_id
+            backend = MagicMock()
+            backend.workspace_dir = (
+                f"/data/{conversation_id}/sessions/{analysis_id}/"
+                f"{agent_type}/{session_id}"
+            )
+            backend.conversation_dir = f"/data/{conversation_id}"
+            return backend
+
+        sandbox.get_session_backend = AsyncMock(side_effect=get_session_backend)
         factory = SpecialistAgentFactory(
             definitions,
             models,
@@ -884,7 +938,10 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                     content="region complete",
                     artifacts=[
                         ArtifactReference(
-                            path=("/sessions/sales-decline/analyst/region/result.json")
+                            path=(
+                                f"{_CONVERSATION_ROOT}/sessions/sales-decline/"
+                                "analyst/region/result.json"
+                            )
                         )
                     ],
                 )
@@ -1135,7 +1192,10 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_artifact_verification_batches_all_paths(self) -> None:
         artifacts = [
             ArtifactReference(
-                path=(f"/sessions/sales-decline/analyst/region/result_{index}.json")
+                path=(
+                    f"{_CONVERSATION_ROOT}/sessions/sales-decline/analyst/"
+                    f"region/result_{index}.json"
+                )
             )
             for index in range(50)
         ]
@@ -1160,6 +1220,38 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(verified_batches, [{artifact.path for artifact in artifacts}])
+
+    async def test_relative_artifact_is_resolved_from_specialist_workspace(
+        self,
+    ) -> None:
+        fake = _FakeAgent(
+            output={
+                "structured_response": SpecialistResult(
+                    status="completed",
+                    content="analysis complete",
+                    artifacts=[ArtifactReference(path="evidence/result.json")],
+                )
+            }
+        )
+        verified_batches: list[set[str]] = []
+
+        async def verify(paths: Collection[str]) -> set[str]:
+            verified_batches.append(set(paths))
+            return set()
+
+        service = _service(fake, artifact_verifier=verify)
+        result = await service.execute_delegation(
+            _request("region"),
+            build_planner_config(12, _CONVERSATION_ID),
+        )
+
+        expected_path = (
+            f"{_CONVERSATION_ROOT}/sessions/sales-decline/analyst/region/"
+            "evidence/result.json"
+        )
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.artifacts[0].path, expected_path)
+        self.assertEqual(verified_batches, [{expected_path}])
 
     async def test_completed_artifact_outside_session_is_rejected(self) -> None:
         fake = _FakeAgent(
@@ -1254,30 +1346,19 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             name="execute_sql",
             tool_call_id="sql-call",
         )
-        structured_call = AIMessage(
-            id="structured-call",
-            content="",
-            tool_calls=[
-                {
-                    "id": "specialist-result-call",
-                    "name": "SpecialistResult",
-                    "args": {"status": "completed"},
-                }
-            ],
-        )
-        structured_result = ToolMessage(
-            id="structured-result",
-            content="accepted",
-            name="SpecialistResult",
-            tool_call_id="specialist-result-call",
+        structured_response = AIMessage(
+            id="structured-response",
+            content=SpecialistResult(
+                status="completed",
+                content="analysis complete",
+            ).model_dump_json(),
         )
         fake = _FakeAgent(
             stream_messages=[
                 tool_call,
                 tool_call,
                 tool_result,
-                structured_call,
-                structured_result,
+                structured_response,
             ],
         )
         service = _service(fake)
@@ -1323,13 +1404,11 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             stream_chunks=[
                 AIMessageChunk(
                     id="specialist-answer",
-                    content="",
-                    additional_kwargs={"reasoning_content": "先检查"},
+                    content=[{"type": "reasoning", "reasoning": "先检查"}],
                 ),
                 AIMessageChunk(
                     id="specialist-answer",
-                    content="",
-                    additional_kwargs={"reasoning_content": "表结构"},
+                    content=[{"type": "reasoning", "reasoning": "表结构"}],
                 ),
                 AIMessageChunk(id="specialist-answer", content="开始查询"),
             ]
@@ -1391,10 +1470,12 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 ),
                 first_ai,
                 first_tool,
-                ToolMessage(
-                    content="private structured result",
-                    name="SpecialistResult",
-                    tool_call_id="structured-call",
+                AIMessage(
+                    id="provider-structured-response",
+                    content=SpecialistResult(
+                        status="completed",
+                        content="第一轮完成",
+                    ).model_dump_json(),
                 ),
                 HumanMessage(
                     content="second",
@@ -1449,6 +1530,17 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                     },
                 ),
                 AIMessage(id="first-ai", content="尚未完成"),
+                AIMessage(
+                    id="invalid-structured-response",
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "invalid-result-call",
+                            "name": "SpecialistResult",
+                            "args": {"status": "completed"},
+                        }
+                    ],
+                ),
                 HumanMessage(
                     content="second",
                     additional_kwargs={
@@ -1490,8 +1582,12 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 ),
                 AIMessage(
                     id="structured-response",
-                    content="",
-                    additional_kwargs={"reasoning_content": "检查完成，准备返回结果。"},
+                    content=[
+                        {
+                            "type": "reasoning",
+                            "reasoning": "检查完成，准备返回结果。",
+                        }
+                    ],
                     tool_calls=[
                         {
                             "id": "structured-call",
@@ -1517,8 +1613,8 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reasoning_message.id, "structured-response")
         self.assertEqual(reasoning_message.tool_calls, [])
         self.assertEqual(
-            reasoning_message.additional_kwargs["reasoning_content"],
-            "检查完成，准备返回结果。",
+            reasoning_message.content,
+            [{"type": "reasoning", "reasoning": "检查完成，准备返回结果。"}],
         )
 
     async def test_replayed_delegation_reuses_latest_structured_result(self) -> None:
@@ -1537,7 +1633,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             "structured_response": SpecialistResult(
                 status="completed",
                 content="已完成的分析结果",
-            ),
+            ).model_dump(mode="json"),
         }
         service = _service(fake)
 

@@ -210,9 +210,8 @@ evidence/
 
 ## 执行环境
 
-- `execute` 默认工作目录是当前 Analyst Session，当前文件优先使用相对路径
-- 文件工具和 `SpecialistResult` 使用 `/sessions/...` 虚拟路径
-- `execute` 读取其他 Session 的虚拟路径时，使用 "$DATAAGENT_CONVERSATION_ROOT/sessions/..."
+- 文件工具和 `execute` 的相对路径均从当前 Analyst Session 工作目录解析，绝对路径直接使用。
+- `SpecialistResult.artifacts` 可以使用相对当前 Session 的路径或完整绝对路径；Agent 间传递前会统一解析为绝对路径。
 - Python 统一直接执行 `python <script_path>`（或 `python3`），沙箱镜像已全局预装 pandas、polars、duckdb、pyarrow、numpy、scipy、scikit-learn、openpyxl 等数据分析库
 - 优先在单进程内完成向量化计算，中小型数据使用 pandas，大文件或内存紧张时使用 Polars、DuckDB 或 PyArrow 分块
 - 技能自带脚本位于 `/skills/analyst/analysis/scripts/`，可直接执行；技能目录只读，计算输出必须写入当前 Session
@@ -246,4 +245,4 @@ evidence/
 - 每条重要结论都能追溯到实际文件中的数字
 - 结论区分事实、推断与建议，因果措辞符合识别能力
 - 不确定性和限制与数据覆盖、稳健性及未解释部分一致
-- 返回 `artifacts` 时使用 `/sessions/...` 路径并包含足够描述
+- 返回 `artifacts` 时使用相对当前 Session 的路径或完整绝对路径，并包含足够描述

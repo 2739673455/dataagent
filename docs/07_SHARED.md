@@ -30,8 +30,9 @@ Shared
   → sandbox 单文件上限不超过工作区上限
   → idle_stop 小于 idle_remove
   → 默认模型和各 Specialist 引用已声明模型
-  → 模型 Profile 只配置 image_inputs 和 max_input_tokens
+  → 模型 Profile 只配置 image_inputs、structured_output 和 max_input_tokens
   → Responses 模型使用 LangChain OpenAI 原生客户端或 DeepSeek 专属适配
+  → OpenRouter 模型使用 ChatOpenRouter 原生客户端
   → 工厂只为支持图片输入的 Responses 模型派生 image_tool_message
 → 配置无效时阻止进程启动
 ```

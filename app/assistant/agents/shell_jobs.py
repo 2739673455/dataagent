@@ -135,6 +135,7 @@ class ShellJobRuntime:
         if not math.isfinite(foreground_wait_seconds) or foreground_wait_seconds < 0:
             raise ValueError("foreground_wait_seconds 必须是非负有限数")
         self._backend = backend
+        self._workspace_dir = backend.workspace_dir.rstrip("/")
         self._foreground_wait_seconds = foreground_wait_seconds
         self._records: dict[str, _ShellJobRecord] = {}
         self._lock = threading.RLock()
@@ -271,7 +272,9 @@ class ShellJobRuntime:
                 job_id=job_id,
                 command=command,
                 started_at=datetime.now(UTC),
-                output_path=f"large_tool_results/shell_jobs/{job_id}.log",
+                output_path=(
+                    f"{self._workspace_dir}/large_tool_results/shell_jobs/{job_id}.log"
+                ),
                 done=asyncio.Event(),
             )
             self._records[job_id] = record

@@ -114,8 +114,18 @@ class QueryProvidersTest(unittest.IsolatedAsyncioTestCase):
             result=query_result,
         )
 
-        async def execute_query(*_: object) -> SuccessfulQueryExecution:
+        async def execute_query(
+            received_session_key: AgentSessionKey,
+            sql: str,
+            validation: QueryValidationResult,
+            *,
+            purpose: str,
+        ) -> SuccessfulQueryExecution:
             self.assertEqual(active_sessions, {"auth": 0, "meta": 0})
+            self.assertEqual(received_session_key, session_key)
+            self.assertEqual(sql, "SELECT 1")
+            self.assertEqual(validation.normalized_sql, "SELECT 1")
+            self.assertEqual(purpose, "统计订单")
             return details
 
         execution_service = MagicMock()

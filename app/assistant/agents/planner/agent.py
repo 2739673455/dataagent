@@ -4,7 +4,6 @@ from collections.abc import Sequence
 from typing import Any, cast
 
 from deepagents import FilesystemMiddleware, create_deep_agent
-from deepagents.backends.protocol import BackendProtocol
 from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
@@ -26,6 +25,7 @@ from app.assistant.agents.middleware.user_message_metadata import (
 )
 from app.assistant.agents.session_service import AgentSessionService
 from app.assistant.agents.tools import create_view_image_tools
+from app.sandbox.backend import DockerSandboxBackend
 
 from .prompt import PLANNER_SYSTEM_PROMPT
 
@@ -36,7 +36,7 @@ def create_planner_agent(
     *,
     model: BaseChatModel,
     tools: Sequence[BaseTool],
-    backend: BackendProtocol,
+    backend: DockerSandboxBackend,
     checkpointer: BaseCheckpointSaver,
     session_service: AgentSessionService,
     interpreter_memory_limit_bytes: int,
@@ -64,7 +64,7 @@ def create_planner_agent(
                 filesystem,
                 interpreter,
                 UserMessageMetadataMiddleware(),
-                UserMessageAttachmentMiddleware(backend),
+                UserMessageAttachmentMiddleware(backend, backend.conversation_dir),
                 MessageTimestampMiddleware(),
             ],
         ),

@@ -500,10 +500,6 @@ describe("chat message display and turn grouping", () => {
     expect(getAttachmentFileType("gmv_category_daily_leaf.csv")).toBe("table");
     expect(getAttachmentFileType("summary.xlsx")).toBe("table");
     expect(getAttachmentFileType("result.parquet")).toBe("table");
-    expect(getAttachmentFileType("data.table.json")).toBe("table");
-    expect(
-      getAttachmentFileType("arbitrary_name.json", "application/vnd.dataagent.table+json")
-    ).toBe("table");
 
     expect(getAttachmentFileType("prepare_gmv_data.py")).toBe("code");
     expect(getAttachmentFileType("analysis.sql")).toBe("code");

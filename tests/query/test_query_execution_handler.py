@@ -98,6 +98,7 @@ class QueryExecutionHandlerTest(unittest.IsolatedAsyncioTestCase):
             session_key,
             "SELECT 1",
             validation,
+            purpose="统计订单",
         )
         context, recorded_details = runtime.record_success.await_args.args
         self.assertEqual(context.role_name, "dataagent_standard")

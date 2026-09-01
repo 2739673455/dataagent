@@ -10,12 +10,12 @@ from deepagents import (
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel, ModelProfile
 from langchain_openai import ChatOpenAI
+from langchain_openrouter import ChatOpenRouter
 
-from app.assistant.deepseek_model import (
-    DataAgentChatDeepSeek,
-    DataAgentDeepSeekResponses,
-)
+from app.assistant.deepseek_model import DataAgentDeepSeekResponses
 from app.shared.config import app_config
+
+_REQUEST_TIMEOUT_SECONDS = 30
 
 
 def create_configured_model(model_name: str) -> BaseChatModel:
@@ -44,8 +44,7 @@ def create_configured_model(model_name: str) -> BaseChatModel:
         "base_url": model_cfg.base_url,
         "api_key": model_cfg.api_key.get_secret_value(),
         "profile": profile,
-        "request_timeout": 30,
-        "max_retries": 3,
+        "max_retries": 0,
         "streaming": True,
     }
     if model_cfg.api_protocol == "responses":
@@ -56,14 +55,20 @@ def create_configured_model(model_name: str) -> BaseChatModel:
         )
         return model_class(
             **model_kwargs,
+            timeout=_REQUEST_TIMEOUT_SECONDS,
             use_responses_api=True,
             output_version="responses/v1",
             store=False,
             use_previous_response_id=False,
         )
-    if model_cfg.model_provider == "deepseek":
-        return DataAgentChatDeepSeek(**model_kwargs)
+    if model_cfg.model_provider == "openrouter":
+        # ChatOpenRouter 将 timeout 原样映射到毫秒制 timeout_ms。
+        return ChatOpenRouter(
+            **model_kwargs,
+            timeout=_REQUEST_TIMEOUT_SECONDS * 1000,
+        )
     return init_chat_model(
         model_provider=model_cfg.model_provider,
         **model_kwargs,
+        timeout=_REQUEST_TIMEOUT_SECONDS,
     )

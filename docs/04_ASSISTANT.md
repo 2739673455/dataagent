@@ -62,7 +62,7 @@ Assistant
 
 Planner 可以在 QuickJS 中通过 Programmatic Tool Calling 调用白名单工具，并用 `Promise.all` 并行委派独立分支。并行 Session 和继续执行次数受配置限制。
 
-每项模型配置通过 `api_protocol` 显式选择 `chat_completions` 或 `responses`。Responses 模型固定 `store=false` 和 `use_previous_response_id=false`，会话历史继续由 LangGraph checkpoint 管理。DeepSeek Responses 适配器会在工具续轮中完整重放无状态 API 要求的明文 reasoning item。协议调用失败时直接返回错误，不跨协议重试。
+每项模型配置通过 `api_protocol` 显式选择 `chat_completions` 或 `responses`。Responses 模型固定 `store=false` 和 `use_previous_response_id=false`，会话历史继续由 LangGraph checkpoint 管理。DeepSeek Responses 适配器会在工具续轮中完整重放无状态 API 要求的明文 reasoning item。OpenRouter Chat Completions 使用 `ChatOpenRouter`；`profile.structured_output=true` 时 Specialist 使用 Provider 原生 strict JSON Schema，最终 JSON 只用于恢复结构化状态，不进入公开消息。服务统一从 LangChain 标准 content blocks 读取 reasoning。协议调用失败时直接返回错误，不跨协议重试。
 
 ## 3. 委派和恢复专业 Agent Session
 
@@ -209,6 +209,7 @@ Agent 使用工作区
 附件进入模型
 → `profile.image_inputs=true` 时，每次调用都重新加载当前上下文中所有 HumanMessage 的图片
 → Responses API 额外向 Agent 提供 view_image，用于读取工作区或仅保留路径引用的图片
+→ view_image 与其他文件工具一致：相对路径从当前 Session 解析，绝对路径直接使用
 → view_image 只持久化工作区路径，下一次模型调用临时加载图片工具结果
 → `profile.image_inputs=false` 时只提供附件路径，并明确告知模型图片不会自动加载
 → 文档和数据文件以沙箱路径提供给 Agent
@@ -223,7 +224,7 @@ Planner 最终交付文件
 → 最终报告或综合报告只交付 Analyst 生成的自包含 HTML
 → Markdown 仅作为内部分析和审查证据，不作为最终报告
 → PNG、SVG、CSV、Parquet 等可以作为 HTML 报告的配套附件
-→ 在最终回答中使用独占一行的 `[[DATAAGENT_ARTIFACT:/sessions/...]]` 指令
+→ 在最终回答中使用独占一行的 `[[DATAAGENT_ARTIFACT:<absolute_path>]]` 指令
 → 文件无需预先出现在 delegation 的 artifacts 中
 → 后端校验路径属于当前对话且文件真实可下载
 → 实时和历史消息统一投影为附件

@@ -7,10 +7,9 @@ from langchain.tools import ToolRuntime
 from langchain_core.messages import ToolMessage
 
 from app.assistant.agents.analyst import agent as analyst_agent
-from app.assistant.agents.skills import (
-    agent_skills_mount_path,
-    mount_agent_skills,
-)
+from app.assistant.agents.filesystem import build_specialist_filesystem
+from app.assistant.agents.skills import agent_skills_mount_path
+from app.sandbox.backend import DockerSandboxBackend
 
 _ANALYST_SKILLS_PATH = agent_skills_mount_path("analyst")
 
@@ -18,8 +17,12 @@ _ANALYST_SKILLS_PATH = agent_skills_mount_path("analyst")
 class AgentSkillsTest(unittest.TestCase):
     def test_agent_cannot_modify_mounted_skill(self) -> None:
         skill_directory = Path(analyst_agent.__file__).with_name("skills")
-        backend, filesystem = mount_agent_skills(
-            StateBackend(),
+        state_backend = StateBackend()
+        cast(
+            Any, state_backend
+        ).workspace_dir = "/data/conversation/sessions/analysis/analyst/session"
+        backend, filesystem = build_specialist_filesystem(
+            cast(DockerSandboxBackend, state_backend),
             skill_directory,
             [_ANALYST_SKILLS_PATH],
         )

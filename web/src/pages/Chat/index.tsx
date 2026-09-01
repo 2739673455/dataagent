@@ -9,8 +9,6 @@ import { ChatComposer } from "./components/ChatComposer";
 import { ChatMessages } from "./components/ChatMessages";
 import { ChatSidebar, ChatUserFooter } from "./components/ChatSidebar";
 import { getConversationExecutionStatus } from "./components/messages/displayModel";
-import { PreviewSidebar } from "./components/PreviewSidebar";
-import { useChatPreview } from "./hooks/useChatPreview";
 import { useChatStream } from "./hooks/useChatStream";
 
 export default function ChatPage() {
@@ -75,17 +73,6 @@ export default function ChatPage() {
     currentMessages,
     isStreaming
   );
-
-  const {
-    isPreviewSidebarOpen,
-    setIsPreviewSidebarOpen,
-    activePreviewAttachment,
-    activeHtmlPreviewUrl,
-    activeTableArtifact,
-    returnedPreviewAttachments,
-    setActivePreviewPath,
-    handleOpenPreviewAttachment,
-  } = useChatPreview(routeConversationId, currentMessages);
 
   // 新消息到达后将消息区滚到底部
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
@@ -198,21 +185,9 @@ export default function ChatPage() {
             messages={currentMessages}
             subagentRuns={currentSubagentRuns}
             loadSubagentMessages={loadSubagentMessages}
-            onOpenPreviewAttachment={handleOpenPreviewAttachment}
             viewportRef={messageViewportRef}
           />
         </div>
-
-        {/* 右侧产物预览分栏 */}
-        <PreviewSidebar
-          activeHtmlPreviewUrl={activeHtmlPreviewUrl}
-          activePreviewAttachment={activePreviewAttachment}
-          activeTableArtifact={activeTableArtifact}
-          isOpen={isPreviewSidebarOpen}
-          onSelectAttachmentPath={setActivePreviewPath}
-          onToggleOpen={() => setIsPreviewSidebarOpen((v) => !v)}
-          previewAttachments={returnedPreviewAttachments}
-        />
       </div>
 
       {/* 底部统一操作栏 */}

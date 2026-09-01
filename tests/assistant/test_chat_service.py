@@ -44,6 +44,7 @@ from app.assistant.services import chat as chat_service
 from app.sandbox.paths import normalize_attachment_path
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
+_SANDBOX_ROOT = f"/data/{_CONVERSATION_ID}"
 
 
 class _FileInspectorStub:
@@ -158,7 +159,7 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-        response = chat_service._langchain_message_to_schema(message)
+        response = chat_service._langchain_message_to_schema(message, _CONVERSATION_ID)
 
         self.assertIsNotNone(response)
         assert response is not None
@@ -188,7 +189,7 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
             [item.f_path for item in private_attachments.attachments],
             ["uploads/report.csv", "uploads/chart.png"],
         )
-        response = chat_service._langchain_message_to_schema(message)
+        response = chat_service._langchain_message_to_schema(message, _CONVERSATION_ID)
         assert response is not None
         self.assertEqual(
             [item.f_path for item in response.attachments or ()],
@@ -210,13 +211,16 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn(MESSAGE_CREATED_AT_KEY, response_message.additional_kwargs)
 
-    async def test_reasoning_content_is_projected_as_completed_thinking(self) -> None:
+    async def test_reasoning_block_is_projected_as_completed_thinking(self) -> None:
         response = chat_service._langchain_message_to_schema(
             AIMessage(
                 id="answer-1",
-                content="最终回答",
-                additional_kwargs={"reasoning_content": "先核对数据，再回答。"},
-            )
+                content=[
+                    {"type": "reasoning", "reasoning": "先核对数据，再回答。"},
+                    {"type": "text", "text": "最终回答"},
+                ],
+            ),
+            _CONVERSATION_ID,
         )
 
         assert response is not None
@@ -325,8 +329,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                     "data": (
                         AIMessageChunk(
                             id="answer-1",
-                            content="",
-                            additional_kwargs={"reasoning_content": delta},
+                            content=[{"type": "reasoning", "reasoning": delta}],
                         ),
                         {"langgraph_node": "model"},
                     ),
@@ -351,8 +354,13 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                         "messages": [
                             AIMessage(
                                 id="answer-1",
-                                content="完成",
-                                additional_kwargs={"reasoning_content": "先定位数据源"},
+                                content=[
+                                    {
+                                        "type": "reasoning",
+                                        "reasoning": "先定位数据源",
+                                    },
+                                    {"type": "text", "text": "完成"},
+                                ],
                                 response_metadata={"finish_reason": "stop"},
                             )
                         ]
@@ -536,7 +544,9 @@ def _delegation_payload() -> dict[str, object]:
         "content": "Chart generated",
         "artifacts": [
             {
-                "path": ("/sessions/sales-review/analyst/chart-1/report.html"),
+                "path": (
+                    f"{_SANDBOX_ROOT}/sessions/sales-review/analyst/chart-1/report.html"
+                ),
                 "media_type": "text/html",
                 "description": "Interactive report",
             }
@@ -550,9 +560,13 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
     async def test_final_artifact_directives_project_downloadable_session_files(
         self,
     ) -> None:
-        report_path = "/sessions/sales-review/analyst/chart-1/report.html"
-        missing_path = "/sessions/sales-review/analyst/chart-1/missing.csv"
-        code_path = "/sessions/sales-review/analyst/chart-1/example.png"
+        report_path = (
+            f"{_SANDBOX_ROOT}/sessions/sales-review/analyst/chart-1/report.html"
+        )
+        missing_path = (
+            f"{_SANDBOX_ROOT}/sessions/sales-review/analyst/chart-1/missing.csv"
+        )
+        code_path = f"{_SANDBOX_ROOT}/sessions/sales-review/analyst/chart-1/example.png"
         message = AIMessage(
             id="assistant-final",
             content=(
@@ -568,7 +582,13 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             response_metadata={"finish_reason": "stop"},
         )
         files = _FileInspectorStub(
-            {(7, _CONVERSATION_ID, report_path.removeprefix("/"))}
+            {
+                (
+                    7,
+                    _CONVERSATION_ID,
+                    "sessions/sales-review/analyst/chart-1/report.html",
+                )
+            }
         )
 
         schema = await chat_service._langchain_message_to_schema_with_artifacts(
@@ -582,7 +602,10 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         assert schema is not None
         self.assertEqual(len(schema.attachments or ()), 1)
         attachment = (schema.attachments or [])[0]
-        self.assertEqual(attachment.f_path, report_path.removeprefix("/"))
+        self.assertEqual(
+            attachment.f_path,
+            "sessions/sales-review/analyst/chart-1/report.html",
+        )
         self.assertEqual(attachment.media_type, "text/html")
         rendered_text = "".join(
             part.text
@@ -602,15 +625,23 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             files.calls,
             [
-                (7, _CONVERSATION_ID, report_path.removeprefix("/")),
-                (7, _CONVERSATION_ID, missing_path.removeprefix("/")),
+                (
+                    7,
+                    _CONVERSATION_ID,
+                    "sessions/sales-review/analyst/chart-1/report.html",
+                ),
+                (
+                    7,
+                    _CONVERSATION_ID,
+                    "sessions/sales-review/analyst/chart-1/missing.csv",
+                ),
             ],
         )
 
     async def test_artifact_directives_only_apply_to_final_assistant_messages(
         self,
     ) -> None:
-        path = "/sessions/sales-review/explorer/source-1/result.csv"
+        path = f"{_SANDBOX_ROOT}/sessions/sales-review/explorer/source-1/result.csv"
         message = AIMessage(
             content=f"[[DATAAGENT_ARTIFACT:{path}]]",
             tool_calls=[
@@ -643,13 +674,14 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
     async def test_artifact_directive_file_check_is_scoped_to_conversation(
         self,
     ) -> None:
-        path = "/sessions/sales-review/analyst/main/final.csv"
+        path = f"{_SANDBOX_ROOT}/sessions/sales-review/analyst/main/final.csv"
         other_conversation_id = UUID("660e8400-e29b-41d4-a716-446655440000")
         message = AIMessage(
             content=f"[[DATAAGENT_ARTIFACT:{path}]]",
             response_metadata={"finish_reason": "stop"},
         )
-        files = _FileInspectorStub({(7, other_conversation_id, path.removeprefix("/"))})
+        relative_path = "sessions/sales-review/analyst/main/final.csv"
+        files = _FileInspectorStub({(7, other_conversation_id, relative_path)})
 
         schema = await chat_service._langchain_message_to_schema_with_artifacts(
             message,
@@ -663,7 +695,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(schema.attachments)
         self.assertEqual(
             files.calls,
-            [(7, _CONVERSATION_ID, path.removeprefix("/"))],
+            [(7, _CONVERSATION_ID, relative_path)],
         )
         text_part = schema.parts[0]
         self.assertIsInstance(text_part, chat_schema.TextContent)
@@ -671,7 +703,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(text_part.text, f"[[DATAAGENT_ARTIFACT:{path}]]")
 
     async def test_history_and_live_stream_use_same_artifact_projection(self) -> None:
-        path = "/sessions/sales-review/analyst/main/final.csv"
+        path = f"{_SANDBOX_ROOT}/sessions/sales-review/analyst/main/final.csv"
         message = AIMessage(
             id="assistant-final",
             content=f"结果见附件。\n[[DATAAGENT_ARTIFACT:{path}]]",
@@ -757,7 +789,8 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                         }
                     ]
                 },
-            )
+            ),
+            _CONVERSATION_ID,
         )
 
         self.assertIsNotNone(schema)
@@ -777,14 +810,16 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                         "args": {"sql": "x" * 25_000},
                     }
                 ],
-            )
+            ),
+            _CONVERSATION_ID,
         )
         result_schema = chat_service._langchain_message_to_schema(
             ToolMessage(
                 content="x" * 55_000,
                 name="execute_sql",
                 tool_call_id="large-call",
-            )
+            ),
+            _CONVERSATION_ID,
         )
 
         self.assertIsNotNone(call_schema)
@@ -997,7 +1032,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             content=json.dumps(_delegation_payload()),
         )
 
-        schema = chat_service._langchain_message_to_schema(message)
+        schema = chat_service._langchain_message_to_schema(message, _CONVERSATION_ID)
 
         self.assertIsNotNone(schema)
         assert schema is not None
@@ -1079,7 +1114,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             content=json.dumps(payload),
         )
 
-        schema = chat_service._langchain_message_to_schema(message)
+        schema = chat_service._langchain_message_to_schema(message, _CONVERSATION_ID)
 
         self.assertIsNotNone(schema)
         assert schema is not None
@@ -1101,7 +1136,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             content=json.dumps(payload),
         )
 
-        schema = chat_service._langchain_message_to_schema(message)
+        schema = chat_service._langchain_message_to_schema(message, _CONVERSATION_ID)
 
         self.assertIsNotNone(schema)
         assert schema is not None

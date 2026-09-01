@@ -1,6 +1,5 @@
 import { ArrowUp, Paperclip, RotateCcw, Square } from "lucide-react";
 import { useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import type { Attachment } from "@/types";
 import { AttachmentChip } from "./messages/AttachmentChip";
@@ -18,25 +17,6 @@ interface ChatComposerProps {
   onSubmit: (value: string) => Promise<boolean>;
 }
 
-function ImagePreview({ alt, onClose, src }: { alt: string; onClose: () => void; src: string }) {
-  return createPortal(
-    <button
-      type="button"
-      onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 backdrop-blur-xs"
-    >
-      <div className="rounded border border-[#d4d4ce] bg-[#ffffff] p-3 shadow-xl">
-        <div className="mb-2 flex items-center justify-between border-b border-[#e5e5df] pb-1 text-xs text-[#71717a]">
-          <span>图片预览: {alt}</span>
-          <span className="text-[#27272a]">点击关闭</span>
-        </div>
-        <img src={src} alt={alt} className="max-h-[80vh] max-w-[85vw] rounded object-contain" />
-      </div>
-    </button>,
-    document.body
-  );
-}
-
 export function ChatComposer({
   attachments = [],
   disabled = false,
@@ -50,10 +30,6 @@ export function ChatComposer({
   onSubmit,
 }: ChatComposerProps) {
   const [value, setValue] = useState("");
-  const [previewImage, setPreviewImage] = useState<{
-    src: string;
-    alt: string;
-  } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -101,7 +77,6 @@ export function ChatComposer({
                 key={attachment.f_path}
                 attachment={attachment}
                 isUser={false}
-                onPreview={(src, alt) => setPreviewImage({ src, alt })}
                 onRemove={() => onRemoveAttachment(attachment.f_path)}
               />
             ))}
@@ -190,14 +165,6 @@ export function ChatComposer({
           </div>
         </div>
       </div>
-
-      {previewImage ? (
-        <ImagePreview
-          src={previewImage.src}
-          alt={previewImage.alt}
-          onClose={() => setPreviewImage(null)}
-        />
-      ) : null}
     </div>
   );
 }

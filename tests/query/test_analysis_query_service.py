@@ -24,6 +24,7 @@ from app.query.services.executor import (
     QueryPlanUnavailableError,
     QueryRejectedError,
     _estimate_doris_query_plan,
+    _query_artifact_filename,
 )
 from app.shared.contracts.analysis import AgentSessionKey
 
@@ -150,6 +151,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
             make_session_key(),
             "SHOW TABLES",
             make_validation(query_kind="catalog"),
+            purpose="列出可用业务表",
         )
 
         self.assertIsNone(repo.explain_sql)
@@ -173,6 +175,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
                 make_session_key(),
                 "SELECT raw",
                 make_validation(),
+                purpose="测试超时查询",
             )
 
         self.assertEqual(store.uploads, [])
@@ -281,6 +284,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
             session_key,
             "SELECT raw",
             make_validation(),
+            purpose="统计订单金额及创建时间",
         )
         result = details.result
 
@@ -300,12 +304,14 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(store.uploads), 1)
         user_id, uploaded_conversation_id, path, content = store.uploads[0]
         self.assertEqual((user_id, uploaded_conversation_id), (9, conversation_id))
-        self.assertEqual(result.path, f"/{path}")
+        self.assertEqual(result.path, f"/data/{conversation_id}/{path}")
         self.assertTrue(
             result.path.startswith(
-                "/sessions/sales-drop-2026/explorer/orders-v1/query_"
+                f"/data/{conversation_id}/sessions/sales-drop-2026/explorer/"
+                "orders-v1/统计订单金额及创建时间_"
             )
         )
+        self.assertRegex(result.path, r"_[0-9a-f]{4}\.csv$")
         rows = list(csv.reader(io.StringIO(content.decode())))
         self.assertEqual(rows[0], ["id", "amount", "created_at"])
         self.assertEqual(rows[1][1], "12.50")
@@ -328,6 +334,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
             session_key,
             "SELECT raw",
             make_validation(physical_table=True),
+            purpose="查询订单明细",
         )
 
         self.assertEqual(len(store.uploads), 1)
@@ -359,6 +366,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
                 make_session_key(),
                 "SELECT raw",
                 make_validation(),
+                purpose="读取全部订单",
             )
         ).result
 
@@ -380,6 +388,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
                 make_session_key(),
                 "SELECT raw",
                 make_validation(),
+                purpose="查询空结果",
             )
         ).result
 
@@ -412,6 +421,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
                         )
                     ],
                 ),
+                purpose="执行非法查询",
             )
 
         self.assertIsNone(query_repo.explain_sql)
@@ -432,6 +442,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
                 make_session_key(),
                 "SELECT raw",
                 make_validation(),
+                purpose="查询中文文本",
             )
         ).result
 
@@ -457,6 +468,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
                 make_session_key(),
                 "SELECT raw",
                 make_validation(),
+                purpose="查询长文本",
             )
         ).result
 
@@ -489,6 +501,7 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
                 make_session_key(),
                 "SELECT raw",
                 make_validation(),
+                purpose="查询公式文本",
             )
         ).result
 
@@ -498,3 +511,15 @@ class AnalysisQueryServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[2], ["' \t@SUM(A1)", "'+123"])
         self.assertEqual(rows[3], ["'\x01-CMD", "42"])
         self.assertEqual(result.sample[0]["=formula_header"], "=1+1")
+
+    def test_query_artifact_filename_is_readable_safe_and_bounded(self) -> None:
+        filename = _query_artifact_filename(
+            " 查看订单状态枚举值，确认有效订单口径（排除取消）/最近30天 "
+        )
+
+        self.assertRegex(
+            filename,
+            r"^查看订单状态枚举值_确认有效订单口径_排除取消_最近30天_"
+            r"[0-9a-f]{4}\.csv$",
+        )
+        self.assertLessEqual(len(filename.encode("utf-8")), 129)

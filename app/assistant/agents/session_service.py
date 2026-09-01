@@ -45,6 +45,8 @@ from app.assistant.agents.contracts import (
 )
 from app.assistant.agents.session_store import AgentSessionStore
 from app.assistant.agents.specialists import SpecialistAgentRun
+from app.assistant.message_content import reasoning_text
+from app.sandbox.paths import SandboxSessionScope, resolve_sandbox_path
 from app.shared.contracts.analysis import AgentSessionKey, validate_agent_type
 
 _STRUCTURED_RETRY_MESSAGE = """
@@ -53,6 +55,15 @@ completed 必须在 content 中给出完整结论；needs_repair 必须包含 re
 """.strip()
 _INTERNAL_RETRY_KEY = "dataagent_internal_retry"
 _STRUCTURED_RESPONSE_TOOL_NAME = "SpecialistResult"
+
+
+def _session_workspace(session_key: AgentSessionKey) -> str:
+    """返回 Session 在容器中的规范工作目录。"""
+    return SandboxSessionScope(
+        session_key.analysis_id,
+        session_key.agent_type,
+        session_key.session_id,
+    ).workspace_path(session_key.conversation_id)
 
 
 @asynccontextmanager
@@ -227,7 +238,7 @@ class AgentSessionService:
             "checkpoint_ns": session_key.checkpoint_ns,
             "user_id": session_key.user_id,
             "conversation_id": str(session_key.conversation_id),
-            "workspace_dir": session_key.workspace_dir,
+            "workspace_dir": _session_workspace(session_key),
             "analysis_id": session_key.analysis_id,
             "agent_type": session_key.agent_type,
             "session_id": session_key.session_id,
@@ -344,10 +355,7 @@ class AgentSessionService:
         session_key: AgentSessionKey,
     ) -> None:
         """验证结论产物实际存在于当前工作区。"""
-        session_prefix = (
-            f"/sessions/{session_key.analysis_id}/{session_key.agent_type}/"
-            f"{session_key.session_id}/"
-        )
+        session_prefix = f"{_session_workspace(session_key)}/"
         artifact_paths = {artifact.path for artifact in result.artifacts}
         invalid_artifacts = sorted(
             path for path in artifact_paths if not path.startswith(session_prefix)
@@ -361,6 +369,33 @@ class AgentSessionService:
         missing = sorted(await self._session_store.find_missing_files(paths))
         if missing:
             raise ValueError(f"产物不存在: {', '.join(missing)}")
+
+    @staticmethod
+    def _resolve_result_artifacts(
+        result: SpecialistResult,
+        session_key: AgentSessionKey,
+    ) -> SpecialistResult:
+        """以产出该文件的 Session 为基准解析相对产物路径。"""
+        workspace = _session_workspace(session_key)
+        artifacts = [
+            artifact.model_copy(
+                update={"path": resolve_sandbox_path(artifact.path, workspace)}
+            )
+            for artifact in result.artifacts
+        ]
+        return result.model_copy(update={"artifacts": artifacts})
+
+    async def _prepare_specialist_result(
+        self,
+        result: SpecialistResult,
+        session_key: AgentSessionKey,
+    ) -> SpecialistResult:
+        """规范化并校验即将跨 Agent 传递的结构化结果。"""
+        # 相对路径只在产出它的 Session 内有明确含义；跨过此边界后统一传递绝对路径。
+        result = self._resolve_result_artifacts(result, session_key)
+        await self._validate_repair_targets(result, session_key)
+        await self._verify_result_artifacts(result, session_key)
+        return result
 
     async def _invoke_specialist(
         self,
@@ -395,9 +430,7 @@ class AgentSessionService:
             )
             try:
                 result = self._parse_specialist_result(output)
-                await self._validate_repair_targets(result, session_key)
-                await self._verify_result_artifacts(result, session_key)
-                return result
+                return await self._prepare_specialist_result(result, session_key)
             except (TypeError, ValueError, ValidationError):
                 retry_output = await self._stream_specialist(
                     agent_run.agent,
@@ -416,9 +449,7 @@ class AgentSessionService:
                     emit_messages=False,
                 )
                 result = self._parse_specialist_result(retry_output)
-                await self._validate_repair_targets(result, session_key)
-                await self._verify_result_artifacts(result, session_key)
-                return result
+                return await self._prepare_specialist_result(result, session_key)
         finally:
             if agent_run is not None:
                 await self._cleanup_agent_run(agent_run)
@@ -433,33 +464,55 @@ class AgentSessionService:
             await cleanup_task
             raise
 
-    @staticmethod
-    def _is_structured_response_message(message: BaseMessage) -> bool:
-        """判断消息是否属于 SpecialistResult 结构化响应。"""
-        if isinstance(message, AIMessage):
-            return any(
-                call.get("name") == _STRUCTURED_RESPONSE_TOOL_NAME
-                for call in message.tool_calls
-            )
-        if isinstance(message, ToolMessage):
-            return message.name == _STRUCTURED_RESPONSE_TOOL_NAME
-        return False
-
-    @staticmethod
-    def _structured_response_status(
+    @classmethod
+    def _structured_response_from_message(
+        cls,
         message: BaseMessage,
-    ) -> SubagentRunStatus | None:
-        """从结构化响应工具调用中读取本次 delegation 的终态。"""
+    ) -> SpecialistResult | None:
+        """从工具调用或 Provider JSON 正文严格解析 Specialist 终态。"""
         if not isinstance(message, AIMessage):
             return None
         for call in message.tool_calls:
             if call.get("name") != _STRUCTURED_RESPONSE_TOOL_NAME:
                 continue
             try:
-                return SpecialistResult.model_validate(call.get("args")).status
+                return SpecialistResult.model_validate(call.get("args"))
             except ValidationError:
                 continue
-        return None
+
+        text = cls._text_content(message)
+        if text is None:
+            return None
+        try:
+            return SpecialistResult.model_validate_json(text)
+        except ValidationError:
+            return None
+
+    @classmethod
+    def _is_structured_response_message(cls, message: BaseMessage) -> bool:
+        """判断消息是否属于 SpecialistResult 结构化响应。"""
+        if isinstance(message, AIMessage):
+            has_result_tool_call = any(
+                call.get("name") == _STRUCTURED_RESPONSE_TOOL_NAME
+                for call in message.tool_calls
+            )
+            # ProviderStrategy 将终态写入 JSON 正文；这段协议数据不能作为普通回答展示。
+            return (
+                has_result_tool_call
+                or cls._structured_response_from_message(message) is not None
+            )
+        if isinstance(message, ToolMessage):
+            return message.name == _STRUCTURED_RESPONSE_TOOL_NAME
+        return False
+
+    @classmethod
+    def _structured_response_status(
+        cls,
+        message: BaseMessage,
+    ) -> SubagentRunStatus | None:
+        """从结构化响应消息读取本次 delegation 的终态。"""
+        result = cls._structured_response_from_message(message)
+        return result.status if result is not None else None
 
     @classmethod
     def _is_public_activity_message(cls, message: BaseMessage) -> bool:
@@ -468,14 +521,6 @@ class AgentSessionService:
             message,
             AIMessage | ToolMessage,
         )
-
-    @staticmethod
-    def _reasoning_content(message: BaseMessage) -> str | None:
-        """读取模型返回的完整思考或思考增量。"""
-        reasoning = message.additional_kwargs.get("reasoning_content")
-        if not isinstance(reasoning, str) or not reasoning:
-            return None
-        return reasoning
 
     @staticmethod
     def _text_content(message: BaseMessage) -> str | None:
@@ -501,16 +546,16 @@ class AgentSessionService:
     @classmethod
     def _reasoning_only_message(cls, message: AIMessage) -> AIMessage | None:
         """将结构化协议响应投影为只含思考的公开消息。"""
-        reasoning = cls._reasoning_content(message)
+        reasoning = reasoning_text(message)
         if reasoning is None:
             return None
-        additional_kwargs: dict[str, object] = {"reasoning_content": reasoning}
+        additional_kwargs: dict[str, object] = {}
         created_at = message.additional_kwargs.get(MESSAGE_CREATED_AT_KEY)
         if created_at is not None:
             additional_kwargs[MESSAGE_CREATED_AT_KEY] = created_at
         return AIMessage(
             id=message.id,
-            content="",
+            content=[{"type": "reasoning", "reasoning": reasoning}],
             additional_kwargs=additional_kwargs,
             response_metadata=message.response_metadata,
         )
@@ -556,7 +601,7 @@ class AgentSessionService:
                     if message.id is None:
                         continue
                     message_id = str(message.id)
-                    if reasoning := self._reasoning_content(message):
+                    if reasoning := reasoning_text(message):
                         reset = message_id not in thinking_message_ids
                         thinking_message_ids.add(message_id)
                         activity_writer(
@@ -647,7 +692,6 @@ class AgentSessionService:
 
         found = False
         has_later_delegation = False
-        has_structured_response = False
         delegation_status: SubagentRunStatus | None = None
         result: list[BaseMessage] = []
         for message in messages:
@@ -673,7 +717,6 @@ class AgentSessionService:
             if message.additional_kwargs.get(_INTERNAL_RETRY_KEY) is True:
                 continue
             if self._is_structured_response_message(message):
-                has_structured_response = True
                 delegation_status = (
                     self._structured_response_status(message) or delegation_status
                 )
@@ -690,17 +733,16 @@ class AgentSessionService:
         with self._runtime_state_lock:
             is_active = session_key.checkpoint_ns in self._active_sessions
         structured_response = state_values.get("structured_response")
+        try:
+            latest_result = self._parse_specialist_result(structured_response)
+        except (TypeError, ValueError, ValidationError):
+            latest_result = None
         if not has_later_delegation and is_active:
             status: SubagentRunStatus = "running"
         elif delegation_status is not None:
             status = delegation_status
-        elif has_structured_response:
-            status = "completed"
-        elif not has_later_delegation and isinstance(
-            structured_response,
-            SpecialistResult,
-        ):
-            status = structured_response.status
+        elif not has_later_delegation and latest_result is not None:
+            status = latest_result.status
         else:
             status = "cancelled"
         return DelegationActivityHistory(messages=result, status=status)
@@ -735,10 +777,11 @@ class AgentSessionService:
         state_values = await self._read_session_state(session_key)
         structured_response = state_values.get("structured_response")
         messages = state_values.get("messages")
-        if not isinstance(structured_response, SpecialistResult) or not isinstance(
-            messages,
-            list,
-        ):
+        if not isinstance(messages, list):
+            return None
+        try:
+            result = self._parse_specialist_result(structured_response)
+        except (TypeError, ValueError, ValidationError):
             return None
 
         found = False
@@ -758,9 +801,8 @@ class AgentSessionService:
                 found = message_context.delegation_id == delegation_id
         if not found:
             return None
-        await self._validate_repair_targets(structured_response, session_key)
-        await self._verify_result_artifacts(structured_response, session_key)
-        return self._to_delegation_result(request, structured_response)
+        result = await self._prepare_specialist_result(result, session_key)
+        return self._to_delegation_result(request, result)
 
     @staticmethod
     def _to_delegation_result(

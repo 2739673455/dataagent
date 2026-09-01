@@ -5,8 +5,11 @@ from typing import Annotated, Literal
 from langchain.tools import tool
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
+from pydantic import field_validator
 
 from app.assistant.agents.contracts import NonEmptyText, StrictProtocolModel
+from app.sandbox.exceptions import SandboxPathError
+from app.sandbox.paths import normalize_sandbox_path
 
 IMAGE_VIEW_TOOL_NAME = "view_image"
 _IMAGE_SUFFIXES = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
@@ -17,6 +20,12 @@ class ImageViewRequest(StrictProtocolModel):
 
     type: Literal["image_view_request"] = "image_view_request"
     f_path: NonEmptyText
+
+    @field_validator("f_path")
+    @classmethod
+    def validate_sandbox_path(cls, value: str) -> str:
+        """按文件工具规则规范化相对路径或绝对路径。"""
+        return normalize_sandbox_path(value)
 
 
 def is_supported_image_path(path: str) -> bool:
@@ -42,17 +51,25 @@ def _create_view_image_tool() -> BaseTool:
     def view_image(
         f_path: Annotated[
             NonEmptyText,
-            "当前会话工作区内的图片路径",
+            "图片路径；相对路径从当前 Session 工作目录解析，绝对路径直接使用。",
         ],
     ) -> dict[str, object]:
-        """请求加载当前会话工作区内的图片。"""
-        if not is_supported_image_path(f_path):
+        """请求加载沙箱内的图片。"""
+        try:
+            normalized_path = normalize_sandbox_path(f_path)
+        except SandboxPathError:
+            return {
+                "status": "error",
+                "code": "invalid_path",
+                "path": f_path,
+            }
+        if not is_supported_image_path(normalized_path):
             return {
                 "status": "error",
                 "code": "unsupported_image_type",
-                "path": f_path,
+                "path": normalized_path,
             }
-        return ImageViewRequest(f_path=f_path).model_dump(mode="json")
+        return ImageViewRequest(f_path=normalized_path).model_dump(mode="json")
 
     return view_image
 

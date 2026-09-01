@@ -49,7 +49,8 @@ Explorer 提交 purpose 和 SQL
 → 流式写临时 CSV
   → 转义表格公式注入值
   → 统计 columns、nullable、time_range 和 sample
-→ 原子保存为当前 Explorer Session 下的 query_<uuid>.csv
+→ 将 purpose 规范化为可读文件名并追加短唯一后缀
+→ 原子保存到当前 Explorer Session
 → 返回 path、columns、row_count、time_range 和 sample
 ```
 
@@ -230,7 +231,7 @@ Doris
 → 受限只读 SQL
 
 Sandbox
-→ query_<uuid>.csv
+→ <规范化 purpose>_<短唯一后缀>.csv
 
 Celery
 → dataagent.query.sync_index

@@ -16,7 +16,7 @@ from langchain.agents.middleware.types import (
 )
 from langchain_core.messages import AnyMessage, BaseMessage, HumanMessage, ToolMessage
 from loguru import logger
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, field_validator
 
 from app.assistant.agents.contracts import NonEmptyText, StrictProtocolModel
 from app.assistant.agents.tools.view_image import (
@@ -25,6 +25,7 @@ from app.assistant.agents.tools.view_image import (
     is_supported_image_path,
     supports_view_image_tool,
 )
+from app.sandbox.paths import normalize_attachment_path, resolve_sandbox_path
 
 USER_MESSAGE_ATTACHMENTS_KEY = "dataagent_user_message_attachments"
 
@@ -37,6 +38,12 @@ class UserMessageAttachment(StrictProtocolModel):
 
     f_path: NonEmptyText
 
+    @field_validator("f_path")
+    @classmethod
+    def validate_relative_path(cls, value: str) -> str:
+        """只持久化规范的 Conversation 内相对路径。"""
+        return normalize_attachment_path(value)
+
 
 class UserMessageAttachments(StrictProtocolModel):
     """一条用户消息持久化的附件引用。"""
@@ -44,9 +51,9 @@ class UserMessageAttachments(StrictProtocolModel):
     attachments: list[UserMessageAttachment] = Field(default_factory=list)
 
 
-def _model_workspace_path(path: str) -> str:
-    """把持久化的相对附件路径投影为所有 Agent 都能读取的会话绝对路径。"""
-    return path if path.startswith("/") else f"/{path}"
+def _model_workspace_path(path: str, conversation_dir: str) -> str:
+    """把持久化的相对附件路径投影为容器绝对路径。"""
+    return resolve_sandbox_path(path, conversation_dir)
 
 
 def _read_attachments(message: HumanMessage) -> UserMessageAttachments | None:
@@ -77,13 +84,14 @@ def _read_image_view_request(message: ToolMessage) -> ImageViewRequest | None:
 def _attachment_context_block(
     attachments: UserMessageAttachments,
     *,
+    conversation_dir: str,
     image_inputs_enabled: bool,
 ) -> dict[str, str]:
     """生成向模型说明附件路径和图片能力的上下文块。"""
     files: list[dict[str, str]] = []
     images: list[dict[str, str]] = []
     for attachment in attachments.attachments:
-        item = {"path": _model_workspace_path(attachment.f_path)}
+        item = {"path": _model_workspace_path(attachment.f_path, conversation_dir)}
         if is_supported_image_path(attachment.f_path):
             images.append(item)
         else:
@@ -171,6 +179,7 @@ def _latest_user_index(messages: list[AnyMessage]) -> int:
 def _download_paths(
     messages: list[AnyMessage],
     *,
+    conversation_dir: str,
     load_user_images: bool,
     load_tool_images: bool,
 ) -> list[str]:
@@ -184,7 +193,7 @@ def _download_paths(
             metadata = _read_attachments(message)
             if metadata is not None:
                 paths.extend(
-                    item.f_path
+                    _model_workspace_path(item.f_path, conversation_dir)
                     for item in metadata.attachments
                     if is_supported_image_path(item.f_path)
                 )
@@ -204,6 +213,7 @@ def _project_messages(
     messages: list[AnyMessage],
     responses: Sequence[FileDownloadResponse],
     *,
+    conversation_dir: str,
     project_user_images: bool,
     project_tool_images: bool,
 ) -> list[AnyMessage]:
@@ -221,6 +231,7 @@ def _project_messages(
             content.append(
                 _attachment_context_block(
                     metadata,
+                    conversation_dir=conversation_dir,
                     image_inputs_enabled=project_user_images,
                 )
             )
@@ -228,15 +239,19 @@ def _project_messages(
                 for attachment in metadata.attachments:
                     if not is_supported_image_path(attachment.f_path):
                         continue
-                    response = downloaded.get(attachment.f_path)
+                    model_path = _model_workspace_path(
+                        attachment.f_path,
+                        conversation_dir,
+                    )
+                    response = downloaded.get(model_path)
                     if response is not None and response.content is not None:
                         content.append(
-                            _image_content_block(attachment.f_path, response.content)
+                            _image_content_block(model_path, response.content)
                         )
                     else:
                         content.append(
                             _attachment_error_block(
-                                attachment.f_path,
+                                model_path,
                                 str(response.error)
                                 if response is not None
                                 else "unavailable",
@@ -292,9 +307,10 @@ def _image_projection_options(request: ModelRequest[Any]) -> tuple[bool, bool]:
 class UserMessageAttachmentMiddleware(AgentMiddleware[Any, Any, Any]):
     """临时展开用户附件，并消费 view_image 产生的图片加载请求。"""
 
-    def __init__(self, backend: BackendProtocol) -> None:
+    def __init__(self, backend: BackendProtocol, conversation_dir: str) -> None:
         """绑定用于读取当前 Agent 工作区文件的后端。"""
         self._backend = backend
+        self._conversation_dir = conversation_dir
 
     def wrap_model_call(
         self,
@@ -305,6 +321,7 @@ class UserMessageAttachmentMiddleware(AgentMiddleware[Any, Any, Any]):
         user_images, tool_images = _image_projection_options(request)
         paths = _download_paths(
             request.messages,
+            conversation_dir=self._conversation_dir,
             load_user_images=user_images,
             load_tool_images=tool_images,
         )
@@ -312,6 +329,7 @@ class UserMessageAttachmentMiddleware(AgentMiddleware[Any, Any, Any]):
         messages = _project_messages(
             request.messages,
             responses,
+            conversation_dir=self._conversation_dir,
             project_user_images=user_images,
             project_tool_images=tool_images,
         )
@@ -326,6 +344,7 @@ class UserMessageAttachmentMiddleware(AgentMiddleware[Any, Any, Any]):
         user_images, tool_images = _image_projection_options(request)
         paths = _download_paths(
             request.messages,
+            conversation_dir=self._conversation_dir,
             load_user_images=user_images,
             load_tool_images=tool_images,
         )
@@ -333,6 +352,7 @@ class UserMessageAttachmentMiddleware(AgentMiddleware[Any, Any, Any]):
         messages = _project_messages(
             request.messages,
             responses,
+            conversation_dir=self._conversation_dir,
             project_user_images=user_images,
             project_tool_images=tool_images,
         )

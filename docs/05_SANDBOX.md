@@ -58,20 +58,24 @@ Sandbox
 
 ```text
 Agent 调用文件工具
-→ 将虚拟路径解析到当前会话
-→ 读取允许访问同一会话文件
+→ 相对路径以当前 Session workspace_dir 为基准，绝对路径直接使用
+→ 与 execute 使用同一套容器路径命名空间
+→ 读取当前 Session、同一 Conversation 的共享文件或只读 `/skills/...`
 → 写入、编辑和删除限制在当前 Session
 → 执行 read、write、edit、delete、ls、glob 或 grep
-→ 将容器路径转换回 Agent 可见路径
+→ 返回完整容器路径
 
 Agent 调用 execute
 → 在当前 Session workspace_dir 中运行命令
+→ 相对路径以当前 Session workspace_dir 为基准，绝对路径直接使用
 → 受控包装进程以 Session UID 和对话 GID 启动独立进程组
-→ stdout 和 stderr 合并写入 large_tool_results/shell_jobs/{job_id}.log
+→ stdout 和 stderr 合并写入当前 Session 的 large_tool_results/shell_jobs/{job_id}.log
 → 前台固定等待 60 秒，未结束时返回 running 并继续后台执行
 → 日志超过 max_file_bytes 后继续排空输出并标记 output_truncated
 → get_shell_job 查看或等待，cancel_shell_job 先 TERM 后 KILL 整个进程组
 ```
+
+文件工具、`view_image`、`execute` 和结构化产物使用同一套路径规则。Planner 的相对路径从 Conversation 工作目录 `/data/{conversation_id}` 解析，专业 Agent 的相对路径从当前 Session 的 `/data/{conversation_id}/sessions/{analysis_id}/{agent_type}/{session_id}` 解析，绝对路径直接使用。结构化产物在 SessionService 边界统一解析为绝对路径后再校验并传给其他 Agent；Shell Job 的 `output_path` 使用完整绝对路径。专业 Agent 可以读取同一 Conversation 的其他 Session 文件，只能通过文件工具修改自己的 Session；容器文件权限对 Shell 命令实施相同边界。
 
 Specialist Shell Job 没有固定总执行时限。`internal_command_timeout_seconds` 只限制 `du`、限长文件读取、内部编辑脚本和产物检查等同步辅助命令。每个后台任务从启动到终态持续持有 Sandbox operation，因此空闲回收不会停止正在运行任务的容器。
 

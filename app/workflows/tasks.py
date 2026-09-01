@@ -4,8 +4,8 @@ from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 
+from app.assistant.agents.filesystem import packaged_skill_readonly_mounts
 from app.assistant.agents.manager import AgentManager
-from app.assistant.agents.skills import packaged_agent_skill_mounts
 from app.assistant.providers import build_conversation_lifecycle_service
 from app.assistant.services.conversation_tombstone import (
     ConversationTombstoneService,
@@ -54,7 +54,7 @@ async def _process_user_deletion(user_id: int) -> None:
     persistence = LangGraphPostgresManager(cfg.langgraph_postgresql)
     sandbox = create_sandbox_manager(
         cfg.sandbox,
-        packaged_agent_skill_mounts(),
+        packaged_skill_readonly_mounts(),
     )
     agents = AgentManager(
         persistence,

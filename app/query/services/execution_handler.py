@@ -105,7 +105,12 @@ class QueryExecutionHandler:
             if not validation.valid or validation.normalized_sql is None:
                 raise QueryRejectedError(validation)
             service = await self._runtime.create_executor(principal)
-            details = await service.execute(session_key, sql, validation)
+            details = await service.execute(
+                session_key,
+                sql,
+                validation,
+                purpose=purpose,
+            )
         except QueryRejectedError as exc:
             await self._record_failure_safely(
                 context,

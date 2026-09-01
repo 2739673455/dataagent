@@ -69,9 +69,9 @@ class AppConfigInvariantTest(unittest.TestCase):
 
     def test_responses_api_rejects_unknown_langchain_provider(self) -> None:
         values = cfg.model_dump(mode="python")
-        values["lm_config"]["models"][cfg.lm_config.active]["model_provider"] = (
-            "anthropic"
-        )
+        values["lm_config"]["models"]["deepseek-deepseek-v4-flash"][
+            "model_provider"
+        ] = "anthropic"
 
         with self.assertRaisesRegex(ValidationError, "deepseek 或 openai"):
             Cfg.model_validate(values)

@@ -6,8 +6,8 @@ from uuid import UUID
 
 from loguru import logger
 
+from app.assistant.agents.filesystem import packaged_skill_readonly_mounts
 from app.assistant.agents.manager import AgentManager
-from app.assistant.agents.skills import packaged_agent_skill_mounts
 from app.assistant.model_factory import create_configured_model
 from app.assistant.providers import build_conversation_lifecycle_service
 from app.assistant.repositories.conversation import ConversationPGRepo
@@ -178,7 +178,7 @@ async def _run_with_lifecycle_service[T](
     )
     sandbox = create_sandbox_manager(
         cfg.sandbox,
-        packaged_agent_skill_mounts(),
+        packaged_skill_readonly_mounts(),
     )
     agents = AgentManager(
         persistence,

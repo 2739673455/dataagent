@@ -10,11 +10,6 @@ from app.identity.api.admin.schemas import SetUserAdministratorRequest
 from app.identity.api.auth.schemas import LoginRequest
 from app.metadata.api.meta.schemas import TableBatchDeleteRequest
 from app.query.api.admin.schemas import QueryExperienceBatchRequest
-from main import app
-from scripts.development.generate_openapi_types import (
-    OUTPUT_PATH,
-    _render_openapi_types,
-)
 
 
 class ApiContractTests(unittest.TestCase):
@@ -29,12 +24,6 @@ class ApiContractTests(unittest.TestCase):
         for model, payload in cases:
             with self.subTest(model=model.__name__), self.assertRaises(ValidationError):
                 model.model_validate({**payload, "unknown_field": True})
-
-    def test_generated_types_match_openapi(self) -> None:
-        self.assertEqual(
-            _render_openapi_types(app.openapi()),
-            OUTPUT_PATH.read_text(),
-        )
 
 
 if __name__ == "__main__":

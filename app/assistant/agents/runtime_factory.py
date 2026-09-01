@@ -6,7 +6,6 @@ import asyncio
 from dataclasses import dataclass
 from uuid import UUID
 
-from deepagents.backends.protocol import BackendProtocol
 from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
@@ -42,6 +41,7 @@ from app.assistant.services.conversation_tombstone import (
     ConversationTombstoneService,
 )
 from app.query.providers import build_query_execution_handler
+from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.manager import DockerSandboxManager
 from app.shared.clients.langgraph_postgres_manager import (
     LangGraphPostgresManager,
@@ -180,7 +180,7 @@ class ConversationAgentRuntimeFactory:
         self,
         model: BaseChatModel,
         session_service: AgentSessionService,
-        backend: BackendProtocol,
+        backend: DockerSandboxBackend,
         checkpointer: BaseCheckpointSaver,
     ) -> CompiledStateGraph:
         """构建绑定 Session 生命周期工具的 Planner。"""

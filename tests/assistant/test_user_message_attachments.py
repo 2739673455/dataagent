@@ -32,6 +32,8 @@ from app.assistant.agents.tools.view_image import (
     ImageViewRequest,
 )
 
+_CONVERSATION_DIR = "/data/conversation"
+
 
 def _user_message(
     content: str,
@@ -120,7 +122,10 @@ async def _project(
         captured.append(projected)
         return ModelResponse(result=[])
 
-    middleware = UserMessageAttachmentMiddleware(cast(BackendProtocol, backend))
+    middleware = UserMessageAttachmentMiddleware(
+        cast(BackendProtocol, backend),
+        _CONVERSATION_DIR,
+    )
     await middleware.awrap_model_call(request, handler)
     return captured[0].messages
 
@@ -139,8 +144,8 @@ class UserMessageAttachmentProjectionTest(unittest.IsolatedAsyncioTestCase):
         )
         backend = _FakeBackend(
             {
-                "uploads/old.png": b"old-image",
-                "uploads/current.png": b"current-image",
+                f"{_CONVERSATION_DIR}/uploads/old.png": b"old-image",
+                f"{_CONVERSATION_DIR}/uploads/current.png": b"current-image",
             }
         )
         projected = await _project(
@@ -151,7 +156,12 @@ class UserMessageAttachmentProjectionTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             backend.downloaded,
-            [["uploads/old.png", "uploads/current.png"]],
+            [
+                [
+                    f"{_CONVERSATION_DIR}/uploads/old.png",
+                    f"{_CONVERSATION_DIR}/uploads/current.png",
+                ]
+            ],
         )
         projected_historical = cast(HumanMessage, projected[0])
         projected_current = cast(HumanMessage, projected[2])
@@ -168,11 +178,11 @@ class UserMessageAttachmentProjectionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(_blocks(projected_current, "image")), 1)
         historical_context = _blocks(projected_historical, "text")[-1]["text"]
         self.assertIn(
-            '"path":"/uploads/report.csv","tool":"read_file"',
+            f'"path":"{_CONVERSATION_DIR}/uploads/report.csv","tool":"read_file"',
             historical_context,
         )
         self.assertIn(
-            '"path":"/uploads/old.png"',
+            f'"path":"{_CONVERSATION_DIR}/uploads/old.png"',
             historical_context,
         )
         self.assertNotIn('"tool":"view_image"', historical_context)
@@ -192,8 +202,8 @@ class UserMessageAttachmentProjectionTest(unittest.IsolatedAsyncioTestCase):
         )
         backend = _FakeBackend(
             {
-                "uploads/old.png": b"old-image",
-                "uploads/current.png": b"current-image",
+                f"{_CONVERSATION_DIR}/uploads/old.png": b"old-image",
+                f"{_CONVERSATION_DIR}/uploads/current.png": b"current-image",
             }
         )
         projected = await _project(
@@ -204,7 +214,12 @@ class UserMessageAttachmentProjectionTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             backend.downloaded,
-            [["uploads/old.png", "uploads/current.png"]],
+            [
+                [
+                    f"{_CONVERSATION_DIR}/uploads/old.png",
+                    f"{_CONVERSATION_DIR}/uploads/current.png",
+                ]
+            ],
         )
         projected_historical = cast(HumanMessage, projected[0])
         projected_current = cast(HumanMessage, projected[2])
@@ -225,14 +240,17 @@ class UserMessageAttachmentProjectionTest(unittest.IsolatedAsyncioTestCase):
             attachments=["uploads/old.png"],
         )
         current = _user_message("continue", message_id="user-2")
-        backend = _FakeBackend({"uploads/old.png": b"old-image"})
+        backend = _FakeBackend({f"{_CONVERSATION_DIR}/uploads/old.png": b"old-image"})
         projected = await _project(
             _responses_image_model(),
             [historical, AIMessage(content="response"), current],
             backend,
         )
 
-        self.assertEqual(backend.downloaded, [["uploads/old.png"]])
+        self.assertEqual(
+            backend.downloaded,
+            [[f"{_CONVERSATION_DIR}/uploads/old.png"]],
+        )
         projected_historical = cast(HumanMessage, projected[0])
         self.assertEqual(len(_blocks(projected_historical, "image")), 1)
 
@@ -241,7 +259,9 @@ class UserMessageAttachmentProjectionTest(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         user = _user_message("inspect the old image", message_id="user-2")
         stored_result = json.dumps(
-            ImageViewRequest(f_path="uploads/old.png").model_dump(mode="json"),
+            ImageViewRequest(f_path=f"{_CONVERSATION_DIR}/uploads/old.png").model_dump(
+                mode="json"
+            ),
             ensure_ascii=False,
         )
         tool_message = ToolMessage(
@@ -249,7 +269,7 @@ class UserMessageAttachmentProjectionTest(unittest.IsolatedAsyncioTestCase):
             tool_call_id="call-1",
             name=IMAGE_VIEW_TOOL_NAME,
         )
-        backend = _FakeBackend({"uploads/old.png": b"old-image"})
+        backend = _FakeBackend({f"{_CONVERSATION_DIR}/uploads/old.png": b"old-image"})
         projected = await _project(
             _responses_image_model(),
             [user, tool_message],
@@ -263,7 +283,9 @@ class UserMessageAttachmentProjectionTest(unittest.IsolatedAsyncioTestCase):
     async def test_missing_view_image_uses_plain_tool_error(self) -> None:
         user = _user_message("inspect", message_id="user-1")
         stored_result = json.dumps(
-            ImageViewRequest(f_path="uploads/missing.png").model_dump(mode="json")
+            ImageViewRequest(
+                f_path=f"{_CONVERSATION_DIR}/uploads/missing.png"
+            ).model_dump(mode="json")
         )
         tool_message = ToolMessage(
             content=stored_result,
@@ -282,7 +304,7 @@ class UserMessageAttachmentProjectionTest(unittest.IsolatedAsyncioTestCase):
             error,
             {
                 "status": "error",
-                "path": "uploads/missing.png",
+                "path": f"{_CONVERSATION_DIR}/uploads/missing.png",
                 "error": "file_not_found",
             },
         )
@@ -299,6 +321,10 @@ class UserMessageAttachmentProjectionTest(unittest.IsolatedAsyncioTestCase):
         projected = cast(HumanMessage, projected_messages[0])
         error_text = _blocks(projected, "text")[-1]["text"]
         self.assertIn("<attachment_error>", error_text)
+        self.assertIn(
+            f'"path":"{_CONVERSATION_DIR}/uploads/missing.png"',
+            error_text,
+        )
         self.assertIn('"error":"file_not_found"', error_text)
         self.assertEqual(user.content, "inspect")
 
@@ -308,7 +334,7 @@ class UserMessageAttachmentProjectionTest(unittest.IsolatedAsyncioTestCase):
             message_id="user-1",
             attachments=["uploads/chart.png"],
         )
-        backend = _FakeBackend({"uploads/chart.png": b"image"})
+        backend = _FakeBackend({f"{_CONVERSATION_DIR}/uploads/chart.png": b"image"})
         projected_messages = await _project(
             GenericFakeChatModel(messages=iter([])), [user], backend
         )
@@ -317,7 +343,10 @@ class UserMessageAttachmentProjectionTest(unittest.IsolatedAsyncioTestCase):
         projected = cast(HumanMessage, projected_messages[0])
         self.assertEqual(_blocks(projected, "image"), [])
         context = _blocks(projected, "text")[-1]["text"]
-        self.assertIn('"path":"/uploads/chart.png"', context)
+        self.assertIn(
+            f'"path":"{_CONVERSATION_DIR}/uploads/chart.png"',
+            context,
+        )
         self.assertIn("当前模型的图片识别功能未开启", context)
         self.assertIn("图片不会被自动加载", context)
         self.assertIn("请勿根据文件名推测图片内容", context)
@@ -343,6 +372,25 @@ class ViewImageToolTest(unittest.TestCase):
 
     def test_returns_explicit_image_view_request_without_image_bytes(self) -> None:
         tool = create_view_image_tools(_responses_image_model())[0]
+        result = tool.invoke({"f_path": f"{_CONVERSATION_DIR}/uploads/chart.png"})
+
+        self.assertEqual(
+            result,
+            {
+                "type": "image_view_request",
+                "f_path": f"{_CONVERSATION_DIR}/uploads/chart.png",
+            },
+        )
+
+    def test_rejects_non_image_path(self) -> None:
+        tool = create_view_image_tools(_responses_image_model())[0]
+        result = tool.invoke({"f_path": f"{_CONVERSATION_DIR}/uploads/report.csv"})
+
+        self.assertEqual(result["code"], "unsupported_image_type")
+
+    def test_accepts_relative_image_path(self) -> None:
+        tool = create_view_image_tools(_responses_image_model())[0]
+
         result = tool.invoke({"f_path": "uploads/chart.png"})
 
         self.assertEqual(
@@ -350,8 +398,12 @@ class ViewImageToolTest(unittest.TestCase):
             {"type": "image_view_request", "f_path": "uploads/chart.png"},
         )
 
-    def test_rejects_non_image_path(self) -> None:
+    def test_accepts_absolute_image_path(self) -> None:
         tool = create_view_image_tools(_responses_image_model())[0]
-        result = tool.invoke({"f_path": "uploads/report.csv"})
 
-        self.assertEqual(result["code"], "unsupported_image_type")
+        result = tool.invoke({"f_path": "/skills/chart.png"})
+
+        self.assertEqual(
+            result,
+            {"type": "image_view_request", "f_path": "/skills/chart.png"},
+        )

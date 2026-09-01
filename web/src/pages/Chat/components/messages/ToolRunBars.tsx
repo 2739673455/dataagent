@@ -2,7 +2,7 @@ import { ChevronRight } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { cn } from "@/lib/utils";
-import type { Attachment, MessageResponse, SubagentRun } from "@/types";
+import type { MessageResponse, SubagentRun } from "@/types";
 import { AttachmentChip } from "./AttachmentChip";
 import {
   buildDisplayItems,
@@ -82,11 +82,9 @@ export function ToolArgsView({ args }: { args?: Record<string, unknown> }) {
 export function GenericToolRunBar({
   item,
   nestedContent,
-  onOpenPreviewAttachment,
 }: {
   item: ToolRunDisplayItem;
   nestedContent?: ReactNode;
-  onOpenPreviewAttachment?: (attachment: Attachment) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const argsPreview = getToolArgsPreview(item.args);
@@ -169,7 +167,6 @@ export function GenericToolRunBar({
               attachment={attachment}
               conversationId={item.conversationId}
               isUser={false}
-              onOpenPreviewAttachment={onOpenPreviewAttachment}
             />
           ))}
         </div>
@@ -187,7 +184,6 @@ export function ExecutionProcessCollapse({
   isStreaming,
   items,
   loadSubagentMessages,
-  onOpenPreviewAttachment,
   subagentRuns = {},
 }: {
   executionStatus?: Exclude<ExecutionStatus, "idle">;
@@ -198,7 +194,6 @@ export function ExecutionProcessCollapse({
     conversationId: string,
     run: SubagentRunIdentity
   ) => Promise<MessageResponse[]>;
-  onOpenPreviewAttachment?: (attachment: Attachment) => void;
   subagentRuns?: SubagentRunMap;
 }) {
   const [userToggledOpen, setUserToggledOpen] = useState<boolean | null>(null);
@@ -253,13 +248,7 @@ export function ExecutionProcessCollapse({
         <div className="mt-1 space-y-2 border-l border-[#e5e5df] ml-1.5 pl-3.5">
           {items.map((item) => {
             if (item.type === "message") {
-              return (
-                <MessageBubble
-                  key={item.key}
-                  message={item.message}
-                  onOpenPreviewAttachment={onOpenPreviewAttachment}
-                />
-              );
+              return <MessageBubble key={item.key} message={item.message} />;
             }
 
             if (item.name === "delegation") {
@@ -268,7 +257,6 @@ export function ExecutionProcessCollapse({
                   key={item.key}
                   item={item}
                   loadSubagentMessages={loadSubagentMessages}
-                  onOpenPreviewAttachment={onOpenPreviewAttachment}
                   subagentRun={subagentRuns[item.toolCallId]}
                 />
               );
@@ -280,7 +268,6 @@ export function ExecutionProcessCollapse({
                 <GenericToolRunBar
                   key={item.key}
                   item={item}
-                  onOpenPreviewAttachment={onOpenPreviewAttachment}
                   nestedContent={
                     nestedDelegations.length > 0 ? (
                       <div className="space-y-1">
@@ -290,7 +277,6 @@ export function ExecutionProcessCollapse({
                             key={delegation.key}
                             item={delegation}
                             loadSubagentMessages={loadSubagentMessages}
-                            onOpenPreviewAttachment={onOpenPreviewAttachment}
                             subagentRun={subagentRuns[delegation.toolCallId]}
                           />
                         ))}
@@ -301,13 +287,7 @@ export function ExecutionProcessCollapse({
               );
             }
 
-            return (
-              <GenericToolRunBar
-                key={item.key}
-                item={item}
-                onOpenPreviewAttachment={onOpenPreviewAttachment}
-              />
-            );
+            return <GenericToolRunBar key={item.key} item={item} />;
           })}
         </div>
       )}
@@ -321,7 +301,6 @@ export function ExecutionProcessCollapse({
 export function DelegationToolRunBar({
   item,
   loadSubagentMessages,
-  onOpenPreviewAttachment,
   subagentRun,
 }: {
   item: ToolRunDisplayItem;
@@ -329,12 +308,11 @@ export function DelegationToolRunBar({
     conversationId: string,
     run: SubagentRunIdentity
   ) => Promise<MessageResponse[]>;
-  onOpenPreviewAttachment?: (attachment: Attachment) => void;
   subagentRun?: SubagentRun;
 }) {
   const identity = getSubagentRunIdentity(item);
   if (!identity) {
-    return <GenericToolRunBar item={item} onOpenPreviewAttachment={onOpenPreviewAttachment} />;
+    return <GenericToolRunBar item={item} />;
   }
 
   return (
@@ -342,7 +320,6 @@ export function DelegationToolRunBar({
       identity={identity}
       item={item}
       loadSubagentMessages={loadSubagentMessages}
-      onOpenPreviewAttachment={onOpenPreviewAttachment}
       subagentRun={subagentRun}
     />
   );
@@ -352,7 +329,6 @@ function DelegationRunBarInternal({
   identity,
   item,
   loadSubagentMessages,
-  onOpenPreviewAttachment,
   subagentRun,
 }: {
   identity: SubagentRunIdentity;
@@ -361,7 +337,6 @@ function DelegationRunBarInternal({
     conversationId: string,
     run: SubagentRunIdentity
   ) => Promise<MessageResponse[]>;
-  onOpenPreviewAttachment?: (attachment: Attachment) => void;
   subagentRun?: SubagentRun;
 }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -516,13 +491,11 @@ function DelegationRunBarInternal({
               isStreaming={isRunning}
               items={subagentIntermediateItems}
               loadSubagentMessages={loadSubagentMessages}
-              onOpenPreviewAttachment={onOpenPreviewAttachment}
               subagentRuns={subagentRun ? { [item.toolCallId]: subagentRun } : {}}
             />
           ) : isRunning ? (
-            <div className="flex items-center gap-1.5 py-1 text-xs text-[#71717a]">
+            <div className="py-1">
               <DotMatrixLoader label="Specialist 正在执行" className="text-[#18181b]" />
-              <span>Specialist 正在执行分析与计算...</span>
             </div>
           ) : subagentRun?.historyLoading ? (
             <div className="flex items-center gap-1.5 py-1 text-xs text-[#71717a]">
@@ -592,7 +565,6 @@ function DelegationRunBarInternal({
               attachment={attachment}
               conversationId={item.conversationId}
               isUser={false}
-              onOpenPreviewAttachment={onOpenPreviewAttachment}
             />
           ))}
         </div>

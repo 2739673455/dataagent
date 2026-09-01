@@ -12,7 +12,6 @@ import threading
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import PurePosixPath
 from typing import BinaryIO, Literal, TypeVar
 from uuid import UUID
 
@@ -25,10 +24,8 @@ from deepagents.backends.protocol import (
     ExecuteOffloadResult,
     ExecuteResponse,
     FileDownloadResponse,
-    FileInfo,
     FileUploadResponse,
     GlobResult,
-    GrepMatch,
     GrepResult,
     LsResult,
     ReadResult,
@@ -45,6 +42,8 @@ from app.sandbox.paths import (
     SANDBOX_DATA_ROOT,
     SANDBOX_STAGING_ROOT,
     SandboxSessionScope,
+    conversation_workspace_path,
+    resolve_sandbox_path,
 )
 from app.sandbox.scripts import (
     _CANCEL_SHELL_JOB_SCRIPT,
@@ -96,7 +95,7 @@ class SandboxShellJobCancellation:
 
 
 class DockerSandboxBackend(BaseSandbox):
-    """将一个用户容器中的会话目录暴露为虚拟文件系统。"""
+    """在一个用户容器中执行受 Conversation 和 Session 隔离的操作。"""
 
     enable_capture_offload = True
 
@@ -120,13 +119,10 @@ class DockerSandboxBackend(BaseSandbox):
         """初始化会话级 Docker 沙箱后端。"""
         self._user_id = user_id
         self._conversation_id = conversation_id
-        self._conversation_dir = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
+        self._conversation_dir = conversation_workspace_path(conversation_id)
         self._session_scope = session_scope
         self._workspace_dir = (
-            posixpath.join(
-                self._conversation_dir,
-                session_scope.relative_workspace,
-            )
+            session_scope.workspace_path(conversation_id)
             if session_scope is not None
             else self._conversation_dir
         )
@@ -178,63 +174,30 @@ class DockerSandboxBackend(BaseSandbox):
         """获取会话在容器中的实际工作目录。"""
         return self._workspace_dir
 
+    @property
+    def conversation_dir(self) -> str:
+        """获取当前 Conversation 在容器中的实际根目录。"""
+        return self._conversation_dir
+
     def _resolve_path(self, path: str) -> str:
-        """将虚拟路径映射到当前会话目录。"""
-        if "\x00" in path or path.startswith("~"):
-            raise SandboxPathError(path)
-
-        if path == self._workspace_dir or path.startswith(f"{self._workspace_dir}/"):
-            return path
-        if path == self._conversation_dir or path.startswith(
-            f"{self._conversation_dir}/"
-        ):
-            return path
-
-        parts = PurePosixPath(path).parts
-        if any(part == ".." for part in parts):
-            raise SandboxPathError(path)
-        if PurePosixPath(path).is_absolute():
-            return posixpath.join(self._conversation_dir, *parts[1:])
-        return posixpath.join(self._workspace_dir, *parts)
+        """按 execute 的工作目录语义解析文件工具路径。"""
+        return resolve_sandbox_path(path, self._workspace_dir)
 
     def _resolve_mutation_path(self, path: str) -> str:
-        """只允许修改当前 Agent Session 工作区。"""
+        """只允许文件工具修改自身工作目录。"""
         resolved_path = self._resolve_path(path)
-        if self._session_scope is not None and not (
+        if not (
             resolved_path == self._workspace_dir
             or resolved_path.startswith(f"{self._workspace_dir}/")
         ):
             raise SandboxPathError(path)
         return resolved_path
 
-    def _to_virtual_path(self, path: str) -> str:
-        """将容器路径还原为 Agent 可见的虚拟路径。"""
-        if path == self._conversation_dir:
-            return "/"
-        prefix = f"{self._conversation_dir}/"
-        if path.startswith(prefix):
-            return f"/{path[len(prefix) :]}"
-        if not path.startswith("/"):
-            normalized_path = PurePosixPath(path).as_posix()
-            return f"/{normalized_path}" if normalized_path != "." else "/"
-        return path
-
-    def _hide_workspace(self, message: str | None) -> str | None:
-        """从错误信息中隐藏容器工作目录。"""
+    def _sanitize_output(self, message: str | None) -> str | None:
+        """隐藏仅供 Backend 内部使用的暂存目录。"""
         if message is None:
             return None
-        return message.replace(self._conversation_dir, "").replace(
-            self._staging_dir,
-            "<sandbox-staging>",
-        )
-
-    def _map_file_info(self, info: FileInfo) -> FileInfo:
-        """转换文件信息中的路径。"""
-        return FileInfo(**{**info, "path": self._to_virtual_path(info["path"])})
-
-    def _map_grep_match(self, match: GrepMatch) -> GrepMatch:
-        """转换搜索结果中的路径。"""
-        return GrepMatch(**{**match, "path": self._to_virtual_path(match["path"])})
+        return message.replace(self._staging_dir, "<sandbox-staging>")
 
     @contextmanager
     def _resolved_operation(
@@ -347,7 +310,6 @@ class DockerSandboxBackend(BaseSandbox):
                 "TMPDIR": f"{self._workspace_dir}/.tmp",
                 "TMP": f"{self._workspace_dir}/.tmp",
                 "TEMP": f"{self._workspace_dir}/.tmp",
-                "DATAAGENT_CONVERSATION_ROOT": self._conversation_dir,
             },
             workdir=self._workspace_dir,
         )
@@ -363,7 +325,7 @@ class DockerSandboxBackend(BaseSandbox):
         inspected = api_client.exec_inspect(exec_id)
         output = output_buffer.decode("utf-8", errors="replace")
         return ExecuteResponse(
-            output=self._hide_workspace(output) or "",
+            output=self._sanitize_output(output) or "",
             exit_code=inspected.get("ExitCode"),
         )
 
@@ -389,7 +351,7 @@ class DockerSandboxBackend(BaseSandbox):
             else str(raw_output)
         )
         if result.exit_code != 0:
-            detail = self._hide_workspace(output.strip())
+            detail = self._sanitize_output(output.strip())
             raise OSError(detail or "查询工作区大小失败")
         try:
             return int(output.split(maxsplit=1)[0])
@@ -448,13 +410,12 @@ class DockerSandboxBackend(BaseSandbox):
         ):
             raise ValueError("Shell Job 标识无效")
 
-    def _shell_job_paths(self, job_id: str) -> tuple[str, str, str]:
-        """生成受控日志路径、虚拟路径和内部控制路径。"""
+    def _shell_job_paths(self, job_id: str) -> tuple[str, str]:
+        """生成受控日志路径和内部控制路径。"""
         self._validate_shell_job_id(job_id)
         relative_log_path = f"large_tool_results/shell_jobs/{job_id}.log"
         return (
             posixpath.join(self._workspace_dir, relative_log_path),
-            relative_log_path,
             posixpath.join(self._staging_dir, "shell_jobs", f"{job_id}.json"),
         )
 
@@ -497,7 +458,7 @@ class DockerSandboxBackend(BaseSandbox):
         started_callback: Callable[[], None] | None,
     ) -> SandboxShellJobExecution:
         """启动包装进程并持续监控到业务命令终态。"""
-        log_path, _, control_path = self._shell_job_paths(job_id)
+        log_path, control_path = self._shell_job_paths(job_id)
         if self._workspace_size_unlocked() > self._max_workspace_bytes:
             return SandboxShellJobExecution(
                 status="failed",
@@ -549,7 +510,6 @@ class DockerSandboxBackend(BaseSandbox):
                     "TMPDIR": f"{self._workspace_dir}/.tmp",
                     "TMP": f"{self._workspace_dir}/.tmp",
                     "TEMP": f"{self._workspace_dir}/.tmp",
-                    "DATAAGENT_CONVERSATION_ROOT": self._conversation_dir,
                 },
                 workdir=self._workspace_dir,
             )
@@ -568,7 +528,7 @@ class DockerSandboxBackend(BaseSandbox):
                         started_callback()
             inspected = api_client.exec_inspect(exec_id)
         except Exception as exc:  # noqa: BLE001
-            detail = self._hide_workspace(str(exc).strip())
+            detail = self._sanitize_output(str(exc).strip())
             return SandboxShellJobExecution(
                 status="interrupted" if started else "failed",
                 error=detail or type(exc).__name__,
@@ -580,7 +540,7 @@ class DockerSandboxBackend(BaseSandbox):
         control = self._read_shell_job_control_unlocked(control_path)
         if control is None:
             diagnostic_text = diagnostics.decode("utf-8", errors="replace").strip()
-            detail = self._hide_workspace(diagnostic_text)
+            detail = self._sanitize_output(diagnostic_text)
             return SandboxShellJobExecution(
                 status="interrupted" if started else "failed",
                 error=detail or "Shell Job 未产生可读取的最终状态",
@@ -595,7 +555,7 @@ class DockerSandboxBackend(BaseSandbox):
                 status="failed",
                 exit_code=normalized_exit_code,
                 output_truncated=output_truncated,
-                error=self._hide_workspace(
+                error=self._sanitize_output(
                     raw_error if isinstance(raw_error, str) else None
                 ),
             )
@@ -658,7 +618,7 @@ class DockerSandboxBackend(BaseSandbox):
                     started_callback,
                 )
         except Exception as exc:  # noqa: BLE001
-            detail = self._hide_workspace(str(exc).strip())
+            detail = self._sanitize_output(str(exc).strip())
             return SandboxShellJobExecution(
                 status="failed",
                 error=detail or type(exc).__name__,
@@ -681,7 +641,7 @@ class DockerSandboxBackend(BaseSandbox):
 
     def cancel_shell_job(self, job_id: str) -> SandboxShellJobCancellation:
         """先 TERM 后 KILL 终止 Shell Job 的整个进程组。"""
-        _, _, control_path = self._shell_job_paths(job_id)
+        _, control_path = self._shell_job_paths(job_id)
         with self._operation():
             result = self._container.exec_run(
                 [
@@ -705,7 +665,9 @@ class DockerSandboxBackend(BaseSandbox):
             else str(raw_output)
         )
         if result.exit_code != 0:
-            raise OSError(self._hide_workspace(output.strip()) or "取消 Shell Job 失败")
+            raise OSError(
+                self._sanitize_output(output.strip()) or "取消 Shell Job 失败"
+            )
         try:
             response = json.loads(output)
         except json.JSONDecodeError as exc:
@@ -722,7 +684,7 @@ class DockerSandboxBackend(BaseSandbox):
 
     def cleanup_shell_job_control(self, job_id: str) -> None:
         """清除单次 Agent Run 的内部 Shell Job 控制文件。"""
-        _, _, control_path = self._shell_job_paths(job_id)
+        _, control_path = self._shell_job_paths(job_id)
         with self._operation():
             self._container.exec_run(
                 ["rm", "-f", "--", control_path],
@@ -758,18 +720,14 @@ class DockerSandboxBackend(BaseSandbox):
         )
 
     def ls(self, path: str) -> LsResult:
-        """列出当前会话目录内容。"""
+        """列出相对当前工作目录或指定绝对路径的内容。"""
         with self._resolved_operation(path) as resolved_path:
             if resolved_path is None:
                 return LsResult(error=INVALID_PATH)
             result = super().ls(resolved_path)
             return LsResult(
-                error=self._hide_workspace(result.error),
-                entries=(
-                    [self._map_file_info(item) for item in result.entries]
-                    if result.entries is not None
-                    else None
-                ),
+                error=self._sanitize_output(result.error),
+                entries=result.entries,
             )
 
     async def als(self, path: str) -> LsResult:
@@ -782,7 +740,7 @@ class DockerSandboxBackend(BaseSandbox):
             if resolved_path is None:
                 return ReadResult(error=INVALID_PATH)
             result = super().read(resolved_path, offset, limit)
-            result.error = self._hide_workspace(result.error)
+            result.error = self._sanitize_output(result.error)
             return result
 
     async def aread(
@@ -799,11 +757,19 @@ class DockerSandboxBackend(BaseSandbox):
         with self._resolved_operation(file_path, mutation=True) as resolved_path:
             if resolved_path is None:
                 return WriteResult(error=INVALID_PATH)
-            result = super().write(resolved_path, content)
-            return WriteResult(
-                error=self._hide_workspace(result.error),
-                path=self._to_virtual_path(result.path) if result.path else None,
+            preflight_error = self._write_preflight(resolved_path)
+            if preflight_error is not None:
+                preflight_error.error = self._sanitize_output(preflight_error.error)
+                return preflight_error
+            response = self.upload_fileobj(
+                resolved_path,
+                io.BytesIO(content.encode()),
             )
+            if response.error:
+                return WriteResult(
+                    error=f"写入文件 '{file_path}' 失败: {response.error}"
+                )
+            return WriteResult(path=resolved_path)
 
     async def awrite(self, file_path: str, content: str) -> WriteResult:
         """异步写入当前会话文件。"""
@@ -828,8 +794,8 @@ class DockerSandboxBackend(BaseSandbox):
                     replace_all,
                 )
             return EditResult(
-                error=self._hide_workspace(result.error),
-                path=self._to_virtual_path(result.path) if result.path else None,
+                error=self._sanitize_output(result.error),
+                path=result.path,
                 occurrences=result.occurrences,
             )
 
@@ -842,8 +808,8 @@ class DockerSandboxBackend(BaseSandbox):
     ) -> EditResult:
         """通过会话目录内的临时文件安全编辑文本。"""
         token = secrets.token_hex(10)
-        old_path = self._resolve_mutation_path(f".deepagents_tmp/{token}.old")
-        new_path = self._resolve_mutation_path(f".deepagents_tmp/{token}.new")
+        old_path = f"{self._workspace_dir}/.deepagents_tmp/{token}.old"
+        new_path = f"{self._workspace_dir}/.deepagents_tmp/{token}.new"
         responses = self.upload_files(
             [
                 (old_path, old_string.encode()),
@@ -909,8 +875,8 @@ class DockerSandboxBackend(BaseSandbox):
             with self._mutation_lock:
                 result = super().delete(resolved_path)
             return DeleteResult(
-                error=self._hide_workspace(result.error),
-                path=self._to_virtual_path(result.path) if result.path else None,
+                error=self._sanitize_output(result.error),
+                path=result.path,
             )
 
     async def adelete(self, file_path: str) -> DeleteResult:
@@ -926,7 +892,10 @@ class DockerSandboxBackend(BaseSandbox):
         max_count: int | None = None,
     ) -> GrepResult:
         """搜索当前会话文件内容。"""
-        with self._resolved_operation(path or "/") as resolved_path:
+        default_path = "."
+        with self._resolved_operation(
+            path if path is not None else default_path
+        ) as resolved_path:
             if resolved_path is None:
                 return GrepResult(error=INVALID_PATH)
             result = super().grep(
@@ -936,12 +905,8 @@ class DockerSandboxBackend(BaseSandbox):
                 max_count=max_count,
             )
             return GrepResult(
-                error=self._hide_workspace(result.error),
-                matches=(
-                    [self._map_grep_match(item) for item in result.matches]
-                    if result.matches is not None
-                    else None
-                ),
+                error=self._sanitize_output(result.error),
+                matches=result.matches,
                 truncated=result.truncated,
             )
 
@@ -965,17 +930,16 @@ class DockerSandboxBackend(BaseSandbox):
 
     def glob(self, pattern: str, path: str | None = None) -> GlobResult:
         """匹配当前会话中的文件。"""
-        with self._resolved_operation(path or "/") as resolved_path:
+        default_path = "."
+        with self._resolved_operation(
+            path if path is not None else default_path
+        ) as resolved_path:
             if resolved_path is None:
                 return GlobResult(error=INVALID_PATH)
             result = super().glob(pattern, resolved_path)
             return GlobResult(
-                error=self._hide_workspace(result.error),
-                matches=(
-                    [self._map_file_info(item) for item in result.matches]
-                    if result.matches is not None
-                    else None
-                ),
+                error=self._sanitize_output(result.error),
+                matches=result.matches,
                 truncated=result.truncated,
             )
 

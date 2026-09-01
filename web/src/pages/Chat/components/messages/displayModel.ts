@@ -1,7 +1,6 @@
 import { getAttachmentName } from "@/lib/utils";
 import type {
   AgentType,
-  Attachment,
   ImageContent,
   MessagePart,
   MessageResponse,
@@ -112,9 +111,8 @@ export function getAttachmentFileType(
   filePath: string,
   mediaType?: string | null
 ): AttachmentFileType {
-  if (mediaType === "application/vnd.dataagent.table+json" || /\.table\.json$/i.test(filePath)) {
-    return "table";
-  }
+  if (mediaType === "text/html") return "html";
+  if (mediaType?.startsWith("image/")) return "image";
   const cleanPath = filePath.split("?")[0].split("#")[0];
   const ext = cleanPath.split(".").pop()?.toLowerCase() || "";
   if (["csv", "tsv", "xlsx", "xls", "parquet", "feather"].includes(ext)) {
@@ -150,13 +148,6 @@ export function isImageAttachment(name: string): boolean {
 
 export function isHtmlAttachment(name: string): boolean {
   return /\.(html?)$/i.test(name);
-}
-
-export function isInteractiveTableAttachment(attachment: Attachment): boolean {
-  return (
-    attachment.media_type === "application/vnd.dataagent.table+json" ||
-    /\.table\.json$/i.test(attachment.f_path)
-  );
 }
 
 export function buildDisplayItems(
