@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from app.identity import errors as auth_error
-from app.identity.repositories.auth import AuthPGRepo
+from app.identity.repositories.identity import IdentityPGRepo
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 
 
@@ -17,7 +17,7 @@ class PostgresUserDeletionStateStore:
     async def request(self, user_id: int, requested_at: datetime) -> bool:
         """禁用用户、吊销令牌并创建注销任务。"""
         async with self._postgres.session() as session:
-            repo = AuthPGRepo(session)
+            repo = IdentityPGRepo(session)
             async with session.begin():
                 await repo.lock_security_mutation()
                 user = await repo.get_user_by_id_for_update(user_id)
@@ -36,13 +36,13 @@ class PostgresUserDeletionStateStore:
     async def is_completed(self, user_id: int) -> bool:
         """判断用户注销任务是否完成。"""
         async with self._postgres.session() as session:
-            task = await AuthPGRepo(session).get_user_deletion_task(user_id)
+            task = await IdentityPGRepo(session).get_user_deletion_task(user_id)
             return task is not None and task.status == "completed"
 
     async def complete(self, user_id: int, completed_at: datetime) -> None:
         """删除认证用户并完成注销任务。"""
         async with self._postgres.session() as session:
-            repo = AuthPGRepo(session)
+            repo = IdentityPGRepo(session)
             async with session.begin():
                 await repo.lock_security_mutation()
                 # complete 与失败回写可能来自不同 Worker；行锁保证终态不会被迟到的失败覆盖。
@@ -63,7 +63,7 @@ class PostgresUserDeletionStateStore:
     ) -> None:
         """记录注销失败并安排重试。"""
         async with self._postgres.session() as session:
-            repo = AuthPGRepo(session)
+            repo = IdentityPGRepo(session)
             async with session.begin():
                 task = await repo.get_user_deletion_task_for_update(user_id)
                 if task is not None and task.status != "completed":
@@ -83,7 +83,7 @@ class PostgresUserDeletionStateStore:
         """原子领取已到执行时间的注销用户并设置任务租约。"""
         async with self._postgres.session() as session:
             async with session.begin():
-                tasks = await AuthPGRepo(session).claim_due_user_deletions(
+                tasks = await IdentityPGRepo(session).claim_due_user_deletions(
                     now,
                     lease_until=lease_until,
                     limit=limit,
@@ -93,7 +93,7 @@ class PostgresUserDeletionStateStore:
     async def extend_claim(self, user_id: int, *, lease_until: datetime) -> bool:
         """在任务开始或重试开始时延长领取租约。"""
         async with self._postgres.session() as session, session.begin():
-            return await AuthPGRepo(session).extend_user_deletion_claim(
+            return await IdentityPGRepo(session).extend_user_deletion_claim(
                 user_id,
                 lease_until=lease_until,
             )

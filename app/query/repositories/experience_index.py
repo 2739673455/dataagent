@@ -5,8 +5,8 @@ from uuid import UUID
 
 from elasticsearch import AsyncElasticsearch, ConflictError, NotFoundError
 
-from app.metadata.models.search import SearchHit
 from app.shared.config.app_config import cfg
+from app.shared.contracts.search import SearchHit
 
 
 class QueryExperienceESRepo:

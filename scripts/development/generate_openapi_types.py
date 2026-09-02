@@ -71,6 +71,7 @@ def _render_schema(schema: Any, indent: int = 0) -> str:
         return " | ".join(_literal(value) for value in enum)
 
     for keyword, separator in (("anyOf", " | "), ("oneOf", " | "), ("allOf", " & ")):
+        # OpenAPI 组合类型直接映射为 TypeScript 联合或交叉类型，并稳定去重。
         variants = schema.get(keyword)
         if isinstance(variants, list):
             rendered = _unique([_render_schema(item, indent) for item in variants])
@@ -240,6 +241,7 @@ def _render_openapi_types(document: Mapping[str, Any]) -> str:
             lines.append(f"    {_quote(str(name))}: {rendered};")
     lines.extend(["  };", "}", "", "export interface operations {"])
 
+    # Schema、operation 和 path 全部排序，保证生成文件不受字典构造顺序影响。
     operations: list[tuple[str, Mapping[str, Any], Sequence[Any]]] = []
     if isinstance(paths, Mapping):
         for path in sorted(paths):

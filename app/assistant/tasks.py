@@ -1,7 +1,6 @@
 """会话标题与生命周期后台任务。"""
 
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from loguru import logger
@@ -13,8 +12,8 @@ from app.assistant.providers import build_conversation_lifecycle_service
 from app.assistant.repositories.conversation import ConversationPGRepo
 from app.assistant.services.conversation_lifecycle import ConversationLifecycleService
 from app.assistant.services.conversation_title import ConversationTitleService
-from app.assistant.services.conversation_tombstone import (
-    ConversationTombstoneService,
+from app.assistant.services.conversation_tombstone_store import (
+    ConversationTombstoneStore,
 )
 from app.sandbox.providers import create_sandbox_manager
 from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
@@ -67,49 +66,12 @@ def enqueue_conversation_deletion(
     )
 
 
-async def _repair_conversation_titles() -> int:
-    """扫描超时的标题生成记录并重新提交任务。"""
-    assistant_postgres = PostgresClientManager(
-        cfg.langgraph_postgresql,
-        AssistantBase,
-    )
-    assistant_postgres.init()
-    try:
-        async with assistant_postgres.session() as session:
-            repository = ConversationPGRepo(session)
-            cutoff = datetime.now(UTC) - timedelta(
-                seconds=cfg.task_queue.lifecycle_schedule_seconds
-            )
-            conversations = await repository.list_pending_title_generations(
-                cutoff,
-                limit=cfg.lifecycle.cleanup_batch_size,
-            )
-        for conversation in conversations:
-            if conversation.title_source is not None:
-                enqueue_conversation_title(
-                    conversation.user_id,
-                    conversation.id,
-                    conversation.title,
-                    conversation.title_source,
-                )
-        logger.info(f"会话标题补偿扫描完成: pending_count={len(conversations)}")
-        return len(conversations)
-    finally:
-        await assistant_postgres.close()
-
-
-@celery_app.task(name="dataagent.assistant.repair_conversation_titles")
-def repair_conversation_titles_task() -> dict[str, int]:
-    """重新提交丢失或超时的会话标题任务。"""
-    return {"dispatched_count": run_async(_repair_conversation_titles())}
-
-
 async def _generate_conversation_title(
     user_id: int,
     conversation_id: UUID,
     expected_title: str,
     user_text: str,
-) -> None:
+) -> bool:
     """创建短生命周期资源并生成单个会话标题。"""
     assistant_postgres = PostgresClientManager(
         cfg.langgraph_postgresql,
@@ -118,7 +80,7 @@ async def _generate_conversation_title(
     assistant_postgres.init()
     try:
         async with assistant_postgres.session() as session:
-            await ConversationTitleService(
+            updated = await ConversationTitleService(
                 create_configured_model(cfg.lm_config.active)
             ).generate_and_update(
                 ConversationPGRepo(session),
@@ -128,6 +90,7 @@ async def _generate_conversation_title(
                 user_text,
             )
             await session.commit()
+            return updated
     finally:
         await assistant_postgres.close()
 
@@ -149,7 +112,7 @@ def generate_conversation_title_task(
     logger.info(
         f"开始生成会话标题: user_id={user_id}, conversation_id={conversation_id}"
     )
-    run_async(
+    updated = run_async(
         _generate_conversation_title(
             user_id,
             UUID(conversation_id),
@@ -160,7 +123,7 @@ def generate_conversation_title_task(
     logger.info(
         f"会话标题生成完成: user_id={user_id}, conversation_id={conversation_id}"
     )
-    return {"conversation_id": conversation_id, "updated": True}
+    return {"conversation_id": conversation_id, "updated": updated}
 
 
 async def _run_with_lifecycle_service[T](
@@ -183,7 +146,7 @@ async def _run_with_lifecycle_service[T](
     agents = AgentManager(
         persistence,
         sandbox,
-        ConversationTombstoneService(assistant_postgres),
+        ConversationTombstoneStore(assistant_postgres),
     )
     service = build_conversation_lifecycle_service(
         persistence,

@@ -349,8 +349,6 @@ class SemanticRecallContextService:
         conversation_id: UUID,
         query: str,
         *,
-        role_name: str | None,
-        authorization_epoch: UUID | None,
         now: datetime | None = None,
     ) -> tuple[list[QueryExperienceRecallResult], datetime] | None:
         """读取当前查询在一天有效期内的查询经验结果。"""
@@ -362,13 +360,9 @@ class SemanticRecallContextService:
         if record is None:
             return None
         if (
-            role_name != self._query_experience_role_name
-            or authorization_epoch != self._query_experience_authorization_epoch
-        ):
-            return None
-        if (
-            record.query_experience_role_name != role_name
-            or record.query_experience_authorization_epoch != authorization_epoch
+            record.query_experience_role_name != self._query_experience_role_name
+            or record.query_experience_authorization_epoch
+            != self._query_experience_authorization_epoch
         ):
             return None
         retrieved_at = record.query_experiences_retrieved_at
@@ -539,6 +533,7 @@ class SemanticRecallContextService:
         """按 query 删除资源并返回各 query 的最终上下文。"""
         loaded: list[tuple[SemanticRecallResourceDeletion, SemanticRecallRecord]] = []
         missing: list[str] = []
+        # 固定顺序取得全部 query 锁，避免两个批量删除以相反顺序等待而死锁。
         for query in sorted(deletion.query for deletion in deletions):
             await self._repo.acquire_query_lock(user_id, conversation_id, query)
         for deletion in deletions:

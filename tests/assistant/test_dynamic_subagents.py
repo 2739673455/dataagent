@@ -9,6 +9,7 @@ import unittest
 from collections import Counter
 from collections.abc import AsyncGenerator, Awaitable, Callable, Collection
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -29,6 +30,7 @@ from langgraph.constants import CONFIG_KEY_CHECKPOINTER
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import Field, ValidationError
 
+from app.assistant.agents.checkpoint_reader import CheckpointState
 from app.assistant.agents.contracts import (
     DELEGATION_CONTEXT_KEY,
     EVAL_DELEGATIONS_KEY,
@@ -48,19 +50,19 @@ from app.assistant.agents.contracts import (
     SubagentThinkingDeltaActivity,
     build_planner_config,
 )
+from app.assistant.agents.filesystem import agent_skills_mount_path
 from app.assistant.agents.manager import AgentManager
 from app.assistant.agents.middleware.eval_delegations import EvalDelegationMiddleware
 from app.assistant.agents.session_service import AgentSessionService
 from app.assistant.agents.session_store import AgentSessionStore
 from app.assistant.agents.shell_jobs import ShellJobRuntime
-from app.assistant.agents.skills import agent_skills_mount_path
+from app.assistant.agents.specialist_agent import _specialist_response_format
 from app.assistant.agents.specialists import (
     SpecialistAgentFactory,
     SpecialistAgentRun,
     SpecialistDefinition,
     build_specialist_definitions,
 )
-from app.assistant.agents.structured_output import specialist_response_format
 from app.shared.contracts.analysis import AGENT_TYPES, AgentSessionKey, AgentType
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -192,9 +194,34 @@ class _FakeAgent:
                 if isinstance(output, dict)
                 else output
             )
+            existing = self.checkpoints.get(namespace, {}).get("channel_values")
+            channel_values = dict(existing) if isinstance(existing, dict) else {}
+            channel_values.update(
+                {
+                    "structured_response": structured_response,
+                    "messages": [
+                        *(
+                            input.get("messages", [])
+                            if isinstance(input.get("messages"), list)
+                            else []
+                        ),
+                        *self.stream_messages,
+                    ],
+                }
+            )
+            records = input.get("delegation_records")
+            if isinstance(records, dict):
+                channel_values["delegation_records"] = {
+                    **(
+                        channel_values.get("delegation_records", {})
+                        if isinstance(channel_values.get("delegation_records"), dict)
+                        else {}
+                    ),
+                    **records,
+                }
             self.checkpoints[namespace] = {
                 "ts": "2026-08-29T12:00:00+00:00",
-                "channel_values": {"structured_response": structured_response},
+                "channel_values": channel_values,
             }
             return output
         finally:
@@ -237,6 +264,29 @@ class _FakeAgent:
             values = channel_values if isinstance(channel_values, dict) else {}
         return SimpleNamespace(values=values)
 
+    async def aupdate_state(
+        self,
+        config: RunnableConfig,
+        values: dict[str, object],
+    ) -> None:
+        """模拟 CompiledStateGraph 将显式委派状态写回 Checkpoint。"""
+        namespace = str(config.get("configurable", {}).get("checkpoint_ns"))
+        checkpoint = self.checkpoints.setdefault(
+            namespace,
+            {"ts": "2026-08-29T12:00:00+00:00", "channel_values": {}},
+        )
+        channels = checkpoint.setdefault("channel_values", {})
+        assert isinstance(channels, dict)
+        for channel, value in values.items():
+            if channel == "delegation_records" and isinstance(value, dict):
+                current = channels.get(channel)
+                channels[channel] = {
+                    **(current if isinstance(current, dict) else {}),
+                    **value,
+                }
+            else:
+                channels[channel] = value
+
 
 class _DistributedLockRegistry:
     def __init__(self) -> None:
@@ -260,14 +310,6 @@ class _DistributedLockRegistry:
         return self.acquire(session_key.checkpoint_ns)
 
 
-@asynccontextmanager
-async def _unlocked_session(
-    session_key: AgentSessionKey,
-) -> AsyncGenerator[None, None]:
-    del session_key
-    yield
-
-
 async def _conversation_not_deleted() -> bool:
     return False
 
@@ -282,11 +324,14 @@ class _FakeSessionStore:
         lock_factory: Callable[
             [AgentSessionKey],
             AbstractAsyncContextManager[None],
-        ] = _unlocked_session,
+        ]
+        | None = None,
     ) -> None:
         self._fake = fake
         self._artifact_verifier = artifact_verifier
         self._lock_factory = lock_factory
+        self._session_locks: dict[str, asyncio.Lock] = {}
+        self._reserved_session_namespaces: set[str] = set()
         self.workspace_delete_failures = 0
 
     async def list_namespaces(self, analysis_id: str | None) -> list[str]:
@@ -297,11 +342,25 @@ class _FakeSessionStore:
             if namespace.startswith(prefix)
         )
 
-    async def load_checkpoint(
+    async def read_state(
         self,
         session_key: AgentSessionKey,
-    ) -> dict[str, object] | None:
-        return self._fake.checkpoints.get(session_key.checkpoint_ns)
+    ) -> CheckpointState:
+        namespace = session_key.checkpoint_ns
+        values = self._fake.state_values.get(namespace)
+        checkpoint = self._fake.checkpoints.get(namespace)
+        if values is None and checkpoint is not None:
+            raw_values = checkpoint.get("channel_values")
+            values = raw_values if isinstance(raw_values, dict) else {}
+        return CheckpointState(
+            values=values or {},
+            next_nodes=(),
+            updated_at=(
+                datetime.fromisoformat(str(checkpoint.get("ts")))
+                if checkpoint is not None
+                else None
+            ),
+        )
 
     async def delete_checkpoint(self, session_key: AgentSessionKey) -> bool:
         namespace = session_key.checkpoint_ns
@@ -331,20 +390,57 @@ class _FakeSessionStore:
         self,
         session_key: AgentSessionKey,
     ) -> AbstractAsyncContextManager[None]:
-        return self._lock_factory(session_key)
+        if self._lock_factory is not None:
+            return self._lock_factory(session_key)
+        return self._local_session_lock(session_key)
+
+    @asynccontextmanager
+    async def _local_session_lock(
+        self,
+        session_key: AgentSessionKey,
+    ) -> AsyncGenerator[None, None]:
+        lock = self._session_locks.setdefault(session_key.checkpoint_ns, asyncio.Lock())
+        if lock.locked():
+            raise RuntimeError("Session 正在执行或删除")
+        await lock.acquire()
+        try:
+            yield
+        finally:
+            lock.release()
+
+    @asynccontextmanager
+    async def reserve_capacity(
+        self,
+        session_key: AgentSessionKey,
+        max_sessions: int,
+    ) -> AsyncGenerator[None, None]:
+        namespace = session_key.checkpoint_ns
+        if namespace in self._fake.persisted_sessions:
+            yield
+            return
+        occupied = self._fake.persisted_sessions | self._reserved_session_namespaces
+        if namespace not in occupied and len(occupied) >= max_sessions:
+            raise RuntimeError("当前 Conversation 的 Session 数量已达上限")
+        self._reserved_session_namespaces.add(namespace)
+        try:
+            yield
+        finally:
+            self._reserved_session_namespaces.discard(namespace)
 
 
 def _service(
     fake: _FakeAgent,
     *,
     max_parallel_sessions: int = 8,
+    max_sessions: int = 128,
     artifacts_exist: bool = True,
     artifact_verifier: Callable[[Collection[str]], Awaitable[set[str]]] | None = None,
     session_store: AgentSessionStore | None = None,
     session_lock_factory: Callable[
         [AgentSessionKey],
         AbstractAsyncContextManager[None],
-    ] = _unlocked_session,
+    ]
+    | None = None,
 ) -> AgentSessionService:
     async def find_missing_files(paths: Collection[str]) -> set[str]:
         return set() if artifacts_exist else set(paths)
@@ -371,6 +467,7 @@ def _service(
         user_id=12,
         conversation_id=_CONVERSATION_ID,
         max_parallel_sessions=max_parallel_sessions,
+        max_sessions=max_sessions,
     )
 
 
@@ -488,7 +585,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
         agent = create_agent(
             model=model,
             tools=[execute_sql],
-            response_format=specialist_response_format(model),
+            response_format=_specialist_response_format(model),
         )
 
         state = agent.invoke({"messages": [HumanMessage(content="analyze")]})
@@ -507,6 +604,17 @@ class DynamicSubagentContractTest(unittest.TestCase):
         self.assertTrue(
             model.seen_bind_kwargs["response_format"]["json_schema"]["strict"]
         )
+
+    def test_specialist_profile_without_native_selects_tool_output(self) -> None:
+        from langchain.agents.structured_output import ToolStrategy
+
+        model = RecordingChatModel(profile={"structured_output": False})
+
+        response_format = _specialist_response_format(model)
+
+        self.assertIsInstance(response_format, ToolStrategy)
+        self.assertEqual(response_format.schema, SpecialistResult)
+        self.assertTrue(response_format.handle_errors)
 
     def test_specialist_definitions_assign_data_tools_only_to_explorer(self) -> None:
         definitions = build_specialist_definitions(
@@ -557,7 +665,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
             build_specialist_definitions([recall_context], [])
 
     def test_specialist_definitions_reject_reserved_mcp_tool_names(self) -> None:
-        @tool("execute")
+        @tool("shell")
         def conflicting_mcp_tool(command: str) -> str:
             """模拟与 Shell 工具冲突的 MCP 工具。"""
             return command
@@ -571,7 +679,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
                 [conflicting_mcp_tool],
             )
 
-    def test_specialist_agents_expose_native_execution_and_file_tools(self) -> None:
+    def test_specialist_agents_expose_shell_and_file_tools(self) -> None:
         from deepagents import (
             GeneralPurposeSubagentProfile,
             HarnessProfile,
@@ -601,14 +709,10 @@ class DynamicSubagentContractTest(unittest.TestCase):
             [],
         )
         required_tools = {
-            "ls",
             "read_file",
             "write_file",
             "edit_file",
-            "delete",
-            "glob",
-            "grep",
-            "execute",
+            "shell",
             "list_shell_jobs",
             "get_shell_job",
             "cancel_shell_job",
@@ -644,7 +748,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
                     self.assertTrue(required_tools.issubset(model.seen_tools))
                     self.assertNotIn("task", model.seen_tools)
 
-    def test_planner_does_not_expose_mutating_file_or_shell_tools(self) -> None:
+    def test_planner_exposes_tools_with_only_delegation_in_ptc(self) -> None:
         from deepagents import (
             GeneralPurposeSubagentProfile,
             HarnessProfile,
@@ -677,11 +781,13 @@ class DynamicSubagentContractTest(unittest.TestCase):
             """模拟 Planner 解释器工具。"""
             return code
 
+        interpreter_kwargs: dict[str, object] = {}
+
         class InterpreterStub(AgentMiddleware):
             """只用于验证 Planner 工具暴露边界。"""
 
             def __init__(self, **kwargs: object) -> None:
-                del kwargs
+                interpreter_kwargs.update(kwargs)
                 self.tools = [eval]
 
         register_harness_profile(
@@ -699,6 +805,8 @@ class DynamicSubagentContractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as workspace:
             backend = LocalShellBackend(root_dir=workspace)
             cast(Any, backend).conversation_dir = workspace
+            planner_shell_jobs = MagicMock(spec=ShellJobRuntime)
+            planner_shell_jobs.list.return_value = []
             with patch(
                 "app.assistant.agents.planner.agent.CodeInterpreterMiddleware",
                 InterpreterStub,
@@ -709,6 +817,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
                     backend=cast(Any, backend),
                     checkpointer=InMemorySaver(),
                     session_service=_service(_FakeAgent()),
+                    shell_jobs=planner_shell_jobs,
                     interpreter_memory_limit_bytes=2 * 1024 * 1024,
                 )
 
@@ -717,16 +826,31 @@ class DynamicSubagentContractTest(unittest.TestCase):
                 {"configurable": {"thread_id": "planner-tools"}},
             )
 
-        self.assertTrue({"ls", "read_file", "glob", "grep"}.issubset(model.seen_tools))
+        self.assertIn("read_file", model.seen_tools)
         self.assertTrue(
-            {"write_file", "edit_file", "delete", "execute"}.isdisjoint(
-                model.seen_tools
-            )
+            {
+                "ls",
+                "glob",
+                "grep",
+                "write_file",
+                "edit_file",
+                "delete",
+                "execute",
+            }.isdisjoint(model.seen_tools)
+        )
+        self.assertTrue(
+            {
+                "shell",
+                "list_shell_jobs",
+                "get_shell_job",
+                "cancel_shell_job",
+            }.issubset(model.seen_tools)
         )
         self.assertIn("delegation", model.seen_tools)
         self.assertIn("list_sessions", model.seen_tools)
         self.assertIn("delete_session", model.seen_tools)
         self.assertIn("view_image", model.seen_tools)
+        self.assertEqual(interpreter_kwargs["ptc"], ["delegation"])
 
 
 class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
@@ -1106,6 +1230,22 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_session_limit_rejects_new_id_but_allows_existing_session(
+        self,
+    ) -> None:
+        fake = _FakeAgent()
+        service = _service(fake, max_sessions=1)
+        config = build_planner_config(12, _CONVERSATION_ID)
+
+        first = await service.execute_delegation(_request("region"), config)
+        resumed = await service.execute_delegation(_request("region"), config)
+        excess = await service.execute_delegation(_request("product"), config)
+
+        self.assertEqual(first.status, "completed")
+        self.assertEqual(resumed.status, "completed")
+        self.assertEqual(excess.status, "failed")
+        self.assertIn("Session 数量已达上限", excess.failure_reasons[0])
+
     async def test_same_session_conflict_fails_across_service_instances(self) -> None:
         fake = _FakeAgent(delay=0.03)
         distributed_locks = _DistributedLockRegistry()
@@ -1461,6 +1601,16 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             "channel_values": {},
         }
         fake.state_values[namespace] = {
+            "delegation_records": {
+                "delegation-first": {
+                    "delegation_id": "delegation-first",
+                    "status": "completed",
+                    "result": {
+                        "status": "completed",
+                        "content": "第一轮完成",
+                    },
+                }
+            },
             "messages": [
                 HumanMessage(
                     content="first",
@@ -1484,7 +1634,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                     },
                 ),
                 second_ai,
-            ]
+            ],
         }
         service = _service(fake)
 
@@ -1506,13 +1656,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(activity.messages, [first_ai, first_tool])
         self.assertEqual(activity.status, "completed")
         self.assertIsNone(missing)
-        self.assertEqual(len(fake.state_configs), 2)
-        self.assertTrue(
-            all(
-                config.get("configurable", {}).get("checkpoint_ns") == namespace
-                for config in fake.state_configs
-            )
-        )
+        self.assertEqual(fake.state_configs, [])
 
     async def test_get_delegation_activity_keeps_unfinished_older_run_cancelled(
         self,
@@ -1571,6 +1715,16 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         fake = _FakeAgent()
         namespace = "subagents/sales-decline/analyst/region"
         fake.state_values[namespace] = {
+            "delegation_records": {
+                "delegation-first": {
+                    "delegation_id": "delegation-first",
+                    "status": "completed",
+                    "result": {
+                        "status": "completed",
+                        "content": "完成",
+                    },
+                }
+            },
             "messages": [
                 HumanMessage(
                     content="review",
@@ -1596,7 +1750,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                         }
                     ],
                 ),
-            ]
+            ],
         }
 
         activity = await _service(fake).get_delegation_activity(
@@ -1622,6 +1776,16 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         namespace = "subagents/sales-decline/analyst/region"
         context = DelegationMessageContext(delegation_id="delegation-replay")
         fake.state_values[namespace] = {
+            "delegation_records": {
+                "delegation-replay": {
+                    "delegation_id": "delegation-replay",
+                    "status": "completed",
+                    "result": {
+                        "status": "completed",
+                        "content": "已完成的分析结果",
+                    },
+                }
+            },
             "messages": [
                 HumanMessage(
                     content="analyze",
@@ -1709,6 +1873,15 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             ],
             ["running", "cancelled"],
         )
+        channels = fake.checkpoints["subagents/sales-decline/analyst/region"][
+            "channel_values"
+        ]
+        assert isinstance(channels, dict)
+        records = channels["delegation_records"]
+        assert isinstance(records, dict)
+        record = records["delegation-cancel"]
+        assert isinstance(record, dict)
+        self.assertEqual(record["status"], "cancelled")
 
     async def test_agent_manager_rejects_same_planner_across_workers(self) -> None:
         fake = _FakeAgent()
@@ -1719,12 +1892,14 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         first_runtime = ConversationAgentRuntime(
             planner=graph,
             session_service=first_service,
+            shell_jobs=MagicMock(spec=ShellJobRuntime),
             planner_lock=lambda: distributed_locks.acquire("planner"),
             conversation_deleted=_conversation_not_deleted,
         )
         second_runtime = ConversationAgentRuntime(
             planner=graph,
             session_service=second_service,
+            shell_jobs=MagicMock(spec=ShellJobRuntime),
             planner_lock=lambda: distributed_locks.acquire("planner"),
             conversation_deleted=_conversation_not_deleted,
         )
@@ -1769,6 +1944,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         runtime = ConversationAgentRuntime(
             planner=graph,
             session_service=service,
+            shell_jobs=MagicMock(spec=ShellJobRuntime),
             planner_lock=lambda: distributed_locks.acquire("conversation"),
             conversation_deleted=conversation_deleted,
         )

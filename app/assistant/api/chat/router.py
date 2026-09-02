@@ -10,7 +10,6 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from app.assistant import errors as chat_error
-from app.assistant.api.chat import schemas as chat_schema
 from app.assistant.api.chat.dependencies import (
     ConversationPGRepoDep,
 )
@@ -20,12 +19,17 @@ from app.assistant.api.dependencies import (
     ConversationRunServiceDep,
     SandboxManagerDep,
 )
+from app.assistant.contracts import chat as chat_schema
 from app.assistant.services import chat as chat_service
 from app.assistant.services.conversation_run import (
-    ConversationRunAlreadyActiveError as ActiveRunConflict,
+    ActiveConversationRunError,
 )
 from app.assistant.services.conversation_title import (
     initial_conversation_title,
+)
+from app.assistant.services.conversation_turn import (
+    ConversationMissingError,
+    ConversationTurnService,
 )
 from app.assistant.tasks import (
     enqueue_conversation_deletion,
@@ -53,6 +57,19 @@ async def api_create_conversation(
             initial_conversation_title(body.initial_message),
             is_draft=body.is_draft,
         )
+    initial_message = (body.initial_message or "").strip()
+    if initial_message and not body.is_draft:
+        try:
+            enqueue_conversation_title(
+                user_id,
+                conversation.id,
+                conversation.title,
+                initial_message,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                f"提交会话标题任务失败，保留即时标题: conversation_id={conversation.id}"
+            )
 
     logger.info(
         f"创建对话: conversation_id={conversation.id}, is_draft={conversation.is_draft}"
@@ -133,7 +150,6 @@ async def api_update_conversation(
         await conversation_repo.update(
             conversation,
             title=body.title,
-            title_pending=False,
         )
     logger.info(f"更新对话: conversation_id={body.conversation_id}")
 
@@ -283,62 +299,23 @@ async def api_stream_chat(
     conversation_repo: ConversationPGRepoDep,
     current_user: AnalysisUserDep,
     lifecycle: ConversationLifecycleServiceDep,
+    agents: AgentManagerDep,
     runs: ConversationRunServiceDep,
 ) -> StreamingResponse:
     """启动后台对话回合并订阅 Agent 事件。"""
     user_id = current_user.id
-    title_submission: tuple[UUID, str, str] | None = None
-    async with lifecycle.lock(user_id, body.conversation_id):
-        async with conversation_repo.session.begin():
-            conversation = await conversation_repo.get(user_id, body.conversation_id)
-            if conversation is None:
-                raise chat_error.ConversationNotFoundError
-
-            user_text = "\n".join(
-                part.text
-                for part in body.message.parts
-                if isinstance(part, chat_schema.TextContent)
-            ).strip()
-            if (
-                conversation.title_pending
-                and conversation.title_source is None
-                and user_text
-            ):
-                conversation = await conversation_repo.claim_title_generation(
-                    conversation,
-                    title=initial_conversation_title(user_text),
-                    source=user_text,
-                )
-                title_submission = (
-                    conversation.id,
-                    conversation.title,
-                    user_text,
-                )
-            elif conversation.is_draft:
-                await conversation_repo.update(conversation, is_draft=False)
-            else:
-                await conversation_repo.update(conversation)
-
-        if title_submission is not None:
-            conversation_id, expected_title, source = title_submission
-            try:
-                enqueue_conversation_title(
-                    user_id,
-                    conversation_id,
-                    expected_title,
-                    source,
-                )
-            except Exception:  # noqa: BLE001
-                logger.exception(
-                    "提交会话标题任务失败，等待定时补偿: "
-                    f"conversation_id={conversation_id}"
-                )
-
     context.user_id_ctx.set(str(user_id))
     try:
-        events = await runs.start_turn(user_id, body.conversation_id, body.message)
-    except ActiveRunConflict as exc:
-        raise chat_error.ConversationRunAlreadyActiveError from exc
+        events = await ConversationTurnService(
+            repository=conversation_repo,
+            lifecycle=lifecycle,
+            runs=runs,
+            agents=agents,
+        ).start(user_id, body.conversation_id, body.message)
+    except ConversationMissingError as exc:
+        raise chat_error.ConversationNotFoundError from exc
+    except ActiveConversationRunError as exc:
+        raise chat_error.ConversationRunConflictError from exc
     return StreamingResponse(
         _stream_run_events(
             body.conversation_id,
@@ -357,25 +334,26 @@ async def api_resume_chat(
     conversation_id: UUID,
     conversation_repo: ConversationPGRepoDep,
     current_user: AnalysisUserDep,
+    lifecycle: ConversationLifecycleServiceDep,
     agents: AgentManagerDep,
     runs: ConversationRunServiceDep,
 ) -> StreamingResponse:
     """从中断的 Planner Checkpoint 继续当前用户回合。"""
     user_id = current_user.id
-    conversation = await conversation_repo.get(user_id, conversation_id)
-    if conversation is None:
-        raise chat_error.ConversationNotFoundError
-    if not await chat_service.can_resume_agent_turn(
-        agents,
-        user_id,
-        conversation_id,
-    ):
-        raise chat_error.ConversationNotResumableError
     context.user_id_ctx.set(str(user_id))
     try:
-        events = await runs.resume_turn(user_id, conversation_id)
-    except ActiveRunConflict as exc:
-        raise chat_error.ConversationRunAlreadyActiveError from exc
+        events = await ConversationTurnService(
+            repository=conversation_repo,
+            lifecycle=lifecycle,
+            runs=runs,
+            agents=agents,
+        ).resume(user_id, conversation_id)
+    except ConversationMissingError as exc:
+        raise chat_error.ConversationNotFoundError from exc
+    except chat_service.PlannerTurnNotResumableError as exc:
+        raise chat_error.ConversationNotResumableError from exc
+    except ActiveConversationRunError as exc:
+        raise chat_error.ConversationRunConflictError from exc
     return StreamingResponse(
         _stream_run_events(
             conversation_id,

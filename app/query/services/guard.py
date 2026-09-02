@@ -157,6 +157,7 @@ class QueryGuardService:
         if self._references_information_schema(expression):
             return self._check_information_schema_query(expression)
 
+        # 只读语法检查必须先于目录加载，禁止的语句不能触发额外数据库访问。
         issues.extend(self._check_readonly(expression))
         if issues:
             return self._result(None, issues)
@@ -336,6 +337,8 @@ class QueryGuardService:
         from_expression = expression.args.get("from_")
         source = from_expression.this if from_expression is not None else None
         physical_tables = list(expression.find_all(exp.Table))
+        # 当前过滤条件证明只覆盖单表直接 SELECT；更复杂的目录查询无法可靠证明
+        # table_schema 约束作用于所有分支，因此直接拒绝。
         if (
             not isinstance(source, exp.Table)
             or len(physical_tables) != 1
@@ -402,6 +405,7 @@ class QueryGuardService:
             return False
 
         def terms(condition: Expr) -> list[Expr]:
+            """展开括号和 AND，保留不能安全拆分的原子过滤条件。"""
             if isinstance(condition, exp.Paren):
                 return terms(condition.this)
             if isinstance(condition, exp.And):
@@ -755,6 +759,8 @@ class QueryGuardService:
             if from_expression is not None and from_expression.this is not None:
                 left_aliases.add(from_expression.this.alias_or_name.casefold())
             for join in joins:
+                # 每处理一个 JOIN 就把右表加入左侧集合，后续连接必须关联已经形成的
+                # 数据源集合，不能只引用自身或无关别名。
                 right_alias = join.this.alias_or_name.casefold()
                 kind = str(join.args.get("kind") or "").casefold()
                 on = join.args.get("on")
@@ -899,6 +905,7 @@ class QueryGuardService:
             table_key = table.qualified_name.casefold()
             table_columns = columns_by_table.get(table_key, [])
             if table_key in star_tables or not table_columns:
+                # 星号和未解析出显式字段的访问需要表级授权；显式列随后逐列校验。
                 identity = AssetIdentity(
                     data_source=self._data_source,
                     database_name=table.database,

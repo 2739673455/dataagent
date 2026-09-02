@@ -7,8 +7,9 @@ from typing import Any, ClassVar
 from elasticsearch import AsyncElasticsearch
 
 from app.metadata.models.catalog import ColumnKey, ValueInfo, column_resource_key
-from app.metadata.models.search import SearchHit
+from app.metadata.repositories.semantic_index import column_resource_terms_filter
 from app.shared.config.app_config import cfg
+from app.shared.contracts.search import SearchHit
 
 
 def _value_document_id(value_info: ValueInfo) -> str:
@@ -148,7 +149,7 @@ class ValueESRepo:
             query = {
                 "bool": {
                     "must": [query],
-                    "filter": [self._column_filter(allowed_columns)],
+                    "filter": [column_resource_terms_filter(allowed_columns)],
                 }
             }
         result = await self._client.search(
@@ -169,20 +170,6 @@ class ValueESRepo:
             )
             for hit in payload["hits"]["hits"]
         ]
-
-    @staticmethod
-    def _column_filter(allowed_columns: frozenset[ColumnKey]) -> dict[str, Any]:
-        """构造字段值所属表字段白名单。"""
-        if not allowed_columns:
-            raise ValueError("allowed_columns 列表不能为空")
-        return {
-            "terms": {
-                "resource_key": [
-                    column_resource_key(t_name, c_name)
-                    for t_name, c_name in sorted(allowed_columns)
-                ]
-            }
-        }
 
     @staticmethod
     def _resource_query(t_name: str, c_name: str) -> dict[str, Any]:

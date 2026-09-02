@@ -7,8 +7,8 @@ from loguru import logger
 from app.assistant.agents.filesystem import packaged_skill_readonly_mounts
 from app.assistant.agents.manager import AgentManager
 from app.assistant.providers import build_conversation_lifecycle_service
-from app.assistant.services.conversation_tombstone import (
-    ConversationTombstoneService,
+from app.assistant.services.conversation_tombstone_store import (
+    ConversationTombstoneStore,
 )
 from app.identity.services.user_deletion_store import PostgresUserDeletionStateStore
 from app.sandbox.providers import create_sandbox_manager
@@ -59,7 +59,7 @@ async def _process_user_deletion(user_id: int) -> None:
     agents = AgentManager(
         persistence,
         sandbox,
-        ConversationTombstoneService(assistant_postgres),
+        ConversationTombstoneStore(assistant_postgres),
     )
     conversations = build_conversation_lifecycle_service(
         persistence,

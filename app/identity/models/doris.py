@@ -1,7 +1,5 @@
 """Doris 查询身份与权限投影模型。"""
 
-import hashlib
-import json
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -34,21 +32,6 @@ def normalize_doris_role_name(value: str) -> str:
     if DORIS_ROLE_NAME_PATTERN.fullmatch(normalized) is None:
         raise ValueError("Doris 角色名称格式无效")
     return normalized
-
-
-def asset_resource_key(
-    data_source: str,
-    database_name: str | None = None,
-    table_name: str | None = None,
-    column_name: str | None = None,
-) -> str:
-    """生成层级数据资产的稳定资源键。"""
-    canonical = json.dumps(
-        [data_source, database_name, table_name, column_name],
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 class AssetScope(StrEnum):

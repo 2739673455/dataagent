@@ -4,9 +4,6 @@
 export interface components {
   "schemas": {
     "AgentType": "explorer" | "analyst" | "reviewer";
-    "AssetGrantListResponse": {
-      "grants": Array<components["schemas"]["AssetGrantResponse"]>;
-    };
     "AssetGrantResponse": {
       "column_name": (string | null);
       "created_at": string;
@@ -179,16 +176,10 @@ export interface components {
     "DeleteConversationRequest": {
       "conversation_ids": Array<string>;
     };
-    "DorisExistingRoleListResponse": {
-      "roles": Array<components["schemas"]["DorisExistingRoleResponse"]>;
-    };
     "DorisExistingRoleResponse": {
       "doris_users": Array<string>;
       "managed": boolean;
       "name": string;
-    };
-    "DorisRoleListResponse": {
-      "roles": Array<components["schemas"]["DorisRoleResponse"]>;
     };
     "DorisRoleResponse": {
       "description": string;
@@ -200,9 +191,6 @@ export interface components {
       "name": string;
       "query_user": string;
       "workload_group": string;
-    };
-    "DorisWorkloadGroupListResponse": {
-      "workload_groups": Array<string>;
     };
     "DropRowPolicyRequest": {
       "policy_name": string;
@@ -365,9 +353,6 @@ export interface components {
       "updated_count": number;
       "updated_keys": Array<string>;
     };
-    "RowPolicyListResponse": {
-      "policies": Array<components["schemas"]["RowPolicyResponse"]>;
-    };
     "RowPolicyRequest": {
       "policy_name": string;
       "policy_type"?: "RESTRICTIVE" | "PERMISSIVE";
@@ -388,12 +373,6 @@ export interface components {
     };
     "SemanticIndexUpsertResponse": {
       "semantic_index_task_id": (string | null);
-    };
-    "SetUserAdministratorRequest": {
-      "is_admin": boolean;
-    };
-    "SetUserDorisRoleRequest": {
-      "role": string;
     };
     "SubagentMessageListResponse": {
       "messages": Array<components["schemas"]["MessageResponse"]>;
@@ -1494,7 +1473,7 @@ export interface operations {
     "responses": {
       "201": {
         "content": {
-        "application/json": components["schemas"]["AssetGrantListResponse"];
+        "application/json": Array<components["schemas"]["AssetGrantResponse"]>;
       };
       };
       "422": {
@@ -1585,7 +1564,7 @@ export interface operations {
     "responses": {
       "200": {
         "content": {
-        "application/json": components["schemas"]["DorisRoleListResponse"];
+        "application/json": Array<components["schemas"]["DorisRoleResponse"]>;
       };
       };
       "422": {
@@ -1613,7 +1592,7 @@ export interface operations {
     "responses": {
       "200": {
         "content": {
-        "application/json": components["schemas"]["DorisWorkloadGroupListResponse"];
+        "application/json": Array<string>;
       };
       };
       "422": {
@@ -1641,7 +1620,7 @@ export interface operations {
     "responses": {
       "200": {
         "content": {
-        "application/json": components["schemas"]["DorisExistingRoleListResponse"];
+        "application/json": Array<components["schemas"]["DorisExistingRoleResponse"]>;
       };
       };
       "422": {
@@ -1766,7 +1745,7 @@ export interface operations {
     "responses": {
       "200": {
         "content": {
-        "application/json": components["schemas"]["RowPolicyListResponse"];
+        "application/json": Array<components["schemas"]["RowPolicyResponse"]>;
       };
       };
       "422": {
@@ -1796,7 +1775,7 @@ export interface operations {
     "responses": {
       "200": {
         "content": {
-        "application/json": components["schemas"]["AssetGrantListResponse"];
+        "application/json": Array<components["schemas"]["AssetGrantResponse"]>;
       };
       };
       "422": {
@@ -2089,70 +2068,6 @@ export interface operations {
       "200": {
         "content": {
         "application/json": components["schemas"]["DorisRoleResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "set_user_administrator_api_v1_admin_users__user_id__administrator_put": {
-    "parameters": {
-      "path": {
-        "user_id": number;
-      };
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["SetUserAdministratorRequest"];
-    };
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": components["schemas"]["UserResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "set_user_doris_role_api_v1_admin_users__user_id__doris_role_put": {
-    "parameters": {
-      "path": {
-        "user_id": number;
-      };
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["SetUserDorisRoleRequest"];
-    };
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": components["schemas"]["UserResponse"];
       };
       };
       "422": {
@@ -2507,12 +2422,6 @@ export interface paths {
   "/api/v1/admin/users/{user_id}": {
     "put": operations["update_user_api_v1_admin_users__user_id__put"];
     "delete": operations["delete_user_api_v1_admin_users__user_id__delete"];
-  };
-  "/api/v1/admin/users/{user_id}/administrator": {
-    "put": operations["set_user_administrator_api_v1_admin_users__user_id__administrator_put"];
-  };
-  "/api/v1/admin/users/{user_id}/doris-role": {
-    "put": operations["set_user_doris_role_api_v1_admin_users__user_id__doris_role_put"];
   };
   "/api/v1/auth/change-password": {
     "post": operations["change_password_api_v1_auth_change_password_post"];

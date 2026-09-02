@@ -1,17 +1,23 @@
 """专业 Agent 文件系统装配。"""
 
 from collections.abc import Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from deepagents import FilesystemMiddleware
 from deepagents.backends import CompositeBackend, FilesystemBackend
 from deepagents.backends.protocol import BackendProtocol
 from deepagents.middleware.filesystem import FilesystemPermission
 
-from app.assistant.agents.skills import AGENT_SKILLS_MOUNT_ROOT
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.paths import SandboxReadonlyMount
-from app.shared.contracts.analysis import AGENT_TYPES
+from app.shared.contracts.analysis import AGENT_TYPES, AgentType
+
+_AGENT_SKILLS_MOUNT_ROOT = "/skills"
+
+
+def agent_skills_mount_path(agent_type: AgentType) -> str:
+    """返回指定 Agent 的只读技能挂载路径。"""
+    return f"{_AGENT_SKILLS_MOUNT_ROOT}/{agent_type}/"
 
 
 def packaged_skill_readonly_mounts() -> tuple[SandboxReadonlyMount, ...]:
@@ -20,7 +26,7 @@ def packaged_skill_readonly_mounts() -> tuple[SandboxReadonlyMount, ...]:
     return tuple(
         SandboxReadonlyMount(
             source=skill_directory,
-            target=AGENT_SKILLS_MOUNT_ROOT / agent_type,
+            target=PurePosixPath(agent_skills_mount_path(agent_type)),
         )
         for agent_type in AGENT_TYPES
         if (skill_directory := agents_directory / agent_type / "skills").is_dir()
@@ -33,8 +39,8 @@ def _filesystem_system_prompt(workspace_dir: str) -> str:
 
 当前 Session 工作目录是 `{workspace_dir}`。
 
-- 文件工具、`view_image` 和 `execute` 使用同一套容器路径：相对路径从当前 Session 工作目录解析，绝对路径直接使用。
-- `write_file`、`edit_file` 和 `delete` 只能修改当前 Session 工作目录；同一 Conversation 的其他 Session 和上传文件只读。
+- 文件工具、`view_image` 和 `shell` 使用同一套容器路径：相对路径从当前 Session 工作目录解析，绝对路径直接使用。
+- `write_file` 和 `edit_file` 只能修改当前 Session 工作目录；同一 Conversation 的其他 Session 和上传文件只读。
 - `artifacts` 可以使用相对当前 Session 的路径或完整绝对路径；跨 Agent 传递前会统一解析为绝对路径。
 - 内置技能位于只读 `/skills/...`。
 """
@@ -77,13 +83,9 @@ def build_specialist_filesystem(
         backend=resolved_backend,
         system_prompt=_filesystem_system_prompt(workspace_dir),
         tools=[
-            "ls",
             "read_file",
             "write_file",
             "edit_file",
-            "delete",
-            "glob",
-            "grep",
         ],
         _permissions=permissions,
     )

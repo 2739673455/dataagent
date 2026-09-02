@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, Uuid, func, text
+from sqlalchemy import Boolean, DateTime, Index, Integer, String, Uuid, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.shared.database.base import AssistantBase
@@ -17,16 +17,6 @@ class Conversation(AssistantBase):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False)
     title: Mapped[str] = mapped_column(String(64), nullable=False)
-    title_pending: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        default=False,
-        server_default=text("false"),
-    )
-    title_source: Mapped[str | None] = mapped_column(Text)
-    title_generation_requested_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
     is_draft: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -59,13 +49,5 @@ class Conversation(AssistantBase):
             "ix_conversations_pending_deletions",
             "deletion_requested_at",
             postgresql_where=text("deletion_requested_at IS NOT NULL"),
-        ),
-        Index(
-            "ix_conversations_pending_titles",
-            "title_generation_requested_at",
-            postgresql_where=text(
-                "title_pending AND title_source IS NOT NULL "
-                "AND deletion_requested_at IS NULL"
-            ),
         ),
     )

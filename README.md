@@ -76,6 +76,7 @@
 - **专业 Agent 矩阵**：`explorer` 负责语义目录、MCP 外部能力和受控 SQL 数据集；`analyst` 自主完成统计归因、图表和自包含 HTML 报告；`reviewer` 独立审查数据、分析结论与产物并发起修补。
 - **按 Agent 聚合代码**：`app/assistant/agents` 包含 Planner 和三个专业 Agent，每个 Agent 目录聚合自己的构造器与 Prompt；跨 Agent 协议、注册表和 Session 管理位于公共层，平台级数据查询工具归属于 `explorer` Agent。
 - **专业 Agent 通用执行能力**：分析和审查 Agent 使用 DeepAgents 内置的 Shell 与文件工具，在各自 Session 沙箱中编写、运行、修改和验证代码。算法与核验方法由 Agent 根据数据和业务问题自主选择，代码、参数和结果作为产物保留。
+- **Planner 文件查看能力**：Planner 使用只读文件工具和 Conversation 级 Shell 查看用户附件、目录与已知产物，数据处理和文件修改继续交由专业 Agent 完成。
 - **Session-aware 状态管理**：各 Session 使用 `subagents/{analysis_id}/{agent_type}/{session_id}` 作为 `checkpoint_ns`，状态保存在 PostgreSQL，支持并行分析、服务重启后续接和删除墓碑。
 - **产物边界**：Session 产物限定在 `/sessions/{analysis_id}/{agent_type}/{session_id}/`；结构化结果返回前会校验路径和文件存在性，用户附件上传与删除不能改写该系统目录，会话整体删除仍会统一清理产物。
 
@@ -117,7 +118,7 @@ ADMIN_PASSWORD='replace-with-a-strong-password' \
 uv run python -m scripts.bootstrap_admin -u admin -e admin@example.com
 ```
 
-首次引导管理员可以暂时没有数据角色，平台管理员身份也不会映射成 Doris 管理角色。管理员登录 `/admin` 创建第一个 Doris 角色后，将其分配给需要查询数据的用户；第一个角色自动成为缺省角色。平台管理员通过 `POST /api/v1/admin/users` 创建用户，通过 `PUT /api/v1/admin/users/{user_id}/doris-role` 替换用户唯一 Doris 角色，通过 `PUT /api/v1/admin/users/{user_id}/administrator` 管理平台管理员身份。元数据 REST 接口全部要求平台管理员身份。
+首次引导管理员可以暂时没有数据角色，平台管理员身份也不会映射成 Doris 管理角色。平台管理员登录 `/admin` 创建 Doris 角色后，将其分配给需要查询数据的用户；管理员可按需将角色设为缺省角色。平台管理员通过 `POST /api/v1/admin/users` 创建用户，通过 `PUT /api/v1/admin/users/{user_id}` 统一修改用户唯一 Doris 角色和平台管理员身份。元数据 REST 接口全部要求平台管理员身份。
 
 ### 4. 授权撤销与历史留存
 
@@ -136,7 +137,7 @@ make beat
 - 完整执行 `docker compose -f docker/compose.yml up -d` 时，Compose 会在沙箱镜像缺失时自动构建 `dataagent-sandbox:latest`，已有镜像时直接复用。`sandbox-image` 使用零副本配置，不会创建固定沙箱容器；用户沙箱仍由应用按需创建。
 - FastAPI 和 Celery Worker 启动时只校验 `sandbox.image` 对应的镜像，不执行镜像构建。修改沙箱依赖或 Dockerfile 后执行 `docker compose -f docker/compose.yml build sandbox-image` 主动更新镜像。
 - 后端默认监听 `7000` 端口。Vite 开发代理的 `VITE_APP_PROXY` 默认为 `http://localhost:7000`，可复制 `web/.env.example` 并在非默认部署中覆盖。
-- Redis 默认监听 `6379` 端口：DB 0 作为 Celery Broker，DB 1 保存 24 小时任务结果，DB 2 协调 Docker 沙箱跨进程所有权。API 和 Worker 必须连接同一 Redis 实例。
+- Redis 默认监听 `6379` 端口：DB 0 作为 Celery Broker，DB 1 保存 24 小时任务结果，DB 2 协调 Docker 沙箱跨进程所有权，DB 3 保存跨 API Worker 共享的认证限流状态。API 和 Worker 必须连接同一 Redis 实例。
 - 使用 `make worker` 启动消费全部队列的 Celery Worker。详细说明见[Shared 共享基础设施功能](docs/07_SHARED.md)。
 - `lifecycle` Worker 必须能够访问 Docker Engine，Celery Beat 只运行一个实例。
 - 同一 Docker 主机上的不同部署必须使用唯一的 `sandbox.deployment_namespace`，避免容器和数据卷名称冲突。

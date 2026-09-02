@@ -9,6 +9,7 @@ from loguru import logger
 from app.query import errors as query_error
 from app.query.models.execution import QueryExecution
 from app.query.models.experience import QueryExperienceOverview
+from app.query.repositories.execution_postgres import QueryExecutionPGRepo
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
 from app.query.services.contracts import QueryExperienceIndexScheduler
 
@@ -27,10 +28,12 @@ class QueryExperienceManagementService:
     def __init__(
         self,
         repo: QueryExperiencePGRepo,
+        execution_repo: QueryExecutionPGRepo,
         index_scheduler: QueryExperienceIndexScheduler,
     ) -> None:
         """绑定查询经验存储与索引调度器。"""
         self._repo = repo
+        self._execution_repo = execution_repo
         self._index_scheduler = index_scheduler
 
     async def list_overviews(
@@ -73,7 +76,7 @@ class QueryExperienceManagementService:
         async with self._repo.session.begin():
             if await self._repo.get(experience_id) is None:
                 raise query_error.QueryExperienceNotFoundError
-            return await self._repo.list_source_executions(
+            return await self._execution_repo.list_source_executions(
                 experience_id,
                 limit=limit,
                 offset=offset,

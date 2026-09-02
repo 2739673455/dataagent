@@ -85,7 +85,16 @@ def _console_formatter(record: Record) -> str:
 
     context_fields = [
         f"{key}={{extra[{key}]}}"
-        for key in ("status", "problem_type", "exc_type")
+        for key in (
+            "status",
+            "problem_type",
+            "exc_type",
+            "index_name",
+            "document_id",
+            "document_ids",
+            "resource_key",
+            "stage",
+        )
         if extra.get(key) is not None and extra.get(key) != ""
     ]
     if context_fields:

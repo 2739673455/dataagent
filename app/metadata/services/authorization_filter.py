@@ -1,7 +1,13 @@
 """元数据白名单过滤与引用脱敏。"""
 
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
-from app.metadata.models.catalog import ColumnInfo, ColumnKey, MetricInfo, TableInfo
+from app.metadata.models.catalog import (
+    ColumnInfo,
+    ColumnKey,
+    MetricInfo,
+    TableInfo,
+    column_reference_key,
+)
 from app.metadata.models.search import (
     SemanticColumnRecallResult,
     SemanticMetricRecallResult,
@@ -150,7 +156,7 @@ class MetadataAuthorizationFilter:
             for item in metric_infos
             if (
                 {
-                    (reference["t_name"], reference["c_name"])
+                    column_reference_key(reference)
                     for reference in item.relevant_columns
                 }.issubset(allowed_columns)
                 if item.relevant_columns

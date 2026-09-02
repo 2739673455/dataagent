@@ -67,6 +67,7 @@ task_queue: # Celery 队列、任务生命周期和定时调度配置。
   query_experience_repair_seconds: 300 # 查询经验索引修复调度间隔，单位为秒。
 
 auth: # 登录令牌和密码策略。
+  rate_limit_redis_url: redis://127.0.0.1:6379/3 # 跨 API Worker 共享认证限流计数。
   jwt_secret: ${oc.env:JWT_SECRET} # JWT 签名密钥，使用环境变量注入。
   jwt_algorithm: HS256 # JWT 签名算法。
   issuer: dataagent # JWT 签发者标识。
@@ -100,14 +101,11 @@ sandbox: # 每用户 Docker 沙箱及其持久化数据卷配置。
   nano_cpus: 2000000000 # 每个用户沙箱最多使用 2 个 CPU 核心。
   pids_limit: 256 # 单个用户容器允许的最大进程数。
   internal_command_timeout_seconds: 60 # Sandbox 内部辅助命令硬超时。
-  max_file_bytes: 104857600 # 单个工作区文件上限，单位为字节。
-  max_workspace_bytes: 1073741824 # 单个 Conversation 工作区容量上限，单位为字节。
-  workspace_quota_mode: application # 生产环境应改为 volume_driver 并使用支持硬配额的卷驱动。
+  max_file_bytes: 52428800 # 单个工作区文件上限，单位为字节。
+  max_user_storage_bytes: 1073741824 # 单个用户数据卷容量上限，单位为字节。
   volume_driver: local # 用户持久化数据卷使用的 Docker Volume Driver。
-  volume_driver_options: {} # Volume Driver 参数，支持配置字段占位符。
-  max_running_containers: 8 # 按部署机器容量调整，超出后等待或回收空闲容器。
-  max_capacity_waiters: 2048 # 部署实例允许排队等待容器容量的请求数。
-  capacity_wait_timeout_seconds: 60 # 单个请求等待容器容量的上限，单位为秒。
+  volume_driver_options: {} # local 驱动不支持硬配额；生产驱动应使用 {max_user_storage_bytes}。
+  max_running_containers: 8 # 按部署机器容量调整，满载时回收空闲容器或返回容量不足。
   idle_stop_seconds: 600 # 空闲 10 分钟后停止容器。
   idle_remove_seconds: 3600 # 空闲 1 小时后删除容器，但保留用户数据卷。
   cleanup_interval_seconds: 60 # 沙箱空闲资源扫描间隔，单位为秒。
@@ -126,7 +124,7 @@ lm_config: # 可用语言模型集合及默认模型。
       params: {} # 传给模型客户端的附加初始化参数。
       profile: # 模型能力描述和上下文限制。
         image_inputs: false # 当前模型是否支持识别图片内容。
-        structured_output: false # 是否支持工具调用期间的 Provider 原生结构化输出。
+        structured_output: false # DeepSeek Responses 原生 JSON Schema 可能返回空正文，Specialist 使用工具调用输出。
         max_input_tokens: 1048576 # 模型上下文长度，用于计算对话压缩阈值。
     openrouter-deepseek-v4-flash:
       model_provider: openrouter
@@ -156,6 +154,7 @@ lm_config: # 可用语言模型集合及默认模型。
 agent: # Planner 和 Specialist 运行时配置。
   orchestration: # 动态 Specialist 编排限制。
     max_parallel_sessions: 8 # 同一 Conversation 同时执行的 Specialist Session 上限。
+    max_sessions: 128 # 单个 Conversation 可持久化的 Specialist Session 上限。
     max_continuations: 3 # 单个用户回合允许 Planner 自动续写的最大次数。
   interpreter: # Planner 内嵌 QuickJS 解释器配置。
     memory_limit_bytes: 67108864 # QuickJS Heap 内存上限，单位为字节。

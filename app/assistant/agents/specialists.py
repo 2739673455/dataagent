@@ -13,16 +13,15 @@ from langgraph.graph.state import CompiledStateGraph
 
 from app.assistant.agents.analyst.agent import create_analyst_agent
 from app.assistant.agents.explorer.agent import create_explorer_agent
+from app.assistant.agents.filesystem import agent_skills_mount_path
 from app.assistant.agents.reviewer.agent import create_reviewer_agent
 from app.assistant.agents.shell_jobs import ShellJobRuntime
-from app.assistant.agents.skills import agent_skills_mount_path
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.manager import DockerSandboxManager
 from app.shared.contracts.analysis import (
     AGENT_TYPES,
     AgentSessionKey,
     AgentType,
-    validate_agent_type,
 )
 
 _REQUIRED_EXPLORER_TOOLS = frozenset({"recall_context", "execute_sql"})
@@ -38,7 +37,7 @@ _RESERVED_MCP_TOOL_NAMES = frozenset(
         "delete",
         "glob",
         "grep",
-        "execute",
+        "shell",
         "list_shell_jobs",
         "get_shell_job",
         "cancel_shell_job",
@@ -150,7 +149,6 @@ class SpecialistAgentFactory:
 
     async def create(self, session_key: AgentSessionKey) -> SpecialistAgentRun:
         """为一次委派创建专业 Agent 运行图。"""
-        validate_agent_type(session_key.agent_type)
         definition = self._definitions[session_key.agent_type]
         backend = await self._sandbox.get_session_backend(
             session_key.user_id,
@@ -159,7 +157,7 @@ class SpecialistAgentFactory:
             session_key.agent_type,
             session_key.session_id,
         )
-        shell_jobs = ShellJobRuntime(backend)
+        shell_jobs = ShellJobRuntime(backend.shell_jobs)
         agent = definition.builder(
             model=self._models[session_key.agent_type],
             tools=definition.tools,

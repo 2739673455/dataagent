@@ -27,11 +27,3 @@ class AttachmentTooLargeError(ProblemError):
     type = "attachment-too-large"
     title = "附件过大"
     status = HTTPStatus.CONTENT_TOO_LARGE
-
-
-class SandboxStorageLimitProblem(ProblemError):
-    """表示沙箱工作区存储空间不足。"""
-
-    type = "sandbox-storage-limit"
-    title = "沙箱存储空间不足"
-    status = HTTPStatus.INSUFFICIENT_STORAGE

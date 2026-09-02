@@ -107,6 +107,7 @@ class TaskQueueConfig(AppConfigModel):
 class AuthConfig(AppConfigModel):
     """认证令牌与密码策略配置。"""
 
+    rate_limit_redis_url: SecretStr = Field(min_length=1)
     jwt_secret: SecretStr = Field(min_length=32)
     jwt_algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
     issuer: str = Field(min_length=1)
@@ -160,13 +161,10 @@ class SandboxConfig(AppConfigModel):
     pids_limit: int = Field(gt=0)
     internal_command_timeout_seconds: int = Field(default=60, gt=0, le=600)
     max_file_bytes: int = Field(gt=0)
-    max_workspace_bytes: int = Field(gt=0)
-    workspace_quota_mode: Literal["application", "volume_driver"]
+    max_user_storage_bytes: int = Field(gt=0)
     volume_driver: str = Field(min_length=1)
     volume_driver_options: dict[str, str]
     max_running_containers: int = Field(gt=0)
-    max_capacity_waiters: int = Field(gt=0)
-    capacity_wait_timeout_seconds: float = Field(gt=0)
     idle_stop_seconds: int = Field(gt=0)
     idle_remove_seconds: int = Field(gt=0)
     cleanup_interval_seconds: int = Field(gt=0)
@@ -176,14 +174,14 @@ class SandboxConfig(AppConfigModel):
     @model_validator(mode="after")
     def validate_size_limits(self) -> "SandboxConfig":
         """校验沙箱容量限制之间的关系。"""
-        if self.max_file_bytes > self.max_workspace_bytes:
-            raise ValueError("max_file_bytes 不能大于 max_workspace_bytes")
+        if self.max_file_bytes > self.max_user_storage_bytes:
+            raise ValueError("max_file_bytes 不能大于 max_user_storage_bytes")
         if self.idle_stop_seconds >= self.idle_remove_seconds:
             raise ValueError("idle_stop_seconds 必须小于 idle_remove_seconds")
         option_fields = {
             "deployment_namespace": self.deployment_namespace,
             "user_id": 1,
-            "max_workspace_bytes": self.max_workspace_bytes,
+            "max_user_storage_bytes": self.max_user_storage_bytes,
         }
         try:
             rendered_options = {
@@ -195,18 +193,11 @@ class SandboxConfig(AppConfigModel):
             raise ValueError(f"数据卷驱动选项模板无效: {placeholder}") from exc
         if any(not key or not value for key, value in rendered_options.items()):
             raise ValueError("数据卷驱动选项不能包含空键或空值")
-        if self.workspace_quota_mode == "volume_driver" and not any(
-            "{max_workspace_bytes}" in value
+        if self.volume_driver != "local" and not any(
+            "{max_user_storage_bytes}" in value
             for value in self.volume_driver_options.values()
         ):
-            raise ValueError(
-                "volume_driver 配额模式要求选项中包含 max_workspace_bytes 占位符"
-            )
-        if (
-            self.workspace_quota_mode == "volume_driver"
-            and self.volume_driver == "local"
-        ):
-            raise ValueError("volume_driver 配额模式要求使用支持配额的外部驱动")
+            raise ValueError("数据卷驱动选项必须包含 max_user_storage_bytes 占位符")
         return self
 
 
@@ -281,6 +272,7 @@ class OrchestrationConfig(AppConfigModel):
     """动态专业 Agent 编排限制。"""
 
     max_parallel_sessions: int = Field(gt=0)
+    max_sessions: int = Field(gt=0)
     max_continuations: int = Field(ge=0)
 
 

@@ -7,7 +7,6 @@ from typing import Any, Literal
 import sqlglot
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
-from sqlglot import exp
 from sqlglot.errors import ParseError
 
 from app.identity import errors as auth_error
@@ -17,9 +16,8 @@ from app.identity.models.doris import (
     DorisRowPolicy,
     normalize_doris_role_name,
 )
-from app.identity.repositories.auth import AuthPGRepo
 from app.identity.repositories.doris_role import DorisRoleRepository, role_name_from_row
-from app.identity.repositories.query_identity import DorisQueryIdentityPGRepo
+from app.identity.repositories.identity import IdentityPGRepo
 from app.identity.services.authorization import AssetIdentity
 
 
@@ -49,19 +47,15 @@ class DorisPermissionService:
 
     def __init__(
         self,
-        auth_repo: AuthPGRepo,
-        identity_repo: DorisQueryIdentityPGRepo,
+        repo: IdentityPGRepo,
         doris_repo: DorisRoleRepository,
         *,
         data_source: str,
         catalog: str,
         database: str,
     ) -> None:
-        """初始化 Doris 权限操作和 PostgreSQL 投影依赖。"""
-        if auth_repo.session is not identity_repo.session:
-            raise ValueError("认证存储与查询身份存储必须共享同一数据库会话")
-        self._auth_repo = auth_repo
-        self._identity_repo = identity_repo
+        """初始化 Doris 权限操作和 PostgreSQL 身份投影依赖。"""
+        self._repo = repo
         self._doris_repo = doris_repo
         self._data_source = data_source
         self._catalog = catalog
@@ -75,7 +69,7 @@ class DorisPermissionService:
             for row in live_rows
             if (role_name := role_name_from_row(row)) is not None
         }
-        identities = await self._identity_repo.list_all()
+        identities = await self._repo.list_query_identities()
         return [
             DorisRoleStatus(
                 name=identity.role_name,
@@ -103,12 +97,12 @@ class DorisPermissionService:
         granted_columns: tuple[str, ...] = ()
         doris_changed = False
         try:
-            async with self._auth_repo.session.begin():
-                await self._auth_repo.lock_security_mutation()
+            async with self._repo.session.begin():
+                await self._repo.lock_security_mutation()
                 await self._require_role_exists(role)
                 await self._validate_target(table_name, normalized_columns)
                 existing = [
-                    await self._auth_repo.find_asset_grant(
+                    await self._repo.find_asset_grant(
                         role,
                         asset.scope.value,
                         asset.resource_key,
@@ -139,7 +133,7 @@ class DorisPermissionService:
                 for asset, current_grant in zip(assets, existing, strict=True):
                     persisted_grant = current_grant
                     if persisted_grant is None:
-                        persisted_grant = await self._auth_repo.add_asset_grant(
+                        persisted_grant = await self._repo.add_asset_grant(
                             DorisRoleAssetGrant(
                                 role_name=role,
                                 scope=asset.scope.value,
@@ -186,12 +180,12 @@ class DorisPermissionService:
         assets = self._assets(table_name, normalized_columns)
         doris_changed = False
         try:
-            async with self._auth_repo.session.begin():
-                await self._auth_repo.lock_security_mutation()
+            async with self._repo.session.begin():
+                await self._repo.lock_security_mutation()
                 await self._require_role_exists(role)
                 await self._validate_target(table_name, normalized_columns)
                 grants = [
-                    await self._auth_repo.find_asset_grant(
+                    await self._repo.find_asset_grant(
                         role,
                         asset.scope.value,
                         asset.resource_key,
@@ -210,7 +204,7 @@ class DorisPermissionService:
                 doris_changed = True
                 for grant in grants:
                     if grant is not None:
-                        await self._auth_repo.delete_asset_grant(grant)
+                        await self._repo.delete_asset_grant(grant)
                 await self._rotate_authorization_epoch(role)
         except BaseException:
             if doris_changed:
@@ -227,10 +221,10 @@ class DorisPermissionService:
         role = self._normalize_role(role_name)
         revoked_targets: list[_SelectGrantTarget] = []
         try:
-            async with self._auth_repo.session.begin():
-                await self._auth_repo.lock_security_mutation()
+            async with self._repo.session.begin():
+                await self._repo.lock_security_mutation()
                 await self._require_role_exists(role)
-                grants = await self._auth_repo.list_role_asset_grants(role)
+                grants = await self._repo.list_role_asset_grants(role)
                 if not grants:
                     return 0
 
@@ -245,7 +239,7 @@ class DorisPermissionService:
                     )
                     revoked_targets.append(target)
 
-                await self._auth_repo.delete_role_asset_grants(role)
+                await self._repo.delete_role_asset_grants(role)
                 await self._rotate_authorization_epoch(role)
                 return len(grants)
         except BaseException:
@@ -272,19 +266,13 @@ class DorisPermissionService:
         policy_type: Literal["RESTRICTIVE", "PERMISSIVE"],
         predicate: str,
     ) -> None:
-        """校验并创建绑定到角色的 Doris 行策略。"""
+        """校验表达式边界并创建绑定到角色的 Doris 行策略。"""
         role = self._normalize_role(role_name)
-        columns = await self._doris_repo.list_table_columns(
-            self._database,
-            table_name,
-        )
-        if not columns:
-            raise auth_error.InvalidDorisPermissionError(detail="目标表不存在")
-        predicate_sql = self._validate_predicate(predicate, table_name, columns)
+        predicate_sql = self._validate_predicate(predicate)
         doris_changed = False
         try:
-            async with self._auth_repo.session.begin():
-                await self._auth_repo.lock_security_mutation()
+            async with self._repo.session.begin():
+                await self._repo.lock_security_mutation()
                 await self._require_role_exists(role)
                 await self._doris_repo.create_row_policy(
                     policy_name=policy_name,
@@ -331,8 +319,8 @@ class DorisPermissionService:
         )
         doris_changed = False
         try:
-            async with self._auth_repo.session.begin():
-                await self._auth_repo.lock_security_mutation()
+            async with self._repo.session.begin():
+                await self._repo.lock_security_mutation()
                 await self._require_role_exists(role)
                 await self._doris_repo.drop_row_policy(
                     policy_name=policy_name,
@@ -377,17 +365,17 @@ class DorisPermissionService:
 
     async def _require_role_exists(self, role_name: str) -> None:
         """要求规范化角色已配置。"""
-        identity = await self._identity_repo.get(role_name)
+        identity = await self._repo.get_query_identity(role_name)
         if identity is None:
             raise auth_error.RoleNotFoundError
 
     async def _rotate_authorization_epoch(self, role_name: str) -> None:
         """轮换角色安全边界，并持久化到当前认证事务。"""
-        identity = await self._identity_repo.get(role_name)
+        identity = await self._repo.get_query_identity(role_name)
         if identity is None:
             raise auth_error.RoleNotFoundError
         identity.rotate_authorization_epoch()
-        await self._identity_repo.flush()
+        await self._repo.flush()
 
     async def _compensate_select(
         self,
@@ -512,53 +500,21 @@ class DorisPermissionService:
     @staticmethod
     def _validate_predicate(
         predicate: str,
-        table_name: str,
-        allowed_columns: Sequence[str],
     ) -> str:
-        """将行策略限制为目标表上的单个布尔表达式。"""
+        """确认行策略输入是单个 SQL 表达式，并保留原始语义。"""
         normalized = predicate.strip()
         if not normalized:
             raise auth_error.InvalidDorisPermissionError(
                 detail="行级策略谓词表达式不能为空"
             )
         try:
-            statements = sqlglot.parse(
-                f"SELECT 1 FROM `{table_name}` WHERE {normalized}",
-                read="doris",
-            )
+            statements = sqlglot.parse(normalized, read="doris")
         except ParseError as exc:
             raise auth_error.InvalidDorisPermissionError(
                 detail="行级策略谓词表达式语法无效"
             ) from exc
-        if len(statements) != 1 or not isinstance(statements[0], exp.Select):
+        if len(statements) != 1:
             raise auth_error.InvalidDorisPermissionError(
                 detail="行级策略谓词必须为单个布尔表达式"
             )
-        where = statements[0].args.get("where")
-        if not isinstance(where, exp.Where):
-            raise auth_error.InvalidDorisPermissionError(
-                detail="缺少行级策略谓词表达式"
-            )
-        expression = where.this
-        forbidden = (
-            exp.Subquery,
-            exp.Select,
-            exp.Union,
-            exp.Placeholder,
-            exp.Parameter,
-        )
-        if any(isinstance(node, forbidden) for node in expression.walk()):
-            raise auth_error.InvalidDorisPermissionError(
-                detail="行级策略谓词包含禁止的语法结构"
-            )
-        allowed = set(allowed_columns)
-        for column in expression.find_all(exp.Column):
-            if column.name not in allowed:
-                raise auth_error.InvalidDorisPermissionError(
-                    detail=f"行级策略引用了未知的列: {column.name}"
-                )
-            if column.table and column.table != table_name:
-                raise auth_error.InvalidDorisPermissionError(
-                    detail="行级策略不能跨表引用其他表"
-                )
-        return expression.sql(dialect="doris")
+        return normalized

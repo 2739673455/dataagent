@@ -17,19 +17,17 @@ from app.assistant.agents.middleware.eval_delegations import (
 from app.assistant.agents.middleware.message_timestamp import (
     MessageTimestampMiddleware,
 )
-from app.assistant.agents.middleware.user_message_attachments import (
-    UserMessageAttachmentMiddleware,
-)
-from app.assistant.agents.middleware.user_message_metadata import (
-    UserMessageMetadataMiddleware,
+from app.assistant.agents.middleware.user_message_context import (
+    UserMessageContextMiddleware,
 )
 from app.assistant.agents.session_service import AgentSessionService
-from app.assistant.agents.tools import create_view_image_tools
+from app.assistant.agents.shell_jobs import ShellJobRuntime
+from app.assistant.agents.tools import create_shell_tools, create_view_image_tools
 from app.sandbox.backend import DockerSandboxBackend
 
 from .prompt import PLANNER_SYSTEM_PROMPT
 
-_INTERPRETER_PTC = ("delegation", "list_sessions", "delete_session")
+_INTERPRETER_PTC = ("delegation",)
 
 
 def create_planner_agent(
@@ -39,6 +37,7 @@ def create_planner_agent(
     backend: DockerSandboxBackend,
     checkpointer: BaseCheckpointSaver,
     session_service: AgentSessionService,
+    shell_jobs: ShellJobRuntime,
     interpreter_memory_limit_bytes: int,
 ) -> CompiledStateGraph:
     """使用显式解释器配置编译 Planner Agent。"""
@@ -51,11 +50,15 @@ def create_planner_agent(
     )
     filesystem = FilesystemMiddleware(
         backend=backend,
-        tools=["ls", "read_file", "glob", "grep"],
+        tools=["read_file"],
     )
     return create_deep_agent(
         model=model,
-        tools=[*tools, *create_view_image_tools(model)],
+        tools=[
+            *tools,
+            *create_view_image_tools(model),
+            *create_shell_tools(shell_jobs),
+        ],
         system_prompt=PLANNER_SYSTEM_PROMPT,
         middleware=cast(
             "Sequence[AgentMiddleware[Any, Any, Any]]",
@@ -63,8 +66,11 @@ def create_planner_agent(
                 EvalDelegationMiddleware(session_service),
                 filesystem,
                 interpreter,
-                UserMessageMetadataMiddleware(),
-                UserMessageAttachmentMiddleware(backend, backend.conversation_dir),
+                UserMessageContextMiddleware(
+                    backend,
+                    backend.conversation_dir,
+                    shell_jobs,
+                ),
                 MessageTimestampMiddleware(),
             ],
         ),

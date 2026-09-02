@@ -4,8 +4,6 @@ import base64
 import csv
 import hashlib
 import json
-import math
-import re
 import tempfile
 import unicodedata
 from collections.abc import AsyncGenerator
@@ -36,38 +34,10 @@ _SAMPLE_COLLECTION_MAX_ITEMS = 20
 _SAMPLE_MAX_DEPTH = 4
 _QUERY_ARTIFACT_STEM_MAX_BYTES = 120
 _QUERY_ARTIFACT_UNIQUE_SUFFIX_LENGTH = 4
-_PLAN_NODE_PATTERN = re.compile(r"(?:^|\s|\|)\d+\s*:\s*([A-Za-z][A-Za-z0-9_]*)")
-_PLAN_UNNUMBERED_NODE_PATTERN = re.compile(
-    r"\b([A-Za-z][A-Za-z0-9_]*(?:Node|_NODE))\b",
-    re.IGNORECASE,
-)
-_PLAN_SCAN_PATTERN = re.compile(
-    r"\b(?:[A-Za-z]+ScanNode|[A-Za-z_]*SCAN_NODE)\b", re.IGNORECASE
-)
-_PLAN_NUMBER_CAPTURE = (
-    r"(-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?)"
-    r"(?!,\d|[\d.eE])"
-)
-_PLAN_CARDINALITY_PATTERN = re.compile(
-    r"\bcardinality\s*[=:]\s*" + _PLAN_NUMBER_CAPTURE,
-    re.IGNORECASE,
-)
-_PLAN_AVG_ROW_SIZE_PATTERN = re.compile(
-    r"\bavgRowSize\s*[=:]\s*" + _PLAN_NUMBER_CAPTURE,
-    re.IGNORECASE,
-)
 
 
 class ReadonlyQueryRepository(Protocol):
     """只读查询执行存储的最小接口。"""
-
-    async def explain(
-        self,
-        sql: str,
-        limits: QueryExecutionLimits,
-    ) -> tuple[str, ...]:
-        """返回受资源限制约束的查询执行计划。"""
-        ...
 
     def stream(
         self,
@@ -107,19 +77,6 @@ class QueryResultShapeError(RuntimeError):
     """数据库返回的结果结构不稳定或不适合文件输出。"""
 
 
-class QueryPlanUnavailableError(RuntimeError):
-    """Doris 查询计划缺少可验证的扫描估算。"""
-
-
-@dataclass(frozen=True, slots=True)
-class QueryPlanEstimate:
-    """从 Doris EXPLAIN 提取的物理扫描估算。"""
-
-    scan_nodes: int
-    scan_rows: int
-    scan_bytes: int
-
-
 @dataclass(frozen=True, slots=True)
 class SuccessfulQueryExecution:
     """成功查询的规范化 SQL、资产血缘和结果摘要。"""
@@ -128,16 +85,7 @@ class SuccessfulQueryExecution:
     raw_sql: str
     normalized_sql: str
     validation: QueryValidationResult
-    plan_estimate: QueryPlanEstimate | None
     result: AnalysisQueryResult
-
-
-@dataclass(slots=True)
-class _ScanNodeEstimate:
-    """一个 ScanNode 的未完成估算。"""
-
-    cardinality: float | None = None
-    avg_row_size: float | None = None
 
 
 @dataclass(slots=True)
@@ -216,16 +164,13 @@ class AnalysisQueryService:
         if not validation.valid or normalized_sql is None:
             raise QueryRejectedError(validation)
 
-        estimate: QueryPlanEstimate | None = None
-        if validation.query_kind == "business":
-            plan = await self._query_repo.explain(normalized_sql, self._limits)
-            estimate = _estimate_doris_query_plan(
-                plan,
-                require_scan=bool(validation.tables),
-            )
+        scope = SandboxSessionScope(
+            session_key.analysis_id,
+            session_key.agent_type,
+            session_key.session_id,
+        )
         relative_path = (
-            f"sessions/{session_key.analysis_id}/{session_key.agent_type}/"
-            f"{session_key.session_id}/{_query_artifact_filename(purpose)}"
+            f"{scope.relative_workspace}/{_query_artifact_filename(purpose)}"
         )
         with tempfile.TemporaryFile(mode="w+b") as temporary_file:
             summary = await self._execute_to_csv(
@@ -239,11 +184,7 @@ class AnalysisQueryService:
                 relative_path,
                 temporary_file,
             )
-        workspace = SandboxSessionScope(
-            session_key.analysis_id,
-            session_key.agent_type,
-            session_key.session_id,
-        ).workspace_path(session_key.conversation_id)
+        workspace = scope.workspace_path(session_key.conversation_id)
         result = AnalysisQueryResult(
             path=f"{workspace}/{relative_path.rsplit('/', 1)[-1]}",
             columns=summary.columns,
@@ -256,7 +197,6 @@ class AnalysisQueryService:
             raw_sql=sql,
             normalized_sql=normalized_sql,
             validation=validation,
-            plan_estimate=estimate,
             result=result,
         )
         logger.info(
@@ -266,8 +206,6 @@ class AnalysisQueryService:
             f"sql_fingerprint={sql_fingerprint}, "
             f"row_count={details.result.row_count}, "
             f"column_count={len(details.result.columns)}, "
-            f"scan_rows={details.plan_estimate.scan_rows if details.plan_estimate else None}, "
-            f"scan_bytes={details.plan_estimate.scan_bytes if details.plan_estimate else None}, "
             f"artifact_path={details.result.path}"
         )
         return details
@@ -293,6 +231,7 @@ class AnalysisQueryService:
                     column_stats = [_ColumnStats() for _ in column_names]
                     writer.writerow(_csv_value(name) for name in column_names)
                 elif batch.column_names != column_names:
+                    # CSV 和返回 Schema 共用首批列定义，中途变形会使产物无法可靠解析。
                     raise QueryResultShapeError("流式查询各批次返回的列结构不一致")
                 for row in batch.rows:
                     if len(row) != len(column_names):
@@ -302,6 +241,7 @@ class AnalysisQueryService:
                     for stats, value in zip(column_stats, row, strict=True):
                         stats.observe(value)
                     writer.writerow(_csv_value(value) for value in row)
+                    # 完整结果持续写入文件，内存只保留固定数量的可展示样例。
                     if len(sample) < self._options.sample_rows:
                         sample.append(
                             {
@@ -377,76 +317,6 @@ def _query_artifact_filename(purpose: str) -> str:
     safe_stem = "".join(truncated).rstrip("_") or "query_result"
     unique_suffix = uuid4().hex[:_QUERY_ARTIFACT_UNIQUE_SUFFIX_LENGTH]
     return f"{safe_stem}_{unique_suffix}.csv"
-
-
-def _estimate_doris_query_plan(
-    plan: tuple[str, ...],
-    *,
-    require_scan: bool,
-) -> QueryPlanEstimate:
-    """解析 Doris ScanNode 的 cardinality 与 avgRowSize。"""
-    completed: list[_ScanNodeEstimate] = []
-    current: _ScanNodeEstimate | None = None
-
-    def finish_current() -> None:
-        """提交当前扫描节点的估算结果。"""
-        nonlocal current
-        if current is not None:
-            completed.append(current)
-            current = None
-
-    for entry in plan:
-        for line in entry.splitlines() or [entry]:
-            node_match = _PLAN_NODE_PATTERN.search(line)
-            unnumbered_node_match = _PLAN_UNNUMBERED_NODE_PATTERN.search(line)
-            node_name = (
-                node_match.group(1)
-                if node_match is not None
-                else (
-                    unnumbered_node_match.group(1)
-                    if unnumbered_node_match is not None
-                    else None
-                )
-            )
-            if node_name is not None:
-                finish_current()
-                if "scan" in node_name.casefold():
-                    current = _ScanNodeEstimate()
-            elif _PLAN_SCAN_PATTERN.search(line):
-                finish_current()
-                current = _ScanNodeEstimate()
-
-            if current is None:
-                continue
-            if cardinality_match := _PLAN_CARDINALITY_PATTERN.search(line):
-                current.cardinality = float(cardinality_match.group(1).replace(",", ""))
-            if avg_row_size_match := _PLAN_AVG_ROW_SIZE_PATTERN.search(line):
-                current.avg_row_size = float(
-                    avg_row_size_match.group(1).replace(",", "")
-                )
-    finish_current()
-
-    if require_scan and not completed:
-        raise QueryPlanUnavailableError("Doris EXPLAIN 未包含物理扫描节点估算信息")
-    if any(
-        node.cardinality is None
-        or node.cardinality < 0
-        or node.avg_row_size is None
-        or node.avg_row_size < 0
-        or (node.cardinality > 0 and node.avg_row_size == 0)
-        for node in completed
-    ):
-        raise QueryPlanUnavailableError("Doris EXPLAIN 物理扫描节点估算信息不完整")
-    scan_rows = sum(math.ceil(node.cardinality or 0) for node in completed)
-    scan_bytes = sum(
-        math.ceil((node.cardinality or 0) * (node.avg_row_size or 0))
-        for node in completed
-    )
-    return QueryPlanEstimate(
-        scan_nodes=len(completed),
-        scan_rows=scan_rows,
-        scan_bytes=scan_bytes,
-    )
 
 
 def _value_type(value: Any) -> str:

@@ -2,9 +2,9 @@
 
 from uuid import UUID
 
-from app.identity.models.doris import asset_resource_key
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
 from app.query.services.contracts import QueryExperienceIndexScheduler
+from app.shared.contracts.assets import asset_resource_key
 
 
 class QueryExperienceInvalidationService:
@@ -18,6 +18,7 @@ class QueryExperienceInvalidationService:
         data_source: str,
         database_name: str,
     ) -> None:
+        """绑定经验仓储、索引调度器和元数据资产命名空间。"""
         self._repo = repo
         self._index_scheduler = index_scheduler
         self._data_source = data_source

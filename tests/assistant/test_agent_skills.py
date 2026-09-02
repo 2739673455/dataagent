@@ -7,8 +7,10 @@ from langchain.tools import ToolRuntime
 from langchain_core.messages import ToolMessage
 
 from app.assistant.agents.analyst import agent as analyst_agent
-from app.assistant.agents.filesystem import build_specialist_filesystem
-from app.assistant.agents.skills import agent_skills_mount_path
+from app.assistant.agents.filesystem import (
+    agent_skills_mount_path,
+    build_specialist_filesystem,
+)
 from app.sandbox.backend import DockerSandboxBackend
 
 _ANALYST_SKILLS_PATH = agent_skills_mount_path("analyst")

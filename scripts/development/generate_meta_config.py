@@ -627,6 +627,7 @@ def _enrich_metric_context(
     }
 
     def add(t_name: str, c_name: str) -> None:
+        """校验并追加尚未包含的指标上下文字段。"""
         reference = (t_name, c_name)
         if c_name not in schema_columns[t_name]:
             raise ValueError(f"指标上下文字段不存在: {t_name}.{c_name}")
@@ -1706,6 +1707,7 @@ def _build_metrics() -> list[dict[str, Any]]:
 def _build_config(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]:
     """构建完整元数据配置并校验所有引用。"""
     schema = _parse_ecommerce_schema(ddl_path)
+    # 生成器应在 Doris 示例结构变化时立即失败，防止静默输出缺表或遗留规则。
     if set(schema) != set(TABLE_ORDER):
         missing = sorted(set(TABLE_ORDER) - set(schema))
         unexpected = sorted(set(schema) - set(TABLE_ORDER))
@@ -1803,6 +1805,7 @@ def _build_config(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]:
     if len(metric_names) != len(set(metric_names)):
         raise ValueError("指标名称重复")
     metric_terms: dict[str, str] = {}
+    # 指标名称和别名进入同一检索空间，跨指标重复会产生不可判定的语义命中。
     for metric in metrics:
         for term in [metric["name"], *metric["alias"]]:
             owner = metric_terms.setdefault(term, metric["name"])

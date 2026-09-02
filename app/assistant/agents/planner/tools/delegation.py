@@ -89,6 +89,7 @@ def create_delegation_tool(service: AgentSessionService) -> BaseTool:
             )
 
             def write_eval_activity(activity: SubagentActivity) -> None:
+                """为 eval 内部委派活动补充父工具调用和原始指令。"""
                 activity_writer(
                     replace(
                         activity,

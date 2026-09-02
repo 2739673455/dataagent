@@ -406,19 +406,6 @@ try:
         if len(updated_bytes) > payload["max_file_bytes"]:
             print(json.dumps({"error": "file_too_large"}))
             sys.exit(0)
-        workspace_size = 0
-        for current_root, _, files in os.walk(payload["workspace"]):
-            for name in files:
-                current_path = os.path.join(current_root, name)
-                try:
-                    if os.path.isfile(current_path) and not os.path.islink(current_path):
-                        workspace_size += os.path.getsize(current_path)
-                except OSError:
-                    pass
-        projected_size = len(updated_bytes) + workspace_size - len(content.encode("utf-8"))
-        if projected_size > payload["max_workspace_bytes"]:
-            print(json.dumps({"error": "workspace_limit_exceeded"}))
-            sys.exit(0)
         with open(payload["target"], "wb") as target_file:
             target_file.write(updated_bytes)
         print(json.dumps({"count": count}))

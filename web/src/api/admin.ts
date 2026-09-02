@@ -4,7 +4,6 @@ import type { UserResponse } from "@/auth";
 
 type ApiSchemas = components["schemas"];
 
-export type AssetGrantListResponse = ApiSchemas["AssetGrantListResponse"];
 export type AssetGrantResponse = ApiSchemas["AssetGrantResponse"];
 export type CreateDorisRoleRequest = ApiSchemas["CreateDorisRoleRequest"];
 export type CreateUserRequest = ApiSchemas["CreateUserRequest"];
@@ -23,31 +22,26 @@ export type QueryExperienceListResponse = ApiSchemas["QueryExperienceListRespons
 export type QueryExperienceStatus = ApiSchemas["QueryExperienceStatus"];
 type QueryExperienceBatchRequest = ApiSchemas["QueryExperienceBatchRequest"];
 
-type DorisRoleListResponse = ApiSchemas["DorisRoleListResponse"];
 type DropRowPolicyRequest = ApiSchemas["DropRowPolicyRequest"];
-type DorisWorkloadGroupListResponse = ApiSchemas["DorisWorkloadGroupListResponse"];
-type RowPolicyListResponse = ApiSchemas["RowPolicyListResponse"];
-type SetUserAdministratorRequest = ApiSchemas["SetUserAdministratorRequest"];
-type SetUserDorisRoleRequest = ApiSchemas["SetUserDorisRoleRequest"];
 
 export const adminApi = {
   async listRoles(): Promise<DorisRoleResponse[]> {
-    const response = await appClient.get<DorisRoleListResponse>("/api/v1/admin/doris-roles");
-    return response.data.roles;
+    const response = await appClient.get<DorisRoleResponse[]>("/api/v1/admin/doris-roles");
+    return response.data;
   },
 
   async listWorkloadGroups(): Promise<string[]> {
-    const response = await appClient.get<DorisWorkloadGroupListResponse>(
+    const response = await appClient.get<string[]>(
       "/api/v1/admin/doris-roles/workload-groups"
     );
-    return response.data.workload_groups;
+    return response.data;
   },
 
   async listExistingRoles(): Promise<DorisExistingRoleResponse[]> {
-    const response = await appClient.get<ApiSchemas["DorisExistingRoleListResponse"]>(
+    const response = await appClient.get<DorisExistingRoleResponse[]>(
       "/api/v1/admin/doris-roles/existing"
     );
-    return response.data.roles;
+    return response.data;
   },
 
   async createRole(request: CreateDorisRoleRequest): Promise<DorisRoleResponse> {
@@ -89,21 +83,6 @@ export const adminApi = {
 
   async deleteUser(userId: number): Promise<void> {
     await appClient.delete(`/api/v1/admin/users/${userId}`);
-  },
-
-  async setUserRole(userId: number, role: string): Promise<UserResponse> {
-    const response = await appClient.put<UserResponse>(`/api/v1/admin/users/${userId}/doris-role`, {
-      role,
-    } satisfies SetUserDorisRoleRequest);
-    return response.data;
-  },
-
-  async setAdministrator(userId: number, isAdmin: boolean): Promise<UserResponse> {
-    const response = await appClient.put<UserResponse>(
-      `/api/v1/admin/users/${userId}/administrator`,
-      { is_admin: isAdmin } satisfies SetUserAdministratorRequest
-    );
-    return response.data;
   },
 
   async updateUser(userId: number, request: UpdateUserRequest): Promise<UserResponse> {
@@ -196,17 +175,17 @@ export const adminApi = {
   },
 
   async listSelectGrants(role: string): Promise<AssetGrantResponse[]> {
-    const response = await appClient.get<AssetGrantListResponse>(
+    const response = await appClient.get<AssetGrantResponse[]>(
       `/api/v1/admin/doris-roles/${role}/select-grants`
     );
-    return response.data.grants;
+    return response.data;
   },
 
   async listRowPolicies(role: string): Promise<RowPolicyResponse[]> {
-    const response = await appClient.get<RowPolicyListResponse>(
+    const response = await appClient.get<RowPolicyResponse[]>(
       `/api/v1/admin/doris-roles/${role}/row-policies`
     );
-    return response.data.policies;
+    return response.data;
   },
 
   async createRowPolicy(role: string, request: RowPolicyRequest): Promise<void> {

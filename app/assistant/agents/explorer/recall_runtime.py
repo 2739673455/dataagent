@@ -6,7 +6,7 @@ from uuid import UUID
 
 from langchain_core.runnables import RunnableConfig
 
-from app.identity.repositories.auth import AuthPGRepo
+from app.identity.repositories.identity import IdentityPGRepo
 from app.identity.services.authorization import AuthorizationService
 from app.metadata.repositories.recall import SemanticRecallPGRepo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
@@ -46,7 +46,9 @@ async def create_authorized_semantic_recall_service(
 ) -> SemanticRecallContextService:
     """使用用户最新资产权限创建召回服务。"""
     async with auth_postgres_client_manager.session() as auth_session:
-        policy = await AuthorizationService(AuthPGRepo(auth_session)).get_asset_policy(
+        policy = await AuthorizationService(
+            IdentityPGRepo(auth_session)
+        ).get_asset_policy(
             user_id
         )
     return SemanticRecallContextService(

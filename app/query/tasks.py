@@ -4,7 +4,7 @@ from uuid import UUID
 
 from loguru import logger
 
-from app.query.providers import build_query_experience_service
+from app.query.providers import build_query_experience_indexer
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
 from app.query.task_scheduler import query_experience_index_scheduler
 from app.shared.clients.embedding_client_manager import embedding_client_manager
@@ -23,7 +23,7 @@ async def _sync_index(experience_id: UUID, revision: int) -> int:
     meta_postgres_client_manager.init()
     try:
         async with meta_postgres_client_manager.session() as session:
-            return await build_query_experience_service(session).sync_index(
+            return await build_query_experience_indexer(session).sync(
                 experience_id,
                 revision,
             )
@@ -60,7 +60,7 @@ def sync_index_task(
     }
 
 
-async def _repair_indexes() -> int:
+async def _repair_indexes() -> dict[str, int]:
     """扫描索引版本落后的查询经验并提交补偿任务。"""
     meta_postgres_client_manager.init()
     try:
@@ -68,10 +68,22 @@ async def _repair_indexes() -> int:
             pending = await QueryExperiencePGRepo(session).list_pending_index_repairs(
                 limit=_REPAIR_BATCH_SIZE
             )
-        for experience_id, revision in pending.items():
+        dispatched_count = sum(
             query_experience_index_scheduler.enqueue(experience_id, revision)
-        logger.info(f"查询经验索引补偿扫描完成: dispatched_count={len(pending)}")
-        return len(pending)
+            for experience_id, revision in pending.items()
+        )
+        stats = {
+            "attempted_count": len(pending),
+            "dispatched_count": dispatched_count,
+            "failed_count": len(pending) - dispatched_count,
+        }
+        logger.info(
+            "查询经验索引补偿扫描完成: "
+            f"attempted_count={stats['attempted_count']}, "
+            f"dispatched_count={stats['dispatched_count']}, "
+            f"failed_count={stats['failed_count']}"
+        )
+        return stats
     finally:
         await meta_postgres_client_manager.close()
 
@@ -79,4 +91,4 @@ async def _repair_indexes() -> int:
 @celery_app.task(name="dataagent.query.repair_indexes")
 def repair_indexes_task() -> dict[str, int]:
     """提交一批待补偿的查询经验索引任务。"""
-    return {"dispatched_count": run_async(_repair_indexes())}
+    return run_async(_repair_indexes())

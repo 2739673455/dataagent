@@ -10,7 +10,7 @@ from pydantic import SecretStr
 
 from app.identity import errors as auth_error
 from app.identity.models.account import RefreshToken, User
-from app.identity.repositories.auth import AuthPGRepo
+from app.identity.repositories.identity import IdentityPGRepo
 from app.identity.services.auth import (
     AccessTokenAuthenticator,
     Argon2PasswordManager,
@@ -51,6 +51,7 @@ class AsyncSessionStub:
 def build_config() -> AuthConfig:
     """构造测试认证配置。"""
     return AuthConfig(
+        rate_limit_redis_url=SecretStr("redis://127.0.0.1:6379/3"),
         jwt_secret=SecretStr("a-secure-test-key-with-at-least-32-characters"),
         jwt_algorithm="HS256",
         issuer="dataagent-test",
@@ -83,14 +84,14 @@ def build_user(
 
 def build_repo() -> MagicMock:
     """构造认证存储测试替身。"""
-    repo = MagicMock(spec=AuthPGRepo)
+    repo = MagicMock(spec=IdentityPGRepo)
     repo.lock_security_mutation = AsyncMock()
     repo.get_user_by_username = AsyncMock()
     repo.get_user_by_email = AsyncMock()
     repo.get_user_by_username_for_update = AsyncMock()
     repo.get_user_by_email_for_update = AsyncMock()
     repo.add_user = AsyncMock()
-    repo.set_user_admin = AsyncMock()
+    repo.update_user = AsyncMock()
     repo.get_user_by_id = AsyncMock()
     repo.get_user_by_id_for_update = AsyncMock()
     repo.set_user_password = AsyncMock()
@@ -98,7 +99,7 @@ def build_repo() -> MagicMock:
     repo.get_refresh_token_for_update = AsyncMock()
     repo.revoke_refresh_family = AsyncMock()
     repo.revoke_user_refresh_tokens = AsyncMock()
-    repo.rotate_refresh_token.side_effect = AuthPGRepo.rotate_refresh_token
+    repo.rotate_refresh_token.side_effect = IdentityPGRepo.rotate_refresh_token
     return repo
 
 
@@ -221,7 +222,12 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(result.admin_granted)
-        self.repo.set_user_admin.assert_awaited_once_with(existing, True)
+        self.repo.update_user.assert_awaited_once_with(
+            existing,
+            doris_role=None,
+            update_doris_role=False,
+            is_admin=True,
+        )
 
     async def test_refresh_rotates_token_and_replay_revokes_family(self) -> None:
         user = build_user()

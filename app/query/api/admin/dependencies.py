@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.query.repositories.execution_postgres import QueryExecutionPGRepo
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
 from app.query.services.experience_management import QueryExperienceManagementService
 from app.query.task_scheduler import query_experience_index_scheduler
@@ -22,6 +23,7 @@ def _get_query_experience_management_service(
     """创建请求级查询经验管理服务。"""
     return QueryExperienceManagementService(
         QueryExperiencePGRepo(session),
+        QueryExecutionPGRepo(session),
         query_experience_index_scheduler,
     )
 

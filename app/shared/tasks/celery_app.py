@@ -92,10 +92,6 @@ celery_app.conf.beat_schedule = {
         "task": "dataagent.assistant.cleanup_expired_drafts",
         "schedule": cfg.task_queue.lifecycle_schedule_seconds,
     },
-    "conversation-title-repair": {
-        "task": "dataagent.assistant.repair_conversation_titles",
-        "schedule": cfg.task_queue.lifecycle_schedule_seconds,
-    },
     "user-deletion-recovery": {
         "task": "dataagent.workflows.dispatch_due_user_deletions",
         "schedule": cfg.lifecycle.user_deletion_retry_seconds,

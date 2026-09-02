@@ -38,7 +38,7 @@ class AuthDependencyTest(unittest.IsolatedAsyncioTestCase):
                 return_value=session_scope(),
             ) as create_session,
             patch(
-                "app.identity.api.auth.dependencies.AuthPGRepo",
+                "app.identity.api.auth.dependencies.IdentityPGRepo",
                 return_value=repo,
             ) as create_repo,
             patch(

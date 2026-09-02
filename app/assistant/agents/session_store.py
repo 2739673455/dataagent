@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import shlex
-from collections.abc import Collection, Mapping
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncGenerator, Collection
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Protocol
 from uuid import UUID
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
+from app.assistant.agents.checkpoint_reader import (
+    CheckpointState,
+    CheckpointStateReader,
+)
 from app.assistant.agents.contracts import get_thread_id
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.manager import DockerSandboxManager
 from app.shared.clients.langgraph_postgres_manager import (
+    AdvisoryLockBusyError,
     LangGraphPostgresManager,
 )
 from app.shared.contracts.analysis import AgentSessionKey
@@ -27,11 +32,11 @@ class AgentSessionStore(Protocol):
         """列出指定 Analysis 或整个 Conversation 的 Session namespace。"""
         ...
 
-    async def load_checkpoint(
+    async def read_state(
         self,
         session_key: AgentSessionKey,
-    ) -> Mapping[str, object] | None:
-        """读取指定 Session 的最新 Checkpoint。"""
+    ) -> CheckpointState:
+        """读取指定 Session 的最新物化状态。"""
         ...
 
     async def delete_checkpoint(self, session_key: AgentSessionKey) -> bool:
@@ -53,6 +58,14 @@ class AgentSessionStore(Protocol):
         """创建指定 Session 的非阻塞执行锁上下文。"""
         ...
 
+    def reserve_capacity(
+        self,
+        session_key: AgentSessionKey,
+        max_sessions: int,
+    ) -> AbstractAsyncContextManager[None]:
+        """为尚未持久化的新 Session 保留跨进程容量。"""
+        ...
+
 
 class PostgresSandboxSessionStore:
     """绑定一个 Conversation 的 Checkpoint、锁和 Sandbox 操作。"""
@@ -72,9 +85,9 @@ class PostgresSandboxSessionStore:
         self._conversation_id = conversation_id
         self._thread_id = get_thread_id(user_id, conversation_id)
         self._persistence = persistence
-        self._checkpointer = checkpointer
         self._sandbox = sandbox
         self._conversation_backend = conversation_backend
+        self._state_reader = CheckpointStateReader(checkpointer)
 
     async def list_namespaces(self, analysis_id: str | None) -> list[str]:
         """列出当前 Conversation 的专业 Session namespace。"""
@@ -86,12 +99,12 @@ class PostgresSandboxSessionStore:
             prefix=prefix,
         )
 
-    async def load_checkpoint(
+    async def read_state(
         self,
         session_key: AgentSessionKey,
-    ) -> Mapping[str, object] | None:
-        """读取专业 Session 的最新 Checkpoint。"""
-        checkpoint = await self._checkpointer.aget_tuple(
+    ) -> CheckpointState:
+        """读取专业 Session 的最新物化状态。"""
+        return await self._state_reader.read(
             RunnableConfig(
                 configurable={
                     "thread_id": self._thread_id,
@@ -99,7 +112,6 @@ class PostgresSandboxSessionStore:
                 }
             )
         )
-        return checkpoint.checkpoint if checkpoint is not None else None
 
     async def delete_checkpoint(self, session_key: AgentSessionKey) -> bool:
         """删除专业 Session 的完整 Checkpoint namespace。"""
@@ -143,3 +155,32 @@ class PostgresSandboxSessionStore:
         return self._persistence.advisory_lock(
             f"specialist:{self._thread_id}:{session_key.checkpoint_ns}",
         )
+
+    @asynccontextmanager
+    async def reserve_capacity(
+        self,
+        session_key: AgentSessionKey,
+        max_sessions: int,
+    ) -> AsyncGenerator[None, None]:
+        """为新 Session 获取一个跨进程容量槽位。
+
+        新 Session 在首个 Checkpoint 写入前不会出现在持久化 namespace 列表中。
+        槽位持有到本次执行结束，使并发进程也会计入这段空窗口。
+        """
+        namespaces = set(await self.list_namespaces(None))
+        if session_key.checkpoint_ns in namespaces:
+            yield
+            return
+        if len(namespaces) >= max_sessions:
+            raise RuntimeError("当前 Conversation 的 Session 数量已达上限")
+
+        for slot in range(len(namespaces), max_sessions):
+            try:
+                async with self._persistence.advisory_lock(
+                    f"specialist-capacity:{self._thread_id}:{slot}"
+                ):
+                    yield
+                    return
+            except AdvisoryLockBusyError:
+                continue
+        raise RuntimeError("当前 Conversation 的 Session 数量已达上限")

@@ -20,14 +20,6 @@ from app.identity.models.doris import (
     DorisRowPolicy,
     normalize_doris_role_name,
 )
-from app.identity.services.account_validation import (
-    EMAIL_MAX_LENGTH,
-    PASSWORD_MAX_LENGTH,
-    USERNAME_MAX_LENGTH,
-    USERNAME_MIN_LENGTH,
-    validate_email,
-    validate_username,
-)
 from app.identity.services.doris_permission import DorisRoleStatus
 from app.shared.contracts.doris import (
     DORIS_IDENTIFIER_PATTERN,
@@ -40,26 +32,11 @@ class CreateUserRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    username: str = Field(
-        min_length=USERNAME_MIN_LENGTH,
-        max_length=USERNAME_MAX_LENGTH,
-    )
-    email: str = Field(min_length=3, max_length=EMAIL_MAX_LENGTH)
-    password: SecretStr = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
+    username: str
+    email: str
+    password: SecretStr
     doris_role: str | None = Field(default=None, max_length=64)
     is_admin: bool = False
-
-    @field_validator("username")
-    @classmethod
-    def normalize_username(cls, username: str) -> str:
-        """规范化并校验用户名。"""
-        return validate_username(username)
-
-    @field_validator("email")
-    @classmethod
-    def normalize_email(cls, email: str) -> str:
-        """规范化并校验邮箱。"""
-        return validate_email(email)
 
     @field_validator("doris_role")
     @classmethod
@@ -73,35 +50,11 @@ class UpdateUserRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    username: str | None = Field(
-        default=None,
-        min_length=USERNAME_MIN_LENGTH,
-        max_length=USERNAME_MAX_LENGTH,
-    )
-    email: str | None = Field(default=None, min_length=3, max_length=EMAIL_MAX_LENGTH)
-    password: SecretStr | None = Field(
-        default=None,
-        min_length=1,
-        max_length=PASSWORD_MAX_LENGTH,
-    )
+    username: str | None = None
+    email: str | None = None
+    password: SecretStr | None = None
     doris_role: str | None = Field(default=None)
     is_admin: bool | None = Field(default=None)
-
-    @field_validator("username")
-    @classmethod
-    def normalize_username(cls, username: str | None) -> str | None:
-        """规范化并校验用户名。"""
-        if username is None:
-            return None
-        return validate_username(username)
-
-    @field_validator("email")
-    @classmethod
-    def normalize_email(cls, email: str | None) -> str | None:
-        """规范化并校验邮箱。"""
-        if email is None:
-            return None
-        return validate_email(email)
 
     @field_validator("doris_role")
     @classmethod
@@ -164,30 +117,12 @@ class DorisRoleResponse(BaseModel):
         )
 
 
-class DorisRoleListResponse(BaseModel):
-    """Doris 数据角色列表。"""
-
-    roles: list[DorisRoleResponse]
-
-
-class DorisWorkloadGroupListResponse(BaseModel):
-    """Doris 工作组列表响应。"""
-
-    workload_groups: list[str]
-
-
 class DorisExistingRoleResponse(BaseModel):
     """Doris 已有角色响应。"""
 
     name: str
     managed: bool
     doris_users: list[str]
-
-
-class DorisExistingRoleListResponse(BaseModel):
-    """Doris 已有角色列表响应。"""
-
-    roles: list[DorisExistingRoleResponse]
 
 
 class CreateDorisRoleRequest(BaseModel):
@@ -232,28 +167,6 @@ class UserListResponse(BaseModel):
     limit: int = Field(ge=1)
     offset: int = Field(ge=0)
     has_more: bool
-
-
-class SetUserDorisRoleRequest(BaseModel):
-    """设置用户唯一 Doris 角色请求。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    role: str = Field(min_length=1, max_length=64)
-
-    @field_validator("role")
-    @classmethod
-    def normalize_role(cls, role: str) -> str:
-        """校验 Doris 角色名。"""
-        return normalize_doris_role_name(role)
-
-
-class SetUserAdministratorRequest(BaseModel):
-    """设置平台管理员请求。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    is_admin: bool
 
 
 class SelectGrantRequest(BaseModel):
@@ -315,12 +228,6 @@ class AssetGrantResponse(BaseModel):
         )
 
 
-class AssetGrantListResponse(BaseModel):
-    """Doris SELECT 权限投影列表。"""
-
-    grants: list[AssetGrantResponse]
-
-
 class RowPolicyRequest(BaseModel):
     """创建 Doris 行策略请求。"""
 
@@ -378,9 +285,3 @@ class RowPolicyResponse(BaseModel):
             policy_type=policy.policy_type,
             predicate=policy.predicate,
         )
-
-
-class RowPolicyListResponse(BaseModel):
-    """Doris 实时行策略列表。"""
-
-    policies: list[RowPolicyResponse]

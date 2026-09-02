@@ -93,11 +93,16 @@ export function GenericToolRunBar({
   const hasError = isToolResultFailure(item.result);
 
   return (
-    <div className="my-1.5 font-mono text-xs">
+    <div
+      data-expandable-item
+      data-expandable-open={isOpen ? "true" : "false"}
+      className="my-1.5 font-mono text-xs"
+    >
       {/* 无边框折叠触发器 */}
       <button
+        data-expandable-header
         type="button"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => setIsOpen((prev) => !prev)}
         className="flex items-center gap-1.5 py-1 text-left text-xs text-[#71717a] transition hover:text-[#18181b]"
       >
         <ChevronRight
@@ -208,11 +213,16 @@ export function ExecutionProcessCollapse({
   const toolCount = items.filter((i) => i.type === "tool_run").length;
 
   return (
-    <div className="my-1.5 font-mono text-xs">
+    <div
+      data-expandable-item
+      data-expandable-open={isOpen ? "true" : "false"}
+      className="my-1.5 font-mono text-xs"
+    >
       {/* 无边框折叠触发器 */}
       <button
+        data-expandable-header
         type="button"
-        onClick={() => setUserToggledOpen(!isOpen)}
+        onClick={() => setUserToggledOpen((prev) => !(prev ?? !hasFinalItem))}
         className={cn(
           "flex items-center gap-1.5 py-1 text-left text-xs transition",
           isProcessing
@@ -425,11 +435,16 @@ function DelegationRunBarInternal({
     .join(" ");
 
   return (
-    <div className="my-1.5 font-mono text-xs">
+    <div
+      data-expandable-item
+      data-expandable-open={isOpen ? "true" : "false"}
+      className="my-1.5 font-mono text-xs"
+    >
       {/* 无边框触发器 */}
       <button
+        data-expandable-header
         type="button"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => setIsOpen((prev) => !prev)}
         className="flex items-center gap-1.5 py-1 text-left text-xs text-[#71717a] transition hover:text-[#18181b]"
       >
         <ChevronRight

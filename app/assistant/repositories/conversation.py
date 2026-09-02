@@ -1,9 +1,11 @@
 """PostgreSQL 会话目录数据访问。"""
 
 from datetime import UTC, datetime
+from typing import cast
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.assistant.models.conversation import Conversation
@@ -27,14 +29,12 @@ class ConversationPGRepo:
         title: str,
         *,
         is_draft: bool = False,
-        title_pending: bool = True,
     ) -> Conversation:
         """创建会话目录信息。"""
         now = datetime.now(UTC)
         conversation = Conversation(
             user_id=user_id,
             title=title,
-            title_pending=title_pending,
             is_draft=is_draft,
             create_at=now,
             update_at=now,
@@ -64,7 +64,6 @@ class ConversationPGRepo:
         conversation: Conversation,
         *,
         title: str | None = None,
-        title_pending: bool | None = None,
         is_draft: bool | None = None,
         deletion_requested_at: datetime | None = None,
     ) -> Conversation:
@@ -72,8 +71,6 @@ class ConversationPGRepo:
         conversation.update_at = datetime.now(UTC)
         if title is not None:
             conversation.title = title
-        if title_pending is not None:
-            conversation.title_pending = title_pending
         if is_draft is not None:
             conversation.is_draft = is_draft
         if deletion_requested_at is not None:
@@ -81,38 +78,30 @@ class ConversationPGRepo:
         await self._session.flush()
         return conversation
 
-    async def claim_title_generation(
+    async def replace_title_if_current(
         self,
-        conversation: Conversation,
+        user_id: int,
+        conversation_id: UUID,
         *,
+        expected_title: str,
         title: str,
-        source: str,
-    ) -> Conversation:
-        """记录首次标题生成输入并占用生成状态。"""
-        now = datetime.now(UTC)
-        conversation.title = title
-        conversation.title_pending = True
-        conversation.title_source = source
-        conversation.title_generation_requested_at = now
-        conversation.is_draft = False
-        conversation.update_at = now
+    ) -> bool:
+        """仅在即时标题未被用户修改时替换为模型标题。"""
+        result = cast(
+            CursorResult[object],
+            await self._session.execute(
+                update(Conversation)
+                .where(
+                    Conversation.user_id == user_id,
+                    Conversation.id == conversation_id,
+                    Conversation.title == expected_title,
+                    Conversation.deletion_requested_at.is_(None),
+                )
+                .values(title=title, update_at=datetime.now(UTC))
+            ),
+        )
         await self._session.flush()
-        return conversation
-
-    async def complete_title_generation(
-        self,
-        conversation: Conversation,
-        *,
-        title: str,
-    ) -> Conversation:
-        """完成标题生成并清理补偿输入。"""
-        conversation.title = title
-        conversation.title_pending = False
-        conversation.title_source = None
-        conversation.title_generation_requested_at = None
-        conversation.update_at = datetime.now(UTC)
-        await self._session.flush()
-        return conversation
+        return bool(result.rowcount)
 
     async def list_all_by_user(
         self,
@@ -167,27 +156,6 @@ class ConversationPGRepo:
             select(Conversation)
             .where(Conversation.deletion_requested_at.is_not(None))
             .order_by(Conversation.deletion_requested_at, Conversation.id)
-            .limit(limit)
-        )
-        return list(result)
-
-    async def list_pending_title_generations(
-        self,
-        cutoff: datetime,
-        *,
-        limit: int,
-    ) -> list[Conversation]:
-        """跨用户列出需要重新提交的标题生成任务。"""
-        result = await self._session.scalars(
-            select(Conversation)
-            .where(
-                Conversation.deletion_requested_at.is_(None),
-                Conversation.title_pending.is_(True),
-                Conversation.title_source.is_not(None),
-                Conversation.title_generation_requested_at.is_not(None),
-                Conversation.title_generation_requested_at <= cutoff,
-            )
-            .order_by(Conversation.title_generation_requested_at, Conversation.id)
             .limit(limit)
         )
         return list(result)

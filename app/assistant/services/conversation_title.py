@@ -55,7 +55,7 @@ class ConversationTitleService:
         conversation_id: UUID,
         expected_title: str,
         user_text: str,
-    ) -> None:
+    ) -> bool:
         """调用主模型生成标题并避免覆盖用户修改。"""
         response = await self._model.ainvoke(
             [
@@ -65,12 +65,11 @@ class ConversationTitleService:
         )
         generated_title = _normalize_generated_title(response.text)
         if not generated_title:
-            return
+            return False
 
-        conversation = await conversation_repo.get(user_id, conversation_id)
-        if conversation is None or conversation.title != expected_title:
-            return
-        await conversation_repo.complete_title_generation(
-            conversation,
+        return await conversation_repo.replace_title_if_current(
+            user_id,
+            conversation_id,
+            expected_title=expected_title,
             title=generated_title,
         )

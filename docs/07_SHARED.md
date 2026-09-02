@@ -144,7 +144,6 @@ Worker 执行任务
 
 每 lifecycle_schedule_seconds
 → assistant.cleanup_expired_drafts
-→ assistant.repair_conversation_titles
 
 每 user_deletion_retry_seconds
 → workflows.dispatch_due_user_deletions 原子领取并提交到期注销任务

@@ -225,11 +225,16 @@ function ThinkingView({ part }: { part: ThinkingContent }) {
         : "思考过程";
 
   return (
-    <div className="my-1 text-[#71717a]">
+    <div
+      data-expandable-item
+      data-expandable-open={open ? "true" : "false"}
+      className="my-1 text-[#71717a]"
+    >
       <button
+        data-expandable-header
         type="button"
         aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setOpen((prev) => !prev)}
         className="flex items-center gap-1.5 py-0.5 text-xs transition-colors hover:text-[#3f3f46]"
       >
         <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")} />

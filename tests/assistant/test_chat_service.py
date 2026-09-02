@@ -17,6 +17,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 from langchain_core.runnables import RunnableConfig
 from pydantic import ValidationError
 
+from app.assistant.agents.checkpoint_reader import CheckpointState
 from app.assistant.agents.contracts import (
     EVAL_DELEGATIONS_KEY,
     MESSAGE_CREATED_AT_KEY,
@@ -31,16 +32,13 @@ from app.assistant.agents.contracts import (
 from app.assistant.agents.middleware.message_timestamp import (
     MessageTimestampMiddleware,
 )
-from app.assistant.agents.middleware.user_message_attachments import (
-    USER_MESSAGE_ATTACHMENTS_KEY,
-    UserMessageAttachments,
+from app.assistant.agents.middleware.user_message_context import (
+    USER_MESSAGE_CONTEXT_KEY,
+    UserMessageContext,
 )
-from app.assistant.agents.middleware.user_message_metadata import (
-    USER_MESSAGE_METADATA_KEY,
-    UserMessageMetadata,
-)
-from app.assistant.api.chat import schemas as chat_schema
+from app.assistant.contracts import chat as chat_schema
 from app.assistant.services import chat as chat_service
+from app.assistant.services import message_projection
 from app.sandbox.paths import normalize_attachment_path
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -135,43 +133,41 @@ class ChatMutationRequestTest(unittest.TestCase):
 
 class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
     async def test_user_message_creation_time_is_persisted(self) -> None:
-        message = chat_service._schema_to_human_message(
+        message = message_projection.schema_to_human_message(
             chat_schema.UserMessageRequest(
                 parts=[chat_schema.TextContent(type="text", text="analyze")]
             ),
         )
 
-        metadata = chat_schema.MessageResponse.model_validate(
-            message.additional_kwargs[chat_service.MESSAGE_PAYLOAD_KEY]
+        context = UserMessageContext.model_validate(
+            message.additional_kwargs[USER_MESSAGE_CONTEXT_KEY]
         )
-        self.assertIsNotNone(metadata.created_at)
-        private_metadata = UserMessageMetadata.model_validate(
-            message.additional_kwargs[USER_MESSAGE_METADATA_KEY]
-        )
-        self.assertEqual(metadata.created_at, private_metadata.received_at)
+        self.assertIsNotNone(context.received_at)
 
-    async def test_private_user_message_metadata_is_not_exposed_by_api_schema(
+    async def test_private_user_message_context_is_not_exposed_by_api_schema(
         self,
     ) -> None:
-        message = chat_service._schema_to_human_message(
+        message = message_projection.schema_to_human_message(
             chat_schema.UserMessageRequest(
                 parts=[chat_schema.TextContent(type="text", text="analyze")]
             ),
         )
 
-        response = chat_service._langchain_message_to_schema(message, _CONVERSATION_ID)
+        response = message_projection.langchain_message_to_schema(
+            message, _CONVERSATION_ID
+        )
 
         self.assertIsNotNone(response)
         assert response is not None
         payload = response.model_dump(mode="json")
-        self.assertNotIn(USER_MESSAGE_METADATA_KEY, payload)
+        self.assertNotIn(USER_MESSAGE_CONTEXT_KEY, payload)
         self.assertIsNotNone(payload["created_at"])
-        self.assertNotIn("<message_metadata>", json.dumps(payload))
+        self.assertNotIn("<user_message_context>", json.dumps(payload))
 
     async def test_attachment_references_are_private_and_content_stays_raw(
         self,
     ) -> None:
-        message = chat_service._schema_to_human_message(
+        message = message_projection.schema_to_human_message(
             chat_schema.UserMessageRequest(
                 parts=[chat_schema.TextContent(type="text", text="analyze")],
                 attachments=[
@@ -182,21 +178,23 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(message.content, [{"type": "text", "text": "analyze"}])
-        private_attachments = UserMessageAttachments.model_validate(
-            message.additional_kwargs[USER_MESSAGE_ATTACHMENTS_KEY]
+        context = UserMessageContext.model_validate(
+            message.additional_kwargs[USER_MESSAGE_CONTEXT_KEY]
         )
         self.assertEqual(
-            [item.f_path for item in private_attachments.attachments],
+            [item.f_path for item in context.attachments],
             ["uploads/report.csv", "uploads/chart.png"],
         )
-        response = chat_service._langchain_message_to_schema(message, _CONVERSATION_ID)
+        response = message_projection.langchain_message_to_schema(
+            message, _CONVERSATION_ID
+        )
         assert response is not None
         self.assertEqual(
             [item.f_path for item in response.attachments or ()],
             ["uploads/report.csv", "uploads/chart.png"],
         )
         self.assertNotIn(
-            USER_MESSAGE_ATTACHMENTS_KEY,
+            USER_MESSAGE_CONTEXT_KEY,
             response.model_dump(mode="json"),
         )
 
@@ -212,7 +210,7 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(MESSAGE_CREATED_AT_KEY, response_message.additional_kwargs)
 
     async def test_reasoning_block_is_projected_as_completed_thinking(self) -> None:
-        response = chat_service._langchain_message_to_schema(
+        response = message_projection.langchain_message_to_schema(
             AIMessage(
                 id="answer-1",
                 content=[
@@ -234,6 +232,77 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
                 ),
                 chat_schema.TextContent(type="text", text="最终回答"),
             ],
+        )
+
+    async def test_responses_reasoning_item_is_projected_as_completed_thinking(
+        self,
+    ) -> None:
+        response = message_projection.langchain_message_to_schema(
+            AIMessage(
+                id="answer-1",
+                content=[
+                    {
+                        "type": "reasoning",
+                        "id": "rs_1",
+                        "summary": [],
+                        "content": [
+                            {"type": "reasoning_text", "text": "先核对数据。"}
+                        ],
+                    },
+                    {"type": "text", "text": "最终回答"},
+                ],
+            ),
+            _CONVERSATION_ID,
+        )
+
+        assert response is not None
+        thinking = response.parts[0]
+        self.assertIsInstance(thinking, chat_schema.ThinkingContent)
+        self.assertEqual(
+            cast(chat_schema.ThinkingContent, thinking).text,
+            "先核对数据。",
+        )
+
+    async def test_deepseek_checkpoint_reasoning_extras_are_projected(self) -> None:
+        message = AIMessage(
+            id="answer-1",
+            response_metadata={"model_provider": "openai"},
+            content=[
+                {
+                    "type": "reasoning",
+                    "id": "rs_1",
+                    "summary": [],
+                    "content": [
+                        {
+                            "type": "reasoning_text",
+                            "text": "先判断用户意图。",
+                            "index": 0,
+                        }
+                    ],
+                    "encrypted_content": "encrypted-reasoning",
+                    "status": "in_progress",
+                    "index": 0,
+                },
+                {"type": "text", "text": "你好", "index": 1},
+            ],
+        )
+
+        # LangChain 会把扩展 Responses reasoning 的 content 移到 extras，
+        # 历史投影仍应从 Checkpoint 原始 content 恢复思考过程。
+        self.assertNotIn("content", message.content_blocks[0])
+        response = message_projection.langchain_message_to_schema(
+            message,
+            _CONVERSATION_ID,
+        )
+
+        assert response is not None
+        self.assertEqual(
+            response.parts[0],
+            chat_schema.ThinkingContent(
+                type="thinking",
+                text="先判断用户意图。",
+                status="complete",
+            ),
         )
 
 
@@ -294,6 +363,45 @@ class _TurnManagerStub:
             raise AssertionError("unexpected conversation_id")
         return self.runtime
 
+    async def read_planner_state(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+    ) -> CheckpointState:
+        if user_id != self.turn_context.user_id:
+            raise AssertionError("unexpected user_id")
+        if conversation_id != self.turn_context.conversation_id:
+            raise AssertionError("unexpected conversation_id")
+        state = await self.runtime.planner.aget_state(
+            {"configurable": {"thread_id": "test"}}
+        )
+        return CheckpointState(
+            values=state.values,
+            next_nodes=tuple(state.next) if hasattr(state, "next") else (),
+            updated_at=None,
+        )
+
+    async def read_delegation_activity(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        analysis_id: str,
+        agent_type: str,
+        session_id: str,
+        delegation_id: str,
+    ) -> DelegationActivityHistory | None:
+        """通过测试运行时读取 Specialist 活动。"""
+        if user_id != self.turn_context.user_id:
+            raise AssertionError("unexpected user_id")
+        if conversation_id != self.turn_context.conversation_id:
+            raise AssertionError("unexpected conversation_id")
+        return await self.runtime.session_service.get_delegation_activity(
+            analysis_id,
+            agent_type,
+            session_id,
+            delegation_id,
+        )
+
     @asynccontextmanager
     async def execution(
         self,
@@ -329,7 +437,16 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                     "data": (
                         AIMessageChunk(
                             id="answer-1",
-                            content=[{"type": "reasoning", "reasoning": delta}],
+                            content=[
+                                {
+                                    "type": "reasoning",
+                                    "id": "rs_1",
+                                    "summary": [],
+                                    "content": [
+                                        {"type": "reasoning_text", "text": delta}
+                                    ],
+                                }
+                            ],
                         ),
                         {"langgraph_node": "model"},
                     ),
@@ -357,7 +474,14 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                                 content=[
                                     {
                                         "type": "reasoning",
-                                        "reasoning": "先定位数据源",
+                                        "id": "rs_1",
+                                        "summary": [],
+                                        "content": [
+                                            {
+                                                "type": "reasoning_text",
+                                                "text": "先定位数据源",
+                                            }
+                                        ],
                                     },
                                     {"type": "text", "text": "完成"},
                                 ],
@@ -505,7 +629,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 chat_service,
-                "_schema_to_human_message",
+                "schema_to_human_message",
                 new=MagicMock(return_value=HumanMessage(content="analyze")),
             ),
             self.assertRaisesRegex(
@@ -591,7 +715,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        schema = await chat_service._langchain_message_to_schema_with_artifacts(
+        schema = await message_projection.langchain_message_to_schema_with_artifacts(
             message,
             files,
             7,
@@ -655,7 +779,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         )
         files = _FileInspectorStub({(7, _CONVERSATION_ID, path.removeprefix("/"))})
 
-        schema = await chat_service._langchain_message_to_schema_with_artifacts(
+        schema = await message_projection.langchain_message_to_schema_with_artifacts(
             message,
             files,
             7,
@@ -683,7 +807,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         relative_path = "sessions/sales-review/analyst/main/final.csv"
         files = _FileInspectorStub({(7, other_conversation_id, relative_path)})
 
-        schema = await chat_service._langchain_message_to_schema_with_artifacts(
+        schema = await message_projection.langchain_message_to_schema_with_artifacts(
             message,
             files,
             7,
@@ -771,7 +895,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
 
     def test_eval_internal_delegations_are_projected_from_tool_metadata(self) -> None:
         payload = _delegation_payload()
-        schema = chat_service._langchain_message_to_schema(
+        schema = message_projection.langchain_message_to_schema(
             ToolMessage(
                 id="eval-result",
                 content="done",
@@ -800,7 +924,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(schema.eval_delegations[0].result, payload)
 
     def test_large_subagent_tool_payloads_are_preserved(self) -> None:
-        call_schema = chat_service._langchain_message_to_schema(
+        call_schema = message_projection.langchain_message_to_schema(
             AIMessage(
                 content="",
                 tool_calls=[
@@ -813,7 +937,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             ),
             _CONVERSATION_ID,
         )
-        result_schema = chat_service._langchain_message_to_schema(
+        result_schema = message_projection.langchain_message_to_schema(
             ToolMessage(
                 content="x" * 55_000,
                 name="execute_sql",
@@ -913,7 +1037,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(
             chat_service,
-            "_schema_to_human_message",
+            "schema_to_human_message",
             new=MagicMock(return_value=HumanMessage(content="analyze")),
         ):
             async for event in chat_service.run_agent_turn(
@@ -973,26 +1097,31 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             message=reference,
         )
 
-        with patch.object(
-            chat_service,
-            "expand_semantic_recall_messages_for_display",
-            new=expander,
+        with (
+            patch.object(
+                message_projection,
+                "expand_semantic_recall_messages_for_display",
+                new=expander,
+            ),
+            patch.object(
+                chat_service,
+                "expand_semantic_recall_messages_for_display",
+                new=expander,
+            ),
         ):
-            stream_event = await chat_service._subagent_activity_to_event(
+            stream_event = await message_projection.subagent_activity_to_event(
                 activity,
                 7,
                 _CONVERSATION_ID,
             )
 
-            runtime = MagicMock()
-            runtime.session_service.get_delegation_activity = AsyncMock(
+            agents = MagicMock()
+            agents.read_delegation_activity = AsyncMock(
                 return_value=DelegationActivityHistory(
                     messages=[reference],
                     status="completed",
                 )
             )
-            agents = MagicMock()
-            agents.get_conversation_runtime = AsyncMock(return_value=runtime)
             history = await chat_service.get_subagent_activity(
                 agents,
                 7,
@@ -1032,7 +1161,9 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             content=json.dumps(_delegation_payload()),
         )
 
-        schema = chat_service._langchain_message_to_schema(message, _CONVERSATION_ID)
+        schema = message_projection.langchain_message_to_schema(
+            message, _CONVERSATION_ID
+        )
 
         self.assertIsNotNone(schema)
         assert schema is not None
@@ -1084,7 +1215,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 chat_service,
-                "_schema_to_human_message",
+                "schema_to_human_message",
                 new=MagicMock(return_value=HumanMessage(content="analyze")),
             ),
         ):
@@ -1114,7 +1245,9 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             content=json.dumps(payload),
         )
 
-        schema = chat_service._langchain_message_to_schema(message, _CONVERSATION_ID)
+        schema = message_projection.langchain_message_to_schema(
+            message, _CONVERSATION_ID
+        )
 
         self.assertIsNotNone(schema)
         assert schema is not None
@@ -1136,7 +1269,9 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             content=json.dumps(payload),
         )
 
-        schema = chat_service._langchain_message_to_schema(message, _CONVERSATION_ID)
+        schema = message_projection.langchain_message_to_schema(
+            message, _CONVERSATION_ID
+        )
 
         self.assertIsNotNone(schema)
         assert schema is not None

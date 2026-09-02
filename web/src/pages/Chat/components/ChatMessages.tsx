@@ -9,6 +9,7 @@ import {
 } from "./messages/displayModel";
 import { MessageBubble } from "./messages/MessageBubble";
 import { ExecutionProcessCollapse } from "./messages/ToolRunBars";
+import { StickyExpandableHeader } from "./messages/StickyExpandableHeader";
 import type {
   SubagentRunIdentity,
   SubagentRunMap,
@@ -54,29 +55,42 @@ export function ChatMessages({
     const viewport = viewportRef.current;
     if (!conversationId || !viewport) return;
 
-    const bottomThreshold = 48;
+    const bottomThreshold = 6;
     navigationTargetTopRef.current = null;
     shouldStickToBottomRef.current =
       viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= bottomThreshold;
     let animationFrame: number | null = null;
     let touchY: number | null = null;
+    let isUserScrollingUp = false;
+    let userScrollUpTimeout: number | null = null;
 
     const cancelPendingFollow = () => {
       if (animationFrame === null) return;
       window.cancelAnimationFrame(animationFrame);
       animationFrame = null;
     };
-    const stopFollowing = () => {
+    const markUserScrollingUp = () => {
+      isUserScrollingUp = true;
       shouldStickToBottomRef.current = false;
       cancelPendingFollow();
+      if (userScrollUpTimeout !== null) {
+        window.clearTimeout(userScrollUpTimeout);
+      }
+      userScrollUpTimeout = window.setTimeout(() => {
+        isUserScrollingUp = false;
+        userScrollUpTimeout = null;
+      }, 300);
+    };
+    const stopFollowing = () => {
+      markUserScrollingUp();
     };
     const updateStickiness = () => {
       // 内容折叠和程序化定位也会触发 scroll；这里只负责在回到底部时恢复跟随，
       // 停止跟随必须来自下面的滚轮、触摸或滚动条操作。
       const currentScrollTop = viewport.scrollTop;
       const currentScrollHeight = viewport.scrollHeight;
-      const isAtBottom =
-        currentScrollHeight - currentScrollTop - viewport.clientHeight <= bottomThreshold;
+      const distanceFromBottom = currentScrollHeight - currentScrollTop - viewport.clientHeight;
+      const isAtBottom = distanceFromBottom <= bottomThreshold;
       const navigationTargetTop = navigationTargetTopRef.current;
       if (navigationTargetTop !== null) {
         if (Math.abs(currentScrollTop - navigationTargetTop) <= 1) {
@@ -84,11 +98,27 @@ export function ChatMessages({
         }
         return;
       }
-      if (isAtBottom) shouldStickToBottomRef.current = true;
+      if (isUserScrollingUp) {
+        shouldStickToBottomRef.current = false;
+        return;
+      }
+      if (isAtBottom) {
+        shouldStickToBottomRef.current = true;
+      } else {
+        shouldStickToBottomRef.current = false;
+      }
     };
     const handleWheel = (event: WheelEvent) => {
       navigationTargetTopRef.current = null;
-      if (event.deltaY < 0) stopFollowing();
+      if (event.deltaY < 0) {
+        markUserScrollingUp();
+      } else if (event.deltaY > 0) {
+        const distanceFromBottom =
+          viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+        if (distanceFromBottom <= bottomThreshold) {
+          shouldStickToBottomRef.current = true;
+        }
+      }
     };
     const handlePointerDown = (event: PointerEvent) => {
       navigationTargetTopRef.current = null;
@@ -116,8 +146,10 @@ export function ChatMessages({
       });
     };
 
+    const messagesContainer = viewport.querySelector("[data-chat-messages-container]");
+    const targetToObserve = messagesContainer ?? viewport;
     const observer = new MutationObserver(followContentGrowth);
-    observer.observe(viewport, {
+    observer.observe(targetToObserve, {
       childList: true,
       characterData: true,
       subtree: true,
@@ -131,6 +163,7 @@ export function ChatMessages({
 
     return () => {
       observer.disconnect();
+      if (userScrollUpTimeout !== null) window.clearTimeout(userScrollUpTimeout);
       viewport.removeEventListener("scroll", updateStickiness);
       viewport.removeEventListener("wheel", handleWheel);
       viewport.removeEventListener("pointerdown", handlePointerDown);
@@ -211,6 +244,7 @@ export function ChatMessages({
           onNavigate={navigateToUserMessage}
         />
       ) : null}
+      <StickyExpandableHeader viewportRef={viewportRef} />
       <div
         ref={viewportRef}
         className="min-h-0 flex-1 overflow-y-auto px-4 py-4 [scrollbar-gutter:stable_both-edges]"
@@ -237,13 +271,13 @@ export function ChatMessages({
           </div>
         ) : isLoading ? (
           <div className="flex h-full items-center justify-center">
-            <div className="flex items-center gap-2 rounded border border-[#d4d4ce] bg-[#ffffff] px-4 py-2 text-xs text-[#52525b] shadow-xs">
+            <div className="flex items-center gap-2 text-xs text-[#52525b]">
               <DotMatrixLoader label="正在获取会话消息" className="text-[#18181b]" />
               <span>正在获取会话消息...</span>
             </div>
           </div>
         ) : (
-          <div className="mx-auto w-full max-w-4xl space-y-3">
+          <div data-chat-messages-container className="mx-auto w-full max-w-4xl space-y-3">
             {turns.map((turn, turnIndex) => {
               const isTurnStreaming =
                 isStreaming && turnIndex === turns.length - 1 && turn.finalItem === null;

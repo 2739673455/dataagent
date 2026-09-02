@@ -117,7 +117,6 @@ class QueryExecution(MetaBase):
     error_code: Mapped[str | None] = mapped_column(String(128))
     error_detail: Mapped[str | None] = mapped_column(Text)
     validation: Mapped[dict[str, object] | None] = mapped_column(JSON)
-    plan_estimate: Mapped[dict[str, object] | None] = mapped_column(JSON)
     result_summary: Mapped[dict[str, object] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

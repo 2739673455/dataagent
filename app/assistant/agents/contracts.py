@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
 
     from app.assistant.agents.session_service import AgentSessionService
+    from app.assistant.agents.shell_jobs import ShellJobRuntime
 
 Identifier = Annotated[
     str,
@@ -170,6 +171,7 @@ class ConversationAgentRuntime:
 
     planner: CompiledStateGraph
     session_service: AgentSessionService
+    shell_jobs: ShellJobRuntime
     planner_lock: Callable[[], AbstractAsyncContextManager[None]]
     conversation_deleted: Callable[[], Awaitable[bool]]
 
@@ -281,6 +283,14 @@ class AgentResult(StrictProtocolModel):
 
 class SpecialistResult(AgentResult):
     """所有专业 Agent 的结构化输出。"""
+
+
+class DelegationCheckpointRecord(StrictProtocolModel):
+    """持久化在 Specialist Checkpoint 中的一次委派状态。"""
+
+    delegation_id: NonEmptyText
+    status: SubagentRunStatus
+    result: SpecialistResult | None = None
 
 
 class DelegationResult(AgentResult):

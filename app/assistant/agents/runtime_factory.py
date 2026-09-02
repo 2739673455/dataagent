@@ -16,11 +16,7 @@ from app.assistant.agents.contracts import (
 )
 from app.assistant.agents.explorer.tools import (
     create_execute_sql_tool,
-    delete_recalls,
-    get_recall,
-    list_recalls,
-    merge_recalls,
-    recall_context,
+    create_semantic_recall_tools,
 )
 from app.assistant.agents.mcp import get_mcp_tools
 from app.assistant.agents.planner.agent import create_planner_agent
@@ -31,14 +27,15 @@ from app.assistant.agents.planner.tools import (
 )
 from app.assistant.agents.session_service import AgentSessionService
 from app.assistant.agents.session_store import PostgresSandboxSessionStore
+from app.assistant.agents.shell_jobs import ShellJobRuntime
 from app.assistant.agents.specialists import (
     SpecialistAgentFactory,
     SpecialistDefinition,
     build_specialist_definitions,
 )
 from app.assistant.model_factory import create_configured_model
-from app.assistant.services.conversation_tombstone import (
-    ConversationTombstoneService,
+from app.assistant.services.conversation_tombstone_store import (
+    ConversationTombstoneStore,
 )
 from app.query.providers import build_query_execution_handler
 from app.sandbox.backend import DockerSandboxBackend
@@ -66,7 +63,7 @@ class ConversationAgentRuntimeFactory:
         self,
         persistence: LangGraphPostgresManager,
         sandbox: DockerSandboxManager,
-        tombstones: ConversationTombstoneService,
+        tombstones: ConversationTombstoneStore,
     ) -> None:
         """保存运行时依赖，模型和工具在首次使用时初始化。"""
         self._persistence = persistence
@@ -102,11 +99,7 @@ class ConversationAgentRuntimeFactory:
                 for agent_type, model_name in specialist_model_names.items()
             }
             explorer_tools = [
-                recall_context,
-                list_recalls,
-                get_recall,
-                merge_recalls,
-                delete_recalls,
+                *create_semantic_recall_tools(),
                 create_execute_sql_tool(build_query_execution_handler(self._sandbox)),
             ]
             explorer_mcp_tools = await get_mcp_tools()
@@ -157,16 +150,20 @@ class ConversationAgentRuntimeFactory:
             user_id=user_id,
             conversation_id=conversation_id,
             max_parallel_sessions=orchestration.max_parallel_sessions,
+            max_sessions=orchestration.max_sessions,
         )
+        shell_jobs = ShellJobRuntime(conversation_backend.shell_jobs)
         planner = self._create_planner(
             resources.planner_model,
             session_service,
+            shell_jobs,
             conversation_backend,
             checkpointer,
         )
         return ConversationAgentRuntime(
             planner=planner,
             session_service=session_service,
+            shell_jobs=shell_jobs,
             planner_lock=lambda: self._persistence.advisory_lock(
                 conversation_lifecycle_lock_name(user_id, conversation_id),
             ),
@@ -180,6 +177,7 @@ class ConversationAgentRuntimeFactory:
         self,
         model: BaseChatModel,
         session_service: AgentSessionService,
+        shell_jobs: ShellJobRuntime,
         backend: DockerSandboxBackend,
         checkpointer: BaseCheckpointSaver,
     ) -> CompiledStateGraph:
@@ -196,6 +194,7 @@ class ConversationAgentRuntimeFactory:
             backend=backend,
             checkpointer=checkpointer,
             session_service=session_service,
+            shell_jobs=shell_jobs,
             interpreter_memory_limit_bytes=interpreter.memory_limit_bytes,
         )
 

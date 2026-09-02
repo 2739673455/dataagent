@@ -8,21 +8,31 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from uuid import UUID
 
+from langchain_core.runnables import RunnableConfig
+
+from app.assistant.agents.checkpoint_reader import (
+    CheckpointState,
+    CheckpointStateReader,
+)
 from app.assistant.agents.contracts import (
     ConversationAgentRuntime,
+    DelegationActivityHistory,
     PlannerTurnContext,
+    build_planner_config,
     conversation_lifecycle_lock_name,
     get_thread_id,
 )
 from app.assistant.agents.runtime_factory import ConversationAgentRuntimeFactory
-from app.assistant.services.conversation_tombstone import (
-    ConversationTombstoneService,
+from app.assistant.agents.specialist_checkpoint import SpecialistCheckpointView
+from app.assistant.services.conversation_tombstone_store import (
+    ConversationTombstoneStore,
 )
 from app.sandbox.manager import DockerSandboxManager
 from app.shared.clients.langgraph_postgres_manager import (
     LangGraphPostgresManager,
 )
 from app.shared.config import app_config
+from app.shared.contracts.analysis import AgentSessionKey, validate_agent_type
 
 type ConversationKey = tuple[int, UUID]
 
@@ -36,7 +46,7 @@ class AgentManager:
         self,
         persistence_manager: LangGraphPostgresManager,
         sandbox: DockerSandboxManager,
-        tombstones: ConversationTombstoneService,
+        tombstones: ConversationTombstoneStore,
         max_cached_runtimes: int = _DEFAULT_MAX_CACHED_RUNTIMES,
     ) -> None:
         """初始化 Agent 管理器。"""
@@ -85,6 +95,7 @@ class AgentManager:
                     self._runtime_build_tasks.pop(conversation_key, None)
             raise
 
+        evicted_runtimes: list[ConversationAgentRuntime] = []
         async with self._state_lock:
             if self._runtime_build_tasks.get(conversation_key) is current_task:
                 self._runtime_build_tasks.pop(conversation_key, None)
@@ -104,7 +115,10 @@ class AgentManager:
                         if evictable_key is None:
                             break
                         evicted = self._conversation_runtimes.pop(evictable_key)
-                        evicted.session_service.clear()
+                        evicted_runtimes.append(evicted)
+        for evicted in evicted_runtimes:
+            evicted.session_service.clear()
+            await evicted.shell_jobs.cleanup()
         return runtime
 
     async def get_conversation_runtime(
@@ -136,6 +150,54 @@ class AgentManager:
                 )
                 self._runtime_build_tasks[conversation_key] = build_task
         return await asyncio.shield(build_task)
+
+    async def read_planner_state(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+    ) -> CheckpointState:
+        """读取 Planner 根 namespace，且不创建 Conversation 运行时。"""
+        if await self._tombstones.exists(user_id, conversation_id):
+            raise RuntimeError("该会话已被删除")
+        reader = CheckpointStateReader(self._persistence_manager.get_checkpointer())
+        return await reader.read(build_planner_config(user_id, conversation_id))
+
+    async def read_delegation_activity(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        analysis_id: str,
+        agent_type: str,
+        session_id: str,
+        delegation_id: str,
+    ) -> DelegationActivityHistory | None:
+        """直接从 Specialist Checkpoint 读取一次委派历史。"""
+        session_key = AgentSessionKey(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            analysis_id=analysis_id,
+            agent_type=validate_agent_type(agent_type),
+            session_id=session_id,
+        )
+        reader = CheckpointStateReader(self._persistence_manager.get_checkpointer())
+        state = await reader.read(
+            RunnableConfig(
+                configurable={
+                    "thread_id": get_thread_id(user_id, conversation_id),
+                    "checkpoint_ns": session_key.checkpoint_ns,
+                }
+            )
+        )
+        async with self._state_lock:
+            runtime = self._conversation_runtimes.get((user_id, conversation_id))
+            active = bool(
+                runtime
+                and runtime.session_service.is_session_active(session_key.checkpoint_ns)
+            )
+        return SpecialistCheckpointView(state.values).delegation_activity(
+            delegation_id,
+            active=active,
+        )
 
     async def cancel_agent_execution(
         self,
@@ -176,6 +238,7 @@ class AgentManager:
             runtime = self._conversation_runtimes.pop(conversation_key, None)
         if runtime is not None:
             runtime.session_service.clear()
+            await runtime.shell_jobs.cleanup()
         # 先持久化墓碑再删除 Checkpoint，避免其他进程在删除窗口重建会话状态。
         await self._tombstones.save(user_id, conversation_id)
         await self._persistence_manager.delete_thread(
@@ -266,4 +329,8 @@ class AgentManager:
             await asyncio.gather(*pending_tasks, return_exceptions=True)
         for runtime in runtimes:
             runtime.session_service.clear()
+        await asyncio.gather(
+            *(runtime.shell_jobs.cleanup() for runtime in runtimes),
+            return_exceptions=True,
+        )
         self._runtime_factory.close()

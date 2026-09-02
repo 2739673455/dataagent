@@ -148,7 +148,7 @@ Doris
 → metadata
   → 物理目录校验、字段取值读取
 → query
-  → EXPLAIN 和只读 SQL 执行
+  → 受限只读 SQL 执行
 
 Redis
 → shared
@@ -170,7 +170,7 @@ Docker Named Volume
 → Explorer recall_context
 → metadata 召回字段、字段值、指标和查询经验上下文
 → Explorer execute_sql
-→ query 解析身份、Guard、EXPLAIN、执行和 CSV 落盘
+→ query 解析身份、Guard、执行和 CSV 落盘
 → Analyst 读取 CSV，完成分析、图表和自包含 HTML 报告
 → Reviewer 审查证据和结论
 → Planner 汇总最终回答

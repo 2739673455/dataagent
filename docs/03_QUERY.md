@@ -34,11 +34,8 @@ Explorer 提交 purpose 和 SQL
   → 部分字段授权的表拒绝不安全星号查询
   → 校验 JOIN 和重复输出列名
   → 校验实际读取的每张表和每个字段
-  → 生成 normalized_sql 和结构化校验结果
+→ 生成 normalized_sql 和结构化校验结果
 → 关闭 metadata PostgreSQL Session
-→ 对 normalized_sql 执行 Doris EXPLAIN
-  → 提取 ScanNode cardinality 和 avgRowSize
-  → 无法得到物理扫描估算时拒绝执行
 → 设置 Doris 查询限制
   → workload_group
   → query_timeout
@@ -56,7 +53,7 @@ Explorer 提交 purpose 和 SQL
 
 查询受 Doris 查询超时和内存限制。完整结果只保存在沙箱 CSV 中，工具响应只返回路径和有限摘要。
 
-执行失败时，工具会区分 SQL 校验拒绝、无权限、计划不可估算、查询超时、Doris 故障和结果结构异常，并尽量返回具体原因。
+执行失败时，工具会区分 SQL 校验拒绝、无权限、查询超时、Doris 故障和结果结构异常，并尽量返回具体原因。
 
 ## 2. 记录查询执行历史
 
@@ -67,18 +64,18 @@ Explorer 提交 purpose 和 SQL
   → conversation_id、analysis_id、session_id、tool_call_id
   → purpose 和 raw_sql
 
-SQL 在 Guard 或 EXPLAIN 阶段被拒绝
+SQL 在 Guard 阶段被拒绝
 → 保存 status=rejected
 → 保存 error_code、error_detail 和 validation
 
 SQL 在执行、结果处理或文件写入阶段失败
 → 保存 status=failed
-→ 保存已得到的 normalized_sql、validation 和 plan_estimate
+→ 保存已得到的 normalized_sql 和 validation
 → 保存具体错误
 
 SQL 成功并提交 CSV
 → 保存 status=succeeded
-→ 保存 normalized_sql、plan_estimate 和 result_summary
+→ 保存 normalized_sql、validation 和 result_summary
 → 保存 SQL 模板和 fingerprint
 → 关联生成或更新的 QueryExperience
 ```
@@ -227,7 +224,6 @@ Elasticsearch
 → 查询经验语义文档
 
 Doris
-→ EXPLAIN
 → 受限只读 SQL
 
 Sandbox
@@ -241,12 +237,14 @@ Celery
 代码
 → app/query/models
 → app/query/repositories
-→ app/query/services/principal.py
+→ app/identity/services/query_principal.py
 → app/query/services/guard.py
 → app/query/services/executor.py
 → app/query/services/execution_handler.py
 → app/query/services/contracts.py
-→ app/query/services/experience.py
+→ app/query/services/execution_recorder.py
+→ app/query/services/experience_recall.py
+→ app/query/services/experience_indexer.py
 → app/query/services/experience_invalidation.py
 → app/query/services/experience_management.py
 → app/query/api/admin

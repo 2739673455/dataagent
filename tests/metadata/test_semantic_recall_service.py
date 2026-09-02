@@ -19,23 +19,17 @@ from langgraph.prebuilt import ToolNode
 from langgraph.runtime import Runtime
 from pydantic import BaseModel, ValidationError
 
-from app.assistant.agents.explorer.semantic_recall_middleware import (
-    SemanticRecallExpansionMiddleware,
-    _expanded_content,
-    expand_semantic_recall_messages_for_display,
-)
+from app.assistant.agents.explorer.semantic_recall_handler import _record_summary
 from app.assistant.agents.explorer.semantic_recall_protocol import (
     parse_semantic_recall_reference,
     semantic_recall_reference,
 )
-from app.assistant.agents.explorer.tools import (
-    delete_recalls,
-    get_recall,
-    list_recalls,
-    merge_recalls,
-    recall_context,
+from app.assistant.agents.explorer.tools import create_semantic_recall_tools
+from app.assistant.agents.middleware.semantic_recall_expansion import (
+    SemanticRecallExpansionMiddleware,
+    _expanded_content,
+    expand_semantic_recall_messages_for_display,
 )
-from app.assistant.agents.explorer.tools.semantic_recall import _record_summary
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
 from app.metadata.models.recall import (
     SemanticRecallRecord,
@@ -66,6 +60,16 @@ from app.shared.contracts.query_experience import (
 
 _FULL_DATABASE_GRANT = AssetIdentity("doris", "analytics")
 _CONFIGURED_DATABASE_GRANT = AssetIdentity("doris", "ecommerce")
+
+_SEMANTIC_RECALL_TOOLS = {
+    semantic_tool.name: semantic_tool
+    for semantic_tool in create_semantic_recall_tools()
+}
+recall_context = _SEMANTIC_RECALL_TOOLS["recall_context"]
+list_recalls = _SEMANTIC_RECALL_TOOLS["list_recalls"]
+get_recall = _SEMANTIC_RECALL_TOOLS["get_recall"]
+merge_recalls = _SEMANTIC_RECALL_TOOLS["merge_recalls"]
+delete_recalls = _SEMANTIC_RECALL_TOOLS["delete_recalls"]
 
 
 class InMemorySemanticRecallRepo:
@@ -508,16 +512,12 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             self.user_id,
             self.conversation_id,
             "本月收入",
-            role_name=None,
-            authorization_epoch=None,
             now=retrieved_at + timedelta(days=1) - timedelta(microseconds=1),
         )
         expired = await self.service.get_fresh_query_experiences(
             self.user_id,
             self.conversation_id,
             "本月收入",
-            role_name=None,
-            authorization_epoch=None,
             now=retrieved_at + timedelta(days=1),
         )
 
@@ -550,22 +550,28 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             self.user_id,
             self.conversation_id,
             "本月收入",
-            role_name="analyst",
-            authorization_epoch=role_epoch,
         )
-        changed_role = await scoped.get_fresh_query_experiences(
+        changed_role_service = SemanticRecallContextService(
+            recall_repo(self.repo),
+            build_authorization_filter(_FULL_DATABASE_GRANT),
+            query_experience_role_name="finance",
+            query_experience_authorization_epoch=role_epoch,
+        )
+        changed_role = await changed_role_service.get_fresh_query_experiences(
             self.user_id,
             self.conversation_id,
             "本月收入",
-            role_name="finance",
-            authorization_epoch=role_epoch,
         )
-        changed_epoch = await scoped.get_fresh_query_experiences(
+        changed_epoch_service = SemanticRecallContextService(
+            recall_repo(self.repo),
+            build_authorization_filter(_FULL_DATABASE_GRANT),
+            query_experience_role_name="analyst",
+            query_experience_authorization_epoch=uuid4(),
+        )
+        changed_epoch = await changed_epoch_service.get_fresh_query_experiences(
             self.user_id,
             self.conversation_id,
             "本月收入",
-            role_name="analyst",
-            authorization_epoch=uuid4(),
         )
 
         self.assertEqual(fresh, ([experience], retrieved_at))
@@ -1094,12 +1100,12 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.assistant.agents.explorer.tools.semantic_recall."
+                "app.assistant.agents.explorer.semantic_recall_handler."
                 "create_authorized_semantic_recall_service",
                 new=AsyncMock(return_value=service),
             ),
             patch(
-                "app.assistant.agents.explorer.tools.semantic_recall."
+                "app.assistant.agents.explorer.semantic_recall_handler."
                 "semantic_recall_repository",
                 return_value=recall_repository_context(repo),
             ),
@@ -1245,6 +1251,17 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
                 "query_experiences",
             },
         )
+        self.assertEqual(
+            list(payload),
+            [
+                "query",
+                "tables",
+                "metrics",
+                "query_experiences",
+                "created_at",
+                "updated_at",
+            ],
+        )
         self.assertEqual(payload["query"], "本月收入")
         self.assertEqual(payload["created_at"], record.created_at.isoformat())
         self.assertEqual(payload["updated_at"], record.updated_at.isoformat())
@@ -1372,31 +1389,31 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.assistant.agents.explorer.tools.semantic_recall.AuthPGRepo",
+                "app.assistant.agents.explorer.semantic_recall_handler.IdentityPGRepo",
                 return_value=auth_repo,
             ),
             patch(
-                "app.assistant.agents.explorer.tools.semantic_recall."
+                "app.assistant.agents.explorer.semantic_recall_handler."
                 "AuthorizationService",
                 return_value=authorization_service,
             ),
             patch(
-                "app.assistant.agents.explorer.tools.semantic_recall."
+                "app.assistant.agents.explorer.semantic_recall_handler."
                 "SemanticResourceRecallService",
                 return_value=resource_recall_service,
             ),
             patch(
-                "app.assistant.agents.explorer.tools.semantic_recall."
-                "build_query_experience_service",
+                "app.assistant.agents.explorer.semantic_recall_handler."
+                "build_query_experience_recall_service",
                 return_value=experience_service,
             ),
             patch(
-                "app.assistant.agents.explorer.tools.semantic_recall."
+                "app.assistant.agents.explorer.semantic_recall_handler."
                 "auth_postgres_client_manager.session",
                 side_effect=lambda: object_context(MagicMock()),
             ),
             patch(
-                "app.assistant.agents.explorer.tools.semantic_recall."
+                "app.assistant.agents.explorer.semantic_recall_handler."
                 "meta_postgres_client_manager.session",
                 side_effect=[
                     object_context(MagicMock()),
@@ -1408,17 +1425,17 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
                 ],
             ),
             patch(
-                "app.assistant.agents.explorer.tools.semantic_recall."
+                "app.assistant.agents.explorer.semantic_recall_handler."
                 "semantic_recall_repository",
                 side_effect=lambda: recall_repository_context(repo),
             ),
             patch(
-                "app.assistant.agents.explorer.tools.semantic_recall."
+                "app.assistant.agents.explorer.semantic_recall_handler."
                 "embedding_client_manager.get_client",
                 return_value=MagicMock(),
             ),
             patch(
-                "app.assistant.agents.explorer.tools.semantic_recall."
+                "app.assistant.agents.explorer.semantic_recall_handler."
                 "es_client_manager.get_client",
                 return_value=MagicMock(),
             ),
@@ -1609,7 +1626,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.assistant.agents.explorer.semantic_recall_middleware.get_config",
+                "app.assistant.agents.middleware.semantic_recall_expansion.get_config",
                 return_value={
                     "configurable": {
                         "user_id": 7,
@@ -1618,12 +1635,12 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
                 },
             ),
             patch(
-                "app.assistant.agents.explorer.semantic_recall_middleware."
+                "app.assistant.agents.middleware.semantic_recall_expansion."
                 "create_authorized_semantic_recall_service",
                 new=AsyncMock(return_value=restricted_service),
             ),
             patch(
-                "app.assistant.agents.explorer.semantic_recall_middleware."
+                "app.assistant.agents.middleware.semantic_recall_expansion."
                 "semantic_recall_repository",
                 side_effect=lambda: recall_repository_context(repo),
             ),
@@ -1700,7 +1717,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.assistant.agents.explorer.semantic_recall_middleware.get_config",
+                "app.assistant.agents.middleware.semantic_recall_expansion.get_config",
                 return_value={
                     "configurable": {
                         "user_id": 7,
@@ -1709,12 +1726,12 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
                 },
             ),
             patch(
-                "app.assistant.agents.explorer.semantic_recall_middleware."
+                "app.assistant.agents.middleware.semantic_recall_expansion."
                 "create_authorized_semantic_recall_service",
                 new=AsyncMock(return_value=service),
             ),
             patch(
-                "app.assistant.agents.explorer.semantic_recall_middleware."
+                "app.assistant.agents.middleware.semantic_recall_expansion."
                 "semantic_recall_repository",
                 side_effect=lambda: recall_repository_context(repo),
             ),
@@ -1767,12 +1784,12 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.assistant.agents.explorer.tools.semantic_recall."
+                "app.assistant.agents.explorer.semantic_recall_handler."
                 "create_authorized_semantic_recall_service",
                 new=AsyncMock(return_value=service),
             ),
             patch(
-                "app.assistant.agents.explorer.tools.semantic_recall."
+                "app.assistant.agents.explorer.semantic_recall_handler."
                 "semantic_recall_repository",
                 return_value=recall_repository_context(repo),
             ),
@@ -1826,12 +1843,12 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch(
-                "app.assistant.agents.explorer.tools.semantic_recall."
+                "app.assistant.agents.explorer.semantic_recall_handler."
                 "create_authorized_semantic_recall_service",
                 new=AsyncMock(return_value=service),
             ),
             patch(
-                "app.assistant.agents.explorer.tools.semantic_recall."
+                "app.assistant.agents.explorer.semantic_recall_handler."
                 "semantic_recall_repository",
                 return_value=recall_repository_context(repo),
             ),

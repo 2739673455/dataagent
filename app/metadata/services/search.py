@@ -14,10 +14,10 @@ from app.metadata.models.catalog import (
     ColumnKey,
     MetricInfo,
     TableInfo,
+    column_reference_key,
     serialize_column_examples,
 )
 from app.metadata.models.search import (
-    SearchHit,
     SemanticColumnRecallResult,
     SemanticIndexStatus,
     SemanticMatchReason,
@@ -35,6 +35,7 @@ from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.value_index import ValueESRepo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
 from app.shared.clients.embedding_client_manager import EmbeddingClient
+from app.shared.contracts.search import SearchHit
 
 _RRF_K = 60
 _INDEX_SEARCH_LIMIT_MULTIPLIER = 3
@@ -248,7 +249,7 @@ class _ColumnContextBuilder:
         for metric_name, _, _ in ranked.metrics:
             for reference in self._catalog.metrics[metric_name].relevant_columns:
                 self._add_column(
-                    (reference["t_name"], reference["c_name"]),
+                    column_reference_key(reference),
                     "metric_dependency",
                 )
         for (t_name, c_name, _), _, _ in ranked.values:

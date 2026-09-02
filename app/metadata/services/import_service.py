@@ -12,9 +12,10 @@ from app.metadata.models.catalog import (
     COLUMN_EXAMPLE_LIMIT,
     ColumnInfo,
     ColumnKey,
-    ColumnReference,
     MetricInfo,
     TableInfo,
+    column_key_reference,
+    column_reference_key,
     serialize_column_examples,
 )
 from app.metadata.repositories.postgres import MetaPGRepo
@@ -81,6 +82,7 @@ class MetaImportService:
         if not meta_config.tables and not meta_config.metrics:
             raise meta_error.InvalidMetadataError(detail="元数据导入文档不能为空")
 
+        # 先用短事务取得一致的现状快照；随后访问 Doris 时不占用 PostgreSQL 事务。
         async with self._meta_repo.session.begin():
             existing_tables = {
                 table_info.name: table_info
@@ -144,6 +146,7 @@ class MetaImportService:
             )
             return result
 
+        # REPLACE 删除的资源已经没有后续同步入口，必须显式清理对应语义索引。
         if mode is ImportMode.REPLACE:
             await self._meta_index_service.delete_metric_indexes(metric_changes.deleted)
             await self._meta_index_service.delete_column_indexes(column_changes.deleted)
@@ -173,6 +176,7 @@ class MetaImportService:
                     force_version_increment=metric_name in metric_changes.updated,
                 )
 
+        # 元数据提交后再失效查询经验并投递索引任务，消费者才能读取到新版本。
         await self._asset_invalidator.invalidate_assets(
             table_names=set(table_changes.updated + table_changes.deleted),
             column_keys=set(column_changes.updated + column_changes.deleted),
@@ -248,6 +252,7 @@ class MetaImportService:
                     )
 
             target_column_names = [col.name for col in table_config.columns]
+            # 同一张表一次取齐所有示例值，避免逐字段查询产生 N+1 开销和不同采样快照。
             table_column_samples = (
                 await self._source_repo.get_table_columns_sample_values(
                     table_config.name,
@@ -277,8 +282,8 @@ class MetaImportService:
                 name=metric_config.name,
                 description=metric_config.description,
                 relevant_columns=[
-                    ColumnReference(t_name=t_name, c_name=c_name)
-                    for t_name, c_name in sorted(
+                    column_key_reference(key)
+                    for key in sorted(
                         dict.fromkeys(
                             (reference.t_name, reference.c_name)
                             for reference in metric_config.relevant_columns
@@ -365,7 +370,7 @@ class MetaImportService:
         """校验指标关联的字段。"""
         for metric_info in metric_infos:
             relevant_columns = {
-                (reference["t_name"], reference["c_name"])
+                column_reference_key(reference)
                 for reference in metric_info.relevant_columns
             }
             missing_columns = sorted(relevant_columns - available_columns)

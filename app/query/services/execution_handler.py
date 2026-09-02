@@ -5,21 +5,20 @@ from typing import Protocol
 from loguru import logger
 
 from app.identity.services.authorization import AssetAccessPolicy
+from app.identity.services.query_principal import ResolvedQueryPrincipal
 from app.query.models.execution import (
     AnalysisQueryResult,
     QueryExecutionStatus,
     QueryExecutionTimeoutError,
 )
 from app.query.models.validation import QueryValidationResult
+from app.query.services.execution_recorder import QueryExecutionContext
 from app.query.services.executor import (
     AnalysisQueryService,
-    QueryPlanUnavailableError,
     QueryRejectedError,
     QueryResultShapeError,
     SuccessfulQueryExecution,
 )
-from app.query.services.experience import QueryExecutionContext
-from app.query.services.principal import ResolvedQueryPrincipal
 from app.shared.contracts.analysis import AgentSessionKey
 
 
@@ -90,6 +89,7 @@ class QueryExecutionHandler:
     ) -> AnalysisQueryResult:
         """执行一次只读查询并记录成功或失败事实。"""
         context: QueryExecutionContext | None = None
+        validation: QueryValidationResult | None = None
         try:
             principal, policy = await self._runtime.resolve_principal(
                 session_key.user_id
@@ -121,17 +121,24 @@ class QueryExecutionHandler:
                 validation=exc.result,
             )
             raise
-        except (
-            QueryExecutionTimeoutError,
-            QueryPlanUnavailableError,
-            QueryResultShapeError,
-        ) as exc:
+        except QueryExecutionTimeoutError as exc:
             await self._record_failure_safely(
                 context,
                 raw_sql=sql,
                 status="failed",
-                error_code="query_result_rejected",
+                error_code="query_timeout",
                 error_detail=str(exc),
+                validation=validation,
+            )
+            raise
+        except QueryResultShapeError as exc:
+            await self._record_failure_safely(
+                context,
+                raw_sql=sql,
+                status="failed",
+                error_code="query_result_invalid",
+                error_detail=str(exc),
+                validation=validation,
             )
             raise
         except Exception as exc:
@@ -141,6 +148,7 @@ class QueryExecutionHandler:
                 status="failed",
                 error_code="readonly_query_failed",
                 error_detail=str(exc).strip() or "异常未提供详情",
+                validation=validation,
             )
             raise
         await self._record_success_safely(context, details)

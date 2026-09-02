@@ -47,7 +47,7 @@ Identity
 → 要求用户重新登录
 ```
 
-默认进程内限流为：登录 IP 每分钟 30 次、登录标识每分钟 10 次、刷新 IP 每分钟 60 次。
+认证限流使用 Redis 共享计数：登录 IP 每分钟 30 次、登录标识每分钟 10 次、刷新 IP 每分钟 60 次。所有 API Worker 使用同一 `auth.rate_limit_redis_url`；Redis 保存 SHA-256 摘要键、有限容量的活跃桶和自动过期时间，不保存原始 IP 或登录标识。
 
 ## 2. 修改密码和退出登录
 
@@ -109,9 +109,10 @@ Identity
 
 管理员删除角色
 → 校验并处理用户绑定和授权
+→ 快照查询身份、SELECT 权限和 Row Policy
 → 删除 Doris 查询用户和角色关系
-→ 删除 PostgreSQL 查询身份
-→ Doris 与 PostgreSQL 任一侧失败时执行补偿
+→ 删除 PostgreSQL 查询身份与权限投影
+→ Doris 与 PostgreSQL 任一侧失败时按完成步骤补偿
 ```
 
 应用启动时会检查每个 `query_user` 只拥有预期角色、只能访问配置的数据范围，并且没有写权限。检查失败会记录警告并允许应用继续启动，管理员可通过应用修复配置；实际查询仍由身份解析和 Doris 权限边界拒绝。
@@ -167,8 +168,8 @@ Identity
 → 返回 Doris 当前实时策略
 
 管理员创建行策略
-→ 校验角色和目标表
-→ 解析并校验 predicate
+→ 校验角色和 predicate 为单个 SQL 表达式
+→ 交由 Doris 校验目标表、字段和表达式返回类型
 → 在 Doris 执行 CREATE ROW POLICY
 → 轮换角色 authorization_epoch
 → Doris 失败或数据库提交失败时执行补偿

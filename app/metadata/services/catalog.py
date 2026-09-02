@@ -14,9 +14,10 @@ from app.metadata.config import (
 from app.metadata.models.catalog import (
     COLUMN_EXAMPLE_LIMIT,
     ColumnInfo,
-    ColumnReference,
     MetricInfo,
     TableInfo,
+    column_key_reference,
+    column_reference_key,
     serialize_column_examples,
 )
 from app.metadata.repositories.postgres import MetaPGRepo
@@ -128,6 +129,7 @@ class MetaCatalogService:
             COLUMN_EXAMPLE_LIMIT,
         )
 
+        # 引用目标校验与字段写入共享事务，任一校验失败都不会留下部分字段变更。
         async with self._meta_repo.session.begin():
             try:
                 await self._meta_repo.get_table_info(t_name)
@@ -188,10 +190,7 @@ class MetaCatalogService:
         async with self._meta_repo.session.begin():
             relevant_column_keys = sorted(
                 dict.fromkeys(
-                    (
-                        reference["t_name"],
-                        reference["c_name"],
-                    )
+                    column_reference_key(reference)
                     for reference in metric_info.relevant_columns
                 )
             )
@@ -203,8 +202,7 @@ class MetaCatalogService:
                         detail=f"未找到相关字段: {t_name}.{c_name}"
                     ) from exc
             metric_info.relevant_columns = [
-                ColumnReference(t_name=t_name, c_name=c_name)
-                for t_name, c_name in relevant_column_keys
+                column_key_reference(key) for key in relevant_column_keys
             ]
             metric_info.alias = list(dict.fromkeys(metric_info.alias))
             changed = await self._meta_repo.upsert_metric_info(metric_info)
@@ -287,7 +285,7 @@ class MetaCatalogService:
             metric_info.name
             for metric_info in await self._meta_repo.list_metric_infos()
             if any(
-                (reference["t_name"], reference["c_name"]) in deleted_keys
+                column_reference_key(reference) in deleted_keys
                 for reference in metric_info.relevant_columns
             )
         )

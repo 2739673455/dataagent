@@ -42,7 +42,7 @@ def supports_view_image_tool(model: BaseChatModel) -> bool:
 def _create_view_image_tool() -> BaseTool:
     """创建图片查看请求工具。
 
-    工具结果只持久化图片路径。UserMessageAttachmentMiddleware 会在下一次
+    工具结果只持久化图片路径。UserMessageContextMiddleware 会在下一次
     模型调用前读取该请求，把图片内容临时投影到 ToolMessage 副本中，避免
     base64 图片进入 LangGraph Checkpoint。
     """

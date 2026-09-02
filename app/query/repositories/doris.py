@@ -148,29 +148,6 @@ class DorisQueryRepository:
         """构造不把 SQL 字符串内冒号解释为绑定参数的语句。"""
         return text(sql.replace(":", r"\:"))
 
-    async def explain(
-        self,
-        sql: str,
-        limits: QueryExecutionLimits,
-    ) -> tuple[str, ...]:
-        """在实际读取数据前编译受限查询计划。"""
-        async with self._connection_provider.connection() as connection:
-            try:
-                await self._apply_session_limits(connection, limits)
-                result = await connection.execute(self._literal_sql(f"EXPLAIN {sql}"))
-                return tuple(
-                    " | ".join(str(value) for value in row) for row in result.fetchall()
-                )
-            except asyncio.CancelledError:
-                await connection.invalidate()
-                raise
-            except (SQLAlchemyError, TimeoutError) as exc:
-                if self._is_timeout_error(exc):
-                    raise QueryExecutionTimeoutError(
-                        f"Doris 查询执行超时，最大允许 {limits.timeout_seconds} 秒"
-                    ) from exc
-                raise
-
     async def stream(
         self,
         sql: str,

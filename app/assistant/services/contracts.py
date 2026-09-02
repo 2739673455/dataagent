@@ -4,8 +4,10 @@ from contextlib import AbstractAsyncContextManager
 from typing import Protocol
 from uuid import UUID
 
+from app.assistant.agents.checkpoint_reader import CheckpointState
 from app.assistant.agents.contracts import (
     ConversationAgentRuntime,
+    DelegationActivityHistory,
     PlannerTurnContext,
 )
 
@@ -19,6 +21,26 @@ class AgentRuntimeManager(Protocol):
         conversation_id: UUID,
     ) -> ConversationAgentRuntime:
         """获取指定用户会话的 Agent 运行时。"""
+        ...
+
+    async def read_planner_state(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+    ) -> CheckpointState:
+        """读取 Planner 最新物化状态。"""
+        ...
+
+    async def read_delegation_activity(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        analysis_id: str,
+        agent_type: str,
+        session_id: str,
+        delegation_id: str,
+    ) -> DelegationActivityHistory | None:
+        """读取一次 Specialist delegation 的历史活动。"""
         ...
 
     def execution(

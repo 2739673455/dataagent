@@ -11,7 +11,7 @@ from app.identity.api.admin.router import router as admin_router
 from app.identity.api.admin.task_router import router as task_router
 from app.identity.api.auth.router import router as auth_router
 from app.identity.repositories.doris_role import DorisRoleRepository
-from app.identity.repositories.query_identity import DorisQueryIdentityPGRepo
+from app.identity.repositories.identity import IdentityPGRepo
 from app.identity.services.credential import DorisCredentialCipher
 from app.metadata.api.meta.router import router as meta_router
 from app.providers import agent_manager, conversation_run_service, sandbox_manager
@@ -61,7 +61,7 @@ async def _verify_doris_query_identities() -> None:
         cfg.doris_credentials.encryption_key.get_secret_value()
     )
     async with auth_postgres_client_manager.session() as session:
-        identities = await DorisQueryIdentityPGRepo(session).list_all()
+        identities = await IdentityPGRepo(session).list_query_identities()
     try:
         await DorisRoleRepository(admin_doris_client_manager).verify_configured_roles(
             tuple(identity.role_name for identity in identities)

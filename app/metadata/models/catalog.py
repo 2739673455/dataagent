@@ -38,6 +38,16 @@ type ValueIndexSyncStatus = Literal["syncing", "succeeded", "failed"]
 COLUMN_EXAMPLE_LIMIT = 10
 
 
+def column_reference_key(reference: ColumnReference) -> ColumnKey:
+    """将字段引用转换为可用于集合和映射的联合键。"""
+    return reference["t_name"], reference["c_name"]
+
+
+def column_key_reference(key: ColumnKey) -> ColumnReference:
+    """将字段联合键转换为 JSON 可序列化的字段引用。"""
+    return ColumnReference(t_name=key[0], c_name=key[1])
+
+
 def column_resource_key(t_name: str, c_name: str) -> str:
     """生成无歧义的表字段联合资源键。"""
     return json.dumps(
@@ -264,7 +274,7 @@ class MetricInfo(MetaBase):
             self.description,
             tuple(
                 sorted(
-                    (reference["t_name"], reference["c_name"])
+                    column_reference_key(reference)
                     for reference in self.relevant_columns
                 )
             ),

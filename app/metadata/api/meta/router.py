@@ -26,8 +26,8 @@ from app.metadata.api.meta import schemas
 from app.metadata.config import MetaConfig, MetadataName
 from app.metadata.models.catalog import (
     ColumnKey,
-    ColumnReference,
     MetricInfo,
+    column_key_reference,
 )
 from app.metadata.providers import (
     build_meta_catalog_service,
@@ -325,10 +325,7 @@ async def upsert_metric_info(
             name=metric_name,
             description=body.description,
             relevant_columns=[
-                ColumnReference(
-                    t_name=reference.t_name,
-                    c_name=reference.c_name,
-                )
+                column_key_reference((reference.t_name, reference.c_name))
                 for reference in body.relevant_columns
             ],
             alias=body.alias,

@@ -46,7 +46,7 @@ async def _bootstrap_admin() -> None:
 
     # 配置模块会立即解析全量应用环境变量；先处理 CLI 和引导凭据，确保
     # --help 与缺参错误不依赖数据库、模型或沙箱配置。
-    from app.identity.repositories.auth import AuthPGRepo
+    from app.identity.repositories.identity import IdentityPGRepo
     from app.identity.services.auth import (
         Argon2PasswordManager,
         AuthService,
@@ -61,7 +61,7 @@ async def _bootstrap_admin() -> None:
         await auth_postgres_client_manager.init_tables()
         async with auth_postgres_client_manager.session() as session:
             result = await AuthService(
-                AuthPGRepo(session),
+                IdentityPGRepo(session),
                 cfg.auth,
                 Argon2PasswordManager(),
             ).bootstrap_admin(username, email, password)

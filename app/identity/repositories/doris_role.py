@@ -2,6 +2,7 @@
 
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Literal, Protocol, cast
 
 from loguru import logger
@@ -41,6 +42,23 @@ class DorisRoleAlreadyExistsError(RuntimeError):
         """记录发生冲突的 Doris 角色名。"""
         self.role_name = role_name
         super().__init__(f"Doris 角色已存在: {role_name}")
+
+
+@dataclass(frozen=True, slots=True)
+class DorisRoleIdentityDropState:
+    """Doris 查询用户与角色删除的已完成步骤。"""
+
+    query_user_deleted: bool
+    role_deleted: bool
+
+
+class DorisRoleIdentityDropError(RuntimeError):
+    """删除查询用户后删除角色失败。"""
+
+    def __init__(self, state: DorisRoleIdentityDropState) -> None:
+        """保存已完成步骤，供上层 Saga 执行精确补偿。"""
+        self.state = state
+        super().__init__("Doris 查询身份删除未完整完成")
 
 
 class DorisAdminConnectionProvider(Protocol):
@@ -177,12 +195,38 @@ class DorisRoleRepository:
         *,
         role_name: str,
         query_user: str,
-    ) -> None:
-        """删除 Doris 查询用户和角色。"""
+    ) -> DorisRoleIdentityDropState:
+        """删除 Doris 查询用户和角色，并返回已完成的步骤。"""
         user = self.quote_user(query_user)
         role = self.quote_role(role_name)
         await self._execute(f"DROP USER IF EXISTS {user}")
-        await self._execute(f"DROP ROLE IF EXISTS {role}")
+        state = DorisRoleIdentityDropState(
+            query_user_deleted=True,
+            role_deleted=False,
+        )
+        try:
+            await self._execute(f"DROP ROLE IF EXISTS {role}")
+        except BaseException as exc:
+            raise DorisRoleIdentityDropError(state) from exc
+        return DorisRoleIdentityDropState(
+            query_user_deleted=True,
+            role_deleted=True,
+        )
+
+    async def restore_query_user(
+        self,
+        *,
+        role_name: str,
+        query_user: str,
+        password: str,
+    ) -> None:
+        """恢复绑定既有角色的 Doris 查询用户。"""
+        await self._create_query_user(
+            query_user=query_user,
+            user_literal=self.quote_user(query_user),
+            password=password,
+            role_literal=self.quote_role_literal(role_name),
+        )
 
     async def verify_configured_roles(self, role_names: Sequence[str]) -> None:
         """确认管理账号可查看且 Doris 已创建全部配置角色。"""

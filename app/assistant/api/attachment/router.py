@@ -11,17 +11,16 @@ from loguru import logger
 
 from app.assistant import errors as chat_error
 from app.assistant.api.attachment import errors as attachment_error
-from app.assistant.api.chat import schemas as chat_schema
 from app.assistant.api.chat.dependencies import ConversationPGRepoDep
 from app.assistant.api.dependencies import (
     ConversationLifecycleServiceDep,
     SandboxManagerDep,
 )
+from app.assistant.contracts import chat as chat_schema
 from app.identity.api.auth.dependencies import AnalysisUserDep, CurrentUserDep
 from app.sandbox.exceptions import (
     SandboxFileTooLargeError,
     SandboxPathError,
-    SandboxStorageLimitError,
 )
 
 router = APIRouter(tags=["attachment"])
@@ -57,8 +56,6 @@ async def api_upload_attachment(
             raise attachment_error.PathTraversalError from None
         except SandboxFileTooLargeError:
             raise attachment_error.AttachmentTooLargeError from None
-        except SandboxStorageLimitError:
-            raise attachment_error.SandboxStorageLimitProblem from None
         await conversation_repo.update(conversation)
 
     logger.info(f"上传附件: conversation_id={conversation_id}, file={f_path}")

@@ -16,6 +16,10 @@ from app.shared.config.app_config import DBConfig, cfg
 _ADVISORY_POOL_MAX_SIZE = 12
 
 
+class AdvisoryLockBusyError(RuntimeError):
+    """指定 advisory lock 已被其他执行单元占用。"""
+
+
 def _advisory_lock_key(name: str) -> int:
     """把业务锁名称稳定映射为 PostgreSQL bigint。"""
     digest = hashlib.sha256(name.encode("utf-8")).digest()
@@ -109,7 +113,7 @@ class LangGraphPostgresManager:
         advisory_pool = self._advisory_pool
         local_lock = self._advisory_locks.setdefault(name, asyncio.Lock())
         if local_lock.locked():
-            raise RuntimeError(f"咨询锁正在使用: {name}")
+            raise AdvisoryLockBusyError(f"咨询锁正在使用: {name}")
         await local_lock.acquire()
         try:
             async with advisory_pool.connection() as connection:
@@ -121,7 +125,7 @@ class LangGraphPostgresManager:
                 )
                 row = await cursor.fetchone()
                 if row is None or not bool(row["acquired"]):
-                    raise RuntimeError(f"咨询锁正在使用: {name}")
+                    raise AdvisoryLockBusyError(f"咨询锁正在使用: {name}")
                 try:
                     yield
                 finally:
@@ -197,17 +201,22 @@ class LangGraphPostgresManager:
 
     async def delete_user_threads(self, user_id: int) -> None:
         """删除用户全部 LangGraph Checkpoint 线程。"""
-        thread_prefix = f"user_{user_id}:conversation_"
-        thread_ids: set[str] = set()
-        async for checkpoint in self.get_checkpointer().alist(None):
-            configurable = checkpoint.config.get("configurable")
-            if not isinstance(configurable, dict):
-                continue
-            thread_id = configurable.get("thread_id")
-            if isinstance(thread_id, str) and thread_id.startswith(thread_prefix):
-                thread_ids.add(thread_id)
-        for thread_id in thread_ids:
-            await self.delete_thread(thread_id)
+        prefix = f"user_{user_id}:conversation_"
+        if self._pool is None:
+            raise RuntimeError("LangGraph PostgreSQL 管理器尚未初始化")
+        async with self._pool.connection() as connection:
+            cursor = await connection.execute(
+                """
+                SELECT DISTINCT thread_id
+                FROM checkpoints
+                WHERE left(thread_id, length(%s)) = %s
+                ORDER BY thread_id
+                """,
+                (prefix, prefix),
+            )
+            rows = await cursor.fetchall()
+        for row in rows:
+            await self.delete_thread(str(row["thread_id"]))
 
     async def close(self) -> None:
         """关闭连接池并释放持久化组件。"""

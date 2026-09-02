@@ -1,8 +1,9 @@
 """字段语义索引访问。"""
 
-from typing import Any, ClassVar, cast
+from typing import Any
 
 from elasticsearch import AsyncElasticsearch
+from loguru import logger
 
 from app.metadata.models.catalog import (
     ColumnInfo,
@@ -10,99 +11,66 @@ from app.metadata.models.catalog import (
     column_resource_key,
 )
 from app.metadata.models.search import (
-    SearchHit,
     SemanticIndexDelta,
     SemanticIndexDocument,
-    SemanticTextType,
 )
-from app.metadata.repositories.semantic_index import SemanticIndexDeltaRepo
+from app.metadata.repositories.semantic_index import (
+    CorruptedSemanticIndexDocumentError,
+    SemanticIndexRepo,
+    column_resource_terms_filter,
+    semantic_index_mappings,
+)
 from app.shared.config.app_config import cfg
+from app.shared.contracts.search import SearchHit
 
 
 class ColumnESRepo:
     """字段全文与向量索引存储。"""
 
     _index_name = cfg.elasticsearch.column_index
-    _exact_text_boosts: ClassVar[dict[SemanticTextType, float]] = {
-        "name": 8.0,
-        "alias": 6.0,
-        "description": 4.0,
-    }
-    _index_mappings: ClassVar[dict[str, Any]] = {
-        "dynamic": False,
-        "properties": {
-            "resource_key": {"type": "keyword"},
-            "t_name": {"type": "keyword"},
-            "name": {"type": "keyword"},
-            "text": {
-                "type": "text",
-                "analyzer": "ik_max_word",
-                "search_analyzer": "ik_max_word",
-                "fields": {
-                    "raw": {
-                        "type": "keyword",
-                        "ignore_above": 1024,
-                    }
-                },
-            },
-            "text_type": {"type": "keyword"},
-            "meta_version": {"type": "long"},
-            "embedding_revision": {"type": "keyword"},
-            "payload_hash": {"type": "keyword"},
-            "embedding": {
-                "type": "dense_vector",
-                "dims": cfg.elasticsearch.embedding_size,
-                "index": True,
-                "similarity": "cosine",
-                "index_options": {"type": "hnsw"},
-            },
-            "payload": {"type": "object", "enabled": False},
-        },
-    }
+    _index_mappings = semantic_index_mappings(
+        {"t_name": {"type": "keyword"}},
+    )
 
     def __init__(self, client: AsyncElasticsearch) -> None:
         """初始化字段语义索引存储。"""
-        self._client = client
-        self._delta_repo = SemanticIndexDeltaRepo(
+        self._repo = SemanticIndexRepo(
             client,
-            self._index_name,
-            "字段语义索引",
+            index_name=self._index_name,
+            resource_label="字段语义索引",
+            mappings=self._index_mappings,
         )
 
     async def ensure_index(self) -> None:
         """确保字段语义索引存在。"""
-        if await self._client.indices.exists(index=self._index_name):
-            await self._client.indices.put_mapping(
-                index=self._index_name,
-                properties={
-                    "resource_key": {"type": "keyword"},
-                    "meta_version": {"type": "long"},
-                    "embedding_revision": {"type": "keyword"},
-                    "payload_hash": {"type": "keyword"},
-                },
-            )
-        else:
-            await self._client.indices.create(
-                index=self._index_name,
-                mappings=self._index_mappings,
-            )
+        await self._repo.ensure_index()
 
     async def list_resource_documents(
         self,
         resource_key: str,
     ) -> list[SemanticIndexDocument]:
         """读取字段当前语义索引文档。"""
-        return await self._delta_repo.list_documents(
+        result = await self._repo.list_documents(
             {"term": {"resource_key": resource_key}}
         )
+        if result.corrupted_document_ids:
+            logger.bind(
+                index_name=self._index_name,
+                document_ids=result.corrupted_document_ids,
+                resource_key=resource_key,
+                stage="rebuild-corrupted-resource",
+            ).warning("字段语义索引检测到损坏文档，开始重建当前资源")
+            await self._repo.delete_by_filter([{"term": {"resource_key": resource_key}}])
+            return []
+        return result.documents
 
     async def apply_delta(self, delta: SemanticIndexDelta) -> None:
         """应用字段语义索引差量。"""
-        await self._delta_repo.apply_delta(delta)
+        await self._repo.apply_delta(delta)
 
     async def delete(self, t_name: str, c_name: str) -> None:
         """删除字段对应的全部语义索引文档。"""
-        await self._delete_by_filter(
+        await self._repo.delete_by_filter(
             [{"term": {"resource_key": column_resource_key(t_name, c_name)}}]
         )
 
@@ -115,11 +83,15 @@ class ColumnESRepo:
         limit: int = 5,
     ) -> list[SearchHit[ColumnInfo]]:
         """根据向量检索字段并保留命中分数。"""
-        result = await self._vector_search(
+        result = await self._repo.search_vector(
             embedding,
-            score_threshold,
-            limit,
-            allowed_columns,
+            score_threshold=score_threshold,
+            limit=limit,
+            resource_filter=(
+                column_resource_terms_filter(allowed_columns)
+                if allowed_columns is not None
+                else None
+            ),
         )
         return self._hits(result)
 
@@ -131,115 +103,60 @@ class ColumnESRepo:
         limit: int = 5,
     ) -> list[SearchHit[ColumnInfo]]:
         """根据关键词检索字段并保留命中分数。"""
-        result = await self._text_search(query, limit, allowed_columns)
+        result = await self._repo.search_text(
+            query,
+            limit=limit,
+            resource_filter=(
+                column_resource_terms_filter(allowed_columns)
+                if allowed_columns is not None
+                else None
+            ),
+        )
         return self._hits(result)
 
-    async def _delete_by_filter(self, filters: list[dict[str, Any]]) -> None:
-        """按过滤条件删除字段语义索引文档。"""
-        if not await self._client.indices.exists(index=self._index_name):
-            return
-        await self._client.delete_by_query(
-            index=self._index_name,
-            query={"bool": {"filter": filters}},
-            conflicts="proceed",
-            refresh=True,
-        )
-
-    async def _vector_search(
-        self,
-        embedding: list[float],
-        score_threshold: float,
-        limit: int,
-        allowed_columns: frozenset[ColumnKey] | None,
-    ) -> dict[str, Any]:
-        """执行字段向量检索。"""
-        knn: dict[str, Any] = {
-            "field": "embedding",
-            "query_vector": embedding,
-            "k": limit,
-            "num_candidates": min(10_000, max(100, limit * 10)),
-            "similarity": score_threshold,
-        }
-        if allowed_columns is not None:
-            knn["filter"] = self._column_filter(allowed_columns)
-        result = await self._client.search(
-            index=self._index_name,
-            knn=knn,
-            size=limit,
-        )
-        return cast(dict[str, Any], result.body)
-
-    async def _text_search(
-        self,
-        query: str,
-        limit: int,
-        allowed_columns: frozenset[ColumnKey] | None,
-    ) -> dict[str, Any]:
-        """执行字段全文检索。"""
-        exact_queries = [
-            {
-                "bool": {
-                    "filter": [{"term": {"text_type": text_type}}],
-                    "must": [
-                        {
-                            "term": {
-                                "text.raw": {
-                                    "value": query,
-                                    "case_insensitive": True,
-                                }
-                            }
-                        }
-                    ],
-                    "boost": boost,
-                }
-            }
-            for text_type, boost in self._exact_text_boosts.items()
-        ]
-        text_query: dict[str, Any] = {
-            "dis_max": {
-                "queries": [
-                    *exact_queries,
-                    {"match_phrase": {"text": {"query": query, "boost": 2.0}}},
-                    {"match": {"text": query}},
-                ]
-            }
-        }
-        if allowed_columns is not None:
-            text_query = {
-                "bool": {
-                    "must": [text_query],
-                    "filter": [self._column_filter(allowed_columns)],
-                }
-            }
-        result = await self._client.search(
-            index=self._index_name,
-            query=text_query,
-            size=limit,
-        )
-        return cast(dict[str, Any], result.body)
-
-    @staticmethod
-    def _column_filter(allowed_columns: frozenset[ColumnKey]) -> dict[str, Any]:
-        """构造表字段联合白名单过滤条件。"""
-        if not allowed_columns:
-            raise ValueError("allowed_columns 列表不能为空")
-        return {
-            "terms": {
-                "resource_key": [
-                    column_resource_key(t_name, c_name)
-                    for t_name, c_name in sorted(allowed_columns)
-                ]
-            }
-        }
-
-    @staticmethod
-    def _hits(result: dict[str, Any]) -> list[SearchHit[ColumnInfo]]:
+    @classmethod
+    def _hits(cls, result: dict[str, Any]) -> list[SearchHit[ColumnInfo]]:
         """将 Elasticsearch 命中转换为字段结果。"""
-        return [
-            SearchHit(
-                item=ColumnInfo(**hit["_source"]["payload"]),
-                score=float(hit.get("_score") or 0.0),
+        search_hits = result["hits"]["hits"]
+        converted: list[SearchHit[ColumnInfo]] = []
+        for hit in search_hits:
+            document_id = (
+                str(hit.get("_id"))
+                if isinstance(hit, dict) and hit.get("_id") is not None
+                else "<missing>"
             )
-            for hit in result["hits"]["hits"]
-            if isinstance(hit.get("_source", {}).get("payload"), dict)
-        ]
+            source_value = hit.get("_source") if isinstance(hit, dict) else None
+            resource_key = (
+                source_value.get("resource_key")
+                if isinstance(source_value, dict)
+                and isinstance(source_value.get("resource_key"), str)
+                else "<missing>"
+            )
+            try:
+                if not isinstance(hit, dict):
+                    raise TypeError("搜索命中不是对象")
+                source = hit.get("_source")
+                if not isinstance(source, dict):
+                    raise TypeError("搜索命中缺少对象类型的 _source")
+                payload = source.get("payload")
+                if not isinstance(payload, dict):
+                    raise TypeError("搜索命中 payload 必须为对象")
+                converted.append(
+                    SearchHit(
+                        item=ColumnInfo(**payload),
+                        score=float(hit.get("_score") or 0.0),
+                    )
+                )
+            except (TypeError, ValueError, KeyError) as exc:
+                logger.bind(
+                    index_name=cls._index_name,
+                    document_id=document_id,
+                    resource_key=resource_key,
+                    stage="read-corrupted-document",
+                ).warning("字段语义索引读取到损坏文档")
+                raise CorruptedSemanticIndexDocumentError(
+                    resource_label="字段语义索引",
+                    index_name=cls._index_name,
+                    document_id=document_id,
+                ) from exc
+        return converted

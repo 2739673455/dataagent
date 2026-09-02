@@ -14,6 +14,8 @@ from app.metadata.models.catalog import (
     MetricInfo,
     TableInfo,
     ValueIndexSyncState,
+    column_key_reference,
+    column_reference_key,
 )
 
 
@@ -136,11 +138,14 @@ class MetaPGRepo:
         self._session.add_all(
             [
                 ColumnMetric(
-                    t_name=reference["t_name"],
-                    c_name=reference["c_name"],
+                    t_name=t_name,
+                    c_name=c_name,
                     metric_name=metric_info.name,
                 )
-                for reference in metric_info.relevant_columns
+                for t_name, c_name in (
+                    column_reference_key(reference)
+                    for reference in metric_info.relevant_columns
+                )
             ]
         )
         return changed
@@ -239,6 +244,8 @@ class MetaPGRepo:
         limit: int,
     ) -> list[tuple[str, str]]:
         """领取每日增量同步或需要清理的取值索引字段。"""
+        # advisory lock 与下方 syncing 状态写入处于同一事务，多个调度器实例不会
+        # 重复领取同一批字段。
         await self.acquire_index_lock("scheduler", "value-index-dispatch")
         result = await self._session.execute(
             select(ColumnInfo, TableInfo, ValueIndexSyncState)
@@ -257,6 +264,7 @@ class MetaPGRepo:
         pending: list[tuple[str, str]] = []
         for column_info, table_info, state in result.tuples():
             if not column_info.index_values:
+                # 已关闭取值索引的字段仍需领取一次，以清理历史索引和状态。
                 if state is not None and (
                     state.status != "syncing" or state.updated_at <= stale_before
                 ):
@@ -331,6 +339,36 @@ class MetaPGRepo:
     ) -> ValueIndexSyncState | None:
         """获取字段取值索引同步状态。"""
         return await self._session.get(ValueIndexSyncState, (t_name, c_name))
+
+    async def reload_value_index_context(
+        self,
+        t_name: str,
+        c_name: str,
+    ) -> tuple[ColumnInfo, TableInfo]:
+        """绕过会话缓存，重新读取取值索引配置与运行状态。"""
+        result = await self._session.execute(
+            select(ColumnInfo, TableInfo, ValueIndexSyncState)
+            .join(TableInfo, TableInfo.name == ColumnInfo.t_name)
+            .outerjoin(
+                ValueIndexSyncState,
+                (ValueIndexSyncState.t_name == ColumnInfo.t_name)
+                & (ValueIndexSyncState.c_name == ColumnInfo.name),
+            )
+            .where(
+                ColumnInfo.t_name == t_name,
+                ColumnInfo.name == c_name,
+            )
+            # 会话禁用了 expire_on_commit；终态校验必须覆盖第一阶段的缓存实体。
+            .execution_options(populate_existing=True)
+        )
+        row = result.one_or_none()
+        if row is None:
+            raise meta_error.MetadataNotFoundError(
+                detail=f"未找到字段元数据: {t_name}.{c_name}"
+            )
+        column_info, table_info, state = row
+        column_info.value_index_state = state
+        return column_info, table_info
 
     async def begin_value_index_sync(
         self,
@@ -479,10 +517,7 @@ class MetaPGRepo:
         )
         for relation in result:
             references_by_metric[relation.metric_name].append(
-                ColumnReference(
-                    t_name=relation.t_name,
-                    c_name=relation.c_name,
-                )
+                column_key_reference((relation.t_name, relation.c_name))
             )
         for metric_info in metric_infos:
             metric_info.relevant_columns = references_by_metric[metric_info.name]

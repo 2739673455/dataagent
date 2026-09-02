@@ -10,22 +10,15 @@ from threading import Lock as ThreadLock
 from typing import cast
 from uuid import UUID, uuid4
 
-from langchain_core.messages import (
-    AIMessage,
-    AIMessageChunk,
-    BaseMessage,
-    HumanMessage,
-    ToolMessage,
-)
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
-from langgraph.constants import CONFIG_KEY_CHECKPOINTER
 from langgraph.graph.state import CompiledStateGraph
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from app.assistant.agents.contracts import (
     DELEGATION_CONTEXT_KEY,
-    MESSAGE_CREATED_AT_KEY,
     DelegationActivityHistory,
+    DelegationCheckpointRecord,
     DelegationMessageContext,
     DelegationRequest,
     DelegationResult,
@@ -44,17 +37,19 @@ from app.assistant.agents.contracts import (
     get_thread_id,
 )
 from app.assistant.agents.session_store import AgentSessionStore
+from app.assistant.agents.specialist_checkpoint import (
+    SpecialistCheckpointView,
+    is_public_activity_message,
+    is_structured_response_message,
+    parse_specialist_result,
+    reasoning_only_message,
+)
 from app.assistant.agents.specialists import SpecialistAgentRun
-from app.assistant.message_content import reasoning_text
+from app.assistant.message_content import message_text, reasoning_text
 from app.sandbox.paths import SandboxSessionScope, resolve_sandbox_path
 from app.shared.contracts.analysis import AgentSessionKey, validate_agent_type
 
-_STRUCTURED_RETRY_MESSAGE = """
-上一条响应没有通过 SpecialistResult 协议校验。请根据当前 Session 已有工作重新输出结构化结果，不要重复执行工具。
-completed 必须在 content 中给出完整结论；needs_repair 必须包含 repair_requests；failed 必须包含 failure_reasons。
-""".strip()
 _INTERNAL_RETRY_KEY = "dataagent_internal_retry"
-_STRUCTURED_RESPONSE_TOOL_NAME = "SpecialistResult"
 
 
 def _session_workspace(session_key: AgentSessionKey) -> str:
@@ -64,6 +59,21 @@ def _session_workspace(session_key: AgentSessionKey) -> str:
         session_key.agent_type,
         session_key.session_id,
     ).workspace_path(session_key.conversation_id)
+
+
+def _specialist_repair_message(error: Exception) -> str:
+    """生成一次无工具结果修复所需的具体约束。"""
+    category = (
+        "结构解析" if isinstance(error, TypeError | ValidationError) else "业务校验"
+    )
+    return (
+        "上一条 SpecialistResult 未通过校验。当前 Session 已有的工具结果和文件保持有效，"
+        "请只基于这些已有工作重新输出结构化结果，不要再次调用工具。\n"
+        f"失败类别：{category}。\n"
+        f"失败约束：{error}\n"
+        "completed 必须提供完整 content；needs_repair 必须提供 repair_requests；"
+        "failed 必须提供 failure_reasons。"
+    )
 
 
 @asynccontextmanager
@@ -92,18 +102,20 @@ class AgentSessionService:
         user_id: int,
         conversation_id: UUID,
         max_parallel_sessions: int,
+        max_sessions: int,
     ) -> None:
         """初始化会话身份、并发控制和执行限制。"""
         if max_parallel_sessions <= 0:
             raise ValueError("max_parallel_sessions 必须为正整数")
+        if max_sessions <= 0:
+            raise ValueError("max_sessions 必须为正整数")
 
         self._build_agent = build_agent
         self._session_store = session_store
         self._user_id = user_id
         self._conversation_id = conversation_id
-        self._session_locks: dict[str, asyncio.Lock] = {}
         self._parallelism = asyncio.Semaphore(max_parallel_sessions)
-        self._session_query_parallelism = asyncio.Semaphore(max_parallel_sessions)
+        self._max_sessions = max_sessions
         self._active_sessions: dict[str, datetime] = {}
         self._eval_delegations: dict[str, dict[str, EvalDelegationRecord]] = {}
         self._runtime_state_lock = ThreadLock()
@@ -126,6 +138,11 @@ class AgentSessionService:
             self._eval_delegations.setdefault(parent_tool_call_id, {})[
                 delegation_id
             ] = record
+
+    def is_session_active(self, checkpoint_ns: str) -> bool:
+        """返回指定 Session 是否正在当前进程执行。"""
+        with self._runtime_state_lock:
+            return checkpoint_ns in self._active_sessions
 
     def finish_eval_delegation(
         self,
@@ -156,7 +173,8 @@ class AgentSessionService:
         with self._runtime_state_lock:
             if session_key.checkpoint_ns in self._active_sessions:
                 return True
-        return await self._session_store.load_checkpoint(session_key) is not None
+        state = await self._session_store.read_state(session_key)
+        return state.updated_at is not None
 
     def _parse_session_namespace(self, checkpoint_ns: str) -> AgentSessionKey | None:
         """把受控专业 Session namespace 还原为身份键。"""
@@ -173,18 +191,6 @@ class AgentSessionService:
             )
         except (TypeError, ValueError):
             return None
-
-    @staticmethod
-    def _checkpoint_updated_at(checkpoint: Mapping[str, object]) -> datetime | None:
-        """读取 Checkpoint 的 UTC 更新时间。"""
-        timestamp = checkpoint.get("ts")
-        if not isinstance(timestamp, str):
-            return None
-        try:
-            parsed = datetime.fromisoformat(timestamp)
-        except ValueError:
-            return None
-        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
     @staticmethod
     def _failed_result(
@@ -245,18 +251,6 @@ class AgentSessionService:
         }
         return cast(RunnableConfig, config)
 
-    @staticmethod
-    def _parse_specialist_result(output: object) -> SpecialistResult:
-        """从 LangGraph 输出提取并严格校验结构化结果。"""
-        candidate: object = output
-        if isinstance(output, Mapping) and "structured_response" in output:
-            candidate = output["structured_response"]
-        if isinstance(candidate, SpecialistResult):
-            return candidate
-        if isinstance(candidate, BaseModel):
-            candidate = candidate.model_dump(mode="python")
-        return SpecialistResult.model_validate(candidate)
-
     async def list_sessions(self, analysis_id: str | None) -> ListSessionsResult:
         """查询当前 Conversation 内的专业 Agent Session。"""
         namespaces = await self._session_store.list_namespaces(analysis_id)
@@ -277,44 +271,17 @@ class AgentSessionService:
                 analysis_id is not None and session_key.analysis_id != analysis_id
             ):
                 return None
-            async with self._session_query_parallelism:
-                checkpoint = await self._session_store.load_checkpoint(session_key)
+            state = await self._session_store.read_state(session_key)
             active_at = active_sessions.get(checkpoint_ns)
-            if checkpoint is None and active_at is None:
+            if state.updated_at is None and active_at is None:
                 return None
-            status = "interrupted"
-            summary: str | None = None
-            artifact_count = 0
-            updated_at = (
-                self._checkpoint_updated_at(checkpoint)
-                if checkpoint is not None
-                else None
-            )
-            if checkpoint is not None:
-                channel_values = checkpoint.get("channel_values")
-                structured_response = (
-                    channel_values.get("structured_response")
-                    if isinstance(channel_values, Mapping)
-                    else None
-                )
-                try:
-                    result = self._parse_specialist_result(structured_response)
-                except (TypeError, ValueError, ValidationError):
-                    pass
-                else:
-                    status = result.status
-                    summary = result.content
-                    artifact_count = len(result.artifacts)
+            updated_at = state.updated_at
             if active_at is not None:
-                status = "active"
                 updated_at = active_at
-            return SessionSummary(
-                analysis_id=session_key.analysis_id,
-                agent_type=session_key.agent_type,
-                session_id=session_key.session_id,
-                status=status,
-                summary=summary,
-                artifact_count=artifact_count,
+            view = SpecialistCheckpointView(state.values)
+            return view.session_summary(
+                session_key,
+                active=active_at is not None,
                 updated_at=updated_at,
             )
 
@@ -410,6 +377,10 @@ class AgentSessionService:
         try:
             agent_run = await self._build_agent(session_key)
             context = DelegationMessageContext(delegation_id=delegation_id)
+            running_record = DelegationCheckpointRecord(
+                delegation_id=delegation_id,
+                status="running",
+            )
             output = await self._stream_specialist(
                 agent_run.agent,
                 {
@@ -420,7 +391,10 @@ class AgentSessionService:
                                 DELEGATION_CONTEXT_KEY: context.model_dump(mode="json")
                             },
                         )
-                    ]
+                    ],
+                    "delegation_records": {
+                        delegation_id: running_record.model_dump(mode="json")
+                    },
                 },
                 config,
                 request,
@@ -429,15 +403,15 @@ class AgentSessionService:
                 emit_messages=True,
             )
             try:
-                result = self._parse_specialist_result(output)
-                return await self._prepare_specialist_result(result, session_key)
-            except (TypeError, ValueError, ValidationError):
+                result = parse_specialist_result(output)
+                result = await self._prepare_specialist_result(result, session_key)
+            except (TypeError, ValueError, ValidationError) as error:
                 retry_output = await self._stream_specialist(
                     agent_run.agent,
                     {
                         "messages": [
                             HumanMessage(
-                                content=_STRUCTURED_RETRY_MESSAGE,
+                                content=_specialist_repair_message(error),
                                 additional_kwargs={_INTERNAL_RETRY_KEY: True},
                             )
                         ]
@@ -448,8 +422,54 @@ class AgentSessionService:
                     activity_writer,
                     emit_messages=False,
                 )
-                result = self._parse_specialist_result(retry_output)
-                return await self._prepare_specialist_result(result, session_key)
+                result = parse_specialist_result(retry_output)
+                result = await self._prepare_specialist_result(result, session_key)
+            record = DelegationCheckpointRecord(
+                delegation_id=delegation_id,
+                status=result.status,
+                result=result,
+            )
+            await agent_run.agent.aupdate_state(
+                config,
+                {"delegation_records": {delegation_id: record.model_dump(mode="json")}},
+            )
+            return result
+        except asyncio.CancelledError:
+            if agent_run is not None:
+                record = DelegationCheckpointRecord(
+                    delegation_id=delegation_id,
+                    status="cancelled",
+                )
+                await agent_run.agent.aupdate_state(
+                    config,
+                    {
+                        "delegation_records": {
+                            delegation_id: record.model_dump(mode="json")
+                        }
+                    },
+                )
+            raise
+        except Exception as exc:
+            if agent_run is not None:
+                failure = SpecialistResult(
+                    status="failed",
+                    content="专家智能体会话执行失败",
+                    failure_reasons=[f"{type(exc).__name__}: {exc}"],
+                )
+                record = DelegationCheckpointRecord(
+                    delegation_id=delegation_id,
+                    status="failed",
+                    result=failure,
+                )
+                await agent_run.agent.aupdate_state(
+                    config,
+                    {
+                        "delegation_records": {
+                            delegation_id: record.model_dump(mode="json")
+                        }
+                    },
+                )
+            raise
         finally:
             if agent_run is not None:
                 await self._cleanup_agent_run(agent_run)
@@ -464,106 +484,10 @@ class AgentSessionService:
             await cleanup_task
             raise
 
-    @classmethod
-    def _structured_response_from_message(
-        cls,
-        message: BaseMessage,
-    ) -> SpecialistResult | None:
-        """从工具调用或 Provider JSON 正文严格解析 Specialist 终态。"""
-        if not isinstance(message, AIMessage):
-            return None
-        for call in message.tool_calls:
-            if call.get("name") != _STRUCTURED_RESPONSE_TOOL_NAME:
-                continue
-            try:
-                return SpecialistResult.model_validate(call.get("args"))
-            except ValidationError:
-                continue
-
-        text = cls._text_content(message)
-        if text is None:
-            return None
-        try:
-            return SpecialistResult.model_validate_json(text)
-        except ValidationError:
-            return None
-
-    @classmethod
-    def _is_structured_response_message(cls, message: BaseMessage) -> bool:
-        """判断消息是否属于 SpecialistResult 结构化响应。"""
-        if isinstance(message, AIMessage):
-            has_result_tool_call = any(
-                call.get("name") == _STRUCTURED_RESPONSE_TOOL_NAME
-                for call in message.tool_calls
-            )
-            # ProviderStrategy 将终态写入 JSON 正文；这段协议数据不能作为普通回答展示。
-            return (
-                has_result_tool_call
-                or cls._structured_response_from_message(message) is not None
-            )
-        if isinstance(message, ToolMessage):
-            return message.name == _STRUCTURED_RESPONSE_TOOL_NAME
-        return False
-
-    @classmethod
-    def _structured_response_status(
-        cls,
-        message: BaseMessage,
-    ) -> SubagentRunStatus | None:
-        """从结构化响应消息读取本次 delegation 的终态。"""
-        result = cls._structured_response_from_message(message)
-        return result.status if result is not None else None
-
-    @classmethod
-    def _is_public_activity_message(cls, message: BaseMessage) -> bool:
-        """筛除结构化协议消息，只保留可展示的 Agent 工作消息。"""
-        return not cls._is_structured_response_message(message) and isinstance(
-            message,
-            AIMessage | ToolMessage,
-        )
-
-    @staticmethod
-    def _text_content(message: BaseMessage) -> str | None:
-        """读取模型消息中的正文文本或正文增量。"""
-        content = message.content
-        if isinstance(content, str):
-            return content or None
-        if not isinstance(content, list):
-            return None
-        text_parts: list[str] = []
-        for item in content:
-            if isinstance(item, str):
-                text_parts.append(item)
-            elif (
-                isinstance(item, dict)
-                and item.get("type") in {"text", "output_text"}
-                and isinstance(item.get("text"), str)
-            ):
-                text_parts.append(item["text"])
-        text = "".join(text_parts)
-        return text or None
-
-    @classmethod
-    def _reasoning_only_message(cls, message: AIMessage) -> AIMessage | None:
-        """将结构化协议响应投影为只含思考的公开消息。"""
-        reasoning = reasoning_text(message)
-        if reasoning is None:
-            return None
-        additional_kwargs: dict[str, object] = {}
-        created_at = message.additional_kwargs.get(MESSAGE_CREATED_AT_KEY)
-        if created_at is not None:
-            additional_kwargs[MESSAGE_CREATED_AT_KEY] = created_at
-        return AIMessage(
-            id=message.id,
-            content=[{"type": "reasoning", "reasoning": reasoning}],
-            additional_kwargs=additional_kwargs,
-            response_metadata=message.response_metadata,
-        )
-
     async def _stream_specialist(
         self,
         agent: CompiledStateGraph,
-        input_state: dict[str, list[HumanMessage]],
+        input_state: dict[str, object],
         config: RunnableConfig,
         request: DelegationRequest,
         delegation_id: str,
@@ -576,6 +500,8 @@ class AgentSessionService:
         emitted_message_ids: set[str] = set()
         thinking_message_ids: set[str] = set()
         text_message_ids: set[str] = set()
+        # messages 模式提供可实时展示的增量；updates 模式提供节点完成消息；
+        # values 模式才是结构化结果解析所需的最终状态。
         async for part in agent.astream(
             input_state,
             config=config,
@@ -615,7 +541,7 @@ class AgentSessionService:
                                 reset=reset,
                             )
                         )
-                    if text := self._text_content(message):
+                    if text := message_text(message):
                         reset = message_id not in text_message_ids
                         text_message_ids.add(message_id)
                         activity_writer(
@@ -649,14 +575,16 @@ class AgentSessionService:
                     if not isinstance(message, BaseMessage):
                         continue
                     public_message = message
-                    if self._is_structured_response_message(message):
+                    if is_structured_response_message(message):
+                        # SpecialistResult 属于 Agent 间协议，前端只应看到同一响应中
+                        # 可公开的思考内容，结构化正文由 delegation 结果单独承载。
                         if not isinstance(message, AIMessage):
                             continue
-                        reasoning_message = self._reasoning_only_message(message)
+                        reasoning_message = reasoning_only_message(message)
                         if reasoning_message is None:
                             continue
                         public_message = reasoning_message
-                    elif not self._is_public_activity_message(message):
+                    elif not is_public_activity_message(message):
                         continue
                     if public_message.id is not None:
                         if public_message.id in emitted_message_ids:
@@ -683,89 +611,21 @@ class AgentSessionService:
         delegation_id: str,
     ) -> DelegationActivityHistory | None:
         """通过 Specialist Agent 状态读取一次 delegation 的消息和状态。"""
-        context = DelegationMessageContext(delegation_id=delegation_id)
         session_key = self._build_session_key(analysis_id, agent_type, session_id)
         state_values = await self._read_session_state(session_key)
-        messages = state_values.get("messages")
-        if not isinstance(messages, list):
-            return None
-
-        found = False
-        has_later_delegation = False
-        delegation_status: SubagentRunStatus | None = None
-        result: list[BaseMessage] = []
-        for message in messages:
-            if not isinstance(message, BaseMessage):
-                continue
-            raw_context = message.additional_kwargs.get(DELEGATION_CONTEXT_KEY)
-            if raw_context is not None:
-                try:
-                    message_context = DelegationMessageContext.model_validate(
-                        raw_context
-                    )
-                except ValidationError:
-                    if found:
-                        break
-                    continue
-                if found:
-                    has_later_delegation = True
-                    break
-                found = message_context.delegation_id == context.delegation_id
-                continue
-            if not found:
-                continue
-            if message.additional_kwargs.get(_INTERNAL_RETRY_KEY) is True:
-                continue
-            if self._is_structured_response_message(message):
-                delegation_status = (
-                    self._structured_response_status(message) or delegation_status
-                )
-                if isinstance(message, AIMessage):
-                    reasoning_message = self._reasoning_only_message(message)
-                    if reasoning_message is not None:
-                        result.append(reasoning_message)
-                continue
-            if self._is_public_activity_message(message):
-                result.append(message)
-        if not found:
-            return None
-
         with self._runtime_state_lock:
             is_active = session_key.checkpoint_ns in self._active_sessions
-        structured_response = state_values.get("structured_response")
-        try:
-            latest_result = self._parse_specialist_result(structured_response)
-        except (TypeError, ValueError, ValidationError):
-            latest_result = None
-        if not has_later_delegation and is_active:
-            status: SubagentRunStatus = "running"
-        elif delegation_status is not None:
-            status = delegation_status
-        elif not has_later_delegation and latest_result is not None:
-            status = latest_result.status
-        else:
-            status = "cancelled"
-        return DelegationActivityHistory(messages=result, status=status)
+        return SpecialistCheckpointView(state_values).delegation_activity(
+            delegation_id,
+            active=is_active,
+        )
 
     async def _read_session_state(
         self,
         session_key: AgentSessionKey,
     ) -> Mapping[str, object]:
-        """读取 Specialist Agent 合并增量通道后的完整状态。"""
-        agent_run = await self._build_agent(session_key)
-        try:
-            checkpointer = agent_run.agent.checkpointer
-            if not checkpointer:
-                raise RuntimeError("Specialist Agent 未配置 Checkpointer")
-            state_config = self.build_subagent_config(RunnableConfig(), session_key)
-            configurable = state_config.get("configurable")
-            if configurable is None:
-                raise RuntimeError("Specialist Agent 状态配置缺少 configurable")
-            configurable[CONFIG_KEY_CHECKPOINTER] = checkpointer
-            state = await agent_run.agent.aget_state(state_config)
-        finally:
-            await self._cleanup_agent_run(agent_run)
-        return cast(Mapping[str, object], state.values)
+        """读取 Specialist 最新物化 Checkpoint，且不创建执行运行时。"""
+        return (await self._session_store.read_state(session_key)).values
 
     async def _get_replayed_delegation_result(
         self,
@@ -775,34 +635,23 @@ class AgentSessionService:
     ) -> DelegationResult | None:
         """恢复 Planner 待执行工具时复用同一 delegation 的既有结果。"""
         state_values = await self._read_session_state(session_key)
-        structured_response = state_values.get("structured_response")
-        messages = state_values.get("messages")
-        if not isinstance(messages, list):
+        result = SpecialistCheckpointView(state_values).replayed_result(
+            request,
+            delegation_id,
+        )
+        if result is None:
             return None
-        try:
-            result = self._parse_specialist_result(structured_response)
-        except (TypeError, ValueError, ValidationError):
-            return None
-
-        found = False
-        for message in messages:
-            if not isinstance(message, BaseMessage):
-                continue
-            raw_context = message.additional_kwargs.get(DELEGATION_CONTEXT_KEY)
-            if raw_context is not None:
-                try:
-                    message_context = DelegationMessageContext.model_validate(
-                        raw_context
-                    )
-                except ValidationError:
-                    continue
-                if found:
-                    return None
-                found = message_context.delegation_id == delegation_id
-        if not found:
-            return None
-        result = await self._prepare_specialist_result(result, session_key)
-        return self._to_delegation_result(request, result)
+        prepared = await self._prepare_specialist_result(
+            SpecialistResult(
+                status=result.status,
+                content=result.content,
+                artifacts=result.artifacts,
+                repair_requests=result.repair_requests,
+                failure_reasons=result.failure_reasons,
+            ),
+            session_key,
+        )
+        return self._to_delegation_result(request, prepared)
 
     @staticmethod
     def _to_delegation_result(
@@ -839,15 +688,11 @@ class AgentSessionService:
             request.agent_type,
             request.session_id,
         )
-        session_lock = self._session_locks.setdefault(
-            session_key.checkpoint_ns,
-            asyncio.Lock(),
-        )
         config = self.build_subagent_config(parent_config, session_key)
         try:
             async with (
-                _acquire_nowait(session_lock, "Session 正在执行或删除"),
                 self._session_store.lock(session_key),
+                self._session_store.reserve_capacity(session_key, self._max_sessions),
                 _acquire_nowait(
                     self._parallelism,
                     "当前 Conversation 的并行 Session 已满",
@@ -962,12 +807,7 @@ class AgentSessionService:
             request.agent_type,
             request.session_id,
         )
-        session_lock = self._session_locks.setdefault(
-            session_key.checkpoint_ns,
-            asyncio.Lock(),
-        )
         async with (
-            _acquire_nowait(session_lock, "Session 正在执行或删除"),
             self._session_store.lock(session_key),
         ):
             try:
@@ -1002,7 +842,6 @@ class AgentSessionService:
 
     def clear(self) -> None:
         """清除无运行任务时的 Session 内存状态。"""
-        self._session_locks.clear()
         with self._runtime_state_lock:
             self._active_sessions.clear()
             self._eval_delegations.clear()

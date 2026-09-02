@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.identity import errors as auth_error
 from app.identity.models.account import RefreshToken, User
-from app.identity.repositories.auth import AuthPGRepo
+from app.identity.repositories.identity import IdentityPGRepo
 from app.identity.services.account_validation import (
     validate_email,
     validate_password_length,
@@ -284,7 +284,7 @@ class JWTCodec:
 class AccessTokenAuthenticator:
     """使用独立只读会话认证访问令牌。"""
 
-    def __init__(self, repo: AuthPGRepo, config: AuthConfig) -> None:
+    def __init__(self, repo: IdentityPGRepo, config: AuthConfig) -> None:
         """初始化访问令牌编解码器和用户仓储。"""
         self._repo = repo
         self._codec = JWTCodec(config)
@@ -306,7 +306,7 @@ class AuthService:
 
     def __init__(
         self,
-        repo: AuthPGRepo,
+        repo: IdentityPGRepo,
         config: AuthConfig,
         password_manager: PasswordManager,
         *,
@@ -326,16 +326,17 @@ class AuthService:
         password: str,
     ) -> BootstrapAdminResult:
         """使用显式凭据幂等创建或确认管理员。"""
-        normalized_username = validate_username(username)
-        normalized_email = validate_email(email)
-        validate_password_length(
-            password,
-            min_length=self._config.password_min_length,
-        )
+        try:
+            normalized_username = validate_username(username)
+            normalized_email = validate_email(email)
+        except ValueError as exc:
+            raise auth_error.InvalidUserMutationError(detail=str(exc)) from exc
+        self._validate_password(password)
         password_hash = await self._password_manager.hash(password)
 
         try:
             async with self._repo.session.begin():
+                # 多个初始化进程可能同时启动；安全变更锁保证最多创建或提升同一账号一次。
                 await self._repo.lock_security_mutation()
                 by_username = await self._repo.get_user_by_username(normalized_username)
                 by_email = await self._repo.get_user_by_email(normalized_email)
@@ -356,7 +357,12 @@ class AuthService:
                     _ensure_active_user(existing)
                     admin_granted = not existing.is_admin
                     if admin_granted:
-                        await self._repo.set_user_admin(existing, True)
+                        await self._repo.update_user(
+                            existing,
+                            doris_role=None,
+                            update_doris_role=False,
+                            is_admin=True,
+                        )
                     loaded = await self._repo.get_user_by_id(existing.id)
                     if loaded is None:
                         raise RuntimeError("初始化管理员账号加载失败")
@@ -471,13 +477,7 @@ class AuthService:
         new_password: str,
     ) -> None:
         """验证当前密码、更新哈希并吊销全部既有令牌。"""
-        try:
-            validate_password_length(
-                new_password,
-                min_length=self._config.password_min_length,
-            )
-        except ValueError as exc:
-            raise auth_error.WeakPasswordError(detail=str(exc)) from exc
+        self._validate_password(new_password)
         if hmac.compare_digest(current_password, new_password):
             raise auth_error.InvalidUserMutationError(detail="新密码不能与当前密码相同")
         password_hash = await self._password_manager.hash(new_password)
@@ -529,6 +529,16 @@ class AuthService:
             access_expires_in=self._config.access_token_minutes * 60,
             refresh_expires_in=self._config.refresh_token_days * 24 * 60 * 60,
         )
+
+    def _validate_password(self, password: str) -> None:
+        """执行密码长度规则并转换为稳定领域错误。"""
+        try:
+            validate_password_length(
+                password,
+                min_length=self._config.password_min_length,
+            )
+        except ValueError as exc:
+            raise auth_error.WeakPasswordError(detail=str(exc)) from exc
 
     @staticmethod
     def digest_token(token: str) -> str:

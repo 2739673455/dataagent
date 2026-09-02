@@ -12,7 +12,6 @@ from loguru import logger
 from app.query.models.execution import QueryExecutionTimeoutError
 from app.query.services.execution_handler import QueryExecutionHandler
 from app.query.services.executor import (
-    QueryPlanUnavailableError,
     QueryRejectedError,
     QueryResultShapeError,
 )
@@ -97,19 +96,27 @@ async def _execute_sql(
             "hint": "请根据 validation.issues 修正 SQL，然后再次调用 execute_sql",
             "validation": exc.result.model_dump(mode="json"),
         }
-    except (
-        QueryExecutionTimeoutError,
-        QueryPlanUnavailableError,
-        QueryResultShapeError,
-    ) as exc:
+    except QueryExecutionTimeoutError as exc:
         logger.warning(
-            "只读查询结果校验未通过: "
+            "只读查询执行超时: "
             f"conversation_id={session_key.conversation_id if session_key else None}, "
             f"error_type={type(exc).__name__}"
         )
         return {
             "status": "error",
-            "code": "query_result_rejected",
+            "code": "query_timeout",
+            "message": str(exc),
+            "details": _error_details(exc),
+        }
+    except QueryResultShapeError as exc:
+        logger.warning(
+            "只读查询结果结构无效: "
+            f"conversation_id={session_key.conversation_id if session_key else None}, "
+            f"error_type={type(exc).__name__}"
+        )
+        return {
+            "status": "error",
+            "code": "query_result_invalid",
             "message": str(exc),
             "details": _error_details(exc),
         }

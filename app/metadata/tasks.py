@@ -20,6 +20,16 @@ from app.metadata.providers import (
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
 from app.metadata.services.import_service import ImportMode, MetaImportResult
+from app.metadata.task_submission import (
+    DISPATCH_VALUE_INDEXES_TASK,
+    IMPORT_METADATA_TASK,
+    SYNC_COLUMN_INDEXES_TASK,
+    SYNC_COLUMN_VALUES_TASK,
+    SYNC_METRIC_INDEXES_TASK,
+    SYNC_TABLE_INDEXES_TASK,
+    SYNC_TABLE_VALUES_TASK,
+    submit_metadata_task,
+)
 from app.shared.clients.doris_client_manager import admin_doris_client_manager
 from app.shared.clients.embedding_client_manager import embedding_client_manager
 from app.shared.clients.es_client_manager import es_client_manager
@@ -114,22 +124,16 @@ def _import_result(result: MetaImportResult) -> dict[str, Any]:
     }
 
 
-def _submit(name: str, args: list[Any]) -> TaskSubmission:
-    """向元数据索引队列提交指定 Celery 任务。"""
-    task = celery_app.send_task(
-        name,
-        args=args,
-        queue="metadata-index",
-        routing_key="metadata-index",
-    )
-    submission = TaskSubmission(task_id=task.id)
+def _enqueue(name: str, args: list[Any]) -> TaskSubmission:
+    """提交元数据任务并记录统一日志。"""
+    submission = submit_metadata_task(name, args)
     logger.info(f"元数据后台任务已提交: task_id={submission.task_id}, name={name}")
     return submission
 
 
 def enqueue_table_indexes(table_names: list[str]) -> TaskSubmission:
     """提交多个表的字段语义索引同步任务。"""
-    return _submit("dataagent.metadata.sync_table_indexes", [table_names])
+    return _enqueue(SYNC_TABLE_INDEXES_TASK, [table_names])
 
 
 def enqueue_table_values(
@@ -138,15 +142,15 @@ def enqueue_table_values(
     mode: RequestedValueIndexSyncMode,
 ) -> TaskSubmission:
     """提交多个表的字段取值索引同步任务。"""
-    return _submit(
-        "dataagent.metadata.sync_table_values",
+    return _enqueue(
+        SYNC_TABLE_VALUES_TASK,
         [table_names, mode],
     )
 
 
 def enqueue_column_indexes(column_keys: list[tuple[str, str]]) -> TaskSubmission:
     """提交指定字段的语义索引同步任务。"""
-    return _submit("dataagent.metadata.sync_column_indexes", [column_keys])
+    return _enqueue(SYNC_COLUMN_INDEXES_TASK, [column_keys])
 
 
 def enqueue_column_values(
@@ -155,15 +159,15 @@ def enqueue_column_values(
     mode: RequestedValueIndexSyncMode,
 ) -> TaskSubmission:
     """提交指定字段的取值索引同步任务。"""
-    return _submit(
-        "dataagent.metadata.sync_column_values",
+    return _enqueue(
+        SYNC_COLUMN_VALUES_TASK,
         [column_keys, mode],
     )
 
 
 def enqueue_metric_indexes(metric_names: list[str]) -> TaskSubmission:
     """提交指定指标的语义索引同步任务。"""
-    return _submit("dataagent.metadata.sync_metric_indexes", [metric_names])
+    return _enqueue(SYNC_METRIC_INDEXES_TASK, [metric_names])
 
 
 def enqueue_import(
@@ -171,14 +175,14 @@ def enqueue_import(
     mode: ImportMode,
 ) -> TaskSubmission:
     """提交元数据配置导入任务。"""
-    return _submit(
-        "dataagent.metadata.import",
+    return _enqueue(
+        IMPORT_METADATA_TASK,
         [meta_config.model_dump(mode="json"), mode.value],
     )
 
 
 @celery_app.task(
-    name="dataagent.metadata.sync_table_indexes",
+    name=SYNC_TABLE_INDEXES_TASK,
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_jitter=True,
@@ -209,7 +213,7 @@ def sync_table_indexes_task(table_names: list[str]) -> dict[str, Any]:
 
 
 @celery_app.task(
-    name="dataagent.metadata.sync_table_values",
+    name=SYNC_TABLE_VALUES_TASK,
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_jitter=True,
@@ -243,7 +247,7 @@ def sync_table_values_task(
 
 
 @celery_app.task(
-    name="dataagent.metadata.sync_column_indexes",
+    name=SYNC_COLUMN_INDEXES_TASK,
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_jitter=True,
@@ -275,7 +279,7 @@ def sync_column_indexes_task(column_keys: list[list[str]]) -> dict[str, Any]:
 
 
 @celery_app.task(
-    name="dataagent.metadata.sync_column_values",
+    name=SYNC_COLUMN_VALUES_TASK,
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_jitter=True,
@@ -312,7 +316,7 @@ def sync_column_values_task(
 
 
 @celery_app.task(
-    name="dataagent.metadata.sync_metric_indexes",
+    name=SYNC_METRIC_INDEXES_TASK,
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_jitter=True,
@@ -343,7 +347,7 @@ def sync_metric_indexes_task(metric_names: list[str]) -> dict[str, Any]:
 
 
 @celery_app.task(
-    name="dataagent.metadata.import",
+    name=IMPORT_METADATA_TASK,
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_jitter=True,
@@ -421,7 +425,7 @@ async def _dispatch_value_indexes() -> dict[str, int]:
         await meta_postgres_client_manager.close()
 
 
-@celery_app.task(name="dataagent.metadata.dispatch_value_indexes")
+@celery_app.task(name=DISPATCH_VALUE_INDEXES_TASK)
 def dispatch_value_indexes_task() -> dict[str, int]:
     """提交每日字段取值增量同步任务。"""
     return run_async(_dispatch_value_indexes())

@@ -15,14 +15,6 @@ RequestedValueIndexSyncMode = Literal["full", "incremental"]
 
 
 @dataclass(frozen=True, slots=True)
-class SearchHit[SearchItemT]:
-    """索引命中及原始分数。"""
-
-    item: SearchItemT
-    score: float
-
-
-@dataclass(frozen=True, slots=True)
 class SemanticIndexDocument:
     """一条可差量比较的语义索引文档。"""
 

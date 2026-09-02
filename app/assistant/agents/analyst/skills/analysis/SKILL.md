@@ -210,7 +210,7 @@ evidence/
 
 ## 执行环境
 
-- 文件工具和 `execute` 的相对路径均从当前 Analyst Session 工作目录解析，绝对路径直接使用。
+- 文件工具和 `shell` 的相对路径均从当前 Analyst Session 工作目录解析，绝对路径直接使用。
 - `SpecialistResult.artifacts` 可以使用相对当前 Session 的路径或完整绝对路径；Agent 间传递前会统一解析为绝对路径。
 - Python 统一直接执行 `python <script_path>`（或 `python3`），沙箱镜像已全局预装 pandas、polars、duckdb、pyarrow、numpy、scipy、scikit-learn、openpyxl 等数据分析库
 - 优先在单进程内完成向量化计算，中小型数据使用 pandas，大文件或内存紧张时使用 Polars、DuckDB 或 PyArrow 分块

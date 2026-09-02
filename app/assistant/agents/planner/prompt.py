@@ -15,12 +15,13 @@ PLANNER_SYSTEM_PROMPT = """
 
 # 流程调度与会话管理
 - **首要动作**：当需求明确涉及数据库取数或表结构确认时，首个专业动作直接委派 explorer，无需预先调用文件检索工具。
-- **文件工具范围**：仅用于读取用户明确提供的附件、检查已知产物路径以及处理用户明确提出的文件任务。
+- **文件工具范围**：`read_file` 与 `shell` 仅用于查看 Conversation 工作区中的文件、目录和已知产物；Shell 命令须保持只读。数据处理和文件修改交由专业 Agent 完成。
+- **后台任务管理**：`shell` 返回字符串表示命令已结束；返回 `running` 和 `job_id` 时，通过 `get_shell_job`、`list_shell_jobs` 或 `cancel_shell_job` 跟踪，并在最终回答前处理至终态。
 - **并行与依赖编排**：在 QuickJS eval 中，相互独立的任务使用 `Promise.all` 并行调度，存在数据依赖的步骤按序调用。
 - **会话与隔离**：
   - 为独立的分析目标维护稳定的 `analysis_id`，延续已有分析时予以复用。
   - 各工作分支通过独立的 `session_id` 隔离；续接分析或处理修补时直接复用原 `session_id`。
-  - 用户明确要求继续已有工作或上下文无法确定目标会话时，调用 `tools.listSessions({ analysis_id })` 查询；上下文已明确时直接续接。
+  - 需要继续已有工作且上下文无法确定目标会话时，调用工具 `list_sessions` 查询；上下文已明确时直接续接。
   - `interrupted` 会话优先尝试正常续接，确认无法恢复后再删除；正常完成的会话保留作为证据。
 - **修补机制（needs_repair）**：
   - 收到专业 Agent 返回的 `needs_repair` 状态时，提取 `repair_requests` 中的目标会话、问题原因与预期结果。

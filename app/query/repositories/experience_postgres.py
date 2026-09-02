@@ -1,4 +1,4 @@
-"""查询执行历史与经验 PostgreSQL 数据访问。"""
+"""查询经验 PostgreSQL 数据访问。"""
 
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -21,7 +21,7 @@ from app.query.models.experience import (
 
 
 class QueryExperiencePGRepo:
-    """持久化查询执行审计和角色级聚合经验。"""
+    """持久化角色级查询经验及其索引状态。"""
 
     def __init__(self, session: AsyncSession) -> None:
         """绑定当前请求使用的异步数据库会话。"""
@@ -32,13 +32,12 @@ class QueryExperiencePGRepo:
         """返回当前存储绑定的数据库会话。"""
         return self._session
 
-    async def record_success(
+    async def upsert_from_success(
         self,
-        execution: QueryExecution,
         experience: QueryExperience,
         assets: list[QueryExperienceAsset],
     ) -> QueryExperience:
-        """原子写入成功执行并更新相同 SQL 指纹的经验。"""
+        """创建或更新相同角色和 SQL 指纹的查询经验。"""
         now = datetime.now(UTC)
         proposed_id = experience.id or uuid4()
         statement = (
@@ -95,23 +94,11 @@ class QueryExperiencePGRepo:
             for asset in assets:
                 asset.experience_id = experience_id
             self._session.add_all(assets)
-        execution.experience_id = experience_id
-        self._session.add(execution)
         await self._session.flush()
         stored = await self.get(experience_id)
         if stored is None:
             raise RuntimeError("已记录的查询经验不可用")
         return stored
-
-    async def record_failure(self, execution: QueryExecution) -> None:
-        """写入拒绝或失败的 SQL 尝试。"""
-        self._session.add(execution)
-        await self._session.flush()
-
-    async def record_execution(self, execution: QueryExecution) -> None:
-        """写入不参与经验聚合的成功执行。"""
-        self._session.add(execution)
-        await self._session.flush()
 
     async def get(self, experience_id: UUID) -> QueryExperience | None:
         """读取一条经验及其资产。"""
@@ -299,36 +286,6 @@ class QueryExperiencePGRepo:
             execution_count=execution_count,
             last_executed_at=last_executed_at,
         )
-
-    async def list_source_executions(
-        self,
-        experience_id: UUID,
-        *,
-        limit: int,
-        offset: int,
-    ) -> tuple[list[QueryExecution], int]:
-        """分页读取一条经验的来源执行记录。"""
-        filters = (
-            QueryExecution.experience_id == experience_id,
-            QueryExecution.status == "succeeded",
-        )
-        total = await self._session.scalar(
-            select(func.count()).select_from(QueryExecution).where(*filters)
-        )
-        executions = list(
-            (
-                await self._session.scalars(
-                    select(QueryExecution)
-                    .where(*filters)
-                    .order_by(
-                        QueryExecution.created_at.desc(), QueryExecution.id.desc()
-                    )
-                    .limit(limit)
-                    .offset(offset)
-                )
-            ).all()
-        )
-        return executions, total or 0
 
     async def disable_manually(
         self,

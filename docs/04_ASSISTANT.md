@@ -13,7 +13,7 @@ Assistant
 → 为 Explorer 提供召回和查询工具
 → 为专业 Agent 提供 Skill 和文件能力
 → 管理用户附件和 Agent 产物
-→ 生成和修复对话标题
+→ 生成对话标题
 → 删除对话资源
 ```
 
@@ -23,6 +23,7 @@ Assistant
 用户创建对话
 → 创建绑定 user_id 的 Conversation
 → 根据 initial_message 生成临时标题
+→ 非草稿且有 initial_message 时提交一次标题生成任务
 → 可选择创建 draft
 
 用户查看对话列表
@@ -36,7 +37,6 @@ Assistant
 
 用户手动修改标题
 → 更新 Conversation.title
-→ 取消 title_pending
 → 后台标题任务不能覆盖手动标题
 ```
 
@@ -60,7 +60,7 @@ Assistant
 
 流式连接每 15 秒发送 keep-alive。客户端断开后设置取消事件，运行时在安全边界停止后续工作。
 
-Planner 可以在 QuickJS 中通过 Programmatic Tool Calling 调用白名单工具，并用 `Promise.all` 并行委派独立分支。并行 Session 和继续执行次数受配置限制。
+Planner 可以在 QuickJS 中通过 Programmatic Tool Calling 调用白名单工具，并用 `Promise.all` 并行委派独立分支。Planner 还可通过 Conversation 级 Shell 查看工作区目录、附件和已知产物；Shell 在运行时缓存淘汰、会话删除或服务关闭时统一清理。并行 Session 和继续执行次数受配置限制。
 
 每项模型配置通过 `api_protocol` 显式选择 `chat_completions` 或 `responses`。Responses 模型固定 `store=false` 和 `use_previous_response_id=false`，会话历史继续由 LangGraph checkpoint 管理。DeepSeek Responses 适配器会在工具续轮中完整重放无状态 API 要求的明文 reasoning item。OpenRouter Chat Completions 使用 `ChatOpenRouter`；`profile.structured_output=true` 时 Specialist 使用 Provider 原生 strict JSON Schema，最终 JSON 只用于恢复结构化状态，不进入公开消息。服务统一从 LangChain 标准 content blocks 读取 reasoning。协议调用失败时直接返回错误，不跨协议重试。
 
@@ -71,7 +71,7 @@ Planner 调用 delegation
 → 提供 analysis_id、agent_type、session_id 和 message
 → 校验严格结构和 Planner 运行状态
 → 生成专业 Agent checkpoint namespace
-→ 获取同 Session 的进程内锁和 PostgreSQL advisory lock
+→ 获取同 Session 的 PostgreSQL advisory lock
 → 获取或创建绑定独立沙箱目录的专业 Agent
 → 为本次 delegation 创建独占的 Shell Job Runtime
 → 调用 Agent 并解析结构化结果
@@ -126,7 +126,7 @@ Reviewer
 → 发现问题时发起 RepairRequest
 ```
 
-三类 Specialist 都使用 `execute`、`list_shell_jobs`、`get_shell_job` 和 `cancel_shell_job`。`execute` 前台固定等待 60 秒；超时后任务留在当前 Agent Run 后台继续运行。每次 Specialist 模型调用前，`ShellJobContextMiddleware` 把运行中任务和未查看终态任务作为临时 `<shell_jobs>` 系统指令附加到请求副本。该区块不写入消息、Checkpoint 或 SSE 活动流。
+Planner 和三类 Specialist 都使用 `shell`、`list_shell_jobs`、`get_shell_job` 和 `cancel_shell_job`。Planner 的 Shell 限于查看 Conversation 工作区；Specialist 可在各自 Session 沙箱中处理文件和运行分析代码。`shell` 前台固定等待 60 秒：时限内结束时只返回合并 stdout/stderr；内联输出截断时在字符串末尾附加详细输出文件路径。此类前台命令不公开为 Shell Job。超时后任务留在当前 Agent 运行边界内继续运行并返回 `job_id`。`get_shell_job` 单次最多等待 60 秒，避免状态查询重新无限阻塞 Agent；它或 `cancel_shell_job` 返回终态结果时会消费该任务，后续列表和查询均不可见。后台任务首次出现后，`UserMessageContextMiddleware` 将当时可见任务的 `job_id` 和 `output_path` 写入最新真实用户消息的私有字段并随 Checkpoint 持久化。该中间件统一投影消息接收时间、附件、临时图片和 Shell Job 快照；快照写入后不再更新，任务状态继续由 Shell 工具结果表达，因此历史消息前缀保持稳定。
 
 Shell 工具的 AIMessage 和 ToolMessage 沿用现有子 Agent 活动流。Specialist 返回最终结果前应处理运行中任务；Agent Run 的 `finally` 清理负责兜底终止遗留进程，完成后才释放 Session 锁。
 
@@ -236,20 +236,18 @@ Planner 最终交付文件
 → 删除只允许 uploads 下的用户文件
 ```
 
-## 8. 生成和修复对话标题
+## 8. 生成对话标题
 
 ```text
-对话首次有效交互
-→ 标记 title_pending
+首条用户文本创建 Conversation 或结束草稿时
+→ 在事务内写入即时标题并结束草稿状态
 → 提交 lightweight 标题任务
 → 标题模型读取对话文本
 → 只提取 response text
 → 清理并限制标题长度
-→ 条件更新仍处于 title_pending 的对话
+→ 条件更新标题仍等于即时标题的对话
 
-标题任务丢失或失败
-→ Beat 扫描长期 title_pending 对话
-→ 重新提交标题任务
+标题任务提交、生成或重试失败时保留即时标题并记录日志。
 ```
 
 ## 9. 删除对话资源
@@ -288,7 +286,6 @@ Worker 物理清理
 
 assistant Celery 任务
 → generate_conversation_title
-→ repair_conversation_titles
 → delete_conversation_resources
 → cleanup_expired_drafts
 

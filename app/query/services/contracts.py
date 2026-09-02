@@ -7,6 +7,6 @@ from uuid import UUID
 class QueryExperienceIndexScheduler(Protocol):
     """查询经验索引任务调度能力。"""
 
-    def enqueue(self, experience_id: UUID, revision: int) -> None:
-        """提交指定经验版本的索引同步任务。"""
+    def enqueue(self, experience_id: UUID, revision: int) -> bool:
+        """提交指定经验版本的索引同步任务并返回是否成功。"""
         ...

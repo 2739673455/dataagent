@@ -25,51 +25,47 @@ RolePath = Annotated[
 ]
 
 
-@router.get("/doris-roles", response_model=schemas.DorisRoleListResponse)
+@router.get("/doris-roles", response_model=list[schemas.DorisRoleResponse])
 async def list_doris_roles(
     _: AdminUserDep,
     service: DorisPermissionServiceDep,
-) -> schemas.DorisRoleListResponse:
+) -> list[schemas.DorisRoleResponse]:
     """列出可分配角色及 Doris 实时授权状态。"""
     roles = await service.list_roles()
-    return schemas.DorisRoleListResponse(
-        roles=[schemas.DorisRoleResponse.from_status(role) for role in roles]
-    )
+    return [schemas.DorisRoleResponse.from_status(role) for role in roles]
 
 
 @router.get(
     "/doris-roles/workload-groups",
-    response_model=schemas.DorisWorkloadGroupListResponse,
+    response_model=list[str],
 )
 async def list_doris_workload_groups(
     _: AdminUserDep,
     service: DorisRoleManagementServiceDep,
-) -> schemas.DorisWorkloadGroupListResponse:
+) -> list[str]:
     """列出创建角色时可使用的 Doris 工作组。"""
     workload_groups = await service.list_workload_groups()
-    return schemas.DorisWorkloadGroupListResponse(workload_groups=list(workload_groups))
+    return list(workload_groups)
 
 
 @router.get(
     "/doris-roles/existing",
-    response_model=schemas.DorisExistingRoleListResponse,
+    response_model=list[schemas.DorisExistingRoleResponse],
 )
 async def list_existing_doris_roles(
     _: AdminUserDep,
     service: DorisRoleManagementServiceDep,
-) -> schemas.DorisExistingRoleListResponse:
+) -> list[schemas.DorisExistingRoleResponse]:
     """只读列出 Doris 中已存在的角色。"""
     roles = await service.list_existing_roles()
-    return schemas.DorisExistingRoleListResponse(
-        roles=[
-            schemas.DorisExistingRoleResponse(
-                name=role.name,
-                managed=role.managed,
-                doris_users=list(role.doris_users),
-            )
-            for role in roles
-        ]
-    )
+    return [
+        schemas.DorisExistingRoleResponse(
+            name=role.name,
+            managed=role.managed,
+            doris_users=list(role.doris_users),
+        )
+        for role in roles
+    ]
 
 
 @router.post(
@@ -202,38 +198,6 @@ async def delete_user(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.put("/users/{user_id}/doris-role", response_model=schemas.UserResponse)
-async def set_user_doris_role(
-    user_id: int,
-    body: schemas.SetUserDorisRoleRequest,
-    current_admin: AdminUserDep,
-    service: DorisRoleManagementServiceDep,
-) -> schemas.UserResponse:
-    """替换指定用户唯一 Doris 数据角色。"""
-    user = await service.set_user_doris_role(user_id, body.role)
-    logger.info(
-        f"管理员修改用户 Doris 角色: operator_id={current_admin.id}, "
-        f"user_id={user_id}, role={user.doris_role_name}"
-    )
-    return schemas.UserResponse.from_user(user)
-
-
-@router.put("/users/{user_id}/administrator", response_model=schemas.UserResponse)
-async def set_user_administrator(
-    user_id: int,
-    body: schemas.SetUserAdministratorRequest,
-    current_admin: AdminUserDep,
-    service: DorisRoleManagementServiceDep,
-) -> schemas.UserResponse:
-    """设置或撤销平台管理员身份。"""
-    user = await service.set_user_admin(user_id, body.is_admin)
-    logger.info(
-        f"管理员修改用户管理员权限: operator_id={current_admin.id}, "
-        f"user_id={user_id}, is_admin={user.is_admin}"
-    )
-    return schemas.UserResponse.from_user(user)
-
-
 @router.put("/users/{user_id}", response_model=schemas.UserResponse)
 async def update_user(
     user_id: int,
@@ -265,23 +229,21 @@ async def update_user(
 
 @router.get(
     "/doris-roles/{role}/select-grants",
-    response_model=schemas.AssetGrantListResponse,
+    response_model=list[schemas.AssetGrantResponse],
 )
 async def list_select_grants(
     role: RolePath,
     _: AdminUserDep,
     service: DorisRoleManagementServiceDep,
-) -> schemas.AssetGrantListResponse:
+) -> list[schemas.AssetGrantResponse]:
     """列出角色用于检索前置过滤的 SELECT 权限投影。"""
     grants = await service.list_asset_grants(role)
-    return schemas.AssetGrantListResponse(
-        grants=[schemas.AssetGrantResponse.from_entity(grant) for grant in grants]
-    )
+    return [schemas.AssetGrantResponse.from_entity(grant) for grant in grants]
 
 
 @router.post(
     "/doris-roles/{role}/select-grants",
-    response_model=schemas.AssetGrantListResponse,
+    response_model=list[schemas.AssetGrantResponse],
     status_code=status.HTTP_201_CREATED,
 )
 async def grant_select(
@@ -289,7 +251,7 @@ async def grant_select(
     body: schemas.SelectGrantRequest,
     current_admin: AdminUserDep,
     service: DorisPermissionServiceDep,
-) -> schemas.AssetGrantListResponse:
+) -> list[schemas.AssetGrantResponse]:
     """直接向 Doris 角色授予库、表或列 SELECT 权限。"""
     grants = await service.grant_select(
         role,
@@ -300,9 +262,7 @@ async def grant_select(
         f"管理员授予 Doris SELECT 权限: operator_id={current_admin.id}, "
         f"role={role}, table={body.table_name}, columns={body.columns}"
     )
-    return schemas.AssetGrantListResponse(
-        grants=[schemas.AssetGrantResponse.from_entity(grant) for grant in grants]
-    )
+    return [schemas.AssetGrantResponse.from_entity(grant) for grant in grants]
 
 
 @router.delete(
@@ -348,18 +308,16 @@ async def revoke_all_select(
 
 @router.get(
     "/doris-roles/{role}/row-policies",
-    response_model=schemas.RowPolicyListResponse,
+    response_model=list[schemas.RowPolicyResponse],
 )
 async def list_row_policies(
     role: RolePath,
     _: AdminUserDep,
     service: DorisPermissionServiceDep,
-) -> schemas.RowPolicyListResponse:
+) -> list[schemas.RowPolicyResponse]:
     """直接读取 Doris 角色的全部行策略。"""
     policies = await service.list_row_policies(role)
-    return schemas.RowPolicyListResponse(
-        policies=[schemas.RowPolicyResponse.from_model(policy) for policy in policies]
-    )
+    return [schemas.RowPolicyResponse.from_model(policy) for policy in policies]
 
 
 @router.post(

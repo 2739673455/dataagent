@@ -5,7 +5,7 @@ import json
 import unicodedata
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -37,6 +37,21 @@ from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.config.app_config import cfg
 
 _SEMANTIC_PREPROCESS_VERSION = "v1"
+
+
+@dataclass(frozen=True, slots=True)
+class _ValueIndexRun:
+    """一次字段取值索引运行在事务外执行所需的不可变快照。"""
+
+    run_id: uuid.UUID
+    t_name: str
+    c_name: str
+    mode: ValueIndexSyncMode
+    cursor_column: str | None
+    cursor_value: dict[str, Any] | None
+    generation: uuid.UUID | None
+    column_meta_version: int
+    table_meta_version: int
 
 
 class MetaIndexService:
@@ -252,6 +267,7 @@ class MetaIndexService:
             update.append(target)
 
         if embedding_targets:
+            # 批量嵌入只覆盖新增或正文/模型版本变化的文档，payload-only 更新复用旧向量。
             embeddings = await self._embed_texts(
                 [target.text for _, _, target in embedding_targets]
             )
@@ -340,36 +356,63 @@ class MetaIndexService:
         requested_mode: RequestedValueIndexSyncMode,
     ) -> ValueIndexSyncResult:
         """执行单字段取值索引状态机。"""
+        run = await self._begin_value_index_run(
+            t_name,
+            c_name,
+            requested_mode=requested_mode,
+        )
+        try:
+            result = await self._execute_value_index_run(run)
+            await self._complete_value_index_run(run, result)
+            return result
+        except Exception as exc:
+            await self._fail_value_index_run(run, exc)
+            raise
+
+    async def _begin_value_index_run(
+        self,
+        t_name: str,
+        c_name: str,
+        *,
+        requested_mode: RequestedValueIndexSyncMode,
+    ) -> _ValueIndexRun:
+        """在短事务中校验配置并登记运行所有权。"""
         run_id = uuid.uuid4()
         started_at = datetime.now(UTC)
-        # 长时间的 Doris/Elasticsearch I/O 不能占用 PostgreSQL 事务。登记、提交和
-        # 失败各自重取事务级锁，并以 run_id 校验所有权，防止旧任务覆盖新运行。
         async with self._meta_repo.session.begin():
             await self._meta_repo.acquire_index_lock(
                 "value",
                 column_resource_key(t_name, c_name),
             )
             column_info = await self._meta_repo.get_column_info(t_name, c_name)
-            if not column_info.index_values:
-                return await self._clear_value_index(column_info)
             table_info = await self._meta_repo.get_table_info(t_name)
             cursor_column = table_info.value_index_cursor_column
             state = column_info.value_index_state
-            mode = self._select_value_sync_mode(
-                cursor_column,
-                state,
-                requested_mode=requested_mode,
-            )
-            generation = (
-                uuid.uuid4()
-                if mode == "full"
-                else state.current_generation
-                if state is not None
-                else None
-            )
-            if generation is None:
-                mode = "full"
-                generation = uuid.uuid4()
+            if (
+                state is not None
+                and state.status == "syncing"
+                and state.active_run_id is not None
+            ):
+                raise RuntimeError("字段取值索引已有运行中的同步任务")
+            if column_info.index_values:
+                mode: ValueIndexSyncMode = self._select_value_sync_mode(
+                    cursor_column,
+                    state,
+                    requested_mode=requested_mode,
+                )
+                generation = (
+                    uuid.uuid4()
+                    if mode == "full"
+                    else state.current_generation
+                    if state is not None
+                    else None
+                )
+                if generation is None:
+                    mode = "full"
+                    generation = uuid.uuid4()
+            else:
+                mode = "clear"
+                generation = None
             await self._meta_repo.begin_value_index_sync(
                 t_name,
                 c_name,
@@ -377,106 +420,149 @@ class MetaIndexService:
                 generation=generation,
                 started_at=started_at,
             )
+            return _ValueIndexRun(
+                run_id=run_id,
+                t_name=t_name,
+                c_name=c_name,
+                mode=mode,
+                cursor_column=cursor_column,
+                cursor_value=(
+                    dict(state.cursor_value)
+                    if state is not None and state.cursor_value is not None
+                    else None
+                ),
+                generation=generation,
+                column_meta_version=column_info.meta_version,
+                table_meta_version=table_info.meta_version,
+            )
 
-        try:
-            async with self._meta_repo.session.begin():
-                await self._meta_repo.acquire_index_lock(
-                    "value",
-                    column_resource_key(t_name, c_name),
+    async def _execute_value_index_run(
+        self,
+        run: _ValueIndexRun,
+    ) -> ValueIndexSyncResult:
+        """在 PostgreSQL 事务外执行 Doris 和 Elasticsearch I/O。"""
+        if run.mode == "clear":
+            removed_count = await self._value_repo.delete_by_column(
+                run.t_name,
+                run.c_name,
+            )
+            return ValueIndexSyncResult(
+                mode="clear",
+                read_value_count=0,
+                upserted_count=0,
+                removed_count=removed_count,
+                cursor_value=None,
+                sync_generation=None,
+            )
+        await self._value_repo.ensure_index()
+        if run.mode == "full":
+            return await self._run_full_value_sync(run)
+        return await self._run_incremental_value_sync(run)
+
+    async def _complete_value_index_run(
+        self,
+        run: _ValueIndexRun,
+        result: ValueIndexSyncResult,
+    ) -> None:
+        """在短事务中校验运行快照并提交成功状态。"""
+        async with self._meta_repo.session.begin():
+            await self._meta_repo.acquire_index_lock(
+                "value",
+                column_resource_key(run.t_name, run.c_name),
+            )
+            column_info, table_info = await self._meta_repo.reload_value_index_context(
+                run.t_name,
+                run.c_name,
+            )
+            state = column_info.value_index_state
+            if state is None or state.active_run_id != run.run_id:
+                raise RuntimeError("字段取值索引同步运行所有权已失效")
+            if (
+                column_info.meta_version != run.column_meta_version
+                or table_info.meta_version != run.table_meta_version
+                or table_info.value_index_cursor_column != run.cursor_column
+                or column_info.index_values != (run.mode != "clear")
+            ):
+                raise RuntimeError("字段取值索引同步配置已变化")
+            if run.mode == "clear":
+                await self._meta_repo.delete_value_index_state(
+                    run.t_name,
+                    run.c_name,
                 )
-                column_info = await self._meta_repo.get_column_info(t_name, c_name)
-                state = column_info.value_index_state
-                if state is None or state.active_run_id != run_id:
-                    raise RuntimeError("字段取值索引同步运行所有权已失效")
-                if not column_info.index_values:
-                    return await self._clear_value_index(column_info)
-                current_cursor_column = (
-                    await self._meta_repo.get_table_info(t_name)
-                ).value_index_cursor_column
-                if current_cursor_column != cursor_column:
-                    raise RuntimeError("字段取值索引同步配置已变化")
-                await self._value_repo.ensure_index()
-                if mode == "full":
-                    result = await self._run_full_value_sync(
-                        column_info,
-                        state,
-                        cursor_column,
-                        generation,
-                    )
-                else:
-                    result = await self._run_incremental_value_sync(
-                        column_info,
-                        state,
-                        cursor_column,
-                        generation,
-                    )
-                committed = await self._meta_repo.complete_value_index_sync(
-                    t_name,
-                    c_name,
-                    run_id=run_id,
-                    cursor_value=(
-                        result.cursor_value
-                        if isinstance(result.cursor_value, dict)
-                        else state.cursor_value
-                    ),
-                    generation=generation,
-                    completed_at=datetime.now(UTC),
-                    full_sync=mode == "full",
-                    incremental_sync=mode == "incremental",
-                )
-                if not committed:
-                    raise RuntimeError("字段取值索引同步状态提交冲突")
-                return result
-        except Exception as exc:
-            async with self._meta_repo.session.begin():
-                await self._meta_repo.acquire_index_lock(
-                    "value",
-                    column_resource_key(t_name, c_name),
-                )
-                await self._meta_repo.fail_value_index_sync(
-                    t_name,
-                    c_name,
-                    run_id=run_id,
-                    error=f"{type(exc).__name__}: {exc}",
-                    failed_at=datetime.now(UTC),
-                )
-            raise
+                return
+            if run.generation is None:
+                raise RuntimeError("字段取值索引同步缺少代次")
+            committed = await self._meta_repo.complete_value_index_sync(
+                run.t_name,
+                run.c_name,
+                run_id=run.run_id,
+                cursor_value=(
+                    result.cursor_value
+                    if isinstance(result.cursor_value, dict)
+                    else run.cursor_value
+                ),
+                generation=run.generation,
+                completed_at=datetime.now(UTC),
+                full_sync=run.mode == "full",
+                incremental_sync=run.mode == "incremental",
+            )
+            if not committed:
+                raise RuntimeError("字段取值索引同步状态提交冲突")
+
+    async def _fail_value_index_run(
+        self,
+        run: _ValueIndexRun,
+        error: Exception,
+    ) -> None:
+        """在独立短事务中按 run_id 记录失败状态。"""
+        async with self._meta_repo.session.begin():
+            await self._meta_repo.acquire_index_lock(
+                "value",
+                column_resource_key(run.t_name, run.c_name),
+            )
+            await self._meta_repo.fail_value_index_sync(
+                run.t_name,
+                run.c_name,
+                run_id=run.run_id,
+                error=f"{type(error).__name__}: {error}",
+                failed_at=datetime.now(UTC),
+            )
 
     async def _run_full_value_sync(
         self,
-        column_info: ColumnInfo,
-        state: ValueIndexSyncState,
-        cursor_column: str | None,
-        generation: uuid.UUID,
+        run: _ValueIndexRun,
     ) -> ValueIndexSyncResult:
         """执行字段取值索引全量替换。"""
+        if run.generation is None:
+            raise RuntimeError("字段取值索引全量同步缺少代次")
         upper_bound = (
             await self._source_repo.get_value_sync_upper_bound(
-                column_info.t_name,
-                cursor_column,
+                run.t_name,
+                run.cursor_column,
             )
-            if cursor_column is not None
+            if run.cursor_column is not None
             else None
         )
         read_count = await self._upsert_value_batches(
             self._source_repo.iter_column_value_batches(
-                column_info.t_name,
-                column_info.name,
+                run.t_name,
+                run.c_name,
             ),
-            column_info,
-            generation,
+            run.t_name,
+            run.c_name,
+            run.generation,
         )
         if read_count:
             await self._value_repo.refresh()
         removed_count = await self._value_repo.delete_other_generations(
-            column_info.t_name,
-            column_info.name,
-            str(generation),
+            run.t_name,
+            run.c_name,
+            str(run.generation),
         )
         cursor_value = (
             self._serialize_cursor(upper_bound)
             if upper_bound is not None
-            else state.cursor_value
+            else run.cursor_value
         )
         return ValueIndexSyncResult(
             mode="full",
@@ -484,22 +570,23 @@ class MetaIndexService:
             upserted_count=read_count,
             removed_count=removed_count,
             cursor_value=cursor_value,
-            sync_generation=str(generation),
+            sync_generation=str(run.generation),
         )
 
     async def _run_incremental_value_sync(
         self,
-        column_info: ColumnInfo,
-        state: ValueIndexSyncState,
-        cursor_column: str | None,
-        generation: uuid.UUID,
+        run: _ValueIndexRun,
     ) -> ValueIndexSyncResult:
         """执行固定上界和重叠窗口的日常水位同步。"""
-        if cursor_column is None or state.cursor_value is None:
+        if (
+            run.cursor_column is None
+            or run.cursor_value is None
+            or run.generation is None
+        ):
             raise RuntimeError("字段取值增量同步缺少已提交水位")
         upper_bound = await self._source_repo.get_value_sync_upper_bound(
-            column_info.t_name,
-            cursor_column,
+            run.t_name,
+            run.cursor_column,
         )
         if upper_bound is None:
             return ValueIndexSyncResult(
@@ -507,24 +594,25 @@ class MetaIndexService:
                 read_value_count=0,
                 upserted_count=0,
                 removed_count=0,
-                cursor_value=state.cursor_value,
-                sync_generation=str(generation),
+                cursor_value=run.cursor_value,
+                sync_generation=str(run.generation),
             )
-        previous_cursor = self._deserialize_cursor(state.cursor_value)
+        previous_cursor = self._deserialize_cursor(run.cursor_value)
         lower_bound = self._lookback_lower_bound(
             previous_cursor,
             cfg.metadata_index.value_lookback_seconds,
         )
         read_count = await self._upsert_value_batches(
             self._source_repo.iter_changed_column_value_batches(
-                column_info.t_name,
-                column_info.name,
-                cursor_column,
+                run.t_name,
+                run.c_name,
+                run.cursor_column,
                 lower_bound,
                 upper_bound,
             ),
-            column_info,
-            generation,
+            run.t_name,
+            run.c_name,
+            run.generation,
         )
         if read_count:
             await self._value_repo.refresh()
@@ -534,13 +622,14 @@ class MetaIndexService:
             upserted_count=read_count,
             removed_count=0,
             cursor_value=self._serialize_cursor(upper_bound),
-            sync_generation=str(generation),
+            sync_generation=str(run.generation),
         )
 
     async def _upsert_value_batches(
         self,
         batches: AsyncIterator[list[Any]],
-        column_info: ColumnInfo,
+        t_name: str,
+        c_name: str,
         generation: uuid.UUID,
     ) -> int:
         """序列化并写入 Doris 返回的分批去重取值。"""
@@ -549,8 +638,8 @@ class MetaIndexService:
             value_infos = [
                 ValueInfo(
                     value=self._serialize_value(value),
-                    t_name=column_info.t_name,
-                    c_name=column_info.name,
+                    t_name=t_name,
+                    c_name=c_name,
                 )
                 for value in values
                 if value is not None
@@ -559,28 +648,6 @@ class MetaIndexService:
                 await self._value_repo.upsert(value_infos, str(generation))
                 count += len(value_infos)
         return count
-
-    async def _clear_value_index(
-        self,
-        column_info: ColumnInfo,
-    ) -> ValueIndexSyncResult:
-        """清理已关闭字段的取值索引与同步状态。"""
-        removed_count = await self._value_repo.delete_by_column(
-            column_info.t_name,
-            column_info.name,
-        )
-        await self._meta_repo.delete_value_index_state(
-            column_info.t_name,
-            column_info.name,
-        )
-        return ValueIndexSyncResult(
-            mode="clear",
-            read_value_count=0,
-            upserted_count=0,
-            removed_count=removed_count,
-            cursor_value=None,
-            sync_generation=None,
-        )
 
     @staticmethod
     def _select_value_sync_mode(
