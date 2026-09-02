@@ -30,7 +30,9 @@ _STRUCTURED_RESPONSE_TOOL_NAME = "SpecialistResult"
 def parse_specialist_result(output: object) -> SpecialistResult:
     """从 LangGraph 输出提取并严格校验结构化结果。"""
     candidate: object = output
-    if isinstance(output, Mapping) and "structured_response" in output:
+    if isinstance(output, Mapping):
+        if "structured_response" not in output:
+            raise TypeError("Specialist 本轮未输出 structured_response")
         candidate = output["structured_response"]
     if isinstance(candidate, SpecialistResult):
         return candidate
@@ -132,10 +134,52 @@ class SpecialistCheckpointView:
 
     def latest_result(self) -> SpecialistResult | None:
         """读取 Session 最近一次结构化结果。"""
-        try:
-            return parse_specialist_result(self._values.get("structured_response"))
-        except (TypeError, ValueError, ValidationError):
-            return None
+        for message in reversed(self.messages):
+            raw_context = message.additional_kwargs.get(DELEGATION_CONTEXT_KEY)
+            if raw_context is None:
+                continue
+            try:
+                context = DelegationMessageContext.model_validate(raw_context)
+            except ValidationError:
+                continue
+            record = self.delegation_record(context.delegation_id)
+            if record is not None:
+                return record.result
+            break
+        return None
+
+    def plain_response(self, delegation_id: str) -> str | None:
+        """读取一次委派中未封装为 SpecialistResult 的最终文本回答。"""
+        found = False
+        response: str | None = None
+        for message in self.messages:
+            raw_context = message.additional_kwargs.get(DELEGATION_CONTEXT_KEY)
+            if raw_context is not None:
+                try:
+                    context = DelegationMessageContext.model_validate(raw_context)
+                except ValidationError:
+                    if found:
+                        break
+                    continue
+                if found:
+                    # 同一 delegation 的内部重试属于结构化协议修复，不应覆盖
+                    # 首次执行已经生成的现场回答。
+                    if message.additional_kwargs.get(_INTERNAL_RETRY_KEY) is True:
+                        break
+                    if context.delegation_id != delegation_id:
+                        break
+                if context.delegation_id == delegation_id:
+                    found = True
+                continue
+            if (
+                found
+                and isinstance(message, AIMessage)
+                and not is_structured_response_message(message)
+            ):
+                text = message_text(message)
+                if text:
+                    response = text
+        return response
 
     def delegation_activity(
         self,
@@ -155,9 +199,10 @@ class SpecialistCheckpointView:
                     if found:
                         break
                     continue
-                if found:
+                if found and context.delegation_id != delegation_id:
                     break
-                found = context.delegation_id == delegation_id
+                if context.delegation_id == delegation_id:
+                    found = True
                 continue
             if not found or message.additional_kwargs.get(_INTERNAL_RETRY_KEY) is True:
                 continue

@@ -2,14 +2,15 @@
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NotRequired
 
 from deepagents import create_deep_agent
 from deepagents.graph import DeepAgentState
-from langchain.agents.middleware.types import AgentMiddleware
+from langchain.agents.middleware.types import AgentMiddleware, OmitFromInput
 from langchain.agents.structured_output import ProviderStrategy, ToolStrategy
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
+from langgraph.channels import EphemeralValue
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
@@ -47,6 +48,11 @@ def _specialist_response_format(
 class SpecialistAgentState(DeepAgentState):
     """增加显式 delegation 状态的专业 Agent Checkpoint。"""
 
+    # 结构化响应只属于当前 delegation。若跨运行持久化，Agent 路由会把旧值
+    # 误判为本轮已经完成，并将旧结果再次返回。
+    structured_response: NotRequired[
+        Annotated[SpecialistResult, EphemeralValue, OmitFromInput]
+    ]
     delegation_records: Annotated[
         dict[str, object],
         _merge_delegation_records,

@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
+from langgraph._internal._constants import CONFIG_KEY_SCRATCHPAD
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import ValidationError
 
@@ -68,7 +69,7 @@ def _specialist_repair_message(error: Exception) -> str:
     )
     return (
         "上一条 SpecialistResult 未通过校验。当前 Session 已有的工具结果和文件保持有效，"
-        "请只基于这些已有工作重新输出结构化结果，不要再次调用工具。\n"
+        "请重新输出结构化结果。\n"
         f"失败类别：{category}。\n"
         f"失败约束：{error}\n"
         "completed 必须提供完整 content；needs_repair 必须提供 repair_requests；"
@@ -230,10 +231,18 @@ class AgentSessionService:
     ) -> RunnableConfig:
         """复制父配置并替换为专业 Session namespace。"""
         config = dict(parent_config)
+        # Specialist 使用独立的持久化 namespace，不能继承父任务的子图计数器；
+        # 否则 PTC 内部调用会被 LangGraph 自动写入 `<namespace>|N`。
         parent_configurable = {
             key: value
             for key, value in parent_config.get("configurable", {}).items()
-            if key not in {"checkpoint_id", "checkpoint_map", "checkpoint_ns"}
+            if key
+            not in {
+                "checkpoint_id",
+                "checkpoint_map",
+                "checkpoint_ns",
+                CONFIG_KEY_SCRATCHPAD,
+            }
         }
         config["configurable"] = {
             **parent_configurable,
@@ -415,17 +424,46 @@ class AgentSessionService:
                 activity_writer,
                 emit_messages=True,
             )
+            result: SpecialistResult | None = None
+            repair_error: Exception | None = None
             try:
-                result = parse_specialist_result(output)
-                result = await self._prepare_specialist_result(result, session_key)
+                parsed_result = parse_specialist_result(output)
             except (TypeError, ValueError, ValidationError) as error:
+                plain_response = SpecialistCheckpointView(output).plain_response(
+                    delegation_id
+                )
+                if plain_response is not None:
+                    # 部分模型会直接给出完整文本终答而不调用结构化输出工具。
+                    # 此时现场回答比重新从长会话历史生成摘要更可靠；保留正文，
+                    # 未经结构化声明的产物自然降级为空。
+                    result = SpecialistResult(
+                        status="completed",
+                        content=plain_response,
+                    )
+                    result = await self._prepare_specialist_result(result, session_key)
+                else:
+                    repair_error = error
+            else:
+                try:
+                    result = await self._prepare_specialist_result(
+                        parsed_result,
+                        session_key,
+                    )
+                except (TypeError, ValueError, ValidationError) as error:
+                    repair_error = error
+            if repair_error is not None:
                 retry_output = await self._stream_specialist(
                     agent_run.agent,
                     {
                         "messages": [
                             HumanMessage(
-                                content=_specialist_repair_message(error),
-                                additional_kwargs={_INTERNAL_RETRY_KEY: True},
+                                content=_specialist_repair_message(repair_error),
+                                additional_kwargs={
+                                    DELEGATION_CONTEXT_KEY: context.model_dump(
+                                        mode="json"
+                                    ),
+                                    _INTERNAL_RETRY_KEY: True,
+                                },
                             )
                         ]
                     },
@@ -437,6 +475,8 @@ class AgentSessionService:
                 )
                 result = parse_specialist_result(retry_output)
                 result = await self._prepare_specialist_result(result, session_key)
+            if result is None:
+                raise RuntimeError("Specialist 执行未产生可返回结果")
             record = DelegationCheckpointRecord(
                 delegation_id=delegation_id,
                 status=result.status,

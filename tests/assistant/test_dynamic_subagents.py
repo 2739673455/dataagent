@@ -26,6 +26,10 @@ from langchain_core.messages import (
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
+from langgraph._internal._constants import (
+    CONFIG_KEY_SCRATCHPAD,
+    CONFIG_KEY_TASK_ID,
+)
 from langgraph.constants import CONFIG_KEY_CHECKPOINTER
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import Field, ValidationError
@@ -56,7 +60,10 @@ from app.assistant.agents.middleware.eval_delegations import EvalDelegationMiddl
 from app.assistant.agents.session_service import AgentSessionService
 from app.assistant.agents.session_store import AgentSessionStore
 from app.assistant.agents.shell_jobs import ShellJobRuntime
-from app.assistant.agents.specialist_agent import _specialist_response_format
+from app.assistant.agents.specialist_agent import (
+    SpecialistAgentState,
+    _specialist_response_format,
+)
 from app.assistant.agents.specialists import (
     SpecialistAgentFactory,
     SpecialistAgentRun,
@@ -76,6 +83,7 @@ class RecordingChatModel(BaseChatModel):
     seen_tool_choice: str | None = None
     seen_bind_kwargs: dict[str, Any] = Field(default_factory=dict)
     response_content: str = "done"
+    response_contents: list[str] = Field(default_factory=list)
 
     @property
     def _llm_type(self) -> str:
@@ -106,10 +114,13 @@ class RecordingChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         del messages, stop, run_manager, kwargs
+        content = (
+            self.response_contents.pop(0)
+            if self.response_contents
+            else self.response_content
+        )
         return ChatResult(
-            generations=[
-                ChatGeneration(message=AIMessage(content=self.response_content))
-            ]
+            generations=[ChatGeneration(message=AIMessage(content=content))]
         )
 
 
@@ -614,8 +625,42 @@ class DynamicSubagentContractTest(unittest.TestCase):
         response_format = _specialist_response_format(model)
 
         self.assertIsInstance(response_format, ToolStrategy)
+        assert isinstance(response_format, ToolStrategy)
         self.assertEqual(response_format.schema, SpecialistResult)
         self.assertTrue(response_format.handle_errors)
+
+    def test_specialist_structured_response_is_scoped_to_current_run(self) -> None:
+        from langchain.agents import create_agent
+        from langgraph.checkpoint.memory import InMemorySaver
+
+        first = SpecialistResult(status="completed", content="first answer")
+        second = SpecialistResult(status="completed", content="second answer")
+        model = RecordingChatModel(
+            profile={"structured_output": True},
+            response_contents=[first.model_dump_json(), second.model_dump_json()],
+        )
+        agent = create_agent(
+            model=model,
+            tools=[execute_sql],
+            response_format=_specialist_response_format(model),
+            state_schema=SpecialistAgentState,
+            checkpointer=InMemorySaver(),
+        )
+        config = RunnableConfig(
+            configurable={"thread_id": "sequential-specialist-runs"}
+        )
+
+        first_state = agent.invoke(
+            {"messages": [HumanMessage(content="first question")]},
+            config,
+        )
+        second_state = agent.invoke(
+            {"messages": [HumanMessage(content="second question")]},
+            config,
+        )
+
+        self.assertEqual(first_state["structured_response"], first)
+        self.assertEqual(second_state["structured_response"], second)
 
     def test_specialist_definitions_assign_data_tools_only_to_explorer(self) -> None:
         definitions = build_specialist_definitions(
@@ -1055,21 +1100,40 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         completed_ns = "subagents/sales-decline/analyst/region"
         interrupted_ns = "subagents/inventory/explorer/base"
         fake.persisted_sessions.update({completed_ns, interrupted_ns})
+        completed_context = DelegationMessageContext(
+            delegation_id="delegation-completed"
+        )
         fake.checkpoints[completed_ns] = {
             "ts": "2026-08-29T12:00:00+00:00",
             "channel_values": {
-                "structured_response": SpecialistResult(
-                    status="completed",
-                    content="region complete",
-                    artifacts=[
-                        ArtifactReference(
-                            path=(
-                                f"{_CONVERSATION_ROOT}/sessions/sales-decline/"
-                                "analyst/region/result.json"
+                "messages": [
+                    HumanMessage(
+                        content="complete region analysis",
+                        additional_kwargs={
+                            DELEGATION_CONTEXT_KEY: completed_context.model_dump(
+                                mode="json"
                             )
-                        )
-                    ],
-                )
+                        },
+                    )
+                ],
+                "delegation_records": {
+                    "delegation-completed": {
+                        "delegation_id": "delegation-completed",
+                        "status": "completed",
+                        "result": {
+                            "status": "completed",
+                            "content": "region complete",
+                            "artifacts": [
+                                {
+                                    "path": (
+                                        f"{_CONVERSATION_ROOT}/sessions/"
+                                        "sales-decline/analyst/region/result.json"
+                                    )
+                                }
+                            ],
+                        },
+                    }
+                },
             },
         }
         fake.checkpoints[interrupted_ns] = {
@@ -1088,6 +1152,50 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(filtered.sessions), 1)
         self.assertEqual(filtered.sessions[0].summary, "region complete")
         self.assertEqual(filtered.sessions[0].artifact_count, 1)
+
+    async def test_list_sessions_reads_latest_delegation_record_result(self) -> None:
+        fake = _FakeAgent()
+        namespace = "subagents/sales-decline/analyst/region"
+        context = DelegationMessageContext(delegation_id="delegation-latest")
+        fake.persisted_sessions.add(namespace)
+        fake.checkpoints[namespace] = {
+            "ts": "2026-08-29T12:00:00+00:00",
+            "channel_values": {
+                "messages": [
+                    HumanMessage(
+                        content="latest",
+                        additional_kwargs={
+                            DELEGATION_CONTEXT_KEY: context.model_dump(mode="json")
+                        },
+                    )
+                ],
+                "delegation_records": {
+                    "delegation-latest": {
+                        "delegation_id": "delegation-latest",
+                        "status": "completed",
+                        "result": {
+                            "status": "completed",
+                            "content": "latest answer",
+                            "artifacts": [
+                                {
+                                    "path": (
+                                        f"{_CONVERSATION_ROOT}/sessions/"
+                                        "sales-decline/analyst/region/result.json"
+                                    )
+                                }
+                            ],
+                        },
+                    }
+                },
+            },
+        }
+
+        sessions = await _service(fake).list_sessions("sales-decline")
+
+        self.assertEqual(len(sessions.sessions), 1)
+        self.assertEqual(sessions.sessions[0].status, "completed")
+        self.assertEqual(sessions.sessions[0].summary, "latest answer")
+        self.assertEqual(sessions.sessions[0].artifact_count, 1)
 
     async def test_list_sessions_reports_active_session_before_checkpoint(
         self,
@@ -1279,6 +1387,8 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         parent["metadata"] = {"trace": "kept"}
         parent_configurable = parent.setdefault("configurable", {})
         parent_configurable["checkpoint_id"] = "planner-checkpoint"
+        parent_configurable[CONFIG_KEY_TASK_ID] = "planner-tool-task"
+        parent_configurable[CONFIG_KEY_SCRATCHPAD] = object()
         result = await service.execute_delegation(_request("region"), parent)
 
         self.assertEqual(result.status, "completed")
@@ -1295,6 +1405,11 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             parent_configurable.get("thread_id"),
         )
         self.assertNotIn("checkpoint_id", invoked_configurable)
+        self.assertEqual(
+            invoked_configurable.get(CONFIG_KEY_TASK_ID),
+            "planner-tool-task",
+        )
+        self.assertNotIn(CONFIG_KEY_SCRATCHPAD, invoked_configurable)
 
     async def test_self_repair_is_rejected_after_structured_retry(self) -> None:
         repair = RepairRequest(
@@ -1318,6 +1433,97 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.status, "failed")
         self.assertIn("修补自身", result.failure_reasons[0])
+        self.assertEqual(len(fake.configs), 2)
+        initial_message = cast(HumanMessage, fake.inputs[0]["messages"][0])
+        retry_message = cast(HumanMessage, fake.inputs[1]["messages"][0])
+        self.assertEqual(
+            retry_message.additional_kwargs[DELEGATION_CONTEXT_KEY],
+            initial_message.additional_kwargs[DELEGATION_CONTEXT_KEY],
+        )
+        self.assertTrue(retry_message.additional_kwargs["dataagent_internal_retry"])
+
+    async def test_plain_final_answer_is_kept_without_structured_retry(self) -> None:
+        delegation_id = "delegation-current-answer"
+        current_answer = "有使用 skill：analysis 与 visualization。"
+        fake = _FakeAgent(
+            output={
+                "messages": [
+                    HumanMessage(
+                        content="先前分析",
+                        additional_kwargs={
+                            DELEGATION_CONTEXT_KEY: {
+                                "delegation_id": "delegation-previous",
+                            }
+                        },
+                    ),
+                    AIMessage(content="旧的分析交付摘要"),
+                    HumanMessage(
+                        content="是否使用 skill？",
+                        additional_kwargs={
+                            DELEGATION_CONTEXT_KEY: {
+                                "delegation_id": delegation_id,
+                            }
+                        },
+                    ),
+                    AIMessage(content=current_answer),
+                ]
+            }
+        )
+        service = _service(fake)
+
+        with patch(
+            "app.assistant.agents.session_service.uuid4",
+            return_value=SimpleNamespace(hex=delegation_id),
+        ):
+            result = await service.execute_delegation(
+                _request("region"),
+                build_planner_config(12, _CONVERSATION_ID),
+            )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.content, current_answer)
+        self.assertEqual(result.artifacts, [])
+        self.assertEqual(len(fake.configs), 1)
+
+    async def test_malformed_structured_answer_still_retries_once(self) -> None:
+        delegation_id = "delegation-malformed-result"
+        fake = _FakeAgent(
+            output={
+                "messages": [
+                    HumanMessage(
+                        content="执行分析",
+                        additional_kwargs={
+                            DELEGATION_CONTEXT_KEY: {
+                                "delegation_id": delegation_id,
+                            }
+                        },
+                    ),
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "name": "SpecialistResult",
+                                "args": {},
+                                "id": "malformed-result",
+                                "type": "tool_call",
+                            }
+                        ],
+                    ),
+                ]
+            }
+        )
+        service = _service(fake)
+
+        with patch(
+            "app.assistant.agents.session_service.uuid4",
+            return_value=SimpleNamespace(hex=delegation_id),
+        ):
+            result = await service.execute_delegation(
+                _request("region"),
+                build_planner_config(12, _CONVERSATION_ID),
+            )
+
+        self.assertEqual(result.status, "failed")
         self.assertEqual(len(fake.configs), 2)
 
     async def test_missing_artifact_is_filtered_without_structured_retry(self) -> None:
@@ -1367,16 +1573,13 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_artifact_sanitization_keeps_valid_entries(self) -> None:
         valid_path = (
-            f"{_CONVERSATION_ROOT}/sessions/sales-decline/analyst/region/"
-            "valid.json"
+            f"{_CONVERSATION_ROOT}/sessions/sales-decline/analyst/region/valid.json"
         )
         missing_path = (
-            f"{_CONVERSATION_ROOT}/sessions/sales-decline/analyst/region/"
-            "missing.json"
+            f"{_CONVERSATION_ROOT}/sessions/sales-decline/analyst/region/missing.json"
         )
         out_of_scope_path = (
-            f"{_CONVERSATION_ROOT}/sessions/sales-decline/analyst/other/"
-            "foreign.json"
+            f"{_CONVERSATION_ROOT}/sessions/sales-decline/analyst/other/foreign.json"
         )
         fake = _FakeAgent(
             output={
@@ -1765,6 +1968,56 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             activity.messages, [AIMessage(id="first-ai", content="尚未完成")]
         )
         self.assertEqual(activity.status, "cancelled")
+
+    async def test_get_delegation_activity_accepts_same_run_retry_boundary(
+        self,
+    ) -> None:
+        fake = _FakeAgent()
+        namespace = "subagents/sales-decline/analyst/region"
+        context = DelegationMessageContext(delegation_id="delegation-first")
+        context_payload = context.model_dump(mode="json")
+        retry_result = AIMessage(id="retry-result", content="修正后的结果")
+        fake.state_values[namespace] = {
+            "delegation_records": {
+                "delegation-first": {
+                    "delegation_id": "delegation-first",
+                    "status": "completed",
+                    "result": {
+                        "status": "completed",
+                        "content": "修正完成",
+                    },
+                }
+            },
+            "messages": [
+                HumanMessage(
+                    content="first",
+                    additional_kwargs={DELEGATION_CONTEXT_KEY: context_payload},
+                ),
+                AIMessage(id="first-result", content="首次结果"),
+                HumanMessage(
+                    content="retry",
+                    additional_kwargs={
+                        DELEGATION_CONTEXT_KEY: context_payload,
+                        "dataagent_internal_retry": True,
+                    },
+                ),
+                retry_result,
+            ],
+        }
+
+        activity = await _service(fake).get_delegation_activity(
+            "sales-decline",
+            "analyst",
+            "region",
+            "delegation-first",
+        )
+
+        assert activity is not None
+        self.assertEqual(
+            activity.messages,
+            [AIMessage(id="first-result", content="首次结果"), retry_result],
+        )
+        self.assertEqual(activity.status, "completed")
 
     async def test_get_delegation_activity_keeps_structured_response_reasoning(
         self,
