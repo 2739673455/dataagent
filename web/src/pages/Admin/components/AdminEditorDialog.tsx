@@ -95,7 +95,7 @@ export function AdminEditorDialog({
       role="dialog"
     >
       <div
-        className={`max-h-[calc(100vh-2rem)] w-full ${wide ? "max-w-6xl" : "max-w-xl"} overflow-y-auto rounded-lg border border-[#d4d4ce] bg-[#fafaf8] p-5 text-xs shadow-xl`}
+        className={`max-h-[calc(100vh-2rem)] w-full ${wide ? "max-w-6xl" : "max-w-xl"} overflow-y-auto rounded border border-[#d4d4ce] bg-[#fafaf8] p-5 text-xs shadow-xl`}
       >
         <AdminDialogHeader onClose={onClose}>{title}</AdminDialogHeader>
         {children}

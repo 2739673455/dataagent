@@ -43,22 +43,22 @@ export function ChatUserFooter({ user, onChangePassword, onLogout }: ChatUserFoo
 
   return (
     <div className="p-3 bg-[#e4e4df] h-full flex flex-col justify-center">
-      <div className="mb-2.5 flex items-start gap-2.5 rounded border border-[#d4d4ce] bg-[#ffffff] p-2.5 text-xs">
+      <div className="mb-2 flex items-center gap-2.5 rounded border border-[#d4d4ce] bg-[#ffffff] p-2.5 text-xs shadow-2xs">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center text-[#27272a]">
           <User className="h-4 w-4" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-1">
             <p className="truncate font-semibold text-sm text-[#18181b]">
               {user?.username || "访客"}
             </p>
             {user?.is_admin && (
-              <span className="rounded bg-[#27272a] px-1.5 py-0.5 text-[10px] font-bold text-[#ffffff]">
+              <span className="rounded bg-[#3f3f46] px-1.5 py-0.5 text-[10px] font-medium text-[#ffffff]">
                 管理员
               </span>
             )}
           </div>
-          <p className="truncate text-xs text-[#71717a]">
+          <p className="truncate text-xs font-mono text-[#71717a]">
             {user?.doris_role ? `Doris: ${user.doris_role}` : "未分配数据角色"}
           </p>
         </div>
@@ -70,10 +70,10 @@ export function ChatUserFooter({ user, onChangePassword, onLogout }: ChatUserFoo
             asChild
             variant="outline"
             size="sm"
-            className="w-full border-[#d4d4ce] bg-[#ffffff] px-1.5 text-xs text-[#27272a] hover:bg-[#deded8]"
+            className="w-full rounded border-[#d4d4ce] bg-[#ffffff] px-1.5 text-xs font-medium text-[#27272a] shadow-2xs transition-all hover:border-[#b8b8b0] hover:bg-[#f5f5f0]"
           >
             <Link to={ROUTES.admin} title="管理后台">
-              <Settings className="h-3.5 w-3.5 shrink-0" />
+              <Settings className="h-3.5 w-3.5 shrink-0 text-[#52525b]" />
               <span>后台</span>
             </Link>
           </Button>
@@ -81,17 +81,17 @@ export function ChatUserFooter({ user, onChangePassword, onLogout }: ChatUserFoo
         <Button
           variant="outline"
           size="sm"
-          className="w-full border-[#d4d4ce] bg-[#ffffff] px-1.5 text-xs text-[#27272a] hover:bg-[#deded8]"
+          className="w-full rounded border-[#d4d4ce] bg-[#ffffff] px-1.5 text-xs font-medium text-[#27272a] shadow-2xs transition-all hover:border-[#b8b8b0] hover:bg-[#f5f5f0]"
           onClick={() => setIsPasswordOpen(true)}
           title="修改密码"
         >
-          <KeyRound className="h-3.5 w-3.5 shrink-0" />
+          <KeyRound className="h-3.5 w-3.5 shrink-0 text-[#52525b]" />
           <span>密码</span>
         </Button>
         <Button
           variant="outline"
           size="sm"
-          className="w-full border-[#d4d4ce] bg-[#ffffff] px-1.5 text-xs text-[#71717a] hover:bg-[#deded8] hover:text-[#dc2626]"
+          className="w-full rounded border-[#d4d4ce] bg-[#ffffff] px-1.5 text-xs font-medium text-[#71717a] shadow-2xs transition-all hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600"
           onClick={onLogout}
           title="退出登录"
         >

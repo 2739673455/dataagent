@@ -235,7 +235,7 @@ export function MetadataManagement() {
       {/* 右侧悬浮模块快捷导航 */}
       <nav
         aria-label="模块快捷导航"
-        className="fixed right-1.5 top-1/2 -translate-y-1/2 z-40 hidden xl:flex flex-col gap-1.5 rounded-lg border border-[#d4d4ce] bg-[#ffffff]/95 p-2 shadow-lg backdrop-blur-xs font-mono"
+        className="fixed right-1.5 top-1/2 -translate-y-1/2 z-40 hidden xl:flex flex-col gap-1.5 rounded border border-[#d4d4ce] bg-[#ffffff]/95 p-2 shadow-lg backdrop-blur-xs font-mono"
       >
         {[
           { id: "section-yaml", label: "YAML", count: null },

@@ -27,7 +27,7 @@ export function useChatStream({
 }) {
   const streamingConversations = useChatStore((state) => state.streamingConversations);
   const markStreaming = useChatStore((state) => state.markStreaming);
-  const unmarkStreaming = useChatStore((state) => state.unmarkStreaming);
+  const finishStreaming = useChatStore((state) => state.finishStreaming);
   const ensureConversation = useChatStore((state) => state.ensureConversation);
   const appendMessage = useChatStore((state) => state.appendMessage);
   const appendThinking = useChatStore((state) => state.appendThinking);
@@ -42,6 +42,7 @@ export function useChatStream({
   const interruptRunningSubagents = useChatStore((state) => state.interruptRunningSubagents);
 
   const streamControllersRef = useRef<Map<string, AbortController>>(new Map());
+  const interruptedConversationsRef = useRef<Set<string>>(new Set());
   const draftConversationIdRef = useRef<string | null>(null);
   const attachmentsRef = useRef<Attachment[]>([]);
 
@@ -80,6 +81,7 @@ export function useChatStream({
       const controller = new AbortController();
       streamControllersRef.current.set(conversationId, controller);
       let receivedDone = false;
+      let receivedError = false;
 
       const onEvent = (event: ChatStreamEvent) => {
         if (!sessionLifecycle.isCurrent(generation)) return;
@@ -98,6 +100,7 @@ export function useChatStream({
         } else if (event.type === "subagent_status") {
           updateSubagentStatus(conversationId, event);
         } else if (event.type === "error") {
+          receivedError = true;
           toast.error(event.content);
         } else if (event.type === "done") {
           receivedDone = true;
@@ -141,16 +144,30 @@ export function useChatStream({
           if (!sessionLifecycle.isCurrent(generation)) return;
           toast.error(getApiErrorMessage(error, "聊天进度连接异常"));
         })
-        .finally(() => {
+        .finally(async () => {
           if (streamControllersRef.current.get(conversationId) === controller) {
-            streamControllersRef.current.delete(conversationId);
             if (sessionLifecycle.isCurrent(generation)) {
-              if (!receivedDone) interruptRunningSubagents(conversationId);
-              unmarkStreaming(conversationId);
-              void loadConversations();
-              void syncMessages(conversationId).catch((error) => {
+              const outcome =
+                interruptedConversationsRef.current.has(conversationId) ||
+                receivedError ||
+                !receivedDone
+                  ? "interrupted"
+                  : "complete";
+              interruptedConversationsRef.current.delete(conversationId);
+              if (outcome === "interrupted") interruptRunningSubagents(conversationId);
+              try {
+                await syncMessages(conversationId);
+              } catch (error) {
                 toast.error(getApiErrorMessage(error, "同步最终消息失败"));
-              });
+              }
+              if (streamControllersRef.current.get(conversationId) === controller) {
+                streamControllersRef.current.delete(conversationId);
+                finishStreaming(conversationId, outcome);
+                void loadConversations();
+              }
+            } else {
+              streamControllersRef.current.delete(conversationId);
+              interruptedConversationsRef.current.delete(conversationId);
             }
           }
         });
@@ -165,7 +182,7 @@ export function useChatStream({
       interruptRunningSubagents,
       loadConversations,
       syncMessages,
-      unmarkStreaming,
+      finishStreaming,
       updateSubagentStatus,
     ]
   );
@@ -201,25 +218,43 @@ export function useChatStream({
     return () => {
       for (const controller of controllers.values()) controller.abort();
       controllers.clear();
+      interruptedConversationsRef.current.clear();
       abandonDraftConversation();
     };
   }, [abandonDraftConversation]);
 
   const handleStop = useCallback(async () => {
     if (!routeConversationId) return;
+    interruptedConversationsRef.current.add(routeConversationId);
     try {
       await chatApi.stopRun(routeConversationId);
     } catch (error) {
+      interruptedConversationsRef.current.delete(routeConversationId);
       toast.error(getApiErrorMessage(error, "停止对话执行失败"));
       return;
     }
-    streamControllersRef.current.get(routeConversationId)?.abort();
+    const controller = streamControllersRef.current.get(routeConversationId);
+    if (controller) {
+      controller.abort();
+      return;
+    }
+    interruptedConversationsRef.current.delete(routeConversationId);
     interruptRunningSubagents(routeConversationId);
-    unmarkStreaming(routeConversationId);
-    void syncMessages(routeConversationId).catch((error) => {
+    try {
+      await syncMessages(routeConversationId);
+    } catch (error) {
       toast.error(getApiErrorMessage(error, "同步停止后的消息失败"));
-    });
-  }, [interruptRunningSubagents, routeConversationId, syncMessages, unmarkStreaming]);
+    } finally {
+      finishStreaming(routeConversationId, "interrupted");
+      void loadConversations();
+    }
+  }, [
+    finishStreaming,
+    interruptRunningSubagents,
+    loadConversations,
+    routeConversationId,
+    syncMessages,
+  ]);
 
   const handleResume = useCallback(() => {
     if (!routeConversationId) return;

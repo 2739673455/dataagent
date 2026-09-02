@@ -43,7 +43,10 @@ interface ChatState {
   ) => Promise<MessageResponse[]>;
   interruptRunningSubagents: (conversationId: string) => void;
   markStreaming: (conversationId: string) => void;
-  unmarkStreaming: (conversationId: string) => void;
+  finishStreaming: (
+    conversationId: string,
+    outcome: "complete" | "interrupted"
+  ) => void;
   reset: () => void;
 }
 
@@ -322,10 +325,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       set((state) => ({
         messagesByConversation: {
           ...state.messagesByConversation,
-          [conversationId]: mergeMessageSnapshot(
-            messages,
-            state.messagesByConversation[conversationId] ?? []
-          ),
+          [conversationId]: messages,
         },
       }));
     }
@@ -625,7 +625,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       streamingConversations: new Set([...state.streamingConversations, conversationId]),
     })),
 
-  unmarkStreaming: (conversationId) =>
+  finishStreaming: (conversationId, outcome) =>
     set((state) => {
       const next = new Set(state.streamingConversations);
       next.delete(conversationId);
@@ -640,7 +640,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
           ...state.messagesByConversation,
           [conversationId]: settleThinking(
             state.messagesByConversation[conversationId] ?? [],
-            "interrupted"
+            outcome
           ),
         },
       };

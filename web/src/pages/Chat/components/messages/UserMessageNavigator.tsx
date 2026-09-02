@@ -116,12 +116,12 @@ export function UserMessageQuickNavigation({
                 top: Math.max(64, Math.min(window.innerHeight - 80, hoveredTooltip.top)),
                 transform: "translateY(-50%)",
               }}
-              className="pointer-events-none z-[100] w-72 rounded border border-[#d4d4ce] bg-[#ffffff] p-3 text-left shadow-lg"
+              className="pointer-events-none z-[100] w-72 rounded border border-zinc-200/90 bg-white/95 p-3 text-left shadow-md backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/95 dark:shadow-black/30"
             >
-              <div className="mb-1.5 text-[11px] text-[#71717a]">
+              <div className="mb-1.5 text-[11px] font-mono text-zinc-400 dark:text-zinc-500">
                 {formatMessageTime(hoveredTooltip.item.createdAt) ?? "时间未记录"}
               </div>
-              <div className="max-h-24 overflow-hidden whitespace-pre-wrap break-words text-xs leading-5 text-[#27272a]">
+              <div className="max-h-24 overflow-hidden whitespace-pre-wrap break-words text-xs leading-5 text-zinc-700 dark:text-zinc-200">
                 {hoveredTooltip.item.preview}
               </div>
             </div>,

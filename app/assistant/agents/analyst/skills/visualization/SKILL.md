@@ -1,30 +1,58 @@
 ---
 name: visualization
-description: 将 Analyst 已验证的分析结果制作成专业、美观、现代的高管级自包含 HTML 报告与图表。用于最终可视化、综合报告与展示交付；不用于底层取数或改变数据分析口径。
+description: 将 Analyst 已验证的分析结果制作成专业、美观、清晰的自包含 HTML 报告与图表。采用结构化排版、分栏网格与降噪设计；用于最终可视化、综合报告与展示交付。
 ---
 
-# 数据可视化与专业 HTML 报告规范
+# 专业商业数据可视化与 HTML 报告规范
 
-## 1. 核心目标与交付标准
+## 1. 设计核心理念：结构化排版与认知降噪
 
-将 Analyst 验证过的指标、证据表和分析结论，转化为具备**咨询公司/专业 BI 级视觉品质**、结构严谨、排版现代、完全自包含（离线可用）的 HTML 综合分析报告与高清图表。
+报告混乱的根源通常在于**缺乏视觉层级**、**过多指标平铺**、**大段文字堆积**与**单列无限下滚**。优秀的分析报告必须遵循 **MECE 原则** 与 **BLUF（Bottom Line Up Front，结论前置）**，做到：
 
-### 关键交付原则：
-1. **完全自包含（Zero External Dependency）**：
-   - 样式一律采用内联 `<style>`。
-   - 图表一律转换为 `data:image/png;base64,...` 或 SVG 嵌入 HTML。
-   - 严禁引用外部 CDN（如 Google Fonts、外部 CSS/JS、图床图片），严禁使用 `<script>` 标签。
-2. **专业现代审美（Executive-Grade Visual Standards）**：
-   - 拒绝 90 年代老旧表格与粗糙饱和色块；采用现代 Slate/Neutral 灰阶底色、柔和圆角、精致微边框、分层阴影与专业配色。
-   - 所有数值统一使用等宽数字（`tabular-nums`），带千分位与合理小数位。
-3. **证据与图文严格对应**：
-   - 报告中所有数值、图表数据标签与证据表 100% 吻合，具备完整的数据来源与口径追溯说明。
+1. **强视觉层级（Visual Hierarchy）**：
+   - **Hero KPI 只放 3~4 个核心指标**，严禁并排堆叠 8~10 个无主次的指标卡片；次要与诊断指标放入结构化小表。
+   - **图文联动分栏（Split View）**：大盘走势图与核心业务发现左右分栏并排（6:4），让读者“左眼看图、右眼读结论”。
+2. **结构化卡片（Componentized Cards）**：
+   - 杜绝长篇大论的自然段；将类目分级、归因拆解放入“🟢 增长驱动 / 🔴 下滑预警 / ⚪ 结构切换”的分栏矩阵卡片中。
+3. **表格视觉增强（Visualized Tables）**：
+   - 表格不只填纯数字：为份额字段配置内联迷你进度条（Progress Mini-bar），为环比/增速配置红绿胶囊 Badge，提升扫描效率。
+4. **技术细节下沉折叠（Collapsible Appendix）**：
+   - 复杂的 SQL 逻辑、多口径核对表、数据字典使用原生 `<details class="accordion">` 封装，供深入审计时展开，不干扰正文主线阅读。
+5. **严禁在 HTML 中输出内部文件路径（No Server Paths）**：
+   - **绝对禁止**在 HTML 报告中展示服务器内部路径（如 `/data/...`、容器目录、本地文件路径、脚本文件名等）。用户在浏览器中无法访问服务器本地文件，输出路径不仅无用，还会破坏排版。数据溯源只需陈述数据源表名、业务口径、统计周期与样本量。
+6. **完全自包含（Zero Dependency）**：
+   - 纯内联 CSS，所有图表转为 Base64，无需外部网络，支持 `<details>` 原生无 JS 展开收起。
 
 ---
 
-## 2. 现代 HTML 报告设计规范与样式模板
+## 2. 报告标准信息架构（Information Architecture）
 
-在生成最终 HTML 报告时，必须直接内嵌并遵循以下 CSS 样式系统：
+一份标准的商业分析报告由以下六大模块构成：
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ 1. 简洁顶部 Header：报告主标题 + 关键元数据胶囊 (窗口/口径/版本)  │
+├─────────────────────────────────────────────────────────────┤
+│ 2. 核心 KPI 矩阵 (3~4 个 Hero Cards，大字号 + 涨跌对比胶囊)    │
+├──────────────────────────────┬──────────────────────────────┤
+│ 3. 总体趋势走势图 (Base64)    │ 3. 核心业务判断 (3~4 条关键发现)│
+│    (左侧 58% 宽度)           │    (右侧 42% 结构化卡片)     │
+├──────────────────────────────┴──────────────────────────────┤
+│ 4. 结构与归因矩阵卡片 (分栏：🟢 增长引擎 / 🔴 承压类目 / ⚪ 波动) │
+├─────────────────────────────────────────────────────────────┤
+│ 5. 重点维度明细数据表 (带份额迷你进度条 + 增长率 Badge)        │
+├─────────────────────────────────────────────────────────────┤
+│ 6. 深入下钻图表区 (2 列并排图表卡片)                          │
+├─────────────────────────────────────────────────────────────┤
+│ 7. 可折叠附录 (<details> 封装多口径核对、方法限制与 SQL 溯源)   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. 标准 HTML 报告模板与内联 CSS 系统
+
+生成最终 HTML 时，必须直接使用并遵循以下结构化样式系统：
 
 ```html
 <!DOCTYPE html>
@@ -37,24 +65,24 @@ description: 将 Analyst 已验证的分析结果制作成专业、美观、现�
   :root {
     --bg-page: #f8fafc;
     --bg-card: #ffffff;
-    --border-color: #e2e8f0;
+    --border: #e2e8f0;
     --border-hover: #cbd5e1;
-    --text-primary: #0f172a;
-    --text-secondary: #334155;
+    --text-main: #0f172a;
+    --text-sub: #334155;
     --text-muted: #64748b;
     --text-light: #94a3b8;
-    --accent-blue: #2563eb;
-    --accent-blue-bg: #eff6ff;
-    --accent-blue-border: #bfdbfe;
-    --accent-green: #059669;
-    --accent-green-bg: #ecfdf5;
-    --accent-green-border: #a7f3d0;
-    --accent-red: #dc2626;
-    --accent-red-bg: #fef2f2;
-    --accent-red-border: #fecaca;
-    --accent-amber: #d97706;
-    --accent-amber-bg: #fffbeb;
-    --accent-amber-border: #fde68a;
+    --blue: #2563eb;
+    --blue-bg: #eff6ff;
+    --blue-border: #bfdbfe;
+    --green: #059669;
+    --green-bg: #ecfdf5;
+    --green-border: #a7f3d0;
+    --red: #dc2626;
+    --red-bg: #fef2f2;
+    --red-border: #fecaca;
+    --amber: #d97706;
+    --amber-bg: #fffbeb;
+    --amber-border: #fde68a;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -62,220 +90,247 @@ description: 将 Analyst 已验证的分析结果制作成专业、美观、现�
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "WenQuanYi Zen Hei", sans-serif;
     background-color: var(--bg-page);
-    color: var(--text-secondary);
+    color: var(--text-sub);
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
   }
 
   .container {
-    max-width: 1160px;
+    max-width: 1200px;
     margin: 0 auto;
-    padding: 36px 24px 80px;
+    padding: 32px 24px 80px;
   }
 
-  /* 报告主头部 */
+  /* 1. 报告头部 */
   .report-header {
-    margin-bottom: 28px;
-    border-bottom: 1px solid var(--border-color);
-    padding-bottom: 20px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px 28px;
+    margin-bottom: 24px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+  }
+
+  .header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 10px;
   }
 
   .report-title {
-    font-size: 26px;
+    font-size: 24px;
     font-weight: 700;
-    color: var(--text-primary);
+    color: var(--text-main);
     letter-spacing: -0.02em;
-    margin-bottom: 12px;
   }
 
-  .meta-tags {
+  .meta-pills {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
     gap: 8px;
-    font-size: 13px;
-    color: var(--text-muted);
+    margin-top: 8px;
   }
 
-  .meta-tag {
+  .meta-pill {
     display: inline-flex;
     align-items: center;
     background: #f1f5f9;
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 2px 8px;
+    padding: 3px 10px;
     font-size: 12px;
     font-weight: 500;
-    color: var(--text-secondary);
+    color: var(--text-sub);
   }
 
-  /* 导航药丸条 */
-  .nav-pills {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin: 20px 0;
-  }
-
-  .nav-pill {
-    background: var(--bg-card);
-    border: 1px solid var(--border-color);
-    border-radius: 20px;
-    padding: 5px 14px;
-    font-size: 13px;
-    color: var(--text-secondary);
-    text-decoration: none;
-    font-weight: 500;
-    transition: all 0.15s ease;
-  }
-
-  .nav-pill:hover {
-    background: #f1f5f9;
-    border-color: var(--border-hover);
-    color: var(--text-primary);
-  }
-
-  /* 章节标题 */
-  h2.section-title {
-    font-size: 18px;
-    font-weight: 700;
-    color: var(--text-primary);
-    margin: 36px 0 16px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  h2.section-title::before {
-    content: "";
-    display: inline-block;
-    width: 4px;
-    height: 18px;
-    background: var(--accent-blue);
-    border-radius: 2px;
-  }
-
-  h3.subsection-title {
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin: 20px 0 10px;
-  }
-
-  /* KPI 指标卡片网格 */
-  .kpi-grid {
+  /* 2. 核心 KPI 网格 (严格限制 3~4 个卡片) */
+  .hero-kpis {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 14px;
-    margin: 18px 0;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
   }
 
   .kpi-card {
     background: var(--bg-card);
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
-    padding: 14px 16px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    position: relative;
   }
 
-  .kpi-label {
+  .kpi-card.primary {
+    border-top: 3px solid var(--blue);
+  }
+
+  .kpi-title {
     font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--text-muted);
-    margin-bottom: 4px;
+    margin-bottom: 6px;
   }
 
   .kpi-value {
-    font-size: 22px;
+    font-size: 26px;
     font-weight: 700;
-    color: var(--text-primary);
+    color: var(--text-main);
     font-variant-numeric: tabular-nums;
     line-height: 1.2;
   }
 
-  .kpi-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 11.5px;
-    font-weight: 600;
-    padding: 1px 6px;
-    border-radius: 4px;
-    margin-top: 6px;
-  }
-
-  .badge-pos { background: var(--accent-green-bg); color: var(--accent-green); border: 1px solid var(--accent-green-border); }
-  .badge-neg { background: var(--accent-red-bg); color: var(--accent-red); border: 1px solid var(--accent-red-border); }
-  .badge-neutral { background: #f1f5f9; color: var(--text-muted); border: 1px solid var(--border-color); }
-
-  /* 提示框与核心结论 Banner */
-  .callout {
-    border-radius: 8px;
-    padding: 14px 18px;
-    margin: 16px 0;
-    font-size: 14px;
-    line-height: 1.6;
-  }
-
-  .callout-info {
-    background: var(--accent-blue-bg);
-    border-left: 4px solid var(--accent-blue);
-    color: #1e3a8a;
-  }
-
-  .callout-warn {
-    background: var(--accent-amber-bg);
-    border-left: 4px solid var(--accent-amber);
-    color: #78350f;
-  }
-
-  .callout-success {
-    background: var(--accent-green-bg);
-    border-left: 4px solid var(--accent-green);
-    color: #064e3b;
-  }
-
-  .callout-title {
-    font-weight: 700;
-    margin-bottom: 4px;
+  .kpi-meta {
     display: flex;
     align-items: center;
     gap: 6px;
+    font-size: 12px;
+    margin-top: 8px;
+    color: var(--text-muted);
   }
 
-  /* 发现清单 */
-  .findings-list {
-    list-style: none;
-    margin: 14px 0;
-    display: flex;
-    flex-col;
-    gap: 10px;
+  /* 胶囊标签 */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 4px;
+  }
+  .badge-pos { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+  .badge-neg { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+  .badge-neutral { background: #f1f5f9; color: var(--text-muted); border: 1px solid var(--border); }
+
+  /* 3. 分栏布局 (左右并排) */
+  .split-row {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 20px;
+    margin-bottom: 28px;
+    align-items: stretch;
   }
 
-  .findings-list li {
+  @media (max-width: 900px) {
+    .split-row { grid-template-columns: 1fr; }
+  }
+
+  .panel-card {
     background: var(--bg-card);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .panel-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-main);
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #f1f5f9;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  /* 结构化结论条目 */
+  .insight-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    list-style: none;
+    flex: 1;
+  }
+
+  .insight-item {
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--blue);
     border-radius: 8px;
-    padding: 12px 16px;
-    font-size: 13.5px;
+    padding: 12px 14px;
+    font-size: 13px;
     line-height: 1.6;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.02);
   }
 
-  .findings-list li b {
-    color: var(--text-primary);
+  .insight-item.danger { border-left-color: var(--red); }
+  .insight-item.success { border-left-color: var(--green); }
+  .insight-item.warning { border-left-color: var(--amber); }
+
+  .insight-item b {
+    color: var(--text-main);
+    font-weight: 600;
   }
 
-  /* 数据表格 */
+  /* 4. 类目分级卡片阵列 (三列/两列网格) */
+  .segment-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+
+  .segment-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+  }
+
+  .segment-card.growth { border-top: 3px solid var(--green); }
+  .segment-card.drop { border-top: 3px solid var(--red); }
+  .segment-card.stable { border-top: 3px solid var(--text-muted); }
+
+  .segment-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+
+  .segment-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-main);
+  }
+
+  .segment-body {
+    font-size: 13px;
+    color: var(--text-sub);
+    line-height: 1.6;
+  }
+
+  /* 5. 增强数据表格 */
   .table-card {
     background: var(--bg-card);
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
     overflow: hidden;
     box-shadow: 0 1px 3px rgba(0,0,0,0.03);
-    margin: 16px 0;
+    margin-bottom: 28px;
+  }
+
+  .table-header-box {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .table-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-main);
   }
 
   .table-scroll {
@@ -292,11 +347,11 @@ description: 将 Analyst 已验证的分析结果制作成专业、美观、现�
 
   th {
     background: #f8fafc;
-    color: var(--text-secondary);
+    color: var(--text-sub);
     font-weight: 600;
     font-size: 12px;
     padding: 10px 14px;
-    border-bottom: 2px solid var(--border-color);
+    border-bottom: 1px solid var(--border);
     white-space: nowrap;
     position: sticky;
     top: 0;
@@ -306,7 +361,7 @@ description: 将 Analyst 已验证的分析结果制作成专业、美观、现�
   td {
     padding: 9px 14px;
     border-bottom: 1px solid #f1f5f9;
-    color: var(--text-secondary);
+    color: var(--text-sub);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -318,53 +373,65 @@ description: 将 Analyst 已验证的分析结果制作成专业、美观、现�
   .num { text-align: right; }
   .center { text-align: center; }
 
-  /* 图表卡片 */
-  .figure-card {
+  /* 进度条单元格 */
+  .bar-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  .bar-bg {
+    width: 64px;
+    height: 6px;
+    background: #e2e8f0;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    background: var(--blue);
+    border-radius: 3px;
+  }
+
+  /* 6. 可折叠附录 (原生无需 JS) */
+  details.accordion {
     background: var(--bg-card);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--border);
     border-radius: 10px;
-    padding: 16px;
-    margin: 18px 0;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
-  }
-
-  .figure-header {
     margin-bottom: 12px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid #f1f5f9;
+    overflow: hidden;
+    transition: all 0.2s;
   }
 
-  .figure-title {
-    font-size: 15px;
+  details.accordion summary {
+    padding: 14px 18px;
+    font-size: 13.5px;
     font-weight: 600;
-    color: var(--text-primary);
+    color: var(--text-main);
+    cursor: pointer;
+    user-select: none;
+    background: #f8fafc;
+    border-bottom: 1px solid transparent;
   }
 
-  .figure-desc {
-    font-size: 12.5px;
-    color: var(--text-muted);
-    margin-top: 2px;
+  details.accordion[open] summary {
+    border-bottom-color: var(--border);
+    background: var(--bg-card);
   }
 
-  .figure-card img {
-    width: 100%;
-    height: auto;
-    display: block;
-    border-radius: 6px;
-  }
-
-  .figure-footer {
-    font-size: 12px;
-    color: var(--text-muted);
-    margin-top: 8px;
-    padding-top: 6px;
-    border-top: 1px solid #f8fafc;
+  details.accordion .content {
+    padding: 16px 18px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-sub);
   }
 
   /* 页脚 */
   .report-footer {
     margin-top: 48px;
-    border-top: 1px solid var(--border-color);
+    border-top: 1px solid var(--border);
     padding-top: 16px;
     font-size: 12px;
     color: var(--text-muted);
@@ -377,62 +444,168 @@ description: 将 Analyst 已验证的分析结果制作成专业、美观、现�
 </head>
 <body>
 <div class="container">
-  <!-- 报告头部 -->
+  <!-- 1. 顶部 Header -->
   <header class="report-header">
-    <h1 class="report-title">分析报告主标题</h1>
-    <div class="meta-tags">
-      <span class="meta-tag">窗口：2026-08-03 ~ 2026-09-01</span>
-      <span class="meta-tag">主口径：支付成功 GMV</span>
-      <span class="meta-tag">版本：v1.1</span>
+    <div class="header-top">
+      <h1 class="report-title">最近 30 天一级类目 GMV 增长走势分析</h1>
+      <span class="badge badge-neutral">v2.0 商业分析报告</span>
     </div>
-    <!-- 导航药丸 -->
-    <nav class="nav-pills">
-      <a href="#s1" class="nav-pill">1 执行摘要</a>
-      <a href="#s2" class="nav-pill">2 指标口径</a>
-      <a href="#s3" class="nav-pill">3 趋势分析</a>
-      <a href="#s4" class="nav-pill">4 结构归因</a>
-      <a href="#s5" class="nav-pill">5 限制与来源</a>
-    </nav>
+    <div class="meta-pills">
+      <span class="meta-pill">时间窗口：2026-08-03 ~ 2026-09-01</span>
+      <span class="meta-pill">统计口径：全量支付成功 GMV</span>
+      <span class="meta-pill">分析样本：3,845 笔分摊明细</span>
+      <span class="meta-pill">数据主题：电商交易与类目大盘</span>
+    </div>
   </header>
 
-  <!-- 核心结论 Banner -->
-  <div class="callout callout-info">
-    <div class="callout-title">核心业务判断</div>
-    <p>此处清晰阐述分析得出的核心结论，避免冗长描述，突出关键变动方向与核心贡献项。</p>
-  </div>
-
-  <!-- KPI 卡片区 -->
-  <div class="kpi-grid">
-    <div class="kpi-card">
-      <div class="kpi-label">30天 GMV 总额</div>
+  <!-- 2. 核心 KPI 矩阵 (只放 3~4 个关键指标) -->
+  <section class="hero-kpis">
+    <div class="kpi-card primary">
+      <div class="kpi-title">30 天支付 GMV 总额</div>
       <div class="kpi-value">¥5,390,341.56</div>
-      <span class="kpi-badge badge-neutral">日均 ¥179.68k</span>
+      <div class="kpi-meta">日均 ¥179,678.05 · CV 48%</div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">前半 vs 后半 环比</div>
+      <div class="kpi-title">区间环比 (前15天 vs 后15天)</div>
       <div class="kpi-value">-1.51%</div>
-      <span class="kpi-badge badge-neg">微幅波动</span>
+      <div class="kpi-meta"><span class="badge badge-neutral">持平高位震荡</span></div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">稳健窗口环比 (去端点)</div>
+      <div class="kpi-title">稳健窗口环比 (剔除首末日)</div>
       <div class="kpi-value">+11.89%</div>
-      <span class="kpi-badge badge-pos">上行趋势</span>
+      <div class="kpi-meta"><span class="badge badge-pos">核心期稳步走强</span></div>
     </div>
-  </div>
-
-  <!-- 章节内容与表格、图表示例 -->
-  <section id="s1">
-    <h2 class="section-title">1 执行摘要</h2>
-    <ul class="findings-list">
-      <li><b>头部引领增长</b>：手机数码贡献主要增量，区间环比 +25.0%，份额占比 35.83%。</li>
-      <li><b>低基数高弹性</b>：汽车用品（+49.0%）与宠物生活（+49.5%）增速领先，但绝对规模尚小（合计 2.55%）。</li>
-    </ul>
+    <div class="kpi-card">
+      <div class="kpi-title">类目增长结构分布</div>
+      <div class="kpi-value">3 增长 · 2 下滑</div>
+      <div class="kpi-meta">其余 4 类目平稳/高波动</div>
+    </div>
   </section>
 
-  <!-- 页脚 -->
+  <!-- 3. 大盘走势与关键发现分栏 (Split View) -->
+  <section class="split-row">
+    <!-- 左侧：走势图 -->
+    <div class="panel-card">
+      <div class="panel-title">
+        <span>大盘日度 GMV 走势与 7 日移动均线</span>
+        <span class="badge badge-neutral">日度聚合</span>
+      </div>
+      <img src="data:image/png;base64,..." alt="走势图" style="width:100%; border-radius:6px;" />
+    </div>
+
+    <!-- 右侧：核心业务洞察 -->
+    <div class="panel-card">
+      <div class="panel-title">核心业务判断与关键发现</div>
+      <ul class="insight-list">
+        <li class="insight-item success">
+          <b>大盘保持高位震荡</b>：日均 17.97 万元，前后半段等长区间环比微降 1.51%，剔除端点日后稳健窗口环比上升 11.89%。
+        </li>
+        <li class="insight-item success">
+          <b>头部类目引领绝对增量</b>：手机数码贡献主要增量（环比 +25.0%，份额 35.83%），内部呈现由微单向摄像机结构替换。
+        </li>
+        <li class="insight-item danger">
+          <b>运动户外与母婴承压回落</b>：运动户外受前期大额日透支环比 -53.9%；母婴玩具后半程日均持续走低（-20.3%）。
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 4. 类目分级卡片矩阵 (Segment Grid) -->
+  <section class="segment-grid">
+    <div class="segment-card growth">
+      <div class="segment-header">
+        <span class="segment-title">🟢 增长驱动引擎</span>
+        <span class="badge badge-pos">+25.0% 环比</span>
+      </div>
+      <div class="segment-body">
+        <b>手机数码</b>（总额 193.1 万 / 份额 35.8%）：增量主要来自手机通讯（+11.7 万）与摄影摄像（+9.3 万）。<br/>
+        <b>低基数高增长</b>：汽车用品（+49.0%）、宠物生活（+49.5%），规模合计占 2.55%。
+      </div>
+    </div>
+
+    <div class="segment-card drop">
+      <div class="segment-header">
+        <span class="segment-title">🔴 承压与下滑类目</span>
+        <span class="badge badge-neg">回落明显</span>
+      </div>
+      <div class="segment-body">
+        <b>运动户外</b>（-53.9%）：08-17 单日 7.2 万脉冲后持续回落。<br/>
+        <b>母婴玩具</b>（-20.3%）：末段 6 日均值（2,125 元）显著弱于前段均值（5,791 元）。
+      </div>
+    </div>
+
+    <div class="segment-card stable">
+      <div class="segment-header">
+        <span class="segment-title">⚪ 高波动与结构切换</span>
+        <span class="badge badge-neutral">品类重组</span>
+      </div>
+      <div class="segment-body">
+        <b>电脑办公</b>：存在大额日脉冲与 4 个零交易日，整机上升 vs DIY 硬件回落。<br/>
+        <b>家居家装</b>：床垫与桌类增长，灯具与家纺回落。
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. 重点维度明细数据表 (带份额 Mini-Bar 与增长率 Badge) -->
+  <section class="table-card">
+    <div class="table-header-box">
+      <div class="table-title">一级类目 GMV 规模与增长分级总览</div>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>类目名称</th>
+            <th class="num">30天 GMV (元)</th>
+            <th class="num">份额占比</th>
+            <th class="num">前半段 (H1)</th>
+            <th class="num">后半段 (H2)</th>
+            <th class="center">区间环比</th>
+            <th class="center">增长定级</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>手机数码</b></td>
+            <td class="num">¥1,931,274.22</td>
+            <td>
+              <div class="bar-cell">
+                <div class="bar-bg"><div class="bar-fill" style="width: 35.8%;"></div></div>
+                <span>35.8%</span>
+              </div>
+            </td>
+            <td class="num">¥858,359.20</td>
+            <td class="num">¥1,072,915.02</td>
+            <td class="center"><span class="badge badge-pos">+25.0%</span></td>
+            <td class="center"><span class="badge badge-pos">增长类目</span></td>
+          </tr>
+          <!-- 其他类目行 -->
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 6. 技术附录与口径溯源 (使用原生 details 折叠，严禁出现服务器内部文件路径) -->
+  <section>
+    <details class="accordion">
+      <summary>📌 数据口径定义与多口径对照表（点击展开）</summary>
+      <div class="content">
+        <p>下单 GMV 563.95 万，排除取消后有效下单 GMV 539.26 万，最终支付成功 GMV 539.03 万，退款打款 36.87 万...</p>
+      </div>
+    </details>
+
+    <details class="accordion">
+      <summary>📌 数据来源与分析维度说明（点击展开）</summary>
+      <div class="content">
+        <p>数据源：订单交易明细宽表（dws_order_item_df）；分析维度：一级类目（L1 Category）、日度时间序列；聚合方式：按支付时间归属日聚合...</p>
+      </div>
+    </details>
+  </section>
+
+  <!-- 7. 页脚 -->
   <footer class="report-footer">
-    <span>DataAgent Analyst 自动生成</span>
-    <span>数据来源：已验证数据产物</span>
+    <span>DataAgent Analyst 自动生成 · 遵循商业分析报告规范</span>
+    <span>数据校验：Σ 校验 100% 通过</span>
   </footer>
 </div>
 </body>
@@ -441,122 +614,52 @@ description: 将 Analyst 已验证的分析结果制作成专业、美观、现�
 
 ---
 
-## 3. Python 图表绘制专业美化规范 (Matplotlib / Seaborn)
+## 4. 图表高清现代美化参数 (Matplotlib / Seaborn)
 
-绘制图表时，必须通过 Python 设置统一的高清现代商务图表风格。
+绘制图表时，必须通过 Python 设置统一的高清现代商务图表风格：
 
-### 3.1 全局参数配置模板
 ```python
 import matplotlib.pyplot as plt
-import seaborn as sns
 
-# 1. 设置高分辨率与中文字体
 plt.rcParams['figure.dpi'] = 200
 plt.rcParams['font.family'] = 'WenQuanYi Zen Hei'
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.size'] = 10
-plt.rcParams['axes.titlesize'] = 13
-plt.rcParams['axes.labelsize'] = 11
-plt.rcParams['xtick.labelsize'] = 9.5
-plt.rcParams['ytick.labelsize'] = 9.5
 
-# 2. 现代极简色彩板
+# 极简配色
 PALETTE = {
-    'primary': '#2563eb',    # 皇家蓝 (主趋势/主条形)
-    'success': '#059669',    # 翡翠绿 (正增长/目标达成)
-    'danger': '#dc2626',     # 玫瑰红 (下滑/异常)
-    'warning': '#d97706',    # 琥珀金 (预警/关注)
-    'purple': '#7c3aed',     # 紫罗兰 (次要维度)
-    'slate': '#64748b',      # 中性灰 (基线/对比期)
-    'grid': '#e2e8f0',       # 极浅网格线
-    'bg': '#ffffff',         # 纯白画布
+    'primary': '#2563eb',    # 皇家蓝 (主趋势)
+    'success': '#059669',    # 翡翠绿 (正增长)
+    'danger': '#dc2626',     # 玫瑰红 (下滑)
+    'warning': '#d97706',    # 琥珀金 (预警)
+    'slate': '#64748b',      # 中性灰
+    'grid': '#f1f5f9',       # 极淡网格
+    'bg': '#ffffff',
 }
 
-# 3. 统一美化函数
-def apply_chart_style(ax, title=None, xlabel=None, ylabel=None):
-    ax.set_facecolor(PALETTE['bg'])
-    ax.figure.patch.set_facecolor(PALETTE['bg'])
-    
-    # 去除顶部与右侧边框
-    for spine in ['top', 'right']:
-        ax.spines[spine].set_visible(False)
-    for spine in ['left', 'bottom']:
-        ax.spines[spine].set_color('#cbd5e1')
-        ax.spines[spine].set_linewidth(0.8)
-    
-    # 仅保留水平虚线辅助网格
-    ax.yaxis.grid(True, linestyle='--', alpha=0.5, color=PALETTE['grid'])
+def setup_clean_chart(ax, title=None):
+    ax.set_facecolor('#ffffff')
+    ax.figure.patch.set_facecolor('#ffffff')
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color('#cbd5e1')
+    ax.spines['bottom'].set_color('#cbd5e1')
+    ax.yaxis.grid(True, linestyle='--', alpha=0.6, color=PALETTE['grid'])
     ax.xaxis.grid(False)
-    
     if title:
-        ax.set_title(title, weight='bold', color='#0f172a', pad=12)
-    if xlabel:
-        ax.set_xlabel(xlabel, color='#475569', labelpad=8)
-    if ylabel:
-        ax.set_ylabel(ylabel, color='#475569', labelpad=8)
-    
-    ax.tick_params(colors='#475569', width=0.8)
-```
-
-### 3.2 常见图表美化要点
-- **折线趋势图**：
-  - 核心线条线宽设为 `2.2`，配合平滑标记点 `markersize=4.5`。
-  - 使用半透明阴影填充（`fill_between(..., alpha=0.1)`）增强立体感。
-  - 关键拐点或峰值使用 `ax.annotate` 添加箭头和数值标注。
-- **条形/柱状图**：
-  - 柱子宽度 `width=0.55 ~ 0.65`，边框 `edgecolor='none'`。
-  - 正负增长采用双色区分（绿色正、红色负）。
-  - 在柱顶直接标注格式化数字（如 `¥12.5k` 或 `+15.2%`），避免读者来回对比 Y 轴。
-- **结构对比（堆叠/面积/饼图）**：
-  - 类别尽量控制在 5~7 个以内，其余归入“其他”。
-  - 颜色使用同色调渐变或协调离散色系，避免高饱和度杂乱撞色。
-
----
-
-## 4. 自包含 HTML 装配流程代码模板
-
-通过 Python 脚本生成自包含 HTML 报告的推荐工作流：
-
-```python
-import base64
-import os
-
-def img_to_base64(img_path):
-    with open(img_path, "rb") as f:
-        return f"data:image/png;base64,{base64.b64encode(f.read()).decode('utf-8')}"
-
-# 1. 绘制各图表并保存为临时 PNG
-# plt.savefig('charts/fig1.png', bbox_inches='tight', dpi=200)
-
-# 2. 转换为 base64
-# fig1_b64 = img_to_base64('charts/fig1.png')
-
-# 3. 填充进上述标准 HTML 模板中并写入 output
-html_content = f"""<!DOCTYPE html>
-<html lang="zh-CN">
-...
-  <div class="figure-card">
-    <div class="figure-header">
-      <div class="figure-title">图 1：日度 GMV 走势与 7 日移动均线</div>
-      <div class="figure-desc">整体呈现高位震荡，周期性峰值主要受特定活动与大额日驱动</div>
-    </div>
-    <img src="{fig1_b64}" alt="日度GMV走势" />
-    <div class="figure-footer">数据口径：全量支付成功订单 (paid_gmv_amount)</div>
-  </div>
-...
-</html>"""
-
-with open("report_v1.html", "w", encoding="utf-8") as f:
-    f.write(html_content)
+        ax.set_title(title, fontsize=13, weight='bold', color='#0f172a', pad=12)
+    ax.tick_params(colors='#475569', labelsize=9.5)
 ```
 
 ---
 
-## 5. 完成前检查清单（Checklist）
+## 5. 生成报告自检准则 (Quality Checklist)
 
-交付 HTML 报告前，执行以下检查：
-- [ ] **离线打开**：无网络连接或离线状态下，双击 HTML 文件所有样式、字体排版、图表均正常渲染。
-- [ ] **视觉质感**：无大面积深蓝/粗黑边框、无密集无序排版、KPI 与卡片对齐整齐、阴影与圆角统一。
-- [ ] **表格规范**：数字全部右对齐并带千分位，表头固定，无生硬垂直边框。
-- [ ] **图表高清**：DPI ≥ 200，坐标轴无截断，中文标签清晰无方块乱码，无多余顶部/右侧黑色包围线。
-- [ ] **路径追溯**：报告底部明确标明上游数据产物文件路径及指标计算版本。
+在保存交付前，对照以下项进行自查：
+1. [ ] **无视觉过载**：顶部 Hero KPI 严格控制在 3~4 个以内，没有 8~10 个指标平铺。
+2. [ ] **分栏图文对应**：大盘走势图采用 6:4 分栏并排展示，右侧为精炼结论。
+3. [ ] **分类结构清晰**：增长/下滑类目采用分栏卡片（绿色/红色/灰色）组织，而非单一长段落。
+4. [ ] **表格带视觉辅助**：主要表格包含占比 mini-bar 或涨跌幅 Badge，表头置顶。
+5. [ ] **技术细节折叠**：指标定义、口径对照放入 `<details>` 折叠，保持主干清爽。
+6. [ ] **严禁内部文件路径**：HTML 中绝对不出现服务器/容器内部路径（如 `/data/...`、`.parquet/.csv` 本地磁盘路径、`scripts/...` 脚本路径等），溯源仅呈现业务表名、指标与口径。
+7. [ ] **完全自包含**：所有图表 Base64 内嵌，离线双击即可完美呈现。

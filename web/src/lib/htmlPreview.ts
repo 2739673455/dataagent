@@ -31,6 +31,20 @@ const URL_ATTRIBUTES = new Set([
 ]);
 
 const NETWORK_CSS_PATTERN = /(?:@import|url\s*\(|image-set\s*\()/i;
+const INLINE_RASTER_IMAGE_PATTERN = /^data:image\/(?:png|jpeg|gif|webp|avif);base64,/i;
+
+export function isSafePreviewUrlAttribute(
+  tagName: string,
+  attributeName: string,
+  value: string
+): boolean {
+  return (
+    tagName.toLowerCase() === "img" &&
+    attributeName.toLowerCase() === "src" &&
+    INLINE_RASTER_IMAGE_PATTERN.test(value)
+  );
+}
+
 const PREVIEW_CSP = [
   "default-src 'none'",
   "script-src 'none'",
@@ -59,7 +73,14 @@ export function sanitizeHtmlForPreview(source: string): string {
   document.querySelectorAll("*").forEach((element) => {
     for (const attribute of Array.from(element.attributes)) {
       const name = attribute.name.toLowerCase();
-      if (name.startsWith("on") || URL_ATTRIBUTES.has(name)) {
+      if (name.startsWith("on")) {
+        element.removeAttribute(attribute.name);
+        continue;
+      }
+      if (
+        URL_ATTRIBUTES.has(name) &&
+        !isSafePreviewUrlAttribute(element.tagName, name, attribute.value)
+      ) {
         element.removeAttribute(attribute.name);
         continue;
       }

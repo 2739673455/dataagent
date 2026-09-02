@@ -28,21 +28,21 @@ export function ChatSidebar({
       <div className="p-3">
         <div className="mb-2 flex items-center justify-between px-1 text-sm text-[#71717a]">
           <span className="font-medium text-[#27272a]">会话列表</span>
-          <span className="rounded bg-[#deded8] px-1.5 py-0.5 text-xs text-[#52525b]">
+          <span className="rounded bg-[#deded8] px-1.5 py-0.5 text-xs font-mono text-[#52525b]">
             {conversations.length}
           </span>
         </div>
         <Button
           variant="outline"
-          className="w-full justify-start gap-2 border-[#d4d4ce] bg-[#ffffff] text-sm text-[#1e2024] hover:bg-[#deded8]"
+          className="w-full justify-start gap-2 rounded border-[#d4d4ce] bg-[#ffffff] text-sm font-medium text-[#1e2024] shadow-2xs transition-all hover:border-[#b8b8b0] hover:bg-[#f5f5f0] hover:shadow-xs active:scale-[0.99]"
           onClick={onCreate}
         >
-          <Plus className="h-4 w-4" />
+          <Plus className="h-4 w-4 text-[#52525b]" />
           <span>新建会话</span>
         </Button>
       </div>
 
-      <Separator className="bg-[#d4d4ce]" />
+      <Separator className="bg-[#deded8]" />
 
       {/* 会话列表区域 */}
       <div className="min-h-0 flex-1 overflow-y-auto p-2">

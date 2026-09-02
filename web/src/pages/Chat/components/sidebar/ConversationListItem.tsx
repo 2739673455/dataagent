@@ -65,9 +65,9 @@ export function ConversationListItem({
   return (
     <div
       className={cn(
-        "group relative flex items-center justify-between rounded border px-3 py-2 transition-colors",
+        "group relative flex items-center justify-between rounded border px-3 py-2 transition-all",
         isActive
-          ? "border-[#1e2024] bg-[#1e2024] text-[#ffffff] shadow-xs"
+          ? "border-[#3f3f46] bg-[#27272a] text-[#ffffff] shadow-xs"
           : "border-transparent text-[#52525b] hover:bg-[#dfdfda] hover:text-[#18181b]"
       )}
     >
@@ -84,14 +84,14 @@ export function ConversationListItem({
             className={cn(
               "h-7 min-w-0 flex-1 rounded border px-2 text-xs outline-none",
               isActive
-                ? "border-[#52525b] bg-[#2d3139] text-white"
+                ? "border-[#52525b] bg-[#3f3f46] text-white"
                 : "border-[#d4d4ce] bg-white text-[#18181b]"
             )}
           />
           <button
             type="submit"
             disabled={isRenaming || !editingTitle.trim()}
-            className="rounded p-1 text-emerald-400 hover:bg-[#2d3139] disabled:opacity-40"
+            className="rounded p-1 text-emerald-400 hover:bg-[#3f3f46] disabled:opacity-40"
           >
             <Check className="h-3.5 w-3.5" />
           </button>
@@ -102,7 +102,7 @@ export function ConversationListItem({
               setIsEditing(false);
               setEditingTitle(conversation.title);
             }}
-            className="rounded p-1 text-rose-400 hover:bg-[#2d3139] disabled:opacity-40"
+            className="rounded p-1 text-rose-400 hover:bg-[#3f3f46] disabled:opacity-40"
           >
             <X className="h-3.5 w-3.5" />
           </button>
@@ -124,14 +124,19 @@ export function ConversationListItem({
               <p
                 className={cn(
                   "min-w-0 flex-1 truncate text-sm",
-                  isActive ? "font-medium text-[#ffffff]" : "font-normal"
+                  isActive ? "font-medium text-[#ffffff]" : "font-normal text-[#27272a]"
                 )}
               >
                 {fullTitle}
               </p>
             </div>
             {timeStr && (
-              <p className={cn("text-xs", isActive ? "text-[#a1a1aa]" : "text-[#8e8e93]")}>
+              <p
+                className={cn(
+                  "text-[11px] font-mono",
+                  isActive ? "text-[#a1a1aa]" : "text-[#71717a]"
+                )}
+              >
                 {timeStr}
               </p>
             )}
@@ -139,7 +144,12 @@ export function ConversationListItem({
           <button
             type="button"
             title="重命名会话"
-            className="ml-1 shrink-0 rounded p-1 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+            className={cn(
+              "ml-1 shrink-0 rounded p-1 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100",
+              isActive
+                ? "text-[#a1a1aa] hover:bg-[#3f3f46] hover:text-white"
+                : "text-[#71717a] hover:bg-[#d4d4ce] hover:text-[#18181b]"
+            )}
             onClick={() => {
               setEditingTitle(conversation.title);
               setIsEditing(true);
@@ -150,10 +160,15 @@ export function ConversationListItem({
           <button
             type="button"
             title="删除会话"
-            className="ml-1 shrink-0 p-1 text-[#dc2626] opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+            className={cn(
+              "ml-1 shrink-0 rounded p-1 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 text-rose-500",
+              isActive
+                ? "hover:bg-rose-950/50 hover:text-rose-400"
+                : "hover:bg-rose-100 hover:text-rose-600"
+            )}
             onClick={() => onDelete(conversation.conversation_id)}
           >
-            <Trash2 className="h-4 w-4" />
+            <Trash2 className="h-3.5 w-3.5" />
           </button>
         </>
       )}

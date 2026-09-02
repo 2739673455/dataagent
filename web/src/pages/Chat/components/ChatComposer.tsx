@@ -57,7 +57,7 @@ export function ChatComposer({
 
   return (
     <div className="relative font-mono">
-      <div className="overflow-hidden rounded border border-[#d4d4ce] bg-[#ffffff] shadow-xs transition-colors focus-within:border-[#1e2024]">
+      <div className="overflow-hidden rounded border border-[#d4d4ce] bg-[#ffffff] shadow-2xs transition-all focus-within:border-[#71717a] focus-within:shadow-xs">
         <input
           ref={fileInputRef}
           type="file"
@@ -109,7 +109,7 @@ export function ChatComposer({
               type="button"
               disabled={disabled || isUploading || isStreaming || isSubmitting}
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs text-[#52525b] transition hover:bg-[#ebebe6] hover:text-[#18181b] disabled:opacity-40"
+              className="flex items-center gap-1.5 rounded px-1.5 py-1 text-xs text-[#52525b] transition hover:text-[#18181b] disabled:opacity-40"
               title="添加附件"
             >
               <Paperclip className="h-4 w-4" />
@@ -125,7 +125,7 @@ export function ChatComposer({
               <Button
                 size="sm"
                 variant="destructive"
-                className="gap-1.5 px-3.5 text-xs"
+                className="gap-1.5 rounded px-3.5 text-xs font-medium shadow-2xs transition-all active:scale-95"
                 onClick={onStop}
               >
                 <Square className="h-3.5 w-3.5 fill-current" />
@@ -137,7 +137,7 @@ export function ChatComposer({
                   <Button
                     size="sm"
                     variant="outline"
-                    className="gap-1.5 px-3.5 text-xs"
+                    className="gap-1.5 rounded border-[#d4d4ce] bg-white px-3.5 text-xs font-medium text-[#27272a] shadow-2xs transition-all hover:bg-[#f5f5f0] active:scale-95"
                     disabled={disabled || isUploading || isSubmitting}
                     onClick={onResume}
                   >
@@ -148,7 +148,7 @@ export function ChatComposer({
                 <Button
                   size="sm"
                   variant="default"
-                  className="gap-1.5 px-3.5 text-xs"
+                  className="gap-1.5 rounded bg-[#18181b] px-3.5 text-xs font-medium text-white shadow-2xs transition-all hover:bg-[#27272a] active:scale-95 disabled:bg-[#d4d4ce] disabled:text-[#8e8e93]"
                   disabled={
                     disabled ||
                     isUploading ||

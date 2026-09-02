@@ -112,7 +112,7 @@ export function AttachmentIconBadge({
       <IconComponent className={iconSizeClass} />
     );
   const badgeClassName = cn(
-    "flex shrink-0 items-center justify-center overflow-hidden rounded-md border",
+    "flex shrink-0 items-center justify-center overflow-hidden rounded border",
     badgeSizeClass,
     imageUrl && isImage ? "border-[#e4e4de]" : config.badgeClass,
     onOpenPreview && "transition hover:opacity-85"
@@ -270,7 +270,7 @@ export function AttachmentChip({
     <>
       <div
         className={cn(
-          "group inline-flex items-center gap-1.5 rounded-lg border py-1 pl-1.5 pr-2 font-mono text-xs transition-all duration-150 select-none",
+          "group inline-flex items-center gap-1.5 rounded border py-1 pl-1.5 pr-2 font-mono text-xs transition-all duration-150 select-none",
           isUser
             ? "border-[#d8d8d0] bg-[#f0f0eb] text-[#27272a] hover:border-[#b8b8b0] hover:bg-[#eaeae4]"
             : "border-[#e4e4de] bg-[#ffffff] text-[#27272a] shadow-[0_1px_2px_rgba(0,0,0,0.03)] hover:border-[#b8b8b0] hover:bg-[#fafaf8]"
