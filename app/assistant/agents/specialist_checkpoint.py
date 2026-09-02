@@ -201,6 +201,7 @@ class SpecialistCheckpointView:
             session_id=request.session_id,
             content=result.content,
             artifacts=result.artifacts,
+            warnings=result.warnings,
             repair_requests=result.repair_requests,
             failure_reasons=result.failure_reasons,
         )

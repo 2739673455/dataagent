@@ -260,6 +260,10 @@ class AgentResult(StrictProtocolModel):
     artifacts: Annotated[list[ArtifactReference], Field(max_length=50)] = Field(
         default_factory=list
     )
+    warnings: Annotated[list[NonEmptyText], Field(max_length=100)] = Field(
+        default_factory=list,
+        description="不影响正文结论的非阻断问题，包括被过滤的无效产物引用",
+    )
     repair_requests: Annotated[list[RepairRequest], Field(max_length=50)] = Field(
         default_factory=list
     )

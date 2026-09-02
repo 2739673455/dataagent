@@ -316,26 +316,40 @@ class AgentSessionService:
                     f"{request.target_agent_type}/{request.target_session_id}"
                 )
 
-    async def _verify_result_artifacts(
+    async def _sanitize_result_artifacts(
         self,
         result: SpecialistResult,
         session_key: AgentSessionKey,
-    ) -> None:
-        """验证结论产物实际存在于当前工作区。"""
+    ) -> SpecialistResult:
+        """过滤越界或不存在的产物，同时保留正文结论和有效产物。"""
         session_prefix = f"{_session_workspace(session_key)}/"
         artifact_paths = {artifact.path for artifact in result.artifacts}
-        invalid_artifacts = sorted(
+        out_of_scope = {
             path for path in artifact_paths if not path.startswith(session_prefix)
+        }
+        in_scope = artifact_paths - out_of_scope
+        missing = (
+            set(await self._session_store.find_missing_files(in_scope))
+            if in_scope
+            else set()
         )
-        if invalid_artifacts:
-            raise ValueError(
-                f"产物路径超出当前 Session: {', '.join(invalid_artifacts)}"
-            )
-        paths = artifact_paths
-
-        missing = sorted(await self._session_store.find_missing_files(paths))
-        if missing:
-            raise ValueError(f"产物不存在: {', '.join(missing)}")
+        invalid_paths = out_of_scope | missing
+        artifacts = [
+            artifact
+            for artifact in result.artifacts
+            if artifact.path not in invalid_paths
+        ]
+        artifact_warnings = [
+            *(f"忽略越界产物：{path}" for path in sorted(out_of_scope)),
+            *(f"忽略不存在的产物：{path}" for path in sorted(missing)),
+        ]
+        warnings = list(dict.fromkeys([*result.warnings, *artifact_warnings]))[:100]
+        return result.model_copy(
+            update={
+                "artifacts": artifacts,
+                "warnings": warnings,
+            }
+        )
 
     @staticmethod
     def _resolve_result_artifacts(
@@ -357,12 +371,11 @@ class AgentSessionService:
         result: SpecialistResult,
         session_key: AgentSessionKey,
     ) -> SpecialistResult:
-        """规范化并校验即将跨 Agent 传递的结构化结果。"""
+        """规范化即将跨 Agent 传递的结构化结果并过滤无效产物。"""
         # 相对路径只在产出它的 Session 内有明确含义；跨过此边界后统一传递绝对路径。
         result = self._resolve_result_artifacts(result, session_key)
         await self._validate_repair_targets(result, session_key)
-        await self._verify_result_artifacts(result, session_key)
-        return result
+        return await self._sanitize_result_artifacts(result, session_key)
 
     async def _invoke_specialist(
         self,
@@ -646,6 +659,7 @@ class AgentSessionService:
                 status=result.status,
                 content=result.content,
                 artifacts=result.artifacts,
+                warnings=result.warnings,
                 repair_requests=result.repair_requests,
                 failure_reasons=result.failure_reasons,
             ),
@@ -666,6 +680,7 @@ class AgentSessionService:
             session_id=request.session_id,
             content=result.content,
             artifacts=result.artifacts,
+            warnings=result.warnings,
             repair_requests=result.repair_requests,
             failure_reasons=result.failure_reasons,
         )

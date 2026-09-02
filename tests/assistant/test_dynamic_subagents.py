@@ -564,6 +564,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
             content="conclusion only",
         )
         self.assertEqual(completed.artifacts, [])
+        self.assertEqual(completed.warnings, [])
         with self.assertRaises(ValidationError):
             SpecialistResult(
                 status="needs_repair",
@@ -1319,15 +1320,18 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("修补自身", result.failure_reasons[0])
         self.assertEqual(len(fake.configs), 2)
 
-    async def test_missing_artifact_is_rejected_after_structured_retry(self) -> None:
+    async def test_missing_artifact_is_filtered_without_structured_retry(self) -> None:
         fake = _FakeAgent()
         service = _service(fake, artifacts_exist=False)
         config = build_planner_config(12, _CONVERSATION_ID)
         result = await service.execute_delegation(_request("region"), config)
 
-        self.assertEqual(result.status, "failed")
-        self.assertIn("产物不存在", result.failure_reasons[0])
-        self.assertEqual(len(fake.configs), 2)
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.content, "analysis complete")
+        self.assertEqual(result.artifacts, [])
+        self.assertEqual(len(result.warnings), 1)
+        self.assertIn("忽略不存在的产物", result.warnings[0])
+        self.assertEqual(len(fake.configs), 1)
 
     async def test_artifact_verification_batches_all_paths(self) -> None:
         artifacts = [
@@ -1361,6 +1365,57 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "completed")
         self.assertEqual(verified_batches, [{artifact.path for artifact in artifacts}])
 
+    async def test_artifact_sanitization_keeps_valid_entries(self) -> None:
+        valid_path = (
+            f"{_CONVERSATION_ROOT}/sessions/sales-decline/analyst/region/"
+            "valid.json"
+        )
+        missing_path = (
+            f"{_CONVERSATION_ROOT}/sessions/sales-decline/analyst/region/"
+            "missing.json"
+        )
+        out_of_scope_path = (
+            f"{_CONVERSATION_ROOT}/sessions/sales-decline/analyst/other/"
+            "foreign.json"
+        )
+        fake = _FakeAgent(
+            output={
+                "structured_response": SpecialistResult(
+                    status="completed",
+                    content="analysis complete",
+                    artifacts=[
+                        ArtifactReference(path=valid_path),
+                        ArtifactReference(path=missing_path),
+                        ArtifactReference(path=out_of_scope_path),
+                    ],
+                )
+            }
+        )
+
+        async def verify(paths: Collection[str]) -> set[str]:
+            self.assertEqual(paths, {valid_path, missing_path})
+            return {missing_path}
+
+        service = _service(fake, artifact_verifier=verify)
+        result = await service.execute_delegation(
+            _request("region"),
+            build_planner_config(12, _CONVERSATION_ID),
+        )
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(
+            [artifact.path for artifact in result.artifacts],
+            [valid_path],
+        )
+        self.assertEqual(
+            result.warnings,
+            [
+                f"忽略越界产物：{out_of_scope_path}",
+                f"忽略不存在的产物：{missing_path}",
+            ],
+        )
+        self.assertEqual(len(fake.configs), 1)
+
     async def test_relative_artifact_is_resolved_from_specialist_workspace(
         self,
     ) -> None:
@@ -1393,7 +1448,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.artifacts[0].path, expected_path)
         self.assertEqual(verified_batches, [{expected_path}])
 
-    async def test_completed_artifact_outside_session_is_rejected(self) -> None:
+    async def test_completed_artifact_outside_session_is_filtered(self) -> None:
         fake = _FakeAgent(
             output={
                 "structured_response": SpecialistResult(
@@ -1407,9 +1462,11 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         config = build_planner_config(12, _CONVERSATION_ID)
         result = await service.execute_delegation(_request("region"), config)
 
-        self.assertEqual(result.status, "failed")
-        self.assertIn("超出当前 Session", result.failure_reasons[0])
-        self.assertEqual(len(fake.configs), 2)
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.content, "analysis complete")
+        self.assertEqual(result.artifacts, [])
+        self.assertEqual(result.warnings, ["忽略越界产物：/outputs/old.json"])
+        self.assertEqual(len(fake.configs), 1)
 
     async def test_unknown_repair_target_is_rejected(self) -> None:
         repair = RepairRequest(
@@ -1783,6 +1840,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                     "result": {
                         "status": "completed",
                         "content": "已完成的分析结果",
+                        "warnings": ["历史警告"],
                     },
                 }
             },
@@ -1809,6 +1867,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.content, "已完成的分析结果")
+        self.assertEqual(result.warnings, ["历史警告"])
         self.assertEqual(fake.inputs, [])
         self.assertTrue(
             all(

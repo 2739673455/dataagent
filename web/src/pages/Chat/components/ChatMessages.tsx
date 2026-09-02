@@ -51,11 +51,12 @@ export function ChatMessages({
   const navigationTargetTopRef = useRef<number | null>(null);
   const [activeUserMessageKey, setActiveUserMessageKey] = useState<string | null>(null);
 
+
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!conversationId || !viewport) return;
 
-    const bottomThreshold = 6;
+    const bottomThreshold = 8;
     navigationTargetTopRef.current = null;
     shouldStickToBottomRef.current =
       viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= bottomThreshold;
@@ -102,10 +103,9 @@ export function ChatMessages({
         shouldStickToBottomRef.current = false;
         return;
       }
+      // 单向判定：仅在到达底部时恢复跟随，不要在内容撑高产生距离时主动关闭跟随
       if (isAtBottom) {
         shouldStickToBottomRef.current = true;
-      } else {
-        shouldStickToBottomRef.current = false;
       }
     };
     const handleWheel = (event: WheelEvent) => {
@@ -146,14 +146,16 @@ export function ChatMessages({
       });
     };
 
-    const messagesContainer = viewport.querySelector("[data-chat-messages-container]");
-    const targetToObserve = messagesContainer ?? viewport;
-    const observer = new MutationObserver(followContentGrowth);
-    observer.observe(targetToObserve, {
+    const mutationObserver = new MutationObserver(followContentGrowth);
+    mutationObserver.observe(viewport, {
       childList: true,
       characterData: true,
       subtree: true,
     });
+
+    const resizeObserver = new ResizeObserver(followContentGrowth);
+    resizeObserver.observe(viewport);
+
     viewport.addEventListener("scroll", updateStickiness, { passive: true });
     viewport.addEventListener("wheel", handleWheel, { passive: true });
     viewport.addEventListener("pointerdown", handlePointerDown, { passive: true });
@@ -162,7 +164,8 @@ export function ChatMessages({
     viewport.addEventListener("touchend", handleTouchEnd, { passive: true });
 
     return () => {
-      observer.disconnect();
+      mutationObserver.disconnect();
+      resizeObserver.disconnect();
       if (userScrollUpTimeout !== null) window.clearTimeout(userScrollUpTimeout);
       viewport.removeEventListener("scroll", updateStickiness);
       viewport.removeEventListener("wheel", handleWheel);
