@@ -47,9 +47,9 @@ dataagent/
 ├── main.py                    FastAPI 组合根、路由注册和资源生命周期
 ├── app/
 │   ├── shared/                配置、客户端、契约、错误、可观测性和任务设施
-│   ├── sandbox/               Docker 工作区、文件和命令运行时
 │   ├── identity/              账号认证、Doris 身份与授权
 │   ├── metadata/              元数据目录、索引与语义召回
+│   ├── sandbox/               Docker 工作区、文件和命令运行时
 │   ├── query/                 SQL 校验、执行、记录与经验
 │   ├── assistant/             对话、Planner、专业 Agent 和工具
 │   ├── workflows/             跨模块持久化工作流
@@ -68,7 +68,95 @@ dataagent/
 
 ## 3. 核心模块及职责
 
-### 3.1 `identity`：身份认证与数据授权
+### 3.1 `shared`：共享基础设施
+
+`shared` 提供没有单一业务归属的配置、客户端、数据库基础、跨模块契约、错误协议、可观测性和后台任务运行设施。
+
+- **配置加载与校验**
+
+  - 读取 `conf/.env` 和 `conf/app_config.yaml`。
+  - 解析环境变量插值并构造强类型配置。
+  - 拒绝未知配置字段。
+  - 校验数值范围、超时关系和沙箱容量。
+  - 校验模型引用、协议能力和其他跨配置约束。
+- **敏感配置管理**
+
+  - 使用 `SecretStr` 保存数据库密码和 JWT 密钥。
+  - 使用 `SecretStr` 保存 Embedding 与模型密钥。
+  - 使用 `SecretStr` 保存 Redis/Celery URL 和 MCP 连接信息。
+  - 只在创建外部客户端时解包敏感值。
+- **PostgreSQL 客户端**
+
+  - 分别管理认证、元数据和 Agent 数据库的异步 SQLAlchemy Engine。
+  - 管理各数据库的 Session 和建表生命周期。
+  - 为请求和后台任务提供独立事务边界。
+- **Doris 客户端**
+
+  - 维护 Doris 管理员连接。
+  - 维护按角色创建的查询连接 Registry。
+  - 管理员连接用于目录和权限管理。
+  - 查询连接使用专用身份和短生命周期连接执行只读 SQL。
+- **Elasticsearch 与 Embedding 客户端**
+
+  - 初始化检索和向量服务连接。
+  - 集中提供客户端获取和关闭能力。
+  - 支撑元数据索引、查询经验索引和召回。
+- **LangGraph PostgreSQL**
+
+  - 管理 LangGraph Checkpointer。
+  - 清理线程和 namespace。
+  - 提供 Conversation 级 PostgreSQL advisory lock。
+  - 协调 Agent 运行与生命周期操作。
+- **数据库声明基类**
+
+  - 使用 `AuthBase` 划分认证数据域。
+  - 使用 `MetaBase` 划分元数据域。
+  - 使用 `AssistantBase` 划分 Agent 数据域。
+  - 跨数据库对象通过稳定 ID 关联，不建立跨数据库外键。
+- **跨模块契约**
+
+  - 定义 Agent 身份与 Session 共享值对象。
+  - 定义资产键和 Doris 限制。
+  - 定义查询经验召回和搜索结果契约。
+  - 模块之间使用共享契约交换数据，避免传递 ORM 实体。
+- **统一错误响应**
+
+  - 将业务异常统一投影为 `application/problem+json`。
+  - 请求校验错误返回结构化字段位置。
+  - 未处理异常只向客户端返回安全信息。
+  - 在服务端记录未处理异常的完整堆栈。
+- **日志与 Trace**
+
+  - HTTP 中间件创建或继承 Trace 标识。
+  - 在用户和 Conversation 边界绑定日志上下文。
+  - 在 Analysis、Session 和 Tool Call 边界继续绑定上下文。
+  - 后续日志自动携带定位字段。
+- **Celery 任务设施**
+
+  - 使用 Redis 作为 Broker 和 Result Backend。
+  - 统一使用 JSON 序列化。
+  - 统一配置任务确认策略和可见性超时。
+  - 统一配置软硬时限、结果过期和 Worker 预取。
+- **队列路由**
+
+  - `metadata` 与 `query` 任务进入 `metadata-index`。
+  - Assistant 标题任务进入 `lightweight`。
+  - 其他 Assistant 与 Workflows 任务进入 `lifecycle`。
+  - 未匹配任务进入 `default`。
+- **周期调度**
+
+  - 定时提交字段取值索引任务。
+  - 定时清理过期草稿和待删除 Conversation。
+  - 定时恢复用户注销任务。
+  - 定时提交查询经验索引修复任务。
+- **任务状态查询**
+
+  - 通过任务 ID 查询 Celery 任务状态。
+  - 返回 `PENDING`、`STARTED`、`SUCCESS` 和 `FAILURE`。
+  - 返回任务结果或安全错误信息。
+  - 需要可靠恢复的业务状态保存在所属 PostgreSQL。
+
+### 3.2 `identity`：身份认证与数据授权
 
 `identity` 负责确认当前用户身份、平台管理权限，以及用户访问 Doris 数据时使用的查询身份和资产范围。
 
@@ -134,7 +222,7 @@ dataagent/
   - 创建或复用持久化注销任务。
   - 将 Conversation、Checkpoint 和沙箱资源清理交给 `workflows` 编排。
 
-### 3.2 `metadata`：元数据目录与语义召回
+### 3.3 `metadata`：元数据目录与语义召回
 
 `metadata` 负责维护表、字段和指标的业务目录，将目录同步为检索索引，并为 Explorer 构建持续可用的查询上下文。
 
@@ -222,7 +310,81 @@ dataagent/
   - 索引状态、版本号和失败范围保留在服务内部。
   - 缓存时间和授权 scope 保留在服务内部。
 
-### 3.3 `query`：受控查询与查询经验
+### 3.4 `sandbox`：隔离执行与产物工作区
+
+`sandbox` 为 Planner 和专业 Agent 提供受限 Docker 执行环境、持久化文件空间和跨进程安全生命周期。
+
+- **用户级运行资源**
+
+  - 每个用户拥有独立 Docker Named Volume。
+  - 每个用户拥有独立 Container。
+  - Container 可以停止和重新启动。
+  - 用户文件在 Volume 中持续保留。
+- **Conversation 与 Session 目录**
+
+  - 用户卷按 Conversation、Analysis、Agent 类型和 Session 分层。
+  - 每个专业 Session 使用独立 Linux UID。
+  - 同一 Conversation 的 Session 通过受控 GID 读取上游产物。
+- **文件访问边界**
+
+  - 相对路径以当前工作区解析。
+  - 绝对路径使用容器路径。
+  - 专业 Agent 只能修改自己的 Session。
+  - 其他 Session 和用户上传文件按权限只读。
+  - Planner 的文件能力限制为读取。
+- **文件与附件操作**
+
+  - 提供文件读取、写入和编辑。
+  - 提供文件上传、下载和删除。
+  - 提供产物保存和下载资格检查。
+  - 写入过程使用 staging、目录文件描述符和 `O_NOFOLLOW`。
+  - 使用原子替换防止半成品文件。
+  - 防止路径穿越和符号链接绕过。
+- **容量限制**
+
+  - `max_file_bytes` 限制上传文件的大小。
+  - `max_file_bytes` 同时限制文件工具和 Shell 日志的单文件大小。
+  - `max_user_storage_bytes` 交给支持硬配额的 Volume Driver 执行。
+  - 只读检查不会创建缺失的 Volume、Container、Conversation 或 Session。
+- **命令执行**
+
+  - 普通 Backend 命令和 Agent `shell` 使用当前 Session 的 UID 与 GID。
+  - 使用当前 Session 的工作目录、HOME 和临时目录。
+  - 命令在 Docker 资源和路径边界内运行。
+- **Shell Job 生命周期**
+
+  - 命令在前台等待窗口内结束时直接返回结果。
+  - 超时后保留进程并返回 `job_id`。
+  - 将完整 stdout/stderr 写入受限日志文件。
+  - 支持状态查询、有限等待和取消。
+  - 取消时先发送 TERM，超时后使用 KILL 终止进程组。
+- **跨进程所有权协调**
+
+  - Redis 保存 operation lease。
+  - Redis 保存 Conversation maintenance、user maintenance 和 user mutation 状态。
+  - Redis 保存容量锁、活动时间和删除标记。
+  - 协调 FastAPI、Celery Worker 与清理任务对同一资源的并发访问。
+- **运行容量控制**
+
+  - 启动 Container 前在容量锁内读取 Docker 实时状态。
+  - 有空位时启动目标 Container。
+  - 满载时停止最久未活动且没有操作租约的 Container。
+  - 回收后仍无容量时返回明确错误。
+- **空闲回收与删除**
+
+  - 空闲达到阈值后依次停止和删除 Container。
+  - Container 回收后保留用户 Volume。
+  - Conversation 删除只移除对应目录和 UID 注册。
+  - 用户注销时删除 Container、Volume 和 Redis ownership 状态。
+- **Docker 安全边界**
+
+  - 使用只读根文件系统和受限 tmpfs。
+  - Container 断网运行。
+  - 移除 Linux capabilities 并启用 `no-new-privileges`。
+  - 限制 CPU、内存和 PID。
+  - Agent Skill 通过只读挂载提供。
+
+### 3.5 `query`：受控查询与查询经验
 
 `query` 负责安全执行 Explorer 提交的 SQL，保存完整结果和执行事实，并将成功查询沉淀为角色级可复用经验。
 
@@ -309,7 +471,7 @@ dataagent/
   - 索引删除完成后移除 PostgreSQL 经验。
   - 保留原始执行历史。
 
-### 3.4 `assistant`：对话与多 Agent 分析
+### 3.6 `assistant`：对话与多 Agent 分析
 
 `assistant` 负责管理 Conversation 和消息，把 Planner、专业 Agent、工具、Checkpoint 与分析产物组织成可流式返回、可停止、可恢复的分析任务。
 
@@ -425,81 +587,7 @@ dataagent/
   - 周期扫描恢复丢失的删除任务。
   - 周期任务清理过期草稿。
 
-### 3.5 `sandbox`：隔离执行与产物工作区
-
-`sandbox` 为 Planner 和专业 Agent 提供受限 Docker 执行环境、持久化文件空间和跨进程安全生命周期。
-
-- **用户级运行资源**
-
-  - 每个用户拥有独立 Docker Named Volume。
-  - 每个用户拥有独立 Container。
-  - Container 可以停止和重新启动。
-  - 用户文件在 Volume 中持续保留。
-- **Conversation 与 Session 目录**
-
-  - 用户卷按 Conversation、Analysis、Agent 类型和 Session 分层。
-  - 每个专业 Session 使用独立 Linux UID。
-  - 同一 Conversation 的 Session 通过受控 GID 读取上游产物。
-- **文件访问边界**
-
-  - 相对路径以当前工作区解析。
-  - 绝对路径使用容器路径。
-  - 专业 Agent 只能修改自己的 Session。
-  - 其他 Session 和用户上传文件按权限只读。
-  - Planner 的文件能力限制为读取。
-- **文件与附件操作**
-
-  - 提供文件读取、写入和编辑。
-  - 提供文件上传、下载和删除。
-  - 提供产物保存和下载资格检查。
-  - 写入过程使用 staging、目录文件描述符和 `O_NOFOLLOW`。
-  - 使用原子替换防止半成品文件。
-  - 防止路径穿越和符号链接绕过。
-- **容量限制**
-
-  - `max_file_bytes` 限制上传文件的大小。
-  - `max_file_bytes` 同时限制文件工具和 Shell 日志的单文件大小。
-  - `max_user_storage_bytes` 交给支持硬配额的 Volume Driver 执行。
-  - 只读检查不会创建缺失的 Volume、Container、Conversation 或 Session。
-- **命令执行**
-
-  - 普通 Backend 命令和 Agent `shell` 使用当前 Session 的 UID 与 GID。
-  - 使用当前 Session 的工作目录、HOME 和临时目录。
-  - 命令在 Docker 资源和路径边界内运行。
-- **Shell Job 生命周期**
-
-  - 命令在前台等待窗口内结束时直接返回结果。
-  - 超时后保留进程并返回 `job_id`。
-  - 将完整 stdout/stderr 写入受限日志文件。
-  - 支持状态查询、有限等待和取消。
-  - 取消时先发送 TERM，超时后使用 KILL 终止进程组。
-- **跨进程所有权协调**
-
-  - Redis 保存 operation lease。
-  - Redis 保存 Conversation maintenance、user maintenance 和 user mutation 状态。
-  - Redis 保存容量锁、活动时间和删除标记。
-  - 协调 FastAPI、Celery Worker 与清理任务对同一资源的并发访问。
-- **运行容量控制**
-
-  - 启动 Container 前在容量锁内读取 Docker 实时状态。
-  - 有空位时启动目标 Container。
-  - 满载时停止最久未活动且没有操作租约的 Container。
-  - 回收后仍无容量时返回明确错误。
-- **空闲回收与删除**
-
-  - 空闲达到阈值后依次停止和删除 Container。
-  - Container 回收后保留用户 Volume。
-  - Conversation 删除只移除对应目录和 UID 注册。
-  - 用户注销时删除 Container、Volume 和 Redis ownership 状态。
-- **Docker 安全边界**
-
-  - 使用只读根文件系统和受限 tmpfs。
-  - Container 断网运行。
-  - 移除 Linux capabilities 并启用 `no-new-privileges`。
-  - 限制 CPU、内存和 PID。
-  - Agent Skill 通过只读挂载提供。
-
-### 3.6 `workflows`：跨模块生命周期工作流
+### 3.7 `workflows`：跨模块生命周期工作流
 
 `workflows` 负责编排跨越多个模块和存储、需要持久化状态与失败恢复的业务流程，当前实现聚焦用户注销。
 
@@ -552,130 +640,44 @@ dataagent/
   - 失败后的重试可以安全跳过已完成步骤。
   - 资源内部的一致性规则由所属模块负责。
 
-### 3.7 `shared`：共享基础设施
-
-`shared` 提供没有单一业务归属的配置、客户端、数据库基础、跨模块契约、错误协议、可观测性和后台任务运行设施。
-
-- **配置加载与校验**
-
-  - 读取 `conf/.env` 和 `conf/app_config.yaml`。
-  - 解析环境变量插值并构造强类型配置。
-  - 拒绝未知配置字段。
-  - 校验数值范围、超时关系和沙箱容量。
-  - 校验模型引用、协议能力和其他跨配置约束。
-- **敏感配置管理**
-
-  - 使用 `SecretStr` 保存数据库密码和 JWT 密钥。
-  - 使用 `SecretStr` 保存 Embedding 与模型密钥。
-  - 使用 `SecretStr` 保存 Redis/Celery URL 和 MCP 连接信息。
-  - 只在创建外部客户端时解包敏感值。
-- **PostgreSQL 客户端**
-
-  - 分别管理认证、元数据和 Agent 数据库的异步 SQLAlchemy Engine。
-  - 管理各数据库的 Session 和建表生命周期。
-  - 为请求和后台任务提供独立事务边界。
-- **Doris 客户端**
-
-  - 维护 Doris 管理员连接。
-  - 维护按角色创建的查询连接 Registry。
-  - 管理员连接用于目录和权限管理。
-  - 查询连接使用专用身份和短生命周期连接执行只读 SQL。
-- **Elasticsearch 与 Embedding 客户端**
-
-  - 初始化检索和向量服务连接。
-  - 集中提供客户端获取和关闭能力。
-  - 支撑元数据索引、查询经验索引和召回。
-- **LangGraph PostgreSQL**
-
-  - 管理 LangGraph Checkpointer。
-  - 清理线程和 namespace。
-  - 提供 Conversation 级 PostgreSQL advisory lock。
-  - 协调 Agent 运行与生命周期操作。
-- **数据库声明基类**
-
-  - 使用 `AuthBase` 划分认证数据域。
-  - 使用 `MetaBase` 划分元数据域。
-  - 使用 `AssistantBase` 划分 Agent 数据域。
-  - 跨数据库对象通过稳定 ID 关联，不建立跨数据库外键。
-- **跨模块契约**
-
-  - 定义 Agent 身份与 Session 共享值对象。
-  - 定义资产键和 Doris 限制。
-  - 定义查询经验召回和搜索结果契约。
-  - 模块之间使用共享契约交换数据，避免传递 ORM 实体。
-- **统一错误响应**
-
-  - 将业务异常统一投影为 `application/problem+json`。
-  - 请求校验错误返回结构化字段位置。
-  - 未处理异常只向客户端返回安全信息。
-  - 在服务端记录未处理异常的完整堆栈。
-- **日志与 Trace**
-
-  - HTTP 中间件创建或继承 Trace 标识。
-  - 在用户和 Conversation 边界绑定日志上下文。
-  - 在 Analysis、Session 和 Tool Call 边界继续绑定上下文。
-  - 后续日志自动携带定位字段。
-- **Celery 任务设施**
-
-  - 使用 Redis 作为 Broker 和 Result Backend。
-  - 统一使用 JSON 序列化。
-  - 统一配置任务确认策略和可见性超时。
-  - 统一配置软硬时限、结果过期和 Worker 预取。
-- **队列路由**
-
-  - `metadata` 与 `query` 任务进入 `metadata-index`。
-  - Assistant 标题任务进入 `lightweight`。
-  - 其他 Assistant 与 Workflows 任务进入 `lifecycle`。
-  - 未匹配任务进入 `default`。
-- **周期调度**
-
-  - 定时提交字段取值索引任务。
-  - 定时清理过期草稿和待删除 Conversation。
-  - 定时恢复用户注销任务。
-  - 定时提交查询经验索引修复任务。
-- **任务状态查询**
-
-  - 通过任务 ID 查询 Celery 任务状态。
-  - 返回 `PENDING`、`STARTED`、`SUCCESS` 和 `FAILURE`。
-  - 返回任务结果或安全错误信息。
-  - 需要可靠恢复的业务状态保存在所属 PostgreSQL。
-
 ## 4. 模块依赖关系
 
 图中 `A → B` 表示 A 在运行时使用 B 提供的能力。`main.py` 和 `app/providers.py` 是组合根，负责创建对象和注入具体实现。
 
 ```mermaid
 flowchart TD
-    ROOT[main.py / app.providers] --> ID[identity]
+    ROOT[main.py / app.providers] --> SHARED[shared]
+    ROOT --> ID[identity]
     ROOT --> META[metadata]
+    ROOT --> SANDBOX[sandbox]
     ROOT --> QUERY[query]
     ROOT --> ASSIST[assistant]
-    ROOT --> SANDBOX[sandbox]
     ROOT --> FLOW[workflows]
 
-    ASSIST --> ID
-    ASSIST --> META
-    ASSIST --> QUERY
-    ASSIST --> SANDBOX
+    ID --> SHARED
+    META --> SHARED
+    SANDBOX --> SHARED
+    QUERY --> SHARED
+    ASSIST --> SHARED
+    FLOW --> SHARED
+
+    ID -->|用户注销入口| FLOW
+
+    META --> ID
+    META -->|元数据变更使查询经验失效| QUERY
 
     QUERY --> ID
     QUERY --> META
     QUERY --> SANDBOX
 
-    META --> ID
-    META -->|元数据变更使查询经验失效| QUERY
+    ASSIST --> ID
+    ASSIST --> META
+    ASSIST --> SANDBOX
+    ASSIST --> QUERY
 
-    ID -->|用户注销入口| FLOW
     FLOW --> ID
-    FLOW --> ASSIST
     FLOW --> SANDBOX
-
-    ID --> SHARED[shared]
-    META --> SHARED
-    QUERY --> SHARED
-    ASSIST --> SHARED
-    SANDBOX --> SHARED
-    FLOW --> SHARED
+    FLOW --> ASSIST
 ```
 
 依赖关系中的关键连接点如下：
@@ -690,9 +692,9 @@ flowchart TD
 | `query`     | `sandbox`                          | 将完整查询结果写入当前 Agent Session 工作区                      |
 | `assistant` | `identity`                         | 聊天入口校验分析权限；Explorer 召回时读取当前资产策略            |
 | `assistant` | `metadata`                         | Explorer 检索语义资源并维护 Conversation 召回上下文              |
-| `assistant` | `query`                            | Explorer 通过 `execute_sql` 调用完整查询用例并召回历史经验       |
 | `assistant` | `sandbox`                          | 保存附件、查询数据、脚本、图表和报告，并运行文件与 Shell 工具    |
-| `workflows` | `identity`、`assistant`、`sandbox` | 按资源所有权调用公开清理能力，完成用户注销                       |
+| `assistant` | `query`                            | Explorer 通过 `execute_sql` 调用完整查询用例并召回历史经验       |
+| `workflows` | `identity`、`sandbox`、`assistant` | 按资源所有权调用公开清理能力，完成用户注销                       |
 
 `metadata` 与 `query` 存在有明确用途的双向协作：查询依赖当前元数据做 Guard，元数据变更需要失效旧查询经验。两者共享元数据 PostgreSQL，但各自维护自己的模型、Repository 和 Service。
 
@@ -700,12 +702,12 @@ flowchart TD
 
 | 路径前缀                          | 所属模块                | 功能                                       |
 | --------------------------------- | ----------------------- | ------------------------------------------ |
+| `/api/v1/tasks`                   | `shared`                | Celery 任务状态查询                        |
 | `/api/v1/auth`                    | `identity`              | 登录、刷新、退出、改密和当前用户           |
 | `/api/v1/admin`                   | `identity` + `query`    | 用户、Doris 角色、数据权限与查询经验管理   |
 | `/api/v1/meta`                    | `metadata`              | 元数据目录、导入导出和索引任务提交         |
+| `/api/v1/chat/attachment`         | `sandbox` + `assistant` | 附件上传、获取与删除                       |
 | `/api/v1/chat`                    | `assistant`             | Conversation、消息、运行控制和 SSE 事件    |
-| `/api/v1/chat/attachment`         | `assistant` + `sandbox` | 附件上传、获取与删除                       |
-| `/api/v1/tasks`                   | `shared`                | Celery 任务状态查询                        |
 
 ## 6. 数据与外部系统归属
 
@@ -716,7 +718,7 @@ flowchart TD
 | Agent PostgreSQL（`langgraph`） | `assistant` 的 Conversation 与删除墓碑；LangGraph 的 Planner 和专业 Agent Checkpoint、消息与状态                       |
 | Elasticsearch                   | `metadata` 的字段、指标和字段值检索投影；`query` 的查询经验检索投影                                                    |
 | Doris                           | `identity` 管理角色、查询用户、SELECT 权限和 Row Policy；`metadata` 校验物理目录并读取字段值；`query` 执行受限只读 SQL |
-| Redis                           | 认证限流；Celery broker 与 result backend；Sandbox 分布式锁、租约、活动状态和删除标记                                  |
+| Redis                           | Celery broker 与 result backend；认证限流；Sandbox 分布式锁、租约、活动状态和删除标记                                  |
 | Docker Named Volume             | 用户上传文件、查询 CSV、分析脚本、图表、报告和其他持久化产物                                                           |
 | Chat Model                      | Planner 与 Explorer、Analyst、Reviewer 的推理和工具调用                                                                |
 | Embedding 服务                  | 元数据与查询经验的向量索引和向量召回                                                                                   |
