@@ -1,94 +1,177 @@
-# 07. Workflows：实现可恢复的跨存储注销
+# 07. Workflows：实现跨存储注销
 
 ## 功能说明
 
-`app/workflows` 负责编排无法在单个业务领域、单个数据库事务中完成的长生命周期持久流程。系统的核心长工作流是**跨存储用户注销**：在安全受理注销后，依次彻底清除用户的会话目录、LangGraph Checkpoint、语义召回快照、Docker 容器与磁盘持久卷，最后物理移除认证用户。
-
-本模块的核心职责与底层实现细节如下。
-
-### 1. 跨模块持久工作流定位与注销受理
-
-用户注销涉及认证数据库（PostgreSQL）、助手图状态库（PostgreSQL Checkpointer）、元数据检索快照（PostgreSQL）、Docker 守护进程（容器实例）以及本地存储（Named Volume）等多个异构系统，无法通过单次数据库 ACID 事务保证原子性。
-
-- **窄接口依赖原则**：
-  - Workflows 模块作为无状态编排器，仅通过 `app/workflows/contracts.py` 中定义的最小 Protocol 依赖外部能力：`UserDeletionStateStore`（由 Identity 提供）、`UserSandboxCleaner`（由 Sandbox 提供）与 `ConversationLifecycleService`（由 Assistant 提供）；
-  - 严禁在工作流中直接引入其他业务模块的 ORM 模型、SQLAlchemy Session、Docker SDK 或底层 Redis 键，杜绝编排层对具体存储知识的隐式耦合。
-- **原子注销受理（request_deletion）**：
-  - 管理员通过接口发起注销请求，系统首先执行业务安全约束校验：禁止当前登录的操作员注销自身，核验系统中保留至少一个启用的管理员；
-  - 在单个认证数据库事务中执行：将目标用户的 `is_active` 置为 `False`，撤销该名下所有 Refresh Token，并在 `user_deletion_tasks` 表中插入或更新一条 `status='pending'` 的注销任务记录；
-  - 事务提交后，目标用户的既有访问令牌和刷新令牌在下一次请求时全部立即失效，平台访问权限瞬间阻断；HTTP 接口随即向客户端返回成功，物理清理交由后台异步流转，保障毫秒级响应。
-
-### 2. 幂等编排与固定清理拓扑
-
-- **固定清理依赖拓扑**：
-  - `UserDeletionService.process(user_id)` 按照不可调换的拓扑顺序执行清理：
-    ```text
-    1. 会话资源清理（ConversationLifecycleService.delete_user_conversations）：
-       清理所有 Conversation 行、物理删除 LangGraph Checkpoints、清除语义召回快照；
-    2. 沙箱资源清理（UserSandboxCleaner.delete_user_sandbox）：
-       停止并销毁用户专属 Docker 容器，删除用户 Named Volume，清理 Redis 所有权键；
-    3. 任务完成与用户物理删除（UserDeletionStateStore.complete）：
-       物理删除 users 表中的认证记录，将 user_deletion_tasks 标记为 completed。
-    ```
-- **认证用户作为恢复锚点**：
-  - 认证用户 `User` 记录与 `UserDeletionTask` 任务行强制保留至外部异构资源（会话、Checkpoints、Docker 容器与卷）全部清理完毕后才物理删除；
-  - 若在清理的任何中间步骤遭遇进程崩溃、Docker API 超时或网络中断，数据库中始终保留着带有 `pending` 状态的任务记录与用户 ID，作为后续自动恢复的确定性锚点。
-- **全链路幂等设计**：
-  - 各资源清理器（Cleaner）必须将“目标资源已不存在”视为清理成功（例如容器已被删除、卷已不存在或会话已为空）；
-  - 工作流在发生重试时一律从第 1 步开始重新执行完整清理流程。由于每个单项步骤均具备严格幂等性，系统无需维护复杂的子步骤完成位，以极低的架构复杂度换取确定性的最终一致性。
-
-### 3. 终态保护与悲观行锁并发控制
-
-- **单向不可逆终态（completed）**：
-  - `UserDeletionTask` 的状态机限定为 `pending` 与 `completed` 两种；
-  - `completed` 是单向不可逆的绝对终态。一旦任务写入 `completed`，无论后续是否有迟到的重试 Worker 回写错误，数据库状态绝不被回退为 `pending`。
-- **行级排他锁（FOR UPDATE）保障并发收敛**：
-  - `PostgresUserDeletionStateStore.complete()` 与 `record_failure()` 在执行时，必须在认证事务内通过 `get_user_deletion_task_for_update(user_id)` 锁定任务行；
-  - 任何针对已处于 `completed` 状态任务的失败回写操作被直接忽略，防止因分布式消息重投导致的迟到错误覆盖最终成功事实。
-
-### 4. 双层调度、分布式任务租约与自愈机制
-
-系统通过“快速重试”与“慢速自愈”双层调度体系抵御所有阶段的故障。
-
-- **第一层：Celery 快速重试**：
-  - 任务投递至 Celery 的 `lifecycle` 队列；
-  - Worker 执行遇到瞬时故障（如 Docker 守护进程瞬时高负载）时，利用 Celery 异常重试机制进行就地重试（最多 3 次），配置指数退避与随机抖动（jitter），在秒级时间内完成快速自愈。
-- **第二层：Celery Beat 周期自愈分发**：
-  - 若 Celery 快速重试耗尽，或 Worker 节点遭遇硬件断电、OOM 强制终止导致消息丢失，数据库中的 `UserDeletionTask` 仍处于 `pending` 状态；
-  - Celery Beat 定期（默认每 60 秒）执行 `dispatch_due_user_deletions` 任务，扫描数据库中满足 `status = 'pending' AND next_attempt_at <= now` 的任务。
-- **悲观抢占与租约机制（SKIP LOCKED）**：
-  - 扫描任务使用 `SELECT ... FOR UPDATE SKIP LOCKED`，多个并发调度器节点可安全并行扫描而不发生行锁冲突，每个节点仅锁定并领取未被锁定的到期记录；
-  - 领取成功后，立即在同一事务中将 `next_attempt_at` 推进至 `now + visibility_timeout`（例如 15 分钟后）作为分布式执行租约；
-  - 租约完整覆盖了“数据库已领取、Broker 消息发送中”以及“Worker 正在执行但尚未完成”的时间窗口，杜绝其他调度节点在任务正常执行期间重复拉起相同用户；
-  - 若任务在执行期间崩溃，租约到期后该任务自动再次对 Beat 变为可见并重新分发。
-- **批量分发错误隔离**：分发器批量扫描到多个到期用户时，逐个调用 `enqueue_user_deletion`。若某单个用户的消息发布发生异常，系统仅记录该用户的错误并将该用户的 `next_attempt_at` 推迟，其余用户的消息发布不受任何影响。
-
-### 5. Worker 子进程资源生命周期完全隔离
-
-在异步架构中，父进程在 fork 子进程前创建的异步事件循环、数据库连接池与 Socket 句柄绝不能在子进程中复用。
-
-- **专属运行时动态装配**：
-  - Celery Worker 在子进程中执行 `dataagent.workflows.delete_user` 任务时，`_process_user_deletion(user_id)` 动态实例化当前任务专属的资源管理器：
-    - 独立的 `PostgresClientManager`（分别连接 `auth_postgresql`、`meta_postgresql`、`langgraph_postgresql`）；
-    - 独立的 `LangGraphPostgresManager`；
-    - 独立的 `DockerSandboxManager`；
-    - 独立的 `AgentManager` 与 `ConversationLifecycleService`。
-- **任务级显式初始化与安全逆序释放**：
-  - 连接池在任务入口显式执行 `init()`；
-  - 业务执行结束后，在 `finally` 代码块中严格按照依赖关系的逆序调用各管理器的 `close()` / `disconnect()` 释放所有网络连接与文件描述符，防止 Worker 长时间运行产生连接泄漏。
+Workflows 负责需要跨多个模块和存储系统才能完成的长期任务。当前只有用户注销流程：先停用账号，再清理会话、LangGraph Checkpoint、搜索快照、Docker 容器和存储卷，最后删除用户记录。
 
 ---
 
-## 核心实现代码与模块架构
+## 1. 模块总体架构与分层设计
 
-### 1. 跨模块工作流依赖契约实现
+### 1.1 架构定位与核心职责
 
-文件路径：`app/workflows/contracts.py`
+用户注销会同时影响认证数据库、助手会话库、Docker 和存储卷。Workflows 负责按顺序协调这些操作：
 
-定义工作流所需的最小窄接口，屏蔽底层各模块的存储细节：
+1. **调用各模块提供的清理接口**：工作流只依赖少量 Protocol 和 `ConversationLifecycleService`，自己不直接保存 ORM 会话或 Docker 客户端。
+2. **按固定顺序清理**：依次清理会话、沙箱和认证记录。每一步都允许重复执行，因此失败后可以从头重试。
+3. **保留恢复所需记录**：外部资源全部清理前，用户 ID 和注销任务会一直留在数据库中。任务完成后，迟到的失败结果不能把状态改回去。
+4. **自动重试未完成任务**：Celery 先进行几次快速重试，Celery Beat 再定期扫描数据库。多个调度器使用 `SKIP LOCKED` 分开领取任务。
+5. **每个 Worker 子进程创建自己的连接**：任务开始时创建连接池和管理器，结束时在 `finally` 中关闭。
+
+### 1.2 系统数据流与架构关系
+
+```mermaid
+flowchart TD
+    subgraph Admin["平台管理员"]
+        ReqAdmin[管理员发起用户注销]
+    end
+
+    subgraph IdentityMod["02. Identity 模块 (受理层)"]
+        StoreReq[UserDeletionStateStore.request<br/>锁定安全锁 · 禁用用户 · 撤销 Token · 插入 pending 任务]
+        StoreComp[UserDeletionStateStore.complete<br/>物理删除用户 · 标记 completed]
+        UserPG[(PostgreSQL<br/>users · user_deletion_tasks)]
+    end
+
+    subgraph WorkflowsEngine["07. Workflows 编排与调度层"]
+        BeatScheduler[Celery Beat 调度器<br/>dispatch_due_user_deletions]
+        TaskQueue[Celery lifecycle 队列]
+        WorkerProcess[Celery Worker 子进程<br/>独立连接池生命周期]
+        DeletionService[UserDeletionService.process<br/>固定顺序幂等执行]
+    end
+
+    subgraph CleaningTargets["外部异构清理目标"]
+        AssistantCleanup["Assistant 模块<br/>删除 Conversation · Checkpoints · 快照"]
+        SandboxCleanup["Sandbox 模块<br/>销毁 Docker 容器 · 删除 Named Volume · 清理 Redis"]
+    end
+
+    ReqAdmin --> StoreReq
+    StoreReq --> UserPG
+
+    BeatScheduler -->|SKIP LOCKED 扫描领取| UserPG
+    BeatScheduler -->|投递任务| TaskQueue
+    TaskQueue --> WorkerProcess
+    WorkerProcess --> DeletionService
+
+    DeletionService -->|第一步：清理会话| AssistantCleanup
+    DeletionService -->|第二步：清理沙箱| SandboxCleanup
+    DeletionService -->|第三步：物理删除用户| StoreComp
+    StoreComp --> UserPG
+```
+
+### 1.3 主要组件职责
+
+| 领域 | 核心类 / 函数 | 职责描述 |
+| :--- | :--- | :--- |
+| 清理接口 | `UserDeletionStateStore`, `UserSandboxCleaner` | 定义工作流真正需要的认证状态和沙箱清理操作 |
+| 注销流程 | `UserDeletionService` | 受理注销，依次清理会话、沙箱和认证记录，并记录下次重试时间 |
+| 任务提交 | `enqueue_user_deletion` | 将单个用户清理任务提交到 `lifecycle` 队列 |
+| 任务执行 | `delete_user_task`, `_process_user_deletion` | 在 Worker 中创建本次任务需要的资源并执行清理 |
+| 恢复调度 | `dispatch_due_user_deletions_task`, `_dispatch_due_user_deletions` | 领取到期任务，逐个提交并隔离发布失败 |
+
+---
+
+## 2. 创建一条可以持续重试的注销任务
+
+用户注销需要修改多个 PostgreSQL 数据库，还要删除 Docker 容器和存储卷。一个数据库事务无法同时控制这些系统，因此流程必须保存进度，并允许失败后重试。
+
+### 2.1 工作流只依赖实际需要的几个操作
+
+Workflows 通过 `UserDeletionStateStore` 和 `UserSandboxCleaner` 调用认证与沙箱模块，通过 `ConversationLifecycleService.delete_user_conversations` 清理会话。PostgreSQL、LangGraph、Redis 和 Docker 的具体操作留在对应实现中。
+
+### 2.2 一次事务停用账号并创建任务
+
+管理员通过接口发起注销请求，系统首先执行业务安全约束校验：
+- 禁止当前登录的操作员注销自身，核验系统中保留至少一个启用的管理员；
+- 在单个认证数据库事务中执行：将目标用户的 `is_active` 置为 `False`，撤销该名下所有 Refresh Token，并在 `user_deletion_tasks` 表中插入或更新一条 `status='pending'` 的注销任务记录；
+- 事务提交后，目标用户的访问令牌会因用户已禁用而失效，刷新令牌已全部撤销；管理接口返回 204。受理路径只创建或刷新 `pending` 任务，不直接发送 Celery 消息，定时恢复任务随后领取并投递物理清理。
+
+---
+
+## 3. 固定清理顺序，并允许从头重试
+
+### 3.1 按下面的顺序清理
+
+`UserDeletionService.process(user_id)` 按照固定的顺序执行清理：
+1. **会话资源清理（`ConversationLifecycleService.delete_user_conversations`）**：
+   清理所有 Conversation 行、物理删除 LangGraph Checkpoints、清除语义召回快照；
+2. **沙箱资源清理（`UserSandboxCleaner.delete_user_sandbox`）**：
+   强制删除用户专属 Docker 容器和 Named Volume，删除 Redis 中的用户活动时间，并保留永久用户删除标记来拒绝迟到请求；
+3. **任务完成与用户物理删除（`UserDeletionStateStore.complete`）**：
+   物理删除 users 表中的认证记录，将 `user_deletion_tasks` 标记为 `completed`。
+
+### 3.2 清理完成前保留用户 ID 和任务记录
+
+认证用户 `User` 记录与 `UserDeletionTask` 任务行保留至外部资源（会话、Checkpoints、Docker 容器与卷）全部清理完毕后才物理删除。若在清理的任何中间步骤遭遇进程崩溃、Docker 超时或网络中断，数据库中保留着带有 `pending` 状态的任务记录与用户 ID，作为后续自动恢复的基础。
+
+### 3.3 每个清理步骤都可以重复执行
+
+如果容器、存储卷或会话已经不存在，清理器会直接当作成功。任务重试时从第 1 步重新执行，不需要记录每个子步骤做到哪里。
+
+---
+
+## 4. 任务完成后不允许改回失败状态
+
+### 4.1 completed 是最终状态
+
+`UserDeletionTask` 只有 `pending` 和 `completed` 两种状态。状态变成 `completed` 后不能再改回 `pending`，因此迟到的旧 Worker 不会覆盖已经完成的结果。
+
+### 4.2 更新状态前用 FOR UPDATE 锁住任务行
+
+`complete()` 和 `record_failure()` 更新状态前，都会通过 `get_user_deletion_task_for_update(user_id)` 锁住任务行。如果任务已经是 `completed`，`record_failure()` 会直接返回。这样，重复投递产生的旧失败结果不会覆盖成功状态。
+
+---
+
+## 5. 快速重试和定时补漏
+
+系统先快速重试临时故障，再通过定时扫描找回仍未完成的任务。
+
+### 5.1 第一层：Celery 快速重试
+
+任务进入 Celery 的 `lifecycle` 队列。遇到 Docker 短时繁忙等临时故障时，Celery 最多重试 3 次。每次等待时间逐渐增加，并加入少量随机时间，避免大量任务同时重试。
+
+### 5.2 Celery Beat 定时找回未完成任务
+
+Celery 快速重试全部失败，或者 Worker 因断电、OOM 等原因退出后，`UserDeletionTask` 仍会保持 `pending`。Celery Beat 默认每 60 秒扫描一次，把 `next_attempt_at` 已到期的 pending 任务重新提交。
+
+### 5.3 多个调度器怎样避免领取同一任务
+
+扫描时使用 `SELECT ... FOR UPDATE SKIP LOCKED`。一个调度器锁住任务后，其他调度器会跳过它并领取别的任务。领取后，`next_attempt_at` 会被推迟 3,900 秒，也就是当前 Celery 3,600 秒硬时限再加 300 秒可见性余量；Worker 开始执行时会再次设置同样长度的租约。如果进程崩溃，租约到期后这条任务会重新进入待领取状态。
+
+### 5.4 一个任务发送失败不影响其他任务
+
+分发器批量扫描到多个到期用户时，逐个调用 `enqueue_user_deletion`。若某单个用户的消息发布发生异常，系统记录该用户的错误并将该用户的 `next_attempt_at` 推迟，其余用户的消息发布不受影响。
+
+---
+
+## 6. Worker 子进程单独创建和关闭连接
+
+在异步架构中，父进程在 fork 子进程前创建的异步事件循环、数据库连接池与 Socket 句柄不在子进程中复用。
+
+### 6.1 每个任务创建自己的运行资源
+
+Celery Worker 在子进程中执行 `dataagent.workflows.delete_user` 任务时，`_process_user_deletion(user_id)` 动态实例化当前任务专属的资源管理器：
+- 独立的 `PostgresClientManager`（分别连接 `auth_postgresql`、`meta_postgresql`、`langgraph_postgresql`）；
+- 独立的 `LangGraphPostgresManager`；
+- 独立的 `DockerSandboxManager`；
+- 独立的 `AgentManager` 与 `ConversationLifecycleService`。
+
+### 6.2 初始化和关闭资源的顺序
+
+连接池在任务入口显式执行 `init()`。全部初始化完成后，业务执行被包在 `try/finally` 中，`finally` 按 `AgentManager -> Sandbox -> LangGraph -> Meta PostgreSQL -> Assistant PostgreSQL -> Auth PostgreSQL` 的顺序调用 `close()` / `disconnect()`。
+
+当前代码在进入 `try` 之前初始化资源。如果前几个资源成功、后一个资源初始化失败，`finally` 不会执行，已经创建的资源可能没有关闭。关闭资源时也没有逐项隔离异常，某一步关闭失败会导致后面的资源不再关闭。这是当前实现的两个已知缺口。
+
+---
+
+## 7. 关键实现代码摘录
+
+以下代码选取当前实现中的关键类、函数和完整方法，保留源码里的名称、签名、处理流程和异常处理。没有展示的辅助定义和启动接线由正文说明。
+
+### 1. 工作流依赖的最小接口
+
+这些接口只暴露注销流程真正需要的操作，数据库和 Docker 细节留在各模块内部：
 
 ```python
-# app/workflows/contracts.py
 """跨模块工作流依赖协议。"""
 
 from datetime import datetime
@@ -99,15 +182,15 @@ class UserDeletionStateStore(Protocol):
     """用户注销编排所需的认证状态存储能力。"""
 
     async def request(self, user_id: int, requested_at: datetime) -> bool:
-        """在认证库中禁用用户、吊销令牌并创建注销任务。"""
+        """禁用用户、吊销令牌并创建注销任务。"""
         ...
 
     async def is_completed(self, user_id: int) -> bool:
-        """判断用户注销任务是否处于 completed 终态。"""
+        """判断用户注销任务是否完成。"""
         ...
 
     async def complete(self, user_id: int, completed_at: datetime) -> None:
-        """物理删除认证用户并将任务记录置为 completed 终态。"""
+        """删除认证用户并完成注销任务。"""
         ...
 
     async def record_failure(
@@ -117,7 +200,7 @@ class UserDeletionStateStore(Protocol):
         error: str,
         next_attempt_at: datetime,
     ) -> None:
-        """记录注销失败原因并推进下一次可重试时间。"""
+        """记录注销失败并安排重试。"""
         ...
 
 
@@ -125,19 +208,16 @@ class UserSandboxCleaner(Protocol):
     """用户注销所需的沙箱清理能力。"""
 
     async def delete_user_sandbox(self, user_id: int) -> None:
-        """删除用户全部沙箱资源（容器、Volume 与 Redis 键）。"""
+        """删除用户全部沙箱资源。"""
         ...
 ```
 
-### 2. 跨存储用户注销编排服务实现
+### 2. 按顺序执行用户注销
 
-文件路径：`app/workflows/user_deletion.py`
-
-控制拓扑清理顺序、终态幂等检查与失败退避记录：
+按固定顺序清理资源，跳过已经完成的任务，并记录失败原因和下次重试时间：
 
 ```python
-# app/workflows/user_deletion.py
-"""跨存储用户注销编排服务。"""
+"""跨存储用户注销编排。"""
 
 from datetime import UTC, datetime, timedelta
 from loguru import logger
@@ -149,7 +229,7 @@ from app.workflows.contracts import UserDeletionStateStore, UserSandboxCleaner
 
 
 class UserDeletionService:
-    """协调认证库、会话库、检索快照和沙箱容器的用户注销。"""
+    """协调认证库、会话库、元数据库、索引和沙箱的用户注销。"""
 
     def __init__(
         self,
@@ -158,13 +238,14 @@ class UserDeletionService:
         conversations: ConversationLifecycleService,
         config: LifecycleConfig,
     ) -> None:
+        """绑定用户注销涉及的各存储和生命周期服务。"""
         self._state_store = state_store
         self._sandbox = sandbox
         self._conversations = conversations
         self._config = config
 
     async def request_deletion(self, user_id: int, *, operator_id: int) -> bool:
-        """禁用目标用户并在认证数据库中持久化注销任务。"""
+        """禁用目标用户并持久化注销任务。"""
         if user_id == operator_id:
             raise auth_error.InvalidUserMutationError(
                 detail="不能注销当前操作的管理员账号"
@@ -177,29 +258,22 @@ class UserDeletionService:
 
     async def process(self, user_id: int) -> None:
         """幂等执行一个用户的跨存储注销清理。"""
-        # 1. 终态检查：已完成的任务直接跳过，绝不产生外部调用
         if await self._state_store.is_completed(user_id):
             logger.info(f"用户注销清理已完成，跳过重复任务: user_id={user_id}")
             return
-
         logger.info(f"开始用户注销清理编排: user_id={user_id}")
         try:
-            # 2. 清理会话、LangGraph Checkpoints 与语义召回快照
             await self._conversations.delete_user_conversations(user_id)
             logger.info(f"用户会话资源清理完成: user_id={user_id}")
-
-            # 3. 停止并删除 Docker 容器、物理卷与 Redis 状态
             await self._sandbox.delete_user_sandbox(user_id)
             logger.info(f"用户沙箱资源清理完成: user_id={user_id}")
-
-            # 4. 物理删除认证用户并将任务记录置为 completed 终态
             await self._state_store.complete(user_id, datetime.now(UTC))
             logger.info(f"用户注销清理编排完成: user_id={user_id}")
         except Exception as exc:
-            # 任一步失败，记录错误并根据退避配置设置重试时间
             await self._record_failure(user_id, exc)
             logger.exception(
-                f"用户注销清理编排失败: user_id={user_id}, error_type={type(exc).__name__}"
+                "用户注销清理编排失败: "
+                f"user_id={user_id}, error_type={type(exc).__name__}"
             )
             raise
 
@@ -214,16 +288,18 @@ class UserDeletionService:
             error=f"{type(exc).__name__}: {exc}",
             next_attempt_at=next_attempt_at,
         )
+        logger.warning(
+            "用户注销失败状态已记录: "
+            f"user_id={user_id}, error_type={type(exc).__name__}, "
+            f"next_attempt_at={next_attempt_at.isoformat()}"
+        )
 ```
 
-### 3. 认证状态存储与终态行锁保护实现
+### 3. 用数据库行锁保护完成状态
 
-文件路径：`app/identity/services/user_deletion_store.py`
-
-展示数据库行级悲观锁如何保护 `completed` 终态不被迟到失败覆盖：
+更新任务前先锁住对应数据库行，防止迟到的失败结果覆盖 `completed`：
 
 ```python
-# app/identity/services/user_deletion_store.py（核心终态锁片段）
 """用户注销认证状态存储。"""
 
 from datetime import datetime
@@ -232,24 +308,24 @@ from app.shared.clients.postgres_client_manager import PostgresClientManager
 
 
 class PostgresUserDeletionStateStore:
-    """使用认证 PostgreSQL 原子维护用户注销状态与终态保护。"""
+    """使用认证 PostgreSQL 原子维护用户注销状态。"""
 
     def __init__(self, postgres: PostgresClientManager) -> None:
+        """绑定认证 PostgreSQL 管理器。"""
         self._postgres = postgres
 
     async def complete(self, user_id: int, completed_at: datetime) -> None:
-        """物理删除认证用户并将注销任务锁定置为 completed 终态。"""
+        """删除认证用户并完成注销任务。"""
         async with self._postgres.session() as session:
             repo = IdentityPGRepo(session)
             async with session.begin():
                 await repo.lock_security_mutation()
-                # 使用 FOR UPDATE 锁定任务行，防止并发冲突
+                # complete 与失败回写可能来自不同 Worker；行锁保证终态不会被迟到的失败覆盖。
                 task = await repo.get_user_deletion_task_for_update(user_id)
                 if task is None:
                     raise RuntimeError("用户注销任务记录不存在")
                 user = await repo.get_user_by_id_for_update(user_id)
                 if user is not None:
-                    # 外部资源全部成功后，才最后删除认证用户记录
                     await repo.delete_user(user)
                 await repo.complete_user_deletion(task, completed_at)
 
@@ -260,12 +336,11 @@ class PostgresUserDeletionStateStore:
         error: str,
         next_attempt_at: datetime,
     ) -> None:
-        """记录注销失败，终态任务绝不回退。"""
+        """记录注销失败并安排重试。"""
         async with self._postgres.session() as session:
             repo = IdentityPGRepo(session)
             async with session.begin():
                 task = await repo.get_user_deletion_task_for_update(user_id)
-                # 终态保护：若任务已被其他 Worker 标记为 completed，禁止写入失败
                 if task is not None and task.status != "completed":
                     await repo.record_user_deletion_failure(
                         task,
@@ -274,14 +349,11 @@ class PostgresUserDeletionStateStore:
                     )
 ```
 
-### 4. Celery Worker 任务与进程级资源生命周期实现
+### 4. Celery Worker 创建并关闭任务资源
 
-文件路径：`app/workflows/tasks.py`
-
-在子进程中动态创建专属连接池并在 `finally` 逆序释放：
+子进程为任务创建自己的连接池，并在 `finally` 中按顺序关闭：
 
 ```python
-# app/workflows/tasks.py（核心执行与装配）
 """跨存储用户注销后台任务。"""
 
 from datetime import UTC, datetime, timedelta
@@ -304,37 +376,62 @@ from app.workflows.user_deletion import UserDeletionService
 
 
 def enqueue_user_deletion(user_id: int) -> TaskSubmission:
-    """提交用户注销清理任务至 lifecycle 队列。"""
+    """提交用户注销清理任务。"""
     task = celery_app.send_task(
         "dataagent.workflows.delete_user",
         args=[user_id],
         queue="lifecycle",
         routing_key="lifecycle",
     )
-    return TaskSubmission(task_id=task.id)
+    submission = TaskSubmission(task_id=task.id)
+    logger.info(
+        f"用户注销清理任务已提交: task_id={submission.task_id}, user_id={user_id}"
+    )
+    return submission
 
 
 async def _process_user_deletion(user_id: int) -> None:
-    """Worker 子进程独立初始化跨存储连接并在任务结束时逆序销毁。"""
+    """初始化跨存储资源并处理单个用户注销任务。"""
     auth_postgres = PostgresClientManager(cfg.auth_postgresql, AuthBase)
-    assistant_postgres = PostgresClientManager(cfg.langgraph_postgresql, AssistantBase)
-    meta_postgres = PostgresClientManager(cfg.meta_postgresql, MetaBase)
+    assistant_postgres = PostgresClientManager(
+        cfg.langgraph_postgresql,
+        AssistantBase,
+    )
+    meta_postgres = PostgresClientManager(
+        cfg.meta_postgresql,
+        MetaBase,
+    )
     persistence = LangGraphPostgresManager(cfg.langgraph_postgresql)
-    sandbox = create_sandbox_manager(cfg.sandbox, packaged_skill_readonly_mounts())
-    agents = AgentManager(persistence, sandbox, ConversationTombstoneStore(assistant_postgres))
+    sandbox = create_sandbox_manager(
+        cfg.sandbox,
+        packaged_skill_readonly_mounts(),
+    )
+    agents = AgentManager(
+        persistence,
+        sandbox,
+        ConversationTombstoneStore(assistant_postgres),
+    )
     conversations = build_conversation_lifecycle_service(
-        persistence, assistant_postgres, meta_postgres, agents, sandbox, cfg.lifecycle
+        persistence,
+        assistant_postgres,
+        meta_postgres,
+        agents,
+        sandbox,
+        cfg.lifecycle,
     )
     state_store = PostgresUserDeletionStateStore(auth_postgres)
-    service = UserDeletionService(state_store, sandbox, conversations, cfg.lifecycle)
+    service = UserDeletionService(
+        state_store,
+        sandbox,
+        conversations,
+        cfg.lifecycle,
+    )
 
-    # 显式初始化子进程专属连接池
     auth_postgres.init()
     assistant_postgres.init()
     meta_postgres.init()
     await persistence.init()
     await sandbox.init(start_cleanup=False)
-
     try:
         started_at = datetime.now(UTC)
         await state_store.extend_claim(
@@ -343,7 +440,6 @@ async def _process_user_deletion(user_id: int) -> None:
         )
         await service.process(user_id)
     finally:
-        # 逆序安全释放连接池
         await agents.close()
         await sandbox.disconnect()
         await persistence.close()
@@ -354,37 +450,60 @@ async def _process_user_deletion(user_id: int) -> None:
 
 @celery_app.task(
     name="dataagent.workflows.delete_user",
-    bind=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_jitter=True,
     max_retries=3,
-    default_retry_delay=10,
 )
-def delete_user(self, user_id: int) -> None:
-    """Celery 任务入口。"""
+def delete_user_task(user_id: int) -> dict[str, object]:
+    """执行用户跨存储注销清理。"""
+    logger.info(f"开始执行用户跨存储注销清理: user_id={user_id}")
+    run_async(_process_user_deletion(user_id))
+    logger.info(f"用户跨存储注销清理完成: user_id={user_id}")
+    return {"user_id": user_id, "completed": True}
+
+
+async def _dispatch_due_user_deletions() -> int:
+    """原子领取到期注销记录并向生命周期队列提交任务。"""
+    auth_postgres = PostgresClientManager(cfg.auth_postgresql, AuthBase)
+    auth_postgres.init()
     try:
-        run_async(_process_user_deletion(user_id))
-    except Exception as exc:
-        # 异常就地快速重试，退避参数受 Celery 管理
-        raise self.retry(exc=exc)
+        state_store = PostgresUserDeletionStateStore(auth_postgres)
+        claimed_at = datetime.now(UTC)
+        user_ids = await state_store.claim_due_user_ids(
+            claimed_at,
+            lease_until=claimed_at + timedelta(seconds=TASK_VISIBILITY_TIMEOUT_SECONDS),
+            limit=cfg.lifecycle.cleanup_batch_size,
+        )
+        dispatched_count = 0
+        failed_count = 0
+        for user_id in user_ids:
+            try:
+                enqueue_user_deletion(user_id)
+            except Exception as exc:  # noqa: BLE001
+                failed_at = datetime.now(UTC)
+                await state_store.record_failure(
+                    user_id,
+                    error=f"{type(exc).__name__}: {exc}",
+                    next_attempt_at=failed_at
+                    + timedelta(seconds=cfg.lifecycle.user_deletion_retry_seconds),
+                )
+                failed_count += 1
+                logger.exception(f"提交用户注销任务失败并释放领取: user_id={user_id}")
+            else:
+                dispatched_count += 1
+        logger.info(
+            "用户注销任务调度完成: "
+            f"claimed_count={len(user_ids)}, dispatched_count={dispatched_count}, "
+            f"failed_count={failed_count}"
+        )
+        return dispatched_count
+    finally:
+        await auth_postgres.close()
+
+
+@celery_app.task(name="dataagent.workflows.dispatch_due_user_deletions")
+def dispatch_due_user_deletions_task() -> dict[str, int]:
+    """提交已到重试时间的用户注销任务。"""
+    return {"dispatched_count": run_async(_dispatch_due_user_deletions())}
 ```
-
----
-
-## 阶段学习与验证要点
-
-### 阶段 1：验证注销受理与即时失效
-
-1. **自注销拦截验证**：当前管理员向 `/api/v1/admin/users/{current_admin_id}` 发起注销，验证系统立即抛出 `InvalidUserMutationError` 并拒绝操作。
-2. **受理即时失效验证**：注销某个普通用户，验证数据库中该用户 `is_active` 立即变为 `False`，且其所有 Refresh Token 的 `revoked_at` 均被写入时间戳，后续携带原令牌访问受保护接口立即返回 401。
-
-### 阶段 2：验证跨异构存储清理拓扑与最终删除
-
-1. **中途异常恢复锚点验证**：在测试用例中注入故障使第 2 步沙箱清理抛出异常，验证执行中断后数据库中的 `UserDeletionTask` 记录状态为 `pending` 且附带 `last_error`，认证用户 `User` 记录依然存在，可被后续 Beat 重新扫描拉起。
-2. **全流程成功最终物理删除验证**：在无故障环境下运行完整注销流程，验证执行完毕后：
-   - 助手库中的相关会话与 Checkpointer 节点被物理删除；
-   - Docker 守护进程中的用户容器与命名卷被彻底删除；
-   - 认证库中的 `users` 记录被物理删除，`user_deletion_tasks` 状态更新为 `completed`。
-
-### 阶段 3：验证终态保护与并发排他
-
-1. **迟到失败不回退终态验证**：并发模拟两个执行单元，单元 A 执行成功调用 `complete()`，随后单元 B 调用 `record_failure()`，验证最终任务状态依然保持 `completed`，绝不回退为 `pending`。
-2. **分布式租约防重复领取验证**：两个调度节点并发执行 `claim_due_user_deletions`，验证由于 `FOR UPDATE SKIP LOCKED` 机制，相同的 `user_id` 仅被一个节点领取并推进租约时间。

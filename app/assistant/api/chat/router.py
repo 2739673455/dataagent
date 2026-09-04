@@ -21,6 +21,10 @@ from app.assistant.api.dependencies import (
 )
 from app.assistant.contracts import chat as chat_schema
 from app.assistant.services import chat as chat_service
+from app.assistant.services.conversation_lifecycle import (
+    ConversationLifecycleBusyError,
+    ConversationLifecycleService,
+)
 from app.assistant.services.conversation_run import (
     ActiveConversationRunError,
 )
@@ -41,6 +45,26 @@ from app.shared.observability import context
 
 router = APIRouter(tags=["chat"])
 _SSE_HEARTBEAT_SECONDS = 15
+
+
+async def _request_deletion_or_raise(
+    lifecycle: ConversationLifecycleService,
+    user_id: int,
+    conversation_id: UUID,
+    *,
+    draft_only: bool = False,
+) -> bool:
+    """受理会话删除，并把锁冲突转换为稳定的业务错误。"""
+    try:
+        return await lifecycle.request_conversation_deletion(
+            user_id,
+            conversation_id,
+            draft_only=draft_only,
+        )
+    except ConversationLifecycleBusyError as exc:
+        raise chat_error.ConversationBusyError(
+            detail="对话正在运行或清理，请稍后重试",
+        ) from exc
 
 
 @router.post("/create", status_code=status.HTTP_201_CREATED)
@@ -92,7 +116,8 @@ async def api_delete_conversations(
     user_id = current_user.id
 
     for conversation_id in body.conversation_ids:
-        if not await lifecycle.request_conversation_deletion(
+        if not await _request_deletion_or_raise(
+            lifecycle,
             user_id,
             conversation_id,
         ):
@@ -117,7 +142,8 @@ async def api_delete_draft_conversation(
     lifecycle: ConversationLifecycleServiceDep,
 ) -> Response:
     """幂等删除当前用户主动放弃的草稿会话。"""
-    requested = await lifecycle.request_conversation_deletion(
+    requested = await _request_deletion_or_raise(
+        lifecycle,
         current_user.id,
         conversation_id,
         draft_only=True,

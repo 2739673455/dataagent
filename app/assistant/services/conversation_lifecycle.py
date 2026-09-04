@@ -15,7 +15,12 @@ from app.assistant.services.contracts import (
     ConversationRecallCleaner,
     ConversationSandboxCleaner,
 )
+from app.shared.clients.langgraph_postgres_manager import AdvisoryLockBusyError
 from app.shared.config.app_config import LifecycleConfig
+
+
+class ConversationLifecycleBusyError(RuntimeError):
+    """会话正在由其他执行单元运行或清理。"""
 
 
 class ConversationLifecycleService:
@@ -63,25 +68,30 @@ class ConversationLifecycleService:
     ) -> bool:
         """写入删除墓碑并使会话立即从接口中消失。"""
         await self._agents.cancel_agent_execution(user_id, conversation_id)
-        async with (
-            self.lock(user_id, conversation_id),
-            self._repository_factory() as repository,
-        ):
-            conversation = await repository.get(
-                user_id,
-                conversation_id,
-                include_deleting=True,
-            )
-            if conversation is None:
-                return False
-            if draft_only and not conversation.is_draft:
-                return False
-            if conversation.deletion_requested_at is None:
-                await repository.update(
-                    conversation,
-                    deletion_requested_at=datetime.now(UTC),
+        try:
+            async with (
+                self.lock(user_id, conversation_id),
+                self._repository_factory() as repository,
+            ):
+                conversation = await repository.get(
+                    user_id,
+                    conversation_id,
+                    include_deleting=True,
                 )
-            return True
+                if conversation is None:
+                    return False
+                if draft_only and not conversation.is_draft:
+                    return False
+                if conversation.deletion_requested_at is None:
+                    await repository.update(
+                        conversation,
+                        deletion_requested_at=datetime.now(UTC),
+                    )
+                return True
+        except AdvisoryLockBusyError as exc:
+            raise ConversationLifecycleBusyError(
+                "会话正在由其他执行单元运行或清理"
+            ) from exc
 
     async def delete_conversation_resources(
         self,

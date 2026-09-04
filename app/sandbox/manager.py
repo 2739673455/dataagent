@@ -11,6 +11,7 @@ from uuid import UUID
 
 from docker.errors import APIError, ImageNotFound, NotFound
 from docker.models.containers import Container
+from docker.models.volumes import Volume
 from loguru import logger
 
 import docker
@@ -219,19 +220,14 @@ class DockerSandboxManager:
             json.dumps(spec_payload, sort_keys=True).encode()
         ).hexdigest()
 
-    def _get_or_create_volume(self, user_id: int):
-        """获取用户数据卷并校验归属。"""
+    def _get_existing_volume_sync(self, user_id: int) -> Volume | None:
+        """获取并校验已存在的用户数据卷。"""
         client = self._get_client()
         volume_name = self._volume_name(user_id)
         try:
             volume = client.volumes.get(volume_name)
         except NotFound:
-            return client.volumes.create(
-                name=volume_name,
-                driver=self._config.volume_driver,
-                driver_opts=self._volume_driver_options(user_id),
-                labels=self._resource_labels(user_id),
-            )
+            return None
         volume.reload()
         expected_labels = self._resource_labels(user_id)
         actual_labels = volume.attrs.get("Labels") or {}
@@ -250,6 +246,18 @@ class DockerSandboxManager:
                 f"Docker 数据卷存储策略发生变更，需要迁移: {volume_name}"
             )
         return volume
+
+    def _get_or_create_volume(self, user_id: int) -> Volume:
+        """获取或创建用户数据卷。"""
+        volume = self._get_existing_volume_sync(user_id)
+        if volume is not None:
+            return volume
+        return self._get_client().volumes.create(
+            name=self._volume_name(user_id),
+            driver=self._config.volume_driver,
+            driver_opts=self._volume_driver_options(user_id),
+            labels=self._resource_labels(user_id),
+        )
 
     def _create_container(self, user_id: int) -> Container:
         """创建保持停止状态的用户容器。"""
@@ -309,6 +317,14 @@ class DockerSandboxManager:
         ):
             raise RuntimeError(f"Docker 容器名称已被占用: {name}")
         return container
+
+    def _get_running_storage_container_sync(self, user_id: int) -> Container | None:
+        """为已有沙箱数据取得可执行命令的运行中容器。"""
+        container = self._get_existing_container_sync(user_id)
+        if container is None and self._get_existing_volume_sync(user_id) is None:
+            return None
+        self._touch_user(user_id)
+        return self._runtime_pool.get_running(user_id)
 
     def _running_containers_sync(self) -> list[tuple[int, Container]]:
         """读取 Docker 中当前部署的运行容器。"""
@@ -422,12 +438,15 @@ class DockerSandboxManager:
             """在独占维护窗口中删除 Session 沙箱资源。"""
             with self._ownership.conversation_maintenance(user_id, conversation_id):
                 self._ownership.assert_available(user_id, conversation_id)
-                container = self._runtime_pool.get_running(user_id)
-                return self._archive.delete_session(
-                    container,
-                    conversation_id,
-                    scope,
-                )
+                container = self._get_running_storage_container_sync(user_id)
+                if container is None:
+                    return False
+                with self._ownership.user_mutation(user_id):
+                    return self._archive.delete_session(
+                        container,
+                        conversation_id,
+                        scope,
+                    )
 
         deleted = await asyncio.to_thread(delete)
         await asyncio.to_thread(self._touch_user, user_id)
@@ -550,11 +569,13 @@ class DockerSandboxManager:
         def delete() -> None:
             """只删除已有文件，避免空删除创建沙箱资源。"""
             with self._ownership.conversation_maintenance(user_id, conversation_id):
-                container = self._get_existing_container_sync(user_id)
+                self._ownership.assert_available(user_id, conversation_id)
+                container = self._get_running_storage_container_sync(user_id)
                 if container is not None:
-                    self._archive.delete_file(
-                        container, conversation_id, normalized_path
-                    )
+                    with self._ownership.user_mutation(user_id):
+                        self._archive.delete_file(
+                            container, conversation_id, normalized_path
+                        )
 
         await asyncio.to_thread(delete)
         await asyncio.to_thread(self._touch_user, user_id)
@@ -590,20 +611,18 @@ class DockerSandboxManager:
 
         def delete() -> None:
             """删除会话工作区并更新 UID 注册表。"""
-            with (
-                self._ownership.conversation_maintenance(
-                    user_id,
-                    conversation_id,
-                ),
-                self._ownership.user_mutation(user_id),
+            with self._ownership.conversation_maintenance(
+                user_id,
+                conversation_id,
             ):
                 self._ownership.mark_conversation_deleted(
                     user_id,
                     conversation_id,
                 )
-                container = self._get_existing_container_sync(user_id)
+                container = self._get_running_storage_container_sync(user_id)
                 if container is not None:
-                    self._archive.delete_conversation(container, conversation_id)
+                    with self._ownership.user_mutation(user_id):
+                        self._archive.delete_conversation(container, conversation_id)
 
         await asyncio.to_thread(delete)
         await asyncio.to_thread(self._touch_user, user_id)

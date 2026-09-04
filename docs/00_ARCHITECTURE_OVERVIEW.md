@@ -2,8 +2,6 @@
 
 DataAgent 后端接收已认证用户的数据问题，由 Planner 动态调度数据探索、数据分析和结果审查 Agent，最终返回文字结论与可下载产物。系统围绕四项核心能力展开：受控访问数据、理解业务元数据、执行多 Agent 分析、持久化和清理运行资源。
 
-本文覆盖后端应用、配置、基础服务、开发脚本和测试，不包含 `dbmock` 与 `web`。整套文档目录见[后端文档大纲](./README.md)。
-
 ## 1. 系统总体架构
 
 ```mermaid
@@ -24,7 +22,7 @@ flowchart TD
     E --> FILES["专业 Agent 通用沙箱工具<br/>read_file · write_file · edit_file<br/>shell · list_shell_jobs · get_shell_job · cancel_shell_job<br/>view_image（按模型能力提供）"]
     N --> FILES
     R --> FILES
-    P --> PFILES["Planner 沙箱工具（只读使用约束）<br/>read_file · shell · list_shell_jobs<br/>get_shell_job · cancel_shell_job<br/>view_image（按模型能力提供）"]
+    P --> PFILES["Planner 沙箱工具<br/>read_file · shell（提示词要求只读） · list_shell_jobs<br/>get_shell_job · cancel_shell_job<br/>view_image（按模型能力提供）"]
 
     RECALL --> M[metadata<br/>元数据与语义召回]
     RECALL --> Q[query<br/>只读 SQL 与查询经验]
@@ -206,7 +204,8 @@ dataagent/
 
   - 直接读取 Doris 中的实时行策略。
   - 支持创建和删除 Row Policy。
-  - 创建时校验目标表、字段、谓词结构和返回类型。
+  - 创建时去除首尾空白，并确认输入按 Doris 方言只能解析出一条 SQL 语句。
+  - 目标表、字段和表达式的最终有效性由 Doris 执行 `CREATE ROW POLICY` 时检查。
   - 策略变化后轮换授权代次。
   - 跨存储操作失败时尝试补偿。
 - **查询身份安全检查**
@@ -273,7 +272,8 @@ dataagent/
 - **字段取值索引**
 
   - 全量同步时使用新 generation 分批写入 Doris distinct value。
-  - 全量同步成功后原子切换 generation，并删除旧 generation。
+  - 新值写入后先删除 Elasticsearch 中的旧 generation，再用 PostgreSQL 条件更新提交当前 generation。
+  - Elasticsearch 与 PostgreSQL 之间没有跨库原子事务，失败状态保留已提交的旧 generation。
   - 增量同步使用固定上界、游标和回看窗口补充变化值。
   - 运行失败时保留旧 generation，并记录可恢复的失败状态。
 - **语义资源召回**
@@ -294,7 +294,7 @@ dataagent/
 
   - Explorer 使用稳定 `query` 创建和追加召回上下文。
   - 同一 query 的字段、字段值、指标和表关系按业务主键累计合并。
-  - 查询经验按缓存时间、角色和授权代次刷新。
+  - 查询经验缓存 1 天；角色或授权代次变化时立即重新查询。
   - 将查询经验与语义召回结果共同保存为快照。
 - **上下文查询、合并与删除**
 
@@ -375,11 +375,11 @@ dataagent/
   - 空闲达到阈值后依次停止和删除 Container。
   - Container 回收后保留用户 Volume。
   - Conversation 删除只移除对应目录和 UID 注册。
-  - 用户注销时删除 Container、Volume 和 Redis ownership 状态。
+  - 用户注销时删除 Container、Volume 和 Redis 活动时间，永久保留用户删除标记以拒绝迟到请求。
 - **Docker 安全边界**
 
   - 使用只读根文件系统和受限 tmpfs。
-  - Container 断网运行。
+  - 当前配置让 Container 断网运行；配置模型也允许显式使用 bridge 网络。
   - 移除 Linux capabilities 并启用 `no-new-privileges`。
   - 限制 CPU、内存和 PID。
   - Agent Skill 通过只读挂载提供。
@@ -495,11 +495,12 @@ dataagent/
   - 通过 SSE 返回完整消息、专业 Agent 活动、错误和完成事件。
 - **运行控制**
 
-  - 跟踪每个 Conversation 的活跃回合。
+  - 在当前 API 进程内跟踪每个 Conversation 的活跃回合、事件缓冲和订阅者。
   - 处理客户端断开和主动停止。
   - 处理服务关闭和运行时淘汰。
   - Planner Checkpoint 存在待执行节点时恢复同一回合。
   - 限制自动续写次数。
+  - 多 API Worker 部署需要把同一 Run 的启动、订阅、状态和停止请求路由到持有它的进程。
 - **模型与 Agent Runtime 装配**
 
   - 根据配置为 Planner 和各 Specialist 创建模型。
@@ -557,7 +558,7 @@ dataagent/
   - 专业 Agent 可以使用文件读取、写入和编辑工具。
   - 专业 Agent 可以创建和管理 Shell Job。
   - 模型支持图片输入时启用 `view_image`。
-  - Planner 的文件工具和 Shell 受到只读约束。
+  - Planner 只挂载文件读取工具；Shell 的只读要求由 Planner 提示词约束，后端不解析命令内容来强制只读。
   - Shell 命令可以在前台返回，也可以在超时后转为带 `job_id` 的后台任务。
   - 后台任务支持列出、查询和取消。
 - **Skill 与 MCP 扩展**
@@ -580,7 +581,8 @@ dataagent/
   - 使用条件更新保护用户手动修改的标题。
 - **Conversation 清理**
 
-  - 删除请求先取消当前运行并标记 Conversation。
+  - 删除请求先取消当前进程中的运行，再取得非阻塞数据库锁并标记 Conversation。
+  - 另一个 API 进程持有运行锁时，当前请求无法远程取消，接口返回 `conversation-busy` 的 409，调用方需要在该 Run 结束后重试。
   - 后台任务持久化删除墓碑。
   - 删除 Planner 与 Specialist Checkpoint。
   - 删除语义召回快照、沙箱目录和 Conversation 记录。
@@ -593,7 +595,7 @@ dataagent/
 
 - **注销请求受理**
 
-  - 由身份状态存储校验操作人和目标用户。
+  - 由注销服务校验操作人不能注销自己，再由身份状态存储校验目标用户和最后管理员约束。
   - 立即禁用目标账号。
   - 撤销目标用户的 Refresh Token。
   - 创建或复用 `pending` 的 `UserDeletionTask`。
@@ -615,7 +617,7 @@ dataagent/
   - 调用 `sandbox` 阻止用户发起新操作。
   - 等待现有操作结束。
   - 删除用户 Container 和 Named Volume。
-  - 删除 UID 注册和 Redis ownership 状态。
+  - 随 Volume 删除 UID 注册，清除 Redis 活动时间，并保留用户删除标记。
 - **身份数据完成**
 
   - 全部外部资源清理成功后删除认证 PostgreSQL 中的 User。
@@ -700,14 +702,14 @@ flowchart TD
 
 ## 5. HTTP 入口
 
-| 路径前缀                          | 所属模块                | 功能                                       |
-| --------------------------------- | ----------------------- | ------------------------------------------ |
-| `/api/v1/tasks`                   | `shared`                | Celery 任务状态查询                        |
-| `/api/v1/auth`                    | `identity`              | 登录、刷新、退出、改密和当前用户           |
-| `/api/v1/admin`                   | `identity` + `query`    | 用户、Doris 角色、数据权限与查询经验管理   |
-| `/api/v1/meta`                    | `metadata`              | 元数据目录、导入导出和索引任务提交         |
-| `/api/v1/chat/attachment`         | `sandbox` + `assistant` | 附件上传、获取与删除                       |
-| `/api/v1/chat`                    | `assistant`             | Conversation、消息、运行控制和 SSE 事件    |
+| 路径前缀                  | 所属模块                | 功能                                     |
+| ------------------------- | ----------------------- | ---------------------------------------- |
+| `/api/v1/tasks`           | `shared`                | Celery 任务状态查询                      |
+| `/api/v1/auth`            | `identity`              | 登录、刷新、退出、改密和当前用户         |
+| `/api/v1/admin`           | `identity` + `query`    | 用户、Doris 角色、数据权限与查询经验管理 |
+| `/api/v1/meta`            | `metadata`              | 元数据目录、导入导出和索引任务提交       |
+| `/api/v1/chat/attachment` | `sandbox` + `assistant` | 附件上传、获取与删除                     |
+| `/api/v1/chat`            | `assistant`             | Conversation、消息、运行控制和 SSE 事件  |
 
 ## 6. 数据与外部系统归属
 

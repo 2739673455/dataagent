@@ -35,3 +35,11 @@ class ConversationRunConflictError(ProblemError):
     type = "conversation-run-already-active"
     title = "对话正在执行"
     status = HTTPStatus.CONFLICT
+
+
+class ConversationBusyError(ProblemError):
+    """表示目标对话正在运行或执行生命周期操作。"""
+
+    type = "conversation-busy"
+    title = "对话正在处理中"
+    status = HTTPStatus.CONFLICT
