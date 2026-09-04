@@ -1218,3 +1218,139 @@ class DockerSandboxManager:
         await asyncio.to_thread(delete)
         await asyncio.to_thread(self._touch_user, user_id)
 ```
+
+### 7. 删除会话、删除用户和关闭管理器
+
+删除会话时会先写入永久删除标记，再检查用户的 Container 或 Volume 是否存在。只要持久化 Volume 还在，`_get_running_storage_container_sync()` 就会通过运行时池取得一个可执行命令的 Container；原 Container 已停止时会先重新启动，因此不会再对停止状态的 Container 直接调用 `exec_run()`。
+
+删除用户的范围更大：强制删除 Container 和 Volume，最后清理可过期的 Redis 状态。用户删除标记会继续保留，用来拒绝迟到请求。
+
+```python
+class DockerSandboxManager:
+    """管理每个用户唯一的本地 Docker 沙箱。"""
+
+    def _get_running_storage_container_sync(self, user_id: int) -> Container | None:
+        """为已有沙箱数据取得可执行命令的运行中容器。"""
+        container = self._get_existing_container_sync(user_id)
+        if container is None and self._get_existing_volume_sync(user_id) is None:
+            return None
+        self._touch_user(user_id)
+        return self._runtime_pool.get_running(user_id)
+
+    async def delete_conversation(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+    ) -> None:
+        """删除用户沙箱中的会话目录。"""
+        await self.init()
+
+        def delete() -> None:
+            """删除会话工作区并更新 UID 注册表。"""
+            with self._ownership.conversation_maintenance(
+                user_id,
+                conversation_id,
+            ):
+                self._ownership.mark_conversation_deleted(
+                    user_id,
+                    conversation_id,
+                )
+                container = self._get_running_storage_container_sync(user_id)
+                if container is not None:
+                    with self._ownership.user_mutation(user_id):
+                        self._archive.delete_conversation(container, conversation_id)
+
+        await asyncio.to_thread(delete)
+        await asyncio.to_thread(self._touch_user, user_id)
+
+    async def delete_user_sandbox(self, user_id: int) -> None:
+        """删除用户容器及其持久化数据卷。"""
+        await self.init()
+
+        def delete() -> None:
+            """删除用户容器和持久化数据卷。"""
+            with (
+                self._ownership.user_maintenance(user_id),
+                self._ownership.capacity(),
+                self._ownership.user_mutation(user_id),
+            ):
+                self._ownership.mark_user_deleted(user_id)
+                client = self._get_client()
+                with suppress(NotFound):
+                    client.containers.get(self._container_name(user_id)).remove(
+                        force=True
+                    )
+                with suppress(NotFound):
+                    client.volumes.get(self._volume_name(user_id)).remove(force=True)
+
+        await asyncio.to_thread(delete)
+        await asyncio.to_thread(self._ownership.forget_user, user_id)
+```
+
+空闲清理会隔离每个用户的失败。FastAPI 主进程关闭时，最后一个运行时可以终止残留 Container；Celery 等短生命周期管理器调用 `disconnect()`，只释放本进程持有的连接和租约，不会停止仍供其他进程使用的 Container。
+
+```python
+class DockerSandboxManager:
+    """管理每个用户唯一的本地 Docker 沙箱。"""
+
+    async def _run_cleanup_cycle(self) -> None:
+        """执行一个带用户级错误隔离的清理周期。"""
+        errors: list[str] = []
+        try:
+            user_ids = await asyncio.to_thread(self._managed_user_ids_sync)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"资源发现失败: {exc}")
+            logger.exception("发现 Docker 沙箱资源失败")
+            self._record_cleanup_result(errors)
+            return
+
+        for user_id in user_ids:
+            try:
+                await asyncio.to_thread(self._runtime_pool.cleanup_idle, user_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"user_id={user_id}: {exc}")
+                logger.exception(f"清理 Docker 沙箱失败: user_id={user_id}")
+        self._record_cleanup_result(errors)
+
+    async def close(self) -> None:
+        """停止后台任务并关闭 Docker 客户端。"""
+        await self._close(finalize_containers=True)
+
+    async def disconnect(self) -> None:
+        """释放短生命周期管理器且保留运行中的沙箱容器。"""
+        await self._close(finalize_containers=False)
+
+    async def _close(self, *, finalize_containers: bool) -> None:
+        """按调用场景释放 Docker 管理资源。"""
+        cleanup_task = self._cleanup_task
+        self._cleanup_task = None
+        if cleanup_task is not None:
+            cleanup_task.cancel()
+            await asyncio.gather(cleanup_task, return_exceptions=True)
+        client = self._client
+
+        def release_runtime() -> None:
+            """释放运行时租约并按需终止残留容器。"""
+            if not self._ownership_started:
+                return
+            with self._ownership.release_runtime() as last_runtime:
+                if finalize_containers and last_runtime and client is not None:
+                    containers = client.containers.list(
+                        all=True,
+                        filters=self._container_filters(),
+                    )
+                    self._runtime_pool.finalize(containers)
+
+        try:
+            await asyncio.to_thread(release_runtime)
+        finally:
+            self._ownership_started = False
+            if client is not None:
+                self._client = None
+                await asyncio.to_thread(client.close)
+            await asyncio.to_thread(self._ownership.close)
+```

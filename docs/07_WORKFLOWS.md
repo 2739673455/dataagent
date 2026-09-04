@@ -507,3 +507,71 @@ def dispatch_due_user_deletions_task() -> dict[str, int]:
     """提交已到重试时间的用户注销任务。"""
     return {"dispatched_count": run_async(_dispatch_due_user_deletions())}
 ```
+
+### 5. API 受理和数据库租约领取
+
+管理员接口只负责原子受理注销请求。用户停用、Refresh Token 撤销和任务记录写入完成后即可返回 204，耗时的跨存储删除交给后台任务。
+
+```python
+@router.delete(
+    "/users/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_user(
+    user_id: int,
+    current_admin: AdminUserDep,
+    service: UserDeletionServiceDep,
+) -> Response:
+    """平台管理员删除指定用户。"""
+    await service.request_deletion(user_id, operator_id=current_admin.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+```
+
+周期补漏领取任务时使用 `FOR UPDATE SKIP LOCKED`。多个调度器可以同时扫描，已经被另一个事务锁定的任务会直接跳过；领取成功后把 `next_attempt_at` 推到租约结束时间，避免任务执行期间被重复提交。
+
+```python
+class IdentityPGRepo:
+    """身份认证和 Doris 角色配置数据访问。"""
+
+    async def claim_due_user_deletions(
+        self,
+        now: datetime,
+        *,
+        lease_until: datetime,
+        limit: int,
+    ) -> list[UserDeletionTask]:
+        """原子领取到期且未完成的用户注销任务。"""
+        result = await self._session.scalars(
+            select(UserDeletionTask)
+            .where(
+                UserDeletionTask.status == "pending",
+                UserDeletionTask.next_attempt_at <= now,
+            )
+            .order_by(UserDeletionTask.next_attempt_at, UserDeletionTask.user_id)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        tasks = list(result)
+        for task in tasks:
+            task.next_attempt_at = lease_until
+        await self._session.flush()
+        return tasks
+
+    async def extend_user_deletion_claim(
+        self,
+        user_id: int,
+        *,
+        lease_until: datetime,
+    ) -> bool:
+        """延长一个未完成用户注销任务的领取租约。"""
+        task = await self._session.get(
+            UserDeletionTask,
+            user_id,
+            with_for_update=True,
+        )
+        if task is None or task.status == "completed":
+            return False
+        task.next_attempt_at = lease_until
+        await self._session.flush()
+        return True
+```

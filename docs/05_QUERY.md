@@ -1180,3 +1180,113 @@ async def delete_query_experience(
             text(f"SET exec_mem_limit = {limits.memory_limit_bytes}")
         )
 ```
+
+### 10. 查询经验返回前重新核对版本和权限
+
+Elasticsearch 只负责快速找候选。真正返回给 Agent 前，服务会回 PostgreSQL 检查经验状态、授权代次和资产版本；元数据已经变化的经验会被停用并重新提交索引任务。最后还会用当前用户的资产策略逐条过滤，避免旧索引结果越权。
+
+```python
+class QueryExperienceRecallService:
+    """检索经过当前权限和元数据版本复核的查询经验。"""
+
+    async def recall(
+        self,
+        *,
+        role_name: str,
+        authorization_epoch: UUID,
+        policy: AssetAccessPolicy,
+        query: str,
+        limit: int,
+    ) -> QueryExperienceRecall:
+        """按混合语义排名检索查询经验。"""
+        semantic_recall = await self._semantic_recall(
+            query,
+            role_name=role_name,
+            authorization_epoch=authorization_epoch,
+        )
+        if semantic_recall.status == "failed":
+            return QueryExperienceRecall(status="failed", results=[])
+        semantic_ranks = semantic_recall.ranks
+        async with self._repo.session.begin():
+            experiences = await self._repo.get_many(
+                list(semantic_ranks),
+                role_name=role_name,
+                authorization_epoch=authorization_epoch,
+            )
+            current_versions = await self._repo.current_asset_versions(experiences)
+            invalid_revisions = {
+                experience.id: experience.revision
+                for experience in experiences
+                if experience.status != "active"
+            }
+            stale_ids = {
+                experience.id
+                for experience in experiences
+                if experience.status == "active"
+                and any(
+                    current_versions.get(asset.resource_key) != asset.meta_version
+                    for asset in experience.assets
+                )
+            }
+            invalid_revisions.update(
+                await self._repo.disable_for_metadata_change(stale_ids)
+            )
+            experiences = [
+                experience
+                for experience in experiences
+                if experience.id not in invalid_revisions
+            ]
+        for experience_id, revision in invalid_revisions.items():
+            self._index_scheduler.enqueue(experience_id, revision)
+        authorization_filter = MetadataAuthorizationFilter(
+            policy,
+            self._data_source,
+            self._database_name,
+        )
+        ordered_experiences = sorted(
+            experiences,
+            key=lambda item: (-semantic_ranks[item.id], item.id.hex),
+        )
+        results = [
+            result
+            for experience in ordered_experiences
+            if (result := self._to_recall_result(experience, authorization_filter))
+            is not None
+        ][:limit]
+        return QueryExperienceRecall(
+            status=semantic_recall.status,
+            results=results,
+        )
+
+    @staticmethod
+    def _to_recall_result(
+        experience: QueryExperience,
+        authorization_filter: MetadataAuthorizationFilter,
+    ) -> QueryExperienceRecallResult | None:
+        """将已通过有效性检查的经验转换为模型可用结果。"""
+        assets = [
+            QueryAssetSnapshot(
+                kind=cast(QueryAssetKind, asset.kind),
+                database=asset.database_name,
+                table=asset.table_name,
+                column=asset.column_name,
+                meta_version=asset.meta_version,
+            )
+            for asset in sorted(
+                experience.assets,
+                key=lambda item: (
+                    item.kind,
+                    item.table_name,
+                    item.column_name or "",
+                ),
+            )
+        ]
+        if not authorization_filter.query_experience_is_allowed(assets):
+            return None
+        return QueryExperienceRecallResult(
+            id=experience.id,
+            purpose=experience.purposes[-1],
+            sql_template=experience.sql_template,
+            assets=assets,
+        )
+```

@@ -1126,3 +1126,851 @@ class ConversationRunService:
                 continue
         raise RuntimeError("当前 Conversation 的 Session 数量已达上限")
 ```
+
+### 8. 根据配置创建模型客户端
+
+所有 Agent 都从同一个入口创建模型。这里把模型能力写入 `profile`，图片工具和附件中间件会读取该能力；Responses、OpenRouter 和普通聊天协议在这里分流。请求级重试关闭，由上层运行逻辑决定是否重试整个步骤。
+
+```python
+def create_configured_model(model_name: str) -> BaseChatModel:
+    """按配置名称创建聊天模型。"""
+    try:
+        model_cfg = app_config.cfg.lm_config.models[model_name]
+    except KeyError as exc:
+        raise ValueError(f"未知的语言模型配置: {model_name}") from exc
+    register_harness_profile(
+        f"{model_cfg.model_provider}:{model_cfg.model}",
+        HarnessProfile(
+            general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
+        ),
+    )
+    profile = cast(
+        ModelProfile,
+        {
+            **model_cfg.profile.model_dump(),
+            "image_tool_message": model_cfg.api_protocol == "responses"
+            and model_cfg.profile.image_inputs,
+        },
+    )
+    model_kwargs = {
+        **model_cfg.params,
+        "model": model_cfg.model,
+        "base_url": model_cfg.base_url,
+        "api_key": model_cfg.api_key.get_secret_value(),
+        "profile": profile,
+        "max_retries": 0,
+        "streaming": True,
+    }
+    if model_cfg.api_protocol == "responses":
+        model_class = (
+            DataAgentDeepSeekResponses
+            if model_cfg.model_provider == "deepseek"
+            else DataAgentResponses
+        )
+        return model_class(
+            **model_kwargs,
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+            use_responses_api=True,
+            output_version="responses/v1",
+            store=False,
+            use_previous_response_id=False,
+        )
+    if model_cfg.model_provider == "openrouter":
+        # ChatOpenRouter 将 timeout 原样映射到毫秒制 timeout_ms。
+        return ChatOpenRouter(
+            **model_kwargs,
+            timeout=_REQUEST_TIMEOUT_SECONDS * 1000,
+        )
+    return init_chat_model(
+        model_provider=model_cfg.model_provider,
+        **model_kwargs,
+        timeout=_REQUEST_TIMEOUT_SECONDS,
+    )
+```
+
+### 9. Shell Job 与图片查看工具
+
+四个 Shell 工具共享当前 Agent Run 的 `ShellJobRuntime`。`shell` 启动命令；命令转入后台后，另外三个工具负责列出、等待和取消。工具只做协议转换，任务归属、输出文件、一次性终态和进程组终止都由 Runtime 处理。
+
+```python
+def create_shell_tools(runtime: ShellJobRuntime) -> tuple[BaseTool, ...]:
+    """创建绑定当前 Agent Run Registry 的四个 Shell 工具。"""
+
+    @tool("shell")
+    async def shell(
+        runtime_context: ToolRuntime,
+        command: Annotated[
+            str,
+            Field(
+                min_length=1,
+                description=(
+                    "在当前 Session 工作目录执行的 Shell 命令；相对路径从该目录"
+                    "解析，绝对路径直接使用。"
+                ),
+            ),
+        ],
+    ) -> str | dict[str, Any]:
+        """运行 Shell 命令；前台截断输出附带路径，超时后返回后台 job_id。"""
+        del runtime_context
+        result = await runtime.start(command)
+        return result if isinstance(result, str) else _dump(result)
+
+    @tool("list_shell_jobs")
+    async def list_shell_jobs(
+        runtime_context: ToolRuntime,
+    ) -> list[dict[str, Any]]:
+        """列出当前 Agent Run 尚未消费的后台 Shell Job。"""
+        del runtime_context
+        return [_dump(item) for item in runtime.list()]
+
+    @tool("get_shell_job")
+    async def get_shell_job(
+        runtime_context: ToolRuntime,
+        job_id: Annotated[str, Field(min_length=1, description="shell 返回的 job_id")],
+        wait_seconds: Annotated[
+            float,
+            Field(
+                ge=0,
+                le=SHELL_JOB_MAX_STATUS_WAIT_SECONDS,
+                description="最多等待任务结束的秒数，范围 0 到 60，0 表示立即返回",
+            ),
+        ] = 0,
+    ) -> dict[str, Any]:
+        """查看或短暂等待 Shell Job；完整输出在 output_path，终态仅可读取一次。"""
+        del runtime_context
+        return _dump(await runtime.get(job_id, wait_seconds=wait_seconds))
+
+    @tool("cancel_shell_job")
+    async def cancel_shell_job(
+        runtime_context: ToolRuntime,
+        job_id: Annotated[str, Field(min_length=1, description="shell 返回的 job_id")],
+    ) -> dict[str, Any]:
+        """取消一个 Shell Job，并终止命令所属的整个进程组；终态会被消费。"""
+        del runtime_context
+        return _dump(await runtime.cancel(job_id))
+
+    return shell, list_shell_jobs, get_shell_job, cancel_shell_job
+```
+
+`view_image` 的持久化结果只有规范化路径。下一次模型请求到来时，消息中间件读取图片并生成临时图片内容块，Checkpoint 中不会保存 base64。
+
+```python
+class ImageViewRequest(StrictProtocolModel):
+    """请求附件 Middleware 在下一次模型调用前临时加载一张图片。"""
+
+    type: Literal["image_view_request"] = "image_view_request"
+    f_path: NonEmptyText
+
+    @field_validator("f_path")
+    @classmethod
+    def validate_sandbox_path(cls, value: str) -> str:
+        """按文件工具规则规范化相对路径或绝对路径。"""
+        return normalize_sandbox_path(value)
+
+
+def _create_view_image_tool() -> BaseTool:
+    """创建图片查看请求工具。
+
+    工具结果只持久化图片路径。UserMessageContextMiddleware 会在下一次
+    模型调用前读取该请求，把图片内容临时投影到 ToolMessage 副本中，避免
+    base64 图片进入 LangGraph Checkpoint。
+    """
+
+    @tool(IMAGE_VIEW_TOOL_NAME)
+    def view_image(
+        f_path: Annotated[
+            NonEmptyText,
+            "图片路径；相对路径从当前 Session 工作目录解析，绝对路径直接使用。",
+        ],
+    ) -> dict[str, object]:
+        """请求加载沙箱内的图片。"""
+        try:
+            normalized_path = normalize_sandbox_path(f_path)
+        except SandboxPathError:
+            return {
+                "status": "error",
+                "code": "invalid_path",
+                "path": f_path,
+            }
+        if not is_supported_image_path(normalized_path):
+            return {
+                "status": "error",
+                "code": "unsupported_image_type",
+                "path": normalized_path,
+            }
+        return ImageViewRequest(f_path=normalized_path).model_dump(mode="json")
+
+    return view_image
+
+
+def create_view_image_tools(model: BaseChatModel) -> tuple[BaseTool, ...]:
+    """为支持图片工具结果的模型提供工作区图片查看工具。"""
+    if not supports_view_image_tool(model):
+        return ()
+    return (_create_view_image_tool(),)
+```
+
+Planner 的另外两个 Session 工具同样只做参数校验、调用服务和稳定错误转换：
+
+```python
+def create_list_sessions_tool(service: AgentSessionService) -> BaseTool:
+    """创建绑定当前用户 Conversation 的 Session 查询 Tool。"""
+
+    @tool("list_sessions")
+    async def list_sessions(
+        runtime: ToolRuntime,
+        analysis_id: Annotated[
+            str | None,
+            "可选分析标识；省略时查询当前 Conversation 的全部专业 Session",
+        ] = None,
+    ) -> dict[str, object]:
+        """查询已有专业 Agent Session 的最新持久化状态。"""
+        del runtime
+        try:
+            request = ListSessionsRequest(analysis_id=analysis_id)
+        except ValidationError as exc:
+            return {
+                "status": "error",
+                "code": "invalid_list_sessions_request",
+                "message": "Session 查询请求无效",
+                "details": exc.errors(include_url=False),
+            }
+        try:
+            result = await service.list_sessions(request.analysis_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("查询专业 Agent Session 失败")
+            return {
+                "status": "error",
+                "code": "list_sessions_failed",
+                "message": "Session 查询失败",
+                "details": [
+                    {
+                        "type": type(exc).__name__,
+                        "msg": str(exc).strip() or "异常未提供详情",
+                    }
+                ],
+            }
+        return result.model_dump(mode="json")
+
+    return list_sessions
+
+
+def create_delete_session_tool(service: AgentSessionService) -> BaseTool:
+    """创建绑定当前用户 Conversation 的 Session 删除 Tool。"""
+
+    @tool("delete_session")
+    async def delete_session(
+        analysis_id: Annotated[str, "待删除 Session 所属分析标识"],
+        agent_type: Annotated[AgentType, "待删除的专业 Agent 类型"],
+        session_id: Annotated[str, "待删除的专业 Session 标识"],
+    ) -> dict[str, object]:
+        """幂等删除专业 Agent Session 的 Checkpoint 和沙箱资源。"""
+        try:
+            request = DeleteSessionRequest(
+                analysis_id=analysis_id,
+                agent_type=agent_type,
+                session_id=session_id,
+            )
+        except ValidationError as exc:
+            return {
+                "status": "error",
+                "code": "invalid_delete_session_request",
+                "message": "Session 删除请求无效",
+                "details": exc.errors(include_url=False),
+            }
+        try:
+            result = await service.delete_session(request)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("删除专业 Agent Session 失败")
+            return {
+                "status": "error",
+                "code": "delete_session_failed",
+                "message": "Session 删除失败",
+                "details": [
+                    {
+                        "type": type(exc).__name__,
+                        "msg": str(exc).strip() or "异常未提供详情",
+                    }
+                ],
+            }
+        return result.model_dump(mode="json")
+
+    return delete_session
+```
+
+### 10. Explorer 语义召回与 SQL 工具
+
+五个语义召回工具保持薄封装，只负责声明模型可见的参数和把运行配置交给召回处理器。稳定 `query`、结果合并、删除选择器、权限复核和快照持久化都集中在处理器与 Metadata 服务中。
+
+```python
+def create_semantic_recall_tools() -> list[BaseTool]:
+    """创建只负责协议转换的 Explorer 语义召回工具。"""
+
+    @tool
+    async def recall_context(
+        runtime: ToolRuntime,
+        query: Annotated[
+            str,
+            (
+                "当前会话内召回上下文的稳定业务键。后续补充检索必须原样复用，"
+                "只调整 terms 和 resource_types"
+            ),
+        ],
+        resource_types: Annotated[
+            list[Literal["column", "metric", "value"]],
+            "需要检索的字段、指标或字段值资源类型，可多选",
+        ],
+        terms: Annotated[
+            list[str],
+            "用于检索的业务词或同义词，至少 1 个且最多 20 个",
+        ],
+        limit_per_type: Annotated[int, "每类候选的最大数量，范围 1 到 20"] = 5,
+    ) -> dict[str, Any]:
+        """按稳定 query 累计召回语义资源和历史 SQL 经验。"""
+        return await semantic_recall_handler.recall_context(
+            runtime.config,
+            query,
+            resource_types,
+            terms,
+            limit_per_type,
+        )
+
+    @tool
+    async def list_recalls(
+        runtime: ToolRuntime,
+        limit: Annotated[int, "返回最近记录的数量，范围 1 到 100"] = 20,
+    ) -> dict[str, Any]:
+        """列出当前会话中每个 query 的最新累计召回记录。"""
+        return await semantic_recall_handler.list_recalls(runtime.config, limit)
+
+    @tool
+    async def get_recall(
+        runtime: ToolRuntime,
+        query: Annotated[
+            str,
+            "需要读取的稳定 query，必须与 recall_context 使用的 query 完全一致",
+        ],
+    ) -> dict[str, Any]:
+        """按 query 读取当前会话的最新累计召回记录。"""
+        return await semantic_recall_handler.get_recall(runtime.config, query)
+
+    @tool
+    async def merge_recalls(
+        runtime: ToolRuntime,
+        target_query: Annotated[str, "接收累计结果并保留的目标 query"],
+        source_query: Annotated[str, "提供结果并在合并后删除的来源 query"],
+    ) -> dict[str, Any]:
+        """合并来源 query 的语义资源并删除来源。"""
+        return await semantic_recall_handler.merge_recalls(
+            runtime.config,
+            target_query,
+            source_query,
+        )
+
+    @tool
+    async def delete_recalls(
+        runtime: ToolRuntime,
+        deletions: Annotated[
+            list[SemanticRecallResourceDeletion],
+            (
+                "待删除的 query 上下文树。未提供资源选择器时删除整个 query；"
+                "同一 query 在一次调用中只能出现一次"
+            ),
+        ],
+    ) -> dict[str, Any]:
+        """删除当前会话 query 的全部上下文或其中指定资源。"""
+        return await semantic_recall_handler.delete_recalls(runtime.config, deletions)
+
+    return [
+        recall_context,
+        list_recalls,
+        get_recall,
+        merge_recalls,
+        delete_recalls,
+    ]
+```
+
+`execute_sql` 从工具运行配置构造完整的 Agent Session 标识，调用 Query 模块完成身份解析、SQL Guard、只读执行、CSV 导出和审计记录。已知业务错误会转换成模型可处理的稳定错误码。
+
+```python
+async def _execute_sql(
+    handler: QueryExecutionHandler,
+    runtime: ToolRuntime,
+    sql: Annotated[str, "需要执行的单条 Doris 只读 SQL"],
+    purpose: Annotated[str | None, "本次 SQL 要解决的具体数据问题"] = None,
+) -> dict[str, Any]:
+    """安全执行只读 SQL，将完整结果写入当前会话 CSV 并返回紧凑摘要。"""
+    session_key: AgentSessionKey | None = None
+    try:
+        session_key = _get_query_session(runtime)
+        result = await handler.execute(
+            session_key,
+            sql,
+            purpose=_query_purpose(runtime, purpose),
+            tool_call_id=runtime.tool_call_id,
+        )
+    except QueryRejectedError as exc:
+        logger.warning(
+            "只读查询在执行前被拒绝: "
+            f"conversation_id={session_key.conversation_id if session_key else None}, "
+            f"issue_count={len(exc.result.issues)}"
+        )
+        return {
+            "status": "error",
+            "code": "sql_validation_failed",
+            "message": "SQL 在提交 Doris 执行前未通过校验",
+            "hint": "请根据 validation.issues 修正 SQL，然后再次调用 execute_sql",
+            "validation": exc.result.model_dump(mode="json"),
+        }
+    except QueryExecutionTimeoutError as exc:
+        logger.warning(
+            "只读查询执行超时: "
+            f"conversation_id={session_key.conversation_id if session_key else None}, "
+            f"error_type={type(exc).__name__}"
+        )
+        return {
+            "status": "error",
+            "code": "query_timeout",
+            "message": str(exc),
+            "details": _error_details(exc),
+        }
+    except QueryResultShapeError as exc:
+        logger.warning(
+            "只读查询结果结构无效: "
+            f"conversation_id={session_key.conversation_id if session_key else None}, "
+            f"error_type={type(exc).__name__}"
+        )
+        return {
+            "status": "error",
+            "code": "query_result_invalid",
+            "message": str(exc),
+            "details": _error_details(exc),
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "只读查询工具执行失败: "
+            f"conversation_id={session_key.conversation_id if session_key else None}"
+        )
+        return {
+            "status": "error",
+            "code": "readonly_query_failed",
+            "message": "只读查询执行失败",
+            "details": _error_details(exc),
+        }
+    return {"status": "success", **result.model_dump(mode="json")}
+
+
+def create_execute_sql_tool(handler: QueryExecutionHandler) -> BaseTool:
+    """使用查询用例处理器构建只读 SQL 工具。"""
+
+    @tool("execute_sql")
+    async def execute_sql_tool(
+        runtime: ToolRuntime,
+        sql: Annotated[str, "需要执行的单条 Doris 只读 SQL"],
+        purpose: Annotated[str | None, "本次 SQL 要解决的具体数据问题"] = None,
+    ) -> dict[str, Any]:
+        """安全执行只读 SQL 并写入会话产物。"""
+        return await _execute_sql(
+            handler,
+            runtime,
+            sql,
+            purpose,
+        )
+
+    return execute_sql_tool
+```
+
+### 11. 用户附件和 `view_image` 的临时图片投影
+
+每次调用模型前，中间件根据模型能力分别决定是否加载用户附件图片和 `view_image` 请求。两类图片共用下载、base64 编码和临时消息副本机制。真实 Checkpoint 继续保存附件相对路径或工具请求路径。
+
+```python
+def _download_paths(
+    messages: list[AnyMessage],
+    *,
+    conversation_dir: str,
+    load_user_images: bool,
+    load_tool_images: bool,
+) -> list[str]:
+    """收集本次模型调用需要临时加载的去重图片路径。"""
+    paths: list[str] = []
+    if load_user_images:
+        for message in messages:
+            if not isinstance(message, HumanMessage):
+                continue
+            context = _read_attachments(message)
+            if context is not None:
+                paths.extend(
+                    _model_workspace_path(item.f_path, conversation_dir)
+                    for item in context.attachments
+                    if is_supported_image_path(item.f_path)
+                )
+    if load_tool_images:
+        paths.extend(
+            image_request.f_path
+            for message in messages
+            if isinstance(message, ToolMessage)
+            and (image_request := _read_image_view_request(message)) is not None
+        )
+    return list(dict.fromkeys(paths))
+
+
+def _project_messages(
+    messages: list[AnyMessage],
+    responses: Sequence[FileDownloadResponse],
+    *,
+    conversation_dir: str,
+    project_user_images: bool,
+    project_tool_images: bool,
+) -> list[AnyMessage]:
+    """将私有消息上下文和已加载图片投影到本次模型请求。"""
+    downloaded = _downloaded_content(responses)
+    projected: list[AnyMessage] = []
+    for message in messages:
+        if isinstance(message, HumanMessage):
+            projected.append(
+                _project_human_message(
+                    message,
+                    downloaded,
+                    conversation_dir=conversation_dir,
+                    project_user_images=project_user_images,
+                )
+            )
+            continue
+        if project_tool_images and isinstance(message, ToolMessage):
+            image_request = _read_image_view_request(message)
+            if image_request is not None:
+                response = downloaded.get(image_request.f_path)
+                view_content: list[dict[str, Any]] = [
+                    {
+                        "type": "text",
+                        "text": f"图片路径：`{image_request.f_path}`",
+                    }
+                ]
+                if response is not None and response.content is not None:
+                    view_content.append(
+                        _image_content_block(image_request.f_path, response.content)
+                    )
+                else:
+                    view_content.append(
+                        _image_view_error_block(
+                            image_request.f_path,
+                            str(response.error)
+                            if response is not None
+                            else "unavailable",
+                        )
+                    )
+                projected.append(
+                    message.model_copy(update={"content": cast(Any, view_content)})
+                )
+                continue
+        projected.append(message)
+    return projected
+
+
+def _image_projection_options(request: ModelRequest[Any]) -> tuple[bool, bool]:
+    """计算用户消息图片和工具图片的投影策略。"""
+    profile = request.model.profile
+    return (
+        bool(profile and profile.get("image_inputs")),
+        supports_view_image_tool(request.model),
+    )
+
+
+class UserMessageContextMiddleware(AgentMiddleware[Any, Any, Any]):
+    """持久化并投影用户接收时间、附件、图片和 Shell Job 上下文。"""
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest[Any],
+        handler: Callable[[ModelRequest[Any]], ModelResponse[Any]],
+    ) -> ModelResponse[Any]:
+        """同步读取当前需要查看的图片并投影模型请求。"""
+        user_images, tool_images = _image_projection_options(request)
+        paths = _download_paths(
+            request.messages,
+            conversation_dir=self._conversation_dir,
+            load_user_images=user_images,
+            load_tool_images=tool_images,
+        )
+        responses = self._backend.download_files(paths) if paths else []
+        messages = _project_messages(
+            request.messages,
+            responses,
+            conversation_dir=self._conversation_dir,
+            project_user_images=user_images,
+            project_tool_images=tool_images,
+        )
+        if all(
+            projected is original
+            for projected, original in zip(messages, request.messages, strict=True)
+        ):
+            return handler(request)
+        return handler(request.override(messages=messages))
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest[Any],
+        handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
+    ) -> ModelResponse[Any]:
+        """异步读取当前需要查看的图片并投影模型请求。"""
+        user_images, tool_images = _image_projection_options(request)
+        paths = _download_paths(
+            request.messages,
+            conversation_dir=self._conversation_dir,
+            load_user_images=user_images,
+            load_tool_images=tool_images,
+        )
+        responses = await self._backend.adownload_files(paths) if paths else []
+        messages = _project_messages(
+            request.messages,
+            responses,
+            conversation_dir=self._conversation_dir,
+            project_user_images=user_images,
+            project_tool_images=tool_images,
+        )
+        if all(
+            projected is original
+            for projected, original in zip(messages, request.messages, strict=True)
+        ):
+            return await handler(request)
+        return await handler(request.override(messages=messages))
+```
+
+### 12. Run 停止、结束和慢订阅者处理
+
+SSE 连接只负责消费事件。客户端断线会从订阅集合移除自己的队列，后台 Run 继续执行。显式停止会同时设置协作取消事件并取消 asyncio Task。Run 正常结束、主动取消或抛出异常后都会执行 `_finish()`，发送 `done` 并移除进程内注册。
+
+```python
+class ConversationRunService:
+    """后台执行 Planner Run，并向任意数量的 SSE 连接发布事件。"""
+
+    async def stop(self, user_id: int, conversation_id: UUID) -> bool:
+        """显式停止指定 Conversation 的 Planner Run。"""
+        async with self._lock:
+            run = self._runs.get((user_id, conversation_id))
+            if run is None or run.task is None or run.task.done():
+                return False
+            run.cancel.set()
+            task = run.task
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        return True
+
+    async def _execute(
+        self,
+        key: ConversationRunKey,
+        run: _ConversationRun,
+        user_message: chat_schema.UserMessageRequest | None,
+    ) -> None:
+        """执行新回合或恢复回合，并把结果发布给全部订阅者。"""
+        user_id, conversation_id = key
+        responses = (
+            chat_service.run_agent_turn(
+                self._agents,
+                self._files,
+                user_id,
+                conversation_id,
+                user_message,
+                run.cancel,
+            )
+            if user_message is not None
+            else chat_service.resume_agent_turn(
+                self._agents,
+                self._files,
+                user_id,
+                conversation_id,
+                run.cancel,
+            )
+        )
+        try:
+            async for event in responses:
+                await self._publish(run, event)
+        except asyncio.CancelledError:
+            logger.info(f"智能体执行已停止: conversation_id={conversation_id}")
+        except Exception:  # noqa: BLE001
+            logger.exception(f"智能体执行异常: conversation_id={conversation_id}")
+            await self._publish(
+                run,
+                chat_schema.ChatStreamErrorEvent(
+                    type="error",
+                    content="模型调用失败，请稍后重试。",
+                ),
+            )
+        finally:
+            run.cancel.set()
+            try:
+                await responses.aclose()
+            finally:
+                await self._finish(key, run)
+
+    async def _finish(self, key: ConversationRunKey, run: _ConversationRun) -> None:
+        """结束 Run 并通知订阅者关闭事件流。"""
+        done = chat_schema.ChatStreamDoneEvent(type="done")
+        async with self._lock:
+            if self._runs.get(key) is run:
+                self._runs.pop(key, None)
+            self._cache_event(run, done)
+            subscribers = tuple(run.subscribers)
+        for queue in subscribers:
+            if not self._offer_event(queue, done) or not self._offer_event(queue, None):
+                await self._drop_slow_subscriber(run, queue)
+
+    async def _drop_slow_subscriber(
+        self,
+        run: _ConversationRun,
+        queue: asyncio.Queue[RunEvent | None],
+    ) -> None:
+        """断开无法跟上实时事件的订阅者，避免其占用无界内存。"""
+        async with self._lock:
+            if queue not in run.subscribers:
+                return
+            run.subscribers.discard(queue)
+        while not queue.empty():
+            queue.get_nowait()
+        queue.put_nowait(
+            chat_schema.ChatStreamErrorEvent(
+                type="error",
+                content="事件流消费速度过慢，请重新连接以恢复最新状态。",
+            )
+        )
+        queue.put_nowait(None)
+
+    async def _consume(
+        self,
+        run: _ConversationRun,
+        queue: asyncio.Queue[RunEvent | None],
+        replay: tuple[RunEvent, ...],
+    ) -> AsyncGenerator[RunEvent]:
+        """读取一次订阅；订阅取消只移除订阅者，不影响后台 Run。"""
+        try:
+            for event in replay:
+                yield event
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                yield event
+        finally:
+            async with self._lock:
+                run.subscribers.discard(queue)
+```
+
+### 13. 会话删除受理与跨存储物理清理
+
+API 删除阶段先取消当前进程里的执行，再尝试取得跨进程咨询锁并写入 `deletion_requested_at`。锁已被其他进程占用时，生命周期服务抛出会话忙异常，路由转换成 409。后台物理清理继续使用原始锁异常，让 Celery 自动重试。
+
+```python
+class ConversationLifecycleBusyError(RuntimeError):
+    """会话正在由其他执行单元运行或清理。"""
+
+
+class ConversationLifecycleService:
+    """统一删除会话状态、召回记录和沙箱文件。"""
+
+    @asynccontextmanager
+    async def lock(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+    ) -> AsyncGenerator[None]:
+        """获取跨进程会话生命周期锁。"""
+        async with self._lock_provider.advisory_lock(
+            conversation_lifecycle_lock_name(user_id, conversation_id),
+        ):
+            yield
+
+    async def request_conversation_deletion(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        *,
+        draft_only: bool = False,
+    ) -> bool:
+        """写入删除墓碑并使会话立即从接口中消失。"""
+        await self._agents.cancel_agent_execution(user_id, conversation_id)
+        try:
+            async with (
+                self.lock(user_id, conversation_id),
+                self._repository_factory() as repository,
+            ):
+                conversation = await repository.get(
+                    user_id,
+                    conversation_id,
+                    include_deleting=True,
+                )
+                if conversation is None:
+                    return False
+                if draft_only and not conversation.is_draft:
+                    return False
+                if conversation.deletion_requested_at is None:
+                    await repository.update(
+                        conversation,
+                        deletion_requested_at=datetime.now(UTC),
+                    )
+                return True
+        except AdvisoryLockBusyError as exc:
+            raise ConversationLifecycleBusyError(
+                "会话正在由其他执行单元运行或清理"
+            ) from exc
+
+    async def delete_conversation_resources(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        *,
+        draft_expired_before: datetime | None = None,
+        draft_only: bool = False,
+    ) -> bool:
+        """幂等删除一个会话的全部跨存储资源。"""
+        async with self.lock(user_id, conversation_id):
+            async with self._repository_factory() as repository:
+                conversation = await repository.get(
+                    user_id,
+                    conversation_id,
+                    include_deleting=True,
+                )
+            if conversation is None:
+                return False
+            if draft_only and not conversation.is_draft:
+                return False
+            if draft_expired_before is not None and (
+                not conversation.is_draft
+                or conversation.update_at > draft_expired_before
+            ):
+                return False
+
+            await self._agents.delete_agent_under_lifecycle_lock(
+                user_id,
+                conversation_id,
+            )
+            async with self._recall_cleaner_factory() as recall_cleaner:
+                await recall_cleaner.delete_all(user_id, conversation_id)
+            await self._sandbox.delete_conversation(user_id, conversation_id)
+            async with self._repository_factory() as repository:
+                await repository.delete(user_id, conversation_id)
+            return True
+```
+
+路由只处理“删除请求受理”阶段的业务错误映射：
+
+```python
+async def _request_deletion_or_raise(
+    lifecycle: ConversationLifecycleService,
+    user_id: int,
+    conversation_id: UUID,
+    *,
+    draft_only: bool = False,
+) -> bool:
+    """受理会话删除，并把锁冲突转换为稳定的业务错误。"""
+    try:
+        return await lifecycle.request_conversation_deletion(
+            user_id,
+            conversation_id,
+            draft_only=draft_only,
+        )
+    except ConversationLifecycleBusyError as exc:
+        raise chat_error.ConversationBusyError(
+            detail="对话正在运行或清理，请稍后重试",
+        ) from exc
+```

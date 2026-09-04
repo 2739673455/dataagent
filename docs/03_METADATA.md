@@ -1325,6 +1325,185 @@ async def _run_incremental_value_sync(
     )
 ```
 
+完整同步和增量同步都由同一套运行状态机包住。开始阶段在短事务中取得资源锁并记录 `run_id`；Doris 和 Elasticsearch 的慢 I/O 放在事务外；完成阶段重新加载配置和运行所有权，确认期间没有被其他修改覆盖；异常阶段只允许当前 `run_id` 写回失败状态。
+
+```python
+class MetadataIndexService:
+    """同步元数据语义索引与字段取值索引。"""
+
+    async def sync_column_values(
+        self,
+        column_keys: list[ColumnKey],
+        *,
+        mode: RequestedValueIndexSyncMode,
+    ) -> dict[ColumnKey, ValueIndexSyncResult]:
+        """按水位或全量校准模式同步多个字段取值。"""
+        results: dict[ColumnKey, ValueIndexSyncResult] = {}
+        for column_key in dict.fromkeys(column_keys):
+            results[column_key] = await self._sync_column_value_index(
+                *column_key,
+                requested_mode=mode,
+            )
+        return results
+
+    async def _sync_column_value_index(
+        self,
+        t_name: str,
+        c_name: str,
+        *,
+        requested_mode: RequestedValueIndexSyncMode,
+    ) -> ValueIndexSyncResult:
+        """执行单字段取值索引状态机。"""
+        run = await self._begin_value_index_run(
+            t_name,
+            c_name,
+            requested_mode=requested_mode,
+        )
+        try:
+            result = await self._execute_value_index_run(run)
+            await self._complete_value_index_run(run, result)
+            return result
+        except Exception as exc:
+            await self._fail_value_index_run(run, exc)
+            raise
+
+    async def _begin_value_index_run(
+        self,
+        t_name: str,
+        c_name: str,
+        *,
+        requested_mode: RequestedValueIndexSyncMode,
+    ) -> _ValueIndexRun:
+        """在短事务中校验配置并登记运行所有权。"""
+        run_id = uuid.uuid4()
+        started_at = datetime.now(UTC)
+        async with self._meta_repo.session.begin():
+            await self._meta_repo.acquire_index_lock(
+                "value",
+                column_resource_key(t_name, c_name),
+            )
+            column_info = await self._meta_repo.get_column_info(t_name, c_name)
+            table_info = await self._meta_repo.get_table_info(t_name)
+            cursor_column = table_info.value_index_cursor_column
+            state = column_info.value_index_state
+            if (
+                state is not None
+                and state.status == "syncing"
+                and state.active_run_id is not None
+            ):
+                raise RuntimeError("字段取值索引已有运行中的同步任务")
+            if column_info.index_values:
+                mode: ValueIndexSyncMode = self._select_value_sync_mode(
+                    cursor_column,
+                    state,
+                    requested_mode=requested_mode,
+                )
+                generation = (
+                    uuid.uuid4()
+                    if mode == "full"
+                    else state.current_generation
+                    if state is not None
+                    else None
+                )
+                if generation is None:
+                    mode = "full"
+                    generation = uuid.uuid4()
+            else:
+                mode = "clear"
+                generation = None
+            await self._meta_repo.begin_value_index_sync(
+                t_name,
+                c_name,
+                run_id=run_id,
+                generation=generation,
+                started_at=started_at,
+            )
+            return _ValueIndexRun(
+                run_id=run_id,
+                t_name=t_name,
+                c_name=c_name,
+                mode=mode,
+                cursor_column=cursor_column,
+                cursor_value=(
+                    dict(state.cursor_value)
+                    if state is not None and state.cursor_value is not None
+                    else None
+                ),
+                generation=generation,
+                column_meta_version=column_info.meta_version,
+                table_meta_version=table_info.meta_version,
+            )
+
+    async def _complete_value_index_run(
+        self,
+        run: _ValueIndexRun,
+        result: ValueIndexSyncResult,
+    ) -> None:
+        """在短事务中校验运行快照并提交成功状态。"""
+        async with self._meta_repo.session.begin():
+            await self._meta_repo.acquire_index_lock(
+                "value",
+                column_resource_key(run.t_name, run.c_name),
+            )
+            column_info, table_info = await self._meta_repo.reload_value_index_context(
+                run.t_name,
+                run.c_name,
+            )
+            state = column_info.value_index_state
+            if state is None or state.active_run_id != run.run_id:
+                raise RuntimeError("字段取值索引同步运行所有权已失效")
+            if (
+                column_info.meta_version != run.column_meta_version
+                or table_info.meta_version != run.table_meta_version
+                or table_info.value_index_cursor_column != run.cursor_column
+                or column_info.index_values != (run.mode != "clear")
+            ):
+                raise RuntimeError("字段取值索引同步配置已变化")
+            if run.mode == "clear":
+                await self._meta_repo.delete_value_index_state(
+                    run.t_name,
+                    run.c_name,
+                )
+                return
+            if run.generation is None:
+                raise RuntimeError("字段取值索引同步缺少代次")
+            committed = await self._meta_repo.complete_value_index_sync(
+                run.t_name,
+                run.c_name,
+                run_id=run.run_id,
+                cursor_value=(
+                    result.cursor_value
+                    if isinstance(result.cursor_value, dict)
+                    else run.cursor_value
+                ),
+                generation=run.generation,
+                completed_at=datetime.now(UTC),
+                full_sync=run.mode == "full",
+                incremental_sync=run.mode == "incremental",
+            )
+            if not committed:
+                raise RuntimeError("字段取值索引同步状态提交冲突")
+
+    async def _fail_value_index_run(
+        self,
+        run: _ValueIndexRun,
+        error: Exception,
+    ) -> None:
+        """在独立短事务中按 run_id 记录失败状态。"""
+        async with self._meta_repo.session.begin():
+            await self._meta_repo.acquire_index_lock(
+                "value",
+                column_resource_key(run.t_name, run.c_name),
+            )
+            await self._meta_repo.fail_value_index_sync(
+                run.t_name,
+                run.c_name,
+                run_id=run.run_id,
+                error=f"{type(error).__name__}: {error}",
+                failed_at=datetime.now(UTC),
+            )
+```
+
 ### 11.5 检查并导入 YAML，随后提交同步任务
 
 ```python

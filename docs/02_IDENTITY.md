@@ -1423,3 +1423,202 @@ class AuthRateLimitService:
         """规范化登录账号限流键。"""
         return identifier.strip().casefold()
 ```
+
+### 9. Doris SELECT 授权与应用侧投影补偿
+
+一次授权会同时修改 Doris 的真实权限和 PostgreSQL 中的资产可见性投影。两边没有共同事务，因此实现会先记录 Doris 是否已经修改；后续数据库写入或事务提交失败时，再反向撤销 Doris 权限。
+
+```python
+class DorisPermissionService:
+    """通过独立管理账号维护 Doris 角色的细粒度权限。"""
+
+    async def grant_select(
+        self,
+        role_name: str,
+        *,
+        table_name: str | None,
+        columns: Sequence[str],
+    ) -> list[DorisRoleAssetGrant]:
+        """授予角色库、表或列 SELECT 权限并更新可见性投影。"""
+        role = self._normalize_role(role_name)
+        normalized_columns = self._normalize_columns(columns)
+        assets = self._assets(table_name, normalized_columns)
+        granted_columns: tuple[str, ...] = ()
+        doris_changed = False
+        try:
+            async with self._repo.session.begin():
+                await self._repo.lock_security_mutation()
+                await self._require_role_exists(role)
+                await self._validate_target(table_name, normalized_columns)
+                existing = [
+                    await self._repo.find_asset_grant(
+                        role,
+                        asset.scope.value,
+                        asset.resource_key,
+                    )
+                    for asset in assets
+                ]
+                if all(grant is not None for grant in existing):
+                    return [grant for grant in existing if grant is not None]
+                pending_assets = [
+                    asset
+                    for asset, persisted in zip(assets, existing, strict=True)
+                    if persisted is None
+                ]
+                granted_columns = tuple(
+                    asset.column_name
+                    for asset in pending_assets
+                    if asset.column_name is not None
+                )
+                await self._doris_repo.grant_select(
+                    role_name=role,
+                    catalog=self._catalog,
+                    database=self._database,
+                    table=table_name,
+                    columns=granted_columns,
+                )
+                doris_changed = True
+                result: list[DorisRoleAssetGrant] = []
+                for asset, current_grant in zip(assets, existing, strict=True):
+                    persisted_grant = current_grant
+                    if persisted_grant is None:
+                        persisted_grant = await self._repo.add_asset_grant(
+                            DorisRoleAssetGrant(
+                                role_name=role,
+                                scope=asset.scope.value,
+                                data_source=asset.data_source,
+                                database_name=asset.database_name,
+                                table_name=asset.table_name,
+                                column_name=asset.column_name,
+                                resource_key=asset.resource_key,
+                            )
+                        )
+                    result.append(persisted_grant)
+                return result
+        except IntegrityError as exc:
+            if doris_changed:
+                await self._compensate_select(
+                    grant=False,
+                    role_name=role,
+                    table_name=table_name,
+                    columns=granted_columns,
+                )
+            raise auth_error.AssetGrantAlreadyExistsError from exc
+        except BaseException:
+            # Doris 变更不参与 PostgreSQL 回滚；取消任务也必须进入补偿，否则实际
+            # 权限会与应用侧可见性投影分离。
+            if doris_changed:
+                await self._compensate_select(
+                    grant=False,
+                    role_name=role,
+                    table_name=table_name,
+                    columns=granted_columns,
+                )
+            raise
+
+    async def _compensate_select(
+        self,
+        *,
+        grant: bool,
+        role_name: str,
+        table_name: str | None,
+        columns: Sequence[str],
+    ) -> None:
+        """在 PostgreSQL 投影失败时尽力恢复 Doris 权限。"""
+        operation = (
+            self._doris_repo.grant_select if grant else self._doris_repo.revoke_select
+        )
+        try:
+            await operation(
+                role_name=role_name,
+                catalog=self._catalog,
+                database=self._database,
+                table=table_name,
+                columns=columns,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                f"Doris 权限补偿操作失败: role={role_name}, table={table_name}"
+            )
+```
+
+### 10. Row Policy 创建、授权代次轮换与失败补偿
+
+行策略直接落在 Doris。创建成功后会轮换 `authorization_epoch`，让依赖旧权限快照的查询连接和查询经验失效。PostgreSQL 提交失败时会尝试删除刚创建的策略。
+
+```python
+class DorisPermissionService:
+    """通过独立管理账号维护 Doris 角色的细粒度权限。"""
+
+    async def create_row_policy(
+        self,
+        role_name: str,
+        *,
+        policy_name: str,
+        table_name: str,
+        policy_type: Literal["RESTRICTIVE", "PERMISSIVE"],
+        predicate: str,
+    ) -> None:
+        """校验表达式边界并创建绑定到角色的 Doris 行策略。"""
+        role = self._normalize_role(role_name)
+        predicate_sql = self._validate_predicate(predicate)
+        doris_changed = False
+        try:
+            async with self._repo.session.begin():
+                await self._repo.lock_security_mutation()
+                await self._require_role_exists(role)
+                await self._doris_repo.create_row_policy(
+                    policy_name=policy_name,
+                    role_name=role,
+                    catalog=self._catalog,
+                    database=self._database,
+                    table=table_name,
+                    policy_type=policy_type,
+                    predicate_sql=predicate_sql,
+                )
+                doris_changed = True
+                await self._rotate_authorization_epoch(role)
+        except BaseException:
+            if doris_changed:
+                try:
+                    await self._doris_repo.drop_row_policy(
+                        policy_name=policy_name,
+                        role_name=role,
+                        catalog=self._catalog,
+                        database=self._database,
+                        table=table_name,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(f"Doris 行策略补偿删除失败: role={role}")
+            raise
+
+    async def _rotate_authorization_epoch(self, role_name: str) -> None:
+        """轮换角色安全边界，并持久化到当前认证事务。"""
+        identity = await self._repo.get_query_identity(role_name)
+        if identity is None:
+            raise auth_error.RoleNotFoundError
+        identity.rotate_authorization_epoch()
+        await self._repo.flush()
+
+    @staticmethod
+    def _validate_predicate(
+        predicate: str,
+    ) -> str:
+        """确认行策略输入是单个 SQL 表达式，并保留原始语义。"""
+        normalized = predicate.strip()
+        if not normalized:
+            raise auth_error.InvalidDorisPermissionError(
+                detail="行级策略谓词表达式不能为空"
+            )
+        try:
+            statements = sqlglot.parse(normalized, read="doris")
+        except ParseError as exc:
+            raise auth_error.InvalidDorisPermissionError(
+                detail="行级策略谓词表达式语法无效"
+            ) from exc
+        if len(statements) != 1:
+            raise auth_error.InvalidDorisPermissionError(
+                detail="行级策略谓词必须为单个布尔表达式"
+            )
+        return normalized
+```
