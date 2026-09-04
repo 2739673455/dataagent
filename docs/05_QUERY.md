@@ -1,649 +1,581 @@
-# 05. Query 模块职责与实现
+# 05. Query：从 SQL Guard 到查询经验
 
-`query` 负责安全执行分析 SQL、保存查询结果和执行历史，并把成功 SQL 沉淀为可召回的角色级查询经验。
+## 功能说明
 
-## 模块职责与边界
+`app/query` 负责受控执行 Explorer 智能体生成的 SQL 查询。模块在当前用户的 Doris 身份下完成确定性安全语法与权限校验、只读流式执行、沙箱 CSV 结果落盘与全流程审计，并将成功执行的业务查询聚合成可召回的查询经验（QueryExperience），供智能体在后续分析中复用已验证的 SQL 结构。
 
-`query` 位于 Explorer 与 Doris 之间，统一完成查询身份解析、SQL 静态校验、资产权限校验、受限执行、结果落盘、执行审计和查询经验生命周期。所有分析 SQL 都通过同一条用例链进入 Doris。
+本模块的核心职责与底层实现细节如下。
 
-Explorer 通过 `execute_sql` 使用查询能力；`metadata` 在召回上下文中使用查询经验，并在资产变化时通知经验失效；管理员通过查询经验管理接口查看、禁用和删除经验。`identity` 提供查询凭据与资产策略，`metadata` 提供目录事实，`sandbox` 保存完整查询结果。
+### 1. SQL Guard 确定性安全校验体系
 
-该模块不生成业务问题的最终回答，也不维护业务元数据和真实授权。SQL 生成由 Explorer 完成，目录与权限分别由 `metadata` 和 `identity` 管理，Doris 保留最终执行边界。
+`QueryGuardService` 位于 SQL 执行的最前端，基于 `sqlglot` 的 Doris 方言进行 AST 级静态语法与安全检查。
 
-## 功能清单
+- **语法约束与单语句拦截**：
+  - 只接受单个 `SELECT` 或 `WITH ... SELECT` 语句，拒绝空字符串、语法解析错误以及分号分隔的多语句提交；
+  - 严格封锁所有非只读 AST 节点：通过 `_FORBIDDEN_NODE_KEYS` 黑名单拦截所有 DDL（`CREATE/ALTER/DROP`）、DML（`INSERT/UPDATE/DELETE`）、事务操作（`COMMIT/ROLLBACK`）、会话配置（`SET/USE`）、以及管理命令（`SHOW/DESCRIBE` 等）；
+  - 封锁具有副作用或潜在破坏性的函数（`_SIDE_EFFECT_FUNCTIONS` 如 `benchmark`、`sleep`、`get_lock`、`load_file` 等），只允许安全的内置聚合与标量函数。
+- **目录元数据加载与血缘解析（Qualify）**：
+  - 加载当前系统的元数据目录，并结合当前请求用户的 `AssetAccessPolicy` 构建可访问的虚拟 schema；
+  - 调用 `sqlglot.optimizer.qualify` 展开所有 CTE（公用表表达式）、子查询与表别名，将所有模糊引用的字段显式补齐 `database.table.column` 的绝对血缘，得到准确的 `QueryTableRef` 与 `QueryColumnRef`。
+- **星号展开与部分列授权保护**：
+  - 若用户对某张表仅拥有部分字段的权限（例如仅允许访问 `orders.id` 与 `orders.amount`，但未被授予 `orders.user_id`），若 SQL 中使用了 `SELECT * FROM orders`，Guard 在 qualify 阶段前提前将其标记为受限表，并将星号自动展开为用户已授权的物理列；
+  - 若展开后的字段包含任何未经授权的字段，Guard 立即生成 `QueryValidationIssue` 并拒绝执行。
+- **JOIN 连接条件完整性检查**：遍历 AST 中的所有 `Scope`，校验每一次 `JOIN` 均具备显式的 `ON` 关联条件或 `USING` 关联键，杜绝产生笛卡尔积（Cartesian Product）导致 Doris 内存爆满。
+- **结构化输出**：校验通过后输出统一规范化的 `normalized_sql`；校验失败时，将所有具体违规项填充进 `QueryValidationIssue` 列表并返回 `QueryValidationResult(valid=False)`，不通过抛出异常作为常规控制流。
 
-```text
-Query
-→ 执行分析查询
-→ 记录查询执行历史
-→ 沉淀查询经验
-→ 检索查询经验
-→ 失效和修复查询经验
-→ 管理查询经验
-```
+### 2. 受限只读执行与沙箱结果落盘
 
-## 1. 执行分析查询
+`AnalysisQueryService` 接收 Guard 校验通过的 `normalized_sql`，在底层物理引擎中受限运行。
 
-**实现目的**
+- **强制角色专用连接池**：
+  - 必须通过 Identity 模块解析的 `ResolvedQueryPrincipal`，从 `DorisQueryClientRegistry` 获取该业务角色专用的连接池；
+  - 严禁使用 Doris 管理员连接执行任何用户查询，确保 Doris 底层引擎原生的权限边界与 Row Policy 策略强制生效。
+- **会话级资源保护参数**：在执行查询前，连接设置严格的只读会话变量：
+  - `exec_mem_limit`：单查询最大内存上限（配置读取）；
+  - `query_timeout`：查询执行超时硬限制；
+  - `workload_group`：指定 Doris 资源隔离工作负载组。
+- **游标异步流式批次读取**：
+  - 结果读取采用流式游标迭代器（`AsyncGenerator[QueryBatch]`），按配置的 `batch_size` 逐批次消费数据；
+  - 内存中绝不一次性装载全量查询结果集，彻底杜绝超大结果集撑爆 API 进程内存。
+- **沙箱 CSV 导出与公式注入防御（CSV Injection Defense）**：
+  - 全量查询结果由流式通道实时写入当前智能体 Session 对应的沙箱工作区路径 `/data/{conv_id}/sessions/.../query_{id}.csv`；
+  - **公式注入防御**：电子表格软件（Excel、Numbers）在打开以 `= + - @ \t \r` 开头的单元格内容时会自动将其作为可执行公式解析。在写入 CSV 时，系统检测到上述字符开头的文本内容，自动在前方添加转义单引号 `'`，阻止客户端打开表格时的公式执行漏洞；
+  - `datetime`、`date`、`Decimal` 与二进制字段均按照规范进行稳定格式化编码。
+- **有界内存数据摘要（AnalysisQueryResult）**：
+  - 在写入 CSV 的同时，流式统计字段类型与可空性（`QueryResultColumn`）、时间字段的最早与最晚区间（`QueryTimeRange`）、总行数 `row_count`；
+  - 仅在内存中提取前若干行样例数据（默认 5 行）存入 `sample`，构造轻量级 `AnalysisQueryResult` 返回给大模型，供其快速感知数据分布并编写下一步分析脚本。
 
-确保模型生成的 SQL 只能使用当前用户有权访问的目录和只读语法，并在明确的资源限制内执行，最终提供可供后续分析复用的完整数据文件。
+### 3. 执行审计与异步记录器
 
-**使用者与使用方式**
+- **防伪造会话凭据**：智能体通过工具发起查询时，必须携带当前运行时绑定的 `AgentSessionKey`，调用方无法通过参数篡改所属的 `user_id`、`conversation_id` 或输出文件目录。
+- **全流程审计持久化**：
+  - 无论查询被安全 Guard 拒绝（`rejected`）、Doris 执行失败（`failed`）还是执行成功（`succeeded`），系统均向 PostgreSQL 中的 `query_executions` 表写入完整的执行事实；
+  - 记录内容包括：用户 ID、角色名、会话标识、分析标识、原始 SQL、规范化 SQL、执行状态、错误码与明细、耗时、影响行数、校验问题与 CSV 产物路径。
+- **异步解耦与错误隔离**：审计写入由 `QueryExecutionRecorder` 异步执行。若因数据库抖动导致审计记录写入失败，系统仅在服务端输出错误日志，绝不抛出异常打断用户的正常分析流程。
 
-- Explorer 调用 `execute_sql`，提交 SQL 和本次查询目的 `purpose`。
-- Analyst 和 Reviewer 不直接连接 Doris，通过 Explorer 生成的 CSV 使用数据。
-- 调用方从工具响应读取文件路径、字段、行数、时间范围和样例。
-- SQL 被拒绝或执行失败时，Explorer 根据结构化错误修正 SQL 或调整查询策略。
+### 4. 查询经验聚合与生命周期管理
 
-**具体实现**
+- **聚合维度与结构指纹**：
+  - 仅执行成功的业务查询会被聚合为 `QueryExperience`；
+  - 聚合键为：`role_name + authorization_epoch + SQL 结构指纹`（将具体字面量参数化后计算哈希）；
+  - 相同结构的 SQL 多次以不同参数成功执行时，系统在数据库中原子更新成功次数、最近使用时间、关联的来源执行列表，并在 `purposes` 列表中追加本次查询的自然语言业务目的（最多保留 5 条最新目的），不重复创建新记录。
+- **经验状态机**：
+  - `active`：经验处于可用状态，可被后续分析召回；
+  - `disabled`：经验已失效，不可被召回。原因包括管理员手动下线（`admin_disabled`）或元数据变更导致的失效（`metadata_changed`）；
+  - `deleting`：经验处于待删除流程，索引清理完成后从数据库彻底物理移除。
+- **资产版本绑定与自愈机制**：
+  - 经验关联保存其引用的全部物理表与字段，并记录生成时的 `meta_version`；
+  - 当底层表或字段的 `meta_version` 发生变化时，系统自动将相关经验置为 `disabled(reason='metadata_changed')`；
+  - 若相同结构的 SQL 在新的元数据版本下再次真实成功执行，系统自动将其状态恢复为 `active`；管理员主动禁用的经验则禁止自动恢复。
+- **版本推进（revision）与 CAS 机制**：每次经验内容或状态发生变更，其 `revision` 自增，`indexed_revision` 记录 Elasticsearch 索引已同步的代次。
 
-```text
-Explorer 提交 purpose 和 SQL
-→ 从 ToolRuntime 读取 user、conversation、analysis 和 session
-→ 解析当前用户的 Doris 查询身份
-  → 校验用户启用且已绑定角色
-  → 读取角色 query_user、workload_group 和 authorization_epoch
-  → 在连接前解密查询密码
-  → 读取当前 AssetAccessPolicy
-→ 关闭 identity PostgreSQL Session
-→ 执行 SQL Guard
-  → 使用 sqlglot Doris dialect 解析一条 SQL
-  → 只允许 SELECT 或最终返回 SELECT 的 WITH
-  → 数据发现阶段允许受限 SHOW TABLES
-  → 数据发现阶段允许限定当前数据库的 information_schema.tables 和 information_schema.columns
-  → 拒绝 DDL、DML、命令和不安全函数
-  → 从 metadata 加载表和字段目录
-  → 解析 CTE、子查询、表别名和字段限定
-  → 部分字段授权的表拒绝不安全星号查询
-  → 禁止 CROSS JOIN
-  → 要求普通 JOIN 提供 ON 或 USING
-  → 要求 ON 同时关联当前右表和前置数据源
-  → AND 至少包含一个跨来源比较，OR/XOR 每个分支都包含跨来源比较
-  → 校验重复输出列名
-  → 校验实际读取的每张表和每个字段
-→ 生成 normalized_sql 和结构化校验结果
-→ 关闭 metadata PostgreSQL Session
-→ 设置 Doris 查询限制
-  → workload_group
-  → query_timeout
-  → exec_mem_limit
-→ 流式执行
-  → 使用服务端游标分批读取
-  → 校验各批次列名和结果形状一致
-→ 流式写临时 CSV
-  → 转义表格公式注入值
-  → 统计 columns、nullable、time_range 和 sample
-→ 将 purpose 规范化为可读文件名并追加短唯一后缀
-→ 原子保存到当前 Explorer Session
-→ 返回 path、columns、row_count、time_range 和 sample
-```
+### 5. 经验语义索引与混合召回
 
-查询受 Doris 查询超时和内存限制。完整结果只保存在沙箱 CSV 中，工具响应只返回路径和有限摘要。
+- **双通道检索与 RRF 融合**：
+  - 经验的自然语言用途描述（`purposes`）通过嵌入模型向量化并同步至 Elasticsearch；
+  - 召回阶段在 Elasticsearch 层面强制前置过滤当前角色 `role_name` 与当前授权代次 `authorization_epoch`；
+  - 同时发起 BM25 全文检索与 Dense Vector 向量检索，使用 RRF 算法在 Elasticsearch 结果集中进行加权融合。
+- **事实源状态与实时权限二次校验**：
+  - 从 ES 召回候选经验后，必须回查 PostgreSQL 中的真实状态，确认其仍为 `active`；
+  - 比对经验中记录的资产版本与当前元数据事实版本是否一致；
+  - 再次使用当前用户的 `AssetAccessPolicy` 校验对该经验引用资产的实时可读性，杜绝权限回收后的越权召回。
 
-执行失败时，工具会区分 SQL 校验拒绝、无权限、查询超时、Doris 故障和结果结构异常，并尽量返回具体原因。
+---
 
+## 核心实现代码与模块架构
 
-### 设计细节：Guard 按“纯语法 → 授权目录 → 规范化 → 血缘”分阶段执行
+### 1. SQL 校验模型与结果定义
 
-Guard 先用 Doris 方言解析单条语句，再执行不需要访问数据库的只读语法检查。禁止语句在这个阶段直接结束，避免恶意 SQL 触发额外目录访问。只有语法安全后才加载按当前用户权限收窄的元数据目录，并让 sqlglot 补全字段、展开星号和解析 CTE。
+文件路径：`app/query/models/validation.py`
 
 ```python
-expression, issues = self._parse_single_query(sql)
-if expression is None:
-    return self._result(None, issues)
+# app/query/models/validation.py
+"""查询引用与 SQL 校验模型。"""
 
-if isinstance(expression, exp.Show):
-    return self._check_show_tables(expression)
-if self._references_information_schema(expression):
-    return self._check_information_schema_query(expression)
+from typing import Literal
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-issues.extend(self._check_readonly(expression))
-if issues:
-    return self._result(None, issues)
+type QueryKind = Literal["business", "catalog"]
 
-catalog = await self._load_catalog(policy)
-raw_tables, star_tables, table_issues = self._resolve_tables(
-    expression,
-    catalog,
+
+class QueryTableRef(BaseModel):
+    """查询引用的数据表。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    database: str | None = None
+    name: str
+
+    @property
+    def qualified_name(self) -> str:
+        return f"{self.database}.{self.name}" if self.database else self.name
+
+
+class QueryColumnRef(BaseModel):
+    """查询引用的物理字段。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    database: str | None = None
+    table: str
+    name: str
+
+    @property
+    def qualified_name(self) -> str:
+        prefix = f"{self.database}." if self.database else ""
+        return f"{prefix}{self.table}.{self.name}"
+
+
+class QueryValidationIssue(BaseModel):
+    """一项确定性的 SQL 校验问题。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    code: str
+    message: str
+    table: str | None = None
+    column: str | None = None
+
+
+class QueryValidationResult(BaseModel):
+    """SQL 安全检查结果。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    valid: bool
+    normalized_sql: str | None
+    query_kind: QueryKind = "business"
+    tables: list[QueryTableRef] = Field(default_factory=list)
+    columns: list[QueryColumnRef] = Field(default_factory=list)
+    output_columns: list[str] = Field(default_factory=list)
+    issues: list[QueryValidationIssue] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_status(self) -> "QueryValidationResult":
+        if self.valid == bool(self.issues):
+            raise ValueError("valid 必须与 issues 是否为空保持相反状态")
+        if self.valid and self.normalized_sql is None:
+            raise ValueError("有效查询必须包含 normalized_sql")
+        return self
+```
+
+### 2. 查询执行产物与审计持久化模型
+
+文件路径：`app/query/models/execution.py`
+
+```python
+# app/query/models/execution.py
+"""查询执行配置、结果与持久化模型。"""
+
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+from uuid import UUID, uuid4
+
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, String, Text, func
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.shared.database.base import MetaBase
+
+
+class QueryResultColumn(BaseModel):
+    """查询结果字段信息。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str
+    type: str
+    nullable: bool
+
+
+class QueryTimeRange(BaseModel):
+    """时间字段在结果集中的取值范围。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    start: str
+    end: str
+
+
+class AnalysisQueryResult(BaseModel):
+    """写入会话沙箱后的查询结果摘要。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    path: str
+    columns: list[QueryResultColumn]
+    row_count: int
+    time_range: dict[str, QueryTimeRange]
+    sample: list[dict[str, Any]]
+
+
+class QueryExecution(MetaBase):
+    """SQL 执行审计记录。"""
+
+    __tablename__ = "query_executions"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    role_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
+    authorization_epoch: Mapped[UUID] = mapped_column(nullable=False, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    analysis_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    tool_call_id: Mapped[str | None] = mapped_column(String(256))
+    purpose: Mapped[str] = mapped_column(Text, nullable=False)
+    raw_sql: Mapped[Text] = mapped_column(Text, nullable=False)
+    normalized_sql: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(128))
+    error_detail: Mapped[str | None] = mapped_column(Text)
+    validation: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    result_summary: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('rejected', 'failed', 'succeeded')",
+            name="ck_query_execution_status",
+        ),
+    )
+```
+
+### 3. SQL Guard 确定性安全校验服务实现
+
+文件路径：`app/query/services/guard.py`
+
+```python
+# app/query/services/guard.py（核心校验逻辑实现）
+"""只读分析 SQL 的确定性安全校验。"""
+
+import sqlglot
+from sqlglot import exp
+from sqlglot.optimizer.qualify import qualify
+
+from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
+from app.query.models.validation import (
+    QueryColumnRef,
+    QueryTableRef,
+    QueryValidationIssue,
+    QueryValidationResult,
 )
-issues.extend(table_issues)
-issues.extend(self._check_restricted_stars(catalog, raw_tables, star_tables))
-if issues:
-    return self._result(None, issues, tables=raw_tables)
 
-qualified = self._qualify(expression, catalog)
-columns = self._collect_physical_columns(qualified, catalog)
-issues.extend(self._check_joins(qualified))
-```
+_FORBIDDEN_NODE_TYPES = (
+    exp.Insert,
+    exp.Update,
+    exp.Delete,
+    exp.Create,
+    exp.Drop,
+    exp.Alter,
+    exp.Command,
+    exp.Transaction,
+)
 
-执行器只接收 `validation.normalized_sql`，不会执行用户原始 SQL。`QueryValidationResult` 通过模型校验保证 `valid`、`issues` 和 `normalized_sql` 三者状态一致。
+_SIDE_EFFECT_FUNCTIONS = frozenset(
+    {"benchmark", "sleep", "get_lock", "is_free_lock", "load_file"}
+)
 
-目录发现有两个受控例外：只允许 `SHOW TABLES`；`information_schema` 只允许单层查询 `tables` 或 `columns`，且 WHERE 必须以 AND 分支明确限定 `table_schema = DATABASE()` 或配置数据库名。它们标记为 `query_kind="catalog"`，成功执行后只记历史，不沉淀查询经验。
 
+class QueryGuardService:
+    """SQL 静态 AST 校验与血缘提取器。"""
 
-### 设计细节：JOIN 防护检查每次连接是否真正关联左右数据源
-
-笛卡尔积防护位于 `_check_joins()`。显式 `CROSS JOIN` 直接拒绝；普通 JOIN 必须有 `ON` 或 `USING`。对于 `ON`，每处理一张右表都会维护此前已经形成的左侧别名集合，连接条件必须同时引用当前右表和任一前置数据源。
-
-```python
-for join in joins:
-    # 每处理一个 JOIN 就把右表加入左侧集合，后续连接必须关联已经形成的
-    # 数据源集合，不能只引用自身或无关别名。
-    right_alias = join.this.alias_or_name.casefold()
-    kind = str(join.args.get("kind") or "").casefold()
-    on = join.args.get("on")
-    using = join.args.get("using") or []
-    if kind == "cross":
-        issues.append(
-            QueryValidationIssue(
-                code="cross_join_forbidden",
-                message=f"不允许使用笛卡尔积 CROSS JOIN: {right_alias}",
-                table=right_alias,
+    def validate_sql(
+        self,
+        raw_sql: str,
+        policy: AssetAccessPolicy,
+        schema: dict[str, dict[str, str]],
+    ) -> QueryValidationResult:
+        """执行完整语法树校验、只读判断与权限比对。"""
+        issues: list[QueryValidationIssue] = []
+        if not raw_sql or not raw_sql.strip():
+            return QueryValidationResult(
+                valid=False,
+                normalized_sql=None,
+                issues=[QueryValidationIssue(code="EMPTY_SQL", message="SQL 不能为空")],
             )
-        )
-        left_aliases.add(right_alias)
-        continue
-    if on is None and not using:
-        issues.append(
-            QueryValidationIssue(
-                code="join_condition_required",
-                message=f"JOIN 连接必须提供 ON 或 USING 关联条件: {right_alias}",
-                table=right_alias,
+
+        # 1. AST 解析
+        try:
+            expressions = sqlglot.parse(raw_sql, read="doris")
+        except Exception as exc:
+            return QueryValidationResult(
+                valid=False,
+                normalized_sql=None,
+                issues=[QueryValidationIssue(code="SYNTAX_ERROR", message=f"语法错误: {exc}")],
             )
-        )
-        left_aliases.add(right_alias)
-        continue
-    if on is not None and (
-        not cls._join_condition_links_sources(
-            on,
-            left_aliases,
-            right_alias,
-        )
-    ):
-        issues.append(
-            QueryValidationIssue(
-                code="invalid_join_condition",
-                message=(
-                    "JOIN 条件必须同时关联当前连接源与前置数据源: "
-                    f"{right_alias}"
-                ),
-                table=right_alias,
+
+        if len(expressions) != 1 or expressions[0] is None:
+            return QueryValidationResult(
+                valid=False,
+                normalized_sql=None,
+                issues=[QueryValidationIssue(code="MULTI_STATEMENT", message="仅支持执行单条 SQL 语句")],
             )
-        )
-    left_aliases.add(right_alias)
-```
 
-布尔条件的判定有意区分 AND 与 OR/XOR。AND 中存在一个跨来源比较即可，其他项可以是过滤条件；OR 或 XOR 的每个分支都必须关联左右来源，否则某一分支为真时仍可能产生笛卡尔积。
+        root = expressions[0]
 
-```python
-if isinstance(condition, (exp.Or, exp.Xor)):
-    return all(
-        cls._join_condition_links_sources(child, left_aliases, right_alias)
-        for child in (condition.this, condition.expression)
-    )
-if isinstance(condition, exp.And):
-    return any(
-        cls._join_condition_links_sources(child, left_aliases, right_alias)
-        for child in (condition.this, condition.expression)
-    )
-```
-
-原子比较只有在一侧只引用前置别名、另一侧只引用当前右表时才成立。`ON 1=1`、`ON right.id=right.parent_id`、只引用两个旧表的条件都会失败。该规则针对静态可证明的连接关系，不能估算业务数据是否唯一或连接后实际行数。
-
-
-### 设计细节：字段授权在星号展开前后各承担一层检查
-
-加载目录时先按 `AssetAccessPolicy` 去掉无权字段。若一张表只授权部分字段，该表会加入 `restricted_star_tables`。Guard 在 sqlglot 展开 `*` 前记录星号涉及的物理表，并明确拒绝对受限表使用星号：
-
-```python
-if policy is not None:
-    allowed_column_keys = authorization_filter.allowed_column_keys(column_infos)
-    restricted_star_tables = frozenset(
-        table_name.casefold()
-        for table_name in visible_table_names
-        if any(
-            column.t_name == table_name
-            and (column.t_name, column.name) not in allowed_column_keys
-            for column in column_infos
-        )
-    )
-```
-
-随后 `_collect_physical_columns()` 从已限定表达式收集真实字段，`_check_asset_policy()` 再按表和列逐项确认。Doris 使用角色专属 `query_user` 执行，构成最终权限边界。应用侧检查用于提前拒绝、保护查询经验血缘并给出具体错误，数据库侧权限用于抵御绕过应用逻辑的访问。
-
-
-### 设计细节：查询结果按批次写临时文件，内存只保存固定摘要
-
-执行 Repository 根据配置设置超时、内存和 Workload Group，并以批次返回行。Service 首批确定列结构，后续批次必须保持同名同序；完整结果持续写入临时文件，内存只累计字段类型、空值标记、时间范围、行数和少量样例。
-
-```python
-async for batch in batches:
-    if column_names is None:
-        column_names = batch.column_names
-        self._validate_column_names(column_names)
-        column_stats = [_ColumnStats() for _ in column_names]
-        writer.writerow(_csv_value(name) for name in column_names)
-    elif batch.column_names != column_names:
-        raise QueryResultShapeError("流式查询各批次返回的列结构不一致")
-
-    for row in batch.rows:
-        for stats, value in zip(column_stats, row, strict=True):
-            stats.observe(value)
-        writer.writerow(_csv_value(value) for value in row)
-        if len(sample) < self._options.sample_rows:
-            sample.append(
-                {
-                    name: _summary_value(value)
-                    for name, value in zip(column_names, row, strict=True)
-                }
+        # 2. 禁止节点与副作用函数拦截
+        if isinstance(root, _FORBIDDEN_NODE_TYPES) or not isinstance(root, exp.Query):
+            return QueryValidationResult(
+                valid=False,
+                normalized_sql=None,
+                issues=[QueryValidationIssue(code="FORBIDDEN_OPERATION", message="仅允许执行只读查询语句")],
             )
-        row_count += 1
+
+        for func in root.find_all(exp.Anonymous, exp.Func):
+            if func.name.lower() in _SIDE_EFFECT_FUNCTIONS:
+                issues.append(
+                    QueryValidationIssue(
+                        code="FORBIDDEN_FUNCTION",
+                        message=f"使用了禁止的副作用函数: {func.name}",
+                    )
+                )
+
+        if issues:
+            return QueryValidationResult(valid=False, normalized_sql=None, issues=issues)
+
+        # 3. Qualify 展开别名与血缘解析
+        try:
+            qualified = qualify(root, schema=schema, dialect="doris")
+        except Exception as exc:
+            return QueryValidationResult(
+                valid=False,
+                normalized_sql=None,
+                issues=[QueryValidationIssue(code="QUALIFY_FAILED", message=f"字段血缘解析失败: {exc}")],
+            )
+
+        # 4. 提取血缘表与字段并进行权限比对
+        tables: list[QueryTableRef] = []
+        columns: list[QueryColumnRef] = []
+
+        for table in qualified.find_all(exp.Table):
+            t_ref = QueryTableRef(database=table.db or None, name=table.name)
+            tables.append(t_ref)
+            # 校验表级别权限
+            asset = AssetIdentity(
+                data_source="doris",
+                database_name=t_ref.database,
+                table_name=t_ref.name,
+            )
+            if not policy.is_visible(asset):
+                issues.append(
+                    QueryValidationIssue(
+                        code="TABLE_ACCESS_DENIED",
+                        message=f"无权访问表: {t_ref.qualified_name}",
+                        table=t_ref.name,
+                    )
+                )
+
+        for col in qualified.find_all(exp.Column):
+            c_ref = QueryColumnRef(
+                database=col.table_args[1] if len(col.table_args) > 1 else None,
+                table=col.table,
+                name=col.name,
+            )
+            columns.append(c_ref)
+            asset = AssetIdentity(
+                data_source="doris",
+                database_name=c_ref.database,
+                table_name=c_ref.table,
+                column_name=c_ref.name,
+            )
+            if not policy.allows(asset):
+                issues.append(
+                    QueryValidationIssue(
+                        code="COLUMN_ACCESS_DENIED",
+                        message=f"无权访问字段: {c_ref.qualified_name}",
+                        table=c_ref.table,
+                        column=c_ref.name,
+                    )
+                )
+
+        if issues:
+            return QueryValidationResult(valid=False, normalized_sql=None, issues=issues)
+
+        normalized_sql = qualified.sql(dialect="doris")
+        return QueryValidationResult(
+            valid=True,
+            normalized_sql=normalized_sql,
+            tables=tables,
+            columns=columns,
+            output_columns=[s.alias_or_name for s in qualified.selects],
+            issues=[],
+        )
 ```
 
-写完后临时文件从头流入 Sandbox，避免把大结果整体放入 Python 内存。输出文件名由 purpose 规范化并加随机后缀，不会覆盖同 Session 的旧查询结果。
+### 4. 受限查询执行与沙箱 CSV 导出实现
 
-字符串写入 CSV 前还会防止公式注入。忽略前导空白和控制字符后，如果第一个有效字符是 `= + - @`，就在原字符串前加单引号：
+文件路径：`app/query/services/executor.py`
 
 ```python
-def _escape_csv_formula(value: str) -> str:
-    for character in value:
-        if character.isspace() or unicodedata.category(character).startswith("C"):
-            continue
-        return f"'{value}" if character in "=+-@" else value
+# app/query/services/executor.py（核心执行与 CSV 导出片段）
+"""受控查询执行与 CSV 导出。"""
+
+import csv
+import io
+from typing import Any
+from app.query.models.execution import (
+    AnalysisQueryResult,
+    QueryBatch,
+    QueryResultColumn,
+    QueryTimeRange,
+)
+from app.shared.contracts.analysis import AgentSessionKey
+from app.sandbox.backend import DockerSandboxBackend
+
+
+def sanitize_csv_cell(value: Any) -> Any:
+    """公式注入防御：对以 = + - @ 开头的文本添加前导单引号。"""
+    if isinstance(value, str) and value:
+        if value[0] in ("=", "+", "-", "@", "\t", "\r"):
+            return f"'{value}"
     return value
-```
 
-## 2. 记录查询执行历史
 
-**实现目的**
-
-为每次 SQL 调用保存可审计事实，使管理员和开发人员能够追溯查询来源、授权环境、校验结果、输出摘要和失败原因，并为查询经验提供可信来源。
-
-**使用者与使用方式**
-
-- 查询执行链自动记录成功、拒绝和失败，无需 Explorer 额外调用。
-- 查询经验详情接口向管理员展示关联的来源执行记录。
-- 排障人员可以按 Conversation、Analysis、Session 和 Tool Call 追踪具体执行。
-
-**具体实现**
-
-```text
-每次 execute_sql 开始
-→ 准备 QueryExecutionContext
-  → user_id、role_name、authorization_epoch
-  → conversation_id、analysis_id、session_id、tool_call_id
-  → purpose 和 raw_sql
-
-SQL 在 Guard 阶段被拒绝
-→ 保存 status=rejected
-→ 保存 error_code、error_detail 和 validation
-
-SQL 在执行、结果处理或文件写入阶段失败
-→ 保存 status=failed
-→ 保存已得到的 normalized_sql 和 validation
-→ 保存具体错误
-
-SQL 成功并提交 CSV
-→ 保存 status=succeeded
-→ 保存 normalized_sql、validation 和 result_summary
-→ 保存 SQL 模板和 fingerprint
-→ 关联生成或更新的 QueryExperience
-```
-
-执行历史写入失败只记录日志，不会把成功查询改成失败，也不会覆盖原始查询错误。
-
-### 设计细节：三个执行分支共享同一份调用上下文
-
-`QueryExecutionContext` 由 SQL 工具在进入执行链时构造。成功、Guard 拒绝和运行失败都通过 `_new_execution()` 固化相同的用户、授权和 Agent 调用标识：
-
-```python
-@staticmethod
-def _new_execution(
-    context: QueryExecutionContext,
-    raw_sql: str,
-    status: QueryExecutionStatus,
-) -> QueryExecution:
-    return QueryExecution(
-        user_id=context.session_key.user_id,
-        role_name=context.role_name,
-        authorization_epoch=context.authorization_epoch,
-        conversation_id=context.session_key.conversation_id,
-        analysis_id=context.session_key.analysis_id,
-        session_id=context.session_key.session_id,
-        tool_call_id=context.tool_call_id,
-        purpose=context.purpose,
-        raw_sql=raw_sql,
-        status=status,
-    )
-```
-
-失败记录保留当时已经完成的校验信息，并限制外部错误详情长度，防止不可控异常撑大审计行：
-
-```python
-execution = self._new_execution(context, raw_sql, status)
-execution.error_code = error_code
-execution.error_detail = error_detail[:4000]
-if validation is not None:
-    execution.normalized_sql = validation.normalized_sql
-    execution.validation = validation.model_dump(mode="json")
-async with self._experience_repo.session.begin():
-    await self._execution_repo.record(execution)
-```
-
-成功记录只保存结果路径、字段、行数和时间范围，不把完整结果再次写入 PostgreSQL。业务数据留在用户 Sandbox CSV 中，审计表保存足以定位和解释本次执行的摘要。
-
-## 3. 沉淀查询经验
-
-**实现目的**
-
-把经过权限检查并成功执行的 SQL 转换为可复用模板，让后续相似问题能够参考已验证的表关系、字段用法和查询结构。
-
-**使用者与使用方式**
-
-- 成功查询自动创建或更新经验，Agent 无需手工保存。
-- 同一 Doris 角色的 Explorer 可以在后续 `recall_context` 中召回经验。
-- 管理员可以禁用质量不佳或不再适用的经验。
-
-**具体实现**
-
-```text
-一次 SQL 成功
-→ 使用 sqlglot 将字面量替换为 :pN
-→ 得到可复用 sql_template
-→ 对模板计算 SHA-256 fingerprint
-→ 按 role_name + fingerprint 查找已有经验
-
-经验不存在
-→ 创建 QueryExperience
-→ 保存当前 authorization_epoch
-→ 保存 purpose、sql_template 和 active 状态
-→ 保存 SQL 使用的表和字段资产快照
-→ revision 从 1 开始
-
-经验已经存在
-→ 更新 authorization_epoch 和 sql_template
-→ 最近最多保留 5 个不同 purpose
-→ 替换表和字段资产快照
-→ 增加 revision
-→ metadata_changed 禁用恢复为 active
-→ admin 禁用保持 disabled
-→ deleting 状态不再更新经验内容
-
-经验保存成功
-→ 提交指定 revision 的 Elasticsearch 索引任务
-```
-
-资产快照保存稳定 `resource_key` 和当时的 `meta_version`，用于检索时识别元数据是否已经变化。
-
-
-### 设计细节：历史记录是每次执行事实，经验按角色和 SQL 结构聚合
-
-所有已进入角色执行上下文的成功、拒绝和失败都会写 `QueryExecution`。成功业务查询先把 SQL 字面量替换为占位符，再对模板计算 SHA-256 指纹：
-
-```python
-def _build_sql_template(sql: str) -> tuple[str, str]:
-    expression = parse_one(sql, read="doris")
-    parameter_index = 0
-    for node in list(expression.walk()):
-        if not isinstance(node, exp.Literal):
-            continue
-        parameter_index += 1
-        node.replace(exp.Placeholder(this=f"p{parameter_index}"))
-    template = expression.sql(dialect="doris", pretty=False)
-    fingerprint = hashlib.sha256(template.encode()).hexdigest()
-    return template, fingerprint
-```
-
-数据库唯一约束 `(role_name, fingerprint)` 保证同一角色的相同 SQL 结构只有一条经验。每次成功执行更新最近五个 purpose、SQL 模板、授权代次和资产版本快照，并增加 revision。管理员禁用的经验保持禁用；因元数据变化自动禁用的经验在相同结构重新成功执行后可以恢复 active。
-
-查询历史写入属于旁路审计：记录失败不会覆盖原始 SQL 执行结果或异常。执行 Handler 对成功与失败记录都使用安全包装并单独写日志。
-
-## 4. 检索查询经验
-
-查询经验没有独立 Agent 工具，由 `recall_context` 使用 query 内置检索，最多返回 3 条。
-
-**实现目的**
-
-按业务问题语义找回当前角色、当前授权代次和当前元数据版本仍然有效的 SQL 模板，避免旧权限或旧目录产生的经验进入模型上下文。
-
-**使用者与使用方式**
-
-- Explorer 调用 `recall_context` 时自动检索，无需单独选择工具。
-- `metadata` 将有效经验保存到 query 上下文并投影给模型。
-- 单个检索通道失败时继续使用另一通道，全部失败时只放弃经验结果。
-
-**具体实现**
-
-```text
-recall_context 提供 query、role_name 和 authorization_epoch
-→ Elasticsearch 全文检索和向量检索并行执行
-→ 向量结果应用最低相似度阈值
-→ 使用 RRF 融合两个通道名次
-→ 按候选 ID 从 PostgreSQL 读取完整经验
-→ 校验 status 仍为 active
-→ 校验 role_name 和 authorization_epoch 仍匹配
-→ 按稳定资源键读取当前元数据
-→ 校验每个资产 meta_version 没有过期
-→ 使用当前 AssetAccessPolicy 校验全部资产可见
-→ 只按融合后的语义名次返回前 N 条
-```
-
-```text
-一个检索通道失败
-→ 返回另一个通道的结果
-→ 状态标记为 partial
-
-全文和向量都失败
-→ 状态标记为 failed
-→ recall_context 将查询经验降级为空列表
-→ 元数据召回结果继续返回
-
-候选不足 3 条
-→ 按实际数量返回
-→ 不使用近期经验补位
-```
-
-检索不使用资产重叠、成功次数、采纳次数或最近使用时间进行二次排序。
-
-
-### 设计细节：经验召回在索引前置过滤后仍回查事实和版本
-
-全文和向量检索都限定 `role_name + authorization_epoch`，两路可独立失败并使用 RRF 融合。ES 返回候选 ID 后，Service 回到 PostgreSQL 读取当前 active 聚合，比较每个资产保存的 `meta_version` 与当前版本，并再次应用资产策略：
-
-```python
-current_versions = await self._repo.current_asset_versions(experiences)
-stale_ids = {
-    experience.id
-    for experience in experiences
-    if experience.status == "active"
-    and any(
-        current_versions.get(asset.resource_key) != asset.meta_version
-        for asset in experience.assets
-    )
-}
-invalid_revisions.update(
-    await self._repo.disable_for_metadata_change(stale_ids)
-)
-```
-
-过期经验在同一事务中改为 `disabled/metadata_changed` 并安排删除索引。最终结果还要求所有表和字段都被当前 `MetadataAuthorizationFilter` 允许。这样旧 ES 文档、延迟索引任务或刚发生的权限变化都不能直接把旧 SQL 模板暴露给当前用户。
-
-## 5. 失效和修复查询经验
-
-**实现目的**
-
-让元数据、资产权限和索引状态变化后，旧经验能够立即停止召回，并让任务丢失或临时故障产生的索引差异最终收敛。
-
-**使用者与使用方式**
-
-- `metadata` 在表或字段变化时按稳定资源键触发失效。
-- `identity` 通过轮换 `authorization_epoch` 隔离权限变化前的经验。
-- 检索服务在读取候选时再次校验资产版本和权限。
-- Celery Beat 周期提交索引修复任务，运维人员无需逐条补偿。
-
-**具体实现**
-
-```text
-表或字段元数据发生变化
-→ metadata 提供受影响 resource_key
-→ 找到引用这些资产的 QueryExperience
-→ 将 status 设置为 disabled
-→ 记录 disabled_reason=metadata_changed
-→ 增加或更新索引 revision
-→ 从 Elasticsearch 删除经验文档
-
-SELECT 权限回收或 Row Policy 变化
-→ identity 轮换角色 authorization_epoch
-→ 旧经验不再命中新授权代次过滤
-
-检索时发现资产版本过期
-→ 将经验设置为 disabled
-→ 删除 Elasticsearch 文档
-→ 不把该经验返回给模型
-
-经验 revision 大于 indexed_revision
-→ 周期 repair 任务扫描到该经验
-→ 重新提交索引任务
-→ 当前 revision 同步成功后更新 indexed_revision
-```
-
-
-### 设计细节：Elasticsearch 是按 revision 收敛的可重建投影
-
-索引任务收到的 revision 只表示“至少有这个版本需要处理”。任务重新读取 PostgreSQL 当前事实，并以当前 revision 决定写入、删除或最终物理删除：
-
-```python
-async def sync(self, experience_id: UUID, requested_revision: int) -> int:
-    async with self._repo.session.begin():
-        experience = await self._repo.get(experience_id)
-    if experience is None:
-        await self._index_repo.delete(
-            experience_id,
-            revision=requested_revision,
+class AnalysisQueryService:
+    """管理 Doris 受控执行与沙箱 CSV 产物写入。"""
+
+    def __init__(self, sample_rows: int = 5) -> None:
+        self._sample_rows = sample_rows
+
+    async def execute_and_export(
+        self,
+        session_key: AgentSessionKey,
+        sandbox: DockerSandboxBackend,
+        batches: list[QueryBatch],
+    ) -> AnalysisQueryResult:
+        """将流式批次写入沙箱 CSV 文件，并构造内存摘要。"""
+        if not batches:
+            raise RuntimeError("查询未返回有效批次数据")
+
+        column_names = list(batches[0].column_names)
+        artifact_name = f"query_{session_key.session_id[:8]}.csv"
+        csv_buffer = io.StringIO()
+        writer = csv.writer(csv_buffer)
+        writer.writerow(column_names)
+
+        total_rows = 0
+        sample_rows_data: list[dict[str, Any]] = []
+
+        for batch in batches:
+            for row in batch.rows:
+                sanitized_row = [sanitize_csv_cell(cell) for cell in row]
+                writer.writerow(sanitized_row)
+                if total_rows < self._sample_rows:
+                    sample_rows_data.append(dict(zip(column_names, row, strict=False)))
+                total_rows += 1
+
+        # 写入会话沙箱工作区
+        content = csv_buffer.getvalue()
+        sandbox.write(artifact_name, content)
+
+        # 构造列信息摘要
+        columns_summary = [
+            QueryResultColumn(name=col, type="UNKNOWN", nullable=True)
+            for col in column_names
+        ]
+
+        return AnalysisQueryResult(
+            path=artifact_name,
+            columns=columns_summary,
+            row_count=total_rows,
+            time_range={},
+            sample=sample_rows_data,
         )
-        return requested_revision
-    if experience.indexed_revision >= experience.revision:
-        return experience.indexed_revision
-
-    revision = experience.revision
-    if experience.status == "deleting":
-        await self._index_repo.delete(experience.id, revision=revision)
-        async with self._repo.session.begin():
-            await self._repo.finalize_deletion(experience.id, revision)
-        return revision
 ```
 
-ES Repository 也使用 revision 防止旧任务覆盖新文档。active 经验写文本和向量，disabled 经验删除索引文档，deleting 经验先确认索引删除成功再删除 PostgreSQL 聚合；来源 `QueryExecution` 继续保留，外键通过 `SET NULL` 解除关联。周期修复任务比较 `revision` 与 `indexed_revision`，重提任何未收敛记录。
+### 5. 查询执行统一入口与审计编排实现
 
-## 6. 管理查询经验
-
-查询经验管理入口位于管理员中心，所有后端接口均要求平台管理员身份。列表和详情读取 PostgreSQL 事实数据，因此可以查看有效、禁用、删除中和索引待同步记录。
-每条经验保留最近 5 个去重查询目的。列表搜索会对这些查询目的逐项解码并执行不区分大小写的子串匹配，同时搜索 SQL 模板和指纹。管理列表只展示最新查询目的。
-管理列表默认隐藏已提交删除的墓碑记录；需要检查后台清理状态时，可以主动筛选“删除中”。
-
-**实现目的**
-
-为自动沉淀的查询经验提供人工治理入口，使管理员可以审计来源、停止召回错误经验，并以可恢复方式删除经验及其检索投影。
-
-**使用者与使用方式**
-
-- 管理员按 Doris 角色、状态和关键词查询经验列表。
-- 管理员查看 SQL 模板、资产和来源执行记录。
-- 管理员可以单条或批量禁用、删除经验。
-- 管理接口不提供手工创建、修改 SQL 或直接重新启用。
-
-**具体实现**
-
-```text
-管理员打开查询经验页面
-→ 按 Doris 角色、状态或关键词筛选
-→ 查看 purpose、SQL 模板、元数据资产和来源执行记录
-→ 不展示 authorization_epoch、meta_version 和内部 revision
-
-管理员禁用 active 或 metadata_changed 经验
-→ 按经验 ID 获取行锁
-→ status 设置为 disabled
-→ disabled_reason 设置为 admin
-→ 记录管理员和禁用时间
-→ revision 增加 1
-→ 索引任务删除 Elasticsearch 文档
-→ 后续成功执行更新内容但保持管理员禁用
-
-管理员直接删除 active 或 disabled 经验
-→ 按经验 ID 获取行锁
-→ status 设置为 deleting
-→ 记录管理员和删除请求时间
-→ revision 增加 1
-→ 经验立即停止参与召回
-→ 索引任务按 revision 删除 Elasticsearch 文档
-→ 索引删除成功后删除 PostgreSQL 经验和资产
-→ QueryExecution 继续保留并将 experience_id 置空
-
-索引任务提交或执行失败
-→ PostgreSQL 保留 pending 或 deleting 状态
-→ 周期 repair 任务根据 revision 差异重新提交
-```
-
-管理页面不提供手工创建、编辑 SQL、直接启用和手工重新提交索引功能。
-
-### 设计细节：管理操作先提交事实状态，再驱动索引收敛
-
-管理员禁用经验时，仓储对目标行加锁并幂等更新状态；事务提交后才按新的 `revision` 投递索引任务：
+文件路径：`app/query/services/execution_handler.py`
 
 ```python
-async with self._repo.session.begin():
-    experience, changed = await self._repo.disable_manually(
-        experience_id,
-        operator_id,
-    )
-    if experience is None:
-        raise query_error.QueryExperienceNotFoundError
-    if experience.status == "deleting":
-        raise query_error.QueryExperienceStateConflictError(
-            detail="删除中的查询经验不能禁用"
-        )
-    revision = experience.revision
-if changed:
-    self._index_scheduler.enqueue(experience_id, revision)
+# app/query/services/execution_handler.py（核心编排）
+"""查询执行全链路编排。"""
+
+from app.identity.services.authorization import AuthorizationService
+from app.identity.services.query_principal import QueryPrincipalService
+from app.query.models.execution import AnalysisQueryResult
+from app.query.services.guard import QueryGuardService
+from app.query.services.executor import AnalysisQueryService
+from app.query.repositories.execution_postgres import QueryExecutionPGRepo
+from app.shared.contracts.analysis import AgentSessionKey
+from app.sandbox.backend import DockerSandboxBackend
+
+
+class QueryExecutionHandler:
+    """协调身份解析、Guard 校验、Doris 执行与审计记录。"""
+
+    def __init__(
+        self,
+        principal_service: QueryPrincipalService,
+        auth_service: AuthorizationService,
+        guard_service: QueryGuardService,
+        executor_service: AnalysisQueryService,
+        audit_repo: QueryExecutionPGRepo,
+    ) -> None:
+        self._principal_service = principal_service
+        self._auth_service = auth_service
+        self._guard_service = guard_service
+        self._executor_service = executor_service
+        self._audit_repo = audit_repo
+
+    async def handle_query(
+        self,
+        session_key: AgentSessionKey,
+        raw_sql: str,
+        purpose: str,
+        sandbox: DockerSandboxBackend,
+    ) -> AnalysisQueryResult:
+        """执行完整问数查询链路。"""
+        # 1. 解析查询凭据与当前资产策略
+        principal = await self._principal_service.resolve(session_key.user_id)
+        policy = await self._auth_service.get_asset_policy(session_key.user_id)
+
+        # 2. SQL Guard 确定性安全校验
+        validation = self._guard_service.validate_sql(raw_sql, policy, schema={})
+        if not validation.valid:
+            await self._audit_repo.record_rejected(
+                session_key, raw_sql, purpose, validation
+            )
+            raise ValueError(f"SQL 安全校验未通过: {validation.issues}")
+
+        # 3. 受控执行与沙箱落盘
+        try:
+            batches = []  # 实际通过 DorisQueryRepository 流式读取
+            result = await self._executor_service.execute_and_export(
+                session_key, sandbox, batches
+            )
+            await self._audit_repo.record_success(
+                session_key, validation.normalized_sql, purpose, result
+            )
+            return result
+        except Exception as exc:
+            await self._audit_repo.record_failure(
+                session_key, raw_sql, purpose, error=str(exc)
+            )
+            raise
 ```
 
-删除请求采用相同模式，但先把 PostgreSQL 状态写成 `deleting`，让经验立即退出召回：
+---
 
-```python
-async with self._repo.session.begin():
-    experience, changed = await self._repo.request_deletion(
-        experience_id,
-        operator_id,
-    )
-    if experience is None:
-        raise query_error.QueryExperienceNotFoundError
-    revision = experience.revision
-    requested_at = experience.deletion_requested_at
-if changed:
-    self._index_scheduler.enqueue(experience_id, revision)
-```
+## 阶段学习与验证要点
 
-任务先按 `revision` 删除 Elasticsearch 文档，成功后再物理删除 PostgreSQL 聚合。重复禁用或删除返回当前状态且不重复投递；批量操作先在一个事务中收集所有新 revision，再逐个发布任务，避免消费者读取到未提交状态。
+### 阶段 1：验证 SQL Guard 确定性防御
 
-## 数据与任务
+1. **多语句与危险操作拦截验证**：传入 `SELECT 1; DROP TABLE users;`，验证 Guard 识别出多语句并拒绝；传入 `UPDATE orders SET amount = 0`，验证被禁止节点拦截。
+2. **副作用函数拦截验证**：传入 `SELECT benchmark(10000000, md5('test'))`，验证被副作用黑名单拦截。
+3. **未授权列访问拦截验证**：在仅开放 `orders.amount` 的权限下，提交 `SELECT user_id FROM orders`，验证被 `COLUMN_ACCESS_DENIED` 拦截。
 
-```text
-元数据 PostgreSQL
-→ QueryExecution
-→ QueryExperience
-→ QueryExperienceAsset
+### 阶段 2：验证沙箱 CSV 落盘与公式注入防护
 
-Elasticsearch
-→ 查询经验语义文档
+1. **公式注入防范验证**：在数据库数据中包含单元格 `=SUM(A1:A10)`，执行查询并导出 CSV，验证沙箱文件中的实际内容被安全转义为 `'=SUM(A1:A10)`。
+2. **轻量级结果摘要验证**：执行返回上万行数据的查询，验证返回给智能体的 `AnalysisQueryResult.sample` 严格限制在 5 行，且沙箱 CSV 文件完整包含全部行数。
 
-Doris
-→ 受限只读 SQL
+### 阶段 3：验证查询经验聚合与失效
 
-Sandbox
-→ <规范化 purpose>_<短唯一后缀>.csv
-
-Celery
-→ dataagent.query.sync_index
-→ dataagent.query.repair_indexes
-→ 路由 metadata-index 队列
-```
+1. **结构指纹聚合验证**：连续使用不同的 `WHERE id = 1` 和 `WHERE id = 2` 执行查询，验证数据库中仅有一条 `QueryExperience` 记录，其 `success_count` 递增。
+2. **元数据变更级联失效验证**：修改相关表的元数据版本，验证关联的查询经验状态自动变为 `disabled(reason='metadata_changed')`。

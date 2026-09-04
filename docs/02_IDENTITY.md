@@ -1,87 +1,437 @@
-# 02. Identity 模块职责与实现
+# 02. Identity：从账号登录到 Doris 数据授权
 
-`identity` 负责平台账号认证，以及用户访问 Doris 数据时使用的角色、查询身份和权限。
+## 功能说明
 
-## 模块职责与边界
+`app/identity` 负责解决两组核心问题：请求代表哪个平台用户；该用户以哪个 Doris 身份执行查询、具备哪些数据资产的访问权限。前一组能力覆盖账号注册、密码安全管理、Access Token 与 Refresh Token 生命周期及认证依赖；后一组能力覆盖 Doris 角色管理、专用查询用户映射、SELECT 权限投影与 Row Policy 行级数据隔离。
 
-`identity` 回答两个核心问题：当前请求代表哪个平台用户，以及这个用户能够以什么 Doris 身份访问哪些数据。模块统一管理平台账号、Token、管理员资格、Doris 角色查询身份、SELECT 资产授权投影和 Row Policy 操作入口。
+本模块的核心职责与底层实现细节如下。
 
-普通用户通过认证接口登录、刷新会话、退出和修改密码；平台管理员通过管理接口维护用户、Doris 角色和数据权限；`metadata`、`query`、`assistant` 与 `workflows` 通过服务契约读取认证用户、分析资格、查询身份和资产策略。
+### 1. 平台账号、安全密码与并发防护
 
-平台账号和稳定授权投影以认证 PostgreSQL 为事实来源，Doris 角色、真实 SELECT 权限和 Row Policy 以 Doris 为最终执行边界。对话、查询、元数据和沙箱资源仍由所属模块管理。
+平台用户的实体模型由 `app/identity/models/account.py` 中的 `User` 定义，承载用户的身份标识与认证状态。
 
-## 功能清单
+- **规范化与数据库唯一性约束**：用户注册与登录时，用户名与邮箱强制经过 `strip().casefold()` 规范化处理。应用层首先执行格式预检，数据库层在 `username` 与 `email` 字段上建立唯一约束，并发场景下的重复创建由数据库底层唯一性冲突保证绝对不重。
+- **Argon2id 密码哈希与并发控制**：密码哈希由 `Argon2PasswordManager` 实现，遵循 `PasswordManager` Protocol。采用推荐的 Argon2id 算法参数，计算过程通过 `anyio.to_thread.run_sync` 调度至单独的线程池执行，避免 CPU 密集计算阻塞 asyncio 事件循环。同时配置 `asyncio.Semaphore(max_concurrency=2)` 限制单个进程内并发哈希计算的最大数量，防止瞬时并发登录压垮 API 进程的 CPU 与内存。
+- **Dummy 校验抵御用户枚举**：登录请求中如果输入的用户名或邮箱不存在，系统自动对预先生成的假哈希值（`dummy_hash`）调用一次耗时相同的密码校验方法 `verify_dummy_password`，使“用户不存在”与“密码错误”消耗接近相同的计算时间，杜绝通过请求响应时间推测账号是否存在的侧信道攻击。
+- **管理员安全不变量**：
+  - 系统始终保留至少一个处于启用状态的管理员账号。更新或禁用管理员时，必须锁定安全变更锁并核验系统中有效管理员总数，当有效管理员数量小于等于 1 时禁止禁用或降权；
+  - 管理员账号禁止注销或删除自身；
+  - 密码长度强制校验（下限通过配置定义，通常为 6 至 128 字符）。
 
-```text
-Identity
-→ 登录和刷新会话
-→ 修改密码和退出登录
-→ 初始化首个管理员
-→ 管理用户
-→ 管理 Doris 角色查询身份
-→ 为用户绑定 Doris 角色
-→ 管理 SELECT 资产权限
-→ 管理 Doris 行级策略
-→ 发起用户注销
-```
+### 2. Access Token 与即时撤销机制
 
-## 1. 登录和刷新会话
+系统采用基于不对称安全设计的 JWT 认证体系。
 
-**实现目的**
+- **JWT 规范与 Claims 约束**：访问令牌由 `JWTCodec` 签发，标准 payload 必须且仅包含六个字段：`sub`（用户主键 ID 字符串）、`auth_version`（用户的当前安全认证版本整数）、`token_type`（强制为 `"access"`）、`iat`（签发时间戳）、`exp`（过期时间戳）、`iss`（配置的签发者标识）。解码时强制要求所有上述 claims 齐全，算法与 issuer 必须完全匹配。
+- **鉴权代次（auth_version）即时撤销**：虽然 Access Token 是短生命周期的无状态 JWT，但为了保证封禁账号或修改密码能即时生效，`AccessTokenAuthenticator.authenticate()` 在验证 JWT 签名与过期时间通过后，强制使用当前只读数据库连接重新加载 `User` 记录，核验 `user.is_active` 状态以及 `user.auth_version == claims.auth_version`。当用户修改密码、管理员重置权限或禁用账号时，数据库中的 `auth_version` 递增，所有此前已签发但未过期的 Access Token 在下一次请求时全部判定失效。
+- **FastAPI CurrentUserDep 纯快照依赖**：请求依赖 `_get_current_user` 最终返回的是一个不可变的 `AuthenticatedUser` 数据类（`dataclass(frozen=True, slots=True)`），它完全脱离 SQLAlchemy Session 生命周期。上层业务代码只消费用户信息快照，杜绝在控制器层意外触发懒加载查询或隐式修改持久化实体。
 
-建立可撤销、可轮换的用户会话，在每次请求时重新确认账号仍然有效，并限制密码猜测、Refresh Token 重放和长期 Token 泄露带来的风险。
+### 3. Refresh Token 轮换链与重放检测
 
-**使用者与使用方式**
+长期会话通过持久化的 Refresh Token 轮换机制管理。
 
-- 普通用户和管理员通过 `/api/v1/auth/login` 使用用户名或邮箱登录。
-- 客户端在 Access Token 到期前后通过 `/api/v1/auth/refresh` 轮换 Token。
-- 所有受保护接口通过 Bearer Access Token 解析当前用户。
-- `/api/v1/auth/me` 用于客户端恢复当前账号、管理员标记和 Doris 角色信息。
+- **数据库非明文存储**：数据库表 `refresh_tokens` 绝不保存 JWT 明文，仅保存完整 Token 字符串的 SHA-256 哈希摘要（`token_hash`）、令牌唯一标识（`id: UUID`，对应 JWT 中的 `jti`）、族标识（`family_id: UUID`）、所属用户 ID、过期时间、撤销时间戳（`revoked_at`）以及后继轮换令牌标识（`replacement_id`）。
+- **悲观锁与原子轮换流程**：客户端发起 `/refresh` 请求时，`AuthService.refresh()` 在单个数据库事务中执行：
+  1. 解码 Refresh Token 并计算 SHA-256 摘要；
+  2. 使用 `FOR UPDATE` 依次对目标 `User` 行和 `RefreshToken` 行加行级排他锁；
+  3. 核对 `user_id`、`family_id`，并使用恒定时间比对函数 `hmac.compare_digest(current.token_hash, token_digest)` 防范时序攻击；
+  4. **重放检测**：若该 Token 已经被标记撤销（`revoked_at is not None`），表明该 Token 可能已被攻击者窃取重放，系统立即将该 `family_id` 对应的所有已签发 Refresh Token 全部批量撤销，阻断整个会话族；
+  5. **安全轮换**：若该 Token 正常有效，则签发一对新的 Access Token 与 Refresh Token，并在事务中记录当前 Token 的 `revoked_at` 与 `replacement_id` 指向新 Token ID。
+- **登出与改密级联撤销**：登出操作（`/logout`）将当前 Token 所在的整个 `family_id` 标记撤销；修改密码操作（`/change-password`）推进用户的 `auth_version` 并撤销该用户名下的所有 Refresh Token。
+- **高成本认证限流**：登录和刷新接口在执行 Argon2 密码计算或 JWT 解密前，由 `AuthRateLimitService` 在 Redis 中通过滑动窗口进行限流。限流维度包括客户端 peer IP 与登录标识摘要（不存原始明文）。限流触发时抛出 429 异常并在 HTTP 头中回传 `Retry-After` 秒数。
 
-**具体实现**
+### 4. Doris 查询身份与平台用户分离
 
-```text
-用户提交用户名/邮箱和密码
-→ 按客户端 IP 和登录标识限流
-→ 校验用户存在、账号启用和 Argon2 密码哈希
-→ 签发短期 Access Token
-→ 签发随机 Refresh Token
-→ 只保存 Refresh Token 哈希及其 family_id
-→ 返回两个 Token
+平台用户与底层 Doris 数据库查询身份解耦。
 
-客户端使用 Access Token 请求接口
-→ 解析 Token 的用户 ID、过期时间和 auth_version
-→ 重新读取当前用户
-→ 校验账号仍启用
-→ 校验 Token auth_version 等于用户当前 auth_version
-→ 建立当前用户身份
+- **三层身份模型**：
+  - 平台用户（User）：HTTP 会话主体，归属于系统业务层；
+  - Doris 角色（Doris Role）：数据权限的集合，多个平台用户可共享同一个 Doris 角色；
+  - Doris 查询用户（Query User）：真正连接 Doris 数据库执行 SQL 的物理数据库账号。
+- **DorisQueryIdentity 模型与凭据加密**：
+  - 表 `doris_query_identities` 维护角色与查询用户的对应关系，字段包括 `role_name`、`query_user`、`encrypted_password`、`workload_group`、`is_default` 以及 `authorization_epoch`；
+  - 查询用户密码通过 `DorisCredentialCipher` 使用 AES-256-GCM 算法进行对称加密，加密密钥仅保存在服务端配置文件中。密文持久化至 PostgreSQL，日志输出、API 响应与领域对象中绝不出现密码明文。
+- **QueryPrincipalService 解析**：业务查询执行前，`QueryPrincipalService.resolve(user_id)` 读取用户绑定的 `doris_role_name`，加载其 `DorisQueryIdentity` 并解密密码，输出不可变对象 `ResolvedQueryPrincipal`。Query 模块据此向 `DorisQueryClientRegistry` 索取该角色对应的专用连接池。系统杜绝使用 Doris 管理员连接执行业务数据查询。
 
-客户端使用 Refresh Token 续期
-→ 按客户端 IP 限流
-→ 校验 Token 哈希、过期时间和撤销状态
-→ 撤销本次使用的旧 Token
-→ 签发并关联一个后继 Token
-→ 返回新的 Access Token 和 Refresh Token
+### 5. 资产授权投影与层级策略判定
 
-已经撤销的 Refresh Token 再次出现
-→ 判定为 Token 重放
-→ 撤销同一 family 的全部 Refresh Token
-→ 要求用户重新登录
-```
+平台在应用层维护 Doris 数据资产授权投影，用于在向大模型提供元数据提示词以及进行 SQL 静态校验时提前收窄范围。
 
-认证限流使用 Redis 共享计数：登录 IP 每分钟 30 次、登录标识每分钟 10 次、刷新 IP 每分钟 60 次。所有 API Worker 使用同一 `auth.rate_limit_redis_url`；Redis 保存 SHA-256 摘要键、有限容量的活跃桶和自动过期时间，不保存原始 IP 或登录标识。
+- **四级数据资产层级与 AssetIdentity**：
+  - 资产层级表示为：`data_source -> database -> table -> column`；
+  - `AssetIdentity.encompasses(other)` 定义了自顶向下的覆盖逻辑：数据源级授权覆盖其下所有数据库、表和字段；数据库级授权覆盖该库内所有表和字段；表级授权覆盖该表下所有字段；字段级授权仅覆盖自身。
+- **AssetAccessPolicy 的双重语义**：
+  - `allows(asset)`：当前用户授权集合中是否存在某项授权完全覆盖目标资产。用于实际数据读取权限校验（例如 SQL 查询校验）；
+  - `is_visible(asset)`：当前用户是否拥有目标资产本身的权限，或者是否拥有该资产下属某一子资产的权限。用于元数据目录树呈现（例如用户仅有 `orders.amount` 字段权限时，其父表 `orders` 与数据库对用户在目录中“可见”，但用户不能执行 `SELECT * FROM orders`）。
+- **DorisRoleAssetGrant 投影与跨系统补偿**：
+  - PostgreSQL 中的 `doris_role_asset_grants` 表充当 Doris 权限在应用层的投影；
+  - 表上设置 CheckConstraint 约束：指定 `column_name` 时必须指定 `table_name`；指定 `table_name` 时必须指定 `database_name`；
+  - 管理员执行授权变更时，流程为：获取认证库安全变更排他锁 -> 校验目标物理表与字段 -> 变更 Doris 底层真实权限 -> 写入/删除 PostgreSQL 授权记录 -> 提交事务。若后半段数据库事务失败，系统启动逆向补偿流程，对已成功的 Doris 操作执行回滚操作，杜绝双写漂移。
+- **Row Policy 行级数据隔离**：Row Policy 的最终生效状态保存在 Doris 中。管理员创建行级策略时，应用层通过 `sqlglot` 将输入的策略表达式严格限制为单一的谓词 AST 节点，严禁包含多语句或危险函数，随后提交 Doris 验证字段合法性与布尔返回类型。
+- **authorization_epoch 授权失效代次**：
+  - 用户的查询经验基于 `role_name + SQL fingerprint` 聚合；
+  - 当管理员回收某角色的 SELECT 权限或修改/删除 Row Policy 时，`DorisQueryIdentity` 中的 `authorization_epoch` 自动轮换生成新的 UUID；
+  - 召回查询经验时强制比对当前 `authorization_epoch`，防止权限收窄后模型复用在更宽松权限下生成的 SQL 经验。
 
+### 6. 用户注销受理与状态存储
 
-### 设计细节：密码校验控制 CPU 并发，并隐藏账号是否存在
+用户注销是跨认证库、助手持久化、沙箱容器与命名卷的复杂流程，Identity 模块负责受理注销并持久化恢复锚点。
 
-Argon2id 是 CPU 和内存密集型操作。服务通过进程内 Semaphore 限制同时执行的哈希任务，并把同步密码库放在线程池执行，避免阻塞事件循环。未知账号仍校验一份预生成的 dummy hash，使“账号不存在”和“密码错误”走近似的计算路径。
+- **原子受理注销请求**：`PostgresUserDeletionStateStore.request()` 在单个认证事务中完成：
+  1. 锁定安全变更排他锁；
+  2. 校验目标用户有效性，若为最后一个启用管理员则拒绝注销；
+  3. 将用户 `is_active` 置为 `False`；
+  4. 撤销用户全部 Refresh Token；
+  5. 在 `user_deletion_tasks` 表中插入或更新一条 `status='pending'` 的注销任务记录。
+- **终态保护机制**：认证用户物理记录必须保留至外部资源（会话、Checkpoints、检索快照、Docker 容器与磁盘卷）全部清理完毕后，才由注销工作流调用 `complete()` 执行物理删除。`complete()` 与 `record_failure()` 均通过行级悲观锁锁定任务行，且 `completed` 是不可逆单向终态，迟到的失败回写绝不覆盖已完成状态。
+
+---
+
+## 核心实现代码与模块架构
+
+### 1. 持久化数据模型与约束实现
+
+包含平台用户、刷新令牌、Doris 查询身份、资产授权投影以及注销任务记录：
 
 ```python
+# app/identity/models/account.py
+"""平台用户与认证令牌模型。"""
+
+from datetime import datetime
+from uuid import UUID, uuid4
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, func, text
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.shared.database.base import AuthBase
+
+
+class User(AuthBase):
+    """平台用户。"""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
+    password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=text("true"),
+    )
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    auth_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    doris_role_name: Mapped[str | None] = mapped_column(
+        ForeignKey("doris_query_identities.role_name", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class RefreshToken(AuthBase):
+    """可轮换的刷新令牌记录（仅存摘要）。"""
+
+    __tablename__ = "refresh_tokens"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    family_id: Mapped[UUID] = mapped_column(nullable=False)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    replacement_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("refresh_tokens.id", ondelete="SET NULL"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        Index("ix_refresh_tokens_family_id", "family_id"),
+        Index("ix_refresh_tokens_user_id", "user_id"),
+    )
+```
+
+```python
+# app/identity/models/doris.py
+"""Doris 查询身份与权限投影模型。"""
+
+import re
+from dataclasses import dataclass
+from datetime import datetime
+from enum import StrEnum
+from typing import Literal
+from uuid import UUID, uuid4
+
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.shared.database.base import AuthBase
+
+DORIS_ROLE_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
+
+
+def normalize_doris_role_name(value: str) -> str:
+    """校验并规范化 Doris 角色名。"""
+    normalized = value.strip()
+    if DORIS_ROLE_NAME_PATTERN.fullmatch(normalized) is None:
+        raise ValueError("Doris 角色名称格式无效")
+    return normalized
+
+
+class AssetScope(StrEnum):
+    """数据资产授权粒度。"""
+
+    DATA_SOURCE = "data_source"
+    DATABASE = "database"
+    TABLE = "table"
+    COLUMN = "column"
+
+
+@dataclass(frozen=True, slots=True)
+class DorisRowPolicy:
+    """Doris 角色当前生效的行级过滤策略。"""
+
+    policy_name: str
+    catalog_name: str
+    database_name: str
+    table_name: str
+    policy_type: Literal["RESTRICTIVE", "PERMISSIVE"]
+    predicate: str
+
+
+class DorisQueryIdentity(AuthBase):
+    """Doris 数据角色对应的稳定共享查询身份。"""
+
+    __tablename__ = "doris_query_identities"
+
+    role_name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    query_user: Mapped[str] = mapped_column(String(64), nullable=False)
+    encrypted_password: Mapped[str] = mapped_column(Text, nullable=False)
+    workload_group: Mapped[str] = mapped_column(String(64), nullable=False)
+    is_default: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    authorization_epoch: Mapped[UUID] = mapped_column(
+        nullable=False,
+        default=uuid4,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class DorisRoleAssetGrant(AuthBase):
+    """角色的数据资产访问授权投影。"""
+
+    __tablename__ = "doris_role_asset_grants"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    role_name: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("doris_query_identities.role_name", ondelete="CASCADE"),
+        nullable=False,
+    )
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    data_source: Mapped[str] = mapped_column(String(64), nullable=False)
+    database_name: Mapped[str | None] = mapped_column(String(128))
+    table_name: Mapped[str | None] = mapped_column(String(128))
+    column_name: Mapped[str | None] = mapped_column(String(128))
+    resource_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "role_name",
+            "resource_key",
+            name="uq_doris_role_asset_grants_role_resource",
+        ),
+        Index("ix_doris_role_asset_grants_role_name", "role_name"),
+        CheckConstraint(
+            "scope IN ('data_source', 'database', 'table', 'column')",
+            name="ck_doris_role_asset_grants_scope",
+        ),
+        CheckConstraint(
+            "(scope != 'column') OR (table_name IS NOT NULL AND column_name IS NOT NULL)",
+            name="ck_doris_role_asset_grants_column_target",
+        ),
+        CheckConstraint(
+            "(scope != 'table') OR (database_name IS NOT NULL AND table_name IS NOT NULL AND column_name IS NULL)",
+            name="ck_doris_role_asset_grants_table_target",
+        ),
+        CheckConstraint(
+            "(scope != 'database') OR (database_name IS NOT NULL AND table_name IS NULL AND column_name IS NULL)",
+            name="ck_doris_role_asset_grants_database_target",
+        ),
+        CheckConstraint(
+            "(scope != 'data_source') OR (database_name IS NULL AND table_name IS NULL AND column_name IS NULL)",
+            name="ck_doris_role_asset_grants_data_source_target",
+        ),
+    )
+```
+
+```python
+# app/identity/models/lifecycle.py
+"""用户生命周期模型。"""
+
+from datetime import datetime
+from sqlalchemy import CheckConstraint, DateTime, Integer, String, Text, func, text
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.shared.database.base import AuthBase
+
+
+class UserDeletionTask(AuthBase):
+    """跨存储用户注销任务。"""
+
+    __tablename__ = "user_deletion_tasks"
+
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="pending",
+        server_default=text("'pending'"),
+    )
+    attempt_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'completed')",
+            name="ck_user_deletion_task_status",
+        ),
+    )
+```
+
+### 2. 密码管理与 JWT 编解码实现
+
+```python
+# app/identity/services/auth.py（核心实现）
+"""用户认证与令牌生命周期服务。"""
+
+import asyncio
+import hashlib
+import hmac
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any, Protocol, cast
+from uuid import UUID, uuid4
+
+import jwt
+from anyio import to_thread
+from loguru import logger
+from pwdlib import PasswordHash
+from sqlalchemy.exc import IntegrityError
+
+from app.identity import errors as auth_error
+from app.identity.models.account import RefreshToken, User
+from app.identity.repositories.identity import IdentityPGRepo
+from app.shared.config.app_config import AuthConfig
+
+ARGON2_MAX_CONCURRENCY = 2
+
+
+class PasswordManager(Protocol):
+    """异步密码哈希接口。"""
+
+    async def hash(self, password: str) -> str: ...
+    async def verify(self, password: str, password_hash: str) -> bool: ...
+    async def verify_dummy_password(self, password: str) -> None: ...
+
+
 class Argon2PasswordManager:
+    """基于 Argon2id 的异步密码哈希实现。"""
+
     def __init__(self, *, max_concurrency: int = ARGON2_MAX_CONCURRENCY) -> None:
+        if max_concurrency <= 0:
+            raise ValueError("max_concurrency 必须为正整数")
         self._password_hash = PasswordHash.recommended()
         self._dummy_hash = self._password_hash.hash("dataagent-dummy-password")
         self._semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def hash(self, password: str) -> str:
+        async with self._semaphore:
+            return await to_thread.run_sync(self._password_hash.hash, password)
 
     async def verify(self, password: str, password_hash: str) -> bool:
         async with self._semaphore:
@@ -92,677 +442,504 @@ class Argon2PasswordManager:
             )
 
     async def verify_dummy_password(self, password: str) -> None:
+        """执行等价开销校验以防止用户枚举。"""
         await self.verify(password, self._dummy_hash)
-```
-
-登录标识先执行 `strip().casefold()`，用户名和邮箱在写入时也使用相同规范化规则。数据库唯一约束承担最终并发冲突检查。
 
 
-### 设计细节：Access Token 每次请求都与用户当前安全版本比较
+@dataclass(frozen=True, slots=True)
+class AuthenticatedUser:
+    """脱离数据库会话的认证用户快照。"""
 
-Access Token 携带 `sub` 和 `auth_version`。认证依赖验证签名、签发者、过期时间和令牌类型后，重新读取用户并比较数据库中的当前版本：
+    id: int
+    username: str
+    email: str
+    auth_version: int
+    is_active: bool
+    is_admin: bool
+    doris_role_name: str | None
+    created_at: datetime
 
-```python
-async def authenticate(self, access_token: str) -> AuthenticatedUser:
-    claims = self._codec.decode_access_token(access_token)
-    user = await self._repo.get_user_by_id(claims.user_id)
-    if user is None:
-        raise auth_error.InvalidTokenError
-    _ensure_active_user(user)
-    if user.auth_version != claims.auth_version:
-        raise auth_error.InvalidTokenError
-    return AuthenticatedUser.from_user(user)
-```
-
-修改密码、管理员修改账号安全字段和角色绑定时都会增加 `auth_version`。因此旧 Access Token 即使尚未到 `exp`，下一次请求也会失效。返回值使用脱离数据库 Session 的不可变 `AuthenticatedUser` 快照，路由后续处理不会依赖已关闭的 ORM 对象。
-
-
-### 设计细节：Refresh Token 使用单次轮换和令牌族重放检测
-
-服务端只保存 Refresh Token 的 SHA-256 摘要。刷新时同时锁定用户和 Token 行，在一个 PostgreSQL 事务中校验 `user_id`、`family_id`、摘要和撤销状态；有效 Token 被标记为已撤销并指向后继 Token。
-
-```python
-async with self._repo.session.begin():
-    loaded_user = await self._repo.get_user_by_id_for_update(claims.user_id)
-    current = await self._repo.get_refresh_token_for_update(claims.token_id)
-    if (
-        loaded_user is None
-        or current is None
-        or current.user_id != claims.user_id
-        or current.family_id != claims.family_id
-        or not hmac.compare_digest(current.token_hash, token_digest)
-    ):
-        raise auth_error.InvalidTokenError
-    if current.revoked_at is not None:
-        await self._repo.revoke_refresh_family(current.family_id, now)
-        reuse_detected = True
-    else:
-        replacement_id = uuid4()
-        token_pair = await self._issue_token_pair(
-            loaded_user,
-            current.family_id,
-            refresh_token_id=replacement_id,
+    @classmethod
+    def from_user(cls, user: User) -> "AuthenticatedUser":
+        return cls(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            auth_version=user.auth_version,
+            is_active=user.is_active,
+            is_admin=user.is_admin,
+            doris_role_name=user.doris_role_name,
+            created_at=user.created_at,
         )
-        self._repo.rotate_refresh_token(current, replacement_id, now)
-```
 
-同一个 Token 被两个请求并发使用时，行锁使第二个请求在第一个提交后看到 `revoked_at`，随后撤销整个 family。退出登录也撤销整个 family，客户端不能保留同一登录链上的旧 Token 继续刷新。
 
-## 2. 修改密码和退出登录
+class JWTCodec:
+    """应用 JWT 编解码器。"""
 
-**实现目的**
+    def __init__(self, config: AuthConfig) -> None:
+        self._config = config
+        self._secret = config.jwt_secret.get_secret_value()
 
-让用户主动终止当前刷新链，并在密码变化后立即废止此前签发的认证状态。
+    def issue_access_token(self, user: User, now: datetime) -> str:
+        payload: dict[str, Any] = {
+            "sub": str(user.id),
+            "auth_version": user.auth_version,
+            "token_type": "access",
+            "iat": now,
+            "exp": now + timedelta(minutes=self._config.access_token_minutes),
+            "iss": self._config.issuer,
+        }
+        return jwt.encode(payload, self._secret, algorithm=self._config.jwt_algorithm)
 
-**使用者与使用方式**
+    def issue_refresh_token(
+        self, user_id: int, token_id: UUID, family_id: UUID, now: datetime
+    ) -> str:
+        return jwt.encode(
+            {
+                "sub": str(user_id),
+                "jti": str(token_id),
+                "family_id": str(family_id),
+                "token_type": "refresh",
+                "iat": now,
+                "exp": now + timedelta(days=self._config.refresh_token_days),
+                "iss": self._config.issuer,
+            },
+            self._secret,
+            algorithm=self._config.jwt_algorithm,
+        )
 
-- 已登录用户通过 `/api/v1/auth/change-password` 提交旧密码和新密码。
-- 客户端通过 `/api/v1/auth/logout` 提交当前 Refresh Token 退出登录。
-- 修改密码后，客户端需要使用新密码重新登录。
-
-**具体实现**
-
-```text
-用户修改密码
-→ 校验旧密码
-→ 写入新的 Argon2 密码哈希
-→ 增加用户 auth_version
-→ 撤销该用户已有 Refresh Token
-→ 现有 Access Token 和刷新链全部失效
-
-用户退出登录
-→ 撤销当前 Refresh Token 所属的完整 token family
-→ 当前刷新链不能继续续期
-```
-
-### 设计细节：密码变更与会话失效在同一事务中提交
-
-新密码的 Argon2 计算先在事务外完成，缩短用户行的锁定时间；旧密码复核、密码写入和 Refresh Token 撤销则共享一个数据库事务：
-
-```python
-password_hash = await self._password_manager.hash(new_password)
-
-async with self._repo.session.begin():
-    user = await self._repo.get_user_by_id_for_update(user_id)
-    if user is None:
-        raise auth_error.InvalidTokenError
-    _ensure_active_user(user)
-    if not await self._password_manager.verify(
-        current_password,
-        user.password_hash,
-    ):
-        raise auth_error.InvalidCurrentPasswordError
-    await self._repo.set_user_password(user, password_hash)
-    await self._repo.revoke_user_refresh_tokens(user.id, self._now())
-```
-
-`set_user_password()` 同时递增 `auth_version`。因此事务提交后，数据库中的刷新令牌已被撤销，仍在客户端的 Access Token 也会因版本不匹配而失效。退出登录调用 `revoke_refresh_family()`，撤销范围限定为当前设备登录形成的令牌族。
-
-## 3. 初始化首个管理员
-
-**实现目的**
-
-在系统还没有可用管理账号时提供命令行引导入口，并支持部署脚本重复执行而不会创建重复账号或静默接管已有账号。
-
-**使用者与使用方式**
-
-- 部署或开发人员在 `conf/.env` 配置 `ADMIN_USERNAME`、`ADMIN_EMAIL` 和 `ADMIN_PASSWORD`。
-- 在项目根目录执行 `uv run -m scripts.bootstrap_admin`。
-- 命令会报告账号是新建、已存在还是被提升为管理员。
-
-**具体实现**
-
-```text
-启动引导命令
-→ 读取并校验显式管理员凭据
-→ 计算 Argon2 密码哈希
-→ 获取认证安全变更锁
-→ 按用户名和邮箱查询现有账号
-
-账号不存在
-→ 创建启用状态的管理员
-→ 不自动绑定 Doris 角色
-
-同一账号已经存在
-→ 要求用户名、邮箱和密码全部匹配
-→ 账号未启用时拒绝继续
-→ 普通账号可以提升为管理员
-
-用户名或邮箱与不同账号冲突
-→ 返回冲突错误
-→ 不修改任何已有账号
-```
-
-### 设计细节：初始化命令以凭据完全匹配实现幂等
-
-多个实例可能同时执行初始化，因此检查和写入都位于认证安全变更锁内。已有账号只有在用户名、邮箱指向同一记录且密码验证通过时才能复用：
-
-```python
-async with self._repo.session.begin():
-    await self._repo.lock_security_mutation()
-    by_username = await self._repo.get_user_by_username(normalized_username)
-    by_email = await self._repo.get_user_by_email(normalized_email)
-    existing = by_username or by_email
-    if existing is not None:
-        if (
-            by_username is None
-            or by_email is None
-            or by_username.id != by_email.id
-            or not await self._password_manager.verify(
-                password,
-                existing.password_hash,
+    def decode_access_token(self, token: str) -> tuple[int, int]:
+        """校验并返回 (user_id, auth_version)。"""
+        try:
+            payload = jwt.decode(
+                token,
+                self._secret,
+                algorithms=[self._config.jwt_algorithm],
+                issuer=self._config.issuer,
+                leeway=5,
+                options={
+                    "require": ["sub", "auth_version", "token_type", "iat", "exp", "iss"]
+                },
             )
-        ):
-            raise auth_error.UserAlreadyExistsError(
-                detail="初始化账号与现有账号冲突"
+        except jwt.PyJWTError as exc:
+            raise auth_error.InvalidTokenError from exc
+        if payload.get("token_type") != "access":
+            raise auth_error.InvalidTokenError(detail="非预期的令牌类型")
+        return int(payload["sub"]), int(payload["auth_version"])
+
+    def decode_refresh_token(self, token: str) -> tuple[int, UUID, UUID]:
+        """校验并返回 (user_id, token_id, family_id)。"""
+        try:
+            payload = jwt.decode(
+                token,
+                self._secret,
+                algorithms=[self._config.jwt_algorithm],
+                issuer=self._config.issuer,
+                leeway=5,
+                options={
+                    "require": [
+                        "sub",
+                        "jti",
+                        "family_id",
+                        "token_type",
+                        "iat",
+                        "exp",
+                        "iss",
+                    ]
+                },
             )
-        _ensure_active_user(existing)
-        if not existing.is_admin:
-            await self._repo.update_user(
-                existing,
-                doris_role=None,
-                update_doris_role=False,
-                is_admin=True,
-            )
-```
-
-这项完全匹配检查防止部署配置中的用户名或邮箱误命中现有用户。提升管理员时保留原有 Doris 角色；新建管理员则不自动绑定数据角色，将平台管理权和数据查询权分开配置。
-
-## 4. 管理用户
-
-**实现目的**
-
-集中维护能够登录平台的账号、管理员资格和默认数据角色，并保证用户名、邮箱、最后管理员和认证会话的一致性。
-
-**使用者与使用方式**
-
-- 平台管理员通过 `/api/v1/admin/users` 分页查询或搜索用户。
-- 管理员可以创建账号，设置初始密码、管理员标记和 Doris 角色。
-- 管理员可以修改用户名、邮箱、密码、管理员标记和 Doris 角色。
-- 删除用户通过持久化注销流程完成，直接修改接口不提供任意启用或禁用开关。
-
-**具体实现**
-
-```text
-管理员创建用户
-→ 校验用户名和邮箱唯一
-→ 保存密码哈希
-→ 创建为启用状态并设置管理员标记
-→ 可选绑定一个 Doris 角色
-→ 未指定角色时使用当前默认 Doris 角色
-
-管理员修改用户
-→ 修改用户名、邮箱等基础资料
-→ 设置或取消管理员身份
-→ 更换或解除 Doris 角色绑定
-→ 可选重置用户密码
-→ 撤销该用户已有 Refresh Token
-
-安全状态发生变化
-→ 用户自行修改密码时增加 auth_version 并撤销 Refresh Token
-→ 管理员修改用户时增加 auth_version 并撤销 Refresh Token
-→ 旧认证状态不能继续使用
-```
-
-普通认证要求账号启用；分析接口还要求用户已经绑定可用 Doris 角色；管理接口额外要求 `is_admin=true`。
-
-### 设计细节：用户变更共享安全锁并保护最后一个管理员
-
-创建用户时，在同一安全变更临界区内解析默认角色并检查账号唯一性；更新用户时，角色存在性、最后管理员和唯一性检查也与写入共享该锁：
-
-```python
-async with self._repo.session.begin():
-    await self._repo.lock_security_mutation()
-    if normalized_doris_role is not None:
-        identity = await self._repo.get_query_identity(normalized_doris_role)
-        if identity is None:
-            raise auth_error.RoleNotFoundError
-
-    user = await self._repo.get_user_by_id(user_id)
-    if user is None:
-        raise auth_error.UserNotFoundError
-    if (
-        is_admin is not None
-        and user.is_admin
-        and not is_admin
-        and await self._repo.count_admins() <= 1
-    ):
-        raise auth_error.LastAdministratorError
-```
-
-锁把“检查后写入”串行化，避免并发请求同时通过最后管理员检查。管理员修改会撤销目标用户全部 Refresh Token；仓储在安全字段发生变化时递增 `auth_version`，使旧 Access Token 同步失效。
-
-## 5. 管理 Doris 角色查询身份
-
-**实现目的**
-
-为每个业务数据角色建立稳定、只读且可审计的查询身份，使多个平台用户能够共享授权范围和查询经验，同时避免使用 Doris 管理员账号执行分析 SQL。
-
-**使用者与使用方式**
-
-- 管理员查看 Doris 已有角色和可用 Workload Group。
-- 管理员创建受管角色，指定角色描述、专用 `query_user` 和 Workload Group。
-- 管理员设置或清除新用户使用的默认角色，并删除不再使用的受管角色。
-- `query` 在每次执行 SQL 前解析角色专用凭据和授权代次。
-
-**具体实现**
-
-```text
-管理员创建受管 Doris 角色
-→ 创建或确认 Doris 角色
-→ 创建该角色专用的 query_user
-→ 生成随机查询密码
-→ 只把 query_user 绑定到该角色
-→ 加密查询密码
-→ 保存 role_name、query_user、workload_group 和 authorization_epoch
-→ 可选设置为默认角色
-
-查询模块需要执行 SQL
-→ 按用户绑定的 role_name 读取查询身份
-→ 在建立连接前解密查询密码
-→ 按 role_name 复用凭据匹配的 Doris 连接池
-→ 使用 query_user 借出查询连接，并把 workload_group 写入查询限制
-
-管理员修改角色
-→ 修改描述或 workload_group
-→ 切换全局唯一默认角色
-
-管理员删除角色
-→ 校验并处理用户绑定和授权
-→ 快照查询身份、SELECT 权限和 Row Policy
-→ 删除 Doris 查询用户和角色关系
-→ 删除 PostgreSQL 查询身份与权限投影
-→ Doris 与 PostgreSQL 任一侧失败时按完成步骤补偿
-```
-
-应用启动时会检查每个 `query_user` 只拥有预期角色、只能访问配置的数据范围，并且没有写权限。检查失败会记录警告并允许应用继续启动，管理员可通过应用修复配置；实际查询仍由身份解析和 Doris 权限边界拒绝。
-
-### 设计细节：查询身份在 Doris 和 PostgreSQL 之间使用补偿事务
-
-角色及查询用户必须先在 Doris 建立，随后才能把加密凭据保存为平台投影。PostgreSQL 写入失败时，异常路径删除刚创建的 Doris 对象：
-
-```python
-password = self._cipher.generate_password()
-doris_created = False
-try:
-    async with self._repo.session.begin():
-        await self._repo.lock_security_mutation()
-        await self._doris_repo.create_role_identity(
-            role_name=role,
-            query_user=query_user,
-            password=password,
-            workload_group=workload_group,
+        except jwt.PyJWTError as exc:
+            raise auth_error.InvalidTokenError from exc
+        if payload.get("token_type") != "refresh":
+            raise auth_error.InvalidTokenError(detail="非预期的令牌类型")
+        return (
+            int(payload["sub"]),
+            UUID(str(payload["jti"])),
+            UUID(str(payload["family_id"])),
         )
-        doris_created = True
-        return await self._repo.add_query_identity(
-            DorisQueryIdentity(
-                role_name=role,
-                query_user=query_user,
-                encrypted_password=self._cipher.encrypt(password),
-                workload_group=workload_group,
-                is_default=False,
-            )
-        )
-except BaseException:
-    if doris_created:
-        await self._doris_repo.drop_role_identity(
-            role_name=role,
-            query_user=query_user,
-        )
-    raise
-```
 
-明文密码只存在于创建过程和执行前的内存中，持久化层保存密文。捕获 `BaseException` 让协程取消也触发补偿；补偿本身失败时会记录高优先级日志，由管理员核对 Doris 实态。
 
-## 6. 为用户绑定 Doris 角色
+class AccessTokenAuthenticator:
+    """使用只读会话校验访问令牌并验证用户状态与代次。"""
 
-**实现目的**
+    def __init__(self, repo: IdentityPGRepo, config: AuthConfig) -> None:
+        self._repo = repo
+        self._codec = JWTCodec(config)
 
-把平台身份映射到确定的数据访问身份，使认证、元数据召回、SQL Guard、Doris 执行和查询经验召回使用同一个角色边界。
-
-**使用者与使用方式**
-
-- 管理员在创建或修改用户时选择一个受管 Doris 角色。
-- 管理员通过将 `doris_role` 明确设置为空解除绑定。
-- `metadata` 和 `query` 根据当前用户的绑定角色获取资产策略。
-- `assistant` 在开始分析前检查用户是否具备可用角色。
-
-**具体实现**
-
-```text
-管理员选择平台用户和 Doris 角色
-→ 校验用户存在
-→ 校验角色具有受管查询身份
-→ 更新 User.doris_role_name
-→ 用户后续查询和召回使用该角色的权限
-
-管理员解除角色绑定
-→ 清空 User.doris_role_name
-→ 用户仍可登录
-→ 用户不能调用分析查询能力
-```
-
-一个用户最多绑定一个角色；多个用户可以共享同一角色的查询身份和查询经验。
-
-### 设计细节：执行身份只从当前用户绑定即时解析
-
-Query 不接收上层传入的 Doris 用户名或密码，而是用平台用户 ID 在执行前解析唯一查询身份：
-
-```python
-user = await self._repo.get_user_by_id(user_id)
-if user is None:
-    raise auth_error.UserNotFoundError
-if not user.is_active:
-    raise auth_error.InactiveUserError
-if user.doris_role_name is None:
-    raise QueryPrincipalNotConfiguredError("用户尚未配置 Doris 角色")
-
-identity = await self._repo.get_query_identity(user.doris_role_name)
-if identity is None:
-    raise QueryPrincipalNotConfiguredError(
-        "用户的 Doris 角色尚未配置可用的查询身份"
-    )
-return ResolvedQueryPrincipal(
-    role_name=user.doris_role_name,
-    authorization_epoch=identity.authorization_epoch,
-    query_user=identity.query_user,
-    password=self._cipher.decrypt(identity.encrypted_password),
-    workload_group=identity.workload_group,
-)
-```
-
-返回值把角色、授权代次、专用账号和 Workload Group 固化为一次执行快照。调用方只能使用解析结果建立连接，避免客户端绕过用户绑定选择更高权限身份。
-
-## 7. 管理 SELECT 资产权限
-
-**实现目的**
-
-支持数据库、表和字段粒度的数据隔离，并让应用在访问 Doris 前完成目录过滤和可解释的权限拒绝。
-
-**使用者与使用方式**
-
-- 管理员按 Doris 角色查看、授予、回收或全部回收 SELECT 权限。
-- 表名为空表示数据库级授权；指定表且字段为空表示表级授权；同时指定表和字段表示列级授权。
-- `metadata` 使用 `AssetAccessPolicy` 过滤召回结果。
-- `query` 使用同一策略校验 SQL 实际读取的表和字段，Doris 再执行最终权限检查。
-
-**具体实现**
-
-```text
-管理员为角色授予资产
-→ 选择 data_source、database、table 或 column 层级
-→ 在 Doris 执行 GRANT
-→ 在 PostgreSQL 写入 DorisRoleAssetGrant 投影
-→ 生成稳定 resource_key
-→ 任一侧失败时补偿另一侧
-
-管理员回收资产
-→ 在 Doris 执行 REVOKE
-→ 删除 PostgreSQL 权限投影
-→ 轮换角色 authorization_epoch
-
-上层模块读取用户授权
-→ 校验用户和绑定角色
-→ 读取角色当前 authorization_epoch
-→ 加载角色全部授权投影
-→ 构造 AssetAccessPolicy
-→ metadata 用它过滤召回目录
-→ query 用它校验 SQL 实际资产
-```
-
-应用侧策略负责提前过滤和返回可解释错误，Doris 权限负责最终访问隔离。
-
-
-### 设计细节：资产授权用层级包含关系统一回答“可访问”和“可见”
-
-一个授权对象按数据源、数据库、表、字段逐级收窄。上层字段为 `None` 表示授权覆盖其全部下级资产。`allows()` 用于确认完整访问权；`is_visible()` 还允许父目录在存在任一下级授权时出现在目录中。
-
-```python
-def encompasses(self, other: "AssetIdentity") -> bool:
-    own_parts = (
-        self.data_source,
-        self.database_name,
-        self.table_name,
-        self.column_name,
-    )
-    other_parts = (
-        other.data_source,
-        other.database_name,
-        other.table_name,
-        other.column_name,
-    )
-    return all(
-        own is None or own == target
-        for own, target in zip(own_parts, other_parts, strict=True)
-    )
-
-
-def allows(self, asset: AssetIdentity) -> bool:
-    return any(grant.encompasses(asset) for grant in self.grants)
-
-def is_visible(self, asset: AssetIdentity) -> bool:
-    return self.allows(asset) or any(
-        asset.encompasses(grant) for grant in self.grants
-    )
-```
-
-例如只有 `orders.amount` 字段权限时，`orders` 表可以出现在元数据目录中，但查询 `orders.*` 不会通过 Guard。Metadata 和 Query 共用这一策略快照，避免目录展示与 SQL 校验采用两套权限规则。
-
-
-### 设计细节：Doris 权限和 PostgreSQL 投影通过安全锁与补偿保持收敛
-
-Doris 不能加入 PostgreSQL 事务。所有账号、角色和权限安全变更先取得同一把 PostgreSQL advisory transaction lock，避免两个请求交错修改真实权限和应用投影。授予 SELECT 时先改 Doris，再写投影；投影写入或事务提交失败时执行反向 REVOKE：
-
-```python
-try:
-    async with self._repo.session.begin():
-        await self._repo.lock_security_mutation()
-        await self._require_role_exists(role)
-        await self._doris_repo.grant_select(
-            role_name=role,
-            catalog=self._catalog,
-            database=self._database,
-            table=table_name,
-            columns=granted_columns,
-        )
-        doris_changed = True
-        result: list[DorisRoleAssetGrant] = []
-        for asset, current_grant in zip(assets, existing, strict=True):
-            persisted_grant = current_grant
-            if persisted_grant is None:
-                persisted_grant = await self._repo.add_asset_grant(
-                    DorisRoleAssetGrant(
-                        role_name=role,
-                        scope=asset.scope.value,
-                        data_source=asset.data_source,
-                        database_name=asset.database_name,
-                        table_name=asset.table_name,
-                        column_name=asset.column_name,
-                        resource_key=asset.resource_key,
-                    )
-                )
-            result.append(persisted_grant)
-except BaseException:
-    if doris_changed:
-        await self._compensate_select(
-            grant=False,
-            role_name=role,
-            table_name=table_name,
-            columns=granted_columns,
-        )
-    raise
-```
-
-捕获 `BaseException` 是为了让任务取消也进入补偿路径。角色删除会先快照查询用户、密码、Workload Group、SELECT 授权和 Row Policy，再根据 Doris 已完成步骤恢复。补偿失败会记录高优先级错误，管理员需要处理真实权限与投影可能暂时分离的情况。
-
-## 8. 管理 Doris 行级策略
-
-**实现目的**
-
-在表和字段授权之上限制角色能够看到的具体数据行，并让行策略变化立即形成新的授权环境。
-
-**使用者与使用方式**
-
-- 管理员按角色查看 Doris 当前 Row Policy。
-- 管理员指定策略名、目标表和谓词创建行策略。
-- 管理员按策略名删除行策略。
-- `query` 无需重写 SQL，Doris 在执行阶段自动应用角色的 Row Policy。
-
-**具体实现**
-
-```text
-管理员查看角色行策略
-→ 向 Doris 执行 SHOW ROW POLICY
-→ 返回 Doris 当前实时策略
-
-管理员创建行策略
-→ 校验角色和 predicate 为单个 SQL 表达式
-→ 交由 Doris 校验目标表、字段和表达式返回类型
-→ 在 Doris 执行 CREATE ROW POLICY
-→ 轮换角色 authorization_epoch
-→ Doris 失败或数据库提交失败时执行补偿
-
-管理员删除行策略
-→ 读取原策略用于补偿
-→ 在 Doris 执行 DROP ROW POLICY
-→ 轮换角色 authorization_epoch
-→ 后续失败时尝试恢复原策略
-```
-
-行策略只存储在 Doris。PostgreSQL 通过查询身份的 `authorization_epoch` 标识当前授权代次。
-
-### 设计细节：谓词校验、Doris 写入和授权代次轮换形成一个用例
-
-服务先把谓词限制为单个 SQL 表达式，再在安全锁内创建 Doris 策略并轮换授权代次。数据库事务未提交时，会删除刚创建的策略：
-
-```python
-predicate_sql = self._validate_predicate(predicate)
-doris_changed = False
-try:
-    async with self._repo.session.begin():
-        await self._repo.lock_security_mutation()
-        await self._require_role_exists(role)
-        await self._doris_repo.create_row_policy(
-            policy_name=policy_name,
-            role_name=role,
-            catalog=self._catalog,
-            database=self._database,
-            table=table_name,
-            policy_type=policy_type,
-            predicate_sql=predicate_sql,
-        )
-        doris_changed = True
-        await self._rotate_authorization_epoch(role)
-except BaseException:
-    if doris_changed:
-        await self._doris_repo.drop_row_policy(
-            policy_name=policy_name,
-            role_name=role,
-            catalog=self._catalog,
-            database=self._database,
-            table=table_name,
-        )
-    raise
-```
-
-表达式的字段存在性和布尔返回类型最终由 Doris 校验。应用侧语法检查负责阻止多语句和超出谓词边界的结构；授权代次轮换负责让旧查询经验立即退出可召回范围。
-
-
-### 设计细节：authorization_epoch 是角色权限环境的代次
-
-回收 SELECT 权限、创建或删除 Row Policy 时，查询身份会生成新的 `authorization_epoch`：
-
-```python
-async def _rotate_authorization_epoch(self, role_name: str) -> None:
-    identity = await self._repo.get_query_identity(role_name)
-    if identity is None:
-        raise auth_error.RoleNotFoundError
-    identity.rotate_authorization_epoch()
-    await self._repo.flush()
-```
-
-Query 解析一次执行身份时同时读取该代次。查询经验和会话内的经验缓存都记录它；角色权限发生收窄后，旧代次经验不会继续召回。单纯新增 SELECT 权限不会使既有经验变得越权，因此授予路径不轮换代次。
-
-## 9. 发起用户注销
-
-**实现目的**
-
-在立即阻止目标用户继续访问系统的同时，可靠清理分布在认证库、Agent Checkpoint、语义召回快照和 Docker Volume 中的全部用户资源。
-
-**使用者与使用方式**
-
-- 平台管理员通过删除用户接口发起注销。
-- 接口只负责受理、禁用账号和创建持久任务，调用方无需等待资源清理完成。
-- `workflows`、Celery Worker 和 Beat 负责执行、重试与恢复后续清理。
-
-**具体实现**
-
-```text
-管理员请求注销用户
-→ 拒绝注销当前操作管理员
-→ 拒绝注销唯一启用的管理员
-→ 禁用目标用户
-→ 撤销目标用户 Refresh Token
-→ 创建或复用 UserDeletionTask
-→ 提交跨模块用户注销任务
-
-注销任务执行完成
-→ 删除 User 记录
-→ 将 UserDeletionTask 标记为 completed
-
-注销任务执行失败
-→ 保存失败原因、尝试次数和下次执行时间
-→ 周期任务重新提交
-```
-
-对话、LangGraph 和沙箱资源的实际清理由 `workflows` 编排。
-
-
-### 设计细节：注销受理在一个认证事务中完成即时封禁
-
-注销请求必须先形成可靠的本地事实，再由 Workflows 清理外部资源。禁用账号、吊销 Refresh Token 和创建 `UserDeletionTask` 使用同一事务，并在安全锁内保护最后管理员规则：
-
-```python
-async with self._postgres.session() as session:
-    repo = IdentityPGRepo(session)
-    async with session.begin():
-        await repo.lock_security_mutation()
-        user = await repo.get_user_by_id_for_update(user_id)
-        task = await repo.get_user_deletion_task_for_update(user_id)
+    async def authenticate(self, access_token: str) -> AuthenticatedUser:
+        user_id, auth_version = self._codec.decode_access_token(access_token)
+        user = await self._repo.get_user_by_id(user_id)
         if user is None:
-            if task is not None and task.status == "completed":
-                return False
+            raise auth_error.InvalidTokenError
+        if not user.is_active:
+            raise auth_error.InactiveUserError
+        if user.auth_version != auth_version:
+            raise auth_error.InvalidTokenError
+        return AuthenticatedUser.from_user(user)
+```
+
+### 3. 登录与刷新令牌轮换逻辑实现
+
+```python
+# app/identity/services/auth.py（续）
+class AuthService:
+    """登录、刷新与密码会话管理。"""
+
+    def __init__(
+        self,
+        repo: IdentityPGRepo,
+        config: AuthConfig,
+        password_manager: PasswordManager,
+    ) -> None:
+        self._repo = repo
+        self._config = config
+        self._password_manager = password_manager
+        self._codec = JWTCodec(config)
+
+    async def login(self, identifier: str, password: str) -> tuple[User, str, str]:
+        """校验凭据并签发 Token 对。"""
+        normalized = identifier.strip().casefold()
+        async with self._repo.session.begin():
+            user = (
+                await self._repo.get_user_by_email_for_update(normalized)
+                if "@" in normalized
+                else await self._repo.get_user_by_username_for_update(normalized)
+            )
+            if user is None:
+                await self._password_manager.verify_dummy_password(password)
+                raise auth_error.InvalidCredentialsError
+            if not await self._password_manager.verify(password, user.password_hash):
+                raise auth_error.InvalidCredentialsError
+            if not user.is_active:
+                raise auth_error.InactiveUserError
+
+            now = datetime.now(UTC)
+            access_token = self._codec.issue_access_token(user, now)
+            family_id = uuid4()
+            token_id = uuid4()
+            refresh_token = self._codec.issue_refresh_token(
+                user.id, token_id, family_id, now
+            )
+            await self._repo.add_refresh_token(
+                RefreshToken(
+                    id=token_id,
+                    family_id=family_id,
+                    user_id=user.id,
+                    token_hash=hashlib.sha256(refresh_token.encode()).hexdigest(),
+                    expires_at=now + timedelta(days=self._config.refresh_token_days),
+                )
+            )
+        return user, access_token, refresh_token
+
+    async def refresh(self, refresh_token: str) -> tuple[User, str, str]:
+        """轮换刷新令牌并防止重放攻击。"""
+        user_id, token_id, family_id = self._codec.decode_refresh_token(refresh_token)
+        token_digest = hashlib.sha256(refresh_token.encode()).hexdigest()
+        now = datetime.now(UTC)
+
+        async with self._repo.session.begin():
+            user = await self._repo.get_user_by_id_for_update(user_id)
+            current = await self._repo.get_refresh_token_for_update(token_id)
+            if (
+                user is None
+                or current is None
+                or current.user_id != user_id
+                or current.family_id != family_id
+                or not hmac.compare_digest(current.token_hash, token_digest)
+            ):
+                raise auth_error.InvalidTokenError
+
+            if current.revoked_at is not None:
+                # 检测到已撤销 Token 重放，批量撤销整族令牌
+                await self._repo.revoke_refresh_family(family_id, now)
+                raise auth_error.RefreshTokenReuseError(detail="该刷新令牌已被注销")
+
+            if not user.is_active:
+                raise auth_error.InactiveUserError
+
+            # 正常轮换：签发新令牌并链接 replacement
+            replacement_id = uuid4()
+            new_access_token = self._codec.issue_access_token(user, now)
+            new_refresh_token = self._codec.issue_refresh_token(
+                user.id, replacement_id, family_id, now
+            )
+            await self._repo.add_refresh_token(
+                RefreshToken(
+                    id=replacement_id,
+                    family_id=family_id,
+                    user_id=user.id,
+                    token_hash=hashlib.sha256(new_refresh_token.encode()).hexdigest(),
+                    expires_at=now + timedelta(days=self._config.refresh_token_days),
+                )
+            )
+            self._repo.rotate_refresh_token(current, replacement_id, now)
+        return user, new_access_token, new_refresh_token
+```
+
+### 4. FastAPI 认证与权限依赖注入实现
+
+```python
+# app/identity/api/auth/dependencies.py
+"""FastAPI 认证与权限依赖。"""
+
+from typing import Annotated
+from fastapi import Depends, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from app.identity import errors as auth_error
+from app.identity.repositories.identity import IdentityPGRepo
+from app.identity.services.auth import (
+    AccessTokenAuthenticator,
+    AuthenticatedUser,
+)
+from app.shared.clients.postgres_client_manager import auth_postgres_client_manager
+from app.shared.config.app_config import cfg
+
+_bearer = HTTPBearer(auto_error=False)
+
+
+async def _get_current_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> AuthenticatedUser:
+    """解析 Bearer Token 并核查数据库。"""
+    if credentials is None or credentials.scheme.casefold() != "bearer":
+        raise auth_error.AuthenticationRequiredError
+    async with auth_postgres_client_manager.session() as session:
+        return await AccessTokenAuthenticator(
+            IdentityPGRepo(session),
+            cfg.auth,
+        ).authenticate(credentials.credentials)
+
+
+CurrentUserDep = Annotated[AuthenticatedUser, Depends(_get_current_user)]
+
+
+async def _require_admin(current_user: CurrentUserDep) -> AuthenticatedUser:
+    """强制要求管理员权限。"""
+    if not current_user.is_admin:
+        raise auth_error.PermissionDeniedError(detail="需要平台管理员权限")
+    return current_user
+
+
+AdminUserDep = Annotated[AuthenticatedUser, Depends(_require_admin)]
+```
+
+### 5. Doris 查询身份解析与凭据加解密实现
+
+```python
+# app/identity/services/credential.py
+"""Doris 查询凭据加解密。"""
+
+import base64
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+
+class DorisCredentialCipher:
+    """使用 AES-256-GCM 加解密 Doris 查询密码。"""
+
+    def __init__(self, base64_key: str) -> None:
+        self._key = base64.b64decode(base64_key)
+        self._aesgcm = AESGCM(self._key)
+
+    def encrypt(self, plain_text: str) -> str:
+        nonce = b"\x00" * 12  # 示例固定 nonce 或使用随机 nonce
+        ciphertext = self._aesgcm.encrypt(nonce, plain_text.encode("utf-8"), None)
+        return base64.b64encode(nonce + ciphertext).decode("ascii")
+
+    def decrypt(self, encrypted_text: str) -> str:
+        raw = base64.b64decode(encrypted_text.encode("ascii"))
+        nonce, ciphertext = raw[:12], raw[12:]
+        return self._aesgcm.decrypt(nonce, ciphertext, None).decode("utf-8")
+```
+
+```python
+# app/identity/services/query_principal.py
+"""按用户解析受限的 Doris 查询身份。"""
+
+from dataclasses import dataclass, field
+from uuid import UUID
+
+from app.identity import errors as auth_error
+from app.identity.repositories.identity import IdentityPGRepo
+from app.identity.services.credential import DorisCredentialCipher
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedQueryPrincipal:
+    """服务端为一次查询解析出的受限 Doris 身份。"""
+
+    role_name: str
+    authorization_epoch: UUID
+    query_user: str
+    workload_group: str
+    password: str = field(repr=False)
+
+
+class QueryPrincipalService:
+    """解析当前用户绑定的 Doris 查询身份。"""
+
+    def __init__(self, repo: IdentityPGRepo, cipher: DorisCredentialCipher) -> None:
+        self._repo = repo
+        self._cipher = cipher
+
+    async def resolve(self, user_id: int) -> ResolvedQueryPrincipal:
+        user = await self._repo.get_user_by_id(user_id)
+        if user is None:
             raise auth_error.UserNotFoundError
-        if user.is_active and user.is_admin and await repo.count_admins() <= 1:
-            raise auth_error.LastAdministratorError
-        await repo.set_user_active(user, False)
-        await repo.revoke_user_refresh_tokens(user.id, requested_at)
-        await repo.enqueue_user_deletion(user.id, requested_at)
+        if not user.is_active:
+            raise auth_error.InactiveUserError
+        if user.doris_role_name is None:
+            raise RuntimeError("用户尚未配置 Doris 角色")
+        identity = await self._repo.get_query_identity(user.doris_role_name)
+        if identity is None:
+            raise RuntimeError("用户的 Doris 角色尚未配置可用的查询身份")
+        return ResolvedQueryPrincipal(
+            role_name=user.doris_role_name,
+            authorization_epoch=identity.authorization_epoch,
+            query_user=identity.query_user,
+            password=self._cipher.decrypt(identity.encrypted_password),
+            workload_group=identity.workload_group,
+        )
 ```
 
-事务提交后用户立即无法通过 Access Token 或 Refresh Token 继续访问。外部清理失败只会延迟物理删除，不会重新启用账号。
+### 6. 资产策略判断与授权投影实现
 
-## 数据与接口
+```python
+# app/identity/services/authorization.py（核心实现）
+"""RBAC 与数据资产白名单授权服务。"""
 
-```text
-认证 PostgreSQL
-→ User
-→ RefreshToken
-→ DorisQueryIdentity
-→ DorisRoleAssetGrant
-→ UserDeletionTask
+from dataclasses import dataclass
+from uuid import UUID
+from app.shared.contracts.assets import asset_resource_key
 
-Doris
-→ 角色和 query_user
-→ SELECT 权限
-→ Row Policy
 
-/api/v1/auth
-→ login、refresh、logout、change-password、me
+@dataclass(frozen=True)
+class AssetIdentity:
+    """层级化数据资产标识。"""
 
-/api/v1/admin
-→ 用户、角色、SELECT 权限、Row Policy 和用户注销管理
+    data_source: str
+    database_name: str | None = None
+    table_name: str | None = None
+    column_name: str | None = None
 
-命令行
-→ scripts/bootstrap_admin.py：初始化或确认首个管理员
+    def __post_init__(self) -> None:
+        if not self.data_source:
+            raise ValueError("data_source 不能为空")
+        if self.column_name is not None and self.table_name is None:
+            raise ValueError("指定 column_name 时必须同时指定 table_name")
+        if self.table_name is not None and self.database_name is None:
+            raise ValueError("指定 table_name 时必须同时指定 database_name")
+
+    def encompasses(self, other: "AssetIdentity") -> bool:
+        """判断当前授权是否向下覆盖目标资产。"""
+        own_parts = (
+            self.data_source,
+            self.database_name,
+            self.table_name,
+            self.column_name,
+        )
+        other_parts = (
+            other.data_source,
+            other.database_name,
+            other.table_name,
+            other.column_name,
+        )
+        return all(
+            own is None or own == target
+            for own, target in zip(own_parts, other_parts, strict=True)
+        )
+
+
+@dataclass(frozen=True)
+class AssetAccessPolicy:
+    """用户资产访问策略快照。"""
+
+    user_id: int
+    role_name: str | None = None
+    authorization_epoch: UUID | None = None
+    grants: frozenset[AssetIdentity] = frozenset()
+
+    def allows(self, asset: AssetIdentity) -> bool:
+        """判断是否拥有目标资产的完整读取访问权（用于 SQL 执行）。"""
+        return any(grant.encompasses(asset) for grant in self.grants)
+
+    def is_visible(self, asset: AssetIdentity) -> bool:
+        """判断资产或其任一下级资产是否可见（用于目录展示）。"""
+        return self.allows(asset) or any(
+            asset.encompasses(grant) for grant in self.grants
+        )
 ```
+
+### 7. 用户注销状态存储实现
+
+```python
+# app/identity/services/user_deletion_store.py
+"""用户注销认证状态存储。"""
+
+from datetime import datetime
+from app.identity import errors as auth_error
+from app.identity.repositories.identity import IdentityPGRepo
+from app.shared.clients.postgres_client_manager import PostgresClientManager
+
+
+class PostgresUserDeletionStateStore:
+    """在认证数据库中维护注销状态与终态保护。"""
+
+    def __init__(self, postgres: PostgresClientManager) -> None:
+        self._postgres = postgres
+
+    async def request(self, user_id: int, requested_at: datetime) -> bool:
+        """禁用用户、吊销令牌并创建注销任务。"""
+        async with self._postgres.session() as session:
+            repo = IdentityPGRepo(session)
+            async with session.begin():
+                await repo.lock_security_mutation()
+                user = await repo.get_user_by_id_for_update(user_id)
+                task = await repo.get_user_deletion_task_for_update(user_id)
+                if user is None:
+                    if task is not None and task.status == "completed":
+                        return False
+                    raise auth_error.UserNotFoundError
+                if user.is_active and user.is_admin and await repo.count_admins() <= 1:
+                    raise auth_error.LastAdministratorError
+                await repo.set_user_active(user, False)
+                await repo.revoke_user_refresh_tokens(user.id, requested_at)
+                await repo.enqueue_user_deletion(user.id, requested_at)
+        return True
+
+    async def complete(self, user_id: int, completed_at: datetime) -> None:
+        """物理删除认证用户并将注销任务标记为 completed 终态。"""
+        async with self._postgres.session() as session:
+            repo = IdentityPGRepo(session)
+            async with session.begin():
+                await repo.lock_security_mutation()
+                task = await repo.get_user_deletion_task_for_update(user_id)
+                if task is None:
+                    raise RuntimeError("用户注销任务记录不存在")
+                user = await repo.get_user_by_id_for_update(user_id)
+                if user is not None:
+                    await repo.delete_user(user)
+                await repo.complete_user_deletion(task, completed_at)
+```
+
+---
+
+## 阶段学习与验证要点
+
+### 阶段 1：验证账号规范化与密码安全
+
+1. **输入规范化验证**：注册账号 `  AdminUser@example.com  `，验证数据库中保存的实际为小写无空格 `adminuser@example.com`。
+2. **Argon2id 密码哈希与并发截流验证**：同时发起 10 个并发注册请求，验证进程内 Semaphore 将并发计算限制在 2 个线程内，事件循环持续响应健康检查。
+3. **Dummy Verify 时间恒定性验证**：分别对存在的用户和不存在的用户发起密码错误的登录请求，对比响应延迟，验证两者的耗时分布基本一致。
+
+### 阶段 2：验证 Access Token 即时失效与 Refresh Token 轮换
+
+1. **改密即时失效验证**：用户登录获取 Access Token 后调用改密接口，成功后立即使用原 Access Token 请求受保护接口 `/api/v1/auth/me`，验证系统因 `auth_version` 不匹配返回 401 错误。
+2. **Refresh Token 正常轮换验证**：调用 `/refresh` 接口，验证旧 Refresh Token 的 `revoked_at` 被打标且返回新的 Token 对。
+3. **重放攻击拦截验证**：使用已被轮换的旧 Refresh Token 再次调用 `/refresh`，验证系统捕获重放攻击，并将该用户当前 family 下的所有 Refresh Token 全部撤销。
+
+### 阶段 3：验证 Doris 查询身份与资产授权
+
+1. **查询身份解析隔离验证**：调用 `QueryPrincipalService.resolve()`，验证输出的密码已完成解密，但领域对象脱离 ORM 会话。
+2. **层级授权判定差异验证**：授予角色 `orders.amount` 字段权限，调用 `policy.is_visible(orders)` 返回 `True`，调用 `policy.allows(orders)` 返回 `False`。
+3. **authorization_epoch 轮换验证**：管理员回收该角色某字段权限，验证 `doris_query_identities` 表中的 `authorization_epoch` 生成了新的 UUID。
