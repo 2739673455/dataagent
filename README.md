@@ -181,3 +181,16 @@ docker compose -f docker/compose.yml build sandbox-image
 2. 选中创建的角色，在“表与列数据权限 (SELECT)”区域配置查询权限：表名留空表示授予当前数据库全部表权限；填写表名并将字段留空表示授予整表权限；同时填写表名和逗号分隔的字段表示仅授予指定字段权限。
 3. 按需配置行级策略，并可将该角色设为新用户的默认角色。
 4. 打开“用户账号管理”，添加或编辑用户，将 Doris 角色分配给需要查询数据的账号。
+
+## 模块文档
+
+详细的架构设计与各模块实现文档位于 [docs](docs/) 目录：
+
+- [00. 架构与协作总览](docs/00_ARCHITECTURE_OVERVIEW.md)：系统总体架构、数据流向与多 Agent 协作机制。
+- [01. Shared 基础能力](docs/01_SHARED.md)：数据库与外部服务连接、公共数据格式、统一错误响应、请求跟踪与后台任务。
+- [02. Identity 认证与授权](docs/02_IDENTITY.md)：用户认证、Token 管理、Doris 账号与查询权限控制（列级与行级策略）。
+- [03. Metadata 元数据与语义召回](docs/03_METADATA.md)：表/字段/指标元数据管理、Elasticsearch 语义与取值索引。
+- [04. Sandbox 隔离工作区](docs/04_SANDBOX.md)：基于 Docker 容器的隔离执行环境、文件权限与多进程沙箱协调。
+- [05. Query 安全查询链路](docs/05_QUERY.md)：只读 SQL 校验与安全执行、结果导出为 CSV 及查询经验沉淀。
+- [06. Assistant 多 Agent 分析体系](docs/06_ASSISTANT.md)：Planner、Explorer、Analyst、Reviewer 的调度执行、会话管理与流式推送。
+- [07. Workflows 跨存储工作流](docs/07_WORKFLOWS.md)：跨多存储与环境的长期复合任务（用户注销与资源级联清理）。
