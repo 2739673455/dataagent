@@ -148,38 +148,57 @@ class QueryGuardService:
         policy: AssetAccessPolicy | None = None,
     ) -> QueryValidationResult:
         """返回 SQL 的完整安全检查结果。"""
+        # 1. 按 Doris 方言解析 SQL，检查输入非空、语法正确且只有一条有效语句。
+        # 无法得到单条语句时直接返回，后续检查都依赖解析出的语法树。
         expression, issues = self._parse_single_query(sql)
         if expression is None:
             return self._result(None, issues)
 
+        # 2. 目录查询走专门的白名单：SHOW 只允许查看当前库的表；
+        # information_schema 查询限制目录表、查询结构和当前数据库过滤条件。
+        # 这两类查询直接返回检查结果，实际目录可见范围由 Doris 查询账号控制。
         if isinstance(expression, exp.Show):
             return self._check_show_tables(expression)
         if self._references_information_schema(expression):
             return self._check_information_schema_query(expression)
 
-        # 只读语法检查必须先于目录加载，禁止的语句不能触发额外数据库访问。
+        # 3. 检查业务 SQL 是否为只读查询，拦截写操作、锁、Hint、参数占位符、
+        # 危险函数和未经允许的匿名函数。先检查语法，拒绝后无需再读取元数据。
         issues.extend(self._check_readonly(expression))
         if issues:
             return self._result(None, issues)
 
+        # 4. 加载表和字段元数据；传入权限策略时，只保留当前用户可见的资源，
+        # 并标记只有部分字段权限的表，供后续星号检查使用。
         catalog = await self._load_catalog(policy)
+        # 5. 区分物理表、别名和 CTE，检查表是否在当前库的可见元数据目录中，
+        # 拒绝显式 Catalog 和其他数据库，同时记录星号引用涉及哪些物理表。
         raw_tables, star_tables, table_issues = self._resolve_tables(
             expression,
             catalog,
         )
         issues.extend(table_issues)
+        # 只有部分字段权限时，拒绝通过 * 或 table.* 读取整表字段。
+        # 表引用或星号权限有问题时直接返回，避免继续用不完整的目录解析字段。
         issues.extend(self._check_restricted_stars(catalog, raw_tables, star_tables))
         if issues:
             return self._result(None, issues, tables=raw_tables)
 
+        # 6. 根据目录补全字段所属表、展开别名和星号，检查字段及 CTE 引用。
+        # 不存在或有歧义的字段转换成明确的校验问题；解析失败后停止后续检查。
         try:
             qualified = self._qualify(expression, catalog)
         except OptimizeError as exc:
             issue = self._optimization_issue(expression, catalog, exc)
             return self._result(None, [issue], tables=raw_tables)
 
+        # 7. 收集 SELECT、WHERE、JOIN 等位置实际引用的物理字段，
+        # 用于后续权限检查和返回查询所依赖的资产。
         columns = self._collect_physical_columns(qualified, catalog)
+        # 8. 拒绝 CROSS JOIN；其他 JOIN 必须有 ON 或 USING，
+        # 并检查 ON 中存在连接当前右侧来源与前置来源的跨表比较。
         issues.extend(self._check_joins(qualified))
+        # 9. 检查最终输出列名，忽略大小写后也不能重复，避免 CSV 列名冲突。
         output_columns = list(qualified.named_selects)
         duplicate_outputs = self._duplicates(output_columns)
         if duplicate_outputs:
@@ -190,6 +209,8 @@ class QueryGuardService:
                 )
             )
 
+        # 10. 传入权限策略时，再逐项检查物理表和字段的访问权限。
+        # 星号或没有显式字段的表访问要求表级授权，显式字段逐列校验。
         if policy is not None:
             issues.extend(
                 self._check_asset_policy(
@@ -200,6 +221,8 @@ class QueryGuardService:
                 )
             )
 
+        # 11. 将补全后的语法树转换为 Doris SQL；只有全部检查通过才返回可执行
+        # 的 normalized_sql，有问题时返回问题列表和已解析出的表、字段信息。
         normalized_sql = qualified.sql(dialect="doris", pretty=False)
         return self._result(
             normalized_sql if not issues else None,
