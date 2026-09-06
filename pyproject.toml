@@ -54,3 +54,9 @@ exclude = [
   "dbmock",
   "web",
 ]
+
+[tool.ruff]
+extend-exclude = [
+  "dbmock",
+]
+

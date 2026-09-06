@@ -244,7 +244,7 @@ class _FakeAgent:
         input: dict[str, Any],
         config: RunnableConfig,
         **kwargs: Any,
-    ) -> AsyncGenerator[dict[str, Any], None]:
+    ) -> AsyncGenerator[dict[str, Any]]:
         """使用 v2 values 事件模拟 CompiledStateGraph 流。"""
         del kwargs
         output = await self.ainvoke(input, config)
@@ -304,7 +304,7 @@ class _DistributedLockRegistry:
         self._locks: dict[str, asyncio.Lock] = {}
 
     @asynccontextmanager
-    async def acquire(self, name: str) -> AsyncGenerator[None, None]:
+    async def acquire(self, name: str) -> AsyncGenerator[None]:
         lock = self._locks.setdefault(name, asyncio.Lock())
         if lock.locked():
             raise RuntimeError(f"lock busy: {name}")
@@ -409,7 +409,7 @@ class _FakeSessionStore:
     async def _local_session_lock(
         self,
         session_key: AgentSessionKey,
-    ) -> AsyncGenerator[None, None]:
+    ) -> AsyncGenerator[None]:
         lock = self._session_locks.setdefault(session_key.checkpoint_ns, asyncio.Lock())
         if lock.locked():
             raise RuntimeError("Session 正在执行或删除")
@@ -424,7 +424,7 @@ class _FakeSessionStore:
         self,
         session_key: AgentSessionKey,
         max_sessions: int,
-    ) -> AsyncGenerator[None, None]:
+    ) -> AsyncGenerator[None]:
         namespace = session_key.checkpoint_ns
         if namespace in self._fake.persisted_sessions:
             yield

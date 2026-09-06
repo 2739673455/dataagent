@@ -409,7 +409,7 @@ class _TurnManagerStub:
         conversation_id: UUID,
         *,
         runtime: ConversationAgentRuntime,
-    ) -> AsyncGenerator[PlannerTurnContext, None]:
+    ) -> AsyncGenerator[PlannerTurnContext]:
         if user_id != self.turn_context.user_id:
             raise AssertionError("unexpected user_id")
         if conversation_id != self.turn_context.conversation_id:

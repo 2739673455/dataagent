@@ -179,7 +179,7 @@ async def recall_repository_context(
 
 
 @asynccontextmanager
-async def object_context(value: Any) -> AsyncGenerator[Any, None]:
+async def object_context(value: Any) -> AsyncGenerator[Any]:
     """为工具依赖提供简单异步上下文。"""
     yield value
 

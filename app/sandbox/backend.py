@@ -165,7 +165,7 @@ class DockerSandboxBackend(BaseSandbox):
         path: str,
         *,
         mutation: bool = False,
-    ) -> Generator[str | None, None, None]:
+    ) -> Generator[str | None]:
         """解析路径并进入沙箱操作窗口。"""
         try:
             resolved_path = (
@@ -180,7 +180,7 @@ class DockerSandboxBackend(BaseSandbox):
             yield resolved_path
 
     @contextmanager
-    def _operation(self) -> Generator[None, None, None]:
+    def _operation(self) -> Generator[None]:
         """登记 Redis operation lease，并在公开操作结束后记录活动时间。"""
         existing_container = getattr(self._operation_local, "container", None)
         cancel_event = getattr(self._operation_local, "cancel_event", None)

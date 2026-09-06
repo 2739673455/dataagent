@@ -277,7 +277,7 @@ class AgentManager:
         conversation_id: UUID,
         *,
         runtime: ConversationAgentRuntime,
-    ) -> AsyncGenerator[PlannerTurnContext, None]:
+    ) -> AsyncGenerator[PlannerTurnContext]:
         """登记完整用户回合并建立共享运行状态。"""
         current_task = asyncio.current_task()
         if current_task is None:

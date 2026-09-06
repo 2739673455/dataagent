@@ -90,7 +90,7 @@ class SandboxArchiveStore:
         self,
         container: Container,
         path: str,
-    ) -> Generator[tarfile.TarFile, None, None]:
+    ) -> Generator[tarfile.TarFile]:
         """流式打开容器中的 archive。"""
         chunks, _ = container.get_archive(path)
         raw_reader = _IteratorReader(iter(chunks))

@@ -161,7 +161,7 @@ class PostgresSandboxSessionStore:
         self,
         session_key: AgentSessionKey,
         max_sessions: int,
-    ) -> AsyncGenerator[None, None]:
+    ) -> AsyncGenerator[None]:
         """为新 Session 获取一个跨进程容量槽位。
 
         新 Session 在首个 Checkpoint 写入前不会出现在持久化 namespace 列表中。

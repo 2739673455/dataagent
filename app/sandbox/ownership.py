@@ -38,17 +38,17 @@ class SandboxOwnership(Protocol):
         ...
 
     @contextmanager
-    def release_runtime(self) -> Generator[bool, None, None]:
+    def release_runtime(self) -> Generator[bool]:
         """释放运行时租约并返回是否已无存活运行时。"""
         ...
 
     @contextmanager
-    def capacity(self) -> Generator[None, None, None]:
+    def capacity(self) -> Generator[None]:
         """串行化沙箱容量检查与创建。"""
         ...
 
     @contextmanager
-    def user_mutation(self, user_id: int) -> Generator[None, None, None]:
+    def user_mutation(self, user_id: int) -> Generator[None]:
         """串行化指定用户的沙箱结构变更。"""
         ...
 
@@ -77,7 +77,7 @@ class SandboxOwnership(Protocol):
         self,
         user_id: int,
         conversation_id: UUID,
-    ) -> Generator[None, None, None]:
+    ) -> Generator[None]:
         """登记一个支持同线程重入的会话沙箱操作。"""
         ...
 
@@ -86,12 +86,12 @@ class SandboxOwnership(Protocol):
         self,
         user_id: int,
         conversation_id: UUID,
-    ) -> Generator[None, None, None]:
+    ) -> Generator[None]:
         """等待会话操作结束并独占维护窗口。"""
         ...
 
     @contextmanager
-    def user_maintenance(self, user_id: int) -> Generator[None, None, None]:
+    def user_maintenance(self, user_id: int) -> Generator[None]:
         """等待用户操作结束并独占维护窗口。"""
         ...
 
@@ -147,7 +147,7 @@ class RedisSandboxOwnership:
         return f"{self._prefix}:{suffix}"
 
     @contextmanager
-    def _lock(self, suffix: str) -> Generator[None, None, None]:
+    def _lock(self, suffix: str) -> Generator[None]:
         """获取支持后台续期的 Redis 分布式锁。"""
         lock = self._redis.lock(
             self._key(f"lock:{suffix}"),
@@ -187,7 +187,7 @@ class RedisSandboxOwnership:
                 lock.release()
 
     @contextmanager
-    def _short_lock(self, suffix: str) -> Generator[None, None, None]:
+    def _short_lock(self, suffix: str) -> Generator[None]:
         """获取只保护短时 Redis 事务的分布式锁。"""
         lock = self._redis.lock(
             self._key(f"lock:{suffix}"),
@@ -252,7 +252,7 @@ class RedisSandboxOwnership:
         self._runtime_renewal.start()
 
     @contextmanager
-    def release_runtime(self) -> Generator[bool, None, None]:
+    def release_runtime(self) -> Generator[bool]:
         """停止续期并释放当前进程的运行时租约。"""
         stop = self._runtime_stop
         renewal = self._runtime_renewal
@@ -268,13 +268,13 @@ class RedisSandboxOwnership:
             yield active_runtimes == 0
 
     @contextmanager
-    def capacity(self) -> Generator[None, None, None]:
+    def capacity(self) -> Generator[None]:
         """通过分布式锁串行化全局容量操作。"""
         with self._lock("capacity"):
             yield
 
     @contextmanager
-    def user_mutation(self, user_id: int) -> Generator[None, None, None]:
+    def user_mutation(self, user_id: int) -> Generator[None]:
         """通过分布式锁串行化用户沙箱变更。"""
         with self._lock(f"user:{user_id}:mutation"):
             yield
@@ -395,7 +395,7 @@ class RedisSandboxOwnership:
         self,
         user_id: int,
         conversation_id: UUID,
-    ) -> Generator[None, None, None]:
+    ) -> Generator[None]:
         """登记并续期一个跨进程会话沙箱操作。"""
         key = (user_id, conversation_id)
         depths = getattr(self._local, "operation_depths", None)
@@ -466,7 +466,7 @@ class RedisSandboxOwnership:
         self,
         user_id: int,
         conversation_id: UUID,
-    ) -> Generator[None, None, None]:
+    ) -> Generator[None]:
         """独占会话入口并等待跨进程操作结束。"""
         label = f"conversation:{user_id}:{conversation_id}"
         with self._lock(f"{label}:gate"):
@@ -477,7 +477,7 @@ class RedisSandboxOwnership:
             yield
 
     @contextmanager
-    def user_maintenance(self, user_id: int) -> Generator[None, None, None]:
+    def user_maintenance(self, user_id: int) -> Generator[None]:
         """独占用户入口并等待跨进程操作结束。"""
         label = f"user:{user_id}"
         with self._lock(f"{label}:gate"):

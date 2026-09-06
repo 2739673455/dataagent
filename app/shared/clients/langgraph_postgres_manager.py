@@ -102,7 +102,7 @@ class LangGraphPostgresManager:
     async def advisory_lock(
         self,
         name: str,
-    ) -> AsyncGenerator[None, None]:
+    ) -> AsyncGenerator[None]:
         """非阻塞获取连接级 PostgreSQL advisory lock。"""
         if not name:
             raise ValueError("咨询锁名称不能为空")

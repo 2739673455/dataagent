@@ -50,17 +50,17 @@ class FakeSandboxOwnership:
         """完成空运行时登记。"""
 
     @contextmanager
-    def release_runtime(self) -> Generator[bool, None, None]:
+    def release_runtime(self) -> Generator[bool]:
         """返回测试指定的最后运行时标志。"""
         yield self._last_runtime
 
     @contextmanager
-    def capacity(self) -> Generator[None, None, None]:
+    def capacity(self) -> Generator[None]:
         """允许测试直接进入容量临界区。"""
         yield
 
     @contextmanager
-    def user_mutation(self, user_id: int) -> Generator[None, None, None]:
+    def user_mutation(self, user_id: int) -> Generator[None]:
         """允许测试直接执行用户结构变更。"""
         del user_id
         yield
@@ -90,7 +90,7 @@ class FakeSandboxOwnership:
         self,
         user_id: int,
         conversation_id: UUID,
-    ) -> Generator[None, None, None]:
+    ) -> Generator[None]:
         """允许测试直接进入操作范围。"""
         del user_id, conversation_id
         yield
@@ -100,13 +100,13 @@ class FakeSandboxOwnership:
         self,
         user_id: int,
         conversation_id: UUID,
-    ) -> Generator[None, None, None]:
+    ) -> Generator[None]:
         """允许测试直接进入会话维护范围。"""
         del user_id, conversation_id
         yield
 
     @contextmanager
-    def user_maintenance(self, user_id: int) -> Generator[None, None, None]:
+    def user_maintenance(self, user_id: int) -> Generator[None]:
         """允许测试直接进入用户维护范围。"""
         del user_id
         yield

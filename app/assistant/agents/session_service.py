@@ -81,7 +81,7 @@ def _specialist_repair_message(error: Exception) -> str:
 async def _acquire_nowait(
     guard: asyncio.Lock | asyncio.Semaphore,
     busy_message: str,
-) -> AsyncGenerator[None, None]:
+) -> AsyncGenerator[None]:
     """立即竞争进程内并发许可，已占用时直接失败。"""
     if guard.locked():
         raise RuntimeError(busy_message)
