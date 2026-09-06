@@ -1,5 +1,7 @@
 """语义召回记录管理服务。"""
 
+from __future__ import annotations
+
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta

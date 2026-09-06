@@ -9,8 +9,7 @@ from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import Response
 from loguru import logger
 
-from app.assistant import errors as chat_error
-from app.assistant.api.attachment import errors as attachment_error
+from app.assistant import errors
 from app.assistant.api.chat.dependencies import ConversationPGRepoDep
 from app.assistant.api.dependencies import (
     ConversationLifecycleServiceDep,
@@ -41,7 +40,7 @@ async def api_upload_attachment(
         # 检查对话是否存在且属于当前用户。
         conversation = await conversation_repo.get(user_id, conversation_id)
         if conversation is None:
-            raise chat_error.ConversationNotFoundError
+            raise errors.ConversationNotFoundError
 
         # 获取文件名。
         f_path = file.filename or "upload"
@@ -53,9 +52,9 @@ async def api_upload_attachment(
                 file.file,
             )
         except SandboxPathError:
-            raise attachment_error.PathTraversalError from None
+            raise errors.PathTraversalError from None
         except SandboxFileTooLargeError:
-            raise attachment_error.AttachmentTooLargeError from None
+            raise errors.AttachmentTooLargeError from None
         await conversation_repo.update(conversation)
 
     logger.info(f"上传附件: conversation_id={conversation_id}, file={f_path}")
@@ -77,7 +76,7 @@ async def api_delete_attachment(
     async with lifecycle.lock(user_id, body.conversation_id):
         conversation = await conversation_repo.get(user_id, body.conversation_id)
         if conversation is None:
-            raise chat_error.ConversationNotFoundError
+            raise errors.ConversationNotFoundError
 
         try:
             await sandbox.delete_user_attachment(
@@ -86,7 +85,7 @@ async def api_delete_attachment(
                 body.f_path,
             )
         except SandboxPathError:
-            raise attachment_error.PathTraversalError from None
+            raise errors.PathTraversalError from None
         await conversation_repo.update(conversation)
 
     logger.info(f"删除附件: conversation_id={body.conversation_id}, file={body.f_path}")
@@ -104,7 +103,7 @@ async def api_get_attachment(
     user_id = current_user.id
     conversation = await conversation_repo.get(user_id, conversation_id)
     if conversation is None:
-        raise chat_error.ConversationNotFoundError
+        raise errors.ConversationNotFoundError
 
     try:
         content = await sandbox.download_file(
@@ -113,11 +112,11 @@ async def api_get_attachment(
             f_path,
         )
     except SandboxPathError:
-        raise attachment_error.PathTraversalError from None
+        raise errors.PathTraversalError from None
     except FileNotFoundError:
-        raise attachment_error.AttachmentNotFoundError(detail=f_path) from None
+        raise errors.AttachmentNotFoundError(detail=f_path) from None
     except SandboxFileTooLargeError:
-        raise attachment_error.AttachmentTooLargeError from None
+        raise errors.AttachmentTooLargeError from None
 
     # 获取文件 MIME 类型。
     media_type, _ = mimetypes.guess_type(f_path)

@@ -43,3 +43,27 @@ class ConversationBusyError(ProblemError):
     type = "conversation-busy"
     title = "对话正在处理中"
     status = HTTPStatus.CONFLICT
+
+
+class PathTraversalError(ProblemError):
+    """表示请求路径越过允许的沙箱边界。"""
+
+    type = "path-traversal"
+    title = "路径穿越"
+    status = HTTPStatus.FORBIDDEN
+
+
+class AttachmentNotFoundError(ProblemError):
+    """表示目标沙箱附件不存在。"""
+
+    type = "attachment-not-found"
+    title = "附件不存在"
+    status = HTTPStatus.NOT_FOUND
+
+
+class AttachmentTooLargeError(ProblemError):
+    """表示附件大小超过上传限制。"""
+
+    type = "attachment-too-large"
+    title = "附件过大"
+    status = HTTPStatus.CONTENT_TOO_LARGE
