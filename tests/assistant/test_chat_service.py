@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import unittest
 from collections.abc import AsyncGenerator, AsyncIterator
@@ -245,9 +244,7 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
                         "type": "reasoning",
                         "id": "rs_1",
                         "summary": [],
-                        "content": [
-                            {"type": "reasoning_text", "text": "先核对数据。"}
-                        ],
+                        "content": [{"type": "reasoning_text", "text": "先核对数据。"}],
                     },
                     {"type": "text", "text": "最终回答"},
                 ],
@@ -512,7 +509,6 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                 _FileInspectorStub(),
                 7,
                 _CONVERSATION_ID,
-                asyncio.Event(),
             )
         ]
 
@@ -588,7 +584,6 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                 _FileInspectorStub(),
                 7,
                 _CONVERSATION_ID,
-                asyncio.Event(),
             )
         ]
 
@@ -643,7 +638,6 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                 7,
                 _CONVERSATION_ID,
                 user_message,
-                asyncio.Event(),
             ):
                 events.append(event)
 
@@ -879,7 +873,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 chat_schema.UserMessageRequest(
                     parts=[chat_schema.TextContent(type="text", text="分析")]
                 ),
-                asyncio.Event(),
             )
         ]
 
@@ -1048,7 +1041,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 chat_schema.UserMessageRequest(
                     parts=[chat_schema.TextContent(type="text", text="analyze")]
                 ),
-                asyncio.Event(),
             ):
                 events.append(event)
 
@@ -1225,7 +1217,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 7,
                 _CONVERSATION_ID,
                 user_message,
-                asyncio.Event(),
             ):
                 events.append(event)
 

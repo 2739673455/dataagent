@@ -35,7 +35,6 @@ _DELTA_EVENT_TYPES = (
 class _ConversationRun:
     """一个独立于 SSE 订阅者生命周期的 Planner Run。"""
 
-    cancel: asyncio.Event = field(default_factory=asyncio.Event)
     events: deque[RunEvent] = field(default_factory=deque)
     replay_bytes: int = 0
     subscribers: set[asyncio.Queue[RunEvent | None]] = field(default_factory=set)
@@ -146,7 +145,6 @@ class ConversationRunService:
             run = self._runs.get((user_id, conversation_id))
             if run is None or run.task is None or run.task.done():
                 return False
-            run.cancel.set()
             task = run.task
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -167,7 +165,6 @@ class ConversationRunService:
                 user_id,
                 conversation_id,
                 user_message,
-                run.cancel,
             )
             if user_message is not None
             else chat_service.resume_agent_turn(
@@ -175,7 +172,6 @@ class ConversationRunService:
                 self._files,
                 user_id,
                 conversation_id,
-                run.cancel,
             )
         )
         try:
@@ -193,7 +189,6 @@ class ConversationRunService:
                 ),
             )
         finally:
-            run.cancel.set()
             try:
                 await responses.aclose()
             finally:
@@ -324,8 +319,6 @@ class ConversationRunService:
             tasks = tuple(
                 run.task for run in runs if run.task is not None and not run.task.done()
             )
-            for run in runs:
-                run.cancel.set()
             for task in tasks:
                 task.cancel()
         if tasks:
