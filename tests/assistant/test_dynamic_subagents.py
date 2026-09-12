@@ -2158,6 +2158,52 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             ["failed"],
         )
 
+    async def test_cancelled_delegation_cleans_resources_and_releases_session(
+        self,
+    ) -> None:
+        fake = _FakeAgent()
+        service = _service(fake, max_parallel_sessions=1)
+        config = build_planner_config(12, _CONVERSATION_ID)
+        started = asyncio.Event()
+        blocked = asyncio.Event()
+
+        async def wait_for_cancel(*args: Any, **kwargs: Any) -> Any:
+            started.set()
+            await blocked.wait()
+
+        cleanup = AgentSessionService._cleanup_agent_run
+        with (
+            patch.object(fake, "ainvoke", side_effect=wait_for_cancel),
+            patch.object(
+                AgentSessionService, "_cleanup_agent_run", wraps=cleanup
+            ) as cleanup_run,
+        ):
+            async with asyncio.timeout(3):
+                task = asyncio.create_task(
+                    service.execute_delegation(
+                        _request("region"), config, delegation_id="cancel-cleanup"
+                    )
+                )
+                try:
+                    await started.wait()
+                    task.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await task
+                finally:
+                    if not task.done():
+                        task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+
+            cleanup_run.assert_awaited_once()
+            agent_run = cleanup_run.call_args.args[0]
+            agent_run.shell_jobs.cleanup.assert_awaited_once()
+
+        async with asyncio.timeout(3):
+            result = await service.execute_delegation(
+                _request("region"), config, delegation_id="after-cancel"
+            )
+        self.assertEqual(result.status, "completed")
+
     async def test_delegation_cancellation_emits_cancelled_status(self) -> None:
         fake = _FakeAgent(delay=0.2)
         service = _service(fake)

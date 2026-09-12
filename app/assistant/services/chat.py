@@ -1,6 +1,5 @@
 """Planner 回合读取、执行、续写与恢复。"""
 
-import asyncio
 from collections.abc import AsyncGenerator
 from typing import Any
 from uuid import UUID
@@ -123,7 +122,6 @@ async def _run_agent_turn(
     user_id: int,
     conversation_id: UUID,
     input_messages: list[BaseMessage] | None,
-    cancel: asyncio.Event,
 ) -> AsyncGenerator[chat_schema.ChatStreamEventPayload]:
     """执行新回合或从待执行 Checkpoint 恢复同一回合。"""
     runtime = await agents.get_conversation_runtime(user_id, conversation_id)
@@ -143,10 +141,6 @@ async def _run_agent_turn(
                 runtime,
                 turn_context,
             ):
-                if cancel.is_set():
-                    logger.info(f"智能体执行已取消: conversation_id={conversation_id}")
-                    break
-
                 if chunk.get("type") == "custom":
                     activity = chunk.get("data")
                     if isinstance(
@@ -231,11 +225,7 @@ async def _run_agent_turn(
                         message=response,
                     )
 
-            if (
-                cancel.is_set()
-                or last_finish_reason is None
-                or last_finish_reason == "stop"
-            ):
+            if last_finish_reason is None or last_finish_reason == "stop":
                 break
             if continuation_count >= turn_context.max_continuations:
                 raise PlannerContinuationLimitError(
@@ -254,7 +244,6 @@ async def run_agent_turn(
     user_id: int,
     conversation_id: UUID,
     user_message: chat_schema.UserMessageRequest,
-    cancel: asyncio.Event,
 ) -> AsyncGenerator[chat_schema.ChatStreamEventPayload]:
     """执行一轮 Agent 对话并流式返回响应。"""
     logger.info(
@@ -268,7 +257,6 @@ async def run_agent_turn(
         user_id,
         conversation_id,
         [schema_to_human_message(user_message)],
-        cancel,
     ):
         yield event
 
@@ -280,7 +268,6 @@ async def resume_agent_turn(
     files: ConversationFileInspector,
     user_id: int,
     conversation_id: UUID,
-    cancel: asyncio.Event,
 ) -> AsyncGenerator[chat_schema.ChatStreamEventPayload]:
     """从 Planner 最新 Checkpoint 的待执行任务继续生成。"""
     logger.info(f"智能体回合恢复: conversation_id={conversation_id}")
@@ -290,7 +277,6 @@ async def resume_agent_turn(
         user_id,
         conversation_id,
         None,
-        cancel,
     ):
         yield event
     logger.info(f"智能体回合恢复结束: conversation_id={conversation_id}")
