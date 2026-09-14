@@ -35,11 +35,6 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="只执行数据质量校验",
     )
-    parser.add_argument(
-        "--dimensions-only",
-        action="store_true",
-        help="只加载公共维度、SPU 和 SKU 并执行维度质量校验",
-    )
     return parser.parse_args()
 
 
@@ -48,15 +43,6 @@ def _run(ctx: RunContext, args: argparse.Namespace) -> None:
 
     if args.validate_only:
         quality.validate_database(ctx, tables)
-        return
-
-    if args.dimensions_only:
-        with ctx.engine.connect() as conn:
-            support.assert_empty(conn, tables)
-        dimensions.run(ctx, tables)
-        products.run_dimensions(ctx, tables)
-        quality.validate_catalog_dimensions(ctx)
-        logger.info("维度数据生成并校验完成 run_id=%s", ctx.run_id)
         return
 
     with ctx.engine.connect() as conn:

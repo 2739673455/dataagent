@@ -1,9 +1,11 @@
+name: dataagent
+
 services:
   sandbox-image:
     image: ${SANDBOX_IMAGE:-dataagent-sandbox:latest}
+    pull_policy: never
     build:
       context: ./sandbox
-      network: host
       args:
         APT_MIRROR: ${SANDBOX_APT_MIRROR:-https://mirrors.aliyun.com/debian}
         APT_SECURITY_MIRROR: ${SANDBOX_APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}

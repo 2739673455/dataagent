@@ -1,17 +1,35 @@
 ARG UV_VERSION=0.12.3
+ARG NODE_VERSION=22-bookworm-slim
 
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
+
+FROM node:${NODE_VERSION} AS node
+
+FROM node AS node-deps
+ARG NPM_REGISTRY=https://registry.npmjs.org
+WORKDIR /opt/dataagent-node
+COPY package.json package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npm ci \
+        --omit=dev \
+        --ignore-scripts \
+        --no-audit \
+        --no-fund \
+        --fetch-retries=3 \
+        --fetch-timeout=60000 \
+        --registry="${NPM_REGISTRY}"
 
 FROM python:3.14-slim
 
 ARG APT_MIRROR=https://deb.debian.org/debian
 ARG APT_SECURITY_MIRROR=https://deb.debian.org/debian-security
 ARG PYPI_INDEX_URL=https://pypi.org/simple
-ARG NPM_REGISTRY=https://registry.npmjs.org
 
 COPY --from=uv /uv /uvx /usr/local/bin/
 
-RUN sed --in-place \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    sed --in-place \
         --expression="s|http://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
         --expression="s|https://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
         --expression="s|http://deb.debian.org/debian|${APT_MIRROR}|g" \
@@ -29,25 +47,10 @@ RUN sed --in-place \
         install --yes --no-install-recommends \
         fontconfig \
         fonts-wqy-zenhei \
+        libstdc++6 \
     && fc-cache --force \
     && test -r /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc \
-    && fc-match "WenQuanYi Zen Hei" | grep --quiet "wqy-zenhei" \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-get \
-        -o Acquire::Retries=3 \
-        -o Acquire::http::Timeout=20 \
-        -o Acquire::https::Timeout=20 \
-        update \
-    && apt-get \
-        -o Acquire::Retries=3 \
-        -o Acquire::http::Timeout=20 \
-        -o Acquire::https::Timeout=20 \
-        install --yes --no-install-recommends \
-        nodejs \
-        npm
+    && fc-match "WenQuanYi Zen Hei" | grep --quiet "wqy-zenhei"
 
 COPY requirements.txt /tmp/sandbox-requirements.txt
 
@@ -58,18 +61,11 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
         --requirements /tmp/sandbox-requirements.txt \
     && rm -f /tmp/sandbox-requirements.txt
 
-COPY package.json package-lock.json /opt/dataagent-node/
-
-RUN --mount=type=cache,target=/root/.npm,sharing=locked \
-    cd /opt/dataagent-node \
-    && npm ci \
-        --omit=dev \
-        --ignore-scripts \
-        --no-audit \
-        --no-fund \
-        --fetch-retries=3 \
-        --fetch-timeout=60000 \
-        --registry="${NPM_REGISTRY}"
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+COPY --from=node-deps /opt/dataagent-node /opt/dataagent-node
 
 RUN useradd --create-home --uid 1000 sandbox \
     && mkdir -p /data \
