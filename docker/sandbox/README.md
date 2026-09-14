@@ -11,11 +11,11 @@
 - 修改依赖或 Dockerfile 后执行 `docker compose -f docker/compose.yml build sandbox-image`，再重启 API 和需要访问沙箱的 Worker。
 - 日常启动和重启服务直接复用 `dataagent-sandbox:latest`，无需重新构建。
 
-首次执行 `docker compose -f docker/compose.yml up -d` 时，Compose 会在镜像缺失时自动构建沙箱镜像。`sandbox-image` 配置为零副本，只负责声明镜像构建规则，不会创建固定沙箱容器。
+首次执行 `docker compose -f docker/compose.yml up -d` 时，Compose 会在镜像缺失时自动构建沙箱镜像。沙箱服务设置 `pull_policy: never`，跳过远端拉取，已有镜像直接复用。`sandbox-image` 配置为零副本，只负责声明镜像构建规则，不会创建固定沙箱容器。
 
-镜像名称、构建上下文、构建网络和依赖下载源集中定义在 `docker/compose.yml` 的 `sandbox-image` 服务中。`SANDBOX_APT_MIRROR`、`SANDBOX_APT_SECURITY_MIRROR`、`SANDBOX_PYPI_INDEX_URL` 和 `SANDBOX_NPM_REGISTRY` 环境变量可以临时覆盖默认下载源。
+镜像名称、构建上下文和依赖下载源集中定义在 `docker/compose.yml` 的 `sandbox-image` 服务中。`SANDBOX_APT_MIRROR`、`SANDBOX_APT_SECURITY_MIRROR`、`SANDBOX_PYPI_INDEX_URL` 和 `SANDBOX_NPM_REGISTRY` 环境变量可以临时覆盖默认下载源。
 
-Node.js 和 npm 随字体一起从 Debian APT 源安装，避免额外下载 Node 镜像或发布包。上述配置只影响镜像构建，不会为运行中的沙箱开启网络。
+构建使用 Docker 默认网络。Node.js 22 和 npm 从官方 Node 镜像复制，项目 npm 依赖在独立阶段安装。APT 仅安装字体及必要运行库，并缓存软件包索引，避免通过 Debian npm 包引入大量附属依赖。上述配置只影响镜像构建，不会为运行中的沙箱开启网络。
 
 ```bash
 docker compose -f docker/compose.yml build sandbox-image

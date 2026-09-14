@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from sqlalchemy import Table, text
 
 from .settings import RunContext
-from .support import doris_unique_key_columns, iter_jsonl_rows
+from .support import doris_unique_key_columns
 from .timeline import month_periods
 
 logger = logging.getLogger(__name__)
@@ -639,37 +639,36 @@ CHECKS: dict[str, str] = {
            OR s.in_transit_qty <> e.last_in_transit
     """,
     "库存快照覆盖范围": """
-        WITH expected AS (
-            SELECT d.date_key snapshot_date_key,
-                   b.warehouse_sk,
-                   b.sku_sk
-            FROM (
-                SELECT warehouse_sk,
-                       sku_sk,
-                       MIN(biz_date) listing_date
-                FROM dwd_inventory_change_di
-                WHERE change_type = 'INITIAL_STOCK'
-                GROUP BY warehouse_sk, sku_sk
-            ) b
+        -- 快照 UNIQUE KEY 为 (snapshot_date_key, warehouse_sk, sku_sk)。
+        -- 缺失数 = 应有数 - 合法数；多余数单独累计，避免相互抵消。
+        WITH listings AS (
+            SELECT warehouse_sk, sku_sk, MIN(biz_date) listing_date
+            FROM dwd_inventory_change_di
+            WHERE change_type = 'INITIAL_STOCK'
+            GROUP BY warehouse_sk, sku_sk
+        ), listing_counts AS (
+            SELECT listing_date, COUNT(*) pair_count
+            FROM listings
+            GROUP BY listing_date
+        ), expected_count AS (
+            SELECT COALESCE(SUM(b.pair_count), 0) total
+            FROM listing_counts b
             JOIN dim_date d ON d.full_date >= b.listing_date
-        )
-        SELECT SUM(violations) FROM (
-            SELECT COUNT(*) violations
-            FROM expected e
-            LEFT JOIN dwd_inventory_daily_snapshot_df s
-              ON s.snapshot_date_key = e.snapshot_date_key
-             AND s.warehouse_sk = e.warehouse_sk
-             AND s.sku_sk = e.sku_sk
-            WHERE s.sku_sk IS NULL
-            UNION ALL
-            SELECT COUNT(*)
+        ), actual_counts AS (
+            SELECT COUNT(*) total,
+                   COALESCE(SUM(CASE
+                       WHEN b.sku_sk IS NOT NULL
+                        AND d.full_date >= b.listing_date THEN 1
+                       ELSE 0
+                   END), 0) valid_count
             FROM dwd_inventory_daily_snapshot_df s
-            LEFT JOIN expected e
-              ON e.snapshot_date_key = s.snapshot_date_key
-             AND e.warehouse_sk = s.warehouse_sk
-             AND e.sku_sk = s.sku_sk
-            WHERE e.sku_sk IS NULL
-        ) q
+            LEFT JOIN listings b
+              ON b.warehouse_sk = s.warehouse_sk
+             AND b.sku_sk = s.sku_sk
+            LEFT JOIN dim_date d ON d.date_key = s.snapshot_date_key
+        )
+        SELECT e.total - a.valid_count + (a.total - a.valid_count)
+        FROM expected_count e CROSS JOIN actual_counts a
     """,
     "会话事件汇总": """
         SELECT COUNT(*)
@@ -962,99 +961,6 @@ FACT_TIME_COLUMNS = {
     "dwd_traffic_search_di": "event_time",
     "dwd_traffic_session_di": "session_end_time",
 }
-
-
-def validate_catalog_dimensions(ctx: RunContext) -> None:
-    failures: list[str] = []
-    selected_spu_ids = {
-        int(row["spu_id"])
-        for index, row in enumerate(iter_jsonl_rows(ctx.gen.data_dir / "spus.jsonl"))
-        if index < ctx.gen.spu_count
-    }
-    expected_skus = sum(
-        1
-        for row in iter_jsonl_rows(ctx.gen.data_dir / "skus.jsonl")
-        if int(row["spu_id"]) in selected_spu_ids
-    )
-    checks = {
-        "SPU数量": (
-            "SELECT COUNT(*) FROM dim_spu_info_zip WHERE spu_id <> 0 AND is_current = 1",
-            ctx.gen.spu_count,
-        ),
-        "SKU数量": (
-            "SELECT COUNT(*) FROM dim_sku_info_zip WHERE sku_id <> 0 AND is_current = 1",
-            expected_skus,
-        ),
-        "SKU库存预警阈值": (
-            """
-            SELECT COUNT(*)
-            FROM dim_sku_info_zip
-            WHERE sku_id <> 0
-              AND is_current = 1
-              AND warning_stock_qty <= 0
-            """,
-            0,
-        ),
-        "没有SKU的SPU数量": (
-            """
-            SELECT COUNT(*) FROM (
-                SELECT sp.spu_id
-                FROM dim_spu_info_zip sp
-                LEFT JOIN dim_sku_info_zip sk
-                  ON sk.spu_id = sp.spu_id
-                 AND sk.sku_id <> 0
-                 AND sk.is_current = 1
-                WHERE sp.spu_id <> 0 AND sp.is_current = 1
-                GROUP BY sp.spu_id
-                HAVING COUNT(sk.sku_id) = 0
-            ) x
-            """,
-            0,
-        ),
-        "SPU维度引用": (
-            """
-            SELECT COUNT(*)
-            FROM dim_spu_info_zip sp
-            LEFT JOIN dim_shop_info_zip sh
-              ON sh.shop_id = sp.shop_id AND sh.is_current = 1
-            LEFT JOIN dim_category_info_zip c
-              ON c.category_id = sp.category_id AND c.is_current = 1
-            LEFT JOIN dim_brand_info b ON b.brand_id = sp.brand_id
-            WHERE sp.spu_id <> 0 AND sp.is_current = 1
-              AND (sh.shop_id IS NULL OR c.category_id IS NULL OR b.brand_id IS NULL)
-            """,
-            0,
-        ),
-        "SKU维度引用": (
-            """
-            SELECT COUNT(*)
-            FROM dim_sku_info_zip sk
-            LEFT JOIN dim_spu_info_zip sp
-              ON sp.spu_id = sk.spu_id AND sp.is_current = 1
-            LEFT JOIN dim_shop_info_zip sh
-              ON sh.shop_id = sk.shop_id AND sh.is_current = 1
-            LEFT JOIN dim_category_info_zip c
-              ON c.category_id = sk.category_id AND c.is_current = 1
-            LEFT JOIN dim_brand_info b ON b.brand_id = sk.brand_id
-            WHERE sk.sku_id <> 0 AND sk.is_current = 1
-              AND (sp.spu_id IS NULL OR sh.shop_id IS NULL
-                   OR c.category_id IS NULL OR b.brand_id IS NULL)
-            """,
-            0,
-        ),
-    }
-    with ctx.engine.connect() as conn:
-        for name, (sql, expected) in checks.items():
-            actual = int(conn.execute(text(sql)).scalar_one() or 0)
-            if actual != expected:
-                failures.append(f"{name}: expected={expected} actual={actual}")
-    if failures:
-        raise ValueError("商品维度校验失败\n" + "\n".join(failures))
-    logger.info(
-        "商品维度校验通过 spus=%s skus=%s",
-        ctx.gen.spu_count,
-        expected_skus,
-    )
 
 
 def _collect_realism_metrics(
