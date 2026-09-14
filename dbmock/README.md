@@ -34,7 +34,7 @@ uv sync
 ```dotenv
 DB_HOST="127.0.0.1"
 DB_PORT=9030
-DB_HTTP_PORT=8030
+DB_HTTP_PORT=8040
 DB_USER="atguigu"
 DB_PASSWORD="123123"
 DB_NAME="ecommerce"
