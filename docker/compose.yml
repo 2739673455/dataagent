@@ -16,7 +16,6 @@ services:
 
   postgres:
     image: postgres:17-alpine
-    container_name: postgres
     restart: unless-stopped
     ports:
       - "5432:5432"
@@ -36,7 +35,6 @@ services:
 
   elasticsearch:
     build: ./elasticsearch
-    container_name: elasticsearch
     restart: unless-stopped
     environment:
       discovery.type: single-node
@@ -50,7 +48,6 @@ services:
 
   redis:
     image: redis:8.10.0-alpine
-    container_name: redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     ports:
@@ -66,7 +63,6 @@ services:
 
   doris-fe:
     image: apache/doris:fe-4.0.7
-    container_name: doris-fe
     hostname: doris-fe
     restart: unless-stopped
     ports:
@@ -95,7 +91,6 @@ services:
 
   doris-be:
     image: apache/doris:be-4.0.7
-    container_name: doris-be
     hostname: doris-be
     restart: unless-stopped
     ports:
@@ -127,7 +122,6 @@ services:
 
   doris-init:
     image: apache/doris:fe-4.0.7
-    container_name: doris-init
     restart: "no"
     entrypoint: ["/bin/bash", "-c"]
     command:
