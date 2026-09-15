@@ -9,6 +9,7 @@ from datetime import timedelta
 
 from src import quality, support
 from src.batches import behavior, commerce, dimensions, marketing, products, snapshots
+from src.logging_setup import configure_logging
 from src.reference import load_reference_data
 from src.settings import DorisConfig, GenerateConfig, RunContext
 from src.timeline import (
@@ -18,9 +19,7 @@ from src.timeline import (
     month_periods,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
-logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -176,12 +175,32 @@ def _run(ctx: RunContext, args: argparse.Namespace) -> None:
 
 def main() -> None:
     args = _parse_args()
-    gen = GenerateConfig.smoke() if args.smoke else GenerateConfig()
-    ctx = RunContext(DorisConfig(), gen)
+    task = "validate" if args.validate_only else "smoke" if args.smoke else "generate"
+    log_path = configure_logging(task)
+    started = time.perf_counter()
+    logger.info("任务开始 task=%s smoke=%s log=%s", task, args.smoke, log_path)
     try:
-        _run(ctx, args)
-    finally:
-        ctx.close()
+        gen = GenerateConfig.smoke() if args.smoke else GenerateConfig()
+        ctx = RunContext(DorisConfig(), gen)
+        try:
+            logger.info("运行上下文初始化完成 run_id=%s", ctx.run_id)
+            _run(ctx, args)
+        finally:
+            ctx.close()
+    except KeyboardInterrupt:
+        logger.warning(
+            "任务已中断 task=%s elapsed=%.2fs", task, time.perf_counter() - started
+        )
+        raise
+    except Exception:
+        logger.exception(
+            "任务失败 task=%s elapsed=%.2fs", task, time.perf_counter() - started
+        )
+        raise
+    else:
+        logger.info(
+            "任务完成 task=%s elapsed=%.2fs", task, time.perf_counter() - started
+        )
 
 
 if __name__ == "__main__":

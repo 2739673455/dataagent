@@ -10,3 +10,6 @@ wheels/
 .venv
 .env
 logs
+
+# Generated quality report
+/data/quality_report.json
