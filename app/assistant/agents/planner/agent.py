@@ -20,9 +20,9 @@ from app.assistant.agents.middleware.message_timestamp import (
 from app.assistant.agents.middleware.user_message_context import (
     UserMessageContextMiddleware,
 )
-from app.assistant.agents.session_service import AgentSessionService
-from app.assistant.agents.shell_jobs import ShellJobRuntime
 from app.assistant.agents.tools import create_shell_tools, create_view_image_tools
+from app.assistant.execution.session_service import AgentSessionService
+from app.assistant.execution.shell_jobs import ShellJobRuntime
 from app.sandbox.backend import DockerSandboxBackend
 
 from .prompt import PLANNER_SYSTEM_PROMPT

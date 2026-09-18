@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { adminApi } from "../src/api/admin";
+import { queryExperiencesApi } from "../src/features/query-experiences/api";
 import appClient from "../src/api/appClient";
 
 afterEach(() => {
@@ -17,7 +17,7 @@ describe("query experience admin", () => {
     };
     const get = vi.spyOn(appClient, "get").mockResolvedValue({ data: response });
 
-    await adminApi.listQueryExperiences({
+    await queryExperiencesApi.listQueryExperiences({
       limit: 20,
       offset: 40,
       roleName: "analyst",

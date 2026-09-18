@@ -1,7 +1,5 @@
 """PostgreSQL 客户端管理。"""
 
-from collections.abc import AsyncIterator
-
 from sqlalchemy import URL
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -11,8 +9,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase
 
-from app.shared.config.app_config import DBConfig, cfg
-from app.shared.database.base import AssistantBase, AuthBase, MetaBase
+from app.shared.config.app_config import DBConfig
 
 
 class PostgresClientManager:
@@ -68,11 +65,6 @@ class PostgresClientManager:
         """创建数据库会话。"""
         return self._get_session_maker()()
 
-    async def get_session(self) -> AsyncIterator[AsyncSession]:
-        """获取 FastAPI 请求级数据库会话。"""
-        async with self.session() as db_session:
-            yield db_session
-
     async def close(self) -> None:
         """关闭数据库引擎并释放资源。"""
         resource = self._engine
@@ -87,17 +79,3 @@ class PostgresClientManager:
             raise RuntimeError("PostgreSQL 客户端管理器尚未初始化")
         async with self._engine.begin() as connection:
             await connection.run_sync(self._base.metadata.create_all)
-
-
-auth_postgres_client_manager = PostgresClientManager(
-    cfg.auth_postgresql,
-    AuthBase,
-)
-meta_postgres_client_manager = PostgresClientManager(
-    cfg.meta_postgresql,
-    MetaBase,
-)
-assistant_postgres_client_manager = PostgresClientManager(
-    cfg.langgraph_postgresql,
-    AssistantBase,
-)

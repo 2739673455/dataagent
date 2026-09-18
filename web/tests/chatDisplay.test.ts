@@ -11,9 +11,9 @@ import {
   parseDelegationResult,
   resolveDelegationRunStatus,
   splitFinalAssistantMessage,
-} from "../src/pages/Chat/components/messages/displayModel";
-import type { ToolRunDisplayItem } from "../src/pages/Chat/components/messages/types";
-import type { MessageResponse } from "../src/types";
+} from "../src/features/chat/components/messages/displayModel";
+import type { ToolRunDisplayItem } from "../src/features/chat/components/messages/types";
+import type { MessageResponse } from "../src/features/chat/types";
 
 describe("chat message display and turn grouping", () => {
   test("keeps a reasoning-only assistant message out of the final answer slot", () => {

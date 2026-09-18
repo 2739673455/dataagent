@@ -8,6 +8,7 @@ from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.dependencies import WebResourcesDep
 from app.identity import errors as auth_error
 from app.identity.repositories.doris_role import DorisRoleRepository
 from app.identity.repositories.identity import IdentityPGRepo
@@ -24,19 +25,17 @@ from app.identity.services.authorization import (
 from app.identity.services.credential import DorisCredentialCipher
 from app.identity.services.doris_permission import DorisPermissionService
 from app.identity.services.rate_limit import AuthRateLimitService
-from app.runtime import user_deletion_service
-from app.shared.clients.doris_client_manager import (
-    admin_doris_client_manager,
-    query_doris_client_registry,
-)
-from app.shared.clients.postgres_client_manager import auth_postgres_client_manager
 from app.shared.config.app_config import cfg
 from app.workflows.user_deletion import UserDeletionService
 
-SessionDep = Annotated[
-    AsyncSession,
-    Depends(auth_postgres_client_manager.get_session),
-]
+
+async def _get_session(resources: WebResourcesDep) -> AsyncGenerator[AsyncSession]:
+    """创建当前应用的请求级身份会话。"""
+    async with resources.auth.session() as session:
+        yield session
+
+
+SessionDep = Annotated[AsyncSession, Depends(_get_session)]
 
 
 def _get_identity_repo(session: SessionDep) -> IdentityPGRepo:
@@ -74,12 +73,9 @@ def _get_auth_service(
 AuthServiceDep = Annotated[AuthService, Depends(_get_auth_service)]
 
 
-@lru_cache(maxsize=1)
-def _get_auth_rate_limit_service() -> AuthRateLimitService:
+def _get_auth_rate_limit_service(resources: WebResourcesDep) -> AuthRateLimitService:
     """创建跨 API Worker 共享计数的认证限流服务。"""
-    return AuthRateLimitService(
-        redis_url=cfg.auth.rate_limit_redis_url.get_secret_value(),
-    )
+    return resources.auth_rate_limit
 
 
 AuthRateLimitServiceDep = Annotated[
@@ -95,6 +91,7 @@ def get_client_ip(request: Request) -> str:
 
 
 async def _get_current_user(
+    resources: WebResourcesDep,
     credentials: Annotated[
         HTTPAuthorizationCredentials | None,
         Depends(_bearer),
@@ -103,7 +100,7 @@ async def _get_current_user(
     """解析 Bearer Token 并加载当前用户。"""
     if credentials is None or credentials.scheme.casefold() != "bearer":
         raise auth_error.AuthenticationRequiredError
-    async with auth_postgres_client_manager.session() as session:
+    async with resources.auth.session() as session:
         return await AccessTokenAuthenticator(
             IdentityPGRepo(session),
             cfg.auth,
@@ -139,14 +136,16 @@ async def _require_analysis_access(
 AnalysisUserDep = Annotated[AuthenticatedUser, Depends(_require_analysis_access)]
 
 
-async def _get_role_management_service() -> AsyncGenerator[DorisRoleManagementService]:
+async def _get_role_management_service(
+    resources: WebResourcesDep,
+) -> AsyncGenerator[DorisRoleManagementService]:
     """创建独立会话的 Doris 角色管理服务。"""
-    async with auth_postgres_client_manager.session() as session:
+    async with resources.auth.session() as session:
         yield DorisRoleManagementService(
             IdentityPGRepo(session),
-            DorisRoleRepository(admin_doris_client_manager),
+            DorisRoleRepository(resources.admin_doris),
             _get_doris_credential_cipher(),
-            query_doris_client_registry,
+            resources.query_clients,
             _get_password_manager(),
             cfg.auth,
         )
@@ -158,9 +157,9 @@ DorisRoleManagementServiceDep = Annotated[
 ]
 
 
-def _get_user_deletion_service() -> UserDeletionService:
+def _get_user_deletion_service(resources: WebResourcesDep) -> UserDeletionService:
     """获取进程级跨存储用户注销服务。"""
-    return user_deletion_service
+    return resources.user_deletion
 
 
 UserDeletionServiceDep = Annotated[
@@ -169,12 +168,14 @@ UserDeletionServiceDep = Annotated[
 ]
 
 
-async def _get_doris_permission_service() -> AsyncGenerator[DorisPermissionService]:
+async def _get_doris_permission_service(
+    resources: WebResourcesDep,
+) -> AsyncGenerator[DorisPermissionService]:
     """创建 Doris 权限管理服务。"""
-    async with auth_postgres_client_manager.session() as session:
+    async with resources.auth.session() as session:
         yield DorisPermissionService(
             IdentityPGRepo(session),
-            DorisRoleRepository(admin_doris_client_manager),
+            DorisRoleRepository(resources.admin_doris),
             data_source=cfg.query.data_source,
             catalog="internal",
             database=cfg.doris.database,

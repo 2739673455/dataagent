@@ -6,10 +6,11 @@ from langchain.tools import ToolRuntime, tool
 from langchain_core.tools import BaseTool
 
 from app.assistant.agents.explorer import semantic_recall_handler
+from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
 from app.metadata.models.recall import SemanticRecallResourceDeletion
 
 
-def create_semantic_recall_tools() -> list[BaseTool]:
+def create_semantic_recall_tools(recall: SemanticRecallRuntime) -> list[BaseTool]:
     """创建只负责协议转换的 Explorer 语义召回工具。"""
 
     @tool
@@ -39,6 +40,7 @@ def create_semantic_recall_tools() -> list[BaseTool]:
             resource_types,
             terms,
             limit_per_type,
+            recall=recall,
         )
 
     @tool
@@ -47,7 +49,9 @@ def create_semantic_recall_tools() -> list[BaseTool]:
         limit: Annotated[int, "返回最近记录的数量，范围 1 到 100"] = 20,
     ) -> dict[str, Any]:
         """列出当前会话中每个 query 的最新累计召回记录。"""
-        return await semantic_recall_handler.list_recalls(runtime.config, limit)
+        return await semantic_recall_handler.list_recalls(
+            runtime.config, limit, recall=recall
+        )
 
     @tool
     async def get_recall(
@@ -58,7 +62,9 @@ def create_semantic_recall_tools() -> list[BaseTool]:
         ],
     ) -> dict[str, Any]:
         """按 query 读取当前会话的最新累计召回记录。"""
-        return await semantic_recall_handler.get_recall(runtime.config, query)
+        return await semantic_recall_handler.get_recall(
+            runtime.config, query, recall=recall
+        )
 
     @tool
     async def merge_recalls(
@@ -71,6 +77,7 @@ def create_semantic_recall_tools() -> list[BaseTool]:
             runtime.config,
             target_query,
             source_query,
+            recall=recall,
         )
 
     @tool
@@ -85,7 +92,9 @@ def create_semantic_recall_tools() -> list[BaseTool]:
         ],
     ) -> dict[str, Any]:
         """删除当前会话 query 的全部上下文或其中指定资源。"""
-        return await semantic_recall_handler.delete_recalls(runtime.config, deletions)
+        return await semantic_recall_handler.delete_recalls(
+            runtime.config, deletions, recall=recall
+        )
 
     return [
         recall_context,

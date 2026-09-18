@@ -4,36 +4,34 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from app.assistant.agents.manager import AgentManager
-from app.assistant.services.conversation_lifecycle import ConversationLifecycleService
-from app.assistant.services.conversation_run import ConversationRunService
-from app.runtime import (
-    agent_manager,
-    conversation_lifecycle_service,
-    conversation_run_service,
-    sandbox_manager,
-)
+from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
+from app.assistant.conversations.lifecycle import ConversationLifecycleService
+from app.assistant.execution.manager import AgentManager
+from app.assistant.execution.run import ConversationRunService
+from app.dependencies import WebResourcesDep
 from app.sandbox.manager import DockerSandboxManager
 
 
-def _get_agent_manager() -> AgentManager:
+def _get_agent_manager(resources: WebResourcesDep) -> AgentManager:
     """获取应用级 Agent 管理器。"""
-    return agent_manager
+    return resources.agents
 
 
-def _get_sandbox_manager() -> DockerSandboxManager:
+def _get_sandbox_manager(resources: WebResourcesDep) -> DockerSandboxManager:
     """获取应用级沙箱管理器。"""
-    return sandbox_manager
+    return resources.sandbox
 
 
-def _get_conversation_lifecycle_service() -> ConversationLifecycleService:
+def _get_conversation_lifecycle_service(
+    resources: WebResourcesDep,
+) -> ConversationLifecycleService:
     """获取应用级会话生命周期服务。"""
-    return conversation_lifecycle_service
+    return resources.conversations
 
 
-def _get_conversation_run_service() -> ConversationRunService:
+def _get_conversation_run_service(resources: WebResourcesDep) -> ConversationRunService:
     """获取应用级 Conversation Run 管理器。"""
-    return conversation_run_service
+    return resources.runs
 
 
 AgentManagerDep = Annotated[AgentManager, Depends(_get_agent_manager)]
@@ -45,4 +43,14 @@ ConversationLifecycleServiceDep = Annotated[
 ConversationRunServiceDep = Annotated[
     ConversationRunService,
     Depends(_get_conversation_run_service),
+]
+
+
+def _get_recall_runtime(resources: WebResourcesDep) -> SemanticRecallRuntime:
+    """获取当前应用的召回能力资源。"""
+    return resources.recall
+
+
+SemanticRecallRuntimeDep = Annotated[
+    SemanticRecallRuntime, Depends(_get_recall_runtime)
 ]

@@ -14,7 +14,6 @@ from langgraph.channels import EphemeralValue
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
-from app.assistant.agents.contracts import SpecialistResult
 from app.assistant.agents.filesystem import build_specialist_filesystem
 from app.assistant.agents.middleware.message_timestamp import (
     MessageTimestampMiddleware,
@@ -22,8 +21,9 @@ from app.assistant.agents.middleware.message_timestamp import (
 from app.assistant.agents.middleware.user_message_context import (
     UserMessageContextMiddleware,
 )
-from app.assistant.agents.shell_jobs import ShellJobRuntime
 from app.assistant.agents.tools import create_shell_tools, create_view_image_tools
+from app.assistant.execution.shell_jobs import ShellJobRuntime
+from app.assistant.execution.types import SpecialistResult
 from app.sandbox.backend import DockerSandboxBackend
 
 

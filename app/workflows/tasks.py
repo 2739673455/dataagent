@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 
-from app.assistant.lifecycle_runtime import conversation_lifecycle_resources
+from app.assistant.conversations.resources import conversation_lifecycle_resources
 from app.identity.services.user_deletion_store import PostgresUserDeletionStateStore
 from app.shared.async_runtime import run_async
 from app.shared.clients.postgres_client_manager import PostgresClientManager

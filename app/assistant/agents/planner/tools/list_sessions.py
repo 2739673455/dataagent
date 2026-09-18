@@ -7,8 +7,8 @@ from langchain_core.tools import BaseTool
 from loguru import logger
 from pydantic import ValidationError
 
-from app.assistant.agents.contracts import ListSessionsRequest
-from app.assistant.agents.session_service import AgentSessionService
+from app.assistant.execution.session_service import AgentSessionService
+from app.assistant.execution.types import ListSessionsRequest
 
 
 def create_list_sessions_tool(service: AgentSessionService) -> BaseTool:

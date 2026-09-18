@@ -6,6 +6,7 @@ import math
 import time
 from collections import OrderedDict, deque
 from collections.abc import Callable
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 
 from anyio import to_thread
@@ -183,6 +184,10 @@ class RedisBoundedRateLimiter:
         self._redis = Redis.from_url(redis_url, decode_responses=True)
         self._prefix = f"dataagent:identity:rate-limit:{bucket_name}"
 
+    def close(self) -> None:
+        """释放本限流器的 Redis 连接池。"""
+        self._redis.close()
+
     async def consume(self, key: str) -> None:
         """原子消费跨进程共享额度，Redis 只接收不可逆键摘要。"""
         digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
@@ -263,6 +268,13 @@ class AuthRateLimitService:
             bucket_name="refresh-ip",
             redis_url=redis_url,
         )
+
+    def close(self) -> None:
+        """关闭全部外部限流存储，内存限流器无需清理。"""
+        with ExitStack() as stack:
+            for limiter in (self._login_ip, self._login_identifier, self._refresh_ip):
+                if isinstance(limiter, RedisBoundedRateLimiter):
+                    stack.callback(limiter.close)
 
     @staticmethod
     def _build_limiter(

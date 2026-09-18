@@ -7,7 +7,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from pydantic import field_validator
 
-from app.assistant.agents.contracts import NonEmptyText, StrictProtocolModel
+from app.assistant.execution.types import NonEmptyText, StrictProtocolModel
 from app.sandbox.exceptions import SandboxPathError
 from app.sandbox.paths import normalize_sandbox_path
 

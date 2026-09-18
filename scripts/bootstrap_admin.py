@@ -53,9 +53,12 @@ async def _bootstrap_admin() -> None:
         AuthService,
     )
     from app.shared.clients.postgres_client_manager import (
-        auth_postgres_client_manager,
+        PostgresClientManager,
     )
     from app.shared.config.app_config import cfg
+    from app.shared.database.base import AuthBase
+
+    auth_postgres_client_manager = PostgresClientManager(cfg.auth_postgresql, AuthBase)
 
     try:
         auth_postgres_client_manager.init()

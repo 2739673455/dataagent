@@ -2,7 +2,7 @@
 
 from elasticsearch import AsyncElasticsearch
 
-from app.shared.config.app_config import ESConfig, cfg
+from app.shared.config.app_config import ESConfig
 
 
 class ESClientManager:
@@ -34,6 +34,3 @@ class ESClientManager:
         self._client = None
         if resource is not None:
             await resource.close()
-
-
-es_client_manager = ESClientManager(cfg.elasticsearch)

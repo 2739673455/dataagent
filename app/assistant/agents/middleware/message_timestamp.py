@@ -10,7 +10,7 @@ from langchain.agents.middleware.types import (
     ModelResponse,
 )
 
-from app.assistant.agents.contracts import MESSAGE_CREATED_AT_KEY
+from app.assistant.execution.types import MESSAGE_CREATED_AT_KEY
 
 
 def _stamp_response(response: ModelResponse[Any]) -> ModelResponse[Any]:

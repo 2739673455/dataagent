@@ -1,12 +1,10 @@
 """元数据管理与索引同步路由。"""
 
-from collections.abc import AsyncGenerator
 from typing import Annotated
 
 import yaml
 from fastapi import (
     APIRouter,
-    Depends,
     File,
     Path,
     Query,
@@ -23,18 +21,18 @@ from app.identity.api.auth.dependencies import (
 )
 from app.metadata import errors as meta_error
 from app.metadata.api.meta import schemas
+from app.metadata.api.meta.dependencies import (
+    MetaCatalogServiceDep,
+    MetaImportServiceDep,
+)
 from app.metadata.config import MetaConfig, MetadataName
 from app.metadata.models.catalog import (
     ColumnKey,
     MetricInfo,
     column_key_reference,
 )
-from app.metadata.repositories.postgres import MetaPGRepo
-from app.metadata.repositories.source_doris import SourceDorisRepo
-from app.metadata.services.catalog import MetaCatalogService
 from app.metadata.services.import_service import (
     ImportMode,
-    MetaImportService,
     ResourceChanges,
 )
 from app.metadata.task_scheduler import (
@@ -45,62 +43,10 @@ from app.metadata.task_scheduler import (
     enqueue_table_indexes,
     enqueue_table_values,
 )
-from app.shared.clients.doris_client_manager import admin_doris_client_manager
-from app.shared.clients.embedding_client_manager import embedding_client_manager
-from app.shared.clients.es_client_manager import es_client_manager
-from app.shared.clients.postgres_client_manager import meta_postgres_client_manager
 from app.shared.tasks.schemas import TaskAcceptedResponse
-from app.workflows.providers import (
-    build_meta_catalog_service,
-    build_meta_import_service,
-)
 
 router = APIRouter(tags=["meta"])
 MetadataPath = Annotated[MetadataName, Path()]
-
-
-async def _get_meta_catalog_service(
-    _: AdminUserDep,
-) -> AsyncGenerator[MetaCatalogService]:
-    """为平台管理员创建完整元数据目录服务。"""
-    async with (
-        meta_postgres_client_manager.session() as meta_session,
-        admin_doris_client_manager.connection() as source_connection,
-    ):
-        meta_repo = MetaPGRepo(session=meta_session)
-        source_repo = SourceDorisRepo(connection=source_connection)
-        yield build_meta_catalog_service(
-            meta_repo,
-            source_repo,
-            es_client_manager.get_client(),
-            embedding_client_manager.get_client(),
-        )
-
-
-async def _get_meta_import_service() -> AsyncGenerator[MetaImportService]:
-    """创建请求级元数据导入服务。"""
-    async with (
-        meta_postgres_client_manager.session() as meta_session,
-        admin_doris_client_manager.connection() as source_connection,
-    ):
-        meta_repo = MetaPGRepo(session=meta_session)
-        source_repo = SourceDorisRepo(connection=source_connection)
-        yield build_meta_import_service(
-            meta_repo,
-            source_repo,
-            es_client_manager.get_client(),
-            embedding_client_manager.get_client(),
-        )
-
-
-MetaCatalogServiceDep = Annotated[
-    MetaCatalogService,
-    Depends(_get_meta_catalog_service),
-]
-MetaImportServiceDep = Annotated[
-    MetaImportService,
-    Depends(_get_meta_import_service),
-]
 
 
 def _format_resource_key(key: str | ColumnKey) -> str:

@@ -8,7 +8,7 @@ from uuid import UUID
 
 from app.assistant import errors as chat_error
 from app.assistant.api.chat.router import _request_deletion_or_raise
-from app.assistant.services.conversation_lifecycle import (
+from app.assistant.conversations.lifecycle import (
     ConversationLifecycleBusyError,
     ConversationLifecycleService,
 )
@@ -38,7 +38,7 @@ def _build_service() -> tuple[
     repository_factory = MagicMock()
     service = ConversationLifecycleService(
         repository_factory=repository_factory,
-        recall_cleaner_factory=MagicMock(),
+        recall_cleaner=MagicMock(),
         lock_provider=_BusyLockProvider(),
         agents=agents,
         sandbox=MagicMock(),

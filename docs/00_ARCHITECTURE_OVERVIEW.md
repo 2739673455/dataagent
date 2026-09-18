@@ -42,7 +42,7 @@ flowchart TD
 
 ```text
 dataagent/
-├── main.py                    FastAPI 组合根、路由注册和资源生命周期
+├── main.py                    FastAPI 应用创建、路由注册
 ├── app/
 │   ├── shared/                配置、客户端、契约、错误、可观测性和任务设施
 │   ├── identity/              账号认证、Doris 身份与授权
@@ -51,7 +51,8 @@ dataagent/
 │   ├── query/                 SQL 校验、执行、记录与经验
 │   ├── assistant/             对话、Planner、专业 Agent 和工具
 │   ├── workflows/             跨模块持久化工作流
-│   └── providers.py           跨模块长生命周期对象的组装入口
+│   ├── runtime.py             Web lifespan 内创建、组装与释放资源
+│   └── dependencies.py        HTTP 依赖从当前 app.state 取得资源
 ├── conf/
 │   ├── app_config.yaml        应用配置
 │   ├── meta_config.yaml       可导入的业务元数据
@@ -63,6 +64,17 @@ dataagent/
 │   └── sandbox/               Agent 沙箱镜像
 └── scripts/                   初始化与开发辅助脚本
 ```
+
+### 2.1 资源和调用边界
+
+- `app/runtime.py` 的每次 `lifespan` 创建一套独立的 `WebResources`。仅 HTTP 依赖组装读取这个集合，业务服务接收具体依赖。
+- `shared/clients` 只提供客户端类型，不持有 Web 单例。CLI、Celery 在自己的异步生命周期内创建、关闭客户端。
+- `assistant/conversations` 管理会话目录、历史、标题和清理；`execution` 管理执行、取消、委派和运行时；`agents` 定义 Agent 行为；`checkpoints` 读取状态；`events` 解析和投影消息。
+- `providers.py` 组装具体服务，API dependencies 负责请求范围的资源；仓储只处理所属模块的数据访问。
+- 会话生命周期通过 `metadata.services.recall_cleanup.RecallCleanupService` 删除召回记录，由元数据模块负责短事务，Assistant 不创建对方仓储。
+- `web/src/features` 按 `chat/users/roles/metadata/query-experiences` 集中组件、状态和业务请求。`pages` 组合页面；`api` 保留 HTTP 基础能力与生成类型。
+
+新增功能优先放入已有职责，不要求每个模块具有相同层数。只有需要隐藏业务规则、事务或资源生命周期时才新增抽象；不添加旧路径转发层。
 
 ## 3. 核心模块及职责
 

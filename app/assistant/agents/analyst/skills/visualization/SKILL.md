@@ -621,34 +621,35 @@ description: 将 Analyst 已验证的分析结果制作成专业、美观、清�
 ```python
 import matplotlib.pyplot as plt
 
-plt.rcParams['figure.dpi'] = 200
-plt.rcParams['font.family'] = 'WenQuanYi Zen Hei'
-plt.rcParams['axes.unicode_minus'] = False
-plt.rcParams['font.size'] = 10
+plt.rcParams["figure.dpi"] = 200
+plt.rcParams["font.family"] = "WenQuanYi Zen Hei"
+plt.rcParams["axes.unicode_minus"] = False
+plt.rcParams["font.size"] = 10
 
 # 极简配色
 PALETTE = {
-    'primary': '#2563eb',    # 皇家蓝 (主趋势)
-    'success': '#059669',    # 翡翠绿 (正增长)
-    'danger': '#dc2626',     # 玫瑰红 (下滑)
-    'warning': '#d97706',    # 琥珀金 (预警)
-    'slate': '#64748b',      # 中性灰
-    'grid': '#f1f5f9',       # 极淡网格
-    'bg': '#ffffff',
+    "primary": "#2563eb",  # 皇家蓝 (主趋势)
+    "success": "#059669",  # 翡翠绿 (正增长)
+    "danger": "#dc2626",  # 玫瑰红 (下滑)
+    "warning": "#d97706",  # 琥珀金 (预警)
+    "slate": "#64748b",  # 中性灰
+    "grid": "#f1f5f9",  # 极淡网格
+    "bg": "#ffffff",
 }
 
+
 def setup_clean_chart(ax, title=None):
-    ax.set_facecolor('#ffffff')
-    ax.figure.patch.set_facecolor('#ffffff')
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['left'].set_color('#cbd5e1')
-    ax.spines['bottom'].set_color('#cbd5e1')
-    ax.yaxis.grid(True, linestyle='--', alpha=0.6, color=PALETTE['grid'])
+    ax.set_facecolor("#ffffff")
+    ax.figure.patch.set_facecolor("#ffffff")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color("#cbd5e1")
+    ax.spines["bottom"].set_color("#cbd5e1")
+    ax.yaxis.grid(True, linestyle="--", alpha=0.6, color=PALETTE["grid"])
     ax.xaxis.grid(False)
     if title:
-        ax.set_title(title, fontsize=13, weight='bold', color='#0f172a', pad=12)
-    ax.tick_params(colors='#475569', labelsize=9.5)
+        ax.set_title(title, fontsize=13, weight="bold", color="#0f172a", pad=12)
+    ax.tick_params(colors="#475569", labelsize=9.5)
 ```
 
 ---

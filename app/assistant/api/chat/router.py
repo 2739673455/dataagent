@@ -12,28 +12,30 @@ from loguru import logger
 from app.assistant import errors as chat_error
 from app.assistant.api.chat.dependencies import (
     ConversationPGRepoDep,
+    ConversationTurnServiceDep,
 )
 from app.assistant.api.dependencies import (
     AgentManagerDep,
     ConversationLifecycleServiceDep,
     ConversationRunServiceDep,
     SandboxManagerDep,
+    SemanticRecallRuntimeDep,
 )
-from app.assistant.contracts import chat as chat_schema
-from app.assistant.services import conversation_history, planner_turn
-from app.assistant.services.conversation_lifecycle import (
+from app.assistant.conversations import history as conversation_history
+from app.assistant.conversations.lifecycle import (
     ConversationLifecycleBusyError,
     ConversationLifecycleService,
 )
-from app.assistant.services.conversation_run import (
-    ActiveConversationRunError,
-)
-from app.assistant.services.conversation_title import (
+from app.assistant.conversations.title import (
     initial_conversation_title,
 )
-from app.assistant.services.conversation_turn import (
+from app.assistant.events import schemas as chat_schema
+from app.assistant.execution import planner as planner_turn
+from app.assistant.execution.run import (
+    ActiveConversationRunError,
+)
+from app.assistant.execution.turn import (
     ConversationMissingError,
-    ConversationTurnService,
 )
 from app.assistant.task_scheduler import (
     enqueue_conversation_deletion,
@@ -234,6 +236,7 @@ async def api_get_messages(
     "runs/{delegation_id}/messages"
 )
 async def api_get_subagent_messages(
+    recall: SemanticRecallRuntimeDep,
     conversation_id: UUID,
     analysis_id: str,
     agent_type: AgentType,
@@ -257,6 +260,7 @@ async def api_get_subagent_messages(
             agent_type,
             session_id,
             delegation_id,
+            recall=recall,
         )
     except ValueError as exc:
         raise chat_error.SubagentRunNotFoundError from exc
@@ -305,6 +309,18 @@ async def _stream_run_events(
         await events.aclose()
 
 
+def _sse_response(
+    conversation_id: UUID,
+    events: AsyncGenerator[chat_schema.ChatStreamEventPayload],
+) -> StreamingResponse:
+    """为启动、恢复和重新订阅统一配置 SSE 心跳、清理及响应头。"""
+    return StreamingResponse(
+        _stream_run_events(conversation_id, events),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.post(
     "/stream",
     response_class=StreamingResponse,
@@ -322,75 +338,39 @@ async def _stream_run_events(
 )
 async def api_stream_chat(
     body: chat_schema.ChatStreamRequest,
-    conversation_repo: ConversationPGRepoDep,
+    turns: ConversationTurnServiceDep,
     current_user: AnalysisUserDep,
-    lifecycle: ConversationLifecycleServiceDep,
-    agents: AgentManagerDep,
-    runs: ConversationRunServiceDep,
 ) -> StreamingResponse:
     """启动后台对话回合并订阅 Agent 事件。"""
     user_id = current_user.id
     context.user_id_ctx.set(str(user_id))
     try:
-        events = await ConversationTurnService(
-            repository=conversation_repo,
-            lifecycle=lifecycle,
-            runs=runs,
-            agents=agents,
-        ).start(user_id, body.conversation_id, body.message)
+        events = await turns.start(user_id, body.conversation_id, body.message)
     except ConversationMissingError as exc:
         raise chat_error.ConversationNotFoundError from exc
     except ActiveConversationRunError as exc:
         raise chat_error.ConversationRunConflictError from exc
-    return StreamingResponse(
-        _stream_run_events(
-            body.conversation_id,
-            events,
-        ),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return _sse_response(body.conversation_id, events)
 
 
 @router.post("/{conversation_id}/resume", response_class=StreamingResponse)
 async def api_resume_chat(
     conversation_id: UUID,
-    conversation_repo: ConversationPGRepoDep,
+    turns: ConversationTurnServiceDep,
     current_user: AnalysisUserDep,
-    lifecycle: ConversationLifecycleServiceDep,
-    agents: AgentManagerDep,
-    runs: ConversationRunServiceDep,
 ) -> StreamingResponse:
     """从中断的 Planner Checkpoint 继续当前用户回合。"""
     user_id = current_user.id
     context.user_id_ctx.set(str(user_id))
     try:
-        events = await ConversationTurnService(
-            repository=conversation_repo,
-            lifecycle=lifecycle,
-            runs=runs,
-            agents=agents,
-        ).resume(user_id, conversation_id)
+        events = await turns.resume(user_id, conversation_id)
     except ConversationMissingError as exc:
         raise chat_error.ConversationNotFoundError from exc
     except planner_turn.PlannerTurnNotResumableError as exc:
         raise chat_error.ConversationNotResumableError from exc
     except ActiveConversationRunError as exc:
         raise chat_error.ConversationRunConflictError from exc
-    return StreamingResponse(
-        _stream_run_events(
-            conversation_id,
-            events,
-        ),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return _sse_response(conversation_id, events)
 
 
 @router.get("/{conversation_id}/run")
@@ -422,14 +402,7 @@ async def api_subscribe_conversation_run(
         raise chat_error.ConversationNotFoundError
     context.user_id_ctx.set(str(user_id))
     events = await runs.subscribe(user_id, conversation_id)
-    return StreamingResponse(
-        _stream_run_events(conversation_id, events),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return _sse_response(conversation_id, events)
 
 
 @router.post("/{conversation_id}/stop", status_code=status.HTTP_204_NO_CONTENT)

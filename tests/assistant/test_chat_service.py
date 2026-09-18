@@ -16,8 +16,19 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 from langchain_core.runnables import RunnableConfig
 from pydantic import ValidationError
 
-from app.assistant.agents.checkpoint_reader import CheckpointState
-from app.assistant.agents.contracts import (
+from app.assistant.agents.middleware.message_timestamp import (
+    MessageTimestampMiddleware,
+)
+from app.assistant.agents.middleware.user_message_context import (
+    USER_MESSAGE_CONTEXT_KEY,
+    UserMessageContext,
+)
+from app.assistant.checkpoints.reader import CheckpointState
+from app.assistant.conversations import history as conversation_history
+from app.assistant.events import projection as message_projection
+from app.assistant.events import schemas as chat_schema
+from app.assistant.execution import planner as planner_turn
+from app.assistant.execution.types import (
     EVAL_DELEGATIONS_KEY,
     MESSAGE_CREATED_AT_KEY,
     ConversationAgentRuntime,
@@ -27,19 +38,6 @@ from app.assistant.agents.contracts import (
     SubagentMessageDeltaActivity,
     SubagentStatusActivity,
     SubagentThinkingDeltaActivity,
-)
-from app.assistant.agents.middleware.message_timestamp import (
-    MessageTimestampMiddleware,
-)
-from app.assistant.agents.middleware.user_message_context import (
-    USER_MESSAGE_CONTEXT_KEY,
-    UserMessageContext,
-)
-from app.assistant.contracts import chat as chat_schema
-from app.assistant.services import (
-    conversation_history,
-    message_projection,
-    planner_turn,
 )
 from app.sandbox.paths import normalize_attachment_path
 
@@ -395,12 +393,7 @@ class _TurnManagerStub:
             raise AssertionError("unexpected user_id")
         if conversation_id != self.turn_context.conversation_id:
             raise AssertionError("unexpected conversation_id")
-        return await self.runtime.session_service.get_delegation_activity(
-            analysis_id,
-            agent_type,
-            session_id,
-            delegation_id,
-        )
+        raise AssertionError("回合执行测试不应读取专业 Agent 历史")
 
     @asynccontextmanager
     async def execution(
@@ -508,10 +501,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         events = [
             event
             async for event in planner_turn.resume_agent_turn(
-                manager,
-                _FileInspectorStub(),
-                7,
-                _CONVERSATION_ID,
+                manager, _FileInspectorStub(), 7, _CONVERSATION_ID, recall=MagicMock()
             )
         ]
 
@@ -583,10 +573,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         events = [
             event
             async for event in planner_turn.resume_agent_turn(
-                manager,
-                _FileInspectorStub(),
-                7,
-                _CONVERSATION_ID,
+                manager, _FileInspectorStub(), 7, _CONVERSATION_ID, recall=MagicMock()
             )
         ]
 
@@ -641,6 +628,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                 7,
                 _CONVERSATION_ID,
                 user_message,
+                recall=MagicMock(),
             ):
                 events.append(event)
 
@@ -876,6 +864,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 chat_schema.UserMessageRequest(
                     parts=[chat_schema.TextContent(type="text", text="分析")]
                 ),
+                recall=MagicMock(),
             )
         ]
 
@@ -1044,6 +1033,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 chat_schema.UserMessageRequest(
                     parts=[chat_schema.TextContent(type="text", text="analyze")]
                 ),
+                recall=MagicMock(),
             ):
                 events.append(event)
 
@@ -1105,9 +1095,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             stream_event = await message_projection.subagent_activity_to_event(
-                activity,
-                7,
-                _CONVERSATION_ID,
+                activity, 7, _CONVERSATION_ID, recall=MagicMock()
             )
 
             agents = MagicMock()
@@ -1125,6 +1113,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 "explorer",
                 "source-1",
                 "delegation-1",
+                recall=MagicMock(),
             )
 
         self.assertIsInstance(
@@ -1220,6 +1209,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 7,
                 _CONVERSATION_ID,
                 user_message,
+                recall=MagicMock(),
             ):
                 events.append(event)
 

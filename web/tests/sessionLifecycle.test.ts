@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
-import { chatApi } from "../src/api/chat";
+import { chatApi } from "../src/features/chat/api";
 import { isRefreshSnapshotCurrent, sessionLifecycle } from "../src/auth/sessionLifecycle";
-import { useChatStore } from "../src/stores/chatStore";
+import { useChatStore } from "../src/features/chat/store";
 
 function deferred<T>() {
   let resolve: ((value: T) => void) | undefined;

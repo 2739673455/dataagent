@@ -222,7 +222,7 @@ class UserSandboxCleaner(Protocol):
 from datetime import UTC, datetime, timedelta
 from loguru import logger
 
-from app.assistant.services.conversation_lifecycle import ConversationLifecycleService
+from app.assistant.conversations.lifecycle import ConversationLifecycleService
 from app.identity import errors as auth_error
 from app.shared.config.app_config import LifecycleConfig
 from app.workflows.contracts import UserDeletionStateStore, UserSandboxCleaner
@@ -360,9 +360,9 @@ from datetime import UTC, datetime, timedelta
 from loguru import logger
 
 from app.assistant.agents.filesystem import packaged_skill_readonly_mounts
-from app.assistant.agents.manager import AgentManager
+from app.assistant.execution.manager import AgentManager
 from app.assistant.providers import build_conversation_lifecycle_service
-from app.assistant.services.conversation_tombstone_store import ConversationTombstoneStore
+from app.assistant.conversations.tombstones import ConversationTombstoneStore
 from app.identity.services.user_deletion_store import PostgresUserDeletionStateStore
 from app.sandbox.providers import create_sandbox_manager
 from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager

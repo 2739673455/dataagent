@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
-import { ChatMessages } from "../src/pages/Chat/components/ChatMessages";
-import type { MessageResponse } from "../src/types";
+import { ChatMessages } from "../src/features/chat/components/ChatMessages";
+import type { MessageResponse } from "../src/features/chat/types";
 
 describe("chat messages", () => {
   test("shows the streaming indicator only on the latest unanswered turn", () => {
