@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-from contextlib import AbstractAsyncContextManager
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Literal, Self
@@ -174,8 +173,6 @@ class ConversationAgentRuntime:
     planner: CompiledStateGraph
     session_service: AgentSessionService
     shell_jobs: ShellJobRuntime
-    planner_lock: Callable[[], AbstractAsyncContextManager[None]]
-    conversation_deleted: Callable[[], Awaitable[bool]]
 
 
 class StrictProtocolModel(BaseModel):

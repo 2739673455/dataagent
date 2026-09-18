@@ -8,19 +8,18 @@ from app.assistant.checkpoints.reader import CheckpointState
 from app.assistant.execution.types import (
     ConversationAgentRuntime,
     DelegationActivityHistory,
-    PlannerTurnContext,
 )
 
 
 class AgentRuntimeManager(Protocol):
     """聊天服务需要的最小 Agent 运行时能力。"""
 
-    async def get_conversation_runtime(
+    def use_runtime(
         self,
         user_id: int,
         conversation_id: UUID,
-    ) -> ConversationAgentRuntime:
-        """获取指定用户会话的 Agent 运行时。"""
+    ) -> AbstractAsyncContextManager[ConversationAgentRuntime]:
+        """借用并保护会话运行时，退出后允许缓存淘汰。"""
         ...
 
     async def read_planner_state(
@@ -41,16 +40,6 @@ class AgentRuntimeManager(Protocol):
         delegation_id: str,
     ) -> DelegationActivityHistory | None:
         """读取一次 Specialist delegation 的历史活动。"""
-        ...
-
-    def execution(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        *,
-        runtime: ConversationAgentRuntime,
-    ) -> AbstractAsyncContextManager[PlannerTurnContext]:
-        """创建绑定 Planner 回合预算的执行上下文。"""
         ...
 
 
@@ -80,14 +69,6 @@ class ConversationLifecycleLockProvider(Protocol):
 
 class ConversationAgentLifecycle(Protocol):
     """会话清理所需的最小 Agent 生命周期能力。"""
-
-    async def cancel_agent_execution(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-    ) -> None:
-        """取消会话中正在执行的 Agent。"""
-        ...
 
     async def delete_agent_under_lifecycle_lock(
         self,

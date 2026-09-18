@@ -28,15 +28,11 @@ from app.assistant.agents.specialists import (
     SpecialistDefinition,
     build_specialist_definitions,
 )
-from app.assistant.conversations.tombstones import (
-    ConversationTombstoneStore,
-)
 from app.assistant.execution.session_service import AgentSessionService
 from app.assistant.execution.session_store import PostgresSandboxSessionStore
 from app.assistant.execution.shell_jobs import ShellJobRuntime
 from app.assistant.execution.types import (
     ConversationAgentRuntime,
-    conversation_lifecycle_lock_name,
 )
 from app.assistant.model_factory import create_configured_model
 from app.query.services.execution_handler import QueryExecutionHandler
@@ -65,7 +61,6 @@ class ConversationAgentRuntimeFactory:
         self,
         persistence: LangGraphPostgresManager,
         sandbox: DockerSandboxManager,
-        tombstones: ConversationTombstoneStore,
         recall: SemanticRecallRuntime,
         query: QueryExecutionHandler,
     ) -> None:
@@ -74,7 +69,6 @@ class ConversationAgentRuntimeFactory:
         self._query = query
         self._persistence = persistence
         self._sandbox = sandbox
-        self._tombstones = tombstones
         self._init_lock = asyncio.Lock()
         self._resources: _SharedAgentResources | None = None
         self._model_contexts = AsyncExitStack()
@@ -176,13 +170,6 @@ class ConversationAgentRuntimeFactory:
             planner=planner,
             session_service=session_service,
             shell_jobs=shell_jobs,
-            planner_lock=lambda: self._persistence.advisory_lock(
-                conversation_lifecycle_lock_name(user_id, conversation_id),
-            ),
-            conversation_deleted=lambda: self._tombstones.exists(
-                user_id,
-                conversation_id,
-            ),
         )
 
     def _create_planner(

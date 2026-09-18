@@ -46,6 +46,7 @@ from app.assistant.agents.specialists import (
 )
 from app.assistant.checkpoints.reader import CheckpointState
 from app.assistant.execution.manager import AgentManager
+from app.assistant.execution.run import ConversationRunService
 from app.assistant.execution.session_service import AgentSessionService
 from app.assistant.execution.session_store import AgentSessionStore
 from app.assistant.execution.shell_jobs import ShellJobRuntime
@@ -53,7 +54,6 @@ from app.assistant.execution.types import (
     DELEGATION_CONTEXT_KEY,
     EVAL_DELEGATIONS_KEY,
     ArtifactReference,
-    ConversationAgentRuntime,
     DelegationMessageContext,
     DelegationRequest,
     DelegationResult,
@@ -335,10 +335,6 @@ class _DistributedLockRegistry:
         session_key: AgentSessionKey,
     ) -> AbstractAsyncContextManager[None]:
         return self.acquire(session_key.checkpoint_ns)
-
-
-async def _conversation_not_deleted() -> bool:
-    return False
 
 
 class _FakeSessionStore:
@@ -2327,71 +2323,43 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         assert isinstance(record, dict)
         self.assertEqual(record["status"], "cancelled")
 
-    async def test_agent_manager_rejects_same_planner_across_workers(self) -> None:
-        fake = _FakeAgent()
-        first_service = _service(fake)
-        second_service = _service(fake)
-        graph = cast(CompiledStateGraph, fake)
-        distributed_locks = _DistributedLockRegistry()
-        first_runtime = ConversationAgentRuntime(
-            planner=graph,
-            session_service=first_service,
-            shell_jobs=MagicMock(spec=ShellJobRuntime),
-            planner_lock=lambda: distributed_locks.acquire("planner"),
-            conversation_deleted=_conversation_not_deleted,
-        )
-        second_runtime = ConversationAgentRuntime(
-            planner=graph,
-            session_service=second_service,
-            shell_jobs=MagicMock(spec=ShellJobRuntime),
-            planner_lock=lambda: distributed_locks.acquire("planner"),
-            conversation_deleted=_conversation_not_deleted,
-        )
-        first_manager = AgentManager(MagicMock(), MagicMock(), MagicMock())
-        second_manager = AgentManager(MagicMock(), MagicMock(), MagicMock())
-        active = 0
-        max_active = 0
+    async def test_run_rejects_same_planner_across_workers(self) -> None:
+        locks = _DistributedLockRegistry()
+        provider = MagicMock(advisory_lock=locks.acquire)
+        release = asyncio.Event()
 
-        async def run(
-            manager: AgentManager,
-            runtime: ConversationAgentRuntime,
-        ) -> None:
-            nonlocal active, max_active
-            async with manager.execution(12, _CONVERSATION_ID, runtime=runtime):
-                active += 1
-                max_active = max(max_active, active)
-                await asyncio.sleep(0.01)
-                active -= 1
+        @asynccontextmanager
+        async def use_runtime(*args):
+            yield runtime
 
-        results = await asyncio.gather(
-            run(first_manager, first_runtime),
-            run(second_manager, second_runtime),
-            return_exceptions=True,
-        )
+        async def stream(**kwargs):
+            await release.wait()
+            if False:
+                yield {}
 
-        self.assertEqual(max_active, 1)
-        self.assertEqual(
-            sum(isinstance(result, RuntimeError) for result in results),
-            1,
+        runtime = MagicMock()
+        runtime.planner.astream = stream
+        first = ConversationRunService(
+            MagicMock(use_runtime=use_runtime), MagicMock(), MagicMock(), provider
         )
+        second = ConversationRunService(
+            MagicMock(use_runtime=use_runtime), MagicMock(), MagicMock(), provider
+        )
+        try:
+            events = await first.resume_turn(12, _CONVERSATION_ID, prepare=AsyncMock())
+            with self.assertRaises(RuntimeError):
+                await second.resume_turn(12, _CONVERSATION_ID, prepare=AsyncMock())
+            self.assertTrue(await first.is_running(12, _CONVERSATION_ID))
+            release.set()
+            self.assertEqual([e.type async for e in events], ["done"])
+        finally:
+            await first.close()
+            await second.close()
 
     async def test_persisted_tombstone_blocks_other_worker_execution(self) -> None:
-        fake = _FakeAgent()
-        service = _service(fake)
-        graph = cast(CompiledStateGraph, fake)
         distributed_locks = _DistributedLockRegistry()
         tombstone = False
 
-        async def conversation_deleted() -> bool:
-            return tombstone
-
-        runtime = ConversationAgentRuntime(
-            planner=graph,
-            session_service=service,
-            shell_jobs=MagicMock(spec=ShellJobRuntime),
-            planner_lock=lambda: distributed_locks.acquire("conversation"),
-            conversation_deleted=conversation_deleted,
-        )
         tombstones = MagicMock()
 
         async def write_tombstone(*args: object, **kwargs: object) -> None:
@@ -2413,10 +2381,6 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         await deleting_worker.delete_agent(12, _CONVERSATION_ID)
 
         with self.assertRaisesRegex(RuntimeError, "已被删除"):
-            async with serving_worker.execution(
-                12,
-                _CONVERSATION_ID,
-                runtime=runtime,
-            ):
+            async with serving_worker.use_runtime(12, _CONVERSATION_ID):
                 self.fail("deleted conversation entered execution")
         persistence.delete_thread.assert_awaited_once()

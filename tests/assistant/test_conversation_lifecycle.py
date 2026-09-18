@@ -34,8 +34,11 @@ def _build_service() -> tuple[
 ]:
     """创建只会走锁冲突分支的生命周期服务。"""
     agents = MagicMock()
-    agents.cancel_agent_execution = AsyncMock()
+    runs = MagicMock(stop=AsyncMock())
     repository_factory = MagicMock()
+    repository_factory.return_value.__aenter__.return_value.get = AsyncMock(
+        return_value=MagicMock()
+    )
     service = ConversationLifecycleService(
         repository_factory=repository_factory,
         recall_cleaner=MagicMock(),
@@ -43,8 +46,9 @@ def _build_service() -> tuple[
         agents=agents,
         sandbox=MagicMock(),
         config=MagicMock(),
+        runs=runs,
     )
-    return service, agents.cancel_agent_execution, repository_factory
+    return service, runs.stop, repository_factory
 
 
 class ConversationLifecycleBusyTest(unittest.IsolatedAsyncioTestCase):
@@ -56,7 +60,7 @@ class ConversationLifecycleBusyTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsInstance(caught.exception.__cause__, AdvisoryLockBusyError)
         cancel_execution.assert_awaited_once_with(1, _CONVERSATION_ID)
-        repository_factory.assert_not_called()
+        repository_factory.assert_called_once()
 
     async def test_physical_cleanup_keeps_lock_error_for_task_retry(self) -> None:
         service, _, repository_factory = _build_service()
@@ -91,3 +95,13 @@ class ConversationLifecycleBusyTest(unittest.IsolatedAsyncioTestCase):
             _CONVERSATION_ID,
             draft_only=True,
         )
+
+    async def test_non_draft_deletion_does_not_stop_active_run(self):
+        service, stop, repository_factory = _build_service()
+        repository_factory.return_value.__aenter__.return_value.get.return_value.is_draft = False
+        self.assertFalse(
+            await service.request_conversation_deletion(
+                1, _CONVERSATION_ID, draft_only=True
+            )
+        )
+        stop.assert_not_awaited()

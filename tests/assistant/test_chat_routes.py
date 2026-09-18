@@ -47,7 +47,6 @@ def test_stream_routes_preserve_frames_headers_and_business_errors(entry, failur
     # 保留真实 ConversationTurnService 的依赖组装；仅替换其资源与方法行为。
     async def start(service, user_id, conversation_id, message):
         assert service._repository is repository
-        assert service._lifecycle is lifecycle
         assert service._agents is agents
         if failure:
             raise ConversationMissingError

@@ -350,17 +350,6 @@ class _TurnManagerStub:
         self.turn_context = turn_context
         self.execution_count = 0
 
-    async def get_conversation_runtime(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-    ) -> ConversationAgentRuntime:
-        if user_id != self.turn_context.user_id:
-            raise AssertionError("unexpected user_id")
-        if conversation_id != self.turn_context.conversation_id:
-            raise AssertionError("unexpected conversation_id")
-        return self.runtime
-
     async def read_planner_state(
         self,
         user_id: int,
@@ -396,21 +385,16 @@ class _TurnManagerStub:
         raise AssertionError("回合执行测试不应读取专业 Agent 历史")
 
     @asynccontextmanager
-    async def execution(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        *,
-        runtime: ConversationAgentRuntime,
-    ) -> AsyncGenerator[PlannerTurnContext]:
-        if user_id != self.turn_context.user_id:
-            raise AssertionError("unexpected user_id")
-        if conversation_id != self.turn_context.conversation_id:
-            raise AssertionError("unexpected conversation_id")
-        if runtime is not self.runtime:
-            raise AssertionError("unexpected runtime")
+    async def use_runtime(
+        self, user_id: int, conversation_id: UUID
+    ) -> AsyncGenerator[ConversationAgentRuntime]:
+        if (user_id, conversation_id) != (
+            self.turn_context.user_id,
+            self.turn_context.conversation_id,
+        ):
+            raise AssertionError("unexpected conversation identity")
         self.execution_count += 1
-        yield self.turn_context
+        yield self.runtime
 
 
 class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
@@ -500,8 +484,12 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
 
         events = [
             event
-            async for event in planner_turn.resume_agent_turn(
-                manager, _FileInspectorStub(), 7, _CONVERSATION_ID, recall=MagicMock()
+            async for event in planner_turn.run_agent_turn(
+                manager,
+                _FileInspectorStub(),
+                manager.turn_context,
+                recall=MagicMock(),
+                user_message=None,
             )
         ]
 
@@ -572,8 +560,12 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
 
         events = [
             event
-            async for event in planner_turn.resume_agent_turn(
-                manager, _FileInspectorStub(), 7, _CONVERSATION_ID, recall=MagicMock()
+            async for event in planner_turn.run_agent_turn(
+                manager,
+                _FileInspectorStub(),
+                manager.turn_context,
+                recall=MagicMock(),
+                user_message=None,
             )
         ]
 
@@ -625,8 +617,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
             async for event in planner_turn.run_agent_turn(
                 manager,
                 _FileInspectorStub(),
-                7,
-                _CONVERSATION_ID,
+                manager.turn_context,
                 user_message,
                 recall=MagicMock(),
             ):
@@ -859,8 +850,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             async for event in planner_turn.run_agent_turn(
                 manager,
                 files,
-                7,
-                _CONVERSATION_ID,
+                manager.turn_context,
                 chat_schema.UserMessageRequest(
                     parts=[chat_schema.TextContent(type="text", text="分析")]
                 ),
@@ -1028,8 +1018,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             async for event in planner_turn.run_agent_turn(
                 manager,
                 _FileInspectorStub(),
-                7,
-                _CONVERSATION_ID,
+                manager.turn_context,
                 chat_schema.UserMessageRequest(
                     parts=[chat_schema.TextContent(type="text", text="analyze")]
                 ),
@@ -1206,8 +1195,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             async for event in planner_turn.run_agent_turn(
                 manager,
                 _FileInspectorStub(),
-                7,
-                _CONVERSATION_ID,
+                manager.turn_context,
                 user_message,
                 recall=MagicMock(),
             ):

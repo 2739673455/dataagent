@@ -5,7 +5,6 @@ from uuid import UUID
 
 from loguru import logger
 
-from app.assistant.conversations.lifecycle import ConversationLifecycleService
 from app.assistant.conversations.title import initial_conversation_title
 from app.assistant.events import schemas as chat_contract
 from app.assistant.execution import planner as planner_turn
@@ -26,13 +25,11 @@ class ConversationTurnService:
         self,
         *,
         repository: ConversationPGRepo,
-        lifecycle: ConversationLifecycleService,
         runs: ConversationRunService,
         agents: AgentRuntimeManager,
     ) -> None:
-        """绑定 Conversation 持久化、生命周期锁和 Agent Run 能力。"""
+        """绑定 Conversation 持久化、后台 Run 和 Checkpoint 读取能力。"""
         self._repository = repository
-        self._lifecycle = lifecycle
         self._runs = runs
         self._agents = agents
 
@@ -43,8 +40,10 @@ class ConversationTurnService:
         message: chat_contract.UserMessageRequest,
     ) -> AsyncGenerator[chat_contract.ChatStreamEventPayload]:
         """更新 Conversation 状态、提交标题任务并启动 Planner Run。"""
-        title_submission: tuple[UUID, str, str] | None = None
-        async with self._lifecycle.lock(user_id, conversation_id):
+
+        async def prepare() -> None:
+            """在 Run 持有生命周期锁时更新目录并调度标题。"""
+            title_submission: tuple[UUID, str, str] | None = None
             async with self._repository.session.begin():
                 conversation = await self._repository.get(user_id, conversation_id)
                 if conversation is None:
@@ -88,7 +87,13 @@ class ConversationTurnService:
                         "提交会话标题任务失败，等待定时补偿: "
                         f"conversation_id={target_id}"
                     )
-        return await self._runs.start_turn(user_id, conversation_id, message)
+
+        return await self._runs.start_turn(
+            user_id,
+            conversation_id,
+            message,
+            prepare=prepare,
+        )
 
     async def resume(
         self,
@@ -96,12 +101,17 @@ class ConversationTurnService:
         conversation_id: UUID,
     ) -> AsyncGenerator[chat_contract.ChatStreamEventPayload]:
         """验证 Conversation 和 Checkpoint 后恢复 Planner Run。"""
-        if await self._repository.get(user_id, conversation_id) is None:
-            raise ConversationMissingError
-        if not await planner_turn.can_resume_agent_turn(
-            self._agents,
-            user_id,
-            conversation_id,
-        ):
-            raise planner_turn.PlannerTurnNotResumableError
-        return await self._runs.resume_turn(user_id, conversation_id)
+
+        async def prepare() -> None:
+            """检查与执行使用同一把锁，并在进入模型前结束数据库事务。"""
+            async with self._repository.session.begin():
+                if await self._repository.get(user_id, conversation_id) is None:
+                    raise ConversationMissingError
+            if not await planner_turn.can_resume_agent_turn(
+                self._agents,
+                user_id,
+                conversation_id,
+            ):
+                raise planner_turn.PlannerTurnNotResumableError
+
+        return await self._runs.resume_turn(user_id, conversation_id, prepare=prepare)

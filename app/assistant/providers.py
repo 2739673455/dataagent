@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from app.assistant.conversations.lifecycle import ConversationLifecycleService
 from app.assistant.execution.manager import AgentManager
+from app.assistant.execution.run import ConversationRunService
 from app.assistant.repositories.conversation import ConversationPGRepo
 from app.metadata.services.recall_cleanup import RecallCleanupService
 from app.sandbox.manager import DockerSandboxManager
@@ -29,6 +30,7 @@ def build_conversation_lifecycle_service(
     agents: AgentManager,
     sandbox: DockerSandboxManager,
     config: LifecycleConfig,
+    runs: ConversationRunService | None = None,
 ) -> ConversationLifecycleService:
     """组装会话跨存储生命周期服务。"""
     return ConversationLifecycleService(
@@ -38,4 +40,5 @@ def build_conversation_lifecycle_service(
         agents,
         sandbox,
         config,
+        runs,
     )

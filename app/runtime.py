@@ -73,11 +73,11 @@ def _create_resources() -> WebResources:
     factory = ConversationAgentRuntimeFactory(
         persistence,
         sandbox,
-        tombstones,
         recall,
         build_query_execution_handler(sandbox, auth, meta, query_clients),
     )
     agents = AgentManager(persistence, tombstones, factory)
+    runs = ConversationRunService(agents, sandbox, recall, persistence)
     conversations = build_conversation_lifecycle_service(
         persistence,
         assistant,
@@ -85,6 +85,7 @@ def _create_resources() -> WebResources:
         agents,
         sandbox,
         cfg.lifecycle,
+        runs,
     )
     return WebResources(
         auth=auth,
@@ -97,7 +98,7 @@ def _create_resources() -> WebResources:
         persistence=persistence,
         sandbox=sandbox,
         agents=agents,
-        runs=ConversationRunService(agents, sandbox, recall),
+        runs=runs,
         conversations=conversations,
         user_deletion=UserDeletionService(
             PostgresUserDeletionStateStore(auth),

@@ -10,6 +10,7 @@ from app.assistant.execution.contracts import (
     ConversationLifecycleLockProvider,
     ConversationSandboxCleaner,
 )
+from app.assistant.execution.run import ConversationRunService
 from app.assistant.execution.types import (
     conversation_lifecycle_lock_name,
 )
@@ -36,6 +37,7 @@ class ConversationLifecycleService:
         agents: ConversationAgentLifecycle,
         sandbox: ConversationSandboxCleaner,
         config: LifecycleConfig,
+        runs: ConversationRunService | None = None,
     ) -> None:
         """初始化跨存储会话资源和生命周期锁依赖。"""
         self._repository_factory = repository_factory
@@ -44,6 +46,7 @@ class ConversationLifecycleService:
         self._agents = agents
         self._sandbox = sandbox
         self._config = config
+        self._runs = runs
 
     @asynccontextmanager
     async def lock(
@@ -65,7 +68,15 @@ class ConversationLifecycleService:
         draft_only: bool = False,
     ) -> bool:
         """写入删除墓碑并使会话立即从接口中消失。"""
-        await self._agents.cancel_agent_execution(user_id, conversation_id)
+        # 先确认删除请求有效，避免 draft_only/no-op 取消正常执行。
+        async with self._repository_factory() as repository:
+            conversation = await repository.get(
+                user_id, conversation_id, include_deleting=True
+            )
+            if conversation is None or (draft_only and not conversation.is_draft):
+                return False
+        if self._runs is not None:
+            await self._runs.stop(user_id, conversation_id)
         try:
             async with (
                 self.lock(user_id, conversation_id),
