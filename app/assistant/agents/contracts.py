@@ -77,7 +77,9 @@ def build_planner_config(user_id: int, conversation_id: UUID) -> RunnableConfig:
 
 @dataclass(frozen=True, slots=True)
 class PlannerTurnContext:
-    """绑定一个用户回合的身份和续写上限。"""
+    """Turn 是处理一次用户输入的逻辑回合，可包含多次模型续写。
+
+    中断后恢复仍处理同一回合；Run 则是承载执行与订阅的进程内实例。"""
 
     user_id: int
     conversation_id: UUID
@@ -192,7 +194,10 @@ class DelegationMessageContext(StrictProtocolModel):
 
 
 class DelegationRequest(StrictProtocolModel):
-    """Planner 发起专业 Agent 委派的请求。"""
+    """Delegation 是 Planner 向专业 Agent 发起的一次工作委派。
+
+    请求定位可复用的 Session；每次委派以独立 delegation_id 记录结果，
+    同一 Session 可以接收多次委派并延续工作上下文。"""
 
     analysis_id: Identifier
     agent_type: AgentType

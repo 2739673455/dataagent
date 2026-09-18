@@ -2,30 +2,12 @@
 
 from typing import Protocol
 
-from app.metadata.models.catalog import ColumnKey
-from app.shared.tasks.submission import TaskSubmission
+from app.metadata.models.changes import MetadataChanges, MetadataChangeTasks
 
 
-class MetadataAssetInvalidator(Protocol):
-    """使引用已变更元数据的派生资产失效。"""
+class MetadataChangeHandler(Protocol):
+    """处理已提交元数据对派生资产的影响。"""
 
-    async def invalidate_assets(
-        self,
-        *,
-        table_names: set[str],
-        column_keys: set[ColumnKey],
-    ) -> object:
-        """使引用指定表或字段的派生资产失效。"""
-        ...
-
-
-class MetadataSemanticIndexScheduler(Protocol):
-    """提交元数据语义索引同步任务。"""
-
-    def enqueue_columns(self, column_keys: list[ColumnKey]) -> TaskSubmission:
-        """提交字段语义索引同步任务。"""
-        ...
-
-    def enqueue_metrics(self, metric_names: list[str]) -> TaskSubmission:
-        """提交指标语义索引同步任务。"""
+    async def handle(self, changes: MetadataChanges) -> MetadataChangeTasks:
+        """数据库提交成功后调用；失败向上传播，保留调用方的错误响应或重试语义。"""
         ...

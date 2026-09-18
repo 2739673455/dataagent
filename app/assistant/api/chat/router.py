@@ -20,7 +20,7 @@ from app.assistant.api.dependencies import (
     SandboxManagerDep,
 )
 from app.assistant.contracts import chat as chat_schema
-from app.assistant.services import chat as chat_service
+from app.assistant.services import conversation_history, planner_turn
 from app.assistant.services.conversation_lifecycle import (
     ConversationLifecycleBusyError,
     ConversationLifecycleService,
@@ -35,7 +35,7 @@ from app.assistant.services.conversation_turn import (
     ConversationMissingError,
     ConversationTurnService,
 )
-from app.assistant.tasks import (
+from app.assistant.task_scheduler import (
     enqueue_conversation_deletion,
     enqueue_conversation_title,
 )
@@ -217,7 +217,7 @@ async def api_get_messages(
     conversation = await conversation_repo.get(user_id, conversation_id)
     if conversation is None:
         raise chat_error.ConversationNotFoundError
-    messages = await chat_service.list_messages(
+    messages = await conversation_history.list_messages(
         agents,
         sandbox,
         user_id,
@@ -249,7 +249,7 @@ async def api_get_subagent_messages(
     if conversation is None:
         raise chat_error.ConversationNotFoundError
     try:
-        activity = await chat_service.get_subagent_activity(
+        activity = await conversation_history.get_subagent_activity(
             agents,
             user_id,
             conversation_id,
@@ -376,7 +376,7 @@ async def api_resume_chat(
         ).resume(user_id, conversation_id)
     except ConversationMissingError as exc:
         raise chat_error.ConversationNotFoundError from exc
-    except chat_service.PlannerTurnNotResumableError as exc:
+    except planner_turn.PlannerTurnNotResumableError as exc:
         raise chat_error.ConversationNotResumableError from exc
     except ActiveConversationRunError as exc:
         raise chat_error.ConversationRunConflictError from exc

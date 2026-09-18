@@ -8,11 +8,9 @@ from app.assistant.services.conversation_lifecycle import (
     ConversationLifecycleService,
 )
 from app.identity import errors as auth_error
+from app.identity.services.user_deletion_store import PostgresUserDeletionStateStore
+from app.sandbox.manager import DockerSandboxManager
 from app.shared.config.app_config import LifecycleConfig
-from app.workflows.contracts import (
-    UserDeletionStateStore,
-    UserSandboxCleaner,
-)
 
 
 class UserDeletionService:
@@ -20,8 +18,8 @@ class UserDeletionService:
 
     def __init__(
         self,
-        state_store: UserDeletionStateStore,
-        sandbox: UserSandboxCleaner,
+        state_store: PostgresUserDeletionStateStore,
+        sandbox: DockerSandboxManager,
         conversations: ConversationLifecycleService,
         config: LifecycleConfig,
     ) -> None:

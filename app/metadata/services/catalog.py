@@ -20,12 +20,10 @@ from app.metadata.models.catalog import (
     column_reference_key,
     serialize_column_examples,
 )
+from app.metadata.models.changes import MetadataChanges
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
-from app.metadata.services.contracts import (
-    MetadataAssetInvalidator,
-    MetadataSemanticIndexScheduler,
-)
+from app.metadata.services.contracts import MetadataChangeHandler
 from app.metadata.services.index import MetaIndexService
 from app.shared.tasks.submission import TaskSubmission
 
@@ -38,15 +36,13 @@ class MetaCatalogService:
         meta_repo: MetaPGRepo,
         source_repo: SourceDorisRepo,
         meta_index_service: MetaIndexService,
-        asset_invalidator: MetadataAssetInvalidator,
-        semantic_index_scheduler: MetadataSemanticIndexScheduler,
+        change_handler: MetadataChangeHandler,
     ) -> None:
         """初始化元数据目录管理服务。"""
         self._meta_repo = meta_repo
         self._source_repo = source_repo
         self._meta_index_service = meta_index_service
-        self._asset_invalidator = asset_invalidator
-        self._semantic_index_scheduler = semantic_index_scheduler
+        self._change_handler = change_handler
 
     async def list_table_infos(self) -> list[TableInfo]:
         """查询全部表元数据。"""
@@ -100,9 +96,8 @@ class MetaCatalogService:
                 )
             )
         if changed:
-            await self._asset_invalidator.invalidate_assets(
-                table_names={t_name},
-                column_keys=set(),
+            await self._change_handler.handle(
+                MetadataChanges(invalidated_tables=(t_name,))
             )
 
     async def upsert_column_info(
@@ -175,11 +170,13 @@ class MetaCatalogService:
                 )
             )
         if changed:
-            await self._asset_invalidator.invalidate_assets(
-                table_names=set(),
-                column_keys={(t_name, c_name)},
+            tasks = await self._change_handler.handle(
+                MetadataChanges(
+                    invalidated_columns=((t_name, c_name),),
+                    sync_columns=((t_name, c_name),),
+                )
             )
-            return self._semantic_index_scheduler.enqueue_columns([(t_name, c_name)])
+            return tasks.columns
         return None
 
     async def upsert_metric_info(
@@ -207,7 +204,10 @@ class MetaCatalogService:
             metric_info.alias = list(dict.fromkeys(metric_info.alias))
             changed = await self._meta_repo.upsert_metric_info(metric_info)
         if changed:
-            return self._semantic_index_scheduler.enqueue_metrics([metric_info.name])
+            tasks = await self._change_handler.handle(
+                MetadataChanges(sync_metrics=(metric_info.name,))
+            )
+            return tasks.metrics
         return None
 
     async def delete_tables(self, table_names: list[str]) -> None:
@@ -229,9 +229,8 @@ class MetaCatalogService:
         async with self._meta_repo.session.begin():
             await self._meta_repo.delete_column_infos(column_keys)
             await self._meta_repo.delete_table_infos(unique_table_names)
-        await self._asset_invalidator.invalidate_assets(
-            table_names=set(unique_table_names),
-            column_keys=set(),
+        await self._change_handler.handle(
+            MetadataChanges(invalidated_tables=tuple(unique_table_names))
         )
 
     async def delete_columns(self, column_keys: list[tuple[str, str]]) -> None:
@@ -247,9 +246,8 @@ class MetaCatalogService:
         await self._meta_index_service.delete_column_indexes(unique_keys)
         async with self._meta_repo.session.begin():
             await self._meta_repo.delete_column_infos(unique_keys)
-        await self._asset_invalidator.invalidate_assets(
-            table_names=set(),
-            column_keys=set(unique_keys),
+        await self._change_handler.handle(
+            MetadataChanges(invalidated_columns=tuple(unique_keys))
         )
 
     async def delete_metrics(self, metric_names: list[str]) -> None:

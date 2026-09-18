@@ -24,7 +24,7 @@ from app.identity.services.authorization import (
 from app.identity.services.credential import DorisCredentialCipher
 from app.identity.services.doris_permission import DorisPermissionService
 from app.identity.services.rate_limit import AuthRateLimitService
-from app.providers import user_deletion_service
+from app.runtime import user_deletion_service
 from app.shared.clients.doris_client_manager import (
     admin_doris_client_manager,
     query_doris_client_registry,

@@ -29,10 +29,6 @@ from app.metadata.models.catalog import (
     MetricInfo,
     column_key_reference,
 )
-from app.metadata.providers import (
-    build_meta_catalog_service,
-    build_meta_import_service,
-)
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
 from app.metadata.services.catalog import MetaCatalogService
@@ -41,7 +37,7 @@ from app.metadata.services.import_service import (
     MetaImportService,
     ResourceChanges,
 )
-from app.metadata.tasks import (
+from app.metadata.task_scheduler import (
     enqueue_column_indexes,
     enqueue_column_values,
     enqueue_import,
@@ -54,6 +50,10 @@ from app.shared.clients.embedding_client_manager import embedding_client_manager
 from app.shared.clients.es_client_manager import es_client_manager
 from app.shared.clients.postgres_client_manager import meta_postgres_client_manager
 from app.shared.tasks.schemas import TaskAcceptedResponse
+from app.workflows.providers import (
+    build_meta_catalog_service,
+    build_meta_import_service,
+)
 
 router = APIRouter(tags=["meta"])
 MetadataPath = Annotated[MetadataName, Path()]

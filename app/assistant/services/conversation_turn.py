@@ -1,4 +1,4 @@
-"""Conversation 用户回合的应用用例。"""
+"""用户回合入口：会话校验与目录更新 → 标题调度 → Run 启动或恢复。"""
 
 from collections.abc import AsyncGenerator
 from uuid import UUID
@@ -7,12 +7,12 @@ from loguru import logger
 
 from app.assistant.contracts import chat as chat_contract
 from app.assistant.repositories.conversation import ConversationPGRepo
-from app.assistant.services import chat
+from app.assistant.services import planner_turn
 from app.assistant.services.contracts import AgentRuntimeManager
 from app.assistant.services.conversation_lifecycle import ConversationLifecycleService
 from app.assistant.services.conversation_run import ConversationRunService
 from app.assistant.services.conversation_title import initial_conversation_title
-from app.assistant.tasks import enqueue_conversation_title
+from app.assistant.task_scheduler import enqueue_conversation_title
 
 
 class ConversationMissingError(RuntimeError):
@@ -98,10 +98,10 @@ class ConversationTurnService:
         """验证 Conversation 和 Checkpoint 后恢复 Planner Run。"""
         if await self._repository.get(user_id, conversation_id) is None:
             raise ConversationMissingError
-        if not await chat.can_resume_agent_turn(
+        if not await planner_turn.can_resume_agent_turn(
             self._agents,
             user_id,
             conversation_id,
         ):
-            raise chat.PlannerTurnNotResumableError
+            raise planner_turn.PlannerTurnNotResumableError
         return await self._runs.resume_turn(user_id, conversation_id)

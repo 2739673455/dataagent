@@ -15,21 +15,8 @@ from app.shared.tasks.celery_app import (
     TASK_VISIBILITY_TIMEOUT_SECONDS,
     celery_app,
 )
-from app.shared.tasks.submission import TaskSubmission
+from app.workflows.task_scheduler import enqueue_user_deletion
 from app.workflows.user_deletion import UserDeletionService
-
-
-def enqueue_user_deletion(user_id: int) -> TaskSubmission:
-    """提交用户注销清理任务。"""
-    task = celery_app.send_task(
-        "dataagent.workflows.delete_user",
-        args=[user_id],
-    )
-    submission = TaskSubmission(task_id=task.id)
-    logger.info(
-        f"用户注销清理任务已提交: task_id={submission.task_id}, user_id={user_id}"
-    )
-    return submission
 
 
 async def _process_user_deletion(user_id: int) -> None:

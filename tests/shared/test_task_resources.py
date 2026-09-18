@@ -121,7 +121,7 @@ def test_index_task_resources_are_isolated_between_threads(module) -> None:
 
 
 def test_web_shutdown_attempts_every_resource_after_startup_failure() -> None:
-    import main
+    from app import runtime
 
     resources = [
         "query_doris_client_registry",
@@ -144,10 +144,10 @@ def test_web_shutdown_attempts_every_resource_after_startup_failure() -> None:
 
     async def run() -> None:
         with pytest.raises(RuntimeError, match="shutdown"):
-            async with main._lifespan(main.app):
+            async with runtime.lifespan(MagicMock()):
                 pytest.fail("启动失败不应进入业务阶段")
         for manager in managers.values():
             manager.close.assert_awaited_once()
 
-    with patch.multiple(main, **managers):
+    with patch.multiple(runtime, **managers):
         asyncio.run(run())

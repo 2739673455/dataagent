@@ -5,14 +5,14 @@ from uuid import UUID
 
 import pytest
 
-from app.assistant.tasks import (
+from app.assistant.task_scheduler import (
     enqueue_conversation_deletion,
     enqueue_conversation_title,
 )
-from app.metadata.task_submission import SYNC_COLUMN_INDEXES_TASK, submit_metadata_task
+from app.metadata.task_scheduler import SYNC_COLUMN_INDEXES_TASK, submit_metadata_task
 from app.query.task_scheduler import query_experience_index_scheduler
 from app.shared.tasks.celery_app import celery_app
-from app.workflows.tasks import enqueue_user_deletion
+from app.workflows.task_scheduler import enqueue_user_deletion
 
 _ID = UUID("550e8400-e29b-41d4-a716-446655440000")
 

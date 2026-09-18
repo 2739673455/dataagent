@@ -3,14 +3,14 @@
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Literal, cast
 
 from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.identity.models.doris import DorisRowPolicy
+from app.shared.clients.doris_client_manager import DorisClientManager
 from app.shared.contracts.doris import DORIS_IDENTIFIER_PATTERN
 
 _USER_IDENTITY_PATTERN = re.compile(r"'(?:\\.|''|[^'])*'@'(?:\\.|''|[^'])*'")
@@ -61,18 +61,10 @@ class DorisRoleIdentityDropError(RuntimeError):
         super().__init__("Doris 查询身份删除未完整完成")
 
 
-class DorisAdminConnectionProvider(Protocol):
-    """Doris 权限管理连接提供器。"""
-
-    def connection(self) -> AsyncConnection:
-        """创建 Doris 管理操作使用的连接上下文。"""
-        ...
-
-
 class DorisRoleRepository:
     """通过独立管理身份操作 Doris 内置 RBAC。"""
 
-    def __init__(self, provider: DorisAdminConnectionProvider) -> None:
+    def __init__(self, provider: DorisClientManager) -> None:
         """绑定 Doris 管理连接提供器。"""
         self._provider = provider
 

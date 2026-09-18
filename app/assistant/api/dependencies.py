@@ -7,7 +7,7 @@ from fastapi import Depends
 from app.assistant.agents.manager import AgentManager
 from app.assistant.services.conversation_lifecycle import ConversationLifecycleService
 from app.assistant.services.conversation_run import ConversationRunService
-from app.providers import (
+from app.runtime import (
     agent_manager,
     conversation_lifecycle_service,
     conversation_run_service,

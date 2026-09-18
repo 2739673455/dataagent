@@ -18,12 +18,10 @@ from app.metadata.models.catalog import (
     column_reference_key,
     serialize_column_examples,
 )
+from app.metadata.models.changes import MetadataChanges
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
-from app.metadata.services.contracts import (
-    MetadataAssetInvalidator,
-    MetadataSemanticIndexScheduler,
-)
+from app.metadata.services.contracts import MetadataChangeHandler
 from app.metadata.services.index import MetaIndexService
 
 
@@ -62,15 +60,13 @@ class MetaImportService:
         meta_repo: MetaPGRepo,
         source_repo: SourceDorisRepo,
         meta_index_service: MetaIndexService,
-        asset_invalidator: MetadataAssetInvalidator,
-        semantic_index_scheduler: MetadataSemanticIndexScheduler,
+        change_handler: MetadataChangeHandler,
     ) -> None:
         """初始化元数据批量导入服务。"""
         self._meta_repo = meta_repo
         self._source_repo = source_repo
         self._meta_index_service = meta_index_service
-        self._asset_invalidator = asset_invalidator
-        self._semantic_index_scheduler = semantic_index_scheduler
+        self._change_handler = change_handler
 
     async def import_metadata(
         self,
@@ -177,16 +173,18 @@ class MetaImportService:
                 )
 
         # 元数据提交后再失效查询经验并投递索引任务，消费者才能读取到新版本。
-        await self._asset_invalidator.invalidate_assets(
-            table_names=set(table_changes.updated + table_changes.deleted),
-            column_keys=set(column_changes.updated + column_changes.deleted),
-        )
         changed_column_keys = column_changes.created + column_changes.updated
         changed_metric_names = metric_changes.created + metric_changes.updated
-        if changed_column_keys:
-            self._semantic_index_scheduler.enqueue_columns(changed_column_keys)
-        if changed_metric_names:
-            self._semantic_index_scheduler.enqueue_metrics(changed_metric_names)
+        await self._change_handler.handle(
+            MetadataChanges(
+                invalidated_tables=tuple(table_changes.updated + table_changes.deleted),
+                invalidated_columns=tuple(
+                    column_changes.updated + column_changes.deleted
+                ),
+                sync_columns=tuple(changed_column_keys),
+                sync_metrics=tuple(changed_metric_names),
+            )
+        )
 
         logger.info(
             "元数据导入完成: "

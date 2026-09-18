@@ -3,7 +3,6 @@
 import asyncio
 import re
 from collections.abc import AsyncGenerator, Mapping, Sequence
-from typing import Protocol
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -15,6 +14,7 @@ from app.query.models.execution import (
     QueryExecutionOptions,
     QueryExecutionTimeoutError,
 )
+from app.shared.clients.doris_client_manager import DorisClientManager
 from app.shared.contracts.doris import DORIS_WORKLOAD_GROUP_PATTERN
 
 _PRIVILEGE_PATTERN = re.compile(
@@ -34,18 +34,10 @@ class DorisReadonlyPrivilegeError(RuntimeError):
     """Doris 查询账号包含写入或管理权限。"""
 
 
-class DorisConnectionProvider(Protocol):
-    """按查询创建 Doris 异步连接的最小接口。"""
-
-    def connection(self) -> AsyncConnection:
-        """返回可作为异步上下文管理器使用的 Doris 连接。"""
-        ...
-
-
 class DorisQueryRepository:
     """使用服务端游标分批读取 Doris 查询结果。"""
 
-    def __init__(self, connection_provider: DorisConnectionProvider) -> None:
+    def __init__(self, connection_provider: DorisClientManager) -> None:
         """初始化 Doris 查询存储。"""
         self._connection_provider = connection_provider
 
