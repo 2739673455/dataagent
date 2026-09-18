@@ -5,7 +5,7 @@ from uuid import UUID
 from langchain_core.messages import BaseMessage
 
 from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
-from app.assistant.agents.middleware.semantic_recall_expansion import (
+from app.assistant.agents.explorer.semantic_recall_messages import (
     expand_semantic_recall_messages_for_display,
 )
 from app.assistant.events import schemas as chat_schema

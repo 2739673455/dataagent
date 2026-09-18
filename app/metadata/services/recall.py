@@ -392,6 +392,20 @@ class SemanticRecallContextService:
             raise SemanticQueriesNotFoundError([query])
         return self._authorize_record(record)
 
+    async def get_many(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        queries: list[str],
+    ) -> dict[str, SemanticRecallRecord]:
+        """批量返回按当前权限过滤的最新记录，允许部分 query 不存在。"""
+        return {
+            record.query: self._authorize_record(record)
+            for record in await self._repo.get_latest_by_queries(
+                user_id, conversation_id, queries
+            )
+        }
+
     async def list(
         self,
         user_id: int,
