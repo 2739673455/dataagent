@@ -9,7 +9,7 @@ from pydantic import SecretStr
 from sqlalchemy import URL
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
-from app.shared.config.app_config import DBConfig, cfg
+from app.shared.config.app_config import DBConfig
 
 
 class DorisClientManager:
@@ -124,7 +124,3 @@ class _QueryClientEntry:
 
     fingerprint: str
     manager: DorisClientManager
-
-
-admin_doris_client_manager = DorisClientManager(cfg.doris)
-query_doris_client_registry = DorisQueryClientRegistry(cfg.doris)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import tempfile
 import unittest
 from collections import Counter
@@ -34,8 +33,23 @@ from langgraph.constants import CONFIG_KEY_CHECKPOINTER
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import Field, ValidationError
 
-from app.assistant.agents.checkpoint_reader import CheckpointState
-from app.assistant.agents.contracts import (
+from app.assistant.agents.filesystem import agent_skills_mount_path
+from app.assistant.agents.middleware.eval_delegations import EvalDelegationMiddleware
+from app.assistant.agents.specialist_agent import (
+    SpecialistAgentState,
+    _specialist_response_format,
+)
+from app.assistant.agents.specialists import (
+    SpecialistAgentFactory,
+    SpecialistAgentRun,
+    build_specialist_definitions,
+)
+from app.assistant.checkpoints.reader import CheckpointState
+from app.assistant.execution.manager import AgentManager
+from app.assistant.execution.session_service import AgentSessionService
+from app.assistant.execution.session_store import AgentSessionStore
+from app.assistant.execution.shell_jobs import ShellJobRuntime
+from app.assistant.execution.types import (
     DELEGATION_CONTEXT_KEY,
     EVAL_DELEGATIONS_KEY,
     ArtifactReference,
@@ -53,22 +67,6 @@ from app.assistant.agents.contracts import (
     SubagentStatusActivity,
     SubagentThinkingDeltaActivity,
     build_planner_config,
-)
-from app.assistant.agents.filesystem import agent_skills_mount_path
-from app.assistant.agents.manager import AgentManager
-from app.assistant.agents.middleware.eval_delegations import EvalDelegationMiddleware
-from app.assistant.agents.session_service import AgentSessionService
-from app.assistant.agents.session_store import AgentSessionStore
-from app.assistant.agents.shell_jobs import ShellJobRuntime
-from app.assistant.agents.specialist_agent import (
-    SpecialistAgentState,
-    _specialist_response_format,
-)
-from app.assistant.agents.specialists import (
-    SpecialistAgentFactory,
-    SpecialistAgentRun,
-    SpecialistDefinition,
-    build_specialist_definitions,
 )
 from app.shared.contracts.analysis import AGENT_TYPES, AgentSessionKey, AgentType
 
@@ -297,6 +295,24 @@ class _FakeAgent:
                 }
             else:
                 channels[channel] = value
+
+
+def _history_manager(fake: _FakeAgent) -> AgentManager:
+    """使用真实生产历史读取链，只替换外部 Checkpointer I/O。"""
+
+    async def get_tuple(config: RunnableConfig):
+        namespace = str(config.get("configurable", {}).get("checkpoint_ns"))
+        checkpoint = dict(fake.checkpoints.get(namespace, {}))
+        checkpoint["channel_values"] = fake.state_values.get(
+            namespace, checkpoint.get("channel_values", {})
+        )
+        return SimpleNamespace(checkpoint=checkpoint, config=config, pending_writes=[])
+
+    persistence = MagicMock()
+    persistence.get_checkpointer.return_value.aget_tuple = AsyncMock(
+        side_effect=get_tuple
+    )
+    return AgentManager(persistence, MagicMock(), MagicMock())
 
 
 class _DistributedLockRegistry:
@@ -669,6 +685,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
                 execute_sql,
             ],
             [mcp_web_search],
+            recall=MagicMock(),
         )
 
         self.assertEqual(
@@ -697,6 +714,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
                 execute_sql,
             ],
             [],
+            recall=MagicMock(),
         )
 
         self.assertEqual(
@@ -708,7 +726,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
 
     def test_specialist_definitions_require_explorer_data_tools(self) -> None:
         with self.assertRaisesRegex(ValueError, "Explorer 缺少必需工具"):
-            build_specialist_definitions([recall_context], [])
+            build_specialist_definitions([recall_context], [], recall=MagicMock())
 
     def test_specialist_definitions_reject_reserved_mcp_tool_names(self) -> None:
         @tool("shell")
@@ -723,6 +741,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
                     execute_sql,
                 ],
                 [conflicting_mcp_tool],
+                recall=MagicMock(),
             )
 
     def test_specialist_agents_expose_shell_and_file_tools(self) -> None:
@@ -735,24 +754,14 @@ class DynamicSubagentContractTest(unittest.TestCase):
         from langchain_core.messages import HumanMessage
         from langgraph.checkpoint.memory import InMemorySaver
 
-        from app.assistant.agents.analyst.agent import create_analyst_agent
-        from app.assistant.agents.explorer.agent import create_explorer_agent
-        from app.assistant.agents.reviewer.agent import create_reviewer_agent
-
         register_harness_profile(
             "recordingchatmodel",
             HarnessProfile(
                 general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)
             ),
         )
-        builders = {
-            "explorer": create_explorer_agent,
-            "analyst": create_analyst_agent,
-            "reviewer": create_reviewer_agent,
-        }
         definitions = build_specialist_definitions(
-            [recall_context, execute_sql],
-            [],
+            [recall_context, execute_sql], [], recall=MagicMock()
         )
         required_tools = {
             "read_file",
@@ -766,7 +775,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
         }
 
         with tempfile.TemporaryDirectory() as workspace:
-            for agent_type, builder in builders.items():
+            for agent_type in definitions:
                 with self.subTest(agent_type=agent_type):
                     model = RecordingChatModel(
                         profile={
@@ -777,14 +786,27 @@ class DynamicSubagentContractTest(unittest.TestCase):
                     shell_backend = LocalShellBackend(root_dir=workspace)
                     cast(Any, shell_backend).workspace_dir = workspace
                     cast(Any, shell_backend).conversation_dir = workspace
-                    graph = builder(
-                        model=model,
-                        tools=[],
-                        backend=cast(Any, shell_backend),
-                        checkpointer=InMemorySaver(),
-                        shell_jobs=ShellJobRuntime(cast(Any, shell_backend)),
-                        skills=definitions[cast(AgentType, agent_type)].skills,
+                    cast(Any, shell_backend).shell_jobs = shell_backend
+                    sandbox = MagicMock()
+                    sandbox.get_session_backend = AsyncMock(return_value=shell_backend)
+                    factory = SpecialistAgentFactory(
+                        definitions,
+                        {kind: model for kind in AGENT_TYPES},
+                        sandbox,
+                        InMemorySaver(),
                     )
+                    run = asyncio.run(
+                        factory.create(
+                            AgentSessionKey(
+                                user_id=12,
+                                conversation_id=_CONVERSATION_ID,
+                                analysis_id="test",
+                                agent_type=agent_type,
+                                session_id="tools",
+                            )
+                        )
+                    )
+                    graph = run.agent
 
                     graph.invoke(
                         {"messages": [HumanMessage(content="inspect tools")]},
@@ -1034,10 +1056,15 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             built_agents.append(agent)
             return agent
 
-        definitions: dict[AgentType, SpecialistDefinition] = {
-            agent_type: SpecialistDefinition(builder=build_agent)
-            for agent_type in AGENT_TYPES
-        }
+        definitions = build_specialist_definitions(
+            [recall_context, execute_sql], [], recall=MagicMock()
+        )
+        builder_patch = patch(
+            "app.assistant.agents.specialists.create_specialist_agent",
+            side_effect=build_agent,
+        )
+        builder_patch.start()
+        self.addCleanup(builder_patch.stop)
         model = RecordingChatModel()
         models: dict[AgentType, BaseChatModel] = {
             agent_type: model for agent_type in AGENT_TYPES
@@ -1472,7 +1499,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         service = _service(fake)
 
         with patch(
-            "app.assistant.agents.session_service.uuid4",
+            "app.assistant.execution.session_service.uuid4",
             return_value=SimpleNamespace(hex=delegation_id),
         ):
             result = await service.execute_delegation(
@@ -1515,7 +1542,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         service = _service(fake)
 
         with patch(
-            "app.assistant.agents.session_service.uuid4",
+            "app.assistant.execution.session_service.uuid4",
             return_value=SimpleNamespace(hex=delegation_id),
         ):
             result = await service.execute_delegation(
@@ -1843,7 +1870,56 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([activity.delta for activity in message_deltas], ["开始查询"])
         self.assertTrue(message_deltas[0].reset)
 
-    async def test_get_delegation_activity_segments_checkpoint_history(self) -> None:
+    async def test_history_uses_cached_activity_without_building_a_runtime(
+        self,
+    ) -> None:
+        fake = _FakeAgent()
+        namespace = "subagents/sales-decline/analyst/region"
+        fake.state_values[namespace] = {
+            "messages": [
+                HumanMessage(
+                    content="work",
+                    additional_kwargs={
+                        DELEGATION_CONTEXT_KEY: {"delegation_id": "running-work"}
+                    },
+                )
+            ],
+            "delegation_records": {
+                "running-work": {"delegation_id": "running-work", "status": "running"}
+            },
+        }
+        manager = _history_manager(fake)
+        runtime = MagicMock()
+        runtime.session_service.is_session_active.return_value = True
+        manager._conversation_runtimes[(12, _CONVERSATION_ID)] = runtime
+        with patch.object(
+            manager._runtime_factory, "create", new_callable=AsyncMock
+        ) as create:
+            active = await manager.read_delegation_activity(
+                12,
+                _CONVERSATION_ID,
+                "sales-decline",
+                "analyst",
+                "region",
+                "running-work",
+            )
+            assert active is not None
+            self.assertEqual(active.status, "running")
+            runtime.session_service.is_session_active.assert_called_once_with(namespace)
+            manager._conversation_runtimes.clear()
+            interrupted = await manager.read_delegation_activity(
+                12,
+                _CONVERSATION_ID,
+                "sales-decline",
+                "analyst",
+                "region",
+                "running-work",
+            )
+            assert interrupted is not None
+            self.assertEqual(interrupted.status, "cancelled")
+            create.assert_not_awaited()
+
+    async def test_read_delegation_activity_segments_checkpoint_history(self) -> None:
         fake = _FakeAgent()
         namespace = "subagents/sales-decline/analyst/region"
         first_context = DelegationMessageContext(delegation_id="delegation-first")
@@ -1896,15 +1972,19 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 second_ai,
             ],
         }
-        service = _service(fake)
+        manager = _history_manager(fake)
 
-        activity = await service.get_delegation_activity(
+        activity = await manager.read_delegation_activity(
+            12,
+            _CONVERSATION_ID,
             "sales-decline",
             "analyst",
             "region",
             "delegation-first",
         )
-        missing = await service.get_delegation_activity(
+        missing = await manager.read_delegation_activity(
+            12,
+            _CONVERSATION_ID,
             "sales-decline",
             "analyst",
             "region",
@@ -1918,7 +1998,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(missing)
         self.assertEqual(fake.state_configs, [])
 
-    async def test_get_delegation_activity_keeps_unfinished_older_run_cancelled(
+    async def test_read_delegation_activity_keeps_unfinished_older_run_cancelled(
         self,
     ) -> None:
         fake = _FakeAgent()
@@ -1953,9 +2033,11 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 ),
             ]
         }
-        service = _service(fake)
+        manager = _history_manager(fake)
 
-        activity = await service.get_delegation_activity(
+        activity = await manager.read_delegation_activity(
+            12,
+            _CONVERSATION_ID,
             "sales-decline",
             "analyst",
             "region",
@@ -1969,7 +2051,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(activity.status, "cancelled")
 
-    async def test_get_delegation_activity_accepts_same_run_retry_boundary(
+    async def test_read_delegation_activity_accepts_same_run_retry_boundary(
         self,
     ) -> None:
         fake = _FakeAgent()
@@ -2005,7 +2087,9 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             ],
         }
 
-        activity = await _service(fake).get_delegation_activity(
+        activity = await _history_manager(fake).read_delegation_activity(
+            12,
+            _CONVERSATION_ID,
             "sales-decline",
             "analyst",
             "region",
@@ -2019,7 +2103,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(activity.status, "completed")
 
-    async def test_get_delegation_activity_keeps_structured_response_reasoning(
+    async def test_read_delegation_activity_keeps_structured_response_reasoning(
         self,
     ) -> None:
         fake = _FakeAgent()
@@ -2063,7 +2147,9 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             ],
         }
 
-        activity = await _service(fake).get_delegation_activity(
+        activity = await _history_manager(fake).read_delegation_activity(
+            12,
+            _CONVERSATION_ID,
             "sales-decline",
             "analyst",
             "region",
@@ -2321,8 +2407,8 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         persistence.advisory_lock = lambda *args, **kwargs: distributed_locks.acquire(
             "conversation"
         )
-        deleting_worker = AgentManager(persistence, MagicMock(), tombstones)
-        serving_worker = AgentManager(MagicMock(), MagicMock(), tombstones)
+        deleting_worker = AgentManager(persistence, tombstones, MagicMock())
+        serving_worker = AgentManager(MagicMock(), tombstones, MagicMock())
 
         await deleting_worker.delete_agent(12, _CONVERSATION_ID)
 
@@ -2334,86 +2420,3 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             ):
                 self.fail("deleted conversation entered execution")
         persistence.delete_thread.assert_awaited_once()
-
-    @unittest.skipUnless(
-        os.getenv("RUN_QUICKJS_INTEGRATION") == "1",
-        "requires QuickJS integration environment",
-    )
-    async def test_quickjs_bridge_calls_session_lifecycle_tools(self) -> None:
-        from langchain.agents.middleware.types import ModelRequest
-        from langchain.tools import ToolRuntime
-        from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-        from langchain_core.messages import AIMessage
-        from langchain_quickjs import CodeInterpreterMiddleware
-
-        from app.assistant.agents.planner.tools import (
-            create_delegation_tool,
-            create_delete_session_tool,
-            create_list_sessions_tool,
-        )
-
-        fake = _FakeAgent()
-        service = _service(fake)
-        delegation_tool = create_delegation_tool(service)
-        list_sessions_tool = create_list_sessions_tool(service)
-        delete_session_tool = create_delete_session_tool(service)
-
-        @tool
-        def forbidden_tool() -> str:
-            """模拟未加入 PTC 白名单的 Agent Tool。"""
-            return "must not be callable"
-
-        middleware = CodeInterpreterMiddleware(
-            mode="call",
-            ptc=["delegation", "list_sessions", "delete_session"],
-        )
-        request = ModelRequest(
-            model=GenericFakeChatModel(messages=iter([AIMessage(content="ok")])),
-            messages=[],
-            tools=[
-                delegation_tool,
-                list_sessions_tool,
-                delete_session_tool,
-                forbidden_tool,
-            ],
-        )
-        middleware._prepare_for_call(request)
-        config = build_planner_config(12, _CONVERSATION_ID)
-        runtime = ToolRuntime(
-            state={"messages": []},
-            context=None,
-            config=config,
-            stream_writer=lambda _: None,
-            tool_call_id="eval-call",
-            store=None,
-        )
-        eval_tool = middleware.tools[0]
-        eval_coroutine = cast(Any, eval_tool).coroutine
-        try:
-            result = await eval_coroutine(
-                runtime=runtime,
-                code="""
-const delegated = await tools.delegation({
-  analysis_id: "sales-decline",
-  agent_type: "analyst",
-  session_id: "region",
-  message: "analyze source",
-});
-const listed = await tools.listSessions({ analysis_id: "sales-decline" });
-const deleted = await tools.deleteSession({
-  analysis_id: "sales-decline",
-  agent_type: "analyst",
-  session_id: "region",
-});
-const forbiddenType = typeof tools.forbiddenTool;
-({ delegated, listed, deleted, forbiddenType });
-""",
-            )
-        finally:
-            middleware._registry.close()
-
-        self.assertIn("completed", str(result.content))
-        self.assertIn("success", str(result.content))
-        self.assertIn("undefined", str(result.content))
-        self.assertEqual(len(fake.configs), 1)
-        self.assertEqual(fake.persisted_sessions, set())

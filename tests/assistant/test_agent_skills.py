@@ -6,7 +6,7 @@ from deepagents.backends import StateBackend
 from langchain.tools import ToolRuntime
 from langchain_core.messages import ToolMessage
 
-from app.assistant.agents.analyst import agent as analyst_agent
+from app.assistant.agents.analyst import prompt as analyst_prompt
 from app.assistant.agents.filesystem import (
     agent_skills_mount_path,
     build_specialist_filesystem,
@@ -18,7 +18,7 @@ _ANALYST_SKILLS_PATH = agent_skills_mount_path("analyst")
 
 class AgentSkillsTest(unittest.TestCase):
     def test_agent_cannot_modify_mounted_skill(self) -> None:
-        skill_directory = Path(analyst_agent.__file__).with_name("skills")
+        skill_directory = Path(analyst_prompt.__file__).with_name("skills")
         state_backend = StateBackend()
         cast(
             Any, state_backend

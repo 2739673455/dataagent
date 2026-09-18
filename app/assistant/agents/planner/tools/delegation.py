@@ -10,12 +10,12 @@ from langchain_core.tools import BaseTool
 from loguru import logger
 from pydantic import ValidationError
 
-from app.assistant.agents.contracts import (
+from app.assistant.execution.session_service import AgentSessionService
+from app.assistant.execution.types import (
     DelegationRequest,
     SubagentActivity,
     SubagentActivityWriter,
 )
-from app.assistant.agents.session_service import AgentSessionService
 from app.shared.contracts.analysis import AgentType
 
 _PTC_DELEGATION_ID_PREFIX = "ptc_delegation_"

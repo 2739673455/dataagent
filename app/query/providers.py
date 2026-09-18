@@ -17,11 +17,11 @@ from app.query.services.experience_invalidation import (
 )
 from app.query.services.experience_recall import QueryExperienceRecallService
 from app.query.task_scheduler import query_experience_index_scheduler
+from app.shared.clients.doris_client_manager import DorisQueryClientRegistry
 from app.shared.clients.embedding_client_manager import (
     EmbeddingClient,
-    embedding_client_manager,
 )
-from app.shared.clients.es_client_manager import es_client_manager
+from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
 
 
@@ -42,14 +42,16 @@ def build_query_execution_recorder(
 
 def build_query_experience_recall_service(
     session: AsyncSession,
+    es_client: AsyncElasticsearch,
+    embedding_client: EmbeddingClient,
     *,
     index_scheduler: QueryExperienceIndexScheduler = query_experience_index_scheduler,
 ) -> QueryExperienceRecallService:
     """创建查询经验混合召回服务。"""
     return QueryExperienceRecallService(
         repo=QueryExperiencePGRepo(session),
-        index_repo=QueryExperienceESRepo(client=es_client_manager.get_client()),
-        embedding_client=embedding_client_manager.get_client(),
+        index_repo=QueryExperienceESRepo(client=es_client),
+        embedding_client=embedding_client,
         index_scheduler=index_scheduler,
         data_source=cfg.query.data_source,
         database_name=cfg.doris.database,
@@ -85,8 +87,13 @@ def build_query_experience_invalidation_service(
 
 def build_query_execution_handler(
     artifact_store: QueryArtifactStore,
+    auth: PostgresClientManager,
+    meta: PostgresClientManager,
+    query_clients: DorisQueryClientRegistry,
 ) -> QueryExecutionHandler:
     """组装身份解析、受控执行和历史记录完整查询用例。"""
     return QueryExecutionHandler(
-        DatabaseQueryExecutionRuntime(artifact_store, build_query_execution_recorder)
+        DatabaseQueryExecutionRuntime(
+            artifact_store, build_query_execution_recorder, auth, meta, query_clients
+        )
     )

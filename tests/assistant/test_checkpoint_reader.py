@@ -14,10 +14,60 @@ from langgraph.checkpoint.base import (
     empty_checkpoint,
 )
 
-from app.assistant.agents.checkpoint_reader import CheckpointStateReader
+from app.assistant.checkpoints.reader import CheckpointStateReader
 
 
 class CheckpointStateReaderTest(unittest.IsolatedAsyncioTestCase):
+    async def test_projects_business_channels_without_losing_pending_records_or_next_nodes(
+        self,
+    ) -> None:
+        config = RunnableConfig(configurable={"thread_id": "thread-1"})
+        checkpoint = empty_checkpoint()
+        checkpoint["channel_values"] = {
+            "delegation_records": {"old": {"status": "succeeded"}},
+            "branch:to:tools": None,
+            "__error__": "previous error",
+            "unrelated_state": "ignored",
+        }
+        checkpoint["channel_versions"] = {"branch:to:tools": "2"}
+        checkpoint["versions_seen"] = {"tools": {"branch:to:tools": "1"}}
+        saved = CheckpointTuple(
+            config=config,
+            checkpoint=checkpoint,
+            metadata={},
+            pending_writes=[
+                ("task", "__error__", "failed"),
+                ("task", "__interrupt__", ()),
+                ("task", "branch:to:model", None),
+                ("task", "unrelated_state", "ignored too"),
+                ("task", "delegation_records", {"new": {"status": "running"}}),
+                ("task", "delegation_records", {"new": {"status": "cancelled"}}),
+                ("task", "messages", [AIMessage(id="answer", content="answer")]),
+            ],
+        )
+        checkpointer = MagicMock(spec=BaseCheckpointSaver)
+        checkpointer.aget_tuple = AsyncMock(return_value=saved)
+
+        state = await CheckpointStateReader(
+            cast(BaseCheckpointSaver[Any], checkpointer)
+        ).read(config)
+
+        self.assertEqual(set(state.values), {"messages", "delegation_records"})
+        self.assertEqual(
+            state.values["delegation_records"],
+            {"old": {"status": "succeeded"}, "new": {"status": "cancelled"}},
+        )
+        self.assertEqual(
+            [message.id for message in cast(list[Any], state.values["messages"])],
+            ["answer"],
+        )
+        self.assertEqual(state.next_nodes, ("tools",))
+        self.assertIsNotNone(state.updated_at)
+        self.assertEqual(
+            checkpoint["channel_values"]["delegation_records"],
+            {"old": {"status": "succeeded"}},
+        )
+
     async def test_replays_delta_channel_messages_and_current_pending_write(
         self,
     ) -> None:

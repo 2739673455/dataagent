@@ -31,10 +31,11 @@ class AuthDependencyTest(unittest.IsolatedAsyncioTestCase):
             credentials="access-token",
         )
 
+        resources = MagicMock()
         with (
-            patch(
-                "app.identity.api.auth.dependencies."
-                "auth_postgres_client_manager.session",
+            patch.object(
+                resources.auth,
+                "session",
                 return_value=session_scope(),
             ) as create_session,
             patch(
@@ -46,7 +47,7 @@ class AuthDependencyTest(unittest.IsolatedAsyncioTestCase):
                 return_value=authenticator,
             ) as create_authenticator,
         ):
-            result = await _get_current_user(credentials)
+            result = await _get_current_user(resources, credentials)
 
         self.assertIs(result, principal)
         create_session.assert_called_once_with()

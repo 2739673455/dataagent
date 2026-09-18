@@ -2,21 +2,26 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from pathlib import Path
 
+from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
-from app.assistant.agents.analyst.agent import create_analyst_agent
-from app.assistant.agents.explorer.agent import create_explorer_agent
+from app.assistant.agents.analyst.prompt import ANALYST_SYSTEM_PROMPT
+from app.assistant.agents.explorer.prompt import EXPLORER_SYSTEM_PROMPT
+from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
 from app.assistant.agents.filesystem import agent_skills_mount_path
-from app.assistant.agents.reviewer.agent import create_reviewer_agent
-from app.assistant.agents.shell_jobs import ShellJobRuntime
-from app.sandbox.backend import DockerSandboxBackend
+from app.assistant.agents.middleware.semantic_recall_expansion import (
+    SemanticRecallExpansionMiddleware,
+)
+from app.assistant.agents.reviewer.prompt import REVIEWER_SYSTEM_PROMPT
+from app.assistant.agents.specialist_agent import create_specialist_agent
+from app.assistant.execution.shell_jobs import ShellJobRuntime
 from app.sandbox.manager import DockerSandboxManager
 from app.shared.contracts.analysis import (
     AGENT_TYPES,
@@ -46,23 +51,6 @@ _RESERVED_MCP_TOOL_NAMES = frozenset(
 )
 
 
-class SpecialistBuilder(Protocol):
-    """所有专业 Agent 构造器共享的调用协议。"""
-
-    def __call__(
-        self,
-        *,
-        model: BaseChatModel,
-        tools: Sequence[BaseTool],
-        backend: DockerSandboxBackend,
-        checkpointer: BaseCheckpointSaver,
-        shell_jobs: ShellJobRuntime,
-        skills: Sequence[str] = (),
-    ) -> CompiledStateGraph:
-        """使用统一依赖构造一个可执行的专业 Agent 图。"""
-        ...
-
-
 @dataclass(frozen=True, slots=True)
 class SpecialistAgentRun:
     """一次 delegation 共用的 Agent 图和 Shell Job Runtime。"""
@@ -73,9 +61,11 @@ class SpecialistAgentRun:
 
 @dataclass(frozen=True, slots=True)
 class SpecialistDefinition:
-    """一种专业 Agent 的构造器及其专属能力。"""
+    """一种专业 Agent 的提示词、技能目录和专属能力。"""
 
-    builder: SpecialistBuilder
+    system_prompt: str
+    skill_directory: Path
+    extra_middleware: tuple[AgentMiddleware, ...] = ()
     tools: tuple[BaseTool, ...] = ()
     skills: tuple[str, ...] = ()
 
@@ -88,6 +78,8 @@ class SpecialistDefinition:
 def build_specialist_definitions(
     explorer_tools: Iterable[BaseTool],
     explorer_mcp_tools: Iterable[BaseTool],
+    *,
+    recall: SemanticRecallRuntime,
 ) -> dict[AgentType, SpecialistDefinition]:
     """构造专业 Agent 定义，并将数据访问能力限定给 Explorer。"""
     builtin_tools = tuple(explorer_tools)
@@ -115,14 +107,20 @@ def build_specialist_definitions(
     }
     return {
         "explorer": SpecialistDefinition(
-            builder=create_explorer_agent,
+            system_prompt=EXPLORER_SYSTEM_PROMPT,
+            skill_directory=Path(__file__).parent / "explorer" / "skills",
+            extra_middleware=(SemanticRecallExpansionMiddleware(recall),),
             tools=tuple(tools_by_name[name] for name in sorted(explorer_tool_names)),
         ),
         "analyst": SpecialistDefinition(
-            builder=create_analyst_agent,
+            system_prompt=ANALYST_SYSTEM_PROMPT,
+            skill_directory=Path(__file__).parent / "analyst" / "skills",
             skills=(agent_skills_mount_path("analyst"),),
         ),
-        "reviewer": SpecialistDefinition(builder=create_reviewer_agent),
+        "reviewer": SpecialistDefinition(
+            system_prompt=REVIEWER_SYSTEM_PROMPT,
+            skill_directory=Path(__file__).parent / "reviewer" / "skills",
+        ),
     }
 
 
@@ -158,7 +156,11 @@ class SpecialistAgentFactory:
             session_key.session_id,
         )
         shell_jobs = ShellJobRuntime(backend.shell_jobs)
-        agent = definition.builder(
+        agent = create_specialist_agent(
+            name=session_key.agent_type,
+            system_prompt=definition.system_prompt,
+            skill_directory=definition.skill_directory,
+            extra_middleware=definition.extra_middleware,
             model=self._models[session_key.agent_type],
             tools=definition.tools,
             backend=backend,

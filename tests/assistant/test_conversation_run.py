@@ -12,9 +12,9 @@ from uuid import UUID
 
 from langchain_core.messages import AIMessageChunk
 
-from app.assistant.agents.contracts import PlannerTurnContext
-from app.assistant.contracts import chat as chat_schema
-from app.assistant.services.conversation_run import ConversationRunService
+from app.assistant.events import schemas as chat_schema
+from app.assistant.execution.run import ConversationRunService
+from app.assistant.execution.types import PlannerTurnContext
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
 
@@ -60,7 +60,7 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
         manager = MagicMock()
         manager.get_conversation_runtime = AsyncMock(return_value=runtime)
         manager.execution = execution
-        self.service = ConversationRunService(manager, MagicMock())
+        self.service = ConversationRunService(manager, MagicMock(), recall=MagicMock())
         self.addAsyncCleanup(self.service.close)
 
     async def test_stop_interrupts_model_wait_and_finishes_all_subscribers(

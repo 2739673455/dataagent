@@ -15,7 +15,7 @@ from app.assistant.api.dependencies import (
     ConversationLifecycleServiceDep,
     SandboxManagerDep,
 )
-from app.assistant.contracts import chat as chat_schema
+from app.assistant.events import schemas as chat_schema
 from app.identity.api.auth.dependencies import AnalysisUserDep, CurrentUserDep
 from app.sandbox.exceptions import (
     SandboxFileTooLargeError,

@@ -16,13 +16,13 @@ from app.assistant.agents.middleware.user_message_context import (
     SHELL_JOB_CONTEXT_KEY,
     UserMessageContextMiddleware,
 )
-from app.assistant.agents.shell_jobs import (
+from app.assistant.agents.tools.shell import create_shell_tools
+from app.assistant.execution.shell_jobs import (
     ShellJobError,
     ShellJobResult,
     ShellJobRuntime,
     ShellJobSummary,
 )
-from app.assistant.agents.tools.shell import create_shell_tools
 from app.sandbox.shell_runner import (
     DockerShellJobRunner,
     SandboxShellJobCancellation,

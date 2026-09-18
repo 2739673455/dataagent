@@ -1,0 +1,71 @@
+import { useState } from "react";
+import { cn } from "@/lib/utils";
+import { AttachmentChip } from "@/features/chat/components/messages/AttachmentChip";
+import {
+  formatMessageTime,
+  getMessagePartKey,
+} from "@/features/chat/components/messages/displayModel";
+import { ImagePreview } from "@/features/chat/components/messages/ImagePreview";
+import { PartView } from "@/features/chat/components/messages/MarkdownRenderer";
+import type { MessageDisplayItem } from "@/features/chat/components/messages/types";
+
+export function MessageBubble({ message }: { message: MessageDisplayItem["message"] }) {
+  const isUser = message.role === "user";
+  const createdAt = formatMessageTime(message.createdAt);
+  const [previewImage, setPreviewImage] = useState<{
+    src: string;
+    alt: string;
+  } | null>(null);
+  const attachmentChips = message.attachments?.length ? (
+    <div className="flex flex-wrap gap-1.5">
+      {message.attachments.map((attachment) => (
+        <AttachmentChip
+          key={attachment.f_path}
+          attachment={attachment}
+          conversationId={message.conversationId}
+          isUser={isUser}
+        />
+      ))}
+    </div>
+  ) : null;
+
+  return (
+    <>
+      <div className="my-2 font-mono">
+        <div className="px-1 py-1">
+          <div className="space-y-1.5">
+            {isUser ? attachmentChips : null}
+
+            {message.parts.map((part) => (
+              <PartView
+                key={getMessagePartKey(part)}
+                part={part}
+                onPreview={(src, alt) => setPreviewImage({ src, alt })}
+                renderMarkdown={!isUser}
+                isUser={isUser}
+              />
+            ))}
+
+            {isUser ? null : attachmentChips}
+          </div>
+
+          {createdAt ? (
+            <div className="mt-1.5 flex justify-start">
+              <time className={cn("text-[11px]", isUser ? "text-[#3b82f6]" : "text-[#71717a]")}>
+                {createdAt}
+              </time>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      {previewImage && (
+        <ImagePreview
+          src={previewImage.src}
+          alt={previewImage.alt}
+          onClose={() => setPreviewImage(null)}
+        />
+      )}
+    </>
+  );
+}

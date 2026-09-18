@@ -8,9 +8,8 @@ from loguru import logger
 from pydantic import ValidationError
 
 from app.assistant.agents.explorer.recall_runtime import (
-    create_authorized_semantic_recall_service,
+    SemanticRecallRuntime,
     resolve_semantic_recall_identity,
-    semantic_recall_repository,
 )
 from app.assistant.agents.explorer.semantic_recall_protocol import (
     semantic_recall_reference,
@@ -37,12 +36,6 @@ from app.metadata.services.recall import (
 )
 from app.metadata.services.search import SemanticResourceRecallService
 from app.query.providers import build_query_experience_recall_service
-from app.shared.clients.embedding_client_manager import embedding_client_manager
-from app.shared.clients.es_client_manager import es_client_manager
-from app.shared.clients.postgres_client_manager import (
-    auth_postgres_client_manager,
-    meta_postgres_client_manager,
-)
 from app.shared.config.app_config import cfg
 from app.shared.contracts.query_experience import (
     QUERY_EXPERIENCE_RECALL_LIMIT,
@@ -99,6 +92,8 @@ async def recall_context(
         "用于检索字段、指标和字段值的业务词或同义词，至少 1 个且最多 20 个",
     ],
     limit_per_type: Annotated[int, "每类直接候选的最大数量，范围 1 到 20"] = 5,
+    *,
+    recall: SemanticRecallRuntime,
 ) -> dict[str, Any]:
     """按稳定 query 业务键累计召回语义资源，并检索三条历史 SQL 经验
 
@@ -129,8 +124,8 @@ async def recall_context(
     try:
         user_id, conversation_id = resolve_semantic_recall_identity(config)
         async with (
-            auth_postgres_client_manager.session() as auth_session,
-            meta_postgres_client_manager.session() as meta_search_session,
+            recall.auth.session() as auth_session,
+            recall.meta.session() as meta_search_session,
         ):
             auth_repo = IdentityPGRepo(auth_session)
             asset_policy = await AuthorizationService(auth_repo).get_asset_policy(
@@ -142,10 +137,10 @@ async def recall_context(
                 cfg.doris.database,
             )
             service = SemanticResourceRecallService(
-                embedding_client=embedding_client_manager.get_client(),
-                column_repo=ColumnESRepo(es_client_manager.get_client()),
-                metric_repo=MetricESRepo(es_client_manager.get_client()),
-                value_repo=ValueESRepo(es_client_manager.get_client()),
+                embedding_client=recall.embedding.get_client(),
+                column_repo=ColumnESRepo(recall.es.get_client()),
+                metric_repo=MetricESRepo(recall.es.get_client()),
+                value_repo=ValueESRepo(recall.es.get_client()),
                 meta_repo=MetaPGRepo(meta_search_session),
                 asset_policy=asset_policy,
                 data_source=cfg.query.data_source,
@@ -159,7 +154,7 @@ async def recall_context(
     query_experiences: list[QueryExperienceRecallResult] = []
     query_experiences_retrieved_at = _STALE_QUERY_EXPERIENCES_RETRIEVED_AT
     try:
-        async with semantic_recall_repository() as recall_repo:
+        async with recall.repository() as recall_repo:
             recall_service = SemanticRecallContextService(
                 recall_repo,
                 authorization_filter,
@@ -176,9 +171,11 @@ async def recall_context(
                 asset_policy.role_name is not None
                 and asset_policy.authorization_epoch is not None
             ):
-                async with meta_postgres_client_manager.session() as experience_session:
+                async with recall.meta.session() as experience_session:
                     experience_recall = await build_query_experience_recall_service(
-                        experience_session
+                        experience_session,
+                        recall.es.get_client(),
+                        recall.embedding.get_client(),
                     ).recall(
                         role_name=asset_policy.role_name,
                         authorization_epoch=asset_policy.authorization_epoch,
@@ -199,7 +196,7 @@ async def recall_context(
         logger.exception("查询经验检索失败")
 
     try:
-        async with semantic_recall_repository() as recall_repo:
+        async with recall.repository() as recall_repo:
             record = await SemanticRecallContextService(
                 recall_repo,
                 authorization_filter,
@@ -236,6 +233,8 @@ def _record_summary(record: SemanticRecallRecord) -> dict[str, Any]:
 async def list_recalls(
     config: RunnableConfig,
     limit: Annotated[int, "返回最近记录的数量，范围 1 到 100"] = 20,
+    *,
+    recall: SemanticRecallRuntime,
 ) -> dict[str, Any]:
     """列出当前会话中每个 query 业务键对应的最新累计召回记录。"""
     if not 1 <= limit <= 100:
@@ -251,8 +250,8 @@ async def list_recalls(
         }
     try:
         user_id, conversation_id = resolve_semantic_recall_identity(config)
-        async with semantic_recall_repository() as repo:
-            service = await create_authorized_semantic_recall_service(user_id, repo)
+        async with recall.repository() as repo:
+            service = await recall.authorized_service(user_id, repo)
             records = await service.list(user_id, conversation_id, limit=limit)
     except Exception as exc:  # noqa: BLE001
         logger.exception("获取语义召回列表失败")
@@ -269,6 +268,8 @@ async def get_recall(
         str,
         "需要读取的稳定 query 业务键，必须与 recall_context 使用的 query 完全一致",
     ],
+    *,
+    recall: SemanticRecallRuntime,
 ) -> dict[str, Any]:
     """按 query 业务键读取当前会话的最新累计召回记录。"""
     try:
@@ -281,8 +282,8 @@ async def get_recall(
         )
     try:
         user_id, conversation_id = resolve_semantic_recall_identity(config)
-        async with semantic_recall_repository() as repo:
-            service = await create_authorized_semantic_recall_service(user_id, repo)
+        async with recall.repository() as repo:
+            service = await recall.authorized_service(user_id, repo)
             record = await service.get(user_id, conversation_id, query)
     except SemanticQueriesNotFoundError as exc:
         return {
@@ -306,6 +307,8 @@ async def merge_recalls(
         str,
         "提供累计结果并在合并完成后删除的来源 query 业务键",
     ],
+    *,
+    recall: SemanticRecallRuntime,
 ) -> dict[str, Any]:
     """合并来源 query 的语义资源并删除来源，查询经验只保留目标结果。"""
     try:
@@ -332,8 +335,8 @@ async def merge_recalls(
         )
     try:
         user_id, conversation_id = resolve_semantic_recall_identity(config)
-        async with semantic_recall_repository() as repo:
-            service = await create_authorized_semantic_recall_service(user_id, repo)
+        async with recall.repository() as repo:
+            service = await recall.authorized_service(user_id, repo)
             record = await service.merge(
                 user_id,
                 conversation_id,
@@ -362,6 +365,8 @@ async def delete_recalls(
             "未提供资源选择器时删除整个 query。"
         ),
     ],
+    *,
+    recall: SemanticRecallRuntime,
 ) -> dict[str, Any]:
     """删除当前会话 query 的全部上下文或其中指定资源。"""
     if not deletions:
@@ -405,8 +410,8 @@ async def delete_recalls(
         normalized_deletions.append(deletion.model_copy(update={"query": query}))
     try:
         user_id, conversation_id = resolve_semantic_recall_identity(config)
-        async with semantic_recall_repository() as repo:
-            service = await create_authorized_semantic_recall_service(user_id, repo)
+        async with recall.repository() as repo:
+            service = await recall.authorized_service(user_id, repo)
             records = await service.delete(
                 user_id,
                 conversation_id,

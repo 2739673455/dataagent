@@ -23,6 +23,24 @@ Assistant 负责组织整个问数过程。它管理会话和消息，运行 Pla
 5. **继续已有 Specialist Session**：`AgentSessionKey` 同时确定 LangGraph 状态位置和沙箱目录。再次委派同一个 Session 时可以从上次状态继续，也可以按 `needs_repair` 要求修正结果。
 6. **处理并发、断线和恢复**：`AgentManager` 缓存活跃会话的运行时，会话锁阻止同一会话同时执行多个 Planner 回合。后台任务不依赖 HTTP 连接，前端断线后可以重新订阅事件。
 
+当前代码按职责组织：
+
+```text
+assistant/
+├── api/                HTTP 依赖、路由与 SSE 响应
+├── conversations/      历史、标题、墓碑、清理及清理任务资源
+├── execution/          回合执行、运行管理、委派、Session 与运行时装配
+├── agents/             Agent 定义、提示词、工具和中间件
+├── checkpoints/        业务状态读取与委派结果投影
+├── events/             消息内容、流式解析、事件协议和公开投影
+├── repositories/       会话目录数据访问
+├── models/             会话目录和墓碑 ORM
+├── providers.py        会话清理用例装配
+└── tasks.py            后台任务入口
+```
+
+Web 运行资源由 `app/runtime.py` 持有；召回和查询能力显式注入。清理任务不装配模型、工具或执行工厂。下面的代码片段用于解释行为，实际签名以源码为准。
+
 ### 1.2 系统数据流与架构关系
 
 ```mermaid
@@ -655,8 +673,8 @@ from langgraph.graph.state import CompiledStateGraph
 from app.assistant.agents.middleware.eval_delegations import EvalDelegationMiddleware
 from app.assistant.agents.middleware.message_timestamp import MessageTimestampMiddleware
 from app.assistant.agents.middleware.user_message_context import UserMessageContextMiddleware
-from app.assistant.agents.session_service import AgentSessionService
-from app.assistant.agents.shell_jobs import ShellJobRuntime
+from app.assistant.execution.session_service import AgentSessionService
+from app.assistant.execution.shell_jobs import ShellJobRuntime
 from app.assistant.agents.tools import create_shell_tools, create_view_image_tools
 from app.sandbox.backend import DockerSandboxBackend
 
@@ -731,12 +749,12 @@ from langchain_core.tools import BaseTool
 from loguru import logger
 from pydantic import ValidationError
 
-from app.assistant.agents.contracts import (
+from app.assistant.execution.types import (
     DelegationRequest,
     SubagentActivity,
     SubagentActivityWriter,
 )
-from app.assistant.agents.session_service import AgentSessionService
+from app.assistant.execution.session_service import AgentSessionService
 from app.shared.contracts.analysis import AgentType
 
 _PTC_DELEGATION_ID_PREFIX = "ptc_delegation_"
@@ -874,11 +892,11 @@ from langgraph.channels import EphemeralValue
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
-from app.assistant.agents.contracts import SpecialistResult
+from app.assistant.execution.types import SpecialistResult
 from app.assistant.agents.filesystem import build_specialist_filesystem
 from app.assistant.agents.middleware.message_timestamp import MessageTimestampMiddleware
 from app.assistant.agents.middleware.user_message_context import UserMessageContextMiddleware
-from app.assistant.agents.shell_jobs import ShellJobRuntime
+from app.assistant.execution.shell_jobs import ShellJobRuntime
 from app.assistant.agents.tools import create_shell_tools, create_view_image_tools
 from app.sandbox.backend import DockerSandboxBackend
 

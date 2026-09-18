@@ -21,14 +21,14 @@ from langgraph.runtime import Runtime
 from loguru import logger
 from pydantic import Field, ValidationError, field_validator
 
-from app.assistant.agents.contracts import NonEmptyText, StrictProtocolModel
-from app.assistant.agents.shell_jobs import ShellJobRuntime
 from app.assistant.agents.tools.view_image import (
     IMAGE_VIEW_TOOL_NAME,
     ImageViewRequest,
     is_supported_image_path,
     supports_view_image_tool,
 )
+from app.assistant.execution.shell_jobs import ShellJobRuntime
+from app.assistant.execution.types import NonEmptyText, StrictProtocolModel
 from app.sandbox.paths import normalize_attachment_path, resolve_sandbox_path
 
 USER_MESSAGE_CONTEXT_KEY = "dataagent_user_message_context"

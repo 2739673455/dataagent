@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test } from "vitest";
-import { SemanticIndexStatus } from "../src/pages/Admin/components/MetadataManagement/SemanticIndexStatus";
+import { SemanticIndexStatus } from "../src/features/metadata/SemanticIndexStatus";
 
 describe("semantic index status", () => {
   test("distinguishes missing, stale, and current indexes", () => {

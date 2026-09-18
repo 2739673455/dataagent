@@ -388,9 +388,7 @@ class IdentityPGRepo:
     ) -> DorisQueryIdentity | None:
         """按 Doris 角色读取稳定查询身份。"""
         return await self._session.scalar(
-            select(DorisQueryIdentity).where(
-                DorisQueryIdentity.role_name == role_name
-            )
+            select(DorisQueryIdentity).where(DorisQueryIdentity.role_name == role_name)
         )
 
     async def get_query_identity_by_query_user(
@@ -407,9 +405,7 @@ class IdentityPGRepo:
     async def get_default_query_identity(self) -> DorisQueryIdentity | None:
         """读取当前缺省 Doris 查询身份。"""
         return await self._session.scalar(
-            select(DorisQueryIdentity).where(
-                DorisQueryIdentity.is_default.is_(True)
-            )
+            select(DorisQueryIdentity).where(DorisQueryIdentity.is_default.is_(True))
         )
 
     async def list_query_identities(self) -> list[DorisQueryIdentity]:

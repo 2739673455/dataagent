@@ -8,8 +8,8 @@ from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
 
-from app.assistant.agents.contracts import EVAL_DELEGATIONS_KEY
-from app.assistant.agents.session_service import AgentSessionService
+from app.assistant.execution.session_service import AgentSessionService
+from app.assistant.execution.types import EVAL_DELEGATIONS_KEY
 
 
 class EvalDelegationMiddleware(AgentMiddleware[Any, Any, Any]):

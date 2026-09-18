@@ -3,10 +3,10 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from app.assistant.agents.manager import AgentManager
+from app.assistant.conversations.lifecycle import ConversationLifecycleService
+from app.assistant.execution.manager import AgentManager
 from app.assistant.repositories.conversation import ConversationPGRepo
-from app.assistant.services.conversation_lifecycle import ConversationLifecycleService
-from app.metadata.repositories.recall import SemanticRecallPGRepo
+from app.metadata.services.recall_cleanup import RecallCleanupService
 from app.sandbox.manager import DockerSandboxManager
 from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 from app.shared.clients.postgres_client_manager import PostgresClientManager
@@ -22,15 +22,6 @@ async def _conversation_repository(
         yield ConversationPGRepo(session)
 
 
-@asynccontextmanager
-async def _semantic_recall_repository(
-    postgres: PostgresClientManager,
-) -> AsyncGenerator[SemanticRecallPGRepo]:
-    """创建带事务边界的语义召回数据访问。"""
-    async with postgres.session() as session, session.begin():
-        yield SemanticRecallPGRepo(session)
-
-
 def build_conversation_lifecycle_service(
     persistence: LangGraphPostgresManager,
     assistant_postgres: PostgresClientManager,
@@ -42,7 +33,7 @@ def build_conversation_lifecycle_service(
     """组装会话跨存储生命周期服务。"""
     return ConversationLifecycleService(
         lambda: _conversation_repository(assistant_postgres),
-        lambda: _semantic_recall_repository(meta_postgres),
+        RecallCleanupService(meta_postgres),
         persistence,
         agents,
         sandbox,

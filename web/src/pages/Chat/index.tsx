@@ -4,12 +4,12 @@ import { toast } from "sonner";
 import { getApiErrorMessage } from "@/api/errors";
 import { changePassword, logoutUser, redirectToLogin, useAuthStore } from "@/auth";
 import { ROUTES } from "@/config/settings";
-import { useChatStore } from "@/stores/chatStore";
-import { ChatComposer } from "./components/ChatComposer";
-import { ChatMessages } from "./components/ChatMessages";
-import { ChatSidebar, ChatUserFooter } from "./components/ChatSidebar";
-import { getConversationExecutionStatus } from "./components/messages/displayModel";
-import { useChatStream } from "./hooks/useChatStream";
+import { useChatStore } from "@/features/chat/store";
+import { ChatComposer } from "@/features/chat/components/ChatComposer";
+import { ChatMessages } from "@/features/chat/components/ChatMessages";
+import { ChatSidebar, ChatUserFooter } from "@/features/chat/components/ChatSidebar";
+import { getConversationExecutionStatus } from "@/features/chat/components/messages/displayModel";
+import { useChatStream } from "@/features/chat/hooks/useChatStream";
 
 export default function ChatPage() {
   const navigate = useNavigate();

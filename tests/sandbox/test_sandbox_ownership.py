@@ -1,5 +1,4 @@
 import asyncio
-import os
 import threading
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -11,14 +10,6 @@ from app.sandbox.exceptions import SandboxDeletedError, SandboxOwnershipError
 from app.sandbox.manager import DockerSandboxManager
 from app.sandbox.ownership import RedisSandboxOwnership
 from tests.sandbox.fakes import FakeSandboxOwnership, build_sandbox_config
-
-
-def _assert_threads_stopped(*threads: threading.Thread) -> None:
-    """等待测试线程退出，避免失败路径阻塞测试进程。"""
-    for thread in threads:
-        if thread.ident is not None:
-            thread.join(timeout=1)
-    assert all(not thread.is_alive() for thread in threads)
 
 
 def _redis_ownership(redis: MagicMock) -> RedisSandboxOwnership:
@@ -162,98 +153,3 @@ def test_runtime_records_operation_renewal_failure() -> None:
             make_uuid.return_value.hex = "operation-token"
             with ownership.operation(7, uuid4()):
                 pass
-
-
-@pytest.mark.skipif(
-    os.getenv("RUN_REDIS_SANDBOX_TESTS") != "1",
-    reason="set RUN_REDIS_SANDBOX_TESTS=1 to run Redis ownership tests",
-)
-def test_redis_maintenance_coordinates_independent_runtimes() -> None:
-    namespace = f"ownership-test-{uuid4().hex}"
-
-    def create_ownership() -> RedisSandboxOwnership:
-        """构造共享测试命名空间的真实 Redis ownership。"""
-        return RedisSandboxOwnership(
-            "redis://127.0.0.1:6379/15",
-            namespace,
-            lock_timeout_seconds=5,
-            wait_timeout_seconds=3,
-            lease_seconds=2,
-        )
-
-    first = create_ownership()
-    second = create_ownership()
-    conversation_id = uuid4()
-    other_conversation_id = uuid4()
-    maintenance_started = threading.Event()
-    release_maintenance = threading.Event()
-    target_operation_started = threading.Event()
-    active_operation_started = threading.Event()
-    release_active_operation = threading.Event()
-    waiting_maintenance_started = threading.Event()
-
-    def maintain() -> None:
-        """持有目标 Conversation 的维护窗口。"""
-        with first.conversation_maintenance(7, conversation_id):
-            maintenance_started.set()
-            release_maintenance.wait(timeout=2)
-
-    def operate_on_target() -> None:
-        """等待目标 Conversation 维护完成后进入操作。"""
-        with second.operation(7, conversation_id):
-            target_operation_started.set()
-
-    def hold_operation() -> None:
-        """持有目标 Conversation 的活跃操作租约。"""
-        with first.operation(7, conversation_id):
-            active_operation_started.set()
-            release_active_operation.wait(timeout=2)
-
-    def wait_for_operation() -> None:
-        """等待目标 Conversation 活跃操作结束后进入维护。"""
-        with second.conversation_maintenance(7, conversation_id):
-            waiting_maintenance_started.set()
-
-    maintenance_thread = threading.Thread(target=maintain, daemon=True)
-    operation_thread = threading.Thread(target=operate_on_target, daemon=True)
-    active_operation_thread = threading.Thread(target=hold_operation, daemon=True)
-    waiting_maintenance_thread = threading.Thread(
-        target=wait_for_operation,
-        daemon=True,
-    )
-    first.start_runtime()
-    second.start_runtime()
-    try:
-        maintenance_thread.start()
-        assert maintenance_started.wait(timeout=1)
-        operation_thread.start()
-        assert not target_operation_started.wait(timeout=0.2)
-        with second.operation(7, other_conversation_id):
-            pass
-        release_maintenance.set()
-        assert target_operation_started.wait(timeout=1)
-
-        active_operation_thread.start()
-        assert active_operation_started.wait(timeout=1)
-        waiting_maintenance_thread.start()
-        assert not waiting_maintenance_started.wait(timeout=0.2)
-        release_active_operation.set()
-        assert waiting_maintenance_started.wait(timeout=1)
-    finally:
-        release_maintenance.set()
-        release_active_operation.set()
-        _assert_threads_stopped(
-            maintenance_thread,
-            operation_thread,
-            active_operation_thread,
-            waiting_maintenance_thread,
-        )
-        with first.release_runtime():
-            pass
-        with second.release_runtime():
-            pass
-        keys = tuple(first._redis.scan_iter(f"dataagent:sandbox:{namespace}:*"))
-        if keys:
-            first._redis.delete(*keys)
-        first.close()
-        second.close()

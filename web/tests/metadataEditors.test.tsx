@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test, vi } from "vitest";
-import { ColumnEditorDialog } from "../src/pages/Admin/components/MetadataManagement/ColumnDialogs";
-import { MetricEditorDialog } from "../src/pages/Admin/components/MetadataManagement/MetricDialogs";
-import { TableEditorDialog } from "../src/pages/Admin/components/MetadataManagement/TableDialogs";
+import { ColumnEditorDialog } from "../src/features/metadata/ColumnDialogs";
+import { MetricEditorDialog } from "../src/features/metadata/MetricDialogs";
+import { TableEditorDialog } from "../src/features/metadata/TableDialogs";
 
 // 表单行为不依赖 Portal；服务端渲染检查真实字段和按钮约束。
-vi.mock("../src/pages/Admin/components/AdminEditorDialog", () => ({
+vi.mock("../src/components/AdminEditorDialog", () => ({
   AdminEditorDialog: ({ children }: { children: ReactNode }) => <section>{children}</section>,
   AdminDialogActions: ({ children }: { children: ReactNode }) => <footer>{children}</footer>,
   AdminDialogCancelButton: ({ children }: { children: ReactNode }) => (

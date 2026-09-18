@@ -15,9 +15,8 @@ from langgraph.config import get_config
 from loguru import logger
 
 from app.assistant.agents.explorer.recall_runtime import (
-    create_authorized_semantic_recall_service,
+    SemanticRecallRuntime,
     resolve_semantic_recall_identity,
-    semantic_recall_repository,
 )
 from app.assistant.agents.explorer.semantic_recall_protocol import (
     SemanticRecallReference,
@@ -123,10 +122,11 @@ async def _load_recall_records(
     user_id: int,
     conversation_id: UUID,
     references: list[tuple[int, SemanticRecallReference]],
+    recall: SemanticRecallRuntime,
 ) -> tuple[dict[str, SemanticRecallRecord], set[str]]:
     """逐个 query 加载召回记录，并隔离已失效的引用。"""
-    async with semantic_recall_repository() as repo:
-        service = await create_authorized_semantic_recall_service(user_id, repo)
+    async with recall.repository() as repo:
+        service = await recall.authorized_service(user_id, repo)
         records: dict[str, SemanticRecallRecord] = {}
         missing_queries: set[str] = set()
         for _, reference in references:
@@ -173,6 +173,8 @@ async def expand_semantic_recall_messages_for_display(
     messages: list[Any],
     user_id: int,
     conversation_id: UUID,
+    *,
+    recall: SemanticRecallRuntime,
 ) -> list[Any]:
     """在公开消息投影中展开语义召回引用，不修改持久化消息。"""
     references = [
@@ -188,6 +190,7 @@ async def expand_semantic_recall_messages_for_display(
             user_id,
             conversation_id,
             references,
+            recall,
         )
     except Exception:  # noqa: BLE001
         logger.exception("公开消息中的语义召回展开失败")
@@ -202,6 +205,10 @@ async def expand_semantic_recall_messages_for_display(
 
 class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
     """仅在当前模型请求中展开已授权的召回记录。"""
+
+    def __init__(self, recall: SemanticRecallRuntime) -> None:
+        """绑定当前进程的召回资源。"""
+        self._recall = recall
 
     def wrap_model_call(
         self,
@@ -230,6 +237,7 @@ class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
                 user_id,
                 conversation_id,
                 references,
+                self._recall,
             )
         except Exception:  # noqa: BLE001
             logger.exception("语义召回展开失败")

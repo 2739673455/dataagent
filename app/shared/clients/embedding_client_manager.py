@@ -4,7 +4,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from app.shared.config.app_config import EmbeddingConfig, cfg
+from app.shared.config.app_config import EmbeddingConfig
 
 
 class EmbeddingClient(Protocol):
@@ -103,6 +103,3 @@ class EmbeddingClientManager:
         self._client = None
         if resource is not None:
             await resource.aclose()
-
-
-embedding_client_manager = EmbeddingClientManager(cfg.embedding)

@@ -2,12 +2,10 @@ import { ArrowLeft, Database, History, Shield, Users } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ROUTES } from "@/config/settings";
-import {
-  DorisRoleManagement,
-  MetadataManagement,
-  QueryExperienceManagement,
-  UserManagement,
-} from "./components";
+import { DorisRoleManagement } from "@/features/roles";
+import { MetadataManagement } from "@/features/metadata";
+import { QueryExperienceManagement } from "@/features/query-experiences";
+import { UserManagement } from "@/features/users";
 
 export default function AdminPage() {
   const [searchParams, setSearchParams] = useSearchParams();

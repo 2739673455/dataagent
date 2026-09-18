@@ -11,7 +11,7 @@ from psycopg.conninfo import make_conninfo
 from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 
-from app.shared.config.app_config import DBConfig, cfg
+from app.shared.config.app_config import DBConfig
 
 _ADVISORY_POOL_MAX_SIZE = 12
 
@@ -222,6 +222,3 @@ class LangGraphPostgresManager:
                 stack.push_async_callback(pool.close)
             if advisory_pool is not None:
                 stack.push_async_callback(advisory_pool.close)
-
-
-langgraph_postgres_manager = LangGraphPostgresManager(cfg.langgraph_postgresql)

@@ -11,7 +11,7 @@ from langchain_openai import ChatOpenAI
 from langchain_openrouter import ChatOpenRouter
 
 from app.assistant import model_factory
-from app.assistant.agents import runtime_factory
+from app.assistant.execution import runtime_factory
 from app.shared.config.app_config import LMConfigCfg, ModelCfg, ModelProfileCfg, cfg
 
 
@@ -86,9 +86,7 @@ def test_runtime_init_failure_closes_already_created_models() -> None:
             closed.append(name)
 
     factory = runtime_factory.ConversationAgentRuntimeFactory(
-        MagicMock(),
-        MagicMock(),
-        MagicMock(),
+        MagicMock(), MagicMock(), MagicMock(), recall=MagicMock(), query=MagicMock()
     )
 
     async def run() -> None:

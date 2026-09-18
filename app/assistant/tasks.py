@@ -4,10 +4,10 @@ from uuid import UUID
 
 from loguru import logger
 
-from app.assistant.lifecycle_runtime import conversation_lifecycle_resources
+from app.assistant.conversations.resources import conversation_lifecycle_resources
+from app.assistant.conversations.title import ConversationTitleService
 from app.assistant.model_factory import create_configured_model
 from app.assistant.repositories.conversation import ConversationPGRepo
-from app.assistant.services.conversation_title import ConversationTitleService
 from app.shared.async_runtime import run_async
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
