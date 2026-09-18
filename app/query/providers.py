@@ -1,5 +1,6 @@
 """查询应用服务依赖组装。"""
 
+from elasticsearch import AsyncElasticsearch
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.identity.repositories.identity import IdentityPGRepo
@@ -39,7 +40,10 @@ from app.query.services.experience_recall import QueryExperienceRecallService
 from app.query.services.guard import QueryGuardService
 from app.query.task_scheduler import query_experience_index_scheduler
 from app.shared.clients.doris_client_manager import query_doris_client_registry
-from app.shared.clients.embedding_client_manager import embedding_client_manager
+from app.shared.clients.embedding_client_manager import (
+    EmbeddingClient,
+    embedding_client_manager,
+)
 from app.shared.clients.es_client_manager import es_client_manager
 from app.shared.clients.postgres_client_manager import (
     auth_postgres_client_manager,
@@ -79,12 +83,16 @@ def build_query_experience_recall_service(
     )
 
 
-def build_query_experience_indexer(session: AsyncSession) -> QueryExperienceIndexer:
+def build_query_experience_indexer(
+    session: AsyncSession,
+    es_client: AsyncElasticsearch,
+    embedding_client: EmbeddingClient,
+) -> QueryExperienceIndexer:
     """创建查询经验索引同步服务。"""
     return QueryExperienceIndexer(
         repo=QueryExperiencePGRepo(session),
-        index_repo=QueryExperienceESRepo(es_client_manager.get_client()),
-        embedding_client=embedding_client_manager.get_client(),
+        index_repo=QueryExperienceESRepo(es_client),
+        embedding_client=embedding_client,
     )
 
 

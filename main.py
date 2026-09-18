@@ -1,4 +1,5 @@
-from contextlib import asynccontextmanager
+import sys
+from contextlib import AsyncExitStack, asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
@@ -92,7 +93,18 @@ async def _verify_doris_query_identities() -> None:
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     """初始化并释放应用进程持有的共享资源。"""
-    try:
+    async with AsyncExitStack() as stack:
+        stack.push_async_callback(query_doris_client_registry.close)
+        stack.push_async_callback(admin_doris_client_manager.close)
+        stack.push_async_callback(auth_postgres_client_manager.close)
+        stack.push_async_callback(meta_postgres_client_manager.close)
+        stack.push_async_callback(assistant_postgres_client_manager.close)
+        stack.push_async_callback(es_client_manager.close)
+        stack.push_async_callback(embedding_client_manager.close)
+        stack.push_async_callback(langgraph_postgres_manager.close)
+        stack.push_async_callback(sandbox_manager.close)
+        stack.push_async_callback(agent_manager.close)
+        stack.push_async_callback(conversation_run_service.close)
         # FastAPI 应用启动前执行。
         logger.info("开始初始化应用资源")
         embedding_client_manager.init()
@@ -111,21 +123,6 @@ async def _lifespan(_app: FastAPI):
         logger.info("应用资源初始化完成")
 
         yield
-    finally:
-        # FastAPI 应用结束前执行。
-        logger.info("开始释放应用资源")
-        await conversation_run_service.close()
-        await agent_manager.close()
-        await sandbox_manager.close()
-        await langgraph_postgres_manager.close()
-        await embedding_client_manager.close()
-        await es_client_manager.close()
-        await assistant_postgres_client_manager.close()
-        await meta_postgres_client_manager.close()
-        await auth_postgres_client_manager.close()
-        await admin_doris_client_manager.close()
-        await query_doris_client_registry.close()
-        logger.info("应用资源释放完成")
 
 
 def _register_routes(app: FastAPI) -> None:
@@ -171,4 +168,13 @@ app = _create_app()
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=cfg.port)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=cfg.port,
+        loop=(
+            "app.shared.async_runtime:create_event_loop"
+            if sys.platform == "win32"
+            else "auto"
+        ),
+    )

@@ -13,43 +13,48 @@ cp conf/.env.example conf/.env
 编辑 `conf/.env`：
 
 ```dotenv
-# 本地 docker/compose.yml 的默认密码均为 123123
-DORIS_ADMIN_PASSWORD=123123
+# ==================== 数据库 ====================
+
+# PostgreSQL 数据库密码（认证、元数据和会话持久化共用）
 POSTGRES_PASSWORD=123123
 
-# 分别执行下方命令生成
+# Doris 平台内部管理账号密码，用于元数据读取和权限管理
+DORIS_ADMIN_PASSWORD=123123
+
+# Doris 查询身份凭据加密密钥
+# python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
 DORIS_CREDENTIAL_ENCRYPTION_KEY=
+
+# ==================== 身份认证与管理员 ====================
+
+# JWT 签名密钥，必须使用至少 32 字符的随机值
+# python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
 JWT_SECRET=
 
-# 外部服务密钥
-TAVILY_API_KEY=
-SILICONFLOW_API_KEY=
-OPENROUTER_API_KEY=
+# 初始管理员引导凭据（scripts/bootstrap_admin.py）
+# 用户名和邮箱可通过 CLI 覆盖；密码从环境变量读取
+ADMIN_USERNAME=123
+ADMIN_EMAIL=123@123.com
+ADMIN_PASSWORD=123123
+
+# ==================== 模型服务 ====================
+
+# DeepSeek 官方 API 密钥
 DEEPSEEK_API_KEY=
 
-# 首次创建的平台管理员
-ADMIN_USERNAME=admin
-ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=
+# OpenRouter 模型服务密钥
+OPENROUTER_API_KEY=
+
+# SiliconFlow 模型服务密钥
+SILICONFLOW_API_KEY=
+
+# ==================== MCP 工具 ====================
+
+# Tavily MCP 搜索服务密钥
+TAVILY_API_KEY=
 ```
 
-生成 Doris 凭据加密密钥和 JWT 密钥：
-
-```bash
-python3 -c 'import base64, secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())'
-python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
-```
-
-将两条命令的输出分别复制到 `DORIS_CREDENTIAL_ENCRYPTION_KEY` 和 `JWT_SECRET`。
-
-当前 `conf/app_config.yaml` 引用了以下外部服务环境变量，保留对应配置时需要填写有效密钥：
-
-| 环境变量              | 用途                                       |
-| --------------------- | ------------------------------------------ |
-| `DEEPSEEK_API_KEY`    | 默认语言模型 `deepseek-deepseek-v4-flash`  |
-| `OPENROUTER_API_KEY`  | `app_config.yaml` 中声明的 OpenRouter 模型 |
-| `SILICONFLOW_API_KEY` | `BAAI/bge-m3` 文本向量模型                 |
-| `TAVILY_API_KEY`      | Tavily MCP 搜索工具                        |
+按注释中的命令生成 Doris 凭据加密密钥和 JWT 签名密钥。
 
 ### 应用配置
 

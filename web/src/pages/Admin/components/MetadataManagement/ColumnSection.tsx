@@ -5,7 +5,7 @@ import { getApiErrorMessage } from "@/api/errors";
 import { type ColumnInfo, metaApi, type ValueIndexSyncRequestMode } from "@/api/meta";
 import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { Button } from "@/components/ui/button";
-import { ColumnCreateDialog, ColumnEditDialog, ValueIndexStatus } from "./ColumnDialogs";
+import { ColumnEditorDialog, type ColumnDraft, ValueIndexStatus } from "./ColumnDialogs";
 import { ColumnReferenceBadge } from "./ColumnReferenceBadge";
 import { SemanticIndexStatus } from "./SemanticIndexStatus";
 import { splitCsv } from "./utils";
@@ -35,19 +35,7 @@ export function ColumnSection({
   onSyncColumnValues,
   onReloadColumns,
 }: ColumnSectionProps) {
-  const [isCreatingColumn, setIsCreatingColumn] = useState(false);
-  const [newColName, setNewColName] = useState("");
-  const [newColDesc, setNewColDesc] = useState("");
-  const [newColAlias, setNewColAlias] = useState("");
-  const [newColIndexValues, setNewColIndexValues] = useState(false);
-  const [newColRefTable, setNewColRefTable] = useState("");
-  const [newColRefColumn, setNewColRefColumn] = useState("");
-  const [editingColumn, setEditingColumn] = useState<ColumnInfo | null>(null);
-  const [editColDesc, setEditColDesc] = useState("");
-  const [editColAlias, setEditColAlias] = useState("");
-  const [editColIndexValues, setEditColIndexValues] = useState(false);
-  const [editColRefTable, setEditColRefTable] = useState("");
-  const [editColRefColumn, setEditColRefColumn] = useState("");
+  const [editor, setEditor] = useState<ColumnDraft | null>(null);
   const [savingColumn, setSavingColumn] = useState(false);
   const [deletingColumn, setDeletingColumn] = useState<string | null>(null);
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
@@ -76,46 +64,27 @@ export function ColumnSection({
     }
   };
 
-  const handleCreateColumn = async () => {
-    if (!selectedTable || !newColName.trim() || !newColDesc.trim()) {
+  const handleSaveColumn = async () => {
+    if (!editor) return;
+    const name = editor.name.trim();
+    if (!name || !editor.description.trim()) {
       toast.error("字段名称和业务描述不能为空");
       return;
     }
     setSavingColumn(true);
     try {
-      await metaApi.upsertColumn(selectedTable, newColName.trim(), {
-        description: newColDesc.trim(),
-        alias: splitCsv(newColAlias),
-        index_values: newColIndexValues,
-        reference_t_name: newColRefTable.trim() || undefined,
-        reference_c_name: newColRefColumn.trim() || undefined,
+      await metaApi.upsertColumn(editor.tableName, name, {
+        description: editor.description.trim(),
+        alias: splitCsv(editor.alias),
+        index_values: editor.indexValues,
+        reference_t_name: editor.refTable.trim() || undefined,
+        reference_c_name: editor.refColumn.trim() || undefined,
       });
-      toast.success(`字段 ${newColName.trim()} 添加成功`);
-      setIsCreatingColumn(false);
-      await onReloadColumns(selectedTable);
+      toast.success(`字段 ${name} ${editor.mode === "create" ? "添加" : "更新"}成功`);
+      setEditor(null);
+      await onReloadColumns(editor.tableName);
     } catch (error) {
-      toast.error(getApiErrorMessage(error, "添加字段失败"));
-    } finally {
-      setSavingColumn(false);
-    }
-  };
-
-  const handleSaveColumn = async () => {
-    if (!selectedTable || !editingColumn) return;
-    setSavingColumn(true);
-    try {
-      await metaApi.upsertColumn(selectedTable, editingColumn.name, {
-        description: editColDesc.trim(),
-        alias: splitCsv(editColAlias),
-        index_values: editColIndexValues,
-        reference_t_name: editColRefTable.trim() || undefined,
-        reference_c_name: editColRefColumn.trim() || undefined,
-      });
-      toast.success(`字段 ${editingColumn.name} 更新成功`);
-      setEditingColumn(null);
-      await onReloadColumns(selectedTable);
-    } catch (error) {
-      toast.error(getApiErrorMessage(error, "更新字段失败"));
+      toast.error(getApiErrorMessage(error, "保存字段元数据失败"));
     } finally {
       setSavingColumn(false);
     }
@@ -243,14 +212,17 @@ export function ColumnSection({
               <Button
                 size="sm"
                 onClick={() => {
-                  setEditingColumn(null);
-                  setIsCreatingColumn(true);
-                  setNewColName("");
-                  setNewColDesc("");
-                  setNewColAlias("");
-                  setNewColIndexValues(false);
-                  setNewColRefTable("");
-                  setNewColRefColumn("");
+                  if (selectedTable)
+                    setEditor({
+                      mode: "create",
+                      tableName: selectedTable,
+                      name: "",
+                      description: "",
+                      alias: "",
+                      indexValues: false,
+                      refTable: "",
+                      refColumn: "",
+                    });
                 }}
                 className="h-7 px-2 text-xs"
                 title={`为表 ${selectedTable} 添加字段元数据`}
@@ -263,42 +235,15 @@ export function ColumnSection({
         </div>
       </div>
 
-      <ColumnCreateDialog
-        isOpen={isCreatingColumn}
-        newColAlias={newColAlias}
-        newColDesc={newColDesc}
-        newColIndexValues={newColIndexValues}
-        newColName={newColName}
-        newColRefColumn={newColRefColumn}
-        newColRefTable={newColRefTable}
-        onClose={() => setIsCreatingColumn(false)}
-        onSubmit={handleCreateColumn}
-        savingColumn={savingColumn}
-        selectedTable={selectedTable}
-        setNewColAlias={setNewColAlias}
-        setNewColDesc={setNewColDesc}
-        setNewColIndexValues={setNewColIndexValues}
-        setNewColName={setNewColName}
-        setNewColRefColumn={setNewColRefColumn}
-        setNewColRefTable={setNewColRefTable}
-      />
-
-      <ColumnEditDialog
-        editColAlias={editColAlias}
-        editColDesc={editColDesc}
-        editColIndexValues={editColIndexValues}
-        editColRefColumn={editColRefColumn}
-        editColRefTable={editColRefTable}
-        editingColumn={editingColumn}
-        onClose={() => setEditingColumn(null)}
-        onSubmit={handleSaveColumn}
-        savingColumn={savingColumn}
-        setEditColAlias={setEditColAlias}
-        setEditColDesc={setEditColDesc}
-        setEditColIndexValues={setEditColIndexValues}
-        setEditColRefColumn={setEditColRefColumn}
-        setEditColRefTable={setEditColRefTable}
-      />
+      {editor && (
+        <ColumnEditorDialog
+          draft={editor}
+          onChange={setEditor}
+          onClose={() => setEditor(null)}
+          onSubmit={handleSaveColumn}
+          saving={savingColumn}
+        />
+      )}
 
       <div className="mt-4 rounded border border-[#d4d4ce]">
         {!selectedTable ? (
@@ -439,13 +384,17 @@ export function ColumnSection({
                             variant="outline"
                             size="sm"
                             onClick={() => {
-                              setIsCreatingColumn(false);
-                              setEditingColumn(col);
-                              setEditColDesc(col.description);
-                              setEditColAlias(col.alias?.join(", ") || "");
-                              setEditColIndexValues(col.index_values);
-                              setEditColRefTable(col.reference_t_name || "");
-                              setEditColRefColumn(col.reference_c_name || "");
+                              if (selectedTable)
+                                setEditor({
+                                  mode: "edit",
+                                  tableName: selectedTable,
+                                  name: col.name,
+                                  description: col.description,
+                                  alias: col.alias?.join(", ") || "",
+                                  indexValues: col.index_values,
+                                  refTable: col.reference_t_name || "",
+                                  refColumn: col.reference_c_name || "",
+                                });
                             }}
                             className="h-7 px-2 text-xs"
                             title={`编辑字段 ${col.name}`}

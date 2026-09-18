@@ -99,9 +99,10 @@ class EmbeddingClientManager:
 
     async def close(self) -> None:
         """关闭 Embedding 客户端并释放资源。"""
-        if self._client is not None:
-            await self._client.aclose()
+        resource = self._client
         self._client = None
+        if resource is not None:
+            await resource.aclose()
 
 
 embedding_client_manager = EmbeddingClientManager(cfg.embedding)

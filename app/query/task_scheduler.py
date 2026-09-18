@@ -16,8 +16,6 @@ class CeleryQueryExperienceIndexScheduler:
             celery_app.send_task(
                 "dataagent.query.sync_index",
                 args=[str(experience_id), revision],
-                queue="metadata-index",
-                routing_key="metadata-index",
             )
             return True
         except Exception:  # noqa: BLE001

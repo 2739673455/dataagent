@@ -2,15 +2,10 @@ import { Edit2, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/api/errors";
-import {
-  metaApi,
-  type TableInfo,
-  type TableRole,
-  type ValueIndexSyncRequestMode,
-} from "@/api/meta";
+import { metaApi, type TableInfo, type ValueIndexSyncRequestMode } from "@/api/meta";
 import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { Button } from "@/components/ui/button";
-import { TableCreateDialog, TableEditDialog } from "./TableDialogs";
+import { TableEditorDialog, type TableDraft } from "./TableDialogs";
 
 interface TableSectionProps {
   tables: TableInfo[];
@@ -41,16 +36,7 @@ export function TableSection({
 }: TableSectionProps) {
   const [sourceTables, setSourceTables] = useState<string[]>([]);
   const [loadingSourceTables, setLoadingSourceTables] = useState(false);
-  const [isCreatingTable, setIsCreatingTable] = useState(false);
-  const [newTableName, setNewTableName] = useState("");
-  const [newTableRole, setNewTableRole] = useState<TableRole>("fact");
-  const [newTableDesc, setNewTableDesc] = useState("");
-  const [newTableCursorColumn, setNewTableCursorColumn] = useState("");
-  const [isTableDropdownOpen, setIsTableDropdownOpen] = useState(false);
-  const [editingTable, setEditingTable] = useState<TableInfo | null>(null);
-  const [editTableRole, setEditTableRole] = useState<TableRole>("fact");
-  const [editTableDesc, setEditTableDesc] = useState("");
-  const [editTableCursorColumn, setEditTableCursorColumn] = useState("");
+  const [editor, setEditor] = useState<TableDraft | null>(null);
   const [savingTable, setSavingTable] = useState(false);
   const [deletingTable, setDeletingTable] = useState<string | null>(null);
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
@@ -76,20 +62,8 @@ export function TableSection({
 
   const existingTableNames = useMemo(() => new Set(tables.map((t) => t.name)), [tables]);
 
-  const filteredSourceTables = useMemo(() => {
-    if (!newTableName.trim()) return sourceTables;
-    const query = newTableName.toLowerCase().trim();
-    return sourceTables.filter((t) => t.toLowerCase().includes(query));
-  }, [sourceTables, newTableName]);
-
   const handleOpenCreateTable = async () => {
-    setIsCreatingTable(true);
-    setEditingTable(null);
-    setNewTableName("");
-    setNewTableRole("fact");
-    setNewTableDesc("");
-    setNewTableCursorColumn("");
-    setIsTableDropdownOpen(false);
+    setEditor({ mode: "create", name: "", role: "fact", description: "", cursorColumn: "" });
 
     if (sourceTables.length === 0) {
       setLoadingSourceTables(true);
@@ -104,43 +78,26 @@ export function TableSection({
     }
   };
 
-  const handleCreateTable = async () => {
-    if (!newTableName.trim() || !newTableDesc.trim()) {
+  const handleSaveTable = async () => {
+    if (!editor) return;
+    const name = editor.name.trim();
+    if (!name || !editor.description.trim()) {
       toast.error("表名称和业务描述不能为空");
       return;
     }
     setSavingTable(true);
     try {
-      await metaApi.upsertTable(newTableName.trim(), {
-        role: newTableRole,
-        description: newTableDesc.trim(),
-        value_index_cursor_column: newTableCursorColumn.trim() || null,
+      await metaApi.upsertTable(name, {
+        role: editor.role,
+        description: editor.description.trim(),
+        value_index_cursor_column: editor.cursorColumn.trim() || null,
       });
-      toast.success(`数据表 ${newTableName.trim()} 添加成功`);
-      setIsCreatingTable(false);
+      toast.success(`表 ${name} ${editor.mode === "create" ? "添加" : "更新"}成功`);
+      setEditor(null);
       await onReloadCatalog();
-      onSelectTable(newTableName.trim());
+      if (editor.mode === "create") onSelectTable(name);
     } catch (error) {
-      toast.error(getApiErrorMessage(error, "添加数据表失败"));
-    } finally {
-      setSavingTable(false);
-    }
-  };
-
-  const handleSaveTable = async () => {
-    if (!editingTable) return;
-    setSavingTable(true);
-    try {
-      await metaApi.upsertTable(editingTable.name, {
-        role: editTableRole,
-        description: editTableDesc.trim(),
-        value_index_cursor_column: editTableCursorColumn.trim() || null,
-      });
-      toast.success(`数据表 ${editingTable.name} 更新成功`);
-      setEditingTable(null);
-      await onReloadCatalog();
-    } catch (error) {
-      toast.error(getApiErrorMessage(error, "更新数据表失败"));
+      toast.error(getApiErrorMessage(error, "保存表元数据失败"));
     } finally {
       setSavingTable(false);
     }
@@ -272,39 +229,18 @@ export function TableSection({
         </div>
       </div>
 
-      <TableCreateDialog
-        existingTableNames={existingTableNames}
-        filteredSourceTables={filteredSourceTables}
-        isOpen={isCreatingTable}
-        isTableDropdownOpen={isTableDropdownOpen}
-        loadingSourceTables={loadingSourceTables}
-        newTableCursorColumn={newTableCursorColumn}
-        newTableDesc={newTableDesc}
-        newTableName={newTableName}
-        newTableRole={newTableRole}
-        onClose={() => setIsCreatingTable(false)}
-        onSubmit={handleCreateTable}
-        savingTable={savingTable}
-        setIsTableDropdownOpen={setIsTableDropdownOpen}
-        setNewTableCursorColumn={setNewTableCursorColumn}
-        setNewTableDesc={setNewTableDesc}
-        setNewTableName={setNewTableName}
-        setNewTableRole={setNewTableRole}
-        sourceTables={sourceTables}
-      />
-
-      <TableEditDialog
-        editingTable={editingTable}
-        editTableCursorColumn={editTableCursorColumn}
-        editTableDesc={editTableDesc}
-        editTableRole={editTableRole}
-        onClose={() => setEditingTable(null)}
-        onSubmit={handleSaveTable}
-        savingTable={savingTable}
-        setEditTableCursorColumn={setEditTableCursorColumn}
-        setEditTableDesc={setEditTableDesc}
-        setEditTableRole={setEditTableRole}
-      />
+      {editor && (
+        <TableEditorDialog
+          draft={editor}
+          onChange={setEditor}
+          onClose={() => setEditor(null)}
+          onSubmit={handleSaveTable}
+          saving={savingTable}
+          existingTableNames={existingTableNames}
+          sourceTables={sourceTables}
+          loadingSourceTables={loadingSourceTables}
+        />
+      )}
 
       <div className="mt-4 rounded border border-[#d4d4ce]">
         {tables.length === 0 ? (
@@ -433,11 +369,13 @@ export function TableSection({
                             size="sm"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setIsCreatingTable(false);
-                              setEditingTable(table);
-                              setEditTableRole(table.role);
-                              setEditTableDesc(table.description);
-                              setEditTableCursorColumn(table.value_index_cursor_column || "");
+                              setEditor({
+                                mode: "edit",
+                                name: table.name,
+                                role: table.role,
+                                description: table.description,
+                                cursorColumn: table.value_index_cursor_column || "",
+                              });
                             }}
                             className={`h-7 px-2 text-xs ${
                               isSelected

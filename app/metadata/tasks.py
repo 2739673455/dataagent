@@ -1,10 +1,12 @@
 """元数据导入与索引同步后台任务。"""
 
 from collections.abc import Awaitable, Callable
+from contextlib import AsyncExitStack
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from elasticsearch import AsyncElasticsearch
 from loguru import logger
 
 from app.metadata.config import MetaConfig
@@ -30,40 +32,48 @@ from app.metadata.task_submission import (
     SYNC_TABLE_VALUES_TASK,
     submit_metadata_task,
 )
-from app.shared.clients.doris_client_manager import admin_doris_client_manager
-from app.shared.clients.embedding_client_manager import embedding_client_manager
-from app.shared.clients.es_client_manager import es_client_manager
-from app.shared.clients.postgres_client_manager import meta_postgres_client_manager
+from app.shared.async_runtime import run_async
+from app.shared.clients.doris_client_manager import DorisClientManager
+from app.shared.clients.embedding_client_manager import (
+    EmbeddingClient,
+    EmbeddingClientManager,
+)
+from app.shared.clients.es_client_manager import ESClientManager
+from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
+from app.shared.database.base import MetaBase
 from app.shared.tasks.celery_app import celery_app
-from app.shared.tasks.runner import run_async
 from app.shared.tasks.submission import TaskSubmission
 
 _PERIODIC_BATCH_SIZE = 50
 
 
 async def _run_with_metadata_resources[T](
-    operation: Callable[[MetaPGRepo, SourceDorisRepo], Awaitable[T]],
+    operation: Callable[
+        [MetaPGRepo, SourceDorisRepo, AsyncElasticsearch, EmbeddingClient], Awaitable[T]
+    ],
 ) -> T:
     """初始化元数据任务资源并执行指定异步操作。"""
-    embedding_client_manager.init()
-    es_client_manager.init()
-    meta_postgres_client_manager.init()
-    admin_doris_client_manager.init()
-    try:
-        async with (
-            meta_postgres_client_manager.session() as session,
-            admin_doris_client_manager.connection() as connection,
-        ):
+    embedding = EmbeddingClientManager(cfg.embedding)
+    es = ESClientManager(cfg.elasticsearch)
+    postgres = PostgresClientManager(cfg.meta_postgresql, MetaBase)
+    doris = DorisClientManager(cfg.doris)
+    async with AsyncExitStack() as stack:
+        stack.push_async_callback(embedding.close)
+        stack.push_async_callback(es.close)
+        stack.push_async_callback(postgres.close)
+        stack.push_async_callback(doris.close)
+        embedding.init()
+        es.init()
+        postgres.init()
+        doris.init()
+        async with postgres.session() as session, doris.connection() as connection:
             return await operation(
                 MetaPGRepo(session),
                 SourceDorisRepo(connection),
+                es.get_client(),
+                embedding.get_client(),
             )
-    finally:
-        await admin_doris_client_manager.close()
-        await meta_postgres_client_manager.close()
-        await es_client_manager.close()
-        await embedding_client_manager.close()
 
 
 def _column_semantic_results(
@@ -196,10 +206,15 @@ def sync_table_indexes_task(table_names: list[str]) -> dict[str, Any]:
         f"truncated={len(table_names) > 20}"
     )
 
-    async def operation(meta_repo: MetaPGRepo, source_repo: SourceDorisRepo) -> Any:
+    async def operation(
+        meta_repo: MetaPGRepo,
+        source_repo: SourceDorisRepo,
+        es_client: AsyncElasticsearch,
+        embedding_client: EmbeddingClient,
+    ) -> Any:
         """使用任务级仓储执行表字段语义索引同步。"""
         return await build_meta_index_service(
-            meta_repo, source_repo
+            meta_repo, source_repo, es_client, embedding_client
         ).sync_table_indexes(table_names)
 
     results = _column_semantic_results(
@@ -230,9 +245,16 @@ def sync_table_values_task(
         f"tables={table_names[:20]}, truncated={len(table_names) > 20}"
     )
 
-    async def operation(meta_repo: MetaPGRepo, source_repo: SourceDorisRepo) -> Any:
+    async def operation(
+        meta_repo: MetaPGRepo,
+        source_repo: SourceDorisRepo,
+        es_client: AsyncElasticsearch,
+        embedding_client: EmbeddingClient,
+    ) -> Any:
         """使用任务级仓储执行表字段取值索引同步。"""
-        return await build_meta_index_service(meta_repo, source_repo).sync_table_values(
+        return await build_meta_index_service(
+            meta_repo, source_repo, es_client, embedding_client
+        ).sync_table_values(
             table_names,
             mode=mode,
         )
@@ -262,10 +284,15 @@ def sync_column_indexes_task(column_keys: list[list[str]]) -> dict[str, Any]:
         f"truncated={len(keys) > 20}"
     )
 
-    async def operation(meta_repo: MetaPGRepo, source_repo: SourceDorisRepo) -> Any:
+    async def operation(
+        meta_repo: MetaPGRepo,
+        source_repo: SourceDorisRepo,
+        es_client: AsyncElasticsearch,
+        embedding_client: EmbeddingClient,
+    ) -> Any:
         """使用任务级仓储执行字段语义索引同步。"""
         return await build_meta_index_service(
-            meta_repo, source_repo
+            meta_repo, source_repo, es_client, embedding_client
         ).sync_column_indexes(keys)
 
     results = _column_semantic_results(
@@ -297,10 +324,15 @@ def sync_column_values_task(
         f"columns={keys[:20]}, truncated={len(keys) > 20}"
     )
 
-    async def operation(meta_repo: MetaPGRepo, source_repo: SourceDorisRepo) -> Any:
+    async def operation(
+        meta_repo: MetaPGRepo,
+        source_repo: SourceDorisRepo,
+        es_client: AsyncElasticsearch,
+        embedding_client: EmbeddingClient,
+    ) -> Any:
         """使用任务级仓储执行字段取值索引同步。"""
         return await build_meta_index_service(
-            meta_repo, source_repo
+            meta_repo, source_repo, es_client, embedding_client
         ).sync_column_values(
             keys,
             mode=mode,
@@ -330,10 +362,15 @@ def sync_metric_indexes_task(metric_names: list[str]) -> dict[str, Any]:
         f"truncated={len(metric_names) > 20}"
     )
 
-    async def operation(meta_repo: MetaPGRepo, source_repo: SourceDorisRepo) -> Any:
+    async def operation(
+        meta_repo: MetaPGRepo,
+        source_repo: SourceDorisRepo,
+        es_client: AsyncElasticsearch,
+        embedding_client: EmbeddingClient,
+    ) -> Any:
         """使用任务级仓储执行指标语义索引同步。"""
         return await build_meta_index_service(
-            meta_repo, source_repo
+            meta_repo, source_repo, es_client, embedding_client
         ).sync_metric_indexes(metric_names)
 
     results = _metric_semantic_results(
@@ -361,9 +398,16 @@ def import_metadata_task(payload: dict[str, Any], mode: str) -> dict[str, Any]:
         f"metric_count={len(payload.get('metrics', []))}"
     )
 
-    async def operation(meta_repo: MetaPGRepo, source_repo: SourceDorisRepo) -> Any:
+    async def operation(
+        meta_repo: MetaPGRepo,
+        source_repo: SourceDorisRepo,
+        es_client: AsyncElasticsearch,
+        embedding_client: EmbeddingClient,
+    ) -> Any:
         """使用任务级仓储执行元数据导入。"""
-        return await build_meta_import_service(meta_repo, source_repo).import_metadata(
+        return await build_meta_import_service(
+            meta_repo, source_repo, es_client, embedding_client
+        ).import_metadata(
             MetaConfig.model_validate(payload),
             ImportMode(mode),
             False,
@@ -383,12 +427,13 @@ async def _dispatch_value_indexes() -> dict[str, int]:
     """提交到达每日执行时间的字段取值增量同步任务。"""
     now = datetime.now(UTC)
     stale_before = now - timedelta(seconds=cfg.task_queue.task_time_limit_seconds + 300)
-    meta_postgres_client_manager.init()
+    postgres = PostgresClientManager(cfg.meta_postgresql, MetaBase)
     try:
+        postgres.init()
         value_count = 0
         while True:
             async with (
-                meta_postgres_client_manager.session() as session,
+                postgres.session() as session,
                 session.begin(),
             ):
                 values = await MetaPGRepo(session).claim_pending_value_index_keys(
@@ -407,7 +452,7 @@ async def _dispatch_value_indexes() -> dict[str, int]:
                 )
             except Exception as exc:
                 async with (
-                    meta_postgres_client_manager.session() as session,
+                    postgres.session() as session,
                     session.begin(),
                 ):
                     await MetaPGRepo(session).fail_value_index_claims(
@@ -422,7 +467,7 @@ async def _dispatch_value_indexes() -> dict[str, int]:
         logger.info(f"周期字段取值增量同步扫描完成: dispatched_count={value_count}")
         return {"value_count": value_count}
     finally:
-        await meta_postgres_client_manager.close()
+        await postgres.close()
 
 
 @celery_app.task(name=DISPATCH_VALUE_INDEXES_TASK)

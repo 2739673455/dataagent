@@ -5,7 +5,7 @@ import hashlib
 import json
 import time
 from collections.abc import Sequence
-from contextlib import suppress
+from contextlib import AsyncExitStack, suppress
 from typing import Any, BinaryIO
 from uuid import UUID
 
@@ -102,20 +102,30 @@ class DockerSandboxManager:
             raise
         self._client = client
 
+    def _initialize_runtime_sync(self) -> None:
+        """在同一工作线程完成运行时登记和 Docker 初始化。"""
+        if not self._ownership_started:
+            self._ownership.start_runtime()
+            self._ownership_started = True
+        if self._client is None:
+            self._init_sync()
+            self._runtime_pool.reconcile()
+
     async def init(self, *, start_cleanup: bool = True) -> None:
-        """初始化 Docker 沙箱管理器。"""
+        """初始化 Docker 沙箱，失败或取消时释放已取得的资源。"""
         async with self._init_lock:
-            if not self._ownership_started:
-                await asyncio.to_thread(self._ownership.start_runtime)
-                self._ownership_started = True
-            if self._client is None:
+            if not self._ownership_started or self._client is None:
+                initialization = asyncio.create_task(
+                    asyncio.to_thread(self._initialize_runtime_sync)
+                )
                 try:
-                    await asyncio.to_thread(self._init_sync)
-                    await asyncio.to_thread(self._runtime_pool.reconcile)
-                except Exception:
-                    with self._ownership.release_runtime():
-                        pass
-                    self._ownership_started = False
+                    # 取消等待不会停止线程；必须等线程结束后再释放它创建的资源。
+                    await asyncio.shield(initialization)
+                except BaseException:
+                    try:
+                        await initialization
+                    finally:
+                        await self.disconnect()
                     raise
             if start_cleanup and self._cleanup_task is None:
                 self._cleanup_task = asyncio.create_task(
@@ -745,11 +755,12 @@ class DockerSandboxManager:
                     )
                     self._runtime_pool.finalize(containers)
 
-        try:
-            await asyncio.to_thread(release_runtime)
-        finally:
-            self._ownership_started = False
+        async with AsyncExitStack() as stack:
+            stack.push_async_callback(asyncio.to_thread, self._ownership.close)
             if client is not None:
+                stack.push_async_callback(asyncio.to_thread, client.close)
+            try:
+                await asyncio.to_thread(release_runtime)
+            finally:
+                self._ownership_started = False
                 self._client = None
-                await asyncio.to_thread(client.close)
-            await asyncio.to_thread(self._ownership.close)

@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 
 from pydantic import SecretStr
@@ -55,9 +56,10 @@ class DorisClientManager:
 
     async def close(self) -> None:
         """关闭 Doris 连接池并释放资源。"""
-        if self._engine is not None:
-            await self._engine.dispose()
+        resource = self._engine
         self._engine = None
+        if resource is not None:
+            await resource.dispose()
 
 
 class DorisQueryClientRegistry:
@@ -111,8 +113,9 @@ class DorisQueryClientRegistry:
         async with self._lock:
             entries = tuple(self._entries.values())
             self._entries.clear()
-        for entry in entries:
-            await entry.manager.close()
+        async with AsyncExitStack() as stack:
+            for entry in entries:
+                stack.push_async_callback(entry.manager.close)
 
 
 @dataclass(frozen=True, slots=True)
