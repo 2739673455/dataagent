@@ -3,7 +3,6 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Protocol
 from uuid import UUID
 
 from loguru import logger
@@ -36,16 +35,9 @@ from app.identity.services.account_validation import (
 )
 from app.identity.services.auth import AuthenticatedUser, PasswordManager
 from app.identity.services.credential import DorisCredentialCipher
+from app.shared.clients.doris_client_manager import DorisQueryClientRegistry
 from app.shared.config.app_config import AuthConfig
 from app.shared.contracts.assets import asset_resource_key
-
-
-class QueryClientInvalidator(Protocol):
-    """Doris 角色变更所需的查询客户端失效能力。"""
-
-    async def invalidate(self, role_name: str) -> None:
-        """关闭并移除指定角色的共享查询客户端。"""
-        ...
 
 
 @dataclass(frozen=True)
@@ -233,7 +225,7 @@ class DorisRoleManagementService:
         repo: IdentityPGRepo,
         doris_repo: DorisRoleRepository,
         cipher: DorisCredentialCipher,
-        client_registry: QueryClientInvalidator,
+        client_registry: DorisQueryClientRegistry,
         password_manager: PasswordManager,
         auth_config: AuthConfig,
     ) -> None:

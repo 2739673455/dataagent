@@ -36,8 +36,11 @@ from app.assistant.agents.middleware.user_message_context import (
     UserMessageContext,
 )
 from app.assistant.contracts import chat as chat_schema
-from app.assistant.services import chat as chat_service
-from app.assistant.services import message_projection
+from app.assistant.services import (
+    conversation_history,
+    message_projection,
+    planner_turn,
+)
 from app.sandbox.paths import normalize_attachment_path
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -504,7 +507,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
 
         events = [
             event
-            async for event in chat_service.resume_agent_turn(
+            async for event in planner_turn.resume_agent_turn(
                 manager,
                 _FileInspectorStub(),
                 7,
@@ -579,7 +582,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
 
         events = [
             event
-            async for event in chat_service.resume_agent_turn(
+            async for event in planner_turn.resume_agent_turn(
                 manager,
                 _FileInspectorStub(),
                 7,
@@ -623,16 +626,16 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         events: list[chat_schema.ChatStreamEventPayload] = []
         with (
             patch.object(
-                chat_service,
+                planner_turn,
                 "schema_to_human_message",
                 new=MagicMock(return_value=HumanMessage(content="analyze")),
             ),
             self.assertRaisesRegex(
-                chat_service.PlannerContinuationLimitError,
+                planner_turn.PlannerContinuationLimitError,
                 "连续续写次数超过上限",
             ),
         ):
-            async for event in chat_service.run_agent_turn(
+            async for event in planner_turn.run_agent_turn(
                 manager,
                 _FileInspectorStub(),
                 7,
@@ -857,7 +860,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         )
         files = _FileInspectorStub({(7, _CONVERSATION_ID, path.removeprefix("/"))})
 
-        history = await chat_service.list_messages(
+        history = await conversation_history.list_messages(
             manager,
             files,
             7,
@@ -865,7 +868,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         )
         events = [
             event
-            async for event in chat_service.run_agent_turn(
+            async for event in planner_turn.run_agent_turn(
                 manager,
                 files,
                 7,
@@ -1029,11 +1032,11 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         events: list[chat_schema.ChatStreamEventPayload] = []
 
         with patch.object(
-            chat_service,
+            planner_turn,
             "schema_to_human_message",
             new=MagicMock(return_value=HumanMessage(content="analyze")),
         ):
-            async for event in chat_service.run_agent_turn(
+            async for event in planner_turn.run_agent_turn(
                 manager,
                 _FileInspectorStub(),
                 7,
@@ -1096,7 +1099,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 new=expander,
             ),
             patch.object(
-                chat_service,
+                conversation_history,
                 "expand_semantic_recall_messages_for_display",
                 new=expander,
             ),
@@ -1114,7 +1117,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                     status="completed",
                 )
             )
-            history = await chat_service.get_subagent_activity(
+            history = await conversation_history.get_subagent_activity(
                 agents,
                 7,
                 _CONVERSATION_ID,
@@ -1206,12 +1209,12 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
-                chat_service,
+                planner_turn,
                 "schema_to_human_message",
                 new=MagicMock(return_value=HumanMessage(content="analyze")),
             ),
         ):
-            async for event in chat_service.run_agent_turn(
+            async for event in planner_turn.run_agent_turn(
                 manager,
                 _FileInspectorStub(),
                 7,

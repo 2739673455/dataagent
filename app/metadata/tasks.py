@@ -15,14 +15,11 @@ from app.metadata.models.search import (
     SemanticIndexSyncResult,
     ValueIndexSyncResult,
 )
-from app.metadata.providers import (
-    build_meta_import_service,
-    build_meta_index_service,
-)
+from app.metadata.providers import build_meta_index_service
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
 from app.metadata.services.import_service import ImportMode, MetaImportResult
-from app.metadata.task_submission import (
+from app.metadata.task_scheduler import (
     DISPATCH_VALUE_INDEXES_TASK,
     IMPORT_METADATA_TASK,
     SYNC_COLUMN_INDEXES_TASK,
@@ -30,7 +27,7 @@ from app.metadata.task_submission import (
     SYNC_METRIC_INDEXES_TASK,
     SYNC_TABLE_INDEXES_TASK,
     SYNC_TABLE_VALUES_TASK,
-    submit_metadata_task,
+    enqueue_column_values,
 )
 from app.shared.async_runtime import run_async
 from app.shared.clients.doris_client_manager import DorisClientManager
@@ -43,7 +40,7 @@ from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
 from app.shared.database.base import MetaBase
 from app.shared.tasks.celery_app import celery_app
-from app.shared.tasks.submission import TaskSubmission
+from app.workflows.providers import build_meta_import_service
 
 _PERIODIC_BATCH_SIZE = 50
 
@@ -132,63 +129,6 @@ def _import_result(result: MetaImportResult) -> dict[str, Any]:
         "columns": changes(result.columns),
         "metrics": changes(result.metrics),
     }
-
-
-def _enqueue(name: str, args: list[Any]) -> TaskSubmission:
-    """提交元数据任务并记录统一日志。"""
-    submission = submit_metadata_task(name, args)
-    logger.info(f"元数据后台任务已提交: task_id={submission.task_id}, name={name}")
-    return submission
-
-
-def enqueue_table_indexes(table_names: list[str]) -> TaskSubmission:
-    """提交多个表的字段语义索引同步任务。"""
-    return _enqueue(SYNC_TABLE_INDEXES_TASK, [table_names])
-
-
-def enqueue_table_values(
-    table_names: list[str],
-    *,
-    mode: RequestedValueIndexSyncMode,
-) -> TaskSubmission:
-    """提交多个表的字段取值索引同步任务。"""
-    return _enqueue(
-        SYNC_TABLE_VALUES_TASK,
-        [table_names, mode],
-    )
-
-
-def enqueue_column_indexes(column_keys: list[tuple[str, str]]) -> TaskSubmission:
-    """提交指定字段的语义索引同步任务。"""
-    return _enqueue(SYNC_COLUMN_INDEXES_TASK, [column_keys])
-
-
-def enqueue_column_values(
-    column_keys: list[tuple[str, str]],
-    *,
-    mode: RequestedValueIndexSyncMode,
-) -> TaskSubmission:
-    """提交指定字段的取值索引同步任务。"""
-    return _enqueue(
-        SYNC_COLUMN_VALUES_TASK,
-        [column_keys, mode],
-    )
-
-
-def enqueue_metric_indexes(metric_names: list[str]) -> TaskSubmission:
-    """提交指定指标的语义索引同步任务。"""
-    return _enqueue(SYNC_METRIC_INDEXES_TASK, [metric_names])
-
-
-def enqueue_import(
-    meta_config: MetaConfig,
-    mode: ImportMode,
-) -> TaskSubmission:
-    """提交元数据配置导入任务。"""
-    return _enqueue(
-        IMPORT_METADATA_TASK,
-        [meta_config.model_dump(mode="json"), mode.value],
-    )
 
 
 @celery_app.task(

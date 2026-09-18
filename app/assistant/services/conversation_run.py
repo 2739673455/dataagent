@@ -11,7 +11,7 @@ from uuid import UUID
 from loguru import logger
 
 from app.assistant.contracts import chat as chat_schema
-from app.assistant.services import chat as chat_service
+from app.assistant.services import planner_turn
 from app.assistant.services.contracts import (
     AgentRuntimeManager,
     ConversationFileInspector,
@@ -33,7 +33,10 @@ _DELTA_EVENT_TYPES = (
 
 @dataclass(slots=True)
 class _ConversationRun:
-    """一个独立于 SSE 订阅者生命周期的 Planner Run。"""
+    """Run 是一次启动或恢复产生的进程内执行实例。
+
+    独立于 SSE 连接存活，持有后台任务、事件缓存和订阅者；
+    用户 Turn 的可恢复状态由 LangGraph 检查点保存。"""
 
     events: deque[RunEvent] = field(default_factory=deque)
     replay_bytes: int = 0
@@ -159,7 +162,7 @@ class ConversationRunService:
         """执行新回合或恢复回合，并把结果发布给全部订阅者。"""
         user_id, conversation_id = key
         responses = (
-            chat_service.run_agent_turn(
+            planner_turn.run_agent_turn(
                 self._agents,
                 self._files,
                 user_id,
@@ -167,7 +170,7 @@ class ConversationRunService:
                 user_message,
             )
             if user_message is not None
-            else chat_service.resume_agent_turn(
+            else planner_turn.resume_agent_turn(
                 self._agents,
                 self._files,
                 user_id,

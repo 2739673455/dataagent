@@ -129,7 +129,7 @@ services:
         mysql -hdoris-fe -P9030 -uroot <<'SQL'
         CREATE USER IF NOT EXISTS 'atguigu'@'%' IDENTIFIED BY '123123';
         ALTER USER IF EXISTS 'atguigu'@'%' IDENTIFIED BY '123123';
-        GRANT SELECT_PRIV, LOAD_PRIV, ALTER_PRIV, CREATE_PRIV, DROP_PRIV ON internal.*.* TO 'atguigu'@'%';
+        GRANT ADMIN_PRIV ON *.*.* TO 'atguigu'@'%';
         SQL
     depends_on:
       doris-fe:

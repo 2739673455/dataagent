@@ -38,7 +38,10 @@ def _validate_identifier(value: str, field_name: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class AgentSessionKey:
-    """定位一个可续接的专业 Agent Session。"""
+    """定位专业 Agent 的工作会话 Session，可由多次 Delegation 续接。
+
+    conversation_id 属于用户聊天；analysis_id 划分一次分析；session_id
+    在该分析和 agent_type 下定位独立工作上下文，不是用户聊天会话 ID。"""
 
     user_id: int
     conversation_id: UUID

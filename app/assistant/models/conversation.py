@@ -10,7 +10,9 @@ from app.shared.database.base import AssistantBase
 
 
 class Conversation(AssistantBase):
-    """助手会话目录。"""
+    """Conversation 是用户聊天会话，可包含多个 Turn 和分析任务。
+
+    此表保存目录信息；消息和执行检查点由 LangGraph 持久化。"""
 
     __tablename__ = "conversations"
 

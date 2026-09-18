@@ -1,35 +1,17 @@
 import sys
-from contextlib import AsyncExitStack, asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from loguru import logger
 
 from app.assistant.api.attachment.router import router as attachment_router
 from app.assistant.api.chat.router import router as chat_router
 from app.identity.api.admin.router import router as admin_router
 from app.identity.api.admin.task_router import router as task_router
 from app.identity.api.auth.router import router as auth_router
-from app.identity.repositories.doris_role import DorisRoleRepository
-from app.identity.repositories.identity import IdentityPGRepo
-from app.identity.services.credential import DorisCredentialCipher
 from app.metadata.api.meta.router import router as meta_router
-from app.providers import agent_manager, conversation_run_service, sandbox_manager
 from app.query.api.admin.router import router as query_experience_admin_router
-from app.query.repositories.doris import DorisQueryRepository
-from app.shared.clients.doris_client_manager import (
-    admin_doris_client_manager,
-    query_doris_client_registry,
-)
-from app.shared.clients.embedding_client_manager import embedding_client_manager
-from app.shared.clients.es_client_manager import es_client_manager
-from app.shared.clients.langgraph_postgres_manager import langgraph_postgres_manager
-from app.shared.clients.postgres_client_manager import (
-    assistant_postgres_client_manager,
-    auth_postgres_client_manager,
-    meta_postgres_client_manager,
-)
+from app.runtime import lifespan
 from app.shared.config.app_config import cfg
 from app.shared.errors.base import ProblemDetails
 from app.shared.errors.exc_handlers import register_exception_handlers
@@ -54,75 +36,6 @@ _ERROR_RESPONSES = {
         "description": "Problem Details 错误响应",
     },
 }
-
-
-async def _verify_doris_query_identities() -> None:
-    """校验数据库中全部查询身份的 Doris 权限。"""
-    cipher = DorisCredentialCipher(
-        cfg.doris_credentials.encryption_key.get_secret_value()
-    )
-    async with auth_postgres_client_manager.session() as session:
-        identities = await IdentityPGRepo(session).list_query_identities()
-    try:
-        await DorisRoleRepository(admin_doris_client_manager).verify_configured_roles(
-            tuple(identity.role_name for identity in identities)
-        )
-    except Exception as exc:  # noqa: BLE001
-        # 管理员需要应用保持可用以修复 Doris 侧配置；实际查询仍会在身份解析和
-        # Doris 权限边界失败，因此启动检查只负责暴露漂移，不放宽查询权限。
-        logger.warning(f"Doris 查询角色完整性校验未通过，应用继续启动: {exc}")
-    for identity in identities:
-        try:
-            manager = await query_doris_client_registry.get_or_create(
-                identity.role_name,
-                identity.query_user,
-                cipher.decrypt(identity.encrypted_password),
-            )
-            await DorisQueryRepository(manager).verify_readonly_access(
-                identity.workload_group,
-                cfg.doris.database,
-                identity.role_name,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                f"Doris 角色 '{identity.role_name}' 未完成目标库表授权或校验未通过，"
-                f"应用继续启动: {exc}"
-            )
-
-
-@asynccontextmanager
-async def _lifespan(_app: FastAPI):
-    """初始化并释放应用进程持有的共享资源。"""
-    async with AsyncExitStack() as stack:
-        stack.push_async_callback(query_doris_client_registry.close)
-        stack.push_async_callback(admin_doris_client_manager.close)
-        stack.push_async_callback(auth_postgres_client_manager.close)
-        stack.push_async_callback(meta_postgres_client_manager.close)
-        stack.push_async_callback(assistant_postgres_client_manager.close)
-        stack.push_async_callback(es_client_manager.close)
-        stack.push_async_callback(embedding_client_manager.close)
-        stack.push_async_callback(langgraph_postgres_manager.close)
-        stack.push_async_callback(sandbox_manager.close)
-        stack.push_async_callback(agent_manager.close)
-        stack.push_async_callback(conversation_run_service.close)
-        # FastAPI 应用启动前执行。
-        logger.info("开始初始化应用资源")
-        embedding_client_manager.init()
-        es_client_manager.init()
-        await langgraph_postgres_manager.init()
-        await sandbox_manager.init()
-        await agent_manager.init()
-        auth_postgres_client_manager.init()
-        await auth_postgres_client_manager.init_tables()
-        meta_postgres_client_manager.init()
-        await meta_postgres_client_manager.init_tables()
-        assistant_postgres_client_manager.init()
-        await assistant_postgres_client_manager.init_tables()
-        admin_doris_client_manager.init()
-        await _verify_doris_query_identities()
-        logger.info("应用资源初始化完成")
-
-        yield
 
 
 def _register_routes(app: FastAPI) -> None:
@@ -157,7 +70,7 @@ def _register_middlewares(app: FastAPI) -> None:
 def _create_app() -> FastAPI:
     """创建并组装 FastAPI 应用。"""
     setup_logger()
-    app = FastAPI(lifespan=_lifespan, responses=_ERROR_RESPONSES)
+    app = FastAPI(lifespan=lifespan, responses=_ERROR_RESPONSES)
     _register_middlewares(app)
     register_exception_handlers(app)
     _register_routes(app)
