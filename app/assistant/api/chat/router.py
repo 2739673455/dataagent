@@ -33,6 +33,7 @@ from app.assistant.events import schemas as chat_schema
 from app.assistant.execution import planner as planner_turn
 from app.assistant.execution.run import (
     ActiveConversationRunError,
+    ConversationRunStoppedError,
 )
 from app.assistant.execution.turn import (
     ConversationMissingError,
@@ -42,6 +43,7 @@ from app.assistant.task_scheduler import (
     enqueue_conversation_title,
 )
 from app.identity.api.auth.dependencies import AnalysisUserDep, CurrentUserDep
+from app.shared.clients.langgraph_postgres_manager import AdvisoryLockBusyError
 from app.shared.contracts.analysis import AgentType
 from app.shared.observability import context
 
@@ -350,6 +352,8 @@ async def api_stream_chat(
         raise chat_error.ConversationNotFoundError from exc
     except ActiveConversationRunError as exc:
         raise chat_error.ConversationRunConflictError from exc
+    except (AdvisoryLockBusyError, ConversationRunStoppedError) as exc:
+        raise chat_error.ConversationBusyError(detail=str(exc)) from exc
     return _sse_response(body.conversation_id, events)
 
 
@@ -370,6 +374,8 @@ async def api_resume_chat(
         raise chat_error.ConversationNotResumableError from exc
     except ActiveConversationRunError as exc:
         raise chat_error.ConversationRunConflictError from exc
+    except (AdvisoryLockBusyError, ConversationRunStoppedError) as exc:
+        raise chat_error.ConversationBusyError(detail=str(exc)) from exc
     return _sse_response(conversation_id, events)
 
 
