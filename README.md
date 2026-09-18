@@ -163,12 +163,6 @@ uv run celery --app app.shared.tasks.celery_app:celery_app beat -l INFO
 - 前端：<http://localhost:7001>
 - 后端 OpenAPI：<http://localhost:7000/docs>
 
-修改 `docker/sandbox` 中的依赖或 Dockerfile 后，重新构建沙箱镜像：
-
-```bash
-docker compose -f docker/compose.yml build sandbox-image
-```
-
 ## 启动后页面配置
 
 使用 `conf/.env` 中配置的管理员账号登录前端，点击左下角的“后台”按钮进入“管理中心”。
