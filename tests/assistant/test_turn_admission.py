@@ -104,8 +104,9 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
             return False
 
         with (
-            patch(
-                "app.assistant.execution.turn.planner_turn.can_resume_agent_turn",
+            patch.object(
+                self.agents,
+                "can_resume_planner",
                 side_effect=can_resume,
             ),
             self.assertRaises(PlannerTurnNotResumableError),

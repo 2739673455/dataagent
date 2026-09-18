@@ -350,6 +350,11 @@ class _TurnManagerStub:
         self.turn_context = turn_context
         self.execution_count = 0
 
+    async def can_resume_planner(self, user_id: int, conversation_id: UUID) -> bool:
+        return bool(
+            (await self.read_planner_state(user_id, conversation_id)).next_nodes
+        )
+
     async def read_planner_state(
         self,
         user_id: int,

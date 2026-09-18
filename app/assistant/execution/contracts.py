@@ -22,6 +22,10 @@ class AgentRuntimeManager(Protocol):
         """借用并保护会话运行时，退出后允许缓存淘汰。"""
         ...
 
+    async def can_resume_planner(self, user_id: int, conversation_id: UUID) -> bool:
+        """只读取 Planner 的待执行任务状态。"""
+        ...
+
     async def read_planner_state(
         self,
         user_id: int,

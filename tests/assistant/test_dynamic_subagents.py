@@ -29,6 +29,7 @@ from langgraph._internal._constants import (
     CONFIG_KEY_SCRATCHPAD,
     CONFIG_KEY_TASK_ID,
 )
+from langgraph.checkpoint.base import CheckpointTuple, empty_checkpoint
 from langgraph.constants import CONFIG_KEY_CHECKPOINTER
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import Field, ValidationError
@@ -302,11 +303,18 @@ def _history_manager(fake: _FakeAgent) -> AgentManager:
 
     async def get_tuple(config: RunnableConfig):
         namespace = str(config.get("configurable", {}).get("checkpoint_ns"))
-        checkpoint = dict(fake.checkpoints.get(namespace, {}))
+        checkpoint = empty_checkpoint()
+        checkpoint.update(cast(Any, fake.checkpoints.get(namespace, {})))
         checkpoint["channel_values"] = fake.state_values.get(
             namespace, checkpoint.get("channel_values", {})
         )
-        return SimpleNamespace(checkpoint=checkpoint, config=config, pending_writes=[])
+        checkpoint["channel_values"].setdefault("messages", [])
+        return CheckpointTuple(
+            checkpoint=checkpoint,
+            config=config,
+            metadata={"step": 0},
+            pending_writes=[],
+        )
 
     persistence = MagicMock()
     persistence.get_checkpointer.return_value.aget_tuple = AsyncMock(

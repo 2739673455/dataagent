@@ -330,7 +330,17 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, String, Text, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.shared.database.base import MetaBase
@@ -1166,19 +1176,15 @@ async def delete_query_experience(
 每次取得连接后、执行 SQL 前，都会把当前角色的 Workload Group 和两项资源限制写入 Doris 会话：
 
 ```python
-    @staticmethod
-    async def _apply_session_limits(
-        connection: AsyncConnection,
-        limits: QueryExecutionLimits,
-    ) -> None:
-        """设置当前连接的 Doris 查询资源限制。"""
-        await connection.execute(
-            text(f"SET workload_group = '{limits.workload_group}'")
-        )
-        await connection.execute(text(f"SET query_timeout = {limits.timeout_seconds}"))
-        await connection.execute(
-            text(f"SET exec_mem_limit = {limits.memory_limit_bytes}")
-        )
+@staticmethod
+async def _apply_session_limits(
+    connection: AsyncConnection,
+    limits: QueryExecutionLimits,
+) -> None:
+    """设置当前连接的 Doris 查询资源限制。"""
+    await connection.execute(text(f"SET workload_group = '{limits.workload_group}'"))
+    await connection.execute(text(f"SET query_timeout = {limits.timeout_seconds}"))
+    await connection.execute(text(f"SET exec_mem_limit = {limits.memory_limit_bytes}"))
 ```
 
 ### 10. 查询经验返回前重新核对版本和权限
