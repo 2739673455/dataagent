@@ -370,7 +370,7 @@ from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
 from app.shared.database.base import AssistantBase, AuthBase, MetaBase
 from app.shared.tasks.celery_app import TASK_VISIBILITY_TIMEOUT_SECONDS, celery_app
-from app.shared.tasks.runner import run_async
+from app.shared.async_runtime import run_async
 from app.shared.tasks.submission import TaskSubmission
 from app.workflows.user_deletion import UserDeletionService
 

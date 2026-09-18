@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -71,6 +72,7 @@ class ConversationAgentRuntimeFactory:
         self._tombstones = tombstones
         self._init_lock = asyncio.Lock()
         self._resources: _SharedAgentResources | None = None
+        self._model_contexts = AsyncExitStack()
 
     async def init(self) -> None:
         """初始化所有 Conversation 共享的模型和专业 Agent 能力。"""
@@ -90,28 +92,34 @@ class ConversationAgentRuntimeFactory:
                 for agent_type in AGENT_TYPES
             }
             configured_names = {active_model_name, *specialist_model_names.values()}
-            models = {
-                model_name: create_configured_model(model_name)
-                for model_name in configured_names
-            }
-            specialist_models: dict[AgentType, BaseChatModel] = {
-                agent_type: models[model_name]
-                for agent_type, model_name in specialist_model_names.items()
-            }
-            explorer_tools = [
-                *create_semantic_recall_tools(),
-                create_execute_sql_tool(build_query_execution_handler(self._sandbox)),
-            ]
-            explorer_mcp_tools = await get_mcp_tools()
+            async with AsyncExitStack() as stack:
+                models = {
+                    model_name: await stack.enter_async_context(
+                        create_configured_model(model_name)
+                    )
+                    for model_name in configured_names
+                }
+                specialist_models: dict[AgentType, BaseChatModel] = {
+                    agent_type: models[model_name]
+                    for agent_type, model_name in specialist_model_names.items()
+                }
+                explorer_tools = [
+                    *create_semantic_recall_tools(),
+                    create_execute_sql_tool(
+                        build_query_execution_handler(self._sandbox)
+                    ),
+                ]
+                explorer_mcp_tools = await get_mcp_tools()
 
-            self._resources = _SharedAgentResources(
-                planner_model=models[active_model_name],
-                specialist_models=specialist_models,
-                specialist_definitions=build_specialist_definitions(
-                    explorer_tools,
-                    explorer_mcp_tools,
-                ),
-            )
+                self._resources = _SharedAgentResources(
+                    planner_model=models[active_model_name],
+                    specialist_models=specialist_models,
+                    specialist_definitions=build_specialist_definitions(
+                        explorer_tools,
+                        explorer_mcp_tools,
+                    ),
+                )
+                self._model_contexts = stack.pop_all()
 
     async def create(
         self,
@@ -198,6 +206,7 @@ class ConversationAgentRuntimeFactory:
             interpreter_memory_limit_bytes=interpreter.memory_limit_bytes,
         )
 
-    def close(self) -> None:
-        """释放当前进程持有的共享 Agent 配置。"""
+    async def close(self) -> None:
+        """释放共享 Agent 配置及其模型客户端。"""
         self._resources = None
+        await self._model_contexts.aclose()

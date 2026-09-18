@@ -3,7 +3,7 @@
 import asyncio
 import hashlib
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg import AsyncConnection
@@ -72,25 +72,17 @@ class LangGraphPostgresManager:
                 "row_factory": dict_row,
             },
         )
-        try:
+        async with AsyncExitStack() as rollback:
+            rollback.push_async_callback(pool.close)
+            rollback.push_async_callback(advisory_pool.close)
             await pool.open(wait=True)
             await advisory_pool.open(wait=True)
-        except Exception:
-            await advisory_pool.close()
-            await pool.close()
-            raise
-
-        checkpointer = AsyncPostgresSaver(pool)
-        try:
+            checkpointer = AsyncPostgresSaver(pool)
             await checkpointer.setup()
-        except Exception:
-            await advisory_pool.close()
-            await pool.close()
-            raise
-
-        self._pool = pool
-        self._advisory_pool = advisory_pool
-        self._checkpointer = checkpointer
+            self._pool = pool
+            self._advisory_pool = advisory_pool
+            self._checkpointer = checkpointer
+            rollback.pop_all()
 
     def get_checkpointer(self) -> AsyncPostgresSaver:
         """获取已初始化的 Checkpointer。"""
@@ -220,14 +212,16 @@ class LangGraphPostgresManager:
 
     async def close(self) -> None:
         """关闭连接池并释放持久化组件。"""
-        if self._advisory_pool is not None:
-            await self._advisory_pool.close()
-        if self._pool is not None:
-            await self._pool.close()
+        pool, advisory_pool = self._pool, self._advisory_pool
         self._advisory_pool = None
         self._pool = None
         self._checkpointer = None
         self._advisory_locks.clear()
+        async with AsyncExitStack() as stack:
+            if pool is not None:
+                stack.push_async_callback(pool.close)
+            if advisory_pool is not None:
+                stack.push_async_callback(advisory_pool.close)
 
 
 langgraph_postgres_manager = LangGraphPostgresManager(cfg.langgraph_postgresql)

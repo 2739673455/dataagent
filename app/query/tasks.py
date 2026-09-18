@@ -1,5 +1,6 @@
 """查询经验索引后台任务。"""
 
+from contextlib import AsyncExitStack
 from uuid import UUID
 
 from loguru import logger
@@ -7,30 +8,35 @@ from loguru import logger
 from app.query.providers import build_query_experience_indexer
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
 from app.query.task_scheduler import query_experience_index_scheduler
-from app.shared.clients.embedding_client_manager import embedding_client_manager
-from app.shared.clients.es_client_manager import es_client_manager
-from app.shared.clients.postgres_client_manager import meta_postgres_client_manager
+from app.shared.async_runtime import run_async
+from app.shared.clients.embedding_client_manager import EmbeddingClientManager
+from app.shared.clients.es_client_manager import ESClientManager
+from app.shared.clients.postgres_client_manager import PostgresClientManager
+from app.shared.config.app_config import cfg
+from app.shared.database.base import MetaBase
 from app.shared.tasks.celery_app import celery_app
-from app.shared.tasks.runner import run_async
 
 _REPAIR_BATCH_SIZE = 500
 
 
 async def _sync_index(experience_id: UUID, revision: int) -> int:
     """初始化任务资源并同步指定查询经验索引。"""
-    embedding_client_manager.init()
-    es_client_manager.init()
-    meta_postgres_client_manager.init()
-    try:
-        async with meta_postgres_client_manager.session() as session:
-            return await build_query_experience_indexer(session).sync(
-                experience_id,
-                revision,
-            )
-    finally:
-        await meta_postgres_client_manager.close()
-        await es_client_manager.close()
-        await embedding_client_manager.close()
+    embedding = EmbeddingClientManager(cfg.embedding)
+    es = ESClientManager(cfg.elasticsearch)
+    postgres = PostgresClientManager(cfg.meta_postgresql, MetaBase)
+    async with AsyncExitStack() as stack:
+        stack.push_async_callback(embedding.close)
+        stack.push_async_callback(es.close)
+        stack.push_async_callback(postgres.close)
+        embedding.init()
+        es.init()
+        postgres.init()
+        async with postgres.session() as session:
+            return await build_query_experience_indexer(
+                session,
+                es.get_client(),
+                embedding.get_client(),
+            ).sync(experience_id, revision)
 
 
 @celery_app.task(
@@ -62,9 +68,10 @@ def sync_index_task(
 
 async def _repair_indexes() -> dict[str, int]:
     """扫描索引版本落后的查询经验并提交补偿任务。"""
-    meta_postgres_client_manager.init()
+    postgres = PostgresClientManager(cfg.meta_postgresql, MetaBase)
     try:
-        async with meta_postgres_client_manager.session() as session, session.begin():
+        postgres.init()
+        async with postgres.session() as session, session.begin():
             pending = await QueryExperiencePGRepo(session).list_pending_index_repairs(
                 limit=_REPAIR_BATCH_SIZE
             )
@@ -85,7 +92,7 @@ async def _repair_indexes() -> dict[str, int]:
         )
         return stats
     finally:
-        await meta_postgres_client_manager.close()
+        await postgres.close()
 
 
 @celery_app.task(name="dataagent.query.repair_indexes")

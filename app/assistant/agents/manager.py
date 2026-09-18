@@ -333,4 +333,4 @@ class AgentManager:
             *(runtime.shell_jobs.cleanup() for runtime in runtimes),
             return_exceptions=True,
         )
-        self._runtime_factory.close()
+        await self._runtime_factory.close()

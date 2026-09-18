@@ -6,7 +6,7 @@ import { type MetricInfo, metaApi } from "@/api/meta";
 import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { Button } from "@/components/ui/button";
 import { ColumnReferenceBadge } from "./ColumnReferenceBadge";
-import { MetricCreateDialog, MetricEditDialog } from "./MetricDialogs";
+import { MetricEditorDialog, type MetricDraft } from "./MetricDialogs";
 import { SemanticIndexStatus } from "./SemanticIndexStatus";
 import { parseMetricColumns, splitCsv } from "./utils";
 
@@ -29,15 +29,7 @@ export function MetricSection({
   onSyncMetricIndexes,
   onReloadCatalog,
 }: MetricSectionProps) {
-  const [isCreatingMetric, setIsCreatingMetric] = useState(false);
-  const [newMetricName, setNewMetricName] = useState("");
-  const [newMetricDesc, setNewMetricDesc] = useState("");
-  const [newMetricColumns, setNewMetricColumns] = useState("");
-  const [newMetricAlias, setNewMetricAlias] = useState("");
-  const [editingMetric, setEditingMetric] = useState<MetricInfo | null>(null);
-  const [editMetricDesc, setEditMetricDesc] = useState("");
-  const [editMetricColumns, setEditMetricColumns] = useState("");
-  const [editMetricAlias, setEditMetricAlias] = useState("");
+  const [editor, setEditor] = useState<MetricDraft | null>(null);
   const [savingMetric, setSavingMetric] = useState(false);
   const [deletingMetric, setDeletingMetric] = useState<string | null>(null);
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
@@ -61,42 +53,25 @@ export function MetricSection({
     }
   };
 
-  const handleCreateMetric = async () => {
-    if (!newMetricName.trim() || !newMetricDesc.trim()) {
-      toast.error("指标名称和业务口径说明不能为空");
+  const handleSaveMetric = async () => {
+    if (!editor) return;
+    const name = editor.name.trim();
+    if (!name || !editor.description.trim()) {
+      toast.error("指标名称和业务描述不能为空");
       return;
     }
     setSavingMetric(true);
     try {
-      await metaApi.upsertMetric(newMetricName.trim(), {
-        description: newMetricDesc.trim(),
-        relevant_columns: parseMetricColumns(newMetricColumns),
-        alias: splitCsv(newMetricAlias),
+      await metaApi.upsertMetric(name, {
+        description: editor.description.trim(),
+        relevant_columns: parseMetricColumns(editor.columns),
+        alias: splitCsv(editor.alias),
       });
-      toast.success(`指标 ${newMetricName.trim()} 添加成功`);
-      setIsCreatingMetric(false);
+      toast.success(`指标 ${name} ${editor.mode === "create" ? "添加" : "更新"}成功`);
+      setEditor(null);
       await onReloadCatalog();
     } catch (error) {
-      toast.error(getApiErrorMessage(error, "添加指标失败"));
-    } finally {
-      setSavingMetric(false);
-    }
-  };
-
-  const handleSaveMetric = async () => {
-    if (!editingMetric) return;
-    setSavingMetric(true);
-    try {
-      await metaApi.upsertMetric(editingMetric.name, {
-        description: editMetricDesc.trim(),
-        relevant_columns: parseMetricColumns(editMetricColumns),
-        alias: splitCsv(editMetricAlias),
-      });
-      toast.success(`指标 ${editingMetric.name} 更新成功`);
-      setEditingMetric(null);
-      await onReloadCatalog();
-    } catch (error) {
-      toast.error(getApiErrorMessage(error, "更新指标失败"));
+      toast.error(getApiErrorMessage(error, "保存指标元数据失败"));
     } finally {
       setSavingMetric(false);
     }
@@ -177,12 +152,7 @@ export function MetricSection({
           <Button
             size="sm"
             onClick={() => {
-              setEditingMetric(null);
-              setIsCreatingMetric(true);
-              setNewMetricName("");
-              setNewMetricDesc("");
-              setNewMetricColumns("");
-              setNewMetricAlias("");
+              setEditor({ mode: "create", name: "", description: "", columns: "", alias: "" });
             }}
             className="h-7 px-2 text-xs"
             title="添加业务指标"
@@ -193,33 +163,15 @@ export function MetricSection({
         </div>
       </div>
 
-      <MetricCreateDialog
-        isOpen={isCreatingMetric}
-        newMetricAlias={newMetricAlias}
-        newMetricColumns={newMetricColumns}
-        newMetricDesc={newMetricDesc}
-        newMetricName={newMetricName}
-        onClose={() => setIsCreatingMetric(false)}
-        onSubmit={handleCreateMetric}
-        savingMetric={savingMetric}
-        setNewMetricAlias={setNewMetricAlias}
-        setNewMetricColumns={setNewMetricColumns}
-        setNewMetricDesc={setNewMetricDesc}
-        setNewMetricName={setNewMetricName}
-      />
-
-      <MetricEditDialog
-        editMetricAlias={editMetricAlias}
-        editMetricColumns={editMetricColumns}
-        editMetricDesc={editMetricDesc}
-        editingMetric={editingMetric}
-        onClose={() => setEditingMetric(null)}
-        onSubmit={handleSaveMetric}
-        savingMetric={savingMetric}
-        setEditMetricAlias={setEditMetricAlias}
-        setEditMetricColumns={setEditMetricColumns}
-        setEditMetricDesc={setEditMetricDesc}
-      />
+      {editor && (
+        <MetricEditorDialog
+          draft={editor}
+          onChange={setEditor}
+          onClose={() => setEditor(null)}
+          onSubmit={handleSaveMetric}
+          saving={savingMetric}
+        />
+      )}
 
       <div className="mt-4 rounded border border-[#d4d4ce]">
         {metrics.length === 0 ? (
@@ -347,15 +299,16 @@ export function MetricSection({
                             variant="outline"
                             size="sm"
                             onClick={() => {
-                              setIsCreatingMetric(false);
-                              setEditingMetric(metric);
-                              setEditMetricDesc(metric.description);
-                              setEditMetricColumns(
-                                metric.relevant_columns
-                                  ?.map((c) => `${c.t_name}.${c.c_name}`)
-                                  .join(", ") || ""
-                              );
-                              setEditMetricAlias(metric.alias?.join(", ") || "");
+                              setEditor({
+                                mode: "edit",
+                                name: metric.name,
+                                description: metric.description,
+                                columns:
+                                  metric.relevant_columns
+                                    ?.map((c) => `${c.t_name}.${c.c_name}`)
+                                    .join(", ") || "",
+                                alias: metric.alias?.join(", ") || "",
+                              });
                             }}
                             className="h-7 px-2 text-xs"
                             title={`编辑指标 ${metric.name}`}

@@ -1,10 +1,11 @@
 """语义索引差量读写原语。"""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
 from elasticsearch import AsyncElasticsearch
+from loguru import logger
 
 from app.metadata.models.catalog import ColumnKey, column_resource_key
 from app.metadata.models.search import (
@@ -13,6 +14,7 @@ from app.metadata.models.search import (
     SemanticTextType,
 )
 from app.shared.config.app_config import cfg
+from app.shared.contracts.search import SearchHit
 
 _SOURCE_FIELDS = [
     "resource_key",
@@ -375,3 +377,69 @@ class SemanticIndexRepo:
         if include_embedding:
             source["embedding"] = document.embedding
         return source
+
+    async def list_resource_documents(
+        self, resource_key: str
+    ) -> list[SemanticIndexDocument]:
+        """读取资源文档；发现损坏时删除整个资源的文档以便重建。"""
+        result = await self.list_documents({"term": {"resource_key": resource_key}})
+        if result.corrupted_document_ids:
+            logger.bind(
+                index_name=self._index_name,
+                document_ids=result.corrupted_document_ids,
+                resource_key=resource_key,
+                stage="rebuild-corrupted-resource",
+            ).warning(f"{self._resource_label}检测到损坏文档，开始重建当前资源")
+            await self.delete_by_filter([{"term": {"resource_key": resource_key}}])
+            return []
+        return result.documents
+
+    def parse_hits[T](
+        self,
+        result: dict[str, Any],
+        parse_payload: Callable[[dict[str, Any]], T],
+    ) -> list[SearchHit[T]]:
+        """将 Elasticsearch 命中转换为领域结果。"""
+        search_hits = result["hits"]["hits"]
+        converted: list[SearchHit[T]] = []
+        for hit in search_hits:
+            document_id = (
+                str(hit.get("_id"))
+                if isinstance(hit, dict) and hit.get("_id") is not None
+                else "<missing>"
+            )
+            source_value = hit.get("_source") if isinstance(hit, dict) else None
+            resource_key = (
+                source_value.get("resource_key")
+                if isinstance(source_value, dict)
+                and isinstance(source_value.get("resource_key"), str)
+                else "<missing>"
+            )
+            try:
+                if not isinstance(hit, dict):
+                    raise TypeError("搜索命中不是对象")
+                source = hit.get("_source")
+                if not isinstance(source, dict):
+                    raise TypeError("搜索命中缺少对象类型的 _source")
+                payload = source.get("payload")
+                if not isinstance(payload, dict):
+                    raise TypeError("搜索命中 payload 必须为对象")
+                converted.append(
+                    SearchHit(
+                        item=parse_payload(payload),
+                        score=float(hit.get("_score") or 0.0),
+                    )
+                )
+            except (TypeError, ValueError, KeyError) as exc:
+                logger.bind(
+                    index_name=self._index_name,
+                    document_id=document_id,
+                    resource_key=resource_key,
+                    stage="read-corrupted-document",
+                ).warning(f"{self._resource_label}读取到损坏文档")
+                raise CorruptedSemanticIndexDocumentError(
+                    resource_label=self._resource_label,
+                    index_name=self._index_name,
+                    document_id=document_id,
+                ) from exc
+        return converted

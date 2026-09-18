@@ -1,11 +1,12 @@
 """使用 CLI 参数或环境变量引导平台管理员。"""
 
 import argparse
-import asyncio
 import os
 from pathlib import Path
 
 import dotenv
+
+from app.shared.async_runtime import run_async
 
 _USERNAME_ENV = "ADMIN_USERNAME"
 _EMAIL_ENV = "ADMIN_EMAIL"
@@ -56,8 +57,8 @@ async def _bootstrap_admin() -> None:
     )
     from app.shared.config.app_config import cfg
 
-    auth_postgres_client_manager.init()
     try:
+        auth_postgres_client_manager.init()
         await auth_postgres_client_manager.init_tables()
         async with auth_postgres_client_manager.session() as session:
             result = await AuthService(
@@ -76,4 +77,4 @@ async def _bootstrap_admin() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(_bootstrap_admin())
+    run_async(_bootstrap_admin())

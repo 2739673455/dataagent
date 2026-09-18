@@ -1,26 +1,20 @@
 """跨存储用户注销后台任务。"""
 
+from contextlib import AsyncExitStack
 from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 
-from app.assistant.agents.filesystem import packaged_skill_readonly_mounts
-from app.assistant.agents.manager import AgentManager
-from app.assistant.providers import build_conversation_lifecycle_service
-from app.assistant.services.conversation_tombstone_store import (
-    ConversationTombstoneStore,
-)
+from app.assistant.lifecycle_runtime import conversation_lifecycle_resources
 from app.identity.services.user_deletion_store import PostgresUserDeletionStateStore
-from app.sandbox.providers import create_sandbox_manager
-from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
+from app.shared.async_runtime import run_async
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
-from app.shared.database.base import AssistantBase, AuthBase, MetaBase
+from app.shared.database.base import AuthBase
 from app.shared.tasks.celery_app import (
     TASK_VISIBILITY_TIMEOUT_SECONDS,
     celery_app,
 )
-from app.shared.tasks.runner import run_async
 from app.shared.tasks.submission import TaskSubmission
 from app.workflows.user_deletion import UserDeletionService
 
@@ -30,8 +24,6 @@ def enqueue_user_deletion(user_id: int) -> TaskSubmission:
     task = celery_app.send_task(
         "dataagent.workflows.delete_user",
         args=[user_id],
-        queue="lifecycle",
-        routing_key="lifecycle",
     )
     submission = TaskSubmission(task_id=task.id)
     logger.info(
@@ -43,59 +35,23 @@ def enqueue_user_deletion(user_id: int) -> TaskSubmission:
 async def _process_user_deletion(user_id: int) -> None:
     """初始化跨存储资源并处理单个用户注销任务。"""
     auth_postgres = PostgresClientManager(cfg.auth_postgresql, AuthBase)
-    assistant_postgres = PostgresClientManager(
-        cfg.langgraph_postgresql,
-        AssistantBase,
-    )
-    meta_postgres = PostgresClientManager(
-        cfg.meta_postgresql,
-        MetaBase,
-    )
-    persistence = LangGraphPostgresManager(cfg.langgraph_postgresql)
-    sandbox = create_sandbox_manager(
-        cfg.sandbox,
-        packaged_skill_readonly_mounts(),
-    )
-    agents = AgentManager(
-        persistence,
-        sandbox,
-        ConversationTombstoneStore(assistant_postgres),
-    )
-    conversations = build_conversation_lifecycle_service(
-        persistence,
-        assistant_postgres,
-        meta_postgres,
-        agents,
-        sandbox,
-        cfg.lifecycle,
-    )
-    state_store = PostgresUserDeletionStateStore(auth_postgres)
-    service = UserDeletionService(
-        state_store,
-        sandbox,
-        conversations,
-        cfg.lifecycle,
-    )
-
-    auth_postgres.init()
-    assistant_postgres.init()
-    meta_postgres.init()
-    await persistence.init()
-    await sandbox.init(start_cleanup=False)
-    try:
+    async with AsyncExitStack() as stack:
+        stack.push_async_callback(auth_postgres.close)
+        auth_postgres.init()
+        resources = await stack.enter_async_context(conversation_lifecycle_resources())
+        state_store = PostgresUserDeletionStateStore(auth_postgres)
+        service = UserDeletionService(
+            state_store,
+            resources.sandbox,
+            resources.conversations,
+            cfg.lifecycle,
+        )
         started_at = datetime.now(UTC)
         await state_store.extend_claim(
             user_id,
             lease_until=started_at + timedelta(seconds=TASK_VISIBILITY_TIMEOUT_SECONDS),
         )
         await service.process(user_id)
-    finally:
-        await agents.close()
-        await sandbox.disconnect()
-        await persistence.close()
-        await meta_postgres.close()
-        await assistant_postgres.close()
-        await auth_postgres.close()
 
 
 @celery_app.task(
@@ -116,8 +72,8 @@ def delete_user_task(user_id: int) -> dict[str, object]:
 async def _dispatch_due_user_deletions() -> int:
     """原子领取到期注销记录并向生命周期队列提交任务。"""
     auth_postgres = PostgresClientManager(cfg.auth_postgresql, AuthBase)
-    auth_postgres.init()
     try:
+        auth_postgres.init()
         state_store = PostgresUserDeletionStateStore(auth_postgres)
         claimed_at = datetime.now(UTC)
         user_ids = await state_store.claim_due_user_ids(

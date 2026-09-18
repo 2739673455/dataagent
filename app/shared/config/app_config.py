@@ -226,6 +226,12 @@ class ModelCfg(AppConfigModel):
         """禁止附加参数覆盖显式模型配置和协议选项。"""
         reserved = {
             "api_key",
+            "client",
+            "async_client",
+            "root_client",
+            "root_async_client",
+            "http_client",
+            "http_async_client",
             "api_protocol",
             "base_url",
             "max_retries",

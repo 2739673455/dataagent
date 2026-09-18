@@ -58,72 +58,60 @@ export function ValueIndexStatus({ column }: { column: ColumnInfo }) {
   );
 }
 
-export function ColumnCreateDialog({
-  isOpen,
-  newColAlias,
-  newColDesc,
-  newColIndexValues,
-  newColName,
-  newColRefColumn,
-  newColRefTable,
+export interface ColumnDraft {
+  mode: "create" | "edit";
+  tableName: string;
+  name: string;
+  description: string;
+  alias: string;
+  indexValues: boolean;
+  refTable: string;
+  refColumn: string;
+}
+
+export function ColumnEditorDialog({
+  draft,
+  onChange,
   onClose,
   onSubmit,
-  savingColumn,
-  selectedTable,
-  setNewColAlias,
-  setNewColDesc,
-  setNewColIndexValues,
-  setNewColName,
-  setNewColRefColumn,
-  setNewColRefTable,
+  saving,
 }: {
-  isOpen: boolean;
-  newColAlias: string;
-  newColDesc: string;
-  newColIndexValues: boolean;
-  newColName: string;
-  newColRefColumn: string;
-  newColRefTable: string;
+  draft: ColumnDraft;
+  onChange: (draft: ColumnDraft) => void;
   onClose: () => void;
   onSubmit: () => Promise<void>;
-  savingColumn: boolean;
-  selectedTable: string | null;
-  setNewColAlias: (val: string) => void;
-  setNewColDesc: (val: string) => void;
-  setNewColIndexValues: (val: boolean) => void;
-  setNewColName: (val: string) => void;
-  setNewColRefColumn: (val: string) => void;
-  setNewColRefTable: (val: string) => void;
+  saving: boolean;
 }) {
-  if (!isOpen) return null;
-
+  const creating = draft.mode === "create";
   return (
     <AdminEditorDialog
-      ariaLabel={`添加字段元数据 ${selectedTable || "未选择"}`}
+      ariaLabel={creating ? `添加字段元数据 ${draft.tableName}` : `编辑字段元数据 ${draft.name}`}
       onClose={onClose}
-      title={`添加字段元数据: ${selectedTable}`}
+      title={creating ? `添加字段元数据: ${draft.tableName}` : `编辑字段元数据: ${draft.name}`}
     >
       <div className="space-y-3">
-        <div>
-          <label htmlFor="new-col-name" className="block text-xs font-medium text-[#71717a] mb-1">
-            字段名称
-          </label>
-          <input
-            id="new-col-name"
-            value={newColName}
-            onChange={(e) => setNewColName(e.target.value)}
-            placeholder="如：order_id"
-            className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-          />
-        </div>
+        {creating && (
+          <div>
+            <label htmlFor="new-col-name" className="block text-xs font-medium text-[#71717a] mb-1">
+              字段名称
+            </label>
+            <input
+              id="new-col-name"
+              value={draft.name}
+              onChange={(e) => onChange({ ...draft, name: e.target.value })}
+              placeholder="如：order_id"
+              className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
+            />
+          </div>
+        )}
         <div>
           <label htmlFor="new-col-desc" className="block text-xs font-medium text-[#71717a] mb-1">
             字段描述
           </label>
           <textarea
             id="new-col-desc"
-            value={newColDesc}
-            onChange={(e) => setNewColDesc(e.target.value)}
+            value={draft.description}
+            onChange={(e) => onChange({ ...draft, description: e.target.value })}
             placeholder="字段业务含义说明"
             rows={2}
             className="w-full rounded border border-[#d4d4ce] bg-[#ffffff] p-2 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
@@ -135,8 +123,8 @@ export function ColumnCreateDialog({
           </label>
           <input
             id="new-col-alias"
-            value={newColAlias}
-            onChange={(e) => setNewColAlias(e.target.value)}
+            value={draft.alias}
+            onChange={(e) => onChange({ ...draft, alias: e.target.value })}
             placeholder="别名1, 别名2"
             className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
           />
@@ -151,8 +139,8 @@ export function ColumnCreateDialog({
             </label>
             <input
               id="new-col-ref-table"
-              value={newColRefTable}
-              onChange={(e) => setNewColRefTable(e.target.value)}
+              value={draft.refTable}
+              onChange={(e) => onChange({ ...draft, refTable: e.target.value })}
               placeholder="如：dim_user"
               className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
             />
@@ -166,8 +154,8 @@ export function ColumnCreateDialog({
             </label>
             <input
               id="new-col-ref-column"
-              value={newColRefColumn}
-              onChange={(e) => setNewColRefColumn(e.target.value)}
+              value={draft.refColumn}
+              onChange={(e) => onChange({ ...draft, refColumn: e.target.value })}
               placeholder="如：id"
               className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
             />
@@ -181,8 +169,8 @@ export function ColumnCreateDialog({
             <input
               type="checkbox"
               id="new-col-index-values"
-              checked={newColIndexValues}
-              onChange={(e) => setNewColIndexValues(e.target.checked)}
+              checked={draft.indexValues}
+              onChange={(e) => onChange({ ...draft, indexValues: e.target.checked })}
               className="h-4 w-4 rounded accent-[#1e2024]"
             />
             <span>开启取值索引</span>
@@ -191,136 +179,10 @@ export function ColumnCreateDialog({
         <AdminDialogActions>
           <AdminDialogCancelButton onClick={onClose}>取消</AdminDialogCancelButton>
           <AdminDialogPrimaryButton
-            disabled={savingColumn || !newColName.trim() || !newColDesc.trim()}
+            disabled={saving || !draft.name.trim() || !draft.description.trim()}
             onClick={() => void onSubmit()}
           >
-            {savingColumn ? "正在添加..." : "确认添加字段"}
-          </AdminDialogPrimaryButton>
-        </AdminDialogActions>
-      </div>
-    </AdminEditorDialog>
-  );
-}
-
-export function ColumnEditDialog({
-  editColAlias,
-  editColDesc,
-  editColIndexValues,
-  editColRefColumn,
-  editColRefTable,
-  editingColumn,
-  onClose,
-  onSubmit,
-  savingColumn,
-  setEditColAlias,
-  setEditColDesc,
-  setEditColIndexValues,
-  setEditColRefColumn,
-  setEditColRefTable,
-}: {
-  editColAlias: string;
-  editColDesc: string;
-  editColIndexValues: boolean;
-  editColRefColumn: string;
-  editColRefTable: string;
-  editingColumn: ColumnInfo | null;
-  onClose: () => void;
-  onSubmit: () => Promise<void>;
-  savingColumn: boolean;
-  setEditColAlias: (val: string) => void;
-  setEditColDesc: (val: string) => void;
-  setEditColIndexValues: (val: boolean) => void;
-  setEditColRefColumn: (val: string) => void;
-  setEditColRefTable: (val: string) => void;
-}) {
-  if (!editingColumn) return null;
-
-  return (
-    <AdminEditorDialog
-      ariaLabel={`编辑字段元数据 ${editingColumn.name}`}
-      onClose={onClose}
-      title={`编辑字段元数据: ${editingColumn.name}`}
-    >
-      <div className="space-y-3">
-        <div>
-          <label htmlFor="edit-col-desc" className="block text-xs font-medium text-[#71717a] mb-1">
-            字段描述
-          </label>
-          <textarea
-            id="edit-col-desc"
-            value={editColDesc}
-            onChange={(e) => setEditColDesc(e.target.value)}
-            placeholder="字段业务含义说明"
-            rows={2}
-            className="w-full rounded border border-[#d4d4ce] bg-[#ffffff] p-2 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-          />
-        </div>
-        <div>
-          <label htmlFor="edit-col-alias" className="block text-xs font-medium text-[#71717a] mb-1">
-            同义别名（逗号分隔）
-          </label>
-          <input
-            id="edit-col-alias"
-            value={editColAlias}
-            onChange={(e) => setEditColAlias(e.target.value)}
-            placeholder="别名1, 别名2"
-            className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-          />
-        </div>
-        <div className="grid gap-3">
-          <div>
-            <label
-              htmlFor="edit-col-ref-table"
-              className="block text-xs font-medium text-[#71717a] mb-1"
-            >
-              关联引用表
-            </label>
-            <input
-              id="edit-col-ref-table"
-              value={editColRefTable}
-              onChange={(e) => setEditColRefTable(e.target.value)}
-              placeholder="如：dim_user"
-              className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-            />
-          </div>
-          <div>
-            <label
-              htmlFor="edit-col-ref-column"
-              className="block text-xs font-medium text-[#71717a] mb-1"
-            >
-              关联引用列
-            </label>
-            <input
-              id="edit-col-ref-column"
-              value={editColRefColumn}
-              onChange={(e) => setEditColRefColumn(e.target.value)}
-              placeholder="如：id"
-              className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
-            />
-          </div>
-        </div>
-        <div className="flex items-center">
-          <label
-            htmlFor="edit-col-index-values"
-            className="flex cursor-pointer items-center gap-1.5 text-xs text-[#52525b]"
-          >
-            <input
-              type="checkbox"
-              id="edit-col-index-values"
-              checked={editColIndexValues}
-              onChange={(e) => setEditColIndexValues(e.target.checked)}
-              className="h-4 w-4 rounded accent-[#1e2024]"
-            />
-            <span>开启取值索引</span>
-          </label>
-        </div>
-        <AdminDialogActions>
-          <AdminDialogCancelButton onClick={onClose}>取消</AdminDialogCancelButton>
-          <AdminDialogPrimaryButton
-            disabled={savingColumn || !editColDesc.trim()}
-            onClick={() => void onSubmit()}
-          >
-            {savingColumn ? "保存中..." : "保存字段元数据"}
+            {saving ? "保存中..." : creating ? "确认添加字段" : "保存字段元数据"}
           </AdminDialogPrimaryButton>
         </AdminDialogActions>
       </div>

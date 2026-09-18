@@ -113,23 +113,23 @@ sandbox: # 每用户 Docker 沙箱及其持久化数据卷配置。
   stop_containers_on_shutdown: true # 服务关闭时是否停止本实例管理的用户容器。
 
 lm_config: # 可用语言模型集合及默认模型。
-  active: deepseek-deepseek-v4-flash # Planner 和默认 Specialist 使用的模型配置名。
+  active: deepseek-deepseek-flash # Planner 和默认 Specialist 使用的模型配置名。
   models: # 按配置名声明可用语言模型。
-    deepseek-deepseek-v4-flash: # 模型配置名，可由 active 或 Specialist 引用。
+    deepseek-deepseek-flash: # 模型配置名，可由 active 或 Specialist 引用。
       model_provider: deepseek # 使用 DeepSeek 无状态 Responses 专属适配器。
       api_protocol: responses # 显式选择 Responses API，失败时不回退到 Chat Completions。
-      model: deepseek-v4-flash # 供应商侧模型标识。
+      model: deepseek-flash # 供应商侧模型标识。
       base_url: https://api.deepseek.com # 模型供应商 API 地址。
       api_key: ${oc.env:DEEPSEEK_API_KEY} # 模型供应商 API 密钥。
       params: {} # 传给模型客户端的附加初始化参数。
       profile: # 模型能力描述和上下文限制。
-        image_inputs: false # 当前模型是否支持识别图片内容。
+        image_inputs: true # 当前模型是否支持识别图片内容。
         structured_output: false # DeepSeek Responses 原生 JSON Schema 可能返回空正文，Specialist 使用工具调用输出。
         max_input_tokens: 1048576 # 模型上下文长度，用于计算对话压缩阈值。
-    openrouter-deepseek-v4-flash:
+    openrouter-deepseek-v4.1-flash:
       model_provider: openrouter
       api_protocol: chat_completions
-      model: deepseek/deepseek-v4-flash-0731
+      model: deepseek/deepseek-v4.1-flash
       base_url: https://openrouter.ai/api/v1
       api_key: ${oc.env:OPENROUTER_API_KEY}
       params: {}

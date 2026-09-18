@@ -116,3 +116,64 @@ def test_delete_conversation_does_not_create_empty_storage() -> None:
     client.containers.create.assert_not_called()
     client.volumes.create.assert_not_called()
     archive.delete_conversation.assert_not_called()
+
+
+def test_init_cancellation_waits_for_thread_then_releases_resources() -> None:
+    """初始化线程不能在取消后的清理之外继续创建 Docker 客户端。"""
+    from threading import Event
+
+    import pytest
+
+    manager = DockerSandboxManager(build_sandbox_config(), FakeSandboxOwnership(), ())
+    client = MagicMock()
+    started, finish = Event(), Event()
+
+    def initialize() -> None:
+        started.set()
+        assert finish.wait(5)
+        manager._client = client
+        manager._ownership_started = True
+
+    async def run() -> None:
+        task = asyncio.create_task(manager.init(start_cleanup=False))
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+        finally:
+            finish.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        client.close.assert_called_once()
+        assert manager._client is None
+        assert not manager._ownership_started
+
+    with patch.object(manager, "_initialize_runtime_sync", side_effect=initialize):
+        asyncio.run(run())
+
+
+def test_init_failure_closes_client_created_before_reconcile() -> None:
+    """Docker 已连接但运行时校验失败时，客户端仍被关闭。"""
+    import pytest
+
+    manager = DockerSandboxManager(build_sandbox_config(), FakeSandboxOwnership(), ())
+    client = MagicMock()
+
+    def initialize() -> None:
+        manager._client = client
+
+    async def run() -> None:
+        with pytest.raises(RuntimeError, match="reconcile"):
+            await manager.init(start_cleanup=False)
+        client.close.assert_called_once()
+        assert manager._client is None
+        assert not manager._ownership_started
+
+    with (
+        patch.object(manager, "_init_sync", side_effect=initialize),
+        patch.object(
+            manager._runtime_pool, "reconcile", side_effect=RuntimeError("reconcile")
+        ),
+    ):
+        asyncio.run(run())

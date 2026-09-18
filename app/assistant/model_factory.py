@@ -1,9 +1,11 @@
 """语言模型实例构建。"""
 
-from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, cast
 from uuid import uuid4
 
+import httpx
 from deepagents import (
     GeneralPurposeSubagentProfile,
     HarnessProfile,
@@ -228,8 +230,9 @@ class DataAgentDeepSeekResponses(DataAgentResponses):
                 yield generation_chunk
 
 
-def create_configured_model(model_name: str) -> BaseChatModel:
-    """按配置名称创建聊天模型。"""
+@asynccontextmanager
+async def create_configured_model(model_name: str) -> AsyncGenerator[BaseChatModel]:
+    """创建并持有聊天模型客户端，退出时在当前循环中关闭。"""
     try:
         model_cfg = app_config.cfg.lm_config.models[model_name]
     except KeyError as exc:
@@ -257,28 +260,53 @@ def create_configured_model(model_name: str) -> BaseChatModel:
         "max_retries": 0,
         "streaming": True,
     }
-    if model_cfg.api_protocol == "responses":
-        model_class = (
-            DataAgentDeepSeekResponses
-            if model_cfg.model_provider == "deepseek"
-            else DataAgentResponses
+    async with AsyncExitStack() as stack:
+        if model_cfg.model_provider == "openrouter":
+            # SDK 不使用 ChatOpenAI 的 HTTP 客户端接口；包括自定义 headers
+            # 分支创建的两个 transport，都由本模型上下文负责关闭。
+            model = ChatOpenRouter(
+                **model_kwargs,
+                timeout=_REQUEST_TIMEOUT_SECONDS * 1000,
+            )
+            sdk_config = model.client.sdk_configuration
+            stack.callback(sdk_config.client.close)
+            stack.push_async_callback(sdk_config.async_client.aclose)
+            yield model
+            return
+
+        http_client = stack.enter_context(
+            httpx.Client(
+                timeout=_REQUEST_TIMEOUT_SECONDS,
+                follow_redirects=True,
+            )
         )
-        return model_class(
-            **model_kwargs,
-            timeout=_REQUEST_TIMEOUT_SECONDS,
-            use_responses_api=True,
-            output_version="responses/v1",
-            store=False,
-            use_previous_response_id=False,
+        http_async_client = await stack.enter_async_context(
+            httpx.AsyncClient(
+                timeout=_REQUEST_TIMEOUT_SECONDS,
+                follow_redirects=True,
+            )
         )
-    if model_cfg.model_provider == "openrouter":
-        # ChatOpenRouter 将 timeout 原样映射到毫秒制 timeout_ms。
-        return ChatOpenRouter(
-            **model_kwargs,
-            timeout=_REQUEST_TIMEOUT_SECONDS * 1000,
+        model_kwargs.update(
+            http_client=http_client,
+            http_async_client=http_async_client,
         )
-    return init_chat_model(
-        model_provider=model_cfg.model_provider,
-        **model_kwargs,
-        timeout=_REQUEST_TIMEOUT_SECONDS,
-    )
+        if model_cfg.api_protocol == "responses":
+            model_class = (
+                DataAgentDeepSeekResponses
+                if model_cfg.model_provider == "deepseek"
+                else DataAgentResponses
+            )
+            yield model_class(
+                **model_kwargs,
+                timeout=_REQUEST_TIMEOUT_SECONDS,
+                use_responses_api=True,
+                output_version="responses/v1",
+                store=False,
+                use_previous_response_id=False,
+            )
+        else:
+            yield init_chat_model(
+                model_provider=model_cfg.model_provider,
+                **model_kwargs,
+                timeout=_REQUEST_TIMEOUT_SECONDS,
+            )

@@ -75,10 +75,11 @@ class PostgresClientManager:
 
     async def close(self) -> None:
         """关闭数据库引擎并释放资源。"""
-        if self._engine is not None:
-            await self._engine.dispose()
+        resource = self._engine
         self._engine = None
         self._session_maker = None
+        if resource is not None:
+            await resource.dispose()
 
     async def init_tables(self) -> None:
         """根据当前 ORM 模型创建尚未存在的数据表。"""

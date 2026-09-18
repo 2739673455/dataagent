@@ -30,9 +30,10 @@ class ESClientManager:
 
     async def close(self) -> None:
         """关闭 Elasticsearch 客户端并释放资源。"""
-        if self._client is not None:
-            await self._client.close()
+        resource = self._client
         self._client = None
+        if resource is not None:
+            await resource.close()
 
 
 es_client_manager = ESClientManager(cfg.elasticsearch)

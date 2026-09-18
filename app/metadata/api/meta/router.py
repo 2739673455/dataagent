@@ -50,6 +50,8 @@ from app.metadata.tasks import (
     enqueue_table_values,
 )
 from app.shared.clients.doris_client_manager import admin_doris_client_manager
+from app.shared.clients.embedding_client_manager import embedding_client_manager
+from app.shared.clients.es_client_manager import es_client_manager
 from app.shared.clients.postgres_client_manager import meta_postgres_client_manager
 from app.shared.tasks.schemas import TaskAcceptedResponse
 
@@ -67,7 +69,12 @@ async def _get_meta_catalog_service(
     ):
         meta_repo = MetaPGRepo(session=meta_session)
         source_repo = SourceDorisRepo(connection=source_connection)
-        yield build_meta_catalog_service(meta_repo, source_repo)
+        yield build_meta_catalog_service(
+            meta_repo,
+            source_repo,
+            es_client_manager.get_client(),
+            embedding_client_manager.get_client(),
+        )
 
 
 async def _get_meta_import_service() -> AsyncGenerator[MetaImportService]:
@@ -78,7 +85,12 @@ async def _get_meta_import_service() -> AsyncGenerator[MetaImportService]:
     ):
         meta_repo = MetaPGRepo(session=meta_session)
         source_repo = SourceDorisRepo(connection=source_connection)
-        yield build_meta_import_service(meta_repo, source_repo)
+        yield build_meta_import_service(
+            meta_repo,
+            source_repo,
+            es_client_manager.get_client(),
+            embedding_client_manager.get_client(),
+        )
 
 
 MetaCatalogServiceDep = Annotated[
