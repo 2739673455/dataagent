@@ -131,6 +131,33 @@ class SemanticRecallPGRepo:
         )
         return self._to_record(snapshot) if snapshot is not None else None
 
+    async def get_latest_by_queries(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        queries: list[str],
+    ) -> list[SemanticRecallRecord]:
+        """一次读取指定 query 集合的最新快照，缺失项不返回。"""
+        if not queries:
+            return []
+        snapshots = (
+            await self._session.scalars(
+                select(SemanticRecallSnapshot)
+                .where(
+                    SemanticRecallSnapshot.user_id == user_id,
+                    SemanticRecallSnapshot.conversation_id == conversation_id,
+                    SemanticRecallSnapshot.query.in_(list(dict.fromkeys(queries))),
+                )
+                .distinct(SemanticRecallSnapshot.query)
+                .order_by(
+                    SemanticRecallSnapshot.query,
+                    SemanticRecallSnapshot.updated_at.desc(),
+                    SemanticRecallSnapshot.recall_id.desc(),
+                )
+            )
+        ).all()
+        return [self._to_record(snapshot) for snapshot in snapshots]
+
     async def list(
         self,
         user_id: int,

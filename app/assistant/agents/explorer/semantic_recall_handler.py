@@ -1,7 +1,6 @@
 """Explorer 语义资源召回与记录管理用例。"""
 
-from datetime import UTC, datetime
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from langchain_core.runnables import RunnableConfig
 from loguru import logger
@@ -12,37 +11,16 @@ from app.assistant.agents.explorer.recall_runtime import (
     resolve_semantic_recall_identity,
 )
 from app.assistant.agents.explorer.semantic_recall_protocol import (
+    semantic_recall_deletion_result,
     semantic_recall_reference,
 )
-from app.assistant.agents.middleware.semantic_recall_expansion import (
-    semantic_recall_payload,
-)
-from app.identity.repositories.identity import IdentityPGRepo
-from app.identity.services.authorization import AuthorizationService
 from app.metadata.models.recall import (
     SemanticRecallRecord,
     SemanticRecallResourceDeletion,
     normalize_semantic_recall_query,
 )
 from app.metadata.models.search import SemanticResourceRecallRequest
-from app.metadata.repositories.column_index import ColumnESRepo
-from app.metadata.repositories.metric_index import MetricESRepo
-from app.metadata.repositories.postgres import MetaPGRepo
-from app.metadata.repositories.value_index import ValueESRepo
-from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
-from app.metadata.services.recall import (
-    SemanticQueriesNotFoundError,
-    SemanticRecallContextService,
-)
-from app.metadata.services.search import SemanticResourceRecallService
-from app.query.providers import build_query_experience_recall_service
-from app.shared.config.app_config import cfg
-from app.shared.contracts.query_experience import (
-    QUERY_EXPERIENCE_RECALL_LIMIT,
-    QueryExperienceRecallResult,
-)
-
-_STALE_QUERY_EXPERIENCES_RETRIEVED_AT = datetime.min.replace(tzinfo=UTC)
+from app.metadata.services.recall import SemanticQueriesNotFoundError
 
 
 def _invalid_query_response(
@@ -74,24 +52,10 @@ def _tool_error_response(
 
 async def recall_context(
     config: RunnableConfig,
-    query: Annotated[
-        str,
-        (
-            "当前会话内召回上下文的稳定业务键，作用类似主键。为一个数据任务"
-            "填写完整且固定的数据问题；后续补充检索必须原样复用，只调整 terms "
-            "和 resource_types。同一 query 的历次召回结果会累计合并，修改 query "
-            "会创建独立上下文"
-        ),
-    ],
-    resource_types: Annotated[
-        list[Literal["column", "metric", "value"]],
-        "必须选择需要检索的资源类型：字段、指标或字段值，可多选",
-    ],
-    terms: Annotated[
-        list[str],
-        "用于检索字段、指标和字段值的业务词或同义词，至少 1 个且最多 20 个",
-    ],
-    limit_per_type: Annotated[int, "每类直接候选的最大数量，范围 1 到 20"] = 5,
+    query: str,
+    resource_types: list[Literal["column", "metric", "value"]],
+    terms: list[str],
+    limit_per_type: int,
     *,
     recall: SemanticRecallRuntime,
 ) -> dict[str, Any]:
@@ -123,86 +87,17 @@ async def recall_context(
 
     try:
         user_id, conversation_id = resolve_semantic_recall_identity(config)
-        async with (
-            recall.auth.session() as auth_session,
-            recall.meta.session() as meta_search_session,
-        ):
-            auth_repo = IdentityPGRepo(auth_session)
-            asset_policy = await AuthorizationService(auth_repo).get_asset_policy(
-                user_id
-            )
-            authorization_filter = MetadataAuthorizationFilter(
-                asset_policy,
-                cfg.query.data_source,
-                cfg.doris.database,
-            )
-            service = SemanticResourceRecallService(
-                embedding_client=recall.embedding.get_client(),
-                column_repo=ColumnESRepo(recall.es.get_client()),
-                metric_repo=MetricESRepo(recall.es.get_client()),
-                value_repo=ValueESRepo(recall.es.get_client()),
-                meta_repo=MetaPGRepo(meta_search_session),
-                asset_policy=asset_policy,
-                data_source=cfg.query.data_source,
-                database_name=cfg.doris.database,
-            )
-            response = await service.recall(request)
+        asset_policy, response = await recall.search(user_id, request)
     except Exception as exc:  # noqa: BLE001
         logger.exception("语义资源召回失败")
         return _tool_error_response("语义资源召回失败", exc)
 
-    query_experiences: list[QueryExperienceRecallResult] = []
-    query_experiences_retrieved_at = _STALE_QUERY_EXPERIENCES_RETRIEVED_AT
+    query_experiences, query_experiences_retrieved_at = await recall.query_experiences(
+        user_id, conversation_id, query, asset_policy
+    )
     try:
-        async with recall.repository() as recall_repo:
-            recall_service = SemanticRecallContextService(
-                recall_repo,
-                authorization_filter,
-                query_experience_role_name=asset_policy.role_name,
-                query_experience_authorization_epoch=(asset_policy.authorization_epoch),
-            )
-            cached = await recall_service.get_fresh_query_experiences(
-                user_id,
-                conversation_id,
-                query,
-            )
-        if cached is None:
-            if (
-                asset_policy.role_name is not None
-                and asset_policy.authorization_epoch is not None
-            ):
-                async with recall.meta.session() as experience_session:
-                    experience_recall = await build_query_experience_recall_service(
-                        experience_session,
-                        recall.es.get_client(),
-                        recall.embedding.get_client(),
-                    ).recall(
-                        role_name=asset_policy.role_name,
-                        authorization_epoch=asset_policy.authorization_epoch,
-                        policy=asset_policy,
-                        query=query,
-                        limit=QUERY_EXPERIENCE_RECALL_LIMIT,
-                    )
-                    if experience_recall.status == "failed":
-                        logger.warning("查询经验全文和向量检索均不可用")
-                    else:
-                        query_experiences = experience_recall.results
-                        query_experiences_retrieved_at = datetime.now(UTC)
-            else:
-                query_experiences_retrieved_at = datetime.now(UTC)
-        else:
-            query_experiences, query_experiences_retrieved_at = cached
-    except Exception:  # noqa: BLE001
-        logger.exception("查询经验检索失败")
-
-    try:
-        async with recall.repository() as recall_repo:
-            record = await SemanticRecallContextService(
-                recall_repo,
-                authorization_filter,
-                query_experience_role_name=asset_policy.role_name,
-                query_experience_authorization_epoch=(asset_policy.authorization_epoch),
-            ).record(
+        async with recall.context_service(user_id, policy=asset_policy) as service:
+            record = await service.record(
                 user_id,
                 conversation_id,
                 query,
@@ -232,7 +127,7 @@ def _record_summary(record: SemanticRecallRecord) -> dict[str, Any]:
 
 async def list_recalls(
     config: RunnableConfig,
-    limit: Annotated[int, "返回最近记录的数量，范围 1 到 100"] = 20,
+    limit: int,
     *,
     recall: SemanticRecallRuntime,
 ) -> dict[str, Any]:
@@ -250,8 +145,7 @@ async def list_recalls(
         }
     try:
         user_id, conversation_id = resolve_semantic_recall_identity(config)
-        async with recall.repository() as repo:
-            service = await recall.authorized_service(user_id, repo)
+        async with recall.context_service(user_id) as service:
             records = await service.list(user_id, conversation_id, limit=limit)
     except Exception as exc:  # noqa: BLE001
         logger.exception("获取语义召回列表失败")
@@ -264,10 +158,7 @@ async def list_recalls(
 
 async def get_recall(
     config: RunnableConfig,
-    query: Annotated[
-        str,
-        "需要读取的稳定 query 业务键，必须与 recall_context 使用的 query 完全一致",
-    ],
+    query: str,
     *,
     recall: SemanticRecallRuntime,
 ) -> dict[str, Any]:
@@ -282,8 +173,7 @@ async def get_recall(
         )
     try:
         user_id, conversation_id = resolve_semantic_recall_identity(config)
-        async with recall.repository() as repo:
-            service = await recall.authorized_service(user_id, repo)
+        async with recall.context_service(user_id) as service:
             record = await service.get(user_id, conversation_id, query)
     except SemanticQueriesNotFoundError as exc:
         return {
@@ -299,14 +189,8 @@ async def get_recall(
 
 async def merge_recalls(
     config: RunnableConfig,
-    target_query: Annotated[
-        str,
-        "接收累计结果并继续保留的目标 query 业务键",
-    ],
-    source_query: Annotated[
-        str,
-        "提供累计结果并在合并完成后删除的来源 query 业务键",
-    ],
+    target_query: str,
+    source_query: str,
     *,
     recall: SemanticRecallRuntime,
 ) -> dict[str, Any]:
@@ -335,8 +219,7 @@ async def merge_recalls(
         )
     try:
         user_id, conversation_id = resolve_semantic_recall_identity(config)
-        async with recall.repository() as repo:
-            service = await recall.authorized_service(user_id, repo)
+        async with recall.context_service(user_id) as service:
             record = await service.merge(
                 user_id,
                 conversation_id,
@@ -357,14 +240,7 @@ async def merge_recalls(
 
 async def delete_recalls(
     config: RunnableConfig,
-    deletions: Annotated[
-        list[SemanticRecallResourceDeletion],
-        (
-            "待删除的 query 上下文树。tables 结构为表名到 columns 再到字段值；"
-            "metrics 为指标名称映射；query_experiences 的每项仅包含经验 ID。"
-            "未提供资源选择器时删除整个 query。"
-        ),
-    ],
+    deletions: list[SemanticRecallResourceDeletion],
     *,
     recall: SemanticRecallRuntime,
 ) -> dict[str, Any]:
@@ -410,9 +286,8 @@ async def delete_recalls(
         normalized_deletions.append(deletion.model_copy(update={"query": query}))
     try:
         user_id, conversation_id = resolve_semantic_recall_identity(config)
-        async with recall.repository() as repo:
-            service = await recall.authorized_service(user_id, repo)
-            records = await service.delete(
+        async with recall.context_service(user_id) as service:
+            await service.delete(
                 user_id,
                 conversation_id,
                 normalized_deletions,
@@ -426,7 +301,4 @@ async def delete_recalls(
     except Exception as exc:  # noqa: BLE001
         logger.exception("删除语义召回记录失败")
         return _tool_error_response("无法删除语义召回记录", exc)
-    return {
-        "status": "success",
-        "recalls": [semantic_recall_payload(record) for record in records],
-    }
+    return semantic_recall_deletion_result(normalized_deletions)

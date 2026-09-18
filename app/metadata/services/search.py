@@ -31,7 +31,6 @@ from app.metadata.models.search import (
 )
 from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
-from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.value_index import ValueESRepo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
 from app.shared.clients.embedding_client_manager import EmbeddingClient
@@ -95,7 +94,7 @@ class _ColumnContext:
 
 
 @dataclass(frozen=True, slots=True)
-class _SemanticCatalog:
+class SemanticCatalog:
     """语义召回使用的完整元数据目录。"""
 
     tables: dict[str, TableInfo]
@@ -108,7 +107,7 @@ class _RecallContext:
     """单次语义召回的输入、目录和可变状态。"""
 
     request: SemanticResourceRecallRequest
-    catalog: _SemanticCatalog
+    catalog: SemanticCatalog
     column_scores: dict[ColumnKey, _CandidateScore] = field(default_factory=dict)
     metric_scores: dict[str, _CandidateScore] = field(default_factory=dict)
     value_scores: dict[ValueKey, _CandidateScore] = field(default_factory=dict)
@@ -174,7 +173,7 @@ class _ColumnContextBuilder:
 
     def __init__(
         self,
-        catalog: _SemanticCatalog,
+        catalog: SemanticCatalog,
         warnings: list[str],
     ) -> None:
         """初始化语义目录、告警集合和字段上下文缓存。"""
@@ -364,7 +363,7 @@ class SemanticResourceRecallService:
         column_repo: ColumnESRepo,
         metric_repo: MetricESRepo,
         value_repo: ValueESRepo,
-        meta_repo: MetaPGRepo,
+        catalog: SemanticCatalog,
         asset_policy: AssetAccessPolicy,
         data_source: str,
         database_name: str,
@@ -377,7 +376,7 @@ class SemanticResourceRecallService:
         self._column_repo = column_repo
         self._metric_repo = metric_repo
         self._value_repo = value_repo
-        self._meta_repo = meta_repo
+        self._catalog = catalog
         self._authorization_filter = MetadataAuthorizationFilter(
             asset_policy,
             data_source,
@@ -389,19 +388,19 @@ class SemanticResourceRecallService:
         self,
         request: SemanticResourceRecallRequest,
     ) -> SemanticResourceRecallResponse:
-        """按加载目录、执行召回和构建响应三个阶段完成语义资源召回。"""
-        context = await self._create_context(request)
+        """按目录权限过滤、外部检索和响应构建三个阶段完成召回。"""
+        context = self._create_context(request)
         await self._retrieve(context)
         return self._build_response(context)
 
-    async def _create_context(
+    def _create_context(
         self,
         request: SemanticResourceRecallRequest,
     ) -> _RecallContext:
-        """加载完整元数据并创建单次检索上下文。"""
-        table_infos = await self._meta_repo.list_table_infos()
-        column_infos = await self._meta_repo.list_column_infos()
-        metric_infos = await self._meta_repo.list_metric_infos()
+        """按权限过滤已加载的目录并创建单次检索上下文。"""
+        table_infos = list(self._catalog.tables.values())
+        column_infos = list(self._catalog.columns.values())
+        metric_infos = list(self._catalog.metrics.values())
         allowed_column_keys = self._authorization_filter.allowed_column_keys(
             column_infos
         )
@@ -428,7 +427,7 @@ class SemanticResourceRecallService:
         }
         return _RecallContext(
             request=request,
-            catalog=_SemanticCatalog(
+            catalog=SemanticCatalog(
                 tables=visible_tables,
                 columns=allowed_columns,
                 metrics=allowed_metrics,
