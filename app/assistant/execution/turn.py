@@ -107,8 +107,7 @@ class ConversationTurnService:
             async with self._repository.session.begin():
                 if await self._repository.get(user_id, conversation_id) is None:
                     raise ConversationMissingError
-            if not await planner_turn.can_resume_agent_turn(
-                self._agents,
+            if not await self._agents.can_resume_planner(
                 user_id,
                 conversation_id,
             ):

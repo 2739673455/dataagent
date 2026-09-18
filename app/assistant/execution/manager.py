@@ -152,6 +152,15 @@ class AgentManager:
                 self._runtime_build_tasks[conversation_key] = build_task
         return await asyncio.shield(build_task)
 
+    async def can_resume_planner(self, user_id: int, conversation_id: UUID) -> bool:
+        """检查 Planner 待执行任务，不还原历史消息或创建运行时。"""
+        if await self._tombstones.exists(user_id, conversation_id):
+            raise RuntimeError("该会话已被删除")
+        reader = CheckpointStateReader(self._persistence_manager.get_checkpointer())
+        return await reader.has_pending_tasks(
+            build_planner_config(user_id, conversation_id)
+        )
+
     async def read_planner_state(
         self,
         user_id: int,

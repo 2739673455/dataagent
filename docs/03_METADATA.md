@@ -1277,11 +1277,7 @@ async def _run_incremental_value_sync(
     run: _ValueIndexRun,
 ) -> ValueIndexSyncResult:
     """执行固定上界和重叠窗口的日常水位同步。"""
-    if (
-        run.cursor_column is None
-        or run.cursor_value is None
-        or run.generation is None
-    ):
+    if run.cursor_column is None or run.cursor_value is None or run.generation is None:
         raise RuntimeError("字段取值增量同步缺少已提交水位")
     upper_bound = await self._source_repo.get_value_sync_upper_bound(
         run.t_name,
@@ -1669,9 +1665,7 @@ async def _create_context(
     table_infos = await self._meta_repo.list_table_infos()
     column_infos = await self._meta_repo.list_column_infos()
     metric_infos = await self._meta_repo.list_metric_infos()
-    allowed_column_keys = self._authorization_filter.allowed_column_keys(
-        column_infos
-    )
+    allowed_column_keys = self._authorization_filter.allowed_column_keys(column_infos)
     allowed_columns = {
         (item.t_name, item.name): item
         for item in self._authorization_filter.filter_columns(
@@ -1966,9 +1960,7 @@ async def merge(
             source_record.source_queries,
         ]
     )
-    absorbed_queries = [
-        query for query in absorbed_queries if query != target_query
-    ]
+    absorbed_queries = [query for query in absorbed_queries if query != target_query]
     merged = SemanticRecallRecord(
         user_id=user_id,
         conversation_id=conversation_id,
@@ -1979,9 +1971,7 @@ async def merge(
             [target_record.response, source_record.response],
         ),
         query_experiences=target_record.query_experiences,
-        query_experiences_retrieved_at=(
-            target_record.query_experiences_retrieved_at
-        ),
+        query_experiences_retrieved_at=(target_record.query_experiences_retrieved_at),
         query_experience_role_name=target_record.query_experience_role_name,
         query_experience_authorization_epoch=(
             target_record.query_experience_authorization_epoch

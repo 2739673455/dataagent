@@ -3,7 +3,6 @@
 from collections.abc import AsyncGenerator
 from contextlib import aclosing
 from typing import Any, cast
-from uuid import UUID
 
 from langchain_core.messages import BaseMessage
 from langgraph.types import StreamPart
@@ -155,16 +154,6 @@ async def run_agent_turn(
             input_messages = []
 
     logger.info(f"智能体回合结束: conversation_id={conversation_id}")
-
-
-async def can_resume_agent_turn(
-    agents: AgentRuntimeManager,
-    user_id: int,
-    conversation_id: UUID,
-) -> bool:
-    """检查 Planner 最新 Checkpoint 是否保留待执行任务。"""
-    state = await agents.read_planner_state(user_id, conversation_id)
-    return bool(state.next_nodes)
 
 
 class PlannerContinuationLimitError(RuntimeError):
