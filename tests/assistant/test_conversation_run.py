@@ -75,7 +75,7 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         async with asyncio.timeout(3):
-            stream = await self.service.start_turn(
+            stream = await self.service.start(
                 1,
                 _CONVERSATION_ID,
                 chat_schema.UserMessageRequest(
@@ -97,8 +97,8 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
     async def test_stop_after_delta_allows_same_conversation_to_restart(self) -> None:
         async with asyncio.timeout(3):
             self.emit_delta = True
-            stream = await self.service.resume_turn(
-                1, _CONVERSATION_ID, prepare=AsyncMock()
+            stream = await self.service.start(
+                1, _CONVERSATION_ID, None, prepare=AsyncMock()
             )
             first = await anext(stream)
             self.assertIsInstance(first, chat_schema.ChatStreamMessageDeltaEvent)
@@ -112,8 +112,8 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             self.started.clear()
             self.cleaned.clear()
             self.cancelled.clear()
-            resumed = await self.service.resume_turn(
-                1, _CONVERSATION_ID, prepare=AsyncMock()
+            resumed = await self.service.start(
+                1, _CONVERSATION_ID, None, prepare=AsyncMock()
             )
             await self.started.wait()
             self.release.set()
@@ -129,8 +129,8 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         async with asyncio.timeout(3):
-            stream = await self.service.resume_turn(
-                1, _CONVERSATION_ID, prepare=AsyncMock()
+            stream = await self.service.start(
+                1, _CONVERSATION_ID, None, prepare=AsyncMock()
             )
             await self.started.wait()
             await self.service.close()
@@ -156,7 +156,7 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
                 ),
                 self.assertRaises(ConversationBusyError),
             ):
-                await self.service.resume_turn(1, _CONVERSATION_ID, prepare=AsyncMock())
+                await self.service.start(1, _CONVERSATION_ID, None, prepare=AsyncMock())
             self.assertFalse(self.started.is_set())
             stream = await self.service.subscribe(1, _CONVERSATION_ID)
             self.assertEqual([event.type async for event in stream], ["done"])
@@ -171,7 +171,7 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
 
         async with asyncio.timeout(1):
             request = asyncio.create_task(
-                self.service.resume_turn(1, _CONVERSATION_ID, prepare=prepare)
+                self.service.start(1, _CONVERSATION_ID, None, prepare=prepare)
             )
             await entered.wait()
             await self.service.close()
@@ -185,8 +185,8 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
     async def test_execution_error_cleans_up_before_terminal_events(self) -> None:
         async with asyncio.timeout(1):
             self.fail_execution = True
-            stream = await self.service.resume_turn(
-                1, _CONVERSATION_ID, prepare=AsyncMock()
+            stream = await self.service.start(
+                1, _CONVERSATION_ID, None, prepare=AsyncMock()
             )
             await self.started.wait()
             self.release.set()
@@ -199,8 +199,8 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
     async def test_disconnecting_subscriber_does_not_stop_execution(self) -> None:
         async with asyncio.timeout(1):
             self.emit_delta = True
-            stream = await self.service.resume_turn(
-                1, _CONVERSATION_ID, prepare=AsyncMock()
+            stream = await self.service.start(
+                1, _CONVERSATION_ID, None, prepare=AsyncMock()
             )
             self.assertEqual((await anext(stream)).type, "message_delta")
             await stream.aclose()
@@ -224,12 +224,12 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
 
         async with asyncio.timeout(1):
             first = asyncio.create_task(
-                self.service.resume_turn(1, _CONVERSATION_ID, prepare=prepare)
+                self.service.start(1, _CONVERSATION_ID, None, prepare=prepare)
             )
             await entered.wait()
             duplicate = AsyncMock()
             with self.assertRaises(ConversationRunConflictError):
-                await self.service.resume_turn(1, _CONVERSATION_ID, prepare=duplicate)
+                await self.service.start(1, _CONVERSATION_ID, None, prepare=duplicate)
             duplicate.assert_not_awaited()
             release.set()
             stream = await first
@@ -241,8 +241,8 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
     async def test_admission_failure_returns_original_error_without_execution(self):
         failure = ValueError("conversation missing")
         with self.assertRaises(ValueError) as caught:
-            await self.service.resume_turn(
-                1, _CONVERSATION_ID, prepare=AsyncMock(side_effect=failure)
+            await self.service.start(
+                1, _CONVERSATION_ID, None, prepare=AsyncMock(side_effect=failure)
             )
         self.assertIs(caught.exception, failure)
         self.assertFalse(self.started.is_set())
@@ -263,7 +263,7 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
 
         async with asyncio.timeout(1):
             request = asyncio.create_task(
-                self.service.resume_turn(1, _CONVERSATION_ID, prepare=prepare)
+                self.service.start(1, _CONVERSATION_ID, None, prepare=prepare)
             )
             await entered.wait()
             request.cancel()

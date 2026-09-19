@@ -72,35 +72,15 @@ class ConversationRunService:
         self._runs: dict[ConversationRunKey, _ConversationRun] = {}
         self._lock = asyncio.Lock()
 
-    async def start_turn(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        user_message: chat_schema.UserMessageRequest,
-        *,
-        prepare: Callable[[], Awaitable[None]],
-    ) -> AsyncGenerator[RunEvent]:
-        """启动新用户回合并返回首个事件订阅。"""
-        return await self._start(user_id, conversation_id, user_message, prepare)
-
-    async def resume_turn(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        *,
-        prepare: Callable[[], Awaitable[None]],
-    ) -> AsyncGenerator[RunEvent]:
-        """后台恢复中断回合并返回首个事件订阅。"""
-        return await self._start(user_id, conversation_id, None, prepare)
-
-    async def _start(
+    async def start(
         self,
         user_id: int,
         conversation_id: UUID,
         user_message: chat_schema.UserMessageRequest | None,
+        *,
         prepare: Callable[[], Awaitable[None]],
     ) -> AsyncGenerator[RunEvent]:
-        """原子注册后台 Run，并返回包含首订阅者的事件流。"""
+        """原子注册后台 Run；消息为 None 时恢复回合，返回首订阅者事件流。"""
         key = (user_id, conversation_id)
         queue: asyncio.Queue[RunEvent | None] = asyncio.Queue(
             maxsize=_SUBSCRIBER_QUEUE_LIMIT

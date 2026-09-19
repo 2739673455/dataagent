@@ -34,10 +34,6 @@ class DockerRuntimePool:
         self._get_existing_container = get_existing_container
         self._running_containers = running_containers
 
-    def _activity_at(self, user_id: int) -> float:
-        """读取 Redis 中唯一的用户活动时间。"""
-        return self._ownership.last_activity(user_id)
-
     def get_running(
         self,
         user_id: int,
@@ -63,7 +59,7 @@ class DockerRuntimePool:
                 idle_user_id
                 for idle_user_id, _ in sorted(
                     running,
-                    key=lambda item: self._activity_at(item[0]),
+                    key=lambda item: self._ownership.last_activity(item[0]),
                 )
                 if idle_user_id != user_id
             ]
@@ -112,9 +108,11 @@ class DockerRuntimePool:
         """为已运行 Container 初始化活动记录并收敛既有容量。"""
         running = self._running_containers()
         for user_id, _ in running:
-            if self._activity_at(user_id) <= 0:
+            if self._ownership.last_activity(user_id) <= 0:
                 self._ownership.touch(user_id, time.time())
-        running.sort(key=lambda item: self._activity_at(item[0]), reverse=True)
+        running.sort(
+            key=lambda item: self._ownership.last_activity(item[0]), reverse=True
+        )
         for user_id, _ in running[self._config.max_running_containers :]:
             with self._ownership.user_maintenance(user_id), self._ownership.capacity():
                 current = self._get_existing_container(user_id)
@@ -128,7 +126,9 @@ class DockerRuntimePool:
             container = self._get_existing_container(user_id)
             if container is None:
                 return
-            idle_seconds = max(0.0, time.time() - self._activity_at(user_id))
+            idle_seconds = max(
+                0.0, time.time() - self._ownership.last_activity(user_id)
+            )
             if idle_seconds < self._config.idle_stop_seconds:
                 return
             if idle_seconds >= self._config.idle_remove_seconds:

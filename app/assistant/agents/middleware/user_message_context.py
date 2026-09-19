@@ -138,11 +138,6 @@ def project_user_message_context(message: BaseMessage) -> BaseMessage:
     return message.model_copy(update={"content": cast(Any, content)})
 
 
-def _model_workspace_path(path: str, conversation_dir: str) -> str:
-    """把持久化的相对附件路径投影为容器绝对路径。"""
-    return resolve_sandbox_path(path, conversation_dir)
-
-
 def _read_attachments(message: HumanMessage) -> UserMessageContext | None:
     """读取并校验用户消息中持久化的附件引用。"""
     context = read_user_message_context(message)
@@ -172,7 +167,7 @@ def _attachment_context_block(
     files: list[dict[str, str]] = []
     images: list[dict[str, str]] = []
     for attachment in attachments.attachments:
-        item = {"path": _model_workspace_path(attachment.f_path, conversation_dir)}
+        item = {"path": resolve_sandbox_path(attachment.f_path, conversation_dir)}
         if is_supported_image_path(attachment.f_path):
             images.append(item)
         else:
@@ -273,7 +268,7 @@ def _download_paths(
             context = _read_attachments(message)
             if context is not None:
                 paths.extend(
-                    _model_workspace_path(item.f_path, conversation_dir)
+                    resolve_sandbox_path(item.f_path, conversation_dir)
                     for item in context.attachments
                     if is_supported_image_path(item.f_path)
                 )
@@ -318,7 +313,7 @@ def _project_human_message(
                 for attachment in context.attachments:
                     if not is_supported_image_path(attachment.f_path):
                         continue
-                    model_path = _model_workspace_path(
+                    model_path = resolve_sandbox_path(
                         attachment.f_path,
                         conversation_dir,
                     )

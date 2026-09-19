@@ -2354,9 +2354,9 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             MagicMock(use_runtime=use_runtime), MagicMock(), MagicMock(), provider
         )
         try:
-            events = await first.resume_turn(12, _CONVERSATION_ID, prepare=AsyncMock())
+            events = await first.start(12, _CONVERSATION_ID, None, prepare=AsyncMock())
             with self.assertRaises(RuntimeError):
-                await second.resume_turn(12, _CONVERSATION_ID, prepare=AsyncMock())
+                await second.start(12, _CONVERSATION_ID, None, prepare=AsyncMock())
             self.assertTrue(await first.is_running(12, _CONVERSATION_ID))
             release.set()
             self.assertEqual([e.type async for e in events], ["done"])
