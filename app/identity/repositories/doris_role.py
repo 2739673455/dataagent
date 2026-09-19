@@ -59,14 +59,9 @@ class DorisRoleRepository:
         return f"`{identifier}`"
 
     @classmethod
-    def quote_role(cls, role_name: str) -> str:
-        """校验并引用 Doris 角色名。"""
-        return cls.quote_identifier(role_name)
-
-    @classmethod
     def quote_role_literal(cls, role_name: str) -> str:
         """校验 Doris 角色名并构造字符串字面量。"""
-        cls.quote_role(role_name)
+        cls.quote_identifier(role_name)
         return f"'{role_name}'"
 
     @staticmethod
@@ -107,7 +102,7 @@ class DorisRoleRepository:
     ) -> DorisAuthorizationSnapshot:
         """从专属查询账号读取有效权限及角色、用户行策略。"""
         user = self.quote_user(query_user)
-        role = self.quote_role(role_name)
+        role = self.quote_identifier(role_name)
         async with self._provider.connection() as connection:
             await connection.exec_driver_sql("SET show_user_default_role = false")
             result = await connection.execute(text(f"SHOW GRANTS FOR {user}@'%'"))
@@ -172,7 +167,7 @@ class DorisRoleRepository:
         workload_group: str,
     ) -> None:
         """创建 Doris 角色、查询用户及 Workload Group 授权。"""
-        role = self.quote_role(role_name)
+        role = self.quote_identifier(role_name)
         role_literal = self.quote_role_literal(role_name)
         user_literal = self.quote_user(query_user)
         if _GENERATED_PASSWORD_PATTERN.fullmatch(password) is None:
@@ -202,7 +197,7 @@ class DorisRoleRepository:
     async def drop_role_identity(self, *, role_name: str, query_user: str) -> None:
         """幂等删除查询用户和角色；失败后允许再次执行剩余步骤。"""
         user = self.quote_user(query_user)
-        role = self.quote_role(role_name)
+        role = self.quote_identifier(role_name)
         await self._execute(f"DROP USER IF EXISTS {user}")
         await self._execute(f"DROP ROLE IF EXISTS {role}")
 
@@ -215,7 +210,7 @@ class DorisRoleRepository:
 
     async def list_role_row_policies(self, role_name: str) -> list[DorisRowPolicy]:
         """读取指定角色的全部行策略。"""
-        role = self.quote_role(role_name)
+        role = self.quote_identifier(role_name)
         async with self._provider.connection() as connection:
             result = await connection.exec_driver_sql(
                 f"SHOW ROW POLICY FOR ROLE {role}"
@@ -252,7 +247,7 @@ class DorisRoleRepository:
         columns: Sequence[str],
     ) -> None:
         """向 Doris 角色授予库、表或字段 SELECT 权限。"""
-        role = self.quote_role(role_name)
+        role = self.quote_identifier(role_name)
         if table is None:
             if columns:
                 raise ValueError("列级授权必须指定对应的数据表")
@@ -275,7 +270,7 @@ class DorisRoleRepository:
         columns: Sequence[str],
     ) -> None:
         """从 Doris 角色回收库、表或字段 SELECT 权限。"""
-        role = self.quote_role(role_name)
+        role = self.quote_identifier(role_name)
         if table is None:
             if columns:
                 raise ValueError("列级授权必须指定对应的数据表")
@@ -301,7 +296,7 @@ class DorisRoleRepository:
     ) -> None:
         """创建绑定 Doris 角色的行策略。"""
         policy = self.quote_identifier(policy_name)
-        role = self.quote_role(role_name)
+        role = self.quote_identifier(role_name)
         target = self.qualified_table(catalog, database, table)
         await self._execute(
             f"CREATE ROW POLICY {policy} ON {target} AS {policy_type} "
@@ -319,7 +314,7 @@ class DorisRoleRepository:
     ) -> None:
         """删除绑定 Doris 角色的行策略。"""
         policy = self.quote_identifier(policy_name)
-        role = self.quote_role(role_name)
+        role = self.quote_identifier(role_name)
         target = self.qualified_table(catalog, database, table)
         await self._execute(f"DROP ROW POLICY {policy} ON {target} FOR ROLE {role}")
 

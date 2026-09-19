@@ -43,7 +43,7 @@ def test_stream_routes_preserve_frames_headers_and_business_errors(entry, failur
         finally:
             closed.append(True)
 
-    for method in ("start_turn", "resume_turn", "subscribe"):
+    for method in ("start", "subscribe"):
         setattr(runs, method, AsyncMock(side_effect=lambda *args: events()))
 
     # 保留真实 ConversationTurnService 的依赖组装；仅替换其资源与方法行为。
@@ -52,13 +52,13 @@ def test_stream_routes_preserve_frames_headers_and_business_errors(entry, failur
         assert service._agents is agents
         if failure:
             raise ConversationNotFoundError
-        return await service._runs.start_turn(user_id, conversation_id, message)
+        return await service._runs.start(user_id, conversation_id, message)
 
     async def resume(service, user_id, conversation_id):
         assert service._repository is repository
         if failure:
             raise ConversationNotResumableError
-        return await service._runs.resume_turn(user_id, conversation_id)
+        return await service._runs.start(user_id, conversation_id, None)
 
     def dependency(value):
         async def resolve():
@@ -113,6 +113,6 @@ def test_stream_routes_preserve_frames_headers_and_business_errors(entry, failur
         if entry == "subscribe":
             runs.subscribe.assert_awaited_once_with(12, _ID)
         elif entry == "resume":
-            runs.resume_turn.assert_awaited_once_with(12, _ID)
+            runs.start.assert_awaited_once_with(12, _ID, None)
         else:
-            assert runs.start_turn.await_args.args[:2] == (12, _ID)
+            assert runs.start.await_args.args[:2] == (12, _ID)

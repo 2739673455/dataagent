@@ -87,7 +87,7 @@ class ConversationTurnService:
                         f"conversation_id={target_id}"
                     )
 
-        return await self._runs.start_turn(
+        return await self._runs.start(
             user_id,
             conversation_id,
             message,
@@ -112,4 +112,4 @@ class ConversationTurnService:
             ):
                 raise ConversationNotResumableError
 
-        return await self._runs.resume_turn(user_id, conversation_id, prepare=prepare)
+        return await self._runs.start(user_id, conversation_id, None, prepare=prepare)

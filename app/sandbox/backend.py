@@ -553,13 +553,6 @@ class DockerSandboxBackend(BaseSandbox):
         inspected = api_client.exec_inspect(exec_id)
         return bytes(output), inspected.get("ExitCode")
 
-    def _read_file_bytes_unlocked(self, path: str) -> tuple[bytes, int | None]:
-        """按单文件上限读取文件内容。"""
-        return self._read_limited_file_bytes_unlocked(
-            path,
-            self._max_file_bytes + 1,
-        )
-
     def upload_fileobj(self, path: str, content: BinaryIO) -> FileUploadResponse:
         """上传文件对象到当前会话。"""
         try:
@@ -643,7 +636,9 @@ class DockerSandboxBackend(BaseSandbox):
                         )
                         continue
                     # stat 与读取之间文件可能变化，读取后再次校验长度才能守住上限。
-                    content, exit_code = self._read_file_bytes_unlocked(resolved_path)
+                    content, exit_code = self._read_limited_file_bytes_unlocked(
+                        resolved_path, self._max_file_bytes + 1
+                    )
                     if len(content) > self._max_file_bytes:
                         responses.append(
                             FileDownloadResponse(
