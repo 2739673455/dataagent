@@ -7,11 +7,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from app.assistant.conversations.lifecycle import ConversationLifecycleService
+from app.assistant.errors import (
+    ConversationBusyError,
+    ConversationNotFoundError,
+    ConversationNotResumableError,
+)
 from app.assistant.events.schemas import TextContent, UserMessageRequest
-from app.assistant.execution.planner import PlannerTurnNotResumableError
 from app.assistant.execution.run import ConversationRunService
 from app.assistant.execution.turn import (
-    ConversationMissingError,
     ConversationTurnService,
 )
 from app.shared.clients.langgraph_postgres_manager import AdvisoryLockBusyError
@@ -88,7 +91,7 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
         ) as enqueue:
             stream = await self.turn.start(1, self.conversation_id, message)
             await self.started.wait()
-            with self.assertRaises(AdvisoryLockBusyError):
+            with self.assertRaises(ConversationBusyError):
                 await other.start(1, self.conversation_id, message)
             self.repo.update.assert_awaited_once()
             enqueue.assert_called_once()
@@ -109,7 +112,7 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
                 "can_resume_planner",
                 side_effect=can_resume,
             ),
-            self.assertRaises(PlannerTurnNotResumableError),
+            self.assertRaises(ConversationNotResumableError),
         ):
             await self.turn.resume(1, self.conversation_id)
         self.assertFalse(self.started.is_set())
@@ -118,7 +121,7 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_deleted_conversation_rejected_before_runtime_creation(self):
         self.repo.get.return_value = None
-        with self.assertRaises(ConversationMissingError):
+        with self.assertRaises(ConversationNotFoundError):
             await self.turn.resume(1, self.conversation_id)
         self.assertFalse(self.started.is_set())
         self.assertIsNone(self.owner)
@@ -161,6 +164,6 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual([event.type async for event in stream], ["done"])
             self.assertIsNotNone(conversation.deletion_requested_at)
-            with self.assertRaises(ConversationMissingError):
+            with self.assertRaises(ConversationNotFoundError):
                 await self.turn.start(1, self.conversation_id, message)
         self.assertIsNone(self.owner)

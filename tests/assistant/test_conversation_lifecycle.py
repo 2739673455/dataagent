@@ -6,12 +6,10 @@ from http import HTTPStatus
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
-from app.assistant import errors as chat_error
-from app.assistant.api.chat.router import _request_deletion_or_raise
 from app.assistant.conversations.lifecycle import (
-    ConversationLifecycleBusyError,
     ConversationLifecycleService,
 )
+from app.assistant.errors import ConversationBusyError
 from app.shared.clients.langgraph_postgres_manager import AdvisoryLockBusyError
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -55,10 +53,12 @@ class ConversationLifecycleBusyTest(unittest.IsolatedAsyncioTestCase):
     async def test_deletion_request_translates_busy_advisory_lock(self) -> None:
         service, cancel_execution, repository_factory = _build_service()
 
-        with self.assertRaises(ConversationLifecycleBusyError) as caught:
+        with self.assertRaises(ConversationBusyError) as caught:
             await service.request_conversation_deletion(1, _CONVERSATION_ID)
 
         self.assertIsInstance(caught.exception.__cause__, AdvisoryLockBusyError)
+        self.assertEqual(caught.exception.status, HTTPStatus.CONFLICT)
+        self.assertEqual(caught.exception.detail, "对话正在运行或清理，请稍后重试")
         cancel_execution.assert_awaited_once_with(1, _CONVERSATION_ID)
         repository_factory.assert_called_once()
 
@@ -69,32 +69,6 @@ class ConversationLifecycleBusyTest(unittest.IsolatedAsyncioTestCase):
             await service.delete_conversation_resources(1, _CONVERSATION_ID)
 
         repository_factory.assert_not_called()
-
-    async def test_api_maps_lifecycle_busy_to_conflict_problem(self) -> None:
-        lifecycle = MagicMock(spec=ConversationLifecycleService)
-        lifecycle.request_conversation_deletion = AsyncMock(
-            side_effect=ConversationLifecycleBusyError
-        )
-
-        with self.assertRaises(chat_error.ConversationBusyError) as caught:
-            await _request_deletion_or_raise(
-                lifecycle,
-                1,
-                _CONVERSATION_ID,
-                draft_only=True,
-            )
-
-        self.assertEqual(caught.exception.status, HTTPStatus.CONFLICT)
-        self.assertEqual(caught.exception.type, "conversation-busy")
-        self.assertEqual(
-            caught.exception.detail,
-            "对话正在运行或清理，请稍后重试",
-        )
-        lifecycle.request_conversation_deletion.assert_awaited_once_with(
-            1,
-            _CONVERSATION_ID,
-            draft_only=True,
-        )
 
     async def test_non_draft_deletion_does_not_stop_active_run(self):
         service, stop, repository_factory = _build_service()

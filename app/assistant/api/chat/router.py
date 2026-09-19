@@ -22,53 +22,20 @@ from app.assistant.api.dependencies import (
     SemanticRecallRuntimeDep,
 )
 from app.assistant.conversations import history as conversation_history
-from app.assistant.conversations.lifecycle import (
-    ConversationLifecycleBusyError,
-    ConversationLifecycleService,
-)
 from app.assistant.conversations.title import (
     initial_conversation_title,
 )
 from app.assistant.events import schemas as chat_schema
-from app.assistant.execution import planner as planner_turn
-from app.assistant.execution.run import (
-    ActiveConversationRunError,
-    ConversationRunStoppedError,
-)
-from app.assistant.execution.turn import (
-    ConversationMissingError,
-)
 from app.assistant.task_scheduler import (
     enqueue_conversation_deletion,
     enqueue_conversation_title,
 )
 from app.identity.api.auth.dependencies import AnalysisUserDep, CurrentUserDep
-from app.shared.clients.langgraph_postgres_manager import AdvisoryLockBusyError
 from app.shared.contracts.analysis import AgentType
 from app.shared.observability import context
 
 router = APIRouter(tags=["chat"])
 _SSE_HEARTBEAT_SECONDS = 15
-
-
-async def _request_deletion_or_raise(
-    lifecycle: ConversationLifecycleService,
-    user_id: int,
-    conversation_id: UUID,
-    *,
-    draft_only: bool = False,
-) -> bool:
-    """受理会话删除，并把锁冲突转换为稳定的业务错误。"""
-    try:
-        return await lifecycle.request_conversation_deletion(
-            user_id,
-            conversation_id,
-            draft_only=draft_only,
-        )
-    except ConversationLifecycleBusyError as exc:
-        raise chat_error.ConversationBusyError(
-            detail="对话正在运行或清理，请稍后重试",
-        ) from exc
 
 
 @router.post("/create", status_code=status.HTTP_201_CREATED)
@@ -120,8 +87,7 @@ async def api_delete_conversations(
     user_id = current_user.id
 
     for conversation_id in body.conversation_ids:
-        if not await _request_deletion_or_raise(
-            lifecycle,
+        if not await lifecycle.request_conversation_deletion(
             user_id,
             conversation_id,
         ):
@@ -146,8 +112,7 @@ async def api_delete_draft_conversation(
     lifecycle: ConversationLifecycleServiceDep,
 ) -> Response:
     """幂等删除当前用户主动放弃的草稿会话。"""
-    requested = await _request_deletion_or_raise(
-        lifecycle,
+    requested = await lifecycle.request_conversation_deletion(
         current_user.id,
         conversation_id,
         draft_only=True,
@@ -253,22 +218,16 @@ async def api_get_subagent_messages(
     conversation = await conversation_repo.get(user_id, conversation_id)
     if conversation is None:
         raise chat_error.ConversationNotFoundError
-    try:
-        activity = await conversation_history.get_subagent_activity(
-            agents,
-            user_id,
-            conversation_id,
-            analysis_id,
-            agent_type,
-            session_id,
-            delegation_id,
-            recall=recall,
-        )
-    except ValueError as exc:
-        raise chat_error.SubagentRunNotFoundError from exc
-    if activity is None:
-        raise chat_error.SubagentRunNotFoundError
-    return activity
+    return await conversation_history.get_subagent_activity(
+        agents,
+        user_id,
+        conversation_id,
+        analysis_id,
+        agent_type,
+        session_id,
+        delegation_id,
+        recall=recall,
+    )
 
 
 def _serialize_sse_event(event: chat_schema.ChatStreamEventPayload) -> str:
@@ -346,14 +305,7 @@ async def api_stream_chat(
     """启动后台对话回合并订阅 Agent 事件。"""
     user_id = current_user.id
     context.user_id_ctx.set(str(user_id))
-    try:
-        events = await turns.start(user_id, body.conversation_id, body.message)
-    except ConversationMissingError as exc:
-        raise chat_error.ConversationNotFoundError from exc
-    except ActiveConversationRunError as exc:
-        raise chat_error.ConversationRunConflictError from exc
-    except (AdvisoryLockBusyError, ConversationRunStoppedError) as exc:
-        raise chat_error.ConversationBusyError(detail=str(exc)) from exc
+    events = await turns.start(user_id, body.conversation_id, body.message)
     return _sse_response(body.conversation_id, events)
 
 
@@ -366,16 +318,7 @@ async def api_resume_chat(
     """从中断的 Planner Checkpoint 继续当前用户回合。"""
     user_id = current_user.id
     context.user_id_ctx.set(str(user_id))
-    try:
-        events = await turns.resume(user_id, conversation_id)
-    except ConversationMissingError as exc:
-        raise chat_error.ConversationNotFoundError from exc
-    except planner_turn.PlannerTurnNotResumableError as exc:
-        raise chat_error.ConversationNotResumableError from exc
-    except ActiveConversationRunError as exc:
-        raise chat_error.ConversationRunConflictError from exc
-    except (AdvisoryLockBusyError, ConversationRunStoppedError) as exc:
-        raise chat_error.ConversationBusyError(detail=str(exc)) from exc
+    events = await turns.resume(user_id, conversation_id)
     return _sse_response(conversation_id, events)
 
 

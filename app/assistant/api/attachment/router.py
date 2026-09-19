@@ -9,53 +9,25 @@ from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import Response
 from loguru import logger
 
-from app.assistant import errors
-from app.assistant.api.chat.dependencies import ConversationPGRepoDep
-from app.assistant.api.dependencies import (
-    ConversationLifecycleServiceDep,
-    SandboxManagerDep,
-)
+from app.assistant.api.attachment.dependencies import AttachmentServiceDep
 from app.assistant.events import schemas as chat_schema
 from app.identity.api.auth.dependencies import AnalysisUserDep, CurrentUserDep
-from app.sandbox.exceptions import (
-    SandboxFileTooLargeError,
-    SandboxPathError,
-)
 
 router = APIRouter(tags=["attachment"])
 
 
 @router.post("/upload")
 async def api_upload_attachment(
-    conversation_repo: ConversationPGRepoDep,
+    service: AttachmentServiceDep,
     current_user: AnalysisUserDep,
-    lifecycle: ConversationLifecycleServiceDep,
-    sandbox: SandboxManagerDep,
     conversation_id: Annotated[UUID, Form()],
     file: Annotated[UploadFile, File()],
 ) -> chat_schema.UploadAttachmentResponse:
     """上传附件到当前会话工作区。"""
     user_id = current_user.id
-    async with lifecycle.lock(user_id, conversation_id):
-        # 检查对话是否存在且属于当前用户。
-        conversation = await conversation_repo.get(user_id, conversation_id)
-        if conversation is None:
-            raise errors.ConversationNotFoundError
-
-        # 获取文件名。
-        f_path = file.filename or "upload"
-        try:
-            f_path = await sandbox.upload_user_attachment(
-                user_id,
-                conversation_id,
-                f_path,
-                file.file,
-            )
-        except SandboxPathError:
-            raise errors.PathTraversalError from None
-        except SandboxFileTooLargeError:
-            raise errors.AttachmentTooLargeError from None
-        await conversation_repo.update(conversation)
+    f_path = await service.upload(
+        user_id, conversation_id, file.filename or "upload", file.file
+    )
 
     logger.info(f"上传附件: conversation_id={conversation_id}, file={f_path}")
     return chat_schema.UploadAttachmentResponse(
@@ -66,27 +38,12 @@ async def api_upload_attachment(
 @router.post("/delete")
 async def api_delete_attachment(
     body: chat_schema.DeleteAttachmentRequest,
-    conversation_repo: ConversationPGRepoDep,
+    service: AttachmentServiceDep,
     current_user: CurrentUserDep,
-    lifecycle: ConversationLifecycleServiceDep,
-    sandbox: SandboxManagerDep,
 ) -> None:
     """删除当前会话工作区中的附件。"""
     user_id = current_user.id
-    async with lifecycle.lock(user_id, body.conversation_id):
-        conversation = await conversation_repo.get(user_id, body.conversation_id)
-        if conversation is None:
-            raise errors.ConversationNotFoundError
-
-        try:
-            await sandbox.delete_user_attachment(
-                user_id,
-                body.conversation_id,
-                body.f_path,
-            )
-        except SandboxPathError:
-            raise errors.PathTraversalError from None
-        await conversation_repo.update(conversation)
+    await service.delete(user_id, body.conversation_id, body.f_path)
 
     logger.info(f"删除附件: conversation_id={body.conversation_id}, file={body.f_path}")
 
@@ -95,28 +52,12 @@ async def api_delete_attachment(
 async def api_get_attachment(
     conversation_id: UUID,
     f_path: str,
-    conversation_repo: ConversationPGRepoDep,
+    service: AttachmentServiceDep,
     current_user: CurrentUserDep,
-    sandbox: SandboxManagerDep,
 ) -> Response:
     """获取当前会话工作区中的附件文件。"""
     user_id = current_user.id
-    conversation = await conversation_repo.get(user_id, conversation_id)
-    if conversation is None:
-        raise errors.ConversationNotFoundError
-
-    try:
-        content = await sandbox.download_file(
-            user_id,
-            conversation_id,
-            f_path,
-        )
-    except SandboxPathError:
-        raise errors.PathTraversalError from None
-    except FileNotFoundError:
-        raise errors.AttachmentNotFoundError(detail=f_path) from None
-    except SandboxFileTooLargeError:
-        raise errors.AttachmentTooLargeError from None
+    content = await service.download(user_id, conversation_id, f_path)
 
     # 获取文件 MIME 类型。
     media_type, _ = mimetypes.guess_type(f_path)

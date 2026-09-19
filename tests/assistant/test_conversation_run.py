@@ -12,11 +12,10 @@ from uuid import UUID
 
 from langchain_core.messages import AIMessageChunk
 
+from app.assistant.errors import ConversationBusyError, ConversationRunConflictError
 from app.assistant.events import schemas as chat_schema
 from app.assistant.execution.run import (
-    ActiveConversationRunError,
     ConversationRunService,
-    ConversationRunStoppedError,
 )
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -155,7 +154,7 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
                     "app.assistant.execution.run.asyncio.create_task",
                     side_effect=cancel_new_run,
                 ),
-                self.assertRaises(ConversationRunStoppedError),
+                self.assertRaises(ConversationBusyError),
             ):
                 await self.service.resume_turn(1, _CONVERSATION_ID, prepare=AsyncMock())
             self.assertFalse(self.started.is_set())
@@ -176,7 +175,7 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             )
             await entered.wait()
             await self.service.close()
-            with self.assertRaises(ConversationRunStoppedError):
+            with self.assertRaises(ConversationBusyError):
                 await request
             self.assertFalse(self.started.is_set())
             stream = await self.service.subscribe(1, _CONVERSATION_ID)
@@ -229,7 +228,7 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             )
             await entered.wait()
             duplicate = AsyncMock()
-            with self.assertRaises(ActiveConversationRunError):
+            with self.assertRaises(ConversationRunConflictError):
                 await self.service.resume_turn(1, _CONVERSATION_ID, prepare=duplicate)
             duplicate.assert_not_awaited()
             release.set()

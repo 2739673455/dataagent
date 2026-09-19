@@ -8,6 +8,7 @@ from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
 from app.assistant.agents.explorer.semantic_recall_messages import (
     expand_semantic_recall_messages_for_display,
 )
+from app.assistant.errors import SubagentRunNotFoundError
 from app.assistant.events import schemas as chat_schema
 from app.assistant.events.projection import (
     langchain_message_to_schema,
@@ -55,18 +56,21 @@ async def get_subagent_activity(
     delegation_id: str,
     *,
     recall: SemanticRecallRuntime,
-) -> chat_schema.SubagentMessageListResponse | None:
+) -> chat_schema.SubagentMessageListResponse:
     """读取一次 Specialist delegation 的公开工作消息和状态。"""
-    activity = await agents.read_delegation_activity(
-        user_id,
-        conversation_id,
-        analysis_id,
-        agent_type,
-        session_id,
-        delegation_id,
-    )
+    try:
+        activity = await agents.read_delegation_activity(
+            user_id,
+            conversation_id,
+            analysis_id,
+            agent_type,
+            session_id,
+            delegation_id,
+        )
+    except ValueError as exc:
+        raise SubagentRunNotFoundError from exc
     if activity is None:
-        return None
+        raise SubagentRunNotFoundError
     messages = await expand_semantic_recall_messages_for_display(
         activity.messages,
         user_id,
