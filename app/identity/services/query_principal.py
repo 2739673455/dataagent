@@ -5,6 +5,7 @@ from uuid import UUID
 
 from app.identity import errors as auth_error
 from app.identity.repositories.identity import IdentityPGRepo
+from app.identity.services.authorization import AssetAccessPolicy, AuthorizationService
 from app.identity.services.credential import DorisCredentialCipher
 
 
@@ -35,8 +36,10 @@ class QueryPrincipalService:
         self._repo = repo
         self._cipher = cipher
 
-    async def resolve(self, user_id: int) -> ResolvedQueryPrincipal:
-        """选择用户唯一 Doris 角色对应的查询身份。"""
+    async def resolve(
+        self, user_id: int
+    ) -> tuple[ResolvedQueryPrincipal, AssetAccessPolicy]:
+        """一次读取用户和角色身份，派生查询凭据及资产策略。"""
         user = await self._repo.get_user_by_id(user_id)
         if user is None:
             raise auth_error.UserNotFoundError
@@ -49,10 +52,14 @@ class QueryPrincipalService:
             raise QueryPrincipalNotConfiguredError(
                 "用户的 Doris 角色尚未配置可用的查询身份"
             )
-        return ResolvedQueryPrincipal(
-            role_name=user.doris_role_name,
+        principal = ResolvedQueryPrincipal(
+            role_name=identity.role_name,
             authorization_epoch=identity.authorization_epoch,
             query_user=identity.query_user,
             password=self._cipher.decrypt(identity.encrypted_password),
             workload_group=identity.workload_group,
         )
+        policy = await AuthorizationService(self._repo).get_role_asset_policy(
+            user.id, identity
+        )
+        return principal, policy

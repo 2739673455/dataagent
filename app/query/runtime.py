@@ -5,7 +5,7 @@ from collections.abc import Callable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.identity.repositories.identity import IdentityPGRepo
-from app.identity.services.authorization import AssetAccessPolicy, AuthorizationService
+from app.identity.services.authorization import AssetAccessPolicy
 from app.identity.services.credential import DorisCredentialCipher
 from app.identity.services.query_principal import (
     QueryPrincipalService,
@@ -13,6 +13,7 @@ from app.identity.services.query_principal import (
 )
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.query.models.execution import (
+    AnalysisQueryResult,
     QueryExecutionLimits,
     QueryExecutionOptions,
     QueryExecutionStatus,
@@ -26,7 +27,6 @@ from app.query.services.execution_recorder import (
 from app.query.services.executor import (
     AnalysisQueryService,
     QueryArtifactStore,
-    SuccessfulQueryExecution,
 )
 from app.query.services.guard import QueryGuardService
 from app.shared.clients.doris_client_manager import DorisQueryClientRegistry
@@ -66,12 +66,10 @@ class DatabaseQueryExecutionRuntime:
         """在单个认证会话中解析身份和资产策略。"""
         async with self._auth.session() as session:
             repo = IdentityPGRepo(session)
-            principal = await QueryPrincipalService(
+            return await QueryPrincipalService(
                 repo,
                 self._credential_cipher,
             ).resolve(user_id)
-            policy = await AuthorizationService(repo).get_asset_policy(user_id)
-        return principal, policy
 
     async def validate(
         self,
@@ -111,13 +109,18 @@ class DatabaseQueryExecutionRuntime:
     async def record_success(
         self,
         context: QueryExecutionContext,
-        details: SuccessfulQueryExecution,
+        *,
+        raw_sql: str,
+        validation: QueryValidationResult,
+        result: AnalysisQueryResult,
     ) -> None:
         """使用独立元数据会话记录成功事实。"""
         async with self._meta.session() as session:
             await self._recorder_factory(session).record_success(
                 context,
-                details,
+                raw_sql=raw_sql,
+                validation=validation,
+                result=result,
             )
 
     async def record_failure(

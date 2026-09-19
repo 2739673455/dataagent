@@ -149,10 +149,16 @@ class AuthorizationService:
         identity = await self._repo.get_query_identity(user.doris_role_name)
         if identity is None:
             return AssetAccessPolicy(user_id=user.id)
-        grants = await self._repo.list_role_asset_grants(user.doris_role_name)
+        return await self.get_role_asset_policy(user.id, identity)
+
+    async def get_role_asset_policy(
+        self, user_id: int, identity: DorisQueryIdentity
+    ) -> AssetAccessPolicy:
+        """根据已解析的角色身份加载授权，不重复读取用户或查询身份。"""
+        grants = await self._repo.list_role_asset_grants(identity.role_name)
         return AssetAccessPolicy(
-            user_id=user.id,
-            role_name=user.doris_role_name,
+            user_id=user_id,
+            role_name=identity.role_name,
             authorization_epoch=identity.authorization_epoch,
             grants=frozenset(self._grant_identity(grant) for grant in grants),
         )
