@@ -94,7 +94,7 @@ celery_app.conf.beat_schedule = {
     },
     "user-deletion-recovery": {
         "task": "dataagent.workflows.dispatch_due_user_deletions",
-        "schedule": cfg.lifecycle.user_deletion_retry_seconds,
+        "schedule": cfg.lifecycle.user_deletion_schedule_seconds,
     },
     "query-experience-index-repair": {
         "task": "dataagent.query.repair_indexes",

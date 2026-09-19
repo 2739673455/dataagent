@@ -290,14 +290,14 @@ class SemanticRecallContextService:
         authorization_filter: MetadataAuthorizationFilter,
         *,
         query_experience_role_name: str | None,
-        query_experience_authorization_epoch: UUID | None,
+        query_experience_authorization_fingerprint: str | None,
     ) -> None:
         """初始化召回管理服务。"""
         self._repo = repo
         self._authorization_filter = authorization_filter
         self._query_experience_role_name = query_experience_role_name
-        self._query_experience_authorization_epoch = (
-            query_experience_authorization_epoch
+        self._query_experience_authorization_fingerprint = (
+            query_experience_authorization_fingerprint
         )
 
     async def record(
@@ -335,8 +335,8 @@ class SemanticRecallContextService:
             query_experiences=self._filter_query_experiences(query_experiences),
             query_experiences_retrieved_at=query_experiences_retrieved_at,
             query_experience_role_name=self._query_experience_role_name,
-            query_experience_authorization_epoch=(
-                self._query_experience_authorization_epoch
+            query_experience_authorization_fingerprint=(
+                self._query_experience_authorization_fingerprint
             ),
             source_queries=(previous.source_queries if previous is not None else []),
             created_at=(previous.created_at if previous is not None else now),
@@ -363,8 +363,8 @@ class SemanticRecallContextService:
             return None
         if (
             record.query_experience_role_name != self._query_experience_role_name
-            or record.query_experience_authorization_epoch
-            != self._query_experience_authorization_epoch
+            or record.query_experience_authorization_fingerprint
+            != self._query_experience_authorization_fingerprint
         ):
             return None
         retrieved_at = record.query_experiences_retrieved_at
@@ -492,8 +492,8 @@ class SemanticRecallContextService:
                 target_record.query_experiences_retrieved_at
             ),
             query_experience_role_name=target_record.query_experience_role_name,
-            query_experience_authorization_epoch=(
-                target_record.query_experience_authorization_epoch
+            query_experience_authorization_fingerprint=(
+                target_record.query_experience_authorization_fingerprint
             ),
             source_queries=absorbed_queries,
             created_at=target_record.created_at,
@@ -533,11 +533,11 @@ class SemanticRecallContextService:
         ]
 
     def _matches_query_experience_scope(self, record: SemanticRecallRecord) -> bool:
-        """判断持久化经验缓存是否属于当前角色授权代次。"""
+        """判断持久化经验缓存是否属于当前角色授权指纹。"""
         return (
             record.query_experience_role_name == self._query_experience_role_name
-            and record.query_experience_authorization_epoch
-            == self._query_experience_authorization_epoch
+            and record.query_experience_authorization_fingerprint
+            == self._query_experience_authorization_fingerprint
         )
 
     async def delete(

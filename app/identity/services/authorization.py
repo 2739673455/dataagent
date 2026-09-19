@@ -1,9 +1,8 @@
 """RBAC 与数据资产白名单授权服务。"""
 
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from uuid import UUID
 
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
@@ -12,16 +11,13 @@ from app.identity import errors as auth_error
 from app.identity.models.account import User
 from app.identity.models.doris import (
     AssetScope,
+    DorisAuthorizationSnapshot,
     DorisQueryIdentity,
-    DorisRoleAssetGrant,
-    DorisRowPolicy,
     normalize_doris_role_name,
 )
 from app.identity.repositories.doris_role import (
     DorisQueryUserAlreadyExistsError,
     DorisRoleAlreadyExistsError,
-    DorisRoleIdentityDropError,
-    DorisRoleIdentityDropState,
     DorisRoleRepository,
     DorisWorkloadGroupNotFoundError,
     role_name_from_row,
@@ -116,7 +112,7 @@ class AssetAccessPolicy:
 
     user_id: int
     role_name: str | None = None
-    authorization_epoch: UUID | None = None
+    authorization_fingerprint: str | None = None
     grants: frozenset[AssetIdentity] = frozenset()
 
     def allows(self, asset: AssetIdentity) -> bool:
@@ -133,12 +129,23 @@ class AssetAccessPolicy:
 class AuthorizationService:
     """为检索与 SQL 守卫提供用户授权策略。"""
 
-    def __init__(self, repo: IdentityPGRepo) -> None:
-        """绑定认证授权投影仓储。"""
+    def __init__(
+        self,
+        repo: IdentityPGRepo,
+        doris_repo: DorisRoleRepository,
+        *,
+        data_source: str,
+        database: str,
+        catalog: str = "internal",
+    ) -> None:
         self._repo = repo
+        self._doris_repo = doris_repo
+        self._data_source = data_source
+        self._database = database
+        self._catalog = catalog
 
     async def get_asset_policy(self, user_id: int) -> AssetAccessPolicy:
-        """构建用户当前资产访问策略。"""
+        """在调用方事务内读取身份、Doris 当前授权并更新权限指纹。"""
         user = await self._repo.get_user_by_id(user_id)
         if user is None:
             raise auth_error.UserNotFoundError
@@ -146,21 +153,56 @@ class AuthorizationService:
             raise auth_error.InactiveUserError
         if user.doris_role_name is None:
             return AssetAccessPolicy(user_id=user.id)
-        identity = await self._repo.get_query_identity(user.doris_role_name)
+        return await self.get_role_asset_policy(user.id, user.doris_role_name)
+
+    async def observe_role(
+        self,
+        role_name: str,
+    ) -> tuple[DorisQueryIdentity, DorisAuthorizationSnapshot]:
+        """先锁身份再读取 Doris，避免较早读取的快照覆盖较新的权限指纹。"""
+        identity = await self._repo.lock_query_identity(role_name)
         if identity is None:
-            return AssetAccessPolicy(user_id=user.id)
-        return await self.get_role_asset_policy(user.id, identity)
+            raise auth_error.RoleNotFoundError
+        snapshot = await self._doris_repo.read_authorization(
+            role_name=identity.role_name,
+            query_user=identity.query_user,
+            data_source=self._data_source,
+            catalog=self._catalog,
+            database=self._database,
+        )
+        if identity.authorization_fingerprint != snapshot.fingerprint:
+            identity.authorization_fingerprint = snapshot.fingerprint
+            await self._repo.flush()
+        return identity, snapshot
 
     async def get_role_asset_policy(
-        self, user_id: int, identity: DorisQueryIdentity
+        self,
+        user_id: int,
+        role_name: str,
     ) -> AssetAccessPolicy:
-        """根据已解析的角色身份加载授权，不重复读取用户或查询身份。"""
-        grants = await self._repo.list_role_asset_grants(identity.role_name)
+        identity, snapshot = await self.observe_role(role_name)
+        return self.policy_from_snapshot(user_id, identity, snapshot)
+
+    @staticmethod
+    def policy_from_snapshot(
+        user_id: int,
+        identity: DorisQueryIdentity,
+        snapshot: DorisAuthorizationSnapshot,
+    ) -> AssetAccessPolicy:
+        """将同一次观察得到的授权内容构造成不可变策略。"""
         return AssetAccessPolicy(
             user_id=user_id,
             role_name=identity.role_name,
-            authorization_epoch=identity.authorization_epoch,
-            grants=frozenset(self._grant_identity(grant) for grant in grants),
+            authorization_fingerprint=snapshot.fingerprint,
+            grants=frozenset(
+                AssetIdentity(
+                    grant.data_source,
+                    grant.database_name,
+                    grant.table_name,
+                    grant.column_name,
+                )
+                for grant in snapshot.grants
+            ),
         )
 
     @staticmethod
@@ -178,19 +220,6 @@ class AuthorizationService:
         if user.doris_role_name is None or identity is None:
             raise auth_error.PermissionDeniedError(detail="分配的 Doris 角色不可用")
 
-    @staticmethod
-    def _grant_identity(grant: DorisRoleAssetGrant) -> AssetIdentity:
-        """将持久化授权转换为资产标识。"""
-        identity = AssetIdentity(
-            data_source=grant.data_source,
-            database_name=grant.database_name,
-            table_name=grant.table_name,
-            column_name=grant.column_name,
-        )
-        if identity.scope.value != grant.scope:
-            raise RuntimeError(f"持久化资产授权记录无效: {grant.id}")
-        return identity
-
 
 @dataclass(frozen=True, slots=True)
 class DorisExistingRoleDescriptor:
@@ -199,28 +228,6 @@ class DorisExistingRoleDescriptor:
     name: str
     managed: bool
     doris_users: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class _RoleSelectGrantSnapshot:
-    """恢复 Doris SELECT 权限所需的单条投影快照。"""
-
-    scope: str
-    database_name: str | None
-    table_name: str | None
-    column_name: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class _RoleDeletionSnapshot:
-    """跨存储删除 Doris 角色前保存的完整恢复状态。"""
-
-    role_name: str
-    query_user: str
-    workload_group: str
-    password: str = field(repr=False)
-    select_grants: tuple[_RoleSelectGrantSnapshot, ...] = ()
-    row_policies: tuple[DorisRowPolicy, ...] = ()
 
 
 class DorisRoleManagementService:
@@ -365,168 +372,21 @@ class DorisRoleManagementService:
             await self._repo.clear_default_query_identity()
 
     async def delete_role(self, role_name: str) -> None:
-        """以跨存储 Saga 删除未被用户使用的 Doris 查询身份和角色。"""
+        """先删除 Doris 身份再删除平台配置；中途失败保留配置供重试。"""
         role = normalize_doris_role_name(role_name)
-        snapshot: _RoleDeletionSnapshot | None = None
-        drop_state: DorisRoleIdentityDropState | None = None
-        try:
-            async with self._repo.session.begin():
-                await self._repo.lock_security_mutation()
-                identity = await self._repo.get_query_identity(role)
-                if identity is None:
-                    raise auth_error.RoleNotFoundError
-                if await self._repo.count_query_identity_assigned_users(role):
-                    raise auth_error.RoleInUseError
-                grants = await self._repo.list_role_asset_grants(role)
-                policies = await self._doris_repo.list_role_row_policies(role)
-                snapshot = self._role_deletion_snapshot(identity, grants, policies)
-                try:
-                    drop_state = await self._doris_repo.drop_role_identity(
-                        role_name=identity.role_name,
-                        query_user=identity.query_user,
-                    )
-                except DorisRoleIdentityDropError as exc:
-                    drop_state = exc.state
-                    raise
-                await self._repo.delete_role_asset_grants(role)
-                await self._repo.delete_query_identity(identity)
-        except BaseException:
-            # Doris 不参与 PostgreSQL 事务；包括提交失败和任务取消在内的任一中断都
-            # 必须按已完成步骤恢复，避免真实权限与 PostgreSQL 投影长期分离。
-            if snapshot is not None and drop_state is not None:
-                await self._compensate_role_deletion(snapshot, drop_state)
-            raise
+        async with self._repo.session.begin():
+            await self._repo.lock_security_mutation()
+            identity = await self._repo.lock_query_identity(role)
+            if identity is None:
+                raise auth_error.RoleNotFoundError
+            if await self._repo.count_query_identity_assigned_users(role):
+                raise auth_error.RoleInUseError
+            await self._doris_repo.drop_role_identity(
+                role_name=identity.role_name,
+                query_user=identity.query_user,
+            )
+            await self._repo.delete_query_identity(identity)
         await self._client_registry.invalidate(role)
-
-    def _role_deletion_snapshot(
-        self,
-        identity: DorisQueryIdentity,
-        grants: Sequence[DorisRoleAssetGrant],
-        policies: Sequence[DorisRowPolicy],
-    ) -> _RoleDeletionSnapshot:
-        """从事务对象提取角色删除后的 Doris 恢复状态。"""
-        return _RoleDeletionSnapshot(
-            role_name=identity.role_name,
-            query_user=identity.query_user,
-            workload_group=identity.workload_group,
-            password=self._cipher.decrypt(identity.encrypted_password),
-            select_grants=tuple(
-                _RoleSelectGrantSnapshot(
-                    scope=grant.scope,
-                    database_name=grant.database_name,
-                    table_name=grant.table_name,
-                    column_name=grant.column_name,
-                )
-                for grant in grants
-            ),
-            row_policies=tuple(policies),
-        )
-
-    async def _compensate_role_deletion(
-        self,
-        snapshot: _RoleDeletionSnapshot,
-        drop_state: DorisRoleIdentityDropState,
-    ) -> None:
-        """按 Doris 删除进度恢复查询用户或完整角色状态。"""
-        if drop_state.role_deleted:
-            await self._restore_role_state(snapshot)
-        elif drop_state.query_user_deleted:
-            await self._restore_query_user(snapshot)
-
-    async def _restore_query_user(self, snapshot: _RoleDeletionSnapshot) -> None:
-        """恢复仍存在角色的查询用户。"""
-        try:
-            await self._doris_repo.restore_query_user(
-                role_name=snapshot.role_name,
-                query_user=snapshot.query_user,
-                password=snapshot.password,
-            )
-        except BaseException:  # noqa: BLE001
-            logger.exception(
-                "Doris 角色删除 Saga 补偿失败: "
-                f"role={snapshot.role_name}, query_user={snapshot.query_user}, "
-                "stage=restore-query-user"
-            )
-
-    async def _restore_role_state(self, snapshot: _RoleDeletionSnapshot) -> None:
-        """恢复已删除的 Doris 角色、查询用户、SELECT 权限和行策略。"""
-        stage = "restore-role-identity"
-        try:
-            await self._doris_repo.create_role_identity(
-                role_name=snapshot.role_name,
-                query_user=snapshot.query_user,
-                password=snapshot.password,
-                workload_group=snapshot.workload_group,
-            )
-            stage = "restore-select-grants"
-            for database_name, table_name, columns in self._select_grant_targets(
-                snapshot.select_grants
-            ):
-                await self._doris_repo.grant_select(
-                    role_name=snapshot.role_name,
-                    catalog="internal",
-                    database=database_name,
-                    table=table_name,
-                    columns=columns,
-                )
-            stage = "restore-row-policies"
-            for policy in snapshot.row_policies:
-                await self._doris_repo.create_row_policy(
-                    policy_name=policy.policy_name,
-                    role_name=snapshot.role_name,
-                    catalog=policy.catalog_name,
-                    database=policy.database_name,
-                    table=policy.table_name,
-                    policy_type=policy.policy_type,
-                    predicate_sql=policy.predicate,
-                )
-        except BaseException:  # noqa: BLE001
-            logger.exception(
-                "Doris 角色删除 Saga 补偿失败: "
-                f"role={snapshot.role_name}, query_user={snapshot.query_user}, "
-                f"stage={stage}"
-            )
-
-    @staticmethod
-    def _select_grant_targets(
-        grants: Sequence[_RoleSelectGrantSnapshot],
-    ) -> tuple[tuple[str, str | None, tuple[str, ...]], ...]:
-        """将投影快照还原为 Doris 库、表和列级授权操作。"""
-        database_grants: set[str] = set()
-        table_grants: set[tuple[str, str]] = set()
-        column_grants: dict[tuple[str, str], set[str]] = {}
-        for grant in grants:
-            if grant.scope == AssetScope.DATABASE.value and grant.database_name:
-                database_grants.add(grant.database_name)
-            elif (
-                grant.scope == AssetScope.TABLE.value
-                and grant.database_name
-                and grant.table_name
-            ):
-                table_grants.add((grant.database_name, grant.table_name))
-            elif (
-                grant.scope == AssetScope.COLUMN.value
-                and grant.database_name
-                and grant.table_name
-                and grant.column_name
-            ):
-                column_grants.setdefault(
-                    (grant.database_name, grant.table_name), set()
-                ).add(grant.column_name)
-            else:
-                raise RuntimeError(f"存在无法恢复的 SELECT 权限投影: {grant.scope}")
-        targets: list[tuple[str, str | None, tuple[str, ...]]] = [
-            (database_name, None, ()) for database_name in sorted(database_grants)
-        ]
-        targets.extend(
-            (database_name, table_name, ())
-            for database_name, table_name in sorted(table_grants)
-        )
-        targets.extend(
-            (database_name, table_name, tuple(sorted(columns)))
-            for (database_name, table_name), columns in sorted(column_grants.items())
-        )
-        return tuple(targets)
 
     async def list_users(
         self,
@@ -713,13 +573,3 @@ class DorisRoleManagementService:
                 return updated
         except IntegrityError as exc:
             raise auth_error.UserAlreadyExistsError from exc
-
-    async def list_asset_grants(
-        self,
-        role_name: str,
-    ) -> list[DorisRoleAssetGrant]:
-        """列出 Doris 角色的 SELECT 权限投影。"""
-        normalized_name = normalize_doris_role_name(role_name)
-        if await self._repo.get_query_identity(normalized_name) is None:
-            raise auth_error.RoleNotFoundError
-        return await self._repo.list_role_asset_grants(normalized_name)

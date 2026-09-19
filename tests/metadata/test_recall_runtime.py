@@ -20,10 +20,14 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.closed = []
 
         @asynccontextmanager
+        async def async_transaction():
+            yield
+
+        @asynccontextmanager
         async def session(name):
             self.open_sessions.add(name)
             try:
-                yield MagicMock()
+                yield MagicMock(begin=lambda: async_transaction())
             finally:
                 self.open_sessions.remove(name)
                 self.closed.append(name)
@@ -31,6 +35,7 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.runtime = SemanticRecallRuntime(
             MagicMock(session=lambda: session("auth")),
             MagicMock(session=lambda: session("meta")),
+            MagicMock(),
             MagicMock(),
             MagicMock(),
         )
@@ -178,7 +183,7 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_experience_backend_failure_keeps_stale_timestamp_for_retry(self):
         policy = AssetAccessPolicy(
-            user_id=7, role_name="analyst", authorization_epoch=uuid4()
+            user_id=7, role_name="analyst", authorization_fingerprint="a" * 64
         )
 
         @asynccontextmanager

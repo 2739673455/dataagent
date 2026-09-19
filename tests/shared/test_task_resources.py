@@ -2,7 +2,7 @@
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack
+from contextlib import ExitStack, asynccontextmanager
 from threading import Barrier
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -32,7 +32,19 @@ def test_lifecycle_task_cleans_up_after_sandbox_init_failure(module) -> None:
     )
     agents = MagicMock(close=AsyncMock(side_effect=RuntimeError("agents close")))
 
+    @asynccontextmanager
+    async def execution_lock(user_id):
+        yield True
+
+    state_store = MagicMock(
+        execution_lock=execution_lock,
+        extend_claim=AsyncMock(return_value=True),
+        record_failure=AsyncMock(),
+    )
     with (
+        patch.object(
+            workflow_tasks, "PostgresUserDeletionStateStore", return_value=state_store
+        ),
         patch.object(
             lifecycle_runtime, "LangGraphPostgresManager", return_value=persistence
         ),

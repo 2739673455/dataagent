@@ -17,7 +17,10 @@ from app.query.services.experience_invalidation import (
 )
 from app.query.services.experience_recall import QueryExperienceRecallService
 from app.query.task_scheduler import query_experience_index_scheduler
-from app.shared.clients.doris_client_manager import DorisQueryClientRegistry
+from app.shared.clients.doris_client_manager import (
+    DorisClientManager,
+    DorisQueryClientRegistry,
+)
 from app.shared.clients.embedding_client_manager import (
     EmbeddingClient,
 )
@@ -90,10 +93,16 @@ def build_query_execution_handler(
     auth: PostgresClientManager,
     meta: PostgresClientManager,
     query_clients: DorisQueryClientRegistry,
+    admin_doris: DorisClientManager,
 ) -> QueryExecutionHandler:
     """组装身份解析、受控执行和历史记录完整查询用例。"""
     return QueryExecutionHandler(
         DatabaseQueryExecutionRuntime(
-            artifact_store, build_query_execution_recorder, auth, meta, query_clients
+            artifact_store,
+            build_query_execution_recorder,
+            auth,
+            meta,
+            query_clients,
+            admin_doris,
         )
     )

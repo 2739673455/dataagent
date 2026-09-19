@@ -10,7 +10,11 @@ interface PaginationControlsProps {
 }
 
 /** 将用户输入的页码限制在当前有效页码范围内。 */
-export function normalizePageNumber(value: string, currentPage: number, totalPages: number): number {
+export function normalizePageNumber(
+  value: string,
+  currentPage: number,
+  totalPages: number
+): number {
   const normalizedTotal = Math.max(1, totalPages);
   const trimmed = value.trim();
   if (!/^\d+$/.test(trimmed)) return Math.min(Math.max(1, currentPage), normalizedTotal);

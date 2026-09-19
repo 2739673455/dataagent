@@ -26,7 +26,7 @@ class QueryExecutionContext:
 
     session_key: AgentSessionKey
     role_name: str
-    authorization_epoch: UUID
+    authorization_fingerprint: str
     purpose: str
     tool_call_id: str | None = None
 
@@ -99,7 +99,7 @@ class QueryExecutionRecorder:
             experience = QueryExperience(
                 id=experience_id,
                 role_name=context.role_name,
-                authorization_epoch=context.authorization_epoch,
+                authorization_fingerprint=context.authorization_fingerprint,
                 fingerprint=fingerprint,
                 purposes=[context.purpose],
                 sql_template=sql_template,
@@ -149,7 +149,7 @@ class QueryExecutionRecorder:
         return QueryExecution(
             user_id=context.session_key.user_id,
             role_name=context.role_name,
-            authorization_epoch=context.authorization_epoch,
+            authorization_fingerprint=context.authorization_fingerprint,
             conversation_id=context.session_key.conversation_id,
             analysis_id=context.session_key.analysis_id,
             session_id=context.session_key.session_id,

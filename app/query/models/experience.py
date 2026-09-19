@@ -24,13 +24,13 @@ QUERY_EXPERIENCE_PURPOSE_LIMIT = 5
 
 
 class QueryExperience(MetaBase):
-    """按角色和 SQL 结构聚合的共享查询经验。"""
+    """按角色、授权指纹和 SQL 结构聚合的共享查询经验。"""
 
     __tablename__ = "query_experiences"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     role_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
-    authorization_epoch: Mapped[UUID] = mapped_column(nullable=False, default=uuid4)
+    authorization_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     purposes: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     sql_template: Mapped[str] = mapped_column(Text, nullable=False)
@@ -79,8 +79,9 @@ class QueryExperience(MetaBase):
     __table_args__ = (
         UniqueConstraint(
             "role_name",
+            "authorization_fingerprint",
             "fingerprint",
-            name="uq_query_experience_role_fingerprint",
+            name="uq_query_experience_role_auth_sql",
         ),
         CheckConstraint(
             "status IN ('active', 'disabled', 'deleting')",
@@ -118,20 +119,15 @@ class QueryExperience(MetaBase):
         self,
         *,
         purpose: str,
-        authorization_epoch: UUID,
         sql_template: str,
     ) -> bool:
-        """更新同一角色和 SQL 结构的共享经验。"""
+        """更新同一角色、授权指纹和 SQL 结构的共享经验。"""
         if self.status == "deleting":
             return False
-        if self.authorization_epoch != authorization_epoch:
-            self.authorization_epoch = authorization_epoch
-            self.purposes = [purpose]
-        else:
-            self.purposes = [
-                *[item for item in self.purposes if item != purpose],
-                purpose,
-            ][-QUERY_EXPERIENCE_PURPOSE_LIMIT:]
+        self.purposes = [
+            *[item for item in self.purposes if item != purpose],
+            purpose,
+        ][-QUERY_EXPERIENCE_PURPOSE_LIMIT:]
         self.sql_template = sql_template
         self.revision += 1
         if self.disabled_reason == "metadata_changed":

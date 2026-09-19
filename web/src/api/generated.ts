@@ -6,10 +6,8 @@ export interface components {
     "AgentType": "explorer" | "analyst" | "reviewer";
     "AssetGrantResponse": {
       "column_name": (string | null);
-      "created_at": string;
       "data_source": string;
       "database_name": (string | null);
-      "id": string;
       "role": string;
       "scope": string;
       "table_name": (string | null);

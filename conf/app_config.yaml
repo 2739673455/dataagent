@@ -13,7 +13,7 @@ doris: # Doris 管理连接，用于角色权限管理等平台操作。
   password: ${oc.env:DORIS_ADMIN_PASSWORD} # 连接密码，使用环境变量注入。
   database: ecommerce # 默认连接数据库。
 
-auth_postgresql: # 用户、令牌、Doris 角色投影和注销任务数据库。
+auth_postgresql: # 用户、令牌、Doris 查询身份、权限指纹和注销任务数据库。
   host: 127.0.0.1
   port: 5432
   user: atguigu
@@ -78,7 +78,8 @@ auth: # 登录令牌和密码策略。
 lifecycle: # 跨存储 Conversation 和用户资源清理策略。
   draft_ttl_minutes: 1440 # 未完成草稿保留时间，单位为分钟。
   cleanup_batch_size: 100 # 单次清理或任务领取的最大记录数。
-  user_deletion_retry_seconds: 60 # 用户注销失败后的重新调度间隔，单位为秒。
+  user_deletion_schedule_seconds: 300 # 注销漏投及失败任务的补偿扫描周期，单位为秒。
+  user_deletion_retry_seconds: 60 # 注销失败后到下一次可领取的最短等待时间，单位为秒。
 
 query: # Agent 只读 SQL 执行和查询经验召回配置。
   data_source: doris # SQL 查询数据源标识。

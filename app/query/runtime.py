@@ -4,8 +4,9 @@ from collections.abc import Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.identity.repositories.doris_role import DorisRoleRepository
 from app.identity.repositories.identity import IdentityPGRepo
-from app.identity.services.authorization import AssetAccessPolicy
+from app.identity.services.authorization import AssetAccessPolicy, AuthorizationService
 from app.identity.services.credential import DorisCredentialCipher
 from app.identity.services.query_principal import (
     QueryPrincipalService,
@@ -29,7 +30,10 @@ from app.query.services.executor import (
     QueryArtifactStore,
 )
 from app.query.services.guard import QueryGuardService
-from app.shared.clients.doris_client_manager import DorisQueryClientRegistry
+from app.shared.clients.doris_client_manager import (
+    DorisClientManager,
+    DorisQueryClientRegistry,
+)
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
 
@@ -44,9 +48,11 @@ class DatabaseQueryExecutionRuntime:
         auth: PostgresClientManager,
         meta: PostgresClientManager,
         query_clients: DorisQueryClientRegistry,
+        admin_doris: DorisClientManager,
     ) -> None:
         """绑定查询产物存储和静态执行配置。"""
         self._auth = auth
+        self._admin_doris = admin_doris
         self._meta = meta
         self._query_clients = query_clients
         self._artifact_store = artifact_store
@@ -64,11 +70,17 @@ class DatabaseQueryExecutionRuntime:
         user_id: int,
     ) -> tuple[ResolvedQueryPrincipal, AssetAccessPolicy]:
         """在单个认证会话中解析身份和资产策略。"""
-        async with self._auth.session() as session:
+        async with self._auth.session() as session, session.begin():
             repo = IdentityPGRepo(session)
             return await QueryPrincipalService(
                 repo,
                 self._credential_cipher,
+                AuthorizationService(
+                    repo,
+                    DorisRoleRepository(self._admin_doris),
+                    data_source=cfg.query.data_source,
+                    database=cfg.doris.database,
+                ),
             ).resolve(user_id)
 
     async def validate(

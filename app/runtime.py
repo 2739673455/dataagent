@@ -69,12 +69,12 @@ def _create_resources() -> WebResources:
     persistence = LangGraphPostgresManager(cfg.langgraph_postgresql)
     sandbox = create_sandbox_manager(cfg.sandbox, packaged_skill_readonly_mounts())
     tombstones = ConversationTombstoneStore(assistant)
-    recall = SemanticRecallRuntime(auth, meta, embedding, es)
+    recall = SemanticRecallRuntime(auth, meta, embedding, es, admin_doris)
     factory = ConversationAgentRuntimeFactory(
         persistence,
         sandbox,
         recall,
-        build_query_execution_handler(sandbox, auth, meta, query_clients),
+        build_query_execution_handler(sandbox, auth, meta, query_clients, admin_doris),
     )
     agents = AgentManager(persistence, tombstones, factory)
     runs = ConversationRunService(agents, sandbox, recall, persistence)
@@ -104,7 +104,6 @@ def _create_resources() -> WebResources:
             PostgresUserDeletionStateStore(auth),
             sandbox,
             conversations,
-            cfg.lifecycle,
         ),
         recall=recall,
         auth_rate_limit=AuthRateLimitService(

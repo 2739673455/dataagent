@@ -1,6 +1,7 @@
 """跨存储用户注销编排。"""
 
-from datetime import UTC, datetime, timedelta
+import asyncio
+from datetime import UTC, datetime
 
 from loguru import logger
 
@@ -10,27 +11,25 @@ from app.assistant.conversations.lifecycle import (
 from app.identity import errors as auth_error
 from app.identity.services.user_deletion_store import PostgresUserDeletionStateStore
 from app.sandbox.manager import DockerSandboxManager
-from app.shared.config.app_config import LifecycleConfig
+from app.workflows.task_scheduler import enqueue_user_deletion
 
 
 class UserDeletionService:
-    """协调认证库、会话库、元数据库、索引和沙箱的用户注销。"""
+    """协调注销状态、会话资源与用户沙箱清理。"""
 
     def __init__(
         self,
         state_store: PostgresUserDeletionStateStore,
         sandbox: DockerSandboxManager,
         conversations: ConversationLifecycleService,
-        config: LifecycleConfig,
     ) -> None:
         """绑定用户注销涉及的各存储和生命周期服务。"""
         self._state_store = state_store
         self._sandbox = sandbox
         self._conversations = conversations
-        self._config = config
 
     async def request_deletion(self, user_id: int, *, operator_id: int) -> bool:
-        """禁用目标用户并持久化注销任务。"""
+        """提交注销事务后立即投递清理，投递失败由数据库补偿扫描恢复。"""
         if user_id == operator_id:
             raise auth_error.InvalidUserMutationError(
                 detail="不能注销当前操作的管理员账号"
@@ -39,42 +38,18 @@ class UserDeletionService:
         submitted = await self._state_store.request(user_id, datetime.now(UTC))
         if submitted:
             logger.info(f"用户注销已受理: operator_id={operator_id}, user_id={user_id}")
+            try:
+                await asyncio.to_thread(enqueue_user_deletion, user_id)
+            except Exception:  # noqa: BLE001
+                # 已提交的禁用和 pending 记录仍有效，保留到期时间供补偿扫描领取。
+                logger.exception(
+                    f"用户注销立即投递失败，等待补偿扫描: user_id={user_id}"
+                )
         return submitted
 
     async def process(self, user_id: int) -> None:
-        """幂等执行一个用户的跨存储注销清理。"""
-        if await self._state_store.is_completed(user_id):
-            logger.info(f"用户注销清理已完成，跳过重复任务: user_id={user_id}")
-            return
-        logger.info(f"开始用户注销清理编排: user_id={user_id}")
-        try:
-            await self._conversations.delete_user_conversations(user_id)
-            logger.info(f"用户会话资源清理完成: user_id={user_id}")
-            await self._sandbox.delete_user_sandbox(user_id)
-            logger.info(f"用户沙箱资源清理完成: user_id={user_id}")
-            await self._state_store.complete(user_id, datetime.now(UTC))
-            logger.info(f"用户注销清理编排完成: user_id={user_id}")
-        except Exception as exc:
-            await self._record_failure(user_id, exc)
-            logger.exception(
-                "用户注销清理编排失败: "
-                f"user_id={user_id}, error_type={type(exc).__name__}"
-            )
-            raise
-
-    async def _record_failure(self, user_id: int, exc: Exception) -> None:
-        """记录注销失败原因和下一次重试时间。"""
-        now = datetime.now(UTC)
-        next_attempt_at = now + timedelta(
-            seconds=self._config.user_deletion_retry_seconds
-        )
-        await self._state_store.record_failure(
-            user_id,
-            error=f"{type(exc).__name__}: {exc}",
-            next_attempt_at=next_attempt_at,
-        )
-        logger.warning(
-            "用户注销失败状态已记录: "
-            f"user_id={user_id}, error_type={type(exc).__name__}, "
-            f"next_attempt_at={next_attempt_at.isoformat()}"
-        )
+        """在任务入口持有用户锁并确认 pending 后，依次完成跨存储清理。"""
+        await self._conversations.delete_user_conversations(user_id)
+        await self._sandbox.delete_user_sandbox(user_id)
+        await self._state_store.complete(user_id, datetime.now(UTC))
+        logger.info(f"用户注销清理编排完成: user_id={user_id}")

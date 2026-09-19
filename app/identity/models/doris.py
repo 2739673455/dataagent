@@ -1,21 +1,17 @@
-"""Doris 查询身份与权限投影模型。"""
+"""Doris 查询身份与实时授权模型。"""
 
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Literal
-from uuid import UUID, uuid4
 
 from sqlalchemy import (
     Boolean,
-    CheckConstraint,
     DateTime,
-    ForeignKey,
     Index,
     String,
     Text,
-    UniqueConstraint,
     func,
     text,
 )
@@ -65,10 +61,7 @@ class DorisQueryIdentity(AuthBase):
     query_user: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     encrypted_password: Mapped[str] = mapped_column(Text, nullable=False)
     workload_group: Mapped[str] = mapped_column(String(128), nullable=False)
-    authorization_epoch: Mapped[UUID] = mapped_column(
-        nullable=False,
-        default=uuid4,
-    )
+    authorization_fingerprint: Mapped[str | None] = mapped_column(String(64))
     is_default: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -96,50 +89,29 @@ class DorisQueryIdentity(AuthBase):
         ),
     )
 
-    def rotate_authorization_epoch(self) -> None:
-        """推进角色授权代次，使旧查询经验立即失效。"""
-        self.authorization_epoch = uuid4()
+
+@dataclass(frozen=True, slots=True)
+class DorisSelectGrant:
+    """查询账号在当前业务数据库中的一项有效 SELECT 授权。"""
+
+    role_name: str
+    data_source: str
+    database_name: str
+    table_name: str | None = None
+    column_name: str | None = None
+
+    @property
+    def scope(self) -> str:
+        if self.column_name is not None:
+            return AssetScope.COLUMN.value
+        if self.table_name is not None:
+            return AssetScope.TABLE.value
+        return AssetScope.DATABASE.value
 
 
-class DorisRoleAssetGrant(AuthBase):
-    """Doris 角色 SELECT 权限的应用侧可见性投影。"""
-
-    __tablename__ = "doris_role_asset_grants"
-
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    role_name: Mapped[str] = mapped_column(
-        ForeignKey("doris_query_identities.role_name", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    scope: Mapped[str] = mapped_column(String(16), nullable=False)
-    data_source: Mapped[str] = mapped_column(String(256), nullable=False)
-    database_name: Mapped[str | None] = mapped_column(String(256))
-    table_name: Mapped[str | None] = mapped_column(String(256))
-    column_name: Mapped[str | None] = mapped_column(String(256))
-    resource_key: Mapped[str] = mapped_column(String(64), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "role_name",
-            "scope",
-            "resource_key",
-            name="uq_doris_role_asset_grant_resource",
-        ),
-        CheckConstraint(
-            "(scope = 'data_source' AND database_name IS NULL "
-            "AND table_name IS NULL AND column_name IS NULL) OR "
-            "(scope = 'database' AND database_name IS NOT NULL "
-            "AND table_name IS NULL AND column_name IS NULL) OR "
-            "(scope = 'table' AND database_name IS NOT NULL "
-            "AND table_name IS NOT NULL AND column_name IS NULL) OR "
-            "(scope = 'column' AND database_name IS NOT NULL "
-            "AND table_name IS NOT NULL AND column_name IS NOT NULL)",
-            name="ck_doris_role_asset_grant_hierarchy",
-        ),
-    )
+@dataclass(frozen=True, slots=True)
+class DorisAuthorizationSnapshot:
+    grants: tuple[DorisSelectGrant, ...]
+    fingerprint: str
+    # 全局或 Catalog SELECT 不能通过当前数据库的撤权入口消除。
+    has_broad_select: bool = False
