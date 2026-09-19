@@ -91,7 +91,7 @@ class SemanticRecallRecord(BaseModel):
     query_experiences: list[QueryExperienceRecallResult]
     query_experiences_retrieved_at: datetime
     query_experience_role_name: str | None
-    query_experience_authorization_epoch: UUID | None
+    query_experience_authorization_fingerprint: str | None
     source_queries: list[str]
     created_at: datetime
     updated_at: datetime

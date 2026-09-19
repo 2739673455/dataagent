@@ -234,9 +234,9 @@ async def update_user(
 async def list_select_grants(
     role: RolePath,
     _: AdminUserDep,
-    service: DorisRoleManagementServiceDep,
+    service: DorisPermissionServiceDep,
 ) -> list[schemas.AssetGrantResponse]:
-    """列出角色用于检索前置过滤的 SELECT 权限投影。"""
+    """列出角色查询账号的实时有效 SELECT 权限。"""
     grants = await service.list_asset_grants(role)
     return [schemas.AssetGrantResponse.from_entity(grant) for grant in grants]
 

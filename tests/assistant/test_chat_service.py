@@ -743,6 +743,49 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_final_artifact_directive_returns_uploaded_image(self) -> None:
+        relative_path = "uploads/PixPin_2026-09-19_14-21-52.png"
+        message = AIMessage(
+            content=f"图片见附件。\n[[DATAAGENT_ARTIFACT:{_SANDBOX_ROOT}/{relative_path}]]",
+            response_metadata={"finish_reason": "stop"},
+        )
+        files = _FileInspectorStub({(7, _CONVERSATION_ID, relative_path)})
+
+        schema = await message_projection.langchain_message_to_schema_with_artifacts(
+            message, files, 7, _CONVERSATION_ID
+        )
+
+        assert schema is not None
+        self.assertEqual(
+            schema.attachments,
+            [chat_schema.Attachment(f_path=relative_path, media_type="image/png")],
+        )
+        self.assertEqual(
+            schema.parts, [chat_schema.TextContent(type="text", text="图片见附件。\n")]
+        )
+        self.assertEqual(files.calls, [(7, _CONVERSATION_ID, relative_path)])
+
+    async def test_artifact_directives_reject_paths_outside_public_roots(self) -> None:
+        files = _FileInspectorStub(set())
+        for path in (
+            "/data/660e8400-e29b-41d4-a716-446655440000/uploads/image.png",
+            f"{_SANDBOX_ROOT}/private/image.png",
+            f"{_SANDBOX_ROOT}/uploads/../../image.png",
+        ):
+            with self.subTest(path=path):
+                text = f"[[DATAAGENT_ARTIFACT:{path}]]"
+                schema = (
+                    await message_projection.langchain_message_to_schema_with_artifacts(
+                        AIMessage(content=text), files, 7, _CONVERSATION_ID
+                    )
+                )
+                assert schema is not None
+                self.assertIsNone(schema.attachments)
+                self.assertEqual(
+                    schema.parts, [chat_schema.TextContent(type="text", text=text)]
+                )
+        self.assertEqual(files.calls, [])
+
     async def test_artifact_directives_only_apply_to_final_assistant_messages(
         self,
     ) -> None:

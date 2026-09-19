@@ -1,8 +1,6 @@
 """管理员接口请求与响应模型。"""
 
-from datetime import datetime
 from typing import Any, Literal, Self
-from uuid import UUID
 
 from pydantic import (
     BaseModel,
@@ -16,8 +14,8 @@ from pydantic import (
 from app.identity.api.auth.schemas import UserResponse
 from app.identity.models.doris import (
     DorisQueryIdentity,
-    DorisRoleAssetGrant,
     DorisRowPolicy,
+    DorisSelectGrant,
     normalize_doris_role_name,
 )
 from app.identity.services.doris_permission import DorisRoleStatus
@@ -202,29 +200,25 @@ class SelectGrantRequest(BaseModel):
 
 
 class AssetGrantResponse(BaseModel):
-    """Doris SELECT 权限投影响应。"""
+    """Doris 查询账号有效 SELECT 权限响应。"""
 
-    id: UUID
     role: str
     scope: str
     data_source: str
     database_name: str | None
     table_name: str | None
     column_name: str | None
-    created_at: datetime
 
     @classmethod
-    def from_entity(cls, grant: DorisRoleAssetGrant) -> Self:
-        """从权限投影实体构造响应。"""
+    def from_entity(cls, grant: DorisSelectGrant) -> Self:
+        """从实时权限构造响应。"""
         return cls(
-            id=grant.id,
             role=grant.role_name,
             scope=grant.scope,
             data_source=grant.data_source,
             database_name=grant.database_name,
             table_name=grant.table_name,
             column_name=grant.column_name,
-            created_at=grant.created_at,
         )
 
 

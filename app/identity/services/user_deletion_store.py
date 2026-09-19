@@ -1,6 +1,10 @@
 """用户注销认证状态存储。"""
 
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import datetime
+
+from sqlalchemy import text
 
 from app.identity import errors as auth_error
 from app.identity.repositories.identity import IdentityPGRepo
@@ -26,6 +30,8 @@ class PostgresUserDeletionStateStore:
                     if task is not None and task.status == "completed":
                         return False
                     raise auth_error.UserNotFoundError
+                if task is not None:
+                    return False
                 if user.is_active and user.is_admin and await repo.count_admins() <= 1:
                     raise auth_error.LastAdministratorError
                 await repo.set_user_active(user, False)
@@ -33,11 +39,19 @@ class PostgresUserDeletionStateStore:
                 await repo.enqueue_user_deletion(user.id, requested_at)
         return True
 
-    async def is_completed(self, user_id: int) -> bool:
-        """判断用户注销任务是否完成。"""
-        async with self._postgres.session() as session:
-            task = await IdentityPGRepo(session).get_user_deletion_task(user_id)
-            return task is not None and task.status == "completed"
+    @asynccontextmanager
+    async def execution_lock(self, user_id: int) -> AsyncGenerator[bool]:
+        """用专属认证事务持有用户级互斥锁，事务退出或连接断开即释放。
+
+        此事务只负责锁；受理、续租、失败回写和完成各用独立短事务。
+        两个 int 键与安全变更使用的 bigint advisory lock 命名空间分离。
+        """
+        async with self._postgres.session() as session, session.begin():
+            acquired = await session.scalar(
+                text("SELECT pg_try_advisory_xact_lock(:namespace, :user_id)"),
+                {"namespace": 0x5544454C, "user_id": user_id},
+            )
+            yield bool(acquired)
 
     async def complete(self, user_id: int, completed_at: datetime) -> None:
         """删除认证用户并完成注销任务。"""
@@ -49,6 +63,8 @@ class PostgresUserDeletionStateStore:
                 task = await repo.get_user_deletion_task_for_update(user_id)
                 if task is None:
                     raise RuntimeError("用户注销任务记录不存在")
+                if task.status == "completed":
+                    return
                 user = await repo.get_user_by_id_for_update(user_id)
                 if user is not None:
                     await repo.delete_user(user)

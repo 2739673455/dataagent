@@ -2,14 +2,14 @@
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
-from app.identity.models.doris import DorisRowPolicy
+from app.identity.models.doris import DorisAuthorizationSnapshot, DorisRowPolicy
+from app.identity.repositories.doris_authorization import parse_authorization
 from app.shared.clients.doris_client_manager import DorisClientManager
 from app.shared.contracts.doris import DORIS_IDENTIFIER_PATTERN
 
@@ -42,23 +42,6 @@ class DorisRoleAlreadyExistsError(RuntimeError):
         """记录发生冲突的 Doris 角色名。"""
         self.role_name = role_name
         super().__init__(f"Doris 角色已存在: {role_name}")
-
-
-@dataclass(frozen=True, slots=True)
-class DorisRoleIdentityDropState:
-    """Doris 查询用户与角色删除的已完成步骤。"""
-
-    query_user_deleted: bool
-    role_deleted: bool
-
-
-class DorisRoleIdentityDropError(RuntimeError):
-    """删除查询用户后删除角色失败。"""
-
-    def __init__(self, state: DorisRoleIdentityDropState) -> None:
-        """保存已完成步骤，供上层 Saga 执行精确补偿。"""
-        self.state = state
-        super().__init__("Doris 查询身份删除未完整完成")
 
 
 class DorisRoleRepository:
@@ -112,6 +95,40 @@ class DorisRoleRepository:
         async with self._provider.connection() as connection:
             result = await connection.execute(text("SHOW ROLES"))
             return [dict(row) for row in result.mappings().all()]
+
+    async def read_authorization(
+        self,
+        *,
+        role_name: str,
+        query_user: str,
+        data_source: str,
+        catalog: str,
+        database: str,
+    ) -> DorisAuthorizationSnapshot:
+        """从专属查询账号读取有效权限及角色、用户行策略。"""
+        user = self.quote_user(query_user)
+        role = self.quote_role(role_name)
+        async with self._provider.connection() as connection:
+            await connection.exec_driver_sql("SET show_user_default_role = false")
+            result = await connection.execute(text(f"SHOW GRANTS FOR {user}@'%'"))
+            rows = result.mappings().all()
+            if len(rows) != 1:
+                raise ValueError("Doris 查询账号授权结果必须唯一")
+            policies: list[dict[str, Any]] = []
+            for subject in (f"ROLE {role}", f"{user}@'%'"):
+                result = await connection.execute(
+                    text(f"SHOW ROW POLICY FOR {subject}")
+                )
+                policies.extend(dict(row) for row in result.mappings().all())
+            return parse_authorization(
+                dict(rows[0]),
+                policies,
+                role_name=role_name,
+                query_user=query_user,
+                data_source=data_source,
+                catalog=catalog,
+                database=database,
+            )
 
     async def list_role_names(self) -> tuple[str, ...]:
         """读取 Doris 中的全部显式角色名。"""
@@ -182,43 +199,12 @@ class DorisRoleRepository:
                     logger.exception(f"补偿删除 Doris 角色失败: {role_name}")
             raise
 
-    async def drop_role_identity(
-        self,
-        *,
-        role_name: str,
-        query_user: str,
-    ) -> DorisRoleIdentityDropState:
-        """删除 Doris 查询用户和角色，并返回已完成的步骤。"""
+    async def drop_role_identity(self, *, role_name: str, query_user: str) -> None:
+        """幂等删除查询用户和角色；失败后允许再次执行剩余步骤。"""
         user = self.quote_user(query_user)
         role = self.quote_role(role_name)
         await self._execute(f"DROP USER IF EXISTS {user}")
-        state = DorisRoleIdentityDropState(
-            query_user_deleted=True,
-            role_deleted=False,
-        )
-        try:
-            await self._execute(f"DROP ROLE IF EXISTS {role}")
-        except BaseException as exc:
-            raise DorisRoleIdentityDropError(state) from exc
-        return DorisRoleIdentityDropState(
-            query_user_deleted=True,
-            role_deleted=True,
-        )
-
-    async def restore_query_user(
-        self,
-        *,
-        role_name: str,
-        query_user: str,
-        password: str,
-    ) -> None:
-        """恢复绑定既有角色的 Doris 查询用户。"""
-        await self._create_query_user(
-            query_user=query_user,
-            user_literal=self.quote_user(query_user),
-            password=password,
-            role_literal=self.quote_role_literal(role_name),
-        )
+        await self._execute(f"DROP ROLE IF EXISTS {role}")
 
     async def verify_configured_roles(self, role_names: Sequence[str]) -> None:
         """确认管理账号可查看且 Doris 已创建全部配置角色。"""

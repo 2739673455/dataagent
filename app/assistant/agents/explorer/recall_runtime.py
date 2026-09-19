@@ -21,6 +21,7 @@ from app.metadata.providers import (
 )
 from app.metadata.services.recall import SemanticRecallContextService
 from app.query.providers import build_query_experience_recall_service
+from app.shared.clients.doris_client_manager import DorisClientManager
 from app.shared.clients.embedding_client_manager import EmbeddingClientManager
 from app.shared.clients.es_client_manager import ESClientManager
 from app.shared.clients.postgres_client_manager import PostgresClientManager
@@ -50,12 +51,13 @@ class SemanticRecallRuntime:
     meta: PostgresClientManager
     embedding: EmbeddingClientManager
     es: ESClientManager
+    doris: DorisClientManager
 
     async def search(
         self, user_id: int, request: SemanticResourceRecallRequest
     ) -> tuple[AssetAccessPolicy, SemanticResourceRecallResponse]:
         """取得本次策略和目录，再在读取会话之外执行外部检索。"""
-        policy = await load_asset_policy(self.auth, user_id)
+        policy = await load_asset_policy(self.auth, self.doris, user_id)
         service = await build_semantic_resource_recall_service(
             self.meta, self.es.get_client(), self.embedding.get_client(), policy
         )
@@ -67,7 +69,7 @@ class SemanticRecallRuntime:
     ) -> AsyncGenerator[SemanticRecallContextService]:
         """单次操作内复用策略，独立工具/消息读取始终重新授权。"""
         if policy is None:
-            policy = await load_asset_policy(self.auth, user_id)
+            policy = await load_asset_policy(self.auth, self.doris, user_id)
         async with semantic_recall_context(self.meta, policy) as service:
             yield service
 
@@ -86,14 +88,14 @@ class SemanticRecallRuntime:
                 )
             if cached is not None:
                 return cached
-            if policy.role_name is None or policy.authorization_epoch is None:
+            if policy.role_name is None or policy.authorization_fingerprint is None:
                 return [], datetime.now(UTC)
             async with self.meta.session() as session:
                 result = await build_query_experience_recall_service(
                     session, self.es.get_client(), self.embedding.get_client()
                 ).recall(
                     role_name=policy.role_name,
-                    authorization_epoch=policy.authorization_epoch,
+                    authorization_fingerprint=policy.authorization_fingerprint,
                     policy=policy,
                     query=query,
                     limit=QUERY_EXPERIENCE_RECALL_LIMIT,

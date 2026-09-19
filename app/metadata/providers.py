@@ -79,5 +79,5 @@ async def semantic_recall_context(
                 policy, cfg.query.data_source, cfg.doris.database
             ),
             query_experience_role_name=policy.role_name,
-            query_experience_authorization_epoch=policy.authorization_epoch,
+            query_experience_authorization_fingerprint=policy.authorization_fingerprint,
         )

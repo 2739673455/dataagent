@@ -147,22 +147,6 @@ class RoleInUseError(ProblemError):
     status = HTTPStatus.CONFLICT
 
 
-class AssetGrantNotFoundError(ProblemError):
-    """表示目标数据资产授权不存在。"""
-
-    type = "asset-grant-not-found"
-    title = "资产授权不存在"
-    status = HTTPStatus.NOT_FOUND
-
-
-class AssetGrantAlreadyExistsError(ProblemError):
-    """表示目标数据资产授权已经存在。"""
-
-    type = "asset-grant-already-exists"
-    title = "资产授权已存在"
-    status = HTTPStatus.CONFLICT
-
-
 class LastAdministratorError(ProblemError):
     """表示操作会移除最后一位平台管理员。"""
 

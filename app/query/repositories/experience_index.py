@@ -17,7 +17,7 @@ class QueryExperienceESRepo:
         "dynamic": False,
         "properties": {
             "role_name": {"type": "keyword"},
-            "authorization_epoch": {"type": "keyword"},
+            "authorization_fingerprint": {"type": "keyword"},
             "text": {
                 "type": "text",
                 "analyzer": "ik_max_word",
@@ -51,7 +51,7 @@ class QueryExperienceESRepo:
         *,
         revision: int,
         role_name: str,
-        authorization_epoch: UUID,
+        authorization_fingerprint: str,
         text: str,
         embedding: list[float],
     ) -> None:
@@ -63,7 +63,7 @@ class QueryExperienceESRepo:
                 id=str(experience_id),
                 document={
                     "role_name": role_name,
-                    "authorization_epoch": str(authorization_epoch),
+                    "authorization_fingerprint": authorization_fingerprint,
                     "text": text,
                     "embedding": embedding,
                 },
@@ -93,7 +93,7 @@ class QueryExperienceESRepo:
         query: str,
         *,
         role_name: str,
-        authorization_epoch: UUID,
+        authorization_fingerprint: str,
         limit: int,
     ) -> list[SearchHit[UUID]]:
         """按任务文本执行全文检索。"""
@@ -112,7 +112,7 @@ class QueryExperienceESRepo:
                             }
                         }
                     ],
-                    "filter": self._scope_filter(role_name, authorization_epoch),
+                    "filter": self._scope_filter(role_name, authorization_fingerprint),
                 }
             },
             size=limit,
@@ -124,7 +124,7 @@ class QueryExperienceESRepo:
         embedding: list[float],
         *,
         role_name: str,
-        authorization_epoch: UUID,
+        authorization_fingerprint: str,
         limit: int,
         min_score: float,
     ) -> list[SearchHit[UUID]]:
@@ -140,7 +140,9 @@ class QueryExperienceESRepo:
                 "num_candidates": min(10_000, max(100, limit * 10)),
                 "filter": {
                     "bool": {
-                        "filter": self._scope_filter(role_name, authorization_epoch),
+                        "filter": self._scope_filter(
+                            role_name, authorization_fingerprint
+                        ),
                     }
                 },
             },
@@ -152,12 +154,12 @@ class QueryExperienceESRepo:
     @staticmethod
     def _scope_filter(
         role_name: str,
-        authorization_epoch: UUID,
+        authorization_fingerprint: str,
     ) -> list[dict[str, Any]]:
         """构造角色和权限纪元一致的索引过滤条件。"""
         return [
             {"term": {"role_name": role_name}},
-            {"term": {"authorization_epoch": str(authorization_epoch)}},
+            {"term": {"authorization_fingerprint": authorization_fingerprint}},
         ]
 
     @staticmethod

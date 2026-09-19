@@ -37,7 +37,7 @@ class QueryExperiencePGRepo:
         experience: QueryExperience,
         assets: list[QueryExperienceAsset],
     ) -> QueryExperience:
-        """创建或更新相同角色和 SQL 指纹的查询经验。"""
+        """创建或更新相同角色、授权指纹和 SQL 指纹的查询经验。"""
         now = datetime.now(UTC)
         proposed_id = experience.id or uuid4()
         statement = (
@@ -45,7 +45,7 @@ class QueryExperiencePGRepo:
             .values(
                 id=proposed_id,
                 role_name=experience.role_name,
-                authorization_epoch=experience.authorization_epoch,
+                authorization_fingerprint=experience.authorization_fingerprint,
                 fingerprint=experience.fingerprint,
                 purposes=experience.purposes,
                 sql_template=experience.sql_template,
@@ -60,7 +60,9 @@ class QueryExperiencePGRepo:
                 created_at=now,
                 updated_at=now,
             )
-            .on_conflict_do_nothing(index_elements=["role_name", "fingerprint"])
+            .on_conflict_do_nothing(
+                index_elements=["role_name", "authorization_fingerprint", "fingerprint"]
+            )
             .returning(QueryExperience.id)
         )
         inserted_id = await self._session.scalar(statement)
@@ -69,6 +71,8 @@ class QueryExperiencePGRepo:
                 select(QueryExperience)
                 .where(
                     QueryExperience.role_name == experience.role_name,
+                    QueryExperience.authorization_fingerprint
+                    == experience.authorization_fingerprint,
                     QueryExperience.fingerprint == experience.fingerprint,
                 )
                 .with_for_update()
@@ -78,7 +82,6 @@ class QueryExperiencePGRepo:
             experience_id = existing.id
             experience_updated = existing.refresh_from_success(
                 purpose=experience.purposes[0],
-                authorization_epoch=experience.authorization_epoch,
                 sql_template=experience.sql_template,
             )
         else:
@@ -113,15 +116,15 @@ class QueryExperiencePGRepo:
         experience_ids: list[UUID],
         *,
         role_name: str,
-        authorization_epoch: UUID,
+        authorization_fingerprint: str,
     ) -> list[QueryExperience]:
-        """在当前角色和授权代次范围内按 ID 批量读取经验。"""
+        """在当前角色和授权指纹范围内按 ID 批量读取经验。"""
         if not experience_ids:
             return []
         conditions = [
             QueryExperience.id.in_(experience_ids),
             QueryExperience.role_name == role_name,
-            QueryExperience.authorization_epoch == authorization_epoch,
+            QueryExperience.authorization_fingerprint == authorization_fingerprint,
         ]
         result = await self._session.scalars(
             select(QueryExperience)

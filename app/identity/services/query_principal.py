@@ -1,7 +1,6 @@
 """按用户唯一 Doris 角色解析稳定共享查询身份。"""
 
 from dataclasses import dataclass, field
-from uuid import UUID
 
 from app.identity import errors as auth_error
 from app.identity.repositories.identity import IdentityPGRepo
@@ -18,7 +17,7 @@ class ResolvedQueryPrincipal:
     """服务端为一次查询解析出的 Doris 身份。"""
 
     role_name: str
-    authorization_epoch: UUID
+    authorization_fingerprint: str
     query_user: str
     workload_group: str
     password: str = field(repr=False)
@@ -31,10 +30,12 @@ class QueryPrincipalService:
         self,
         repo: IdentityPGRepo,
         cipher: DorisCredentialCipher,
+        authorization: AuthorizationService,
     ) -> None:
         """绑定身份存储和查询凭据解密器。"""
         self._repo = repo
         self._cipher = cipher
+        self._authorization = authorization
 
     async def resolve(
         self, user_id: int
@@ -47,19 +48,18 @@ class QueryPrincipalService:
             raise auth_error.InactiveUserError
         if user.doris_role_name is None:
             raise QueryPrincipalNotConfiguredError("用户尚未配置 Doris 角色")
-        identity = await self._repo.get_query_identity(user.doris_role_name)
-        if identity is None:
-            raise QueryPrincipalNotConfiguredError(
-                "用户的 Doris 角色尚未配置可用的查询身份"
+        try:
+            identity, snapshot = await self._authorization.observe_role(
+                user.doris_role_name
             )
+        except auth_error.RoleNotFoundError as exc:
+            raise QueryPrincipalNotConfiguredError("角色查询身份不存在") from exc
+        policy = self._authorization.policy_from_snapshot(user.id, identity, snapshot)
         principal = ResolvedQueryPrincipal(
             role_name=identity.role_name,
-            authorization_epoch=identity.authorization_epoch,
+            authorization_fingerprint=snapshot.fingerprint,
             query_user=identity.query_user,
             password=self._cipher.decrypt(identity.encrypted_password),
             workload_group=identity.workload_group,
-        )
-        policy = await AuthorizationService(self._repo).get_role_asset_policy(
-            user.id, identity
         )
         return principal, policy

@@ -1,21 +1,21 @@
-"""PostgreSQL 认证身份与 Doris 权限投影访问。"""
+"""PostgreSQL 认证身份与 授权变化版本访问。"""
 
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, func, or_, select, text, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.identity.models.account import RefreshToken, User
-from app.identity.models.doris import DorisQueryIdentity, DorisRoleAssetGrant
+from app.identity.models.doris import DorisQueryIdentity
 from app.identity.models.lifecycle import UserDeletionTask
 
 _SECURITY_MUTATION_LOCK_KEY = 0x444154414147454E
 
 
 class IdentityPGRepo:
-    """PostgreSQL 身份、查询身份与 Doris 权限投影存储。"""
+    """PostgreSQL 身份、查询身份与 授权变化版本存储。"""
 
     def __init__(self, session: AsyncSession) -> None:
         """绑定当前请求使用的异步数据库会话。"""
@@ -236,7 +236,7 @@ class IdentityPGRepo:
         user_id: int,
         now: datetime,
     ) -> None:
-        """新增或重新调度用户注销任务。"""
+        """仅新增注销任务，重复受理不重置租约与失败信息。"""
         await self._session.execute(
             insert(UserDeletionTask)
             .values(
@@ -246,16 +246,7 @@ class IdentityPGRepo:
                 next_attempt_at=now,
                 last_error=None,
             )
-            .on_conflict_do_update(
-                index_elements=[UserDeletionTask.user_id],
-                set_={
-                    "status": "pending",
-                    "next_attempt_at": now,
-                    "last_error": None,
-                    "updated_at": now,
-                },
-                where=UserDeletionTask.status != "completed",
-            )
+            .on_conflict_do_nothing(index_elements=[UserDeletionTask.user_id])
         )
 
     async def claim_due_user_deletions(
@@ -324,55 +315,6 @@ class IdentityPGRepo:
         task.updated_at = now
         await self._session.flush()
 
-    async def list_role_asset_grants(
-        self,
-        role_name: str,
-    ) -> list[DorisRoleAssetGrant]:
-        """读取指定 Doris 角色的权限投影。"""
-        result = await self._session.scalars(
-            select(DorisRoleAssetGrant)
-            .where(DorisRoleAssetGrant.role_name == role_name)
-            .order_by(DorisRoleAssetGrant.resource_key)
-        )
-        return list(result)
-
-    async def find_asset_grant(
-        self,
-        role_name: str,
-        scope: str,
-        resource_key: str,
-    ) -> DorisRoleAssetGrant | None:
-        """按角色和资产键读取权限投影。"""
-        return await self._session.scalar(
-            select(DorisRoleAssetGrant).where(
-                DorisRoleAssetGrant.role_name == role_name,
-                DorisRoleAssetGrant.scope == scope,
-                DorisRoleAssetGrant.resource_key == resource_key,
-            )
-        )
-
-    async def add_asset_grant(
-        self,
-        grant: DorisRoleAssetGrant,
-    ) -> DorisRoleAssetGrant:
-        """新增 Doris 权限投影。"""
-        self._session.add(grant)
-        await self._session.flush()
-        return grant
-
-    async def delete_asset_grant(self, grant: DorisRoleAssetGrant) -> None:
-        """删除 Doris 权限投影。"""
-        await self._session.delete(grant)
-        await self._session.flush()
-
-    async def delete_role_asset_grants(self, role_name: str) -> None:
-        """删除指定 Doris 角色的全部权限投影。"""
-        await self._session.execute(
-            delete(DorisRoleAssetGrant).where(
-                DorisRoleAssetGrant.role_name == role_name
-            )
-        )
-
     async def add_query_identity(
         self,
         identity: DorisQueryIdentity,
@@ -389,6 +331,15 @@ class IdentityPGRepo:
         """按 Doris 角色读取稳定查询身份。"""
         return await self._session.scalar(
             select(DorisQueryIdentity).where(DorisQueryIdentity.role_name == role_name)
+        )
+
+    async def lock_query_identity(self, role_name: str) -> DorisQueryIdentity | None:
+        """串行化实时授权观察与指纹更新，刷新会话中已有的身份对象。"""
+        return await self._session.scalar(
+            select(DorisQueryIdentity)
+            .where(DorisQueryIdentity.role_name == role_name)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
 
     async def get_query_identity_by_query_user(

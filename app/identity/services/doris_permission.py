@@ -5,20 +5,18 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import sqlglot
-from loguru import logger
-from sqlalchemy.exc import IntegrityError
 from sqlglot.errors import ParseError
 
 from app.identity import errors as auth_error
 from app.identity.models.doris import (
     AssetScope,
-    DorisRoleAssetGrant,
     DorisRowPolicy,
+    DorisSelectGrant,
     normalize_doris_role_name,
 )
 from app.identity.repositories.doris_role import DorisRoleRepository, role_name_from_row
 from app.identity.repositories.identity import IdentityPGRepo
-from app.identity.services.authorization import AssetIdentity
+from app.identity.services.authorization import AssetIdentity, AuthorizationService
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,12 +52,19 @@ class DorisPermissionService:
         catalog: str,
         database: str,
     ) -> None:
-        """初始化 Doris 权限操作和 PostgreSQL 身份投影依赖。"""
+        """初始化 Doris 权限操作和平台身份依赖。"""
         self._repo = repo
         self._doris_repo = doris_repo
         self._data_source = data_source
         self._catalog = catalog
         self._database = database
+        self._authorization = AuthorizationService(
+            repo,
+            doris_repo,
+            data_source=data_source,
+            catalog=catalog,
+            database=database,
+        )
 
     async def list_roles(self) -> list[DorisRoleStatus]:
         """合并配置角色与 Doris 实时授权状态。"""
@@ -83,89 +88,36 @@ class DorisPermissionService:
             for identity in identities
         ]
 
+    async def list_asset_grants(self, role_name: str) -> list[DorisSelectGrant]:
+        """读取专属查询账号当前有效 SELECT 授权。"""
+        async with self._repo.session.begin():
+            _, snapshot = await self._authorization.observe_role(
+                self._normalize_role(role_name)
+            )
+            return list(snapshot.grants)
+
     async def grant_select(
         self,
         role_name: str,
         *,
         table_name: str | None,
         columns: Sequence[str],
-    ) -> list[DorisRoleAssetGrant]:
-        """授予角色库、表或列 SELECT 权限并更新可见性投影。"""
+    ) -> list[DorisSelectGrant]:
         role = self._normalize_role(role_name)
-        normalized_columns = self._normalize_columns(columns)
-        assets = self._assets(table_name, normalized_columns)
-        granted_columns: tuple[str, ...] = ()
-        doris_changed = False
-        try:
-            async with self._repo.session.begin():
-                await self._repo.lock_security_mutation()
-                await self._require_role_exists(role)
-                await self._validate_target(table_name, normalized_columns)
-                existing = [
-                    await self._repo.find_asset_grant(
-                        role,
-                        asset.scope.value,
-                        asset.resource_key,
-                    )
-                    for asset in assets
-                ]
-                if all(grant is not None for grant in existing):
-                    return [grant for grant in existing if grant is not None]
-                pending_assets = [
-                    asset
-                    for asset, persisted in zip(assets, existing, strict=True)
-                    if persisted is None
-                ]
-                granted_columns = tuple(
-                    asset.column_name
-                    for asset in pending_assets
-                    if asset.column_name is not None
-                )
-                await self._doris_repo.grant_select(
-                    role_name=role,
-                    catalog=self._catalog,
-                    database=self._database,
-                    table=table_name,
-                    columns=granted_columns,
-                )
-                doris_changed = True
-                result: list[DorisRoleAssetGrant] = []
-                for asset, current_grant in zip(assets, existing, strict=True):
-                    persisted_grant = current_grant
-                    if persisted_grant is None:
-                        persisted_grant = await self._repo.add_asset_grant(
-                            DorisRoleAssetGrant(
-                                role_name=role,
-                                scope=asset.scope.value,
-                                data_source=asset.data_source,
-                                database_name=asset.database_name,
-                                table_name=asset.table_name,
-                                column_name=asset.column_name,
-                                resource_key=asset.resource_key,
-                            )
-                        )
-                    result.append(persisted_grant)
-                return result
-        except IntegrityError as exc:
-            if doris_changed:
-                await self._compensate_select(
-                    grant=False,
-                    role_name=role,
-                    table_name=table_name,
-                    columns=granted_columns,
-                )
-            raise auth_error.AssetGrantAlreadyExistsError from exc
-        except BaseException:
-            # Doris 变更不参与 PostgreSQL 回滚；取消任务也必须进入补偿，否则实际
-            # 权限会与应用侧可见性投影分离。
-            if doris_changed:
-                await self._compensate_select(
-                    grant=False,
-                    role_name=role,
-                    table_name=table_name,
-                    columns=granted_columns,
-                )
-            raise
+        columns = self._normalize_columns(columns)
+        async with self._repo.session.begin():
+            await self._repo.lock_security_mutation()
+            await self._authorization.observe_role(role)
+            await self._validate_target(table_name, columns)
+            await self._doris_repo.grant_select(
+                role_name=role,
+                catalog=self._catalog,
+                database=self._database,
+                table=table_name,
+                columns=columns,
+            )
+            _, snapshot = await self._authorization.observe_role(role)
+            return list(snapshot.grants)
 
     async def revoke_select(
         self,
@@ -174,86 +126,58 @@ class DorisPermissionService:
         table_name: str | None,
         columns: Sequence[str],
     ) -> None:
-        """回收角色库、表或列 SELECT 权限并删除可见性投影。"""
         role = self._normalize_role(role_name)
-        normalized_columns = self._normalize_columns(columns)
-        assets = self._assets(table_name, normalized_columns)
-        doris_changed = False
-        try:
-            async with self._repo.session.begin():
-                await self._repo.lock_security_mutation()
-                await self._require_role_exists(role)
-                await self._validate_target(table_name, normalized_columns)
-                grants = [
-                    await self._repo.find_asset_grant(
-                        role,
-                        asset.scope.value,
-                        asset.resource_key,
-                    )
-                    for asset in assets
-                ]
-                if any(grant is None for grant in grants):
-                    raise auth_error.AssetGrantNotFoundError
+        columns = self._normalize_columns(columns)
+        async with self._repo.session.begin():
+            await self._repo.lock_security_mutation()
+            await self._authorization.observe_role(role)
+            # 撤权不依赖目标表仍存在，允许清理已删除表的遗留授权。
+            self._assets(table_name, columns)
+            await self._doris_repo.revoke_select(
+                role_name=role,
+                catalog=self._catalog,
+                database=self._database,
+                table=table_name,
+                columns=columns,
+            )
+            _, snapshot = await self._authorization.observe_role(role)
+            targets = self._assets(table_name, columns)
+            if any(
+                AssetIdentity(
+                    g.data_source, g.database_name, g.table_name, g.column_name
+                ).encompasses(target)
+                for g in snapshot.grants
+                for target in targets
+            ):
+                raise auth_error.InvalidDorisPermissionError(
+                    detail="角色撤权后查询账号仍有有效权限，请检查账号直接授权或更高层级授权"
+                )
+
+    async def revoke_all_select(self, role_name: str) -> int:
+        role = self._normalize_role(role_name)
+        async with self._repo.session.begin():
+            await self._repo.lock_security_mutation()
+            _, snapshot = await self._authorization.observe_role(role)
+            if snapshot.has_broad_select:
+                raise auth_error.InvalidDorisPermissionError(
+                    detail="账号存在全局或 Catalog SELECT 授权，不能在业务数据库范围内清空，请先在 Doris 撤销上级授权"
+                )
+            for target in self._group_select_grant_targets(snapshot.grants):
                 await self._doris_repo.revoke_select(
                     role_name=role,
                     catalog=self._catalog,
                     database=self._database,
-                    table=table_name,
-                    columns=normalized_columns,
-                )
-                doris_changed = True
-                for grant in grants:
-                    if grant is not None:
-                        await self._repo.delete_asset_grant(grant)
-                await self._rotate_authorization_epoch(role)
-        except BaseException:
-            if doris_changed:
-                await self._compensate_select(
-                    grant=True,
-                    role_name=role,
-                    table_name=table_name,
-                    columns=normalized_columns,
-                )
-            raise
-
-    async def revoke_all_select(self, role_name: str) -> int:
-        """回收角色在当前数据库中的全部 SELECT 权限并清空投影。"""
-        role = self._normalize_role(role_name)
-        revoked_targets: list[_SelectGrantTarget] = []
-        try:
-            async with self._repo.session.begin():
-                await self._repo.lock_security_mutation()
-                await self._require_role_exists(role)
-                grants = await self._repo.list_role_asset_grants(role)
-                if not grants:
-                    return 0
-
-                targets = self._group_select_grant_targets(grants)
-                for target in targets:
-                    await self._doris_repo.revoke_select(
-                        role_name=role,
-                        catalog=self._catalog,
-                        database=self._database,
-                        table=target.table_name,
-                        columns=target.columns,
-                    )
-                    revoked_targets.append(target)
-
-                await self._repo.delete_role_asset_grants(role)
-                await self._rotate_authorization_epoch(role)
-                return len(grants)
-        except BaseException:
-            for target in reversed(revoked_targets):
-                await self._compensate_select(
-                    grant=True,
-                    role_name=role,
-                    table_name=target.table_name,
+                    table=target.table_name,
                     columns=target.columns,
                 )
-            raise
+            _, updated = await self._authorization.observe_role(role)
+            if updated.grants:
+                raise auth_error.InvalidDorisPermissionError(
+                    detail="角色撤权后账号仍有直接 SELECT 授权，请在 Doris 中处理"
+                )
+            return len(snapshot.grants)
 
     async def list_row_policies(self, role_name: str) -> list[DorisRowPolicy]:
-        """读取角色在 Doris 中的实时行策略。"""
         role = await self._require_role(role_name)
         return await self._doris_repo.list_role_row_policies(role)
 
@@ -266,38 +190,21 @@ class DorisPermissionService:
         policy_type: Literal["RESTRICTIVE", "PERMISSIVE"],
         predicate: str,
     ) -> None:
-        """校验表达式边界并创建绑定到角色的 Doris 行策略。"""
         role = self._normalize_role(role_name)
         predicate_sql = self._validate_predicate(predicate)
-        doris_changed = False
-        try:
-            async with self._repo.session.begin():
-                await self._repo.lock_security_mutation()
-                await self._require_role_exists(role)
-                await self._doris_repo.create_row_policy(
-                    policy_name=policy_name,
-                    role_name=role,
-                    catalog=self._catalog,
-                    database=self._database,
-                    table=table_name,
-                    policy_type=policy_type,
-                    predicate_sql=predicate_sql,
-                )
-                doris_changed = True
-                await self._rotate_authorization_epoch(role)
-        except BaseException:
-            if doris_changed:
-                try:
-                    await self._doris_repo.drop_row_policy(
-                        policy_name=policy_name,
-                        role_name=role,
-                        catalog=self._catalog,
-                        database=self._database,
-                        table=table_name,
-                    )
-                except Exception:  # noqa: BLE001
-                    logger.exception(f"Doris 行策略补偿删除失败: role={role}")
-            raise
+        async with self._repo.session.begin():
+            await self._repo.lock_security_mutation()
+            await self._authorization.observe_role(role)
+            await self._doris_repo.create_row_policy(
+                policy_name=policy_name,
+                role_name=role,
+                catalog=self._catalog,
+                database=self._database,
+                table=table_name,
+                policy_type=policy_type,
+                predicate_sql=predicate_sql,
+            )
+            await self._authorization.observe_role(role)
 
     async def drop_row_policy(
         self,
@@ -306,46 +213,18 @@ class DorisPermissionService:
         policy_name: str,
         table_name: str,
     ) -> None:
-        """删除绑定到角色的 Doris 行策略。"""
         role = self._normalize_role(role_name)
-        policies = await self._doris_repo.list_role_row_policies(role)
-        original = next(
-            (
-                item
-                for item in policies
-                if item.policy_name == policy_name and item.table_name == table_name
-            ),
-            None,
-        )
-        doris_changed = False
-        try:
-            async with self._repo.session.begin():
-                await self._repo.lock_security_mutation()
-                await self._require_role_exists(role)
-                await self._doris_repo.drop_row_policy(
-                    policy_name=policy_name,
-                    role_name=role,
-                    catalog=self._catalog,
-                    database=self._database,
-                    table=table_name,
-                )
-                doris_changed = True
-                await self._rotate_authorization_epoch(role)
-        except BaseException:
-            if doris_changed and original is not None:
-                try:
-                    await self._doris_repo.create_row_policy(
-                        policy_name=original.policy_name,
-                        role_name=role,
-                        catalog=original.catalog_name,
-                        database=original.database_name,
-                        table=original.table_name,
-                        policy_type=original.policy_type,
-                        predicate_sql=original.predicate,
-                    )
-                except Exception:  # noqa: BLE001
-                    logger.exception(f"Doris 行策略补偿创建失败: role={role}")
-            raise
+        async with self._repo.session.begin():
+            await self._repo.lock_security_mutation()
+            await self._authorization.observe_role(role)
+            await self._doris_repo.drop_row_policy(
+                policy_name=policy_name,
+                role_name=role,
+                catalog=self._catalog,
+                database=self._database,
+                table=table_name,
+            )
+            await self._authorization.observe_role(role)
 
     async def _require_role(self, role_name: str) -> str:
         """要求角色存在于稳定查询身份配置。"""
@@ -368,39 +247,6 @@ class DorisPermissionService:
         identity = await self._repo.get_query_identity(role_name)
         if identity is None:
             raise auth_error.RoleNotFoundError
-
-    async def _rotate_authorization_epoch(self, role_name: str) -> None:
-        """轮换角色安全边界，并持久化到当前认证事务。"""
-        identity = await self._repo.get_query_identity(role_name)
-        if identity is None:
-            raise auth_error.RoleNotFoundError
-        identity.rotate_authorization_epoch()
-        await self._repo.flush()
-
-    async def _compensate_select(
-        self,
-        *,
-        grant: bool,
-        role_name: str,
-        table_name: str | None,
-        columns: Sequence[str],
-    ) -> None:
-        """在 PostgreSQL 投影失败时尽力恢复 Doris 权限。"""
-        operation = (
-            self._doris_repo.grant_select if grant else self._doris_repo.revoke_select
-        )
-        try:
-            await operation(
-                role_name=role_name,
-                catalog=self._catalog,
-                database=self._database,
-                table=table_name,
-                columns=columns,
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                f"Doris 权限补偿操作失败: role={role_name}, table={table_name}"
-            )
 
     async def _validate_target(
         self,
@@ -431,8 +277,12 @@ class DorisPermissionService:
         table_name: str | None,
         columns: Sequence[str],
     ) -> tuple[AssetIdentity, ...]:
-        """将授权目标转换为可见性投影资产。"""
+        """将授权目标转换为资产标识。"""
         if table_name is None:
+            if columns:
+                raise auth_error.InvalidDorisPermissionError(
+                    detail="指定列权限时必须提供目标表"
+                )
             return (AssetIdentity(self._data_source, self._database),)
         if not columns:
             return (AssetIdentity(self._data_source, self._database, table_name),)
@@ -448,9 +298,9 @@ class DorisPermissionService:
 
     @staticmethod
     def _group_select_grant_targets(
-        grants: Sequence[DorisRoleAssetGrant],
+        grants: Sequence[DorisSelectGrant],
     ) -> tuple[_SelectGrantTarget, ...]:
-        """将权限投影合并为数据库、整表和字段级 Doris 回收目标。"""
+        """将有效授权合并为数据库、整表和字段级 Doris 回收目标。"""
         has_database_grant = False
         table_grants: set[str] = set()
         column_grants: dict[str, set[str]] = {}
@@ -469,7 +319,7 @@ class DorisPermissionService:
             ):
                 column_grants.setdefault(grant.table_name, set()).add(grant.column_name)
                 continue
-            raise RuntimeError(f"存在无法回收的 SELECT 权限投影: {grant.scope}")
+            raise RuntimeError(f"存在无法回收的 SELECT 权限: {grant.scope}")
 
         targets: list[_SelectGrantTarget] = []
         if has_database_grant:

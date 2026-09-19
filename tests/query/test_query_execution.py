@@ -13,6 +13,7 @@ from langchain.tools import ToolRuntime
 
 from app.assistant.agents.explorer.tools.execute_sql import _execute_sql
 from app.identity import errors as auth_error
+from app.identity.models.doris import DorisAuthorizationSnapshot
 from app.identity.services.query_principal import (
     QueryPrincipalNotConfiguredError,
     QueryPrincipalService,
@@ -79,12 +80,19 @@ class QueryPrincipalTest(unittest.IsolatedAsyncioTestCase):
                 repo = MagicMock(
                     get_user_by_id=AsyncMock(return_value=user),
                     get_query_identity=AsyncMock(return_value=identity),
-                    list_role_asset_grants=AsyncMock(),
                 )
                 cipher = MagicMock()
                 with self.assertRaises(expected):
-                    await QueryPrincipalService(repo, cipher).resolve(7)
-                repo.list_role_asset_grants.assert_not_awaited()
+                    await QueryPrincipalService(
+                        repo,
+                        cipher,
+                        MagicMock(
+                            observe_role=AsyncMock(
+                                side_effect=auth_error.RoleNotFoundError
+                            )
+                        ),
+                    ).resolve(7)
+
                 cipher.decrypt.assert_not_called()
 
 
@@ -92,7 +100,7 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.key = key()
         self.principal = SimpleNamespace(
-            role_name="reader", authorization_epoch=uuid4()
+            role_name="reader", authorization_fingerprint="a" * 64
         )
         self.service = MagicMock(execute=AsyncMock(return_value=result()))
         self.runtime = MagicMock(
@@ -357,23 +365,26 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
         active = set()
         events = []
 
+        @asynccontextmanager
+        async def transaction():
+            yield
+
         def manager(name):
             @asynccontextmanager
             async def session():
                 active.add(name)
                 events.append((name, "enter"))
                 try:
-                    yield MagicMock()
+                    yield MagicMock(begin=lambda: transaction())
                 finally:
                     active.remove(name)
                     events.append((name, "exit"))
 
             return MagicMock(session=session)
 
-        epoch = uuid4()
         identity = SimpleNamespace(
             role_name="reader",
-            authorization_epoch=epoch,
+            authorization_fingerprint="same",
             query_user="query_reader",
             encrypted_password="encrypted",
             workload_group="readers",
@@ -385,7 +396,7 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 )
             ),
             get_query_identity=AsyncMock(return_value=identity),
-            list_role_asset_grants=AsyncMock(return_value=[]),
+            lock_query_identity=AsyncMock(return_value=identity),
         )
         clients = MagicMock(get_or_create=AsyncMock(return_value=MagicMock()))
         recorder = MagicMock(record_success=AsyncMock())
@@ -411,27 +422,39 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 return_value=MagicMock(decrypt=lambda _: "password"),
             ),
             patch("app.query.runtime.IdentityPGRepo", return_value=repo),
+            patch(
+                "app.query.runtime.DorisRoleRepository",
+                return_value=MagicMock(
+                    read_authorization=AsyncMock(
+                        return_value=DorisAuthorizationSnapshot((), "same")
+                    )
+                ),
+            ),
             patch("app.query.runtime.QueryGuardService", return_value=guard),
             patch.object(DorisQueryRepository, "stream", stream),
         ):
             runtime = DatabaseQueryExecutionRuntime(
-                store, lambda _: recorder, manager("auth"), manager("meta"), clients
+                store,
+                lambda _: recorder,
+                manager("auth"),
+                manager("meta"),
+                clients,
+                MagicMock(),
             )
             actual = await QueryExecutionHandler(runtime).execute(
                 key(), "SELECT 1", purpose="统计", tool_call_id=None
             )
         self.assertEqual(actual.row_count, 1)
         repo.get_user_by_id.assert_awaited_once_with(7)
-        repo.get_query_identity.assert_awaited_once_with("reader")
-        repo.list_role_asset_grants.assert_awaited_once_with("reader")
+        repo.lock_query_identity.assert_awaited_once_with("reader")
         clients.get_or_create.assert_awaited_once_with(
             "reader", "query_reader", "password"
         )
         policy = guard.check.call_args.args[1]
         context = recorder.record_success.call_args.args[0]
         self.assertEqual(
-            (policy.role_name, policy.authorization_epoch),
-            (context.role_name, context.authorization_epoch),
+            (policy.role_name, policy.authorization_fingerprint),
+            (context.role_name, context.authorization_fingerprint),
         )
         self.assertEqual(
             events,
@@ -480,7 +503,7 @@ class QueryRecorderTest(unittest.IsolatedAsyncioTestCase):
                     data_source="doris",
                     database_name="analytics",
                 )
-                context = QueryExecutionContext(key(), "reader", uuid4(), "统计")
+                context = QueryExecutionContext(key(), "reader", "a" * 64, "统计")
                 validation = QueryValidationResult(
                     valid=True, normalized_sql="SELECT 1 AS value", query_kind=kind
                 )
@@ -499,7 +522,8 @@ class QueryRecorderTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(recorded, stored.id)
                     experience = experiences.upsert_from_success.call_args.args[0]
                     self.assertEqual(
-                        experience.authorization_epoch, context.authorization_epoch
+                        experience.authorization_fingerprint,
+                        context.authorization_fingerprint,
                     )
                     self.assertEqual(experience.purposes, ["统计"])
                     self.assertIn(":p1", experience.sql_template)

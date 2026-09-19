@@ -52,7 +52,7 @@ class QueryExperienceIndexer:
                 experience.id,
                 revision=revision,
                 role_name=experience.role_name,
-                authorization_epoch=experience.authorization_epoch,
+                authorization_fingerprint=experience.authorization_fingerprint,
                 text=text,
                 embedding=embedding,
             )

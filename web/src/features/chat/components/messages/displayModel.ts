@@ -298,6 +298,7 @@ export function buildEvalDelegationItems(
         message: run.instruction ?? "",
       },
       result: existing?.result,
+      attachments: existing?.attachments,
       completed: existing?.completed === true || completed,
       interrupted: run.status === "cancelled" || run.status === "interrupted",
     });

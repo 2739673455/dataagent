@@ -121,6 +121,7 @@ class LifecycleConfig(AppConfigModel):
 
     draft_ttl_minutes: int = Field(gt=0)
     cleanup_batch_size: int = Field(gt=0, le=1000)
+    user_deletion_schedule_seconds: int = Field(gt=0)
     user_deletion_retry_seconds: int = Field(gt=0)
 
 

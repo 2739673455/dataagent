@@ -50,8 +50,8 @@ class SemanticRecallPGRepo:
                 "query_experiences_retrieved_at"
             ],
             query_experience_role_name=response_payload["query_experience_role_name"],
-            query_experience_authorization_epoch=response_payload[
-                "query_experience_authorization_epoch"
+            query_experience_authorization_fingerprint=response_payload[
+                "query_experience_authorization_fingerprint"
             ],
             source_queries=snapshot.source_queries,
             created_at=snapshot.created_at,
@@ -84,10 +84,8 @@ class SemanticRecallPGRepo:
                         record.query_experiences_retrieved_at.isoformat()
                     ),
                     "query_experience_role_name": (record.query_experience_role_name),
-                    "query_experience_authorization_epoch": (
-                        str(record.query_experience_authorization_epoch)
-                        if record.query_experience_authorization_epoch is not None
-                        else None
+                    "query_experience_authorization_fingerprint": (
+                        record.query_experience_authorization_fingerprint
                     ),
                 },
                 source_queries=record.source_queries,

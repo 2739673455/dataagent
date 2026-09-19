@@ -61,7 +61,7 @@ class QueryExperienceRecallService:
         self,
         *,
         role_name: str,
-        authorization_epoch: UUID,
+        authorization_fingerprint: str,
         policy: AssetAccessPolicy,
         query: str,
         limit: int,
@@ -70,7 +70,7 @@ class QueryExperienceRecallService:
         semantic_recall = await self._semantic_recall(
             query,
             role_name=role_name,
-            authorization_epoch=authorization_epoch,
+            authorization_fingerprint=authorization_fingerprint,
         )
         if semantic_recall.status == "failed":
             return QueryExperienceRecall(status="failed", results=[])
@@ -79,7 +79,7 @@ class QueryExperienceRecallService:
             experiences = await self._repo.get_many(
                 list(semantic_ranks),
                 role_name=role_name,
-                authorization_epoch=authorization_epoch,
+                authorization_fingerprint=authorization_fingerprint,
             )
             current_versions = await self._repo.current_asset_versions(experiences)
             invalid_revisions = {
@@ -131,14 +131,14 @@ class QueryExperienceRecallService:
         query: str,
         *,
         role_name: str,
-        authorization_epoch: UUID,
+        authorization_fingerprint: str,
     ) -> _SemanticRecall:
         """分别召回全文和向量候选，并融合可用通道。"""
         text_task = asyncio.create_task(
             self._index_repo.search_text(
                 query,
                 role_name=role_name,
-                authorization_epoch=authorization_epoch,
+                authorization_fingerprint=authorization_fingerprint,
                 limit=_SEARCH_POOL_SIZE,
             )
         )
@@ -149,7 +149,7 @@ class QueryExperienceRecallService:
                 self._index_repo.search_vector(
                     embedding,
                     role_name=role_name,
-                    authorization_epoch=authorization_epoch,
+                    authorization_fingerprint=authorization_fingerprint,
                     limit=_SEARCH_POOL_SIZE,
                     min_score=cfg.query.query_experience_vector_score_threshold,
                 )

@@ -38,6 +38,9 @@ describe("chat message display and turn grouping", () => {
   });
 
   test("restores eval internal delegations and merges live activity", () => {
+    const attachments = [
+      { f_path: "sessions/sales/source/artifacts/sales.csv", media_type: "text/csv" },
+    ];
     const messages: MessageResponse[] = [
       {
         message_id: "eval-call-message",
@@ -69,6 +72,7 @@ describe("chat message display and turn grouping", () => {
             agent_type: "explorer",
             session_id: "source",
             message: "定位销售数据",
+            attachments,
             result: {
               status: "completed",
               analysis_id: "sales",
@@ -85,7 +89,19 @@ describe("chat message display and turn grouping", () => {
     ];
 
     const parent = buildDisplayItems("conv-1", messages, false)[0] as ToolRunDisplayItem;
+    expect(buildEvalDelegationItems(parent, {})[0].attachments).toEqual(attachments);
     const nested = buildEvalDelegationItems(parent, {
+      "ptc-delegation-1": {
+        delegationId: "ptc-delegation-1",
+        analysisId: "sales",
+        agentType: "explorer",
+        sessionId: "source",
+        parentToolCallId: "eval-call",
+        status: "completed",
+        messages: [],
+        historyLoaded: false,
+        historyLoading: false,
+      },
       "ptc-delegation-2": {
         delegationId: "ptc-delegation-2",
         analysisId: "sales",
@@ -103,6 +119,7 @@ describe("chat message display and turn grouping", () => {
     expect(parent.evalDelegations).toHaveLength(1);
     expect(nested.map((item) => item.toolCallId)).toEqual(["ptc-delegation-1", "ptc-delegation-2"]);
     expect(nested[0].completed).toBe(true);
+    expect(nested[0].attachments).toEqual(attachments);
     expect(nested[1].completed).toBe(false);
     expect(nested[1].args?.message).toBe("计算销售指标");
   });

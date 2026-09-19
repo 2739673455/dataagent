@@ -95,7 +95,7 @@ class QueryExecutionHandler:
             context = QueryExecutionContext(
                 session_key=session_key,
                 role_name=principal.role_name,
-                authorization_epoch=principal.authorization_epoch,
+                authorization_fingerprint=principal.authorization_fingerprint,
                 purpose=purpose,
                 tool_call_id=tool_call_id,
             )

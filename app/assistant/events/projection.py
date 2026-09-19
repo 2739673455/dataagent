@@ -158,14 +158,6 @@ def _transform_artifact_directives(
     return "".join(output), paths
 
 
-def _normalized_directive_path(path: str, conversation_id: UUID) -> str:
-    """将最终产物指令路径规范化为 Conversation 内相对路径。"""
-    normalized = conversation_relative_path(path, conversation_id)
-    if not normalized.startswith("sessions/"):
-        raise SandboxPathError(path)
-    return normalized
-
-
 def _is_final_assistant_message(message: BaseMessage) -> bool:
     """判断消息是否可以承载 Planner 最终产物指令。"""
     if not isinstance(message, AIMessage) or message.tool_calls:
@@ -200,7 +192,7 @@ async def _project_final_artifact_directives(
     seen_paths: set[str] = set()
     for directive_path in candidate_paths:
         try:
-            relative_path = _normalized_directive_path(
+            relative_path = conversation_relative_path(
                 directive_path,
                 conversation_id,
             )

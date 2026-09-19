@@ -135,9 +135,11 @@ export function AssetPermissionPanel({
 
         <div className="rounded border border-[#d4d4ce] bg-[#fafaf8] p-3">
           <div className="flex items-center justify-between text-xs font-semibold text-[#18181b]">
-            <span>当前 SELECT 授权</span>
+            <span title="权限实时读取自 Doris；此处操作角色授权，账号直接授权需在 Doris 中管理">
+              查询账号的有效 SELECT 权限
+            </span>
             <div className="flex items-center gap-2">
-              <span className="font-normal text-[#71717a]">{grants.length} 条投影</span>
+              <span className="font-normal text-[#71717a]">{grants.length} 条授权</span>
               {grants.length > 0 && (
                 <Button
                   type="button"
@@ -233,7 +235,7 @@ export function AssetPermissionPanel({
               ))}
             </div>
           ) : (
-            <p className="mt-2 text-xs text-[#71717a]">当前角色没有 SELECT 授权</p>
+            <p className="mt-2 text-xs text-[#71717a]">当前查询账号没有 SELECT 权限</p>
           )}
         </div>
       </div>
