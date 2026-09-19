@@ -166,7 +166,3 @@ class PlannerContinuationLimitError(RuntimeError):
         super().__init__(
             f"规划器在结束原因 {finish_reason!r} 下连续续写次数超过上限 ({max_continuations} 次)"
         )
-
-
-class PlannerTurnNotResumableError(RuntimeError):
-    """Planner 最新 Checkpoint 没有待执行节点。"""

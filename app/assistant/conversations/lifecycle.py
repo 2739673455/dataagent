@@ -5,6 +5,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from app.assistant.errors import ConversationBusyError
 from app.assistant.execution.contracts import (
     ConversationAgentLifecycle,
     ConversationLifecycleLockProvider,
@@ -18,10 +19,6 @@ from app.assistant.repositories.conversation import ConversationPGRepo
 from app.metadata.services.recall_cleanup import RecallCleanupService
 from app.shared.clients.langgraph_postgres_manager import AdvisoryLockBusyError
 from app.shared.config.app_config import LifecycleConfig
-
-
-class ConversationLifecycleBusyError(RuntimeError):
-    """会话正在由其他执行单元运行或清理。"""
 
 
 class ConversationLifecycleService:
@@ -98,8 +95,8 @@ class ConversationLifecycleService:
                     )
                 return True
         except AdvisoryLockBusyError as exc:
-            raise ConversationLifecycleBusyError(
-                "会话正在由其他执行单元运行或清理"
+            raise ConversationBusyError(
+                detail="对话正在运行或清理，请稍后重试"
             ) from exc
 
     async def delete_conversation_resources(

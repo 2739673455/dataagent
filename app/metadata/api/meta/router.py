@@ -13,13 +13,10 @@ from fastapi import (
     status,
 )
 from loguru import logger
-from pydantic import ValidationError as PydanticValidationError
-from yaml import YAMLError
 
 from app.identity.api.auth.dependencies import (
     AdminUserDep,
 )
-from app.metadata import errors as meta_error
 from app.metadata.api.meta import schemas
 from app.metadata.api.meta.dependencies import (
     MetaCatalogServiceDep,
@@ -34,6 +31,7 @@ from app.metadata.models.catalog import (
 from app.metadata.services.import_service import (
     ImportMode,
     ResourceChanges,
+    parse_metadata_yaml,
 )
 from app.metadata.task_scheduler import (
     enqueue_column_indexes,
@@ -74,30 +72,7 @@ async def _load_yaml(file: UploadFile) -> MetaConfig:
         content = await file.read()
     finally:
         await file.close()
-    if not content:
-        raise meta_error.InvalidMetadataError(detail="元数据 YAML 文件不能为空")
-
-    try:
-        raw_config = yaml.safe_load(content.decode("utf-8"))
-        return MetaConfig.model_validate(raw_config)
-    except UnicodeDecodeError as exc:
-        raise meta_error.InvalidMetadataError(
-            detail="元数据 YAML 文件必须使用 UTF-8 编码",
-        ) from exc
-    except YAMLError as exc:
-        raise meta_error.InvalidMetadataError(
-            detail=f"元数据 YAML 格式解析失败: {exc}",
-        ) from exc
-    except PydanticValidationError as exc:
-        errors = exc.errors(
-            include_url=False,
-            include_context=False,
-            include_input=False,
-        )
-        raise meta_error.InvalidMetadataError(
-            detail="元数据 YAML 结构不符合规范要求",
-            extensions={"errors": errors},
-        ) from exc
+    return parse_metadata_yaml(content)
 
 
 @router.post(

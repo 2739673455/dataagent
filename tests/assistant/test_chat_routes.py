@@ -12,9 +12,11 @@ from fastapi import FastAPI
 from app.assistant.api import dependencies as runtime_dependencies
 from app.assistant.api.chat import dependencies as chat_dependencies
 from app.assistant.api.chat.router import router
+from app.assistant.errors import (
+    ConversationNotFoundError,
+    ConversationNotResumableError,
+)
 from app.assistant.events.schemas import ChatStreamDoneEvent
-from app.assistant.execution.planner import PlannerTurnNotResumableError
-from app.assistant.execution.turn import ConversationMissingError
 from app.identity.api.auth.dependencies import _require_analysis_access
 from app.shared.errors.exc_handlers import register_exception_handlers
 
@@ -49,13 +51,13 @@ def test_stream_routes_preserve_frames_headers_and_business_errors(entry, failur
         assert service._repository is repository
         assert service._agents is agents
         if failure:
-            raise ConversationMissingError
+            raise ConversationNotFoundError
         return await service._runs.start_turn(user_id, conversation_id, message)
 
     async def resume(service, user_id, conversation_id):
         assert service._repository is repository
         if failure:
-            raise PlannerTurnNotResumableError
+            raise ConversationNotResumableError
         return await service._runs.resume_turn(user_id, conversation_id)
 
     def dependency(value):

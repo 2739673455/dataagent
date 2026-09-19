@@ -6,16 +6,15 @@ from uuid import UUID
 from loguru import logger
 
 from app.assistant.conversations.title import initial_conversation_title
+from app.assistant.errors import (
+    ConversationNotFoundError,
+    ConversationNotResumableError,
+)
 from app.assistant.events import schemas as chat_contract
-from app.assistant.execution import planner as planner_turn
 from app.assistant.execution.contracts import AgentRuntimeManager
 from app.assistant.execution.run import ConversationRunService
 from app.assistant.repositories.conversation import ConversationPGRepo
 from app.assistant.task_scheduler import enqueue_conversation_title
-
-
-class ConversationMissingError(RuntimeError):
-    """目标 Conversation 不存在或不属于当前用户。"""
 
 
 class ConversationTurnService:
@@ -47,7 +46,7 @@ class ConversationTurnService:
             async with self._repository.session.begin():
                 conversation = await self._repository.get(user_id, conversation_id)
                 if conversation is None:
-                    raise ConversationMissingError
+                    raise ConversationNotFoundError
 
                 user_text = "\n".join(
                     part.text
@@ -106,11 +105,11 @@ class ConversationTurnService:
             """检查与执行使用同一把锁，并在进入模型前结束数据库事务。"""
             async with self._repository.session.begin():
                 if await self._repository.get(user_id, conversation_id) is None:
-                    raise ConversationMissingError
+                    raise ConversationNotFoundError
             if not await self._agents.can_resume_planner(
                 user_id,
                 conversation_id,
             ):
-                raise planner_turn.PlannerTurnNotResumableError
+                raise ConversationNotResumableError
 
         return await self._runs.resume_turn(user_id, conversation_id, prepare=prepare)

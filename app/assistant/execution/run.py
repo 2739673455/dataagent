@@ -11,6 +11,7 @@ from uuid import UUID
 from loguru import logger
 
 from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
+from app.assistant.errors import ConversationBusyError, ConversationRunConflictError
 from app.assistant.events import schemas as chat_schema
 from app.assistant.execution import planner as planner_turn
 from app.assistant.execution.contracts import (
@@ -22,6 +23,7 @@ from app.assistant.execution.types import (
     PlannerTurnContext,
     conversation_lifecycle_lock_name,
 )
+from app.shared.clients.langgraph_postgres_manager import AdvisoryLockBusyError
 from app.shared.config.app_config import cfg
 
 type ConversationRunKey = tuple[int, UUID]
@@ -50,14 +52,6 @@ class _ConversationRun:
     replay_bytes: int = 0
     subscribers: set[asyncio.Queue[RunEvent | None]] = field(default_factory=set)
     task: asyncio.Task[None] | None = None
-
-
-class ActiveConversationRunError(RuntimeError):
-    """同一 Conversation 已经存在运行中的 Planner Run。"""
-
-
-class ConversationRunStoppedError(RuntimeError):
-    """执行受理完成前被停止。"""
 
 
 class ConversationRunService:
@@ -120,7 +114,7 @@ class ConversationRunService:
                 and existing.task is not None
                 and not existing.task.done()
             ):
-                raise ActiveConversationRunError
+                raise ConversationRunConflictError
             self._runs[key] = run
             run.task = asyncio.create_task(
                 self._execute(key, run, user_message, prepare),
@@ -132,6 +126,8 @@ class ConversationRunService:
             failure = await asyncio.shield(run.ready)
             if failure is not None:
                 await asyncio.gather(run.task, return_exceptions=True)
+                if isinstance(failure, AdvisoryLockBusyError):
+                    raise ConversationBusyError(detail=str(failure)) from failure
                 raise failure
         except BaseException:
             run.subscribers.discard(queue)
@@ -254,7 +250,7 @@ class ConversationRunService:
         if self._runs.get(key) is run:
             self._runs.pop(key, None)
         if not run.ready.done():
-            run.ready.set_result(ConversationRunStoppedError("对话在受理完成前已停止"))
+            run.ready.set_result(ConversationBusyError(detail="对话在受理完成前已停止"))
         done = chat_schema.ChatStreamDoneEvent(type="done")
         self._cache_event(run, done)
         for queue in tuple(run.subscribers):
