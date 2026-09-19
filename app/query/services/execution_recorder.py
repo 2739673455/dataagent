@@ -6,13 +6,16 @@ from uuid import UUID, uuid4
 
 from sqlglot import exp, parse_one
 
-from app.query.models.execution import QueryExecution, QueryExecutionStatus
+from app.query.models.execution import (
+    AnalysisQueryResult,
+    QueryExecution,
+    QueryExecutionStatus,
+)
 from app.query.models.experience import QueryExperience, QueryExperienceAsset
 from app.query.models.validation import QueryValidationResult
 from app.query.repositories.execution_postgres import QueryExecutionPGRepo
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
 from app.query.services.contracts import QueryExperienceIndexScheduler
-from app.query.services.executor import SuccessfulQueryExecution
 from app.shared.contracts.analysis import AgentSessionKey
 from app.shared.contracts.assets import asset_resource_key
 
@@ -64,23 +67,29 @@ class QueryExecutionRecorder:
     async def record_success(
         self,
         context: QueryExecutionContext,
-        details: SuccessfulQueryExecution,
+        *,
+        raw_sql: str,
+        validation: QueryValidationResult,
+        result: AnalysisQueryResult,
     ) -> UUID | None:
         """记录成功执行并增量更新相同结构的查询经验。"""
-        execution = self._new_execution(context, details.raw_sql, "succeeded")
-        execution.normalized_sql = details.normalized_sql
-        execution.validation = details.validation.model_dump(mode="json")
-        execution.result_summary = self._result_summary(details)
-        if details.validation.query_kind == "catalog":
+        normalized_sql = validation.normalized_sql
+        if not validation.valid or normalized_sql is None:
+            raise ValueError("成功执行记录必须使用有效的 SQL 校验结果")
+        execution = self._new_execution(context, raw_sql, "succeeded")
+        execution.normalized_sql = normalized_sql
+        execution.validation = validation.model_dump(mode="json")
+        execution.result_summary = self._result_summary(result)
+        if validation.query_kind == "catalog":
             async with self._experience_repo.session.begin():
                 await self._execution_repo.record(execution)
             return None
 
-        sql_template, fingerprint = _build_sql_template(details.normalized_sql)
+        sql_template, fingerprint = _build_sql_template(normalized_sql)
         execution.sql_template = sql_template
         execution.fingerprint = fingerprint
-        tables = {item.name for item in details.validation.tables}
-        columns = {(item.table, item.name) for item in details.validation.columns}
+        tables = {item.name for item in validation.tables}
+        columns = {(item.table, item.name) for item in validation.columns}
         async with self._experience_repo.session.begin():
             (
                 table_versions,
@@ -97,7 +106,7 @@ class QueryExecutionRecorder:
             )
             assets = self._build_assets(
                 experience_id,
-                details.validation,
+                validation,
                 table_versions,
                 column_versions,
             )
@@ -151,17 +160,15 @@ class QueryExecutionRecorder:
         )
 
     @staticmethod
-    def _result_summary(details: SuccessfulQueryExecution) -> dict[str, object]:
+    def _result_summary(result: AnalysisQueryResult) -> dict[str, object]:
         """构造成功执行的持久化结果摘要。"""
         return {
-            "path": details.result.path,
-            "columns": [
-                item.model_dump(mode="json") for item in details.result.columns
-            ],
-            "row_count": details.result.row_count,
+            "path": result.path,
+            "columns": [item.model_dump(mode="json") for item in result.columns],
+            "row_count": result.row_count,
             "time_range": {
                 key: value.model_dump(mode="json")
-                for key, value in details.result.time_range.items()
+                for key, value in result.time_range.items()
             },
         }
 

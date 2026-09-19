@@ -13,10 +13,11 @@ from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from itertools import islice
 from typing import Any, BinaryIO, Protocol
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from loguru import logger
 
+from app.query.errors import QueryRejectedError, QueryResultShapeError
 from app.query.models.execution import (
     AnalysisQueryResult,
     QueryBatch,
@@ -32,8 +33,6 @@ from app.shared.contracts.analysis import AgentSessionKey
 _SAMPLE_STRING_MAX_CHARS = 512
 _SAMPLE_COLLECTION_MAX_ITEMS = 20
 _SAMPLE_MAX_DEPTH = 4
-_QUERY_ARTIFACT_STEM_MAX_BYTES = 120
-_QUERY_ARTIFACT_UNIQUE_SUFFIX_LENGTH = 4
 
 
 class ReadonlyQueryRepository(Protocol):
@@ -61,31 +60,6 @@ class QueryArtifactStore(Protocol):
     ) -> None:
         """将查询产物写入指定用户的会话沙箱。"""
         ...
-
-
-class QueryRejectedError(ValueError):
-    """SQL 未通过确定性安全校验。"""
-
-    def __init__(self, result: QueryValidationResult) -> None:
-        """保存完整校验结果并汇总拒绝原因。"""
-        self.result = result
-        message = "; ".join(issue.message for issue in result.issues)
-        super().__init__(message or "SQL 查询已被拒绝")
-
-
-class QueryResultShapeError(RuntimeError):
-    """数据库返回的结果结构不稳定或不适合文件输出。"""
-
-
-@dataclass(frozen=True, slots=True)
-class SuccessfulQueryExecution:
-    """成功查询的规范化 SQL、资产血缘和结果摘要。"""
-
-    session_key: AgentSessionKey
-    raw_sql: str
-    normalized_sql: str
-    validation: QueryValidationResult
-    result: AnalysisQueryResult
 
 
 @dataclass(slots=True)
@@ -147,23 +121,23 @@ class AnalysisQueryService:
     async def execute(
         self,
         session_key: AgentSessionKey,
-        sql: str,
         validation: QueryValidationResult,
         *,
         purpose: str,
-    ) -> SuccessfulQueryExecution:
-        """执行已校验查询，返回完整的成功执行信息。"""
-        sql_fingerprint = hashlib.sha256(sql.encode("utf-8")).hexdigest()[:16]
+    ) -> AnalysisQueryResult:
+        """执行已校验查询，返回会话产物及结果摘要。"""
+        normalized_sql = validation.normalized_sql
+        if not validation.valid or normalized_sql is None:
+            raise QueryRejectedError(validation)
+        sql_fingerprint = hashlib.sha256(normalized_sql.encode("utf-8")).hexdigest()[
+            :16
+        ]
         logger.info(
             "开始执行只读查询: "
             f"conversation_id={session_key.conversation_id}, "
             f"analysis_id={session_key.analysis_id}, "
             f"sql_fingerprint={sql_fingerprint}"
         )
-        normalized_sql = validation.normalized_sql
-        if not validation.valid or normalized_sql is None:
-            raise QueryRejectedError(validation)
-
         scope = SandboxSessionScope(
             session_key.analysis_id,
             session_key.agent_type,
@@ -192,23 +166,16 @@ class AnalysisQueryService:
             time_range=summary.time_range,
             sample=summary.sample,
         )
-        details = SuccessfulQueryExecution(
-            session_key=session_key,
-            raw_sql=sql,
-            normalized_sql=normalized_sql,
-            validation=validation,
-            result=result,
-        )
         logger.info(
             "只读查询执行完成: "
             f"conversation_id={session_key.conversation_id}, "
             f"analysis_id={session_key.analysis_id}, "
             f"sql_fingerprint={sql_fingerprint}, "
-            f"row_count={details.result.row_count}, "
-            f"column_count={len(details.result.columns)}, "
-            f"artifact_path={details.result.path}"
+            f"row_count={result.row_count}, "
+            f"column_count={len(result.columns)}, "
+            f"artifact_path={result.path}"
         )
-        return details
+        return result
 
     async def _execute_to_csv(
         self,
@@ -292,7 +259,7 @@ class _QuerySummary:
 
 
 def _query_artifact_filename(purpose: str) -> str:
-    """将查询目的转换为安全、可辨识且不会覆盖旧产物的 CSV 文件名。"""
+    """将查询目的清理为 CSV 文件名；同一 Session 内同名结果覆盖写入。"""
     normalized = unicodedata.normalize("NFKC", purpose).strip()
     stem_parts: list[str] = []
     separator_pending = False
@@ -306,17 +273,7 @@ def _query_artifact_filename(purpose: str) -> str:
             separator_pending = True
 
     stem = "".join(stem_parts).rstrip("_") or "query_result"
-    encoded_size = 0
-    truncated: list[str] = []
-    for character in stem:
-        character_size = len(character.encode("utf-8"))
-        if encoded_size + character_size > _QUERY_ARTIFACT_STEM_MAX_BYTES:
-            break
-        truncated.append(character)
-        encoded_size += character_size
-    safe_stem = "".join(truncated).rstrip("_") or "query_result"
-    unique_suffix = uuid4().hex[:_QUERY_ARTIFACT_UNIQUE_SUFFIX_LENGTH]
-    return f"{safe_stem}_{unique_suffix}.csv"
+    return f"{stem}.csv"
 
 
 def _value_type(value: Any) -> str:

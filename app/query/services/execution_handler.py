@@ -6,19 +6,14 @@ from loguru import logger
 
 from app.identity.services.authorization import AssetAccessPolicy
 from app.identity.services.query_principal import ResolvedQueryPrincipal
+from app.query.errors import QueryRejectedError, classify_query_error
 from app.query.models.execution import (
     AnalysisQueryResult,
     QueryExecutionStatus,
-    QueryExecutionTimeoutError,
 )
 from app.query.models.validation import QueryValidationResult
 from app.query.services.execution_recorder import QueryExecutionContext
-from app.query.services.executor import (
-    AnalysisQueryService,
-    QueryRejectedError,
-    QueryResultShapeError,
-    SuccessfulQueryExecution,
-)
+from app.query.services.executor import AnalysisQueryService
 from app.shared.contracts.analysis import AgentSessionKey
 
 
@@ -50,7 +45,10 @@ class QueryExecutionRuntime(Protocol):
     async def record_success(
         self,
         context: QueryExecutionContext,
-        details: SuccessfulQueryExecution,
+        *,
+        raw_sql: str,
+        validation: QueryValidationResult,
+        result: AnalysisQueryResult,
     ) -> None:
         """在独立元数据会话中记录成功事实。"""
         ...
@@ -105,63 +103,42 @@ class QueryExecutionHandler:
             if not validation.valid or validation.normalized_sql is None:
                 raise QueryRejectedError(validation)
             service = await self._runtime.create_executor(principal)
-            details = await service.execute(
+            result = await service.execute(
                 session_key,
-                sql,
                 validation,
                 purpose=purpose,
             )
-        except QueryRejectedError as exc:
-            await self._record_failure_safely(
-                context,
-                raw_sql=sql,
-                status="rejected",
-                error_code="sql_validation_failed",
-                error_detail=str(exc),
-                validation=exc.result,
-            )
-            raise
-        except QueryExecutionTimeoutError as exc:
-            await self._record_failure_safely(
-                context,
-                raw_sql=sql,
-                status="failed",
-                error_code="query_timeout",
-                error_detail=str(exc),
-                validation=validation,
-            )
-            raise
-        except QueryResultShapeError as exc:
-            await self._record_failure_safely(
-                context,
-                raw_sql=sql,
-                status="failed",
-                error_code="query_result_invalid",
-                error_detail=str(exc),
-                validation=validation,
-            )
-            raise
         except Exception as exc:
+            status, error_code = classify_query_error(exc)
             await self._record_failure_safely(
                 context,
                 raw_sql=sql,
-                status="failed",
-                error_code="readonly_query_failed",
+                status=status,
+                error_code=error_code,
                 error_detail=str(exc).strip() or "异常未提供详情",
-                validation=validation,
+                validation=exc.result
+                if isinstance(exc, QueryRejectedError)
+                else validation,
             )
             raise
-        await self._record_success_safely(context, details)
-        return details.result
+        await self._record_success_safely(
+            context, raw_sql=sql, validation=validation, result=result
+        )
+        return result
 
     async def _record_success_safely(
         self,
         context: QueryExecutionContext,
-        details: SuccessfulQueryExecution,
+        *,
+        raw_sql: str,
+        validation: QueryValidationResult,
+        result: AnalysisQueryResult,
     ) -> None:
         """记录成功查询，持久化故障不改变查询结果。"""
         try:
-            await self._runtime.record_success(context, details)
+            await self._runtime.record_success(
+                context, raw_sql=raw_sql, validation=validation, result=result
+            )
         except Exception:  # noqa: BLE001
             logger.exception("记录成功查询历史失败")
 
