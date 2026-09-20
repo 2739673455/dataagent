@@ -125,16 +125,6 @@ class DorisRoleRepository:
                 database=database,
             )
 
-    async def list_role_names(self) -> tuple[str, ...]:
-        """读取 Doris 中的全部显式角色名。"""
-        rows = await self.list_roles()
-        names = {
-            role_name
-            for row in rows
-            if (role_name := role_name_from_row(row)) is not None
-        }
-        return tuple(sorted(names, key=str.casefold))
-
     async def list_workload_groups(self) -> tuple[str, ...]:
         """读取管理账号可见的 Doris 工作组。"""
         async with self._provider.connection() as connection:
@@ -200,13 +190,6 @@ class DorisRoleRepository:
         role = self.quote_identifier(role_name)
         await self._execute(f"DROP USER IF EXISTS {user}")
         await self._execute(f"DROP ROLE IF EXISTS {role}")
-
-    async def verify_configured_roles(self, role_names: Sequence[str]) -> None:
-        """确认管理账号可查看且 Doris 已创建全部配置角色。"""
-        existing = set(await self.list_role_names())
-        missing = sorted(set(role_names) - existing)
-        if missing:
-            raise RuntimeError(f"配置的 Doris 角色不存在: {', '.join(missing)}")
 
     async def list_role_row_policies(self, role_name: str) -> list[DorisRowPolicy]:
         """读取指定角色的全部行策略。"""

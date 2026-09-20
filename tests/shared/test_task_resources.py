@@ -246,8 +246,5 @@ def test_web_applications_own_separate_resources_and_request_dependencies() -> N
         assert not hasattr(first.state, "resources")
         first_resources.auth.close.assert_awaited_once()
 
-    with (
-        patch.object(runtime, "_create_resources", side_effect=create),
-        patch.object(runtime, "_verify_doris_query_identities", new=AsyncMock()),
-    ):
+    with patch.object(runtime, "_create_resources", side_effect=create):
         asyncio.run(run())

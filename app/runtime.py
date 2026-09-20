@@ -14,13 +14,9 @@ from app.assistant.execution.manager import AgentManager
 from app.assistant.execution.run import ConversationRunService
 from app.assistant.execution.runtime_factory import ConversationAgentRuntimeFactory
 from app.assistant.providers import build_conversation_lifecycle_service
-from app.identity.repositories.doris_role import DorisRoleRepository
-from app.identity.repositories.identity import IdentityPGRepo
-from app.identity.services.credential import DorisCredentialCipher
 from app.identity.services.rate_limit import AuthRateLimitService
 from app.identity.services.user_deletion_store import PostgresUserDeletionStateStore
 from app.query.providers import build_query_execution_handler
-from app.query.repositories.doris import DorisQueryRepository
 from app.sandbox.manager import DockerSandboxManager
 from app.sandbox.providers import create_sandbox_manager
 from app.shared.clients.doris_client_manager import (
@@ -112,40 +108,6 @@ def _create_resources() -> WebResources:
     )
 
 
-async def _verify_doris_query_identities(resources: WebResources) -> None:
-    """校验数据库中全部查询身份的 Doris 权限。"""
-    cipher = DorisCredentialCipher(
-        cfg.doris_credentials.encryption_key.get_secret_value()
-    )
-    async with resources.auth.session() as session:
-        identities = await IdentityPGRepo(session).list_query_identities()
-    try:
-        await DorisRoleRepository(resources.admin_doris).verify_configured_roles(
-            tuple(identity.role_name for identity in identities)
-        )
-    except Exception as exc:  # noqa: BLE001
-        # 管理员需要应用保持可用以修复 Doris 侧配置；实际查询仍会在身份解析和
-        # Doris 权限边界失败，因此启动检查只负责暴露漂移，不放宽查询权限。
-        logger.warning(f"Doris 查询角色完整性校验未通过，应用继续启动: {exc}")
-    for identity in identities:
-        try:
-            manager = await resources.query_clients.get_or_create(
-                identity.role_name,
-                identity.query_user,
-                cipher.decrypt(identity.encrypted_password),
-            )
-            await DorisQueryRepository(manager).verify_readonly_access(
-                identity.workload_group,
-                cfg.doris.database,
-                identity.role_name,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                f"Doris 角色 '{identity.role_name}' 未完成目标库表授权或校验未通过，"
-                f"应用继续启动: {exc}"
-            )
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """启动时创建资源，失败及退出时逆序清理，避免应用实例之间共享连接。"""
@@ -176,7 +138,6 @@ async def lifespan(app: FastAPI):
             await postgres.init_tables()
         resources.admin_doris.init()
         await resources.agents.init()
-        await _verify_doris_query_identities(resources)
         logger.info("应用资源初始化完成")
         app.state.resources = resources
         try:

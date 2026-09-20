@@ -1,5 +1,11 @@
 # DataAgent
 
+## 推荐运行环境
+
+在本机运行整套服务（应用、PostgreSQL、Elasticsearch、Redis 和 Doris），供单人使用并同时运行一个分析沙箱时，**建议至少配备 24 GB 内存**。该建议为容量估算，实际占用取决于数据规模、查询复杂度和并发量。
+
+推荐使用 **Ubuntu Linux**；Windows 开发环境建议通过 **WSL2 + Ubuntu** 运行项目。
+
 ## 配置
 
 ### 后端环境变量
@@ -64,15 +70,15 @@ TAVILY_API_KEY=
 
 本地使用项目提供的 Compose 时，配置中的服务地址和端口与其对应。连接已有服务时，按下表修改相应配置组。
 
-| 配置组 | 用途与配置要点 |
-| --- | --- |
+| 配置组                 | 用途与配置要点                                                                                                                          |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `port`、`cors_origins` | 后端默认监听 `7000` 端口。浏览器直接跨域访问后端时，在 `cors_origins` 中填写前端 Origin；通过前端开发代理访问时，配置下一节的代理地址。 |
-| `log` | 设置日志级别和单个日志文件的滚动大小，默认 `INFO`、`10MB`。 |
-| `doris` | 配置业务数据库和后台管理连接，用于读取元数据、管理角色和权限。用户执行 SQL 时使用平台角色对应的 Doris 查询账号。 |
-| `auth_postgresql` | 保存平台账号、令牌、Doris 查询身份、权限指纹和用户注销任务。 |
-| `meta_postgresql` | 保存元数据目录、查询经验、执行记录和召回快照。 |
-| `langgraph_postgresql` | 保存会话目录、删除标记和 Agent 的 Checkpoint。三组 PostgreSQL 配置默认连接同一服务中的 `auth`、`meta`、`langgraph` 三个数据库。 |
-| `elasticsearch` | 设置搜索服务地址、字段/指标/取值/查询经验的索引名称，以及向量维度 `embedding_size`。 |
+| `log`                  | 设置日志级别和单个日志文件的滚动大小，默认 `INFO`、`10MB`。                                                                             |
+| `doris`                | 配置业务数据库和后台管理连接，用于读取元数据、管理角色和权限。用户执行 SQL 时使用平台角色对应的 Doris 查询账号。                        |
+| `auth_postgresql`      | 保存平台账号、令牌、Doris 查询身份、权限指纹和用户注销任务。                                                                            |
+| `meta_postgresql`      | 保存元数据目录、查询经验、执行记录和召回快照。                                                                                          |
+| `langgraph_postgresql` | 保存会话目录、删除标记和 Agent 的 Checkpoint。三组 PostgreSQL 配置默认连接同一服务中的 `auth`、`meta`、`langgraph` 三个数据库。         |
+| `elasticsearch`        | 设置搜索服务地址、字段/指标/取值/查询经验的索引名称，以及向量维度 `embedding_size`。                                                    |
 
 Redis 分别用于后台任务、沙箱协调和认证限流。默认使用同一 Redis 服务的不同逻辑库：`task_queue.broker_url` 使用 `/0`，`task_queue.result_backend` 使用 `/1`，`sandbox.ownership.redis_url` 使用 `/2`，`auth.rate_limit_redis_url` 使用 `/3`。更换 Redis 服务时，需要同步核对这四处地址。
 

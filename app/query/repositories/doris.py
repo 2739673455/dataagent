@@ -1,8 +1,7 @@
 """受控 Doris 分析查询访问。"""
 
 import asyncio
-import re
-from collections.abc import AsyncGenerator, Mapping, Sequence
+from collections.abc import AsyncGenerator
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -15,23 +14,6 @@ from app.query.models.execution import (
     QueryExecutionTimeoutError,
 )
 from app.shared.clients.doris_client_manager import DorisClientManager
-from app.shared.contracts.doris import DORIS_WORKLOAD_GROUP_PATTERN
-
-_PRIVILEGE_PATTERN = re.compile(
-    r"\b(?:node|admin|grant|select|load|alter|create|drop|usage|show_view)_priv\b"
-    r"|\b(?:all|read_write|read_only)\b",
-    re.IGNORECASE,
-)
-_ALLOWED_READONLY_PRIVILEGES = {
-    "select_priv",
-    "usage_priv",
-    "show_view_priv",
-    "read_only",
-}
-
-
-class DorisReadonlyPrivilegeError(RuntimeError):
-    """Doris 查询账号包含写入或管理权限。"""
 
 
 class DorisQueryRepository:
@@ -54,78 +36,6 @@ class DorisQueryRepository:
         await connection.execute(
             text(f"SET exec_mem_limit = {limits.memory_limit_bytes}")
         )
-
-    async def verify_readonly_access(
-        self,
-        workload_group: str,
-        database: str,
-        expected_role: str,
-    ) -> None:
-        """启动前确认查询账号仅绑定预期角色且可见目标数据库。"""
-        if re.fullmatch(DORIS_WORKLOAD_GROUP_PATTERN, workload_group) is None:
-            raise ValueError("Doris Workload Group 标识无效")
-        if not database.strip():
-            raise ValueError("Doris 查询数据库名不能为空")
-        async with self._connection_provider.connection() as connection:
-            result = await connection.execute(text("SHOW GRANTS"))
-            rows = [dict(row) for row in result.mappings().all()]
-            database_result = await connection.execute(
-                text("SHOW DATABASES LIKE :database"),
-                {"database": database},
-            )
-            visible_databases = {
-                str(row[0]) for row in database_result.fetchall() if row
-            }
-            await connection.execute(text(f"SET workload_group = '{workload_group}'"))
-        self.require_readonly_grants(rows, expected_role)
-        if database not in visible_databases:
-            raise DorisReadonlyPrivilegeError(
-                "Doris 查询账号无权访问所配置的目标数据库"
-            )
-
-    @staticmethod
-    def require_readonly_grants(
-        rows: Sequence[Mapping[str, object]],
-        expected_role: str,
-    ) -> None:
-        """校验 SHOW GRANTS 返回的当前账号合并权限。"""
-        if not rows:
-            raise DorisReadonlyPrivilegeError("Doris 查询账号未返回有效的授权信息")
-        tokens: set[str] = set()
-        for row in rows:
-            privilege_values = [
-                value
-                for key, value in row.items()
-                if key.casefold().endswith("privs") or "grant" in key.casefold()
-            ]
-            for value in privilege_values:
-                if value is None:
-                    continue
-                tokens.update(
-                    match.group(0).casefold()
-                    for match in _PRIVILEGE_PATTERN.finditer(str(value))
-                )
-        forbidden = sorted(tokens - _ALLOWED_READONLY_PRIVILEGES)
-        if forbidden:
-            raise DorisReadonlyPrivilegeError(
-                "Doris 查询账号包含禁止的非只读权限: " + ", ".join(forbidden)
-            )
-        if "select_priv" not in tokens and "read_only" not in tokens:
-            raise DorisReadonlyPrivilegeError("Doris 查询账号缺少 SELECT_PRIV 只读权限")
-        roles: set[str] = set()
-        for row in rows:
-            for key, value in row.items():
-                if key.casefold() != "roles" or value is None:
-                    continue
-                roles.update(
-                    role.strip().strip("'\"")
-                    for role in re.split(r"[,;]", str(value))
-                    if role.strip()
-                )
-        if roles != {expected_role}:
-            raise DorisReadonlyPrivilegeError(
-                "Doris 查询账号必须精确绑定到预期的唯一角色"
-            )
 
     @staticmethod
     def _is_timeout_error(exc: BaseException) -> bool:
