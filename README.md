@@ -155,12 +155,17 @@ docker compose -f docker/compose.yml ps
 
 ### 3. 准备 Doris 全量数据
 
-默认应用连接 Doris 的 `ecommerce` 数据库。全量数据依赖 Git LFS 中的数据文件，先在项目根目录拉取：
+默认应用连接 Doris 的 `ecommerce` 数据库。[dbmock](https://github.com/2739673455/dbmock) 作为 Git 子模块固定到指定提交，其数据文件由子仓库的 Git LFS 管理。先在项目根目录初始化子模块并拉取数据：
 
 ```bash
 git lfs install
-git lfs pull
+git submodule update --init --recursive
+git -C dbmock lfs pull
 ```
+
+首次克隆主仓库时可使用 `git clone --recurse-submodules https://github.com/2739673455/dataagent.git`。之后更新主仓库代码时，执行 `git submodule update --init --recursive` 同步子模块版本。
+
+修改 dbmock 后，先在子仓库的开发分支中提交并推送，再回到主仓库执行 `git add dbmock` 并提交，以更新固定的子模块版本。
 
 创建 `dbmock` 配置并生成两年全量数据：
 
