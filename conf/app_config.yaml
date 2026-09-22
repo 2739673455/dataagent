@@ -127,30 +127,30 @@ lm_config: # 可用语言模型集合及默认模型。
         image_inputs: true # 当前模型是否支持识别图片内容。
         structured_output: false # DeepSeek Responses 原生 JSON Schema 可能返回空正文，Specialist 使用工具调用输出。
         max_input_tokens: 1048576 # 模型上下文长度，用于计算对话压缩阈值。
-    openrouter-deepseek-v4.1-flash:
-      model_provider: openrouter
-      api_protocol: chat_completions
-      model: deepseek/deepseek-v4.1-flash
-      base_url: https://openrouter.ai/api/v1
-      api_key: ${oc.env:OPENROUTER_API_KEY}
-      params: {}
-      profile:
-        image_inputs: false
-        structured_output: true
-        max_input_tokens: 1048576
-    openrouter-glm-5.3-flash:
-      model_provider: openrouter
-      api_protocol: chat_completions
-      model: z-ai/glm-5.3-flash
-      base_url: https://openrouter.ai/api/v1
-      api_key: ${oc.env:OPENROUTER_API_KEY}
-      params:
-        reasoning:
-          effort: high
-      profile:
-        image_inputs: true
-        structured_output: false
-        max_input_tokens: 1048576
+    # openrouter-deepseek-v4.1-flash:
+    #   model_provider: openrouter
+    #   api_protocol: chat_completions
+    #   model: deepseek/deepseek-v4.1-flash
+    #   base_url: https://openrouter.ai/api/v1
+    #   api_key: ${oc.env:OPENROUTER_API_KEY}
+    #   params: {}
+    #   profile:
+    #     image_inputs: false
+    #     structured_output: true
+    #     max_input_tokens: 1048576
+    # openrouter-glm-5.3-flash:
+    #   model_provider: openrouter
+    #   api_protocol: chat_completions
+    #   model: z-ai/glm-5.3-flash
+    #   base_url: https://openrouter.ai/api/v1
+    #   api_key: ${oc.env:OPENROUTER_API_KEY}
+    #   params:
+    #     reasoning:
+    #       effort: high
+    #   profile:
+    #     image_inputs: true
+    #     structured_output: false
+    #     max_input_tokens: 1048576
 
 agent: # Planner 和 Specialist 运行时配置。
   orchestration: # 动态 Specialist 编排限制。
