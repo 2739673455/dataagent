@@ -124,13 +124,13 @@ docker compose -f docker/compose.yml ps
 
 ```bash
 git lfs install
-git submodule update --init --recursive
+git submodule update --init
 git -C dbmock lfs pull
 ```
 
-首次克隆主仓库时可添加 `--recurse-submodules` 参数。之后更新主仓库代码时，执行 `git submodule update --init --recursive` 同步子模块版本。
+首次克隆主仓库时可添加 `--recurse-submodules` 参数。之后更新主仓库代码时，执行 `git submodule update --init` 同步子模块版本。
 
-创建 `dbmock` 配置并生成两年全量数据：
+创建 `dbmock` 配置并按指定月份生成数据：
 
 ```bash
 cp dbmock/.env.example dbmock/.env
@@ -139,11 +139,11 @@ cp dbmock/.env.example dbmock/.env
 cd dbmock
 uv sync
 uv run scripts/init_db.py
-uv run main.py
+uv run main.py --start-month 2026-01 --end-month 2026-08
 cd ..
 ```
 
-`dbmock/scripts/init_db.py` 会删除并重建 `DB_NAME` 指定的数据库，只能用于可重建的本地数据。全量数据生成通常需要十几分钟，实际耗时取决于本机资源和 Doris 负载。
+`dbmock/scripts/init_db.py` 会删除并重建 `DB_NAME` 指定的数据库，只能用于可重建的本地数据。生成耗时取决于月份范围、数据规模、本机资源和 Doris 负载。
 
 ### 4. 创建管理员
 
