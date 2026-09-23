@@ -77,10 +77,9 @@ async def _execute_sql(
             session_key,
             sql,
             purpose=_query_purpose(runtime, purpose),
-            tool_call_id=runtime.tool_call_id,
         )
     except Exception as exc:  # noqa: BLE001
-        _, code = classify_query_error(exc)
+        code = classify_query_error(exc)
         conversation_id = session_key.conversation_id if session_key else None
         if code == "readonly_query_failed":
             logger.exception(f"只读查询工具执行失败: conversation_id={conversation_id}")

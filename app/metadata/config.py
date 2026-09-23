@@ -1,4 +1,4 @@
-"""元数据导入导出配置模型。"""
+"""元数据导入配置模型。"""
 
 from typing import Annotated, Literal
 
@@ -73,7 +73,7 @@ class MetricConfig(MetaConfigModel):
 
 
 class MetaConfig(MetaConfigModel):
-    """元数据导入导出配置。"""
+    """元数据导入配置。"""
 
     tables: list[TableConfig] = Field(default_factory=list)
     metrics: list[MetricConfig] = Field(default_factory=list)

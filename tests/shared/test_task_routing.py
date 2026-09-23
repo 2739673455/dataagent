@@ -9,7 +9,6 @@ from app.assistant.task_scheduler import (
     enqueue_conversation_deletion,
     enqueue_conversation_title,
 )
-from app.metadata.task_scheduler import SYNC_COLUMN_INDEXES_TASK, submit_metadata_task
 from app.shared.tasks.celery_app import celery_app
 from app.workflows.task_scheduler import enqueue_user_deletion
 
@@ -22,10 +21,6 @@ _ID = UUID("550e8400-e29b-41d4-a716-446655440000")
         (lambda: enqueue_conversation_title(1, _ID, "title", "text"), "lightweight"),
         (lambda: enqueue_conversation_deletion(1, _ID), "lifecycle"),
         (lambda: enqueue_user_deletion(1), "lifecycle"),
-        (
-            lambda: submit_metadata_task(SYNC_COLUMN_INDEXES_TASK, [["orders", "id"]]),
-            "metadata-index",
-        ),
     ],
 )
 def test_submission_uses_configured_route(submit, queue: str) -> None:

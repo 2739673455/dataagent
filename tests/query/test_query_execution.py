@@ -30,10 +30,6 @@ from app.query.models.validation import QueryValidationIssue, QueryValidationRes
 from app.query.repositories.doris import DorisQueryRepository
 from app.query.runtime import DatabaseQueryExecutionRuntime
 from app.query.services.execution_handler import QueryExecutionHandler
-from app.query.services.execution_recorder import (
-    QueryExecutionContext,
-    QueryExecutionRecorder,
-)
 from app.query.services.executor import AnalysisQueryService
 from app.shared.contracts.analysis import AgentSessionKey
 
@@ -107,8 +103,6 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
             resolve_principal=AsyncMock(return_value=(self.principal, object())),
             validate=AsyncMock(return_value=valid()),
             create_executor=AsyncMock(return_value=self.service),
-            record_success=AsyncMock(),
-            record_failure=AsyncMock(),
         )
         self.handler = QueryExecutionHandler(self.runtime)
         self.tool_runtime = ToolRuntime(
@@ -129,31 +123,23 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
 
     async def execute(self):
         return await self.handler.execute(
-            self.key, " select 1 as value ", purpose="统计", tool_call_id="call-1"
+            self.key, " select 1 as value ", purpose="统计"
         )
 
-    async def test_success_record_failure_does_not_change_result(self):
-        self.runtime.record_success.side_effect = OSError("record unavailable")
+    async def test_success_returns_executor_result(self):
         actual = await self.execute()
         self.assertIs(actual, self.service.execute.return_value)
-        args = self.runtime.record_success.call_args
-        self.assertEqual(args.args[0].session_key, self.key)
-        self.assertEqual(args.args[0].role_name, "reader")
-        self.assertEqual(args.kwargs["raw_sql"], " select 1 as value ")
-        self.assertIs(args.kwargs["validation"], self.runtime.validate.return_value)
-        self.assertIs(args.kwargs["result"], actual)
-        self.runtime.record_failure.assert_not_awaited()
+        self.service.execute.assert_awaited_once_with(
+            self.key, self.runtime.validate.return_value, purpose="统计"
+        )
 
     async def test_rejection_never_creates_executor(self):
         self.runtime.validate.return_value = rejected()
         with self.assertRaises(QueryRejectedError):
             await self.execute()
         self.runtime.create_executor.assert_not_awaited()
-        self.assertEqual(
-            self.runtime.record_failure.call_args.kwargs["status"], "rejected"
-        )
 
-    async def test_tool_and_record_share_codes_and_record_failure_preserves_error(self):
+    async def test_tool_classifies_errors_and_handler_preserves_original_error(self):
         for error, code in (
             (QueryRejectedError(rejected()), "sql_validation_failed"),
             (QueryExecutionTimeoutError("超时"), "query_timeout"),
@@ -162,7 +148,6 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(code=code):
                 self.service.execute.side_effect = error
-                self.runtime.record_failure.side_effect = OSError("record unavailable")
                 with self.assertRaises(type(error)) as raised:
                     await self.execute()
                 self.assertIs(raised.exception, error)
@@ -170,9 +155,6 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
                     self.handler, self.tool_runtime, "SELECT 1", "统计"
                 )
                 self.assertEqual(payload["code"], code)
-                self.assertEqual(
-                    self.runtime.record_failure.call_args.kwargs["error_code"], code
-                )
                 if isinstance(error, QueryRejectedError):
                     self.assertEqual(
                         payload["validation"], error.result.model_dump(mode="json")
@@ -180,14 +162,12 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
                 else:
                     self.assertEqual(payload["details"][0]["msg"], str(error))
 
-    async def test_cancellation_propagates_through_tool_without_failure_record(self):
+    async def test_cancellation_propagates_through_tool(self):
         self.service.execute.side_effect = asyncio.CancelledError()
         with self.assertRaises(asyncio.CancelledError):
             await _execute_sql(self.handler, self.tool_runtime, "SELECT 1")
-        self.runtime.record_failure.assert_not_awaited()
-        self.runtime.record_success.assert_not_awaited()
 
-    async def test_identity_failure_does_not_execute_or_record_under_unknown_role(self):
+    async def test_identity_failure_does_not_execute(self):
         self.runtime.resolve_principal.side_effect = QueryPrincipalNotConfiguredError(
             "no role"
         )
@@ -195,7 +175,6 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
             await self.execute()
         self.runtime.validate.assert_not_awaited()
         self.runtime.create_executor.assert_not_awaited()
-        self.runtime.record_failure.assert_not_awaited()
 
 
 class QueryExecutorTest(unittest.IsolatedAsyncioTestCase):
@@ -399,7 +378,6 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
             lock_query_identity=AsyncMock(return_value=identity),
         )
         clients = MagicMock(get_or_create=AsyncMock(return_value=MagicMock()))
-        recorder = MagicMock(record_success=AsyncMock())
         store = MagicMock(write_artifact=AsyncMock())
         guard = MagicMock(check=AsyncMock(return_value=valid()))
 
@@ -411,11 +389,7 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(active, {"meta"})
             return valid()
 
-        async def record(*args, **kwargs):
-            self.assertEqual(active, {"meta"})
-
         guard.check.side_effect = validate
-        recorder.record_success.side_effect = record
         with (
             patch(
                 "app.query.runtime.DorisCredentialCipher",
@@ -435,14 +409,13 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
         ):
             runtime = DatabaseQueryExecutionRuntime(
                 store,
-                lambda _: recorder,
                 manager("auth"),
                 manager("meta"),
                 clients,
                 MagicMock(),
             )
             actual = await QueryExecutionHandler(runtime).execute(
-                key(), "SELECT 1", purpose="统计", tool_call_id=None
+                key(), "SELECT 1", purpose="统计"
             )
         self.assertEqual(actual.row_count, 1)
         repo.get_user_by_id.assert_awaited_once_with(7)
@@ -451,10 +424,9 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
             "reader", "query_reader", "password"
         )
         policy = guard.check.call_args.args[1]
-        context = recorder.record_success.call_args.args[0]
         self.assertEqual(
             (policy.role_name, policy.authorization_fingerprint),
-            (context.role_name, context.authorization_fingerprint),
+            ("reader", "same"),
         )
         self.assertEqual(
             events,
@@ -463,51 +435,5 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 ("auth", "exit"),
                 ("meta", "enter"),
                 ("meta", "exit"),
-                ("meta", "enter"),
-                ("meta", "exit"),
             ],
         )
-
-
-class QueryRecorderTest(unittest.IsolatedAsyncioTestCase):
-    async def test_business_and_catalog_queries_record_success(self):
-        for kind in ("business", "catalog"):
-            with self.subTest(kind=kind):
-                executions = MagicMock(record=AsyncMock())
-                recorder = QueryExecutionRecorder(executions)
-                context = QueryExecutionContext(key(), "reader", "a" * 64, "统计")
-                validation = QueryValidationResult(
-                    valid=True, normalized_sql="SELECT 1 AS value", query_kind=kind
-                )
-                await recorder.record_success(
-                    context,
-                    raw_sql="select 1 as value",
-                    validation=validation,
-                    result=result(),
-                )
-                executions.record.assert_awaited_once()
-                execution = executions.record.call_args.args[0]
-                self.assertEqual(execution.user_id, context.session_key.user_id)
-                self.assertEqual(execution.raw_sql, "select 1 as value")
-                self.assertEqual(execution.normalized_sql, validation.normalized_sql)
-                self.assertEqual(execution.status, "succeeded")
-                self.assertNotIn("sample", execution.result_summary)
-
-    async def test_failed_and_rejected_queries_record_audit(self):
-        for status in ("failed", "rejected"):
-            with self.subTest(status=status):
-                executions = MagicMock(record=AsyncMock())
-                recorder = QueryExecutionRecorder(executions)
-                context = QueryExecutionContext(key(), "reader", "a" * 64, "统计")
-                await recorder.record_failure(
-                    context,
-                    raw_sql="select 1",
-                    status=status,
-                    error_code="test_error",
-                    error_detail="error detail",
-                )
-                executions.record.assert_awaited_once()
-                execution = executions.record.call_args.args[0]
-                self.assertEqual(execution.status, status)
-                self.assertEqual(execution.error_code, "test_error")
-                self.assertEqual(execution.error_detail, "error detail")

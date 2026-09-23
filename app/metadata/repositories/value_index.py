@@ -45,6 +45,13 @@ class ValueESRepo:
         """初始化字段取值索引存储。"""
         self._client = client
 
+    async def reset_index(self) -> None:
+        """删除全部取值索引并重建映射。"""
+        await self._client.options(ignore_status=404).indices.delete(
+            index=self._index_name
+        )
+        await self.ensure_index()
+
     async def ensure_index(self) -> None:
         """确保字段取值索引存在。"""
         if await self._client.indices.exists(index=self._index_name):
@@ -99,42 +106,6 @@ class ValueESRepo:
         """刷新字段取值索引。"""
         await self._client.indices.refresh(index=self._index_name)
 
-    async def delete_by_column(self, t_name: str, c_name: str) -> int:
-        """删除字段对应的全部取值。"""
-        if not await self._client.indices.exists(index=self._index_name):
-            return 0
-        result = await self._client.delete_by_query(
-            index=self._index_name,
-            query=self._resource_query(t_name, c_name),
-            conflicts="proceed",
-            refresh=True,
-        )
-        return self._deleted_count(result)
-
-    async def delete_other_generations(
-        self,
-        t_name: str,
-        c_name: str,
-        generation: str,
-    ) -> int:
-        """删除字段下未进入当前全量同步代次的取值。"""
-        if not await self._client.indices.exists(index=self._index_name):
-            return 0
-        result = await self._client.delete_by_query(
-            index=self._index_name,
-            query={
-                "bool": {
-                    "filter": [self._resource_query(t_name, c_name)],
-                    "must_not": [
-                        {"term": {"sync_generation": generation}},
-                    ],
-                }
-            },
-            conflicts="proceed",
-            refresh=True,
-        )
-        return self._deleted_count(result)
-
     async def search_hits(
         self,
         keyword: str,
@@ -170,16 +141,3 @@ class ValueESRepo:
             )
             for hit in payload["hits"]["hits"]
         ]
-
-    @staticmethod
-    def _resource_query(t_name: str, c_name: str) -> dict[str, Any]:
-        """构造字段资源过滤条件。"""
-        return {"term": {"resource_key": column_resource_key(t_name, c_name)}}
-
-    @staticmethod
-    def _deleted_count(result: Any) -> int:
-        """校验按查询删除结果并返回删除数量。"""
-        body = result.body
-        if body.get("failures"):
-            raise RuntimeError("Elasticsearch 批量删除取值索引存在失败项")
-        return int(body.get("deleted") or 0)

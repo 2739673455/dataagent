@@ -1,7 +1,6 @@
 """Celery 应用与队列配置。"""
 
 from celery import Celery
-from celery.schedules import crontab
 from kombu import Queue
 
 from app.shared.config.app_config import cfg
@@ -14,7 +13,6 @@ celery_app = Celery(
     backend=cfg.task_queue.result_backend.get_secret_value(),
     include=[
         "app.assistant.tasks",
-        "app.metadata.tasks",
         "app.workflows.tasks",
     ],
 )
@@ -37,7 +35,6 @@ celery_app.conf.update(
     task_default_routing_key="default",
     task_queues=(
         Queue("default", routing_key="default"),
-        Queue("metadata-index", routing_key="metadata-index"),
         Queue("lifecycle", routing_key="lifecycle"),
         Queue("lightweight", routing_key="lightweight"),
     ),
@@ -58,10 +55,6 @@ celery_app.conf.update(
             "queue": "lifecycle",
             "routing_key": "lifecycle",
         },
-        "dataagent.metadata.*": {
-            "queue": "metadata-index",
-            "routing_key": "metadata-index",
-        },
         "dataagent.workflows.*": {
             "queue": "lifecycle",
             "routing_key": "lifecycle",
@@ -76,13 +69,6 @@ celery_app.conf.update(
 )
 
 celery_app.conf.beat_schedule = {
-    "value-index-daily-dispatch": {
-        "task": "dataagent.metadata.dispatch_value_indexes",
-        "schedule": crontab(
-            hour=cfg.task_queue.value_index_sync_time.hour,
-            minute=cfg.task_queue.value_index_sync_time.minute,
-        ),
-    },
     "lifecycle-periodic-dispatch": {
         "task": "dataagent.assistant.cleanup_expired_drafts",
         "schedule": cfg.task_queue.lifecycle_schedule_seconds,

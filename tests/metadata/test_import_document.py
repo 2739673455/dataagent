@@ -24,6 +24,8 @@ def test_invalid_document_returns_business_error(content, message):
 
 
 def test_valid_document_is_parsed():
-    config = parse_metadata_yaml(b"tables: []\nmetrics: []")
-    assert config.tables == []
+    config = parse_metadata_yaml(
+        b"tables: [{name: orders, role: fact, description: Orders}]"
+    )
+    assert config.tables[0].name == "orders"
     assert config.metrics == []

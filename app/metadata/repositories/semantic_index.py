@@ -1,7 +1,6 @@
-"""语义索引差量读写原语。"""
+"""语义索引写入与检索。"""
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
 from typing import Any, cast
 
 from elasticsearch import AsyncElasticsearch
@@ -9,41 +8,17 @@ from loguru import logger
 
 from app.metadata.models.catalog import ColumnKey, column_resource_key
 from app.metadata.models.search import (
-    SemanticIndexDelta,
     SemanticIndexDocument,
     SemanticTextType,
 )
 from app.shared.config.app_config import cfg
 from app.shared.contracts.search import SearchHit
 
-_SOURCE_FIELDS = [
-    "resource_key",
-    "text",
-    "text_type",
-    "embedding_revision",
-    "meta_version",
-    "payload_hash",
-    "payload",
-]
 _EXACT_TEXT_BOOSTS: dict[SemanticTextType, float] = {
     "name": 8.0,
     "alias": 6.0,
     "description": 4.0,
 }
-_UPDATABLE_MAPPING_PROPERTIES: dict[str, Any] = {
-    "resource_key": {"type": "keyword"},
-    "meta_version": {"type": "long"},
-    "embedding_revision": {"type": "keyword"},
-    "payload_hash": {"type": "keyword"},
-}
-
-
-@dataclass(frozen=True, slots=True)
-class SemanticIndexDocumentReadResult:
-    """语义索引资源文档读取结果及损坏文档编号。"""
-
-    documents: list[SemanticIndexDocument]
-    corrupted_document_ids: list[str]
 
 
 class CorruptedSemanticIndexDocumentError(RuntimeError):
@@ -99,9 +74,6 @@ def semantic_index_mappings(
             },
         },
         "text_type": {"type": "keyword"},
-        "meta_version": {"type": "long"},
-        "embedding_revision": {"type": "keyword"},
-        "payload_hash": {"type": "keyword"},
         "embedding": {
             "type": "dense_vector",
             "dims": cfg.elasticsearch.embedding_size,
@@ -133,128 +105,39 @@ class SemanticIndexRepo:
         self._resource_label = resource_label
         self._mappings = mappings
 
+    async def reset_index(self) -> None:
+        """删除当前索引并使用最新映射重建。"""
+        await self._client.options(ignore_status=404).indices.delete(
+            index=self._index_name
+        )
+        await self.ensure_index()
+
     async def ensure_index(self) -> None:
-        """确保语义索引存在并补充可安全升级的字段。"""
-        if await self._client.indices.exists(index=self._index_name):
-            await self._client.indices.put_mapping(
-                index=self._index_name,
-                properties=_UPDATABLE_MAPPING_PROPERTIES,
-            )
-            return
-        await self._client.indices.create(
-            index=self._index_name,
-            mappings=self._mappings,
-        )
-
-    async def list_documents(
-        self,
-        query: dict[str, Any],
-    ) -> SemanticIndexDocumentReadResult:
-        """读取一个资源下参与差量比较的全部文档及损坏状态。"""
+        """确保语义索引存在。"""
         if not await self._client.indices.exists(index=self._index_name):
-            return SemanticIndexDocumentReadResult([], [])
-        result = await self._client.search(
-            index=self._index_name,
-            query=query,
-            source={"includes": _SOURCE_FIELDS},
-            size=1000,
-        )
-        hits = cast(dict[str, Any], result.body).get("hits", {}).get("hits", [])
-        documents: list[SemanticIndexDocument] = []
-        corrupted_document_ids: list[str] = []
-        for hit in hits:
-            document_id = (
-                str(hit.get("_id"))
-                if isinstance(hit, dict) and hit.get("_id") is not None
-                else "<missing>"
+            await self._client.indices.create(
+                index=self._index_name, mappings=self._mappings
             )
-            try:
-                if not isinstance(hit, dict):
-                    raise TypeError("搜索命中不是对象")
-                if not isinstance(hit.get("_id"), str) or not hit["_id"]:
-                    raise ValueError("搜索命中缺少 _id")
-                source = hit.get("_source")
-                if not isinstance(source, dict):
-                    raise TypeError("搜索命中缺少对象类型的 _source")
-                text_value = source.get("text")
-                if not isinstance(text_value, str):
-                    raise TypeError("语义文档 text 必须为字符串")
-                text_type_value = source.get("text_type")
-                if text_type_value not in {"name", "description", "alias"}:
-                    raise ValueError("语义文档 text_type 无效")
-                payload = source.get("payload")
-                if not isinstance(payload, dict):
-                    raise TypeError("语义文档 payload 必须为对象")
-                documents.append(
-                    SemanticIndexDocument(
-                        id=hit["_id"],
-                        resource_key=str(source.get("resource_key") or ""),
-                        text=text_value,
-                        text_type=cast(SemanticTextType, text_type_value),
-                        embedding=None,
-                        embedding_revision=str(source.get("embedding_revision") or ""),
-                        meta_version=int(source.get("meta_version") or 0),
-                        payload_hash=str(source.get("payload_hash") or ""),
-                        payload=payload,
-                    )
-                )
-            except (TypeError, ValueError, KeyError):
-                corrupted_document_ids.append(document_id)
-        return SemanticIndexDocumentReadResult(documents, corrupted_document_ids)
 
-    async def apply_delta(
-        self,
-        delta: SemanticIndexDelta,
-        *,
-        batch_size: int = 100,
+    async def write_documents(
+        self, documents: list[SemanticIndexDocument], *, batch_size: int = 100
     ) -> None:
-        """混合执行语义文档新增、更新和删除。"""
-        actions: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
-        for document in delta.create:
-            if document.embedding is None:
-                raise ValueError("新增语义索引文档缺少向量")
-            actions.append(
-                (
-                    {"index": {"_index": self._index_name, "_id": document.id}},
-                    self._document_source(document, include_embedding=True),
-                )
-            )
-        for document in delta.update:
-            if document.embedding is None:
-                # 文本未变化时使用 partial update，保留 Elasticsearch 中已有向量。
-                actions.append(
-                    (
-                        {"update": {"_index": self._index_name, "_id": document.id}},
-                        {
-                            "doc": self._document_source(
-                                document,
-                                include_embedding=False,
-                            )
-                        },
-                    )
-                )
-            else:
-                # 文本或 embedding revision 变化时整条覆盖，确保向量与正文同版本。
-                actions.append(
-                    (
-                        {"index": {"_index": self._index_name, "_id": document.id}},
-                        self._document_source(document, include_embedding=True),
-                    )
-                )
-        actions.extend(
-            (
-                {"delete": {"_index": self._index_name, "_id": document_id}},
-                None,
-            )
-            for document_id in delta.delete_ids
-        )
-        for offset in range(0, len(actions), batch_size):
-            # Bulk API 的 metadata 与 source 分别占一行，batch_size 按业务文档计数。
+        """分批写入完整语义文档，全部成功后刷新索引。"""
+        for offset in range(0, len(documents), batch_size):
             operations: list[dict[str, Any]] = []
-            for metadata, source in actions[offset : offset + batch_size]:
-                operations.append(metadata)
-                if source is not None:
-                    operations.append(source)
+            for document in documents[offset : offset + batch_size]:
+                operations.extend(
+                    [
+                        {"index": {"_index": self._index_name, "_id": document.id}},
+                        {
+                            "resource_key": document.resource_key,
+                            "text": document.text,
+                            "text_type": document.text_type,
+                            "embedding": document.embedding,
+                            "payload": document.payload,
+                        },
+                    ]
+                )
             result = await self._client.bulk(operations=operations, refresh=False)
             payload = cast(dict[str, Any], result.body)
             if payload.get("errors"):
@@ -267,21 +150,10 @@ class SemanticIndexRepo:
                     )
                 ]
                 raise RuntimeError(
-                    f"Elasticsearch {self._resource_label}差量写入失败: {failures[:3]}"
+                    f"Elasticsearch {self._resource_label}写入失败: {failures[:3]}"
                 )
-        if actions:
+        if documents:
             await self._client.indices.refresh(index=self._index_name)
-
-    async def delete_by_filter(self, filters: list[dict[str, Any]]) -> None:
-        """按过滤条件删除语义索引文档。"""
-        if not await self._client.indices.exists(index=self._index_name):
-            return
-        await self._client.delete_by_query(
-            index=self._index_name,
-            query={"bool": {"filter": filters}},
-            conflicts="proceed",
-            refresh=True,
-        )
 
     async def search_vector(
         self,
@@ -357,42 +229,6 @@ class SemanticIndexRepo:
             size=limit,
         )
         return cast(dict[str, Any], result.body)
-
-    @staticmethod
-    def _document_source(
-        document: SemanticIndexDocument,
-        *,
-        include_embedding: bool,
-    ) -> dict[str, Any]:
-        """构造语义索引文档源数据。"""
-        source = {
-            "resource_key": document.resource_key,
-            "text": document.text,
-            "text_type": document.text_type,
-            "embedding_revision": document.embedding_revision,
-            "meta_version": document.meta_version,
-            "payload_hash": document.payload_hash,
-            "payload": document.payload,
-        }
-        if include_embedding:
-            source["embedding"] = document.embedding
-        return source
-
-    async def list_resource_documents(
-        self, resource_key: str
-    ) -> list[SemanticIndexDocument]:
-        """读取资源文档；发现损坏时删除整个资源的文档以便重建。"""
-        result = await self.list_documents({"term": {"resource_key": resource_key}})
-        if result.corrupted_document_ids:
-            logger.bind(
-                index_name=self._index_name,
-                document_ids=result.corrupted_document_ids,
-                resource_key=resource_key,
-                stage="rebuild-corrupted-resource",
-            ).warning(f"{self._resource_label}检测到损坏文档，开始重建当前资源")
-            await self.delete_by_filter([{"term": {"resource_key": resource_key}}])
-            return []
-        return result.documents
 
     def parse_hits[T](
         self,

@@ -11,7 +11,6 @@ from deepagents import (
     HarnessProfile,
     register_harness_profile,
 )
-from langchain.chat_models import init_chat_model
 from langchain_core.callbacks import (
     AsyncCallbackManagerForLLMRun,
     CallbackManagerForLLMRun,
@@ -28,7 +27,6 @@ from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langchain_openai.chat_models import base as openai_chat_base
-from langchain_openrouter import ChatOpenRouter
 
 from app.shared.config import app_config
 
@@ -87,8 +85,8 @@ def _convert_deepseek_responses_chunk(
     )
 
 
-class DataAgentResponses(ChatOpenAI):
-    """为每次 Responses API 调用分配稳定的公开消息 ID。"""
+class DataAgentDeepSeekResponses(ChatOpenAI):
+    """适配 DeepSeek 无状态 Responses thinking 续轮。"""
 
     def _stream(self, *args: Any, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
         """统一同一次同步流式调用的 chunk ID。"""
@@ -107,10 +105,6 @@ class DataAgentResponses(ChatOpenAI):
         async for chunk in self._astream_responses(*args, **kwargs):
             chunk.message.id = message_id
             yield chunk
-
-
-class DataAgentDeepSeekResponses(DataAgentResponses):
-    """适配 DeepSeek 无状态 Responses thinking 续轮。"""
 
     def bind_tools(
         self,
@@ -237,8 +231,12 @@ async def create_configured_model(model_name: str) -> AsyncGenerator[BaseChatMod
         model_cfg = app_config.cfg.lm_config.models[model_name]
     except KeyError as exc:
         raise ValueError(f"未知的语言模型配置: {model_name}") from exc
+    deepseek_responses = (
+        model_cfg.model_provider == "deepseek" and model_cfg.api_protocol == "responses"
+    )
+    provider = "deepseek" if deepseek_responses else "openai"
     register_harness_profile(
-        f"{model_cfg.model_provider}:{model_cfg.model}",
+        f"{provider}:{model_cfg.model}",
         HarnessProfile(
             general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
         ),
@@ -261,19 +259,6 @@ async def create_configured_model(model_name: str) -> AsyncGenerator[BaseChatMod
         "streaming": True,
     }
     async with AsyncExitStack() as stack:
-        if model_cfg.model_provider == "openrouter":
-            # SDK 不使用 ChatOpenAI 的 HTTP 客户端接口；包括自定义 headers
-            # 分支创建的两个 transport，都由本模型上下文负责关闭。
-            model = ChatOpenRouter(
-                **model_kwargs,
-                timeout=_REQUEST_TIMEOUT_SECONDS * 1000,
-            )
-            sdk_config = model.client.sdk_configuration
-            stack.callback(sdk_config.client.close)
-            stack.push_async_callback(sdk_config.async_client.aclose)
-            yield model
-            return
-
         http_client = stack.enter_context(
             httpx.Client(
                 timeout=_REQUEST_TIMEOUT_SECONDS,
@@ -290,23 +275,15 @@ async def create_configured_model(model_name: str) -> AsyncGenerator[BaseChatMod
             http_client=http_client,
             http_async_client=http_async_client,
         )
+        model_class = DataAgentDeepSeekResponses if deepseek_responses else ChatOpenAI
         if model_cfg.api_protocol == "responses":
-            model_class = (
-                DataAgentDeepSeekResponses
-                if model_cfg.model_provider == "deepseek"
-                else DataAgentResponses
-            )
-            yield model_class(
-                **model_kwargs,
-                timeout=_REQUEST_TIMEOUT_SECONDS,
-                use_responses_api=True,
+            model_kwargs.update(
                 output_version="responses/v1",
                 store=False,
                 use_previous_response_id=False,
             )
-        else:
-            yield init_chat_model(
-                model_provider=model_cfg.model_provider,
-                **model_kwargs,
-                timeout=_REQUEST_TIMEOUT_SECONDS,
-            )
+        yield model_class(
+            **model_kwargs,
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+            use_responses_api=model_cfg.api_protocol == "responses",
+        )

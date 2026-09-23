@@ -1,14 +1,15 @@
-"""元数据检索索引增量同步服务。"""
+"""元数据索引构建与字段取值增量导入。"""
 
-import hashlib
 import json
 import unicodedata
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime, timedelta
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
+
+from loguru import logger
 
 from app.metadata.models.catalog import (
     ColumnInfo,
@@ -20,10 +21,7 @@ from app.metadata.models.catalog import (
     serialize_column_examples,
 )
 from app.metadata.models.search import (
-    RequestedValueIndexSyncMode,
-    SemanticIndexDelta,
     SemanticIndexDocument,
-    SemanticIndexSyncResult,
     SemanticTextType,
     ValueIndexSyncMode,
     ValueIndexSyncResult,
@@ -34,9 +32,6 @@ from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
 from app.metadata.repositories.value_index import ValueESRepo
 from app.shared.clients.embedding_client_manager import EmbeddingClient
-from app.shared.config.app_config import cfg
-
-_SEMANTIC_PREPROCESS_VERSION = "v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,58 +70,87 @@ class MetaIndexService:
         self._metric_repo = metric_repo
         self._embedding_client = embedding_client
         self._value_repo = value_repo
+        self._value_upper_bounds: dict[tuple[str, str], Any] = {}
 
-    async def sync_column_indexes(
-        self,
-        column_keys: list[ColumnKey],
-    ) -> dict[ColumnKey, SemanticIndexSyncResult]:
-        """差量同步多个字段的语义索引。"""
-        results: dict[ColumnKey, SemanticIndexSyncResult] = {}
+    async def reset_indexes(self) -> None:
+        """删除并重建三个元数据索引。"""
+        for repo in (self._column_repo, self._metric_repo, self._value_repo):
+            await repo.reset_index()
+
+    async def import_incremental_values(self) -> None:
+        """检查已配置水位的表，仅同步启用取值索引的字段。"""
+        async with self._meta_repo.session.begin():
+            tables = await self._meta_repo.list_table_infos()
+            columns = await self._meta_repo.list_column_infos()
+        if not tables:
+            raise RuntimeError("元数据目录为空，请先执行全量导入")
+        eligible = set()
+        for table in tables:
+            if table.value_index_cursor_column is None:
+                logger.info("跳过未配置水位的表 table={}", table.name)
+            else:
+                eligible.add(table.name)
+        await self.sync_column_values(
+            [
+                (item.t_name, item.name)
+                for item in columns
+                if item.index_values and item.t_name in eligible
+            ],
+            mode="incremental",
+        )
+        logger.info("字段取值增量导入完成")
+
+    async def _value_upper_bound(self, table: str, cursor: str) -> Any:
+        """同次导入中每张表只读取一次固定水位上界。"""
+        key = (table, cursor)
+        if key not in self._value_upper_bounds:
+            self._value_upper_bounds[
+                key
+            ] = await self._source_repo.get_value_sync_upper_bound(table, cursor)
+        return self._value_upper_bounds[key]
+
+    async def build_column_indexes(self, column_keys: list[ColumnKey]) -> None:
+        """构建字段的名称、说明与别名索引。"""
         for t_name, c_name in dict.fromkeys(column_keys):
-            resource_key = column_resource_key(t_name, c_name)
             async with self._meta_repo.session.begin():
-                await self._meta_repo.acquire_index_lock("column", resource_key)
-                column_info = await self._meta_repo.get_column_info(t_name, c_name)
-                result = await self._sync_column_index(column_info)
-                committed = await self._meta_repo.mark_column_indexed_if_current(
-                    t_name,
-                    c_name,
-                    result.target_version,
-                )
-            results[(t_name, c_name)] = replace(
-                result,
-                version_committed=committed,
+                column = await self._meta_repo.get_column_info(t_name, c_name)
+            documents = await self._build_semantic_documents(
+                "column",
+                column_resource_key(t_name, c_name),
+                self._column_payload(column),
+                column.name,
+                column.description,
+                column.alias,
             )
-        return results
+            await self._column_repo.write_documents(documents)
+            async with self._meta_repo.session.begin():
+                await self._meta_repo.mark_column_indexed(t_name, c_name)
 
-    async def sync_metric_indexes(
-        self,
-        metric_names: list[str],
-    ) -> dict[str, SemanticIndexSyncResult]:
-        """差量同步多个指标的语义索引。"""
-        results: dict[str, SemanticIndexSyncResult] = {}
-        for metric_name in dict.fromkeys(metric_names):
+    async def build_metric_indexes(self, metric_names: list[str]) -> None:
+        """构建指标的名称、说明与别名索引。"""
+        for name in dict.fromkeys(metric_names):
             async with self._meta_repo.session.begin():
-                await self._meta_repo.acquire_index_lock("metric", metric_name)
-                metric_info = await self._meta_repo.get_metric_info(metric_name)
-                result = await self._sync_metric_index(metric_info)
-                committed = await self._meta_repo.mark_metric_indexed_if_current(
-                    metric_name,
-                    result.target_version,
-                )
-            results[metric_name] = replace(
-                result,
-                version_committed=committed,
+                metric = await self._meta_repo.get_metric_info(name)
+            documents = await self._build_semantic_documents(
+                "metric",
+                name,
+                self._metric_payload(metric),
+                metric.name,
+                metric.description,
+                metric.alias,
             )
-        return results
+            await self._metric_repo.write_documents(documents)
+            async with self._meta_repo.session.begin():
+                await self._meta_repo.mark_metric_indexed(name)
 
     async def sync_column_values(
         self,
         column_keys: list[ColumnKey],
         *,
-        mode: RequestedValueIndexSyncMode,
+        mode: ValueIndexSyncMode,
     ) -> dict[ColumnKey, ValueIndexSyncResult]:
         """按水位或全量校准模式同步多个字段取值。"""
+        self._value_upper_bounds.clear()
         results: dict[ColumnKey, ValueIndexSyncResult] = {}
         for column_key in dict.fromkeys(column_keys):
             results[column_key] = await self._sync_column_value_index(
@@ -135,170 +159,10 @@ class MetaIndexService:
             )
         return results
 
-    async def sync_table_indexes(
-        self,
-        table_names: list[str],
-    ) -> dict[ColumnKey, SemanticIndexSyncResult]:
-        """同步多个表下全部字段的语义索引。"""
-        column_keys = await self._get_column_keys_by_table_names(table_names)
-        return await self.sync_column_indexes(column_keys)
-
-    async def sync_table_values(
-        self,
-        table_names: list[str],
-        *,
-        mode: RequestedValueIndexSyncMode,
-    ) -> dict[ColumnKey, ValueIndexSyncResult]:
-        """同步多个表下已开启字段的取值索引。"""
-        column_keys = await self._get_column_keys_by_table_names(
-            table_names,
-            index_values=True,
-        )
-        return await self.sync_column_values(
-            column_keys,
-            mode=mode,
-        )
-
-    async def _get_column_keys_by_table_names(
-        self,
-        table_names: list[str],
-        *,
-        index_values: bool | None = None,
-    ) -> list[ColumnKey]:
-        """根据多个表名获取字段键。"""
-        async with self._meta_repo.session.begin():
-            column_infos = await self._meta_repo.list_column_infos_by_table_names(
-                table_names,
-                index_values=index_values,
-            )
-        return [(column_info.t_name, column_info.name) for column_info in column_infos]
-
-    async def delete_column_indexes(self, column_keys: list[ColumnKey]) -> None:
-        """删除多个字段的语义和取值索引。"""
-        for t_name, c_name in dict.fromkeys(column_keys):
-            await self._column_repo.delete(t_name, c_name)
-            await self._value_repo.delete_by_column(t_name, c_name)
-
-    async def delete_metric_indexes(self, metric_names: list[str]) -> None:
-        """删除多个指标的语义索引。"""
-        for metric_name in dict.fromkeys(metric_names):
-            await self._metric_repo.delete(metric_name)
-
-    async def _sync_column_index(
-        self,
-        column_info: ColumnInfo,
-    ) -> SemanticIndexSyncResult:
-        """差量替换字段内部发生变化的语义文档。"""
-        await self._column_repo.ensure_index()
-        resource_key = column_resource_key(column_info.t_name, column_info.name)
-        payload = self._column_payload(column_info)
-        targets = self._target_semantic_documents(
-            "column",
-            resource_key,
-            column_info.meta_version,
-            payload,
-            column_info.name,
-            column_info.description,
-            column_info.alias,
-        )
-        current = await self._column_repo.list_resource_documents(
-            resource_key,
-        )
-        delta, embedded_count = await self._semantic_delta(targets, current)
-        await self._column_repo.apply_delta(delta)
-        return self._semantic_result(delta, embedded_count, column_info.meta_version)
-
-    async def _sync_metric_index(
-        self,
-        metric_info: MetricInfo,
-    ) -> SemanticIndexSyncResult:
-        """差量替换指标内部发生变化的语义文档。"""
-        await self._metric_repo.ensure_index()
-        payload = self._metric_payload(metric_info)
-        targets = self._target_semantic_documents(
-            "metric",
-            metric_info.name,
-            metric_info.meta_version,
-            payload,
-            metric_info.name,
-            metric_info.description,
-            metric_info.alias,
-        )
-        current = await self._metric_repo.list_resource_documents(metric_info.name)
-        delta, embedded_count = await self._semantic_delta(targets, current)
-        await self._metric_repo.apply_delta(delta)
-        return self._semantic_result(delta, embedded_count, metric_info.meta_version)
-
-    async def _semantic_delta(
-        self,
-        targets: list[SemanticIndexDocument],
-        current: list[SemanticIndexDocument],
-    ) -> tuple[SemanticIndexDelta, int]:
-        """计算文档差异并只补充必要的向量。"""
-        current_by_id = {document.id: document for document in current}
-        target_ids = {document.id for document in targets}
-        create: list[SemanticIndexDocument] = []
-        update: list[SemanticIndexDocument] = []
-        unchanged_count = 0
-        embedding_targets: list[tuple[str, int, SemanticIndexDocument]] = []
-        for target in targets:
-            existing = current_by_id.get(target.id)
-            if existing is None:
-                embedding_targets.append(("create", len(create), target))
-                create.append(target)
-                continue
-            needs_embedding = (
-                existing.text != target.text
-                or existing.embedding_revision != target.embedding_revision
-            )
-            changed = needs_embedding or any(
-                (
-                    existing.resource_key != target.resource_key,
-                    existing.text_type != target.text_type,
-                    existing.meta_version != target.meta_version,
-                    existing.payload_hash != target.payload_hash,
-                )
-            )
-            if not changed:
-                unchanged_count += 1
-                continue
-            if needs_embedding:
-                embedding_targets.append(("update", len(update), target))
-            update.append(target)
-
-        if embedding_targets:
-            # 批量嵌入只覆盖新增或正文/模型版本变化的文档，payload-only 更新复用旧向量。
-            embeddings = await self._embed_texts(
-                [target.text for _, _, target in embedding_targets]
-            )
-            for (operation, index, target), embedding in zip(
-                embedding_targets,
-                embeddings,
-                strict=True,
-            ):
-                embedded = replace(target, embedding=embedding)
-                if operation == "create":
-                    create[index] = embedded
-                else:
-                    update[index] = embedded
-
-        return (
-            SemanticIndexDelta(
-                create=create,
-                update=update,
-                delete_ids=sorted(
-                    document.id for document in current if document.id not in target_ids
-                ),
-                unchanged_count=unchanged_count,
-            ),
-            len(embedding_targets),
-        )
-
-    def _target_semantic_documents(
+    async def _build_semantic_documents(
         self,
         resource_type: str,
         resource_key: str,
-        meta_version: int,
         payload: dict[str, Any],
         name: str,
         description: str,
@@ -315,15 +179,8 @@ class MetaIndexService:
             canonical = unicodedata.normalize("NFC", text_value).strip()
             if canonical:
                 entries.setdefault(canonical, text_type)
-        payload_hash = hashlib.sha256(
-            json.dumps(
-                payload,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode()
-        ).hexdigest()
-        embedding_revision = self._embedding_revision()
+        texts = sorted(entries)
+        embeddings = await self._embed_texts(texts)
         return [
             SemanticIndexDocument(
                 id=str(
@@ -338,14 +195,11 @@ class MetaIndexService:
                 ),
                 resource_key=resource_key,
                 text=text_value,
-                text_type=text_type,
-                embedding=None,
-                embedding_revision=embedding_revision,
-                meta_version=meta_version,
-                payload_hash=payload_hash,
+                text_type=entries[text_value],
+                embedding=embedding,
                 payload=payload,
             )
-            for text_value, text_type in sorted(entries.items())
+            for text_value, embedding in zip(texts, embeddings, strict=True)
         ]
 
     async def _sync_column_value_index(
@@ -353,7 +207,7 @@ class MetaIndexService:
         t_name: str,
         c_name: str,
         *,
-        requested_mode: RequestedValueIndexSyncMode,
+        requested_mode: ValueIndexSyncMode,
     ) -> ValueIndexSyncResult:
         """执行单字段取值索引状态机。"""
         run = await self._begin_value_index_run(
@@ -364,6 +218,13 @@ class MetaIndexService:
         try:
             result = await self._execute_value_index_run(run)
             await self._complete_value_index_run(run, result)
+            logger.info(
+                "字段取值导入完成 table={} column={} values={} watermark={}",
+                t_name,
+                c_name,
+                result.upserted_count,
+                result.cursor_value,
+            )
             return result
         except Exception as exc:
             await self._fail_value_index_run(run, exc)
@@ -374,7 +235,7 @@ class MetaIndexService:
         t_name: str,
         c_name: str,
         *,
-        requested_mode: RequestedValueIndexSyncMode,
+        requested_mode: ValueIndexSyncMode,
     ) -> _ValueIndexRun:
         """在短事务中校验配置并登记运行所有权。"""
         run_id = uuid.uuid4()
@@ -388,31 +249,20 @@ class MetaIndexService:
             table_info = await self._meta_repo.get_table_info(t_name)
             cursor_column = table_info.value_index_cursor_column
             state = column_info.value_index_state
-            if (
-                state is not None
-                and state.status == "syncing"
-                and state.active_run_id is not None
-            ):
-                raise RuntimeError("字段取值索引已有运行中的同步任务")
-            if column_info.index_values:
-                mode: ValueIndexSyncMode = self._select_value_sync_mode(
-                    cursor_column,
-                    state,
-                    requested_mode=requested_mode,
-                )
-                generation = (
-                    uuid.uuid4()
-                    if mode == "full"
-                    else state.current_generation
-                    if state is not None
-                    else None
-                )
-                if generation is None:
-                    mode = "full"
-                    generation = uuid.uuid4()
-            else:
-                mode = "clear"
-                generation = None
+            if not column_info.index_values:
+                raise RuntimeError("字段未启用取值索引")
+            mode = self._select_value_sync_mode(
+                cursor_column, state, requested_mode=requested_mode
+            )
+            generation = (
+                uuid.uuid4()
+                if mode == "full"
+                else state.current_generation
+                if state is not None
+                else None
+            )
+            if generation is None:
+                raise RuntimeError("字段取值增量同步缺少全量同步状态")
             await self._meta_repo.begin_value_index_sync(
                 t_name,
                 c_name,
@@ -441,19 +291,6 @@ class MetaIndexService:
         run: _ValueIndexRun,
     ) -> ValueIndexSyncResult:
         """在 PostgreSQL 事务外执行 Doris 和 Elasticsearch I/O。"""
-        if run.mode == "clear":
-            removed_count = await self._value_repo.delete_by_column(
-                run.t_name,
-                run.c_name,
-            )
-            return ValueIndexSyncResult(
-                mode="clear",
-                read_value_count=0,
-                upserted_count=0,
-                removed_count=removed_count,
-                cursor_value=None,
-                sync_generation=None,
-            )
         await self._value_repo.ensure_index()
         if run.mode == "full":
             return await self._run_full_value_sync(run)
@@ -481,15 +318,9 @@ class MetaIndexService:
                 column_info.meta_version != run.column_meta_version
                 or table_info.meta_version != run.table_meta_version
                 or table_info.value_index_cursor_column != run.cursor_column
-                or column_info.index_values != (run.mode != "clear")
+                or not column_info.index_values
             ):
                 raise RuntimeError("字段取值索引同步配置已变化")
-            if run.mode == "clear":
-                await self._meta_repo.delete_value_index_state(
-                    run.t_name,
-                    run.c_name,
-                )
-                return
             if run.generation is None:
                 raise RuntimeError("字段取值索引同步缺少代次")
             committed = await self._meta_repo.complete_value_index_sync(
@@ -536,7 +367,7 @@ class MetaIndexService:
         if run.generation is None:
             raise RuntimeError("字段取值索引全量同步缺少代次")
         upper_bound = (
-            await self._source_repo.get_value_sync_upper_bound(
+            await self._value_upper_bound(
                 run.t_name,
                 run.cursor_column,
             )
@@ -554,11 +385,6 @@ class MetaIndexService:
         )
         if read_count:
             await self._value_repo.refresh()
-        removed_count = await self._value_repo.delete_other_generations(
-            run.t_name,
-            run.c_name,
-            str(run.generation),
-        )
         cursor_value = (
             self._serialize_cursor(upper_bound)
             if upper_bound is not None
@@ -568,7 +394,6 @@ class MetaIndexService:
             mode="full",
             read_value_count=read_count,
             upserted_count=read_count,
-            removed_count=removed_count,
             cursor_value=cursor_value,
             sync_generation=str(run.generation),
         )
@@ -577,37 +402,35 @@ class MetaIndexService:
         self,
         run: _ValueIndexRun,
     ) -> ValueIndexSyncResult:
-        """执行固定上界和重叠窗口的日常水位同步。"""
-        if (
-            run.cursor_column is None
-            or run.cursor_value is None
-            or run.generation is None
-        ):
+        """只读取已提交水位之后、固定上界以内的数据。"""
+        if run.cursor_column is None or run.generation is None:
             raise RuntimeError("字段取值增量同步缺少已提交水位")
-        upper_bound = await self._source_repo.get_value_sync_upper_bound(
+        upper_bound = await self._value_upper_bound(
             run.t_name,
             run.cursor_column,
         )
-        if upper_bound is None:
+        previous_cursor = (
+            self._deserialize_cursor(run.cursor_value)
+            if run.cursor_value is not None
+            else None
+        )
+        if upper_bound is None or (
+            previous_cursor is not None and upper_bound <= previous_cursor
+        ):
+            logger.info("水位未推进，跳过 table={} column={}", run.t_name, run.c_name)
             return ValueIndexSyncResult(
                 mode="incremental",
                 read_value_count=0,
                 upserted_count=0,
-                removed_count=0,
                 cursor_value=run.cursor_value,
                 sync_generation=str(run.generation),
             )
-        previous_cursor = self._deserialize_cursor(run.cursor_value)
-        lower_bound = self._lookback_lower_bound(
-            previous_cursor,
-            cfg.metadata_index.value_lookback_seconds,
-        )
         read_count = await self._upsert_value_batches(
             self._source_repo.iter_changed_column_value_batches(
                 run.t_name,
                 run.c_name,
                 run.cursor_column,
-                lower_bound,
+                previous_cursor,
                 upper_bound,
             ),
             run.t_name,
@@ -620,7 +443,6 @@ class MetaIndexService:
             mode="incremental",
             read_value_count=read_count,
             upserted_count=read_count,
-            removed_count=0,
             cursor_value=self._serialize_cursor(upper_bound),
             sync_generation=str(run.generation),
         )
@@ -654,14 +476,14 @@ class MetaIndexService:
         cursor_column: str | None,
         state: ValueIndexSyncState | None,
         *,
-        requested_mode: RequestedValueIndexSyncMode,
+        requested_mode: ValueIndexSyncMode,
     ) -> ValueIndexSyncMode:
         """校验请求模式所需状态并选择同步模式。"""
         if requested_mode == "full":
             return "full"
         if state is None or state.current_generation is None:
             raise RuntimeError("字段取值增量同步缺少全量同步状态")
-        if cursor_column is None or state.cursor_value is None:
+        if cursor_column is None:
             raise RuntimeError("字段取值增量同步缺少游标配置或已提交水位")
         return "incremental"
 
@@ -696,31 +518,6 @@ class MetaIndexService:
             "meta_version": metric_info.meta_version,
             "index_version": metric_info.meta_version,
         }
-
-    @staticmethod
-    def _semantic_result(
-        delta: SemanticIndexDelta,
-        embedded_count: int,
-        target_version: int,
-    ) -> SemanticIndexSyncResult:
-        """汇总语义索引差量统计。"""
-        return SemanticIndexSyncResult(
-            created_count=len(delta.create),
-            updated_count=len(delta.update),
-            deleted_count=len(delta.delete_ids),
-            embedded_count=embedded_count,
-            unchanged_count=delta.unchanged_count,
-            target_version=target_version,
-            version_committed=False,
-        )
-
-    @staticmethod
-    def _embedding_revision() -> str:
-        """生成当前嵌入模型和预处理规则版本。"""
-        return (
-            f"openai-compatible:{cfg.embedding.model}:"
-            f"{cfg.elasticsearch.embedding_size}:{_SEMANTIC_PREPROCESS_VERSION}"
-        )
 
     async def _embed_texts(self, texts: list[str]) -> list[list[float]]:
         """分批生成文本向量。"""
@@ -769,16 +566,6 @@ class MetaIndexService:
         if cursor_type == "str" and isinstance(value, str):
             return value
         raise ValueError("取值索引游标状态格式无效")
-
-    @staticmethod
-    def _lookback_lower_bound(cursor: Any, lookback_seconds: int) -> Any:
-        """对时间游标应用回看窗口并重放其他类型边界。"""
-        if isinstance(cursor, datetime):
-            return cursor - timedelta(seconds=lookback_seconds)
-        if isinstance(cursor, date):
-            lookback_days = max(1, (lookback_seconds + 86_399) // 86_400)
-            return cursor - timedelta(days=lookback_days)
-        return cursor
 
     @staticmethod
     def _serialize_value(value: Any) -> str:

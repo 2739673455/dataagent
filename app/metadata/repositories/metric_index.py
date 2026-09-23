@@ -6,7 +6,6 @@ from elasticsearch import AsyncElasticsearch
 
 from app.metadata.models.catalog import MetricInfo
 from app.metadata.models.search import (
-    SemanticIndexDelta,
     SemanticIndexDocument,
 )
 from app.metadata.repositories.semantic_index import (
@@ -32,24 +31,13 @@ class MetricESRepo:
             mappings=self._index_mappings,
         )
 
-    async def ensure_index(self) -> None:
-        """确保指标语义索引存在。"""
-        await self._repo.ensure_index()
+    async def reset_index(self) -> None:
+        """重建语义索引。"""
+        await self._repo.reset_index()
 
-    async def list_resource_documents(
-        self,
-        resource_key: str,
-    ) -> list[SemanticIndexDocument]:
-        """读取指标当前语义索引文档。"""
-        return await self._repo.list_resource_documents(resource_key)
-
-    async def apply_delta(self, delta: SemanticIndexDelta) -> None:
-        """应用指标语义索引差量。"""
-        await self._repo.apply_delta(delta)
-
-    async def delete(self, metric_name: str) -> None:
-        """删除指标对应的全部语义索引文档。"""
-        await self._repo.delete_by_filter([{"term": {"resource_key": metric_name}}])
+    async def write_documents(self, documents: list[SemanticIndexDocument]) -> None:
+        """写入完整语义索引文档。"""
+        await self._repo.write_documents(documents)
 
     async def search_vector_hits(
         self,

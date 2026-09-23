@@ -1,9 +1,5 @@
 """查询各阶段的数据库运行环境；每个阶段使用独立短会话。"""
 
-from collections.abc import Callable
-
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.identity.repositories.doris_role import DorisRoleRepository
 from app.identity.repositories.identity import IdentityPGRepo
 from app.identity.services.authorization import AssetAccessPolicy, AuthorizationService
@@ -14,17 +10,11 @@ from app.identity.services.query_principal import (
 )
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.query.models.execution import (
-    AnalysisQueryResult,
     QueryExecutionLimits,
     QueryExecutionOptions,
-    QueryExecutionStatus,
 )
 from app.query.models.validation import QueryValidationResult
 from app.query.repositories.doris import DorisQueryRepository
-from app.query.services.execution_recorder import (
-    QueryExecutionContext,
-    QueryExecutionRecorder,
-)
 from app.query.services.executor import (
     AnalysisQueryService,
     QueryArtifactStore,
@@ -44,7 +34,6 @@ class DatabaseQueryExecutionRuntime:
     def __init__(
         self,
         artifact_store: QueryArtifactStore,
-        recorder_factory: Callable[[AsyncSession], QueryExecutionRecorder],
         auth: PostgresClientManager,
         meta: PostgresClientManager,
         query_clients: DorisQueryClientRegistry,
@@ -56,7 +45,6 @@ class DatabaseQueryExecutionRuntime:
         self._meta = meta
         self._query_clients = query_clients
         self._artifact_store = artifact_store
-        self._recorder_factory = recorder_factory
         self._credential_cipher = DorisCredentialCipher(
             cfg.doris_credentials.encryption_key.get_secret_value()
         )
@@ -117,41 +105,3 @@ class DatabaseQueryExecutionRuntime:
             limits,
             self._options,
         )
-
-    async def record_success(
-        self,
-        context: QueryExecutionContext,
-        *,
-        raw_sql: str,
-        validation: QueryValidationResult,
-        result: AnalysisQueryResult,
-    ) -> None:
-        """使用独立元数据会话记录成功事实。"""
-        async with self._meta.session() as session:
-            await self._recorder_factory(session).record_success(
-                context,
-                raw_sql=raw_sql,
-                validation=validation,
-                result=result,
-            )
-
-    async def record_failure(
-        self,
-        context: QueryExecutionContext,
-        *,
-        raw_sql: str,
-        status: QueryExecutionStatus,
-        error_code: str,
-        error_detail: str,
-        validation: QueryValidationResult | None = None,
-    ) -> None:
-        """使用独立元数据会话记录失败事实。"""
-        async with self._meta.session() as session:
-            await self._recorder_factory(session).record_failure(
-                context,
-                raw_sql=raw_sql,
-                status=status,
-                error_code=error_code,
-                error_detail=error_detail,
-                validation=validation,
-            )

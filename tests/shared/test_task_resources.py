@@ -1,9 +1,7 @@
 """任务资源初始化失败及同进程并发隔离测试。"""
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack, asynccontextmanager
-from threading import Barrier
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -11,7 +9,6 @@ import pytest
 
 from app.assistant import tasks as assistant_tasks
 from app.assistant.conversations import resources as lifecycle_runtime
-from app.metadata import tasks as metadata_tasks
 from app.workflows import tasks as workflow_tasks
 
 
@@ -66,54 +63,6 @@ def test_lifecycle_task_cleans_up_after_sandbox_init_failure(module) -> None:
     sandbox.disconnect.assert_awaited_once()
     for database in databases:
         database.close.assert_awaited_once()
-
-
-def test_index_task_resources_are_isolated_between_threads() -> None:
-    module = metadata_tasks
-    barrier = Barrier(2)
-    managers = []
-    clients_seen = []
-
-    def manager_factory(*args):
-        owner_loop = asyncio.get_running_loop()
-        manager = MagicMock()
-        manager.session.return_value.__aenter__.return_value = MagicMock()
-        manager.connection.return_value.__aenter__.return_value = MagicMock()
-
-        async def close():
-            assert asyncio.get_running_loop() is owner_loop
-
-        manager.close = AsyncMock(side_effect=close)
-        managers.append(manager)
-        return manager
-
-    async def operation(*args):
-        # 元数据 operation 接收 ES、Embedding 两个依赖。
-        clients_seen.append(args[-2:])
-        await asyncio.to_thread(barrier.wait, 5)
-        return 1
-
-    def worker(_):
-        return asyncio.run(module._run_with_metadata_resources(operation))
-
-    with ExitStack() as stack:
-        for name in (
-            "PostgresClientManager",
-            "ESClientManager",
-            "EmbeddingClientManager",
-        ):
-            stack.enter_context(patch.object(module, name, side_effect=manager_factory))
-        stack.enter_context(
-            patch.object(module, "DorisClientManager", side_effect=manager_factory)
-        )
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            assert list(executor.map(worker, range(2))) == [1, 1]
-    assert len(clients_seen) == 2
-    assert clients_seen[0][0] is not clients_seen[1][0]
-    assert clients_seen[0][1] is not clients_seen[1][1]
-    for manager in managers:
-        manager.init.assert_called_once()
-        manager.close.assert_awaited_once()
 
 
 def test_web_shutdown_attempts_every_resource_after_startup_failure() -> None:

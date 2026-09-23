@@ -51,9 +51,6 @@ embedding: # 文本向量化服务配置。
   model: BAAI/bge-m3 # 嵌入模型标识。
   timeout: 30.0 # 单次嵌入请求超时，单位为秒。
 
-metadata_index: # 元数据索引同步策略。
-  value_lookback_seconds: 300 # 增量取值索引同步的回看窗口，单位为秒。
-
 task_queue: # Celery 队列、任务生命周期和定时调度配置。
   broker_url: redis://127.0.0.1:6379/0 # Celery Broker 地址。
   result_backend: redis://127.0.0.1:6379/1 # Celery 任务结果存储地址。
@@ -61,7 +58,6 @@ task_queue: # Celery 队列、任务生命周期和定时调度配置。
   task_time_limit_seconds: 3600 # 单个任务硬时间上限，单位为秒。
   task_soft_time_limit_seconds: 3300 # 单个任务软时间上限，单位为秒。
   worker_prefetch_multiplier: 1 # 每个 Worker Process 预取的任务数量。
-  value_index_sync_time: "08:00" # 每日取值索引调度时间，使用本地 HH:MM。
   lifecycle_schedule_seconds: 300 # 草稿和 Conversation 生命周期扫描间隔，单位为秒。
 
 auth: # 登录令牌和密码策略。
@@ -124,30 +120,6 @@ lm_config: # 可用语言模型集合及默认模型。
         image_inputs: true # 当前模型是否支持识别图片内容。
         structured_output: false # DeepSeek Responses 原生 JSON Schema 可能返回空正文，Specialist 使用工具调用输出。
         max_input_tokens: 1048576 # 模型上下文长度，用于计算对话压缩阈值。
-    # openrouter-deepseek-v4.1-flash:
-    #   model_provider: openrouter
-    #   api_protocol: chat_completions
-    #   model: deepseek/deepseek-v4.1-flash
-    #   base_url: https://openrouter.ai/api/v1
-    #   api_key: ${oc.env:OPENROUTER_API_KEY}
-    #   params: {}
-    #   profile:
-    #     image_inputs: false
-    #     structured_output: true
-    #     max_input_tokens: 1048576
-    # openrouter-glm-5.3-flash:
-    #   model_provider: openrouter
-    #   api_protocol: chat_completions
-    #   model: z-ai/glm-5.3-flash
-    #   base_url: https://openrouter.ai/api/v1
-    #   api_key: ${oc.env:OPENROUTER_API_KEY}
-    #   params:
-    #     reasoning:
-    #       effort: high
-    #   profile:
-    #     image_inputs: true
-    #     structured_output: false
-    #     max_input_tokens: 1048576
 
 agent: # Planner 和 Specialist 运行时配置。
   orchestration: # 动态 Specialist 编排限制。

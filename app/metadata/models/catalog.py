@@ -101,15 +101,6 @@ class TableInfo(MetaBase):
     )
     meta_version: Mapped[int] = _version_column(1, "元数据版本")
 
-    def metadata_snapshot(self) -> tuple[Any, ...]:
-        """生成元数据内容快照。"""
-        return (
-            self.role,
-            self.primary_key_columns,
-            self.description,
-            self.value_index_cursor_column,
-        )
-
 
 class ColumnInfo(MetaBase):
     """字段信息。"""
@@ -157,18 +148,6 @@ class ColumnInfo(MetaBase):
     index_version: Mapped[int] = _version_column(0, "语义索引版本")
     value_index_state: "ValueIndexSyncState | None" = None
 
-    def metadata_snapshot(self) -> tuple[Any, ...]:
-        """生成元数据内容快照。"""
-        return (
-            self.type,
-            self.description,
-            self.examples,
-            self.alias,
-            self.index_values,
-            self.reference_t_name,
-            self.reference_c_name,
-        )
-
 
 class ValueIndexSyncState(MetaBase):
     """字段取值索引增量同步状态。"""
@@ -215,17 +194,6 @@ class ValueIndexSyncState(MetaBase):
         ]
         return max(timestamps, default=None)
 
-    @property
-    def last_sync_mode(self) -> Literal["full", "incremental"] | None:
-        """返回最近一次成功同步的模式。"""
-        if self.last_full_synced_at is None:
-            return "incremental" if self.last_incremental_synced_at else None
-        if self.last_incremental_synced_at is None:
-            return "full"
-        if self.last_full_synced_at >= self.last_incremental_synced_at:
-            return "full"
-        return "incremental"
-
 
 @dataclass
 class ValueInfo:
@@ -267,19 +235,6 @@ class MetricInfo(MetaBase):
         self.relevant_columns = relevant_columns or []
         self.meta_version = meta_version
         self.index_version = index_version
-
-    def metadata_snapshot(self) -> tuple[Any, ...]:
-        """生成元数据内容快照。"""
-        return (
-            self.description,
-            tuple(
-                sorted(
-                    column_reference_key(reference)
-                    for reference in self.relevant_columns
-                )
-            ),
-            self.alias,
-        )
 
 
 class ColumnMetric(MetaBase):

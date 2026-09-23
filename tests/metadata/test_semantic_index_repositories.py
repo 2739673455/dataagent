@@ -83,17 +83,50 @@ def test_search_reports_corrupted_payload_with_document_identity(
 
 
 @pytest.mark.parametrize("repo_class", [ColumnESRepo, MetricESRepo])
-def test_corrupted_resource_is_removed_before_rebuild(repo_class) -> None:
+def test_full_documents_are_written_with_vectors(repo_class):
+    from app.metadata.models.search import SemanticIndexDocument
+
     client = MagicMock(
-        search=AsyncMock(
-            return_value=SimpleNamespace(body={"hits": {"hits": [{"_id": "broken"}]}})
-        ),
-        delete_by_query=AsyncMock(),
+        bulk=AsyncMock(return_value=SimpleNamespace(body={"errors": False}))
     )
-    client.indices.exists = AsyncMock(return_value=True)
-    repo = repo_class(client)
-    assert asyncio.run(repo.list_resource_documents("resource")) == []
-    client.delete_by_query.assert_awaited_once()
-    assert client.delete_by_query.call_args.kwargs["query"] == {
-        "bool": {"filter": [{"term": {"resource_key": "resource"}}]},
+    client.indices.refresh = AsyncMock()
+    document = SemanticIndexDocument(
+        "doc", "resource", "金额", "name", [0.1, 0.2], {"name": "amount"}
+    )
+    asyncio.run(repo_class(client).write_documents([document]))
+    operations = client.bulk.call_args.kwargs["operations"]
+    assert operations[0] == {"index": {"_index": repo_class._index_name, "_id": "doc"}}
+    assert operations[1] == {
+        "resource_key": "resource",
+        "text": "金额",
+        "text_type": "name",
+        "embedding": [0.1, 0.2],
+        "payload": {"name": "amount"},
     }
+    client.search.assert_not_called()
+    client.indices.refresh.assert_awaited_once()
+
+
+def test_bulk_item_failure_is_not_reported_as_success():
+    from app.metadata.models.search import SemanticIndexDocument
+
+    client = MagicMock(
+        bulk=AsyncMock(
+            return_value=SimpleNamespace(
+                body={
+                    "errors": True,
+                    "items": [{"index": {"error": "invalid vector"}}],
+                }
+            )
+        )
+    )
+    client.indices.refresh = AsyncMock()
+    with pytest.raises(RuntimeError, match="invalid vector"):
+        asyncio.run(
+            ColumnESRepo(client).write_documents(
+                [
+                    SemanticIndexDocument("doc", "resource", "金额", "name", [0.1], {}),
+                ]
+            )
+        )
+    client.indices.refresh.assert_not_awaited()

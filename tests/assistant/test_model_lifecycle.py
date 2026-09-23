@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 from langchain_openai import ChatOpenAI
-from langchain_openrouter import ChatOpenRouter
 
 from app.assistant import model_factory
 from app.assistant.execution import runtime_factory
@@ -22,6 +21,9 @@ from app.shared.config.app_config import LMConfigCfg, ModelCfg, ModelProfileCfg,
         ("deepseek", "responses"),
         ("openai", "chat_completions"),
         ("openrouter", "chat_completions"),
+        ("openrouter", "responses"),
+        ("deepseek", "chat_completions"),
+        ("custom", "chat_completions"),
     ],
 )
 def test_clients_are_scoped_to_each_model_context(provider: str, protocol: str) -> None:
@@ -50,14 +52,15 @@ def test_clients_are_scoped_to_each_model_context(provider: str, protocol: str) 
     async def run() -> None:
         with pytest.raises(RuntimeError, match="operation"):
             async with model_factory.create_configured_model("test") as model:
-                if provider == "openrouter":
-                    assert isinstance(model, ChatOpenRouter)
-                    sdk = model.client.sdk_configuration
-                    sync_client, async_client = sdk.client, sdk.async_client
-                else:
-                    assert isinstance(model, ChatOpenAI)
-                    sync_client = model.http_client
-                    async_client = model.http_async_client
+                expected_class = (
+                    model_factory.DataAgentDeepSeekResponses
+                    if provider == "deepseek" and protocol == "responses"
+                    else ChatOpenAI
+                )
+                assert type(model) is expected_class
+                assert model.use_responses_api is (protocol == "responses")
+                sync_client = model.http_client
+                async_client = model.http_async_client
                 assert isinstance(sync_client, httpx.Client)
                 assert isinstance(async_client, httpx.AsyncClient)
                 assert not sync_client.is_closed

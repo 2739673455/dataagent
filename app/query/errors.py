@@ -1,6 +1,6 @@
 """查询模块业务错误。"""
 
-from app.query.models.execution import QueryExecutionStatus, QueryExecutionTimeoutError
+from app.query.models.execution import QueryExecutionTimeoutError
 from app.query.models.validation import QueryValidationResult
 
 
@@ -18,12 +18,12 @@ class QueryResultShapeError(RuntimeError):
     """数据库返回的结果结构不稳定或不适合文件输出。"""
 
 
-def classify_query_error(error: Exception) -> tuple[QueryExecutionStatus, str]:
-    """供执行记录和工具协议共用的查询失败分类。"""
+def classify_query_error(error: Exception) -> str:
+    """返回查询工具使用的错误码。"""
     if isinstance(error, QueryRejectedError):
-        return "rejected", "sql_validation_failed"
+        return "sql_validation_failed"
     if isinstance(error, QueryExecutionTimeoutError):
-        return "failed", "query_timeout"
+        return "query_timeout"
     if isinstance(error, QueryResultShapeError):
-        return "failed", "query_result_invalid"
-    return "failed", "readonly_query_failed"
+        return "query_result_invalid"
+    return "readonly_query_failed"

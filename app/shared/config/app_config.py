@@ -1,4 +1,4 @@
-from datetime import time, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 
@@ -66,10 +66,6 @@ class EmbeddingConfig(AppConfigModel):
 
 
 # 元数据索引配置。
-class MetadataIndexConfig(AppConfigModel):
-    """元数据索引同步策略配置。"""
-
-    value_lookback_seconds: int = Field(gt=0)
 
 
 # 后台任务配置。
@@ -82,7 +78,6 @@ class TaskQueueConfig(AppConfigModel):
     task_time_limit_seconds: int = Field(gt=0)
     task_soft_time_limit_seconds: int = Field(gt=0)
     worker_prefetch_multiplier: int = Field(gt=0)
-    value_index_sync_time: time
     lifecycle_schedule_seconds: int = Field(gt=0)
 
     @model_validator(mode="after")
@@ -92,12 +87,6 @@ class TaskQueueConfig(AppConfigModel):
             raise ValueError(
                 "task_soft_time_limit_seconds 必须小于 task_time_limit_seconds"
             )
-        if (
-            self.value_index_sync_time.second != 0
-            or self.value_index_sync_time.microsecond != 0
-            or self.value_index_sync_time.tzinfo is not None
-        ):
-            raise ValueError("value_index_sync_time 必须是 HH:MM 格式的本地时间")
         return self
 
 
@@ -219,44 +208,6 @@ class ModelCfg(AppConfigModel):
     params: dict[str, Any]
     profile: ModelProfileCfg
 
-    @model_validator(mode="after")
-    def validate_client_parameters(self) -> "ModelCfg":
-        """禁止附加参数覆盖显式模型配置和协议选项。"""
-        reserved = {
-            "api_key",
-            "client",
-            "async_client",
-            "root_client",
-            "root_async_client",
-            "http_client",
-            "http_async_client",
-            "api_protocol",
-            "base_url",
-            "max_retries",
-            "model",
-            "model_name",
-            "model_provider",
-            "openai_api_base",
-            "openai_api_key",
-            "output_version",
-            "profile",
-            "request_timeout",
-            "store",
-            "streaming",
-            "timeout",
-            "use_previous_response_id",
-            "use_responses_api",
-        }
-        conflicts = sorted(reserved & self.params.keys())
-        if conflicts:
-            raise ValueError("params 不能覆盖模型配置字段: " + ", ".join(conflicts))
-        if self.api_protocol == "responses" and self.model_provider not in {
-            "deepseek",
-            "openai",
-        }:
-            raise ValueError("Responses API 仅支持 model_provider: deepseek 或 openai")
-        return self
-
 
 class LMConfigCfg(AppConfigModel):
     """语言模型集合与激活项配置。"""
@@ -372,7 +323,6 @@ class Cfg(AppConfigModel):
     embedding: EmbeddingConfig
 
     # 元数据索引配置。
-    metadata_index: MetadataIndexConfig
 
     # 后台任务配置。
     task_queue: TaskQueueConfig

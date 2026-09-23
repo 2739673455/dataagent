@@ -11,7 +11,6 @@ dependencies = [
   "langchain>=1.2.7",
   "langchain-mcp-adapters>=0.2.1",
   "langchain-openai>=1.1.7",
-  "langchain-openrouter>=0.2.8,<0.3",
   "langgraph>=1.0.7",
   "langgraph-checkpoint-postgres>=3.1.2",
   "loguru>=0.7.3",

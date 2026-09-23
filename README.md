@@ -68,7 +68,7 @@ TAVILY_API_KEY=
 
 **语言模型（`lm_config`）**
 
-- `models`：按配置名声明模型，填写 `model_provider`、`api_protocol`、`model`、`base_url` 和 `api_key`；`params` 用于传入推理强度等附加参数。
+- `models`：按配置名声明模型，填写 `model_provider`、`api_protocol`、`model`、`base_url` 和 `api_key`；`params` 用于传入推理强度等附加参数。仅 DeepSeek Responses 使用专用适配，其余供应商统一使用 OpenAI 兼容接口；供应商扩展请求字段放在 `params.extra_body` 中。
 - `active`：选择 `models` 中的一个配置名，作为 Planner 的默认模型。
 - `profile`：按模型实际能力填写图片输入支持（`image_inputs`）、结构化输出支持（`structured_output`）和上下文长度（`max_input_tokens`）。
 - `agent.specialists`：可为 Explorer、Analyst、Reviewer 单独指定模型配置名；填写 `default` 时跟随 `lm_config.active`。
@@ -180,12 +180,27 @@ uv run celery --app app.shared.tasks.celery_app:celery_app beat -l INFO
 
 使用 `conf/.env` 中配置的管理员账号登录前端，点击左下角的“后台”按钮进入“管理中心”。
 
-### 1. 元数据导入与索引同步
+### 1. 元数据导入
 
-1. 打开“元数据管理”，在“元数据 YAML 导入导出”区域选择 `conf/meta_config.yaml`。
-2. 模式选择“全量替换”，点击“执行导入”。
-3. 导入完成后，系统会自动提交字段和指标的语义索引同步任务。保持 Celery Worker 运行，等待任务完成后刷新页面，确认对应索引状态为“已同步”。
-4. 在“表元数据”区域全选数据表，点击“全量同步取值索引”，完成启用取值索引字段的首次同步。
+在项目根目录执行全量导入，默认读取 `conf/meta_config.yaml`：
+
+```bash
+uv run -m scripts.import_metadata --full
+# 指定其他 YAML 文件
+uv run -m scripts.import_metadata --full --config /path/to/metadata.yaml
+```
+
+脚本先校验 YAML 结构、名称和引用及 Doris 源表，然后删除全部元数据目录、取值同步状态、召回快照和三个元数据索引，重新写入目录并完成字段、指标和字段取值索引。修改 YAML 或更换向量模型后重新执行全量导入。
+
+后续仅追加字段取值：
+
+```bash
+uv run -m scripts.import_metadata --incremental
+```
+
+增量脚本使用已导入目录中的 `value_index_cursor_column`，每张表读取一次最大水位。水位未推进则跳过；有新数据时读取 `(上次水位, 本次最大水位]` 中启用 `index_values` 的字段取值，索引写入成功后提交新水位。未配置水位的表跳过，全量时为空的表可在后续有数据时开始增量导入。
+
+水位字段需要在新增或更新时递增；相同或更旧水位的迟到数据、源数据删除不会由增量脚本修复，应重新全量导入。增量失败可直接重跑，已完成字段保留水位，失败字段从旧水位重试；全量失败重新执行全量脚本。两种模式互斥运行，失败返回非零退出码，不依赖 API、Celery Worker 或 Beat。
 
 ### 2. 数据库角色创建与权限分配
 

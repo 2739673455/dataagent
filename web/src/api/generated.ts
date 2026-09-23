@@ -24,9 +24,6 @@ export interface components {
       "conversation_id": string;
       "file": string;
     };
-    "Body_import_metadata_api_v1_meta_import_post": {
-      "file": string;
-    };
     "ChangePasswordRequest": {
       "current_password": string;
       "new_password": string;
@@ -103,41 +100,6 @@ export interface components {
       "reset"?: boolean;
       "type": "thinking";
     };
-    "ColumnBatchDeleteRequest": {
-      "columns": Array<components["schemas"]["ColumnReference"]>;
-    };
-    "ColumnIndexSyncRequest": {
-      "columns": Array<components["schemas"]["ColumnReference"]>;
-    };
-    "ColumnInfoRequest": {
-      "alias"?: Array<string>;
-      "description": string;
-      "index_values": boolean;
-      "reference_c_name"?: (string | null);
-      "reference_t_name"?: (string | null);
-    };
-    "ColumnInfoResponse": {
-      "alias": Array<string>;
-      "description": string;
-      "examples": Array<unknown>;
-      "index_values": boolean;
-      "index_version": number;
-      "meta_version": number;
-      "name": string;
-      "reference_c_name": (string | null);
-      "reference_t_name": (string | null);
-      "t_name": string;
-      "type": string;
-      "value_index_state": (components["schemas"]["ValueIndexSyncStateResponse"] | null);
-    };
-    "ColumnReference": {
-      "c_name": string;
-      "t_name": string;
-    };
-    "ColumnValueIndexSyncRequest": {
-      "columns": Array<components["schemas"]["ColumnReference"]>;
-      "mode": "full" | "incremental";
-    };
     "ConversationListResponse": {
       "conversations": Array<components["schemas"]["ConversationResponse"]>;
     };
@@ -209,7 +171,6 @@ export interface components {
       "image_url": string;
       "type": "image_url";
     };
-    "ImportMode": "merge" | "replace";
     "LoginRequest": {
       "identifier": string;
       "password": string;
@@ -229,32 +190,6 @@ export interface components {
       "parts": Array<(components["schemas"]["TextContent"] | components["schemas"]["ImageContent"] | components["schemas"]["ThinkingContent"] | components["schemas"]["ToolCallPart"] | components["schemas"]["ToolResultPart"])>;
       "role": "user" | "assistant" | "tool" | "system";
     };
-    "MetaImportResponse": {
-      "columns": components["schemas"]["ResourceImportChanges"];
-      "dry_run": boolean;
-      "metrics": components["schemas"]["ResourceImportChanges"];
-      "mode": string;
-      "tables": components["schemas"]["ResourceImportChanges"];
-    };
-    "MetricBatchDeleteRequest": {
-      "metrics": Array<string>;
-    };
-    "MetricIndexSyncRequest": {
-      "metrics": Array<string>;
-    };
-    "MetricInfoRequest": {
-      "alias"?: Array<string>;
-      "description": string;
-      "relevant_columns"?: Array<components["schemas"]["ColumnReference"]>;
-    };
-    "MetricInfoResponse": {
-      "alias": Array<string>;
-      "description": string;
-      "index_version": number;
-      "meta_version": number;
-      "name": string;
-      "relevant_columns": Array<components["schemas"]["ColumnReference"]>;
-    };
     "ProblemDetails": {
       "detail"?: (string | null);
       "instance"?: (string | null);
@@ -265,14 +200,6 @@ export interface components {
     };
     "RefreshRequest": {
       "refresh_token": string;
-    };
-    "ResourceImportChanges": {
-      "created_count": number;
-      "created_keys": Array<string>;
-      "deleted_count": number;
-      "deleted_keys": Array<string>;
-      "updated_count": number;
-      "updated_keys": Array<string>;
     };
     "RowPolicyRequest": {
       "policy_name": string;
@@ -292,38 +219,9 @@ export interface components {
       "columns"?: Array<string>;
       "table_name"?: (string | null);
     };
-    "SemanticIndexUpsertResponse": {
-      "semantic_index_task_id": (string | null);
-    };
     "SubagentMessageListResponse": {
       "messages": Array<components["schemas"]["MessageResponse"]>;
       "status": "running" | "completed" | "needs_repair" | "failed" | "cancelled";
-    };
-    "TableBatchDeleteRequest": {
-      "tables": Array<string>;
-    };
-    "TableIndexSyncRequest": {
-      "tables": Array<string>;
-    };
-    "TableInfoRequest": {
-      "description": string;
-      "role": "fact" | "dim";
-      "value_index_cursor_column"?: (string | null);
-    };
-    "TableInfoResponse": {
-      "description": string;
-      "meta_version": number;
-      "name": string;
-      "primary_key_columns": Array<string>;
-      "role": "fact" | "dim";
-      "value_index_cursor_column": (string | null);
-    };
-    "TableValueIndexSyncRequest": {
-      "mode": "full" | "incremental";
-      "tables": Array<string>;
-    };
-    "TaskAcceptedResponse": {
-      "task_id": string;
     };
     "TaskStatusResponse": {
       "error"?: (string | null);
@@ -397,19 +295,6 @@ export interface components {
       "is_active": boolean;
       "is_admin": boolean;
       "username": string;
-    };
-    "ValueIndexSyncStateResponse": {
-      "current_generation": (string | null);
-      "cursor_value": ({
-        [key: string]: unknown;
-      } | null);
-      "last_error": (string | null);
-      "last_full_synced_at": (string | null);
-      "last_incremental_synced_at": (string | null);
-      "last_sync_mode": ("full" | "incremental" | null);
-      "last_synced_at": (string | null);
-      "status": "syncing" | "succeeded" | "failed";
-      "updated_at": string;
     };
   };
 }
@@ -1007,34 +892,6 @@ export interface operations {
       };
     };
   };
-  "delete_columns_api_v1_meta_columns_batch_delete_post": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["ColumnBatchDeleteRequest"];
-    };
-    "responses": {
-      "204": {
-        "content": never;
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
   "delete_doris_role_api_v1_admin_doris_roles__role__delete": {
     "parameters": {
       "path": {
@@ -1045,62 +902,6 @@ export interface operations {
       "cookie"?: never;
     };
     "requestBody"?: never;
-    "responses": {
-      "204": {
-        "content": never;
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "delete_metrics_api_v1_meta_metrics_batch_delete_post": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["MetricBatchDeleteRequest"];
-    };
-    "responses": {
-      "204": {
-        "content": never;
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "delete_tables_api_v1_meta_tables_batch_delete_post": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["TableBatchDeleteRequest"];
-    };
     "responses": {
       "204": {
         "content": never;
@@ -1177,32 +978,6 @@ export interface operations {
       };
     };
   };
-  "export_metadata_api_v1_meta_export_get": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "200": {
-        "content": never;
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
   "get_task_status_api_v1_tasks__task_id__get": {
     "parameters": {
       "path": {
@@ -1249,69 +1024,6 @@ export interface operations {
       "201": {
         "content": {
         "application/json": Array<components["schemas"]["AssetGrantResponse"]>;
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "import_metadata_api_v1_meta_import_post": {
-    "parameters": {
-      "path"?: never;
-      "query": {
-        "dry_run"?: boolean;
-        "mode"?: components["schemas"]["ImportMode"];
-      };
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "multipart/form-data": components["schemas"]["Body_import_metadata_api_v1_meta_import_post"];
-    };
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": (components["schemas"]["MetaImportResponse"] | components["schemas"]["TaskAcceptedResponse"]);
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "list_column_infos_api_v1_meta_tables__t_name__columns_get": {
-    "parameters": {
-      "path": {
-        "t_name": string;
-      };
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": Array<components["schemas"]["ColumnInfoResponse"]>;
       };
       };
       "422": {
@@ -1412,34 +1124,6 @@ export interface operations {
       };
     };
   };
-  "list_metric_infos_api_v1_meta_metrics_get": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": Array<components["schemas"]["MetricInfoResponse"]>;
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
   "list_row_policies_api_v1_admin_doris_roles__role__row_policies_get": {
     "parameters": {
       "path": {
@@ -1484,62 +1168,6 @@ export interface operations {
       "200": {
         "content": {
         "application/json": Array<components["schemas"]["AssetGrantResponse"]>;
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "list_source_tables_api_v1_meta_source_tables_get": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": Array<string>;
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "list_table_infos_api_v1_meta_tables_get": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": Array<components["schemas"]["TableInfoResponse"]>;
       };
       };
       "422": {
@@ -1792,156 +1420,6 @@ export interface operations {
       };
     };
   };
-  "sync_column_indexes_api_v1_meta_columns_sync_post": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["ColumnIndexSyncRequest"];
-    };
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": components["schemas"]["TaskAcceptedResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "sync_column_values_api_v1_meta_columns_sync_values_post": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["ColumnValueIndexSyncRequest"];
-    };
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": components["schemas"]["TaskAcceptedResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "sync_metric_indexes_api_v1_meta_metrics_sync_post": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["MetricIndexSyncRequest"];
-    };
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": components["schemas"]["TaskAcceptedResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "sync_table_indexes_api_v1_meta_tables_sync_post": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["TableIndexSyncRequest"];
-    };
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": components["schemas"]["TaskAcceptedResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "sync_table_values_api_v1_meta_tables_sync_values_post": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["TableValueIndexSyncRequest"];
-    };
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": components["schemas"]["TaskAcceptedResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
   "update_user_api_v1_admin_users__user_id__put": {
     "parameters": {
       "path": {
@@ -1959,101 +1437,6 @@ export interface operations {
         "content": {
         "application/json": components["schemas"]["UserResponse"];
       };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "upsert_column_info_api_v1_meta_tables__t_name__columns__c_name__put": {
-    "parameters": {
-      "path": {
-        "c_name": string;
-        "t_name": string;
-      };
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["ColumnInfoRequest"];
-    };
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": components["schemas"]["SemanticIndexUpsertResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "upsert_metric_info_api_v1_meta_metrics__metric_name__put": {
-    "parameters": {
-      "path": {
-        "metric_name": string;
-      };
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["MetricInfoRequest"];
-    };
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": components["schemas"]["SemanticIndexUpsertResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "upsert_table_info_api_v1_meta_tables__t_name__put": {
-    "parameters": {
-      "path": {
-        "t_name": string;
-      };
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["TableInfoRequest"];
-    };
-    "responses": {
-      "204": {
-        "content": never;
       };
       "422": {
         "content": {
@@ -2171,57 +1554,6 @@ export interface paths {
   };
   "/api/v1/chat/{conversation_id}/subagents/{analysis_id}/{agent_type}/{session_id}/runs/{delegation_id}/messages": {
     "get": operations["api_get_subagent_messages_api_v1_chat__conversation_id__subagents__analysis_id___agent_type___session_id__runs__delegation_id__messages_get"];
-  };
-  "/api/v1/meta/columns/batch-delete": {
-    "post": operations["delete_columns_api_v1_meta_columns_batch_delete_post"];
-  };
-  "/api/v1/meta/columns/sync": {
-    "post": operations["sync_column_indexes_api_v1_meta_columns_sync_post"];
-  };
-  "/api/v1/meta/columns/sync-values": {
-    "post": operations["sync_column_values_api_v1_meta_columns_sync_values_post"];
-  };
-  "/api/v1/meta/export": {
-    "get": operations["export_metadata_api_v1_meta_export_get"];
-  };
-  "/api/v1/meta/import": {
-    "post": operations["import_metadata_api_v1_meta_import_post"];
-  };
-  "/api/v1/meta/metrics": {
-    "get": operations["list_metric_infos_api_v1_meta_metrics_get"];
-  };
-  "/api/v1/meta/metrics/batch-delete": {
-    "post": operations["delete_metrics_api_v1_meta_metrics_batch_delete_post"];
-  };
-  "/api/v1/meta/metrics/sync": {
-    "post": operations["sync_metric_indexes_api_v1_meta_metrics_sync_post"];
-  };
-  "/api/v1/meta/metrics/{metric_name}": {
-    "put": operations["upsert_metric_info_api_v1_meta_metrics__metric_name__put"];
-  };
-  "/api/v1/meta/source-tables": {
-    "get": operations["list_source_tables_api_v1_meta_source_tables_get"];
-  };
-  "/api/v1/meta/tables": {
-    "get": operations["list_table_infos_api_v1_meta_tables_get"];
-  };
-  "/api/v1/meta/tables/batch-delete": {
-    "post": operations["delete_tables_api_v1_meta_tables_batch_delete_post"];
-  };
-  "/api/v1/meta/tables/sync": {
-    "post": operations["sync_table_indexes_api_v1_meta_tables_sync_post"];
-  };
-  "/api/v1/meta/tables/sync-values": {
-    "post": operations["sync_table_values_api_v1_meta_tables_sync_values_post"];
-  };
-  "/api/v1/meta/tables/{t_name}": {
-    "put": operations["upsert_table_info_api_v1_meta_tables__t_name__put"];
-  };
-  "/api/v1/meta/tables/{t_name}/columns": {
-    "get": operations["list_column_infos_api_v1_meta_tables__t_name__columns_get"];
-  };
-  "/api/v1/meta/tables/{t_name}/columns/{c_name}": {
-    "put": operations["upsert_column_info_api_v1_meta_tables__t_name__columns__c_name__put"];
   };
   "/api/v1/tasks/{task_id}": {
     "get": operations["get_task_status_api_v1_tasks__task_id__get"];
