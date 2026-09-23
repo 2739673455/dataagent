@@ -7,7 +7,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from threading import Lock as ThreadLock
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from uuid import UUID, uuid4
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
@@ -25,7 +25,6 @@ from app.assistant.checkpoints.specialist import (
     reasoning_only_message,
 )
 from app.assistant.events.stream import MessageDeltaParser
-from app.assistant.execution.session_store import AgentSessionStore
 from app.assistant.execution.types import (
     DELEGATION_CONTEXT_KEY,
     DelegationCheckpointRecord,
@@ -48,6 +47,9 @@ from app.assistant.execution.types import (
 )
 from app.sandbox.paths import SandboxSessionScope, resolve_sandbox_path
 from app.shared.contracts.analysis import AgentSessionKey, validate_agent_type
+
+if TYPE_CHECKING:
+    from app.assistant.execution.session_store import PostgresSandboxSessionStore
 
 _INTERNAL_RETRY_KEY = "dataagent_internal_retry"
 
@@ -98,7 +100,7 @@ class AgentSessionService:
         self,
         *,
         build_agent: Callable[[AgentSessionKey], Awaitable[SpecialistAgentRun]],
-        session_store: AgentSessionStore,
+        session_store: PostgresSandboxSessionStore,
         user_id: int,
         conversation_id: UUID,
         max_parallel_sessions: int,

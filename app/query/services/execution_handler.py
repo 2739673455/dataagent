@@ -1,11 +1,11 @@
 """只读查询完整用例编排。"""
 
-from typing import Protocol
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from app.identity.services.authorization import AssetAccessPolicy
-from app.identity.services.query_principal import ResolvedQueryPrincipal
 from app.query.errors import QueryRejectedError, classify_query_error
 from app.query.models.execution import (
     AnalysisQueryResult,
@@ -13,58 +13,10 @@ from app.query.models.execution import (
 )
 from app.query.models.validation import QueryValidationResult
 from app.query.services.execution_recorder import QueryExecutionContext
-from app.query.services.executor import AnalysisQueryService
 from app.shared.contracts.analysis import AgentSessionKey
 
-
-class QueryExecutionRuntime(Protocol):
-    """一次查询各阶段所需的短生命周期运行环境。"""
-
-    async def resolve_principal(
-        self,
-        user_id: int,
-    ) -> tuple[ResolvedQueryPrincipal, AssetAccessPolicy]:
-        """解析查询身份和当前资产策略。"""
-        ...
-
-    async def validate(
-        self,
-        sql: str,
-        policy: AssetAccessPolicy,
-    ) -> QueryValidationResult:
-        """在独立元数据会话中校验 SQL。"""
-        ...
-
-    async def create_executor(
-        self,
-        principal: ResolvedQueryPrincipal,
-    ) -> AnalysisQueryService:
-        """创建不持有 PostgreSQL 会话的 Doris 查询执行器。"""
-        ...
-
-    async def record_success(
-        self,
-        context: QueryExecutionContext,
-        *,
-        raw_sql: str,
-        validation: QueryValidationResult,
-        result: AnalysisQueryResult,
-    ) -> None:
-        """在独立元数据会话中记录成功事实。"""
-        ...
-
-    async def record_failure(
-        self,
-        context: QueryExecutionContext,
-        *,
-        raw_sql: str,
-        status: QueryExecutionStatus,
-        error_code: str,
-        error_detail: str,
-        validation: QueryValidationResult | None = None,
-    ) -> None:
-        """在独立元数据会话中记录失败事实。"""
-        ...
+if TYPE_CHECKING:
+    from app.query.runtime import DatabaseQueryExecutionRuntime
 
 
 class QueryExecutionHandler:
@@ -72,7 +24,7 @@ class QueryExecutionHandler:
 
     def __init__(
         self,
-        runtime: QueryExecutionRuntime,
+        runtime: DatabaseQueryExecutionRuntime,
     ) -> None:
         """绑定查询用例运行环境。"""
         self._runtime = runtime
@@ -89,9 +41,7 @@ class QueryExecutionHandler:
         context: QueryExecutionContext | None = None
         validation: QueryValidationResult | None = None
         try:
-            principal, policy = await self._runtime.resolve_principal(
-                session_key.user_id
-            )
+            principal = await self._runtime.resolve_principal(session_key.user_id)
             context = QueryExecutionContext(
                 session_key=session_key,
                 role_name=principal.role_name,
@@ -99,7 +49,7 @@ class QueryExecutionHandler:
                 purpose=purpose,
                 tool_call_id=tool_call_id,
             )
-            validation = await self._runtime.validate(sql, policy)
+            validation = await self._runtime.validate(sql)
             if not validation.valid or validation.normalized_sql is None:
                 raise QueryRejectedError(validation)
             service = await self._runtime.create_executor(principal)

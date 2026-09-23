@@ -5,7 +5,6 @@ from __future__ import annotations
 import shlex
 from collections.abc import AsyncGenerator, Collection
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import Protocol
 from uuid import UUID
 
 from langchain_core.runnables import RunnableConfig
@@ -18,53 +17,9 @@ from app.assistant.checkpoints.reader import (
 from app.assistant.execution.types import get_thread_id
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.manager import DockerSandboxManager
-from app.shared.clients.langgraph_postgres_manager import (
-    AdvisoryLockBusyError,
-    LangGraphPostgresManager,
-)
+from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 from app.shared.contracts.analysis import AgentSessionKey
-
-
-class AgentSessionStore(Protocol):
-    """SessionService 使用的外部状态访问协议。"""
-
-    async def list_namespaces(self, analysis_id: str | None) -> list[str]:
-        """列出指定 Analysis 或整个 Conversation 的 Session namespace。"""
-        ...
-
-    async def read_state(
-        self,
-        session_key: AgentSessionKey,
-    ) -> CheckpointState:
-        """读取指定 Session 的最新物化状态。"""
-        ...
-
-    async def delete_checkpoint(self, session_key: AgentSessionKey) -> bool:
-        """删除指定 Session 的完整 Checkpoint namespace。"""
-        ...
-
-    async def delete_workspace(self, session_key: AgentSessionKey) -> bool:
-        """删除指定 Session 的独立工作区。"""
-        ...
-
-    async def find_missing_files(self, paths: Collection[str]) -> set[str]:
-        """返回当前 Conversation 工作区中不存在的文件路径。"""
-        ...
-
-    def lock(
-        self,
-        session_key: AgentSessionKey,
-    ) -> AbstractAsyncContextManager[None]:
-        """创建指定 Session 的非阻塞执行锁上下文。"""
-        ...
-
-    def reserve_capacity(
-        self,
-        session_key: AgentSessionKey,
-        max_sessions: int,
-    ) -> AbstractAsyncContextManager[None]:
-        """为尚未持久化的新 Session 保留跨进程容量。"""
-        ...
+from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 
 class PostgresSandboxSessionStore:

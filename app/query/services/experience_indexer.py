@@ -1,11 +1,16 @@
 """查询经验 Elasticsearch 投影同步。"""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from app.query.models.experience import QUERY_EXPERIENCE_PURPOSE_LIMIT, QueryExperience
 from app.query.repositories.experience_index import QueryExperienceESRepo
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
-from app.shared.clients.embedding_client_manager import EmbeddingClient
+
+if TYPE_CHECKING:
+    from app.shared.clients.embedding_client_manager import RemoteEmbeddingClient
 
 _INDEX_TEXT_MAX_CHARS = 8000
 
@@ -17,7 +22,7 @@ class QueryExperienceIndexer:
         self,
         repo: QueryExperiencePGRepo,
         index_repo: QueryExperienceESRepo,
-        embedding_client: EmbeddingClient,
+        embedding_client: RemoteEmbeddingClient,
     ) -> None:
         """绑定查询经验事实、索引和向量生成依赖。"""
         self._repo = repo

@@ -1,10 +1,12 @@
 """元数据导入与索引同步后台任务。"""
 
+from __future__ import annotations
+
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from elasticsearch import AsyncElasticsearch
 from loguru import logger
@@ -31,10 +33,7 @@ from app.metadata.task_scheduler import (
 )
 from app.shared.async_runtime import run_async
 from app.shared.clients.doris_client_manager import DorisClientManager
-from app.shared.clients.embedding_client_manager import (
-    EmbeddingClient,
-    EmbeddingClientManager,
-)
+from app.shared.clients.embedding_client_manager import EmbeddingClientManager
 from app.shared.clients.es_client_manager import ESClientManager
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
@@ -42,12 +41,16 @@ from app.shared.database.base import MetaBase
 from app.shared.tasks.celery_app import celery_app
 from app.workflows.providers import build_meta_import_service
 
+if TYPE_CHECKING:
+    from app.shared.clients.embedding_client_manager import RemoteEmbeddingClient
+
 _PERIODIC_BATCH_SIZE = 50
 
 
 async def _run_with_metadata_resources[T](
     operation: Callable[
-        [MetaPGRepo, SourceDorisRepo, AsyncElasticsearch, EmbeddingClient], Awaitable[T]
+        [MetaPGRepo, SourceDorisRepo, AsyncElasticsearch, RemoteEmbeddingClient],
+        Awaitable[T],
     ],
 ) -> T:
     """初始化元数据任务资源并执行指定异步操作。"""
@@ -150,7 +153,7 @@ def sync_table_indexes_task(table_names: list[str]) -> dict[str, Any]:
         meta_repo: MetaPGRepo,
         source_repo: SourceDorisRepo,
         es_client: AsyncElasticsearch,
-        embedding_client: EmbeddingClient,
+        embedding_client: RemoteEmbeddingClient,
     ) -> Any:
         """使用任务级仓储执行表字段语义索引同步。"""
         return await build_meta_index_service(
@@ -189,7 +192,7 @@ def sync_table_values_task(
         meta_repo: MetaPGRepo,
         source_repo: SourceDorisRepo,
         es_client: AsyncElasticsearch,
-        embedding_client: EmbeddingClient,
+        embedding_client: RemoteEmbeddingClient,
     ) -> Any:
         """使用任务级仓储执行表字段取值索引同步。"""
         return await build_meta_index_service(
@@ -228,7 +231,7 @@ def sync_column_indexes_task(column_keys: list[list[str]]) -> dict[str, Any]:
         meta_repo: MetaPGRepo,
         source_repo: SourceDorisRepo,
         es_client: AsyncElasticsearch,
-        embedding_client: EmbeddingClient,
+        embedding_client: RemoteEmbeddingClient,
     ) -> Any:
         """使用任务级仓储执行字段语义索引同步。"""
         return await build_meta_index_service(
@@ -268,7 +271,7 @@ def sync_column_values_task(
         meta_repo: MetaPGRepo,
         source_repo: SourceDorisRepo,
         es_client: AsyncElasticsearch,
-        embedding_client: EmbeddingClient,
+        embedding_client: RemoteEmbeddingClient,
     ) -> Any:
         """使用任务级仓储执行字段取值索引同步。"""
         return await build_meta_index_service(
@@ -306,7 +309,7 @@ def sync_metric_indexes_task(metric_names: list[str]) -> dict[str, Any]:
         meta_repo: MetaPGRepo,
         source_repo: SourceDorisRepo,
         es_client: AsyncElasticsearch,
-        embedding_client: EmbeddingClient,
+        embedding_client: RemoteEmbeddingClient,
     ) -> Any:
         """使用任务级仓储执行指标语义索引同步。"""
         return await build_meta_index_service(
@@ -342,7 +345,7 @@ def import_metadata_task(payload: dict[str, Any], mode: str) -> dict[str, Any]:
         meta_repo: MetaPGRepo,
         source_repo: SourceDorisRepo,
         es_client: AsyncElasticsearch,
-        embedding_client: EmbeddingClient,
+        embedding_client: RemoteEmbeddingClient,
     ) -> Any:
         """使用任务级仓储执行元数据导入。"""
         return await build_meta_import_service(

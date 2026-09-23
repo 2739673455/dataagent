@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from redis.exceptions import RedisError
 
-from app.sandbox.exceptions import SandboxDeletedError, SandboxOwnershipError
+from app.sandbox.errors import SandboxDeletedError, SandboxOwnershipError
 from app.sandbox.manager import DockerSandboxManager
 from app.sandbox.ownership import RedisSandboxOwnership
 from tests.sandbox.fakes import FakeSandboxOwnership, build_sandbox_config

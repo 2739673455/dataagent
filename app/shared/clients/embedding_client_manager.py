@@ -1,22 +1,12 @@
 """Embedding 客户端管理。"""
 
-from typing import Any, Protocol
+from __future__ import annotations
+
+from typing import Any
 
 import httpx
 
 from app.shared.config.app_config import EmbeddingConfig
-
-
-class EmbeddingClient(Protocol):
-    """Embedding 客户端协议。"""
-
-    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
-        """生成多个文本的向量。"""
-        ...
-
-    async def aclose(self) -> None:
-        """关闭 Embedding 客户端。"""
-        ...
 
 
 class RemoteEmbeddingClient:
@@ -85,13 +75,13 @@ class EmbeddingClientManager:
     def __init__(self, config: EmbeddingConfig) -> None:
         """初始化 Embedding 客户端管理器。"""
         self._config = config
-        self._client: EmbeddingClient | None = None
+        self._client: RemoteEmbeddingClient | None = None
 
     def init(self) -> None:
         """初始化 Embedding 客户端。"""
         self._client = RemoteEmbeddingClient(self._config)
 
-    def get_client(self) -> EmbeddingClient:
+    def get_client(self) -> RemoteEmbeddingClient:
         """获取 Embedding 客户端。"""
         if self._client is None:
             raise RuntimeError("Embedding 客户端管理器尚未初始化")

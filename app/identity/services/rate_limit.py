@@ -105,11 +105,6 @@ class BoundedRateLimiter:
         self._buckets: OrderedDict[str, _RateBucket] = OrderedDict()
         self._lock = asyncio.Lock()
 
-    @property
-    def tracked_keys(self) -> int:
-        """返回当前跟踪的限流键数量。"""
-        return len(self._buckets)
-
     async def consume(self, key: str) -> None:
         """消费一次请求额度。"""
         key_digest = hashlib.sha256(key.encode("utf-8")).hexdigest()

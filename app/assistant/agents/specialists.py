@@ -69,11 +69,6 @@ class SpecialistDefinition:
     tools: tuple[BaseTool, ...] = ()
     skills: tuple[str, ...] = ()
 
-    @property
-    def tool_names(self) -> frozenset[str]:
-        """返回显式分配给该 Agent 的工具名。"""
-        return frozenset(tool.name for tool in self.tools)
-
 
 def build_specialist_definitions(
     explorer_tools: Iterable[BaseTool],

@@ -2,7 +2,7 @@
 
 from http import HTTPStatus
 
-from app.query.models.execution import QueryExecutionStatus, QueryExecutionTimeoutError
+from app.query.models.execution import QueryExecutionStatus
 from app.query.models.validation import QueryValidationResult
 from app.shared.errors.base import ProblemError
 
@@ -35,6 +35,10 @@ class QueryRejectedError(ValueError):
 
 class QueryResultShapeError(RuntimeError):
     """数据库返回的结果结构不稳定或不适合文件输出。"""
+
+
+class QueryExecutionTimeoutError(RuntimeError):
+    """Doris 查询执行超时。"""
 
 
 def classify_query_error(error: Exception) -> tuple[QueryExecutionStatus, str]:

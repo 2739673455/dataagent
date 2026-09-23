@@ -7,6 +7,7 @@ from typing import Any, cast
 from elasticsearch import AsyncElasticsearch
 from loguru import logger
 
+from app.metadata.errors import CorruptedSemanticIndexDocumentError
 from app.metadata.models.catalog import ColumnKey, column_resource_key
 from app.metadata.models.search import (
     SemanticIndexDelta,
@@ -44,24 +45,6 @@ class SemanticIndexDocumentReadResult:
 
     documents: list[SemanticIndexDocument]
     corrupted_document_ids: list[str]
-
-
-class CorruptedSemanticIndexDocumentError(RuntimeError):
-    """在线检索读取到无法反序列化的 Elasticsearch 文档。"""
-
-    def __init__(
-        self,
-        *,
-        resource_label: str,
-        index_name: str,
-        document_id: str,
-    ) -> None:
-        """保存可用于日志和召回失败记录的定位信息。"""
-        self.index_name = index_name
-        self.document_id = document_id
-        super().__init__(
-            f"{resource_label}文档损坏: index={index_name}, document_id={document_id}"
-        )
 
 
 def column_resource_terms_filter(

@@ -1,7 +1,10 @@
 """元数据应用服务组装。"""
 
+from __future__ import annotations
+
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 from elasticsearch import AsyncElasticsearch
 
@@ -16,16 +19,18 @@ from app.metadata.services.authorization_filter import MetadataAuthorizationFilt
 from app.metadata.services.index import MetaIndexService
 from app.metadata.services.recall import SemanticRecallContextService
 from app.metadata.services.search import SemanticCatalog, SemanticResourceRecallService
-from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
+
+if TYPE_CHECKING:
+    from app.shared.clients.embedding_client_manager import RemoteEmbeddingClient
 
 
 def build_meta_index_service(
     meta_repo: MetaPGRepo,
     source_repo: SourceDorisRepo,
     es_client: AsyncElasticsearch,
-    embedding_client: EmbeddingClient,
+    embedding_client: RemoteEmbeddingClient,
 ) -> MetaIndexService:
     """创建元数据索引同步服务。"""
     return MetaIndexService(
@@ -41,7 +46,7 @@ def build_meta_index_service(
 async def build_semantic_resource_recall_service(
     postgres: PostgresClientManager,
     es_client: AsyncElasticsearch,
-    embedding_client: EmbeddingClient,
+    embedding_client: RemoteEmbeddingClient,
     policy: AssetAccessPolicy,
 ) -> SemanticResourceRecallService:
     """先读取完整目录并关闭会话，再构建不依赖数据库事务的检索服务。"""

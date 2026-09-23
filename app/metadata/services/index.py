@@ -1,5 +1,7 @@
 """元数据检索索引增量同步服务。"""
 
+from __future__ import annotations
+
 import hashlib
 import json
 import unicodedata
@@ -8,7 +10,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.metadata.models.catalog import (
     ColumnInfo,
@@ -33,8 +35,10 @@ from app.metadata.repositories.metric_index import MetricESRepo
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
 from app.metadata.repositories.value_index import ValueESRepo
-from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.config.app_config import cfg
+
+if TYPE_CHECKING:
+    from app.shared.clients.embedding_client_manager import RemoteEmbeddingClient
 
 _SEMANTIC_PREPROCESS_VERSION = "v1"
 
@@ -65,7 +69,7 @@ class MetaIndexService:
         source_repo: SourceDorisRepo,
         column_repo: ColumnESRepo,
         metric_repo: MetricESRepo,
-        embedding_client: EmbeddingClient,
+        embedding_client: RemoteEmbeddingClient,
         value_repo: ValueESRepo,
     ) -> None:
         """初始化元数据检索索引同步服务。"""

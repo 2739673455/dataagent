@@ -1,18 +1,23 @@
 """Docker Container 运行容量与生命周期。"""
 
+from __future__ import annotations
+
 import asyncio
 import time
 from collections.abc import Callable
 from contextlib import suppress
 from threading import Event
+from typing import TYPE_CHECKING
 
 from docker.errors import NotFound
 from docker.models.containers import Container
 from loguru import logger
 
-from app.sandbox.exceptions import SandboxCapacityUnavailableError
-from app.sandbox.ownership import SandboxOwnership
+from app.sandbox.errors import SandboxCapacityUnavailableError
 from app.shared.config.app_config import SandboxConfig
+
+if TYPE_CHECKING:
+    from app.sandbox.ownership import RedisSandboxOwnership
 
 
 class DockerRuntimePool:
@@ -21,7 +26,7 @@ class DockerRuntimePool:
     def __init__(
         self,
         config: SandboxConfig,
-        ownership: SandboxOwnership,
+        ownership: RedisSandboxOwnership,
         *,
         get_or_create_container: Callable[[int], Container],
         get_existing_container: Callable[[int], Container | None],

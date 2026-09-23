@@ -14,13 +14,13 @@ from app.assistant.agents.explorer.semantic_recall_protocol import (
     semantic_recall_deletion_result,
     semantic_recall_reference,
 )
+from app.metadata.errors import SemanticQueriesNotFoundError
 from app.metadata.models.recall import (
     SemanticRecallRecord,
     SemanticRecallResourceDeletion,
     normalize_semantic_recall_query,
 )
 from app.metadata.models.search import SemanticResourceRecallRequest
-from app.metadata.services.recall import SemanticQueriesNotFoundError
 
 
 def _invalid_query_response(

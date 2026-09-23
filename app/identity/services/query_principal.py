@@ -3,13 +3,10 @@
 from dataclasses import dataclass, field
 
 from app.identity import errors as auth_error
+from app.identity.errors import QueryPrincipalNotConfiguredError
 from app.identity.repositories.identity import IdentityPGRepo
-from app.identity.services.authorization import AssetAccessPolicy, AuthorizationService
+from app.identity.services.authorization import AuthorizationService
 from app.identity.services.credential import DorisCredentialCipher
-
-
-class QueryPrincipalNotConfiguredError(RuntimeError):
-    """用户没有可用的稳定查询身份。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,10 +34,8 @@ class QueryPrincipalService:
         self._cipher = cipher
         self._authorization = authorization
 
-    async def resolve(
-        self, user_id: int
-    ) -> tuple[ResolvedQueryPrincipal, AssetAccessPolicy]:
-        """一次读取用户和角色身份，派生查询凭据及资产策略。"""
+    async def resolve(self, user_id: int) -> ResolvedQueryPrincipal:
+        """读取用户和角色身份，返回查询凭据、权限指纹及资源组。"""
         user = await self._repo.get_user_by_id(user_id)
         if user is None:
             raise auth_error.UserNotFoundError
@@ -54,12 +49,10 @@ class QueryPrincipalService:
             )
         except auth_error.RoleNotFoundError as exc:
             raise QueryPrincipalNotConfiguredError("角色查询身份不存在") from exc
-        policy = self._authorization.policy_from_snapshot(user.id, identity, snapshot)
-        principal = ResolvedQueryPrincipal(
+        return ResolvedQueryPrincipal(
             role_name=identity.role_name,
             authorization_fingerprint=snapshot.fingerprint,
             query_user=identity.query_user,
             password=self._cipher.decrypt(identity.encrypted_password),
             workload_group=identity.workload_group,
         )
-        return principal, policy

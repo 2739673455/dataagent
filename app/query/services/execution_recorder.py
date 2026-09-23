@@ -1,7 +1,10 @@
 """查询执行审计与成功经验聚合。"""
 
+from __future__ import annotations
+
 import hashlib
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlglot import exp, parse_one
@@ -15,9 +18,11 @@ from app.query.models.experience import QueryExperience, QueryExperienceAsset
 from app.query.models.validation import QueryValidationResult
 from app.query.repositories.execution_postgres import QueryExecutionPGRepo
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
-from app.query.services.contracts import QueryExperienceIndexScheduler
 from app.shared.contracts.analysis import AgentSessionKey
 from app.shared.contracts.assets import asset_resource_key
+
+if TYPE_CHECKING:
+    from app.query.task_scheduler import CeleryQueryExperienceIndexScheduler
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +57,7 @@ class QueryExecutionRecorder:
         self,
         execution_repo: QueryExecutionPGRepo,
         experience_repo: QueryExperiencePGRepo,
-        index_scheduler: QueryExperienceIndexScheduler,
+        index_scheduler: CeleryQueryExperienceIndexScheduler,
         *,
         data_source: str,
         database_name: str,
@@ -193,7 +198,12 @@ class QueryExecutionRecorder:
                 database_name=table.database or self._database_name,
                 table_name=table.name,
                 column_name=None,
-                meta_version=table_versions.get(table.name, 0),
+                meta_version=(
+                    table_versions.get(table.name, 0)
+                    if (table.database or self._database_name).casefold()
+                    == self._database_name.casefold()
+                    else 0
+                ),
             )
             for table in validation.tables
         ]
@@ -211,7 +221,12 @@ class QueryExecutionRecorder:
                 database_name=column.database or self._database_name,
                 table_name=column.table,
                 column_name=column.name,
-                meta_version=column_versions.get((column.table, column.name), 0),
+                meta_version=(
+                    column_versions.get((column.table, column.name), 0)
+                    if (column.database or self._database_name).casefold()
+                    == self._database_name.casefold()
+                    else 0
+                ),
             )
             for column in validation.columns
         )

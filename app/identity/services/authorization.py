@@ -1,13 +1,21 @@
 """RBAC 与数据资产白名单授权服务。"""
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
 
 from app.identity import errors as auth_error
+from app.identity.errors import (
+    DorisQueryUserAlreadyExistsError,
+    DorisRoleAlreadyExistsError,
+    DorisWorkloadGroupNotFoundError,
+)
 from app.identity.models.account import User
 from app.identity.models.doris import (
     AssetScope,
@@ -16,10 +24,7 @@ from app.identity.models.doris import (
     normalize_doris_role_name,
 )
 from app.identity.repositories.doris_role import (
-    DorisQueryUserAlreadyExistsError,
-    DorisRoleAlreadyExistsError,
     DorisRoleRepository,
-    DorisWorkloadGroupNotFoundError,
     role_name_from_row,
     role_users_from_row,
 )
@@ -29,11 +34,14 @@ from app.identity.services.account_validation import (
     validate_password_length,
     validate_username,
 )
-from app.identity.services.auth import AuthenticatedUser, PasswordManager
+from app.identity.services.auth import AuthenticatedUser
 from app.identity.services.credential import DorisCredentialCipher
 from app.shared.clients.doris_client_manager import DorisQueryClientRegistry
 from app.shared.config.app_config import AuthConfig
 from app.shared.contracts.assets import asset_resource_key
+
+if TYPE_CHECKING:
+    from app.identity.services.auth import Argon2PasswordManager
 
 
 @dataclass(frozen=True)
@@ -86,7 +94,7 @@ class AssetIdentity:
             self.column_name,
         )
 
-    def encompasses(self, other: "AssetIdentity") -> bool:
+    def encompasses(self, other: AssetIdentity) -> bool:
         """判断当前授权是否覆盖目标资产。"""
         own_parts = (
             self.data_source,
@@ -239,7 +247,7 @@ class DorisRoleManagementService:
         doris_repo: DorisRoleRepository,
         cipher: DorisCredentialCipher,
         client_registry: DorisQueryClientRegistry,
-        password_manager: PasswordManager,
+        password_manager: Argon2PasswordManager,
         auth_config: AuthConfig,
     ) -> None:
         """初始化 Doris 角色、凭据和用户绑定管理依赖。"""

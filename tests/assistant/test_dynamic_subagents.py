@@ -49,7 +49,7 @@ from app.assistant.checkpoints.reader import CheckpointState
 from app.assistant.execution.manager import AgentManager
 from app.assistant.execution.run import ConversationRunService
 from app.assistant.execution.session_service import AgentSessionService
-from app.assistant.execution.session_store import AgentSessionStore
+from app.assistant.execution.session_store import PostgresSandboxSessionStore
 from app.assistant.execution.shell_jobs import ShellJobRuntime
 from app.assistant.execution.types import (
     DELEGATION_CONTEXT_KEY,
@@ -345,7 +345,7 @@ class _DistributedLockRegistry:
         return self.acquire(session_key.checkpoint_ns)
 
 
-class _FakeSessionStore:
+class _FakeSessionStore(PostgresSandboxSessionStore):
     def __init__(
         self,
         fake: _FakeAgent,
@@ -466,7 +466,7 @@ def _service(
     max_sessions: int = 128,
     artifacts_exist: bool = True,
     artifact_verifier: Callable[[Collection[str]], Awaitable[set[str]]] | None = None,
-    session_store: AgentSessionStore | None = None,
+    session_store: PostgresSandboxSessionStore | None = None,
     session_lock_factory: Callable[
         [AgentSessionKey],
         AbstractAsyncContextManager[None],
@@ -693,7 +693,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
         )
 
         self.assertEqual(
-            definitions["explorer"].tool_names,
+            {tool.name for tool in definitions["explorer"].tools},
             {
                 "recall_context",
                 "execute_sql",
@@ -701,11 +701,11 @@ class DynamicSubagentContractTest(unittest.TestCase):
             },
         )
         self.assertEqual(
-            definitions["analyst"].tool_names,
+            {tool.name for tool in definitions["analyst"].tools},
             set(),
         )
         self.assertEqual(
-            definitions["reviewer"].tool_names,
+            {tool.name for tool in definitions["reviewer"].tools},
             set(),
         )
 

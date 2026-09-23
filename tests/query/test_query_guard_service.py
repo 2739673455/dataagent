@@ -1,7 +1,8 @@
 import unittest
+from unittest.mock import AsyncMock, MagicMock
 
-from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
 from app.metadata.models.catalog import ColumnInfo, TableInfo
+from app.metadata.repositories.postgres import MetaPGRepo
 from app.query.services.guard import QueryGuardService
 
 
@@ -42,17 +43,15 @@ class FakeCatalogRepo:
             make_column("users", "name", "VARCHAR(100)"),
         ]
 
-    async def list_table_infos(self) -> list[TableInfo]:
-        return self.tables
-
-    async def list_column_infos(self) -> list[ColumnInfo]:
-        return self.columns
-
 
 def make_guard() -> QueryGuardService:
+    catalog = FakeCatalogRepo()
     return QueryGuardService(
-        FakeCatalogRepo(),
-        data_source="doris",
+        MagicMock(
+            spec=MetaPGRepo,
+            list_table_infos=AsyncMock(return_value=catalog.tables),
+            list_column_infos=AsyncMock(return_value=catalog.columns),
+        ),
         current_database="analytics",
     )
 
@@ -83,21 +82,11 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
     async def test_rejects_catalog_queries_outside_discovery_allowlist(self) -> None:
         cases = {
             "SHOW DATABASES": "catalog_statement_not_allowed",
-            "SHOW TABLES FROM other_database": "unknown_database",
+            "SELECT * FROM external.information_schema.tables": "catalog_not_allowed",
+            "DELETE FROM information_schema.tables": "readonly_query_required",
             (
-                "SELECT * FROM information_schema.schemata "
-                "WHERE schema_name = DATABASE()"
-            ): "catalog_table_not_allowed",
-            "SELECT * FROM information_schema.tables": "catalog_scope_required",
-            (
-                "SELECT * FROM information_schema.tables "
-                "WHERE table_schema = DATABASE() OR 1 = 1"
-            ): "catalog_scope_required",
-            (
-                "SELECT c.column_name FROM information_schema.columns c "
-                "JOIN orders o ON c.table_name = 'orders' "
-                "WHERE c.table_schema = DATABASE()"
-            ): "catalog_query_shape_not_allowed",
+                "WITH t AS (SELECT * FROM external.information_schema.tables) SELECT * FROM t"
+            ): "catalog_not_allowed",
         }
         for sql, issue_code in cases.items():
             with self.subTest(sql=sql):
@@ -105,6 +94,41 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(result.valid)
                 self.assertEqual(result.query_kind, "catalog")
                 self.assertIn(issue_code, {issue.code for issue in result.issues})
+
+    async def test_allows_complex_catalog_queries_and_other_system_tables(self) -> None:
+        for sql in (
+            "SELECT * FROM information_schema.schemata",
+            "SELECT c.column_name FROM information_schema.columns c JOIN orders o ON c.table_name = 'orders'",
+            "WITH t AS (SELECT table_name FROM information_schema.tables) SELECT * FROM t",
+            "SELECT * FROM (SELECT table_name FROM information_schema.tables) t",
+            "SELECT table_name FROM information_schema.tables UNION ALL SELECT column_name FROM information_schema.columns",
+        ):
+            with self.subTest(sql=sql):
+                result = await make_guard().check(sql)
+                self.assertTrue(result.valid, result.issues)
+                self.assertEqual(result.query_kind, "catalog")
+                self.assertIsNotNone(result.normalized_sql)
+
+    async def test_rejects_write_statements_inside_ctes(self) -> None:
+        for statement in (
+            "DROP TABLE orders",
+            "DELETE FROM orders RETURNING id",
+            "UPDATE orders SET amount = 1 RETURNING id",
+            "INSERT INTO orders (id) VALUES (1)",
+        ):
+            with self.subTest(statement=statement):
+                result = await make_guard().check(
+                    f"WITH changed AS ({statement}) SELECT 1 AS value"
+                )
+                self.assertFalse(result.valid)
+                self.assertIn(
+                    "forbidden_operation", [issue.code for issue in result.issues]
+                )
+                self.assertIsNone(result.normalized_sql)
+
+    async def test_allows_replace_string_function(self) -> None:
+        result = await make_guard().check("SELECT REPLACE('abc', 'a', 'b') AS value")
+        self.assertTrue(result.valid, result.issues)
 
     async def test_accepts_qualified_cte_readonly_query(self) -> None:
         result = await make_guard().check(
@@ -136,7 +160,7 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
         cases = {
             "DELETE FROM orders": "readonly_query_required",
             "SELECT 1; SELECT 2": "multiple_statements",
-            "SELECT SLEEP(1)": "forbidden_function",
+            "SELECT SLEEP(1)": "unapproved_function",
             "SELECT HTTP_GET('http://169.254.169.254/')": "unapproved_function",
             "SELECT LAST_INSERT_ID(123)": "unapproved_function",
             "SELECT * FROM S3('uri'='http://example.invalid/data')": (
@@ -162,21 +186,84 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result.valid)
 
-    async def test_rejects_unknown_and_ambiguous_references(self) -> None:
-        cases = {
-            "SELECT missing FROM orders": "unknown_column",
-            "SELECT id FROM orders o JOIN users u ON o.user_id = u.id": (
-                "ambiguous_column"
-            ),
-            "SELECT id FROM absent": "unknown_table",
-            "SELECT id FROM other.orders": "unknown_database",
-        }
-        for sql, issue_code in cases.items():
+    async def test_defers_missing_and_ambiguous_references_to_doris(self) -> None:
+        for sql in (
+            "SELECT missing FROM orders",
+            "SELECT id FROM orders o JOIN users u ON o.user_id = u.id",
+            "SELECT id FROM absent",
+            "SELECT * FROM absent",
+        ):
             with self.subTest(sql=sql):
                 result = await make_guard().check(sql)
-                self.assertIn(issue_code, {issue.code for issue in result.issues})
+                self.assertTrue(result.valid, result.issues)
 
-    async def test_rejects_invalid_join_and_duplicate_outputs(self) -> None:
+    async def test_database_scope_is_checked_by_doris(self) -> None:
+        for sql in (
+            "SELECT id FROM other.orders",
+            "SHOW TABLES FROM other_database",
+            "SELECT * FROM information_schema.tables",
+            "SELECT * FROM information_schema.columns WHERE table_schema = 'other'",
+            "SELECT * FROM information_schema.tables WHERE table_schema = DATABASE() OR 1 = 1",
+        ):
+            with self.subTest(sql=sql):
+                result = await make_guard().check(sql)
+                self.assertTrue(result.valid, result.issues)
+        result = await make_guard().check("SELECT new_column FROM other.orders")
+        self.assertEqual([t.qualified_name for t in result.tables], ["other.orders"])
+        self.assertEqual(
+            [c.qualified_name for c in result.columns], ["other.orders.new_column"]
+        )
+
+    async def test_leaves_duplicate_outputs_to_executor(self) -> None:
+        result = await make_guard().check(
+            "SELECT o.id, u.id FROM orders o JOIN users u ON o.user_id = u.id"
+        )
+        self.assertTrue(result.valid, result.issues)
+        self.assertEqual(result.output_columns, ["id", "id"])
+
+    async def test_preserves_star_for_doris_authorization(self) -> None:
+        result = await make_guard().check("SELECT * FROM orders")
+        self.assertTrue(result.valid, result.issues)
+        self.assertEqual(result.normalized_sql, "SELECT * FROM orders")
+
+    async def test_records_missing_catalog_references(self) -> None:
+        result = await make_guard().check("SELECT new_column FROM new_table")
+        self.assertTrue(result.valid, result.issues)
+        self.assertEqual(
+            [t.qualified_name for t in result.tables], ["analytics.new_table"]
+        )
+        self.assertEqual(
+            [c.qualified_name for c in result.columns],
+            ["analytics.new_table.new_column"],
+        )
+
+    async def test_empty_catalog_does_not_block_query(self) -> None:
+        guard = QueryGuardService(
+            MagicMock(
+                spec=MetaPGRepo,
+                list_table_infos=AsyncMock(return_value=[]),
+                list_column_infos=AsyncMock(return_value=[]),
+            ),
+            current_database="analytics",
+        )
+        result = await guard.check("SELECT id FROM orders WHERE amount > 10")
+        self.assertTrue(result.valid, result.issues)
+        self.assertEqual(
+            result.normalized_sql, "SELECT id FROM orders WHERE amount > 10"
+        )
+        self.assertEqual(
+            [column.qualified_name for column in result.columns],
+            ["analytics.orders.amount", "analytics.orders.id"],
+        )
+
+    async def test_catalog_duplicate_outputs_are_left_to_executor(self) -> None:
+        result = await make_guard().check(
+            "SELECT table_name AS name, table_type AS name FROM information_schema.tables "
+            "WHERE table_schema = DATABASE()"
+        )
+        self.assertTrue(result.valid, result.issues)
+
+    async def test_rejects_invalid_join(self) -> None:
         cases = {
             "SELECT o.id FROM orders o JOIN users u": "join_condition_required",
             "SELECT o.id FROM orders o CROSS JOIN users u": "cross_join_forbidden",
@@ -203,9 +290,6 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
                 "SELECT o.id AS order_id, u.id AS user_id FROM orders o "
                 "JOIN users u ON o.id + u.id > 0"
             ): "invalid_join_condition",
-            "SELECT o.id, u.id FROM orders o JOIN users u ON o.user_id = u.id": (
-                "duplicate_output_column"
-            ),
         }
         for sql, issue_code in cases.items():
             with self.subTest(sql=sql):
@@ -251,146 +335,3 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
         result = await make_guard().check("SELECT amount = 'not-a-number' FROM orders")
 
         self.assertTrue(result.valid, result.issues)
-
-
-class QueryGuardAuthorizationTest(unittest.IsolatedAsyncioTestCase):
-    async def test_column_grant_allows_explicit_column(self) -> None:
-        policy = AssetAccessPolicy(
-            user_id=7,
-            grants=frozenset(
-                {
-                    AssetIdentity(
-                        data_source="doris",
-                        database_name="analytics",
-                        table_name="orders",
-                        column_name="id",
-                    )
-                }
-            ),
-        )
-        result = await make_guard().check("SELECT id FROM orders", policy)
-        self.assertTrue(result.valid)
-
-    async def test_column_grant_cannot_authorize_star(self) -> None:
-        policy = AssetAccessPolicy(
-            user_id=7,
-            grants=frozenset(
-                {
-                    AssetIdentity(
-                        data_source="doris",
-                        database_name="analytics",
-                        table_name="orders",
-                        column_name="id",
-                    )
-                }
-            ),
-        )
-        result = await make_guard().check("SELECT * FROM orders", policy)
-        self.assertEqual(
-            {issue.code for issue in result.issues},
-            {"column_access_denied"},
-        )
-
-    async def test_explicit_filter_column_is_also_authorized(self) -> None:
-        policy = AssetAccessPolicy(
-            user_id=7,
-            grants=frozenset(
-                {
-                    AssetIdentity(
-                        data_source="doris",
-                        database_name="analytics",
-                        table_name="orders",
-                        column_name="id",
-                    )
-                }
-            ),
-        )
-        result = await make_guard().check(
-            "SELECT id FROM orders WHERE amount > 10",
-            policy,
-        )
-        self.assertEqual(
-            {issue.column for issue in result.issues},
-            {"amount"},
-        )
-
-    async def test_denied_and_missing_resources_are_indistinguishable(self) -> None:
-        policy = AssetAccessPolicy(
-            user_id=7,
-            grants=frozenset(
-                {
-                    AssetIdentity(
-                        data_source="doris",
-                        database_name="analytics",
-                        table_name="orders",
-                        column_name="id",
-                    )
-                }
-            ),
-        )
-        denied_table = await make_guard().check("SELECT 1 FROM users", policy)
-        missing_table = await make_guard().check("SELECT 1 FROM secrets", policy)
-        denied_column = await make_guard().check(
-            "SELECT amount FROM orders",
-            policy,
-        )
-        missing_column = await make_guard().check(
-            "SELECT secret_amount FROM orders",
-            policy,
-        )
-
-        self.assertEqual(
-            [issue.code for issue in denied_table.issues],
-            [issue.code for issue in missing_table.issues],
-        )
-        self.assertEqual(
-            [issue.code for issue in denied_column.issues],
-            [issue.code for issue in missing_column.issues],
-        )
-
-    async def test_table_grant_allows_star(self) -> None:
-        policy = AssetAccessPolicy(
-            user_id=7,
-            grants=frozenset(
-                {
-                    AssetIdentity(
-                        data_source="doris",
-                        database_name="analytics",
-                        table_name="orders",
-                    )
-                }
-            ),
-        )
-        result = await make_guard().check("SELECT * FROM orders", policy)
-        self.assertTrue(result.valid)
-
-    async def test_qualified_star_does_not_require_other_joined_table_grant(
-        self,
-    ) -> None:
-        policy = AssetAccessPolicy(
-            user_id=7,
-            grants=frozenset(
-                {
-                    AssetIdentity(
-                        data_source="doris",
-                        database_name="analytics",
-                        table_name="orders",
-                    ),
-                    AssetIdentity(
-                        data_source="doris",
-                        database_name="analytics",
-                        table_name="users",
-                        column_name="id",
-                    ),
-                }
-            ),
-        )
-        result = await make_guard().check(
-            """
-            SELECT o.*, u.id AS user_pk
-            FROM orders o
-            JOIN users u ON o.user_id = u.id
-            """,
-            policy,
-        )
-        self.assertTrue(result.valid)

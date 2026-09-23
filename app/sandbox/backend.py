@@ -1,5 +1,7 @@
 """DeepAgents Docker 沙箱 Backend。"""
 
+from __future__ import annotations
+
 import asyncio
 import base64
 import io
@@ -11,7 +13,7 @@ import tarfile
 import threading
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
-from typing import BinaryIO, TypeVar
+from typing import TYPE_CHECKING, BinaryIO, TypeVar
 from uuid import UUID
 
 from deepagents.backends.protocol import (
@@ -29,8 +31,7 @@ from deepagents.backends.sandbox import BaseSandbox
 from docker.errors import APIError, NotFound
 from docker.models.containers import Container
 
-from app.sandbox.exceptions import SandboxPathError
-from app.sandbox.ownership import SandboxOwnership
+from app.sandbox.errors import SandboxPathError
 from app.sandbox.paths import (
     SANDBOX_DATA_ROOT,
     SANDBOX_STAGING_ROOT,
@@ -44,6 +45,9 @@ from app.sandbox.scripts import (
 )
 from app.sandbox.shell_runner import DockerShellJobRunner
 from app.shared.config.app_config import SandboxConfig
+
+if TYPE_CHECKING:
+    from app.sandbox.ownership import RedisSandboxOwnership
 
 _ResultT = TypeVar("_ResultT")
 _SANDBOX_STAGING_ROOT = SANDBOX_STAGING_ROOT
@@ -73,7 +77,7 @@ class DockerSandboxBackend(BaseSandbox):
         conversation_id: UUID,
         conversation_uid: int,
         sandbox_config: SandboxConfig,
-        ownership: SandboxOwnership,
+        ownership: RedisSandboxOwnership,
         touch: Callable[[], None],
         get_running_container: Callable[[threading.Event | None], Container],
         *,
@@ -675,10 +679,3 @@ class DockerSandboxBackend(BaseSandbox):
     ) -> list[FileDownloadResponse]:
         """异步批量下载当前会话文件。"""
         return await self._run_async(lambda: self.download_files(paths))
-
-    def is_file(self, path: str) -> bool:
-        """检查当前会话路径是否为文件。"""
-        resolved_path = self._resolve_path(path)
-        with self._operation():
-            result = self._execute_unlocked(f"test -f {shlex.quote(resolved_path)}")
-            return result.exit_code == 0

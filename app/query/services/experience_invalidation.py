@@ -1,10 +1,15 @@
 """元数据变化触发的查询经验失效。"""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
-from app.query.services.contracts import QueryExperienceIndexScheduler
 from app.shared.contracts.assets import asset_resource_key
+
+if TYPE_CHECKING:
+    from app.query.task_scheduler import CeleryQueryExperienceIndexScheduler
 
 
 class QueryExperienceInvalidationService:
@@ -13,7 +18,7 @@ class QueryExperienceInvalidationService:
     def __init__(
         self,
         repo: QueryExperiencePGRepo,
-        index_scheduler: QueryExperienceIndexScheduler,
+        index_scheduler: CeleryQueryExperienceIndexScheduler,
         *,
         data_source: str,
         database_name: str,

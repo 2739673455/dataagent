@@ -1,5 +1,8 @@
 """聊天与专业 Agent 历史消息读取。"""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from langchain_core.messages import BaseMessage
@@ -14,15 +17,15 @@ from app.assistant.events.projection import (
     langchain_message_to_schema,
     langchain_message_to_schema_with_artifacts,
 )
-from app.assistant.execution.contracts import (
-    AgentRuntimeManager,
-    ConversationFileInspector,
-)
+
+if TYPE_CHECKING:
+    from app.assistant.execution.manager import AgentManager
+    from app.sandbox.manager import DockerSandboxManager
 
 
 async def list_messages(
-    agents: AgentRuntimeManager,
-    files: ConversationFileInspector,
+    agents: AgentManager,
+    files: DockerSandboxManager,
     user_id: int,
     conversation_id: UUID,
 ) -> list[chat_schema.MessageResponse]:
@@ -47,7 +50,7 @@ async def list_messages(
 
 
 async def get_subagent_activity(
-    agents: AgentRuntimeManager,
+    agents: AgentManager,
     user_id: int,
     conversation_id: UUID,
     analysis_id: str,

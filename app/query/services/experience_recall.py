@@ -1,8 +1,10 @@
 """权限感知的查询经验混合召回。"""
 
+from __future__ import annotations
+
 import asyncio
 from dataclasses import dataclass
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from uuid import UUID
 
 from loguru import logger
@@ -12,8 +14,6 @@ from app.metadata.services.authorization_filter import MetadataAuthorizationFilt
 from app.query.models.experience import QueryExperience
 from app.query.repositories.experience_index import QueryExperienceESRepo
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
-from app.query.services.contracts import QueryExperienceIndexScheduler
-from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.config.app_config import cfg
 from app.shared.contracts.query_experience import (
     QueryAssetKind,
@@ -23,6 +23,10 @@ from app.shared.contracts.query_experience import (
     QueryExperienceRecallStatus,
 )
 from app.shared.contracts.search import SearchHit
+
+if TYPE_CHECKING:
+    from app.query.task_scheduler import CeleryQueryExperienceIndexScheduler
+    from app.shared.clients.embedding_client_manager import RemoteEmbeddingClient
 
 _SEARCH_POOL_SIZE = 100
 _RRF_K = 60
@@ -43,8 +47,8 @@ class QueryExperienceRecallService:
         self,
         repo: QueryExperiencePGRepo,
         index_repo: QueryExperienceESRepo,
-        embedding_client: EmbeddingClient,
-        index_scheduler: QueryExperienceIndexScheduler,
+        embedding_client: RemoteEmbeddingClient,
+        index_scheduler: CeleryQueryExperienceIndexScheduler,
         *,
         data_source: str,
         database_name: str,

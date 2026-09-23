@@ -1,12 +1,14 @@
 """Docker 沙箱资源与工作区管理。"""
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import json
 import time
 from collections.abc import Sequence
 from contextlib import AsyncExitStack, suppress
-from typing import Any, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO
 from uuid import UUID
 
 from docker.errors import APIError, ImageNotFound, NotFound
@@ -17,7 +19,6 @@ from loguru import logger
 import docker
 from app.sandbox.archive import SandboxArchiveStore
 from app.sandbox.backend import DockerSandboxBackend
-from app.sandbox.ownership import SandboxOwnership
 from app.sandbox.paths import (
     SANDBOX_DATA_ROOT,
     SandboxReadonlyMount,
@@ -27,6 +28,9 @@ from app.sandbox.paths import (
 )
 from app.sandbox.runtime_pool import DockerRuntimePool
 from app.shared.config.app_config import SandboxConfig
+
+if TYPE_CHECKING:
+    from app.sandbox.ownership import RedisSandboxOwnership
 
 _DEPLOYMENT_LABEL = "dataagent.sandbox.deployment"
 _USER_LABEL = "dataagent.sandbox.user_id"
@@ -40,7 +44,7 @@ class DockerSandboxManager:
     def __init__(
         self,
         sandbox_config: SandboxConfig,
-        ownership: SandboxOwnership,
+        ownership: RedisSandboxOwnership,
         readonly_mounts: Sequence[SandboxReadonlyMount],
     ) -> None:
         """初始化 Docker 沙箱管理器。"""

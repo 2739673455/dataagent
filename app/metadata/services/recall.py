@@ -7,6 +7,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from app.metadata.errors import SemanticQueriesNotFoundError
 from app.metadata.models.recall import (
     SemanticRecallRecord,
     SemanticRecallResourceDeletion,
@@ -25,15 +26,6 @@ from app.metadata.services.authorization_filter import MetadataAuthorizationFilt
 from app.shared.contracts.query_experience import QueryExperienceRecallResult
 
 _QUERY_EXPERIENCE_CACHE_TTL = timedelta(days=1)
-
-
-class SemanticQueriesNotFoundError(Exception):
-    """一个或多个查询业务键不存在。"""
-
-    def __init__(self, queries: list[str]) -> None:
-        """初始化未找到的查询业务键。"""
-        self.queries = queries
-        super().__init__(", ".join(queries))
 
 
 def _stable_union[T](groups: list[list[T]]) -> list[T]:

@@ -25,9 +25,11 @@ from app.assistant.agents.middleware.user_message_context import (
 )
 from app.assistant.checkpoints.reader import CheckpointState
 from app.assistant.conversations import history as conversation_history
+from app.assistant.errors import PlannerContinuationLimitError
 from app.assistant.events import projection as message_projection
 from app.assistant.events import schemas as chat_schema
 from app.assistant.execution import planner as planner_turn
+from app.assistant.execution.manager import AgentManager
 from app.assistant.execution.types import (
     EVAL_DELEGATIONS_KEY,
     MESSAGE_CREATED_AT_KEY,
@@ -39,13 +41,14 @@ from app.assistant.execution.types import (
     SubagentStatusActivity,
     SubagentThinkingDeltaActivity,
 )
+from app.sandbox.manager import DockerSandboxManager
 from app.sandbox.paths import normalize_attachment_path
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
 _SANDBOX_ROOT = f"/data/{_CONVERSATION_ID}"
 
 
-class _FileInspectorStub:
+class _FileInspectorStub(DockerSandboxManager):
     """按用户、会话和路径返回可下载状态。"""
 
     def __init__(self, available: set[tuple[int, UUID, str]] | None = None) -> None:
@@ -338,7 +341,7 @@ class _RepeatingPlanner:
         }
 
 
-class _TurnManagerStub:
+class _TurnManagerStub(AgentManager):
     """记录一个聊天回合进入的执行上下文次数。"""
 
     def __init__(
@@ -615,7 +618,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                 new=MagicMock(return_value=HumanMessage(content="analyze")),
             ),
             self.assertRaisesRegex(
-                planner_turn.PlannerContinuationLimitError,
+                PlannerContinuationLimitError,
                 "连续续写次数超过上限",
             ),
         ):

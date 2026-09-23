@@ -1,12 +1,15 @@
 """查询各阶段的数据库运行环境；每个阶段使用独立短会话。"""
 
+from __future__ import annotations
+
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.identity.repositories.doris_role import DorisRoleRepository
 from app.identity.repositories.identity import IdentityPGRepo
-from app.identity.services.authorization import AssetAccessPolicy, AuthorizationService
+from app.identity.services.authorization import AuthorizationService
 from app.identity.services.credential import DorisCredentialCipher
 from app.identity.services.query_principal import (
     QueryPrincipalService,
@@ -25,10 +28,7 @@ from app.query.services.execution_recorder import (
     QueryExecutionContext,
     QueryExecutionRecorder,
 )
-from app.query.services.executor import (
-    AnalysisQueryService,
-    QueryArtifactStore,
-)
+from app.query.services.executor import AnalysisQueryService
 from app.query.services.guard import QueryGuardService
 from app.shared.clients.doris_client_manager import (
     DorisClientManager,
@@ -37,13 +37,16 @@ from app.shared.clients.doris_client_manager import (
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
 
+if TYPE_CHECKING:
+    from app.sandbox.manager import DockerSandboxManager
+
 
 class DatabaseQueryExecutionRuntime:
     """使用阶段化短会话提供查询用例运行环境。"""
 
     def __init__(
         self,
-        artifact_store: QueryArtifactStore,
+        artifact_store: DockerSandboxManager,
         recorder_factory: Callable[[AsyncSession], QueryExecutionRecorder],
         auth: PostgresClientManager,
         meta: PostgresClientManager,
@@ -68,8 +71,8 @@ class DatabaseQueryExecutionRuntime:
     async def resolve_principal(
         self,
         user_id: int,
-    ) -> tuple[ResolvedQueryPrincipal, AssetAccessPolicy]:
-        """在单个认证会话中解析身份和资产策略。"""
+    ) -> ResolvedQueryPrincipal:
+        """在单个认证会话中解析查询身份。"""
         async with self._auth.session() as session, session.begin():
             repo = IdentityPGRepo(session)
             return await QueryPrincipalService(
@@ -86,15 +89,13 @@ class DatabaseQueryExecutionRuntime:
     async def validate(
         self,
         sql: str,
-        policy: AssetAccessPolicy,
     ) -> QueryValidationResult:
         """在独立元数据会话中校验 SQL。"""
         async with self._meta.session() as session:
             return await QueryGuardService(
                 MetaPGRepo(session),
-                data_source=cfg.query.data_source,
                 current_database=cfg.doris.database,
-            ).check(sql, policy)
+            ).check(sql)
 
     async def create_executor(
         self,

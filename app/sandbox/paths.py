@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from uuid import UUID
 
-from app.sandbox.exceptions import SandboxPathError
+from app.sandbox.errors import SandboxPathError
 
 SANDBOX_DATA_ROOT = "/data"
 SANDBOX_STAGING_ROOT = "/data/.dataagent-staging"

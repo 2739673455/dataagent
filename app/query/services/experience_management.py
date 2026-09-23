@@ -1,7 +1,10 @@
 """查询经验管理用例。"""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from loguru import logger
@@ -11,7 +14,9 @@ from app.query.models.execution import QueryExecution
 from app.query.models.experience import QueryExperienceOverview
 from app.query.repositories.execution_postgres import QueryExecutionPGRepo
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
-from app.query.services.contracts import QueryExperienceIndexScheduler
+
+if TYPE_CHECKING:
+    from app.query.task_scheduler import CeleryQueryExperienceIndexScheduler
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,7 +34,7 @@ class QueryExperienceManagementService:
         self,
         repo: QueryExperiencePGRepo,
         execution_repo: QueryExecutionPGRepo,
-        index_scheduler: QueryExperienceIndexScheduler,
+        index_scheduler: CeleryQueryExperienceIndexScheduler,
     ) -> None:
         """绑定查询经验存储与索引调度器。"""
         self._repo = repo

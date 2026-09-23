@@ -17,7 +17,7 @@ from app.assistant.execution.run import ConversationRunService
 from app.assistant.execution.turn import (
     ConversationTurnService,
 )
-from app.shared.clients.langgraph_postgres_manager import AdvisoryLockBusyError
+from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 
 class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):

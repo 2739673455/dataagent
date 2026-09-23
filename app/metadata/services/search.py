@@ -1,10 +1,12 @@
 """确定性的元数据语义资源召回服务。"""
 
+from __future__ import annotations
+
 import asyncio
 import uuid
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
-from typing import Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Literal, TypeVar, cast
 
 from loguru import logger
 
@@ -33,8 +35,10 @@ from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
 from app.metadata.repositories.value_index import ValueESRepo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
-from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.contracts.search import SearchHit
+
+if TYPE_CHECKING:
+    from app.shared.clients.embedding_client_manager import RemoteEmbeddingClient
 
 _RRF_K = 60
 _INDEX_SEARCH_LIMIT_MULTIPLIER = 3
@@ -359,7 +363,7 @@ class SemanticResourceRecallService:
 
     def __init__(
         self,
-        embedding_client: EmbeddingClient,
+        embedding_client: RemoteEmbeddingClient,
         column_repo: ColumnESRepo,
         metric_repo: MetricESRepo,
         value_repo: ValueESRepo,

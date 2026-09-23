@@ -1,26 +1,27 @@
 """受控只读查询执行与会话产物写入。"""
 
+from __future__ import annotations
+
 import base64
 import csv
 import hashlib
 import json
+import re
 import tempfile
 import unicodedata
-from collections.abc import AsyncGenerator
 from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
+from io import TextIOWrapper
 from itertools import islice
-from typing import Any, BinaryIO, Protocol
-from uuid import UUID
+from typing import TYPE_CHECKING, Any, TextIO
 
 from loguru import logger
 
 from app.query.errors import QueryRejectedError, QueryResultShapeError
 from app.query.models.execution import (
     AnalysisQueryResult,
-    QueryBatch,
     QueryExecutionLimits,
     QueryExecutionOptions,
     QueryResultColumn,
@@ -30,36 +31,13 @@ from app.query.models.validation import QueryValidationResult
 from app.sandbox.paths import SandboxSessionScope
 from app.shared.contracts.analysis import AgentSessionKey
 
+if TYPE_CHECKING:
+    from app.query.repositories.doris import DorisQueryRepository
+    from app.sandbox.manager import DockerSandboxManager
+
 _SAMPLE_STRING_MAX_CHARS = 512
 _SAMPLE_COLLECTION_MAX_ITEMS = 20
 _SAMPLE_MAX_DEPTH = 4
-
-
-class ReadonlyQueryRepository(Protocol):
-    """只读查询执行存储的最小接口。"""
-
-    def stream(
-        self,
-        sql: str,
-        limits: QueryExecutionLimits,
-        options: QueryExecutionOptions,
-    ) -> AsyncGenerator[QueryBatch]:
-        """按批次流式读取受控查询结果。"""
-        ...
-
-
-class QueryArtifactStore(Protocol):
-    """查询产物写入会话沙箱的最小接口。"""
-
-    async def write_artifact(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        path: str,
-        content: BinaryIO,
-    ) -> None:
-        """将查询产物写入指定用户的会话沙箱。"""
-        ...
 
 
 @dataclass(slots=True)
@@ -78,28 +56,15 @@ class _ColumnStats:
             return
         value_type = _value_type(value)
         self.inferred_type = _merge_types(self.inferred_type, value_type)
-        temporal_value = _temporal_value(value)
-        if temporal_value is None:
+        if not isinstance(value, date):
             return
+        if isinstance(value, datetime) and value.tzinfo is not None:
+            value = value.astimezone(UTC)
+        temporal_value = value.isoformat()
         if self.time_start is None or temporal_value < self.time_start:
             self.time_start = temporal_value
         if self.time_end is None or temporal_value > self.time_end:
             self.time_end = temporal_value
-
-
-@dataclass(slots=True)
-class _Utf8Writer:
-    """将 CSV 文本编码为 UTF-8 后写入二进制文件。"""
-
-    destination: BinaryIO
-
-    def write(self, value: str) -> int:
-        """编码并写入一段 CSV 文本。"""
-        encoded = value.encode("utf-8")
-        written = self.destination.write(encoded)
-        if written != len(encoded):
-            raise OSError("临时查询输出写入不完整")
-        return len(value)
 
 
 class AnalysisQueryService:
@@ -107,8 +72,8 @@ class AnalysisQueryService:
 
     def __init__(
         self,
-        query_repo: ReadonlyQueryRepository,
-        artifact_store: QueryArtifactStore,
+        query_repo: DorisQueryRepository,
+        artifact_store: DockerSandboxManager,
         limits: QueryExecutionLimits,
         options: QueryExecutionOptions,
     ) -> None:
@@ -143,12 +108,15 @@ class AnalysisQueryService:
             session_key.agent_type,
             session_key.session_id,
         )
-        relative_path = (
-            f"{scope.relative_workspace}/{_query_artifact_filename(purpose)}"
-        )
-        with tempfile.TemporaryFile(mode="w+b") as temporary_file:
+        normalized = unicodedata.normalize("NFKC", purpose).strip()
+        stem = re.sub(r"[\W_]+", "_", normalized).strip("_") or "query_result"
+        relative_path = f"{scope.relative_workspace}/{stem}.csv"
+        with (
+            tempfile.TemporaryFile(mode="w+b") as temporary_file,
+            TextIOWrapper(temporary_file, encoding="utf-8", newline="") as csv_file,
+        ):
             summary = await self._execute_to_csv(
-                temporary_file,
+                csv_file,
                 normalized_sql,
             )
             temporary_file.seek(0)
@@ -160,7 +128,7 @@ class AnalysisQueryService:
             )
         workspace = scope.workspace_path(session_key.conversation_id)
         result = AnalysisQueryResult(
-            path=f"{workspace}/{relative_path.rsplit('/', 1)[-1]}",
+            path=f"{workspace}/{stem}.csv",
             columns=summary.columns,
             row_count=summary.row_count,
             time_range=summary.time_range,
@@ -179,11 +147,11 @@ class AnalysisQueryService:
 
     async def _execute_to_csv(
         self,
-        temporary_file: BinaryIO,
+        csv_file: TextIO,
         sql: str,
-    ) -> "_QuerySummary":
+    ) -> _QuerySummary:
         """流式执行查询并写入 CSV，同时保留字段统计与少量样例。"""
-        writer = csv.writer(_Utf8Writer(temporary_file), lineterminator="\n")
+        writer = csv.writer(csv_file, lineterminator="\n")
         column_names: tuple[str, ...] | None = None
         column_stats: list[_ColumnStats] = []
         sample: list[dict[str, Any]] = []
@@ -194,7 +162,12 @@ class AnalysisQueryService:
             async for batch in batches:
                 if column_names is None:
                     column_names = batch.column_names
-                    self._validate_column_names(column_names)
+                    if not column_names or any(not name for name in column_names):
+                        raise QueryResultShapeError("查询结果列名不能为空")
+                    if len({name.casefold() for name in column_names}) != len(
+                        column_names
+                    ):
+                        raise QueryResultShapeError("查询结果列名不能重复")
                     column_stats = [_ColumnStats() for _ in column_names]
                     writer.writerow(_csv_value(name) for name in column_names)
                 elif batch.column_names != column_names:
@@ -219,7 +192,7 @@ class AnalysisQueryService:
                     row_count += 1
         if column_names is None:
             raise QueryResultShapeError("数据库未返回有效的结果元数据")
-        temporary_file.flush()
+        csv_file.flush()
         return _QuerySummary(
             columns=[
                 QueryResultColumn(
@@ -238,15 +211,6 @@ class AnalysisQueryService:
             sample=sample,
         )
 
-    @staticmethod
-    def _validate_column_names(column_names: tuple[str, ...]) -> None:
-        """要求数据库返回非空且唯一的字段名。"""
-        if not column_names or any(not name for name in column_names):
-            raise QueryResultShapeError("查询结果列名不能为空")
-        normalized = [name.casefold() for name in column_names]
-        if len(normalized) != len(set(normalized)):
-            raise QueryResultShapeError("查询结果列名不能重复")
-
 
 @dataclass(frozen=True, slots=True)
 class _QuerySummary:
@@ -256,24 +220,6 @@ class _QuerySummary:
     row_count: int
     time_range: dict[str, QueryTimeRange]
     sample: list[dict[str, Any]]
-
-
-def _query_artifact_filename(purpose: str) -> str:
-    """将查询目的清理为 CSV 文件名；同一 Session 内同名结果覆盖写入。"""
-    normalized = unicodedata.normalize("NFKC", purpose).strip()
-    stem_parts: list[str] = []
-    separator_pending = False
-    for character in normalized:
-        if character.isalnum():
-            if separator_pending and stem_parts:
-                stem_parts.append("_")
-            stem_parts.append(character)
-            separator_pending = False
-        else:
-            separator_pending = True
-
-    stem = "".join(stem_parts).rstrip("_") or "query_result"
-    return f"{stem}.csv"
 
 
 def _value_type(value: Any) -> str:
@@ -312,17 +258,6 @@ def _merge_types(current: str | None, observed: str) -> str:
     return "mixed"
 
 
-def _temporal_value(value: Any) -> str | None:
-    """把日期时间值转换为可稳定比较的 ISO 文本。"""
-    if isinstance(value, datetime):
-        if value.tzinfo is not None:
-            value = value.astimezone(UTC)
-        return value.isoformat()
-    if isinstance(value, date):
-        return value.isoformat()
-    return None
-
-
 def _summary_value(value: Any, depth: int = 0) -> Any:
     """转换为可以放入工具返回值的 JSON 兼容数据。"""
     if value is None or isinstance(value, (int, float, bool)):
@@ -331,18 +266,16 @@ def _summary_value(value: Any, depth: int = 0) -> Any:
         if len(value) <= _SAMPLE_STRING_MAX_CHARS:
             return value
         return f"{value[:_SAMPLE_STRING_MAX_CHARS]}…"
-    if isinstance(value, (date, datetime, time)):
-        return value.isoformat()
-    if isinstance(value, Decimal):
-        return str(value)
     if isinstance(value, bytes):
         byte_limit = _SAMPLE_STRING_MAX_CHARS * 3 // 4
-        encoded = base64.b64encode(value[:byte_limit]).decode("ascii")
+        encoded = _scalar_value(value[:byte_limit])
         return f"{encoded}…" if len(value) > byte_limit else encoded
+    if isinstance(value, (date, time, Decimal)):
+        return _scalar_value(value)
     if depth >= _SAMPLE_MAX_DEPTH:
         return "<nested value omitted>"
     if isinstance(value, dict):
-        items = list(islice(value.items(), _SAMPLE_COLLECTION_MAX_ITEMS))
+        items = islice(value.items(), _SAMPLE_COLLECTION_MAX_ITEMS)
         summary = {str(key): _summary_value(item, depth + 1) for key, item in items}
         if len(value) > _SAMPLE_COLLECTION_MAX_ITEMS:
             summary["__truncated__"] = len(value) - _SAMPLE_COLLECTION_MAX_ITEMS
@@ -369,17 +302,13 @@ def _csv_value(value: Any) -> Any:
         return _escape_csv_formula(value)
     if isinstance(value, bool):
         return "true" if value else "false"
-    if isinstance(value, (date, datetime, time)):
-        return value.isoformat()
-    if isinstance(value, bytes):
-        return base64.b64encode(value).decode("ascii")
     if isinstance(value, (dict, list, tuple)):
         return json.dumps(
             _json_value(value),
             ensure_ascii=False,
             separators=(",", ":"),
         )
-    return value
+    return _scalar_value(value)
 
 
 def _escape_csv_formula(value: str) -> str:
@@ -395,14 +324,19 @@ def _json_value(value: Any) -> Any:
     """完整保留 CSV 中嵌套值并转换为 JSON 兼容数据。"""
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
-    if isinstance(value, (date, datetime, time)):
+    if isinstance(value, dict):
+        return {str(key): _json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value(item) for item in value]
+    return str(_scalar_value(value))
+
+
+def _scalar_value(value: Any) -> Any:
+    """将日期时间、金额和二进制值转为文本，其他值原样返回。"""
+    if isinstance(value, (date, time)):
         return value.isoformat()
     if isinstance(value, Decimal):
         return str(value)
     if isinstance(value, bytes):
         return base64.b64encode(value).decode("ascii")
-    if isinstance(value, dict):
-        return {str(key): _json_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_value(item) for item in value]
-    return str(value)
+    return value

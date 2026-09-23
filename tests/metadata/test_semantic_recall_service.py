@@ -35,6 +35,7 @@ from app.assistant.agents.middleware.semantic_recall_expansion import (
     SemanticRecallExpansionMiddleware,
 )
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
+from app.metadata.errors import SemanticQueriesNotFoundError
 from app.metadata.models.recall import (
     SemanticRecallRecord,
     SemanticRecallResourceDeletion,
@@ -52,10 +53,7 @@ from app.metadata.models.search import (
 )
 from app.metadata.repositories.recall import SemanticRecallPGRepo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
-from app.metadata.services.recall import (
-    SemanticQueriesNotFoundError,
-    SemanticRecallContextService,
-)
+from app.metadata.services.recall import SemanticRecallContextService
 from app.shared.contracts.query_experience import (
     QueryAssetSnapshot,
     QueryExperienceRecall,

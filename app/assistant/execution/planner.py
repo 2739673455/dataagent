@@ -1,14 +1,17 @@
 """Planner 回合执行、续写与恢复，及执行事件到聊天协议的转换。"""
 
+from __future__ import annotations
+
 from collections.abc import AsyncGenerator
 from contextlib import aclosing
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from langchain_core.messages import BaseMessage
 from langgraph.types import StreamPart
 from loguru import logger
 
 from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
+from app.assistant.errors import PlannerContinuationLimitError
 from app.assistant.events import schemas as chat_schema
 from app.assistant.events.projection import (
     langchain_message_to_schema_with_artifacts,
@@ -17,10 +20,6 @@ from app.assistant.events.projection import (
     subagent_activity_to_event,
 )
 from app.assistant.events.stream import MessageDeltaParser
-from app.assistant.execution.contracts import (
-    AgentRuntimeManager,
-    ConversationFileInspector,
-)
 from app.assistant.execution.types import (
     PlannerTurnContext,
     SubagentMessageActivity,
@@ -30,10 +29,14 @@ from app.assistant.execution.types import (
     build_planner_config,
 )
 
+if TYPE_CHECKING:
+    from app.assistant.execution.manager import AgentManager
+    from app.sandbox.manager import DockerSandboxManager
+
 
 async def run_agent_turn(
-    agents: AgentRuntimeManager,
-    files: ConversationFileInspector,
+    agents: AgentManager,
+    files: DockerSandboxManager,
     turn_context: PlannerTurnContext,
     user_message: chat_schema.UserMessageRequest | None,
     *,
@@ -154,15 +157,3 @@ async def run_agent_turn(
             input_messages = []
 
     logger.info(f"智能体回合结束: conversation_id={conversation_id}")
-
-
-class PlannerContinuationLimitError(RuntimeError):
-    """Planner 自动续写次数超过服务端硬限制。"""
-
-    def __init__(self, max_continuations: int, finish_reason: str) -> None:
-        """初始化包含续写上限和结束原因的异常。"""
-        self.max_continuations = max_continuations
-        self.finish_reason = finish_reason
-        super().__init__(
-            f"规划器在结束原因 {finish_reason!r} 下连续续写次数超过上限 ({max_continuations} 次)"
-        )

@@ -1,24 +1,27 @@
 """会话资源生命周期编排。"""
 
+from __future__ import annotations
+
 from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from app.assistant.errors import ConversationBusyError
-from app.assistant.execution.contracts import (
-    ConversationAgentLifecycle,
-    ConversationLifecycleLockProvider,
-    ConversationSandboxCleaner,
-)
 from app.assistant.execution.run import ConversationRunService
 from app.assistant.execution.types import (
     conversation_lifecycle_lock_name,
 )
 from app.assistant.repositories.conversation import ConversationPGRepo
 from app.metadata.services.recall_cleanup import RecallCleanupService
-from app.shared.clients.langgraph_postgres_manager import AdvisoryLockBusyError
 from app.shared.config.app_config import LifecycleConfig
+from app.shared.errors.infrastructure import AdvisoryLockBusyError
+
+if TYPE_CHECKING:
+    from app.assistant.execution.manager import AgentManager
+    from app.sandbox.manager import DockerSandboxManager
+    from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 
 
 class ConversationLifecycleService:
@@ -30,9 +33,9 @@ class ConversationLifecycleService:
             [], AbstractAsyncContextManager[ConversationPGRepo]
         ],
         recall_cleaner: RecallCleanupService,
-        lock_provider: ConversationLifecycleLockProvider,
-        agents: ConversationAgentLifecycle,
-        sandbox: ConversationSandboxCleaner,
+        lock_provider: LangGraphPostgresManager,
+        agents: AgentManager,
+        sandbox: DockerSandboxManager,
         config: LifecycleConfig,
         runs: ConversationRunService | None = None,
     ) -> None:

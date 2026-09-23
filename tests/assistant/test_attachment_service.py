@@ -10,8 +10,8 @@ import pytest
 
 from app.assistant import errors
 from app.assistant.conversations.attachments import AttachmentService
-from app.sandbox.exceptions import SandboxFileTooLargeError, SandboxPathError
-from app.shared.clients.langgraph_postgres_manager import AdvisoryLockBusyError
+from app.sandbox.errors import SandboxFileTooLargeError, SandboxPathError
+from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 
 @pytest.mark.parametrize(

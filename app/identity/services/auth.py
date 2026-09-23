@@ -1,12 +1,14 @@
 """用户认证与令牌生命周期服务。"""
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import hmac
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol, cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import jwt
@@ -26,22 +28,6 @@ from app.identity.services.account_validation import (
 from app.shared.config.app_config import AuthConfig
 
 ARGON2_MAX_CONCURRENCY = 2
-
-
-class PasswordManager(Protocol):
-    """异步密码哈希接口。"""
-
-    async def hash(self, password: str) -> str:
-        """异步计算密码哈希。"""
-        ...
-
-    async def verify(self, password: str, password_hash: str) -> bool:
-        """异步校验密码与哈希是否匹配。"""
-        ...
-
-    async def verify_dummy_password(self, password: str) -> None:
-        """为未知账号执行等价密码校验。"""
-        ...
 
 
 class Argon2PasswordManager:
@@ -124,7 +110,7 @@ class AuthenticatedUser:
     created_at: datetime
 
     @classmethod
-    def from_user(cls, user: User) -> "AuthenticatedUser":
+    def from_user(cls, user: User) -> AuthenticatedUser:
         """从持久化用户创建不可变快照。"""
         return cls(
             id=user.id,
@@ -308,7 +294,7 @@ class AuthService:
         self,
         repo: IdentityPGRepo,
         config: AuthConfig,
-        password_manager: PasswordManager,
+        password_manager: Argon2PasswordManager,
         *,
         now: Callable[[], datetime] | None = None,
     ) -> None:

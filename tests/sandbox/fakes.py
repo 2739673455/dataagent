@@ -4,6 +4,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from uuid import UUID
 
+from app.sandbox.ownership import RedisSandboxOwnership
 from app.shared.config.app_config import SandboxConfig
 
 
@@ -38,8 +39,8 @@ def build_sandbox_config(**updates: object) -> SandboxConfig:
     return SandboxConfig.model_validate(values)
 
 
-class FakeSandboxOwnership:
-    """提供无跨进程协调的 SandboxOwnership 测试替身。"""
+class FakeSandboxOwnership(RedisSandboxOwnership):
+    """提供无跨进程协调的 RedisSandboxOwnership 测试替身。"""
 
     def __init__(self, *, last_runtime: bool = True) -> None:
         """设置释放运行时时返回的最后运行时标志。"""

@@ -6,13 +6,13 @@ import threading
 import time
 from collections.abc import Generator
 from contextlib import contextmanager, suppress
-from typing import Protocol, cast
+from typing import cast
 from uuid import UUID, uuid4
 
 from redis import Redis
 from redis.exceptions import LockError, RedisError
 
-from app.sandbox.exceptions import SandboxDeletedError, SandboxOwnershipError
+from app.sandbox.errors import SandboxDeletedError, SandboxOwnershipError
 
 _REGISTER_OPERATION_SCRIPT = """
 if redis.call("exists", KEYS[1]) == 1 then
@@ -28,92 +28,6 @@ redis.call("zadd", KEYS[5], ARGV[1], ARGV[2])
 redis.call("zadd", KEYS[6], ARGV[1], ARGV[2])
 return 0
 """
-
-
-class SandboxOwnership(Protocol):
-    """沙箱运行时需要的跨进程协调接口。"""
-
-    def start_runtime(self) -> None:
-        """登记当前进程的沙箱运行时租约。"""
-        ...
-
-    @contextmanager
-    def release_runtime(self) -> Generator[bool]:
-        """释放运行时租约并返回是否已无存活运行时。"""
-        ...
-
-    @contextmanager
-    def capacity(self) -> Generator[None]:
-        """串行化沙箱容量检查与创建。"""
-        ...
-
-    @contextmanager
-    def user_mutation(self, user_id: int) -> Generator[None]:
-        """串行化指定用户的沙箱结构变更。"""
-        ...
-
-    def assert_available(
-        self,
-        user_id: int,
-        conversation_id: UUID | None = None,
-    ) -> None:
-        """确认用户或会话沙箱未被标记删除。"""
-        ...
-
-    def mark_conversation_deleted(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-    ) -> None:
-        """记录会话沙箱删除墓碑。"""
-        ...
-
-    def mark_user_deleted(self, user_id: int) -> None:
-        """记录用户沙箱删除墓碑。"""
-        ...
-
-    @contextmanager
-    def operation(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-    ) -> Generator[None]:
-        """登记一个支持同线程重入的会话沙箱操作。"""
-        ...
-
-    @contextmanager
-    def conversation_maintenance(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-    ) -> Generator[None]:
-        """等待会话操作结束并独占维护窗口。"""
-        ...
-
-    @contextmanager
-    def user_maintenance(self, user_id: int) -> Generator[None]:
-        """等待用户操作结束并独占维护窗口。"""
-        ...
-
-    def touch(self, user_id: int, activity_at: float) -> None:
-        """更新用户沙箱的最后活动时间。"""
-        ...
-
-    def last_activity(self, user_id: int) -> float:
-        """读取用户沙箱的最后活动时间。"""
-        ...
-
-    def is_user_active(self, user_id: int) -> bool:
-        """检查用户是否仍有活跃操作租约。"""
-        ...
-
-    def forget_user(self, user_id: int) -> None:
-        """清除用户沙箱的活动记录。"""
-        ...
-
-    def close(self) -> None:
-        """关闭协调器持有的外部资源。"""
-        ...
 
 
 class RedisSandboxOwnership:

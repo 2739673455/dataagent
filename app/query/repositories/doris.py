@@ -7,11 +7,11 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from app.query.errors import QueryExecutionTimeoutError
 from app.query.models.execution import (
     QueryBatch,
     QueryExecutionLimits,
     QueryExecutionOptions,
-    QueryExecutionTimeoutError,
 )
 from app.shared.clients.doris_client_manager import DorisClientManager
 
@@ -37,19 +37,6 @@ class DorisQueryRepository:
             text(f"SET exec_mem_limit = {limits.memory_limit_bytes}")
         )
 
-    @staticmethod
-    def _is_timeout_error(exc: BaseException) -> bool:
-        """判断是否为 Doris 查询超时异常。"""
-        if isinstance(exc, TimeoutError):
-            return True
-        message = str(exc).lower()
-        return "timeout" in message or "timed out" in message
-
-    @staticmethod
-    def _literal_sql(sql: str):
-        """构造不把 SQL 字符串内冒号解释为绑定参数的语句。"""
-        return text(sql.replace(":", r"\:"))
-
     async def stream(
         self,
         sql: str,
@@ -61,7 +48,7 @@ class DorisQueryRepository:
             try:
                 await self._apply_session_limits(connection, limits)
                 result = await connection.stream(
-                    self._literal_sql(sql),
+                    text(sql.replace(":", r"\:")),
                     execution_options={
                         "stream_results": True,
                         "yield_per": options.batch_size,
@@ -84,7 +71,12 @@ class DorisQueryRepository:
                 await connection.invalidate()
                 raise
             except (SQLAlchemyError, TimeoutError) as exc:
-                if self._is_timeout_error(exc):
+                message = str(exc).lower()
+                if (
+                    isinstance(exc, TimeoutError)
+                    or "timeout" in message
+                    or "timed out" in message
+                ):
                     raise QueryExecutionTimeoutError(
                         f"Doris 查询执行超时，最大允许 {limits.timeout_seconds} 秒"
                     ) from exc

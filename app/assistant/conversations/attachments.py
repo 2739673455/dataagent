@@ -6,9 +6,9 @@ from uuid import UUID
 from app.assistant import errors
 from app.assistant.conversations.lifecycle import ConversationLifecycleService
 from app.assistant.repositories.conversation import ConversationPGRepo
-from app.sandbox.exceptions import SandboxFileTooLargeError, SandboxPathError
+from app.sandbox.errors import SandboxFileTooLargeError, SandboxPathError
 from app.sandbox.manager import DockerSandboxManager
-from app.shared.clients.langgraph_postgres_manager import AdvisoryLockBusyError
+from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 
 class AttachmentService:

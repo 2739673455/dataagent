@@ -27,3 +27,30 @@ class MetadataConflictError(ProblemError):
     type = "metadata-conflict"
     title = "元数据冲突"
     status = HTTPStatus.CONFLICT
+
+
+class CorruptedSemanticIndexDocumentError(RuntimeError):
+    """在线检索读取到无法反序列化的 Elasticsearch 文档。"""
+
+    def __init__(
+        self,
+        *,
+        resource_label: str,
+        index_name: str,
+        document_id: str,
+    ) -> None:
+        """保存可用于日志和召回失败记录的定位信息。"""
+        self.index_name = index_name
+        self.document_id = document_id
+        super().__init__(
+            f"{resource_label}文档损坏: index={index_name}, document_id={document_id}"
+        )
+
+
+class SemanticQueriesNotFoundError(Exception):
+    """一个或多个查询业务键不存在。"""
+
+    def __init__(self, queries: list[str]) -> None:
+        """初始化未找到的查询业务键。"""
+        self.queries = queries
+        super().__init__(", ".join(queries))

@@ -5,6 +5,8 @@ import csv
 import io
 import unittest
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -13,20 +15,26 @@ from langchain.tools import ToolRuntime
 
 from app.assistant.agents.explorer.tools.execute_sql import _execute_sql
 from app.identity import errors as auth_error
+from app.identity.errors import QueryPrincipalNotConfiguredError
 from app.identity.models.doris import DorisAuthorizationSnapshot
-from app.identity.services.query_principal import (
-    QueryPrincipalNotConfiguredError,
-    QueryPrincipalService,
+from app.identity.services.query_principal import QueryPrincipalService
+from app.query.errors import (
+    QueryExecutionTimeoutError,
+    QueryRejectedError,
+    QueryResultShapeError,
 )
-from app.query.errors import QueryRejectedError, QueryResultShapeError
 from app.query.models.execution import (
     AnalysisQueryResult,
     QueryBatch,
     QueryExecutionLimits,
     QueryExecutionOptions,
-    QueryExecutionTimeoutError,
 )
-from app.query.models.validation import QueryValidationIssue, QueryValidationResult
+from app.query.models.validation import (
+    QueryColumnRef,
+    QueryTableRef,
+    QueryValidationIssue,
+    QueryValidationResult,
+)
 from app.query.repositories.doris import DorisQueryRepository
 from app.query.runtime import DatabaseQueryExecutionRuntime
 from app.query.services.execution_handler import QueryExecutionHandler
@@ -104,7 +112,7 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
         )
         self.service = MagicMock(execute=AsyncMock(return_value=result()))
         self.runtime = MagicMock(
-            resolve_principal=AsyncMock(return_value=(self.principal, object())),
+            resolve_principal=AsyncMock(return_value=self.principal),
             validate=AsyncMock(return_value=valid()),
             create_executor=AsyncMock(return_value=self.service),
             record_success=AsyncMock(),
@@ -249,6 +257,77 @@ class QueryExecutorTest(unittest.IsolatedAsyncioTestCase):
             list(csv.reader(io.StringIO(content.decode()))),
             [["value"], ["1"], ["2"], ["3"]],
         )
+
+    async def test_csv_preserves_utf8_quoting_types_and_summary(self):
+        timestamp = datetime(2026, 9, 23, 12, 30, tzinfo=UTC)
+        self.batches = [
+            QueryBatch(
+                (
+                    "文本",
+                    "amount",
+                    "created_at",
+                    "nested",
+                    "binary",
+                    "formula",
+                    "empty",
+                ),
+                (
+                    (
+                        '中文,"引号"\n下一行',
+                        Decimal("12.30"),
+                        timestamp,
+                        {"金额": Decimal("2.50")},
+                        b"\x00\xff",
+                        "=1+1",
+                        None,
+                    ),
+                ),
+            )
+        ]
+        actual = await self.execute()
+        content = self.files[0][3]
+        self.assertFalse(content.startswith(b"\xef\xbb\xbf"))
+        self.assertEqual(
+            list(csv.reader(io.StringIO(content.decode("utf-8")))),
+            [
+                [
+                    "文本",
+                    "amount",
+                    "created_at",
+                    "nested",
+                    "binary",
+                    "formula",
+                    "empty",
+                ],
+                [
+                    '中文,"引号"\n下一行',
+                    "12.30",
+                    "2026-09-23T12:30:00+00:00",
+                    '{"金额":"2.50"}',
+                    "AP8=",
+                    "'=1+1",
+                    "",
+                ],
+            ],
+        )
+        self.assertEqual(actual.sample[0]["nested"], {"金额": "2.50"})
+        self.assertEqual(actual.sample[0]["formula"], "=1+1")
+        self.assertEqual(actual.columns[1].type, "decimal")
+        self.assertTrue(actual.columns[-1].nullable)
+        self.assertEqual(actual.time_range["created_at"].start, timestamp.isoformat())
+        self.assertEqual(actual.time_range["created_at"].end, timestamp.isoformat())
+
+    async def test_filename_normalization_preserves_unicode_and_separators(self):
+        for purpose, filename in (
+            ("  月度__销售 / 汇总  ", "月度_销售_汇总.csv"),
+            ("ＡＢＣ １２３", "ABC_123.csv"),
+            ("a\u0301 / x", "á_x.csv"),
+            ("___-😀-___", "query_result.csv"),
+            ("é²_Ⅳ", "é2_IV.csv"),
+        ):
+            with self.subTest(purpose=purpose):
+                actual = await self.service.execute(self.key, valid(), purpose=purpose)
+                self.assertEqual(actual.path.rsplit("/", 1)[-1], filename)
 
     async def test_empty_result_preserves_header_and_schema(self):
         self.batches = [QueryBatch(("value",), ())]
@@ -450,11 +529,10 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
         clients.get_or_create.assert_awaited_once_with(
             "reader", "query_reader", "password"
         )
-        policy = guard.check.call_args.args[1]
+        guard.check.assert_awaited_once_with("SELECT 1")
         context = recorder.record_success.call_args.args[0]
         self.assertEqual(
-            (policy.role_name, policy.authorization_fingerprint),
-            (context.role_name, context.authorization_fingerprint),
+            (context.role_name, context.authorization_fingerprint), ("reader", "same")
         )
         self.assertEqual(
             events,
@@ -470,6 +548,34 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
 
 class QueryRecorderTest(unittest.IsolatedAsyncioTestCase):
+    def test_cross_database_assets_do_not_use_local_metadata_versions(self):
+        recorder = QueryExecutionRecorder(
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            data_source="doris",
+            database_name="analytics",
+        )
+        validation = QueryValidationResult(
+            valid=True,
+            normalized_sql="SELECT id FROM other.orders",
+            tables=[
+                QueryTableRef(database=db, name="orders")
+                for db in ("analytics", "other")
+            ],
+            columns=[
+                QueryColumnRef(database=db, table="orders", name="id")
+                for db in ("analytics", "other")
+            ],
+        )
+        assets = recorder._build_assets(
+            uuid4(), validation, {"orders": 7}, {("orders", "id"): 9}
+        )
+        self.assertEqual(
+            [(asset.database_name, asset.meta_version) for asset in assets],
+            [("analytics", 7), ("other", 0), ("analytics", 9), ("other", 0)],
+        )
+
     async def test_business_aggregates_experience_catalog_only_records_and_enqueue_after_commit(
         self,
     ):

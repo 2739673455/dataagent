@@ -1,11 +1,13 @@
 """Assistant 消息、artifact 与流事件投影。"""
 
+from __future__ import annotations
+
 import json
 import mimetypes
 import re
 import uuid
 from datetime import UTC, datetime
-from typing import Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 from uuid import UUID
 
 from langchain_core.messages import (
@@ -30,9 +32,6 @@ from app.assistant.agents.middleware.user_message_context import (
 )
 from app.assistant.events import schemas as chat_schema
 from app.assistant.events.content import normalized_content_blocks, reasoning_text
-from app.assistant.execution.contracts import (
-    ConversationFileInspector,
-)
 from app.assistant.execution.types import (
     EVAL_DELEGATIONS_KEY,
     MESSAGE_CREATED_AT_KEY,
@@ -42,9 +41,12 @@ from app.assistant.execution.types import (
     SubagentStatusActivity,
     SubagentThinkingDeltaActivity,
 )
-from app.sandbox.exceptions import SandboxPathError
+from app.sandbox.errors import SandboxPathError
 from app.sandbox.paths import conversation_relative_path
 from app.shared.contracts.analysis import AgentType
+
+if TYPE_CHECKING:
+    from app.sandbox.manager import DockerSandboxManager
 
 _KNOWN_FINISH_REASONS = (
     "content_filter",
@@ -171,7 +173,7 @@ def _is_final_assistant_message(message: BaseMessage) -> bool:
 async def _project_final_artifact_directives(
     message: BaseMessage,
     schema: chat_schema.MessageResponse,
-    files: ConversationFileInspector,
+    files: DockerSandboxManager,
     user_id: int,
     conversation_id: UUID,
 ) -> chat_schema.MessageResponse:
@@ -254,7 +256,7 @@ async def _project_final_artifact_directives(
 
 async def langchain_message_to_schema_with_artifacts(
     message: BaseMessage,
-    files: ConversationFileInspector,
+    files: DockerSandboxManager,
     user_id: int,
     conversation_id: UUID,
 ) -> chat_schema.MessageResponse | None:

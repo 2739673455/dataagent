@@ -1,5 +1,9 @@
 """跨领域元数据变更用例组装，供 HTTP 和 Worker 共用。"""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from elasticsearch import AsyncElasticsearch
 
 from app.metadata.providers import build_meta_index_service
@@ -9,15 +13,17 @@ from app.metadata.services.catalog import MetaCatalogService
 from app.metadata.services.import_service import MetaImportService
 from app.metadata.task_scheduler import CeleryMetadataSemanticIndexScheduler
 from app.query.providers import build_query_experience_invalidation_service
-from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.workflows.metadata_changes import MetadataChangeWorkflow
+
+if TYPE_CHECKING:
+    from app.shared.clients.embedding_client_manager import RemoteEmbeddingClient
 
 
 def build_meta_import_service(
     meta_repo: MetaPGRepo,
     source_repo: SourceDorisRepo,
     es_client: AsyncElasticsearch,
-    embedding_client: EmbeddingClient,
+    embedding_client: RemoteEmbeddingClient,
 ) -> MetaImportService:
     """创建元数据批量导入服务。"""
     return MetaImportService(
@@ -37,7 +43,7 @@ def build_meta_catalog_service(
     meta_repo: MetaPGRepo,
     source_repo: SourceDorisRepo,
     es_client: AsyncElasticsearch,
-    embedding_client: EmbeddingClient,
+    embedding_client: RemoteEmbeddingClient,
 ) -> MetaCatalogService:
     """创建元数据目录管理服务。"""
     return MetaCatalogService(

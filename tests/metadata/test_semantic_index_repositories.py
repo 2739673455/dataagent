@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.metadata.errors import CorruptedSemanticIndexDocumentError
 from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
-from app.metadata.repositories.semantic_index import CorruptedSemanticIndexDocumentError
 
 
 @pytest.mark.parametrize("repo_class", [ColumnESRepo, MetricESRepo])

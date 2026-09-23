@@ -1,8 +1,10 @@
 """元数据批量导入服务。"""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from loguru import logger
@@ -24,8 +26,10 @@ from app.metadata.models.catalog import (
 from app.metadata.models.changes import MetadataChanges
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
-from app.metadata.services.contracts import MetadataChangeHandler
 from app.metadata.services.index import MetaIndexService
+
+if TYPE_CHECKING:
+    from app.workflows.metadata_changes import MetadataChangeWorkflow
 
 
 def parse_metadata_yaml(content: bytes) -> MetaConfig:
@@ -91,7 +95,7 @@ class MetaImportService:
         meta_repo: MetaPGRepo,
         source_repo: SourceDorisRepo,
         meta_index_service: MetaIndexService,
-        change_handler: MetadataChangeHandler,
+        change_handler: MetadataChangeWorkflow,
     ) -> None:
         """初始化元数据批量导入服务。"""
         self._meta_repo = meta_repo
