@@ -117,8 +117,6 @@ class QueryConfig(AppConfigModel):
     """只读分析查询配置。"""
 
     data_source: str = Field(min_length=1)
-    timeout_seconds: int = Field(gt=0)
-    memory_limit_bytes: int = Field(gt=0)
     batch_size: int = Field(gt=0)
     sample_rows: int = Field(ge=0, le=100)
 

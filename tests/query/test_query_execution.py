@@ -13,20 +13,21 @@ from langchain.tools import ToolRuntime
 
 from app.assistant.agents.explorer.tools.execute_sql import _execute_sql
 from app.identity import errors as auth_error
-from app.identity.models.doris import DorisAuthorizationSnapshot
 from app.identity.services.query_principal import (
     QueryPrincipalNotConfiguredError,
     QueryPrincipalService,
 )
-from app.query.errors import QueryRejectedError, QueryResultShapeError
+from app.query.errors import (
+    QueryExecutionTimeoutError,
+    QueryRejectedError,
+    QueryResultShapeError,
+)
 from app.query.models.execution import (
     AnalysisQueryResult,
     QueryBatch,
-    QueryExecutionLimits,
     QueryExecutionOptions,
-    QueryExecutionTimeoutError,
 )
-from app.query.models.validation import QueryValidationIssue, QueryValidationResult
+from app.query.models.validation import QueryValidationResult
 from app.query.repositories.doris import DorisQueryRepository
 from app.query.runtime import DatabaseQueryExecutionRuntime
 from app.query.services.execution_handler import QueryExecutionHandler
@@ -42,14 +43,12 @@ def rejected():
     return QueryValidationResult(
         valid=False,
         normalized_sql=None,
-        issues=[QueryValidationIssue(code="denied", message="不允许访问")],
+        issues=["不允许访问"],
     )
 
 
 def result():
-    return AnalysisQueryResult(
-        path="/result.csv", columns=[], row_count=0, time_range={}, sample=[]
-    )
+    return AnalysisQueryResult(path="/result.csv", columns=[], row_count=0, sample=[])
 
 
 def key():
@@ -82,11 +81,6 @@ class QueryPrincipalTest(unittest.IsolatedAsyncioTestCase):
                     await QueryPrincipalService(
                         repo,
                         cipher,
-                        MagicMock(
-                            observe_role=AsyncMock(
-                                side_effect=auth_error.RoleNotFoundError
-                            )
-                        ),
                     ).resolve(7)
 
                 cipher.decrypt.assert_not_called()
@@ -100,7 +94,7 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
         )
         self.service = MagicMock(execute=AsyncMock(return_value=result()))
         self.runtime = MagicMock(
-            resolve_principal=AsyncMock(return_value=(self.principal, object())),
+            resolve_principal=AsyncMock(return_value=self.principal),
             validate=AsyncMock(return_value=valid()),
             create_executor=AsyncMock(return_value=self.service),
         )
@@ -130,7 +124,7 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
         actual = await self.execute()
         self.assertIs(actual, self.service.execute.return_value)
         self.service.execute.assert_awaited_once_with(
-            self.key, self.runtime.validate.return_value, purpose="统计"
+            self.key, self.runtime.validate.return_value.normalized_sql, purpose="统计"
         )
 
     async def test_rejection_never_creates_executor(self):
@@ -202,14 +196,11 @@ class QueryExecutorTest(unittest.IsolatedAsyncioTestCase):
         self.service = AnalysisQueryService(
             MagicMock(stream=stream),
             self.store,
-            QueryExecutionLimits(
-                workload_group="readers", timeout_seconds=30, memory_limit_bytes=1024
-            ),
             QueryExecutionOptions(batch_size=2, sample_rows=1),
         )
 
     async def execute(self):
-        return await self.service.execute(self.key, valid(), purpose="统计")
+        return await self.service.execute(self.key, "SELECT 1 AS value", purpose="统计")
 
     async def test_multibatch_output_scope_and_bounded_sample(self):
         actual = await self.execute()
@@ -233,14 +224,13 @@ class QueryExecutorTest(unittest.IsolatedAsyncioTestCase):
         self.batches = [QueryBatch(("value",), ())]
         actual = await self.execute()
         self.assertEqual(actual.row_count, 0)
-        self.assertTrue(actual.columns[0].nullable)
+        self.assertEqual(actual.columns, ["value"])
         self.assertEqual(self.files[0][3], b"value\n")
 
     async def test_invalid_shapes_close_stream_without_upload(self):
         for batches in (
             [],
             [QueryBatch(("v", "V"), ())],
-            [QueryBatch(("v",), ((1, 2),))],
             [QueryBatch(("v",), ((1,),)), QueryBatch(("other",), ((2,),))],
         ):
             with self.subTest(batches=batches):
@@ -258,12 +248,6 @@ class QueryExecutorTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(raised.exception, error)
         self.assertTrue(self.closed)
         self.assertTrue(self.store.write_artifact.call_args.args[3].closed)
-
-    async def test_invalid_validation_does_not_execute(self):
-        with self.assertRaises(QueryRejectedError):
-            await self.service.execute(self.key, rejected(), purpose="统计")
-        self.assertFalse(self.closed)
-        self.store.write_artifact.assert_not_awaited()
 
 
 class DorisStreamTest(unittest.IsolatedAsyncioTestCase):
@@ -294,30 +278,17 @@ class DorisStreamTest(unittest.IsolatedAsyncioTestCase):
                 self.exited = True
 
         self.repo = DorisQueryRepository(MagicMock(connection=connection))
-        self.limits = QueryExecutionLimits(
-            workload_group="readers", timeout_seconds=17, memory_limit_bytes=2048
-        )
         self.options = QueryExecutionOptions(batch_size=2)
 
     async def consume(self):
         return [
-            batch
-            async for batch in self.repo.stream(
-                "SELECT ':literal'", self.limits, self.options
-            )
+            batch async for batch in self.repo.stream("SELECT ':literal'", self.options)
         ]
 
-    async def test_limits_and_cursor_cleanup(self):
+    async def test_query_uses_database_defaults_and_closes_cursor(self):
         batches = await self.consume()
         self.assertEqual(batches[0].rows, ((1,),))
-        self.assertEqual(
-            [str(c.args[0]) for c in self.connection.execute.call_args_list],
-            [
-                "SET workload_group = 'readers'",
-                "SET query_timeout = 17",
-                "SET exec_mem_limit = 2048",
-            ],
-        )
+        self.connection.execute.assert_not_awaited()
         self.assertEqual(self.connection.stream.call_args.args[0].compile().params, {})
         self.result.close.assert_awaited_once()
         self.assertTrue(self.exited)
@@ -340,7 +311,7 @@ class DorisStreamTest(unittest.IsolatedAsyncioTestCase):
 
 
 class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
-    async def test_identity_policy_share_reads_and_doris_runs_outside_pg_sessions(self):
+    async def test_role_credentials_are_used_and_doris_runs_outside_pg_sessions(self):
         active = set()
         events = []
 
@@ -379,14 +350,14 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
         clients = MagicMock(get_or_create=AsyncMock(return_value=MagicMock()))
         store = MagicMock(write_artifact=AsyncMock())
-        guard = MagicMock(check=AsyncMock(return_value=valid()))
+        guard = MagicMock(check=MagicMock(return_value=valid()))
 
         async def stream(*args):
             self.assertEqual(active, set())
             yield QueryBatch(("value",), ((1,),))
 
-        async def validate(*args):
-            self.assertEqual(active, {"meta"})
+        def validate(*args):
+            self.assertEqual(active, set())
             return valid()
 
         guard.check.side_effect = validate
@@ -396,44 +367,28 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 return_value=MagicMock(decrypt=lambda _: "password"),
             ),
             patch("app.query.runtime.IdentityPGRepo", return_value=repo),
-            patch(
-                "app.query.runtime.DorisRoleRepository",
-                return_value=MagicMock(
-                    read_authorization=AsyncMock(
-                        return_value=DorisAuthorizationSnapshot((), "same")
-                    )
-                ),
-            ),
             patch("app.query.runtime.QueryGuardService", return_value=guard),
             patch.object(DorisQueryRepository, "stream", stream),
         ):
             runtime = DatabaseQueryExecutionRuntime(
                 store,
                 manager("auth"),
-                manager("meta"),
                 clients,
-                MagicMock(),
             )
             actual = await QueryExecutionHandler(runtime).execute(
                 key(), "SELECT 1", purpose="统计"
             )
         self.assertEqual(actual.row_count, 1)
         repo.get_user_by_id.assert_awaited_once_with(7)
-        repo.lock_query_identity.assert_awaited_once_with("reader")
+        repo.get_query_identity.assert_awaited_once_with("reader")
         clients.get_or_create.assert_awaited_once_with(
             "reader", "query_reader", "password"
         )
-        policy = guard.check.call_args.args[1]
-        self.assertEqual(
-            (policy.role_name, policy.authorization_fingerprint),
-            ("reader", "same"),
-        )
+        guard.check.assert_called_once_with("SELECT 1")
         self.assertEqual(
             events,
             [
                 ("auth", "enter"),
                 ("auth", "exit"),
-                ("meta", "enter"),
-                ("meta", "exit"),
             ],
         )

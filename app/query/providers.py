@@ -2,28 +2,23 @@
 
 from app.query.runtime import DatabaseQueryExecutionRuntime
 from app.query.services.execution_handler import QueryExecutionHandler
-from app.query.services.executor import QueryArtifactStore
+from app.sandbox.manager import DockerSandboxManager
 from app.shared.clients.doris_client_manager import (
-    DorisClientManager,
     DorisQueryClientRegistry,
 )
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 
 
 def build_query_execution_handler(
-    artifact_store: QueryArtifactStore,
+    artifact_store: DockerSandboxManager,
     auth: PostgresClientManager,
-    meta: PostgresClientManager,
     query_clients: DorisQueryClientRegistry,
-    admin_doris: DorisClientManager,
 ) -> QueryExecutionHandler:
     """组装身份解析和受控执行完整查询用例。"""
     return QueryExecutionHandler(
         DatabaseQueryExecutionRuntime(
             artifact_store,
             auth,
-            meta,
             query_clients,
-            admin_doris,
         )
     )

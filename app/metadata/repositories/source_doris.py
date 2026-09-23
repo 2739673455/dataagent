@@ -26,21 +26,6 @@ class SourceDorisRepo:
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError(f"{name} 必须为正整数")
 
-    async def list_tables(self) -> list[str]:
-        """查询当前 Doris 数据库中全部物理表名。"""
-        result = await self._connection.execute(
-            text(
-                """
-                select table_name
-                from information_schema.tables
-                where table_schema = database()
-                  and table_type in ('BASE TABLE', 'VIEW')
-                order by table_name
-                """
-            )
-        )
-        return list(result.scalars().fetchall())
-
     async def table_exists(self, table_name: str) -> bool:
         """判断当前 Doris 数据库中是否存在指定表。"""
         result = await self._connection.execute(

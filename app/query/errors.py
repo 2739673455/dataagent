@@ -1,7 +1,10 @@
 """查询模块业务错误。"""
 
-from app.query.models.execution import QueryExecutionTimeoutError
 from app.query.models.validation import QueryValidationResult
+
+
+class QueryExecutionTimeoutError(RuntimeError):
+    """Doris 查询执行超时。"""
 
 
 class QueryRejectedError(ValueError):
@@ -10,7 +13,7 @@ class QueryRejectedError(ValueError):
     def __init__(self, result: QueryValidationResult) -> None:
         """保存完整校验结果并汇总拒绝原因。"""
         self.result = result
-        message = "; ".join(issue.message for issue in result.issues)
+        message = "; ".join(result.issues)
         super().__init__(message or "SQL 查询已被拒绝")
 
 

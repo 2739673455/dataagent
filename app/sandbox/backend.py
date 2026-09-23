@@ -675,10 +675,3 @@ class DockerSandboxBackend(BaseSandbox):
     ) -> list[FileDownloadResponse]:
         """异步批量下载当前会话文件。"""
         return await self._run_async(lambda: self.download_files(paths))
-
-    def is_file(self, path: str) -> bool:
-        """检查当前会话路径是否为文件。"""
-        resolved_path = self._resolve_path(path)
-        with self._operation():
-            result = self._execute_unlocked(f"test -f {shlex.quote(resolved_path)}")
-            return result.exit_code == 0

@@ -19,11 +19,3 @@ class MetadataNotFoundError(ProblemError):
     type = "metadata-not-found"
     title = "元数据不存在"
     status = HTTPStatus.NOT_FOUND
-
-
-class MetadataConflictError(ProblemError):
-    """表示元数据变更与现有状态冲突。"""
-
-    type = "metadata-conflict"
-    title = "元数据冲突"
-    status = HTTPStatus.CONFLICT

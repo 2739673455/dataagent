@@ -77,8 +77,6 @@ lifecycle: # 跨存储 Conversation 和用户资源清理策略。
 
 query: # Agent 只读 SQL 执行配置。
   data_source: doris # SQL 查询数据源标识。
-  timeout_seconds: 300 # 单条 SQL 执行超时，单位为秒。
-  memory_limit_bytes: 1073741824 # 单条 SQL 在 Doris 中的内存上限，单位为字节。
   batch_size: 100 # 服务端游标每批读取的结果行数。
   sample_rows: 5 # 查询结果摘要保留的样例行数。
 

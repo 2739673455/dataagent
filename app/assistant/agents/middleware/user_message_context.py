@@ -116,28 +116,6 @@ def _context_content_block(context: UserMessageContext) -> dict[str, str]:
     }
 
 
-def project_user_message_context(message: BaseMessage) -> BaseMessage:
-    """为单次模型请求生成带接收时间文本块的消息副本。"""
-    if not isinstance(message, HumanMessage):
-        return message
-    context = read_user_message_context(message)
-    if context is None:
-        return message
-
-    context_block = _context_content_block(context)
-    if isinstance(message.content, str):
-        content: list[str | dict[str, Any]] = [
-            context_block,
-            {"type": "text", "text": message.content},
-        ]
-    elif isinstance(message.content, list):
-        content = [context_block, *message.content]
-    else:
-        logger.warning(f"用户消息内容类型无效: message_id={message.id}")
-        return message
-    return message.model_copy(update={"content": cast(Any, content)})
-
-
 def _read_attachments(message: HumanMessage) -> UserMessageContext | None:
     """读取并校验用户消息中持久化的附件引用。"""
     context = read_user_message_context(message)

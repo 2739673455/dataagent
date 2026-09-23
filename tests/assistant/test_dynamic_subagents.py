@@ -682,33 +682,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
         self.assertEqual(first_state["structured_response"], first)
         self.assertEqual(second_state["structured_response"], second)
 
-    def test_specialist_definitions_assign_data_tools_only_to_explorer(self) -> None:
-        definitions = build_specialist_definitions(
-            [
-                recall_context,
-                execute_sql,
-            ],
-            [mcp_web_search],
-            recall=MagicMock(),
-        )
-
-        self.assertEqual(
-            definitions["explorer"].tool_names,
-            {
-                "recall_context",
-                "execute_sql",
-                "mcp_web_search",
-            },
-        )
-        self.assertEqual(
-            definitions["analyst"].tool_names,
-            set(),
-        )
-        self.assertEqual(
-            definitions["reviewer"].tool_names,
-            set(),
-        )
-
     def test_specialist_definitions_assign_analysis_skill_only_to_analyst(
         self,
     ) -> None:

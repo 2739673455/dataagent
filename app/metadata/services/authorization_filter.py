@@ -47,10 +47,6 @@ class MetadataAuthorizationFilter:
         """判断表或任一下级字段是否对用户可见。"""
         return self._policy.is_visible(self.identity(table_name))
 
-    def table_is_allowed(self, table_name: str) -> bool:
-        """判断表是否具备完整读取权限。"""
-        return self._policy.allows(self.identity(table_name))
-
     def column_is_allowed(self, table_name: str, column_name: str) -> bool:
         """判断字段是否具备完整读取权限。"""
         return self._policy.allows(self.identity(table_name, column_name))

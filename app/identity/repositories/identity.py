@@ -213,13 +213,6 @@ class IdentityPGRepo:
             .values(revoked_at=revoked_at)
         )
 
-    async def get_user_deletion_task(
-        self,
-        user_id: int,
-    ) -> UserDeletionTask | None:
-        """按用户读取注销任务。"""
-        return await self._session.get(UserDeletionTask, user_id)
-
     async def get_user_deletion_task_for_update(
         self,
         user_id: int,
