@@ -15,7 +15,6 @@ celery_app = Celery(
     include=[
         "app.assistant.tasks",
         "app.metadata.tasks",
-        "app.query.tasks",
         "app.workflows.tasks",
     ],
 )
@@ -63,10 +62,6 @@ celery_app.conf.update(
             "queue": "metadata-index",
             "routing_key": "metadata-index",
         },
-        "dataagent.query.*": {
-            "queue": "metadata-index",
-            "routing_key": "metadata-index",
-        },
         "dataagent.workflows.*": {
             "queue": "lifecycle",
             "routing_key": "lifecycle",
@@ -95,9 +90,5 @@ celery_app.conf.beat_schedule = {
     "user-deletion-recovery": {
         "task": "dataagent.workflows.dispatch_due_user_deletions",
         "schedule": cfg.lifecycle.user_deletion_schedule_seconds,
-    },
-    "query-experience-index-repair": {
-        "task": "dataagent.query.repair_indexes",
-        "schedule": cfg.task_queue.query_experience_repair_seconds,
     },
 }

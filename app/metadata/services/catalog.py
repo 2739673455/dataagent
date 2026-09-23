@@ -86,7 +86,7 @@ class MetaCatalogService:
                 )
             )
         async with self._meta_repo.session.begin():
-            changed = await self._meta_repo.upsert_table_info(
+            await self._meta_repo.upsert_table_info(
                 TableInfo(
                     name=t_name,
                     role=role,
@@ -94,10 +94,6 @@ class MetaCatalogService:
                     description=description,
                     value_index_cursor_column=value_index_cursor_column,
                 )
-            )
-        if changed:
-            await self._change_handler.handle(
-                MetadataChanges(invalidated_tables=(t_name,))
             )
 
     async def upsert_column_info(
@@ -172,7 +168,6 @@ class MetaCatalogService:
         if changed:
             tasks = await self._change_handler.handle(
                 MetadataChanges(
-                    invalidated_columns=((t_name, c_name),),
                     sync_columns=((t_name, c_name),),
                 )
             )
@@ -229,9 +224,6 @@ class MetaCatalogService:
         async with self._meta_repo.session.begin():
             await self._meta_repo.delete_column_infos(column_keys)
             await self._meta_repo.delete_table_infos(unique_table_names)
-        await self._change_handler.handle(
-            MetadataChanges(invalidated_tables=tuple(unique_table_names))
-        )
 
     async def delete_columns(self, column_keys: list[tuple[str, str]]) -> None:
         """删除多个字段元数据和索引。"""
@@ -246,9 +238,6 @@ class MetaCatalogService:
         await self._meta_index_service.delete_column_indexes(unique_keys)
         async with self._meta_repo.session.begin():
             await self._meta_repo.delete_column_infos(unique_keys)
-        await self._change_handler.handle(
-            MetadataChanges(invalidated_columns=tuple(unique_keys))
-        )
 
     async def delete_metrics(self, metric_names: list[str]) -> None:
         """删除多个指标元数据和索引。"""

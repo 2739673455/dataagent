@@ -53,7 +53,6 @@ class ESConfig(AppConfigModel):
     column_index: str = Field(min_length=1)
     metric_index: str = Field(min_length=1)
     value_index: str = Field(min_length=1)
-    query_experience_index: str = Field(min_length=1)
     embedding_size: int = Field(gt=0)
 
 
@@ -85,7 +84,6 @@ class TaskQueueConfig(AppConfigModel):
     worker_prefetch_multiplier: int = Field(gt=0)
     value_index_sync_time: time
     lifecycle_schedule_seconds: int = Field(gt=0)
-    query_experience_repair_seconds: int = Field(gt=0)
 
     @model_validator(mode="after")
     def validate_time_limits(self) -> "TaskQueueConfig":
@@ -134,7 +132,6 @@ class QueryConfig(AppConfigModel):
     memory_limit_bytes: int = Field(gt=0)
     batch_size: int = Field(gt=0)
     sample_rows: int = Field(ge=0, le=100)
-    query_experience_vector_score_threshold: float = Field(ge=0, le=1)
 
 
 class SandboxOwnershipConfig(AppConfigModel):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import UUID
 
 from app.metadata.models.recall import (
@@ -22,9 +22,6 @@ from app.metadata.models.search import (
 )
 from app.metadata.repositories.recall import SemanticRecallPGRepo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
-from app.shared.contracts.query_experience import QueryExperienceRecallResult
-
-_QUERY_EXPERIENCE_CACHE_TTL = timedelta(days=1)
 
 
 class SemanticQueriesNotFoundError(Exception):
@@ -288,17 +285,10 @@ class SemanticRecallContextService:
         self,
         repo: SemanticRecallPGRepo,
         authorization_filter: MetadataAuthorizationFilter,
-        *,
-        query_experience_role_name: str | None,
-        query_experience_authorization_fingerprint: str | None,
     ) -> None:
         """初始化召回管理服务。"""
         self._repo = repo
         self._authorization_filter = authorization_filter
-        self._query_experience_role_name = query_experience_role_name
-        self._query_experience_authorization_fingerprint = (
-            query_experience_authorization_fingerprint
-        )
 
     async def record(
         self,
@@ -307,8 +297,6 @@ class SemanticRecallContextService:
         query: str,
         request: SemanticResourceRecallRequest,
         response: SemanticResourceRecallResponse,
-        query_experiences: list[QueryExperienceRecallResult],
-        query_experiences_retrieved_at: datetime,
     ) -> SemanticRecallRecord:
         """将一次检索结果增量合入 query 的持续上下文。"""
         await self._repo.acquire_query_lock(user_id, conversation_id, query)
@@ -332,49 +320,12 @@ class SemanticRecallContextService:
             query=query,
             request=request,
             response=self._authorization_filter.filter_recall_response(response),
-            query_experiences=self._filter_query_experiences(query_experiences),
-            query_experiences_retrieved_at=query_experiences_retrieved_at,
-            query_experience_role_name=self._query_experience_role_name,
-            query_experience_authorization_fingerprint=(
-                self._query_experience_authorization_fingerprint
-            ),
             source_queries=(previous.source_queries if previous is not None else []),
             created_at=(previous.created_at if previous is not None else now),
             updated_at=now,
         )
         await self._repo.save(record)
         return record
-
-    async def get_fresh_query_experiences(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        query: str,
-        *,
-        now: datetime | None = None,
-    ) -> tuple[list[QueryExperienceRecallResult], datetime] | None:
-        """读取当前查询在一天有效期内的查询经验结果。"""
-        record = await self._repo.get_latest_by_query(
-            user_id,
-            conversation_id,
-            query,
-        )
-        if record is None:
-            return None
-        if (
-            record.query_experience_role_name != self._query_experience_role_name
-            or record.query_experience_authorization_fingerprint
-            != self._query_experience_authorization_fingerprint
-        ):
-            return None
-        retrieved_at = record.query_experiences_retrieved_at
-        if retrieved_at.tzinfo is None:
-            retrieved_at = retrieved_at.replace(tzinfo=UTC)
-        current_time = now or datetime.now(UTC)
-        if current_time - retrieved_at >= _QUERY_EXPERIENCE_CACHE_TTL:
-            return None
-        authorized = self._authorize_record(record)
-        return authorized.query_experiences, retrieved_at
 
     async def get(
         self,
@@ -487,14 +438,6 @@ class SemanticRecallContextService:
                 merged_id,
                 [target_record.response, source_record.response],
             ),
-            query_experiences=target_record.query_experiences,
-            query_experiences_retrieved_at=(
-                target_record.query_experiences_retrieved_at
-            ),
-            query_experience_role_name=target_record.query_experience_role_name,
-            query_experience_authorization_fingerprint=(
-                target_record.query_experience_authorization_fingerprint
-            ),
             source_queries=absorbed_queries,
             created_at=target_record.created_at,
             updated_at=now,
@@ -509,35 +452,10 @@ class SemanticRecallContextService:
     ) -> SemanticRecallRecord:
         """按当前策略生成召回记录的安全读取副本。"""
         response = self._authorization_filter.filter_recall_response(record.response)
-        query_experiences = (
-            self._filter_query_experiences(record.query_experiences)
-            if self._matches_query_experience_scope(record)
-            else []
-        )
         return record.model_copy(
             update={
                 "response": response,
-                "query_experiences": query_experiences,
             }
-        )
-
-    def _filter_query_experiences(
-        self,
-        experiences: list[QueryExperienceRecallResult],
-    ) -> list[QueryExperienceRecallResult]:
-        """移除包含当前用户不可见资产的查询经验。"""
-        return [
-            experience
-            for experience in experiences
-            if self._authorization_filter.query_experience_is_allowed(experience.assets)
-        ]
-
-    def _matches_query_experience_scope(self, record: SemanticRecallRecord) -> bool:
-        """判断持久化经验缓存是否属于当前角色授权指纹。"""
-        return (
-            record.query_experience_role_name == self._query_experience_role_name
-            and record.query_experience_authorization_fingerprint
-            == self._query_experience_authorization_fingerprint
         )
 
     async def delete(
@@ -586,7 +504,6 @@ class SemanticRecallContextService:
                                     "tables": [],
                                 }
                             ),
-                            "query_experiences": [],
                             "updated_at": datetime.now(UTC),
                         }
                     )
@@ -594,16 +511,7 @@ class SemanticRecallContextService:
                 continue
 
             response = _remove_semantic_resources(record.response, deletion)
-            removed_experience_ids = {item.id for item in deletion.query_experiences}
-            query_experiences = [
-                experience
-                for experience in record.query_experiences
-                if experience.id not in removed_experience_ids
-            ]
-            if (
-                response == record.response
-                and query_experiences == record.query_experiences
-            ):
+            if response == record.response:
                 results.append(record)
                 continue
             updated_record = record.model_copy(
@@ -612,7 +520,6 @@ class SemanticRecallContextService:
                     "response": response.model_copy(
                         update={"recall_id": f"recall_{uuid.uuid4().hex}"}
                     ),
-                    "query_experiences": query_experiences,
                     "updated_at": datetime.now(UTC),
                 }
             )

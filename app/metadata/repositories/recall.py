@@ -14,7 +14,6 @@ from app.metadata.models.search import (
     SemanticResourceRecallRequest,
     SemanticResourceRecallResponse,
 )
-from app.shared.contracts.query_experience import QueryExperienceRecallResult
 
 
 class SemanticRecallPGRepo:
@@ -42,17 +41,6 @@ class SemanticRecallPGRepo:
                 else None
             ),
             response=SemanticResourceRecallResponse.model_validate(semantic_resources),
-            query_experiences=[
-                QueryExperienceRecallResult.model_validate(item)
-                for item in response_payload["query_experiences"]
-            ],
-            query_experiences_retrieved_at=response_payload[
-                "query_experiences_retrieved_at"
-            ],
-            query_experience_role_name=response_payload["query_experience_role_name"],
-            query_experience_authorization_fingerprint=response_payload[
-                "query_experience_authorization_fingerprint"
-            ],
             source_queries=snapshot.source_queries,
             created_at=snapshot.created_at,
             updated_at=snapshot.updated_at,
@@ -75,17 +63,6 @@ class SemanticRecallPGRepo:
                     "semantic_resources": record.response.model_dump(
                         mode="json",
                         exclude={"recall_id"},
-                    ),
-                    "query_experiences": [
-                        item.model_dump(mode="json")
-                        for item in record.query_experiences
-                    ],
-                    "query_experiences_retrieved_at": (
-                        record.query_experiences_retrieved_at.isoformat()
-                    ),
-                    "query_experience_role_name": (record.query_experience_role_name),
-                    "query_experience_authorization_fingerprint": (
-                        record.query_experience_authorization_fingerprint
                     ),
                 },
                 source_queries=record.source_queries,

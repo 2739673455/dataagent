@@ -10,7 +10,6 @@ from app.assistant.task_scheduler import (
     enqueue_conversation_title,
 )
 from app.metadata.task_scheduler import SYNC_COLUMN_INDEXES_TASK, submit_metadata_task
-from app.query.task_scheduler import query_experience_index_scheduler
 from app.shared.tasks.celery_app import celery_app
 from app.workflows.task_scheduler import enqueue_user_deletion
 
@@ -27,7 +26,6 @@ _ID = UUID("550e8400-e29b-41d4-a716-446655440000")
             lambda: submit_metadata_task(SYNC_COLUMN_INDEXES_TASK, [["orders", "id"]]),
             "metadata-index",
         ),
-        (lambda: query_experience_index_scheduler.enqueue(_ID, 1), "metadata-index"),
     ],
 )
 def test_submission_uses_configured_route(submit, queue: str) -> None:
@@ -43,8 +41,9 @@ def test_submission_uses_configured_route(submit, queue: str) -> None:
     assert route["routing_key"] == queue
 
 
-def test_query_submission_keeps_compensation_behavior() -> None:
-    with patch.object(celery_app, "send_task", side_effect=RuntimeError("broker")):
-        assert not query_experience_index_scheduler.enqueue(_ID, 1)
-        with pytest.raises(RuntimeError, match="broker"):
-            enqueue_user_deletion(1)
+def test_user_deletion_submission_reports_broker_failure() -> None:
+    with (
+        patch.object(celery_app, "send_task", side_effect=RuntimeError("broker")),
+        pytest.raises(RuntimeError, match="broker"),
+    ):
+        enqueue_user_deletion(1)

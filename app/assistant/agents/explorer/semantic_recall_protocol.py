@@ -99,7 +99,7 @@ def parse_semantic_recall_references(
 def semantic_recall_payload(
     record: SemanticRecallRecord,
 ) -> dict[str, Any]:
-    """投影模型执行 SQL 所需的元数据和历史经验。"""
+    """投影模型执行 SQL 所需的元数据。"""
     response = record.response
     values_by_column: dict[tuple[str, str], list[str]] = {}
     for item in response.values:
@@ -142,23 +142,6 @@ def semantic_recall_payload(
             }
             for item in response.metrics
         },
-        "query_experiences": [
-            {
-                "id": str(experience.id),
-                "purpose": experience.purpose,
-                "sql_template": experience.sql_template,
-                "assets": [
-                    {
-                        "kind": asset.kind,
-                        "database": asset.database,
-                        "table": asset.table,
-                        "column": asset.column,
-                    }
-                    for asset in experience.assets
-                ],
-            }
-            for experience in record.query_experiences
-        ],
         "created_at": record.created_at.isoformat(),
         "updated_at": record.updated_at.isoformat(),
     }

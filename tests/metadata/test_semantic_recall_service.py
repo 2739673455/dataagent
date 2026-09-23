@@ -4,7 +4,6 @@ import json
 import unittest
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -55,11 +54,6 @@ from app.metadata.services.authorization_filter import MetadataAuthorizationFilt
 from app.metadata.services.recall import (
     SemanticQueriesNotFoundError,
     SemanticRecallContextService,
-)
-from app.shared.contracts.query_experience import (
-    QueryAssetSnapshot,
-    QueryExperienceRecall,
-    QueryExperienceRecallResult,
 )
 
 _FULL_DATABASE_GRANT = AssetIdentity("doris", "analytics")
@@ -199,28 +193,6 @@ async def object_context(value: Any) -> AsyncGenerator[Any]:
     yield value
 
 
-def build_query_experience(
-    *,
-    table: str = "orders",
-    column: str = "amount",
-) -> QueryExperienceRecallResult:
-    """构造紧凑查询经验结果。"""
-    return QueryExperienceRecallResult(
-        id=uuid4(),
-        purpose="查询订单收入",
-        sql_template=f"SELECT {column} FROM {table}",
-        assets=[
-            QueryAssetSnapshot(
-                kind="column",
-                database="analytics",
-                table=table,
-                column=column,
-                meta_version=1,
-            )
-        ],
-    )
-
-
 def build_request(
     query: str,
     resource_types: list[SemanticResourceType],
@@ -328,8 +300,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
         self.service = SemanticRecallContextService(
             recall_repo(self.repo),
             build_authorization_filter(_FULL_DATABASE_GRANT),
-            query_experience_role_name=None,
-            query_experience_authorization_fingerprint=None,
         )
         self.user_id = 7
         self.conversation_id = uuid4()
@@ -347,8 +317,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             query,
             build_request(query, ["column"]),
             build_response(recall_id, query, score=score, reason=reason),
-            [],
-            datetime.now(UTC),
         )
 
     async def test_batch_expansion_preserves_order_duplicates_missing_and_current_permissions(
@@ -360,8 +328,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
         restricted = SemanticRecallContextService(
             recall_repo(self.repo),
             build_authorization_filter(),
-            query_experience_role_name=None,
-            query_experience_authorization_fingerprint=None,
         )
         messages = [
             ToolMessage(
@@ -515,8 +481,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
         revoked = SemanticRecallContextService(
             recall_repo(self.repo),
             build_authorization_filter(),
-            query_experience_role_name=None,
-            query_experience_authorization_fingerprint=None,
         )
         request = ModelRequest(
             model=GenericFakeChatModel(messages=iter([AIMessage(content="ok")])),
@@ -558,7 +522,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             payload = json.loads(content)
             self.assertEqual(payload["recalls"][0]["tables"], {})
             self.assertEqual(payload["recalls"][0]["metrics"], {})
-            self.assertEqual(payload["recalls"][0]["query_experiences"], [])
             self.assertEqual(payload["recalls"][1], {"status": "deleted", "query": "B"})
         self.assertEqual(message.content, original)
         await self.repo.delete_by_query(self.user_id, self.conversation_id, "A")
@@ -677,16 +640,13 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             await self.repo.get_latest_by_query(self.user_id, uuid4(), "本月收入")
         )
 
-    async def test_postgres_repo_round_trips_combined_recall_payload(self) -> None:
-        experience = build_query_experience()
+    async def test_postgres_repo_round_trips_recall_payload(self) -> None:
         record = await self.service.record(
             self.user_id,
             self.conversation_id,
             "本月收入",
             build_request("本月收入", ["column"]),
             build_response("recall_a", "本月收入", score=0.8, reason="收入"),
-            [experience],
-            datetime.now(UTC),
         )
         session = MagicMock()
         session.flush = AsyncMock()
@@ -699,20 +659,11 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             set(snapshot.request),
             {"terms", "resource_types", "limit_per_type"},
         )
-        self.assertEqual(
-            set(snapshot.response),
-            {
-                "semantic_resources",
-                "query_experiences",
-                "query_experiences_retrieved_at",
-                "query_experience_role_name",
-                "query_experience_authorization_fingerprint",
-            },
-        )
+        self.assertEqual(set(snapshot.response), {"semantic_resources"})
         self.assertNotIn("recall_id", snapshot.response["semantic_resources"])
         self.assertEqual(SemanticRecallPGRepo._to_record(snapshot), record)
         invalid_payload = record.model_dump()
-        invalid_payload["query_experiences_retrieved_at"] = None
+        invalid_payload["updated_at"] = None
         with self.assertRaises(ValidationError):
             SemanticRecallRecord.model_validate(invalid_payload)
 
@@ -760,8 +711,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             "本月收入",
             build_request("本月收入", ["column"]),
             failed,
-            [],
-            datetime.now(UTC),
         )
 
         refreshed = await self.service.record(
@@ -770,8 +719,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             "本月收入",
             build_request("本月收入", ["column"]),
             build_response("recall_b", "本月收入", score=0.8, reason="second"),
-            [],
-            datetime.now(UTC),
         )
 
         self.assertEqual(refreshed.response.status, "success")
@@ -793,8 +740,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             "收入分析",
             build_request("本月收入", ["column"]),
             failed,
-            [],
-            datetime.now(UTC),
         )
 
         refreshed = await self.service.record(
@@ -803,114 +748,18 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             "收入分析",
             build_request("GMV", ["column"]),
             build_response("recall_b", "GMV", score=0.8, reason="second"),
-            [],
-            datetime.now(UTC),
         )
 
         self.assertEqual(refreshed.response.status, "partial")
         self.assertEqual(refreshed.response.failures, failed.failures)
 
-    async def test_query_experience_cache_expires_at_one_day(self) -> None:
-        retrieved_at = datetime(2026, 8, 26, 10, 0, tzinfo=UTC)
-        experience = build_query_experience()
-        await self.service.record(
-            self.user_id,
-            self.conversation_id,
-            "本月收入",
-            build_request("本月收入", ["column"]),
-            build_response("recall_a", "本月收入", score=0.8, reason="收入"),
-            [experience],
-            retrieved_at,
-        )
-
-        fresh = await self.service.get_fresh_query_experiences(
-            self.user_id,
-            self.conversation_id,
-            "本月收入",
-            now=retrieved_at + timedelta(days=1) - timedelta(microseconds=1),
-        )
-        expired = await self.service.get_fresh_query_experiences(
-            self.user_id,
-            self.conversation_id,
-            "本月收入",
-            now=retrieved_at + timedelta(days=1),
-        )
-
-        self.assertEqual(fresh, ([experience], retrieved_at))
-        self.assertIsNone(expired)
-
-    async def test_query_experience_cache_requires_matching_role_and_fingerprint(
-        self,
-    ) -> None:
-        role_fingerprint = "a" * 64
-        scoped = SemanticRecallContextService(
-            recall_repo(self.repo),
-            build_authorization_filter(_FULL_DATABASE_GRANT),
-            query_experience_role_name="analyst",
-            query_experience_authorization_fingerprint=role_fingerprint,
-        )
-        experience = build_query_experience()
-        retrieved_at = datetime.now(UTC)
-        await scoped.record(
-            self.user_id,
-            self.conversation_id,
-            "本月收入",
-            build_request("本月收入", ["column"]),
-            build_response("recall_a", "本月收入", score=0.8, reason="收入"),
-            [experience],
-            retrieved_at,
-        )
-
-        fresh = await scoped.get_fresh_query_experiences(
-            self.user_id,
-            self.conversation_id,
-            "本月收入",
-        )
-        changed_role_service = SemanticRecallContextService(
-            recall_repo(self.repo),
-            build_authorization_filter(_FULL_DATABASE_GRANT),
-            query_experience_role_name="finance",
-            query_experience_authorization_fingerprint=role_fingerprint,
-        )
-        changed_role = await changed_role_service.get_fresh_query_experiences(
-            self.user_id,
-            self.conversation_id,
-            "本月收入",
-        )
-        changed_fingerprint_service = SemanticRecallContextService(
-            recall_repo(self.repo),
-            build_authorization_filter(_FULL_DATABASE_GRANT),
-            query_experience_role_name="analyst",
-            query_experience_authorization_fingerprint="b" * 64,
-        )
-        changed_fingerprint = (
-            await changed_fingerprint_service.get_fresh_query_experiences(
-                self.user_id,
-                self.conversation_id,
-                "本月收入",
-            )
-        )
-
-        self.assertEqual(fresh, ([experience], retrieved_at))
-        self.assertIsNone(changed_role)
-        self.assertIsNone(changed_fingerprint)
-        restored = await scoped.get_fresh_query_experiences(
-            self.user_id, self.conversation_id, "本月收入"
-        )
-        self.assertEqual(restored, fresh)
-
-    async def test_merge_absorbs_resources_without_source_experiences(self) -> None:
-        target_experience = build_query_experience(column="amount")
-        source_experience = build_query_experience(column="status")
-        target_retrieved_at = datetime.now(UTC)
+    async def test_merge_absorbs_resources(self) -> None:
         await self.service.record(
             self.user_id,
             self.conversation_id,
             "本月收入",
             build_request("本月收入", ["column"]),
             build_response("recall_a", "本月收入", score=0.4, reason="query_a"),
-            [target_experience],
-            target_retrieved_at,
         )
         source_response = build_response(
             "recall_b",
@@ -927,8 +776,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             "订单金额",
             build_request("订单金额", ["column"]),
             source_response,
-            [source_experience],
-            datetime.now(UTC),
         )
 
         merged = await self.service.merge(
@@ -951,11 +798,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             [item.name for item in merged.response.columns],
             ["status", "amount"],
         )
-        self.assertEqual(merged.query_experiences, [target_experience])
-        self.assertEqual(
-            merged.query_experiences_retrieved_at,
-            target_retrieved_at,
-        )
         self.assertIsNotNone(
             await self.repo.get_latest_by_query(
                 self.user_id,
@@ -977,12 +819,9 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             "本月收入",
             build_request("本月收入", ["column"]),
             build_response("recall_c", "本月收入", score=0.6, reason="query_c"),
-            [target_experience],
-            target_retrieved_at,
         )
 
         self.assertEqual(continued.source_queries, ["订单金额"])
-        self.assertEqual(continued.query_experiences, [target_experience])
         self.assertEqual(
             [item.name for item in continued.response.columns],
             ["status", "amount"],
@@ -1015,8 +854,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             "收入",
             build_request("收入", ["column", "metric"]),
             previous,
-            [],
-            datetime.now(UTC),
         )
         record = await self.service.record(
             self.user_id,
@@ -1024,8 +861,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             "收入",
             build_request("收入", ["column", "metric"]),
             latest,
-            [],
-            datetime.now(UTC),
         )
 
         metric = record.response.metrics[0]
@@ -1077,7 +912,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(final_record.response.columns, [])
         self.assertEqual(final_record.response.values, [])
         self.assertEqual(final_record.response.tables, [])
-        self.assertEqual(final_record.query_experiences, [])
         self.assertIsNone(
             await self.repo.get_latest_by_query(
                 self.user_id,
@@ -1090,7 +924,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_delete_resources_updates_query_context(self) -> None:
-        experience = build_query_experience()
         response = build_response("recall_a", "本月收入", score=0.8, reason="收入")
         response.values[0].c_name = "amount"
         await self.service.record(
@@ -1099,8 +932,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             "本月收入",
             build_request("本月收入", ["column", "metric", "value"]),
             response,
-            [experience],
-            datetime.now(UTC),
         )
 
         [updated_record] = await self.service.delete(
@@ -1114,7 +945,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
                             "orders": {"columns": {"amount": {"values": ["paid"]}}}
                         },
                         "metrics": {"revenue": {}},
-                        "query_experiences": [{"id": experience.id}],
                     }
                 )
             ],
@@ -1124,7 +954,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated_record.response.values, [])
         self.assertEqual(len(updated_record.response.columns), 1)
         self.assertEqual(len(updated_record.response.tables), 1)
-        self.assertEqual(updated_record.query_experiences, [])
 
         [cleared_record] = await self.service.delete(
             self.user_id,
@@ -1168,8 +997,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
                 score=0.5,
                 reason="other",
             ),
-            [],
-            datetime.now(UTC),
         )
 
         await self.repo.delete_all(self.user_id, self.conversation_id)
@@ -1214,8 +1041,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             "本月收入",
             build_request("本月收入", ["column"]),
             first,
-            [],
-            datetime.now(UTC),
         )
         await self.service.record(
             self.user_id,
@@ -1223,8 +1048,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             "订单状态",
             build_request("订单状态", ["value"]),
             second,
-            [],
-            datetime.now(UTC),
         )
         restricted = SemanticRecallContextService(
             recall_repo(self.repo),
@@ -1236,8 +1059,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
                     "status",
                 )
             ),
-            query_experience_role_name=None,
-            query_experience_authorization_fingerprint=None,
         )
 
         recalled = await restricted.get(
@@ -1285,6 +1106,39 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
 
 
 class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
+    async def test_recall_context_searches_and_persists_semantic_resources(self):
+        from app.assistant.agents.explorer.semantic_recall_handler import (
+            recall_context as handle_recall,
+        )
+
+        repo = InMemorySemanticRecallRepo()
+        conversation_id = uuid4()
+        policy = AssetAccessPolicy(user_id=7, grants=frozenset({_FULL_DATABASE_GRANT}))
+        service = SemanticRecallContextService(
+            recall_repo(repo), build_authorization_filter(_FULL_DATABASE_GRANT)
+        )
+        response = build_response("recall_a", "订单金额", score=0.8, reason="金额")
+        runtime = MagicMock(spec=SemanticRecallRuntime)
+        runtime.search = AsyncMock(return_value=(policy, response))
+        runtime.context_service.side_effect = lambda *args, **kwargs: object_context(
+            service
+        )
+        result = await handle_recall(
+            {"configurable": {"user_id": 7, "conversation_id": str(conversation_id)}},
+            "本月收入",
+            ["column"],
+            ["订单金额"],
+            5,
+            recall=runtime,
+        )
+        self.assertEqual(result, {"status": "stored", "query": "本月收入"})
+        runtime.search.assert_awaited_once()
+        search_request = runtime.search.call_args.args[1]
+        self.assertEqual(search_request.terms, ["订单金额"])
+        runtime.context_service.assert_called_once_with(7, policy=policy)
+        stored = await service.get(7, conversation_id, "本月收入")
+        self.assertEqual(stored.response.columns[0].name, "amount")
+
     """验证模型可见参数和工具运行时注入。"""
 
     def test_runtime_is_hidden_from_tool_call_schema(self) -> None:
@@ -1385,7 +1239,6 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         service = MagicMock()
         conversation_id = uuid4()
-        experience_id = uuid4()
         service.delete = AsyncMock(return_value=[])
         runtime = SimpleNamespace(
             config={
@@ -1415,7 +1268,6 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
                             "orders": {"columns": {"status": {"values": ["paid"]}}},
                         },
                         "metrics": {"revenue": {}},
-                        "query_experiences": [{"id": str(experience_id)}],
                     }
                 ],
             )
@@ -1428,7 +1280,6 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         status_deletion = columns["status"]
         self.assertEqual(status_deletion.values, ["paid"])
         self.assertEqual(set(deletion.metrics), {"revenue"})
-        self.assertEqual(deletion.query_experiences[0].id, experience_id)
         self.assertEqual(
             result,
             {
@@ -1476,8 +1327,6 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         service = SemanticRecallContextService(
             recall_repo(repo),
             build_authorization_filter(_FULL_DATABASE_GRANT),
-            query_experience_role_name=None,
-            query_experience_authorization_fingerprint=None,
         )
         conversation_id = uuid4()
         for query, recall_id in (("订单金额", "recall_a"), ("本月收入", "recall_b")):
@@ -1487,8 +1336,6 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
                 query,
                 build_request(query, ["column"]),
                 build_response(recall_id, query, score=0.8, reason=query),
-                [],
-                datetime.now(UTC),
             )
         merged = await service.merge(7, conversation_id, "本月收入", "订单金额")
 
@@ -1506,14 +1353,12 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("source_queries", expanded)
 
-    async def test_model_payload_only_contains_metadata_and_query_experiences(
+    async def test_model_payload_only_contains_metadata(
         self,
     ) -> None:
         service = SemanticRecallContextService(
             recall_repo(InMemorySemanticRecallRepo()),
             build_authorization_filter(_FULL_DATABASE_GRANT),
-            query_experience_role_name=None,
-            query_experience_authorization_fingerprint=None,
         )
         response = build_response("recall_a", "本月收入", score=0.8, reason="收入")
         response.values[0].c_name = "amount"
@@ -1523,33 +1368,12 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             "本月收入",
             build_request("本月收入", ["column"]),
             response,
-            [build_query_experience()],
-            datetime.now(UTC),
         )
 
         payload = semantic_recall_payload(record)
 
         self.assertEqual(
-            set(payload),
-            {
-                "query",
-                "created_at",
-                "updated_at",
-                "metrics",
-                "tables",
-                "query_experiences",
-            },
-        )
-        self.assertEqual(
-            list(payload),
-            [
-                "query",
-                "tables",
-                "metrics",
-                "query_experiences",
-                "created_at",
-                "updated_at",
-            ],
+            set(payload), {"query", "tables", "metrics", "created_at", "updated_at"}
         )
         self.assertEqual(payload["query"], "本月收入")
         self.assertEqual(payload["created_at"], record.created_at.isoformat())
@@ -1578,14 +1402,6 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             payload["tables"]["orders"]["columns"]["amount"]["values"],
             ["paid"],
         )
-        self.assertEqual(
-            set(payload["query_experiences"][0]),
-            {"id", "purpose", "sql_template", "assets"},
-        )
-        self.assertEqual(
-            set(payload["query_experiences"][0]["assets"][0]),
-            {"kind", "database", "table", "column"},
-        )
 
         def keys(value: object) -> set[str]:
             if isinstance(value, dict):
@@ -1610,210 +1426,9 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             "failures",
             "warnings",
             "truncated",
-            "query_experiences_retrieved_at",
         }
         self.assertTrue(forbidden_fields.isdisjoint(keys(payload)))
         self.assertEqual(record.response.columns[0].meta_version, 1)
-        self.assertEqual(record.query_experiences[0].assets[0].meta_version, 1)
-
-    async def test_recall_context_uses_query_for_experiences_and_terms_for_resources(
-        self,
-    ) -> None:
-        repo = InMemorySemanticRecallRepo()
-        conversation_id = uuid4()
-        policy = AssetAccessPolicy(
-            user_id=7,
-            role_name="analyst",
-            authorization_fingerprint="a" * 64,
-            grants=frozenset({_CONFIGURED_DATABASE_GRANT}),
-        )
-        response = build_response(
-            "recall_a",
-            "收入",
-            score=0.8,
-            reason="收入",
-        )
-        response.terms = ["收入", "订单金额"]
-        experience = build_query_experience()
-        resource_recall_service = MagicMock()
-        second_response = response.model_copy(
-            deep=True,
-            update={"recall_id": "recall_b", "terms": ["订单状态"]},
-        )
-        second_response.columns[0].name = "status"
-        second_response.columns[0].examples = ["paid"]
-        third_response = response.model_copy(
-            deep=True,
-            update={"recall_id": "recall_c", "terms": ["今日收入"]},
-        )
-        resource_recall_service.recall = AsyncMock(
-            side_effect=[
-                response,
-                second_response,
-                third_response,
-                RuntimeError("resource recall down"),
-            ]
-        )
-        experience_service = MagicMock()
-        experience_service.recall = AsyncMock(
-            side_effect=[
-                QueryExperienceRecall(status="success", results=[experience]),
-                RuntimeError("experience recall down"),
-            ]
-        )
-        runtime = SimpleNamespace(
-            config={
-                "configurable": {
-                    "user_id": 7,
-                    "conversation_id": str(conversation_id),
-                }
-            }
-        )
-
-        recall_runtime = SemanticRecallRuntime(
-            MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()
-        )
-        recall_tool = create_semantic_recall_tools(recall_runtime)[0]
-        context_service = SemanticRecallContextService(
-            recall_repo(repo),
-            MetadataAuthorizationFilter(policy, "doris", "ecommerce"),
-            query_experience_role_name=policy.role_name,
-            query_experience_authorization_fingerprint=policy.authorization_fingerprint,
-        )
-        with (
-            patch(
-                "app.assistant.agents.explorer.recall_runtime.load_asset_policy",
-                new=AsyncMock(return_value=policy),
-            ),
-            patch(
-                "app.assistant.agents.explorer.recall_runtime.build_semantic_resource_recall_service",
-                new=AsyncMock(return_value=resource_recall_service),
-            ),
-            patch(
-                "app.assistant.agents.explorer.recall_runtime.build_query_experience_recall_service",
-                return_value=experience_service,
-            ),
-            patch(
-                "app.assistant.agents.explorer.recall_runtime.semantic_recall_context",
-                side_effect=lambda *args: object_context(context_service),
-            ),
-            patch.object(
-                recall_runtime.meta,
-                "session",
-                side_effect=lambda: object_context(MagicMock()),
-            ),
-        ):
-            first_result = await cast(Any, recall_tool).coroutine(
-                runtime=runtime,
-                resource_types=["column", "metric"],
-                query="统计本月订单收入",
-                terms=["收入", "订单金额"],
-            )
-            first_stored = await repo.get_latest_by_query(
-                7,
-                conversation_id,
-                "统计本月订单收入",
-            )
-            second_result = await cast(Any, recall_tool).coroutine(
-                runtime=runtime,
-                resource_types=["column", "metric"],
-                query="统计本月订单收入",
-                terms=["订单状态"],
-            )
-            third_result = await cast(Any, recall_tool).coroutine(
-                runtime=runtime,
-                resource_types=["column"],
-                query="统计今日订单收入",
-                terms=["今日收入"],
-            )
-            resource_error = await cast(Any, recall_tool).coroutine(
-                runtime=runtime,
-                resource_types=["column"],
-                query="统计明日订单收入",
-                terms=["明日收入"],
-            )
-
-        resource_requests = [
-            call.args[0] for call in resource_recall_service.recall.await_args_list
-        ]
-        self.assertTrue(all(not hasattr(item, "query") for item in resource_requests))
-        self.assertEqual(
-            [item.terms for item in resource_requests],
-            [
-                ["收入", "订单金额"],
-                ["订单状态"],
-                ["今日收入"],
-                ["明日收入"],
-            ],
-        )
-        self.assertEqual(
-            [
-                call.kwargs["query"]
-                for call in experience_service.recall.await_args_list
-            ],
-            ["统计本月订单收入", "统计今日订单收入"],
-        )
-        self.assertTrue(
-            all(
-                call.kwargs["role_name"] == "analyst"
-                and call.kwargs["authorization_fingerprint"]
-                == policy.authorization_fingerprint
-                for call in experience_service.recall.await_args_list
-            )
-        )
-        self.assertEqual(
-            first_result,
-            {"status": "stored", "query": "统计本月订单收入"},
-        )
-        self.assertEqual(
-            second_result,
-            {"status": "stored", "query": "统计本月订单收入"},
-        )
-        self.assertEqual(
-            third_result,
-            {"status": "stored", "query": "统计今日订单收入"},
-        )
-        self.assertEqual(
-            resource_error,
-            {
-                "status": "error",
-                "message": "语义资源召回失败",
-                "details": [{"type": "RuntimeError", "msg": "resource recall down"}],
-            },
-        )
-        second_stored = await repo.get_latest_by_query(
-            7,
-            conversation_id,
-            "统计本月订单收入",
-        )
-        assert first_stored is not None
-        assert second_stored is not None
-        assert second_stored.request is not None
-        self.assertEqual(second_stored.query, "统计本月订单收入")
-        self.assertEqual(
-            second_stored.response.terms,
-            ["收入", "订单金额", "订单状态"],
-        )
-        self.assertEqual(
-            [item.name for item in second_stored.response.columns],
-            ["amount", "status"],
-        )
-        self.assertEqual(second_stored.query_experiences, [experience])
-        self.assertEqual(
-            second_stored.query_experiences_retrieved_at,
-            first_stored.query_experiences_retrieved_at,
-        )
-        third_stored = await repo.get_latest_by_query(
-            7,
-            conversation_id,
-            "统计今日订单收入",
-        )
-        assert third_stored is not None
-        self.assertEqual(third_stored.query_experiences, [])
-        self.assertEqual(
-            third_stored.query_experiences_retrieved_at,
-            datetime.min.replace(tzinfo=UTC),
-        )
 
     async def test_tool_message_persists_reference_and_model_sees_authorized_record(
         self,
@@ -1822,11 +1437,8 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         service_with_full_database_grant = SemanticRecallContextService(
             recall_repo(repo),
             build_authorization_filter(_FULL_DATABASE_GRANT),
-            query_experience_role_name=None,
-            query_experience_authorization_fingerprint=None,
         )
         conversation_id = uuid4()
-        experience = build_query_experience(column="status")
         response = build_response("recall_a", "revenue", score=0.8, reason="query")
         response.columns.append(
             response.columns[0].model_copy(
@@ -1845,8 +1457,6 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             "revenue",
             build_request("revenue", ["column"]),
             response,
-            [experience],
-            datetime.now(UTC),
         )
         reference_content = json.dumps(
             semantic_recall_reference(record),
@@ -1879,8 +1489,6 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             build_authorization_filter(
                 AssetIdentity("doris", "analytics", "orders", "status")
             ),
-            query_experience_role_name=None,
-            query_experience_authorization_fingerprint=None,
         )
         seen_messages: list[object] = []
 
@@ -1915,16 +1523,13 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(current_reference.content, reference_content)
         self.assertNotIn("recall_id", reference_content)
         self.assertNotIn("amount", reference_content)
-        self.assertNotIn("SELECT status", reference_content)
         self.assertEqual(getattr(seen_messages[0], "content", None), reference_content)
         expanded_content = str(getattr(seen_messages[2], "content", ""))
         self.assertNotIn("recall_id", expanded_content)
         self.assertNotIn("amount", expanded_content)
         self.assertIn("paid", expanded_content)
-        self.assertIn("SELECT status", expanded_content)
         display_content = str(getattr(display_messages[0], "content", ""))
         self.assertIn("paid", display_content)
-        self.assertIn("SELECT status", display_content)
 
     async def test_missing_reference_does_not_hide_successful_current_turn_recall(
         self,
@@ -1934,8 +1539,6 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         service = SemanticRecallContextService(
             recall_repo(repo),
             build_authorization_filter(_FULL_DATABASE_GRANT),
-            query_experience_role_name=None,
-            query_experience_authorization_fingerprint=None,
         )
         current_record = await service.record(
             7,
@@ -1943,8 +1546,6 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             "当前有效问题",
             build_request("收入", ["column"]),
             build_response("recall_current", "收入", score=0.8, reason="收入"),
-            [],
-            datetime.now(UTC),
         )
         missing_reference = ToolMessage(
             tool_call_id="missing_call",
@@ -2016,8 +1617,6 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         service = SemanticRecallContextService(
             recall_repo(repo),
             build_authorization_filter(_FULL_DATABASE_GRANT),
-            query_experience_role_name=None,
-            query_experience_authorization_fingerprint=None,
         )
         conversation_id = uuid4()
         await service.record(
@@ -2026,8 +1625,6 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             "revenue",
             build_request("revenue", ["column"]),
             build_response("recall_a", "revenue", score=0.8, reason="query"),
-            [],
-            datetime.now(UTC),
         )
         builder = StateGraph(MessagesState)
         builder.add_node("tools", ToolNode([get_recall]))
@@ -2086,8 +1683,6 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         service = SemanticRecallContextService(
             recall_repo(repo),
             build_authorization_filter(_FULL_DATABASE_GRANT),
-            query_experience_role_name=None,
-            query_experience_authorization_fingerprint=None,
         )
         with (
             patch.object(

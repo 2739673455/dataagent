@@ -20,7 +20,7 @@ auth_postgresql: # 用户、令牌、Doris 查询身份、权限指纹和注销�
   password: ${oc.env:POSTGRES_PASSWORD}
   database: auth
 
-meta_postgresql: # 元数据、查询经验、执行记录和召回快照数据库。
+meta_postgresql: # 元数据、执行记录和召回快照数据库。
   host: 127.0.0.1
   port: 5432
   user: atguigu
@@ -43,7 +43,6 @@ elasticsearch: # 语义检索使用的 Elasticsearch 连接和索引名称。
   column_index: data-agent-column # 元数据字段语义索引。
   metric_index: data-agent-metric # 指标语义索引。
   value_index: data-agent-value # 字段取值语义索引。
-  query_experience_index: data-agent-query-experience # 查询经验语义索引。
   embedding_size: 1024 # 索引向量维度，必须与嵌入模型输出一致。
 
 embedding: # 文本向量化服务配置。
@@ -64,7 +63,6 @@ task_queue: # Celery 队列、任务生命周期和定时调度配置。
   worker_prefetch_multiplier: 1 # 每个 Worker Process 预取的任务数量。
   value_index_sync_time: "08:00" # 每日取值索引调度时间，使用本地 HH:MM。
   lifecycle_schedule_seconds: 300 # 草稿和 Conversation 生命周期扫描间隔，单位为秒。
-  query_experience_repair_seconds: 300 # 查询经验索引修复调度间隔，单位为秒。
 
 auth: # 登录令牌和密码策略。
   rate_limit_redis_url: redis://127.0.0.1:6379/3 # 跨 API Worker 共享认证限流计数。
@@ -81,13 +79,12 @@ lifecycle: # 跨存储 Conversation 和用户资源清理策略。
   user_deletion_schedule_seconds: 300 # 注销漏投及失败任务的补偿扫描周期，单位为秒。
   user_deletion_retry_seconds: 60 # 注销失败后到下一次可领取的最短等待时间，单位为秒。
 
-query: # Agent 只读 SQL 执行和查询经验召回配置。
+query: # Agent 只读 SQL 执行配置。
   data_source: doris # SQL 查询数据源标识。
   timeout_seconds: 300 # 单条 SQL 执行超时，单位为秒。
   memory_limit_bytes: 1073741824 # 单条 SQL 在 Doris 中的内存上限，单位为字节。
   batch_size: 100 # 服务端游标每批读取的结果行数。
   sample_rows: 5 # 查询结果摘要保留的样例行数。
-  query_experience_vector_score_threshold: 0.65 # 查询经验向量召回最低相似度。
 
 sandbox: # 每用户 Docker 沙箱及其持久化数据卷配置。
   deployment_namespace: local # 同一 Docker 主机上的部署实例必须使用不同命名空间。

@@ -203,15 +203,11 @@ class MetaImportService:
                     force_version_increment=metric_name in metric_changes.updated,
                 )
 
-        # 元数据提交后再失效查询经验并投递索引任务，消费者才能读取到新版本。
+        # 元数据提交后再投递索引任务，消费者才能读取到新版本。
         changed_column_keys = column_changes.created + column_changes.updated
         changed_metric_names = metric_changes.created + metric_changes.updated
         await self._change_handler.handle(
             MetadataChanges(
-                invalidated_tables=tuple(table_changes.updated + table_changes.deleted),
-                invalidated_columns=tuple(
-                    column_changes.updated + column_changes.deleted
-                ),
                 sync_columns=tuple(changed_column_keys),
                 sync_metrics=tuple(changed_metric_names),
             )

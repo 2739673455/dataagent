@@ -59,7 +59,7 @@ async def recall_context(
     *,
     recall: SemanticRecallRuntime,
 ) -> dict[str, Any]:
-    """按稳定 query 业务键累计召回语义资源，并检索三条历史 SQL 经验
+    """按稳定 query 业务键累计召回语义资源。
 
     一个 query 在当前会话内对应一个持续召回上下文。同一数据任务的后续调用原样
     复用 query，新的 terms 和 resource_types 召回结果会合入该上下文的已有结果。
@@ -92,9 +92,6 @@ async def recall_context(
         logger.exception("语义资源召回失败")
         return _tool_error_response("语义资源召回失败", exc)
 
-    query_experiences, query_experiences_retrieved_at = await recall.query_experiences(
-        user_id, conversation_id, query, asset_policy
-    )
     try:
         async with recall.context_service(user_id, policy=asset_policy) as service:
             record = await service.record(
@@ -103,8 +100,6 @@ async def recall_context(
                 query,
                 request,
                 response,
-                query_experiences,
-                query_experiences_retrieved_at,
             )
     except Exception as exc:  # noqa: BLE001
         logger.exception("语义召回快照持久化失败")
@@ -194,7 +189,7 @@ async def merge_recalls(
     *,
     recall: SemanticRecallRuntime,
 ) -> dict[str, Any]:
-    """合并来源 query 的语义资源并删除来源，查询经验只保留目标结果。"""
+    """合并来源 query 的语义资源并删除来源。"""
     try:
         target_query = normalize_semantic_recall_query(target_query)
     except ValueError as exc:

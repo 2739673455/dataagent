@@ -8,10 +8,8 @@ from app.shared.tasks.submission import TaskSubmission
 
 @dataclass(frozen=True)
 class MetadataChanges:
-    """区分需失效的已有资产和需同步的新版本；删除资产只参与失效。"""
+    """需要同步语义索引的字段和指标。"""
 
-    invalidated_tables: tuple[str, ...] = ()
-    invalidated_columns: tuple[ColumnKey, ...] = ()
     sync_columns: tuple[ColumnKey, ...] = ()
     sync_metrics: tuple[str, ...] = ()
 

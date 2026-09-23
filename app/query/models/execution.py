@@ -10,7 +10,6 @@ from sqlalchemy import (
     JSON,
     CheckConstraint,
     DateTime,
-    ForeignKey,
     Index,
     Integer,
     String,
@@ -97,10 +96,6 @@ class QueryExecution(MetaBase):
     __tablename__ = "query_executions"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    experience_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("query_experiences.id", ondelete="SET NULL"),
-        index=True,
-    )
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     role_name: Mapped[str] = mapped_column(String(256), nullable=False, index=True)
     authorization_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -111,8 +106,6 @@ class QueryExecution(MetaBase):
     purpose: Mapped[str] = mapped_column(Text, nullable=False)
     raw_sql: Mapped[str] = mapped_column(Text, nullable=False)
     normalized_sql: Mapped[str | None] = mapped_column(Text)
-    sql_template: Mapped[str | None] = mapped_column(Text)
-    fingerprint: Mapped[str | None] = mapped_column(String(64), index=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     error_code: Mapped[str | None] = mapped_column(String(128))
     error_detail: Mapped[str | None] = mapped_column(Text)

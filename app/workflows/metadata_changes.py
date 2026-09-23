@@ -1,10 +1,7 @@
-"""元数据变更后的跨领域编排：查询经验失效，再提交语义索引同步。"""
+"""元数据变更后的语义索引同步。"""
 
 from app.metadata.models.changes import MetadataChanges, MetadataChangeTasks
 from app.metadata.task_scheduler import CeleryMetadataSemanticIndexScheduler
-from app.query.services.experience_invalidation import (
-    QueryExperienceInvalidationService,
-)
 
 
 class MetadataChangeWorkflow:
@@ -12,20 +9,13 @@ class MetadataChangeWorkflow:
 
     def __init__(
         self,
-        asset_invalidator: QueryExperienceInvalidationService,
         index_scheduler: CeleryMetadataSemanticIndexScheduler,
     ) -> None:
-        """绑定查询经验失效能力和元数据索引调度能力。"""
-        self._asset_invalidator = asset_invalidator
+        """绑定元数据索引调度能力。"""
         self._index_scheduler = index_scheduler
 
     async def handle(self, changes: MetadataChanges) -> MetadataChangeTasks:
-        """先失效旧经验；成功后依次投递字段、指标的新版本索引。"""
-        if changes.invalidated_tables or changes.invalidated_columns:
-            await self._asset_invalidator.invalidate_assets(
-                table_names=set(changes.invalidated_tables),
-                column_keys=set(changes.invalidated_columns),
-            )
+        """依次投递字段、指标的新版本索引。"""
         columns = (
             self._index_scheduler.enqueue_columns(list(changes.sync_columns))
             if changes.sync_columns

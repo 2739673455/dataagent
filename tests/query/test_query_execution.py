@@ -470,65 +470,44 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
 
 class QueryRecorderTest(unittest.IsolatedAsyncioTestCase):
-    async def test_business_aggregates_experience_catalog_only_records_and_enqueue_after_commit(
-        self,
-    ):
+    async def test_business_and_catalog_queries_record_success(self):
         for kind in ("business", "catalog"):
             with self.subTest(kind=kind):
-                self.transaction_active = False
-
-                @asynccontextmanager
-                async def transaction():
-                    self.transaction_active = True
-                    try:
-                        yield
-                    finally:
-                        self.transaction_active = False
-
-                stored = SimpleNamespace(id=uuid4(), revision=3)
                 executions = MagicMock(record=AsyncMock())
-                experiences = MagicMock(
-                    session=MagicMock(begin=transaction),
-                    metadata_versions=AsyncMock(return_value=({}, {})),
-                    upsert_from_success=AsyncMock(return_value=stored),
-                )
-                scheduler = MagicMock()
-                scheduler.enqueue.side_effect = lambda *_: self.assertFalse(
-                    self.transaction_active
-                )
-                recorder = QueryExecutionRecorder(
-                    executions,
-                    experiences,
-                    scheduler,
-                    data_source="doris",
-                    database_name="analytics",
-                )
+                recorder = QueryExecutionRecorder(executions)
                 context = QueryExecutionContext(key(), "reader", "a" * 64, "统计")
                 validation = QueryValidationResult(
                     valid=True, normalized_sql="SELECT 1 AS value", query_kind=kind
                 )
-                recorded = await recorder.record_success(
+                await recorder.record_success(
                     context,
                     raw_sql="select 1 as value",
                     validation=validation,
                     result=result(),
                 )
+                executions.record.assert_awaited_once()
                 execution = executions.record.call_args.args[0]
                 self.assertEqual(execution.user_id, context.session_key.user_id)
                 self.assertEqual(execution.raw_sql, "select 1 as value")
                 self.assertEqual(execution.normalized_sql, validation.normalized_sql)
+                self.assertEqual(execution.status, "succeeded")
                 self.assertNotIn("sample", execution.result_summary)
-                if kind == "business":
-                    self.assertEqual(recorded, stored.id)
-                    experience = experiences.upsert_from_success.call_args.args[0]
-                    self.assertEqual(
-                        experience.authorization_fingerprint,
-                        context.authorization_fingerprint,
-                    )
-                    self.assertEqual(experience.purposes, ["统计"])
-                    self.assertIn(":p1", experience.sql_template)
-                    scheduler.enqueue.assert_called_once_with(stored.id, 3)
-                else:
-                    self.assertIsNone(recorded)
-                    experiences.upsert_from_success.assert_not_awaited()
-                    scheduler.enqueue.assert_not_called()
+
+    async def test_failed_and_rejected_queries_record_audit(self):
+        for status in ("failed", "rejected"):
+            with self.subTest(status=status):
+                executions = MagicMock(record=AsyncMock())
+                recorder = QueryExecutionRecorder(executions)
+                context = QueryExecutionContext(key(), "reader", "a" * 64, "统计")
+                await recorder.record_failure(
+                    context,
+                    raw_sql="select 1",
+                    status=status,
+                    error_code="test_error",
+                    error_detail="error detail",
+                )
+                executions.record.assert_awaited_once()
+                execution = executions.record.call_args.args[0]
+                self.assertEqual(execution.status, status)
+                self.assertEqual(execution.error_code, "test_error")
+                self.assertEqual(execution.error_detail, "error detail")

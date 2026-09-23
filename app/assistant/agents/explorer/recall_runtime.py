@@ -3,11 +3,9 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from uuid import UUID
 
 from langchain_core.runnables import RunnableConfig
-from loguru import logger
 
 from app.identity.providers import load_asset_policy
 from app.identity.services.authorization import AssetAccessPolicy
@@ -20,15 +18,10 @@ from app.metadata.providers import (
     semantic_recall_context,
 )
 from app.metadata.services.recall import SemanticRecallContextService
-from app.query.providers import build_query_experience_recall_service
 from app.shared.clients.doris_client_manager import DorisClientManager
 from app.shared.clients.embedding_client_manager import EmbeddingClientManager
 from app.shared.clients.es_client_manager import ESClientManager
 from app.shared.clients.postgres_client_manager import PostgresClientManager
-from app.shared.contracts.query_experience import (
-    QUERY_EXPERIENCE_RECALL_LIMIT,
-    QueryExperienceRecallResult,
-)
 
 
 def resolve_semantic_recall_identity(
@@ -72,37 +65,3 @@ class SemanticRecallRuntime:
             policy = await load_asset_policy(self.auth, self.doris, user_id)
         async with semantic_recall_context(self.meta, policy) as service:
             yield service
-
-    async def query_experiences(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        query: str,
-        policy: AssetAccessPolicy,
-    ) -> tuple[list[QueryExperienceRecallResult], datetime]:
-        """复用有效快照；经验检索失败时保留语义召回并允许下次重试。"""
-        try:
-            async with self.context_service(user_id, policy=policy) as service:
-                cached = await service.get_fresh_query_experiences(
-                    user_id, conversation_id, query
-                )
-            if cached is not None:
-                return cached
-            if policy.role_name is None or policy.authorization_fingerprint is None:
-                return [], datetime.now(UTC)
-            async with self.meta.session() as session:
-                result = await build_query_experience_recall_service(
-                    session, self.es.get_client(), self.embedding.get_client()
-                ).recall(
-                    role_name=policy.role_name,
-                    authorization_fingerprint=policy.authorization_fingerprint,
-                    policy=policy,
-                    query=query,
-                    limit=QUERY_EXPERIENCE_RECALL_LIMIT,
-                )
-            if result.status != "failed":
-                return result.results, datetime.now(UTC)
-            logger.warning("查询经验全文和向量检索均不可用")
-        except Exception:  # noqa: BLE001
-            logger.exception("查询经验检索失败")
-        return [], datetime.min.replace(tzinfo=UTC)

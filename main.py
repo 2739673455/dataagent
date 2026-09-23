@@ -10,7 +10,6 @@ from app.identity.api.admin.router import router as admin_router
 from app.identity.api.admin.task_router import router as task_router
 from app.identity.api.auth.router import router as auth_router
 from app.metadata.api.meta.router import router as meta_router
-from app.query.api.admin.router import router as query_experience_admin_router
 from app.runtime import lifespan
 from app.shared.config.app_config import cfg
 from app.shared.errors.base import ProblemDetails
@@ -42,10 +41,6 @@ def _register_routes(app: FastAPI) -> None:
     """注册接口。"""
     app.include_router(auth_router, prefix="/api/v1/auth")
     app.include_router(admin_router, prefix="/api/v1/admin")
-    app.include_router(
-        query_experience_admin_router,
-        prefix="/api/v1/admin/query-experiences",
-    )
     app.include_router(chat_router, prefix="/api/v1/chat")
     app.include_router(
         attachment_router,

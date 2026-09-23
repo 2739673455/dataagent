@@ -3,9 +3,7 @@
 import asyncio
 import unittest
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
 from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
@@ -180,31 +178,3 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 pass
         self.assertEqual(load.await_count, 2)
         self.assertEqual(seen, [self.policy, self.policy, revoked])
-
-    async def test_experience_backend_failure_keeps_stale_timestamp_for_retry(self):
-        policy = AssetAccessPolicy(
-            user_id=7, role_name="analyst", authorization_fingerprint="a" * 64
-        )
-
-        @asynccontextmanager
-        async def context(*args):
-            yield MagicMock(get_fresh_query_experiences=AsyncMock(return_value=None))
-
-        with (
-            patch(
-                "app.assistant.agents.explorer.recall_runtime.semantic_recall_context",
-                side_effect=context,
-            ),
-            patch(
-                "app.assistant.agents.explorer.recall_runtime.build_query_experience_recall_service",
-                return_value=MagicMock(
-                    recall=AsyncMock(return_value=SimpleNamespace(status="failed"))
-                ),
-            ),
-        ):
-            results, retrieved = await self.runtime.query_experiences(
-                7, uuid4(), "收入", policy
-            )
-        self.assertEqual(results, [])
-        self.assertEqual(retrieved.year, 1)
-        self.assertEqual(self.open_sessions, set())

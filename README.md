@@ -75,7 +75,7 @@ TAVILY_API_KEY=
 
 **向量模型（`embedding`）与 ES 维度**
 
-`embedding` 的 `base_url`、`api_key` 和 `model` 指定文本向量化服务，用于元数据和查询经验的语义检索。
+`embedding` 的 `base_url`、`api_key` 和 `model` 指定文本向量化服务，用于元数据的语义检索。
 
 `elasticsearch.embedding_size` 必须等于向量模型实际输出的维度；它只定义 ES 索引的向量维度，不会改变模型输出。更换向量模型后需重新生成索引中的向量；如果维度变化，还需按新维度重建相关 ES 索引。
 

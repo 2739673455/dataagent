@@ -14,7 +14,7 @@ from app.shared.tasks.submission import TaskSubmission
 from app.workflows.metadata_changes import MetadataChangeWorkflow
 
 
-def _dependencies(*, fail_commit=False, fail_invalidation=False, fail_submission=False):
+def _dependencies(*, fail_commit=False, fail_submission=False):
     events = []
 
     @asynccontextmanager
@@ -46,38 +46,29 @@ def _dependencies(*, fail_commit=False, fail_invalidation=False, fail_submission
         delete_column_indexes=AsyncMock(), delete_metric_indexes=AsyncMock()
     )
 
-    async def invalidate(**kwargs):
-        assert events[-1] == "commit"
-        events.append("invalidate")
-        if fail_invalidation:
-            raise RuntimeError("invalidate")
-
     def enqueue(keys):
-        assert events[-1] in ("commit", "invalidate")
+        assert events[-1] == "commit"
         events.append("enqueue")
         if fail_submission:
             raise RuntimeError("broker")
         return TaskSubmission(task_id="columns")
 
-    invalidator = MagicMock(invalidate_assets=AsyncMock(side_effect=invalidate))
     scheduler = MagicMock(enqueue_columns=MagicMock(side_effect=enqueue))
-    workflow = MetadataChangeWorkflow(invalidator, scheduler)
-    return repo, source, indexes, invalidator, scheduler, workflow, events
+    workflow = MetadataChangeWorkflow(scheduler)
+    return repo, source, indexes, scheduler, workflow, events
 
 
 @pytest.mark.parametrize(
     ("failure", "expected"),
     [
-        (None, ["commit", "invalidate", "enqueue"]),
+        (None, ["commit", "enqueue"]),
         ("commit", []),
-        ("invalidate", ["commit", "invalidate"]),
-        ("broker", ["commit", "invalidate", "enqueue"]),
+        ("broker", ["commit", "enqueue"]),
     ],
 )
-def test_column_change_commits_before_invalidating_and_submitting(failure, expected):
-    repo, source, indexes, _, _, workflow, events = _dependencies(
+def test_column_change_commits_before_submitting(failure, expected):
+    repo, source, indexes, _, workflow, events = _dependencies(
         fail_commit=failure == "commit",
-        fail_invalidation=failure == "invalidate",
         fail_submission=failure == "broker",
     )
     service = MetaCatalogService(repo, source, indexes, workflow)
@@ -93,8 +84,8 @@ def test_column_change_commits_before_invalidating_and_submitting(failure, expec
     assert events == expected
 
 
-def test_unchanged_column_does_not_invalidate_or_submit():
-    repo, source, indexes, invalidator, scheduler, workflow, _ = _dependencies()
+def test_unchanged_column_does_not_submit():
+    repo, source, indexes, scheduler, workflow, _ = _dependencies()
     repo.upsert_column_info.return_value = False
     result = asyncio.run(
         MetaCatalogService(repo, source, indexes, workflow).upsert_column_info(
@@ -102,13 +93,12 @@ def test_unchanged_column_does_not_invalidate_or_submit():
         )
     )
     assert result is None
-    invalidator.invalidate_assets.assert_not_awaited()
     scheduler.enqueue_columns.assert_not_called()
 
 
 @pytest.mark.parametrize("dry_run", [True, False])
-def test_replace_import_invalidates_deleted_assets_but_only_indexes_new_ones(dry_run):
-    repo, source, indexes, invalidator, scheduler, workflow, events = _dependencies()
+def test_replace_import_removes_old_indexes_and_indexes_new_columns(dry_run):
+    repo, source, indexes, scheduler, workflow, events = _dependencies()
     repo.list_table_infos.return_value = [
         TableInfo(
             name="old_orders",
@@ -150,13 +140,10 @@ def test_replace_import_invalidates_deleted_assets_but_only_indexes_new_ones(dry
     if dry_run:
         repo.upsert_column_infos.assert_not_awaited()
         indexes.delete_column_indexes.assert_not_awaited()
-        invalidator.invalidate_assets.assert_not_awaited()
         scheduler.enqueue_columns.assert_not_called()
         assert events == ["commit"]  # 只有读取现状的事务。
     else:
-        invalidator.invalidate_assets.assert_awaited_once_with(
-            table_names={"old_orders"}, column_keys={("old_orders", "id")}
-        )
+        indexes.delete_column_indexes.assert_awaited_once_with([("old_orders", "id")])
         scheduler.enqueue_columns.assert_called_once_with([("orders", "id")])
         scheduler.enqueue_metrics.assert_not_called()
-        assert events == ["commit", "commit", "invalidate", "enqueue"]
+        assert events == ["commit", "commit", "enqueue"]

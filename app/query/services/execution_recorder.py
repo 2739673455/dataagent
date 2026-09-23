@@ -1,23 +1,15 @@
-"""查询执行审计与成功经验聚合。"""
+"""查询执行审计。"""
 
-import hashlib
 from dataclasses import dataclass
-from uuid import UUID, uuid4
-
-from sqlglot import exp, parse_one
 
 from app.query.models.execution import (
     AnalysisQueryResult,
     QueryExecution,
     QueryExecutionStatus,
 )
-from app.query.models.experience import QueryExperience, QueryExperienceAsset
 from app.query.models.validation import QueryValidationResult
 from app.query.repositories.execution_postgres import QueryExecutionPGRepo
-from app.query.repositories.experience_postgres import QueryExperiencePGRepo
-from app.query.services.contracts import QueryExperienceIndexScheduler
 from app.shared.contracts.analysis import AgentSessionKey
-from app.shared.contracts.assets import asset_resource_key
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,38 +23,12 @@ class QueryExecutionContext:
     tool_call_id: str | None = None
 
 
-def _build_sql_template(sql: str) -> tuple[str, str]:
-    """将 SQL 字面量替换为参数并生成稳定结构指纹。"""
-    expression = parse_one(sql, read="doris")
-    parameter_index = 0
-    for node in list(expression.walk()):
-        if not isinstance(node, exp.Literal):
-            continue
-        parameter_index += 1
-        node.replace(exp.Placeholder(this=f"p{parameter_index}"))
-    template = expression.sql(dialect="doris", pretty=False)
-    fingerprint = hashlib.sha256(template.encode()).hexdigest()
-    return template, fingerprint
-
-
 class QueryExecutionRecorder:
-    """记录查询执行并聚合成功的业务查询经验。"""
+    """记录查询执行审计。"""
 
-    def __init__(
-        self,
-        execution_repo: QueryExecutionPGRepo,
-        experience_repo: QueryExperiencePGRepo,
-        index_scheduler: QueryExperienceIndexScheduler,
-        *,
-        data_source: str,
-        database_name: str,
-    ) -> None:
-        """绑定执行记录、经验存储和索引调度依赖。"""
+    def __init__(self, execution_repo: QueryExecutionPGRepo) -> None:
+        """绑定执行审计存储。"""
         self._execution_repo = execution_repo
-        self._experience_repo = experience_repo
-        self._index_scheduler = index_scheduler
-        self._data_source = data_source
-        self._database_name = database_name
 
     async def record_success(
         self,
@@ -71,8 +37,8 @@ class QueryExecutionRecorder:
         raw_sql: str,
         validation: QueryValidationResult,
         result: AnalysisQueryResult,
-    ) -> UUID | None:
-        """记录成功执行并增量更新相同结构的查询经验。"""
+    ) -> None:
+        """记录成功执行及结果摘要。"""
         normalized_sql = validation.normalized_sql
         if not validation.valid or normalized_sql is None:
             raise ValueError("成功执行记录必须使用有效的 SQL 校验结果")
@@ -80,44 +46,7 @@ class QueryExecutionRecorder:
         execution.normalized_sql = normalized_sql
         execution.validation = validation.model_dump(mode="json")
         execution.result_summary = self._result_summary(result)
-        if validation.query_kind == "catalog":
-            async with self._experience_repo.session.begin():
-                await self._execution_repo.record(execution)
-            return None
-
-        sql_template, fingerprint = _build_sql_template(normalized_sql)
-        execution.sql_template = sql_template
-        execution.fingerprint = fingerprint
-        tables = {item.name for item in validation.tables}
-        columns = {(item.table, item.name) for item in validation.columns}
-        async with self._experience_repo.session.begin():
-            (
-                table_versions,
-                column_versions,
-            ) = await self._experience_repo.metadata_versions(tables, columns)
-            experience_id = uuid4()
-            experience = QueryExperience(
-                id=experience_id,
-                role_name=context.role_name,
-                authorization_fingerprint=context.authorization_fingerprint,
-                fingerprint=fingerprint,
-                purposes=[context.purpose],
-                sql_template=sql_template,
-            )
-            assets = self._build_assets(
-                experience_id,
-                validation,
-                table_versions,
-                column_versions,
-            )
-            stored = await self._experience_repo.upsert_from_success(
-                experience,
-                assets,
-            )
-            execution.experience_id = stored.id
-            await self._execution_repo.record(execution)
-        self._index_scheduler.enqueue(stored.id, stored.revision)
-        return stored.id
+        await self._execution_repo.record(execution)
 
     async def record_failure(
         self,
@@ -136,8 +65,7 @@ class QueryExecutionRecorder:
         if validation is not None:
             execution.normalized_sql = validation.normalized_sql
             execution.validation = validation.model_dump(mode="json")
-        async with self._experience_repo.session.begin():
-            await self._execution_repo.record(execution)
+        await self._execution_repo.record(execution)
 
     @staticmethod
     def _new_execution(
@@ -171,48 +99,3 @@ class QueryExecutionRecorder:
                 for key, value in result.time_range.items()
             },
         }
-
-    def _build_assets(
-        self,
-        experience_id: UUID,
-        validation: QueryValidationResult,
-        table_versions: dict[str, int],
-        column_versions: dict[tuple[str, str], int],
-    ) -> list[QueryExperienceAsset]:
-        """按校验血缘构造带元数据版本的经验资产快照。"""
-        assets = [
-            QueryExperienceAsset(
-                experience_id=experience_id,
-                kind="table",
-                resource_key=asset_resource_key(
-                    self._data_source,
-                    table.database or self._database_name,
-                    table.name,
-                ),
-                data_source=self._data_source,
-                database_name=table.database or self._database_name,
-                table_name=table.name,
-                column_name=None,
-                meta_version=table_versions.get(table.name, 0),
-            )
-            for table in validation.tables
-        ]
-        assets.extend(
-            QueryExperienceAsset(
-                experience_id=experience_id,
-                kind="column",
-                resource_key=asset_resource_key(
-                    self._data_source,
-                    column.database or self._database_name,
-                    column.table,
-                    column.name,
-                ),
-                data_source=self._data_source,
-                database_name=column.database or self._database_name,
-                table_name=column.table,
-                column_name=column.name,
-                meta_version=column_versions.get((column.table, column.name), 0),
-            )
-            for column in validation.columns
-        )
-        return assets

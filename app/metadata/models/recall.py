@@ -13,7 +13,6 @@ from app.metadata.models.search import (
     SemanticResourceRecallRequest,
     SemanticResourceRecallResponse,
 )
-from app.shared.contracts.query_experience import QueryExperienceRecallResult
 from app.shared.database.base import MetaBase
 
 SemanticResourceName = Annotated[
@@ -88,10 +87,6 @@ class SemanticRecallRecord(BaseModel):
     query: str = Field(min_length=1, max_length=1000)
     request: SemanticResourceRecallRequest | None
     response: SemanticResourceRecallResponse
-    query_experiences: list[QueryExperienceRecallResult]
-    query_experiences_retrieved_at: datetime
-    query_experience_role_name: str | None
-    query_experience_authorization_fingerprint: str | None
     source_queries: list[str]
     created_at: datetime
     updated_at: datetime
@@ -125,14 +120,6 @@ class SemanticRecallTableDeletion(BaseModel):
         return self.columns is None
 
 
-class SemanticRecallQueryExperienceDeletion(BaseModel):
-    """一条查询经验的删除选择器。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: UUID
-
-
 class SemanticRecallMetricDeletion(BaseModel):
     """一个指标的删除选择器。"""
 
@@ -156,9 +143,6 @@ class SemanticRecallResourceDeletion(BaseModel):
     metrics: dict[SemanticResourceName, SemanticRecallMetricDeletion] = Field(
         default_factory=dict
     )
-    query_experiences: list[SemanticRecallQueryExperienceDeletion] = Field(
-        default_factory=list
-    )
 
     @property
     def deletes_entire_query(self) -> bool:
@@ -167,6 +151,5 @@ class SemanticRecallResourceDeletion(BaseModel):
             (
                 self.tables,
                 self.metrics,
-                self.query_experiences,
             )
         )

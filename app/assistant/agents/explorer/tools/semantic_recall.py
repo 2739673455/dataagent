@@ -33,7 +33,7 @@ def create_semantic_recall_tools(recall: SemanticRecallRuntime) -> list[BaseTool
         ],
         limit_per_type: Annotated[int, "每类候选的最大数量，范围 1 到 20"] = 5,
     ) -> dict[str, Any]:
-        """按稳定 query 累计召回语义资源和历史 SQL 经验。"""
+        """按稳定 query 累计召回语义资源。"""
         return await semantic_recall_handler.recall_context(
             runtime.config,
             query,

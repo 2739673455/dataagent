@@ -12,7 +12,6 @@ import pytest
 from app.assistant import tasks as assistant_tasks
 from app.assistant.conversations import resources as lifecycle_runtime
 from app.metadata import tasks as metadata_tasks
-from app.query import tasks as query_tasks
 from app.workflows import tasks as workflow_tasks
 
 
@@ -69,8 +68,8 @@ def test_lifecycle_task_cleans_up_after_sandbox_init_failure(module) -> None:
         database.close.assert_awaited_once()
 
 
-@pytest.mark.parametrize("module", [metadata_tasks, query_tasks])
-def test_index_task_resources_are_isolated_between_threads(module) -> None:
+def test_index_task_resources_are_isolated_between_threads() -> None:
+    module = metadata_tasks
     barrier = Barrier(2)
     managers = []
     clients_seen = []
@@ -89,21 +88,13 @@ def test_index_task_resources_are_isolated_between_threads(module) -> None:
         return manager
 
     async def operation(*args):
-        # 元数据 operation 与查询 indexer 都接收 ES、Embedding 两个依赖。
+        # 元数据 operation 接收 ES、Embedding 两个依赖。
         clients_seen.append(args[-2:])
         await asyncio.to_thread(barrier.wait, 5)
         return 1
 
-    def indexer(*args):
-        async def sync(*unused):
-            return await operation(*args)
-
-        return MagicMock(sync=sync)
-
     def worker(_):
-        if module is metadata_tasks:
-            return asyncio.run(module._run_with_metadata_resources(operation))
-        return asyncio.run(module._sync_index(uuid4(), 1))
+        return asyncio.run(module._run_with_metadata_resources(operation))
 
     with ExitStack() as stack:
         for name in (
@@ -112,16 +103,9 @@ def test_index_task_resources_are_isolated_between_threads(module) -> None:
             "EmbeddingClientManager",
         ):
             stack.enter_context(patch.object(module, name, side_effect=manager_factory))
-        if module is metadata_tasks:
-            stack.enter_context(
-                patch.object(module, "DorisClientManager", side_effect=manager_factory)
-            )
-        else:
-            stack.enter_context(
-                patch.object(
-                    module, "build_query_experience_indexer", side_effect=indexer
-                )
-            )
+        stack.enter_context(
+            patch.object(module, "DorisClientManager", side_effect=manager_factory)
+        )
         with ThreadPoolExecutor(max_workers=2) as executor:
             assert list(executor.map(worker, range(2))) == [1, 1]
     assert len(clients_seen) == 2
