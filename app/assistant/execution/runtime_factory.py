@@ -114,7 +114,6 @@ class ConversationAgentRuntimeFactory:
                     specialist_definitions=build_specialist_definitions(
                         explorer_tools,
                         explorer_mcp_tools,
-                        recall=self._recall,
                     ),
                 )
                 self._model_contexts = stack.pop_all()

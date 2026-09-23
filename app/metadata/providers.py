@@ -1,20 +1,14 @@
 """元数据应用服务组装。"""
 
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
-
 from elasticsearch import AsyncElasticsearch
 
 from app.identity.services.authorization import AssetAccessPolicy
 from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
 from app.metadata.repositories.postgres import MetaPGRepo
-from app.metadata.repositories.recall import SemanticRecallPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
 from app.metadata.repositories.value_index import ValueESRepo
-from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
 from app.metadata.services.index import MetaIndexService
-from app.metadata.services.recall import SemanticRecallContextService
 from app.metadata.services.search import SemanticCatalog, SemanticResourceRecallService
 from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.clients.postgres_client_manager import PostgresClientManager
@@ -64,18 +58,3 @@ async def build_semantic_resource_recall_service(
         data_source=cfg.query.data_source,
         database_name=cfg.doris.database,
     )
-
-
-@asynccontextmanager
-async def semantic_recall_context(
-    postgres: PostgresClientManager,
-    policy: AssetAccessPolicy,
-) -> AsyncGenerator[SemanticRecallContextService]:
-    """在短事务中组装授权后的快照读写服务。"""
-    async with postgres.session() as session, session.begin():
-        yield SemanticRecallContextService(
-            SemanticRecallPGRepo(session),
-            MetadataAuthorizationFilter(
-                policy, cfg.query.data_source, cfg.doris.database
-            ),
-        )

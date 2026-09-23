@@ -18,11 +18,9 @@ from app.assistant.checkpoints.reader import (
 from app.assistant.execution.types import get_thread_id
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.manager import DockerSandboxManager
-from app.shared.clients.langgraph_postgres_manager import (
-    AdvisoryLockBusyError,
-    LangGraphPostgresManager,
-)
+from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 from app.shared.contracts.analysis import AgentSessionKey
+from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 
 class AgentSessionStore(Protocol):

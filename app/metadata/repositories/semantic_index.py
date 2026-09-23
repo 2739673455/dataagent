@@ -6,6 +6,7 @@ from typing import Any, cast
 from elasticsearch import AsyncElasticsearch
 from loguru import logger
 
+from app.metadata.errors import CorruptedSemanticIndexDocumentError
 from app.metadata.models.catalog import ColumnKey, column_resource_key
 from app.metadata.models.search import (
     SemanticIndexDocument,
@@ -19,24 +20,6 @@ _EXACT_TEXT_BOOSTS: dict[SemanticTextType, float] = {
     "alias": 6.0,
     "description": 4.0,
 }
-
-
-class CorruptedSemanticIndexDocumentError(RuntimeError):
-    """在线检索读取到无法反序列化的 Elasticsearch 文档。"""
-
-    def __init__(
-        self,
-        *,
-        resource_label: str,
-        index_name: str,
-        document_id: str,
-    ) -> None:
-        """保存可用于日志和召回失败记录的定位信息。"""
-        self.index_name = index_name
-        self.document_id = document_id
-        super().__init__(
-            f"{resource_label}文档损坏: index={index_name}, document_id={document_id}"
-        )
 
 
 def column_resource_terms_filter(
@@ -110,14 +93,9 @@ class SemanticIndexRepo:
         await self._client.options(ignore_status=404).indices.delete(
             index=self._index_name
         )
-        await self.ensure_index()
-
-    async def ensure_index(self) -> None:
-        """确保语义索引存在。"""
-        if not await self._client.indices.exists(index=self._index_name):
-            await self._client.indices.create(
-                index=self._index_name, mappings=self._mappings
-            )
+        await self._client.indices.create(
+            index=self._index_name, mappings=self._mappings
+        )
 
     async def write_documents(
         self, documents: list[SemanticIndexDocument], *, batch_size: int = 100

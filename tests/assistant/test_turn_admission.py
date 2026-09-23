@@ -17,7 +17,7 @@ from app.assistant.execution.run import ConversationRunService
 from app.assistant.execution.turn import (
     ConversationTurnService,
 )
-from app.shared.clients.langgraph_postgres_manager import AdvisoryLockBusyError
+from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 
 class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
@@ -75,7 +75,7 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
         )
 
     def new_worker(self):
-        runs = ConversationRunService(self.agents, MagicMock(), MagicMock(), self.locks)
+        runs = ConversationRunService(self.agents, MagicMock(), self.locks)
         self.addAsyncCleanup(runs.close)
         return runs
 
@@ -149,7 +149,6 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
         self.repo.update.side_effect = update
         lifecycle = ConversationLifecycleService(
             repository,
-            MagicMock(),
             self.locks,
             self.agents,
             MagicMock(),

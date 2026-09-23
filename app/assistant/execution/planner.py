@@ -8,7 +8,7 @@ from langchain_core.messages import BaseMessage
 from langgraph.types import StreamPart
 from loguru import logger
 
-from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
+from app.assistant.errors import PlannerContinuationLimitError
 from app.assistant.events import schemas as chat_schema
 from app.assistant.events.projection import (
     langchain_message_to_schema_with_artifacts,
@@ -36,8 +36,6 @@ async def run_agent_turn(
     files: ConversationFileInspector,
     turn_context: PlannerTurnContext,
     user_message: chat_schema.UserMessageRequest | None,
-    *,
-    recall: SemanticRecallRuntime,
 ) -> AsyncGenerator[chat_schema.ChatStreamEventPayload]:
     """执行新回合或从待执行 Checkpoint 恢复同一回合。"""
     user_id, conversation_id = turn_context.user_id, turn_context.conversation_id
@@ -86,9 +84,7 @@ async def run_agent_turn(
                         ):
                             event = await subagent_activity_to_event(
                                 activity,
-                                user_id,
                                 conversation_id,
-                                recall=recall,
                             )
                             if event is not None:
                                 yield event
@@ -154,15 +150,3 @@ async def run_agent_turn(
             input_messages = []
 
     logger.info(f"智能体回合结束: conversation_id={conversation_id}")
-
-
-class PlannerContinuationLimitError(RuntimeError):
-    """Planner 自动续写次数超过服务端硬限制。"""
-
-    def __init__(self, max_continuations: int, finish_reason: str) -> None:
-        """初始化包含续写上限和结束原因的异常。"""
-        self.max_continuations = max_continuations
-        self.finish_reason = finish_reason
-        super().__init__(
-            f"规划器在结束原因 {finish_reason!r} 下连续续写次数超过上限 ({max_continuations} 次)"
-        )

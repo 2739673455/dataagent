@@ -6,7 +6,7 @@ from typing import Annotated, NotRequired
 
 from deepagents import create_deep_agent
 from deepagents.graph import DeepAgentState
-from langchain.agents.middleware.types import AgentMiddleware, OmitFromInput
+from langchain.agents.middleware.types import OmitFromInput
 from langchain.agents.structured_output import ProviderStrategy, ToolStrategy
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
@@ -70,7 +70,6 @@ def create_specialist_agent(
     checkpointer: BaseCheckpointSaver,
     shell_jobs: ShellJobRuntime,
     skills: Sequence[str],
-    extra_middleware: Sequence[AgentMiddleware] = (),
 ) -> CompiledStateGraph:
     """编译共享文件、附件和 Shell 生命周期的专业 Agent。"""
     resolved_backend, filesystem = build_specialist_filesystem(
@@ -93,7 +92,6 @@ def create_specialist_agent(
                 backend.conversation_dir,
                 shell_jobs,
             ),
-            *extra_middleware,
             MessageTimestampMiddleware(),
         ],
         backend=resolved_backend,

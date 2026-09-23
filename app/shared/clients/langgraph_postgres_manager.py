@@ -12,12 +12,9 @@ from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from app.shared.config.app_config import DBConfig
+from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 _ADVISORY_POOL_MAX_SIZE = 12
-
-
-class AdvisoryLockBusyError(RuntimeError):
-    """指定 advisory lock 已被其他执行单元占用。"""
 
 
 def _advisory_lock_key(name: str) -> int:

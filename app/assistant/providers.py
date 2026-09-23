@@ -7,7 +7,6 @@ from app.assistant.conversations.lifecycle import ConversationLifecycleService
 from app.assistant.execution.manager import AgentManager
 from app.assistant.execution.run import ConversationRunService
 from app.assistant.repositories.conversation import ConversationPGRepo
-from app.metadata.services.recall_cleanup import RecallCleanupService
 from app.sandbox.manager import DockerSandboxManager
 from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 from app.shared.clients.postgres_client_manager import PostgresClientManager
@@ -26,7 +25,6 @@ async def _conversation_repository(
 def build_conversation_lifecycle_service(
     persistence: LangGraphPostgresManager,
     assistant_postgres: PostgresClientManager,
-    meta_postgres: PostgresClientManager,
     agents: AgentManager,
     sandbox: DockerSandboxManager,
     config: LifecycleConfig,
@@ -35,7 +33,6 @@ def build_conversation_lifecycle_service(
     """组装会话跨存储生命周期服务。"""
     return ConversationLifecycleService(
         lambda: _conversation_repository(assistant_postgres),
-        RecallCleanupService(meta_postgres),
         persistence,
         agents,
         sandbox,

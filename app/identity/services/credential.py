@@ -4,9 +4,7 @@ import secrets
 
 from cryptography.fernet import Fernet, InvalidToken
 
-
-class DorisCredentialError(RuntimeError):
-    """Doris 查询凭据无法解密。"""
+from app.identity.errors import DorisCredentialError
 
 
 class DorisCredentialCipher:

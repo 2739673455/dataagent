@@ -3,12 +3,9 @@
 from dataclasses import dataclass, field
 
 from app.identity import errors as auth_error
+from app.identity.errors import QueryPrincipalNotConfiguredError
 from app.identity.repositories.identity import IdentityPGRepo
 from app.identity.services.credential import DorisCredentialCipher
-
-
-class QueryPrincipalNotConfiguredError(RuntimeError):
-    """用户没有可用的稳定查询身份。"""
 
 
 @dataclass(frozen=True, slots=True)

@@ -16,7 +16,7 @@ from uuid import UUID
 from docker.errors import NotFound
 from docker.models.containers import Container
 
-from app.sandbox.exceptions import (
+from app.sandbox.errors import (
     SandboxFileTooLargeError,
     SandboxPathError,
 )

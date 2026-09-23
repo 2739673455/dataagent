@@ -10,7 +10,7 @@ from docker.errors import NotFound
 from docker.models.containers import Container
 from loguru import logger
 
-from app.sandbox.exceptions import SandboxCapacityUnavailableError
+from app.sandbox.errors import SandboxCapacityUnavailableError
 from app.sandbox.ownership import SandboxOwnership
 from app.shared.config.app_config import SandboxConfig
 

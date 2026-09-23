@@ -8,6 +8,11 @@ from loguru import logger
 from sqlalchemy.exc import IntegrityError
 
 from app.identity import errors as auth_error
+from app.identity.errors import (
+    DorisQueryUserAlreadyExistsError,
+    DorisRoleAlreadyExistsError,
+    DorisWorkloadGroupNotFoundError,
+)
 from app.identity.models.account import User
 from app.identity.models.doris import (
     AssetScope,
@@ -16,10 +21,7 @@ from app.identity.models.doris import (
     normalize_doris_role_name,
 )
 from app.identity.repositories.doris_role import (
-    DorisQueryUserAlreadyExistsError,
-    DorisRoleAlreadyExistsError,
     DorisRoleRepository,
-    DorisWorkloadGroupNotFoundError,
     role_name_from_row,
     role_users_from_row,
 )

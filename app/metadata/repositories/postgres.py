@@ -16,7 +16,6 @@ from app.metadata.models.catalog import (
     ValueIndexSyncState,
     column_key_reference,
 )
-from app.metadata.models.recall import SemanticRecallSnapshot
 
 
 class MetaPGRepo:
@@ -37,9 +36,8 @@ class MetaPGRepo:
         columns: list[ColumnInfo],
         metrics: list[MetricInfo],
     ) -> None:
-        """在调用方事务内清空元数据、同步状态和召回快照，写入完整新目录。"""
+        """在调用方事务内清空元数据和同步状态，写入完整新目录。"""
         for model in (
-            SemanticRecallSnapshot,
             ValueIndexSyncState,
             ColumnMetric,
             ColumnInfo,
@@ -87,7 +85,7 @@ class MetaPGRepo:
         await self._session.execute(
             update(ColumnInfo)
             .where(ColumnInfo.t_name == t_name, ColumnInfo.name == c_name)
-            .values(index_version=ColumnInfo.meta_version)
+            .values(index_ready=True)
         )
 
     async def mark_metric_indexed(self, metric_name: str) -> None:
@@ -95,7 +93,7 @@ class MetaPGRepo:
         await self._session.execute(
             update(MetricInfo)
             .where(MetricInfo.name == metric_name)
-            .values(index_version=MetricInfo.meta_version)
+            .values(index_ready=True)
         )
 
     async def list_table_infos(self) -> list[TableInfo]:
@@ -179,8 +177,6 @@ class MetaPGRepo:
                 active_run_id=run_id,
                 current_generation=None,
                 active_generation=generation,
-                last_incremental_synced_at=None,
-                last_full_synced_at=None,
                 last_error=None,
                 updated_at=started_at,
             )
@@ -203,10 +199,8 @@ class MetaPGRepo:
         cursor_value: dict[str, object] | None,
         generation: UUID,
         completed_at: datetime,
-        full_sync: bool,
-        incremental_sync: bool,
     ) -> bool:
-        """由当前运行提交水位、代次和成功时间。"""
+        """由当前运行提交水位、代次和成功状态。"""
         values: dict[str, object] = {
             "cursor_value": cursor_value,
             "status": "succeeded",
@@ -216,10 +210,6 @@ class MetaPGRepo:
             "last_error": None,
             "updated_at": completed_at,
         }
-        if full_sync:
-            values["last_full_synced_at"] = completed_at
-        if incremental_sync:
-            values["last_incremental_synced_at"] = completed_at
         result = await self._session.execute(
             update(ValueIndexSyncState)
             .where(

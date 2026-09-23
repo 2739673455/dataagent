@@ -13,10 +13,8 @@ from langchain.tools import ToolRuntime
 
 from app.assistant.agents.explorer.tools.execute_sql import _execute_sql
 from app.identity import errors as auth_error
-from app.identity.services.query_principal import (
-    QueryPrincipalNotConfiguredError,
-    QueryPrincipalService,
-)
+from app.identity.errors import QueryPrincipalNotConfiguredError
+from app.identity.services.query_principal import QueryPrincipalService
 from app.query.errors import (
     QueryExecutionTimeoutError,
     QueryRejectedError,

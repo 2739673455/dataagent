@@ -18,10 +18,6 @@ from langchain_core.messages import (
 )
 from loguru import logger
 
-from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
-from app.assistant.agents.explorer.semantic_recall_messages import (
-    expand_semantic_recall_messages_for_display,
-)
 from app.assistant.agents.middleware.user_message_context import (
     USER_MESSAGE_CONTEXT_KEY,
     UserMessageAttachment,
@@ -42,7 +38,7 @@ from app.assistant.execution.types import (
     SubagentStatusActivity,
     SubagentThinkingDeltaActivity,
 )
-from app.sandbox.exceptions import SandboxPathError
+from app.sandbox.errors import SandboxPathError
 from app.sandbox.paths import conversation_relative_path
 from app.shared.contracts.analysis import AgentType
 
@@ -431,10 +427,7 @@ class _SubagentEventContext(TypedDict):
 
 async def subagent_activity_to_event(
     activity: SubagentActivity,
-    user_id: int,
     conversation_id: UUID,
-    *,
-    recall: SemanticRecallRuntime,
 ) -> chat_schema.ChatStreamEventPayload | None:
     """把受信任的 Agent 内部活动投影为公开聊天事件。"""
     common = _SubagentEventContext(
@@ -446,13 +439,7 @@ async def subagent_activity_to_event(
         instruction=activity.instruction,
     )
     if isinstance(activity, SubagentMessageActivity):
-        expanded = await expand_semantic_recall_messages_for_display(
-            [activity.message],
-            user_id,
-            conversation_id,
-            recall=recall,
-        )
-        message = langchain_message_to_schema(expanded[0], conversation_id)
+        message = langchain_message_to_schema(activity.message, conversation_id)
         if message is None:
             return None
         return chat_schema.ChatStreamSubagentMessageEvent(

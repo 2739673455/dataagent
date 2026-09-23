@@ -73,11 +73,10 @@ def _create_resources() -> WebResources:
         build_query_execution_handler(sandbox, auth, query_clients),
     )
     agents = AgentManager(persistence, tombstones, factory)
-    runs = ConversationRunService(agents, sandbox, recall, persistence)
+    runs = ConversationRunService(agents, sandbox, persistence)
     conversations = build_conversation_lifecycle_service(
         persistence,
         assistant,
-        meta,
         agents,
         sandbox,
         cfg.lifecycle,

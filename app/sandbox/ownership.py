@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 from redis import Redis
 from redis.exceptions import LockError, RedisError
 
-from app.sandbox.exceptions import SandboxDeletedError, SandboxOwnershipError
+from app.sandbox.errors import SandboxDeletedError, SandboxOwnershipError
 
 _REGISTER_OPERATION_SCRIPT = """
 if redis.call("exists", KEYS[1]) == 1 then

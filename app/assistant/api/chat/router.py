@@ -19,7 +19,6 @@ from app.assistant.api.dependencies import (
     ConversationLifecycleServiceDep,
     ConversationRunServiceDep,
     SandboxManagerDep,
-    SemanticRecallRuntimeDep,
 )
 from app.assistant.conversations import history as conversation_history
 from app.assistant.conversations.title import (
@@ -203,7 +202,6 @@ async def api_get_messages(
     "runs/{delegation_id}/messages"
 )
 async def api_get_subagent_messages(
-    recall: SemanticRecallRuntimeDep,
     conversation_id: UUID,
     analysis_id: str,
     agent_type: AgentType,
@@ -226,7 +224,6 @@ async def api_get_subagent_messages(
         agent_type,
         session_id,
         delegation_id,
-        recall=recall,
     )
 
 

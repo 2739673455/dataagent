@@ -13,7 +13,6 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
-    Integer,
     String,
     Text,
     Uuid,
@@ -70,17 +69,6 @@ def serialize_column_examples(examples: list[Any]) -> list[Any]:
     return sorted(serialized, key=str)
 
 
-def _version_column(default: int, comment: str) -> Mapped[int]:
-    """创建版本字段。"""
-    return mapped_column(
-        Integer,
-        nullable=False,
-        default=default,
-        server_default=text(str(default)),
-        comment=comment,
-    )
-
-
 class TableInfo(MetaBase):
     """表信息。"""
 
@@ -99,7 +87,6 @@ class TableInfo(MetaBase):
         nullable=True,
         comment="字段取值索引增量游标字段",
     )
-    meta_version: Mapped[int] = _version_column(1, "元数据版本")
 
 
 class ColumnInfo(MetaBase):
@@ -144,8 +131,13 @@ class ColumnInfo(MetaBase):
     reference_c_name: Mapped[str | None] = mapped_column(
         String(256), comment="引用字段名称"
     )
-    meta_version: Mapped[int] = _version_column(1, "元数据版本")
-    index_version: Mapped[int] = _version_column(0, "语义索引版本")
+    index_ready: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+        comment="语义索引是否构建完成",
+    )
     value_index_state: "ValueIndexSyncState | None" = None
 
 
@@ -169,30 +161,11 @@ class ValueIndexSyncState(MetaBase):
     active_run_id: Mapped[UUID | None] = mapped_column(Uuid)
     current_generation: Mapped[UUID | None] = mapped_column(Uuid)
     active_generation: Mapped[UUID | None] = mapped_column(Uuid)
-    last_incremental_synced_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    last_full_synced_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
     last_error: Mapped[str | None] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
     )
-
-    @property
-    def last_synced_at(self) -> datetime | None:
-        """返回最近一次成功的增量或全量同步时间。"""
-        timestamps = [
-            timestamp
-            for timestamp in (
-                self.last_incremental_synced_at,
-                self.last_full_synced_at,
-            )
-            if timestamp is not None
-        ]
-        return max(timestamps, default=None)
 
 
 @dataclass
@@ -214,8 +187,13 @@ class MetricInfo(MetaBase):
     name: Mapped[str] = mapped_column(String(256), primary_key=True, comment="指标名称")
     description: Mapped[str] = mapped_column(Text, nullable=False, comment="指标描述")
     alias: Mapped[list[str]] = mapped_column(JSON, nullable=False, comment="指标别名")
-    meta_version: Mapped[int] = _version_column(1, "元数据版本")
-    index_version: Mapped[int] = _version_column(0, "语义索引版本")
+    index_ready: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+        comment="语义索引是否构建完成",
+    )
     relevant_columns: list[ColumnReference]
 
     def __init__(
@@ -225,16 +203,14 @@ class MetricInfo(MetaBase):
         description: str,
         alias: list[str],
         relevant_columns: list[ColumnReference] | None = None,
-        meta_version: int = 1,
-        index_version: int = 0,
+        index_ready: bool = False,
     ) -> None:
         """初始化指标元数据及其关联字段引用。"""
         self.name = name
         self.description = description
         self.alias = alias
         self.relevant_columns = relevant_columns or []
-        self.meta_version = meta_version
-        self.index_version = index_version
+        self.index_ready = index_ready
 
 
 class ColumnMetric(MetaBase):

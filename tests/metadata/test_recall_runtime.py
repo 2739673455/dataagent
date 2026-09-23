@@ -51,7 +51,6 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
             role="fact",
             description="订单",
             primary_key_columns=[],
-            meta_version=1,
         )
         self.column = ColumnInfo(
             t_name="orders",
@@ -63,8 +62,6 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
             reference_t_name=None,
             reference_c_name=None,
             index_values=False,
-            meta_version=1,
-            index_version=1,
         )
 
     async def test_search_closes_auth_and_catalog_sessions_before_external_calls(self):
@@ -111,8 +108,7 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
             ),
             patch("app.metadata.providers.ColumnESRepo", return_value=index),
         ):
-            policy, response = await self.runtime.search(7, self.request)
-        self.assertIs(policy, self.policy)
+            response = await self.runtime.search(7, self.request)
         self.assertEqual(response.status, "success")
         index.search_text_hits.assert_awaited_once()
         index.search_vector_hits.assert_awaited_once()
@@ -147,34 +143,3 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
                     await task
         self.assertEqual(self.open_sessions, set())
         self.assertEqual(self.closed, ["meta"])
-
-    async def test_independent_context_reads_refresh_policy_but_same_operation_reuses_it(
-        self,
-    ):
-        revoked = AssetAccessPolicy(user_id=7)
-        seen = []
-
-        @asynccontextmanager
-        async def context(postgres, policy):
-            self.assertEqual(self.open_sessions, set())
-            seen.append(policy)
-            yield MagicMock()
-
-        with (
-            patch(
-                "app.assistant.agents.explorer.recall_runtime.load_asset_policy",
-                new=AsyncMock(side_effect=[self.policy, revoked]),
-            ) as load,
-            patch(
-                "app.assistant.agents.explorer.recall_runtime.semantic_recall_context",
-                side_effect=context,
-            ),
-        ):
-            async with self.runtime.context_service(7):
-                pass
-            async with self.runtime.context_service(7, policy=self.policy):
-                pass
-            async with self.runtime.context_service(7):
-                pass
-        self.assertEqual(load.await_count, 2)
-        self.assertEqual(seen, [self.policy, self.policy, revoked])

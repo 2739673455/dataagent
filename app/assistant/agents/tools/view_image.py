@@ -8,7 +8,7 @@ from langchain_core.tools import BaseTool
 from pydantic import field_validator
 
 from app.assistant.execution.types import NonEmptyText, StrictProtocolModel
-from app.sandbox.exceptions import SandboxPathError
+from app.sandbox.errors import SandboxPathError
 from app.sandbox.paths import normalize_sandbox_path
 
 IMAGE_VIEW_TOOL_NAME = "view_image"

@@ -25,6 +25,7 @@ from app.assistant.agents.middleware.user_message_context import (
 )
 from app.assistant.checkpoints.reader import CheckpointState
 from app.assistant.conversations import history as conversation_history
+from app.assistant.errors import PlannerContinuationLimitError
 from app.assistant.events import projection as message_projection
 from app.assistant.events import schemas as chat_schema
 from app.assistant.execution import planner as planner_turn
@@ -493,7 +494,6 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                 manager,
                 _FileInspectorStub(),
                 manager.turn_context,
-                recall=MagicMock(),
                 user_message=None,
             )
         ]
@@ -569,7 +569,6 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                 manager,
                 _FileInspectorStub(),
                 manager.turn_context,
-                recall=MagicMock(),
                 user_message=None,
             )
         ]
@@ -615,7 +614,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                 new=MagicMock(return_value=HumanMessage(content="analyze")),
             ),
             self.assertRaisesRegex(
-                planner_turn.PlannerContinuationLimitError,
+                PlannerContinuationLimitError,
                 "连续续写次数超过上限",
             ),
         ):
@@ -624,7 +623,6 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                 _FileInspectorStub(),
                 manager.turn_context,
                 user_message,
-                recall=MagicMock(),
             ):
                 events.append(event)
 
@@ -902,7 +900,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 chat_schema.UserMessageRequest(
                     parts=[chat_schema.TextContent(type="text", text="分析")]
                 ),
-                recall=MagicMock(),
             )
         ]
 
@@ -1070,7 +1067,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 chat_schema.UserMessageRequest(
                     parts=[chat_schema.TextContent(type="text", text="analyze")]
                 ),
-                recall=MagicMock(),
             ):
                 events.append(event)
 
@@ -1093,65 +1089,42 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status_event.parent_tool_call_id, "eval-call")
         self.assertEqual(status_event.instruction, "定位销售数据")
 
-    async def test_semantic_recall_result_is_expanded_in_stream_and_history(
-        self,
-    ) -> None:
-        reference = ToolMessage(
+    async def test_semantic_recall_result_is_preserved_in_stream_and_history(self):
+        detailed_content = json.dumps(
+            {"tables": {"orders": {"columns": {"amount": {"type": "DECIMAL"}}}}},
+            ensure_ascii=False,
+        )
+        message = ToolMessage(
             id="recall-message",
             name="recall_context",
             tool_call_id="recall-call",
-            content=json.dumps({"status": "stored", "query": "收入趋势"}),
+            content=detailed_content,
         )
-        detailed_content = json.dumps(
-            {
-                "query": "收入趋势",
-                "tables": {"orders": {"columns": {"amount": {"type": "DECIMAL"}}}},
-            },
-            ensure_ascii=False,
-        )
-        expanded = reference.model_copy(update={"content": detailed_content})
-        expander = AsyncMock(return_value=[expanded])
         activity = SubagentMessageActivity(
             delegation_id="delegation-1",
             analysis_id="sales-review",
             agent_type="explorer",
             session_id="source-1",
-            message=reference,
+            message=message,
         )
-
-        with (
-            patch.object(
-                message_projection,
-                "expand_semantic_recall_messages_for_display",
-                new=expander,
-            ),
-            patch.object(
-                conversation_history,
-                "expand_semantic_recall_messages_for_display",
-                new=expander,
-            ),
-        ):
-            stream_event = await message_projection.subagent_activity_to_event(
-                activity, 7, _CONVERSATION_ID, recall=MagicMock()
+        stream_event = await message_projection.subagent_activity_to_event(
+            activity, _CONVERSATION_ID
+        )
+        agents = MagicMock()
+        agents.read_delegation_activity = AsyncMock(
+            return_value=DelegationActivityHistory(
+                messages=[message], status="completed"
             )
-
-            agents = MagicMock()
-            agents.read_delegation_activity = AsyncMock(
-                return_value=DelegationActivityHistory(
-                    messages=[reference],
-                    status="completed",
-                )
-            )
-            history = await conversation_history.get_subagent_activity(
-                agents,
-                7,
-                _CONVERSATION_ID,
-                "sales-review",
-                "explorer",
-                "source-1",
-                "delegation-1",
-                recall=MagicMock(),
-            )
+        )
+        history = await conversation_history.get_subagent_activity(
+            agents,
+            7,
+            _CONVERSATION_ID,
+            "sales-review",
+            "explorer",
+            "source-1",
+            "delegation-1",
+        )
 
         self.assertIsInstance(
             stream_event,
@@ -1169,10 +1142,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(history_part, chat_schema.ToolResultPart)
         assert isinstance(history_part, chat_schema.ToolResultPart)
         self.assertEqual(history_part.content, detailed_content)
-        self.assertEqual(
-            reference.content,
-            json.dumps({"status": "stored", "query": "收入趋势"}),
-        )
+        self.assertEqual(message.content, detailed_content)
 
     def test_delegation_artifacts_are_restored_from_history(self) -> None:
         message = ToolMessage(
@@ -1245,7 +1215,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 _FileInspectorStub(),
                 manager.turn_context,
                 user_message,
-                recall=MagicMock(),
             ):
                 events.append(event)
 

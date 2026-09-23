@@ -691,7 +691,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
                 execute_sql,
             ],
             [],
-            recall=MagicMock(),
         )
 
         self.assertEqual(
@@ -703,7 +702,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
 
     def test_specialist_definitions_require_explorer_data_tools(self) -> None:
         with self.assertRaisesRegex(ValueError, "Explorer 缺少必需工具"):
-            build_specialist_definitions([recall_context], [], recall=MagicMock())
+            build_specialist_definitions([recall_context], [])
 
     def test_specialist_definitions_reject_reserved_mcp_tool_names(self) -> None:
         @tool("shell")
@@ -718,7 +717,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
                     execute_sql,
                 ],
                 [conflicting_mcp_tool],
-                recall=MagicMock(),
             )
 
     def test_specialist_agents_expose_shell_and_file_tools(self) -> None:
@@ -737,9 +735,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
                 general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)
             ),
         )
-        definitions = build_specialist_definitions(
-            [recall_context, execute_sql], [], recall=MagicMock()
-        )
+        definitions = build_specialist_definitions([recall_context, execute_sql], [])
         required_tools = {
             "read_file",
             "write_file",
@@ -1033,9 +1029,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             built_agents.append(agent)
             return agent
 
-        definitions = build_specialist_definitions(
-            [recall_context, execute_sql], [], recall=MagicMock()
-        )
+        definitions = build_specialist_definitions([recall_context, execute_sql], [])
         builder_patch = patch(
             "app.assistant.agents.specialists.create_specialist_agent",
             side_effect=build_agent,
@@ -2321,10 +2315,10 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         runtime = MagicMock()
         runtime.planner.astream = stream
         first = ConversationRunService(
-            MagicMock(use_runtime=use_runtime), MagicMock(), MagicMock(), provider
+            MagicMock(use_runtime=use_runtime), MagicMock(), provider
         )
         second = ConversationRunService(
-            MagicMock(use_runtime=use_runtime), MagicMock(), MagicMock(), provider
+            MagicMock(use_runtime=use_runtime), MagicMock(), provider
         )
         try:
             events = await first.start(12, _CONVERSATION_ID, None, prepare=AsyncMock())

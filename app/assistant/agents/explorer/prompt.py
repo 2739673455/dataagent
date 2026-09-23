@@ -12,12 +12,8 @@ EXPLORER_SYSTEM_PROMPT = """
 - **产物落地**：查询结果落地于沙箱，通过可复现代码完成校验与清洗，向调用方提供结构化摘要与绝对路径。
 
 # 语义检索与元数据发现流程
-- **检索主键（query）**：`query` 是当前会话内召回上下文的唯一业务主键。
-  - 首次调用 `recall_context` 时使用完整的业务问题建立 `query`。
-  - 后续补充检索必须严格复用同一 `query`，仅调整 `terms` 业务词与 `resource_types` 资源类型（`column`、`metric`、`value`）。
-  - 同一 `query` 的检索结果会自动累积合并；修改 `query` 会创建独立上下文。
-  - 若需整合不同查询上下文可使用 `merge_recalls`，查阅历史检索详情可调用 `get_recall`。
-- **SQL 模板参考**：`recall_context` 返回的相似历史 SQL 模板可供参考，但必须结合当前业务问题调整时间区间、维度与过滤条件，并提交完整校验。
+- **元数据召回**：调用 `recall_context`，通过 `terms` 和 `resource_types`（`column`、`metric`、`value`）检索所需资源。
+- **结果使用**：每次调用直接返回本次的表、字段、指标和取值；结果保留在工具消息中，后续轮次可直接参考。缺少信息时补充检索，不需要维护 query 或读取召回记录。
 - **兜底探测**：仅当语义检索无法确定必要表结构或字段时，允许通过 `SHOW TABLES` 或查询 `information_schema`（仅限 `tables` 与 `columns` 视图，且必须附带 `table_schema = DATABASE()` 条件）作为兜底手段。严禁调用其他系统表、`DESCRIBE` 或未授权的 SHOW 指令。
 - **数据内容验证**：仅对已授权的业务表执行只读查询。
 

@@ -10,7 +10,6 @@ from uuid import UUID
 
 from loguru import logger
 
-from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
 from app.assistant.errors import ConversationBusyError, ConversationRunConflictError
 from app.assistant.events import schemas as chat_schema
 from app.assistant.execution import planner as planner_turn
@@ -23,8 +22,8 @@ from app.assistant.execution.types import (
     PlannerTurnContext,
     conversation_lifecycle_lock_name,
 )
-from app.shared.clients.langgraph_postgres_manager import AdvisoryLockBusyError
 from app.shared.config.app_config import cfg
+from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 type ConversationRunKey = tuple[int, UUID]
 type RunEvent = chat_schema.ChatStreamEventPayload
@@ -61,13 +60,11 @@ class ConversationRunService:
         self,
         agents: AgentRuntimeManager,
         files: ConversationFileInspector,
-        recall: SemanticRecallRuntime,
         locks: ConversationLifecycleLockProvider,
     ) -> None:
         """绑定 Agent 执行依赖并初始化进程内 Run 注册表。"""
         self._agents = agents
         self._files = files
-        self._recall = recall
         self._locks = locks
         self._runs: dict[ConversationRunKey, _ConversationRun] = {}
         self._lock = asyncio.Lock()
@@ -189,7 +186,6 @@ class ConversationRunService:
                         cfg.agent.orchestration.max_continuations,
                     ),
                     user_message,
-                    recall=self._recall,
                 )
                 try:
                     async for event in responses:

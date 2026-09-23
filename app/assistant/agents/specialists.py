@@ -6,7 +6,6 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -14,11 +13,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from app.assistant.agents.analyst.prompt import ANALYST_SYSTEM_PROMPT
 from app.assistant.agents.explorer.prompt import EXPLORER_SYSTEM_PROMPT
-from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
 from app.assistant.agents.filesystem import agent_skills_mount_path
-from app.assistant.agents.middleware.semantic_recall_expansion import (
-    SemanticRecallExpansionMiddleware,
-)
 from app.assistant.agents.reviewer.prompt import REVIEWER_SYSTEM_PROMPT
 from app.assistant.agents.specialist_agent import create_specialist_agent
 from app.assistant.execution.shell_jobs import ShellJobRuntime
@@ -65,7 +60,6 @@ class SpecialistDefinition:
 
     system_prompt: str
     skill_directory: Path
-    extra_middleware: tuple[AgentMiddleware, ...] = ()
     tools: tuple[BaseTool, ...] = ()
     skills: tuple[str, ...] = ()
 
@@ -73,8 +67,6 @@ class SpecialistDefinition:
 def build_specialist_definitions(
     explorer_tools: Iterable[BaseTool],
     explorer_mcp_tools: Iterable[BaseTool],
-    *,
-    recall: SemanticRecallRuntime,
 ) -> dict[AgentType, SpecialistDefinition]:
     """构造专业 Agent 定义，并将数据访问能力限定给 Explorer。"""
     builtin_tools = tuple(explorer_tools)
@@ -104,7 +96,6 @@ def build_specialist_definitions(
         "explorer": SpecialistDefinition(
             system_prompt=EXPLORER_SYSTEM_PROMPT,
             skill_directory=Path(__file__).parent / "explorer" / "skills",
-            extra_middleware=(SemanticRecallExpansionMiddleware(recall),),
             tools=tuple(tools_by_name[name] for name in sorted(explorer_tool_names)),
         ),
         "analyst": SpecialistDefinition(
@@ -155,7 +146,6 @@ class SpecialistAgentFactory:
             name=session_key.agent_type,
             system_prompt=definition.system_prompt,
             skill_directory=definition.skill_directory,
-            extra_middleware=definition.extra_middleware,
             model=self._models[session_key.agent_type],
             tools=definition.tools,
             backend=backend,

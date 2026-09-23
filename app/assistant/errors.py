@@ -67,3 +67,15 @@ class AttachmentTooLargeError(ProblemError):
     type = "attachment-too-large"
     title = "附件过大"
     status = HTTPStatus.CONTENT_TOO_LARGE
+
+
+class PlannerContinuationLimitError(RuntimeError):
+    """Planner 自动续写次数超过服务端硬限制。"""
+
+    def __init__(self, max_continuations: int, finish_reason: str) -> None:
+        """初始化包含续写上限和结束原因的异常。"""
+        self.max_continuations = max_continuations
+        self.finish_reason = finish_reason
+        super().__init__(
+            f"规划器在结束原因 {finish_reason!r} 下连续续写次数超过上限 ({max_continuations} 次)"
+        )

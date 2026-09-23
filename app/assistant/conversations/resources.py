@@ -16,7 +16,7 @@ from app.sandbox.providers import create_sandbox_manager
 from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
-from app.shared.database.base import AssistantBase, MetaBase
+from app.shared.database.base import AssistantBase
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,10 +37,6 @@ async def conversation_lifecycle_resources() -> AsyncGenerator[
         cfg.langgraph_postgresql,
         AssistantBase,
     )
-    meta_postgres = PostgresClientManager(
-        cfg.meta_postgresql,
-        MetaBase,
-    )
     sandbox = create_sandbox_manager(
         cfg.sandbox,
         packaged_skill_readonly_mounts(),
@@ -52,7 +48,6 @@ async def conversation_lifecycle_resources() -> AsyncGenerator[
     service = build_conversation_lifecycle_service(
         persistence,
         assistant_postgres,
-        meta_postgres,
         agents,
         sandbox,
         cfg.lifecycle,
@@ -60,11 +55,9 @@ async def conversation_lifecycle_resources() -> AsyncGenerator[
     async with AsyncExitStack() as stack:
         stack.push_async_callback(persistence.close)
         stack.push_async_callback(assistant_postgres.close)
-        stack.push_async_callback(meta_postgres.close)
         stack.push_async_callback(sandbox.disconnect)
         stack.push_async_callback(agents.close)
         await persistence.init()
         assistant_postgres.init()
-        meta_postgres.init()
         await sandbox.init(start_cleanup=False)
         yield ConversationLifecycleResources(service, sandbox)

@@ -1,7 +1,6 @@
 """确定性的元数据语义资源召回服务。"""
 
 import asyncio
-import uuid
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from typing import Literal, TypeVar, cast
@@ -19,7 +18,6 @@ from app.metadata.models.catalog import (
 )
 from app.metadata.models.search import (
     SemanticColumnRecallResult,
-    SemanticIndexStatus,
     SemanticMatchReason,
     SemanticMetricRecallResult,
     SemanticRecallFailure,
@@ -46,15 +44,6 @@ CandidateKeyT = TypeVar("CandidateKeyT")
 IndexResultT = TypeVar("IndexResultT")
 ValueKey = tuple[str, str, str]
 ValueSyncStatus = Literal["syncing", "succeeded", "failed"]
-
-
-def _index_status(item: ColumnInfo | MetricInfo) -> SemanticIndexStatus:
-    """根据元数据和索引版本判断索引状态。"""
-    if item.index_version <= 0:
-        return "missing"
-    if item.index_version < item.meta_version:
-        return "stale"
-    return "current"
 
 
 def _has_semantic_index_match(
@@ -305,13 +294,11 @@ class _ColumnContextBuilder:
         results: list[SemanticColumnRecallResult] = []
         for context in self._contexts.values():
             column_info = context.info
-            index_status = _index_status(column_info)
-            if index_status != "current" and _has_semantic_index_match(
+            if not column_info.index_ready and _has_semantic_index_match(
                 context.match_reasons
             ):
                 self._warnings.append(
-                    "字段语义索引状态为 "
-                    f"{index_status}: {column_info.t_name}.{column_info.name}"
+                    f"字段语义索引尚未就绪: {column_info.t_name}.{column_info.name}"
                 )
             results.append(
                 SemanticColumnRecallResult(
@@ -328,9 +315,7 @@ class _ColumnContextBuilder:
                     inclusion_reasons=context.inclusion_reasons,
                     rank_score=context.rank_score,
                     match_reasons=context.match_reasons,
-                    meta_version=column_info.meta_version,
-                    index_version=column_info.index_version,
-                    index_status=index_status,
+                    index_ready=column_info.index_ready,
                 )
             )
         return results
@@ -343,7 +328,6 @@ class _ColumnContextBuilder:
                 role=table_info.role,
                 description=table_info.description,
                 primary_key_columns=table_info.primary_key_columns,
-                meta_version=table_info.meta_version,
             )
             for t_name in sorted(self._participating_tables())
             if (table_info := self._catalog.tables.get(t_name)) is not None
@@ -703,7 +687,6 @@ class SemanticResourceRecallService:
         ).build(ranked)
         return SemanticResourceRecallResponse(
             status="partial" if context.failures else "success",
-            recall_id=f"recall_{uuid.uuid4().hex}",
             terms=context.request.terms,
             metrics=metric_results,
             columns=column_results,
@@ -780,9 +763,8 @@ class SemanticResourceRecallService:
         results: list[SemanticMetricRecallResult] = []
         for name, rank_score, match_reasons in ranked_metrics:
             metric_info = context.catalog.metrics[name]
-            index_status = _index_status(metric_info)
-            if index_status != "current" and _has_semantic_index_match(match_reasons):
-                context.warnings.append(f"指标语义索引状态为 {index_status}: {name}")
+            if not metric_info.index_ready and _has_semantic_index_match(match_reasons):
+                context.warnings.append(f"指标语义索引尚未就绪: {name}")
             results.append(
                 SemanticMetricRecallResult(
                     name=metric_info.name,
@@ -797,9 +779,7 @@ class SemanticResourceRecallService:
                     ],
                     rank_score=rank_score,
                     match_reasons=match_reasons,
-                    meta_version=metric_info.meta_version,
-                    index_version=metric_info.index_version,
-                    index_status=index_status,
+                    index_ready=metric_info.index_ready,
                 )
             )
         return results
@@ -831,7 +811,6 @@ class SemanticResourceRecallService:
                     rank_score=rank_score,
                     match_reasons=match_reasons,
                     sync_status=sync_status,
-                    synced_at=state.last_synced_at if state is not None else None,
                 )
             )
         return results

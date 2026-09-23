@@ -190,7 +190,7 @@ uv run -m scripts.import_metadata --full
 uv run -m scripts.import_metadata --full --config /path/to/metadata.yaml
 ```
 
-脚本先校验 YAML 结构、名称和引用及 Doris 源表，然后删除全部元数据目录、取值同步状态、召回快照和三个元数据索引，重新写入目录并完成字段、指标和字段取值索引。修改 YAML 或更换向量模型后重新执行全量导入。
+脚本先校验 YAML 结构、名称和引用及 Doris 源表，然后删除全部元数据目录、取值同步状态和三个元数据索引，重新写入目录并完成字段、指标和字段取值索引。修改 YAML 或更换向量模型后重新执行全量导入。
 
 后续仅追加字段取值：
 

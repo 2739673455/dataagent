@@ -45,8 +45,6 @@ class _ValueIndexRun:
     cursor_column: str | None
     cursor_value: dict[str, Any] | None
     generation: uuid.UUID | None
-    column_meta_version: int
-    table_meta_version: int
 
 
 class MetaIndexService:
@@ -282,8 +280,6 @@ class MetaIndexService:
                     else None
                 ),
                 generation=generation,
-                column_meta_version=column_info.meta_version,
-                table_meta_version=table_info.meta_version,
             )
 
     async def _execute_value_index_run(
@@ -315,9 +311,7 @@ class MetaIndexService:
             if state is None or state.active_run_id != run.run_id:
                 raise RuntimeError("字段取值索引同步运行所有权已失效")
             if (
-                column_info.meta_version != run.column_meta_version
-                or table_info.meta_version != run.table_meta_version
-                or table_info.value_index_cursor_column != run.cursor_column
+                table_info.value_index_cursor_column != run.cursor_column
                 or not column_info.index_values
             ):
                 raise RuntimeError("字段取值索引同步配置已变化")
@@ -334,8 +328,6 @@ class MetaIndexService:
                 ),
                 generation=run.generation,
                 completed_at=datetime.now(UTC),
-                full_sync=run.mode == "full",
-                incremental_sync=run.mode == "incremental",
             )
             if not committed:
                 raise RuntimeError("字段取值索引同步状态提交冲突")
@@ -500,8 +492,7 @@ class MetaIndexService:
             "index_values": column_info.index_values,
             "reference_t_name": column_info.reference_t_name,
             "reference_c_name": column_info.reference_c_name,
-            "meta_version": column_info.meta_version,
-            "index_version": column_info.meta_version,
+            "index_ready": True,
         }
 
     @staticmethod
@@ -509,14 +500,13 @@ class MetaIndexService:
         """构造顺序稳定的指标语义索引载荷。"""
         return {
             "name": metric_info.name,
+            "index_ready": True,
             "description": metric_info.description,
             "relevant_columns": sorted(
                 metric_info.relevant_columns,
                 key=lambda item: (item["t_name"], item["c_name"]),
             ),
             "alias": sorted(dict.fromkeys(metric_info.alias)),
-            "meta_version": metric_info.meta_version,
-            "index_version": metric_info.meta_version,
         }
 
     async def _embed_texts(self, texts: list[str]) -> list[list[float]]:

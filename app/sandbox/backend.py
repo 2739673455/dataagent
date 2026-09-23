@@ -29,7 +29,7 @@ from deepagents.backends.sandbox import BaseSandbox
 from docker.errors import APIError, NotFound
 from docker.models.containers import Container
 
-from app.sandbox.exceptions import SandboxPathError
+from app.sandbox.errors import SandboxPathError
 from app.sandbox.ownership import SandboxOwnership
 from app.sandbox.paths import (
     SANDBOX_DATA_ROOT,

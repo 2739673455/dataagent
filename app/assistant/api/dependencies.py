@@ -4,7 +4,6 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
 from app.assistant.conversations.lifecycle import ConversationLifecycleService
 from app.assistant.execution.manager import AgentManager
 from app.assistant.execution.run import ConversationRunService
@@ -43,14 +42,4 @@ ConversationLifecycleServiceDep = Annotated[
 ConversationRunServiceDep = Annotated[
     ConversationRunService,
     Depends(_get_conversation_run_service),
-]
-
-
-def _get_recall_runtime(resources: WebResourcesDep) -> SemanticRecallRuntime:
-    """获取当前应用的召回能力资源。"""
-    return resources.recall
-
-
-SemanticRecallRuntimeDep = Annotated[
-    SemanticRecallRuntime, Depends(_get_recall_runtime)
 ]

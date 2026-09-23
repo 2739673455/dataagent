@@ -174,7 +174,6 @@ def test_replace_catalog_clears_only_metadata_and_preserves_references():
     assert statements == [
         f"DELETE FROM {name}"
         for name in (
-            "semantic_recall_snapshots",
             "value_index_sync_state",
             "column_metric",
             "column_info",
@@ -198,8 +197,8 @@ def incremental_dependencies(previous, upper):
         status="succeeded",
         active_run_id=None,
     )
-    column = SimpleNamespace(index_values=True, value_index_state=state, meta_version=1)
-    table = SimpleNamespace(value_index_cursor_column="updated_at", meta_version=1)
+    column = SimpleNamespace(index_values=True, value_index_state=state)
+    table = SimpleNamespace(value_index_cursor_column="updated_at")
     repo = MagicMock(session=MagicMock(begin=transaction))
     repo.acquire_index_lock = AsyncMock()
     repo.get_column_info = AsyncMock(return_value=column)
@@ -432,7 +431,6 @@ def test_semantic_build_embeds_unique_texts_and_marks_only_after_write(
         name="amount",
         description=" 金额 ",
         alias=["金额", "amount", "总额", " "],
-        meta_version=1,
         t_name="orders",
         type="DECIMAL",
         examples=[],
@@ -456,6 +454,7 @@ def test_semantic_build_embeds_unique_texts_and_marks_only_after_write(
         aembed_documents=AsyncMock(return_value=[[1.0], [2.0], [3.0]])
     )
     service = MetaIndexService(repo, MagicMock(), index, index, embedding, MagicMock())
+
     async def build():
         if kind == "column":
             await service.build_column_indexes([("orders", "amount")])

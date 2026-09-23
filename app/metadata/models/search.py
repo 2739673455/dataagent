@@ -1,13 +1,11 @@
 """元数据语义召回模型。"""
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SemanticResourceType = Literal["column", "metric", "value"]
-SemanticIndexStatus = Literal["current", "stale", "missing"]
 SemanticTextType = Literal["name", "description", "alias"]
 SemanticMatchType = Literal["fulltext", "vector"]
 ValueIndexSyncMode = Literal["full", "incremental"]
@@ -97,9 +95,7 @@ class SemanticMetricRecallResult(BaseModel):
     relevant_columns: list[dict[str, str]]
     rank_score: float
     match_reasons: list[SemanticMatchReason]
-    meta_version: int
-    index_version: int
-    index_status: SemanticIndexStatus
+    index_ready: bool
 
 
 class SemanticColumnRecallResult(BaseModel):
@@ -116,9 +112,7 @@ class SemanticColumnRecallResult(BaseModel):
     inclusion_reasons: list[str]
     rank_score: float | None
     match_reasons: list[SemanticMatchReason]
-    meta_version: int
-    index_version: int
-    index_status: SemanticIndexStatus
+    index_ready: bool
 
 
 class SemanticValueRecallResult(BaseModel):
@@ -130,7 +124,6 @@ class SemanticValueRecallResult(BaseModel):
     rank_score: float
     match_reasons: list[SemanticMatchReason]
     sync_status: Literal["syncing", "succeeded", "failed"] | None
-    synced_at: datetime | None
 
 
 class SemanticTableContext(BaseModel):
@@ -140,14 +133,12 @@ class SemanticTableContext(BaseModel):
     role: str
     description: str
     primary_key_columns: list[str]
-    meta_version: int
 
 
 class SemanticResourceRecallResponse(BaseModel):
     """语义目录召回响应。"""
 
     status: Literal["success", "partial"]
-    recall_id: str
     terms: list[str]
     metrics: list[SemanticMetricRecallResult]
     columns: list[SemanticColumnRecallResult]

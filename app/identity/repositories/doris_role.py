@@ -8,6 +8,11 @@ from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
+from app.identity.errors import (
+    DorisQueryUserAlreadyExistsError,
+    DorisRoleAlreadyExistsError,
+    DorisWorkloadGroupNotFoundError,
+)
 from app.identity.models.doris import DorisAuthorizationSnapshot, DorisRowPolicy
 from app.identity.repositories.doris_authorization import parse_authorization
 from app.shared.clients.doris_client_manager import DorisClientManager
@@ -15,33 +20,6 @@ from app.shared.contracts.doris import DORIS_IDENTIFIER_PATTERN
 
 _USER_IDENTITY_PATTERN = re.compile(r"'(?:\\.|''|[^'])*'@'(?:\\.|''|[^'])*'")
 _GENERATED_PASSWORD_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
-
-
-class DorisWorkloadGroupNotFoundError(RuntimeError):
-    """Doris 工作组不存在。"""
-
-    def __init__(self, workload_group: str) -> None:
-        """初始化缺失的 Doris 工作组名称。"""
-        self.workload_group = workload_group
-        super().__init__(f"Doris 工作组不存在: {workload_group}")
-
-
-class DorisQueryUserAlreadyExistsError(RuntimeError):
-    """Doris 查询用户已存在。"""
-
-    def __init__(self, query_user: str) -> None:
-        """记录发生冲突的 Doris 查询用户名。"""
-        self.query_user = query_user
-        super().__init__(f"Doris 查询用户已存在: {query_user}")
-
-
-class DorisRoleAlreadyExistsError(RuntimeError):
-    """Doris 角色已存在。"""
-
-    def __init__(self, role_name: str) -> None:
-        """记录发生冲突的 Doris 角色名。"""
-        self.role_name = role_name
-        super().__init__(f"Doris 角色已存在: {role_name}")
 
 
 class DorisRoleRepository:

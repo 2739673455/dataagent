@@ -181,3 +181,38 @@ class RateLimitExceededError(ProblemError):
             detail=detail or "认证请求过于频繁，请稍后重试",
             extensions={"retry_after_seconds": retry_after_seconds},
         )
+
+
+class DorisCredentialError(RuntimeError):
+    """Doris 查询凭据无法解密。"""
+
+
+class QueryPrincipalNotConfiguredError(RuntimeError):
+    """用户没有可用的稳定查询身份。"""
+
+
+class DorisWorkloadGroupNotFoundError(RuntimeError):
+    """Doris 工作组不存在。"""
+
+    def __init__(self, workload_group: str) -> None:
+        """初始化缺失的 Doris 工作组名称。"""
+        self.workload_group = workload_group
+        super().__init__(f"Doris 工作组不存在: {workload_group}")
+
+
+class DorisQueryUserAlreadyExistsError(RuntimeError):
+    """Doris 查询用户已存在。"""
+
+    def __init__(self, query_user: str) -> None:
+        """记录发生冲突的 Doris 查询用户名。"""
+        self.query_user = query_user
+        super().__init__(f"Doris 查询用户已存在: {query_user}")
+
+
+class DorisRoleAlreadyExistsError(RuntimeError):
+    """Doris 角色已存在。"""
+
+    def __init__(self, role_name: str) -> None:
+        """记录发生冲突的 Doris 角色名。"""
+        self.role_name = role_name
+        super().__init__(f"Doris 角色已存在: {role_name}")
