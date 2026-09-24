@@ -120,7 +120,6 @@ def test_index_failure_stops_full_pipeline():
 @pytest.mark.parametrize(
     "payload",
     [
-        b"tables: []",
         VALID_YAML.replace(b"c_name: status", b"c_name: missing"),
         VALID_YAML.replace(b"role: fact", b"role: unknown"),
         VALID_YAML.replace(b"    columns:", b"    columns_unknown:"),

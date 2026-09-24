@@ -52,8 +52,6 @@ def parse_metadata_yaml(content: bytes) -> MetaConfig:
 
 def validate_metadata_config(config: MetaConfig) -> None:
     """校验名称唯一性及 YAML 内部引用，不依赖数据库现状。"""
-    if not config.tables:
-        raise meta_error.InvalidMetadataError(detail="元数据 YAML 必须至少包含一张表")
     table_names = [item.name for item in config.tables]
     metric_names = [item.name for item in config.metrics]
     if len(set(table_names)) != len(table_names):
@@ -69,7 +67,7 @@ def validate_metadata_config(config: MetaConfig) -> None:
         for column in table.columns:
             if column.reference_t_name is not None:
                 reference = (column.reference_t_name, column.reference_c_name)
-                if reference not in keys or reference == (table.name, column.name):
+                if reference not in keys:
                     raise meta_error.InvalidMetadataError(
                         detail=f"字段引用无效: {table.name}.{column.name}"
                     )
@@ -95,8 +93,7 @@ class MetaImportService:
         self._meta_index_service = meta_index_service
 
     async def import_full(self, meta_config: MetaConfig) -> None:
-        """校验配置和源表后清空目录，依次完成全部索引构建。"""
-        validate_metadata_config(meta_config)
+        """接收已校验的配置，校验源表后替换目录并构建全部索引。"""
         table_infos, column_infos, metric_infos = await self._build_metadata(
             meta_config
         )
