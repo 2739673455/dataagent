@@ -66,16 +66,6 @@ class SemanticResourceRecallRequest(BaseModel):
         return list(dict.fromkeys(values))
 
 
-class SemanticMatchReason(BaseModel):
-    """一次索引命中的结构化依据。"""
-
-    model_config = ConfigDict(frozen=True)
-
-    match_type: SemanticMatchType
-    term: str
-    score: float
-
-
 class SemanticRecallFailure(BaseModel):
     """一次资源检索通道的失败范围。"""
 
@@ -94,7 +84,6 @@ class SemanticMetricRecallResult(BaseModel):
     alias: list[str]
     relevant_columns: list[dict[str, str]]
     rank_score: float
-    match_reasons: list[SemanticMatchReason]
     index_ready: bool
 
 
@@ -111,7 +100,6 @@ class SemanticColumnRecallResult(BaseModel):
     reference_c_name: str | None
     inclusion_reasons: list[str]
     rank_score: float | None
-    match_reasons: list[SemanticMatchReason]
     index_ready: bool
 
 
@@ -122,7 +110,6 @@ class SemanticValueRecallResult(BaseModel):
     t_name: str
     c_name: str
     rank_score: float
-    match_reasons: list[SemanticMatchReason]
     sync_status: Literal["syncing", "succeeded", "failed"] | None
 
 

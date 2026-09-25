@@ -17,7 +17,6 @@ from app.assistant.agents.explorer.semantic_recall_handler import recall_context
 from app.assistant.agents.explorer.tools import create_semantic_recall_tools
 from app.metadata.models.search import (
     SemanticColumnRecallResult,
-    SemanticMatchReason,
     SemanticMetricRecallResult,
     SemanticResourceRecallRequest,
     SemanticResourceRecallResponse,
@@ -33,11 +32,6 @@ def build_response(
     reason: str,
 ) -> SemanticResourceRecallResponse:
     """构造包含重复资源的测试召回响应。"""
-    match_reason = SemanticMatchReason(
-        match_type="fulltext",
-        term=reason,
-        score=score,
-    )
     return SemanticResourceRecallResponse(
         status="success",
         terms=[query],
@@ -48,7 +42,6 @@ def build_response(
                 alias=[f"收入-{reason}"],
                 relevant_columns=[{"t_name": "orders", "c_name": "amount"}],
                 rank_score=score,
-                match_reasons=[match_reason],
                 index_ready=True,
             )
         ],
@@ -64,7 +57,6 @@ def build_response(
                 reference_c_name=None,
                 inclusion_reasons=["direct_match"],
                 rank_score=score,
-                match_reasons=[match_reason],
                 index_ready=True,
             )
         ],
@@ -74,7 +66,6 @@ def build_response(
                 t_name="orders",
                 c_name="status",
                 rank_score=score,
-                match_reasons=[match_reason],
                 sync_status="succeeded",
             )
         ],

@@ -18,7 +18,6 @@ from app.metadata.models.catalog import (
 )
 from app.metadata.models.search import (
     SemanticColumnRecallResult,
-    SemanticMatchReason,
     SemanticMetricRecallResult,
     SemanticRecallFailure,
     SemanticResourceRecallRequest,
@@ -46,27 +45,6 @@ ValueKey = tuple[str, str, str]
 ValueSyncStatus = Literal["syncing", "succeeded", "failed"]
 
 
-def _has_semantic_index_match(
-    match_reasons: list[SemanticMatchReason],
-) -> bool:
-    """判断候选是否来自全文或向量语义索引。"""
-    return any(reason.match_type in {"fulltext", "vector"} for reason in match_reasons)
-
-
-@dataclass(slots=True)
-class _CandidateScore:
-    """候选资源的融合分数和命中依据。"""
-
-    score: float = 0.0
-    reasons: list[SemanticMatchReason] = field(default_factory=list)
-
-    def add(self, score: float, reason: SemanticMatchReason) -> None:
-        """累计分数并稳定去重命中依据。"""
-        self.score += score
-        if reason not in self.reasons:
-            self.reasons.append(reason)
-
-
 @dataclass(slots=True)
 class _ColumnContext:
     """待返回字段及其引入原因。"""
@@ -74,7 +52,6 @@ class _ColumnContext:
     info: ColumnInfo
     inclusion_reasons: list[str]
     rank_score: float | None = None
-    match_reasons: list[SemanticMatchReason] = field(default_factory=list)
 
     def add_reason(self, reason: str) -> None:
         """稳定去重字段引入原因。"""
@@ -97,9 +74,9 @@ class _RecallContext:
 
     request: SemanticResourceRecallRequest
     catalog: SemanticCatalog
-    column_scores: dict[ColumnKey, _CandidateScore] = field(default_factory=dict)
-    metric_scores: dict[str, _CandidateScore] = field(default_factory=dict)
-    value_scores: dict[ValueKey, _CandidateScore] = field(default_factory=dict)
+    column_scores: dict[ColumnKey, float] = field(default_factory=dict)
+    metric_scores: dict[str, float] = field(default_factory=dict)
+    value_scores: dict[ValueKey, float] = field(default_factory=dict)
     failures: list[SemanticRecallFailure] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -109,13 +86,6 @@ class _RecallContext:
         return min(
             60,
             self.request.limit_per_type * _INDEX_SEARCH_LIMIT_MULTIPLIER,
-        )
-
-    def selects_any(self, *resource_types: SemanticResourceType) -> bool:
-        """判断本次请求是否选择任一资源类型。"""
-        return any(
-            resource_type in self.request.resource_types
-            for resource_type in resource_types
         )
 
     def record_backend_failure(
@@ -151,9 +121,9 @@ class _RecallContext:
 class _RankedCandidates:
     """三类资源的融合排名结果。"""
 
-    columns: list[tuple[ColumnKey, float, list[SemanticMatchReason]]]
-    metrics: list[tuple[str, float, list[SemanticMatchReason]]]
-    values: list[tuple[ValueKey, float, list[SemanticMatchReason]]]
+    columns: list[tuple[ColumnKey, float]]
+    metrics: list[tuple[str, float]]
+    values: list[tuple[ValueKey, float]]
     truncated: bool
 
 
@@ -200,7 +170,6 @@ class _ColumnContextBuilder:
         key: ColumnKey,
         inclusion_reason: str,
         rank_score: float | None = None,
-        match_reasons: list[SemanticMatchReason] | None = None,
         *,
         counts_toward_limit: bool = True,
     ) -> None:
@@ -213,7 +182,6 @@ class _ColumnContextBuilder:
             existing.add_reason(inclusion_reason)
             if rank_score is not None:
                 existing.rank_score = rank_score
-                existing.match_reasons = match_reasons or []
             return
         if (
             counts_toward_limit
@@ -225,22 +193,21 @@ class _ColumnContextBuilder:
             info=column_info,
             inclusion_reasons=[inclusion_reason],
             rank_score=rank_score,
-            match_reasons=match_reasons or [],
         )
         if counts_toward_limit:
             self._ranked_context_count += 1
 
     def _add_ranked_resources(self, ranked: _RankedCandidates) -> None:
         """添加直接字段、指标依赖字段和值所属字段。"""
-        for key, rank_score, match_reasons in ranked.columns:
-            self._add_column(key, "direct_match", rank_score, match_reasons)
-        for metric_name, _, _ in ranked.metrics:
+        for key, rank_score in ranked.columns:
+            self._add_column(key, "direct_match", rank_score)
+        for metric_name, _ in ranked.metrics:
             for reference in self._catalog.metrics[metric_name].relevant_columns:
                 self._add_column(
                     column_reference_key(reference),
                     "metric_dependency",
                 )
-        for (t_name, c_name, _), _, _ in ranked.values:
+        for (t_name, c_name, _), _ in ranked.values:
             self._add_column(
                 (t_name, c_name),
                 "value_owner",
@@ -294,8 +261,9 @@ class _ColumnContextBuilder:
         results: list[SemanticColumnRecallResult] = []
         for context in self._contexts.values():
             column_info = context.info
-            if not column_info.index_ready and _has_semantic_index_match(
-                context.match_reasons
+            if (
+                not column_info.index_ready
+                and "direct_match" in context.inclusion_reasons
             ):
                 self._warnings.append(
                     f"字段语义索引尚未就绪: {column_info.t_name}.{column_info.name}"
@@ -314,7 +282,6 @@ class _ColumnContextBuilder:
                     reference_c_name=column_info.reference_c_name,
                     inclusion_reasons=context.inclusion_reasons,
                     rank_score=context.rank_score,
-                    match_reasons=context.match_reasons,
                     index_ready=column_info.index_ready,
                 )
             )
@@ -420,12 +387,12 @@ class SemanticResourceRecallService:
 
     async def _retrieve(self, context: _RecallContext) -> None:
         """按请求类型执行确定顺序的多路召回。"""
-        if (context.selects_any("column") and context.catalog.columns) or (
-            context.selects_any("metric") and context.catalog.metrics
+        if ("column" in context.request.resource_types and context.catalog.columns) or (
+            "metric" in context.request.resource_types and context.catalog.metrics
         ):
             await self._collect_fulltext_matches(context)
             await self._collect_vector_matches(context)
-        if context.selects_any("value") and context.catalog.columns:
+        if "value" in context.request.resource_types and context.catalog.columns:
             await self._collect_value_matches(context)
 
     async def _collect_fulltext_matches(
@@ -433,7 +400,7 @@ class SemanticResourceRecallService:
         context: _RecallContext,
     ) -> None:
         """收集字段和指标全文命中。"""
-        if context.selects_any("column") and context.catalog.columns:
+        if "column" in context.request.resource_types and context.catalog.columns:
             allowed_columns = frozenset(context.catalog.columns)
             results = await asyncio.gather(
                 *(
@@ -455,7 +422,7 @@ class SemanticResourceRecallService:
                 match_type="fulltext",
             )
 
-        if context.selects_any("metric") and context.catalog.metrics:
+        if "metric" in context.request.resource_types and context.catalog.metrics:
             allowed_metrics = frozenset(context.catalog.metrics)
             results = await asyncio.gather(
                 *(
@@ -489,14 +456,14 @@ class SemanticResourceRecallService:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
-            if context.selects_any("column") and context.catalog.columns:
+            if "column" in context.request.resource_types and context.catalog.columns:
                 context.record_backend_failure(
                     "向量生成",
                     exc,
                     resource_type="column",
                     channel="vector",
                 )
-            if context.selects_any("metric") and context.catalog.metrics:
+            if "metric" in context.request.resource_types and context.catalog.metrics:
                 context.record_backend_failure(
                     "向量生成",
                     exc,
@@ -505,7 +472,7 @@ class SemanticResourceRecallService:
                 )
             return
 
-        if context.selects_any("column") and context.catalog.columns:
+        if "column" in context.request.resource_types and context.catalog.columns:
             allowed_columns = frozenset(context.catalog.columns)
             results = await asyncio.gather(
                 *(
@@ -527,7 +494,7 @@ class SemanticResourceRecallService:
                 match_type="vector",
             )
 
-        if context.selects_any("metric") and context.catalog.metrics:
+        if "metric" in context.request.resource_types and context.catalog.metrics:
             allowed_metrics = frozenset(context.catalog.metrics)
             results = await asyncio.gather(
                 *(
@@ -578,11 +545,6 @@ class SemanticResourceRecallService:
                     context.column_scores,
                     key,
                     self._rrf_score(rank),
-                    SemanticMatchReason(
-                        match_type=match_type,
-                        term=term,
-                        score=hit.score,
-                    ),
                 )
 
     def _merge_metric_hits(
@@ -616,11 +578,6 @@ class SemanticResourceRecallService:
                     context.metric_scores,
                     hit.item.name,
                     self._rrf_score(rank),
-                    SemanticMatchReason(
-                        match_type=match_type,
-                        term=term,
-                        score=hit.score,
-                    ),
                 )
 
     async def _collect_value_matches(
@@ -662,11 +619,6 @@ class SemanticResourceRecallService:
                     context.value_scores,
                     key,
                     self._rrf_score(rank),
-                    SemanticMatchReason(
-                        match_type="fulltext",
-                        term=term,
-                        score=hit.score,
-                    ),
                 )
 
     def _build_response(
@@ -720,50 +672,48 @@ class SemanticResourceRecallService:
 
     @staticmethod
     def _add_candidate_score(
-        scores: dict[CandidateKeyT, _CandidateScore],
+        scores: dict[CandidateKeyT, float],
         key: CandidateKeyT,
         score: float,
-        reason: SemanticMatchReason,
     ) -> None:
         """新增或合并候选资源分数。"""
-        scores.setdefault(key, _CandidateScore()).add(score, reason)
+        scores[key] = scores.get(key, 0.0) + score
 
     @staticmethod
     def _rank_candidates(
-        scores: dict[CandidateKeyT, _CandidateScore],
+        scores: dict[CandidateKeyT, float],
         limit: int,
     ) -> tuple[
-        list[tuple[CandidateKeyT, float, list[SemanticMatchReason]]],
+        list[tuple[CandidateKeyT, float]],
         bool,
     ]:
         """按融合分数排序并归一化为类型内排名分数。"""
         ordered = sorted(
             scores.items(),
-            key=lambda item: (-item[1].score, str(item[0])),
+            key=lambda item: (-item[1], str(item[0])),
         )
         if not ordered:
             return [], False
-        max_score = ordered[0][1].score
+        max_score = ordered[0][1]
         ranked = [
             (
                 key,
-                round(candidate.score / max_score, 6),
-                candidate.reasons,
+                round(score / max_score, 6),
             )
-            for key, candidate in ordered[:limit]
+            for key, score in ordered[:limit]
         ]
         return ranked, len(ordered) > limit
 
     def _build_metric_results(
         self,
-        ranked_metrics: list[tuple[str, float, list[SemanticMatchReason]]],
+        ranked_metrics: list[tuple[str, float]],
         context: _RecallContext,
     ) -> list[SemanticMetricRecallResult]:
         """构建指标检索响应。"""
         results: list[SemanticMetricRecallResult] = []
-        for name, rank_score, match_reasons in ranked_metrics:
+        for name, rank_score in ranked_metrics:
             metric_info = context.catalog.metrics[name]
-            if not metric_info.index_ready and _has_semantic_index_match(match_reasons):
+            if not metric_info.index_ready:
                 context.warnings.append(f"指标语义索引尚未就绪: {name}")
             results.append(
                 SemanticMetricRecallResult(
@@ -778,7 +728,6 @@ class SemanticResourceRecallService:
                         for reference in metric_info.relevant_columns
                     ],
                     rank_score=rank_score,
-                    match_reasons=match_reasons,
                     index_ready=metric_info.index_ready,
                 )
             )
@@ -786,13 +735,13 @@ class SemanticResourceRecallService:
 
     def _build_value_results(
         self,
-        ranked_values: list[tuple[ValueKey, float, list[SemanticMatchReason]]],
+        ranked_values: list[tuple[ValueKey, float]],
         context: _RecallContext,
     ) -> list[SemanticValueRecallResult]:
         """构建字段值检索响应。"""
         results: list[SemanticValueRecallResult] = []
         warned_columns: set[ColumnKey] = set()
-        for (t_name, c_name, value), rank_score, match_reasons in ranked_values:
+        for (t_name, c_name, value), rank_score in ranked_values:
             column_info = context.catalog.columns[(t_name, c_name)]
             state = column_info.value_index_state
             sync_status = self._value_sync_status(
@@ -809,7 +758,6 @@ class SemanticResourceRecallService:
                     t_name=t_name,
                     c_name=c_name,
                     rank_score=rank_score,
-                    match_reasons=match_reasons,
                     sync_status=sync_status,
                 )
             )
