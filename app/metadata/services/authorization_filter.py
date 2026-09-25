@@ -31,7 +31,7 @@ class MetadataAuthorizationFilter:
         self._data_source = data_source
         self._database_name = database_name
 
-    def identity(
+    def _identity(
         self,
         table_name: str | None = None,
         column_name: str | None = None,
@@ -44,17 +44,13 @@ class MetadataAuthorizationFilter:
             column_name=column_name,
         )
 
-    def table_is_visible(self, table_name: str) -> bool:
-        """判断表或任一下级字段是否对用户可见。"""
-        return self._policy.is_visible(self.identity(table_name))
-
     def table_is_allowed(self, table_name: str) -> bool:
         """判断表是否具备完整读取权限。"""
-        return self._policy.allows(self.identity(table_name))
+        return self._policy.allows(self._identity(table_name))
 
     def column_is_allowed(self, table_name: str, column_name: str) -> bool:
         """判断字段是否具备完整读取权限。"""
-        return self._policy.allows(self.identity(table_name, column_name))
+        return self._policy.allows(self._identity(table_name, column_name))
 
     def query_experience_is_allowed(
         self,
@@ -86,7 +82,7 @@ class MetadataAuthorizationFilter:
         return frozenset(
             (item.t_name, item.name)
             for item in column_infos
-            if self._policy.allows(self.identity(item.t_name, item.name))
+            if self._policy.allows(self._identity(item.t_name, item.name))
         )
 
     def filter_tables(
@@ -109,7 +105,7 @@ class MetadataAuthorizationFilter:
                 meta_version=item.meta_version,
             )
             for item in table_infos
-            if self.table_is_visible(item.name)
+            if self._policy.is_visible(self._identity(item.name))
         ]
 
     def filter_columns(
@@ -150,7 +146,7 @@ class MetadataAuthorizationFilter:
         allowed_columns: frozenset[ColumnKey],
     ) -> list[MetricInfo]:
         """仅保留依赖字段全部授权的指标。"""
-        database_allowed = self._policy.allows(self.identity())
+        database_allowed = self._policy.allows(self._identity())
         return [
             item
             for item in metric_infos
@@ -214,7 +210,7 @@ class MetadataAuthorizationFilter:
                 }
             )
             for item in response.tables
-            if self.table_is_visible(item.name)
+            if self._policy.is_visible(self._identity(item.name))
         ]
         return response.model_copy(
             update={
@@ -270,7 +266,7 @@ class MetadataAuthorizationFilter:
     ) -> bool:
         """判断召回指标的全部依赖字段是否仍获授权。"""
         if not relevant_columns:
-            return self._policy.allows(self.identity())
+            return self._policy.allows(self._identity())
         return all(
             isinstance(reference.get("t_name"), str)
             and isinstance(reference.get("c_name"), str)

@@ -61,13 +61,6 @@ def _index_status(item: ColumnInfo | MetricInfo) -> SemanticIndexStatus:
     return "current"
 
 
-def _has_semantic_index_match(
-    match_reasons: list[SemanticMatchReason],
-) -> bool:
-    """判断候选是否来自全文或向量语义索引。"""
-    return any(reason.match_type in {"fulltext", "vector"} for reason in match_reasons)
-
-
 @dataclass(slots=True)
 class _CandidateScore:
     """候选资源的融合分数和命中依据。"""
@@ -124,13 +117,6 @@ class _RecallContext:
         return min(
             60,
             self.request.limit_per_type * _INDEX_SEARCH_LIMIT_MULTIPLIER,
-        )
-
-    def selects_any(self, *resource_types: SemanticResourceType) -> bool:
-        """判断本次请求是否选择任一资源类型。"""
-        return any(
-            resource_type in self.request.resource_types
-            for resource_type in resource_types
         )
 
     def record_backend_failure(
@@ -310,9 +296,7 @@ class _ColumnContextBuilder:
         for context in self._contexts.values():
             column_info = context.info
             index_status = _index_status(column_info)
-            if index_status != "current" and _has_semantic_index_match(
-                context.match_reasons
-            ):
+            if index_status != "current" and context.match_reasons:
                 self._warnings.append(
                     "字段语义索引状态为 "
                     f"{index_status}: {column_info.t_name}.{column_info.name}"
@@ -440,12 +424,12 @@ class SemanticResourceRecallService:
 
     async def _retrieve(self, context: _RecallContext) -> None:
         """按请求类型执行确定顺序的多路召回。"""
-        if (context.selects_any("column") and context.catalog.columns) or (
-            context.selects_any("metric") and context.catalog.metrics
+        if ("column" in context.request.resource_types and context.catalog.columns) or (
+            "metric" in context.request.resource_types and context.catalog.metrics
         ):
             await self._collect_fulltext_matches(context)
             await self._collect_vector_matches(context)
-        if context.selects_any("value") and context.catalog.columns:
+        if "value" in context.request.resource_types and context.catalog.columns:
             await self._collect_value_matches(context)
 
     async def _collect_fulltext_matches(
@@ -453,7 +437,7 @@ class SemanticResourceRecallService:
         context: _RecallContext,
     ) -> None:
         """收集字段和指标全文命中。"""
-        if context.selects_any("column") and context.catalog.columns:
+        if "column" in context.request.resource_types and context.catalog.columns:
             allowed_columns = frozenset(context.catalog.columns)
             results = await asyncio.gather(
                 *(
@@ -475,7 +459,7 @@ class SemanticResourceRecallService:
                 match_type="fulltext",
             )
 
-        if context.selects_any("metric") and context.catalog.metrics:
+        if "metric" in context.request.resource_types and context.catalog.metrics:
             allowed_metrics = frozenset(context.catalog.metrics)
             results = await asyncio.gather(
                 *(
@@ -509,14 +493,14 @@ class SemanticResourceRecallService:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
-            if context.selects_any("column") and context.catalog.columns:
+            if "column" in context.request.resource_types and context.catalog.columns:
                 context.record_backend_failure(
                     "向量生成",
                     exc,
                     resource_type="column",
                     channel="vector",
                 )
-            if context.selects_any("metric") and context.catalog.metrics:
+            if "metric" in context.request.resource_types and context.catalog.metrics:
                 context.record_backend_failure(
                     "向量生成",
                     exc,
@@ -525,7 +509,7 @@ class SemanticResourceRecallService:
                 )
             return
 
-        if context.selects_any("column") and context.catalog.columns:
+        if "column" in context.request.resource_types and context.catalog.columns:
             allowed_columns = frozenset(context.catalog.columns)
             results = await asyncio.gather(
                 *(
@@ -547,7 +531,7 @@ class SemanticResourceRecallService:
                 match_type="vector",
             )
 
-        if context.selects_any("metric") and context.catalog.metrics:
+        if "metric" in context.request.resource_types and context.catalog.metrics:
             allowed_metrics = frozenset(context.catalog.metrics)
             results = await asyncio.gather(
                 *(
@@ -785,7 +769,7 @@ class SemanticResourceRecallService:
         for name, rank_score, match_reasons in ranked_metrics:
             metric_info = context.catalog.metrics[name]
             index_status = _index_status(metric_info)
-            if index_status != "current" and _has_semantic_index_match(match_reasons):
+            if index_status != "current" and match_reasons:
                 context.warnings.append(f"指标语义索引状态为 {index_status}: {name}")
             results.append(
                 SemanticMetricRecallResult(
