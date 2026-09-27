@@ -31,7 +31,7 @@ class CorruptedSemanticIndexDocumentError(RuntimeError):
         index_name: str,
         document_id: str,
     ) -> None:
-        """保存可用于日志和召回失败记录的定位信息。"""
+        """保存索引名和文档编号，并构造损坏文档的异常消息。"""
         self.index_name = index_name
         self.document_id = document_id
         super().__init__(

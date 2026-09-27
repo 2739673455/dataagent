@@ -51,6 +51,9 @@ embedding: # 文本向量化服务配置。
   model: BAAI/bge-m3 # 嵌入模型标识。
   timeout: 30.0 # 单次嵌入请求超时，单位为秒。
 
+metadata: # 元数据全量和增量导入共用的 Redis 租约锁。
+  redis_url: redis://127.0.0.1:6379/4 # 同一元数据目录的所有导入进程必须使用相同地址。
+
 task_queue: # Celery 队列、任务生命周期和定时调度配置。
   broker_url: redis://127.0.0.1:6379/0 # Celery Broker 地址。
   result_backend: redis://127.0.0.1:6379/1 # Celery 任务结果存储地址。

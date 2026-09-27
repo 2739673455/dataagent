@@ -37,7 +37,6 @@ class ValueESRepo:
             },
             "t_name": {"type": "keyword"},
             "c_name": {"type": "keyword"},
-            "sync_generation": {"type": "keyword"},
         },
     }
 
@@ -50,19 +49,13 @@ class ValueESRepo:
         await self._client.options(ignore_status=404).indices.delete(
             index=self._index_name
         )
-        await self.ensure_index()
+        await self._client.indices.create(
+            index=self._index_name, mappings=self._index_mappings
+        )
 
     async def ensure_index(self) -> None:
         """确保字段取值索引存在。"""
-        if await self._client.indices.exists(index=self._index_name):
-            await self._client.indices.put_mapping(
-                index=self._index_name,
-                properties={
-                    "resource_key": {"type": "keyword"},
-                    "sync_generation": {"type": "keyword"},
-                },
-            )
-        else:
+        if not await self._client.indices.exists(index=self._index_name):
             await self._client.indices.create(
                 index=self._index_name, mappings=self._index_mappings
             )
@@ -70,7 +63,6 @@ class ValueESRepo:
     async def upsert(
         self,
         value_infos: list[ValueInfo],
-        generation: str,
         batch_size: int = 500,
     ) -> None:
         """按稳定编号批量覆盖字段取值索引。"""
@@ -95,7 +87,6 @@ class ValueESRepo:
                             value_info.t_name,
                             value_info.c_name,
                         ),
-                        "sync_generation": generation,
                     }
                 )
             result = await self._client.bulk(operations=operations, refresh=False)
@@ -115,6 +106,8 @@ class ValueESRepo:
         limit: int = 5,
     ) -> list[SearchHit[ValueInfo]]:
         """根据关键词检索字段取值并保留命中分数。"""
+        if allowed_columns is not None and not allowed_columns:
+            return []
         query: dict[str, Any] = {"match": {"value": keyword}}
         if allowed_columns is not None:
             query = {

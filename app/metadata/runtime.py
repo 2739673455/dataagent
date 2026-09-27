@@ -1,14 +1,17 @@
 """元数据脚本的资源生命周期与互斥执行。"""
 
+import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 
-from sqlalchemy import text
+from loguru import logger
+from redis.asyncio import Redis
+from redis.asyncio.lock import Lock
+from redis.exceptions import RedisError
 
 from app.metadata.providers import build_meta_index_service
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
-from app.metadata.services.import_service import MetaImportService
 from app.metadata.services.index import MetaIndexService
 from app.shared.clients.doris_client_manager import DorisClientManager
 from app.shared.clients.embedding_client_manager import EmbeddingClientManager
@@ -17,36 +20,61 @@ from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
 from app.shared.database.base import MetaBase
 
+_LOCK_TIMEOUT_SECONDS = 60
+_LOCK_RENEW_SECONDS = 20
+
 
 @asynccontextmanager
-async def metadata_import_services() -> AsyncGenerator[
-    tuple[MetaImportService, MetaIndexService]
-]:
-    """串行执行全量和增量导入，退出时释放锁及全部客户端。"""
-    postgres = PostgresClientManager(cfg.meta_postgresql, MetaBase)
-    doris = DorisClientManager(cfg.doris)
-    es = ESClientManager(cfg.elasticsearch)
-    embedding = EmbeddingClientManager(cfg.embedding)
-    async with AsyncExitStack() as stack:
-        for manager in (postgres, doris, es, embedding):
-            stack.push_async_callback(manager.close)
-            manager.init()
-        # 独立连接只持互斥锁；导入的数据读写使用另一个会话和短事务。
-        lock_session = await stack.enter_async_context(postgres.session())
-        await stack.enter_async_context(lock_session.begin())
-        locked = await lock_session.scalar(
-            text(
-                "SELECT pg_try_advisory_xact_lock(hashtextextended('metadata-import', 0))"
-            )
+async def metadata_import_service() -> AsyncGenerator[MetaIndexService]:
+    """通过 Redis 租约串行执行全量和增量导入。"""
+    async with Redis.from_url(
+        cfg.metadata.redis_url.get_secret_value(),
+        socket_connect_timeout=5,
+        socket_timeout=5,
+    ) as redis:
+        lock = redis.lock(
+            f"metadata-import:{cfg.meta_postgresql.host}:"
+            f"{cfg.meta_postgresql.port}:{cfg.meta_postgresql.database}",
+            timeout=_LOCK_TIMEOUT_SECONDS,
+            blocking=False,
+            thread_local=False,
         )
-        if not locked:
+        if not await lock.acquire():
             raise RuntimeError("已有元数据导入脚本正在运行")
-        await postgres.init_tables()
-        session = await stack.enter_async_context(postgres.session())
-        connection = await stack.enter_async_context(doris.connection())
-        meta_repo = MetaPGRepo(session)
-        source_repo = SourceDorisRepo(connection)
-        index_service = build_meta_index_service(
-            meta_repo, source_repo, es.get_client(), embedding.get_client()
-        )
-        yield MetaImportService(meta_repo, source_repo, index_service), index_service
+        try:
+            async with asyncio.TaskGroup() as group:
+                renewal = group.create_task(_renew_import_lock(lock))
+                try:
+                    async with AsyncExitStack() as stack:
+                        postgres = PostgresClientManager(cfg.meta_postgresql, MetaBase)
+                        doris = DorisClientManager(cfg.doris)
+                        es = ESClientManager(cfg.elasticsearch)
+                        embedding = EmbeddingClientManager(cfg.embedding)
+                        for manager in (postgres, doris, es, embedding):
+                            stack.push_async_callback(manager.close)
+                            manager.init()
+                        await postgres.init_tables()
+                        session = await stack.enter_async_context(postgres.session())
+                        connection = await stack.enter_async_context(doris.connection())
+                        service = build_meta_index_service(
+                            MetaPGRepo(session),
+                            SourceDorisRepo(connection),
+                            es.get_client(),
+                            embedding.get_client(),
+                        )
+                        yield service
+                finally:
+                    renewal.cancel()
+        finally:
+            try:
+                # redis-py 按持有者 token 释放，租约过期后不会删除其他任务的锁。
+                await lock.release()
+            except RedisError:
+                logger.exception("元数据导入锁释放失败，剩余租约将自动过期")
+
+
+async def _renew_import_lock(lock: Lock) -> None:
+    """定期续租；续租失败由 TaskGroup 取消正在执行的导入。"""
+    while True:
+        await asyncio.sleep(_LOCK_RENEW_SECONDS)
+        await lock.extend(_LOCK_TIMEOUT_SECONDS, replace_ttl=True)

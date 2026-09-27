@@ -11,34 +11,6 @@ from app.query.models.validation import (
     QueryValidationResult,
 )
 
-# 拦截查询内部的写入、锁、Hint、变量赋值和参数占位符。
-_FORBIDDEN_NODE_TYPES = (
-    exp.DDL,
-    DML,
-    exp.Command,
-    exp.Into,
-    exp.Lock,
-    exp.Hint,
-    exp.Parameter,
-    exp.SessionParameter,
-    exp.Placeholder,
-    exp.PropertyEQ,
-)
-# 即使出现在 SELECT 中也禁止的副作用函数。
-_SIDE_EFFECT_FUNCTIONS = frozenset(
-    {
-        "benchmark",
-        "get_lock",
-        "load_file",
-        "master_pos_wait",
-        "release_all_locks",
-        "release_lock",
-        "sleep",
-        "sys_exec",
-        "sys_eval",
-    }
-)
-
 
 class QueryGuardService:
     """解析 SQL 并校验只读语法和危险操作。"""
@@ -96,7 +68,22 @@ class QueryGuardService:
             {
                 node.key
                 for node in expression.walk()
-                if isinstance(node, _FORBIDDEN_NODE_TYPES)
+                # 拦截查询内部的写入、锁、Hint、变量赋值和参数占位符。
+                if isinstance(
+                    node,
+                    (
+                        exp.DDL,
+                        DML,
+                        exp.Command,
+                        exp.Into,
+                        exp.Lock,
+                        exp.Hint,
+                        exp.Parameter,
+                        exp.SessionParameter,
+                        exp.Placeholder,
+                        exp.PropertyEQ,
+                    ),
+                )
                 or (
                     isinstance(node.parent, (exp.CTE, exp.Subquery))
                     and node is node.parent.this
@@ -109,7 +96,21 @@ class QueryGuardService:
         anonymous_functions = {
             function.name.casefold() for function in expression.find_all(exp.Anonymous)
         }
-        forbidden_functions = sorted(anonymous_functions & _SIDE_EFFECT_FUNCTIONS)
+        # 即使出现在 SELECT 中也禁止的副作用函数。
+        forbidden_functions = sorted(
+            anonymous_functions
+            & {
+                "benchmark",
+                "get_lock",
+                "load_file",
+                "master_pos_wait",
+                "release_all_locks",
+                "release_lock",
+                "sleep",
+                "sys_exec",
+                "sys_eval",
+            }
+        )
         if forbidden_functions:
             issues.append("查询包含禁止的函数: " + ", ".join(forbidden_functions))
         return issues

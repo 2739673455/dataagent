@@ -42,7 +42,6 @@ def build_response(
                 alias=[f"收入-{reason}"],
                 relevant_columns=[{"t_name": "orders", "c_name": "amount"}],
                 rank_score=score,
-                index_ready=True,
             )
         ],
         columns=[
@@ -57,7 +56,6 @@ def build_response(
                 reference_c_name=None,
                 inclusion_reasons=["direct_match"],
                 rank_score=score,
-                index_ready=True,
             )
         ],
         values=[
@@ -66,7 +64,6 @@ def build_response(
                 t_name="orders",
                 c_name="status",
                 rank_score=score,
-                sync_status="succeeded",
             )
         ],
         tables=[

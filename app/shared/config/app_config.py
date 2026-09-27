@@ -66,6 +66,10 @@ class EmbeddingConfig(AppConfigModel):
 
 
 # 元数据索引配置。
+class MetadataConfig(AppConfigModel):
+    """元数据导入互斥配置。"""
+
+    redis_url: SecretStr = Field(min_length=1)
 
 
 # 后台任务配置。
@@ -321,6 +325,7 @@ class Cfg(AppConfigModel):
     embedding: EmbeddingConfig
 
     # 元数据索引配置。
+    metadata: MetadataConfig
 
     # 后台任务配置。
     task_queue: TaskQueueConfig

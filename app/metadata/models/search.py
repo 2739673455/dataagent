@@ -1,9 +1,11 @@
-"""元数据语义召回模型。"""
+"""语义索引文档、取值同步模式及元数据召回请求和响应。"""
 
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.metadata.models.catalog import ColumnReference
 
 SemanticResourceType = Literal["column", "metric", "value"]
 SemanticTextType = Literal["name", "description", "alias"]
@@ -23,23 +25,12 @@ class SemanticIndexDocument:
     payload: dict[str, Any]
 
 
-@dataclass(frozen=True, slots=True)
-class ValueIndexSyncResult:
-    """取值索引水位同步统计。"""
-
-    mode: ValueIndexSyncMode
-    read_value_count: int
-    upserted_count: int
-    cursor_value: Any | None
-    sync_generation: str | None
-
-
 class SemanticResourceRecallRequest(BaseModel):
     """语义资源召回请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
-    terms: list[str] = Field(min_length=1, max_length=20)
+    terms: list[str] = Field(min_length=1, max_length=50)
     resource_types: list[SemanticResourceType] = Field(
         min_length=1,
         max_length=3,
@@ -49,7 +40,7 @@ class SemanticResourceRecallRequest(BaseModel):
     @field_validator("terms")
     @classmethod
     def normalize_string_list(cls, values: list[str]) -> list[str]:
-        """清理并稳定去重字符串列表。"""
+        """去除检索词首尾空白、空词及重复词，保留首次出现顺序。"""
         normalized = list(
             dict.fromkeys(value.strip() for value in values if value.strip())
         )
@@ -66,27 +57,6 @@ class SemanticResourceRecallRequest(BaseModel):
         return list(dict.fromkeys(values))
 
 
-class SemanticRecallFailure(BaseModel):
-    """一次资源检索通道的失败范围。"""
-
-    model_config = ConfigDict(frozen=True)
-
-    resource_type: SemanticResourceType
-    channel: SemanticMatchType
-    term: str | None
-
-
-class SemanticMetricRecallResult(BaseModel):
-    """指标语义召回结果。"""
-
-    name: str
-    description: str
-    alias: list[str]
-    relevant_columns: list[dict[str, str]]
-    rank_score: float
-    index_ready: bool
-
-
 class SemanticColumnRecallResult(BaseModel):
     """字段语义召回结果。"""
 
@@ -100,7 +70,16 @@ class SemanticColumnRecallResult(BaseModel):
     reference_c_name: str | None
     inclusion_reasons: list[str]
     rank_score: float | None
-    index_ready: bool
+
+
+class SemanticMetricRecallResult(BaseModel):
+    """指标语义召回结果。"""
+
+    name: str
+    description: str
+    alias: list[str]
+    relevant_columns: list[ColumnReference]
+    rank_score: float
 
 
 class SemanticValueRecallResult(BaseModel):
@@ -110,7 +89,6 @@ class SemanticValueRecallResult(BaseModel):
     t_name: str
     c_name: str
     rank_score: float
-    sync_status: Literal["syncing", "succeeded", "failed"] | None
 
 
 class SemanticTableContext(BaseModel):
@@ -120,6 +98,16 @@ class SemanticTableContext(BaseModel):
     role: str
     description: str
     primary_key_columns: list[str]
+
+
+class SemanticRecallFailure(BaseModel):
+    """一次资源检索通道的失败范围。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    resource_type: SemanticResourceType
+    channel: SemanticMatchType
+    term: str | None
 
 
 class SemanticResourceRecallResponse(BaseModel):

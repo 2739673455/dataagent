@@ -5,8 +5,8 @@ from pathlib import Path
 
 from loguru import logger
 
-from app.metadata.runtime import metadata_import_services
-from app.metadata.services.import_service import parse_metadata_yaml
+from app.metadata.runtime import metadata_import_service
+from app.metadata.services.index import parse_metadata_yaml
 from app.shared.async_runtime import run_async
 from app.shared.config.app_config import CONFIG_DIR
 
@@ -18,9 +18,9 @@ async def run(*, full: bool, path: Path | None = None) -> None:
         path = path or CONFIG_DIR / "meta_config.yaml"
         config = parse_metadata_yaml(path.read_bytes())
         logger.info("YAML 格式校验通过 file={}", path)
-    async with metadata_import_services() as (import_service, index_service):
+    async with metadata_import_service() as index_service:
         if config is not None:
-            await import_service.import_full(config)
+            await index_service.import_full(config)
         else:
             await index_service.import_incremental_values()
 

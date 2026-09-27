@@ -130,3 +130,98 @@ def test_bulk_item_failure_is_not_reported_as_success():
             )
         )
     client.indices.refresh.assert_not_awaited()
+
+
+@pytest.mark.parametrize("channel", ["text", "vector"])
+@pytest.mark.parametrize("allowed", [frozenset(), None, frozenset({"amount"})])
+def test_metric_allowlist_distinguishes_empty_and_unrestricted(channel, allowed):
+    client = MagicMock(
+        search=AsyncMock(return_value=SimpleNamespace(body={"hits": {"hits": []}}))
+    )
+    repo = MetricESRepo(client)
+    operation = (
+        repo.search_text_hits("金额", allowed_metrics=allowed)
+        if channel == "text"
+        else repo.search_vector_hits([0.1], allowed_metrics=allowed)
+    )
+    assert asyncio.run(operation) == []
+    if allowed == frozenset():
+        client.search.assert_not_awaited()
+        return
+    client.search.assert_awaited_once()
+    kwargs = client.search.call_args.kwargs
+    if allowed is None:
+        if channel == "vector":
+            assert "filter" not in kwargs["knn"]
+        else:
+            assert "bool" not in kwargs["query"]
+    else:
+        expected = {"terms": {"resource_key": ["amount"]}}
+        if channel == "vector":
+            assert kwargs["knn"]["filter"] == expected
+        else:
+            assert kwargs["query"]["bool"]["filter"] == [expected]
+
+
+@pytest.mark.parametrize("channel", ["text", "vector", "value"])
+@pytest.mark.parametrize(
+    "allowed", [frozenset(), None, frozenset({("orders", "amount")})]
+)
+def test_column_allowlist_distinguishes_empty_and_unrestricted(channel, allowed):
+    from app.metadata.models.catalog import column_resource_key
+    from app.metadata.repositories.value_index import ValueESRepo
+
+    client = MagicMock(
+        search=AsyncMock(return_value=SimpleNamespace(body={"hits": {"hits": []}}))
+    )
+    if channel == "value":
+        operation = ValueESRepo(client).search_hits("金额", allowed_columns=allowed)
+    elif channel == "vector":
+        operation = ColumnESRepo(client).search_vector_hits(
+            [0.1], allowed_columns=allowed
+        )
+    else:
+        operation = ColumnESRepo(client).search_text_hits(
+            "金额", allowed_columns=allowed
+        )
+    assert asyncio.run(operation) == []
+    if allowed == frozenset():
+        client.search.assert_not_awaited()
+        return
+    client.search.assert_awaited_once()
+    kwargs = client.search.call_args.kwargs
+    if allowed is None:
+        if channel == "vector":
+            assert "filter" not in kwargs["knn"]
+        else:
+            assert "bool" not in kwargs["query"]
+    else:
+        expected = {
+            "terms": {"resource_key": [column_resource_key("orders", "amount")]}
+        }
+        if channel == "vector":
+            assert kwargs["knn"]["filter"] == expected
+        else:
+            assert kwargs["query"]["bool"]["filter"] == [expected]
+
+
+@pytest.mark.parametrize(
+    "hit, document_id",
+    [
+        (None, "<missing>"),
+        ({}, "<missing>"),
+        ({"_id": 0, "_source": []}, "0"),
+        ({"_id": "broken", "_source": None}, "broken"),
+        (
+            {"_id": "broken", "_source": {"resource_key": "key", "payload": []}},
+            "broken",
+        ),
+    ],
+)
+def test_corrupted_hit_preserves_available_document_identity(hit, document_id):
+    repo = ColumnESRepo(MagicMock())
+    with pytest.raises(CorruptedSemanticIndexDocumentError) as caught:
+        repo.parse_hits({"hits": {"hits": [hit]}}, lambda payload: payload)
+    assert caught.value.document_id == document_id
+    assert caught.value.index_name == repo._index_name
+    assert isinstance(caught.value.__cause__, TypeError)

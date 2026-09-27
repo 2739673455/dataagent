@@ -25,6 +25,13 @@ class MetaConfigModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ColumnReferenceConfig(MetaConfigModel):
+    """字段联合主键引用。"""
+
+    t_name: MetadataName
+    c_name: MetadataName
+
+
 class ColumnConfig(MetaConfigModel):
     """字段元数据配置。"""
 
@@ -51,13 +58,6 @@ class TableConfig(MetaConfigModel):
     description: MetadataDescription
     value_index_cursor_column: MetadataName | None = None
     columns: list[ColumnConfig] = Field(default_factory=list)
-
-
-class ColumnReferenceConfig(MetaConfigModel):
-    """字段联合主键引用。"""
-
-    t_name: MetadataName
-    c_name: MetadataName
 
 
 class MetricConfig(MetaConfigModel):

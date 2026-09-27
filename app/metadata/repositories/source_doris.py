@@ -8,23 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 
 class SourceDorisRepo:
-    """Doris 业务数据存储。"""
+    """读取 Doris 表结构、样例和字段取值。"""
 
     def __init__(self, connection: AsyncConnection) -> None:
-        """初始化 Doris 业务数据存储。"""
+        """绑定只用于读取业务数据的 Doris 连接。"""
         self._connection = connection
-
-    def _quote_identifier(self, identifier: str) -> str:
-        """使用当前数据库方言安全引用标识符。"""
-        if not identifier or "\x00" in identifier:
-            raise ValueError(f"数据库标识符无效: {identifier}")
-        return self._connection.dialect.identifier_preparer.quote_identifier(identifier)
-
-    @staticmethod
-    def _validate_positive_limit(value: int, name: str) -> None:
-        """校验只能作为 SQL 整数字面量写入的分页参数。"""
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            raise ValueError(f"{name} 必须为正整数")
 
     async def table_exists(self, table_name: str) -> bool:
         """判断当前 Doris 数据库中是否存在指定表。"""
@@ -80,9 +68,9 @@ class SourceDorisRepo:
         self,
         table_name: str,
         column_names: list[str],
-        limit: int = 5,
+        limit: int,
     ) -> dict[str, list[Any]]:
-        """批量获取指定表中多个字段的样例取值。"""
+        """读取至多 limit 行，为指定字段收集去重的非空样例。"""
         if not column_names:
             return {}
         self._validate_positive_limit(limit, "limit")
@@ -99,13 +87,26 @@ class SourceDorisRepo:
                     column_values[c].append(val)
         return column_values
 
+    async def get_value_sync_upper_bound(
+        self,
+        table_name: str,
+        cursor_column: str,
+    ) -> Any | None:
+        """读取表的当前最大水位，供调用方固定本次同步上界。"""
+        table_identifier = self._quote_identifier(table_name)
+        cursor_identifier = self._quote_identifier(cursor_column)
+        result = await self._connection.execute(
+            text(f"select max({cursor_identifier}) from {table_identifier}")
+        )
+        return result.scalar()
+
     async def iter_column_value_batches(
         self,
         table_name: str,
         column_name: str,
         batch_size: int = 1000,
     ) -> AsyncIterator[list[Any]]:
-        """流式分批读取字段的去重取值。"""
+        """全表去重后流式分批读取字段取值，空值由调用方过滤。"""
         self._validate_positive_limit(batch_size, "batch_size")
         table_identifier = self._quote_identifier(table_name)
         column_identifier = self._quote_identifier(column_name)
@@ -117,19 +118,6 @@ class SourceDorisRepo:
         async for values in result.partitions(batch_size):
             yield list(values)
 
-    async def get_value_sync_upper_bound(
-        self,
-        table_name: str,
-        cursor_column: str,
-    ) -> Any | None:
-        """读取字段取值增量同步的固定游标上界。"""
-        table_identifier = self._quote_identifier(table_name)
-        cursor_identifier = self._quote_identifier(cursor_column)
-        result = await self._connection.execute(
-            text(f"select max({cursor_identifier}) from {table_identifier}")
-        )
-        return result.scalar()
-
     async def iter_changed_column_value_batches(
         self,
         table_name: str,
@@ -139,7 +127,7 @@ class SourceDorisRepo:
         upper_bound: Any,
         batch_size: int = 1000,
     ) -> AsyncIterator[list[Any]]:
-        """按左开右闭水位窗口分批读取字段去重取值，首次非空同步不限制下界。"""
+        """按左开右闭水位窗口读取去重取值，无已提交水位时不限制下界。"""
         self._validate_positive_limit(batch_size, "batch_size")
         table_identifier = self._quote_identifier(table_name)
         column_identifier = self._quote_identifier(column_name)
@@ -160,3 +148,15 @@ class SourceDorisRepo:
         )
         async for values in result.partitions(batch_size):
             yield list(values)
+
+    def _quote_identifier(self, identifier: str) -> str:
+        """使用当前数据库方言安全引用标识符。"""
+        if not identifier or "\x00" in identifier:
+            raise ValueError(f"数据库标识符无效: {identifier}")
+        return self._connection.dialect.identifier_preparer.quote_identifier(identifier)
+
+    @staticmethod
+    def _validate_positive_limit(value: int, name: str) -> None:
+        """校验采样数量或读取批次大小，拒绝布尔值和非正整数。"""
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{name} 必须为正整数")

@@ -5,8 +5,8 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
 import pytest
 from sqlalchemy.dialects import postgresql
@@ -16,8 +16,7 @@ from app.metadata.errors import InvalidMetadataError
 from app.metadata.models.catalog import ColumnInfo, ColumnMetric, MetricInfo, TableInfo
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
-from app.metadata.services.import_service import MetaImportService, parse_metadata_yaml
-from app.metadata.services.index import MetaIndexService
+from app.metadata.services.index import MetaIndexService, parse_metadata_yaml
 from scripts.import_metadata import run as import_file
 
 VALID_YAML = b"""
@@ -52,12 +51,19 @@ def full_import_dependencies():
         ),
         get_table_columns_sample_values=AsyncMock(return_value={"status": ["paid"]}),
     )
-    index = MagicMock()
+    indexes = [
+        MagicMock(
+            reset_index=AsyncMock(side_effect=lambda step=name: events.append(step))
+        )
+        for name in ("reset_columns", "reset_metrics", "reset_values")
+    ]
+    index = MetaIndexService(
+        repo, source, indexes[0], indexes[1], MagicMock(), indexes[2]
+    )
     for name in (
-        "reset_indexes",
-        "build_column_indexes",
-        "build_metric_indexes",
-        "sync_column_values",
+        "_build_column_indexes",
+        "_build_metric_indexes",
+        "_sync_column_values",
     ):
         setattr(
             index,
@@ -66,55 +72,47 @@ def full_import_dependencies():
                 side_effect=lambda *args, step=name, **kwargs: events.append(step)
             ),
         )
-    return repo, source, index, events
+    return repo, source, cast(Any, index), events
 
 
 def test_full_import_runs_entire_pipeline_in_order():
-    repo, source, index, events = full_import_dependencies()
-    asyncio.run(
-        MetaImportService(repo, source, index).import_full(
-            parse_metadata_yaml(VALID_YAML)
-        )
-    )
+    repo, _source, index, events = full_import_dependencies()
+    asyncio.run(index.import_full(parse_metadata_yaml(VALID_YAML)))
     assert events == [
-        "reset_indexes",
+        "reset_columns",
+        "reset_metrics",
+        "reset_values",
         "catalog",
-        "build_column_indexes",
-        "build_metric_indexes",
-        "sync_column_values",
+        "_build_column_indexes",
+        "_build_metric_indexes",
+        "_sync_column_values",
     ]
     tables, columns, metrics = repo.replace_catalog.call_args.args
+    index._build_column_indexes.assert_awaited_once_with(columns)
+    index._build_metric_indexes.assert_awaited_once_with(metrics)
     assert tables[0].primary_key_columns == ["id"]
     assert columns[0].examples == ["paid"]
     assert metrics[0].relevant_columns == [{"t_name": "orders", "c_name": "status"}]
-    index.sync_column_values.assert_awaited_once_with(
+    index._sync_column_values.assert_awaited_once_with(
         [("orders", "status")], mode="full"
     )
 
 
 def test_invalid_source_preserves_existing_catalog_and_indexes():
-    repo, source, index, events = full_import_dependencies()
+    _repo, source, index, events = full_import_dependencies()
     source.table_exists.return_value = False
     with pytest.raises(InvalidMetadataError):
-        asyncio.run(
-            MetaImportService(repo, source, index).import_full(
-                parse_metadata_yaml(VALID_YAML)
-            )
-        )
+        asyncio.run(index.import_full(parse_metadata_yaml(VALID_YAML)))
     assert events == []
 
 
 def test_index_failure_stops_full_pipeline():
-    repo, source, index, _events = full_import_dependencies()
-    index.build_column_indexes.side_effect = RuntimeError("embedding unavailable")
+    _repo, _source, index, _events = full_import_dependencies()
+    index._build_column_indexes.side_effect = RuntimeError("embedding unavailable")
     with pytest.raises(RuntimeError, match="embedding"):
-        asyncio.run(
-            MetaImportService(repo, source, index).import_full(
-                parse_metadata_yaml(VALID_YAML)
-            )
-        )
-    index.build_metric_indexes.assert_not_awaited()
-    index.sync_column_values.assert_not_awaited()
+        asyncio.run(index.import_full(parse_metadata_yaml(VALID_YAML)))
+    index._build_metric_indexes.assert_not_awaited()
+    index._sync_column_values.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -128,7 +126,7 @@ def test_index_failure_stops_full_pipeline():
 def test_bad_yaml_never_opens_import_resources(tmp_path, payload):
     path = tmp_path / "metadata.yaml"
     path.write_bytes(payload)
-    with patch("scripts.import_metadata.metadata_import_services") as resources:
+    with patch("scripts.import_metadata.metadata_import_service") as resources:
         with pytest.raises(InvalidMetadataError):
             asyncio.run(import_file(full=True, path=path))
         resources.assert_not_called()
@@ -173,7 +171,6 @@ def test_replace_catalog_clears_only_metadata_and_preserves_references():
     assert statements == [
         f"DELETE FROM {name}"
         for name in (
-            "value_index_sync_state",
             "column_metric",
             "column_info",
             "metric_info",
@@ -188,40 +185,21 @@ def test_replace_catalog_clears_only_metadata_and_preserves_references():
 
 
 def incremental_dependencies(previous, upper):
-    state = SimpleNamespace(
-        current_generation=uuid4(),
-        cursor_value=MetaIndexService._serialize_cursor(previous)
+    column = SimpleNamespace(
+        index_values=True,
+        value_index_cursor_value=MetaIndexService._serialize_cursor(previous)
         if previous is not None
         else None,
-        status="succeeded",
-        active_run_id=None,
     )
-    column = SimpleNamespace(index_values=True, value_index_state=state)
     table = SimpleNamespace(value_index_cursor_column="updated_at")
     repo = MagicMock(session=MagicMock(begin=transaction))
-    repo.acquire_index_lock = AsyncMock()
     repo.get_column_info = AsyncMock(return_value=column)
     repo.get_table_info = AsyncMock(return_value=table)
-    repo.reload_value_index_context = AsyncMock(return_value=(column, table))
 
-    async def begin(*args, **kwargs):
-        state.active_run_id = kwargs["run_id"]
-        state.status = "syncing"
+    async def update_cursor(t_name, c_name, cursor_value):
+        column.value_index_cursor_value = cursor_value
 
-    async def complete(*args, **kwargs):
-        state.cursor_value = kwargs["cursor_value"]
-        state.status = "succeeded"
-        state.active_run_id = None
-        return True
-
-    async def fail(*args, **kwargs):
-        state.status = "failed"
-        state.active_run_id = None
-        return True
-
-    repo.begin_value_index_sync = AsyncMock(side_effect=begin)
-    repo.complete_value_index_sync = AsyncMock(side_effect=complete)
-    repo.fail_value_index_sync = AsyncMock(side_effect=fail)
+    repo.update_value_index_cursor = AsyncMock(side_effect=update_cursor)
 
     async def batches(*args):
         yield ["paid", None, "cancelled"]
@@ -236,19 +214,20 @@ def incremental_dependencies(previous, upper):
     service = MetaIndexService(
         repo, source, MagicMock(), MagicMock(), MagicMock(), values
     )
-    return service, repo, source, values, state
+    return service, repo, source, values, column
 
 
 @pytest.mark.parametrize(
     "previous, upper", [(10, 10), (10, 9), (10, None), (None, None)]
 )
 def test_unchanged_or_lower_watermark_does_not_scan(previous, upper):
-    service, _repo, source, values, state = incremental_dependencies(previous, upper)
-    old = state.cursor_value
-    asyncio.run(service.sync_column_values([("orders", "status")], mode="incremental"))
+    service, repo, source, values, state = incremental_dependencies(previous, upper)
+    old = state.value_index_cursor_value
+    asyncio.run(service._sync_column_values([("orders", "status")], mode="incremental"))
     source.iter_changed_column_value_batches.assert_not_called()
     values.upsert.assert_not_awaited()
-    assert state.cursor_value == old
+    assert state.value_index_cursor_value == old
+    repo.update_value_index_cursor.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -262,14 +241,15 @@ def test_unchanged_or_lower_watermark_does_not_scan(previous, upper):
 )
 def test_new_watermark_advances_only_after_index_write(previous, upper):
     service, _repo, source, values, state = incremental_dependencies(previous, upper)
-    result = asyncio.run(
-        service.sync_column_values([("orders", "status")], mode="incremental")
-    )
+    asyncio.run(service._sync_column_values([("orders", "status")], mode="incremental"))
     source.iter_changed_column_value_batches.assert_called_once_with(
         "orders", "status", "updated_at", previous, upper
     )
-    assert result[("orders", "status")].upserted_count == 2
-    assert state.cursor_value == service._serialize_cursor(upper)
+    assert [item.value for item in values.upsert.call_args.args[0]] == [
+        "paid",
+        "cancelled",
+    ]
+    assert state.value_index_cursor_value == service._serialize_cursor(upper)
     values.refresh.assert_awaited_once()
 
 
@@ -278,20 +258,19 @@ def test_failed_index_write_does_not_advance_watermark_and_can_retry():
     values.upsert.side_effect = RuntimeError("ES unavailable")
     with pytest.raises(RuntimeError, match="ES unavailable"):
         asyncio.run(
-            service.sync_column_values([("orders", "status")], mode="incremental")
+            service._sync_column_values([("orders", "status")], mode="incremental")
         )
-    assert state.cursor_value == service._serialize_cursor(10)
-    assert state.status == "failed"
-    repo.complete_value_index_sync.assert_not_awaited()
+    assert state.value_index_cursor_value == service._serialize_cursor(10)
+    repo.update_value_index_cursor.assert_not_awaited()
     values.upsert.side_effect = None
-    asyncio.run(service.sync_column_values([("orders", "status")], mode="incremental"))
-    assert state.cursor_value == service._serialize_cursor(20)
+    asyncio.run(service._sync_column_values([("orders", "status")], mode="incremental"))
+    assert state.value_index_cursor_value == service._serialize_cursor(20)
 
 
 def test_each_table_upper_bound_is_loaded_once():
     service, _repo, source, _values, _state = incremental_dependencies(10, 20)
     asyncio.run(
-        service.sync_column_values(
+        service._sync_column_values(
             [("orders", "status"), ("orders", "channel")], mode="incremental"
         )
     )
@@ -324,15 +303,20 @@ def test_doris_window_is_open_lower_closed_upper(lower):
     assert ("> :lower_bound" in sql) is (lower is not None)
 
 
-def test_incremental_does_not_fall_back_to_full_import():
-    service, _repo, source, values, state = incremental_dependencies(10, 20)
-    state.current_generation = None
-    with pytest.raises(RuntimeError, match="缺少全量同步状态"):
-        asyncio.run(
-            service.sync_column_values([("orders", "status")], mode="incremental")
+@pytest.mark.parametrize("upper", [None, 20])
+def test_first_incremental_starts_without_watermark(upper):
+    service, _repo, source, values, state = incremental_dependencies(None, upper)
+    asyncio.run(service._sync_column_values([("orders", "status")], mode="incremental"))
+    if upper is None:
+        source.iter_changed_column_value_batches.assert_not_called()
+        values.upsert.assert_not_awaited()
+        assert state.value_index_cursor_value is None
+    else:
+        source.iter_changed_column_value_batches.assert_called_once_with(
+            "orders", "status", "updated_at", None, upper
         )
-    source.get_value_sync_upper_bound.assert_not_awaited()
-    values.upsert.assert_not_awaited()
+        values.upsert.assert_awaited_once()
+        assert state.value_index_cursor_value == service._serialize_cursor(upper)
 
 
 def test_incremental_only_selects_enabled_columns_with_cursor():
@@ -350,57 +334,25 @@ def test_incremental_only_selects_enabled_columns_with_cursor():
             SimpleNamespace(t_name="static", name="name", index_values=True),
         ]
     )
-    with patch.object(service, "sync_column_values", new=AsyncMock()) as sync:
+    with patch.object(service, "_sync_column_values", new=AsyncMock()) as sync:
         asyncio.run(service.import_incremental_values())
     sync.assert_awaited_once_with([("orders", "status")], mode="incremental")
 
 
-def test_script_lock_conflict_closes_all_resources():
-    from app.metadata.runtime import metadata_import_services
-
-    session = MagicMock(begin=transaction, scalar=AsyncMock(return_value=False))
-
-    @asynccontextmanager
-    async def session_context():
-        yield session
-
-    postgres = MagicMock(
-        session=session_context, close=AsyncMock(), init_tables=AsyncMock()
-    )
-    managers = [postgres, *[MagicMock(close=AsyncMock()) for _ in range(3)]]
-
-    async def run():
-        async with metadata_import_services():
-            pytest.fail("must not enter import after lock conflict")
-
-    with (
-        patch("app.metadata.runtime.PostgresClientManager", return_value=managers[0]),
-        patch("app.metadata.runtime.DorisClientManager", return_value=managers[1]),
-        patch("app.metadata.runtime.ESClientManager", return_value=managers[2]),
-        patch("app.metadata.runtime.EmbeddingClientManager", return_value=managers[3]),
-        pytest.raises(RuntimeError, match="已有元数据导入脚本"),
-    ):
-        asyncio.run(run())
-    postgres.init_tables.assert_not_awaited()
-    for manager in managers:
-        manager.close.assert_awaited_once()
-
-
 def test_incremental_script_uses_saved_catalog_without_reading_yaml():
-    importer = MagicMock(import_full=AsyncMock())
-    indexer = MagicMock(import_incremental_values=AsyncMock())
+    indexer = MagicMock(import_full=AsyncMock(), import_incremental_values=AsyncMock())
 
     @asynccontextmanager
     async def services():
-        yield importer, indexer
+        yield indexer
 
     with (
-        patch("scripts.import_metadata.metadata_import_services", services),
+        patch("scripts.import_metadata.metadata_import_service", services),
         patch("scripts.import_metadata.parse_metadata_yaml") as parse,
     ):
         asyncio.run(import_file(full=False))
     parse.assert_not_called()
-    importer.import_full.assert_not_awaited()
+    indexer.import_full.assert_not_awaited()
     indexer.import_incremental_values.assert_awaited_once()
 
 
@@ -423,9 +375,7 @@ def test_import_cli_rejects_invalid_mode_arguments(args):
 
 @pytest.mark.parametrize("kind", ["column", "metric"])
 @pytest.mark.parametrize("write_fails", [False, True])
-def test_semantic_build_embeds_unique_texts_and_marks_only_after_write(
-    kind, write_fails
-):
+def test_semantic_build_embeds_unique_texts_without_database_access(kind, write_fails):
     item = SimpleNamespace(
         name="amount",
         description=" 金额 ",
@@ -438,13 +388,9 @@ def test_semantic_build_embeds_unique_texts_and_marks_only_after_write(
         reference_c_name=None,
         relevant_columns=[],
     )
-    repo = MagicMock(session=MagicMock(begin=transaction))
-    setattr(repo, f"get_{kind}_info", AsyncMock(return_value=item))
-    mark = AsyncMock()
-    setattr(repo, f"mark_{kind}_indexed", mark)
+    repo = MagicMock()
 
     async def write(documents):
-        mark.assert_not_awaited()
         if write_fails:
             raise RuntimeError("write failed")
 
@@ -456,21 +402,150 @@ def test_semantic_build_embeds_unique_texts_and_marks_only_after_write(
 
     async def build():
         if kind == "column":
-            await service.build_column_indexes([("orders", "amount")])
+            await service._build_column_indexes([cast(ColumnInfo, item)])
         else:
-            await service.build_metric_indexes(["amount"])
+            await service._build_metric_indexes([cast(MetricInfo, item)])
 
     if write_fails:
         with pytest.raises(RuntimeError, match="write failed"):
             asyncio.run(build())
-        mark.assert_not_awaited()
     else:
         asyncio.run(build())
-        mark.assert_awaited_once()
+    assert repo.mock_calls == []
     embedding.aembed_documents.assert_awaited_once_with(["amount", "总额", "金额"])
     documents = index.write_documents.call_args.args[0]
+    payload_keys = (
+        (
+            "t_name",
+            "name",
+            "type",
+            "examples",
+            "description",
+            "alias",
+            "index_values",
+            "reference_t_name",
+            "reference_c_name",
+        )
+        if kind == "column"
+        else ("name", "description", "relevant_columns", "alias")
+    )
+    assert all(
+        doc.payload == {key: getattr(item, key) for key in payload_keys}
+        for doc in documents
+    )
     assert [(doc.text, doc.text_type, doc.embedding) for doc in documents] == [
         ("amount", "name", [1.0]),
         ("总额", "alias", [2.0]),
         ("金额", "description", [3.0]),
     ]
+
+
+def test_import_normalizes_metadata_before_catalog_and_index_building():
+    config = parse_metadata_yaml(VALID_YAML)
+    config.tables[0].columns[0].alias = ["z", "a", "z"]
+    config.metrics[0].alias = ["b", "a", "b"]
+    config.metrics[0].relevant_columns *= 2
+    repo, source, index, _ = full_import_dependencies()
+    source.get_table_columns_sample_values.return_value = {
+        "status": [Decimal("2.5"), Decimal("1.5")]
+    }
+    asyncio.run(index.import_full(config))
+    _, columns, metrics = repo.replace_catalog.call_args.args
+    assert columns[0].alias == ["a", "z"]
+    assert columns[0].examples == [1.5, 2.5]
+    assert metrics[0].alias == ["a", "b"]
+    assert metrics[0].relevant_columns == [{"t_name": "orders", "c_name": "status"}]
+
+
+@pytest.mark.parametrize("failure_stage", ["ensure_index", "refresh"])
+def test_index_setup_or_refresh_failure_preserves_watermark(failure_stage):
+    service, repo, _, values, column = incremental_dependencies(10, 20)
+    getattr(values, failure_stage).side_effect = RuntimeError(failure_stage)
+    with pytest.raises(RuntimeError, match=failure_stage):
+        asyncio.run(
+            service._sync_column_values([("orders", "status")], mode="incremental")
+        )
+    assert column.value_index_cursor_value == service._serialize_cursor(10)
+    repo.update_value_index_cursor.assert_not_awaited()
+
+
+@pytest.mark.parametrize("cursor_column, upper", [("updated_at", 20), (None, None)])
+def test_full_value_scan_commits_watermark_after_refresh(cursor_column, upper):
+    service, repo, source, values, column = incremental_dependencies(None, upper)
+    repo.get_table_info.return_value.value_index_cursor_column = cursor_column
+
+    async def batches(*args):
+        yield ["paid", None]
+
+    source.iter_column_value_batches = MagicMock(side_effect=batches)
+    original_update = repo.update_value_index_cursor.side_effect
+
+    async def update(*args):
+        values.refresh.assert_awaited_once()
+        await original_update(*args)
+
+    repo.update_value_index_cursor.side_effect = update
+    asyncio.run(service._sync_column_values([("orders", "status")], mode="full"))
+    source.iter_column_value_batches.assert_called_once_with("orders", "status")
+    source.iter_changed_column_value_batches.assert_not_called()
+    if upper is None:
+        repo.update_value_index_cursor.assert_not_awaited()
+        assert column.value_index_cursor_value is None
+    else:
+        assert column.value_index_cursor_value == service._serialize_cursor(upper)
+
+
+def test_watermark_update_only_changes_target_column():
+    session = MagicMock(execute=AsyncMock())
+    asyncio.run(
+        MetaPGRepo(session).update_value_index_cursor(
+            "orders", "status", {"type": "int", "value": 20}
+        )
+    )
+    statement = session.execute.call_args.args[0].compile(dialect=postgresql.dialect())
+    assert str(statement).startswith("UPDATE column_info SET value_index_cursor_value=")
+    assert "column_info.t_name =" in str(statement)
+    assert "column_info.name =" in str(statement)
+    assert statement.params["value_index_cursor_value"] == {"type": "int", "value": 20}
+    assert "orders" in statement.params.values()
+    assert "status" in statement.params.values()
+
+
+def test_source_and_index_io_run_outside_postgres_transactions():
+    service, repo, source, values, _ = incremental_dependencies(10, 20)
+    in_transaction = False
+    transactions = []
+
+    @asynccontextmanager
+    async def tracked_transaction():
+        nonlocal in_transaction
+        assert not in_transaction
+        in_transaction = True
+        transactions.append(True)
+        try:
+            yield
+        finally:
+            in_transaction = False
+
+    async def upper_bound(*args):
+        assert not in_transaction
+        return 20
+
+    async def write(*args):
+        assert not in_transaction
+
+    original_update = repo.update_value_index_cursor.side_effect
+
+    async def update(*args):
+        assert in_transaction
+        values.refresh.assert_awaited_once()
+        await original_update(*args)
+
+    repo.session.begin = tracked_transaction
+    repo.update_value_index_cursor.side_effect = update
+    source.get_value_sync_upper_bound.side_effect = upper_bound
+    values.ensure_index.side_effect = write
+    values.upsert.side_effect = write
+    values.refresh.side_effect = write
+    asyncio.run(service._sync_column_values([("orders", "status")], mode="incremental"))
+    assert len(transactions) == 2

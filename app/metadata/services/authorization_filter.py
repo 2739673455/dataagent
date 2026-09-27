@@ -24,19 +24,6 @@ class MetadataAuthorizationFilter:
         self._data_source = data_source
         self._database_name = database_name
 
-    def _identity(
-        self,
-        table_name: str | None = None,
-        column_name: str | None = None,
-    ) -> AssetIdentity:
-        """构造当前数据库内的资产标识。"""
-        return AssetIdentity(
-            data_source=self._data_source,
-            database_name=self._database_name,
-            table_name=table_name,
-            column_name=column_name,
-        )
-
     def allowed_column_keys(
         self,
         column_infos: list[ColumnInfo],
@@ -95,9 +82,7 @@ class MetadataAuthorizationFilter:
                 index_values=item.index_values,
                 reference_t_name=item.reference_t_name if target_allowed else None,
                 reference_c_name=item.reference_c_name if target_allowed else None,
-                index_ready=item.index_ready,
             )
-            filtered_item.value_index_state = item.value_index_state
             filtered.append(filtered_item)
         return filtered
 
@@ -120,3 +105,16 @@ class MetadataAuthorizationFilter:
                 else database_allowed
             )
         ]
+
+    def _identity(
+        self,
+        table_name: str | None = None,
+        column_name: str | None = None,
+    ) -> AssetIdentity:
+        """构造当前数据库内的资产标识。"""
+        return AssetIdentity(
+            data_source=self._data_source,
+            database_name=self._database_name,
+            table_name=table_name,
+            column_name=column_name,
+        )

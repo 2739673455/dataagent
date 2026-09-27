@@ -4,18 +4,15 @@ import json
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Literal, TypedDict
-from uuid import UUID
+from typing import Any, TypedDict
 
 from sqlalchemy import (
     JSON,
     Boolean,
-    DateTime,
     ForeignKey,
     ForeignKeyConstraint,
     String,
     Text,
-    Uuid,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -32,7 +29,6 @@ class ColumnReference(TypedDict):
 
 
 type ColumnKey = tuple[str, str]
-type ValueIndexSyncStatus = Literal["syncing", "succeeded", "failed"]
 
 COLUMN_EXAMPLE_LIMIT = 10
 
@@ -57,7 +53,7 @@ def column_resource_key(t_name: str, c_name: str) -> str:
 
 
 def serialize_column_examples(examples: list[Any]) -> list[Any]:
-    """将字段示例转换为可序列化值。"""
+    """转换日期、时间和小数样例，并按字符串形式稳定排序。"""
     serialized: list[Any] = []
     for value in examples:
         if isinstance(value, (datetime, date)):
@@ -93,10 +89,6 @@ class ColumnInfo(MetaBase):
     """字段信息。"""
 
     __tablename__ = "column_info"
-    # Repository 在查询后批量填充索引状态；保持非 ORM relationship，避免序列化
-    # 阶段触发 AsyncSession 无法安全执行的隐式懒加载。
-    __allow_unmapped__ = True
-
     __table_args__ = (
         ForeignKeyConstraint(
             ["reference_t_name", "reference_c_name"],
@@ -131,69 +123,21 @@ class ColumnInfo(MetaBase):
     reference_c_name: Mapped[str | None] = mapped_column(
         String(256), comment="引用字段名称"
     )
-    index_ready: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        default=False,
-        server_default=text("false"),
-        comment="语义索引是否构建完成",
+    value_index_cursor_value: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, comment="字段取值索引已提交水位"
     )
-    value_index_state: "ValueIndexSyncState | None" = None
-
-
-class ValueIndexSyncState(MetaBase):
-    """字段取值索引增量同步状态。"""
-
-    __tablename__ = "value_index_sync_state"
-
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["t_name", "c_name"],
-            ["column_info.t_name", "column_info.name"],
-            ondelete="CASCADE",
-        ),
-    )
-
-    t_name: Mapped[str] = mapped_column(String(256), primary_key=True)
-    c_name: Mapped[str] = mapped_column(String(256), primary_key=True)
-    cursor_value: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
-    status: Mapped[str] = mapped_column(String(16), nullable=False)
-    active_run_id: Mapped[UUID | None] = mapped_column(Uuid)
-    current_generation: Mapped[UUID | None] = mapped_column(Uuid)
-    active_generation: Mapped[UUID | None] = mapped_column(Uuid)
-    last_error: Mapped[str | None] = mapped_column(Text)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-    )
-
-
-@dataclass
-class ValueInfo:
-    """字段取值信息。"""
-
-    value: str
-    t_name: str
-    c_name: str
 
 
 class MetricInfo(MetaBase):
     """指标信息。"""
 
     __tablename__ = "metric_info"
-    # 相关字段由 Repository 批量投影，原因同 ColumnInfo.value_index_state。
+    # 相关字段由 Repository 批量填充，避免异步序列化时触发隐式懒加载。
     __allow_unmapped__ = True
 
     name: Mapped[str] = mapped_column(String(256), primary_key=True, comment="指标名称")
     description: Mapped[str] = mapped_column(Text, nullable=False, comment="指标描述")
     alias: Mapped[list[str]] = mapped_column(JSON, nullable=False, comment="指标别名")
-    index_ready: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        default=False,
-        server_default=text("false"),
-        comment="语义索引是否构建完成",
-    )
     relevant_columns: list[ColumnReference]
 
     def __init__(
@@ -203,14 +147,12 @@ class MetricInfo(MetaBase):
         description: str,
         alias: list[str],
         relevant_columns: list[ColumnReference] | None = None,
-        index_ready: bool = False,
     ) -> None:
         """初始化指标元数据及其关联字段引用。"""
         self.name = name
         self.description = description
         self.alias = alias
         self.relevant_columns = relevant_columns or []
-        self.index_ready = index_ready
 
 
 class ColumnMetric(MetaBase):
@@ -242,3 +184,12 @@ class ColumnMetric(MetaBase):
         primary_key=True,
         comment="指标名称",
     )
+
+
+@dataclass
+class ValueInfo:
+    """字段取值信息。"""
+
+    value: str
+    t_name: str
+    c_name: str
