@@ -188,25 +188,6 @@ class LangGraphPostgresManager:
                 deleted += max(cursor.rowcount, 0)
         return deleted > 0
 
-    async def delete_user_threads(self, user_id: int) -> None:
-        """删除用户全部 LangGraph Checkpoint 线程。"""
-        prefix = f"user_{user_id}:conversation_"
-        if self._pool is None:
-            raise RuntimeError("LangGraph PostgreSQL 管理器尚未初始化")
-        async with self._pool.connection() as connection:
-            cursor = await connection.execute(
-                """
-                SELECT DISTINCT thread_id
-                FROM checkpoints
-                WHERE left(thread_id, length(%s)) = %s
-                ORDER BY thread_id
-                """,
-                (prefix, prefix),
-            )
-            rows = await cursor.fetchall()
-        for row in rows:
-            await self.delete_thread(str(row["thread_id"]))
-
     async def close(self) -> None:
         """关闭连接池并释放持久化组件。"""
         pool, advisory_pool = self._pool, self._advisory_pool

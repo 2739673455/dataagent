@@ -1,6 +1,6 @@
 import { getProblemDetailsMessage } from "@/api/errors";
 import type { components } from "@/api/generated";
-import { getAccessToken, refreshAccessToken } from "@/auth/index";
+import { getSelectedUserId } from "@/identity/index";
 import { CHAT_API_ROUTES } from "@/config/settings";
 import type {
   ChatStreamEvent,
@@ -45,26 +45,21 @@ async function consumeChatStream(
   body: ChatStreamRequest | null,
   signal: AbortSignal,
   onEvent: (event: ChatStreamEvent) => void,
-  method: "GET" | "POST" = "POST",
-  retried = false
+  method: "GET" | "POST" = "POST"
 ): Promise<void> {
-  const accessToken = getAccessToken();
-  if (!accessToken) throw new Error("登录状态已失效");
+  const userId = getSelectedUserId();
+  if (!userId) throw new Error("请先选择用户");
 
   const response = await fetch(url, {
     method,
     headers: {
       Accept: "text/event-stream",
-      Authorization: `Bearer ${accessToken}`,
+      "X-User-ID": userId,
       "Content-Type": "application/json",
     },
     body: body === null ? undefined : JSON.stringify(body),
     signal,
   });
-  if (response.status === 401 && !retried) {
-    await refreshAccessToken();
-    return consumeChatStream(url, body, signal, onEvent, method, true);
-  }
   if (!response.ok) {
     throw new Error(await streamErrorMessage(response));
   }

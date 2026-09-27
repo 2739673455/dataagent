@@ -1,7 +1,6 @@
 """任务资源初始化失败及同进程并发隔离测试。"""
 
 import asyncio
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -9,11 +8,9 @@ import pytest
 
 from app.assistant import tasks as assistant_tasks
 from app.assistant.conversations import resources as lifecycle_runtime
-from app.workflows import tasks as workflow_tasks
 
 
-@pytest.mark.parametrize("module", [assistant_tasks, workflow_tasks])
-def test_lifecycle_task_cleans_up_after_sandbox_init_failure(module) -> None:
+def test_lifecycle_task_cleans_up_after_sandbox_init_failure() -> None:
     persistence = MagicMock(init=AsyncMock(), close=AsyncMock())
     databases = []
 
@@ -28,24 +25,11 @@ def test_lifecycle_task_cleans_up_after_sandbox_init_failure(module) -> None:
     )
     agents = MagicMock(close=AsyncMock(side_effect=RuntimeError("agents close")))
 
-    @asynccontextmanager
-    async def execution_lock(user_id):
-        yield True
-
-    state_store = MagicMock(
-        execution_lock=execution_lock,
-        extend_claim=AsyncMock(return_value=True),
-        record_failure=AsyncMock(),
-    )
     with (
-        patch.object(
-            workflow_tasks, "PostgresUserDeletionStateStore", return_value=state_store
-        ),
         patch.object(
             lifecycle_runtime, "LangGraphPostgresManager", return_value=persistence
         ),
         patch.object(lifecycle_runtime, "PostgresClientManager", side_effect=postgres),
-        patch.object(workflow_tasks, "PostgresClientManager", side_effect=postgres),
         patch.object(lifecycle_runtime, "create_sandbox_manager", return_value=sandbox),
         patch.object(lifecycle_runtime, "AgentManager", return_value=agents),
         patch.object(
@@ -55,10 +39,7 @@ def test_lifecycle_task_cleans_up_after_sandbox_init_failure(module) -> None:
         ),
         pytest.raises(RuntimeError, match="agents close"),
     ):
-        if module is assistant_tasks:
-            module.delete_conversation_resources_task(1, str(uuid4()))
-        else:
-            asyncio.run(module._process_user_deletion(1))
+        assistant_tasks.delete_conversation_resources_task(1, str(uuid4()))
     persistence.close.assert_awaited_once()
     sandbox.disconnect.assert_awaited_once()
     for database in databases:
@@ -92,7 +73,6 @@ def test_web_shutdown_attempts_every_resource_after_startup_failure() -> None:
                 pytest.fail("启动失败不应进入业务阶段")
         for manager in managers.values():
             manager.close.assert_awaited_once()
-        resources.auth_rate_limit.close.assert_called_once()
 
     with patch.object(runtime, "_create_resources", return_value=resources):
         asyncio.run(run())

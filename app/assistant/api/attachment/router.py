@@ -11,7 +11,7 @@ from loguru import logger
 
 from app.assistant.api.attachment.dependencies import AttachmentServiceDep
 from app.assistant.events import schemas as chat_schema
-from app.identity.api.auth.dependencies import AnalysisUserDep, CurrentUserDep
+from app.identity.api.dependencies import CurrentUserDep
 
 router = APIRouter(tags=["attachment"])
 
@@ -19,7 +19,7 @@ router = APIRouter(tags=["attachment"])
 @router.post("/upload")
 async def api_upload_attachment(
     service: AttachmentServiceDep,
-    current_user: AnalysisUserDep,
+    current_user: CurrentUserDep,
     conversation_id: Annotated[UUID, Form()],
     file: Annotated[UploadFile, File()],
 ) -> chat_schema.UploadAttachmentResponse:

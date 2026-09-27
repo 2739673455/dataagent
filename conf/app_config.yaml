@@ -63,20 +63,9 @@ task_queue: # Celery 队列、任务生命周期和定时调度配置。
   worker_prefetch_multiplier: 1 # 每个 Worker Process 预取的任务数量。
   lifecycle_schedule_seconds: 300 # 草稿和 Conversation 生命周期扫描间隔，单位为秒。
 
-auth: # 登录令牌和密码策略。
-  rate_limit_redis_url: redis://127.0.0.1:6379/3 # 跨 API Worker 共享认证限流计数。
-  jwt_secret: ${oc.env:JWT_SECRET} # JWT 签名密钥，使用环境变量注入。
-  jwt_algorithm: HS256 # JWT 签名算法。
-  issuer: dataagent # JWT 签发者标识。
-  access_token_minutes: 15 # Access Token 有效期，单位为分钟。
-  refresh_token_days: 30 # Refresh Token 有效期，单位为天。
-  password_min_length: 6 # 用户密码最小字符数。
-
-lifecycle: # 跨存储 Conversation 和用户资源清理策略。
+lifecycle: # 跨存储 Conversation 资源清理策略。
   draft_ttl_minutes: 1440 # 未完成草稿保留时间，单位为分钟。
   cleanup_batch_size: 100 # 单次清理或任务领取的最大记录数。
-  user_deletion_schedule_seconds: 300 # 注销漏投及失败任务的补偿扫描周期，单位为秒。
-  user_deletion_retry_seconds: 60 # 注销失败后到下一次可领取的最短等待时间，单位为秒。
 
 query: # Agent 只读 SQL 执行配置。
   data_source: doris # SQL 查询数据源标识。

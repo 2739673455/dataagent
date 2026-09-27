@@ -57,14 +57,8 @@ class QueryPrincipalTest(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_user_or_missing_identity_never_loads_grants(self):
         for user, identity, expected in (
             (None, None, auth_error.UserNotFoundError),
-            (SimpleNamespace(is_active=False), None, auth_error.InactiveUserError),
             (
-                SimpleNamespace(is_active=True, doris_role_name=None),
-                None,
-                QueryPrincipalNotConfiguredError,
-            ),
-            (
-                SimpleNamespace(is_active=True, doris_role_name="reader"),
+                SimpleNamespace(doris_role_name="reader"),
                 None,
                 QueryPrincipalNotConfiguredError,
             ),
@@ -339,9 +333,7 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
         repo = MagicMock(
             get_user_by_id=AsyncMock(
-                return_value=SimpleNamespace(
-                    id=7, is_active=True, doris_role_name="reader"
-                )
+                return_value=SimpleNamespace(id=7, doris_role_name="reader")
             ),
             get_query_identity=AsyncMock(return_value=identity),
             lock_query_identity=AsyncMock(return_value=identity),

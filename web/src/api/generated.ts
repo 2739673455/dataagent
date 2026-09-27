@@ -4,14 +4,6 @@
 export interface components {
   "schemas": {
     "AgentType": "explorer" | "analyst" | "reviewer";
-    "AssetGrantResponse": {
-      "column_name": (string | null);
-      "data_source": string;
-      "database_name": (string | null);
-      "role": string;
-      "scope": string;
-      "table_name": (string | null);
-    };
     "Attachment": {
       "description"?: (string | null);
       "f_path": string;
@@ -23,10 +15,6 @@ export interface components {
     "Body_api_upload_attachment_api_v1_chat_attachment_upload_post": {
       "conversation_id": string;
       "file": string;
-    };
-    "ChangePasswordRequest": {
-      "current_password": string;
-      "new_password": string;
     };
     "ChatStreamDoneEvent": {
       "type": "done";
@@ -116,45 +104,12 @@ export interface components {
       "initial_message"?: (string | null);
       "is_draft"?: boolean;
     };
-    "CreateDorisRoleRequest": {
-      "description": string;
-      "query_user": string;
-      "role": string;
-      "workload_group": string;
-    };
-    "CreateUserRequest": {
-      "doris_role"?: (string | null);
-      "email": string;
-      "is_admin"?: boolean;
-      "password": string;
-      "username": string;
-    };
     "DeleteAttachmentRequest": {
       "conversation_id": string;
       "f_path": string;
     };
     "DeleteConversationRequest": {
       "conversation_ids": Array<string>;
-    };
-    "DorisExistingRoleResponse": {
-      "doris_users": Array<string>;
-      "managed": boolean;
-      "name": string;
-    };
-    "DorisRoleResponse": {
-      "description": string;
-      "doris_grants": ({
-        [key: string]: unknown;
-      } | null);
-      "exists_in_doris": boolean;
-      "is_default": boolean;
-      "name": string;
-      "query_user": string;
-      "workload_group": string;
-    };
-    "DropRowPolicyRequest": {
-      "policy_name": string;
-      "table_name": string;
     };
     "EvalDelegationResponse": {
       "agent_type": components["schemas"]["AgentType"];
@@ -170,13 +125,6 @@ export interface components {
     "ImageContent": {
       "image_url": string;
       "type": "image_url";
-    };
-    "LoginRequest": {
-      "identifier": string;
-      "password": string;
-    };
-    "LogoutRequest": {
-      "refresh_token": string;
     };
     "MessageListResponse": {
       "messages": Array<components["schemas"]["MessageResponse"]>;
@@ -198,38 +146,9 @@ export interface components {
       "type": string;
       [key: string]: unknown;
     };
-    "RefreshRequest": {
-      "refresh_token": string;
-    };
-    "RowPolicyRequest": {
-      "policy_name": string;
-      "policy_type"?: "RESTRICTIVE" | "PERMISSIVE";
-      "predicate": string;
-      "table_name": string;
-    };
-    "RowPolicyResponse": {
-      "catalog_name": string;
-      "database_name": string;
-      "policy_name": string;
-      "policy_type": "RESTRICTIVE" | "PERMISSIVE";
-      "predicate": string;
-      "table_name": string;
-    };
-    "SelectGrantRequest": {
-      "columns"?: Array<string>;
-      "table_name"?: (string | null);
-    };
     "SubagentMessageListResponse": {
       "messages": Array<components["schemas"]["MessageResponse"]>;
       "status": "running" | "completed" | "needs_repair" | "failed" | "cancelled";
-    };
-    "TaskStatusResponse": {
-      "error"?: (string | null);
-      "ready": boolean;
-      "result"?: (unknown | null);
-      "state": string;
-      "successful": (boolean | null);
-      "task_id": string;
     };
     "TextContent": {
       "text": string;
@@ -239,14 +158,6 @@ export interface components {
       "status"?: "streaming" | "complete" | "interrupted";
       "text": string;
       "type": "thinking";
-    };
-    "TokenResponse": {
-      "access_token": string;
-      "expires_in": number;
-      "refresh_expires_in": number;
-      "refresh_token": string;
-      "token_type"?: string;
-      "user": components["schemas"]["UserResponse"];
     };
     "ToolCallPart": {
       "args"?: {
@@ -266,34 +177,16 @@ export interface components {
       "conversation_id": string;
       "title": string;
     };
-    "UpdateUserRequest": {
-      "doris_role"?: (string | null);
-      "email"?: (string | null);
-      "is_admin"?: (boolean | null);
-      "password"?: (string | null);
-      "username"?: (string | null);
-    };
     "UploadAttachmentResponse": {
       "attachment": components["schemas"]["Attachment"];
-    };
-    "UserListResponse": {
-      "has_more": boolean;
-      "limit": number;
-      "offset": number;
-      "total": number;
-      "users": Array<components["schemas"]["UserResponse"]>;
     };
     "UserMessageRequest": {
       "attachments"?: (Array<components["schemas"]["AttachmentReference"]> | null);
       "parts": Array<(components["schemas"]["TextContent"] | components["schemas"]["ImageContent"])>;
     };
     "UserResponse": {
-      "created_at": string;
-      "doris_role": (string | null);
-      "email": string;
+      "doris_role_name": string;
       "id": number;
-      "is_active": boolean;
-      "is_admin": boolean;
       "username": string;
     };
   };
@@ -304,7 +197,9 @@ export interface operations {
     "parameters": {
       "path"?: never;
       "query"?: never;
-      "header"?: never;
+      "header": {
+        "X-User-ID"?: (number | null);
+      };
       "cookie"?: never;
     };
     "requestBody": {
@@ -334,7 +229,9 @@ export interface operations {
     "parameters": {
       "path"?: never;
       "query"?: never;
-      "header"?: never;
+      "header": {
+        "X-User-ID"?: (number | null);
+      };
       "cookie"?: never;
     };
     "requestBody": {
@@ -364,7 +261,9 @@ export interface operations {
     "parameters": {
       "path"?: never;
       "query"?: never;
-      "header"?: never;
+      "header": {
+        "X-User-ID"?: (number | null);
+      };
       "cookie"?: never;
     };
     "requestBody": {
@@ -396,7 +295,9 @@ export interface operations {
         "conversation_id": string;
       };
       "query"?: never;
-      "header"?: never;
+      "header": {
+        "X-User-ID"?: (number | null);
+      };
       "cookie"?: never;
     };
     "requestBody"?: never;
@@ -425,7 +326,9 @@ export interface operations {
         "conversation_id": string;
         "f_path": string;
       };
-      "header"?: never;
+      "header": {
+        "X-User-ID"?: (number | null);
+      };
       "cookie"?: never;
     };
     "requestBody"?: never;
@@ -455,7 +358,9 @@ export interface operations {
         "conversation_id": string;
       };
       "query"?: never;
-      "header"?: never;
+      "header": {
+        "X-User-ID"?: (number | null);
+      };
       "cookie"?: never;
     };
     "requestBody"?: never;
@@ -483,7 +388,9 @@ export interface operations {
     "parameters": {
       "path"?: never;
       "query"?: never;
-      "header"?: never;
+      "header": {
+        "X-User-ID"?: (number | null);
+      };
       "cookie"?: never;
     };
     "requestBody"?: never;
@@ -513,7 +420,9 @@ export interface operations {
         "conversation_id": string;
       };
       "query"?: never;
-      "header"?: never;
+      "header": {
+        "X-User-ID"?: (number | null);
+      };
       "cookie"?: never;
     };
     "requestBody"?: never;
@@ -547,7 +456,9 @@ export interface operations {
         "session_id": string;
       };
       "query"?: never;
-      "header"?: never;
+      "header": {
+        "X-User-ID"?: (number | null);
+      };
       "cookie"?: never;
     };
     "requestBody"?: never;
@@ -577,7 +488,9 @@ export interface operations {
         "conversation_id": string;
       };
       "query"?: never;
-      "header"?: never;
+      "header": {
+        "X-User-ID"?: (number | null);
+      };
       "cookie"?: never;
     };
     "requestBody"?: never;
@@ -605,7 +518,9 @@ export interface operations {
         "conversation_id": string;
       };
       "query"?: never;
-      "header"?: never;
+      "header": {
+        "X-User-ID"?: (number | null);
+      };
       "cookie"?: never;
     };
     "requestBody"?: never;
@@ -631,7 +546,9 @@ export interface operations {
     "parameters": {
       "path"?: never;
       "query"?: never;
-      "header"?: never;
+      "header": {
+        "X-User-ID"?: (number | null);
+      };
       "cookie"?: never;
     };
     "requestBody": {
@@ -664,7 +581,9 @@ export interface operations {
         "conversation_id": string;
       };
       "query"?: never;
-      "header"?: never;
+      "header": {
+        "X-User-ID"?: (number | null);
+      };
       "cookie"?: never;
     };
     "requestBody"?: never;
@@ -690,7 +609,9 @@ export interface operations {
     "parameters": {
       "path"?: never;
       "query"?: never;
-      "header"?: never;
+      "header": {
+        "X-User-ID"?: (number | null);
+      };
       "cookie"?: never;
     };
     "requestBody": {
@@ -720,7 +641,9 @@ export interface operations {
     "parameters": {
       "path"?: never;
       "query"?: never;
-      "header"?: never;
+      "header": {
+        "X-User-ID"?: (number | null);
+      };
       "cookie"?: never;
     };
     "requestBody": {
@@ -746,301 +669,7 @@ export interface operations {
       };
     };
   };
-  "change_password_api_v1_auth_change_password_post": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["ChangePasswordRequest"];
-    };
-    "responses": {
-      "204": {
-        "content": never;
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "clear_default_doris_role_api_v1_admin_doris_roles_default_delete": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "204": {
-        "content": never;
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "create_doris_role_api_v1_admin_doris_roles_post": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["CreateDorisRoleRequest"];
-    };
-    "responses": {
-      "201": {
-        "content": {
-        "application/json": components["schemas"]["DorisRoleResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "create_row_policy_api_v1_admin_doris_roles__role__row_policies_post": {
-    "parameters": {
-      "path": {
-        "role": string;
-      };
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["RowPolicyRequest"];
-    };
-    "responses": {
-      "201": {
-        "content": {
-        "application/json": unknown;
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "create_user_api_v1_admin_users_post": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["CreateUserRequest"];
-    };
-    "responses": {
-      "201": {
-        "content": {
-        "application/json": components["schemas"]["UserResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "delete_doris_role_api_v1_admin_doris_roles__role__delete": {
-    "parameters": {
-      "path": {
-        "role": string;
-      };
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "204": {
-        "content": never;
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "delete_user_api_v1_admin_users__user_id__delete": {
-    "parameters": {
-      "path": {
-        "user_id": number;
-      };
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "204": {
-        "content": never;
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "drop_row_policy_api_v1_admin_doris_roles__role__row_policies_delete": {
-    "parameters": {
-      "path": {
-        "role": string;
-      };
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["DropRowPolicyRequest"];
-    };
-    "responses": {
-      "204": {
-        "content": never;
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "get_task_status_api_v1_tasks__task_id__get": {
-    "parameters": {
-      "path": {
-        "task_id": string;
-      };
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": components["schemas"]["TaskStatusResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "grant_select_api_v1_admin_doris_roles__role__select_grants_post": {
-    "parameters": {
-      "path": {
-        "role": string;
-      };
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["SelectGrantRequest"];
-    };
-    "responses": {
-      "201": {
-        "content": {
-        "application/json": Array<components["schemas"]["AssetGrantResponse"]>;
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "list_doris_roles_api_v1_admin_doris_roles_get": {
+  "list_users_api_v1_users_get": {
     "parameters": {
       "path"?: never;
       "query"?: never;
@@ -1051,391 +680,7 @@ export interface operations {
     "responses": {
       "200": {
         "content": {
-        "application/json": Array<components["schemas"]["DorisRoleResponse"]>;
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "list_doris_workload_groups_api_v1_admin_doris_roles_workload_groups_get": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": Array<string>;
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "list_existing_doris_roles_api_v1_admin_doris_roles_existing_get": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": Array<components["schemas"]["DorisExistingRoleResponse"]>;
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "list_row_policies_api_v1_admin_doris_roles__role__row_policies_get": {
-    "parameters": {
-      "path": {
-        "role": string;
-      };
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": Array<components["schemas"]["RowPolicyResponse"]>;
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "list_select_grants_api_v1_admin_doris_roles__role__select_grants_get": {
-    "parameters": {
-      "path": {
-        "role": string;
-      };
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": Array<components["schemas"]["AssetGrantResponse"]>;
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "list_users_api_v1_admin_users_get": {
-    "parameters": {
-      "path"?: never;
-      "query": {
-        "limit"?: number;
-        "offset"?: number;
-        "query"?: (string | null);
-      };
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": components["schemas"]["UserListResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "login_api_v1_auth_login_post": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["LoginRequest"];
-    };
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": components["schemas"]["TokenResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "logout_api_v1_auth_logout_post": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["LogoutRequest"];
-    };
-    "responses": {
-      "204": {
-        "content": never;
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "me_api_v1_auth_me_get": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": components["schemas"]["UserResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "refresh_api_v1_auth_refresh_post": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["RefreshRequest"];
-    };
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": components["schemas"]["TokenResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "revoke_all_select_api_v1_admin_doris_roles__role__select_grants_all_delete": {
-    "parameters": {
-      "path": {
-        "role": string;
-      };
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "204": {
-        "content": never;
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "revoke_select_api_v1_admin_doris_roles__role__select_grants_delete": {
-    "parameters": {
-      "path": {
-        "role": string;
-      };
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["SelectGrantRequest"];
-    };
-    "responses": {
-      "204": {
-        "content": never;
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "set_default_doris_role_api_v1_admin_doris_roles__role__default_put": {
-    "parameters": {
-      "path": {
-        "role": string;
-      };
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": components["schemas"]["DorisRoleResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "update_user_api_v1_admin_users__user_id__put": {
-    "parameters": {
-      "path": {
-        "user_id": number;
-      };
-      "query"?: never;
-      "header"?: never;
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["UpdateUserRequest"];
-    };
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": components["schemas"]["UserResponse"];
+        "application/json": Array<components["schemas"]["UserResponse"]>;
       };
       };
       "422": {
@@ -1455,61 +700,6 @@ export interface operations {
 }
 
 export interface paths {
-  "/api/v1/admin/doris-roles": {
-    "get": operations["list_doris_roles_api_v1_admin_doris_roles_get"];
-    "post": operations["create_doris_role_api_v1_admin_doris_roles_post"];
-  };
-  "/api/v1/admin/doris-roles/default": {
-    "delete": operations["clear_default_doris_role_api_v1_admin_doris_roles_default_delete"];
-  };
-  "/api/v1/admin/doris-roles/existing": {
-    "get": operations["list_existing_doris_roles_api_v1_admin_doris_roles_existing_get"];
-  };
-  "/api/v1/admin/doris-roles/workload-groups": {
-    "get": operations["list_doris_workload_groups_api_v1_admin_doris_roles_workload_groups_get"];
-  };
-  "/api/v1/admin/doris-roles/{role}": {
-    "delete": operations["delete_doris_role_api_v1_admin_doris_roles__role__delete"];
-  };
-  "/api/v1/admin/doris-roles/{role}/default": {
-    "put": operations["set_default_doris_role_api_v1_admin_doris_roles__role__default_put"];
-  };
-  "/api/v1/admin/doris-roles/{role}/row-policies": {
-    "get": operations["list_row_policies_api_v1_admin_doris_roles__role__row_policies_get"];
-    "post": operations["create_row_policy_api_v1_admin_doris_roles__role__row_policies_post"];
-    "delete": operations["drop_row_policy_api_v1_admin_doris_roles__role__row_policies_delete"];
-  };
-  "/api/v1/admin/doris-roles/{role}/select-grants": {
-    "get": operations["list_select_grants_api_v1_admin_doris_roles__role__select_grants_get"];
-    "post": operations["grant_select_api_v1_admin_doris_roles__role__select_grants_post"];
-    "delete": operations["revoke_select_api_v1_admin_doris_roles__role__select_grants_delete"];
-  };
-  "/api/v1/admin/doris-roles/{role}/select-grants/all": {
-    "delete": operations["revoke_all_select_api_v1_admin_doris_roles__role__select_grants_all_delete"];
-  };
-  "/api/v1/admin/users": {
-    "get": operations["list_users_api_v1_admin_users_get"];
-    "post": operations["create_user_api_v1_admin_users_post"];
-  };
-  "/api/v1/admin/users/{user_id}": {
-    "put": operations["update_user_api_v1_admin_users__user_id__put"];
-    "delete": operations["delete_user_api_v1_admin_users__user_id__delete"];
-  };
-  "/api/v1/auth/change-password": {
-    "post": operations["change_password_api_v1_auth_change_password_post"];
-  };
-  "/api/v1/auth/login": {
-    "post": operations["login_api_v1_auth_login_post"];
-  };
-  "/api/v1/auth/logout": {
-    "post": operations["logout_api_v1_auth_logout_post"];
-  };
-  "/api/v1/auth/me": {
-    "get": operations["me_api_v1_auth_me_get"];
-  };
-  "/api/v1/auth/refresh": {
-    "post": operations["refresh_api_v1_auth_refresh_post"];
-  };
   "/api/v1/chat/attachment/delete": {
     "post": operations["api_delete_attachment_api_v1_chat_attachment_delete_post"];
   };
@@ -1555,7 +745,7 @@ export interface paths {
   "/api/v1/chat/{conversation_id}/subagents/{analysis_id}/{agent_type}/{session_id}/runs/{delegation_id}/messages": {
     "get": operations["api_get_subagent_messages_api_v1_chat__conversation_id__subagents__analysis_id___agent_type___session_id__runs__delegation_id__messages_get"];
   };
-  "/api/v1/tasks/{task_id}": {
-    "get": operations["get_task_status_api_v1_tasks__task_id__get"];
+  "/api/v1/users": {
+    "get": operations["list_users_api_v1_users_get"];
   };
 }

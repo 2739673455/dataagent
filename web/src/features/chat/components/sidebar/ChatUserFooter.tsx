@@ -1,171 +1,157 @@
-import { KeyRound, LogOut, Settings, User } from "lucide-react";
-import { useState } from "react";
-import { Link } from "react-router-dom";
-import { toast } from "sonner";
+import { Check, ChevronDown, UserRound } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
 import { getApiErrorMessage } from "@/api/errors";
-import type { UserResponse } from "@/auth/index";
-import { Button } from "@/components/ui/button";
-import { ROUTES } from "@/config/settings";
+import type { UserResponse } from "@/identity";
+import { listUsers } from "@/identity/api";
 import { cn } from "@/lib/utils";
 
-export interface ChatUserFooterProps {
+export function ChatUserFooter({
+  user,
+  onSelectUser,
+  compact = false,
+}: {
   user: UserResponse | null;
-  onChangePassword: (currentPassword: string, newPassword: string) => Promise<void>;
-  onLogout: () => void;
-}
+  onSelectUser: (user: UserResponse) => void;
+  compact?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [users, setUsers] = useState<UserResponse[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const panelId = useId();
 
-export function ChatUserFooter({ user, onChangePassword, onLogout }: ChatUserFooterProps) {
-  const [isPasswordOpen, setIsPasswordOpen] = useState(false);
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt 用于用户点击重试后重新加载。
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    setLoading(true);
+    setError("");
+    panelRef.current?.focus();
+    void listUsers()
+      .then((result) => {
+        if (active) setUsers(result);
+      })
+      .catch((reason) => {
+        if (active) setError(getApiErrorMessage(reason, "加载用户失败"));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [open, attempt]);
 
-  const submitPasswordChange = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (newPassword.length < 6) {
-      toast.error("新密码至少需要 6 个字符");
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      toast.error("两次输入的新密码不一致");
-      return;
-    }
-    setIsChangingPassword(true);
-    try {
-      await onChangePassword(currentPassword, newPassword);
-    } catch (error) {
-      toast.error(getApiErrorMessage(error, "密码修改失败"));
-    } finally {
-      setIsChangingPassword(false);
-    }
-  };
+  useEffect(() => {
+    if (!open) return;
+    const onOutsideInteraction = (event: PointerEvent | FocusEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", onOutsideInteraction);
+    document.addEventListener("focusin", onOutsideInteraction);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onOutsideInteraction);
+      document.removeEventListener("focusin", onOutsideInteraction);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
 
   return (
-    <div className="p-3 bg-[#e4e4df] h-full flex flex-col justify-center">
-      <div className="mb-2 flex items-center gap-2.5 rounded border border-[#d4d4ce] bg-[#ffffff] p-2.5 text-xs shadow-2xs">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center text-[#27272a]">
-          <User className="h-4 w-4" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-1">
-            <p className="truncate font-semibold text-sm text-[#18181b]">
-              {user?.username || "访客"}
-            </p>
-            {user?.is_admin && (
-              <span className="rounded bg-[#3f3f46] px-1.5 py-0.5 text-[10px] font-medium text-[#ffffff]">
-                管理员
-              </span>
-            )}
-          </div>
-          <p className="truncate text-xs font-mono text-[#71717a]">
-            {user?.doris_role ? `Doris: ${user.doris_role}` : "未分配数据角色"}
-          </p>
-        </div>
-      </div>
-
-      <div className={cn("grid gap-1.5", user?.is_admin ? "grid-cols-3" : "grid-cols-2")}>
-        {user?.is_admin && (
-          <Button
-            asChild
-            variant="outline"
-            size="sm"
-            className="w-full rounded border-[#d4d4ce] bg-[#ffffff] px-1.5 text-xs font-medium text-[#27272a] shadow-2xs transition-all hover:border-[#b8b8b0] hover:bg-[#f5f5f0]"
-          >
-            <Link to={ROUTES.admin} title="管理后台">
-              <Settings className="h-3.5 w-3.5 shrink-0 text-[#52525b]" />
-              <span>后台</span>
-            </Link>
-          </Button>
+    <div ref={containerRef} className={cn("relative", !compact && "h-full bg-[#e4e4df] p-3")}>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        aria-controls={open ? panelId : undefined}
+        aria-label={`当前用户：${user?.username ?? "未选择"}，点击切换用户`}
+        onClick={() => setOpen((value) => !value)}
+        className={cn(
+          "flex w-full items-center gap-2 rounded border border-[#d4d4ce] bg-white text-left text-xs hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-zinc-500",
+          compact ? "px-2 py-1" : "p-2.5"
         )}
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full rounded border-[#d4d4ce] bg-[#ffffff] px-1.5 text-xs font-medium text-[#27272a] shadow-2xs transition-all hover:border-[#b8b8b0] hover:bg-[#f5f5f0]"
-          onClick={() => setIsPasswordOpen(true)}
-          title="修改密码"
-        >
-          <KeyRound className="h-3.5 w-3.5 shrink-0 text-[#52525b]" />
-          <span>密码</span>
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full rounded border-[#d4d4ce] bg-[#ffffff] px-1.5 text-xs font-medium text-[#71717a] shadow-2xs transition-all hover:border-rose-300 hover:bg-rose-50 hover:text-rose-600"
-          onClick={onLogout}
-          title="退出登录"
-        >
-          <LogOut className="h-3.5 w-3.5 shrink-0" />
-          <span>退出</span>
-        </Button>
-      </div>
-
-      {isPasswordOpen && (
+      >
+        <UserRound className="h-4 w-4 shrink-0" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-semibold">{user?.username ?? "选择用户"}</span>
+          {!compact && (
+            <span className="block truncate text-zinc-500">{user?.doris_role_name}</span>
+          )}
+        </span>
+        <ChevronDown className={cn("h-3.5 w-3.5 shrink-0", open && "rotate-180")} />
+      </button>
+      {open && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          ref={panelRef}
+          id={panelId}
           role="dialog"
-          aria-modal="true"
-          aria-labelledby="change-password-title"
-          onMouseDown={(event) => {
-            if (event.currentTarget === event.target && !isChangingPassword) {
-              setIsPasswordOpen(false);
-            }
-          }}
+          aria-label="选择用户"
+          tabIndex={-1}
+          className={cn(
+            "absolute z-50 max-h-72 overflow-y-auto rounded border border-[#d4d4ce] bg-white p-2 text-xs shadow-lg outline-none",
+            compact ? "right-0 top-full mt-2 w-60" : "bottom-full left-3 right-3 mb-1"
+          )}
         >
-          <form
-            className="w-full max-w-sm rounded border border-[#d4d4ce] bg-white p-5 shadow-xl"
-            onSubmit={(event) => void submitPasswordChange(event)}
-          >
-            <h2 id="change-password-title" className="mb-4 text-base font-bold text-[#18181b]">
-              修改密码
-            </h2>
-            <label className="mb-3 block text-xs text-[#52525b]">
-              当前密码
-              <input
-                type="password"
-                autoComplete="current-password"
-                value={currentPassword}
-                onChange={(event) => setCurrentPassword(event.target.value)}
-                className="mt-1 h-9 w-full rounded border border-[#d4d4ce] px-3 text-sm"
-                required
-              />
-            </label>
-            <label className="mb-3 block text-xs text-[#52525b]">
-              新密码
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={newPassword}
-                onChange={(event) => setNewPassword(event.target.value)}
-                className="mt-1 h-9 w-full rounded border border-[#d4d4ce] px-3 text-sm"
-                required
-              />
-            </label>
-            <label className="mb-5 block text-xs text-[#52525b]">
-              确认新密码
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={confirmPassword}
-                onChange={(event) => setConfirmPassword(event.target.value)}
-                className="mt-1 h-9 w-full rounded border border-[#d4d4ce] px-3 text-sm"
-                required
-              />
-            </label>
-            <div className="flex justify-end gap-2">
-              <Button
+          <p className="px-2 py-1.5 font-semibold text-zinc-500">选择用户</p>
+          {loading ? (
+            <p role="status" className="p-2 text-zinc-500">
+              正在加载用户...
+            </p>
+          ) : error ? (
+            <div className="p-2">
+              <p role="alert" className="mb-2 text-red-600">
+                {error}
+              </p>
+              <button
                 type="button"
-                variant="outline"
-                disabled={isChangingPassword}
-                onClick={() => setIsPasswordOpen(false)}
+                className="underline"
+                onClick={() => setAttempt((value) => value + 1)}
               >
-                取消
-              </Button>
-              <Button type="submit" disabled={isChangingPassword}>
-                {isChangingPassword ? "提交中..." : "确认修改"}
-              </Button>
+                重试
+              </button>
             </div>
-          </form>
+          ) : users.length === 0 ? (
+            <p className="p-2 text-zinc-500">暂无可用用户</p>
+          ) : (
+            users.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                aria-pressed={item.id === user?.id}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded p-2 text-left hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-zinc-500",
+                  item.id === user?.id && "bg-zinc-100"
+                )}
+                onClick={() => {
+                  setOpen(false);
+                  triggerRef.current?.focus();
+                  onSelectUser(item);
+                }}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{item.username}</span>
+                  <span className="block truncate text-zinc-500">{item.doris_role_name}</span>
+                </span>
+                {item.id === user?.id && (
+                  <>
+                    <span className="text-zinc-500">当前</span>
+                    <Check className="h-3.5 w-3.5 shrink-0" />
+                  </>
+                )}
+              </button>
+            ))
+          )}
         </div>
       )}
     </div>

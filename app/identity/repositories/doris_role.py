@@ -1,73 +1,22 @@
-"""Doris 角色、SELECT 权限与行策略管理访问。"""
+"""读取 Doris 的实际权限并初始化预定义角色。"""
 
 import re
-from collections.abc import Mapping, Sequence
-from typing import Any, Literal, cast
+from typing import Any
 
-from loguru import logger
 from sqlalchemy import text
-from sqlalchemy.exc import OperationalError
 
-from app.identity.errors import (
-    DorisQueryUserAlreadyExistsError,
-    DorisRoleAlreadyExistsError,
-    DorisWorkloadGroupNotFoundError,
-)
-from app.identity.models.doris import DorisAuthorizationSnapshot, DorisRowPolicy
+from app.identity.models.doris import DorisAuthorizationSnapshot
 from app.identity.repositories.doris_authorization import parse_authorization
 from app.shared.clients.doris_client_manager import DorisClientManager
 from app.shared.contracts.doris import DORIS_IDENTIFIER_PATTERN
 
-_USER_IDENTITY_PATTERN = re.compile(r"'(?:\\.|''|[^'])*'@'(?:\\.|''|[^'])*'")
-_GENERATED_PASSWORD_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
-
 
 class DorisRoleRepository:
-    """通过独立管理身份操作 Doris 内置 RBAC。"""
+    """使用管理连接读取权限，初始化专用查询账号。"""
 
     def __init__(self, provider: DorisClientManager) -> None:
         """绑定 Doris 管理连接提供器。"""
         self._provider = provider
-
-    @staticmethod
-    def quote_identifier(identifier: str) -> str:
-        """校验并引用 Doris 标识符。"""
-        if re.fullmatch(DORIS_IDENTIFIER_PATTERN, identifier) is None:
-            raise ValueError("Doris 标识符无效")
-        return f"`{identifier}`"
-
-    @classmethod
-    def quote_role_literal(cls, role_name: str) -> str:
-        """校验 Doris 角色名并构造字符串字面量。"""
-        cls.quote_identifier(role_name)
-        return f"'{role_name}'"
-
-    @staticmethod
-    def quote_user(user_name: str) -> str:
-        """校验并引用 Doris 用户名。"""
-        if re.fullmatch(DORIS_IDENTIFIER_PATTERN, user_name) is None:
-            raise ValueError("Doris 用户名格式无效")
-        return f"'{user_name}'"
-
-    @classmethod
-    def qualified_table(
-        cls,
-        catalog: str,
-        database: str,
-        table: str,
-    ) -> str:
-        """构造引用后的 catalog.database.table。"""
-        return (
-            f"{cls.quote_identifier(catalog)}."
-            f"{cls.quote_identifier(database)}."
-            f"{cls.quote_identifier(table)}"
-        )
-
-    async def list_roles(self) -> list[dict[str, Any]]:
-        """读取 Doris 中的全部显式角色。"""
-        async with self._provider.connection() as connection:
-            result = await connection.execute(text("SHOW ROLES"))
-            return [dict(row) for row in result.mappings().all()]
 
     async def read_authorization(
         self,
@@ -78,7 +27,7 @@ class DorisRoleRepository:
         catalog: str,
         database: str,
     ) -> DorisAuthorizationSnapshot:
-        """从专属查询账号读取有效权限及角色、用户行策略。"""
+        """读取查询账号有效权限及角色、用户行策略，解析为业务库权限快照。"""
         user = self.quote_user(query_user)
         role = self.quote_identifier(role_name)
         async with self._provider.connection() as connection:
@@ -103,282 +52,50 @@ class DorisRoleRepository:
                 database=database,
             )
 
-    async def list_workload_groups(self) -> tuple[str, ...]:
-        """读取管理账号可见的 Doris 工作组。"""
-        async with self._provider.connection() as connection:
-            result = await connection.execute(
-                text(
-                    "SELECT name FROM information_schema.workload_groups ORDER BY name"
-                )
-            )
-            return tuple(map(str, result.scalars().all()))
-
-    async def workload_group_exists(self, workload_group: str) -> bool:
-        """确认 Doris 工作组是否存在。"""
-        self.quote_identifier(workload_group)
-        async with self._provider.connection() as connection:
-            result = await connection.execute(
-                text(
-                    "SELECT 1 FROM information_schema.workload_groups "
-                    "WHERE name = :workload_group LIMIT 1"
-                ),
-                {"workload_group": workload_group},
-            )
-            return result.scalar_one_or_none() is not None
-
-    async def create_role_identity(
+    async def ensure_role_identity(
         self,
         *,
         role_name: str,
         query_user: str,
         password: str,
         workload_group: str,
+        database: str,
     ) -> None:
-        """创建 Doris 角色、查询用户及 Workload Group 授权。"""
+        """初始化角色和查询账号，授予业务库 SELECT 及工作组使用权限。"""
         role = self.quote_identifier(role_name)
-        role_literal = self.quote_role_literal(role_name)
-        user_literal = self.quote_user(query_user)
-        if _GENERATED_PASSWORD_PATTERN.fullmatch(password) is None:
-            raise ValueError("生成的 Doris 密码格式无效")
-        role_created = False
-        try:
-            await self._create_role(role_name=role_name, role=role)
-            role_created = True
-            await self._grant_workload_group_usage(
-                role=role,
-                workload_group=workload_group,
-            )
-            await self._create_query_user(
-                query_user=query_user,
-                user_literal=user_literal,
-                password=password,
-                role_literal=role_literal,
-            )
-        except BaseException:
-            if role_created:
-                try:
-                    await self._execute(f"DROP ROLE IF EXISTS {role}")
-                except Exception:  # noqa: BLE001
-                    logger.exception(f"补偿删除 Doris 角色失败: {role_name}")
-            raise
-
-    async def drop_role_identity(self, *, role_name: str, query_user: str) -> None:
-        """幂等删除查询用户和角色；失败后允许再次执行剩余步骤。"""
         user = self.quote_user(query_user)
-        role = self.quote_identifier(role_name)
-        await self._execute(f"DROP USER IF EXISTS {user}")
-        await self._execute(f"DROP ROLE IF EXISTS {role}")
-
-    async def list_role_row_policies(self, role_name: str) -> list[DorisRowPolicy]:
-        """读取指定角色的全部行策略。"""
-        role = self.quote_identifier(role_name)
-        async with self._provider.connection() as connection:
-            result = await connection.exec_driver_sql(
-                f"SHOW ROW POLICY FOR ROLE {role}"
-            )
-            return [
-                _row_policy_from_row(cast(Mapping[str, object], row))
-                for row in result.mappings().all()
-            ]
-
-    async def list_table_columns(
-        self,
-        database: str,
-        table: str,
-    ) -> tuple[str, ...]:
-        """读取目标表全部字段。"""
-        async with self._provider.connection() as connection:
-            result = await connection.execute(
-                text(
-                    "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_schema = :database AND table_name = :table "
-                    "ORDER BY ordinal_position"
-                ),
-                {"database": database, "table": table},
-            )
-            return tuple(map(str, result.scalars().all()))
-
-    async def grant_select(
-        self,
-        *,
-        role_name: str,
-        catalog: str,
-        database: str,
-        table: str | None,
-        columns: Sequence[str],
-    ) -> None:
-        """向 Doris 角色授予库、表或字段 SELECT 权限。"""
-        role = self.quote_identifier(role_name)
-        if table is None:
-            if columns:
-                raise ValueError("列级授权必须指定对应的数据表")
-            target = (
-                f"{self.quote_identifier(catalog)}.{self.quote_identifier(database)}.*"
-            )
-            privilege = "SELECT_PRIV"
-        else:
-            target = self.qualified_table(catalog, database, table)
-            privilege = self._select_privilege(columns)
-        await self._execute(f"GRANT {privilege} ON {target} TO ROLE {role}")
-
-    async def revoke_select(
-        self,
-        *,
-        role_name: str,
-        catalog: str,
-        database: str,
-        table: str | None,
-        columns: Sequence[str],
-    ) -> None:
-        """从 Doris 角色回收库、表或字段 SELECT 权限。"""
-        role = self.quote_identifier(role_name)
-        if table is None:
-            if columns:
-                raise ValueError("列级授权必须指定对应的数据表")
-            target = (
-                f"{self.quote_identifier(catalog)}.{self.quote_identifier(database)}.*"
-            )
-            privilege = "SELECT_PRIV"
-        else:
-            target = self.qualified_table(catalog, database, table)
-            privilege = self._select_privilege(columns)
-        await self._execute(f"REVOKE {privilege} ON {target} FROM ROLE {role}")
-
-    async def create_row_policy(
-        self,
-        *,
-        policy_name: str,
-        role_name: str,
-        catalog: str,
-        database: str,
-        table: str,
-        policy_type: Literal["RESTRICTIVE", "PERMISSIVE"],
-        predicate_sql: str,
-    ) -> None:
-        """创建绑定 Doris 角色的行策略。"""
-        policy = self.quote_identifier(policy_name)
-        role = self.quote_identifier(role_name)
-        target = self.qualified_table(catalog, database, table)
-        await self._execute(
-            f"CREATE ROW POLICY {policy} ON {target} AS {policy_type} "
-            f"TO ROLE {role} USING ({predicate_sql})"
-        )
-
-    async def drop_row_policy(
-        self,
-        *,
-        policy_name: str,
-        role_name: str,
-        catalog: str,
-        database: str,
-        table: str,
-    ) -> None:
-        """删除绑定 Doris 角色的行策略。"""
-        policy = self.quote_identifier(policy_name)
-        role = self.quote_identifier(role_name)
-        target = self.qualified_table(catalog, database, table)
-        await self._execute(f"DROP ROW POLICY {policy} ON {target} FOR ROLE {role}")
-
-    async def _execute(self, sql: str) -> None:
-        """执行完全由已校验结构组成的 Doris 管理语句。"""
-        async with self._provider.connection() as connection:
-            await connection.exec_driver_sql(sql)
-
-    async def _grant_workload_group_usage(
-        self,
-        *,
-        role: str,
-        workload_group: str,
-    ) -> None:
-        """向角色授予工作组使用权限并识别工作组删除竞争。"""
         group = self.quote_identifier(workload_group)
-        try:
-            await self._execute(
+        database_sql = self.quote_identifier(database)
+        if re.fullmatch(r"[A-Za-z0-9_-]+", password) is None:
+            raise ValueError("生成的 Doris 密码格式无效")
+        async with self._provider.connection() as connection:
+            await connection.exec_driver_sql(f"CREATE ROLE IF NOT EXISTS {role}")
+            await connection.exec_driver_sql(
+                f"GRANT SELECT_PRIV ON `internal`.{database_sql}.* TO ROLE {role}"
+            )
+            await connection.exec_driver_sql(
                 f"GRANT USAGE_PRIV ON WORKLOAD GROUP {group} TO ROLE {role}"
             )
-        except OperationalError as exc:
-            message = str(exc.orig).casefold()
-            if re.search(r"\bcan\s*not find workload group\b", message):
-                raise DorisWorkloadGroupNotFoundError(workload_group) from exc
-            raise
-
-    async def _create_role(self, *, role_name: str, role: str) -> None:
-        """创建角色并识别 Doris 角色名冲突。"""
-        try:
-            await self._execute(f"CREATE ROLE {role}")
-        except OperationalError as exc:
-            message = str(exc.orig).casefold()
-            if re.search(r"\brole\s+role:\s*.+\balready exists?\b", message):
-                raise DorisRoleAlreadyExistsError(role_name) from exc
-            raise
-
-    async def _create_query_user(
-        self,
-        *,
-        query_user: str,
-        user_literal: str,
-        password: str,
-        role_literal: str,
-    ) -> None:
-        """创建查询用户并识别用户名冲突。"""
-        try:
-            await self._execute(
-                f"CREATE USER {user_literal} IDENTIFIED BY '{password}' "
-                f"DEFAULT ROLE {role_literal}"
+            await connection.exec_driver_sql(
+                f"CREATE USER IF NOT EXISTS {user}@'%' IDENTIFIED BY '{password}' "
+                f"DEFAULT ROLE '{role_name}'"
             )
-        except OperationalError as exc:
-            message = str(exc.orig).casefold()
-            if re.search(r"\buser\b.+\balready exists?\b", message):
-                raise DorisQueryUserAlreadyExistsError(query_user) from exc
-            raise
+            # 将 Doris 查询账号的密码设为身份库中保存的值。
+            await connection.exec_driver_sql(
+                f"SET PASSWORD FOR {user}@'%' = PASSWORD('{password}')"
+            )
+            await connection.exec_driver_sql(f"GRANT {role} TO {user}@'%'")
 
-    @classmethod
-    def _select_privilege(cls, columns: Sequence[str]) -> str:
-        """构造表级或列级 SELECT 权限表达式。"""
-        if not columns:
-            return "SELECT_PRIV"
-        quoted_columns = ",".join(cls.quote_identifier(column) for column in columns)
-        return f"SELECT_PRIV({quoted_columns})"
+    @staticmethod
+    def quote_identifier(identifier: str) -> str:
+        """校验并引用 Doris 标识符。"""
+        if re.fullmatch(DORIS_IDENTIFIER_PATTERN, identifier) is None:
+            raise ValueError("Doris 标识符无效")
+        return f"`{identifier}`"
 
-
-def _row_policy_from_row(row: Mapping[str, object]) -> DorisRowPolicy:
-    """将 Doris SHOW ROW POLICY 结果转换为稳定模型。"""
-    raw_policy_type = str(row["FilterType"]).upper()
-    if raw_policy_type not in {"RESTRICTIVE", "PERMISSIVE"}:
-        raise ValueError(f"Doris 行策略组合类型无效: {raw_policy_type}")
-    return DorisRowPolicy(
-        policy_name=str(row["PolicyName"]),
-        catalog_name=str(row["CatalogName"]),
-        database_name=str(row["DbName"]),
-        table_name=str(row["TableName"]),
-        policy_type=cast(
-            Literal["RESTRICTIVE", "PERMISSIVE"],
-            raw_policy_type,
-        ),
-        predicate=str(row["WherePredicate"]),
-    )
-
-
-def role_name_from_row(row: Mapping[str, object]) -> str | None:
-    """从不同 Doris 小版本的 SHOW ROLES 结果读取角色名。"""
-    for key in ("Name", "Role", "RoleName"):
-        value = row.get(key)
-        if value is not None:
-            return str(value)
-    return None
-
-
-def role_users_from_row(row: Mapping[str, object]) -> tuple[str, ...]:
-    """从 SHOW ROLES 结果读取关联的 Doris 用户身份。"""
-    value = row.get("Users")
-    if value is None:
-        return ()
-    text = str(value).strip()
-    if not text or text.casefold() == "null":
-        return ()
-    identities = tuple(
-        match.group(0) for match in _USER_IDENTITY_PATTERN.finditer(text)
-    )
-    if identities:
-        return identities
-    return tuple(item.strip() for item in text.split(",") if item.strip())
+    @staticmethod
+    def quote_user(user_name: str) -> str:
+        """校验并引用 Doris 用户名。"""
+        if re.fullmatch(DORIS_IDENTIFIER_PATTERN, user_name) is None:
+            raise ValueError("Doris 用户名格式无效")
+        return f"'{user_name}'"

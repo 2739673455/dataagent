@@ -64,11 +64,6 @@
     background: #d4d4d0;
     border-radius: 2px;
   }
-  /* 隐藏浏览器默认的密码查看与清除按钮 */
-  input::-ms-reveal,
-  input::-ms-clear {
-    display: none;
-  }
 }
 
 @layer utilities {

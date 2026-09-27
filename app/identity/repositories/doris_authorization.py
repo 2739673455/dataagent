@@ -9,25 +9,6 @@ from app.identity import errors as auth_error
 from app.identity.models.doris import DorisAuthorizationSnapshot, DorisSelectGrant
 
 
-def _text(row: Mapping[str, object], key: str) -> str:
-    if key in row and row[key] is None:
-        return ""
-    if key not in row or not isinstance(row[key], str):
-        raise auth_error.InvalidDorisPermissionError(
-            detail=f"Doris 授权结果缺少有效的 {key} 字段"
-        )
-    return str(row[key]).strip()
-
-
-def _privileges(value: str) -> tuple[str, ...]:
-    if value in {"", "NULL"}:
-        return ()
-    tokens = tuple(sorted(item.strip().lower() for item in value.split(",")))
-    if any(not re.fullmatch(r"[a-z_]+_priv", token) for token in tokens):
-        raise auth_error.InvalidDorisPermissionError(detail="无法解析 Doris 权限标识")
-    return tokens
-
-
 def parse_authorization(
     row: Mapping[str, object],
     policies: Sequence[Mapping[str, object]],
@@ -38,7 +19,7 @@ def parse_authorization(
     catalog: str,
     database: str,
 ) -> DorisAuthorizationSnapshot:
-    """严格解析有效权限；无法识别的格式拒绝使用，不回退到旧策略。"""
+    """解析有效权限，身份不匹配或授权格式无效时抛出异常。"""
     if _text(row, "UserIdentity") != f"'{query_user}'@'%'":
         raise auth_error.InvalidDorisPermissionError(
             detail="Doris 查询用户身份与平台配置不一致"
@@ -54,8 +35,7 @@ def parse_authorization(
             detail="业务查询账号不能具有 Doris 管理权限"
         )
     grants: set[DorisSelectGrant] = set()
-    broad = "select_priv" in global_privileges
-    if broad:
+    if "select_priv" in global_privileges:
         grants.add(DorisSelectGrant(role_name, data_source, database))
     normalized: dict[str, object] = {
         "user": query_user,
@@ -117,8 +97,6 @@ def parse_authorization(
                         for col in values
                     )
                 elif "select_priv" in values:
-                    if arity == 1:
-                        broad = True
                     grants.add(
                         DorisSelectGrant(
                             role_name,
@@ -128,7 +106,8 @@ def parse_authorization(
                         )
                     )
         normalized[field] = sorted(entries)
-    # 排序消除 SHOW 返回顺序的不确定性；保留谓词、组合类型和绑定对象。
+    # 行策略只参与权限指纹；实际行过滤由 Doris 查询账号执行。
+    # 按库表、谓词和组合类型计算指纹，排序消除 SHOW 返回顺序的影响。
     normalized["policies"] = sorted(
         {
             json.dumps(
@@ -163,5 +142,25 @@ def parse_authorization(
             )
         ),
         fingerprint=fingerprint,
-        has_broad_select=broad,
     )
+
+
+def _text(row: Mapping[str, object], key: str) -> str:
+    """读取必需的 SHOW 结果字段，将 SQL NULL 视为空值。"""
+    if key in row and row[key] is None:
+        return ""
+    if key not in row or not isinstance(row[key], str):
+        raise auth_error.InvalidDorisPermissionError(
+            detail=f"Doris 授权结果缺少有效的 {key} 字段"
+        )
+    return str(row[key]).strip()
+
+
+def _privileges(value: str) -> tuple[str, ...]:
+    """规范化权限名称并排序，拒绝无法识别的名称格式。"""
+    if value in {"", "NULL"}:
+        return ()
+    tokens = tuple(sorted(item.strip().lower() for item in value.split(",")))
+    if any(not re.fullmatch(r"[a-z_]+_priv", token) for token in tokens):
+        raise auth_error.InvalidDorisPermissionError(detail="无法解析 Doris 权限标识")
+    return tokens

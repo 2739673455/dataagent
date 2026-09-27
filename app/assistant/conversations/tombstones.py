@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.assistant.models.conversation_tombstone import ConversationTombstone
@@ -43,14 +43,5 @@ class ConversationTombstoneStore:
                         ConversationTombstone.user_id,
                         ConversationTombstone.conversation_id,
                     ]
-                )
-            )
-
-    async def delete_by_user(self, user_id: int) -> None:
-        """删除用户全部会话墓碑。"""
-        async with self._postgres.session() as session, session.begin():
-            await session.execute(
-                delete(ConversationTombstone).where(
-                    ConversationTombstone.user_id == user_id
                 )
             )

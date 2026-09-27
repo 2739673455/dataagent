@@ -101,13 +101,6 @@ class DorisQueryClientRegistry:
             await stale.close()
         return manager
 
-    async def invalidate(self, role_name: str) -> None:
-        """关闭并移除指定角色的查询连接池。"""
-        async with self._lock:
-            entry = self._entries.pop(role_name, None)
-        if entry is not None:
-            await entry.manager.close()
-
     async def close(self) -> None:
         """关闭全部查询身份连接池。"""
         async with self._lock:

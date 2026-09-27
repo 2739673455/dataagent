@@ -1,19 +1,10 @@
-// localStorage 中访问令牌的 key
-export const ACCESS_TOKEN_STORAGE_KEY = "dataagent:access-token";
-export const REFRESH_TOKEN_STORAGE_KEY = "dataagent:refresh-token";
-export const AUTH_API_PATHS = {
-  login: "/api/v1/auth/login",
-  refresh: "/api/v1/auth/refresh",
-  logout: "/api/v1/auth/logout",
-  changePassword: "/api/v1/auth/change-password",
-  me: "/api/v1/auth/me",
-} as const;
+export const SELECTED_USER_STORAGE_KEY = "dataagent:selected-user";
+export const USERS_API_PATH = "/api/v1/users";
 
 // 页面路由
 export const ROUTES = {
-  login: "/login",
+  selectUser: "/select-user",
   chat: "/chat",
-  admin: "/admin",
   chatConversation: (conversationId: string) => `/chat/${conversationId}`,
 } as const;
 

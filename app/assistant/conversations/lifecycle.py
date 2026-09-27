@@ -131,20 +131,6 @@ class ConversationLifecycleService:
                 await repository.delete(user_id, conversation_id)
             return True
 
-    async def delete_user_conversations(self, user_id: int) -> None:
-        """删除用户全部会话。"""
-        while True:
-            async with self._repository_factory() as repository:
-                conversations = await repository.list_all_by_user(
-                    user_id,
-                    include_deleting=True,
-                )
-            if not conversations:
-                break
-            for conversation in conversations:
-                await self.delete_conversation_resources(user_id, conversation.id)
-        await self._agents.delete_user_agents(user_id)
-
     async def cleanup_expired_drafts(self) -> int:
         """执行一批过期草稿回收。"""
         cutoff = datetime.now(UTC) - timedelta(minutes=self._config.draft_ttl_minutes)

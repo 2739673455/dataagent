@@ -29,7 +29,7 @@ from app.assistant.task_scheduler import (
     enqueue_conversation_deletion,
     enqueue_conversation_title,
 )
-from app.identity.api.auth.dependencies import AnalysisUserDep, CurrentUserDep
+from app.identity.api.dependencies import CurrentUserDep
 from app.shared.contracts.analysis import AgentType
 from app.shared.observability import context
 
@@ -41,7 +41,7 @@ _SSE_HEARTBEAT_SECONDS = 15
 async def api_create_conversation(
     body: chat_schema.CreateConversationRequest,
     conversation_repo: ConversationPGRepoDep,
-    current_user: AnalysisUserDep,
+    current_user: CurrentUserDep,
 ) -> chat_schema.ConversationResponse:
     """创建新对话。"""
     user_id = current_user.id
@@ -297,7 +297,7 @@ def _sse_response(
 async def api_stream_chat(
     body: chat_schema.ChatStreamRequest,
     turns: ConversationTurnServiceDep,
-    current_user: AnalysisUserDep,
+    current_user: CurrentUserDep,
 ) -> StreamingResponse:
     """启动后台对话回合并订阅 Agent 事件。"""
     user_id = current_user.id
@@ -310,7 +310,7 @@ async def api_stream_chat(
 async def api_resume_chat(
     conversation_id: UUID,
     turns: ConversationTurnServiceDep,
-    current_user: AnalysisUserDep,
+    current_user: CurrentUserDep,
 ) -> StreamingResponse:
     """从中断的 Planner Checkpoint 继续当前用户回合。"""
     user_id = current_user.id
@@ -323,7 +323,7 @@ async def api_resume_chat(
 async def api_get_conversation_run_status(
     conversation_id: UUID,
     conversation_repo: ConversationPGRepoDep,
-    current_user: AnalysisUserDep,
+    current_user: CurrentUserDep,
     runs: ConversationRunServiceDep,
 ) -> chat_schema.ConversationRunStatusResponse:
     """查询 Conversation 是否有正在后台执行的 Planner Run。"""
@@ -339,7 +339,7 @@ async def api_get_conversation_run_status(
 async def api_subscribe_conversation_run(
     conversation_id: UUID,
     conversation_repo: ConversationPGRepoDep,
-    current_user: AnalysisUserDep,
+    current_user: CurrentUserDep,
     runs: ConversationRunServiceDep,
 ) -> StreamingResponse:
     """订阅已经启动的后台 Planner Run。"""
@@ -355,7 +355,7 @@ async def api_subscribe_conversation_run(
 async def api_stop_conversation_run(
     conversation_id: UUID,
     conversation_repo: ConversationPGRepoDep,
-    current_user: AnalysisUserDep,
+    current_user: CurrentUserDep,
     runs: ConversationRunServiceDep,
 ) -> Response:
     """由用户显式停止 Conversation 当前的 Planner Run。"""

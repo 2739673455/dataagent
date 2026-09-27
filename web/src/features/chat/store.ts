@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { chatApi } from "@/features/chat/api";
-import { sessionLifecycle } from "@/auth/sessionLifecycle";
+import { sessionLifecycle } from "@/identity/sessionLifecycle";
 import type {
   ConversationResponse,
   MessageDeltaEvent,

@@ -11,7 +11,7 @@ from app.shared.config.app_config import cfg
 async def load_asset_policy(
     postgres: PostgresClientManager, doris: DorisClientManager, user_id: int
 ) -> AssetAccessPolicy:
-    """一次操作读取 Doris 权限并提交版本，不把事务带入检索或模型调用。"""
+    """读取 Doris 权限并提交指纹更新，事务在进入检索或模型调用前结束。"""
     async with postgres.session() as session, session.begin():
         return await AuthorizationService(
             IdentityPGRepo(session),

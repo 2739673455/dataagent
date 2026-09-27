@@ -21,7 +21,7 @@ cp conf/.env.example conf/.env
 ```dotenv
 # ==================== 数据库 ====================
 
-# PostgreSQL 数据库密码（认证、元数据和会话持久化共用）
+# PostgreSQL 数据库密码（身份、元数据和会话持久化共用）
 POSTGRES_PASSWORD=123123
 
 # Doris 平台内部管理账号密码，用于元数据读取和权限管理
@@ -30,18 +30,6 @@ DORIS_ADMIN_PASSWORD=123123
 # Doris 查询身份凭据加密密钥
 # python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
 DORIS_CREDENTIAL_ENCRYPTION_KEY=
-
-# ==================== 身份认证与管理员 ====================
-
-# JWT 签名密钥，必须使用至少 32 字符的随机值
-# python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
-JWT_SECRET=
-
-# 初始管理员引导凭据（scripts/bootstrap_admin.py）
-# 用户名和邮箱可通过 CLI 覆盖；密码从环境变量读取
-ADMIN_USERNAME=123
-ADMIN_EMAIL=123@123.com
-ADMIN_PASSWORD=123123
 
 # ==================== 模型服务 ====================
 
@@ -60,7 +48,7 @@ SILICONFLOW_API_KEY=
 TAVILY_API_KEY=
 ```
 
-按注释中的命令生成 Doris 凭据加密密钥和 JWT 签名密钥。
+按注释中的命令生成 Doris 凭据加密密钥。
 
 ### 模型配置
 
@@ -145,13 +133,15 @@ cd ..
 
 `dbmock/scripts/init_db.py` 会删除并重建 `DB_NAME` 指定的数据库，只能用于可重建的本地数据。生成耗时取决于月份范围、数据规模、本机资源和 Doris 负载。
 
-### 4. 创建管理员
+### 4. 初始化预定义用户和角色
 
 ```bash
-uv run -m scripts.bootstrap_admin
+uv run -m scripts.bootstrap_users
 ```
 
-该命令读取 `conf/.env` 中的 `ADMIN_USERNAME`、`ADMIN_EMAIL` 和 `ADMIN_PASSWORD`，可重复执行。
+预定义配置位于 `scripts/bootstrap_users.py`，当前包含用户 `admin` 和角色 `dataagent_admin`。脚本授予该角色 `cfg.doris.database` 全部表的查询权限，并创建专用查询账号。脚本可重复执行，查询密码加密保存在身份数据库中；不再需要平台登录密码或 JWT 配置。
+
+开发数据库中已有旧版用户表时，需先按项目初始化流程重建表，再执行本脚本；脚本本身不会迁移或删除旧表。
 
 ### 5. 启动应用
 
@@ -176,9 +166,9 @@ uv run celery --app app.shared.tasks.celery_app:celery_app beat -l INFO
 - 前端：<http://localhost:7001>
 - 后端 OpenAPI：<http://localhost:7000/docs>
 
-## 启动后页面配置
+## 启动后使用
 
-使用 `conf/.env` 中配置的管理员账号登录前端，点击左下角的“后台”按钮进入“管理中心”。
+在前端选择 `admin` 开始分析，聊天页可切换用户。请求通过 `X-User-ID` 选择身份，不进行密码认证；会话和沙箱仍按用户 ID 隔离。
 
 ### 1. 元数据导入
 
@@ -202,9 +192,6 @@ uv run -m scripts.import_metadata --incremental
 
 水位字段需要在新增或更新时递增；相同或更旧水位的迟到数据、源数据删除不会由增量脚本修复，应重新全量导入。增量失败可直接重跑，已完成字段保留水位，失败字段从旧水位重试；全量失败重新执行全量脚本。两种模式互斥运行，失败返回非零退出码，不依赖 API、Celery Worker 或 Beat。
 
-### 2. 数据库角色创建与权限分配
+### 2. 预定义用户与数据权限
 
-1. 打开“Doris 角色管理”，点击“添加角色”，填写角色标识、查询用户、业务描述和资源工作组后创建角色。
-2. 选中创建的角色，在“表与列数据权限 (SELECT)”区域配置查询权限：表名留空表示授予当前数据库全部表权限；填写表名并将字段留空表示授予整表权限；同时填写表名和逗号分隔的字段表示仅授予指定字段权限。
-3. 按需配置行级策略，并可将该角色设为新用户的默认角色。
-4. 打开“用户账号管理”，添加或编辑用户，将 Doris 角色分配给需要查询数据的账号。
+用户、角色及绑定在 `scripts/bootstrap_users.py` 中定义，执行 `uv run -m scripts.bootstrap_users` 初始化。当前 `admin` 拥有业务库全部表的只读查询权限；Doris 内置的全局 `admin` 角色不用于业务查询。应用不再提供用户和角色管理页面或写入接口。

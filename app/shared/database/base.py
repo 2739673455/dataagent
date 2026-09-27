@@ -4,7 +4,7 @@ from sqlalchemy.orm import DeclarativeBase
 
 
 class AuthBase(DeclarativeBase):
-    """认证与权限 ORM 声明基类。"""
+    """用户身份与权限 ORM 声明基类。"""
 
 
 class MetaBase(DeclarativeBase):

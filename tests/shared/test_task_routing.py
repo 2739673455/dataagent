@@ -10,7 +10,6 @@ from app.assistant.task_scheduler import (
     enqueue_conversation_title,
 )
 from app.shared.tasks.celery_app import celery_app
-from app.workflows.task_scheduler import enqueue_user_deletion
 
 _ID = UUID("550e8400-e29b-41d4-a716-446655440000")
 
@@ -20,7 +19,6 @@ _ID = UUID("550e8400-e29b-41d4-a716-446655440000")
     [
         (lambda: enqueue_conversation_title(1, _ID, "title", "text"), "lightweight"),
         (lambda: enqueue_conversation_deletion(1, _ID), "lifecycle"),
-        (lambda: enqueue_user_deletion(1), "lifecycle"),
     ],
 )
 def test_submission_uses_configured_route(submit, queue: str) -> None:
@@ -34,11 +32,3 @@ def test_submission_uses_configured_route(submit, queue: str) -> None:
     route = celery_app.amqp.router.route({}, call.args[0])
     assert route["queue"].name == queue
     assert route["routing_key"] == queue
-
-
-def test_user_deletion_submission_reports_broker_failure() -> None:
-    with (
-        patch.object(celery_app, "send_task", side_effect=RuntimeError("broker")),
-        pytest.raises(RuntimeError, match="broker"),
-    ):
-        enqueue_user_deletion(1)

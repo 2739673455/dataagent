@@ -8,7 +8,7 @@ from app.shared.observability import context
 
 def _get_client_ip(request: Request) -> str:
     """获取 IP 地址。"""
-    # 转发头只进入日志上下文；认证限流使用 ASGI peer 地址，不能信任客户端自报值。
+    # 转发头只用于日志上下文。
     if forwarded := request.headers.get("X-Forwarded-For"):
         return forwarded.split(",")[0].strip()
     if request.client:

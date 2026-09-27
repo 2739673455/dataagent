@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { chatApi } from "@/features/chat/api";
 import { getApiErrorMessage } from "@/api/errors";
-import { getAccessToken } from "@/auth/index";
-import { sessionLifecycle } from "@/auth/sessionLifecycle";
+import { getSelectedUserId } from "@/identity/index";
+import { sessionLifecycle } from "@/identity/sessionLifecycle";
 import { useChatStore } from "@/features/chat/store";
 import type {
   Attachment,
@@ -23,11 +23,11 @@ function isImageFile(name: string) {
 
 export function useChatStream({
   onNavigateToConversation,
-  onRedirectToAuth,
+  onRedirectToUserSelection,
   routeConversationId,
 }: {
   onNavigateToConversation: (conversationId: string) => void;
-  onRedirectToAuth: (returnTo?: string) => void;
+  onRedirectToUserSelection: (returnTo?: string) => void;
   routeConversationId: string | null;
 }) {
   const streamingConversations = useChatStore((state) => state.streamingConversations);
@@ -220,11 +220,13 @@ export function useChatStream({
   // 卸载时取消所有进行中的请求
   useEffect(() => {
     const controllers = streamControllersRef.current;
+    const generation = sessionLifecycle.current();
     return () => {
       for (const controller of controllers.values()) controller.abort();
       controllers.clear();
       interruptedConversationsRef.current.clear();
-      abandonDraftConversation();
+      // 身份切换后不使用新用户的身份清理旧草稿，由服务端 TTL 回收。
+      if (sessionLifecycle.isCurrent(generation)) abandonDraftConversation();
     };
   }, [abandonDraftConversation]);
 
@@ -273,9 +275,9 @@ export function useChatStream({
 
   const handleAttachmentsSelected = async (files: File[]) => {
     const generation = sessionLifecycle.current();
-    const token = getAccessToken();
-    if (!token) {
-      onRedirectToAuth();
+    const userId = getSelectedUserId();
+    if (!userId) {
+      onRedirectToUserSelection();
       return;
     }
 
@@ -329,9 +331,9 @@ export function useChatStream({
 
   const handleSend = async (value: string): Promise<boolean> => {
     const generation = sessionLifecycle.current();
-    const token = getAccessToken();
-    if (!token) {
-      onRedirectToAuth();
+    const userId = getSelectedUserId();
+    if (!userId) {
+      onRedirectToUserSelection();
       return false;
     }
 

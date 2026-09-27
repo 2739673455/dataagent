@@ -18,14 +18,11 @@ _REGISTER_OPERATION_SCRIPT = """
 if redis.call("exists", KEYS[1]) == 1 then
     return 1
 end
-if redis.call("exists", KEYS[2]) == 1 then
+if redis.call("exists", KEYS[2]) == 1 or redis.call("exists", KEYS[3]) == 1 then
     return 2
 end
-if redis.call("exists", KEYS[3]) == 1 or redis.call("exists", KEYS[4]) == 1 then
-    return 3
-end
+redis.call("zadd", KEYS[4], ARGV[1], ARGV[2])
 redis.call("zadd", KEYS[5], ARGV[1], ARGV[2])
-redis.call("zadd", KEYS[6], ARGV[1], ARGV[2])
 return 0
 """
 
@@ -57,7 +54,7 @@ class SandboxOwnership(Protocol):
         user_id: int,
         conversation_id: UUID | None = None,
     ) -> None:
-        """确认用户或会话沙箱未被标记删除。"""
+        """确认会话沙箱未被标记删除。"""
         ...
 
     def mark_conversation_deleted(
@@ -66,10 +63,6 @@ class SandboxOwnership(Protocol):
         conversation_id: UUID,
     ) -> None:
         """记录会话沙箱删除墓碑。"""
-        ...
-
-    def mark_user_deleted(self, user_id: int) -> None:
-        """记录用户沙箱删除墓碑。"""
         ...
 
     @contextmanager
@@ -279,10 +272,6 @@ class RedisSandboxOwnership:
         with self._lock(f"user:{user_id}:mutation"):
             yield
 
-    def _deleted_user_key(self, user_id: int) -> str:
-        """构造用户删除墓碑键。"""
-        return self._key(f"deleted:user:{user_id}")
-
     def _deleted_conversation_key(
         self,
         user_id: int,
@@ -296,16 +285,10 @@ class RedisSandboxOwnership:
         user_id: int,
         conversation_id: UUID | None = None,
     ) -> None:
-        """从 Redis 墓碑检查用户和会话是否可用。"""
-        keys = [self._deleted_user_key(user_id)]
-        if conversation_id is not None:
-            keys.append(self._deleted_conversation_key(user_id, conversation_id))
-        deleted = self._redis.mget(keys)
-        if not isinstance(deleted, list):
-            raise SandboxOwnershipError("读取沙箱删除墓碑失败")
-        if deleted[0] is not None:
-            raise SandboxDeletedError("用户沙箱已被删除")
-        if len(deleted) > 1 and deleted[1] is not None:
+        """从 Redis 墓碑检查会话是否可用。"""
+        if conversation_id is not None and self._redis.exists(
+            self._deleted_conversation_key(user_id, conversation_id)
+        ):
             raise SandboxDeletedError("会话沙箱已被删除")
 
     def mark_conversation_deleted(
@@ -318,10 +301,6 @@ class RedisSandboxOwnership:
             self._deleted_conversation_key(user_id, conversation_id),
             "1",
         )
-
-    def mark_user_deleted(self, user_id: int) -> None:
-        """持久化用户删除墓碑。"""
-        self._redis.set(self._deleted_user_key(user_id), "1")
 
     def _active_user_key(self, user_id: int) -> str:
         """构造用户活跃操作集合键。"""
@@ -355,7 +334,6 @@ class RedisSandboxOwnership:
         """原子检查维护和删除状态并登记操作租约。"""
         deadline = time.monotonic() + self._wait_timeout_seconds
         keys = (
-            self._deleted_user_key(user_id),
             self._deleted_conversation_key(user_id, conversation_id),
             self._key(f"lock:user:{user_id}:gate"),
             self._key(f"lock:conversation:{user_id}:{conversation_id}:gate"),
@@ -381,10 +359,8 @@ class RedisSandboxOwnership:
             if status == 0:
                 return
             if status == 1:
-                raise SandboxDeletedError("用户沙箱已被删除")
-            if status == 2:
                 raise SandboxDeletedError("会话沙箱已被删除")
-            if status != 3:
+            if status != 2:
                 raise SandboxOwnershipError(f"登记沙箱操作返回未知状态: {status}")
             if time.monotonic() >= deadline:
                 raise SandboxOwnershipError("等待沙箱维护结束超时")

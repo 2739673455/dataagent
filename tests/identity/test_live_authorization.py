@@ -1,7 +1,6 @@
-"""Doris 实时权限解析、变化版本和管理写入边界。"""
+"""Doris 实时权限解析、变化版本和读取边界。"""
 
 import asyncio
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -13,7 +12,6 @@ from app.identity.models.doris import (
 )
 from app.identity.repositories.doris_authorization import parse_authorization
 from app.identity.services.authorization import AssetIdentity, AuthorizationService
-from app.identity.services.doris_permission import DorisPermissionService
 
 
 def raw(**updates):
@@ -53,7 +51,6 @@ def test_column_table_and_database_grants_preserve_scope():
         ("payments", "amount"),
         ("payments", "id"),
     }
-    assert not snapshot.has_broad_select
     identity = DorisQueryIdentity(
         role_name="reader", authorization_fingerprint="a" * 64
     )
@@ -129,9 +126,8 @@ def test_fingerprint_ignores_order_but_detects_column_and_row_policy_changes():
     "updates",
     [{"GlobalPrivs": "Select_priv"}, {"CatalogPrivs": "internal: Select_priv"}],
 )
-def test_broad_select_is_explicit_and_limited_to_configured_database(updates):
+def test_broad_select_is_limited_to_configured_database(updates):
     snapshot = parse(raw(**updates))
-    assert snapshot.has_broad_select
     assert snapshot.grants == (DorisSelectGrant("reader", "doris", "ecommerce"),)
 
 
@@ -140,32 +136,20 @@ def setup_services():
         role_name="reader", query_user="query_reader", authorization_fingerprint=None
     )
 
-    @asynccontextmanager
-    async def transaction():
-        yield
-
     repo = MagicMock(
-        session=MagicMock(begin=transaction),
         lock_query_identity=AsyncMock(return_value=identity),
-        lock_security_mutation=AsyncMock(),
         flush=AsyncMock(),
     )
     doris = MagicMock(
         read_authorization=AsyncMock(return_value=parse()),
-        grant_select=AsyncMock(),
-        revoke_select=AsyncMock(),
-        list_table_columns=AsyncMock(return_value=("amount",)),
     )
     auth = AuthorizationService(repo, doris, data_source="doris", database="ecommerce")
-    permissions = DorisPermissionService(
-        repo, doris, data_source="doris", catalog="internal", database="ecommerce"
-    )
-    return identity, repo, doris, auth, permissions
+    return identity, repo, doris, auth
 
 
 def test_restored_permissions_restore_fingerprint_and_failures_never_use_old_grants():
     async def run():
-        identity, repo, doris, auth, _ = setup_services()
+        identity, repo, doris, auth = setup_services()
         initial = identity.authorization_fingerprint
         first = await auth.get_role_asset_policy(7, "reader")
         assert first.authorization_fingerprint != initial
@@ -194,7 +178,7 @@ def test_restored_permissions_restore_fingerprint_and_failures_never_use_old_gra
 
 def test_read_occurs_after_identity_lock_and_unknown_identity_never_reads_doris():
     async def run():
-        _, repo, doris, auth, _ = setup_services()
+        _, repo, doris, auth = setup_services()
         events = []
         identity = repo.lock_query_identity.return_value
 
@@ -215,41 +199,5 @@ def test_read_occurs_after_identity_lock_and_unknown_identity_never_reads_doris(
         with pytest.raises(errors.RoleNotFoundError):
             await auth.observe_role("reader")
         assert events == ["lock", "read"]
-
-    asyncio.run(run())
-
-
-def test_revoke_does_not_regrant_after_observation_failure():
-    async def run():
-        _, _, doris, _, service = setup_services()
-        doris.read_authorization.side_effect = [
-            parse(),
-            RuntimeError("Doris read failed"),
-        ]
-        with pytest.raises(RuntimeError):
-            await service.revoke_select(
-                "reader", table_name="orders", columns=["amount"]
-            )
-        doris.revoke_select.assert_awaited_once()
-        doris.grant_select.assert_not_awaited()
-
-    asyncio.run(run())
-
-
-def test_revoke_reports_remaining_effective_grants_and_refuses_broad_revoke_all():
-    async def run():
-        _, _, doris, _, service = setup_services()
-        doris.read_authorization.return_value = parse(
-            raw(DatabasePrivs="internal.ecommerce: Select_priv")
-        )
-        with pytest.raises(errors.InvalidDorisPermissionError):
-            await service.revoke_select(
-                "reader", table_name="orders", columns=["amount"]
-            )
-        doris.revoke_select.reset_mock()
-        doris.read_authorization.return_value = parse(raw(GlobalPrivs="Select_priv"))
-        with pytest.raises(errors.InvalidDorisPermissionError):
-            await service.revoke_all_select("reader")
-        doris.revoke_select.assert_not_awaited()
 
     asyncio.run(run())

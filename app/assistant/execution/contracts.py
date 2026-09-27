@@ -82,10 +82,6 @@ class ConversationAgentLifecycle(Protocol):
         """在生命周期锁内删除会话 Agent 状态。"""
         ...
 
-    async def delete_user_agents(self, user_id: int) -> None:
-        """删除用户全部 Agent 状态。"""
-        ...
-
 
 class ConversationSandboxCleaner(Protocol):
     """会话清理所需的最小沙箱能力。"""

@@ -13,7 +13,6 @@ celery_app = Celery(
     backend=cfg.task_queue.result_backend.get_secret_value(),
     include=[
         "app.assistant.tasks",
-        "app.workflows.tasks",
     ],
 )
 
@@ -55,10 +54,6 @@ celery_app.conf.update(
             "queue": "lifecycle",
             "routing_key": "lifecycle",
         },
-        "dataagent.workflows.*": {
-            "queue": "lifecycle",
-            "routing_key": "lifecycle",
-        },
     },
     task_serializer="json",
     task_soft_time_limit=cfg.task_queue.task_soft_time_limit_seconds,
@@ -72,9 +67,5 @@ celery_app.conf.beat_schedule = {
     "lifecycle-periodic-dispatch": {
         "task": "dataagent.assistant.cleanup_expired_drafts",
         "schedule": cfg.task_queue.lifecycle_schedule_seconds,
-    },
-    "user-deletion-recovery": {
-        "task": "dataagent.workflows.dispatch_due_user_deletions",
-        "schedule": cfg.lifecycle.user_deletion_schedule_seconds,
     },
 }

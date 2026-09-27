@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { chatApi } from "../src/features/chat/api";
-import { sessionLifecycle } from "../src/auth/sessionLifecycle";
+import { sessionLifecycle } from "../src/identity/sessionLifecycle";
 import { useChatStore } from "../src/features/chat/store";
 
 const conversationId = "00000000-0000-4000-8000-000000000001";

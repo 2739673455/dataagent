@@ -48,7 +48,7 @@ class DatabaseQueryExecutionRuntime:
         self,
         user_id: int,
     ) -> ResolvedQueryPrincipal:
-        """在单个认证会话中解析查询身份。"""
+        """在单个身份数据库会话中解析查询身份。"""
         async with self._auth.session() as session, session.begin():
             repo = IdentityPGRepo(session)
             return await QueryPrincipalService(

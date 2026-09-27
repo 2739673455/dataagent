@@ -244,31 +244,6 @@ class AgentManager:
             get_thread_id(user_id, conversation_id)
         )
 
-    async def delete_user_agents(self, user_id: int) -> None:
-        """清理用户全部 Agent、孤立线程和删除墓碑。"""
-        async with self._state_lock:
-            conversation_keys = {
-                key
-                for key in (
-                    set(self._conversation_runtimes)
-                    | set(self._runtime_build_tasks)
-                    | set(self._runtime_users)
-                )
-                if key[0] == user_id
-            }
-        for _, conversation_id in sorted(
-            conversation_keys,
-            key=lambda item: str(item[1]),
-        ):
-            await self.delete_agent(user_id, conversation_id)
-
-        await self._persistence_manager.delete_user_threads(user_id)
-        await self._tombstones.delete_by_user(user_id)
-        async with self._state_lock:
-            self._deleted_conversation_keys = {
-                key for key in self._deleted_conversation_keys if key[0] != user_id
-            }
-
     @asynccontextmanager
     async def use_runtime(
         self,

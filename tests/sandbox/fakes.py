@@ -81,10 +81,6 @@ class FakeSandboxOwnership:
         """忽略测试中的跨进程会话墓碑。"""
         del user_id, conversation_id
 
-    def mark_user_deleted(self, user_id: int) -> None:
-        """忽略测试中的跨进程用户墓碑。"""
-        del user_id
-
     @contextmanager
     def operation(
         self,

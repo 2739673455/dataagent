@@ -1,4 +1,4 @@
-"""按用户唯一 Doris 角色解析稳定共享查询身份。"""
+"""根据用户绑定的 Doris 角色获取查询凭据。"""
 
 from dataclasses import dataclass, field
 
@@ -18,7 +18,7 @@ class ResolvedQueryPrincipal:
 
 
 class QueryPrincipalService:
-    """根据用户当前角色解析 Doris 查询身份。"""
+    """根据用户绑定的角色解析 Doris 查询身份。"""
 
     def __init__(
         self,
@@ -30,14 +30,10 @@ class QueryPrincipalService:
         self._cipher = cipher
 
     async def resolve(self, user_id: int) -> ResolvedQueryPrincipal:
-        """一次读取用户和角色身份，获取查询凭据。"""
+        """依次读取用户和角色查询身份，解密本次查询使用的凭据。"""
         user = await self._repo.get_user_by_id(user_id)
         if user is None:
             raise auth_error.UserNotFoundError
-        if not user.is_active:
-            raise auth_error.InactiveUserError
-        if user.doris_role_name is None:
-            raise QueryPrincipalNotConfiguredError("用户尚未配置 Doris 角色")
         identity = await self._repo.get_query_identity(user.doris_role_name)
         if identity is None:
             raise QueryPrincipalNotConfiguredError("角色查询身份不存在")

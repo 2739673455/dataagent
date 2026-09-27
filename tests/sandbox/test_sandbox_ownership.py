@@ -84,7 +84,7 @@ def test_redis_operation_registers_atomically_without_gate_locks() -> None:
 
 def test_redis_operation_waits_for_maintenance_before_registering() -> None:
     redis = MagicMock()
-    redis.eval.side_effect = [3, 0]
+    redis.eval.side_effect = [2, 0]
     redis.pipeline.return_value.execute.return_value = [1, 1]
     ownership = _redis_ownership(redis)
     ownership._runtime_stop = threading.Event()
@@ -104,13 +104,6 @@ def test_redis_operation_rejects_deleted_sandbox() -> None:
     ownership = _redis_ownership(redis)
     ownership._runtime_stop = threading.Event()
     redis.eval.return_value = 1
-    with (
-        pytest.raises(SandboxDeletedError, match="用户沙箱已被删除"),
-        ownership.operation(7, uuid4()),
-    ):
-        pass
-
-    redis.eval.return_value = 2
     with (
         pytest.raises(SandboxDeletedError, match="会话沙箱已被删除"),
         ownership.operation(7, uuid4()),

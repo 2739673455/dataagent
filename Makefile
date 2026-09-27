@@ -1,4 +1,4 @@
-.PHONY: help start run web worker beat init-db bootstrap-admin clean
+.PHONY: help start run web worker beat init-db bootstrap-users clean
 
 help:
 	@echo "make start           - 启动前端、后端、Celery Worker 和 Celery Beat"
@@ -7,7 +7,7 @@ help:
 	@echo "make worker          - 启动 Celery Worker"
 	@echo "make beat            - 启动 Celery Beat"
 	@echo "make init-db         - 初始化数据库"
-	@echo "make bootstrap-admin - 初始化管理员账号"
+	@echo "make bootstrap-users - 初始化预定义用户和角色"
 	@echo "make clean           - 清理临时文件"
 
 start:
@@ -28,8 +28,8 @@ beat:
 init-db:
 	uv run scripts/init_db.py
 
-bootstrap-admin:
-	uv run -m scripts.bootstrap_admin
+bootstrap-users:
+	uv run -m scripts.bootstrap_users
 
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true

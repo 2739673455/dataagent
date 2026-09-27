@@ -1,13 +1,12 @@
 import type { ReactNode } from "react";
 import { lazy, Suspense } from "react";
 import { createBrowserRouter, Navigate } from "react-router-dom";
-import { AdminRoute, ProtectedRoute } from "@/auth";
+import { RequireUser } from "@/identity";
 import { PageLoadingScreen } from "@/components/PageLoadingScreen";
 import { ROUTES } from "@/config/settings";
 
 const ChatPage = lazy(() => import("@/pages/Chat"));
-const LoginPage = lazy(() => import("@/pages/Login"));
-const AdminPage = lazy(() => import("@/pages/Admin"));
+const SelectUserPage = lazy(() => import("@/pages/SelectUser"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 
 function SuspenseWrapper({ children, message }: { children: ReactNode; message: string }) {
@@ -16,35 +15,25 @@ function SuspenseWrapper({ children, message }: { children: ReactNode; message: 
 
 export const router = createBrowserRouter([
   {
-    path: ROUTES.admin,
-    element: (
-      <AdminRoute>
-        <SuspenseWrapper message="正在加载管理中心...">
-          <AdminPage />
-        </SuspenseWrapper>
-      </AdminRoute>
-    ),
-  },
-  {
     path: "/",
     element: <Navigate to={ROUTES.chat} replace />,
   },
   {
-    path: ROUTES.login,
+    path: ROUTES.selectUser,
     element: (
-      <SuspenseWrapper message="正在加载登录页面...">
-        <LoginPage />
+      <SuspenseWrapper message="正在加载用户选择...">
+        <SelectUserPage />
       </SuspenseWrapper>
     ),
   },
   {
     path: `${ROUTES.chat}/:conversationId?`,
     element: (
-      <ProtectedRoute>
+      <RequireUser>
         <SuspenseWrapper message="正在加载对话...">
           <ChatPage />
         </SuspenseWrapper>
-      </ProtectedRoute>
+      </RequireUser>
     ),
   },
   {

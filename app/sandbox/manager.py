@@ -5,7 +5,7 @@ import hashlib
 import json
 import time
 from collections.abc import Sequence
-from contextlib import AsyncExitStack, suppress
+from contextlib import AsyncExitStack
 from typing import Any, BinaryIO
 from uuid import UUID
 
@@ -636,29 +636,6 @@ class DockerSandboxManager:
 
         await asyncio.to_thread(delete)
         await asyncio.to_thread(self._touch_user, user_id)
-
-    async def delete_user_sandbox(self, user_id: int) -> None:
-        """删除用户容器及其持久化数据卷。"""
-        await self.init()
-
-        def delete() -> None:
-            """删除用户容器和持久化数据卷。"""
-            with (
-                self._ownership.user_maintenance(user_id),
-                self._ownership.capacity(),
-                self._ownership.user_mutation(user_id),
-            ):
-                self._ownership.mark_user_deleted(user_id)
-                client = self._get_client()
-                with suppress(NotFound):
-                    client.containers.get(self._container_name(user_id)).remove(
-                        force=True
-                    )
-                with suppress(NotFound):
-                    client.volumes.get(self._volume_name(user_id)).remove(force=True)
-
-        await asyncio.to_thread(delete)
-        await asyncio.to_thread(self._ownership.forget_user, user_id)
 
     def _record_cleanup_result(self, errors: list[str]) -> None:
         """更新连续失败计数，并在达到阈值时记录告警。"""

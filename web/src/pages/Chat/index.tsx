@@ -2,7 +2,12 @@ import { useCallback, useEffect, useRef } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { getApiErrorMessage } from "@/api/errors";
-import { changePassword, logoutUser, redirectToLogin, useAuthStore } from "@/auth";
+import {
+  redirectToUserSelection,
+  selectUser,
+  useIdentityStore,
+  type UserResponse,
+} from "@/identity";
 import { ROUTES } from "@/config/settings";
 import { useChatStore } from "@/features/chat/store";
 import { ChatComposer } from "@/features/chat/components/ChatComposer";
@@ -24,7 +29,13 @@ export default function ChatPage() {
   const renameConversation = useChatStore((state) => state.renameConversation);
   const loadMessages = useChatStore((state) => state.loadMessages);
   const loadSubagentMessages = useChatStore((state) => state.loadSubagentMessages);
-  const user = useAuthStore((state) => state.user);
+  const user = useIdentityStore((state) => state.user);
+
+  const handleSelectUser = (nextUser: UserResponse) => {
+    if (nextUser.id === user?.id) return;
+    selectUser(nextUser);
+    navigate(ROUTES.chat, { replace: true });
+  };
 
   const messageViewportRef = useRef<HTMLDivElement | null>(null);
   const initiallyScrolledConversationRef = useRef<string | null>(null);
@@ -66,7 +77,7 @@ export default function ChatPage() {
   } = useChatStream({
     routeConversationId,
     onNavigateToConversation: (id) => navigate(ROUTES.chatConversation(id)),
-    onRedirectToAuth: (returnTo) => redirectToLogin(returnTo),
+    onRedirectToUserSelection: (returnTo) => redirectToUserSelection(returnTo),
   });
   const executionStatus = getConversationExecutionStatus(
     routeConversationId,
@@ -152,6 +163,9 @@ export default function ChatPage() {
         </div>
 
         <div className="flex items-center gap-3 text-xs">
+          <div className="md:hidden">
+            <ChatUserFooter user={user} onSelectUser={handleSelectUser} compact />
+          </div>
           {executionStatus === "processing" ? (
             <span className="font-medium shimmer-text">处理中</span>
           ) : executionStatus === "interrupted" ? (
@@ -193,17 +207,7 @@ export default function ChatPage() {
       {/* 底部统一操作栏 */}
       <div className="flex shrink-0 border-t border-[#d4d4ce]">
         <div className="w-64 shrink-0 border-r border-[#d4d4ce] hidden md:block">
-          <ChatUserFooter
-            user={user}
-            onChangePassword={async (currentPassword, newPassword) => {
-              await changePassword(currentPassword, newPassword);
-              toast.success("密码已修改，请重新登录");
-              redirectToLogin(ROUTES.chat);
-            }}
-            onLogout={() => {
-              void logoutUser().finally(() => redirectToLogin(ROUTES.chat));
-            }}
-          />
+          <ChatUserFooter user={user} onSelectUser={handleSelectUser} />
         </div>
 
         <div className="flex min-w-0 flex-1 items-center bg-[#f4f4f0] p-3">

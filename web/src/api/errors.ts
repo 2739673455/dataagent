@@ -5,7 +5,7 @@ type ProblemDetails = components["schemas"]["ProblemDetails"];
 
 const HTTP_STATUS_MESSAGES: Readonly<Record<number, string>> = {
   400: "请求内容有误，请检查后重试",
-  401: "登录状态已失效，请重新登录",
+  401: "请选择有效用户后重试",
   403: "没有权限执行此操作",
   404: "请求的内容不存在或已被删除",
   409: "当前操作与已有数据冲突",

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { RouterProvider } from "react-router-dom";
 import { Toaster } from "sonner";
-import { ACCESS_TOKEN_STORAGE_KEY, REFRESH_TOKEN_STORAGE_KEY, synchronizeSession } from "@/auth";
+import { SELECTED_USER_STORAGE_KEY, synchronizeSelection } from "@/identity";
 import { router } from "./router";
 
 export default function App() {
@@ -9,10 +9,10 @@ export default function App() {
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (![ACCESS_TOKEN_STORAGE_KEY, REFRESH_TOKEN_STORAGE_KEY].includes(event.key ?? "")) {
+      if (event.key !== SELECTED_USER_STORAGE_KEY && event.key !== null) {
         return;
       }
-      void synchronizeSession();
+      void synchronizeSelection();
     };
 
     window.addEventListener("storage", onStorage);

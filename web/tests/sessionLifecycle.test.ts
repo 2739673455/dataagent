@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { chatApi } from "../src/features/chat/api";
-import { isRefreshSnapshotCurrent, sessionLifecycle } from "../src/auth/sessionLifecycle";
+import { sessionLifecycle } from "../src/identity/sessionLifecycle";
 import { useChatStore } from "../src/features/chat/store";
 
 function deferred<T>() {
@@ -45,29 +45,6 @@ describe("session lifecycle", () => {
     expect(useChatStore.getState().subagentRunsByConversation).toEqual({});
     expect(useChatStore.getState().isLoadingMessages).toBe(false);
     expect(useChatStore.getState().streamingConversations.size).toBe(0);
-  });
-
-  test("a delayed refresh snapshot expires after a newer transition", async () => {
-    let currentRefreshToken = "refresh-a";
-    let committedAccessToken = "access-a";
-    const snapshot = {
-      generation: sessionLifecycle.current(),
-      refreshToken: currentRefreshToken,
-    };
-    const response = deferred<string>();
-    const oldRefresh = response.promise.then((accessToken) => {
-      if (isRefreshSnapshotCurrent(snapshot, currentRefreshToken)) {
-        committedAccessToken = accessToken;
-      }
-    });
-
-    sessionLifecycle.transition();
-    currentRefreshToken = "refresh-b";
-    committedAccessToken = "access-b";
-    response.resolve("late-access-a");
-    await oldRefresh;
-
-    expect(committedAccessToken).toBe("access-b");
   });
 
   test("responses from old list and message requests cannot refill the store", async () => {
@@ -246,30 +223,4 @@ describe("session lifecycle", () => {
     sessionLifecycle.transition();
   });
 
-  test("refresh commit requires the same generation and token", () => {
-    const snapshot = {
-      generation: sessionLifecycle.current(),
-      refreshToken: "refresh-a",
-    };
-    expect(isRefreshSnapshotCurrent(snapshot, "refresh-a")).toBe(true);
-    expect(isRefreshSnapshotCurrent(snapshot, "refresh-b")).toBe(false);
-
-    sessionLifecycle.transition();
-
-    expect(isRefreshSnapshotCurrent(snapshot, "refresh-a")).toBe(false);
-  });
-
-  test("a stale removal event transition leaves newer storage tokens untouched", () => {
-    const currentStorage = {
-      accessToken: "access-b",
-      refreshToken: "refresh-b",
-    };
-
-    sessionLifecycle.transition();
-
-    expect(currentStorage).toEqual({
-      accessToken: "access-b",
-      refreshToken: "refresh-b",
-    });
-  });
 });

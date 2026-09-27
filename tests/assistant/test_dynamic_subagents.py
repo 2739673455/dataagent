@@ -2344,7 +2344,6 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         tombstones.save = AsyncMock(side_effect=write_tombstone)
         tombstones.exists = AsyncMock(side_effect=lambda *_: tombstone)
-        tombstones.delete_by_user = AsyncMock()
         persistence = MagicMock()
         persistence.delete_thread = AsyncMock()
         persistence.advisory_lock = lambda *args, **kwargs: distributed_locks.acquire(

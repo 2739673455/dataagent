@@ -14,8 +14,6 @@ from app.assistant.execution.manager import AgentManager
 from app.assistant.execution.run import ConversationRunService
 from app.assistant.execution.runtime_factory import ConversationAgentRuntimeFactory
 from app.assistant.providers import build_conversation_lifecycle_service
-from app.identity.services.rate_limit import AuthRateLimitService
-from app.identity.services.user_deletion_store import PostgresUserDeletionStateStore
 from app.query.providers import build_query_execution_handler
 from app.sandbox.manager import DockerSandboxManager
 from app.sandbox.providers import create_sandbox_manager
@@ -29,7 +27,6 @@ from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManag
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
 from app.shared.database.base import AssistantBase, AuthBase, MetaBase
-from app.workflows.user_deletion import UserDeletionService
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,9 +45,7 @@ class WebResources:
     agents: AgentManager
     runs: ConversationRunService
     conversations: ConversationLifecycleService
-    user_deletion: UserDeletionService
     recall: SemanticRecallRuntime
-    auth_rate_limit: AuthRateLimitService
 
 
 def _create_resources() -> WebResources:
@@ -95,15 +90,7 @@ def _create_resources() -> WebResources:
         agents=agents,
         runs=runs,
         conversations=conversations,
-        user_deletion=UserDeletionService(
-            PostgresUserDeletionStateStore(auth),
-            sandbox,
-            conversations,
-        ),
         recall=recall,
-        auth_rate_limit=AuthRateLimitService(
-            redis_url=cfg.auth.rate_limit_redis_url.get_secret_value(),
-        ),
     )
 
 
@@ -112,7 +99,6 @@ async def lifespan(app: FastAPI):
     """启动时创建资源，失败及退出时逆序清理，避免应用实例之间共享连接。"""
     resources = _create_resources()
     async with AsyncExitStack() as stack:
-        stack.callback(resources.auth_rate_limit.close)
         for resource in (
             resources.query_clients,
             resources.admin_doris,

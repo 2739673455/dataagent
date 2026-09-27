@@ -1,7 +1,5 @@
 """Doris 查询身份凭据加密。"""
 
-import secrets
-
 from cryptography.fernet import Fernet, InvalidToken
 
 from app.identity.errors import DorisCredentialError
@@ -31,8 +29,3 @@ class DorisCredentialCipher:
             )
         except (InvalidToken, UnicodeDecodeError, UnicodeEncodeError) as exc:
             raise DorisCredentialError("Doris 查询凭据解密失败") from exc
-
-    @staticmethod
-    def generate_password() -> str:
-        """生成仅供服务端保存的随机 Doris 查询密码。"""
-        return secrets.token_urlsafe(36)

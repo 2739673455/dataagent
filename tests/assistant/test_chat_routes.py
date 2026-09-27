@@ -17,7 +17,7 @@ from app.assistant.errors import (
     ConversationNotResumableError,
 )
 from app.assistant.events.schemas import ChatStreamDoneEvent
-from app.identity.api.auth.dependencies import _require_analysis_access
+from app.identity.api.dependencies import _get_current_user
 from app.shared.errors.exc_handlers import register_exception_handlers
 
 _ID = UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -67,7 +67,7 @@ def test_stream_routes_preserve_frames_headers_and_business_errors(entry, failur
         return resolve
 
     app.dependency_overrides = {
-        _require_analysis_access: dependency(SimpleNamespace(id=12)),
+        _get_current_user: dependency(SimpleNamespace(id=12)),
         chat_dependencies._get_conversation_pg_repo: dependency(repository),
         runtime_dependencies._get_agent_manager: dependency(agents),
         runtime_dependencies._get_conversation_run_service: dependency(runs),

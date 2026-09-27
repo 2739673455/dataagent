@@ -95,25 +95,11 @@ class TaskQueueConfig(AppConfigModel):
 
 
 # 身份与生命周期配置。
-class AuthConfig(AppConfigModel):
-    """认证令牌与密码策略配置。"""
-
-    rate_limit_redis_url: SecretStr = Field(min_length=1)
-    jwt_secret: SecretStr = Field(min_length=32)
-    jwt_algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
-    issuer: str = Field(min_length=1)
-    access_token_minutes: int = Field(gt=0)
-    refresh_token_days: int = Field(gt=0)
-    password_min_length: int = Field(ge=6, le=128)
-
-
 class LifecycleConfig(AppConfigModel):
     """跨存储资源生命周期配置。"""
 
     draft_ttl_minutes: int = Field(gt=0)
     cleanup_batch_size: int = Field(gt=0, le=1000)
-    user_deletion_schedule_seconds: int = Field(gt=0)
-    user_deletion_retry_seconds: int = Field(gt=0)
 
 
 # 查询与沙箱配置。
@@ -331,7 +317,6 @@ class Cfg(AppConfigModel):
     task_queue: TaskQueueConfig
 
     # 身份与生命周期配置。
-    auth: AuthConfig
     lifecycle: LifecycleConfig
 
     # 查询与沙箱配置。
