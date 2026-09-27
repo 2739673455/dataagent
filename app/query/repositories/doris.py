@@ -23,20 +23,6 @@ class DorisQueryRepository:
         """初始化 Doris 查询存储。"""
         self._connection_provider = connection_provider
 
-    @staticmethod
-    async def _apply_session_limits(
-        connection: AsyncConnection,
-        limits: QueryExecutionLimits,
-    ) -> None:
-        """设置当前连接的 Doris 查询资源限制。"""
-        await connection.execute(
-            text(f"SET workload_group = '{limits.workload_group}'")
-        )
-        await connection.execute(text(f"SET query_timeout = {limits.timeout_seconds}"))
-        await connection.execute(
-            text(f"SET exec_mem_limit = {limits.memory_limit_bytes}")
-        )
-
     async def stream(
         self,
         sql: str,
@@ -81,3 +67,17 @@ class DorisQueryRepository:
                         f"Doris 查询执行超时，最大允许 {limits.timeout_seconds} 秒"
                     ) from exc
                 raise
+
+    @staticmethod
+    async def _apply_session_limits(
+        connection: AsyncConnection,
+        limits: QueryExecutionLimits,
+    ) -> None:
+        """设置当前连接的 Doris 查询资源限制。"""
+        await connection.execute(
+            text(f"SET workload_group = '{limits.workload_group}'")
+        )
+        await connection.execute(text(f"SET query_timeout = {limits.timeout_seconds}"))
+        await connection.execute(
+            text(f"SET exec_mem_limit = {limits.memory_limit_bytes}")
+        )

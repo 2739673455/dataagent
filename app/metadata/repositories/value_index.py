@@ -47,15 +47,7 @@ class ValueESRepo:
 
     async def ensure_index(self) -> None:
         """确保字段取值索引存在。"""
-        if await self._client.indices.exists(index=self._index_name):
-            await self._client.indices.put_mapping(
-                index=self._index_name,
-                properties={
-                    "resource_key": {"type": "keyword"},
-                    "sync_generation": {"type": "keyword"},
-                },
-            )
-        else:
+        if not await self._client.indices.exists(index=self._index_name):
             await self._client.indices.create(
                 index=self._index_name, mappings=self._index_mappings
             )
@@ -144,6 +136,8 @@ class ValueESRepo:
         limit: int = 5,
     ) -> list[SearchHit[ValueInfo]]:
         """根据关键词检索字段取值并保留命中分数。"""
+        if allowed_columns is not None and not allowed_columns:
+            return []
         query: dict[str, Any] = {"match": {"value": keyword}}
         if allowed_columns is not None:
             query = {

@@ -2,12 +2,15 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import date
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.metadata.config import ColumnConfig, MetaConfig, TableConfig
-from app.metadata.models.catalog import ColumnInfo, TableInfo
+from app.metadata.config import ColumnConfig, MetaConfig, MetricConfig, TableConfig
+from app.metadata.models.catalog import ColumnInfo, MetricInfo, TableInfo
+from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.services.catalog import MetaCatalogService
 from app.metadata.services.import_service import ImportMode, MetaImportService
 from app.shared.tasks.submission import TaskSubmission
@@ -104,6 +107,165 @@ def test_unchanged_column_does_not_invalidate_or_submit():
     assert result is None
     invalidator.invalidate_assets.assert_not_awaited()
     scheduler.enqueue_columns.assert_not_called()
+
+
+@pytest.mark.parametrize("resource", ["column", "metric"])
+@pytest.mark.parametrize(
+    "aliases,changed",
+    [(["B", "A"], False), (["A", "C"], True), (["A"], True), (["A", "B", "C"], True)],
+)
+def test_alias_comparison_controls_versions_and_catalog_tasks(
+    resource, aliases, changed
+):
+    repo, source, indexes, invalidator, scheduler, workflow, _ = _dependencies()
+    if resource == "column":
+        existing = ColumnInfo(
+            t_name="orders",
+            name="id",
+            type="BIGINT",
+            description="编号",
+            examples=[1],
+            alias=["A", "B"],
+            index_values=False,
+            reference_t_name=None,
+            reference_c_name=None,
+            meta_version=4,
+            index_version=3,
+        )
+    else:
+        existing = MetricInfo(
+            name="count",
+            description="数量",
+            alias=["A", "B"],
+            meta_version=4,
+            index_version=3,
+        )
+    session = MagicMock(
+        get=AsyncMock(return_value=existing),
+        merge=AsyncMock(),
+        scalars=AsyncMock(return_value=[]),
+        execute=AsyncMock(),
+    )
+    real_repo = MetaPGRepo(session)
+    service = MetaCatalogService(repo, source, indexes, workflow)
+    if resource == "column":
+        repo.upsert_column_info.side_effect = real_repo.upsert_column_info
+        asyncio.run(service.upsert_column_info("orders", "id", "编号", aliases, False))
+        enqueue = scheduler.enqueue_columns
+    else:
+        repo.upsert_metric_info = AsyncMock(side_effect=real_repo.upsert_metric_info)
+        asyncio.run(
+            service.upsert_metric_info(
+                MetricInfo(name="count", description="数量", alias=aliases)
+            )
+        )
+        enqueue = scheduler.enqueue_metrics
+    written = session.merge.call_args.args[0]
+    assert written.meta_version == 4 + int(changed)
+    assert written.index_version == 3
+    assert written.alias == aliases
+    assert existing.alias == ["A", "B"]
+    assert enqueue.call_count == int(changed)
+    assert invalidator.invalidate_assets.await_count == int(
+        changed and resource == "column"
+    )
+
+
+@pytest.mark.parametrize("mode", [ImportMode.MERGE, ImportMode.REPLACE])
+def test_import_alias_reordering_does_not_write_or_schedule(mode):
+    repo, source, indexes, invalidator, scheduler, workflow, _ = _dependencies()
+    repo.list_table_infos.return_value = [
+        TableInfo(
+            name="orders",
+            role="fact",
+            description="订单",
+            primary_key_columns=["id"],
+            value_index_cursor_column=None,
+        )
+    ]
+    repo.list_column_infos.return_value = [
+        ColumnInfo(
+            t_name="orders",
+            name="id",
+            type="BIGINT",
+            description="编号",
+            examples=[1],
+            alias=["A", "B"],
+            index_values=False,
+            reference_t_name=None,
+            reference_c_name=None,
+        )
+    ]
+    repo.list_metric_infos.return_value = [
+        MetricInfo(name="count", description="数量", alias=["A", "B"])
+    ]
+    config = MetaConfig(
+        tables=[
+            TableConfig(
+                name="orders",
+                role="fact",
+                description="订单",
+                columns=[
+                    ColumnConfig(
+                        name="id",
+                        description="编号",
+                        alias=["B", "A"],
+                        index_values=False,
+                    )
+                ],
+            )
+        ],
+        metrics=[MetricConfig(name="count", description="数量", alias=["B", "A"])],
+    )
+    result = asyncio.run(
+        MetaImportService(repo, source, indexes, workflow).import_metadata(
+            config, mode, False
+        )
+    )
+    assert result.columns.updated == []
+    assert result.metrics.updated == []
+    repo.upsert_column_infos.assert_awaited_once_with(
+        [], force_version_increment_keys=set()
+    )
+    repo.upsert_metric_info.assert_not_called()
+    invalidator.invalidate_assets.assert_not_awaited()
+    scheduler.enqueue_columns.assert_not_called()
+    scheduler.enqueue_metrics.assert_not_called()
+
+
+@pytest.mark.parametrize("entry", ["import", "catalog"])
+def test_column_write_boundaries_normalize_examples(entry):
+    repo, source, indexes, _, _, workflow, _ = _dependencies()
+    values = [Decimal("2.5"), date(2026, 9, 27), 1]
+    source.get_column_values.return_value = values
+    source.get_table_columns_sample_values.return_value = {"id": values}
+    if entry == "catalog":
+        asyncio.run(
+            MetaCatalogService(repo, source, indexes, workflow).upsert_column_info(
+                "orders", "id", "编号", [], False
+            )
+        )
+        column = repo.upsert_column_info.call_args.args[0]
+    else:
+        config = MetaConfig(
+            tables=[
+                TableConfig(
+                    name="orders",
+                    role="fact",
+                    description="订单",
+                    columns=[
+                        ColumnConfig(name="id", description="编号", index_values=False)
+                    ],
+                )
+            ]
+        )
+        asyncio.run(
+            MetaImportService(repo, source, indexes, workflow).import_metadata(
+                config, ImportMode.MERGE, False
+            )
+        )
+        column = repo.upsert_column_infos.call_args.args[0][0]
+    assert column.examples == [1, 2.5, "2026-09-27"]
 
 
 @pytest.mark.parametrize("dry_run", [True, False])

@@ -48,13 +48,13 @@ class MetaCatalogService:
         self._meta_index_service = meta_index_service
         self._change_handler = change_handler
 
-    async def list_table_infos(self) -> list[TableInfo]:
-        """查询全部表元数据。"""
-        return await self._meta_repo.list_table_infos()
-
     async def list_source_tables(self) -> list[str]:
         """查询底层 Doris 数据库物理表清单。"""
         return await self._source_repo.list_tables()
+
+    async def list_table_infos(self) -> list[TableInfo]:
+        """查询全部表元数据。"""
+        return await self._meta_repo.list_table_infos()
 
     async def list_column_infos(self, t_name: str) -> list[ColumnInfo]:
         """查询表下全部字段元数据。"""
@@ -66,6 +66,56 @@ class MetaCatalogService:
     async def list_metric_infos(self) -> list[MetricInfo]:
         """查询全部指标元数据。"""
         return await self._meta_repo.list_metric_infos()
+
+    async def export_metadata(self) -> MetaConfig:
+        """导出可重新导入的元数据配置。"""
+        table_infos = await self._meta_repo.list_table_infos()
+        column_infos = await self._meta_repo.list_column_infos()
+        metric_infos = await self._meta_repo.list_metric_infos()
+
+        columns_by_table: dict[str, list[ColumnInfo]] = {
+            table_info.name: [] for table_info in table_infos
+        }
+        for column_info in column_infos:
+            columns_by_table[column_info.t_name].append(column_info)
+
+        return MetaConfig(
+            tables=[
+                TableConfig(
+                    name=table_info.name,
+                    role=cast(TableRole, table_info.role),
+                    description=table_info.description,
+                    value_index_cursor_column=table_info.value_index_cursor_column,
+                    columns=[
+                        ColumnConfig(
+                            name=column_info.name,
+                            description=column_info.description,
+                            alias=column_info.alias,
+                            index_values=column_info.index_values,
+                            reference_t_name=column_info.reference_t_name,
+                            reference_c_name=column_info.reference_c_name,
+                        )
+                        for column_info in sorted(
+                            columns_by_table[table_info.name],
+                            key=lambda item: item.name,
+                        )
+                    ],
+                )
+                for table_info in table_infos
+            ],
+            metrics=[
+                MetricConfig(
+                    name=metric_info.name,
+                    description=metric_info.description,
+                    relevant_columns=[
+                        ColumnReferenceConfig(**reference)
+                        for reference in metric_info.relevant_columns
+                    ],
+                    alias=metric_info.alias,
+                )
+                for metric_info in metric_infos
+            ],
+        )
 
     async def upsert_table_info(
         self,
@@ -305,53 +355,3 @@ class MetaCatalogService:
             raise meta_error.MetadataConflictError(
                 detail="无法删除元数据字段，存在冲突引用: " + "; ".join(conflicts)
             )
-
-    async def export_metadata(self) -> MetaConfig:
-        """导出可重新导入的元数据配置。"""
-        table_infos = await self._meta_repo.list_table_infos()
-        column_infos = await self._meta_repo.list_column_infos()
-        metric_infos = await self._meta_repo.list_metric_infos()
-
-        columns_by_table: dict[str, list[ColumnInfo]] = {
-            table_info.name: [] for table_info in table_infos
-        }
-        for column_info in column_infos:
-            columns_by_table[column_info.t_name].append(column_info)
-
-        return MetaConfig(
-            tables=[
-                TableConfig(
-                    name=table_info.name,
-                    role=cast(TableRole, table_info.role),
-                    description=table_info.description,
-                    value_index_cursor_column=table_info.value_index_cursor_column,
-                    columns=[
-                        ColumnConfig(
-                            name=column_info.name,
-                            description=column_info.description,
-                            alias=column_info.alias,
-                            index_values=column_info.index_values,
-                            reference_t_name=column_info.reference_t_name,
-                            reference_c_name=column_info.reference_c_name,
-                        )
-                        for column_info in sorted(
-                            columns_by_table[table_info.name],
-                            key=lambda item: item.name,
-                        )
-                    ],
-                )
-                for table_info in table_infos
-            ],
-            metrics=[
-                MetricConfig(
-                    name=metric_info.name,
-                    description=metric_info.description,
-                    relevant_columns=[
-                        ColumnReferenceConfig(**reference)
-                        for reference in metric_info.relevant_columns
-                    ],
-                    alias=metric_info.alias,
-                )
-                for metric_info in metric_infos
-            ],
-        )

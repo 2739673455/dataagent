@@ -24,40 +24,6 @@ class SemanticRecallPGRepo:
         """初始化召回快照数据访问。"""
         self._session = session
 
-    @staticmethod
-    def _to_record(snapshot: SemanticRecallSnapshot) -> SemanticRecallRecord:
-        """将关系模型转换为领域记录。"""
-        response_payload = snapshot.response
-        semantic_resources = {
-            **response_payload["semantic_resources"],
-            "recall_id": snapshot.recall_id,
-        }
-        return SemanticRecallRecord(
-            user_id=snapshot.user_id,
-            conversation_id=snapshot.conversation_id,
-            query=snapshot.query,
-            request=(
-                SemanticResourceRecallRequest.model_validate(snapshot.request)
-                if snapshot.request is not None
-                else None
-            ),
-            response=SemanticResourceRecallResponse.model_validate(semantic_resources),
-            query_experiences=[
-                QueryExperienceRecallResult.model_validate(item)
-                for item in response_payload["query_experiences"]
-            ],
-            query_experiences_retrieved_at=response_payload[
-                "query_experiences_retrieved_at"
-            ],
-            query_experience_role_name=response_payload["query_experience_role_name"],
-            query_experience_authorization_fingerprint=response_payload[
-                "query_experience_authorization_fingerprint"
-            ],
-            source_queries=snapshot.source_queries,
-            created_at=snapshot.created_at,
-            updated_at=snapshot.updated_at,
-        )
-
     async def save(self, record: SemanticRecallRecord) -> None:
         """保存召回快照。"""
         self._session.add(
@@ -237,3 +203,37 @@ class SemanticRecallPGRepo:
             )
         )
         await self._session.flush()
+
+    @staticmethod
+    def _to_record(snapshot: SemanticRecallSnapshot) -> SemanticRecallRecord:
+        """将关系模型转换为领域记录。"""
+        response_payload = snapshot.response
+        semantic_resources = {
+            **response_payload["semantic_resources"],
+            "recall_id": snapshot.recall_id,
+        }
+        return SemanticRecallRecord(
+            user_id=snapshot.user_id,
+            conversation_id=snapshot.conversation_id,
+            query=snapshot.query,
+            request=(
+                SemanticResourceRecallRequest.model_validate(snapshot.request)
+                if snapshot.request is not None
+                else None
+            ),
+            response=SemanticResourceRecallResponse.model_validate(semantic_resources),
+            query_experiences=[
+                QueryExperienceRecallResult.model_validate(item)
+                for item in response_payload["query_experiences"]
+            ],
+            query_experiences_retrieved_at=response_payload[
+                "query_experiences_retrieved_at"
+            ],
+            query_experience_role_name=response_payload["query_experience_role_name"],
+            query_experience_authorization_fingerprint=response_payload[
+                "query_experience_authorization_fingerprint"
+            ],
+            source_queries=snapshot.source_queries,
+            created_at=snapshot.created_at,
+            updated_at=snapshot.updated_at,
+        )

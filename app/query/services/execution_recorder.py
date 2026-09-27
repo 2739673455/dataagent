@@ -36,20 +36,6 @@ class QueryExecutionContext:
     tool_call_id: str | None = None
 
 
-def _build_sql_template(sql: str) -> tuple[str, str]:
-    """将 SQL 字面量替换为参数并生成稳定结构指纹。"""
-    expression = parse_one(sql, read="doris")
-    parameter_index = 0
-    for node in list(expression.walk()):
-        if not isinstance(node, exp.Literal):
-            continue
-        parameter_index += 1
-        node.replace(exp.Placeholder(this=f"p{parameter_index}"))
-    template = expression.sql(dialect="doris", pretty=False)
-    fingerprint = hashlib.sha256(template.encode()).hexdigest()
-    return template, fingerprint
-
-
 class QueryExecutionRecorder:
     """记录查询执行并聚合成功的业务查询经验。"""
 
@@ -150,7 +136,7 @@ class QueryExecutionRecorder:
         raw_sql: str,
         status: QueryExecutionStatus,
     ) -> QueryExecution:
-        """构造三个记录分支共用的执行上下文字段。"""
+        """构造用户、会话、用途和执行状态的审计记录。"""
         return QueryExecution(
             user_id=context.session_key.user_id,
             role_name=context.role_name,
@@ -231,3 +217,17 @@ class QueryExecutionRecorder:
             for column in validation.columns
         )
         return assets
+
+
+def _build_sql_template(sql: str) -> tuple[str, str]:
+    """将 SQL 字面量替换为参数并生成稳定结构指纹。"""
+    expression = parse_one(sql, read="doris")
+    parameter_index = 0
+    for node in list(expression.walk()):
+        if not isinstance(node, exp.Literal):
+            continue
+        parameter_index += 1
+        node.replace(exp.Placeholder(this=f"p{parameter_index}"))
+    template = expression.sql(dialect="doris", pretty=False)
+    fingerprint = hashlib.sha256(template.encode()).hexdigest()
+    return template, fingerprint

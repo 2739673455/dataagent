@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.metadata.models.catalog import ColumnReference
+
 SemanticResourceType = Literal["column", "metric", "value"]
 SemanticIndexStatus = Literal["current", "stale", "missing"]
 SemanticTextType = Literal["name", "description", "alias"]
@@ -122,7 +124,7 @@ class SemanticMetricRecallResult(BaseModel):
     name: str
     description: str
     alias: list[str]
-    relevant_columns: list[dict[str, str]]
+    relevant_columns: list[ColumnReference]
     rank_score: float
     match_reasons: list[SemanticMatchReason]
     meta_version: int

@@ -4,6 +4,7 @@ from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
 from app.metadata.models.catalog import (
     ColumnInfo,
     ColumnKey,
+    ColumnReference,
     MetricInfo,
     TableInfo,
     column_reference_key,
@@ -30,19 +31,6 @@ class MetadataAuthorizationFilter:
         self._policy = policy
         self._data_source = data_source
         self._database_name = database_name
-
-    def _identity(
-        self,
-        table_name: str | None = None,
-        column_name: str | None = None,
-    ) -> AssetIdentity:
-        """构造当前数据库内的资产标识。"""
-        return AssetIdentity(
-            data_source=self._data_source,
-            database_name=self._database_name,
-            table_name=table_name,
-            column_name=column_name,
-        )
 
     def table_is_allowed(self, table_name: str) -> bool:
         """判断表是否具备完整读取权限。"""
@@ -227,6 +215,19 @@ class MetadataAuthorizationFilter:
             }
         )
 
+    def _identity(
+        self,
+        table_name: str | None = None,
+        column_name: str | None = None,
+    ) -> AssetIdentity:
+        """构造当前数据库内的资产标识。"""
+        return AssetIdentity(
+            data_source=self._data_source,
+            database_name=self._database_name,
+            table_name=table_name,
+            column_name=column_name,
+        )
+
     @staticmethod
     def _filter_semantic_warnings(
         response: SemanticResourceRecallResponse,
@@ -262,7 +263,7 @@ class MetadataAuthorizationFilter:
 
     def _semantic_metric_is_allowed(
         self,
-        relevant_columns: list[dict[str, str]],
+        relevant_columns: list[ColumnReference],
     ) -> bool:
         """判断召回指标的全部依赖字段是否仍获授权。"""
         if not relevant_columns:

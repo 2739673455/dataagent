@@ -19,26 +19,6 @@ from app.shared.tasks.celery_app import celery_app
 _REPAIR_BATCH_SIZE = 500
 
 
-async def _sync_index(experience_id: UUID, revision: int) -> int:
-    """初始化任务资源并同步指定查询经验索引。"""
-    embedding = EmbeddingClientManager(cfg.embedding)
-    es = ESClientManager(cfg.elasticsearch)
-    postgres = PostgresClientManager(cfg.meta_postgresql, MetaBase)
-    async with AsyncExitStack() as stack:
-        stack.push_async_callback(embedding.close)
-        stack.push_async_callback(es.close)
-        stack.push_async_callback(postgres.close)
-        embedding.init()
-        es.init()
-        postgres.init()
-        async with postgres.session() as session:
-            return await build_query_experience_indexer(
-                session,
-                es.get_client(),
-                embedding.get_client(),
-            ).sync(experience_id, revision)
-
-
 @celery_app.task(
     bind=True,
     name="dataagent.query.sync_index",
@@ -64,6 +44,32 @@ def sync_index_task(
         "experience_id": experience_id,
         "revision": synced_revision,
     }
+
+
+@celery_app.task(name="dataagent.query.repair_indexes")
+def repair_indexes_task() -> dict[str, int]:
+    """提交一批待补偿的查询经验索引任务。"""
+    return run_async(_repair_indexes())
+
+
+async def _sync_index(experience_id: UUID, revision: int) -> int:
+    """初始化任务资源并同步指定查询经验索引。"""
+    embedding = EmbeddingClientManager(cfg.embedding)
+    es = ESClientManager(cfg.elasticsearch)
+    postgres = PostgresClientManager(cfg.meta_postgresql, MetaBase)
+    async with AsyncExitStack() as stack:
+        stack.push_async_callback(embedding.close)
+        stack.push_async_callback(es.close)
+        stack.push_async_callback(postgres.close)
+        embedding.init()
+        es.init()
+        postgres.init()
+        async with postgres.session() as session:
+            return await build_query_experience_indexer(
+                session,
+                es.get_client(),
+                embedding.get_client(),
+            ).sync(experience_id, revision)
 
 
 async def _repair_indexes() -> dict[str, int]:
@@ -93,9 +99,3 @@ async def _repair_indexes() -> dict[str, int]:
         return stats
     finally:
         await postgres.close()
-
-
-@celery_app.task(name="dataagent.query.repair_indexes")
-def repair_indexes_task() -> dict[str, int]:
-    """提交一批待补偿的查询经验索引任务。"""
-    return run_async(_repair_indexes())

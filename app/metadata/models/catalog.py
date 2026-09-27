@@ -33,8 +33,8 @@ class ColumnReference(TypedDict):
 
 
 type ColumnKey = tuple[str, str]
-type ValueIndexSyncStatus = Literal["syncing", "succeeded", "failed"]
 
+# 字段示例采集数量上限；批量采样时按源表行数计。
 COLUMN_EXAMPLE_LIMIT = 10
 
 
@@ -58,7 +58,7 @@ def column_resource_key(t_name: str, c_name: str) -> str:
 
 
 def serialize_column_examples(examples: list[Any]) -> list[Any]:
-    """将字段示例转换为可序列化值。"""
+    """序列化字段示例，并按文本表示排序。"""
     serialized: list[Any] = []
     for value in examples:
         if isinstance(value, (datetime, date)):
@@ -115,8 +115,7 @@ class ColumnInfo(MetaBase):
     """字段信息。"""
 
     __tablename__ = "column_info"
-    # Repository 在查询后批量填充索引状态；保持非 ORM relationship，避免序列化
-    # 阶段触发 AsyncSession 无法安全执行的隐式懒加载。
+    # 取值同步状态由仓储显式补载，序列化时不触发 ORM 隐式懒加载。
     __allow_unmapped__ = True
 
     __table_args__ = (
@@ -158,20 +157,97 @@ class ColumnInfo(MetaBase):
     value_index_state: "ValueIndexSyncState | None" = None
 
     def metadata_snapshot(self) -> tuple[Any, ...]:
-        """生成元数据内容快照。"""
+        """生成别名顺序无关的元数据比较快照。"""
         return (
             self.type,
             self.description,
             self.examples,
-            self.alias,
+            tuple(sorted(self.alias)),
             self.index_values,
             self.reference_t_name,
             self.reference_c_name,
         )
 
 
+class MetricInfo(MetaBase):
+    """指标信息。"""
+
+    __tablename__ = "metric_info"
+    # 关联字段由仓储显式补载，序列化时不触发 ORM 隐式懒加载。
+    __allow_unmapped__ = True
+
+    name: Mapped[str] = mapped_column(String(256), primary_key=True, comment="指标名称")
+    description: Mapped[str] = mapped_column(Text, nullable=False, comment="指标描述")
+    alias: Mapped[list[str]] = mapped_column(JSON, nullable=False, comment="指标别名")
+    meta_version: Mapped[int] = _version_column(1, "元数据版本")
+    index_version: Mapped[int] = _version_column(0, "语义索引版本")
+    relevant_columns: list[ColumnReference]
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        description: str,
+        alias: list[str],
+        relevant_columns: list[ColumnReference] | None = None,
+        meta_version: int = 1,
+        index_version: int = 0,
+    ) -> None:
+        """初始化指标元数据及其关联字段引用。"""
+        self.name = name
+        self.description = description
+        self.alias = alias
+        self.relevant_columns = relevant_columns or []
+        self.meta_version = meta_version
+        self.index_version = index_version
+
+    def metadata_snapshot(self) -> tuple[Any, ...]:
+        """生成别名顺序无关的元数据比较快照。"""
+        return (
+            self.description,
+            tuple(
+                sorted(
+                    column_reference_key(reference)
+                    for reference in self.relevant_columns
+                )
+            ),
+            tuple(sorted(self.alias)),
+        )
+
+
+class ColumnMetric(MetaBase):
+    """字段与指标关联。"""
+
+    __tablename__ = "column_metric"
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["t_name", "c_name"],
+            ["column_info.t_name", "column_info.name"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    t_name: Mapped[str] = mapped_column(
+        String(256),
+        primary_key=True,
+        comment="表名称",
+    )
+    c_name: Mapped[str] = mapped_column(
+        String(256),
+        primary_key=True,
+        comment="字段名称",
+    )
+    metric_name: Mapped[str] = mapped_column(
+        String(256),
+        ForeignKey("metric_info.name", ondelete="CASCADE"),
+        primary_key=True,
+        comment="指标名称",
+    )
+
+
 class ValueIndexSyncState(MetaBase):
-    """字段取值索引增量同步状态。"""
+    """字段取值索引的运行归属、水位和全量同步代次。"""
 
     __tablename__ = "value_index_sync_state"
 
@@ -234,80 +310,3 @@ class ValueInfo:
     value: str
     t_name: str
     c_name: str
-
-
-class MetricInfo(MetaBase):
-    """指标信息。"""
-
-    __tablename__ = "metric_info"
-    # 相关字段由 Repository 批量投影，原因同 ColumnInfo.value_index_state。
-    __allow_unmapped__ = True
-
-    name: Mapped[str] = mapped_column(String(256), primary_key=True, comment="指标名称")
-    description: Mapped[str] = mapped_column(Text, nullable=False, comment="指标描述")
-    alias: Mapped[list[str]] = mapped_column(JSON, nullable=False, comment="指标别名")
-    meta_version: Mapped[int] = _version_column(1, "元数据版本")
-    index_version: Mapped[int] = _version_column(0, "语义索引版本")
-    relevant_columns: list[ColumnReference]
-
-    def __init__(
-        self,
-        *,
-        name: str,
-        description: str,
-        alias: list[str],
-        relevant_columns: list[ColumnReference] | None = None,
-        meta_version: int = 1,
-        index_version: int = 0,
-    ) -> None:
-        """初始化指标元数据及其关联字段引用。"""
-        self.name = name
-        self.description = description
-        self.alias = alias
-        self.relevant_columns = relevant_columns or []
-        self.meta_version = meta_version
-        self.index_version = index_version
-
-    def metadata_snapshot(self) -> tuple[Any, ...]:
-        """生成元数据内容快照。"""
-        return (
-            self.description,
-            tuple(
-                sorted(
-                    column_reference_key(reference)
-                    for reference in self.relevant_columns
-                )
-            ),
-            self.alias,
-        )
-
-
-class ColumnMetric(MetaBase):
-    """字段与指标关联。"""
-
-    __tablename__ = "column_metric"
-
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["t_name", "c_name"],
-            ["column_info.t_name", "column_info.name"],
-            ondelete="CASCADE",
-        ),
-    )
-
-    t_name: Mapped[str] = mapped_column(
-        String(256),
-        primary_key=True,
-        comment="表名称",
-    )
-    c_name: Mapped[str] = mapped_column(
-        String(256),
-        primary_key=True,
-        comment="字段名称",
-    )
-    metric_name: Mapped[str] = mapped_column(
-        String(256),
-        ForeignKey("metric_info.name", ondelete="CASCADE"),
-        primary_key=True,
-        comment="指标名称",
-    )

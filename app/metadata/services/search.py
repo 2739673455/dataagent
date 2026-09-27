@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, TypeVar, cast
 
@@ -17,7 +17,6 @@ from app.metadata.models.catalog import (
     MetricInfo,
     TableInfo,
     column_reference_key,
-    serialize_column_examples,
 )
 from app.metadata.models.search import (
     SemanticColumnRecallResult,
@@ -52,13 +51,13 @@ ValueKey = tuple[str, str, str]
 ValueSyncStatus = Literal["syncing", "succeeded", "failed"]
 
 
-def _index_status(item: ColumnInfo | MetricInfo) -> SemanticIndexStatus:
-    """根据元数据和索引版本判断索引状态。"""
-    if item.index_version <= 0:
-        return "missing"
-    if item.index_version < item.meta_version:
-        return "stale"
-    return "current"
+@dataclass(frozen=True, slots=True)
+class SemanticCatalog:
+    """语义召回使用的完整元数据目录。"""
+
+    tables: dict[str, TableInfo]
+    columns: dict[ColumnKey, ColumnInfo]
+    metrics: dict[str, MetricInfo]
 
 
 @dataclass(slots=True)
@@ -76,30 +75,6 @@ class _CandidateScore:
 
 
 @dataclass(slots=True)
-class _ColumnContext:
-    """待返回字段及其引入原因。"""
-
-    info: ColumnInfo
-    inclusion_reasons: list[str]
-    rank_score: float | None = None
-    match_reasons: list[SemanticMatchReason] = field(default_factory=list)
-
-    def add_reason(self, reason: str) -> None:
-        """稳定去重字段引入原因。"""
-        if reason not in self.inclusion_reasons:
-            self.inclusion_reasons.append(reason)
-
-
-@dataclass(frozen=True, slots=True)
-class SemanticCatalog:
-    """语义召回使用的完整元数据目录。"""
-
-    tables: dict[str, TableInfo]
-    columns: dict[ColumnKey, ColumnInfo]
-    metrics: dict[str, MetricInfo]
-
-
-@dataclass(slots=True)
 class _RecallContext:
     """单次语义召回的输入、目录和可变状态。"""
 
@@ -114,10 +89,7 @@ class _RecallContext:
     @property
     def search_limit(self) -> int:
         """计算索引层候选扩召数量。"""
-        return min(
-            60,
-            self.request.limit_per_type * _INDEX_SEARCH_LIMIT_MULTIPLIER,
-        )
+        return self.request.limit_per_type * _INDEX_SEARCH_LIMIT_MULTIPLIER
 
     def record_backend_failure(
         self,
@@ -129,8 +101,6 @@ class _RecallContext:
         term: str | None = None,
     ) -> None:
         """记录检索失败范围并保留任务取消语义。"""
-        if isinstance(error, asyncio.CancelledError):
-            raise error
         if not isinstance(error, Exception):
             raise error
         failure_scope = (
@@ -158,8 +128,18 @@ class _RankedCandidates:
     truncated: bool
 
 
+@dataclass(slots=True)
+class _ColumnContext:
+    """待返回字段及其引入原因。"""
+
+    info: ColumnInfo
+    inclusion_reasons: list[str]
+    rank_score: float | None = None
+    match_reasons: list[SemanticMatchReason] = field(default_factory=list)
+
+
 class _ColumnContextBuilder:
-    """根据融合候选构建字段、表和一层主外键上下文。"""
+    """按融合排名补充字段、一层外键及参与表的主键上下文。"""
 
     def __init__(
         self,
@@ -181,7 +161,7 @@ class _ColumnContextBuilder:
         list[SemanticTableContext],
         bool,
     ]:
-        """按直接候选、依赖字段和外键上下文顺序构建字段上下文。"""
+        """依次加入直接字段、指标依赖、取值归属、一层外键和参与表主键。"""
         self._add_ranked_resources(ranked)
         self._add_foreign_key_context()
         self._add_primary_keys()
@@ -195,41 +175,6 @@ class _ColumnContextBuilder:
             self._build_table_contexts(),
             self._truncated,
         )
-
-    def _add_column(
-        self,
-        key: ColumnKey,
-        inclusion_reason: str,
-        rank_score: float | None = None,
-        match_reasons: list[SemanticMatchReason] | None = None,
-        *,
-        counts_toward_limit: bool = True,
-    ) -> None:
-        """添加字段上下文并合并引入原因。"""
-        column_info = self._catalog.columns.get(key)
-        if column_info is None:
-            return
-        existing = self._contexts.get(key)
-        if existing is not None:
-            existing.add_reason(inclusion_reason)
-            if rank_score is not None:
-                existing.rank_score = rank_score
-                existing.match_reasons = match_reasons or []
-            return
-        if (
-            counts_toward_limit
-            and self._ranked_context_count >= _MAX_RANKED_CONTEXT_COLUMNS
-        ):
-            self._truncated = True
-            return
-        self._contexts[key] = _ColumnContext(
-            info=column_info,
-            inclusion_reasons=[inclusion_reason],
-            rank_score=rank_score,
-            match_reasons=match_reasons or [],
-        )
-        if counts_toward_limit:
-            self._ranked_context_count += 1
 
     def _add_ranked_resources(self, ranked: _RankedCandidates) -> None:
         """添加直接字段、指标依赖字段和值所属字段。"""
@@ -248,6 +193,33 @@ class _ColumnContextBuilder:
                 counts_toward_limit=False,
             )
 
+    def _add_foreign_key_context(self) -> None:
+        """按参与表快照补充一层外键和目标字段，不递归展开新加入的表。"""
+        participating_tables = self._participating_tables()
+        foreign_keys = sorted(
+            (
+                column_info
+                for column_info in self._catalog.columns.values()
+                if column_info.t_name in participating_tables
+            ),
+            key=lambda column_info: (column_info.t_name, column_info.name),
+        )
+        for foreign_key in foreign_keys:
+            target_t_name = foreign_key.reference_t_name
+            target_c_name = foreign_key.reference_c_name
+            if not target_t_name or not target_c_name:
+                continue
+            self._add_column(
+                (foreign_key.t_name, foreign_key.name),
+                "foreign_key",
+                counts_toward_limit=False,
+            )
+            self._add_column(
+                (target_t_name, target_c_name),
+                "reference_target",
+                counts_toward_limit=False,
+            )
+
     def _add_primary_keys(self) -> None:
         """为参与结果的表补充主键字段。"""
         for t_name in sorted(self._participating_tables()):
@@ -261,34 +233,42 @@ class _ColumnContextBuilder:
                     counts_toward_limit=False,
                 )
 
-    def _add_foreign_key_context(self) -> None:
-        """补充参与表的一层外键字段和目标字段。"""
-        participating_tables = self._participating_tables()
-        foreign_keys = sorted(
-            (
-                column_info
-                for column_info in self._catalog.columns.values()
-                if column_info.t_name in participating_tables
-                and column_info.reference_t_name
-                and column_info.reference_c_name
-            ),
-            key=lambda column_info: (column_info.t_name, column_info.name),
+    def _add_column(
+        self,
+        key: ColumnKey,
+        inclusion_reason: str,
+        rank_score: float | None = None,
+        match_reasons: list[SemanticMatchReason] | None = None,
+        *,
+        counts_toward_limit: bool = True,
+    ) -> None:
+        """添加字段并合并引入原因，仅受限类别计入截断数量。"""
+        column_info = self._catalog.columns.get(key)
+        if column_info is None:
+            return
+        existing = self._contexts.get(key)
+        if existing is not None:
+            if inclusion_reason not in existing.inclusion_reasons:
+                existing.inclusion_reasons.append(inclusion_reason)
+            return
+        if (
+            counts_toward_limit
+            and self._ranked_context_count >= _MAX_RANKED_CONTEXT_COLUMNS
+        ):
+            self._truncated = True
+            return
+        self._contexts[key] = _ColumnContext(
+            info=column_info,
+            inclusion_reasons=[inclusion_reason],
+            rank_score=rank_score,
+            match_reasons=match_reasons or [],
         )
-        for foreign_key in foreign_keys:
-            target_t_name = cast(str, foreign_key.reference_t_name)
-            target_c_name = cast(str, foreign_key.reference_c_name)
-            source_key = (foreign_key.t_name, foreign_key.name)
-            target_key = (target_t_name, target_c_name)
-            self._add_column(
-                source_key,
-                "foreign_key",
-                counts_toward_limit=False,
-            )
-            self._add_column(
-                target_key,
-                "reference_target",
-                counts_toward_limit=False,
-            )
+        if counts_toward_limit:
+            self._ranked_context_count += 1
+
+    def _participating_tables(self) -> set[str]:
+        """返回当前字段上下文涉及的表。"""
+        return {t_name for t_name, _ in self._contexts}
 
     def _build_column_results(self) -> list[SemanticColumnRecallResult]:
         """将字段上下文转换为响应模型。"""
@@ -308,9 +288,7 @@ class _ColumnContextBuilder:
                     type=column_info.type,
                     description=column_info.description,
                     alias=column_info.alias,
-                    examples=serialize_column_examples(column_info.examples)[
-                        :_COLUMN_EXAMPLE_LIMIT
-                    ],
+                    examples=column_info.examples[:_COLUMN_EXAMPLE_LIMIT],
                     reference_t_name=column_info.reference_t_name,
                     reference_c_name=column_info.reference_c_name,
                     inclusion_reasons=context.inclusion_reasons,
@@ -336,10 +314,6 @@ class _ColumnContextBuilder:
             for t_name in sorted(self._participating_tables())
             if (table_info := self._catalog.tables.get(t_name)) is not None
         ]
-
-    def _participating_tables(self) -> set[str]:
-        """返回当前字段上下文涉及的表。"""
-        return {context.info.t_name for context in self._contexts.values()}
 
 
 class SemanticResourceRecallService:
@@ -423,209 +397,146 @@ class SemanticResourceRecallService:
         )
 
     async def _retrieve(self, context: _RecallContext) -> None:
-        """按请求类型执行确定顺序的多路召回。"""
-        if ("column" in context.request.resource_types and context.catalog.columns) or (
-            "metric" in context.request.resource_types and context.catalog.metrics
-        ):
-            await self._collect_fulltext_matches(context)
-            await self._collect_vector_matches(context)
+        """生成共享向量，再按字段、指标、取值顺序执行召回。"""
+        search_columns = "column" in context.request.resource_types and bool(
+            context.catalog.columns
+        )
+        search_metrics = "metric" in context.request.resource_types and bool(
+            context.catalog.metrics
+        )
+        embeddings: list[list[float]] | None = None
+        if search_columns or search_metrics:
+            try:
+                embeddings = await self._embedding_client.aembed_documents(
+                    context.request.terms
+                )
+            except Exception as exc:  # noqa: BLE001
+                if search_columns:
+                    context.record_backend_failure(
+                        "向量生成", exc, resource_type="column", channel="vector"
+                    )
+                if search_metrics:
+                    context.record_backend_failure(
+                        "向量生成", exc, resource_type="metric", channel="vector"
+                    )
+        if search_columns:
+            await self._collect_column_matches(context, embeddings)
+        if search_metrics:
+            await self._collect_metric_matches(context, embeddings)
         if "value" in context.request.resource_types and context.catalog.columns:
             await self._collect_value_matches(context)
 
-    async def _collect_fulltext_matches(
+    async def _collect_column_matches(
         self,
         context: _RecallContext,
+        embeddings: list[list[float]] | None,
     ) -> None:
-        """收集字段和指标全文命中。"""
-        if "column" in context.request.resource_types and context.catalog.columns:
-            allowed_columns = frozenset(context.catalog.columns)
-            results = await asyncio.gather(
-                *(
-                    self._run_index_query(
-                        self._column_repo.search_text_hits(
-                            term,
-                            allowed_columns=allowed_columns,
-                            limit=context.search_limit,
-                        )
+        """收集字段全文及向量命中，向量不可用时仅执行全文检索。"""
+        allowed_columns = frozenset(context.catalog.columns)
+        results = await asyncio.gather(
+            *(
+                self._run_index_query(
+                    self._column_repo.search_text_hits(
+                        term,
+                        allowed_columns=allowed_columns,
+                        limit=context.search_limit,
                     )
-                    for term in context.request.terms
-                ),
-                return_exceptions=True,
-            )
-            self._merge_column_hits(
-                context,
-                results,
-                backend_name="字段全文",
-                match_type="fulltext",
-            )
-
-        if "metric" in context.request.resource_types and context.catalog.metrics:
-            allowed_metrics = frozenset(context.catalog.metrics)
-            results = await asyncio.gather(
-                *(
-                    self._run_index_query(
-                        self._metric_repo.search_text_hits(
-                            term,
-                            allowed_metrics=allowed_metrics,
-                            limit=context.search_limit,
-                        )
-                    )
-                    for term in context.request.terms
-                ),
-                return_exceptions=True,
-            )
-            self._merge_metric_hits(
-                context,
-                results,
-                backend_name="指标全文",
-                match_type="fulltext",
-            )
-
-    async def _collect_vector_matches(
-        self,
-        context: _RecallContext,
-    ) -> None:
-        """收集字段和指标向量命中。"""
-        try:
-            embeddings = await self._embedding_client.aembed_documents(
-                context.request.terms
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            if "column" in context.request.resource_types and context.catalog.columns:
-                context.record_backend_failure(
-                    "向量生成",
-                    exc,
-                    resource_type="column",
-                    channel="vector",
                 )
-            if "metric" in context.request.resource_types and context.catalog.metrics:
-                context.record_backend_failure(
-                    "向量生成",
-                    exc,
-                    resource_type="metric",
-                    channel="vector",
-                )
+                for term in context.request.terms
+            ),
+            return_exceptions=True,
+        )
+        self._merge_hits(
+            context,
+            results,
+            resource_type="column",
+            key_of=lambda item: (item.t_name, item.name),
+            allowed_keys=context.catalog.columns,
+            scores=context.column_scores,
+            backend_name="字段全文",
+            match_type="fulltext",
+        )
+        if embeddings is None:
             return
-
-        if "column" in context.request.resource_types and context.catalog.columns:
-            allowed_columns = frozenset(context.catalog.columns)
-            results = await asyncio.gather(
-                *(
-                    self._run_index_query(
-                        self._column_repo.search_vector_hits(
-                            embedding,
-                            allowed_columns=allowed_columns,
-                            limit=context.search_limit,
-                        )
+        results = await asyncio.gather(
+            *(
+                self._run_index_query(
+                    self._column_repo.search_vector_hits(
+                        embedding,
+                        allowed_columns=allowed_columns,
+                        limit=context.search_limit,
                     )
-                    for embedding in embeddings
-                ),
-                return_exceptions=True,
-            )
-            self._merge_column_hits(
-                context,
-                results,
-                backend_name="字段向量",
-                match_type="vector",
-            )
+                )
+                for embedding in embeddings
+            ),
+            return_exceptions=True,
+        )
+        self._merge_hits(
+            context,
+            results,
+            resource_type="column",
+            key_of=lambda item: (item.t_name, item.name),
+            allowed_keys=context.catalog.columns,
+            scores=context.column_scores,
+            backend_name="字段向量",
+            match_type="vector",
+        )
 
-        if "metric" in context.request.resource_types and context.catalog.metrics:
-            allowed_metrics = frozenset(context.catalog.metrics)
-            results = await asyncio.gather(
-                *(
-                    self._run_index_query(
-                        self._metric_repo.search_vector_hits(
-                            embedding,
-                            allowed_metrics=allowed_metrics,
-                            limit=context.search_limit,
-                        )
-                    )
-                    for embedding in embeddings
-                ),
-                return_exceptions=True,
-            )
-            self._merge_metric_hits(
-                context,
-                results,
-                backend_name="指标向量",
-                match_type="vector",
-            )
-
-    def _merge_column_hits(
+    async def _collect_metric_matches(
         self,
         context: _RecallContext,
-        results: list[list[SearchHit[ColumnInfo]] | BaseException],
-        *,
-        backend_name: str,
-        match_type: Literal["fulltext", "vector"],
+        embeddings: list[list[float]] | None,
     ) -> None:
-        """校验并融合每个检索词的字段索引命中。"""
-        for term, result in zip(context.request.terms, results, strict=True):
-            if isinstance(result, BaseException):
-                context.record_backend_failure(
-                    backend_name,
-                    result,
-                    resource_type="column",
-                    channel=match_type,
-                    term=term,
+        """收集指标全文及向量命中，向量不可用时仅执行全文检索。"""
+        allowed_metrics = frozenset(context.catalog.metrics)
+        results = await asyncio.gather(
+            *(
+                self._run_index_query(
+                    self._metric_repo.search_text_hits(
+                        term,
+                        allowed_metrics=allowed_metrics,
+                        limit=context.search_limit,
+                    )
                 )
-                continue
-            seen_keys: set[ColumnKey] = set()
-            for rank, hit in enumerate(result, start=1):
-                key = (hit.item.t_name, hit.item.name)
-                if key not in context.catalog.columns or key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                self._add_candidate_score(
-                    context.column_scores,
-                    key,
-                    self._rrf_score(rank),
-                    SemanticMatchReason(
-                        match_type=match_type,
-                        term=term,
-                        score=hit.score,
-                    ),
+                for term in context.request.terms
+            ),
+            return_exceptions=True,
+        )
+        self._merge_hits(
+            context,
+            results,
+            resource_type="metric",
+            key_of=lambda item: item.name,
+            allowed_keys=context.catalog.metrics,
+            scores=context.metric_scores,
+            backend_name="指标全文",
+            match_type="fulltext",
+        )
+        if embeddings is None:
+            return
+        results = await asyncio.gather(
+            *(
+                self._run_index_query(
+                    self._metric_repo.search_vector_hits(
+                        embedding,
+                        allowed_metrics=allowed_metrics,
+                        limit=context.search_limit,
+                    )
                 )
-
-    def _merge_metric_hits(
-        self,
-        context: _RecallContext,
-        results: list[list[SearchHit[MetricInfo]] | BaseException],
-        *,
-        backend_name: str,
-        match_type: Literal["fulltext", "vector"],
-    ) -> None:
-        """校验并融合每个检索词的指标索引命中。"""
-        for term, result in zip(context.request.terms, results, strict=True):
-            if isinstance(result, BaseException):
-                context.record_backend_failure(
-                    backend_name,
-                    result,
-                    resource_type="metric",
-                    channel=match_type,
-                    term=term,
-                )
-                continue
-            seen_names: set[str] = set()
-            for rank, hit in enumerate(result, start=1):
-                if (
-                    hit.item.name not in context.catalog.metrics
-                    or hit.item.name in seen_names
-                ):
-                    continue
-                seen_names.add(hit.item.name)
-                self._add_candidate_score(
-                    context.metric_scores,
-                    hit.item.name,
-                    self._rrf_score(rank),
-                    SemanticMatchReason(
-                        match_type=match_type,
-                        term=term,
-                        score=hit.score,
-                    ),
-                )
+                for embedding in embeddings
+            ),
+            return_exceptions=True,
+        )
+        self._merge_hits(
+            context,
+            results,
+            resource_type="metric",
+            key_of=lambda item: item.name,
+            allowed_keys=context.catalog.metrics,
+            scores=context.metric_scores,
+            backend_name="指标向量",
+            match_type="vector",
+        )
 
     async def _collect_value_matches(
         self,
@@ -672,6 +583,69 @@ class SemanticResourceRecallService:
                         score=hit.score,
                     ),
                 )
+
+    async def _run_index_query(
+        self,
+        operation: Awaitable[IndexResultT],
+    ) -> IndexResultT:
+        """限制当前服务实例的索引查询并发量。"""
+        async with self._index_query_semaphore:
+            return await operation
+
+    def _merge_hits[ItemT, KeyT](
+        self,
+        context: _RecallContext,
+        results: list[list[SearchHit[ItemT]] | BaseException],
+        *,
+        resource_type: Literal["column", "metric"],
+        key_of: Callable[[ItemT], KeyT],
+        allowed_keys: Collection[KeyT],
+        scores: dict[KeyT, _CandidateScore],
+        backend_name: str,
+        match_type: Literal["fulltext", "vector"],
+    ) -> None:
+        """校验并融合字段或指标命中，按每词原始排名计分并保留命中依据。"""
+        for term, result in zip(context.request.terms, results, strict=True):
+            if isinstance(result, BaseException):
+                context.record_backend_failure(
+                    backend_name,
+                    result,
+                    resource_type=resource_type,
+                    channel=match_type,
+                    term=term,
+                )
+                continue
+            seen_keys: set[KeyT] = set()
+            for rank, hit in enumerate(result, start=1):
+                key = key_of(hit.item)
+                if key not in allowed_keys or key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                self._add_candidate_score(
+                    scores,
+                    key,
+                    self._rrf_score(rank),
+                    SemanticMatchReason(
+                        match_type=match_type,
+                        term=term,
+                        score=hit.score,
+                    ),
+                )
+
+    @staticmethod
+    def _add_candidate_score(
+        scores: dict[CandidateKeyT, _CandidateScore],
+        key: CandidateKeyT,
+        score: float,
+        reason: SemanticMatchReason,
+    ) -> None:
+        """新增或合并候选资源分数。"""
+        scores.setdefault(key, _CandidateScore()).add(score, reason)
+
+    @staticmethod
+    def _rrf_score(rank: int) -> float:
+        """计算倒数排名融合分数。"""
+        return 1 / (_RRF_K + rank)
 
     def _build_response(
         self,
@@ -724,16 +698,6 @@ class SemanticResourceRecallService:
         )
 
     @staticmethod
-    def _add_candidate_score(
-        scores: dict[CandidateKeyT, _CandidateScore],
-        key: CandidateKeyT,
-        score: float,
-        reason: SemanticMatchReason,
-    ) -> None:
-        """新增或合并候选资源分数。"""
-        scores.setdefault(key, _CandidateScore()).add(score, reason)
-
-    @staticmethod
     def _rank_candidates(
         scores: dict[CandidateKeyT, _CandidateScore],
         limit: int,
@@ -741,7 +705,7 @@ class SemanticResourceRecallService:
         list[tuple[CandidateKeyT, float, list[SemanticMatchReason]]],
         bool,
     ]:
-        """按融合分数排序并归一化为类型内排名分数。"""
+        """按融合分数排序并归一化为类型内相对排名分数，分数不表示概率。"""
         ordered = sorted(
             scores.items(),
             key=lambda item: (-item[1].score, str(item[0])),
@@ -776,13 +740,7 @@ class SemanticResourceRecallService:
                     name=metric_info.name,
                     description=metric_info.description,
                     alias=metric_info.alias,
-                    relevant_columns=[
-                        {
-                            "t_name": reference["t_name"],
-                            "c_name": reference["c_name"],
-                        }
-                        for reference in metric_info.relevant_columns
-                    ],
+                    relevant_columns=metric_info.relevant_columns,
                     rank_score=rank_score,
                     match_reasons=match_reasons,
                     meta_version=metric_info.meta_version,
@@ -825,21 +783,17 @@ class SemanticResourceRecallService:
         return results
 
     @staticmethod
-    def _rrf_score(rank: int) -> float:
-        """计算倒数排名融合分数。"""
-        return 1 / (_RRF_K + rank)
-
-    async def _run_index_query(
-        self,
-        operation: Awaitable[IndexResultT],
-    ) -> IndexResultT:
-        """限制当前服务实例的索引查询并发量。"""
-        async with self._index_query_semaphore:
-            return await operation
-
-    @staticmethod
     def _value_sync_status(status: str | None) -> ValueSyncStatus | None:
         """将数据库字段值同步状态收窄到响应枚举。"""
         if status in {"syncing", "succeeded", "failed"}:
             return cast(ValueSyncStatus, status)
         return None
+
+
+def _index_status(item: ColumnInfo | MetricInfo) -> SemanticIndexStatus:
+    """根据元数据和索引版本判断索引状态。"""
+    if item.index_version <= 0:
+        return "missing"
+    if item.index_version < item.meta_version:
+        return "stale"
+    return "current"

@@ -82,7 +82,7 @@ class MetaPGRepo:
         column_infos: list[ColumnInfo],
         force_version_increment_keys: set[tuple[str, str]] | None = None,
     ) -> None:
-        """批量写入字段信息并在目标字段创建后设置引用。"""
+        """批量写入字段，待全部引用目标存在后设置外键引用。"""
         if not column_infos:
             return
         force_version_increment_keys = force_version_increment_keys or set()
@@ -91,6 +91,7 @@ class MetaPGRepo:
                 column_info,
                 (column_info.t_name, column_info.name) in force_version_increment_keys,
             )
+        # 先暂存引用，完成字段写入后再恢复，避免自关联外键依赖输入顺序。
         references = [
             (
                 column_info,
@@ -150,6 +151,108 @@ class MetaPGRepo:
         )
         return changed
 
+    async def delete_table_infos(self, table_names: list[str]) -> None:
+        """删除表信息。"""
+        if not table_names:
+            return
+        await self._session.execute(
+            delete(TableInfo).where(TableInfo.name.in_(table_names))
+        )
+
+    async def delete_column_infos(self, column_keys: list[tuple[str, str]]) -> None:
+        """删除字段信息及指标关联。"""
+        if not column_keys:
+            return
+        key_columns = tuple_(ColumnMetric.t_name, ColumnMetric.c_name)
+        await self._session.execute(
+            delete(ColumnMetric).where(key_columns.in_(column_keys))
+        )
+        info_key_columns = tuple_(ColumnInfo.t_name, ColumnInfo.name)
+        await self._session.execute(
+            delete(ColumnInfo).where(info_key_columns.in_(column_keys))
+        )
+
+    async def delete_metric_infos(self, metric_names: list[str]) -> None:
+        """删除指标信息及字段关联。"""
+        if not metric_names:
+            return
+        await self._session.execute(
+            delete(ColumnMetric).where(ColumnMetric.metric_name.in_(metric_names))
+        )
+        await self._session.execute(
+            delete(MetricInfo).where(MetricInfo.name.in_(metric_names))
+        )
+
+    async def list_table_infos(self) -> list[TableInfo]:
+        """获取全部表信息。"""
+        result = await self._session.scalars(select(TableInfo).order_by(TableInfo.name))
+        return list(result.all())
+
+    async def get_table_info(self, t_name: str) -> TableInfo:
+        """根据表名获取表信息。"""
+        result = await self._session.get(TableInfo, t_name)
+        if result:
+            return result
+        raise meta_error.MetadataNotFoundError(detail=f"未找到表元数据: {t_name}")
+
+    async def list_column_infos(self) -> list[ColumnInfo]:
+        """获取全部字段信息。"""
+        result = await self._session.scalars(
+            select(ColumnInfo).order_by(ColumnInfo.t_name, ColumnInfo.name)
+        )
+        column_infos = list(result.all())
+        await self._load_column_value_states(column_infos)
+        return column_infos
+
+    async def list_column_infos_by_table_names(
+        self,
+        table_names: list[str],
+        *,
+        index_values: bool | None = None,
+    ) -> list[ColumnInfo]:
+        """根据多个表名获取字段信息。"""
+        unique_table_names = list(dict.fromkeys(table_names))
+        if not unique_table_names:
+            return []
+        statement = select(ColumnInfo).where(ColumnInfo.t_name.in_(unique_table_names))
+        if index_values is not None:
+            statement = statement.where(ColumnInfo.index_values.is_(index_values))
+        result = await self._session.scalars(
+            statement.order_by(ColumnInfo.t_name, ColumnInfo.name)
+        )
+        column_infos = list(result.all())
+        await self._load_column_value_states(column_infos)
+        return column_infos
+
+    async def get_column_info(self, t_name: str, c_name: str) -> ColumnInfo:
+        """根据表名和字段名获取字段信息。"""
+        result = await self._session.get(ColumnInfo, (t_name, c_name))
+        if result:
+            result.value_index_state = await self.get_value_index_state(t_name, c_name)
+            return result
+        raise meta_error.MetadataNotFoundError(
+            detail=f"未找到字段元数据: {t_name}.{c_name}"
+        )
+
+    async def list_metric_infos(self) -> list[MetricInfo]:
+        """获取全部指标信息。"""
+        result = await self._session.scalars(
+            select(MetricInfo).order_by(MetricInfo.name)
+        )
+        metric_infos = list(result.all())
+        await self._load_metric_references(metric_infos)
+        return metric_infos
+
+    async def get_metric_info(self, metric_name: str) -> MetricInfo:
+        """根据指标名获取指标信息。"""
+        result = await self._session.get(MetricInfo, metric_name)
+        if result:
+            await self._load_metric_references([result])
+            return result
+        raise meta_error.MetadataNotFoundError(
+            detail=f"未找到指标元数据: {metric_name}"
+        )
+
     async def acquire_index_lock(self, resource_type: str, resource_key: str) -> None:
         """在当前事务中获取索引资源级互斥锁。"""
         await self._session.execute(
@@ -193,49 +296,6 @@ class MetaPGRepo:
         )
         return result.scalar_one_or_none() is not None
 
-    async def list_table_infos(self) -> list[TableInfo]:
-        """获取全部表信息。"""
-        result = await self._session.scalars(select(TableInfo).order_by(TableInfo.name))
-        return list(result.all())
-
-    async def list_column_infos(self) -> list[ColumnInfo]:
-        """获取全部字段信息。"""
-        result = await self._session.scalars(
-            select(ColumnInfo).order_by(ColumnInfo.t_name, ColumnInfo.name)
-        )
-        column_infos = list(result.all())
-        await self._load_column_value_states(column_infos)
-        return column_infos
-
-    async def list_column_infos_by_table_names(
-        self,
-        table_names: list[str],
-        *,
-        index_values: bool | None = None,
-    ) -> list[ColumnInfo]:
-        """根据多个表名获取字段信息。"""
-        unique_table_names = list(dict.fromkeys(table_names))
-        if not unique_table_names:
-            return []
-        statement = select(ColumnInfo).where(ColumnInfo.t_name.in_(unique_table_names))
-        if index_values is not None:
-            statement = statement.where(ColumnInfo.index_values.is_(index_values))
-        result = await self._session.scalars(
-            statement.order_by(ColumnInfo.t_name, ColumnInfo.name)
-        )
-        column_infos = list(result.all())
-        await self._load_column_value_states(column_infos)
-        return column_infos
-
-    async def list_metric_infos(self) -> list[MetricInfo]:
-        """获取全部指标信息。"""
-        result = await self._session.scalars(
-            select(MetricInfo).order_by(MetricInfo.name)
-        )
-        metric_infos = list(result.all())
-        await self._load_metric_references(metric_infos)
-        return metric_infos
-
     async def claim_pending_value_index_keys(
         self,
         *,
@@ -243,9 +303,8 @@ class MetaPGRepo:
         stale_before: datetime,
         limit: int,
     ) -> list[tuple[str, str]]:
-        """领取每日增量同步或需要清理的取值索引字段。"""
-        # advisory lock 与下方 syncing 状态写入处于同一事务，多个调度器实例不会
-        # 重复领取同一批字段。
+        """按成功时间、失败状态和超时阈值领取取值同步或清理任务。"""
+        # 调度锁与 syncing 状态写入共享事务，避免调度器并发领取同一字段。
         await self.acquire_index_lock("scheduler", "value-index-dispatch")
         result = await self._session.execute(
             select(ColumnInfo, TableInfo, ValueIndexSyncState)
@@ -264,7 +323,7 @@ class MetaPGRepo:
         pending: list[tuple[str, str]] = []
         for column_info, table_info, state in result.tuples():
             if not column_info.index_values:
-                # 已关闭取值索引的字段仍需领取一次，以清理历史索引和状态。
+                # 关闭取值索引的字段进入清理任务，删除其索引文档和同步状态。
                 if state is not None and (
                     state.status != "syncing" or state.updated_at <= stale_before
                 ):
@@ -358,7 +417,7 @@ class MetaPGRepo:
                 ColumnInfo.t_name == t_name,
                 ColumnInfo.name == c_name,
             )
-            # 会话禁用了 expire_on_commit；终态校验必须覆盖第一阶段的缓存实体。
+            # expire_on_commit=False；提交前的配置校验需要刷新会话内的实体。
             .execution_options(populate_existing=True)
         )
         row = result.one_or_none()
@@ -521,65 +580,6 @@ class MetaPGRepo:
             )
         for metric_info in metric_infos:
             metric_info.relevant_columns = references_by_metric[metric_info.name]
-
-    async def delete_metric_infos(self, metric_names: list[str]) -> None:
-        """删除指标信息及字段关联。"""
-        if not metric_names:
-            return
-        await self._session.execute(
-            delete(ColumnMetric).where(ColumnMetric.metric_name.in_(metric_names))
-        )
-        await self._session.execute(
-            delete(MetricInfo).where(MetricInfo.name.in_(metric_names))
-        )
-
-    async def delete_column_infos(self, column_keys: list[tuple[str, str]]) -> None:
-        """删除字段信息及指标关联。"""
-        if not column_keys:
-            return
-        key_columns = tuple_(ColumnMetric.t_name, ColumnMetric.c_name)
-        await self._session.execute(
-            delete(ColumnMetric).where(key_columns.in_(column_keys))
-        )
-        info_key_columns = tuple_(ColumnInfo.t_name, ColumnInfo.name)
-        await self._session.execute(
-            delete(ColumnInfo).where(info_key_columns.in_(column_keys))
-        )
-
-    async def delete_table_infos(self, table_names: list[str]) -> None:
-        """删除表信息。"""
-        if not table_names:
-            return
-        await self._session.execute(
-            delete(TableInfo).where(TableInfo.name.in_(table_names))
-        )
-
-    async def get_column_info(self, t_name: str, c_name: str) -> ColumnInfo:
-        """根据表名和字段名获取字段信息。"""
-        result = await self._session.get(ColumnInfo, (t_name, c_name))
-        if result:
-            result.value_index_state = await self.get_value_index_state(t_name, c_name)
-            return result
-        raise meta_error.MetadataNotFoundError(
-            detail=f"未找到字段元数据: {t_name}.{c_name}"
-        )
-
-    async def get_table_info(self, t_name: str) -> TableInfo:
-        """根据表名获取表信息。"""
-        result = await self._session.get(TableInfo, t_name)
-        if result:
-            return result
-        raise meta_error.MetadataNotFoundError(detail=f"未找到表元数据: {t_name}")
-
-    async def get_metric_info(self, metric_name: str) -> MetricInfo:
-        """根据指标名获取指标信息。"""
-        result = await self._session.get(MetricInfo, metric_name)
-        if result:
-            await self._load_metric_references([result])
-            return result
-        raise meta_error.MetadataNotFoundError(
-            detail=f"未找到指标元数据: {metric_name}"
-        )
 
     async def _prepare_column_versions(
         self,

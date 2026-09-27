@@ -67,6 +67,16 @@ class _ColumnStats:
             self.time_end = temporal_value
 
 
+@dataclass(frozen=True, slots=True)
+class _QuerySummary:
+    """CSV 写入完成后的字段统计、时间范围和展示样例。"""
+
+    columns: list[QueryResultColumn]
+    row_count: int
+    time_range: dict[str, QueryTimeRange]
+    sample: list[dict[str, Any]]
+
+
 class AnalysisQueryService:
     """流式执行已通过 Guard 的查询并写入当前会话沙箱。"""
 
@@ -212,16 +222,6 @@ class AnalysisQueryService:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class _QuerySummary:
-    """临时文件写入结束后的内存摘要。"""
-
-    columns: list[QueryResultColumn]
-    row_count: int
-    time_range: dict[str, QueryTimeRange]
-    sample: list[dict[str, Any]]
-
-
 def _value_type(value: Any) -> str:
     """推断结果值的稳定 Schema 类型。"""
     if isinstance(value, bool):
@@ -259,7 +259,7 @@ def _merge_types(current: str | None, observed: str) -> str:
 
 
 def _summary_value(value: Any, depth: int = 0) -> Any:
-    """转换为可以放入工具返回值的 JSON 兼容数据。"""
+    """转换为 JSON 样例，并限制文本长度、集合大小和嵌套深度。"""
     if value is None or isinstance(value, (int, float, bool)):
         return value
     if isinstance(value, str):

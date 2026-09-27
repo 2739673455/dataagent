@@ -32,6 +32,26 @@ if TYPE_CHECKING:
     from app.shared.clients.embedding_client_manager import RemoteEmbeddingClient
 
 
+def build_query_execution_handler(
+    artifact_store: DockerSandboxManager,
+    auth: PostgresClientManager,
+    meta: PostgresClientManager,
+    query_clients: DorisQueryClientRegistry,
+    admin_doris: DorisClientManager,
+) -> QueryExecutionHandler:
+    """组装查询身份解析、受控执行和审计记录用例。"""
+    return QueryExecutionHandler(
+        DatabaseQueryExecutionRuntime(
+            artifact_store,
+            build_query_execution_recorder,
+            auth,
+            meta,
+            query_clients,
+            admin_doris,
+        )
+    )
+
+
 def build_query_execution_recorder(
     session: AsyncSession,
     *,
@@ -89,24 +109,4 @@ def build_query_experience_invalidation_service(
         index_scheduler=index_scheduler,
         data_source=cfg.query.data_source,
         database_name=cfg.doris.database,
-    )
-
-
-def build_query_execution_handler(
-    artifact_store: DockerSandboxManager,
-    auth: PostgresClientManager,
-    meta: PostgresClientManager,
-    query_clients: DorisQueryClientRegistry,
-    admin_doris: DorisClientManager,
-) -> QueryExecutionHandler:
-    """组装身份解析、受控执行和历史记录完整查询用例。"""
-    return QueryExecutionHandler(
-        DatabaseQueryExecutionRuntime(
-            artifact_store,
-            build_query_execution_recorder,
-            auth,
-            meta,
-            query_clients,
-            admin_doris,
-        )
     )

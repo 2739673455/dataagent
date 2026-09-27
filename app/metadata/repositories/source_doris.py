@@ -14,20 +14,8 @@ class SourceDorisRepo:
         """初始化 Doris 业务数据存储。"""
         self._connection = connection
 
-    def _quote_identifier(self, identifier: str) -> str:
-        """使用当前数据库方言安全引用标识符。"""
-        if not identifier or "\x00" in identifier:
-            raise ValueError(f"数据库标识符无效: {identifier}")
-        return self._connection.dialect.identifier_preparer.quote_identifier(identifier)
-
-    @staticmethod
-    def _validate_positive_limit(value: int, name: str) -> None:
-        """校验只能作为 SQL 整数字面量写入的分页参数。"""
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            raise ValueError(f"{name} 必须为正整数")
-
     async def list_tables(self) -> list[str]:
-        """查询当前 Doris 数据库中全部物理表名。"""
+        """列出 Doris 数据库中的表和视图。"""
         result = await self._connection.execute(
             text(
                 """
@@ -111,9 +99,9 @@ class SourceDorisRepo:
         self,
         table_name: str,
         column_names: list[str],
-        limit: int = 5,
+        limit: int,
     ) -> dict[str, list[Any]]:
-        """批量获取指定表中多个字段的样例取值。"""
+        """采样最多 limit 行，并提取各字段的非空去重示例。"""
         if not column_names:
             return {}
         self._validate_positive_limit(limit, "limit")
@@ -130,13 +118,26 @@ class SourceDorisRepo:
                     column_values[c].append(val)
         return column_values
 
+    async def get_value_sync_upper_bound(
+        self,
+        table_name: str,
+        cursor_column: str,
+    ) -> Any | None:
+        """读取本次字段取值扫描使用的最大游标值。"""
+        table_identifier = self._quote_identifier(table_name)
+        cursor_identifier = self._quote_identifier(cursor_column)
+        result = await self._connection.execute(
+            text(f"select max({cursor_identifier}) from {table_identifier}")
+        )
+        return result.scalar()
+
     async def iter_column_value_batches(
         self,
         table_name: str,
         column_name: str,
         batch_size: int = 1000,
     ) -> AsyncIterator[list[Any]]:
-        """流式分批读取字段的去重取值。"""
+        """流式读取字段的全部去重取值，每批最多 batch_size 个。"""
         self._validate_positive_limit(batch_size, "batch_size")
         table_identifier = self._quote_identifier(table_name)
         column_identifier = self._quote_identifier(column_name)
@@ -148,19 +149,6 @@ class SourceDorisRepo:
         async for values in result.partitions(batch_size):
             yield list(values)
 
-    async def get_value_sync_upper_bound(
-        self,
-        table_name: str,
-        cursor_column: str,
-    ) -> Any | None:
-        """读取字段取值增量同步的固定游标上界。"""
-        table_identifier = self._quote_identifier(table_name)
-        cursor_identifier = self._quote_identifier(cursor_column)
-        result = await self._connection.execute(
-            text(f"select max({cursor_identifier}) from {table_identifier}")
-        )
-        return result.scalar()
-
     async def iter_changed_column_value_batches(
         self,
         table_name: str,
@@ -170,7 +158,7 @@ class SourceDorisRepo:
         upper_bound: Any,
         batch_size: int = 1000,
     ) -> AsyncIterator[list[Any]]:
-        """按闭区间水位窗口分批读取字段去重取值。"""
+        """按包含回看范围的闭区间水位窗口，分批读取字段去重取值。"""
         self._validate_positive_limit(batch_size, "batch_size")
         table_identifier = self._quote_identifier(table_name)
         column_identifier = self._quote_identifier(column_name)
@@ -187,3 +175,15 @@ class SourceDorisRepo:
         )
         async for values in result.partitions(batch_size):
             yield list(values)
+
+    def _quote_identifier(self, identifier: str) -> str:
+        """使用当前数据库方言安全引用标识符。"""
+        if not identifier or "\x00" in identifier:
+            raise ValueError(f"数据库标识符无效: {identifier}")
+        return self._connection.dialect.identifier_preparer.quote_identifier(identifier)
+
+    @staticmethod
+    def _validate_positive_limit(value: int, name: str) -> None:
+        """校验只能作为 SQL 整数字面量写入的分页参数。"""
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{name} 必须为正整数")

@@ -55,7 +55,7 @@ class QueryExperienceESRepo:
         text: str,
         embedding: list[float],
     ) -> None:
-        """按外部版本顺序覆盖查询经验索引文档。"""
+        """按经验版本覆盖索引文档，相同版本可重试，较低版本忽略。"""
         await self.ensure_index()
         try:
             await self._client.index(
@@ -75,7 +75,7 @@ class QueryExperienceESRepo:
             return
 
     async def delete(self, experience_id: UUID, *, revision: int) -> None:
-        """按外部版本顺序删除查询经验索引文档。"""
+        """按经验版本删除索引文档，忽略版本冲突和文档不存在。"""
         await self.ensure_index()
         try:
             await self._client.delete(
@@ -156,7 +156,7 @@ class QueryExperienceESRepo:
         role_name: str,
         authorization_fingerprint: str,
     ) -> list[dict[str, Any]]:
-        """构造角色和权限纪元一致的索引过滤条件。"""
+        """按角色名称和授权指纹构造索引过滤条件。"""
         return [
             {"term": {"role_name": role_name}},
             {"term": {"authorization_fingerprint": authorization_fingerprint}},

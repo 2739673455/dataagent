@@ -113,7 +113,7 @@ class MetaImportService:
         if not meta_config.tables and not meta_config.metrics:
             raise meta_error.InvalidMetadataError(detail="元数据导入文档不能为空")
 
-        # 先用短事务取得一致的现状快照；随后访问 Doris 时不占用 PostgreSQL 事务。
+        # 在短事务中读取目录；源表校验和示例采样在 PostgreSQL 事务外执行。
         async with self._meta_repo.session.begin():
             existing_tables = {
                 table_info.name: table_info
@@ -177,7 +177,7 @@ class MetaImportService:
             )
             return result
 
-        # REPLACE 删除的资源已经没有后续同步入口，必须显式清理对应语义索引。
+        # REPLACE 删除目录资源前，清理对应的语义索引和取值索引。
         if mode is ImportMode.REPLACE:
             await self._meta_index_service.delete_metric_indexes(metric_changes.deleted)
             await self._meta_index_service.delete_column_indexes(column_changes.deleted)
@@ -285,7 +285,7 @@ class MetaImportService:
                     )
 
             target_column_names = [col.name for col in table_config.columns]
-            # 同一张表一次取齐所有示例值，避免逐字段查询产生 N+1 开销和不同采样快照。
+            # 每张表执行一次行采样，从相同批次提取各字段示例。
             table_column_samples = (
                 await self._source_repo.get_table_columns_sample_values(
                     table_config.name,

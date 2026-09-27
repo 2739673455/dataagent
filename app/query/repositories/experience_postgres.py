@@ -134,55 +134,6 @@ class QueryExperiencePGRepo:
         by_id = {item.id: item for item in result.unique().all()}
         return [by_id[item_id] for item_id in experience_ids if item_id in by_id]
 
-    async def disable_for_changed_resources(
-        self,
-        resource_keys: set[str],
-    ) -> dict[UUID, int]:
-        """禁用引用指定元数据资产的全部有效经验。"""
-        if not resource_keys:
-            return {}
-        experience_ids = list(
-            (
-                await self._session.scalars(
-                    select(QueryExperience.id)
-                    .join(QueryExperienceAsset)
-                    .where(
-                        QueryExperience.status == "active",
-                        QueryExperienceAsset.resource_key.in_(resource_keys),
-                    )
-                    .distinct()
-                )
-            ).all()
-        )
-        return await self.disable_for_metadata_change(experience_ids)
-
-    async def disable_for_metadata_change(
-        self,
-        experience_ids: set[UUID] | list[UUID],
-    ) -> dict[UUID, int]:
-        """因元数据变化禁用指定经验并返回新版本。"""
-        if not experience_ids:
-            return {}
-        now = datetime.now(UTC)
-        result = await self._session.execute(
-            update(QueryExperience)
-            .where(
-                QueryExperience.id.in_(experience_ids),
-                QueryExperience.status == "active",
-            )
-            .values(
-                status="disabled",
-                disabled_reason="metadata_changed",
-                disabled_by_user_id=None,
-                disabled_at=now,
-                revision=QueryExperience.revision + 1,
-                updated_at=now,
-            )
-            .returning(QueryExperience.id, QueryExperience.revision)
-        )
-        await self._session.flush()
-        return {experience_id: revision for experience_id, revision in result.tuples()}
-
     async def list_overviews(
         self,
         *,
@@ -318,6 +269,55 @@ class QueryExperiencePGRepo:
         await self._session.flush()
         return experience, True
 
+    async def disable_for_changed_resources(
+        self,
+        resource_keys: set[str],
+    ) -> dict[UUID, int]:
+        """禁用引用指定元数据资产的全部有效经验。"""
+        if not resource_keys:
+            return {}
+        experience_ids = list(
+            (
+                await self._session.scalars(
+                    select(QueryExperience.id)
+                    .join(QueryExperienceAsset)
+                    .where(
+                        QueryExperience.status == "active",
+                        QueryExperienceAsset.resource_key.in_(resource_keys),
+                    )
+                    .distinct()
+                )
+            ).all()
+        )
+        return await self.disable_for_metadata_change(experience_ids)
+
+    async def disable_for_metadata_change(
+        self,
+        experience_ids: set[UUID] | list[UUID],
+    ) -> dict[UUID, int]:
+        """因元数据变化禁用指定经验并返回新版本。"""
+        if not experience_ids:
+            return {}
+        now = datetime.now(UTC)
+        result = await self._session.execute(
+            update(QueryExperience)
+            .where(
+                QueryExperience.id.in_(experience_ids),
+                QueryExperience.status == "active",
+            )
+            .values(
+                status="disabled",
+                disabled_reason="metadata_changed",
+                disabled_by_user_id=None,
+                disabled_at=now,
+                revision=QueryExperience.revision + 1,
+                updated_at=now,
+            )
+            .returning(QueryExperience.id, QueryExperience.revision)
+        )
+        await self._session.flush()
+        return {experience_id: revision for experience_id, revision in result.tuples()}
+
     async def request_deletion(
         self,
         experience_id: UUID,
@@ -347,7 +347,7 @@ class QueryExperiencePGRepo:
         return experience, True
 
     async def finalize_deletion(self, experience_id: UUID, revision: int) -> bool:
-        """删除已完成当前索引清理的查询经验。"""
+        """索引清理完成后，仅删除版本匹配且处于删除中的经验。"""
         deleted_id = await self._session.scalar(
             delete(QueryExperience)
             .where(
@@ -378,7 +378,7 @@ class QueryExperiencePGRepo:
         *,
         limit: int,
     ) -> dict[UUID, int]:
-        """列出全部尚未同步到当前版本的查询经验。"""
+        """按批次读取索引版本落后的查询经验。"""
         result = await self._session.execute(
             select(QueryExperience.id, QueryExperience.revision)
             .where(QueryExperience.indexed_revision < QueryExperience.revision)

@@ -47,93 +47,6 @@ if TYPE_CHECKING:
 _PERIODIC_BATCH_SIZE = 50
 
 
-async def _run_with_metadata_resources[T](
-    operation: Callable[
-        [MetaPGRepo, SourceDorisRepo, AsyncElasticsearch, RemoteEmbeddingClient],
-        Awaitable[T],
-    ],
-) -> T:
-    """初始化元数据任务资源并执行指定异步操作。"""
-    embedding = EmbeddingClientManager(cfg.embedding)
-    es = ESClientManager(cfg.elasticsearch)
-    postgres = PostgresClientManager(cfg.meta_postgresql, MetaBase)
-    doris = DorisClientManager(cfg.doris)
-    async with AsyncExitStack() as stack:
-        stack.push_async_callback(embedding.close)
-        stack.push_async_callback(es.close)
-        stack.push_async_callback(postgres.close)
-        stack.push_async_callback(doris.close)
-        embedding.init()
-        es.init()
-        postgres.init()
-        doris.init()
-        async with postgres.session() as session, doris.connection() as connection:
-            return await operation(
-                MetaPGRepo(session),
-                SourceDorisRepo(connection),
-                es.get_client(),
-                embedding.get_client(),
-            )
-
-
-def _column_semantic_results(
-    results: dict[tuple[str, str], SemanticIndexSyncResult],
-) -> list[dict[str, Any]]:
-    """将字段语义索引同步结果转换为任务响应结构。"""
-    return [
-        {"t_name": t_name, "c_name": c_name, **asdict(result)}
-        for (t_name, c_name), result in results.items()
-    ]
-
-
-def _column_value_results(
-    results: dict[tuple[str, str], ValueIndexSyncResult],
-) -> list[dict[str, Any]]:
-    """将字段取值索引同步结果转换为任务响应结构。"""
-    return [
-        {"t_name": t_name, "c_name": c_name, **asdict(result)}
-        for (t_name, c_name), result in results.items()
-    ]
-
-
-def _metric_semantic_results(
-    results: dict[str, SemanticIndexSyncResult],
-) -> list[dict[str, Any]]:
-    """将指标语义索引同步结果转换为任务响应结构。"""
-    return [
-        {"metric_name": metric_name, **asdict(result)}
-        for metric_name, result in results.items()
-    ]
-
-
-def _format_key(key: str | tuple[str, str]) -> str:
-    """将元数据资源键格式化为可序列化文本。"""
-    return ".".join(key) if isinstance(key, tuple) else key
-
-
-def _import_result(result: MetaImportResult) -> dict[str, Any]:
-    """汇总元数据导入结果中的各类资源变更。"""
-
-    def changes(value: Any) -> dict[str, Any]:
-        """统计单类资源的新增、更新和删除明细。"""
-        return {
-            "created_count": len(value.created),
-            "updated_count": len(value.updated),
-            "deleted_count": len(value.deleted),
-            "created_keys": [_format_key(key) for key in value.created],
-            "updated_keys": [_format_key(key) for key in value.updated],
-            "deleted_keys": [_format_key(key) for key in value.deleted],
-        }
-
-    return {
-        "mode": result.mode.value,
-        "dry_run": result.dry_run,
-        "tables": changes(result.tables),
-        "columns": changes(result.columns),
-        "metrics": changes(result.metrics),
-    }
-
-
 @celery_app.task(
     name=SYNC_TABLE_INDEXES_TASK,
     autoretry_for=(Exception,),
@@ -366,8 +279,43 @@ def import_metadata_task(payload: dict[str, Any], mode: str) -> dict[str, Any]:
     return result
 
 
+@celery_app.task(name=DISPATCH_VALUE_INDEXES_TASK)
+def dispatch_value_indexes_task() -> dict[str, int]:
+    """提交符合条件的字段取值同步或清理任务。"""
+    return run_async(_dispatch_value_indexes())
+
+
+async def _run_with_metadata_resources[T](
+    operation: Callable[
+        [MetaPGRepo, SourceDorisRepo, AsyncElasticsearch, RemoteEmbeddingClient],
+        Awaitable[T],
+    ],
+) -> T:
+    """初始化元数据任务资源并执行指定异步操作。"""
+    embedding = EmbeddingClientManager(cfg.embedding)
+    es = ESClientManager(cfg.elasticsearch)
+    postgres = PostgresClientManager(cfg.meta_postgresql, MetaBase)
+    doris = DorisClientManager(cfg.doris)
+    async with AsyncExitStack() as stack:
+        stack.push_async_callback(embedding.close)
+        stack.push_async_callback(es.close)
+        stack.push_async_callback(postgres.close)
+        stack.push_async_callback(doris.close)
+        embedding.init()
+        es.init()
+        postgres.init()
+        doris.init()
+        async with postgres.session() as session, doris.connection() as connection:
+            return await operation(
+                MetaPGRepo(session),
+                SourceDorisRepo(connection),
+                es.get_client(),
+                embedding.get_client(),
+            )
+
+
 async def _dispatch_value_indexes() -> dict[str, int]:
-    """提交到达每日执行时间的字段取值增量同步任务。"""
+    """扫描符合状态和时间条件的字段，分批提交取值同步任务。"""
     now = datetime.now(UTC)
     stale_before = now - timedelta(seconds=cfg.task_queue.task_time_limit_seconds + 300)
     postgres = PostgresClientManager(cfg.meta_postgresql, MetaBase)
@@ -413,7 +361,59 @@ async def _dispatch_value_indexes() -> dict[str, int]:
         await postgres.close()
 
 
-@celery_app.task(name=DISPATCH_VALUE_INDEXES_TASK)
-def dispatch_value_indexes_task() -> dict[str, int]:
-    """提交每日字段取值增量同步任务。"""
-    return run_async(_dispatch_value_indexes())
+def _column_semantic_results(
+    results: dict[tuple[str, str], SemanticIndexSyncResult],
+) -> list[dict[str, Any]]:
+    """将字段语义索引同步结果转换为任务响应结构。"""
+    return [
+        {"t_name": t_name, "c_name": c_name, **asdict(result)}
+        for (t_name, c_name), result in results.items()
+    ]
+
+
+def _column_value_results(
+    results: dict[tuple[str, str], ValueIndexSyncResult],
+) -> list[dict[str, Any]]:
+    """将字段取值索引同步结果转换为任务响应结构。"""
+    return [
+        {"t_name": t_name, "c_name": c_name, **asdict(result)}
+        for (t_name, c_name), result in results.items()
+    ]
+
+
+def _metric_semantic_results(
+    results: dict[str, SemanticIndexSyncResult],
+) -> list[dict[str, Any]]:
+    """将指标语义索引同步结果转换为任务响应结构。"""
+    return [
+        {"metric_name": metric_name, **asdict(result)}
+        for metric_name, result in results.items()
+    ]
+
+
+def _import_result(result: MetaImportResult) -> dict[str, Any]:
+    """汇总元数据导入结果中的各类资源变更。"""
+
+    def changes(value: Any) -> dict[str, Any]:
+        """统计单类资源的新增、更新和删除明细。"""
+        return {
+            "created_count": len(value.created),
+            "updated_count": len(value.updated),
+            "deleted_count": len(value.deleted),
+            "created_keys": [_format_key(key) for key in value.created],
+            "updated_keys": [_format_key(key) for key in value.updated],
+            "deleted_keys": [_format_key(key) for key in value.deleted],
+        }
+
+    return {
+        "mode": result.mode.value,
+        "dry_run": result.dry_run,
+        "tables": changes(result.tables),
+        "columns": changes(result.columns),
+        "metrics": changes(result.metrics),
+    }
+
+
+def _format_key(key: str | tuple[str, str]) -> str:
+    """将元数据资源键格式化为可序列化文本。"""
+    return ".".join(key) if isinstance(key, tuple) else key

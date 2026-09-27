@@ -1,4 +1,4 @@
-"""元数据检索索引增量同步服务。"""
+"""元数据语义索引差量同步与字段取值同步。"""
 
 from __future__ import annotations
 
@@ -80,11 +80,19 @@ class MetaIndexService:
         self._embedding_client = embedding_client
         self._value_repo = value_repo
 
+    async def sync_table_indexes(
+        self,
+        table_names: list[str],
+    ) -> dict[ColumnKey, SemanticIndexSyncResult]:
+        """同步多个表下全部字段的语义索引。"""
+        column_keys = await self._get_column_keys_by_table_names(table_names)
+        return await self.sync_column_indexes(column_keys)
+
     async def sync_column_indexes(
         self,
         column_keys: list[ColumnKey],
     ) -> dict[ColumnKey, SemanticIndexSyncResult]:
-        """差量同步多个字段的语义索引。"""
+        """按资源锁差量同步字段语义索引，并条件提交索引版本。"""
         results: dict[ColumnKey, SemanticIndexSyncResult] = {}
         for t_name, c_name in dict.fromkeys(column_keys):
             resource_key = column_resource_key(t_name, c_name)
@@ -107,7 +115,7 @@ class MetaIndexService:
         self,
         metric_names: list[str],
     ) -> dict[str, SemanticIndexSyncResult]:
-        """差量同步多个指标的语义索引。"""
+        """按资源锁差量同步指标语义索引，并条件提交索引版本。"""
         results: dict[str, SemanticIndexSyncResult] = {}
         for metric_name in dict.fromkeys(metric_names):
             async with self._meta_repo.session.begin():
@@ -123,29 +131,6 @@ class MetaIndexService:
                 version_committed=committed,
             )
         return results
-
-    async def sync_column_values(
-        self,
-        column_keys: list[ColumnKey],
-        *,
-        mode: RequestedValueIndexSyncMode,
-    ) -> dict[ColumnKey, ValueIndexSyncResult]:
-        """按水位或全量校准模式同步多个字段取值。"""
-        results: dict[ColumnKey, ValueIndexSyncResult] = {}
-        for column_key in dict.fromkeys(column_keys):
-            results[column_key] = await self._sync_column_value_index(
-                *column_key,
-                requested_mode=mode,
-            )
-        return results
-
-    async def sync_table_indexes(
-        self,
-        table_names: list[str],
-    ) -> dict[ColumnKey, SemanticIndexSyncResult]:
-        """同步多个表下全部字段的语义索引。"""
-        column_keys = await self._get_column_keys_by_table_names(table_names)
-        return await self.sync_column_indexes(column_keys)
 
     async def sync_table_values(
         self,
@@ -163,6 +148,32 @@ class MetaIndexService:
             mode=mode,
         )
 
+    async def sync_column_values(
+        self,
+        column_keys: list[ColumnKey],
+        *,
+        mode: RequestedValueIndexSyncMode,
+    ) -> dict[ColumnKey, ValueIndexSyncResult]:
+        """按水位或全量校准模式同步多个字段取值。"""
+        results: dict[ColumnKey, ValueIndexSyncResult] = {}
+        for column_key in dict.fromkeys(column_keys):
+            results[column_key] = await self._sync_column_value_index(
+                *column_key,
+                requested_mode=mode,
+            )
+        return results
+
+    async def delete_column_indexes(self, column_keys: list[ColumnKey]) -> None:
+        """删除多个字段的语义和取值索引。"""
+        for t_name, c_name in dict.fromkeys(column_keys):
+            await self._column_repo.delete(t_name, c_name)
+            await self._value_repo.delete_by_column(t_name, c_name)
+
+    async def delete_metric_indexes(self, metric_names: list[str]) -> None:
+        """删除多个指标的语义索引。"""
+        for metric_name in dict.fromkeys(metric_names):
+            await self._metric_repo.delete(metric_name)
+
     async def _get_column_keys_by_table_names(
         self,
         table_names: list[str],
@@ -176,17 +187,6 @@ class MetaIndexService:
                 index_values=index_values,
             )
         return [(column_info.t_name, column_info.name) for column_info in column_infos]
-
-    async def delete_column_indexes(self, column_keys: list[ColumnKey]) -> None:
-        """删除多个字段的语义和取值索引。"""
-        for t_name, c_name in dict.fromkeys(column_keys):
-            await self._column_repo.delete(t_name, c_name)
-            await self._value_repo.delete_by_column(t_name, c_name)
-
-    async def delete_metric_indexes(self, metric_names: list[str]) -> None:
-        """删除多个指标的语义索引。"""
-        for metric_name in dict.fromkeys(metric_names):
-            await self._metric_repo.delete(metric_name)
 
     async def _sync_column_index(
         self,
@@ -232,71 +232,6 @@ class MetaIndexService:
         delta, embedded_count = await self._semantic_delta(targets, current)
         await self._metric_repo.apply_delta(delta)
         return self._semantic_result(delta, embedded_count, metric_info.meta_version)
-
-    async def _semantic_delta(
-        self,
-        targets: list[SemanticIndexDocument],
-        current: list[SemanticIndexDocument],
-    ) -> tuple[SemanticIndexDelta, int]:
-        """计算文档差异并只补充必要的向量。"""
-        current_by_id = {document.id: document for document in current}
-        target_ids = {document.id for document in targets}
-        create: list[SemanticIndexDocument] = []
-        update: list[SemanticIndexDocument] = []
-        unchanged_count = 0
-        embedding_targets: list[tuple[str, int, SemanticIndexDocument]] = []
-        for target in targets:
-            existing = current_by_id.get(target.id)
-            if existing is None:
-                embedding_targets.append(("create", len(create), target))
-                create.append(target)
-                continue
-            needs_embedding = (
-                existing.text != target.text
-                or existing.embedding_revision != target.embedding_revision
-            )
-            changed = needs_embedding or any(
-                (
-                    existing.resource_key != target.resource_key,
-                    existing.text_type != target.text_type,
-                    existing.meta_version != target.meta_version,
-                    existing.payload_hash != target.payload_hash,
-                )
-            )
-            if not changed:
-                unchanged_count += 1
-                continue
-            if needs_embedding:
-                embedding_targets.append(("update", len(update), target))
-            update.append(target)
-
-        if embedding_targets:
-            # 批量嵌入只覆盖新增或正文/模型版本变化的文档，payload-only 更新复用旧向量。
-            embeddings = await self._embed_texts(
-                [target.text for _, _, target in embedding_targets]
-            )
-            for (operation, index, target), embedding in zip(
-                embedding_targets,
-                embeddings,
-                strict=True,
-            ):
-                embedded = replace(target, embedding=embedding)
-                if operation == "create":
-                    create[index] = embedded
-                else:
-                    update[index] = embedded
-
-        return (
-            SemanticIndexDelta(
-                create=create,
-                update=update,
-                delete_ids=sorted(
-                    document.id for document in current if document.id not in target_ids
-                ),
-                unchanged_count=unchanged_count,
-            ),
-            len(embedding_targets),
-        )
 
     def _target_semantic_documents(
         self,
@@ -351,6 +286,136 @@ class MetaIndexService:
             )
             for text_value, text_type in sorted(entries.items())
         ]
+
+    async def _semantic_delta(
+        self,
+        targets: list[SemanticIndexDocument],
+        current: list[SemanticIndexDocument],
+    ) -> tuple[SemanticIndexDelta, int]:
+        """计算文档差异并只补充必要的向量。"""
+        current_by_id = {document.id: document for document in current}
+        target_ids = {document.id for document in targets}
+        create: list[SemanticIndexDocument] = []
+        update: list[SemanticIndexDocument] = []
+        unchanged_count = 0
+        embedding_targets: list[tuple[str, int, SemanticIndexDocument]] = []
+        for target in targets:
+            existing = current_by_id.get(target.id)
+            if existing is None:
+                embedding_targets.append(("create", len(create), target))
+                create.append(target)
+                continue
+            needs_embedding = (
+                existing.text != target.text
+                or existing.embedding_revision != target.embedding_revision
+            )
+            changed = needs_embedding or any(
+                (
+                    existing.resource_key != target.resource_key,
+                    existing.text_type != target.text_type,
+                    existing.meta_version != target.meta_version,
+                    existing.payload_hash != target.payload_hash,
+                )
+            )
+            if not changed:
+                unchanged_count += 1
+                continue
+            if needs_embedding:
+                embedding_targets.append(("update", len(update), target))
+            update.append(target)
+
+        if embedding_targets:
+            # 仅为新增或文本、模型版本变化的文档生成向量；载荷更新复用已存储向量。
+            embeddings = await self._embed_texts(
+                [target.text for _, _, target in embedding_targets]
+            )
+            for (operation, index, target), embedding in zip(
+                embedding_targets,
+                embeddings,
+                strict=True,
+            ):
+                embedded = replace(target, embedding=embedding)
+                if operation == "create":
+                    create[index] = embedded
+                else:
+                    update[index] = embedded
+
+        return (
+            SemanticIndexDelta(
+                create=create,
+                update=update,
+                delete_ids=sorted(
+                    document.id for document in current if document.id not in target_ids
+                ),
+                unchanged_count=unchanged_count,
+            ),
+            len(embedding_targets),
+        )
+
+    async def _embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """分批生成文本向量。"""
+        embeddings: list[list[float]] = []
+        for index in range(0, len(texts), self._embedding_batch_size):
+            batch = texts[index : index + self._embedding_batch_size]
+            embeddings.extend(await self._embedding_client.aembed_documents(batch))
+        return embeddings
+
+    @staticmethod
+    def _embedding_revision() -> str:
+        """生成当前嵌入模型和预处理规则版本。"""
+        return (
+            f"openai-compatible:{cfg.embedding.model}:"
+            f"{cfg.elasticsearch.embedding_size}:{_SEMANTIC_PREPROCESS_VERSION}"
+        )
+
+    @staticmethod
+    def _column_payload(column_info: ColumnInfo) -> dict[str, Any]:
+        """构造顺序稳定的字段语义索引载荷。"""
+        return {
+            "t_name": column_info.t_name,
+            "name": column_info.name,
+            "type": column_info.type,
+            "examples": serialize_column_examples(column_info.examples),
+            "description": column_info.description,
+            "alias": sorted(dict.fromkeys(column_info.alias)),
+            "index_values": column_info.index_values,
+            "reference_t_name": column_info.reference_t_name,
+            "reference_c_name": column_info.reference_c_name,
+            "meta_version": column_info.meta_version,
+            "index_version": column_info.meta_version,
+        }
+
+    @staticmethod
+    def _metric_payload(metric_info: MetricInfo) -> dict[str, Any]:
+        """构造顺序稳定的指标语义索引载荷。"""
+        return {
+            "name": metric_info.name,
+            "description": metric_info.description,
+            "relevant_columns": sorted(
+                metric_info.relevant_columns,
+                key=lambda item: (item["t_name"], item["c_name"]),
+            ),
+            "alias": sorted(dict.fromkeys(metric_info.alias)),
+            "meta_version": metric_info.meta_version,
+            "index_version": metric_info.meta_version,
+        }
+
+    @staticmethod
+    def _semantic_result(
+        delta: SemanticIndexDelta,
+        embedded_count: int,
+        target_version: int,
+    ) -> SemanticIndexSyncResult:
+        """汇总语义索引差量统计。"""
+        return SemanticIndexSyncResult(
+            created_count=len(delta.create),
+            updated_count=len(delta.update),
+            deleted_count=len(delta.delete_ids),
+            embedded_count=embedded_count,
+            unchanged_count=delta.unchanged_count,
+            target_version=target_version,
+            version_committed=False,
+        )
 
     async def _sync_column_value_index(
         self,
@@ -440,6 +505,22 @@ class MetaIndexService:
                 table_meta_version=table_info.meta_version,
             )
 
+    @staticmethod
+    def _select_value_sync_mode(
+        cursor_column: str | None,
+        state: ValueIndexSyncState | None,
+        *,
+        requested_mode: RequestedValueIndexSyncMode,
+    ) -> ValueIndexSyncMode:
+        """校验请求模式所需状态并选择同步模式。"""
+        if requested_mode == "full":
+            return "full"
+        if state is None or state.current_generation is None:
+            raise RuntimeError("字段取值增量同步缺少全量同步状态")
+        if cursor_column is None or state.cursor_value is None:
+            raise RuntimeError("字段取值增量同步缺少游标配置或已提交水位")
+        return "incremental"
+
     async def _execute_value_index_run(
         self,
         run: _ValueIndexRun,
@@ -462,6 +543,127 @@ class MetaIndexService:
         if run.mode == "full":
             return await self._run_full_value_sync(run)
         return await self._run_incremental_value_sync(run)
+
+    async def _run_full_value_sync(
+        self,
+        run: _ValueIndexRun,
+    ) -> ValueIndexSyncResult:
+        """全量写入本次代次的取值，再删除其他代次的文档。"""
+        if run.generation is None:
+            raise RuntimeError("字段取值索引全量同步缺少代次")
+        upper_bound = (
+            await self._source_repo.get_value_sync_upper_bound(
+                run.t_name,
+                run.cursor_column,
+            )
+            if run.cursor_column is not None
+            else None
+        )
+        read_count = await self._upsert_value_batches(
+            self._source_repo.iter_column_value_batches(
+                run.t_name,
+                run.c_name,
+            ),
+            run.t_name,
+            run.c_name,
+            run.generation,
+        )
+        if read_count:
+            await self._value_repo.refresh()
+        removed_count = await self._value_repo.delete_other_generations(
+            run.t_name,
+            run.c_name,
+            str(run.generation),
+        )
+        cursor_value = (
+            self._serialize_cursor(upper_bound)
+            if upper_bound is not None
+            else run.cursor_value
+        )
+        return ValueIndexSyncResult(
+            mode="full",
+            read_value_count=read_count,
+            upserted_count=read_count,
+            removed_count=removed_count,
+            cursor_value=cursor_value,
+            sync_generation=str(run.generation),
+        )
+
+    async def _run_incremental_value_sync(
+        self,
+        run: _ValueIndexRun,
+    ) -> ValueIndexSyncResult:
+        """按固定上界和回看窗口同步取值，沿用已提交代次。"""
+        if (
+            run.cursor_column is None
+            or run.cursor_value is None
+            or run.generation is None
+        ):
+            raise RuntimeError("字段取值增量同步缺少已提交水位")
+        upper_bound = await self._source_repo.get_value_sync_upper_bound(
+            run.t_name,
+            run.cursor_column,
+        )
+        if upper_bound is None:
+            return ValueIndexSyncResult(
+                mode="incremental",
+                read_value_count=0,
+                upserted_count=0,
+                removed_count=0,
+                cursor_value=run.cursor_value,
+                sync_generation=str(run.generation),
+            )
+        previous_cursor = self._deserialize_cursor(run.cursor_value)
+        lower_bound = self._lookback_lower_bound(
+            previous_cursor,
+            cfg.metadata_index.value_lookback_seconds,
+        )
+        read_count = await self._upsert_value_batches(
+            self._source_repo.iter_changed_column_value_batches(
+                run.t_name,
+                run.c_name,
+                run.cursor_column,
+                lower_bound,
+                upper_bound,
+            ),
+            run.t_name,
+            run.c_name,
+            run.generation,
+        )
+        if read_count:
+            await self._value_repo.refresh()
+        return ValueIndexSyncResult(
+            mode="incremental",
+            read_value_count=read_count,
+            upserted_count=read_count,
+            removed_count=0,
+            cursor_value=self._serialize_cursor(upper_bound),
+            sync_generation=str(run.generation),
+        )
+
+    async def _upsert_value_batches(
+        self,
+        batches: AsyncIterator[list[Any]],
+        t_name: str,
+        c_name: str,
+        generation: uuid.UUID,
+    ) -> int:
+        """序列化并写入非空取值，返回包含覆盖写入在内的数量。"""
+        count = 0
+        async for values in batches:
+            value_infos = [
+                ValueInfo(
+                    value=self._serialize_value(value),
+                    t_name=t_name,
+                    c_name=c_name,
+                )
+                for value in values
+                if value is not None
+            ]
+            if value_infos:
+                await self._value_repo.upsert(value_infos, str(generation))
+                count += len(value_infos)
+        return count
 
     async def _complete_value_index_run(
         self,
@@ -532,230 +734,22 @@ class MetaIndexService:
                 failed_at=datetime.now(UTC),
             )
 
-    async def _run_full_value_sync(
-        self,
-        run: _ValueIndexRun,
-    ) -> ValueIndexSyncResult:
-        """执行字段取值索引全量替换。"""
-        if run.generation is None:
-            raise RuntimeError("字段取值索引全量同步缺少代次")
-        upper_bound = (
-            await self._source_repo.get_value_sync_upper_bound(
-                run.t_name,
-                run.cursor_column,
-            )
-            if run.cursor_column is not None
-            else None
-        )
-        read_count = await self._upsert_value_batches(
-            self._source_repo.iter_column_value_batches(
-                run.t_name,
-                run.c_name,
-            ),
-            run.t_name,
-            run.c_name,
-            run.generation,
-        )
-        if read_count:
-            await self._value_repo.refresh()
-        removed_count = await self._value_repo.delete_other_generations(
-            run.t_name,
-            run.c_name,
-            str(run.generation),
-        )
-        cursor_value = (
-            self._serialize_cursor(upper_bound)
-            if upper_bound is not None
-            else run.cursor_value
-        )
-        return ValueIndexSyncResult(
-            mode="full",
-            read_value_count=read_count,
-            upserted_count=read_count,
-            removed_count=removed_count,
-            cursor_value=cursor_value,
-            sync_generation=str(run.generation),
-        )
-
-    async def _run_incremental_value_sync(
-        self,
-        run: _ValueIndexRun,
-    ) -> ValueIndexSyncResult:
-        """执行固定上界和重叠窗口的日常水位同步。"""
-        if (
-            run.cursor_column is None
-            or run.cursor_value is None
-            or run.generation is None
-        ):
-            raise RuntimeError("字段取值增量同步缺少已提交水位")
-        upper_bound = await self._source_repo.get_value_sync_upper_bound(
-            run.t_name,
-            run.cursor_column,
-        )
-        if upper_bound is None:
-            return ValueIndexSyncResult(
-                mode="incremental",
-                read_value_count=0,
-                upserted_count=0,
-                removed_count=0,
-                cursor_value=run.cursor_value,
-                sync_generation=str(run.generation),
-            )
-        previous_cursor = self._deserialize_cursor(run.cursor_value)
-        lower_bound = self._lookback_lower_bound(
-            previous_cursor,
-            cfg.metadata_index.value_lookback_seconds,
-        )
-        read_count = await self._upsert_value_batches(
-            self._source_repo.iter_changed_column_value_batches(
-                run.t_name,
-                run.c_name,
-                run.cursor_column,
-                lower_bound,
-                upper_bound,
-            ),
-            run.t_name,
-            run.c_name,
-            run.generation,
-        )
-        if read_count:
-            await self._value_repo.refresh()
-        return ValueIndexSyncResult(
-            mode="incremental",
-            read_value_count=read_count,
-            upserted_count=read_count,
-            removed_count=0,
-            cursor_value=self._serialize_cursor(upper_bound),
-            sync_generation=str(run.generation),
-        )
-
-    async def _upsert_value_batches(
-        self,
-        batches: AsyncIterator[list[Any]],
-        t_name: str,
-        c_name: str,
-        generation: uuid.UUID,
-    ) -> int:
-        """序列化并写入 Doris 返回的分批去重取值。"""
-        count = 0
-        async for values in batches:
-            value_infos = [
-                ValueInfo(
-                    value=self._serialize_value(value),
-                    t_name=t_name,
-                    c_name=c_name,
-                )
-                for value in values
-                if value is not None
-            ]
-            if value_infos:
-                await self._value_repo.upsert(value_infos, str(generation))
-                count += len(value_infos)
-        return count
-
-    @staticmethod
-    def _select_value_sync_mode(
-        cursor_column: str | None,
-        state: ValueIndexSyncState | None,
-        *,
-        requested_mode: RequestedValueIndexSyncMode,
-    ) -> ValueIndexSyncMode:
-        """校验请求模式所需状态并选择同步模式。"""
-        if requested_mode == "full":
-            return "full"
-        if state is None or state.current_generation is None:
-            raise RuntimeError("字段取值增量同步缺少全量同步状态")
-        if cursor_column is None or state.cursor_value is None:
-            raise RuntimeError("字段取值增量同步缺少游标配置或已提交水位")
-        return "incremental"
-
-    @staticmethod
-    def _column_payload(column_info: ColumnInfo) -> dict[str, Any]:
-        """构造顺序稳定的字段语义索引载荷。"""
-        return {
-            "t_name": column_info.t_name,
-            "name": column_info.name,
-            "type": column_info.type,
-            "examples": serialize_column_examples(column_info.examples),
-            "description": column_info.description,
-            "alias": sorted(dict.fromkeys(column_info.alias)),
-            "index_values": column_info.index_values,
-            "reference_t_name": column_info.reference_t_name,
-            "reference_c_name": column_info.reference_c_name,
-            "meta_version": column_info.meta_version,
-            "index_version": column_info.meta_version,
-        }
-
-    @staticmethod
-    def _metric_payload(metric_info: MetricInfo) -> dict[str, Any]:
-        """构造顺序稳定的指标语义索引载荷。"""
-        return {
-            "name": metric_info.name,
-            "description": metric_info.description,
-            "relevant_columns": sorted(
-                metric_info.relevant_columns,
-                key=lambda item: (item["t_name"], item["c_name"]),
-            ),
-            "alias": sorted(dict.fromkeys(metric_info.alias)),
-            "meta_version": metric_info.meta_version,
-            "index_version": metric_info.meta_version,
-        }
-
-    @staticmethod
-    def _semantic_result(
-        delta: SemanticIndexDelta,
-        embedded_count: int,
-        target_version: int,
-    ) -> SemanticIndexSyncResult:
-        """汇总语义索引差量统计。"""
-        return SemanticIndexSyncResult(
-            created_count=len(delta.create),
-            updated_count=len(delta.update),
-            deleted_count=len(delta.delete_ids),
-            embedded_count=embedded_count,
-            unchanged_count=delta.unchanged_count,
-            target_version=target_version,
-            version_committed=False,
-        )
-
-    @staticmethod
-    def _embedding_revision() -> str:
-        """生成当前嵌入模型和预处理规则版本。"""
-        return (
-            f"openai-compatible:{cfg.embedding.model}:"
-            f"{cfg.elasticsearch.embedding_size}:{_SEMANTIC_PREPROCESS_VERSION}"
-        )
-
-    async def _embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """分批生成文本向量。"""
-        embeddings: list[list[float]] = []
-        for index in range(0, len(texts), self._embedding_batch_size):
-            batch = texts[index : index + self._embedding_batch_size]
-            embeddings.extend(await self._embedding_client.aembed_documents(batch))
-        return embeddings
-
     @staticmethod
     def _serialize_cursor(value: Any) -> dict[str, object]:
-        """将 Doris 类型化游标转换为 JSON 状态。"""
+        """将日期、小数及精确基础类型编码为带类型标记的 JSON 水位。"""
         if isinstance(value, datetime):
             return {"type": "datetime", "value": value.isoformat()}
         if isinstance(value, date):
             return {"type": "date", "value": value.isoformat()}
         if isinstance(value, Decimal):
             return {"type": "decimal", "value": str(value)}
-        if isinstance(value, bool):
-            return {"type": "bool", "value": value}
-        if isinstance(value, int):
-            return {"type": "int", "value": value}
-        if isinstance(value, float):
-            return {"type": "float", "value": value}
-        if isinstance(value, str):
-            return {"type": "str", "value": value}
+        if type(value) in (bool, int, float, str):
+            return {"type": type(value).__name__, "value": value}
         raise TypeError(f"不支持的取值索引游标类型: {type(value).__name__}")
 
     @staticmethod
     def _deserialize_cursor(payload: dict[str, Any]) -> Any:
-        """恢复 JSON 状态中的 Doris 类型化游标。"""
+        """按类型标记恢复水位，数字水位不接受布尔值。"""
         cursor_type = payload.get("type")
         value = payload.get("value")
         if cursor_type == "datetime" and isinstance(value, str):
@@ -764,13 +758,13 @@ class MetaIndexService:
             return date.fromisoformat(value)
         if cursor_type == "decimal" and isinstance(value, str):
             return Decimal(value)
-        if cursor_type == "bool" and isinstance(value, bool):
-            return value
-        if cursor_type == "int" and isinstance(value, int):
-            return value
-        if cursor_type == "float" and isinstance(value, (int, float)):
+        if cursor_type == "float" and (type(value) is int or type(value) is float):
             return float(value)
-        if cursor_type == "str" and isinstance(value, str):
+        if isinstance(cursor_type, str) and type(value) is {
+            "bool": bool,
+            "int": int,
+            "str": str,
+        }.get(cursor_type):
             return value
         raise ValueError("取值索引游标状态格式无效")
 

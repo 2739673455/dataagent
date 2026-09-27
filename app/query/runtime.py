@@ -53,7 +53,7 @@ class DatabaseQueryExecutionRuntime:
         query_clients: DorisQueryClientRegistry,
         admin_doris: DorisClientManager,
     ) -> None:
-        """绑定查询产物存储和静态执行配置。"""
+        """绑定认证、目录、角色查询客户端、产物存储和执行配置。"""
         self._auth = auth
         self._admin_doris = admin_doris
         self._meta = meta

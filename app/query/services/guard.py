@@ -101,28 +101,6 @@ class QueryGuardService:
         )
 
     @staticmethod
-    def _result(
-        normalized_sql: str | None,
-        issues: list[QueryValidationIssue],
-        *,
-        tables: list[QueryTableRef] | None = None,
-        columns: list[QueryColumnRef] | None = None,
-        output_columns: list[str] | None = None,
-        query_kind: QueryKind = "business",
-    ) -> QueryValidationResult:
-        """按问题首次出现的顺序去重并构造结果。"""
-        distinct_issues = list(dict.fromkeys(issues))
-        return QueryValidationResult(
-            valid=not distinct_issues,
-            normalized_sql=normalized_sql,
-            query_kind=query_kind,
-            tables=tables or [],
-            columns=columns or [],
-            output_columns=output_columns or [],
-            issues=distinct_issues,
-        )
-
-    @staticmethod
     def _parse_single_query(
         sql: str,
     ) -> tuple[Expr | None, list[QueryValidationIssue]]:
@@ -306,39 +284,6 @@ class QueryGuardService:
             issues,
         )
 
-    def _physical_sources(
-        self,
-        scope: Scope,
-        catalog: _Catalog,
-        issues: list[QueryValidationIssue] | None = None,
-    ) -> dict[str, QueryTableRef]:
-        """映射作用域别名到物理表；传入 issues 时报告显式 Catalog。"""
-        sources: dict[str, QueryTableRef] = {}
-        for alias, (_, source) in scope.selected_sources.items():
-            # CTE/派生表的 source 是 Scope；其内部物理表会在遍历对应作用域时处理。
-            if not isinstance(source, exp.Table):
-                continue
-            catalog_name = source.catalog
-            database = source.db or self._current_database
-            table_key = source.name.casefold()
-            table_name = (
-                catalog.table_names.get(table_key, source.name)
-                if database.casefold() == self._current_database.casefold()
-                else source.name
-            )
-            table_ref = QueryTableRef(database=database, name=table_name)
-            # 显式指定 Catalog 时记录校验问题。
-            if issues is not None and catalog_name:
-                issues.append(
-                    QueryValidationIssue(
-                        code="catalog_not_allowed",
-                        message=f"不允许访问外部 Catalog: {catalog_name}",
-                        table=table_ref.qualified_name,
-                    )
-                )
-            sources[alias.casefold()] = table_ref
-        return sources
-
     def _qualify(
         self,
         expression: Expr,
@@ -460,6 +405,39 @@ class QueryGuardService:
                 left_aliases.add(right_alias)
         return issues
 
+    def _physical_sources(
+        self,
+        scope: Scope,
+        catalog: _Catalog,
+        issues: list[QueryValidationIssue] | None = None,
+    ) -> dict[str, QueryTableRef]:
+        """映射作用域别名到物理表；传入 issues 时报告显式 Catalog。"""
+        sources: dict[str, QueryTableRef] = {}
+        for alias, (_, source) in scope.selected_sources.items():
+            # CTE/派生表的 source 是 Scope；其内部物理表会在遍历对应作用域时处理。
+            if not isinstance(source, exp.Table):
+                continue
+            catalog_name = source.catalog
+            database = source.db or self._current_database
+            table_key = source.name.casefold()
+            table_name = (
+                catalog.table_names.get(table_key, source.name)
+                if database.casefold() == self._current_database.casefold()
+                else source.name
+            )
+            table_ref = QueryTableRef(database=database, name=table_name)
+            # 显式指定 Catalog 时记录校验问题。
+            if issues is not None and catalog_name:
+                issues.append(
+                    QueryValidationIssue(
+                        code="catalog_not_allowed",
+                        message=f"不允许访问外部 Catalog: {catalog_name}",
+                        table=table_ref.qualified_name,
+                    )
+                )
+            sources[alias.casefold()] = table_ref
+        return sources
+
     @classmethod
     def _join_condition_links_sources(
         cls,
@@ -519,3 +497,25 @@ class QueryGuardService:
             source_side(comparison.this),
             source_side(comparison.expression),
         } == {"left", "right"}
+
+    @staticmethod
+    def _result(
+        normalized_sql: str | None,
+        issues: list[QueryValidationIssue],
+        *,
+        tables: list[QueryTableRef] | None = None,
+        columns: list[QueryColumnRef] | None = None,
+        output_columns: list[str] | None = None,
+        query_kind: QueryKind = "business",
+    ) -> QueryValidationResult:
+        """按问题首次出现的顺序去重并构造结果。"""
+        distinct_issues = list(dict.fromkeys(issues))
+        return QueryValidationResult(
+            valid=not distinct_issues,
+            normalized_sql=normalized_sql,
+            query_kind=query_kind,
+            tables=tables or [],
+            columns=columns or [],
+            output_columns=output_columns or [],
+            issues=distinct_issues,
+        )

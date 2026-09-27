@@ -47,34 +47,6 @@ router = APIRouter(tags=["meta"])
 MetadataPath = Annotated[MetadataName, Path()]
 
 
-def _format_resource_key(key: str | ColumnKey) -> str:
-    """将资源主键转换为响应文本。"""
-    return ".".join(key) if isinstance(key, tuple) else key
-
-
-def _to_import_changes[T: (str, tuple[str, str])](
-    changes: ResourceChanges[T],
-) -> schemas.ResourceImportChanges:
-    """转换元数据导入变更响应。"""
-    return schemas.ResourceImportChanges(
-        created_count=len(changes.created),
-        updated_count=len(changes.updated),
-        deleted_count=len(changes.deleted),
-        created_keys=[_format_resource_key(key) for key in changes.created],
-        updated_keys=[_format_resource_key(key) for key in changes.updated],
-        deleted_keys=[_format_resource_key(key) for key in changes.deleted],
-    )
-
-
-async def _load_yaml(file: UploadFile) -> MetaConfig:
-    """读取并校验上传的 YAML 元数据配置。"""
-    try:
-        content = await file.read()
-    finally:
-        await file.close()
-    return parse_metadata_yaml(content)
-
-
 @router.post(
     "/import",
     response_model=schemas.MetaImportResponse | TaskAcceptedResponse,
@@ -394,3 +366,31 @@ async def sync_metric_indexes(
         f"task_id={submission.task_id}, metrics={body.metrics}"
     )
     return TaskAcceptedResponse(task_id=submission.task_id)
+
+
+async def _load_yaml(file: UploadFile) -> MetaConfig:
+    """读取并校验上传的 YAML 元数据配置。"""
+    try:
+        content = await file.read()
+    finally:
+        await file.close()
+    return parse_metadata_yaml(content)
+
+
+def _to_import_changes[T: (str, tuple[str, str])](
+    changes: ResourceChanges[T],
+) -> schemas.ResourceImportChanges:
+    """转换元数据导入变更响应。"""
+    return schemas.ResourceImportChanges(
+        created_count=len(changes.created),
+        updated_count=len(changes.updated),
+        deleted_count=len(changes.deleted),
+        created_keys=[_format_resource_key(key) for key in changes.created],
+        updated_keys=[_format_resource_key(key) for key in changes.updated],
+        deleted_keys=[_format_resource_key(key) for key in changes.deleted],
+    )
+
+
+def _format_resource_key(key: str | ColumnKey) -> str:
+    """将资源主键转换为响应文本。"""
+    return ".".join(key) if isinstance(key, tuple) else key
