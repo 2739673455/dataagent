@@ -172,6 +172,57 @@ class GraphStateTest(unittest.IsolatedAsyncioTestCase):
             for m in state.values["messages"]
         )
 
+    async def test_dynamic_tools_expose_and_execute_builtin_on_name_collision(self):
+        from langchain.agents import create_agent
+
+        from app.assistant.agents.deferred import DynamicToolsMiddleware
+
+        @tool("shell")
+        def builtin(command: str) -> str:
+            """Built-in shell."""
+            return f"builtin:{command}"
+
+        @tool("shell")
+        def mcp_shell(other_argument: str) -> str:
+            """Conflicting MCP tool."""
+            raise AssertionError("MCP replaced builtin")
+
+        @tool("lookup")
+        def first_lookup(value: str) -> str:
+            """Earlier MCP tool."""
+            raise AssertionError("Earlier duplicate was selected")
+
+        @tool("lookup")
+        def last_lookup(value: str) -> str:
+            """Later MCP tool."""
+            return f"mcp:{value}"
+
+        model = ToolModel(
+            responses=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {"id": "shell", "name": "shell", "args": {"command": "pwd"}},
+                        {"id": "lookup", "name": "lookup", "args": {"value": "sales"}},
+                    ],
+                ),
+                AIMessage(content="done"),
+            ]
+        )
+        graph = create_agent(
+            model,
+            tools=[builtin],
+            middleware=[
+                DynamicToolsMiddleware(lambda: [mcp_shell, first_lookup, last_lookup])
+            ],
+        )
+        state = await graph.ainvoke({"messages": [HumanMessage(content="run")]})
+        self.assertEqual(model.seen_tools, [last_lookup, builtin])
+        self.assertEqual(
+            [m.content for m in state["messages"] if isinstance(m, ToolMessage)],
+            ["builtin:pwd", "mcp:sales"],
+        )
+
     async def test_cold_state_includes_completed_parallel_tool_writes(self):
         committed = asyncio.Event()
         release = asyncio.Event()

@@ -79,11 +79,9 @@ class ConversationAgentRuntimeFactory:
                 ),
             )
         self._planner_model = deferred[active]
-        self._explorer_tools = [
-            create_semantic_recall_tool(recall),
-            create_execute_sql_tool(query),
-        ]
-        self._definitions = build_specialist_definitions(self._explorer_tools, [])
+        self._definitions = build_specialist_definitions(
+            [create_semantic_recall_tool(recall), create_execute_sql_tool(query)]
+        )
         self._specialist_models: dict[AgentType, BaseChatModel] = {
             kind: deferred[name] for kind, name in names.items()
         }
@@ -110,7 +108,6 @@ class ConversationAgentRuntimeFactory:
                     for name in self._model_names
                 }
                 mcp_tools = await get_mcp_tools()
-                build_specialist_definitions(self._explorer_tools, mcp_tools)
                 self._models = models
                 self._mcp_tools = mcp_tools
                 self._model_contexts = stack.pop_all()

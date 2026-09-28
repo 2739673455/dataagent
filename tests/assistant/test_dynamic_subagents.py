@@ -446,25 +446,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
                     session_id="base",
                 )
 
-    def test_specialist_definitions_require_explorer_data_tools(self) -> None:
-        with self.assertRaisesRegex(ValueError, "Explorer 缺少必需工具"):
-            build_specialist_definitions([recall_context], [])
-
-    def test_specialist_definitions_reject_reserved_mcp_tool_names(self) -> None:
-        @tool("shell")
-        def conflicting_mcp_tool(command: str) -> str:
-            """模拟与 Shell 工具冲突的 MCP 工具。"""
-            return command
-
-        with self.assertRaisesRegex(ValueError, "冲突"):
-            build_specialist_definitions(
-                [
-                    recall_context,
-                    execute_sql,
-                ],
-                [conflicting_mcp_tool],
-            )
-
     def test_specialist_agents_expose_shell_and_file_tools(self) -> None:
         from deepagents import (
             GeneralPurposeSubagentProfile,
@@ -481,7 +462,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
                 general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)
             ),
         )
-        definitions = build_specialist_definitions([recall_context, execute_sql], [])
+        definitions = build_specialist_definitions([recall_context, execute_sql])
         required_tools = {
             "read_file",
             "write_file",
