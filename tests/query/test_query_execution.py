@@ -14,7 +14,7 @@ from langchain.tools import ToolRuntime
 from app.assistant.agents.explorer.tools.execute_sql import _execute_sql
 from app.identity import errors as auth_error
 from app.identity.errors import QueryPrincipalNotConfiguredError
-from app.identity.services.query_principal import QueryPrincipalService
+from app.identity.services.identity import IdentityService
 from app.query.errors import (
     QueryExecutionTimeoutError,
     QueryRejectedError,
@@ -70,10 +70,7 @@ class QueryPrincipalTest(unittest.IsolatedAsyncioTestCase):
                 )
                 cipher = MagicMock()
                 with self.assertRaises(expected):
-                    await QueryPrincipalService(
-                        repo,
-                        cipher,
-                    ).resolve(7)
+                    await IdentityService(repo).get_query_principal(7, cipher)
 
                 cipher.decrypt.assert_not_called()
 
@@ -81,9 +78,7 @@ class QueryPrincipalTest(unittest.IsolatedAsyncioTestCase):
 class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.key = key()
-        self.principal = SimpleNamespace(
-            role_name="reader", authorization_fingerprint="a" * 64
-        )
+        self.principal = SimpleNamespace(role_name="reader")
         self.service = MagicMock(execute=AsyncMock(return_value=result()))
         self.runtime = MagicMock(
             resolve_principal=AsyncMock(return_value=self.principal),
@@ -326,7 +321,6 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         identity = SimpleNamespace(
             role_name="reader",
-            authorization_fingerprint="same",
             query_user="query_reader",
             encrypted_password="encrypted",
             workload_group="readers",
@@ -336,7 +330,6 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 return_value=SimpleNamespace(id=7, doris_role_name="reader")
             ),
             get_query_identity=AsyncMock(return_value=identity),
-            lock_query_identity=AsyncMock(return_value=identity),
         )
         clients = MagicMock(get_or_create=AsyncMock(return_value=MagicMock()))
         store = MagicMock(write_artifact=AsyncMock())

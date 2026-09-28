@@ -21,14 +21,6 @@ class UserNotFoundError(ProblemError):
     status = HTTPStatus.NOT_FOUND
 
 
-class RoleNotFoundError(ProblemError):
-    """身份库中未找到所选角色对应的查询身份。"""
-
-    type = "role-not-found"
-    title = "角色不存在"
-    status = HTTPStatus.NOT_FOUND
-
-
 class InvalidDorisPermissionError(ProblemError):
     """Doris 权限结果无法解析，或不符合业务查询身份约束。"""
 

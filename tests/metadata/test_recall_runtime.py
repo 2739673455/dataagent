@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
-from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
+from app.identity.models.authorization import AssetAccessPolicy, AssetIdentity
 from app.metadata.models.catalog import ColumnInfo, TableInfo
 from app.metadata.models.search import SemanticResourceRecallRequest
 from app.shared.config.app_config import cfg
@@ -65,7 +65,7 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_search_closes_auth_and_catalog_sessions_before_external_calls(self):
-        async def load_policy(user_id):
+        async def load_policy(user_id, doris_repo, *, data_source, database):
             self.assertEqual(self.open_sessions, {"auth"})
             return self.policy
 
@@ -93,7 +93,7 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(self.runtime.embedding, "get_client", return_value=embedding),
             patch(
-                "app.identity.providers.AuthorizationService",
+                "app.identity.providers.IdentityService",
                 return_value=MagicMock(
                     get_asset_policy=AsyncMock(side_effect=load_policy)
                 ),

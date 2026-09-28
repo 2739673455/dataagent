@@ -8,7 +8,7 @@ from app.identity.models.doris import DorisQueryIdentity
 
 
 class IdentityPGRepo:
-    """读取用户及查询身份，记录观察到的授权指纹。"""
+    """读取用户及 Doris 查询身份。"""
 
     def __init__(self, session: AsyncSession) -> None:
         """绑定调用方管理的数据库会话，事务由调用方提交。"""
@@ -34,16 +34,3 @@ class IdentityPGRepo:
         return await self._session.scalar(
             select(DorisQueryIdentity).where(DorisQueryIdentity.role_name == role_name)
         )
-
-    async def lock_query_identity(self, role_name: str) -> DorisQueryIdentity | None:
-        """锁定角色查询身份并刷新已加载的对象，锁持续到调用方事务结束。"""
-        return await self._session.scalar(
-            select(DorisQueryIdentity)
-            .where(DorisQueryIdentity.role_name == role_name)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-
-    async def flush(self) -> None:
-        """将变更刷新到数据库事务，由调用方提交。"""
-        await self._session.flush()

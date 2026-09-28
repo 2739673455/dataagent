@@ -1,7 +1,6 @@
 """读取 Doris 的实际权限并初始化预定义角色。"""
 
 import re
-from typing import Any
 
 from sqlalchemy import text
 
@@ -27,24 +26,16 @@ class DorisRoleRepository:
         catalog: str,
         database: str,
     ) -> DorisAuthorizationSnapshot:
-        """读取查询账号有效权限及角色、用户行策略，解析为业务库权限快照。"""
-        user = self.quote_user(query_user)
-        role = self.quote_identifier(role_name)
+        """读取查询账号有效权限，解析为业务库权限快照。"""
+        user = self._quote_user(query_user)
         async with self._provider.connection() as connection:
             await connection.exec_driver_sql("SET show_user_default_role = false")
             result = await connection.execute(text(f"SHOW GRANTS FOR {user}@'%'"))
             rows = result.mappings().all()
             if len(rows) != 1:
                 raise ValueError("Doris 查询账号授权结果必须唯一")
-            policies: list[dict[str, Any]] = []
-            for subject in (f"ROLE {role}", f"{user}@'%'"):
-                result = await connection.execute(
-                    text(f"SHOW ROW POLICY FOR {subject}")
-                )
-                policies.extend(dict(row) for row in result.mappings().all())
             return parse_authorization(
                 dict(rows[0]),
-                policies,
                 role_name=role_name,
                 query_user=query_user,
                 data_source=data_source,
@@ -62,10 +53,10 @@ class DorisRoleRepository:
         database: str,
     ) -> None:
         """初始化角色和查询账号，授予业务库 SELECT 及工作组使用权限。"""
-        role = self.quote_identifier(role_name)
-        user = self.quote_user(query_user)
-        group = self.quote_identifier(workload_group)
-        database_sql = self.quote_identifier(database)
+        role = self._quote_identifier(role_name)
+        user = self._quote_user(query_user)
+        group = self._quote_identifier(workload_group)
+        database_sql = self._quote_identifier(database)
         if re.fullmatch(r"[A-Za-z0-9_-]+", password) is None:
             raise ValueError("生成的 Doris 密码格式无效")
         async with self._provider.connection() as connection:
@@ -87,14 +78,14 @@ class DorisRoleRepository:
             await connection.exec_driver_sql(f"GRANT {role} TO {user}@'%'")
 
     @staticmethod
-    def quote_identifier(identifier: str) -> str:
+    def _quote_identifier(identifier: str) -> str:
         """校验并引用 Doris 标识符。"""
         if re.fullmatch(DORIS_IDENTIFIER_PATTERN, identifier) is None:
             raise ValueError("Doris 标识符无效")
         return f"`{identifier}`"
 
     @staticmethod
-    def quote_user(user_name: str) -> str:
+    def _quote_user(user_name: str) -> str:
         """校验并引用 Doris 用户名。"""
         if re.fullmatch(DORIS_IDENTIFIER_PATTERN, user_name) is None:
             raise ValueError("Doris 用户名格式无效")

@@ -7,7 +7,7 @@ from typing import Literal, TypeVar
 
 from loguru import logger
 
-from app.identity.services.authorization import AssetAccessPolicy
+from app.identity.models.authorization import AssetAccessPolicy
 from app.metadata.models.catalog import (
     ColumnInfo,
     ColumnKey,

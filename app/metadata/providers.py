@@ -2,7 +2,7 @@
 
 from elasticsearch import AsyncElasticsearch
 
-from app.identity.services.authorization import AssetAccessPolicy
+from app.identity.models.authorization import AssetAccessPolicy
 from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
 from app.metadata.repositories.postgres import MetaPGRepo

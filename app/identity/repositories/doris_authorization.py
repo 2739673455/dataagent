@@ -1,9 +1,7 @@
 """解析 Doris 4.x SHOW GRANTS，生成业务数据库的有效权限快照。"""
 
-import hashlib
-import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 
 from app.identity import errors as auth_error
 from app.identity.models.doris import DorisAuthorizationSnapshot, DorisSelectGrant
@@ -11,7 +9,6 @@ from app.identity.models.doris import DorisAuthorizationSnapshot, DorisSelectGra
 
 def parse_authorization(
     row: Mapping[str, object],
-    policies: Sequence[Mapping[str, object]],
     *,
     role_name: str,
     query_user: str,
@@ -37,14 +34,6 @@ def parse_authorization(
     grants: set[DorisSelectGrant] = set()
     if "select_priv" in global_privileges:
         grants.add(DorisSelectGrant(role_name, data_source, database))
-    normalized: dict[str, object] = {
-        "user": query_user,
-        "role": role_name,
-        "source": data_source,
-        "catalog": catalog,
-        "database": database,
-        "global": global_privileges,
-    }
     for field, arity in (
         ("CatalogPrivs", 1),
         ("DatabasePrivs", 2),
@@ -52,7 +41,6 @@ def parse_authorization(
         ("ColPrivs", 3),
     ):
         raw = _text(row, field)
-        entries: list[tuple[str, tuple[str, ...]]] = []
         if raw not in {"", "NULL"}:
             for entry in raw.split("; "):
                 target, separator, value = entry.partition(": ")
@@ -84,7 +72,6 @@ def parse_authorization(
                         )
                 else:
                     values = _privileges(value)
-                entries.append((target, values))
                 if parts[0] != catalog:
                     continue
                 if arity >= 2 and parts[1] != database:
@@ -105,31 +92,6 @@ def parse_authorization(
                             parts[2] if arity == 3 else None,
                         )
                     )
-        normalized[field] = sorted(entries)
-    # 行策略只参与权限指纹；实际行过滤由 Doris 查询账号执行。
-    # 按库表、谓词和组合类型计算指纹，排序消除 SHOW 返回顺序的影响。
-    normalized["policies"] = sorted(
-        {
-            json.dumps(
-                {
-                    key: _text(policy, key)
-                    for key in (
-                        "CatalogName",
-                        "DbName",
-                        "TableName",
-                        "FilterType",
-                        "WherePredicate",
-                    )
-                },
-                sort_keys=True,
-                ensure_ascii=False,
-            )
-            for policy in policies
-        }
-    )
-    fingerprint = hashlib.sha256(
-        json.dumps(normalized, sort_keys=True, ensure_ascii=False).encode()
-    ).hexdigest()
     return DorisAuthorizationSnapshot(
         grants=tuple(
             sorted(
@@ -141,7 +103,6 @@ def parse_authorization(
                 ),
             )
         ),
-        fingerprint=fingerprint,
     )
 
 

@@ -1,17 +1,19 @@
-"""Doris 实时权限解析、变化版本和读取边界。"""
+"""Doris 实时权限解析和读取边界。"""
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.identity import errors
+from app.identity.models.authorization import AssetIdentity
 from app.identity.models.doris import (
     DorisQueryIdentity,
     DorisSelectGrant,
 )
 from app.identity.repositories.doris_authorization import parse_authorization
-from app.identity.services.authorization import AssetIdentity, AuthorizationService
+from app.identity.services.identity import IdentityService
 
 
 def raw(**updates):
@@ -27,10 +29,9 @@ def raw(**updates):
     }
 
 
-def parse(row=None, policies=()):
+def parse(row=None):
     return parse_authorization(
         raw() if row is None else row,
-        policies,
         role_name="reader",
         query_user="query_reader",
         data_source="doris",
@@ -51,10 +52,11 @@ def test_column_table_and_database_grants_preserve_scope():
         ("payments", "amount"),
         ("payments", "id"),
     }
-    identity = DorisQueryIdentity(
-        role_name="reader", authorization_fingerprint="a" * 64
+    _, _, doris, auth = setup_services()
+    doris.read_authorization.return_value = snapshot
+    policy = asyncio.run(
+        auth.get_asset_policy(7, doris, data_source="doris", database="ecommerce")
     )
-    policy = AuthorizationService.policy_from_snapshot(7, identity, snapshot)
     assert policy.allows(AssetIdentity("doris", "ecommerce", "orders", "any"))
     assert policy.is_visible(AssetIdentity("doris", "ecommerce", "payments"))
     assert not policy.allows(AssetIdentity("doris", "ecommerce", "payments"))
@@ -89,39 +91,6 @@ def test_missing_field_is_not_treated_as_empty_grants():
         parse(row)
 
 
-def test_fingerprint_ignores_order_but_detects_column_and_row_policy_changes():
-    a = raw(
-        TablePrivs="internal.ecommerce.b: Select_priv, Show_view_priv; internal.ecommerce.a: Select_priv",
-        ColPrivs="internal.ecommerce.c: Select_priv[y, x]",
-    )
-    b = raw(
-        TablePrivs="internal.ecommerce.a: Select_priv; internal.ecommerce.b: Show_view_priv, Select_priv",
-        ColPrivs="internal.ecommerce.c: Select_priv[x, y]",
-    )
-    policies = [
-        {
-            "PolicyName": "p",
-            "CatalogName": "internal",
-            "DbName": "ecommerce",
-            "TableName": "orders",
-            "WherePredicate": "region = 1",
-            "FilterType": "RESTRICTIVE",
-        }
-    ]
-    assert (
-        parse(a, policies).fingerprint == parse(b, list(reversed(policies))).fingerprint
-    )
-    assert (
-        parse(a, policies).fingerprint
-        != parse(a, [{**policies[0], "WherePredicate": "region = 2"}]).fingerprint
-    )
-    assert (
-        parse(a, policies).fingerprint
-        == parse(a, [{**policies[0], "Id": 99, "PolicyName": "recreated"}]).fingerprint
-    )
-    assert parse(a).fingerprint != parse(raw()).fingerprint
-
-
 @pytest.mark.parametrize(
     "updates",
     [{"GlobalPrivs": "Select_priv"}, {"CatalogPrivs": "internal: Select_priv"}],
@@ -132,72 +101,69 @@ def test_broad_select_is_limited_to_configured_database(updates):
 
 
 def setup_services():
-    identity = DorisQueryIdentity(
-        role_name="reader", query_user="query_reader", authorization_fingerprint=None
-    )
+    identity = DorisQueryIdentity(role_name="reader", query_user="query_reader")
 
     repo = MagicMock(
-        lock_query_identity=AsyncMock(return_value=identity),
-        flush=AsyncMock(),
+        get_user_by_id=AsyncMock(
+            return_value=SimpleNamespace(id=7, doris_role_name="reader")
+        ),
+        get_query_identity=AsyncMock(return_value=identity),
     )
     doris = MagicMock(
         read_authorization=AsyncMock(return_value=parse()),
     )
-    auth = AuthorizationService(repo, doris, data_source="doris", database="ecommerce")
+    auth = IdentityService(repo)
     return identity, repo, doris, auth
 
 
-def test_restored_permissions_restore_fingerprint_and_failures_never_use_old_grants():
+def test_permissions_are_read_each_time_and_failures_propagate():
     async def run():
-        identity, repo, doris, auth = setup_services()
-        initial = identity.authorization_fingerprint
-        first = await auth.get_role_asset_policy(7, "reader")
-        assert first.authorization_fingerprint != initial
-        again = await auth.get_role_asset_policy(7, "reader")
-        assert first == again
+        _, _, doris, auth = setup_services()
+        assert not (
+            await auth.get_asset_policy(
+                7, doris, data_source="doris", database="ecommerce"
+            )
+        ).grants
         doris.read_authorization.return_value = parse(
             raw(ColPrivs="internal.ecommerce.orders: Select_priv[amount]")
         )
-        changed = await auth.get_role_asset_policy(7, "reader")
-        assert changed.authorization_fingerprint != first.authorization_fingerprint
+        changed = await auth.get_asset_policy(
+            7, doris, data_source="doris", database="ecommerce"
+        )
         assert changed.allows(AssetIdentity("doris", "ecommerce", "orders", "amount"))
         doris.read_authorization.return_value = parse()
-        revoked = await auth.get_role_asset_policy(7, "reader")
-        assert not revoked.grants
-        assert revoked.authorization_fingerprint == first.authorization_fingerprint
-        assert revoked.authorization_fingerprint != changed.authorization_fingerprint
-        fingerprint = identity.authorization_fingerprint
+        assert not (
+            await auth.get_asset_policy(
+                7, doris, data_source="doris", database="ecommerce"
+            )
+        ).grants
         doris.read_authorization.side_effect = RuntimeError("unavailable")
         with pytest.raises(RuntimeError):
-            await auth.get_role_asset_policy(7, "reader")
-        assert identity.authorization_fingerprint == fingerprint
-        assert repo.flush.await_count == 3
+            await auth.get_asset_policy(
+                7, doris, data_source="doris", database="ecommerce"
+            )
+        assert doris.read_authorization.await_count == 4
 
     asyncio.run(run())
 
 
-def test_read_occurs_after_identity_lock_and_unknown_identity_never_reads_doris():
+def test_missing_user_or_identity_stops_before_reading_doris():
     async def run():
         _, repo, doris, auth = setup_services()
-        events = []
-        identity = repo.lock_query_identity.return_value
-
-        async def lock(role):
-            events.append("lock")
-            return identity
-
-        async def read(**kwargs):
-            events.append("read")
-            return parse()
-
-        repo.lock_query_identity.side_effect = lock
-        doris.read_authorization.side_effect = read
-        await auth.observe_role("reader")
-        assert events == ["lock", "read"]
-        repo.lock_query_identity.side_effect = None
-        repo.lock_query_identity.return_value = None
-        with pytest.raises(errors.RoleNotFoundError):
-            await auth.observe_role("reader")
-        assert events == ["lock", "read"]
+        repo.get_query_identity.return_value = None
+        with pytest.raises(errors.QueryPrincipalNotConfiguredError):
+            await auth.get_asset_policy(
+                7, doris, data_source="doris", database="ecommerce"
+            )
+        repo.get_query_identity.assert_awaited_once_with("reader")
+        doris.read_authorization.assert_not_awaited()
+        repo.get_user_by_id.return_value = None
+        repo.get_query_identity.reset_mock()
+        with pytest.raises(errors.UserNotFoundError):
+            await auth.get_asset_policy(
+                7, doris, data_source="doris", database="ecommerce"
+            )
+        repo.get_query_identity.assert_not_awaited()
+        doris.read_authorization.assert_not_awaited()
 
     asyncio.run(run())

@@ -1,6 +1,6 @@
 """Doris 查询身份与实时授权模型。"""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import String, Text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -9,7 +9,7 @@ from app.shared.database.base import AuthBase
 
 
 class DorisQueryIdentity(AuthBase):
-    """Doris 角色关联的查询账号、凭据和权限指纹。"""
+    """Doris 角色关联的查询账号、凭据和工作组。"""
 
     __tablename__ = "doris_query_identities"
 
@@ -18,7 +18,6 @@ class DorisQueryIdentity(AuthBase):
     query_user: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     encrypted_password: Mapped[str] = mapped_column(Text, nullable=False)
     workload_group: Mapped[str] = mapped_column(String(128), nullable=False)
-    authorization_fingerprint: Mapped[str | None] = mapped_column(String(64))
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +33,15 @@ class DorisSelectGrant:
 
 @dataclass(frozen=True, slots=True)
 class DorisAuthorizationSnapshot:
-    """同次权限读取的资产授权和包含行策略变化的内容指纹。"""
+    """同次权限读取的业务库 SELECT 授权。"""
 
     grants: tuple[DorisSelectGrant, ...]
-    fingerprint: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedQueryPrincipal:
+    """服务端为一次查询解析出的 Doris 身份。"""
+
+    role_name: str
+    query_user: str
+    password: str = field(repr=False)

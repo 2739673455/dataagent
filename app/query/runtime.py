@@ -1,11 +1,9 @@
 """查询各阶段的数据库运行环境；每个阶段使用独立短会话。"""
 
+from app.identity.models.doris import ResolvedQueryPrincipal
 from app.identity.repositories.identity import IdentityPGRepo
 from app.identity.services.credential import DorisCredentialCipher
-from app.identity.services.query_principal import (
-    QueryPrincipalService,
-    ResolvedQueryPrincipal,
-)
+from app.identity.services.identity import IdentityService
 from app.query.models.execution import (
     QueryExecutionOptions,
 )
@@ -51,10 +49,9 @@ class DatabaseQueryExecutionRuntime:
         """在单个身份数据库会话中解析查询身份。"""
         async with self._auth.session() as session, session.begin():
             repo = IdentityPGRepo(session)
-            return await QueryPrincipalService(
-                repo,
-                self._credential_cipher,
-            ).resolve(user_id)
+            return await IdentityService(repo).get_query_principal(
+                user_id, self._credential_cipher
+            )
 
     async def validate(
         self,
