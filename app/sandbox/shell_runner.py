@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import posixpath
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
@@ -289,10 +290,48 @@ class DockerShellJobRunner:
         command: str,
         started_callback: Callable[[], None] | None = None,
     ) -> SandboxShellJobExecution:
-        """在线程中运行 Shell Job，并让监控独立于工具等待。"""
-        return await self._backend._run_async(
-            lambda: self.run(job_id, command, started_callback)
-        )
+        """等待命令结束；调用取消时终止进程组并等待执行线程退出。"""
+        cancel_event = threading.Event()
+        started = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def notify_started() -> None:
+            loop.call_soon_threadsafe(started.set)
+            if started_callback is not None:
+                started_callback()
+
+        def run() -> SandboxShellJobExecution:
+            self._backend._operation_local.cancel_event = cancel_event
+            try:
+                return self.run(job_id, command, notify_started)
+            finally:
+                del self._backend._operation_local.cancel_event
+
+        task = asyncio.create_task(asyncio.to_thread(run))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancel_event.set()
+
+            async def stop() -> None:
+                ready = asyncio.create_task(started.wait())
+                try:
+                    await asyncio.wait(
+                        {ready, task}, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    if not task.done():
+                        await self.acancel(job_id)
+                    await task
+                finally:
+                    ready.cancel()
+                    await asyncio.gather(ready, return_exceptions=True)
+
+            cleanup = asyncio.create_task(stop())
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                await cleanup
+            raise
 
     def cancel(self, job_id: str) -> SandboxShellJobCancellation:
         """先 TERM 后 KILL 终止 Shell Job 的整个进程组。"""

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Literal, Self
+from typing import TYPE_CHECKING, Annotated, Literal
 from uuid import UUID
 
 from langchain_core.messages import BaseMessage
@@ -13,15 +13,11 @@ from langchain_core.runnables import RunnableConfig
 from pydantic import (
     BaseModel,
     ConfigDict,
-    Field,
     StringConstraints,
-    field_validator,
-    model_validator,
 )
 
 from app.sandbox.paths import (
     conversation_workspace_path,
-    normalize_sandbox_path,
 )
 from app.shared.contracts.analysis import IDENTIFIER_PATTERN, AgentType
 
@@ -29,7 +25,6 @@ if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
 
     from app.assistant.execution.session_service import AgentSessionService
-    from app.assistant.execution.shell_jobs import ShellJobRuntime
 
 Identifier = Annotated[
     str,
@@ -95,7 +90,6 @@ class PlannerTurnContext:
 type SubagentRunStatus = Literal[
     "running",
     "completed",
-    "needs_repair",
     "failed",
     "cancelled",
 ]
@@ -172,7 +166,6 @@ class ConversationAgentRuntime:
 
     planner: CompiledStateGraph
     session_service: AgentSessionService
-    shell_jobs: ShellJobRuntime
 
 
 class StrictProtocolModel(BaseModel):
@@ -216,92 +209,19 @@ class DeleteSessionRequest(StrictProtocolModel):
     session_id: Identifier
 
 
-class ArtifactReference(StrictProtocolModel):
-    """沙箱内可验证产物的引用。"""
-
-    path: Annotated[
-        str,
-        StringConstraints(strip_whitespace=True, min_length=1, max_length=1024),
-    ]
-    media_type: (
-        Annotated[
-            str,
-            StringConstraints(strip_whitespace=True, min_length=1, max_length=255),
-        ]
-        | None
-    ) = None
-    description: (
-        Annotated[
-            str,
-            StringConstraints(strip_whitespace=True, min_length=1, max_length=2000),
-        ]
-        | None
-    ) = None
-
-    @field_validator("path")
-    @classmethod
-    def validate_sandbox_path(cls, value: str) -> str:
-        """接受按当前 Session 解析的相对路径或容器绝对路径。"""
-        return normalize_sandbox_path(value)
-
-
-class RepairRequest(StrictProtocolModel):
-    """下游 Session 向 Planner 报告的上游修补需求。"""
-
-    target_agent_type: AgentType
-    target_session_id: Identifier
-    reason: NonEmptyText
-    expected_result: NonEmptyText
-
-
-class AgentResult(StrictProtocolModel):
-    """专业 Agent 与委派工具共用的结构化结果。"""
-
-    status: Literal["completed", "needs_repair", "failed"]
-    content: NonEmptyText
-    artifacts: Annotated[list[ArtifactReference], Field(max_length=50)] = Field(
-        default_factory=list
-    )
-    warnings: Annotated[list[NonEmptyText], Field(max_length=100)] = Field(
-        default_factory=list,
-        description="不影响正文结论的非阻断问题，包括被过滤的无效产物引用",
-    )
-    repair_requests: Annotated[list[RepairRequest], Field(max_length=50)] = Field(
-        default_factory=list
-    )
-    failure_reasons: Annotated[list[NonEmptyText], Field(max_length=50)] = Field(
-        default_factory=list
-    )
-
-    @model_validator(mode="after")
-    def validate_status_payload(self) -> Self:
-        """校验状态与结果载荷的一致性。"""
-        if self.status == "needs_repair" and not self.repair_requests:
-            raise ValueError("needs_repair 状态必须包含至少一个修补请求")
-        if self.status != "needs_repair" and self.repair_requests:
-            raise ValueError("修补请求仅在 needs_repair 状态下有效")
-        if self.status == "failed" and not self.failure_reasons:
-            raise ValueError("failed 状态必须包含至少一个失败原因 (failure_reasons)")
-        if self.status != "failed" and self.failure_reasons:
-            raise ValueError("失败原因仅在 failed 状态下有效")
-        return self
-
-
-class SpecialistResult(AgentResult):
-    """所有专业 Agent 的结构化输出。"""
-
-
 class DelegationCheckpointRecord(StrictProtocolModel):
-    """持久化在 Specialist Checkpoint 中的一次委派状态。"""
+    """一次委派的运行状态与最终文本。"""
 
     delegation_id: NonEmptyText
     status: SubagentRunStatus
-    result: SpecialistResult | None = None
+    result: str | None = None
 
 
-class DelegationResult(AgentResult):
-    """delegation 返回给 Planner 的稳定协议。"""
+class DelegationResult(StrictProtocolModel):
+    """程序记录的委派状态和文本结果。"""
 
+    status: Literal["completed", "failed"]
+    content: str
     analysis_id: Identifier
     agent_type: AgentType
     session_id: Identifier
@@ -335,12 +255,10 @@ class SessionSummary(StrictProtocolModel):
     status: Literal[
         "active",
         "completed",
-        "needs_repair",
         "failed",
         "interrupted",
     ]
     summary: NonEmptyText | None = None
-    artifact_count: int = Field(default=0, ge=0)
     updated_at: datetime | None = None
 
 

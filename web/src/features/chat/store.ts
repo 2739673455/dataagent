@@ -445,7 +445,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     set((state) =>
       updateSubagentRun(state, conversationId, event, (current) => {
         const thinkingStatus =
-          event.status === "completed" || event.status === "needs_repair"
+          event.status === "completed"
             ? "complete"
             : event.status === "running"
               ? null

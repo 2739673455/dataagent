@@ -2,15 +2,12 @@
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Annotated, NotRequired
+from typing import Annotated
 
 from deepagents import create_deep_agent
 from deepagents.graph import DeepAgentState
-from langchain.agents.middleware.types import OmitFromInput
-from langchain.agents.structured_output import ProviderStrategy, ToolStrategy
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
-from langgraph.channels import EphemeralValue
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
@@ -22,8 +19,6 @@ from app.assistant.agents.middleware.user_message_context import (
     UserMessageContextMiddleware,
 )
 from app.assistant.agents.tools import create_shell_tools, create_view_image_tools
-from app.assistant.execution.shell_jobs import ShellJobRuntime
-from app.assistant.execution.types import SpecialistResult
 from app.sandbox.backend import DockerSandboxBackend
 
 
@@ -35,24 +30,9 @@ def _merge_delegation_records(
     return {**current, **updates}
 
 
-def _specialist_response_format(
-    model: BaseChatModel,
-) -> ProviderStrategy[SpecialistResult] | ToolStrategy[SpecialistResult]:
-    """按模型能力选择 Specialist 结构化输出策略。"""
-    if model.profile and model.profile.get("structured_output"):
-        # 原生 JSON Schema 能让 Provider 在生成时约束最终跨 Agent 结果。
-        return ProviderStrategy(SpecialistResult, strict=True)
-    return ToolStrategy(SpecialistResult)
-
-
 class SpecialistAgentState(DeepAgentState):
     """增加显式 delegation 状态的专业 Agent Checkpoint。"""
 
-    # 结构化响应只属于当前 delegation。若跨运行持久化，Agent 路由会把旧值
-    # 误判为本轮已经完成，并将旧结果再次返回。
-    structured_response: NotRequired[
-        Annotated[SpecialistResult, EphemeralValue, OmitFromInput]
-    ]
     delegation_records: Annotated[
         dict[str, object],
         _merge_delegation_records,
@@ -68,7 +48,6 @@ def create_specialist_agent(
     tools: Sequence[BaseTool],
     backend: DockerSandboxBackend,
     checkpointer: BaseCheckpointSaver,
-    shell_jobs: ShellJobRuntime,
     skills: Sequence[str],
 ) -> CompiledStateGraph:
     """编译共享文件、附件和 Shell 生命周期的专业 Agent。"""
@@ -82,7 +61,7 @@ def create_specialist_agent(
         tools=[
             *tools,
             *create_view_image_tools(model),
-            *create_shell_tools(shell_jobs),
+            *create_shell_tools(backend.shell_jobs),
         ],
         system_prompt=system_prompt,
         middleware=[
@@ -90,14 +69,12 @@ def create_specialist_agent(
             UserMessageContextMiddleware(
                 resolved_backend,
                 backend.conversation_dir,
-                shell_jobs,
             ),
             MessageTimestampMiddleware(),
         ],
         backend=resolved_backend,
         skills=list(skills),
         subagents=[],
-        response_format=_specialist_response_format(model),
         state_schema=SpecialistAgentState,
         checkpointer=checkpointer,
         name=name,

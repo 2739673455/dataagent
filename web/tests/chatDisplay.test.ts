@@ -145,9 +145,8 @@ describe("chat message display and turn grouping", () => {
     ).toEqual({
       status: "failed",
       content: "专家智能体会话执行失败",
-      failureReasons: ["ConnectError: connection reset"],
     });
-    expect(parseDelegationResult("plain text")).toBeNull();
+    expect(parseDelegationResult("plain text")).toEqual({ status: null, content: "plain text" });
   });
 
   test("keeps an interrupted delegation interrupted after activity history loads", () => {

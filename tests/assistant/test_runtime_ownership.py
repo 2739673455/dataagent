@@ -9,7 +9,7 @@ from app.assistant.execution.manager import AgentManager
 
 
 def _runtime():
-    return MagicMock(shell_jobs=MagicMock(cleanup=AsyncMock()))
+    return MagicMock()
 
 
 class RuntimeOwnershipTest(unittest.IsolatedAsyncioTestCase):
@@ -30,12 +30,12 @@ class RuntimeOwnershipTest(unittest.IsolatedAsyncioTestCase):
         async with manager.use_runtime(1, first_id) as borrowed:
             self.assertIs(borrowed, first)
             async with manager.use_runtime(1, second_id):
-                first.shell_jobs.cleanup.assert_not_awaited()
+                first.session_service.clear.assert_not_called()
             async with manager.use_runtime(1, first_id) as reused:
                 self.assertIs(reused, first)
         async with manager.use_runtime(1, uuid4()):
-            first.shell_jobs.cleanup.assert_awaited_once()
-            second.shell_jobs.cleanup.assert_awaited_once()
+            first.session_service.clear.assert_called_once()
+            second.session_service.clear.assert_called_once()
 
     async def test_cancelled_waiter_does_not_cancel_shared_build(self):
         entered, release = asyncio.Event(), asyncio.Event()
@@ -90,7 +90,7 @@ class RuntimeOwnershipTest(unittest.IsolatedAsyncioTestCase):
             await manager.delete_agent_under_lifecycle_lock(1, conversation_id)
             with self.assertRaisesRegex(RuntimeError, "构建已失效"):
                 await waiting
-        runtime.shell_jobs.cleanup.assert_awaited_once()
+        runtime.session_service.clear.assert_called_once()
         self.assertEqual(manager._conversation_runtimes, {})
         self.assertEqual(manager._runtime_users, {})
         with self.assertRaisesRegex(RuntimeError, "已被删除"):

@@ -60,8 +60,8 @@ def create_delegation_tool(service: AgentSessionService) -> BaseTool:
             str,
             "交给专业 Agent 的完整目标、输入产物路径和约束",
         ],
-    ) -> dict[str, object]:
-        """创建或恢复专业 Agent Session 并返回可验证的结构化结果。"""
+    ) -> str | dict[str, object]:
+        """创建或续接专业 Agent Session，返回其文本回答和文件交付指令。"""
         try:
             request = DelegationRequest(
                 analysis_id=analysis_id,
@@ -127,6 +127,6 @@ def create_delegation_tool(service: AgentSessionService) -> BaseTool:
                 delegation_id,
                 result,
             )
-        return result.model_dump(mode="json")
+        return result.content
 
     return delegation

@@ -117,7 +117,6 @@ class AgentManager:
                 evicted_runtimes.append(runtime)
         for evicted in evicted_runtimes:
             evicted.session_service.clear()
-            await evicted.shell_jobs.cleanup()
         if discarded:
             raise RuntimeError("运行时构建已失效")
         return runtime
@@ -237,7 +236,6 @@ class AgentManager:
             runtime = self._conversation_runtimes.pop(conversation_key, None)
         if runtime is not None:
             runtime.session_service.clear()
-            await runtime.shell_jobs.cleanup()
         # 先持久化墓碑再删除 Checkpoint，避免其他进程在删除窗口重建会话状态。
         await self._tombstones.save(user_id, conversation_id)
         await self._persistence_manager.delete_thread(
@@ -282,9 +280,5 @@ class AgentManager:
             await asyncio.gather(*build_tasks, return_exceptions=True)
         for runtime in runtimes:
             runtime.session_service.clear()
-        await asyncio.gather(
-            *(runtime.shell_jobs.cleanup() for runtime in runtimes),
-            return_exceptions=True,
-        )
         if self._runtime_factory is not None:
             await self._runtime_factory.close()

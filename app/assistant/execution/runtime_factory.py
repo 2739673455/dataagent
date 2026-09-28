@@ -30,7 +30,6 @@ from app.assistant.agents.specialists import (
 )
 from app.assistant.execution.session_service import AgentSessionService
 from app.assistant.execution.session_store import PostgresSandboxSessionStore
-from app.assistant.execution.shell_jobs import ShellJobRuntime
 from app.assistant.execution.types import (
     ConversationAgentRuntime,
 )
@@ -141,7 +140,6 @@ class ConversationAgentRuntimeFactory:
             persistence=self._persistence,
             checkpointer=checkpointer,
             sandbox=self._sandbox,
-            conversation_backend=conversation_backend,
         )
         specialist_factory = SpecialistAgentFactory(
             resources.specialist_definitions,
@@ -157,25 +155,21 @@ class ConversationAgentRuntimeFactory:
             max_parallel_sessions=orchestration.max_parallel_sessions,
             max_sessions=orchestration.max_sessions,
         )
-        shell_jobs = ShellJobRuntime(conversation_backend.shell_jobs)
         planner = self._create_planner(
             resources.planner_model,
             session_service,
-            shell_jobs,
             conversation_backend,
             checkpointer,
         )
         return ConversationAgentRuntime(
             planner=planner,
             session_service=session_service,
-            shell_jobs=shell_jobs,
         )
 
     def _create_planner(
         self,
         model: BaseChatModel,
         session_service: AgentSessionService,
-        shell_jobs: ShellJobRuntime,
         backend: DockerSandboxBackend,
         checkpointer: BaseCheckpointSaver,
     ) -> CompiledStateGraph:
@@ -192,7 +186,6 @@ class ConversationAgentRuntimeFactory:
             backend=backend,
             checkpointer=checkpointer,
             session_service=session_service,
-            shell_jobs=shell_jobs,
             interpreter_memory_limit_bytes=interpreter.memory_limit_bytes,
         )
 

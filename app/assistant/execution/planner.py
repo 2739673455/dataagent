@@ -85,6 +85,8 @@ async def run_agent_turn(
                             event = await subagent_activity_to_event(
                                 activity,
                                 conversation_id,
+                                files,
+                                user_id,
                             )
                             if event is not None:
                                 yield event

@@ -560,19 +560,6 @@ function DelegationRunBarInternal({
               </pre>
             </div>
           ) : null}
-
-          {(parsedDelegationResult?.failureReasons.length ?? 0) > 0 ? (
-            <div className="space-y-1">
-              <p className="font-medium text-[#b91c1c]">失败原因</p>
-              <div className="p-2 text-xs leading-relaxed text-[#991b1b]">
-                {parsedDelegationResult?.failureReasons.map((reason) => (
-                  <p key={reason} className="whitespace-pre-wrap break-words">
-                    {reason.trimEnd()}
-                  </p>
-                ))}
-              </div>
-            </div>
-          ) : null}
         </div>
       )}
 

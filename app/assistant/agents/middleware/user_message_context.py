@@ -12,12 +12,10 @@ from typing import Any, TypedDict, cast
 from deepagents.backends.protocol import BackendProtocol, FileDownloadResponse
 from langchain.agents.middleware.types import (
     AgentMiddleware,
-    AgentState,
     ModelRequest,
     ModelResponse,
 )
 from langchain_core.messages import AnyMessage, BaseMessage, HumanMessage, ToolMessage
-from langgraph.runtime import Runtime
 from loguru import logger
 from pydantic import Field, ValidationError, field_validator
 
@@ -27,17 +25,13 @@ from app.assistant.agents.tools.view_image import (
     is_supported_image_path,
     supports_view_image_tool,
 )
-from app.assistant.execution.shell_jobs import ShellJobRuntime
 from app.assistant.execution.types import NonEmptyText, StrictProtocolModel
 from app.sandbox.paths import normalize_attachment_path, resolve_sandbox_path
 
 USER_MESSAGE_CONTEXT_KEY = "dataagent_user_message_context"
-SHELL_JOB_CONTEXT_KEY = "dataagent_shell_jobs"
 _MESSAGE_CONTEXT_TAG = "user_message_context"
 _ATTACHMENTS_TAG = "user_message_attachments"
 _ATTACHMENT_ERROR_TAG = "attachment_error"
-_SHELL_JOB_CONTEXT_TAG = "shell_jobs"
-_INTERNAL_RETRY_KEY = "dataagent_internal_retry"
 
 
 class UserMessageAttachment(StrictProtocolModel):
@@ -177,22 +171,6 @@ def _attachment_error_block(path: str, error: str) -> dict[str, str]:
     }
 
 
-def _shell_job_context_block(message: HumanMessage) -> dict[str, str] | None:
-    """读取并编码一条用户消息持久化的 Shell Job 快照。"""
-    payload = message.additional_kwargs.get(SHELL_JOB_CONTEXT_KEY)
-    if payload is None:
-        return None
-    context = cast(ShellJobMessageContext, payload)
-    return {
-        "type": "text",
-        "text": (
-            f"<{_SHELL_JOB_CONTEXT_TAG}>"
-            f"{json.dumps(context, ensure_ascii=False, separators=(',', ':'))}"
-            f"</{_SHELL_JOB_CONTEXT_TAG}>"
-        ),
-    }
-
-
 def _image_content_block(path: str, content: bytes) -> dict[str, str]:
     """将图片字节编码为 LangChain 标准图片内容块。"""
     mime_type, _ = mimetypes.guess_type(path)
@@ -267,10 +245,9 @@ def _project_human_message(
     conversation_dir: str,
     project_user_images: bool,
 ) -> HumanMessage:
-    """一次性投影接收时间、附件和 Shell Job 上下文。"""
+    """一次性投影接收时间和附件上下文。"""
     context = read_user_message_context(message)
-    shell_block = _shell_job_context_block(message)
-    if context is None and shell_block is None:
+    if context is None:
         return message
     content = _content_list(message)
     if content is None:
@@ -309,8 +286,6 @@ def _project_human_message(
                                 else "unavailable",
                             )
                         )
-    if shell_block is not None:
-        content.append(shell_block)
     return message.model_copy(update={"content": cast(Any, content)})
 
 
@@ -377,59 +352,16 @@ def _image_projection_options(request: ModelRequest[Any]) -> tuple[bool, bool]:
 
 
 class UserMessageContextMiddleware(AgentMiddleware[Any, Any, Any]):
-    """持久化并投影用户接收时间、附件、图片和 Shell Job 上下文。"""
+    """持久化并投影用户接收时间、附件和图片。"""
 
     def __init__(
         self,
         backend: BackendProtocol,
         conversation_dir: str,
-        shell_jobs: ShellJobRuntime,
     ) -> None:
-        """绑定当前 Agent 的文件后端和 Shell Job Runtime。"""
+        """绑定当前 Agent 的文件后端和会话目录。"""
         self._backend = backend
         self._conversation_dir = conversation_dir
-        self._shell_jobs = shell_jobs
-
-    def before_model(
-        self,
-        state: AgentState[Any],
-        runtime: Runtime[Any],
-    ) -> dict[str, Any] | None:
-        """在模型调用前把首次出现的后台任务引用冻结到当前用户回合。"""
-        del runtime
-        jobs = self._shell_jobs.list()
-        if not jobs:
-            return None
-        for message in reversed(state["messages"]):
-            if not isinstance(message, HumanMessage):
-                continue
-            if message.additional_kwargs.get(_INTERNAL_RETRY_KEY) is True:
-                continue
-            if SHELL_JOB_CONTEXT_KEY in message.additional_kwargs:
-                return None
-            additional_kwargs = {
-                **message.additional_kwargs,
-                SHELL_JOB_CONTEXT_KEY: {
-                    "jobs": [
-                        {"job_id": job.job_id, "output_path": job.output_path}
-                        for job in jobs
-                    ]
-                },
-            }
-            return {
-                "messages": [
-                    message.model_copy(update={"additional_kwargs": additional_kwargs})
-                ]
-            }
-        return None
-
-    async def abefore_model(
-        self,
-        state: AgentState[Any],
-        runtime: Runtime[Any],
-    ) -> dict[str, Any] | None:
-        """异步模型调用沿用相同的 Shell Job 快照规则。"""
-        return self.before_model(state, runtime)
 
     def wrap_model_call(
         self,

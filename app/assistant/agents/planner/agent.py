@@ -22,7 +22,6 @@ from app.assistant.agents.middleware.user_message_context import (
 )
 from app.assistant.agents.tools import create_shell_tools, create_view_image_tools
 from app.assistant.execution.session_service import AgentSessionService
-from app.assistant.execution.shell_jobs import ShellJobRuntime
 from app.sandbox.backend import DockerSandboxBackend
 
 from .prompt import PLANNER_SYSTEM_PROMPT
@@ -37,7 +36,6 @@ def create_planner_agent(
     backend: DockerSandboxBackend,
     checkpointer: BaseCheckpointSaver,
     session_service: AgentSessionService,
-    shell_jobs: ShellJobRuntime,
     interpreter_memory_limit_bytes: int,
 ) -> CompiledStateGraph:
     """使用显式解释器配置编译 Planner Agent。"""
@@ -57,7 +55,7 @@ def create_planner_agent(
         tools=[
             *tools,
             *create_view_image_tools(model),
-            *create_shell_tools(shell_jobs),
+            *create_shell_tools(backend.shell_jobs),
         ],
         system_prompt=PLANNER_SYSTEM_PROMPT,
         middleware=cast(
@@ -69,7 +67,6 @@ def create_planner_agent(
                 UserMessageContextMiddleware(
                     backend,
                     backend.conversation_dir,
-                    shell_jobs,
                 ),
                 MessageTimestampMiddleware(),
             ],

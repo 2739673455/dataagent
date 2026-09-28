@@ -210,6 +210,7 @@ async def api_get_subagent_messages(
     conversation_repo: ConversationPGRepoDep,
     current_user: CurrentUserDep,
     agents: AgentManagerDep,
+    files: SandboxManagerDep,
 ) -> chat_schema.SubagentMessageListResponse:
     """读取一次 Specialist delegation 的公开工作消息。"""
     user_id = current_user.id
@@ -218,6 +219,7 @@ async def api_get_subagent_messages(
         raise chat_error.ConversationNotFoundError
     return await conversation_history.get_subagent_activity(
         agents,
+        files,
         user_id,
         conversation_id,
         analysis_id,

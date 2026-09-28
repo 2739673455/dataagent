@@ -1,6 +1,5 @@
 """Assistant 消息、artifact 与流事件投影。"""
 
-import json
 import mimetypes
 import re
 import uuid
@@ -155,7 +154,7 @@ def _transform_artifact_directives(
 
 
 def _is_final_assistant_message(message: BaseMessage) -> bool:
-    """判断消息是否可以承载 Planner 最终产物指令。"""
+    """判断消息是否可以承载 Agent 最终产物指令。"""
     if not isinstance(message, AIMessage) or message.tool_calls:
         return False
     finish_reason = normalize_finish_reason(
@@ -171,7 +170,7 @@ async def _project_final_artifact_directives(
     user_id: int,
     conversation_id: UUID,
 ) -> chat_schema.MessageResponse:
-    """把 Planner 最终消息中的有效文件指令投影为附件。"""
+    """把 Agent 最终消息中的有效文件指令投影为附件。"""
     if not _is_final_assistant_message(message):
         return schema
 
@@ -254,10 +253,28 @@ async def langchain_message_to_schema_with_artifacts(
     user_id: int,
     conversation_id: UUID,
 ) -> chat_schema.MessageResponse | None:
-    """转换消息，并为 Planner 最终回答解析文件交付指令。"""
+    """转换消息，并为 Agent 最终回答解析文件交付指令。"""
     schema = langchain_message_to_schema(message, conversation_id)
     if schema is None:
         return None
+    if isinstance(message, ToolMessage):
+        if message.name == "delegation" and isinstance(message.content, str):
+            projected = await langchain_message_to_schema_with_artifacts(
+                AIMessage(content=message.content), files, user_id, conversation_id
+            )
+            if projected is not None:
+                schema = schema.model_copy(
+                    update={"attachments": projected.attachments}
+                )
+        for delegation in schema.eval_delegations or []:
+            content = (delegation.result or {}).get("content")
+            if isinstance(content, str):
+                projected = await langchain_message_to_schema_with_artifacts(
+                    AIMessage(content=content), files, user_id, conversation_id
+                )
+                if projected is not None:
+                    delegation.attachments = projected.attachments
+        return schema
     return await _project_final_artifact_directives(
         message,
         schema,
@@ -265,53 +282,6 @@ async def langchain_message_to_schema_with_artifacts(
         user_id,
         conversation_id,
     )
-
-
-def _delegation_result_attachments(
-    message: ToolMessage,
-    conversation_id: UUID,
-) -> list[chat_schema.Attachment]:
-    """从委派结果的稳定协议中提取可下载产物。"""
-    if message.name != "delegation":
-        return []
-    content = message.content
-    if isinstance(content, str):
-        try:
-            payload = json.loads(content)
-        except json.JSONDecodeError:
-            return []
-    elif isinstance(content, dict):
-        payload = content
-    else:
-        return []
-    return _artifact_attachments(cast(dict[str, object], payload), conversation_id)
-
-
-def _artifact_attachments(
-    result: dict[str, object] | None,
-    conversation_id: UUID,
-) -> list[chat_schema.Attachment]:
-    """从受控委派结果的产物载荷投影可下载附件。"""
-    if result is None:
-        return []
-    attachments: list[chat_schema.Attachment] = []
-    for artifact in cast(list[dict[str, object]], result.get("artifacts", [])):
-        artifact_path = cast(str, artifact["path"])
-        try:
-            path = conversation_relative_path(artifact_path, conversation_id)
-        except SandboxPathError:
-            logger.warning(
-                f"委派结果产物路径超出当前 Conversation: path={artifact_path!r}"
-            )
-            continue
-        attachments.append(
-            chat_schema.Attachment(
-                f_path=path,
-                media_type=cast(str | None, artifact.get("media_type")),
-                description=cast(str | None, artifact.get("description")),
-            )
-        )
-    return attachments
 
 
 def langchain_message_to_schema(
@@ -328,11 +298,6 @@ def langchain_message_to_schema(
             eval_delegations = [
                 chat_schema.EvalDelegationResponse.model_construct(
                     **cast(Any, record),
-                    attachments=_artifact_attachments(
-                        cast(dict[str, object] | None, record.get("result")),
-                        conversation_id,
-                    )
-                    or None,
                 )
                 for record in cast(list[dict[str, object]], raw_eval_delegations)
             ]
@@ -348,9 +313,6 @@ def langchain_message_to_schema(
                     content=str(message.content),
                 )
             ],
-            attachments=(
-                _delegation_result_attachments(message, conversation_id) or None
-            ),
             eval_delegations=eval_delegations,
         )
 
@@ -428,6 +390,8 @@ class _SubagentEventContext(TypedDict):
 async def subagent_activity_to_event(
     activity: SubagentActivity,
     conversation_id: UUID,
+    files: ConversationFileInspector,
+    user_id: int,
 ) -> chat_schema.ChatStreamEventPayload | None:
     """把受信任的 Agent 内部活动投影为公开聊天事件。"""
     common = _SubagentEventContext(
@@ -439,7 +403,9 @@ async def subagent_activity_to_event(
         instruction=activity.instruction,
     )
     if isinstance(activity, SubagentMessageActivity):
-        message = langchain_message_to_schema(activity.message, conversation_id)
+        message = await langchain_message_to_schema_with_artifacts(
+            activity.message, files, user_id, conversation_id
+        )
         if message is None:
             return None
         return chat_schema.ChatStreamSubagentMessageEvent(

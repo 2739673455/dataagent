@@ -7,7 +7,6 @@ from langchain_core.messages import BaseMessage
 from app.assistant.errors import SubagentRunNotFoundError
 from app.assistant.events import schemas as chat_schema
 from app.assistant.events.projection import (
-    langchain_message_to_schema,
     langchain_message_to_schema_with_artifacts,
 )
 from app.assistant.execution.contracts import (
@@ -44,6 +43,7 @@ async def list_messages(
 
 async def get_subagent_activity(
     agents: AgentRuntimeManager,
+    files: ConversationFileInspector,
     user_id: int,
     conversation_id: UUID,
     analysis_id: str,
@@ -70,7 +70,11 @@ async def get_subagent_activity(
         messages=[
             schema
             for message in activity.messages
-            if (schema := langchain_message_to_schema(message, conversation_id))
+            if (
+                schema := await langchain_message_to_schema_with_artifacts(
+                    message, files, user_id, conversation_id
+                )
+            )
             is not None
         ],
     )

@@ -16,7 +16,6 @@ from app.assistant.agents.explorer.prompt import EXPLORER_SYSTEM_PROMPT
 from app.assistant.agents.filesystem import agent_skills_mount_path
 from app.assistant.agents.reviewer.prompt import REVIEWER_SYSTEM_PROMPT
 from app.assistant.agents.specialist_agent import create_specialist_agent
-from app.assistant.execution.shell_jobs import ShellJobRuntime
 from app.sandbox.manager import DockerSandboxManager
 from app.shared.contracts.analysis import (
     AGENT_TYPES,
@@ -38,20 +37,9 @@ _RESERVED_MCP_TOOL_NAMES = frozenset(
         "glob",
         "grep",
         "shell",
-        "list_shell_jobs",
-        "get_shell_job",
-        "cancel_shell_job",
         "view_image",
     }
 )
-
-
-@dataclass(frozen=True, slots=True)
-class SpecialistAgentRun:
-    """一次 delegation 共用的 Agent 图和 Shell Job Runtime。"""
-
-    agent: CompiledStateGraph
-    shell_jobs: ShellJobRuntime
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,7 +119,7 @@ class SpecialistAgentFactory:
         self._sandbox = sandbox
         self._checkpointer = checkpointer
 
-    async def create(self, session_key: AgentSessionKey) -> SpecialistAgentRun:
+    async def create(self, session_key: AgentSessionKey) -> CompiledStateGraph:
         """为一次委派创建专业 Agent 运行图。"""
         definition = self._definitions[session_key.agent_type]
         backend = await self._sandbox.get_session_backend(
@@ -141,8 +129,7 @@ class SpecialistAgentFactory:
             session_key.agent_type,
             session_key.session_id,
         )
-        shell_jobs = ShellJobRuntime(backend.shell_jobs)
-        agent = create_specialist_agent(
+        return create_specialist_agent(
             name=session_key.agent_type,
             system_prompt=definition.system_prompt,
             skill_directory=definition.skill_directory,
@@ -150,7 +137,5 @@ class SpecialistAgentFactory:
             tools=definition.tools,
             backend=backend,
             checkpointer=self._checkpointer,
-            shell_jobs=shell_jobs,
             skills=definition.skills,
         )
-        return SpecialistAgentRun(agent=agent, shell_jobs=shell_jobs)

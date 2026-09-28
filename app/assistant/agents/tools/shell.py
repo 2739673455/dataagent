@@ -1,76 +1,42 @@
-"""Agent Shell Job 工具。"""
+"""等待沙箱命令完成并返回输出。"""
 
-from typing import Annotated, Any
+import secrets
+from typing import Annotated
 
-from langchain.tools import ToolRuntime, tool
+from langchain.tools import tool
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, Field
+from loguru import logger
+from pydantic import Field
 
-from app.assistant.execution.shell_jobs import (
-    SHELL_JOB_MAX_STATUS_WAIT_SECONDS,
-    ShellJobRuntime,
-)
+from app.sandbox.shell_runner import DockerShellJobRunner
 
 
-def _dump(result: BaseModel) -> dict[str, Any]:
-    """把公开结果模型转换为紧凑 JSON 字典。"""
-    return result.model_dump(mode="json", exclude_none=True)
-
-
-def create_shell_tools(runtime: ShellJobRuntime) -> tuple[BaseTool, ...]:
-    """创建绑定当前 Agent Run Registry 的四个 Shell 工具。"""
+def create_shell_tools(executor: DockerShellJobRunner) -> tuple[BaseTool, ...]:
+    """创建绑定当前工作目录的 Shell 工具。"""
 
     @tool("shell")
-    async def shell(
-        runtime_context: ToolRuntime,
-        command: Annotated[
-            str,
-            Field(
-                min_length=1,
-                description=(
-                    "在当前 Session 工作目录执行的 Shell 命令；相对路径从该目录"
-                    "解析，绝对路径直接使用。"
-                ),
-            ),
-        ],
-    ) -> str | dict[str, Any]:
-        """运行 Shell 命令；前台截断输出附带路径，超时后返回后台 job_id。"""
-        del runtime_context
-        result = await runtime.start(command)
-        return result if isinstance(result, str) else _dump(result)
+    async def shell(command: Annotated[str, Field(min_length=1)]) -> str:
+        """在当前工作目录执行 Shell 命令，等待结束后返回输出；长输出附带文件路径。"""
+        job_id = f"job_{secrets.token_hex(4)}"
+        keep_log = False
+        try:
+            result = await executor.arun(job_id, command)
+            output = result.output or result.error or ""
+            if result.exit_code not in (None, 0):
+                output += f"\nShell 命令以退出码 {result.exit_code} 结束"
+            elif result.status != "completed" and not output:
+                output = f"Shell 命令未完成: {result.status}"
+            keep_log = result.output_inline_truncated
+            if keep_log:
+                output += (
+                    f"\n详细输出文件: {executor.workspace_dir.rstrip('/')}"
+                    f"/large_tool_results/shell_jobs/{job_id}.log"
+                )
+            return output
+        finally:
+            try:
+                await executor.acleanup(job_id, remove_log=not keep_log)
+            except Exception:  # noqa: BLE001
+                logger.exception("清理 Shell 临时文件失败: job_id={}", job_id)
 
-    @tool("list_shell_jobs")
-    async def list_shell_jobs(
-        runtime_context: ToolRuntime,
-    ) -> list[dict[str, Any]]:
-        """列出当前 Agent Run 尚未消费的后台 Shell Job。"""
-        del runtime_context
-        return [_dump(item) for item in runtime.list()]
-
-    @tool("get_shell_job")
-    async def get_shell_job(
-        runtime_context: ToolRuntime,
-        job_id: Annotated[str, Field(min_length=1, description="shell 返回的 job_id")],
-        wait_seconds: Annotated[
-            float,
-            Field(
-                ge=0,
-                le=SHELL_JOB_MAX_STATUS_WAIT_SECONDS,
-                description="最多等待任务结束的秒数，范围 0 到 60，0 表示立即返回",
-            ),
-        ] = 0,
-    ) -> dict[str, Any]:
-        """查看或短暂等待 Shell Job；完整输出在 output_path，终态仅可读取一次。"""
-        del runtime_context
-        return _dump(await runtime.get(job_id, wait_seconds=wait_seconds))
-
-    @tool("cancel_shell_job")
-    async def cancel_shell_job(
-        runtime_context: ToolRuntime,
-        job_id: Annotated[str, Field(min_length=1, description="shell 返回的 job_id")],
-    ) -> dict[str, Any]:
-        """取消一个 Shell Job，并终止命令所属的整个进程组；终态会被消费。"""
-        del runtime_context
-        return _dump(await runtime.cancel(job_id))
-
-    return shell, list_shell_jobs, get_shell_job, cancel_shell_job
+    return (shell,)
