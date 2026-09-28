@@ -58,6 +58,9 @@ class AgentSessionKey:
         _validate_identifier(self.session_id, "session_id")
 
     @property
-    def checkpoint_ns(self) -> str:
-        """生成受控的 Checkpoint namespace。"""
-        return f"subagents/{self.analysis_id}/{self.agent_type}/{self.session_id}"
+    def thread_id(self) -> str:
+        """生成专业 Session 独立的 LangGraph 线程 ID。"""
+        return (
+            f"user_{self.user_id}:conversation_{self.conversation_id}/subagents/"
+            f"{self.analysis_id}/{self.agent_type}/{self.session_id}"
+        )

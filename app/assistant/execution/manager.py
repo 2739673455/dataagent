@@ -9,11 +9,8 @@ from contextlib import asynccontextmanager
 from uuid import UUID
 
 from langchain_core.runnables import RunnableConfig
+from langgraph.types import StateSnapshot
 
-from app.assistant.checkpoints.reader import (
-    CheckpointState,
-    CheckpointStateReader,
-)
 from app.assistant.checkpoints.specialist import SpecialistCheckpointView
 from app.assistant.conversations.tombstones import (
     ConversationTombstoneStore,
@@ -23,7 +20,6 @@ from app.assistant.execution.types import (
     ConversationAgentRuntime,
     DelegationActivityHistory,
     build_planner_config,
-    conversation_lifecycle_lock_name,
     get_thread_id,
 )
 from app.shared.clients.langgraph_postgres_manager import (
@@ -62,12 +58,6 @@ class AgentManager:
         self._runtime_users: dict[ConversationKey, int] = {}
         self._deleted_conversation_keys: set[ConversationKey] = set()
         self._state_lock = asyncio.Lock()
-
-    async def init(self) -> None:
-        """初始化运行时工厂持有的共享模型和工具。"""
-        if self._runtime_factory is None:
-            raise RuntimeError("清理任务未配置 Agent 执行能力")
-        await self._runtime_factory.init()
 
     async def _build_and_cache_conversation_runtime(
         self,
@@ -132,7 +122,6 @@ class AgentManager:
             async with self._state_lock:
                 self._deleted_conversation_keys.add(conversation_key)
             raise RuntimeError("该会话已被删除")
-        await self.init()
         async with self._state_lock:
             if conversation_key in self._deleted_conversation_keys:
                 raise RuntimeError("该会话已被删除")
@@ -152,24 +141,21 @@ class AgentManager:
         return await asyncio.shield(build_task)
 
     async def can_resume_planner(self, user_id: int, conversation_id: UUID) -> bool:
-        """检查 Planner 待执行任务，不还原历史消息或创建运行时。"""
-        if await self._tombstones.exists(user_id, conversation_id):
-            raise RuntimeError("该会话已被删除")
-        reader = CheckpointStateReader(self._persistence_manager.get_checkpointer())
-        return await reader.has_pending_tasks(
-            build_planner_config(user_id, conversation_id)
-        )
+        """通过图状态判断 Planner 是否还有待执行节点。"""
+        return bool((await self.read_planner_state(user_id, conversation_id)).next)
 
     async def read_planner_state(
         self,
         user_id: int,
         conversation_id: UUID,
-    ) -> CheckpointState:
-        """读取 Planner 根 namespace，且不创建 Conversation 运行时。"""
+    ) -> StateSnapshot:
+        """编译 Planner 并读取原生图状态。"""
         if await self._tombstones.exists(user_id, conversation_id):
             raise RuntimeError("该会话已被删除")
-        reader = CheckpointStateReader(self._persistence_manager.get_checkpointer())
-        return await reader.read(build_planner_config(user_id, conversation_id))
+        if self._runtime_factory is None:
+            raise RuntimeError("未配置 Agent 图工厂")
+        graph = self._runtime_factory.build(user_id, conversation_id).planner
+        return await graph.aget_state(build_planner_config(user_id, conversation_id))
 
     async def read_delegation_activity(
         self,
@@ -188,12 +174,13 @@ class AgentManager:
             agent_type=validate_agent_type(agent_type),
             session_id=session_id,
         )
-        reader = CheckpointStateReader(self._persistence_manager.get_checkpointer())
-        state = await reader.read(
+        if self._runtime_factory is None:
+            raise RuntimeError("未配置 Agent 图工厂")
+        graph = self._runtime_factory.specialists().build(session_key)
+        state = await graph.aget_state(
             RunnableConfig(
                 configurable={
-                    "thread_id": get_thread_id(user_id, conversation_id),
-                    "checkpoint_ns": session_key.checkpoint_ns,
+                    "thread_id": session_key.thread_id,
                 }
             )
         )
@@ -201,28 +188,12 @@ class AgentManager:
             runtime = self._conversation_runtimes.get((user_id, conversation_id))
             active = bool(
                 runtime
-                and runtime.session_service.is_session_active(session_key.checkpoint_ns)
+                and runtime.session_service.is_session_active(session_key.thread_id)
             )
         return SpecialistCheckpointView(state.values).delegation_activity(
             delegation_id,
             active=active,
         )
-
-    async def _cancel_runtime_build(self, conversation_key: ConversationKey) -> None:
-        """删除已受理后禁止重建，并回收尚未结束的构建任务。"""
-        async with self._state_lock:
-            self._deleted_conversation_keys.add(conversation_key)
-            build_task = self._runtime_build_tasks.pop(conversation_key, None)
-        if build_task is not None:
-            build_task.cancel()
-            await asyncio.gather(build_task, return_exceptions=True)
-
-    async def delete_agent(self, user_id: int, conversation_id: UUID) -> None:
-        """删除会话 Agent 集合及 Planner 和全部 SubAgent namespace。"""
-        async with self._persistence_manager.advisory_lock(
-            conversation_lifecycle_lock_name(user_id, conversation_id),
-        ):
-            await self.delete_agent_under_lifecycle_lock(user_id, conversation_id)
 
     async def delete_agent_under_lifecycle_lock(
         self,
@@ -231,16 +202,24 @@ class AgentManager:
     ) -> None:
         """在调用方持有会话生命周期锁时删除 Agent 和持久化状态。"""
         conversation_key = (user_id, conversation_id)
-        await self._cancel_runtime_build(conversation_key)
+        async with self._state_lock:
+            self._deleted_conversation_keys.add(conversation_key)
+            build_task = self._runtime_build_tasks.pop(conversation_key, None)
+        if build_task is not None:
+            build_task.cancel()
+            await asyncio.gather(build_task, return_exceptions=True)
         async with self._state_lock:
             runtime = self._conversation_runtimes.pop(conversation_key, None)
         if runtime is not None:
             runtime.session_service.clear()
         # 先持久化墓碑再删除 Checkpoint，避免其他进程在删除窗口重建会话状态。
         await self._tombstones.save(user_id, conversation_id)
-        await self._persistence_manager.delete_thread(
-            get_thread_id(user_id, conversation_id)
-        )
+        thread_id = get_thread_id(user_id, conversation_id)
+        for specialist_thread in await self._persistence_manager.list_threads(
+            prefix=f"{thread_id}/subagents/"
+        ):
+            await self._persistence_manager.delete_thread(specialist_thread)
+        await self._persistence_manager.delete_thread(thread_id)
 
     @asynccontextmanager
     async def use_runtime(

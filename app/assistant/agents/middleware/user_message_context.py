@@ -7,7 +7,7 @@ import json
 import mimetypes
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
-from typing import Any, TypedDict, cast
+from typing import Any, cast
 
 from deepagents.backends.protocol import BackendProtocol, FileDownloadResponse
 from langchain.agents.middleware.types import (
@@ -15,7 +15,7 @@ from langchain.agents.middleware.types import (
     ModelRequest,
     ModelResponse,
 )
-from langchain_core.messages import AnyMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AnyMessage, HumanMessage, ToolMessage
 from loguru import logger
 from pydantic import Field, ValidationError, field_validator
 
@@ -72,19 +72,6 @@ class UserMessageContext(StrictProtocolModel):
         return value.astimezone(UTC)
 
 
-class ShellJobReference(TypedDict):
-    """一项可由 Shell Job 工具继续查询的稳定引用。"""
-
-    job_id: str
-    output_path: str
-
-
-class ShellJobMessageContext(TypedDict):
-    """持久化在真实用户消息中的 Shell Job 快照。"""
-
-    jobs: list[ShellJobReference]
-
-
 def read_user_message_context(message: HumanMessage) -> UserMessageContext | None:
     """读取并校验一条真实用户消息的私有上下文。"""
     payload = message.additional_kwargs.get(USER_MESSAGE_CONTEXT_KEY)
@@ -95,25 +82,6 @@ def read_user_message_context(message: HumanMessage) -> UserMessageContext | Non
     except ValidationError:
         logger.warning(f"用户消息私有上下文无效: message_id={message.id}")
         return None
-
-
-def _context_content_block(context: UserMessageContext) -> dict[str, str]:
-    """将接收时间编码为供模型读取的文本内容块。"""
-    payload = json.dumps(
-        {"received_at": context.received_at.isoformat()},
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    return {
-        "type": "text",
-        "text": f"<{_MESSAGE_CONTEXT_TAG}>{payload}</{_MESSAGE_CONTEXT_TAG}>",
-    }
-
-
-def _read_attachments(message: HumanMessage) -> UserMessageContext | None:
-    """读取并校验用户消息中持久化的附件引用。"""
-    context = read_user_message_context(message)
-    return context if context is not None and context.attachments else None
 
 
 def _read_image_view_request(message: ToolMessage) -> ImageViewRequest | None:
@@ -158,19 +126,6 @@ def _attachment_context_block(
     }
 
 
-def _attachment_error_block(path: str, error: str) -> dict[str, str]:
-    """生成图片附件读取失败时的模型上下文块。"""
-    payload = json.dumps(
-        {"path": path, "error": error},
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    return {
-        "type": "text",
-        "text": f"<{_ATTACHMENT_ERROR_TAG}>{payload}</{_ATTACHMENT_ERROR_TAG}>",
-    }
-
-
 def _image_content_block(path: str, content: bytes) -> dict[str, str]:
     """将图片字节编码为 LangChain 标准图片内容块。"""
     mime_type, _ = mimetypes.guess_type(path)
@@ -180,32 +135,6 @@ def _image_content_block(path: str, content: bytes) -> dict[str, str]:
         "base64": encoded,
         "mime_type": mime_type or "application/octet-stream",
     }
-
-
-def _image_view_error_block(path: str, error: str) -> dict[str, str]:
-    """生成 view_image 工具读取失败时的文本结果。"""
-    payload = json.dumps(
-        {"status": "error", "path": path, "error": error},
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    return {"type": "text", "text": payload}
-
-
-def _content_list(message: BaseMessage) -> list[str | dict[str, Any]] | None:
-    """将支持的消息内容复制并规范化为可追加的内容块列表。"""
-    if isinstance(message.content, str):
-        return [{"type": "text", "text": message.content}]
-    if isinstance(message.content, list):
-        return cast("list[str | dict[str, Any]]", list(message.content))
-    return None
-
-
-def _downloaded_content(
-    responses: Sequence[FileDownloadResponse],
-) -> dict[str, FileDownloadResponse]:
-    """按工作区路径索引文件下载结果。"""
-    return {response.path: response for response in responses}
 
 
 def _download_paths(
@@ -221,7 +150,7 @@ def _download_paths(
         for message in messages:
             if not isinstance(message, HumanMessage):
                 continue
-            context = _read_attachments(message)
+            context = read_user_message_context(message)
             if context is not None:
                 paths.extend(
                     resolve_sandbox_path(item.f_path, conversation_dir)
@@ -249,43 +178,64 @@ def _project_human_message(
     context = read_user_message_context(message)
     if context is None:
         return message
-    content = _content_list(message)
-    if content is None:
+    if isinstance(message.content, str):
+        content: list[str | dict[str, Any]] = [
+            {"type": "text", "text": message.content}
+        ]
+    elif isinstance(message.content, list):
+        content = list(message.content)
+    else:
         logger.warning(f"用户消息内容类型无效: message_id={message.id}")
         return message
 
-    if context is not None:
-        content.insert(0, _context_content_block(context))
-        if context.attachments:
-            content.append(
-                _attachment_context_block(
-                    context,
-                    conversation_dir=conversation_dir,
-                    image_inputs_enabled=project_user_images,
-                )
+    payload = json.dumps(
+        {"received_at": context.received_at.isoformat()},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    content.insert(
+        0,
+        {
+            "type": "text",
+            "text": f"<{_MESSAGE_CONTEXT_TAG}>{payload}</{_MESSAGE_CONTEXT_TAG}>",
+        },
+    )
+    if context.attachments:
+        content.append(
+            _attachment_context_block(
+                context,
+                conversation_dir=conversation_dir,
+                image_inputs_enabled=project_user_images,
             )
-            if project_user_images:
-                for attachment in context.attachments:
-                    if not is_supported_image_path(attachment.f_path):
-                        continue
-                    model_path = resolve_sandbox_path(
-                        attachment.f_path,
-                        conversation_dir,
+        )
+        if project_user_images:
+            for attachment in context.attachments:
+                if not is_supported_image_path(attachment.f_path):
+                    continue
+                model_path = resolve_sandbox_path(
+                    attachment.f_path,
+                    conversation_dir,
+                )
+                response = downloaded.get(model_path)
+                if response is not None and response.content is not None:
+                    content.append(_image_content_block(model_path, response.content))
+                else:
+                    payload = json.dumps(
+                        {
+                            "path": model_path,
+                            "error": str(response.error)
+                            if response is not None
+                            else "unavailable",
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
                     )
-                    response = downloaded.get(model_path)
-                    if response is not None and response.content is not None:
-                        content.append(
-                            _image_content_block(model_path, response.content)
-                        )
-                    else:
-                        content.append(
-                            _attachment_error_block(
-                                model_path,
-                                str(response.error)
-                                if response is not None
-                                else "unavailable",
-                            )
-                        )
+                    content.append(
+                        {
+                            "type": "text",
+                            "text": f"<{_ATTACHMENT_ERROR_TAG}>{payload}</{_ATTACHMENT_ERROR_TAG}>",
+                        }
+                    )
     return message.model_copy(update={"content": cast(Any, content)})
 
 
@@ -298,7 +248,7 @@ def _project_messages(
     project_tool_images: bool,
 ) -> list[AnyMessage]:
     """将私有消息上下文和已加载图片投影到本次模型请求。"""
-    downloaded = _downloaded_content(responses)
+    downloaded = {response.path: response for response in responses}
     projected: list[AnyMessage] = []
     for message in messages:
         if isinstance(message, HumanMessage):
@@ -326,14 +276,18 @@ def _project_messages(
                         _image_content_block(image_request.f_path, response.content)
                     )
                 else:
-                    view_content.append(
-                        _image_view_error_block(
-                            image_request.f_path,
-                            str(response.error)
+                    payload = json.dumps(
+                        {
+                            "status": "error",
+                            "path": image_request.f_path,
+                            "error": str(response.error)
                             if response is not None
                             else "unavailable",
-                        )
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
                     )
+                    view_content.append({"type": "text", "text": payload})
                 projected.append(
                     message.model_copy(update={"content": cast(Any, view_content)})
                 )

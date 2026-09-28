@@ -358,7 +358,7 @@ class DockerSandboxManager:
         self,
         user_id: int,
         conversation_id: UUID,
-        conversation_uid: int,
+        conversation_uid: int | None,
         scope: SandboxSessionScope | None,
         execution_uid: int | None,
     ) -> DockerSandboxBackend:
@@ -374,6 +374,15 @@ class DockerSandboxManager:
             session_scope=scope,
             execution_uid=execution_uid,
         )
+
+    def graph_backend(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        scope: SandboxSessionScope | None = None,
+    ) -> DockerSandboxBackend:
+        """构造图所需的路径和工具后端对象，执行身份由工作区准备流程取得。"""
+        return self._build_backend(user_id, conversation_id, None, scope, None)
 
     async def _prepare_backend(
         self,

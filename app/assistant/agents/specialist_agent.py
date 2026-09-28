@@ -49,6 +49,7 @@ def create_specialist_agent(
     backend: DockerSandboxBackend,
     checkpointer: BaseCheckpointSaver,
     skills: Sequence[str],
+    extra_middleware: Sequence = (),
 ) -> CompiledStateGraph:
     """编译共享文件、附件和 Shell 生命周期的专业 Agent。"""
     resolved_backend, filesystem = build_specialist_filesystem(
@@ -71,6 +72,7 @@ def create_specialist_agent(
                 backend.conversation_dir,
             ),
             MessageTimestampMiddleware(),
+            *extra_middleware,
         ],
         backend=resolved_backend,
         skills=list(skills),

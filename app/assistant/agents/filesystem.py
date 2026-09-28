@@ -33,19 +33,6 @@ def packaged_skill_readonly_mounts() -> tuple[SandboxReadonlyMount, ...]:
     )
 
 
-def _filesystem_system_prompt(workspace_dir: str) -> str:
-    """生成 Specialist 文件工具与 Shell 路径边界说明。"""
-    return f"""## 沙箱路径
-
-当前 Session 工作目录是 `{workspace_dir}`。
-
-- 文件工具、`view_image` 和 `shell` 使用同一套容器路径：相对路径从当前 Session 工作目录解析，绝对路径直接使用。
-- `write_file` 和 `edit_file` 只能修改当前 Session 工作目录；同一 Conversation 的其他 Session 和上传文件只读。
-- `artifacts` 可以使用相对当前 Session 的路径或完整绝对路径；跨 Agent 传递前会统一解析为绝对路径。
-- 内置技能位于只读 `/skills/...`。
-"""
-
-
 def build_specialist_filesystem(
     backend: DockerSandboxBackend,
     skill_directory: Path,
@@ -81,7 +68,15 @@ def build_specialist_filesystem(
     )
     filesystem = FilesystemMiddleware(
         backend=resolved_backend,
-        system_prompt=_filesystem_system_prompt(workspace_dir),
+        system_prompt=f"""## 沙箱路径
+
+当前 Session 工作目录是 `{workspace_dir}`。
+
+- 文件工具、`view_image` 和 `shell` 使用同一套容器路径：相对路径从当前 Session 工作目录解析，绝对路径直接使用。
+- `write_file` 和 `edit_file` 只能修改当前 Session 工作目录；同一 Conversation 的其他 Session 和上传文件只读。
+- `artifacts` 可以使用相对当前 Session 的路径或完整绝对路径；跨 Agent 传递前会统一解析为绝对路径。
+- 内置技能位于只读 `/skills/...`。
+""",
         tools=[
             "read_file",
             "write_file",

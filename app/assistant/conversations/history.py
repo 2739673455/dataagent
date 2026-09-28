@@ -5,12 +5,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from langchain_core.messages import BaseMessage
-
 from app.assistant.errors import SubagentRunNotFoundError
 from app.assistant.events import schemas as chat_schema
 from app.assistant.events.projection import (
-    langchain_message_to_schema_with_artifacts,
+    project_messages,
 )
 
 if TYPE_CHECKING:
@@ -30,18 +28,7 @@ async def list_messages(
     if not isinstance(messages, list):
         return []
 
-    result: list[chat_schema.MessageResponse] = []
-    for message in messages:
-        if not isinstance(message, BaseMessage):
-            continue
-        if schema := await langchain_message_to_schema_with_artifacts(
-            message,
-            files,
-            user_id,
-            conversation_id,
-        ):
-            result.append(schema)
-    return result
+    return await project_messages(messages, files, user_id, conversation_id)
 
 
 async def get_subagent_activity(
@@ -70,14 +57,7 @@ async def get_subagent_activity(
         raise SubagentRunNotFoundError
     return chat_schema.SubagentMessageListResponse(
         status=activity.status,
-        messages=[
-            schema
-            for message in activity.messages
-            if (
-                schema := await langchain_message_to_schema_with_artifacts(
-                    message, files, user_id, conversation_id
-                )
-            )
-            is not None
-        ],
+        messages=await project_messages(
+            activity.messages, files, user_id, conversation_id
+        ),
     )

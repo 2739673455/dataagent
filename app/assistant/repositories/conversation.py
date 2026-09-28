@@ -103,21 +103,6 @@ class ConversationPGRepo:
         await self._session.flush()
         return bool(result.rowcount)
 
-    async def list_all_by_user(
-        self,
-        user_id: int,
-        *,
-        include_deleting: bool = False,
-    ) -> list[Conversation]:
-        """按最后活动时间倒序获取用户的全部会话。"""
-        statement = select(Conversation).where(Conversation.user_id == user_id)
-        if not include_deleting:
-            statement = statement.where(Conversation.deletion_requested_at.is_(None))
-        result = await self._session.scalars(
-            statement.order_by(Conversation.update_at.desc(), Conversation.id.desc())
-        )
-        return list(result)
-
     async def list_by_user(self, user_id: int) -> list[Conversation]:
         """按最后活动时间倒序获取用户的正式会话。"""
         result = await self._session.scalars(

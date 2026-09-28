@@ -2,61 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import Protocol
 from uuid import UUID
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import StateSnapshot
 
-from app.assistant.checkpoints.reader import (
-    CheckpointState,
-    CheckpointStateReader,
-)
 from app.assistant.execution.types import get_thread_id
 from app.sandbox.manager import DockerSandboxManager
 from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 from app.shared.contracts.analysis import AgentSessionKey
 from app.shared.errors.infrastructure import AdvisoryLockBusyError
-
-
-class AgentSessionStore(Protocol):
-    """SessionService 使用的外部状态访问协议。"""
-
-    async def list_namespaces(self, analysis_id: str | None) -> list[str]:
-        """列出指定 Analysis 或整个 Conversation 的 Session namespace。"""
-        ...
-
-    async def read_state(
-        self,
-        session_key: AgentSessionKey,
-    ) -> CheckpointState:
-        """读取指定 Session 的最新物化状态。"""
-        ...
-
-    async def delete_checkpoint(self, session_key: AgentSessionKey) -> bool:
-        """删除指定 Session 的完整 Checkpoint namespace。"""
-        ...
-
-    async def delete_workspace(self, session_key: AgentSessionKey) -> bool:
-        """删除指定 Session 的独立工作区。"""
-        ...
-
-    def lock(
-        self,
-        session_key: AgentSessionKey,
-    ) -> AbstractAsyncContextManager[None]:
-        """创建指定 Session 的非阻塞执行锁上下文。"""
-        ...
-
-    def reserve_capacity(
-        self,
-        session_key: AgentSessionKey,
-        max_sessions: int,
-    ) -> AbstractAsyncContextManager[None]:
-        """为尚未持久化的新 Session 保留跨进程容量。"""
-        ...
 
 
 class PostgresSandboxSessionStore:
@@ -70,6 +29,7 @@ class PostgresSandboxSessionStore:
         persistence: LangGraphPostgresManager,
         checkpointer: AsyncPostgresSaver,
         sandbox: DockerSandboxManager,
+        build_agent: Callable[[AgentSessionKey], CompiledStateGraph],
     ) -> None:
         """初始化 Conversation 级状态访问上下文。"""
         self._user_id = user_id
@@ -77,38 +37,35 @@ class PostgresSandboxSessionStore:
         self._thread_id = get_thread_id(user_id, conversation_id)
         self._persistence = persistence
         self._sandbox = sandbox
-        self._state_reader = CheckpointStateReader(checkpointer)
+        self._checkpointer = checkpointer
+        self._build_agent = build_agent
 
-    async def list_namespaces(self, analysis_id: str | None) -> list[str]:
-        """列出当前 Conversation 的专业 Session namespace。"""
-        prefix = (
-            f"subagents/{analysis_id}/" if analysis_id is not None else "subagents/"
+    async def list_threads(self, analysis_id: str | None) -> list[str]:
+        """列出当前 Conversation 的专业 Session 线程。"""
+        prefix = f"{self._thread_id}/subagents/" + (
+            f"{analysis_id}/" if analysis_id is not None else ""
         )
-        return await self._persistence.list_checkpoint_namespaces(
-            self._thread_id,
-            prefix=prefix,
-        )
+        return await self._persistence.list_threads(prefix=prefix)
 
     async def read_state(
         self,
         session_key: AgentSessionKey,
-    ) -> CheckpointState:
+    ) -> StateSnapshot:
         """读取专业 Session 的最新物化状态。"""
-        return await self._state_reader.read(
+        return await self._build_agent(session_key).aget_state(
             RunnableConfig(
                 configurable={
-                    "thread_id": self._thread_id,
-                    "checkpoint_ns": session_key.checkpoint_ns,
+                    "thread_id": session_key.thread_id,
                 }
             )
         )
 
     async def delete_checkpoint(self, session_key: AgentSessionKey) -> bool:
-        """删除专业 Session 的完整 Checkpoint namespace。"""
-        return await self._persistence.delete_checkpoint_namespace(
-            self._thread_id,
-            session_key.checkpoint_ns,
-        )
+        """删除专业 Session 的完整 Checkpoint 线程。"""
+        config = RunnableConfig(configurable={"thread_id": session_key.thread_id})
+        existed = await self._checkpointer.aget_tuple(config) is not None
+        await self._checkpointer.adelete_thread(session_key.thread_id)
+        return existed
 
     async def delete_workspace(self, session_key: AgentSessionKey) -> bool:
         """删除专业 Session 的独立工作区。"""
@@ -126,7 +83,7 @@ class PostgresSandboxSessionStore:
     ) -> AbstractAsyncContextManager[None]:
         """获取专业 Session 的跨进程互斥锁。"""
         return self._persistence.advisory_lock(
-            f"specialist:{self._thread_id}:{session_key.checkpoint_ns}",
+            f"specialist:{session_key.thread_id}",
         )
 
     @asynccontextmanager
@@ -137,17 +94,17 @@ class PostgresSandboxSessionStore:
     ) -> AsyncGenerator[None]:
         """为新 Session 获取一个跨进程容量槽位。
 
-        新 Session 在首个 Checkpoint 写入前不会出现在持久化 namespace 列表中。
+        新 Session 在首个 Checkpoint 写入前不会出现在持久化线程列表中。
         槽位持有到本次执行结束，使并发进程也会计入这段空窗口。
         """
-        namespaces = set(await self.list_namespaces(None))
-        if session_key.checkpoint_ns in namespaces:
+        threads = set(await self.list_threads(None))
+        if session_key.thread_id in threads:
             yield
             return
-        if len(namespaces) >= max_sessions:
+        if len(threads) >= max_sessions:
             raise RuntimeError("当前 Conversation 的 Session 数量已达上限")
 
-        for slot in range(len(namespaces), max_sessions):
+        for slot in range(len(threads), max_sessions):
             try:
                 async with self._persistence.advisory_lock(
                     f"specialist-capacity:{self._thread_id}:{slot}"

@@ -229,11 +229,6 @@ async def api_get_subagent_messages(
     )
 
 
-def _serialize_sse_event(event: chat_schema.ChatStreamEventPayload) -> str:
-    """将聊天事件序列化为 SSE 数据帧。"""
-    return f"data: {event.model_dump_json()}\n\n"
-
-
 async def _stream_run_events(
     conversation_id: UUID,
     events: AsyncGenerator[chat_schema.ChatStreamEventPayload],
@@ -256,7 +251,7 @@ async def _stream_run_events(
             except StopAsyncIteration:
                 break
 
-            yield _serialize_sse_event(event)
+            yield f"data: {event.model_dump_json()}\n\n"
             next_message_task = asyncio.ensure_future(anext(events))
     except asyncio.CancelledError:
         logger.info(f"SSE 订阅断开: conversation_id={conversation_id}")

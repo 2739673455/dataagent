@@ -71,7 +71,7 @@ class DockerSandboxBackend(BaseSandbox):
         self,
         user_id: int,
         conversation_id: UUID,
-        conversation_uid: int,
+        conversation_uid: int | None,
         sandbox_config: SandboxConfig,
         ownership: SandboxOwnership,
         touch: Callable[[], None],
@@ -182,6 +182,8 @@ class DockerSandboxBackend(BaseSandbox):
     @contextmanager
     def _operation(self) -> Generator[None]:
         """登记 Redis operation lease，并在公开操作结束后记录活动时间。"""
+        if self._execution_uid is None:
+            raise RuntimeError("沙箱执行身份尚未初始化")
         existing_container = getattr(self._operation_local, "container", None)
         cancel_event = getattr(self._operation_local, "cancel_event", None)
         try:

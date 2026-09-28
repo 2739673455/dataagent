@@ -32,7 +32,7 @@ def test_stream_routes_preserve_frames_headers_and_business_errors(entry, failur
     repository = MagicMock(get=AsyncMock(return_value=None if failure else MagicMock()))
     runs = MagicMock()
     agents = MagicMock(
-        read_planner_state=AsyncMock(return_value=SimpleNamespace(next_nodes=()))
+        read_planner_state=AsyncMock(return_value=SimpleNamespace(next=()))
     )
     lifecycle = MagicMock()
     closed = []

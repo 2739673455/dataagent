@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,11 +12,14 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
 from app.assistant.agents.analyst.prompt import ANALYST_SYSTEM_PROMPT
+from app.assistant.agents.deferred import DynamicToolsMiddleware
 from app.assistant.agents.explorer.prompt import EXPLORER_SYSTEM_PROMPT
 from app.assistant.agents.filesystem import agent_skills_mount_path
 from app.assistant.agents.reviewer.prompt import REVIEWER_SYSTEM_PROMPT
 from app.assistant.agents.specialist_agent import create_specialist_agent
+from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.manager import DockerSandboxManager
+from app.sandbox.paths import SandboxSessionScope
 from app.shared.contracts.analysis import (
     AGENT_TYPES,
     AgentSessionKey,
@@ -106,6 +109,8 @@ class SpecialistAgentFactory:
         models: Mapping[AgentType, BaseChatModel],
         sandbox: DockerSandboxManager,
         checkpointer: BaseCheckpointSaver,
+        initialize: Callable[[], Awaitable[None]],
+        mcp_tools: Callable[[], list[BaseTool]],
     ) -> None:
         """绑定专业能力、模型和运行时依赖。"""
         expected_types = set(AGENT_TYPES)
@@ -113,6 +118,8 @@ class SpecialistAgentFactory:
             raise ValueError("专业 Agent 定义必须覆盖所有 Agent 类型")
         if set(models) != expected_types:
             raise ValueError("专业 Agent 模型必须覆盖所有 Agent 类型")
+        self._initialize = initialize
+        self._mcp_tools = mcp_tools
         self._definitions = dict(definitions)
         self._models = dict(models)
         self._sandbox = sandbox
@@ -120,7 +127,7 @@ class SpecialistAgentFactory:
 
     async def create(self, session_key: AgentSessionKey) -> CompiledStateGraph:
         """为一次委派创建专业 Agent 运行图。"""
-        definition = self._definitions[session_key.agent_type]
+        await self._initialize()
         backend = await self._sandbox.get_session_backend(
             session_key.user_id,
             session_key.conversation_id,
@@ -128,6 +135,24 @@ class SpecialistAgentFactory:
             session_key.agent_type,
             session_key.session_id,
         )
+        return self.build(session_key, backend)
+
+    def build(
+        self, session_key: AgentSessionKey, backend: DockerSandboxBackend | None = None
+    ) -> CompiledStateGraph:
+        """编译 Session 图；模型、工具和文件后端在执行时解析。"""
+        definition = self._definitions[session_key.agent_type]
+
+        if backend is None:
+            backend = self._sandbox.graph_backend(
+                session_key.user_id,
+                session_key.conversation_id,
+                SandboxSessionScope(
+                    session_key.analysis_id,
+                    session_key.agent_type,
+                    session_key.session_id,
+                ),
+            )
         return create_specialist_agent(
             name=session_key.agent_type,
             system_prompt=definition.system_prompt,
@@ -135,6 +160,9 @@ class SpecialistAgentFactory:
             model=self._models[session_key.agent_type],
             tools=definition.tools,
             backend=backend,
+            extra_middleware=[DynamicToolsMiddleware(self._mcp_tools)]
+            if session_key.agent_type == "explorer"
+            else [],
             checkpointer=self._checkpointer,
             skills=definition.skills,
         )

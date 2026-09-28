@@ -5,19 +5,20 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
+from contextvars import Context, copy_context
 from datetime import UTC, datetime
+from functools import partial
 from threading import Lock as ThreadLock
 from typing import cast
 from uuid import UUID, uuid4
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
-from langgraph._internal._constants import CONFIG_KEY_SCRATCHPAD
 from langgraph.graph.state import CompiledStateGraph
 
 from app.assistant.checkpoints.specialist import SpecialistCheckpointView
-from app.assistant.events.stream import MessageDeltaParser
-from app.assistant.execution.session_store import AgentSessionStore
+from app.assistant.events.stream import MessageDeltaParser, update_messages
+from app.assistant.execution.session_store import PostgresSandboxSessionStore
 from app.assistant.execution.types import (
     DELEGATION_CONTEXT_KEY,
     DelegationCheckpointRecord,
@@ -38,15 +39,6 @@ from app.assistant.execution.types import (
 )
 from app.sandbox.paths import SandboxSessionScope
 from app.shared.contracts.analysis import AgentSessionKey, validate_agent_type
-
-
-def _session_workspace(session_key: AgentSessionKey) -> str:
-    """返回 Session 在容器中的规范工作目录。"""
-    return SandboxSessionScope(
-        session_key.analysis_id,
-        session_key.agent_type,
-        session_key.session_id,
-    ).workspace_path(session_key.conversation_id)
 
 
 @asynccontextmanager
@@ -71,7 +63,7 @@ class AgentSessionService:
         self,
         *,
         build_agent: Callable[[AgentSessionKey], Awaitable[CompiledStateGraph]],
-        session_store: AgentSessionStore,
+        session_store: PostgresSandboxSessionStore,
         user_id: int,
         conversation_id: UUID,
         max_parallel_sessions: int,
@@ -92,86 +84,50 @@ class AgentSessionService:
         self._active_sessions: dict[str, datetime] = {}
         self._runtime_state_lock = ThreadLock()
 
-    def is_session_active(self, checkpoint_ns: str) -> bool:
+    def is_session_active(self, thread_id: str) -> bool:
         """返回指定 Session 是否正在当前进程执行。"""
         with self._runtime_state_lock:
-            return checkpoint_ns in self._active_sessions
+            return thread_id in self._active_sessions
 
-    def _parse_session_namespace(self, checkpoint_ns: str) -> AgentSessionKey | None:
-        """把受控专业 Session namespace 还原为身份键。"""
-        parts = checkpoint_ns.split("/")
-        if len(parts) != 4 or parts[0] != "subagents":
+    def _parse_session_thread(self, thread_id: str) -> AgentSessionKey | None:
+        """把受控专业 Session 线程还原为身份键。"""
+        prefix = f"{get_thread_id(self._user_id, self._conversation_id)}/subagents/"
+        if not thread_id.startswith(prefix):
+            return None
+        parts = thread_id.removeprefix(prefix).split("/")
+        if len(parts) != 3:
             return None
         try:
             return AgentSessionKey(
                 user_id=self._user_id,
                 conversation_id=self._conversation_id,
-                analysis_id=parts[1],
-                agent_type=validate_agent_type(parts[2]),
-                session_id=parts[3],
+                analysis_id=parts[0],
+                agent_type=validate_agent_type(parts[1]),
+                session_id=parts[2],
             )
         except (TypeError, ValueError):
             return None
-
-    @staticmethod
-    def _failed_result(
-        request: DelegationRequest,
-        content: str,
-        reason: str,
-    ) -> DelegationResult:
-        """构造符合协议的失败结果。"""
-        return DelegationResult(
-            status="failed",
-            analysis_id=request.analysis_id,
-            agent_type=request.agent_type,
-            session_id=request.session_id,
-            content=f"{content}: {reason}",
-        )
-
-    def _build_session_key(
-        self,
-        analysis_id: str,
-        agent_type: str,
-        session_id: str,
-    ) -> AgentSessionKey:
-        """把受控标识绑定到当前用户会话。"""
-        return AgentSessionKey(
-            user_id=self._user_id,
-            conversation_id=self._conversation_id,
-            analysis_id=analysis_id,
-            agent_type=validate_agent_type(agent_type),
-            session_id=session_id,
-        )
 
     @staticmethod
     def build_subagent_config(
         parent_config: RunnableConfig,
         session_key: AgentSessionKey,
     ) -> RunnableConfig:
-        """复制父配置并替换为专业 Session namespace。"""
-        config = dict(parent_config)
-        # Specialist 使用独立的持久化 namespace，清除父任务的检查点和子图计数器。
-        parent_configurable = {
+        """传递标签、元数据与递归限制，使用 Session 的独立线程。"""
+        config = {
             key: value
-            for key, value in parent_config.get("configurable", {}).items()
-            if key
-            not in {
-                "checkpoint_id",
-                "checkpoint_map",
-                "checkpoint_ns",
-                CONFIG_KEY_SCRATCHPAD,
-            }
+            for key, value in parent_config.items()
+            if key in {"tags", "metadata", "recursion_limit"}
         }
         config["configurable"] = {
-            **parent_configurable,
-            "thread_id": get_thread_id(
-                session_key.user_id,
-                session_key.conversation_id,
-            ),
-            "checkpoint_ns": session_key.checkpoint_ns,
+            "thread_id": session_key.thread_id,
             "user_id": session_key.user_id,
             "conversation_id": str(session_key.conversation_id),
-            "workspace_dir": _session_workspace(session_key),
+            "workspace_dir": SandboxSessionScope(
+                session_key.analysis_id,
+                session_key.agent_type,
+                session_key.session_id,
+            ).workspace_path(session_key.conversation_id),
             "analysis_id": session_key.analysis_id,
             "agent_type": session_key.agent_type,
             "session_id": session_key.session_id,
@@ -180,29 +136,31 @@ class AgentSessionService:
 
     async def list_sessions(self, analysis_id: str | None) -> ListSessionsResult:
         """查询当前 Conversation 内的专业 Agent Session。"""
-        namespaces = await self._session_store.list_namespaces(analysis_id)
+        threads = await self._session_store.list_threads(analysis_id)
         with self._runtime_state_lock:
             active_sessions = dict(self._active_sessions)
-        all_namespaces = set(namespaces)
-        for namespace in active_sessions:
-            session_key = self._parse_session_namespace(namespace)
+        all_threads = set(threads)
+        for thread in active_sessions:
+            session_key = self._parse_session_thread(thread)
             if session_key is not None and (
                 analysis_id is None or session_key.analysis_id == analysis_id
             ):
-                all_namespaces.add(namespace)
+                all_threads.add(thread)
 
-        async def load_summary(checkpoint_ns: str) -> SessionSummary | None:
+        async def load_summary(thread_id: str) -> SessionSummary | None:
             """读取单个 Session 的最新持久化状态并叠加活跃状态。"""
-            session_key = self._parse_session_namespace(checkpoint_ns)
+            session_key = self._parse_session_thread(thread_id)
             if session_key is None or (
                 analysis_id is not None and session_key.analysis_id != analysis_id
             ):
                 return None
             state = await self._session_store.read_state(session_key)
-            active_at = active_sessions.get(checkpoint_ns)
-            if state.updated_at is None and active_at is None:
+            active_at = active_sessions.get(thread_id)
+            if state.created_at is None and active_at is None:
                 return None
-            updated_at = state.updated_at
+            updated_at = (
+                datetime.fromisoformat(state.created_at) if state.created_at else None
+            )
             if active_at is not None:
                 updated_at = active_at
             view = SpecialistCheckpointView(state.values)
@@ -213,7 +171,7 @@ class AgentSessionService:
             )
 
         summaries = await asyncio.gather(
-            *(load_summary(namespace) for namespace in sorted(all_namespaces))
+            *(load_summary(thread) for thread in sorted(all_threads))
         )
         sessions = sorted(
             (summary for summary in summaries if summary is not None),
@@ -224,13 +182,12 @@ class AgentSessionService:
     async def _invoke_specialist(
         self,
         request: DelegationRequest,
-        session_key: AgentSessionKey,
+        agent: CompiledStateGraph,
         config: RunnableConfig,
         delegation_id: str,
         activity_writer: SubagentActivityWriter | None,
     ) -> str:
         """执行专业 Agent，并保存本次委派的最终文本。"""
-        agent = await self._build_agent(session_key)
         try:
             context = DelegationMessageContext(delegation_id=delegation_id)
             record = DelegationCheckpointRecord(
@@ -347,57 +304,48 @@ class AgentSessionService:
                 or not isinstance(data, Mapping)
             ):
                 continue
-            for node_name, update in data.items():
-                if node_name not in {"model", "tools"} or not isinstance(
-                    update, Mapping
-                ):
-                    continue
-                messages = update.get("messages")
-                if not isinstance(messages, list):
-                    continue
-                for message in messages:
-                    if not isinstance(message, BaseMessage):
+            for message in update_messages(data):
+                if message.id is not None:
+                    if message.id in emitted_message_ids:
                         continue
-                    if not isinstance(message, AIMessage | ToolMessage):
-                        continue
-                    public_message = message
-                    if public_message.id is not None:
-                        if public_message.id in emitted_message_ids:
-                            continue
-                        emitted_message_ids.add(public_message.id)
-                    activity_writer(
-                        SubagentMessageActivity(
-                            delegation_id=delegation_id,
-                            analysis_id=request.analysis_id,
-                            agent_type=request.agent_type,
-                            session_id=request.session_id,
-                            message=public_message,
-                        )
+                    emitted_message_ids.add(message.id)
+                activity_writer(
+                    SubagentMessageActivity(
+                        delegation_id=delegation_id,
+                        analysis_id=request.analysis_id,
+                        agent_type=request.agent_type,
+                        session_id=request.session_id,
+                        message=message,
                     )
+                )
         if final_values is None:
             raise RuntimeError("Specialist 执行未产生最终状态")
         return final_values
 
-    async def _read_session_state(
-        self,
-        session_key: AgentSessionKey,
-    ) -> Mapping[str, object]:
-        """读取 Specialist 最新物化 Checkpoint，且不创建执行运行时。"""
-        return (await self._session_store.read_state(session_key)).values
-
-    async def _get_replayed_delegation_result(
+    async def execute_delegation(
         self,
         request: DelegationRequest,
-        session_key: AgentSessionKey,
-        delegation_id: str,
-    ) -> DelegationResult | None:
-        """恢复 Planner 待执行工具时复用同一 delegation 的既有结果。"""
-        state_values = await self._read_session_state(session_key)
-        return SpecialistCheckpointView(state_values).replayed_result(
-            request, delegation_id
+        parent_config: RunnableConfig,
+        *,
+        delegation_id: str | None = None,
+        activity_writer: SubagentActivityWriter | None = None,
+    ) -> DelegationResult:
+        """在独立图上下文中运行 Session，隔离父图的调度与检查点配置。"""
+        return await asyncio.create_task(
+            self._execute_delegation(
+                request,
+                parent_config,
+                delegation_id=delegation_id,
+                activity_writer=(
+                    partial(copy_context().run, activity_writer)
+                    if activity_writer is not None
+                    else None
+                ),
+            ),
+            context=Context(),
         )
 
-    async def execute_delegation(
+    async def _execute_delegation(
         self,
         request: DelegationRequest,
         parent_config: RunnableConfig,
@@ -410,10 +358,12 @@ class AgentSessionService:
             delegation_id=delegation_id or uuid4().hex
         ).delegation_id
         activity_started = False
-        session_key = self._build_session_key(
-            request.analysis_id,
-            request.agent_type,
-            request.session_id,
+        session_key = AgentSessionKey(
+            user_id=self._user_id,
+            conversation_id=self._conversation_id,
+            analysis_id=request.analysis_id,
+            agent_type=request.agent_type,
+            session_id=request.session_id,
         )
         config = self.build_subagent_config(parent_config, session_key)
         try:
@@ -425,11 +375,11 @@ class AgentSessionService:
                     "当前 Conversation 的并行 Session 已满",
                 ),
             ):
-                replayed_result = await self._get_replayed_delegation_result(
-                    request,
-                    session_key,
-                    delegation_id,
-                )
+                agent = await self._build_agent(session_key)
+                state = await agent.aget_state(config)
+                replayed_result = SpecialistCheckpointView(
+                    state.values
+                ).replayed_result(request, delegation_id)
                 if replayed_result is not None:
                     self._write_status_activity(
                         request,
@@ -439,7 +389,7 @@ class AgentSessionService:
                     )
                     return replayed_result
                 with self._runtime_state_lock:
-                    self._active_sessions[session_key.checkpoint_ns] = datetime.now(UTC)
+                    self._active_sessions[session_key.thread_id] = datetime.now(UTC)
                 try:
                     if activity_writer is not None:
                         activity_started = True
@@ -455,7 +405,7 @@ class AgentSessionService:
                     try:
                         result = await self._invoke_specialist(
                             request,
-                            session_key,
+                            agent,
                             config,
                             delegation_id,
                             activity_writer,
@@ -471,7 +421,7 @@ class AgentSessionService:
                 finally:
                     with self._runtime_state_lock:
                         self._active_sessions.pop(
-                            session_key.checkpoint_ns,
+                            session_key.thread_id,
                             None,
                         )
                 self._write_status_activity(
@@ -504,10 +454,12 @@ class AgentSessionService:
                     "failed",
                     activity_writer,
                 )
-            return self._failed_result(
-                request,
-                "专家智能体会话执行失败",
-                f"{type(exc).__name__}: {exc}",
+            return DelegationResult(
+                status="failed",
+                analysis_id=request.analysis_id,
+                agent_type=request.agent_type,
+                session_id=request.session_id,
+                content=f"专家智能体会话执行失败: {type(exc).__name__}: {exc}",
             )
 
     @staticmethod
@@ -535,10 +487,12 @@ class AgentSessionService:
         request: DeleteSessionRequest,
     ) -> DeleteSessionResult:
         """幂等删除专业 Agent Session 的持久化与沙箱状态。"""
-        session_key = self._build_session_key(
-            request.analysis_id,
-            request.agent_type,
-            request.session_id,
+        session_key = AgentSessionKey(
+            user_id=self._user_id,
+            conversation_id=self._conversation_id,
+            analysis_id=request.analysis_id,
+            agent_type=request.agent_type,
+            session_id=request.session_id,
         )
         async with (
             self._session_store.lock(session_key),
@@ -561,7 +515,7 @@ class AgentSessionService:
                 raise RuntimeError("删除 Session 工作区失败") from exc
             with self._runtime_state_lock:
                 self._active_sessions.pop(
-                    session_key.checkpoint_ns,
+                    session_key.thread_id,
                     None,
                 )
         existed = checkpoint_deleted or workspace_deleted

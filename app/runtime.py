@@ -122,7 +122,6 @@ async def lifespan(app: FastAPI):
             postgres.init()
             await postgres.init_tables()
         resources.admin_doris.init()
-        await resources.agents.init()
         logger.info("应用资源初始化完成")
         app.state.resources = resources
         try:

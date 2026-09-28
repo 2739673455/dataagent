@@ -5,6 +5,7 @@ from __future__ import annotations
 import mimetypes
 import re
 import uuid
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 from uuid import UUID
@@ -154,16 +155,6 @@ def _transform_artifact_directives(
     return "".join(output), paths
 
 
-def _is_final_assistant_message(message: BaseMessage) -> bool:
-    """判断消息是否可以承载 Agent 最终产物指令。"""
-    if not isinstance(message, AIMessage) or message.tool_calls:
-        return False
-    finish_reason = normalize_finish_reason(
-        message.response_metadata.get("finish_reason")
-    )
-    return finish_reason in {None, "stop"}
-
-
 async def _project_final_artifact_directives(
     message: BaseMessage,
     schema: chat_schema.MessageResponse,
@@ -172,7 +163,12 @@ async def _project_final_artifact_directives(
     conversation_id: UUID,
 ) -> chat_schema.MessageResponse:
     """把 Agent 最终消息中的有效文件指令投影为附件。"""
-    if not _is_final_assistant_message(message):
+    if not isinstance(message, AIMessage) or message.tool_calls:
+        return schema
+    if normalize_finish_reason(message.response_metadata.get("finish_reason")) not in {
+        None,
+        "stop",
+    }:
         return schema
 
     candidate_paths: list[str] = []
@@ -275,6 +271,26 @@ async def langchain_message_to_schema_with_artifacts(
         user_id,
         conversation_id,
     )
+
+
+async def project_messages(
+    messages: Iterable[object],
+    files: DockerSandboxManager,
+    user_id: int,
+    conversation_id: UUID,
+) -> list[chat_schema.MessageResponse]:
+    """统一投影历史与流式更新中的完整消息，包括思考、工具结果和附件。"""
+    return [
+        schema
+        for message in messages
+        if isinstance(message, BaseMessage)
+        and (
+            schema := await langchain_message_to_schema_with_artifacts(
+                message, files, user_id, conversation_id
+            )
+        )
+        is not None
+    ]
 
 
 def langchain_message_to_schema(
@@ -380,15 +396,15 @@ async def subagent_activity_to_event(
         session_id=activity.session_id,
     )
     if isinstance(activity, SubagentMessageActivity):
-        message = await langchain_message_to_schema_with_artifacts(
-            activity.message, files, user_id, conversation_id
+        messages = await project_messages(
+            [activity.message], files, user_id, conversation_id
         )
-        if message is None:
+        if not messages:
             return None
         return chat_schema.ChatStreamSubagentMessageEvent(
             **common,
             type="subagent_message",
-            message=message,
+            message=messages[0],
         )
     if isinstance(activity, SubagentThinkingDeltaActivity):
         return chat_schema.ChatStreamSubagentThinkingEvent(

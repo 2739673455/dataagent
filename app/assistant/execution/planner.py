@@ -13,12 +13,12 @@ from loguru import logger
 from app.assistant.errors import PlannerContinuationLimitError
 from app.assistant.events import schemas as chat_schema
 from app.assistant.events.projection import (
-    langchain_message_to_schema_with_artifacts,
     normalize_finish_reason,
+    project_messages,
     schema_to_human_message,
     subagent_activity_to_event,
 )
-from app.assistant.events.stream import MessageDeltaParser
+from app.assistant.events.stream import MessageDeltaParser, update_messages
 from app.assistant.execution.types import (
     PlannerTurnContext,
     SubagentMessageActivity,
@@ -106,31 +106,11 @@ async def run_agent_turn(
                         continue
                     if chunk.get("type") != "updates":
                         continue
-                    data = chunk.get("data")
-                    if not isinstance(data, dict):
-                        continue
-
-                    responses: list[chat_schema.MessageResponse] = []
-                    for node in ("model", "tools"):
-                        update = data.get(node)
-                        messages = (
-                            update.get("messages") if isinstance(update, dict) else None
-                        )
-                        if not isinstance(messages, list):
-                            continue
-                        for message in messages:
-                            response = await langchain_message_to_schema_with_artifacts(
-                                message,
-                                files,
-                                user_id,
-                                conversation_id,
-                            )
-                            if response is not None:
-                                responses.append(response)
-                    logger.debug(
-                        f"智能体流式更新: conversation_id={conversation_id}, "
-                        f"nodes={tuple(chunk)}, "
-                        f"messages={len(responses)}"
+                    responses = await project_messages(
+                        update_messages(chunk.get("data")),
+                        files,
+                        user_id,
+                        conversation_id,
                     )
                     for response in responses:
                         last_finish_reason = normalize_finish_reason(

@@ -239,33 +239,25 @@ class ConversationRunService:
         """估算一项 replay 事件序列化后的 UTF-8 字节数。"""
         return len(event.model_dump_json().encode("utf-8"))
 
-    @staticmethod
-    def _merge_delta(previous: RunEvent, event: RunEvent) -> RunEvent | None:
-        """合并同一消息连续产生的正文或思考增量。"""
-        if (
-            not isinstance(previous, _DELTA_EVENT_TYPES)
-            or not isinstance(event, _DELTA_EVENT_TYPES)
-            or type(previous) is not type(event)
-        ):
-            return None
-        if event.reset:
-            return None
-        identity_fields = ("message_id", "delegation_id")
-        if any(
-            getattr(previous, field, None) != getattr(event, field, None)
-            for field in identity_fields
-        ):
-            return None
-        return previous.model_copy(update={"delta": previous.delta + event.delta})
-
     def _cache_event(self, run: _ConversationRun, event: RunEvent) -> None:
         """将事件写入有数量和字节边界的重放窗口。"""
         if run.events:
-            merged = self._merge_delta(run.events[-1], event)
-            if merged is not None:
-                previous = run.events.pop()
+            previous = run.events[-1]
+            if (
+                isinstance(previous, _DELTA_EVENT_TYPES)
+                and isinstance(event, _DELTA_EVENT_TYPES)
+                and type(previous) is type(event)
+                and not event.reset
+                and all(
+                    getattr(previous, field, None) == getattr(event, field, None)
+                    for field in ("message_id", "delegation_id")
+                )
+            ):
+                run.events.pop()
                 run.replay_bytes -= self._event_size(previous)
-                event = merged
+                event = previous.model_copy(
+                    update={"delta": previous.delta + event.delta}
+                )
         run.events.append(event)
         run.replay_bytes += self._event_size(event)
         while run.events and (

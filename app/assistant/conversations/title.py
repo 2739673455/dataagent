@@ -31,16 +31,6 @@ def initial_conversation_title(user_text: str | None) -> str:
     return normalized[:_MAX_TITLE_LENGTH]
 
 
-def _normalize_generated_title(raw_title: str) -> str:
-    """规范化模型生成的标题。"""
-    title = " ".join(raw_title.split()).strip(_TITLE_WRAPPERS).strip()
-    for prefix in ("标题：", "标题:"):
-        if title.startswith(prefix):
-            title = title[len(prefix) :].strip()
-            break
-    return title.strip(_TITLE_WRAPPERS).strip()[:_MAX_TITLE_LENGTH]
-
-
 class ConversationTitleService:
     """生成并安全更新会话标题。"""
 
@@ -63,7 +53,12 @@ class ConversationTitleService:
                 HumanMessage(content=user_text[:_MAX_MODEL_INPUT_LENGTH]),
             ]
         )
-        generated_title = _normalize_generated_title(response.text)
+        title = " ".join(response.text.split()).strip(_TITLE_WRAPPERS).strip()
+        for prefix in ("标题：", "标题:"):
+            if title.startswith(prefix):
+                title = title[len(prefix) :].strip()
+                break
+        generated_title = title.strip(_TITLE_WRAPPERS).strip()[:_MAX_TITLE_LENGTH]
         if not generated_title:
             return False
 

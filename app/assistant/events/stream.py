@@ -1,9 +1,9 @@
 """Planner 与 Specialist 共用的模型消息增量解析。"""
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from typing import Literal, TypedDict
 
-from langchain_core.messages import AIMessageChunk
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from app.assistant.events.content import message_text, reasoning_text
 
@@ -43,3 +43,14 @@ class MessageDeltaParser:
             reset = key not in self._seen
             self._seen.add(key)
             yield kind, MessageDelta(message_id=message_id, delta=text, reset=reset)
+
+
+def update_messages(data: object) -> Iterator[AIMessage | ToolMessage]:
+    """从 Planner 或专家的节点更新中提取完整模型与工具消息。"""
+    if not isinstance(data, Mapping):
+        return
+    for node in ("model", "tools"):
+        update = data.get(node)
+        messages = update.get("messages") if isinstance(update, Mapping) else None
+        if isinstance(messages, list):
+            yield from (m for m in messages if isinstance(m, AIMessage | ToolMessage))

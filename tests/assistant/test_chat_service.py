@@ -14,6 +14,7 @@ from uuid import UUID
 from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
+from langgraph.types import StateSnapshot
 from pydantic import ValidationError
 
 from app.assistant.agents.middleware.message_timestamp import (
@@ -23,7 +24,6 @@ from app.assistant.agents.middleware.user_message_context import (
     USER_MESSAGE_CONTEXT_KEY,
     UserMessageContext,
 )
-from app.assistant.checkpoints.reader import CheckpointState
 from app.assistant.conversations import history as conversation_history
 from app.assistant.errors import PlannerContinuationLimitError
 from app.assistant.events import projection as message_projection
@@ -353,15 +353,13 @@ class _TurnManagerStub:
         self.execution_count = 0
 
     async def can_resume_planner(self, user_id: int, conversation_id: UUID) -> bool:
-        return bool(
-            (await self.read_planner_state(user_id, conversation_id)).next_nodes
-        )
+        return bool((await self.read_planner_state(user_id, conversation_id)).next)
 
     async def read_planner_state(
         self,
         user_id: int,
         conversation_id: UUID,
-    ) -> CheckpointState:
+    ) -> StateSnapshot:
         if user_id != self.turn_context.user_id:
             raise AssertionError("unexpected user_id")
         if conversation_id != self.turn_context.conversation_id:
@@ -369,10 +367,15 @@ class _TurnManagerStub:
         state = await self.runtime.planner.aget_state(
             {"configurable": {"thread_id": "test"}}
         )
-        return CheckpointState(
+        return StateSnapshot(
             values=state.values,
-            next_nodes=tuple(state.next) if hasattr(state, "next") else (),
-            updated_at=None,
+            next=tuple(state.next) if hasattr(state, "next") else (),
+            created_at=None,
+            config={},
+            metadata=None,
+            parent_config=None,
+            tasks=(),
+            interrupts=(),
         )
 
     async def read_delegation_activity(
