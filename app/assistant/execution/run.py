@@ -6,6 +6,7 @@ import asyncio
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from loguru import logger
@@ -13,17 +14,17 @@ from loguru import logger
 from app.assistant.errors import ConversationBusyError, ConversationRunConflictError
 from app.assistant.events import schemas as chat_schema
 from app.assistant.execution import planner as planner_turn
-from app.assistant.execution.contracts import (
-    AgentRuntimeManager,
-    ConversationFileInspector,
-    ConversationLifecycleLockProvider,
-)
 from app.assistant.execution.types import (
     PlannerTurnContext,
     conversation_lifecycle_lock_name,
 )
 from app.shared.config.app_config import cfg
 from app.shared.errors.infrastructure import AdvisoryLockBusyError
+
+if TYPE_CHECKING:
+    from app.assistant.execution.manager import AgentManager
+    from app.sandbox.manager import DockerSandboxManager
+    from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 
 type ConversationRunKey = tuple[int, UUID]
 type RunEvent = chat_schema.ChatStreamEventPayload
@@ -58,9 +59,9 @@ class ConversationRunService:
 
     def __init__(
         self,
-        agents: AgentRuntimeManager,
-        files: ConversationFileInspector,
-        locks: ConversationLifecycleLockProvider,
+        agents: AgentManager,
+        files: DockerSandboxManager,
+        locks: LangGraphPostgresManager,
     ) -> None:
         """绑定 Agent 执行依赖并初始化进程内 Run 注册表。"""
         self._agents = agents
@@ -249,7 +250,7 @@ class ConversationRunService:
             return None
         if event.reset:
             return None
-        identity_fields = ("message_id", "delegation_id", "parent_tool_call_id")
+        identity_fields = ("message_id", "delegation_id")
         if any(
             getattr(previous, field, None) != getattr(event, field, None)
             for field in identity_fields

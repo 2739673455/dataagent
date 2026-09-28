@@ -15,7 +15,6 @@ export type ImageContent = ApiSchemas["ImageContent"];
 export type ThinkingContent = ApiSchemas["ThinkingContent"];
 export type UserMessagePart = ApiSchemas["UserMessageRequest"]["parts"][number];
 export type MessagePart = ApiSchemas["MessageResponse"]["parts"][number];
-export type EvalDelegationResponse = ApiSchemas["EvalDelegationResponse"];
 export type UserMessageRequest = ApiSchemas["UserMessageRequest"];
 
 export type MessageResponse = Omit<ApiSchemas["MessageResponse"], "attachments"> & {
@@ -60,8 +59,6 @@ export interface SubagentRunIdentity {
   analysisId: string;
   agentType: AgentType;
   sessionId: string;
-  parentToolCallId?: string | null;
-  instruction?: string | null;
 }
 
 export interface SubagentRun extends SubagentRunIdentity {

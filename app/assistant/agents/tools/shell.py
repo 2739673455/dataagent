@@ -11,7 +11,7 @@ from pydantic import Field
 from app.sandbox.shell_runner import DockerShellJobRunner
 
 
-def create_shell_tools(executor: DockerShellJobRunner) -> tuple[BaseTool, ...]:
+def create_shell_tool(executor: DockerShellJobRunner) -> BaseTool:
     """创建绑定当前工作目录的 Shell 工具。"""
 
     @tool("shell")
@@ -39,4 +39,4 @@ def create_shell_tools(executor: DockerShellJobRunner) -> tuple[BaseTool, ...]:
             except Exception:  # noqa: BLE001
                 logger.exception("清理 Shell 临时文件失败: job_id={}", job_id)
 
-    return (shell,)
+    return shell

@@ -28,7 +28,6 @@ _RESERVED_MCP_TOOL_NAMES = frozenset(
     {
         "delegation",
         "task",
-        "eval",
         "ls",
         "read_file",
         "write_file",

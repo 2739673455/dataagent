@@ -1,8 +1,10 @@
 """Planner 回合执行、续写与恢复，及执行事件到聊天协议的转换。"""
 
+from __future__ import annotations
+
 from collections.abc import AsyncGenerator
 from contextlib import aclosing
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from langchain_core.messages import BaseMessage
 from langgraph.types import StreamPart
@@ -17,10 +19,6 @@ from app.assistant.events.projection import (
     subagent_activity_to_event,
 )
 from app.assistant.events.stream import MessageDeltaParser
-from app.assistant.execution.contracts import (
-    AgentRuntimeManager,
-    ConversationFileInspector,
-)
 from app.assistant.execution.types import (
     PlannerTurnContext,
     SubagentMessageActivity,
@@ -30,10 +28,14 @@ from app.assistant.execution.types import (
     build_planner_config,
 )
 
+if TYPE_CHECKING:
+    from app.assistant.execution.manager import AgentManager
+    from app.sandbox.manager import DockerSandboxManager
+
 
 async def run_agent_turn(
-    agents: AgentRuntimeManager,
-    files: ConversationFileInspector,
+    agents: AgentManager,
+    files: DockerSandboxManager,
     turn_context: PlannerTurnContext,
     user_message: chat_schema.UserMessageRequest | None,
 ) -> AsyncGenerator[chat_schema.ChatStreamEventPayload]:

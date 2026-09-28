@@ -10,11 +10,10 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
-from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
-from app.assistant.agents.explorer.semantic_recall_handler import recall_context
-from app.assistant.agents.explorer.tools import create_semantic_recall_tools
+from app.assistant.agents.explorer.tools import create_semantic_recall_tool
+from app.assistant.agents.explorer.tools.semantic_recall import _recall_context
 from app.metadata.models.search import (
     SemanticColumnRecallResult,
     SemanticMetricRecallResult,
@@ -23,6 +22,7 @@ from app.metadata.models.search import (
     SemanticTableContext,
     SemanticValueRecallResult,
 )
+from app.metadata.services.recall_handler import SemanticRecallHandler
 
 
 def build_response(
@@ -87,13 +87,13 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             first.values[0].model_copy(update={"c_name": "amount", "value": "100"})
         ]
         second = first.model_copy(update={"metrics": [], "values": []})
-        runtime = MagicMock(spec=SemanticRecallRuntime)
+        runtime = MagicMock(spec=SemanticRecallHandler)
         runtime.search = AsyncMock(side_effect=[first, second])
-        tools = create_semantic_recall_tools(runtime)
-        self.assertEqual([tool.name for tool in tools], ["recall_context"])
-        self.assertNotIn("query", tools[0].args)
+        tool = create_semantic_recall_tool(runtime)
+        self.assertEqual(tool.name, "recall_context")
+        self.assertNotIn("query", tool.args)
         builder = StateGraph(MessagesState)
-        builder.add_node("tools", ToolNode(tools))
+        builder.add_node("tools", ToolNode([tool]))
         builder.add_edge(START, "tools")
         builder.add_edge("tools", END)
         graph = builder.compile(checkpointer=InMemorySaver())
@@ -138,10 +138,75 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         saved = await graph.aget_state(config)
         self.assertEqual(saved.values["messages"], result["messages"])
 
+    async def test_tool_schema_validates_and_normalizes_requests(self):
+        handler = MagicMock(spec=SemanticRecallHandler)
+        handler.search = AsyncMock(
+            return_value=build_response("金额", score=0.8, reason="金额")
+        )
+        tool = create_semantic_recall_tool(handler)
+        schema = cast(type[BaseModel], tool.tool_call_schema).model_json_schema()
+        self.assertNotIn("runtime", schema["properties"])
+        self.assertEqual(schema["properties"]["terms"]["maxItems"], 50)
+        builder = StateGraph(MessagesState)
+        builder.add_node("tools", ToolNode([tool]))
+        builder.add_edge(START, "tools")
+        builder.add_edge("tools", END)
+        graph = builder.compile()
+        for terms, limit in (([" "], 5), (["金额"], 21), (["金额"] * 51, 5)):
+            result = await graph.ainvoke(
+                {
+                    "messages": [
+                        AIMessage(
+                            content="",
+                            tool_calls=[
+                                {
+                                    "id": "invalid",
+                                    "name": "recall_context",
+                                    "args": {
+                                        "terms": terms,
+                                        "resource_types": ["column"],
+                                        "limit_per_type": limit,
+                                    },
+                                }
+                            ],
+                        )
+                    ]
+                }
+            )
+            self.assertEqual(result["messages"][-1].status, "error")
+        handler.search.assert_not_awaited()
+        result = await graph.ainvoke(
+            {
+                "messages": [
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "valid",
+                                "name": "recall_context",
+                                "args": {
+                                    "terms": [" 金额 ", "金额"],
+                                    "resource_types": ["column", "column"],
+                                    "extra": "ignored",
+                                },
+                            }
+                        ],
+                    )
+                ]
+            },
+            {"configurable": {"user_id": 7}},
+        )
+        self.assertEqual(result["messages"][-1].status, "success")
+        user_id, request = handler.search.await_args.args
+        self.assertEqual(user_id, 7)
+        self.assertEqual(request.terms, ["金额"])
+        self.assertEqual(request.resource_types, ["column"])
+        self.assertEqual(request.limit_per_type, 5)
+
     async def test_search_failure_returns_error(self):
-        runtime = MagicMock(spec=SemanticRecallRuntime)
+        runtime = MagicMock(spec=SemanticRecallHandler)
         runtime.search = AsyncMock(side_effect=RuntimeError("检索不可用"))
-        result = await recall_context(
+        result = await _recall_context(
             {"configurable": {"user_id": 7}}, ["column"], ["金额"], 5, recall=runtime
         )
         self.assertEqual(result["status"], "error")

@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from fastapi import FastAPI
 from loguru import logger
 
-from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
 from app.assistant.agents.filesystem import packaged_skill_readonly_mounts
 from app.assistant.conversations.lifecycle import ConversationLifecycleService
 from app.assistant.conversations.tombstones import ConversationTombstoneStore
@@ -14,6 +13,7 @@ from app.assistant.execution.manager import AgentManager
 from app.assistant.execution.run import ConversationRunService
 from app.assistant.execution.runtime_factory import ConversationAgentRuntimeFactory
 from app.assistant.providers import build_conversation_lifecycle_service
+from app.metadata.services.recall_handler import SemanticRecallHandler
 from app.query.providers import build_query_execution_handler
 from app.sandbox.manager import DockerSandboxManager
 from app.sandbox.providers import create_sandbox_manager
@@ -45,7 +45,7 @@ class WebResources:
     agents: AgentManager
     runs: ConversationRunService
     conversations: ConversationLifecycleService
-    recall: SemanticRecallRuntime
+    recall: SemanticRecallHandler
 
 
 def _create_resources() -> WebResources:
@@ -60,7 +60,7 @@ def _create_resources() -> WebResources:
     persistence = LangGraphPostgresManager(cfg.langgraph_postgresql)
     sandbox = create_sandbox_manager(cfg.sandbox, packaged_skill_readonly_mounts())
     tombstones = ConversationTombstoneStore(assistant)
-    recall = SemanticRecallRuntime(auth, meta, embedding, es, admin_doris)
+    recall = SemanticRecallHandler(auth, meta, embedding, es, admin_doris)
     factory = ConversationAgentRuntimeFactory(
         persistence,
         sandbox,

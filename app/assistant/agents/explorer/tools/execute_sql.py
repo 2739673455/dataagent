@@ -1,108 +1,59 @@
 """Explorer 受控只读 SQL 执行工具。"""
 
-from collections.abc import Mapping
 from typing import Annotated, Any
 from uuid import UUID
 
 from langchain.tools import ToolRuntime, tool
-from langchain_core.messages import HumanMessage
 from langchain_core.tools import BaseTool
-from loguru import logger
 
 from app.query.errors import QueryRejectedError, classify_query_error
 from app.query.services.execution_handler import QueryExecutionHandler
 from app.shared.contracts.analysis import AgentSessionKey
 
 
-def _get_query_session(runtime: ToolRuntime) -> AgentSessionKey:
-    """从工具运行配置中读取并校验 Explorer Session。"""
-    configurable = runtime.config.get("configurable", {})
-    user_id = configurable.get("user_id")
-    raw_conversation_id = configurable.get("conversation_id")
-    analysis_id = configurable.get("analysis_id")
-    session_id = configurable.get("session_id")
-    if not isinstance(user_id, int) or not isinstance(raw_conversation_id, str):
-        raise TypeError("配置中未找到查询上下文")
-    if not isinstance(analysis_id, str) or not isinstance(session_id, str):
-        raise TypeError("配置中未找到专家会话上下文")
-    return AgentSessionKey(
-        user_id=user_id,
-        conversation_id=UUID(raw_conversation_id),
-        analysis_id=analysis_id,
-        agent_type="explorer",
-        session_id=session_id,
-    )
-
-
-def _query_purpose(runtime: ToolRuntime, purpose: str | None) -> str:
-    """读取显式查询目的或当前 Explorer 任务。"""
-    if purpose is not None and purpose.strip():
-        return purpose.strip()
-    state = runtime.state
-    if isinstance(state, Mapping):
-        messages = state.get("messages")
-        if isinstance(messages, list):
-            for message in reversed(messages):
-                if (
-                    isinstance(message, HumanMessage)
-                    and not message.additional_kwargs.get("dataagent_internal_retry")
-                    and isinstance(message.content, str)
-                    and message.content.strip()
-                ):
-                    return message.content.strip()
-    return "执行只读数据查询"
-
-
-def _error_details(error: Exception) -> list[dict[str, str]]:
-    """构造可供模型处理的异常类别和原因。"""
-    return [
-        {
-            "type": type(error).__name__,
-            "msg": str(error).strip() or "异常未提供详情",
-        }
-    ]
-
-
 async def _execute_sql(
     handler: QueryExecutionHandler,
     runtime: ToolRuntime,
     sql: Annotated[str, "需要执行的单条 Doris 只读 SQL"],
-    purpose: Annotated[str | None, "本次 SQL 的具体查询目的"] = None,
+    purpose: Annotated[str, "本次 SQL 的具体查询目的"],
 ) -> dict[str, Any]:
     """安全执行只读 SQL，将完整结果写入当前会话 CSV 并返回紧凑摘要。"""
-    session_key: AgentSessionKey | None = None
     try:
-        session_key = _get_query_session(runtime)
+        configurable = runtime.config.get("configurable", {})
+        session_key = AgentSessionKey(
+            user_id=configurable["user_id"],
+            conversation_id=UUID(configurable["conversation_id"]),
+            analysis_id=configurable["analysis_id"],
+            agent_type="explorer",
+            session_id=configurable["session_id"],
+        )
         result = await handler.execute(
             session_key,
             sql,
-            purpose=_query_purpose(runtime, purpose),
+            purpose=purpose.strip(),
         )
     except Exception as exc:  # noqa: BLE001
         code = classify_query_error(exc)
-        conversation_id = session_key.conversation_id if session_key else None
-        if code == "readonly_query_failed":
-            logger.exception(f"只读查询工具执行失败: conversation_id={conversation_id}")
-        else:
-            logger.warning(
-                f"只读查询失败: conversation_id={conversation_id}, code={code}"
-            )
+        response: dict[str, Any] = {"status": "error", "code": code}
         if isinstance(exc, QueryRejectedError):
-            return {
-                "status": "error",
-                "code": code,
-                "message": "SQL 在提交 Doris 执行前未通过校验",
-                "hint": "请根据 validation.issues 修正 SQL，然后再次调用 execute_sql",
-                "validation": exc.result.model_dump(mode="json"),
-            }
-        return {
-            "status": "error",
-            "code": code,
-            "message": "只读查询执行失败"
-            if code == "readonly_query_failed"
-            else str(exc),
-            "details": _error_details(exc),
-        }
+            response.update(
+                message="SQL 在提交 Doris 执行前未通过校验",
+                hint="请根据 validation.issues 修正 SQL，然后再次调用 execute_sql",
+                validation=exc.result.model_dump(mode="json"),
+            )
+        else:
+            response.update(
+                message="只读查询执行失败"
+                if code == "readonly_query_failed"
+                else str(exc),
+                details=[
+                    {
+                        "type": type(exc).__name__,
+                        "msg": str(exc).strip() or "异常未提供详情",
+                    }
+                ],
+            )
+        return response
     return {"status": "success", **result.model_dump(mode="json")}
 
 
@@ -113,7 +64,7 @@ def create_execute_sql_tool(handler: QueryExecutionHandler) -> BaseTool:
     async def execute_sql_tool(
         runtime: ToolRuntime,
         sql: Annotated[str, "需要执行的单条 Doris 只读 SQL"],
-        purpose: Annotated[str | None, "本次 SQL 的具体查询目的"] = None,
+        purpose: Annotated[str, "本次 SQL 的具体查询目的"],
     ) -> dict[str, Any]:
         """安全执行只读 SQL 并写入会话产物。"""
         return await _execute_sql(

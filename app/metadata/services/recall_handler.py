@@ -1,4 +1,4 @@
-"""Explorer Agent 语义召回运行时依赖。"""
+"""语义召回用例编排。"""
 
 from dataclasses import dataclass
 
@@ -17,8 +17,8 @@ from app.shared.clients.postgres_client_manager import PostgresClientManager
 
 
 @dataclass(frozen=True, slots=True)
-class SemanticRecallRuntime:
-    """召回能力使用的资源，由所属 Web 进程显式注入。"""
+class SemanticRecallHandler:
+    """读取授权和元数据目录并执行语义召回。"""
 
     auth: PostgresClientManager
     meta: PostgresClientManager

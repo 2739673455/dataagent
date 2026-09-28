@@ -13,6 +13,7 @@ from langchain_core.runnables import RunnableConfig
 from pydantic import (
     BaseModel,
     ConfigDict,
+    Field,
     StringConstraints,
 )
 
@@ -41,7 +42,6 @@ NonEmptyText = Annotated[
 ]
 MESSAGE_CREATED_AT_KEY = "dataagent_created_at"
 DELEGATION_CONTEXT_KEY = "dataagent_delegation_context"
-EVAL_DELEGATIONS_KEY = "dataagent_eval_delegations"
 
 
 def get_thread_id(user_id: int, conversation_id: UUID) -> str:
@@ -104,8 +104,6 @@ class SubagentMessageActivity:
     agent_type: AgentType
     session_id: str
     message: BaseMessage
-    parent_tool_call_id: str | None = None
-    instruction: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,8 +117,6 @@ class SubagentThinkingDeltaActivity:
     message_id: str
     delta: str
     reset: bool = False
-    parent_tool_call_id: str | None = None
-    instruction: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,8 +130,6 @@ class SubagentMessageDeltaActivity:
     message_id: str
     delta: str
     reset: bool = False
-    parent_tool_call_id: str | None = None
-    instruction: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,8 +141,6 @@ class SubagentStatusActivity:
     agent_type: AgentType
     session_id: str
     status: SubagentRunStatus
-    parent_tool_call_id: str | None = None
-    instruction: str | None = None
 
 
 type SubagentActivity = (
@@ -183,30 +175,42 @@ class DelegationMessageContext(StrictProtocolModel):
     ]
 
 
-class DelegationRequest(StrictProtocolModel):
-    """Delegation 是 Planner 向专业 Agent 发起的一次工作委派。
+class DelegationRequest(BaseModel):
+    """创建或续接专业 Agent Session 的委派请求。"""
 
-    请求定位可复用的 Session；每次委派以独立 delegation_id 记录结果，
-    同一 Session 可以接收多次委派并延续工作上下文。"""
+    model_config = ConfigDict(strict=True)
 
-    analysis_id: Identifier
-    agent_type: AgentType
-    session_id: Identifier
-    message: NonEmptyText
+    analysis_id: Identifier = Field(
+        description="分析标识，只能包含小写字母、数字、连字符和下划线，最长 64 字符"
+    )
+    agent_type: AgentType = Field(description="专业 Agent 类型")
+    session_id: Identifier = Field(
+        description="专业 Session 标识，首次创建后续接和修补时必须复用"
+    )
+    message: NonEmptyText = Field(
+        description="交给专业 Agent 的完整目标、输入产物路径和约束"
+    )
 
 
-class ListSessionsRequest(StrictProtocolModel):
+class ListSessionsRequest(BaseModel):
     """查询当前 Conversation 内专业 Session 的请求。"""
 
-    analysis_id: Identifier | None = None
+    model_config = ConfigDict(strict=True)
+
+    analysis_id: Identifier | None = Field(
+        default=None,
+        description="可选分析标识；省略时查询当前 Conversation 的全部专业 Session",
+    )
 
 
-class DeleteSessionRequest(StrictProtocolModel):
+class DeleteSessionRequest(BaseModel):
     """删除专业 Agent Session 的请求。"""
 
-    analysis_id: Identifier
-    agent_type: AgentType
-    session_id: Identifier
+    model_config = ConfigDict(strict=True)
+
+    analysis_id: Identifier = Field(description="待删除 Session 所属分析标识")
+    agent_type: AgentType = Field(description="待删除的专业 Agent 类型")
+    session_id: Identifier = Field(description="待删除的专业 Session 标识")
 
 
 class DelegationCheckpointRecord(StrictProtocolModel):
@@ -225,17 +229,6 @@ class DelegationResult(StrictProtocolModel):
     analysis_id: Identifier
     agent_type: AgentType
     session_id: Identifier
-
-
-class EvalDelegationRecord(StrictProtocolModel):
-    """持久化在 eval ToolMessage 中的内部委派记录。"""
-
-    delegation_id: NonEmptyText
-    analysis_id: Identifier
-    agent_type: AgentType
-    session_id: Identifier
-    message: NonEmptyText
-    result: DelegationResult | None = None
 
 
 @dataclass(frozen=True, slots=True)

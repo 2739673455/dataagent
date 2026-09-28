@@ -35,7 +35,6 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import Field
 
 from app.assistant.agents.filesystem import agent_skills_mount_path
-from app.assistant.agents.middleware.eval_delegations import EvalDelegationMiddleware
 from app.assistant.agents.specialists import (
     SpecialistAgentFactory,
     build_specialist_definitions,
@@ -47,12 +46,10 @@ from app.assistant.execution.session_service import AgentSessionService
 from app.assistant.execution.session_store import AgentSessionStore
 from app.assistant.execution.types import (
     DELEGATION_CONTEXT_KEY,
-    EVAL_DELEGATIONS_KEY,
     DelegationMessageContext,
     DelegationRequest,
     DelegationResult,
     DeleteSessionRequest,
-    EvalDelegationRecord,
     SubagentActivity,
     SubagentMessageActivity,
     SubagentMessageDeltaActivity,
@@ -606,14 +603,13 @@ class DynamicSubagentContractTest(unittest.TestCase):
                     self.assertTrue(required_tools.issubset(model.seen_tools))
                     self.assertNotIn("task", model.seen_tools)
 
-    def test_planner_exposes_tools_with_only_delegation_in_ptc(self) -> None:
+    def test_planner_exposes_direct_delegation_without_eval(self) -> None:
         from deepagents import (
             GeneralPurposeSubagentProfile,
             HarnessProfile,
             register_harness_profile,
         )
         from deepagents.backends import LocalShellBackend
-        from langchain.agents.middleware.types import AgentMiddleware
         from langchain_core.messages import HumanMessage
         from langgraph.checkpoint.memory import InMemorySaver
 
@@ -634,20 +630,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
             """删除测试专业 Session。"""
             return session_id
 
-        @tool
-        def eval(code: str) -> str:
-            """模拟 Planner 解释器工具。"""
-            return code
-
-        interpreter_kwargs: dict[str, object] = {}
-
-        class InterpreterStub(AgentMiddleware):
-            """只用于验证 Planner 工具暴露边界。"""
-
-            def __init__(self, **kwargs: object) -> None:
-                interpreter_kwargs.update(kwargs)
-                self.tools = [eval]
-
         register_harness_profile(
             "recordingchatmodel",
             HarnessProfile(
@@ -664,18 +646,12 @@ class DynamicSubagentContractTest(unittest.TestCase):
             backend = LocalShellBackend(root_dir=workspace)
             cast(Any, backend).shell_jobs = MagicMock()
             cast(Any, backend).conversation_dir = workspace
-            with patch(
-                "app.assistant.agents.planner.agent.CodeInterpreterMiddleware",
-                InterpreterStub,
-            ):
-                graph = create_planner_agent(
-                    model=model,
-                    tools=[delegation, list_sessions, delete_session],
-                    backend=cast(Any, backend),
-                    checkpointer=InMemorySaver(),
-                    session_service=_service(_FakeAgent()),
-                    interpreter_memory_limit_bytes=2 * 1024 * 1024,
-                )
+            graph = create_planner_agent(
+                model=model,
+                tools=[delegation, list_sessions, delete_session],
+                backend=cast(Any, backend),
+                checkpointer=InMemorySaver(),
+            )
 
             graph.invoke(
                 {"messages": [HumanMessage(content="inspect tools")]},
@@ -703,62 +679,13 @@ class DynamicSubagentContractTest(unittest.TestCase):
         self.assertIn("list_sessions", model.seen_tools)
         self.assertIn("delete_session", model.seen_tools)
         self.assertIn("view_image", model.seen_tools)
-        self.assertEqual(interpreter_kwargs["ptc"], ["delegation"])
+        self.assertNotIn("eval", model.seen_tools)
 
 
 class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
     """验证 Session 隔离、并发和修补限制。"""
 
-    def test_collects_eval_delegations_until_parent_result_is_persisted(
-        self,
-    ) -> None:
-        service = _service(_FakeAgent())
-        request = DelegationRequest(
-            analysis_id="sales",
-            agent_type="explorer",
-            session_id="source",
-            message="定位销售数据",
-        )
-        result = service._failed_result(request, "执行失败", "RuntimeError: failed")
-
-        service.begin_eval_delegation("eval-1", "ptc-delegation-1", request)
-        service.finish_eval_delegation("eval-1", "ptc-delegation-1", result)
-
-        records = service.take_eval_delegations("eval-1")
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0].message, "定位销售数据")
-        self.assertEqual(records[0].result, result)
-        self.assertEqual(service.take_eval_delegations("eval-1"), [])
-
-    async def test_eval_middleware_persists_collected_delegations(self) -> None:
-        service = MagicMock(spec=AgentSessionService)
-        service.take_eval_delegations.return_value = [
-            EvalDelegationRecord(
-                delegation_id="ptc-delegation-1",
-                analysis_id="sales",
-                agent_type="explorer",
-                session_id="source",
-                message="定位销售数据",
-            )
-        ]
-        middleware = EvalDelegationMiddleware(service)
-        request = cast(
-            Any,
-            SimpleNamespace(tool_call={"name": "eval", "id": "eval-1"}),
-        )
-
-        async def handler(_: object) -> ToolMessage:
-            return ToolMessage(content="done", tool_call_id="eval-1", name="eval")
-
-        response = await middleware.awrap_tool_call(request, cast(Any, handler))
-
-        self.assertIsInstance(response, ToolMessage)
-        assert isinstance(response, ToolMessage)
-        records = response.additional_kwargs[EVAL_DELEGATIONS_KEY]
-        self.assertEqual(records[0]["delegation_id"], "ptc-delegation-1")
-        service.take_eval_delegations.assert_called_once_with("eval-1")
-
-    async def test_ptc_delegation_emits_activity_linked_to_parent_eval(self) -> None:
+    async def test_direct_delegation_returns_text_and_emits_activity(self) -> None:
         from langchain.tools import ToolRuntime
 
         from app.assistant.agents.planner.tools import create_delegation_tool
@@ -793,29 +720,16 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         service.execute_delegation = AsyncMock(side_effect=execute)
         runtime = ToolRuntime(
-            state={
-                "messages": [
-                    AIMessage(
-                        content="",
-                        tool_calls=[
-                            {
-                                "id": "eval-1",
-                                "name": "eval",
-                                "args": {"code": "await tools.delegation({})"},
-                            }
-                        ],
-                    )
-                ]
-            },
+            state={},
             context=None,
             config=build_planner_config(12, _CONVERSATION_ID),
             stream_writer=activities.append,
-            tool_call_id="ptc_delegation_a1b2c3d4",
+            tool_call_id="delegation-1",
             store=None,
         )
         delegation_tool = create_delegation_tool(service)
 
-        await cast(Any, delegation_tool).coroutine(
+        actual = await cast(Any, delegation_tool).coroutine(
             runtime=runtime,
             analysis_id="sales",
             agent_type="explorer",
@@ -823,14 +737,9 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             message="定位销售数据",
         )
 
-        service.begin_eval_delegation.assert_called_once()
-        service.finish_eval_delegation.assert_called_once_with(
-            "eval-1",
-            "ptc_delegation_a1b2c3d4",
-            result,
-        )
-        self.assertEqual(activities[0].parent_tool_call_id, "eval-1")
-        self.assertEqual(activities[0].instruction, "定位销售数据")
+        self.assertEqual(actual, result.content)
+        self.assertEqual(activities[0].delegation_id, "delegation-1")
+        service.execute_delegation.assert_awaited_once()
 
     async def test_specialist_factory_builds_a_fresh_agent_per_call(self) -> None:
         built_agents: list[CompiledStateGraph] = []

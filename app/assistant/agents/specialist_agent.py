@@ -18,7 +18,7 @@ from app.assistant.agents.middleware.message_timestamp import (
 from app.assistant.agents.middleware.user_message_context import (
     UserMessageContextMiddleware,
 )
-from app.assistant.agents.tools import create_shell_tools, create_view_image_tools
+from app.assistant.agents.tools import create_shell_tool, create_view_image_tools
 from app.sandbox.backend import DockerSandboxBackend
 
 
@@ -61,7 +61,7 @@ def create_specialist_agent(
         tools=[
             *tools,
             *create_view_image_tools(model),
-            *create_shell_tools(backend.shell_jobs),
+            create_shell_tool(backend.shell_jobs),
         ],
         system_prompt=system_prompt,
         middleware=[

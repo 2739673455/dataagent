@@ -1,12 +1,11 @@
 import { ChevronRight } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { cn } from "@/lib/utils";
 import type { MessageResponse, SubagentRun } from "@/features/chat/types";
 import { AttachmentChip } from "@/features/chat/components/messages/AttachmentChip";
 import {
   buildDisplayItems,
-  buildEvalDelegationItems,
   type ExecutionStatus,
   formatToolResult,
   getExecutionStatus,
@@ -86,10 +85,8 @@ export function ToolArgsView({ args }: { args?: Record<string, unknown> }) {
  */
 export function GenericToolRunBar({
   item,
-  nestedContent,
 }: {
   item: ToolRunDisplayItem;
-  nestedContent?: ReactNode;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const argsPreview = getToolArgsPreview(item.args);
@@ -157,7 +154,6 @@ export function GenericToolRunBar({
               <ToolArgsView args={item.args} />
             </div>
           ) : null}
-          {nestedContent}
           {item.result !== undefined ? (
             <div className="space-y-1">
               <p className="font-medium text-[#71717a]">输出</p>
@@ -273,31 +269,6 @@ export function ExecutionProcessCollapse({
                   item={item}
                   loadSubagentMessages={loadSubagentMessages}
                   subagentRun={subagentRuns[item.toolCallId]}
-                />
-              );
-            }
-
-            if (item.name === "eval") {
-              const nestedDelegations = buildEvalDelegationItems(item, subagentRuns);
-              return (
-                <GenericToolRunBar
-                  key={item.key}
-                  item={item}
-                  nestedContent={
-                    nestedDelegations.length > 0 ? (
-                      <div className="space-y-1">
-                        <p className="font-medium text-[#71717a]">内部委派</p>
-                        {nestedDelegations.map((delegation) => (
-                          <DelegationToolRunBar
-                            key={delegation.key}
-                            item={delegation}
-                            loadSubagentMessages={loadSubagentMessages}
-                            subagentRun={subagentRuns[delegation.toolCallId]}
-                          />
-                        ))}
-                      </div>
-                    ) : undefined
-                  }
                 />
               );
             }

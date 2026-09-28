@@ -3,6 +3,7 @@
 import unittest
 from contextlib import asynccontextmanager
 from http import HTTPStatus
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
@@ -10,6 +11,7 @@ from app.assistant.conversations.lifecycle import (
     ConversationLifecycleService,
 )
 from app.assistant.errors import ConversationBusyError
+from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -39,7 +41,7 @@ def _build_service() -> tuple[
     )
     service = ConversationLifecycleService(
         repository_factory=repository_factory,
-        lock_provider=_BusyLockProvider(),
+        lock_provider=cast(LangGraphPostgresManager, _BusyLockProvider()),
         agents=agents,
         sandbox=MagicMock(),
         config=MagicMock(),

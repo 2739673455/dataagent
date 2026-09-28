@@ -146,7 +146,7 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
     async def test_cancellation_propagates_through_tool(self):
         self.service.execute.side_effect = asyncio.CancelledError()
         with self.assertRaises(asyncio.CancelledError):
-            await _execute_sql(self.handler, self.tool_runtime, "SELECT 1")
+            await _execute_sql(self.handler, self.tool_runtime, "SELECT 1", "统计")
 
     async def test_identity_failure_does_not_execute(self):
         self.runtime.resolve_principal.side_effect = QueryPrincipalNotConfiguredError(

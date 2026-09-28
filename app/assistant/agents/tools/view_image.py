@@ -39,13 +39,16 @@ def supports_view_image_tool(model: BaseChatModel) -> bool:
     return bool(model.profile and model.profile.get("image_tool_message"))
 
 
-def _create_view_image_tool() -> BaseTool:
+def create_view_image_tools(model: BaseChatModel) -> tuple[BaseTool, ...]:
     """创建图片查看请求工具。
 
     工具结果只持久化图片路径。UserMessageContextMiddleware 会在下一次
     模型调用前读取该请求，把图片内容临时投影到 ToolMessage 副本中，避免
     base64 图片进入 LangGraph Checkpoint。
     """
+
+    if not supports_view_image_tool(model):
+        return ()
 
     @tool(IMAGE_VIEW_TOOL_NAME)
     def view_image(
@@ -69,13 +72,6 @@ def _create_view_image_tool() -> BaseTool:
                 "code": "unsupported_image_type",
                 "path": normalized_path,
             }
-        return ImageViewRequest(f_path=normalized_path).model_dump(mode="json")
+        return {"type": "image_view_request", "f_path": normalized_path}
 
-    return view_image
-
-
-def create_view_image_tools(model: BaseChatModel) -> tuple[BaseTool, ...]:
-    """为支持图片工具结果的模型提供工作区图片查看工具。"""
-    if not supports_view_image_tool(model):
-        return ()
-    return (_create_view_image_tool(),)
+    return (view_image,)

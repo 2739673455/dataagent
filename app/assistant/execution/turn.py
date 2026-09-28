@@ -1,6 +1,9 @@
 """用户回合入口：会话校验与目录更新 → 标题调度 → Run 启动或恢复。"""
 
+from __future__ import annotations
+
 from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from loguru import logger
@@ -11,10 +14,12 @@ from app.assistant.errors import (
     ConversationNotResumableError,
 )
 from app.assistant.events import schemas as chat_contract
-from app.assistant.execution.contracts import AgentRuntimeManager
 from app.assistant.execution.run import ConversationRunService
 from app.assistant.repositories.conversation import ConversationPGRepo
 from app.assistant.task_scheduler import enqueue_conversation_title
+
+if TYPE_CHECKING:
+    from app.assistant.execution.manager import AgentManager
 
 
 class ConversationTurnService:
@@ -25,7 +30,7 @@ class ConversationTurnService:
         *,
         repository: ConversationPGRepo,
         runs: ConversationRunService,
-        agents: AgentRuntimeManager,
+        agents: AgentManager,
     ) -> None:
         """绑定 Conversation 持久化、后台 Run 和 Checkpoint 读取能力。"""
         self._repository = repository

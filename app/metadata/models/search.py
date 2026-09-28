@@ -28,14 +28,19 @@ class SemanticIndexDocument:
 class SemanticResourceRecallRequest(BaseModel):
     """语义资源召回请求。"""
 
-    model_config = ConfigDict(extra="forbid")
-
-    terms: list[str] = Field(min_length=1, max_length=50)
+    terms: list[str] = Field(
+        min_length=1,
+        max_length=50,
+        description="用于检索的业务词或同义词，至少 1 个且最多 50 个",
+    )
     resource_types: list[SemanticResourceType] = Field(
         min_length=1,
         max_length=3,
+        description="需要检索的字段、指标或字段值资源类型，可多选",
     )
-    limit_per_type: int = Field(default=5, ge=1, le=20)
+    limit_per_type: int = Field(
+        default=5, ge=1, le=20, description="每类候选的最大数量，范围 1 到 20"
+    )
 
     @field_validator("terms")
     @classmethod

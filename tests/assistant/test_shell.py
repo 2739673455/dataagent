@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.assistant.agents.tools.shell import create_shell_tools
+from app.assistant.agents.tools.shell import create_shell_tool
 from app.sandbox.shell_runner import DockerShellJobRunner, SandboxShellJobExecution
 
 
@@ -29,9 +29,9 @@ async def test_shell_waits_for_completion_and_returns_output():
         arun=AsyncMock(side_effect=run),
         acleanup=AsyncMock(),
     )
-    tools = create_shell_tools(runner)
-    assert [t.name for t in tools] == ["shell"]
-    task = asyncio.create_task(tools[0].ainvoke({"command": "sleep 1"}))
+    tool = create_shell_tool(runner)
+    assert tool.name == "shell"
+    task = asyncio.create_task(tool.ainvoke({"command": "sleep 1"}))
     await started.wait()
     assert not task.done()
     finish.set()
@@ -52,7 +52,7 @@ async def test_truncated_output_keeps_log_and_returns_path():
         ),
         acleanup=AsyncMock(),
     )
-    output = await create_shell_tools(runner)[0].ainvoke({"command": "large-output"})
+    output = await create_shell_tool(runner).ainvoke({"command": "large-output"})
     job_id = runner.arun.call_args.args[0]
     assert (
         output
@@ -72,7 +72,7 @@ async def test_nonzero_exit_is_reported_with_output():
         acleanup=AsyncMock(),
     )
     assert (
-        await create_shell_tools(runner)[0].ainvoke({"command": "exit 2"})
+        await create_shell_tool(runner).ainvoke({"command": "exit 2"})
         == "bad\nShell 命令以退出码 2 结束"
     )
 

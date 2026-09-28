@@ -1,10 +1,12 @@
 """Assistant 消息、artifact 与流事件投影。"""
 
+from __future__ import annotations
+
 import mimetypes
 import re
 import uuid
 from datetime import UTC, datetime
-from typing import Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 from uuid import UUID
 
 from langchain_core.messages import (
@@ -25,11 +27,7 @@ from app.assistant.agents.middleware.user_message_context import (
 )
 from app.assistant.events import schemas as chat_schema
 from app.assistant.events.content import normalized_content_blocks, reasoning_text
-from app.assistant.execution.contracts import (
-    ConversationFileInspector,
-)
 from app.assistant.execution.types import (
-    EVAL_DELEGATIONS_KEY,
     MESSAGE_CREATED_AT_KEY,
     SubagentActivity,
     SubagentMessageActivity,
@@ -40,6 +38,9 @@ from app.assistant.execution.types import (
 from app.sandbox.errors import SandboxPathError
 from app.sandbox.paths import conversation_relative_path
 from app.shared.contracts.analysis import AgentType
+
+if TYPE_CHECKING:
+    from app.sandbox.manager import DockerSandboxManager
 
 _KNOWN_FINISH_REASONS = (
     "content_filter",
@@ -166,7 +167,7 @@ def _is_final_assistant_message(message: BaseMessage) -> bool:
 async def _project_final_artifact_directives(
     message: BaseMessage,
     schema: chat_schema.MessageResponse,
-    files: ConversationFileInspector,
+    files: DockerSandboxManager,
     user_id: int,
     conversation_id: UUID,
 ) -> chat_schema.MessageResponse:
@@ -249,7 +250,7 @@ async def _project_final_artifact_directives(
 
 async def langchain_message_to_schema_with_artifacts(
     message: BaseMessage,
-    files: ConversationFileInspector,
+    files: DockerSandboxManager,
     user_id: int,
     conversation_id: UUID,
 ) -> chat_schema.MessageResponse | None:
@@ -266,14 +267,6 @@ async def langchain_message_to_schema_with_artifacts(
                 schema = schema.model_copy(
                     update={"attachments": projected.attachments}
                 )
-        for delegation in schema.eval_delegations or []:
-            content = (delegation.result or {}).get("content")
-            if isinstance(content, str):
-                projected = await langchain_message_to_schema_with_artifacts(
-                    AIMessage(content=content), files, user_id, conversation_id
-                )
-                if projected is not None:
-                    delegation.attachments = projected.attachments
         return schema
     return await _project_final_artifact_directives(
         message,
@@ -290,17 +283,6 @@ def langchain_message_to_schema(
 ) -> chat_schema.MessageResponse | None:
     """将 LangChain 消息转换为接口消息。"""
     if isinstance(message, ToolMessage):
-        # ToolMessage 有独立的公开协议，还可能携带 eval 内部委派记录，不能走
-        # 普通文本消息的 content blocks 投影。
-        eval_delegations: list[chat_schema.EvalDelegationResponse] | None = None
-        raw_eval_delegations = message.additional_kwargs.get(EVAL_DELEGATIONS_KEY)
-        if isinstance(raw_eval_delegations, list):
-            eval_delegations = [
-                chat_schema.EvalDelegationResponse.model_construct(
-                    **cast(Any, record),
-                )
-                for record in cast(list[dict[str, object]], raw_eval_delegations)
-            ]
         return chat_schema.MessageResponse(
             message_id=message.id,
             created_at=_message_created_at(message),
@@ -313,7 +295,6 @@ def langchain_message_to_schema(
                     content=str(message.content),
                 )
             ],
-            eval_delegations=eval_delegations,
         )
 
     if isinstance(message, AIMessage):
@@ -383,14 +364,12 @@ class _SubagentEventContext(TypedDict):
     analysis_id: str
     agent_type: AgentType
     session_id: str
-    parent_tool_call_id: str | None
-    instruction: str | None
 
 
 async def subagent_activity_to_event(
     activity: SubagentActivity,
     conversation_id: UUID,
-    files: ConversationFileInspector,
+    files: DockerSandboxManager,
     user_id: int,
 ) -> chat_schema.ChatStreamEventPayload | None:
     """把受信任的 Agent 内部活动投影为公开聊天事件。"""
@@ -399,8 +378,6 @@ async def subagent_activity_to_event(
         analysis_id=activity.analysis_id,
         agent_type=activity.agent_type,
         session_id=activity.session_id,
-        parent_tool_call_id=activity.parent_tool_call_id,
-        instruction=activity.instruction,
     )
     if isinstance(activity, SubagentMessageActivity):
         message = await langchain_message_to_schema_with_artifacts(

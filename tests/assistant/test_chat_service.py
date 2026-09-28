@@ -29,8 +29,8 @@ from app.assistant.errors import PlannerContinuationLimitError
 from app.assistant.events import projection as message_projection
 from app.assistant.events import schemas as chat_schema
 from app.assistant.execution import planner as planner_turn
+from app.assistant.execution.manager import AgentManager
 from app.assistant.execution.types import (
-    EVAL_DELEGATIONS_KEY,
     MESSAGE_CREATED_AT_KEY,
     ConversationAgentRuntime,
     DelegationActivityHistory,
@@ -40,6 +40,7 @@ from app.assistant.execution.types import (
     SubagentStatusActivity,
     SubagentThinkingDeltaActivity,
 )
+from app.sandbox.manager import DockerSandboxManager
 from app.sandbox.paths import normalize_attachment_path
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -491,8 +492,8 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         events = [
             event
             async for event in planner_turn.run_agent_turn(
-                manager,
-                _FileInspectorStub(),
+                cast(AgentManager, manager),
+                cast(DockerSandboxManager, _FileInspectorStub()),
                 manager.turn_context,
                 user_message=None,
             )
@@ -566,8 +567,8 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         events = [
             event
             async for event in planner_turn.run_agent_turn(
-                manager,
-                _FileInspectorStub(),
+                cast(AgentManager, manager),
+                cast(DockerSandboxManager, _FileInspectorStub()),
                 manager.turn_context,
                 user_message=None,
             )
@@ -619,8 +620,8 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             async for event in planner_turn.run_agent_turn(
-                manager,
-                _FileInspectorStub(),
+                cast(AgentManager, manager),
+                cast(DockerSandboxManager, _FileInspectorStub()),
                 manager.turn_context,
                 user_message,
             ):
@@ -685,7 +686,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
 
         schema = await message_projection.langchain_message_to_schema_with_artifacts(
             message,
-            files,
+            cast(DockerSandboxManager, files),
             7,
             _CONVERSATION_ID,
         )
@@ -739,7 +740,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         files = _FileInspectorStub({(7, _CONVERSATION_ID, relative_path)})
 
         schema = await message_projection.langchain_message_to_schema_with_artifacts(
-            message, files, 7, _CONVERSATION_ID
+            message, cast(DockerSandboxManager, files), 7, _CONVERSATION_ID
         )
 
         assert schema is not None
@@ -763,7 +764,10 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 text = f"[[DATAAGENT_ARTIFACT:{path}]]"
                 schema = (
                     await message_projection.langchain_message_to_schema_with_artifacts(
-                        AIMessage(content=text), files, 7, _CONVERSATION_ID
+                        AIMessage(content=text),
+                        cast(DockerSandboxManager, files),
+                        7,
+                        _CONVERSATION_ID,
                     )
                 )
                 assert schema is not None
@@ -792,7 +796,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
 
         schema = await message_projection.langchain_message_to_schema_with_artifacts(
             message,
-            files,
+            cast(DockerSandboxManager, files),
             7,
             _CONVERSATION_ID,
         )
@@ -820,7 +824,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
 
         schema = await message_projection.langchain_message_to_schema_with_artifacts(
             message,
-            files,
+            cast(DockerSandboxManager, files),
             7,
             _CONVERSATION_ID,
         )
@@ -875,16 +879,16 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         files = _FileInspectorStub({(7, _CONVERSATION_ID, path.removeprefix("/"))})
 
         history = await conversation_history.list_messages(
-            manager,
-            files,
+            cast(AgentManager, manager),
+            cast(DockerSandboxManager, files),
             7,
             _CONVERSATION_ID,
         )
         events = [
             event
             async for event in planner_turn.run_agent_turn(
-                manager,
-                files,
+                cast(AgentManager, manager),
+                cast(DockerSandboxManager, files),
                 manager.turn_context,
                 chat_schema.UserMessageRequest(
                     parts=[chat_schema.TextContent(type="text", text="分析")]
@@ -901,36 +905,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             history[0].model_dump(mode="json"),
             event.message.model_dump(mode="json"),
         )
-
-    def test_eval_internal_delegations_are_projected_from_tool_metadata(self) -> None:
-        payload = _delegation_payload()
-        schema = message_projection.langchain_message_to_schema(
-            ToolMessage(
-                id="eval-result",
-                content="done",
-                name="eval",
-                tool_call_id="eval-call",
-                additional_kwargs={
-                    EVAL_DELEGATIONS_KEY: [
-                        {
-                            "delegation_id": "ptc-delegation-1",
-                            "analysis_id": "sales-review",
-                            "agent_type": "analyst",
-                            "session_id": "chart-1",
-                            "message": "生成销售图表",
-                            "result": payload,
-                        }
-                    ]
-                },
-            ),
-            _CONVERSATION_ID,
-        )
-
-        self.assertIsNotNone(schema)
-        assert schema is not None and schema.eval_delegations is not None
-        self.assertEqual(schema.eval_delegations[0].delegation_id, "ptc-delegation-1")
-        self.assertEqual(schema.eval_delegations[0].message, "生成销售图表")
-        self.assertEqual(schema.eval_delegations[0].result, payload)
 
     def test_large_subagent_tool_payloads_are_preserved(self) -> None:
         call_schema = message_projection.langchain_message_to_schema(
@@ -983,8 +957,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                     agent_type="explorer",
                     session_id="source-1",
                     status="running",
-                    parent_tool_call_id="eval-call",
-                    instruction="定位销售数据",
                 ),
             }
             yield {
@@ -998,8 +970,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                     message_id="specialist-1",
                     delta="先检查数据",
                     reset=True,
-                    parent_tool_call_id="eval-call",
-                    instruction="定位销售数据",
                 ),
             }
             yield {
@@ -1013,8 +983,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                     message_id="specialist-1",
                     delta="正在检查数据",
                     reset=True,
-                    parent_tool_call_id="eval-call",
-                    instruction="定位销售数据",
                 ),
             }
             yield {
@@ -1050,8 +1018,8 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             new=MagicMock(return_value=HumanMessage(content="analyze")),
         ):
             async for event in planner_turn.run_agent_turn(
-                manager,
-                _FileInspectorStub(),
+                cast(AgentManager, manager),
+                cast(DockerSandboxManager, _FileInspectorStub()),
                 manager.turn_context,
                 chat_schema.UserMessageRequest(
                     parts=[chat_schema.TextContent(type="text", text="analyze")]
@@ -1074,9 +1042,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         message_event = cast(chat_schema.ChatStreamSubagentMessageEvent, events[3])
         self.assertEqual(message_event.delegation_id, "delegation-1")
         self.assertEqual(message_event.message.parts[0].type, "text")
-        status_event = cast(chat_schema.ChatStreamSubagentStatusEvent, events[0])
-        self.assertEqual(status_event.parent_tool_call_id, "eval-call")
-        self.assertEqual(status_event.instruction, "定位销售数据")
 
     async def test_semantic_recall_result_is_preserved_in_stream_and_history(self):
         detailed_content = json.dumps(
@@ -1097,7 +1062,10 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             message=message,
         )
         stream_event = await message_projection.subagent_activity_to_event(
-            activity, _CONVERSATION_ID, _FileInspectorStub(), 7
+            activity,
+            _CONVERSATION_ID,
+            cast(DockerSandboxManager, _FileInspectorStub()),
+            7,
         )
         agents = MagicMock()
         agents.read_delegation_activity = AsyncMock(
@@ -1107,7 +1075,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         )
         history = await conversation_history.get_subagent_activity(
             agents,
-            _FileInspectorStub(),
+            cast(DockerSandboxManager, _FileInspectorStub()),
             7,
             _CONVERSATION_ID,
             "sales-review",
@@ -1144,14 +1112,17 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
 
         schema = await message_projection.langchain_message_to_schema_with_artifacts(
             message,
-            _FileInspectorStub(
-                {
-                    (
-                        7,
-                        _CONVERSATION_ID,
-                        "sessions/sales-review/analyst/chart-1/report.html",
-                    )
-                }
+            cast(
+                DockerSandboxManager,
+                _FileInspectorStub(
+                    {
+                        (
+                            7,
+                            _CONVERSATION_ID,
+                            "sessions/sales-review/analyst/chart-1/report.html",
+                        )
+                    }
+                ),
             ),
             7,
             _CONVERSATION_ID,
@@ -1212,15 +1183,18 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             async for event in planner_turn.run_agent_turn(
-                manager,
-                _FileInspectorStub(
-                    {
-                        (
-                            7,
-                            _CONVERSATION_ID,
-                            "sessions/sales-review/analyst/chart-1/report.html",
-                        )
-                    }
+                cast(AgentManager, manager),
+                cast(
+                    DockerSandboxManager,
+                    _FileInspectorStub(
+                        {
+                            (
+                                7,
+                                _CONVERSATION_ID,
+                                "sessions/sales-review/analyst/chart-1/report.html",
+                            )
+                        }
+                    ),
                 ),
                 manager.turn_context,
                 user_message,
@@ -1248,7 +1222,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             message=message,
         )
         event = await message_projection.subagent_activity_to_event(
-            activity, _CONVERSATION_ID, files, 7
+            activity, _CONVERSATION_ID, cast(DockerSandboxManager, files), 7
         )
         agents = MagicMock(
             read_delegation_activity=AsyncMock(
@@ -1259,7 +1233,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         )
         history = await conversation_history.get_subagent_activity(
             agents,
-            files,
+            cast(DockerSandboxManager, files),
             7,
             _CONVERSATION_ID,
             "sales-review",
@@ -1286,45 +1260,13 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 )
                 schema = (
                     await message_projection.langchain_message_to_schema_with_artifacts(
-                        message, files, 7, _CONVERSATION_ID
+                        message, cast(DockerSandboxManager, files), 7, _CONVERSATION_ID
                     )
                 )
                 assert schema is not None
                 assert isinstance(schema.parts[0], chat_schema.ToolResultPart)
                 self.assertIsNone(schema.attachments)
                 self.assertEqual(schema.parts[0].content, message.content)
-
-    async def test_eval_text_result_projects_file_directives(self):
-        path = "sessions/sales-review/analyst/chart-1/report.html"
-        payload = _delegation_payload()
-        payload["content"] = f"结果\n[[DATAAGENT_ARTIFACT:{_SANDBOX_ROOT}/{path}]]"
-        message = ToolMessage(
-            name="eval",
-            tool_call_id="eval1",
-            content="done",
-            additional_kwargs={
-                EVAL_DELEGATIONS_KEY: [
-                    {
-                        "delegation_id": "d1",
-                        "analysis_id": "sales-review",
-                        "agent_type": "analyst",
-                        "session_id": "chart-1",
-                        "message": "生成报告",
-                        "result": payload,
-                    }
-                ]
-            },
-        )
-        schema = await message_projection.langchain_message_to_schema_with_artifacts(
-            message,
-            _FileInspectorStub({(7, _CONVERSATION_ID, path)}),
-            7,
-            _CONVERSATION_ID,
-        )
-        assert schema is not None and schema.eval_delegations is not None
-        assert schema.eval_delegations[0].attachments is not None
-        self.assertEqual(schema.eval_delegations[0].attachments[0].f_path, path)
-        self.assertEqual(schema.eval_delegations[0].result, payload)
 
 
 if __name__ == "__main__":

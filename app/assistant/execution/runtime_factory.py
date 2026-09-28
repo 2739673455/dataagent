@@ -11,10 +11,9 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
-from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
 from app.assistant.agents.explorer.tools import (
     create_execute_sql_tool,
-    create_semantic_recall_tools,
+    create_semantic_recall_tool,
 )
 from app.assistant.agents.mcp import get_mcp_tools
 from app.assistant.agents.planner.agent import create_planner_agent
@@ -34,6 +33,7 @@ from app.assistant.execution.types import (
     ConversationAgentRuntime,
 )
 from app.assistant.model_factory import create_configured_model
+from app.metadata.services.recall_handler import SemanticRecallHandler
 from app.query.services.execution_handler import QueryExecutionHandler
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.manager import DockerSandboxManager
@@ -60,7 +60,7 @@ class ConversationAgentRuntimeFactory:
         self,
         persistence: LangGraphPostgresManager,
         sandbox: DockerSandboxManager,
-        recall: SemanticRecallRuntime,
+        recall: SemanticRecallHandler,
         query: QueryExecutionHandler,
     ) -> None:
         """保存运行时依赖，模型和工具在首次使用时初始化。"""
@@ -102,7 +102,7 @@ class ConversationAgentRuntimeFactory:
                     for agent_type, model_name in specialist_model_names.items()
                 }
                 explorer_tools = [
-                    *create_semantic_recall_tools(self._recall),
+                    create_semantic_recall_tool(self._recall),
                     create_execute_sql_tool(self._query),
                 ]
                 explorer_mcp_tools = await get_mcp_tools()
@@ -179,14 +179,11 @@ class ConversationAgentRuntimeFactory:
             create_list_sessions_tool(session_service),
             create_delete_session_tool(session_service),
         ]
-        interpreter = app_config.cfg.agent.interpreter
         return create_planner_agent(
             model=model,
             tools=planner_tools,
             backend=backend,
             checkpointer=checkpointer,
-            session_service=session_service,
-            interpreter_memory_limit_bytes=interpreter.memory_limit_bytes,
         )
 
     async def close(self) -> None:

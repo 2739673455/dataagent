@@ -5,14 +5,14 @@ import unittest
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
 from app.identity.models.authorization import AssetAccessPolicy, AssetIdentity
 from app.metadata.models.catalog import ColumnInfo, TableInfo
 from app.metadata.models.search import SemanticResourceRecallRequest
+from app.metadata.services.recall_handler import SemanticRecallHandler
 from app.shared.config.app_config import cfg
 
 
-class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
+class RecallHandlerTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.open_sessions = set()
         self.closed = []
@@ -30,7 +30,7 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 self.open_sessions.remove(name)
                 self.closed.append(name)
 
-        self.runtime = SemanticRecallRuntime(
+        self.handler = SemanticRecallHandler(
             MagicMock(session=lambda: session("auth")),
             MagicMock(session=lambda: session("meta")),
             MagicMock(),
@@ -90,7 +90,7 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
         embedding = MagicMock(aembed_documents=AsyncMock(side_effect=embed))
         with (
-            patch.object(self.runtime.embedding, "get_client", return_value=embedding),
+            patch.object(self.handler.embedding, "get_client", return_value=embedding),
             patch(
                 "app.identity.providers.IdentityService",
                 return_value=MagicMock(
@@ -107,7 +107,7 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
             ),
             patch("app.metadata.providers.ColumnESRepo", return_value=index),
         ):
-            response = await self.runtime.search(7, self.request)
+            response = await self.handler.search(7, self.request)
         self.assertEqual(response.status, "success")
         index.search_text_hits.assert_awaited_once()
         index.search_vector_hits.assert_awaited_once()
@@ -123,7 +123,7 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.assistant.agents.explorer.recall_runtime.load_asset_policy",
+                "app.metadata.services.recall_handler.load_asset_policy",
                 new=AsyncMock(return_value=self.policy),
             ),
             patch(
@@ -135,7 +135,7 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             async with asyncio.timeout(1):
-                task = asyncio.create_task(self.runtime.search(7, self.request))
+                task = asyncio.create_task(self.handler.search(7, self.request))
                 await entered.wait()
                 task.cancel()
                 with self.assertRaises(asyncio.CancelledError):

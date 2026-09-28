@@ -116,8 +116,6 @@ agent: # Planner 和 Specialist 运行时配置。
     max_parallel_sessions: 8 # 同一 Conversation 同时执行的 Specialist Session 上限。
     max_sessions: 128 # 单个 Conversation 可持久化的 Specialist Session 上限。
     max_continuations: 3 # 单个用户回合允许 Planner 自动续写的最大次数。
-  interpreter: # Planner 内嵌 QuickJS 解释器配置。
-    memory_limit_bytes: 67108864 # QuickJS Heap 内存上限，单位为字节。
   specialists: # 各 Specialist 的模型选择，default 表示跟随 lm_config.active。
     explorer: # 数据发现 Specialist。
       model: default # Specialist 使用的语言模型配置名。
