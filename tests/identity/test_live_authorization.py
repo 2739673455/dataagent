@@ -2,17 +2,14 @@
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.identity import errors
 from app.identity.models.authorization import AssetIdentity
-from app.identity.models.doris import (
-    DorisQueryIdentity,
-    DorisSelectGrant,
-)
-from app.identity.repositories.doris_authorization import parse_authorization
+from app.identity.models.doris import DorisQueryIdentity
+from app.identity.repositories.doris_role import _parse_authorization
 from app.identity.services.identity import IdentityService
 
 
@@ -30,10 +27,9 @@ def raw(**updates):
 
 
 def parse(row=None):
-    return parse_authorization(
+    return _parse_authorization(
         raw() if row is None else row,
         role_name="reader",
-        query_user="query_reader",
         data_source="doris",
         catalog="internal",
         database="ecommerce",
@@ -41,19 +37,19 @@ def parse(row=None):
 
 
 def test_column_table_and_database_grants_preserve_scope():
-    snapshot = parse(
+    grants = parse(
         raw(
             TablePrivs="internal.ecommerce.orders: Select_priv, Show_view_priv; external.other.secret: Select_priv",
             ColPrivs="internal.ecommerce.payments: Select_priv[amount, id]",
         )
     )
-    assert {(g.table_name, g.column_name) for g in snapshot.grants} == {
+    assert {(g.table_name, g.column_name) for g in grants} == {
         ("orders", None),
         ("payments", "amount"),
         ("payments", "id"),
     }
     _, _, doris, auth = setup_services()
-    doris.read_authorization.return_value = snapshot
+    doris.read_authorization.return_value = grants
     policy = asyncio.run(
         auth.get_asset_policy(7, doris, data_source="doris", database="ecommerce")
     )
@@ -62,26 +58,73 @@ def test_column_table_and_database_grants_preserve_scope():
     assert not policy.allows(AssetIdentity("doris", "ecommerce", "payments"))
     assert not policy.allows(AssetIdentity("doris", "ecommerce", "payments", "secret"))
     db = parse(raw(DatabasePrivs="internal.ecommerce: Select_priv"))
-    assert db.grants == (DorisSelectGrant("reader", "doris", "ecommerce"),)
+    assert db == frozenset({AssetIdentity("doris", "ecommerce")})
+
+
+@pytest.mark.parametrize("privileges", ["select", "unknown permission", "Unknown_priv"])
+def test_unrecognized_privilege_names_do_not_grant_select(privileges):
+    assert (
+        parse(raw(TablePrivs=f"internal.ecommerce.orders: {privileges}")) == frozenset()
+    )
+    assert parse(
+        raw(TablePrivs=f"internal.ecommerce.orders: {privileges}, Select_priv")
+    ) == frozenset({AssetIdentity("doris", "ecommerce", "orders")})
 
 
 @pytest.mark.parametrize(
     "updates",
     [
         {"Roles": "reader,extra"},
-        {"Roles": ""},
-        {"Roles": "wrong"},
-        {"UserIdentity": "'query_reader'@'localhost'"},
+        {"Roles": " extra, reader "},
         {"GlobalPrivs": "Admin_priv"},
-        {"ColPrivs": "internal.ecommerce.orders: Select_priv[]"},
-        {"ColPrivs": "internal.ecommerce.orders: Unknown_priv[id]"},
-        {"TablePrivs": "internal.ecommerce.a.b: Select_priv"},
-        {"TablePrivs": "internal.ecommerce.orders: select"},
+        {"GlobalPrivs": "Node_priv"},
     ],
 )
-def test_ambiguous_or_unsafe_authorization_is_rejected(updates):
-    with pytest.raises(errors.InvalidDorisPermissionError):
-        parse(raw(**updates))
+def test_role_bindings_and_admin_privileges_do_not_block_select_parsing(updates):
+    grants = parse(raw(TablePrivs="internal.ecommerce.orders: Select_priv", **updates))
+    assert grants == frozenset({AssetIdentity("doris", "ecommerce", "orders")})
+
+
+@pytest.mark.parametrize("roles", ["", "wrong", "reader_extra", None])
+def test_configured_role_must_be_bound(roles):
+    with pytest.raises(errors.InvalidDorisPermissionError, match="未绑定配置角色"):
+        parse(raw(Roles=roles))
+
+
+@pytest.mark.parametrize("privilege", ["select_priv", "SELECT_PRIV"])
+def test_regular_privilege_names_are_case_sensitive(privilege):
+    assert parse(raw(GlobalPrivs=privilege)) == frozenset()
+    assert (
+        parse(raw(TablePrivs=f"internal.ecommerce.orders: {privilege}")) == frozenset()
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "broken", "valid", "column"),
+    [
+        ("TablePrivs", "broken", "internal.ecommerce.orders: Select_priv", None),
+        (
+            "TablePrivs",
+            "internal.ecommerce: Select_priv",
+            "internal.ecommerce.orders: Select_priv",
+            None,
+        ),
+        (
+            "ColPrivs",
+            "internal.ecommerce.orders: Select_priv",
+            "internal.ecommerce.orders: Select_priv[id]",
+            "id",
+        ),
+    ],
+)
+def test_parse_errors_are_logged_and_other_entries_are_kept(
+    field, broken, valid, column
+):
+    with patch("app.identity.repositories.doris_role.logger") as logger:
+        grants = parse(raw(**{field: f"{broken}; {valid}"}))
+    assert grants == frozenset({AssetIdentity("doris", "ecommerce", "orders", column)})
+    logger.warning.assert_called_once()
+    assert logger.warning.call_args.args[1:4] == ("reader", field, broken)
 
 
 def test_missing_field_is_not_treated_as_empty_grants():
@@ -96,8 +139,8 @@ def test_missing_field_is_not_treated_as_empty_grants():
     [{"GlobalPrivs": "Select_priv"}, {"CatalogPrivs": "internal: Select_priv"}],
 )
 def test_broad_select_is_limited_to_configured_database(updates):
-    snapshot = parse(raw(**updates))
-    assert snapshot.grants == (DorisSelectGrant("reader", "doris", "ecommerce"),)
+    grants = parse(raw(**updates))
+    assert grants == frozenset({AssetIdentity("doris", "ecommerce")})
 
 
 def setup_services():
@@ -159,7 +202,7 @@ def test_missing_user_or_identity_stops_before_reading_doris():
         doris.read_authorization.assert_not_awaited()
         repo.get_user_by_id.return_value = None
         repo.get_query_identity.reset_mock()
-        with pytest.raises(errors.UserNotFoundError):
+        with pytest.raises(errors.UserSelectionRequiredError):
             await auth.get_asset_policy(
                 7, doris, data_source="doris", database="ecommerce"
             )

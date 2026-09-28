@@ -1,4 +1,4 @@
-"""Doris 查询身份凭据加密。"""
+"""Doris 查询密码的加密与解密。"""
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -6,7 +6,7 @@ from app.identity.errors import DorisCredentialError
 
 
 class DorisCredentialCipher:
-    """使用密钥加密 Doris 查询密码。"""
+    """使用 Fernet 加密与解密 Doris 查询密码。"""
 
     def __init__(self, encryption_key: str) -> None:
         """使用 Fernet 密钥初始化凭据加密器。"""

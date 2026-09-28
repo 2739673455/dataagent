@@ -56,7 +56,7 @@ def key():
 class QueryPrincipalTest(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_user_or_missing_identity_never_loads_grants(self):
         for user, identity, expected in (
-            (None, None, auth_error.UserNotFoundError),
+            (None, None, auth_error.UserSelectionRequiredError),
             (
                 SimpleNamespace(doris_role_name="reader"),
                 None,

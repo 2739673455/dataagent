@@ -1,4 +1,4 @@
-"""身份与授权应用能力组装。"""
+"""组装身份仓库和服务，读取用户的资产访问策略。"""
 
 from app.identity.models.authorization import AssetAccessPolicy
 from app.identity.repositories.doris_role import DorisRoleRepository

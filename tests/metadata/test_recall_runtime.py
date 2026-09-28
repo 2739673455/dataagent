@@ -38,7 +38,6 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
             MagicMock(),
         )
         self.policy = AssetAccessPolicy(
-            user_id=7,
             grants=frozenset(
                 {AssetIdentity(cfg.query.data_source, cfg.doris.database)}
             ),

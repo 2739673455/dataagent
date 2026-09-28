@@ -11,11 +11,11 @@ class IdentityPGRepo:
     """读取用户及 Doris 查询身份。"""
 
     def __init__(self, session: AsyncSession) -> None:
-        """绑定调用方管理的数据库会话，事务由调用方提交。"""
+        """绑定身份数据库会话。"""
         self._session = session
 
     async def list_users(self) -> list[User]:
-        """按 ID 列出已初始化的预定义用户，供前端选择。"""
+        """按 ID 升序读取用户列表。"""
         return list(await self._session.scalars(select(User).order_by(User.id)))
 
     async def get_user_by_id(self, user_id: int) -> User | None:

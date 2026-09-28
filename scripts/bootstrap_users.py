@@ -34,7 +34,6 @@ async def bootstrap() -> None:
 
     from app.identity.models.account import User
     from app.identity.models.doris import DorisQueryIdentity
-    from app.identity.repositories.doris_role import DorisRoleRepository
     from app.identity.services.credential import DorisCredentialCipher
     from app.shared.clients.doris_client_manager import DorisClientManager
     from app.shared.clients.postgres_client_manager import PostgresClientManager
@@ -50,7 +49,6 @@ async def bootstrap() -> None:
         postgres.init()
         doris.init()
         await postgres.init_tables()
-        repository = DorisRoleRepository(doris)
         for role in ROLES:
             # 先保存随机凭据，Doris 初始化失败后重试沿用同一密码。
             async with postgres.session() as session, session.begin():
@@ -75,13 +73,34 @@ async def bootstrap() -> None:
                 identity = await session.get(DorisQueryIdentity, role.name)
                 assert identity is not None
                 password = cipher.decrypt(identity.encrypted_password)
-            await repository.ensure_role_identity(
-                role_name=role.name,
-                query_user=role.query_user,
-                password=password,
-                workload_group=role.workload_group,
-                database=cfg.doris.database,
-            )
+            async with doris.connection() as connection:
+                quote = connection.dialect.identifier_preparer.quote_identifier
+                role_sql = quote(role.name)
+                group_sql = quote(role.workload_group)
+                database_sql = quote(cfg.doris.database)
+                await connection.exec_driver_sql(
+                    f"CREATE ROLE IF NOT EXISTS {role_sql}", ()
+                )
+                await connection.exec_driver_sql(
+                    f"GRANT SELECT_PRIV ON `internal`.{database_sql}.* TO ROLE {role_sql}",
+                    (),
+                )
+                await connection.exec_driver_sql(
+                    f"GRANT USAGE_PRIV ON WORKLOAD GROUP {group_sql} TO ROLE {role_sql}",
+                    (),
+                )
+                await connection.exec_driver_sql(
+                    "CREATE USER IF NOT EXISTS %s@%s IDENTIFIED BY %s DEFAULT ROLE %s",
+                    (role.query_user, "%", password, role.name),
+                )
+                # 将 Doris 查询账号的密码设为身份库中保存的值。
+                await connection.exec_driver_sql(
+                    "SET PASSWORD FOR %s@%s = PASSWORD(%s)",
+                    (role.query_user, "%", password),
+                )
+                await connection.exec_driver_sql(
+                    f"GRANT {role_sql} TO %s@%s", (role.query_user, "%")
+                )
             print(f"角色已就绪: {role.name}，查询范围: {cfg.doris.database}.*")
 
         # 全部角色初始化成功后才发布用户，避免前端选择到未就绪的新用户。

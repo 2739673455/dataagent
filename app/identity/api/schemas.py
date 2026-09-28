@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict
 
 
 class UserResponse(BaseModel):
-    """前端展示和选择用户所需的公开身份信息。"""
+    """用户列表返回的 ID、用户名和 Doris 角色。"""
 
     model_config = ConfigDict(from_attributes=True)
 

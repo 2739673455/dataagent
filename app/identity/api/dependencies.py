@@ -14,7 +14,7 @@ async def _get_current_user(
     resources: WebResourcesDep,
     user_id: Annotated[int | None, Header(alias="X-User-ID", gt=0)] = None,
 ) -> User:
-    """校验用户存在，读取后释放数据库会话再进入业务处理。"""
+    """根据 X-User-ID 读取用户，缺少 ID 或用户不存在时抛出异常。"""
     if user_id is None:
         raise UserSelectionRequiredError
     async with resources.auth.session() as session:

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class AssetIdentity:
-    """按数据源、库、表、字段标识资产；授权中为 None 的层级不限制范围。"""
+    """按数据源、库、表、字段标识资产；None 匹配对应层级的全部资产。"""
 
     data_source: str
     database_name: str | None = None
@@ -13,7 +13,7 @@ class AssetIdentity:
     column_name: str | None = None
 
     def encompasses(self, other: "AssetIdentity") -> bool:
-        """判断当前授权是否覆盖目标资产。"""
+        """逐层比较资产标识，判断当前范围是否覆盖目标。"""
         own_parts = (
             self.data_source,
             self.database_name,
@@ -34,10 +34,8 @@ class AssetIdentity:
 
 @dataclass(frozen=True)
 class AssetAccessPolicy:
-    """用户资产访问策略快照。"""
+    """基于 SELECT 授权判断资产访问范围。"""
 
-    user_id: int
-    role_name: str | None = None
     grants: frozenset[AssetIdentity] = frozenset()
 
     def allows(self, asset: AssetIdentity) -> bool:
