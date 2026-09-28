@@ -19,19 +19,31 @@ def test_web_shutdown_attempts_every_resource_after_startup_failure() -> None:
         "embedding",
         "persistence",
         "sandbox",
-        "agents",
+        "agent_factory",
         "runs",
         "tasks",
     ]
-    managers = {name: MagicMock(close=AsyncMock()) for name in names}
+    closed = []
+    managers = {
+        name: MagicMock(
+            close=AsyncMock(side_effect=lambda name=name: closed.append(name))
+        )
+        for name in names
+    }
     resources = MagicMock(**managers)
     managers["persistence"].init = AsyncMock(side_effect=RuntimeError("startup"))
-    managers["agents"].close.side_effect = RuntimeError("shutdown")
+
+    async def fail_close():
+        closed.append("agent_factory")
+        raise RuntimeError("shutdown")
+
+    managers["agent_factory"].close.side_effect = fail_close
 
     async def run() -> None:
         with pytest.raises(RuntimeError, match="shutdown"):
             async with runtime.lifespan(MagicMock()):
                 pytest.fail("启动失败不应进入业务阶段")
+        assert closed == list(reversed(names))
         for manager in managers.values():
             manager.close.assert_awaited_once()
 
@@ -63,7 +75,11 @@ def test_web_applications_own_separate_resources_and_request_dependencies() -> N
             resource.init = MagicMock()
         for resource in (resources.auth, resources.meta, resources.assistant):
             resource.init_tables = AsyncMock()
-        for resource in (resources.persistence, resources.sandbox):
+        for resource in (
+            resources.persistence,
+            resources.sandbox,
+            resources.agent_factory,
+        ):
             resource.init = AsyncMock()
         for resource in (
             resources.auth,
@@ -75,7 +91,7 @@ def test_web_applications_own_separate_resources_and_request_dependencies() -> N
             resources.es,
             resources.persistence,
             resources.sandbox,
-            resources.agents,
+            resources.agent_factory,
             resources.runs,
             resources.tasks,
         ):

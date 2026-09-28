@@ -6,9 +6,6 @@ from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from loguru import logger
-
-from app.assistant.conversations.title import initial_conversation_title
 from app.assistant.errors import (
     ConversationNotFoundError,
     ConversationNotResumableError,
@@ -61,12 +58,11 @@ class ConversationTurnService:
                     if isinstance(part, chat_contract.TextContent)
                 ).strip()
                 if user_text and (
-                    conversation.is_draft
-                    or conversation.title == initial_conversation_title(None)
+                    conversation.is_draft or conversation.title == "新对话"
                 ):
                     conversation = await self._repository.update(
                         conversation,
-                        title=initial_conversation_title(user_text),
+                        title=user_text[:64],
                         is_draft=False,
                     )
                     title_submission = (
@@ -81,18 +77,12 @@ class ConversationTurnService:
 
             if title_submission is not None:
                 target_id, expected_title, source = title_submission
-                try:
-                    self._tasks.generate_title(
-                        user_id,
-                        target_id,
-                        expected_title,
-                        source,
-                    )
-                except Exception:  # noqa: BLE001
-                    logger.exception(
-                        "提交会话标题任务失败，保留即时标题: "
-                        f"conversation_id={target_id}"
-                    )
+                self._tasks.generate_title(
+                    user_id,
+                    target_id,
+                    expected_title,
+                    source,
+                )
 
         return await self._runs.start(
             user_id,

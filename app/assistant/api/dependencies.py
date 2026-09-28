@@ -12,14 +12,31 @@ from app.dependencies import WebResourcesDep
 from app.sandbox.manager import DockerSandboxManager
 
 
+def _get_sandbox_manager(resources: WebResourcesDep) -> DockerSandboxManager:
+    """获取应用级沙箱管理器。"""
+    return resources.sandbox
+
+
+SandboxManagerDep = Annotated[DockerSandboxManager, Depends(_get_sandbox_manager)]
+
+
 def _get_agent_manager(resources: WebResourcesDep) -> AgentManager:
     """获取应用级 Agent 管理器。"""
     return resources.agents
 
 
-def _get_sandbox_manager(resources: WebResourcesDep) -> DockerSandboxManager:
-    """获取应用级沙箱管理器。"""
-    return resources.sandbox
+AgentManagerDep = Annotated[AgentManager, Depends(_get_agent_manager)]
+
+
+def _get_conversation_run_service(resources: WebResourcesDep) -> ConversationRunService:
+    """获取应用级 Conversation Run 管理器。"""
+    return resources.runs
+
+
+ConversationRunServiceDep = Annotated[
+    ConversationRunService,
+    Depends(_get_conversation_run_service),
+]
 
 
 def _get_conversation_lifecycle_service(
@@ -29,20 +46,9 @@ def _get_conversation_lifecycle_service(
     return resources.conversations
 
 
-def _get_conversation_run_service(resources: WebResourcesDep) -> ConversationRunService:
-    """获取应用级 Conversation Run 管理器。"""
-    return resources.runs
-
-
-AgentManagerDep = Annotated[AgentManager, Depends(_get_agent_manager)]
-SandboxManagerDep = Annotated[DockerSandboxManager, Depends(_get_sandbox_manager)]
 ConversationLifecycleServiceDep = Annotated[
     ConversationLifecycleService,
     Depends(_get_conversation_lifecycle_service),
-]
-ConversationRunServiceDep = Annotated[
-    ConversationRunService,
-    Depends(_get_conversation_run_service),
 ]
 
 

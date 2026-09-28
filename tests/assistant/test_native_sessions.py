@@ -2,13 +2,11 @@
 
 import asyncio
 import unittest
-from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -16,7 +14,6 @@ from app.assistant.agents.planner.tools.delegation import create_delegation_tool
 from app.assistant.agents.specialist_agent import SpecialistAgentState
 from app.assistant.execution.manager import AgentManager
 from app.assistant.execution.session_service import AgentSessionService
-from app.assistant.execution.session_store import PostgresSandboxSessionStore
 from app.assistant.execution.types import (
     DelegationRequest,
     DeleteSessionRequest,
@@ -64,17 +61,13 @@ class NativeSessionTest(unittest.IsolatedAsyncioTestCase):
         self.persistence.delete_thread = self.saver.adelete_thread
         self.persistence.get_checkpointer.return_value = self.saver
         self.persistence.advisory_lock.side_effect = lambda *_: asyncio.Lock()
-        self.store = PostgresSandboxSessionStore(
-            user_id=12,
-            conversation_id=self.conversation_id,
-            persistence=self.persistence,
-            checkpointer=cast(AsyncPostgresSaver, self.saver),
-            build_agent=lambda _: self.agent,
-            sandbox=MagicMock(delete_session=AsyncMock(return_value=False)),
-        )
         self.service = AgentSessionService(
-            build_agent=AsyncMock(return_value=self.agent),
-            session_store=self.store,
+            agents=MagicMock(
+                build=MagicMock(return_value=self.agent),
+                create=AsyncMock(return_value=self.agent),
+            ),
+            persistence=self.persistence,
+            sandbox=MagicMock(delete_session=AsyncMock(return_value=False)),
             user_id=12,
             conversation_id=self.conversation_id,
         )
@@ -203,7 +196,9 @@ class NativeSessionTest(unittest.IsolatedAsyncioTestCase):
         await self.agent.ainvoke(
             {"messages": [HumanMessage(content="other user")]}, unrelated
         )
-        manager = AgentManager(self.persistence, MagicMock(save=AsyncMock()))
+        manager = AgentManager(
+            self.persistence, MagicMock(save=AsyncMock()), MagicMock()
+        )
         await manager.delete_agent_under_lifecycle_lock(12, self.conversation_id)
         prefix = get_thread_id(12, self.conversation_id)
         self.assertFalse(await self.persistence.list_threads(prefix=prefix))

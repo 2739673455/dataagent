@@ -1,10 +1,15 @@
-"""真实执行图与冷启动图共用原生 Checkpoint 读取。"""
+"""验证新建图读取 Checkpoint、恢复执行与工具绑定。"""
 
 import asyncio
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+from deepagents import (
+    GeneralPurposeSubagentProfile,
+    HarnessProfile,
+    register_harness_profile,
+)
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
@@ -27,6 +32,14 @@ class ToolModel(FakeMessagesListChatModel):
     seen_tools: list = Field(default_factory=list)
 
 
+register_harness_profile(
+    "toolmodel",
+    HarnessProfile(
+        general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)
+    ),
+)
+
+
 def make_factory(saver):
     persistence = MagicMock()
     persistence.get_checkpointer.return_value = saver
@@ -38,11 +51,15 @@ def make_factory(saver):
     factory = runtime_factory.ConversationAgentRuntimeFactory(
         persistence, sandbox, MagicMock(), MagicMock()
     )
+    factory._models = {
+        name: ToolModel(responses=[AIMessage(content="unused")])
+        for name in factory._model_names
+    }
     return factory, persistence, sandbox
 
 
 class GraphStateTest(unittest.IsolatedAsyncioTestCase):
-    async def test_cold_read_restores_pending_tools_without_initializing_resources(
+    async def test_new_graph_restores_pending_tools_without_model_or_sandbox_calls(
         self,
     ):
         saver = InMemorySaver()
@@ -127,7 +144,7 @@ class GraphStateTest(unittest.IsolatedAsyncioTestCase):
         assert state.next == ()
         sandbox.init.assert_not_awaited()
 
-    async def test_mcp_tools_resolve_at_execution_and_survive_resume(self):
+    async def test_mcp_tools_bind_at_build_and_survive_resume(self):
         calls = []
 
         @tool
@@ -152,8 +169,8 @@ class GraphStateTest(unittest.IsolatedAsyncioTestCase):
             ]
         )
         factory._models = {name: model for name in factory._model_names}
-        graph = factory.specialists().build(key)
         factory._mcp_tools = [lookup]
+        graph = factory.specialists().build(key)
         await graph.ainvoke(
             {"messages": [HumanMessage(content="lookup")]},
             config,
@@ -172,20 +189,21 @@ class GraphStateTest(unittest.IsolatedAsyncioTestCase):
             for m in state.values["messages"]
         )
 
-    async def test_dynamic_tools_expose_and_execute_builtin_on_name_collision(self):
-        from langchain.agents import create_agent
-
-        from app.assistant.agents.deferred import DynamicToolsMiddleware
-
-        @tool("shell")
-        def builtin(command: str) -> str:
-            """Built-in shell."""
-            return f"builtin:{command}"
-
-        @tool("shell")
-        def mcp_shell(other_argument: str) -> str:
+    async def test_static_tools_keep_builtin_priority_and_last_mcp_duplicate(self):
+        @tool("semantic_recall")
+        def mcp_recall(query: str) -> str:
             """Conflicting MCP tool."""
             raise AssertionError("MCP replaced builtin")
+
+        @tool("read_file")
+        def mcp_read_file(path: str) -> str:
+            """Conflicting filesystem tool."""
+            raise AssertionError("MCP replaced filesystem")
+
+        @tool("shell")
+        def mcp_shell(command: str) -> str:
+            """Conflicting shell tool."""
+            raise AssertionError("MCP replaced shell")
 
         @tool("lookup")
         def first_lookup(value: str) -> str:
@@ -197,30 +215,44 @@ class GraphStateTest(unittest.IsolatedAsyncioTestCase):
             """Later MCP tool."""
             return f"mcp:{value}"
 
+        saver = InMemorySaver()
+        factory, _, _ = make_factory(saver)
+        # 使用实际内置工具的名字制造冲突，验证模型只看到内置定义。
+        builtin = factory._definitions["explorer"].tools[0]
+        mcp_recall.name = builtin.name
         model = ToolModel(
             responses=[
                 AIMessage(
                     content="",
                     tool_calls=[
-                        {"id": "shell", "name": "shell", "args": {"command": "pwd"}},
-                        {"id": "lookup", "name": "lookup", "args": {"value": "sales"}},
+                        {"id": "lookup", "name": "lookup", "args": {"value": "sales"}}
                     ],
                 ),
                 AIMessage(content="done"),
             ]
         )
-        graph = create_agent(
-            model,
-            tools=[builtin],
-            middleware=[
-                DynamicToolsMiddleware(lambda: [mcp_shell, first_lookup, last_lookup])
-            ],
+        factory._models = {name: model for name in factory._model_names}
+        factory._mcp_tools = [
+            mcp_recall,
+            mcp_read_file,
+            mcp_shell,
+            first_lookup,
+            last_lookup,
+        ]
+        key = AgentSessionKey(12, uuid4(), "sales", "explorer", "lookup")
+        graph = factory.specialists().build(key)
+        state = await graph.ainvoke(
+            {"messages": [HumanMessage(content="run")]},
+            {"configurable": {"thread_id": key.thread_id}},
         )
-        state = await graph.ainvoke({"messages": [HumanMessage(content="run")]})
-        self.assertEqual(model.seen_tools, [last_lookup, builtin])
-        self.assertEqual(
+        tools = {tool.name: tool for tool in model.seen_tools}
+        self.assertIs(tools[builtin.name], builtin)
+        self.assertIs(tools["lookup"], last_lookup)
+        self.assertIsNot(tools["read_file"], mcp_read_file)
+        self.assertIsNot(tools["shell"], mcp_shell)
+        self.assertIn(
+            "mcp:sales",
             [m.content for m in state["messages"] if isinstance(m, ToolMessage)],
-            ["builtin:pwd", "mcp:sales"],
         )
 
     async def test_cold_state_includes_completed_parallel_tool_writes(self):

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Mapping
 from contextvars import Context, copy_context
 from datetime import UTC, datetime
 from functools import partial
@@ -15,9 +15,9 @@ from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 
+from app.assistant.agents.specialists import SpecialistAgentFactory
 from app.assistant.checkpoints.specialist import SpecialistCheckpointView
 from app.assistant.events.stream import MessageDeltaParser, update_messages
-from app.assistant.execution.session_store import PostgresSandboxSessionStore
 from app.assistant.execution.types import (
     DELEGATION_CONTEXT_KEY,
     DelegationCheckpointRecord,
@@ -36,7 +36,9 @@ from app.assistant.execution.types import (
     SubagentThinkingDeltaActivity,
     get_thread_id,
 )
+from app.sandbox.manager import DockerSandboxManager
 from app.sandbox.paths import SandboxSessionScope
+from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 from app.shared.contracts.analysis import AgentSessionKey, validate_agent_type
 
 
@@ -46,14 +48,16 @@ class AgentSessionService:
     def __init__(
         self,
         *,
-        build_agent: Callable[[AgentSessionKey], Awaitable[CompiledStateGraph]],
-        session_store: PostgresSandboxSessionStore,
+        agents: SpecialistAgentFactory,
+        persistence: LangGraphPostgresManager,
+        sandbox: DockerSandboxManager,
         user_id: int,
         conversation_id: UUID,
     ) -> None:
         """初始化会话身份、状态访问与 Agent 工厂。"""
-        self._build_agent = build_agent
-        self._session_store = session_store
+        self._agents = agents
+        self._persistence = persistence
+        self._sandbox = sandbox
         self._user_id = user_id
         self._conversation_id = conversation_id
         self._active_sessions: dict[str, datetime] = {}
@@ -111,7 +115,10 @@ class AgentSessionService:
 
     async def list_sessions(self, analysis_id: str | None) -> ListSessionsResult:
         """查询当前 Conversation 内的专业 Agent Session。"""
-        threads = await self._session_store.list_threads(analysis_id)
+        prefix = f"{get_thread_id(self._user_id, self._conversation_id)}/subagents/"
+        if analysis_id is not None:
+            prefix += f"{analysis_id}/"
+        threads = await self._persistence.list_threads(prefix=prefix)
         with self._runtime_state_lock:
             active_sessions = dict(self._active_sessions)
         all_threads = set(threads)
@@ -129,7 +136,9 @@ class AgentSessionService:
                 analysis_id is not None and session_key.analysis_id != analysis_id
             ):
                 return None
-            state = await self._session_store.read_state(session_key)
+            state = await self._agents.build(session_key).aget_state(
+                RunnableConfig(configurable={"thread_id": session_key.thread_id})
+            )
             active_at = active_sessions.get(thread_id)
             if state.created_at is None and active_at is None:
                 return None
@@ -342,8 +351,10 @@ class AgentSessionService:
         )
         config = self.build_subagent_config(parent_config, session_key)
         try:
-            async with self._session_store.lock(session_key):
-                agent = await self._build_agent(session_key)
+            async with self._persistence.advisory_lock(
+                f"specialist:{session_key.thread_id}"
+            ):
+                agent = await self._agents.create(session_key)
                 state = await agent.aget_state(config)
                 replayed_result = SpecialistCheckpointView(
                     state.values
@@ -463,19 +474,26 @@ class AgentSessionService:
             session_id=request.session_id,
         )
         async with (
-            self._session_store.lock(session_key),
+            self._persistence.advisory_lock(f"specialist:{session_key.thread_id}"),
         ):
             try:
-                checkpoint_deleted = await self._session_store.delete_checkpoint(
-                    session_key
+                checkpointer = self._persistence.get_checkpointer()
+                config = RunnableConfig(
+                    configurable={"thread_id": session_key.thread_id}
                 )
+                checkpoint_deleted = await checkpointer.aget_tuple(config) is not None
+                await checkpointer.adelete_thread(session_key.thread_id)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 raise RuntimeError("删除 Session Checkpoint 失败") from exc
             try:
-                workspace_deleted = await self._session_store.delete_workspace(
-                    session_key
+                workspace_deleted = await self._sandbox.delete_session(
+                    self._user_id,
+                    self._conversation_id,
+                    session_key.analysis_id,
+                    session_key.agent_type,
+                    session_key.session_id,
                 )
             except asyncio.CancelledError:
                 raise
@@ -494,8 +512,3 @@ class AgentSessionService:
             existed=existed,
             message=("Session 已删除" if existed else "Session 不存在，无需删除"),
         )
-
-    def clear(self) -> None:
-        """清除无运行任务时的 Session 内存状态。"""
-        with self._runtime_state_lock:
-            self._active_sessions.clear()

@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
-from app.assistant.models.conversation_tombstone import ConversationTombstone
+from app.assistant.models.conversation import ConversationTombstone
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 
 

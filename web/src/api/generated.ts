@@ -222,36 +222,6 @@ export interface operations {
       };
     };
   };
-  "api_delete_draft_conversation_api_v1_chat_draft__conversation_id__delete": {
-    "parameters": {
-      "path": {
-        "conversation_id": string;
-      };
-      "query"?: never;
-      "header": {
-        "X-User-ID"?: (number | null);
-      };
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "204": {
-        "content": never;
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
   "api_get_attachment_api_v1_chat_attachment_get_get": {
     "parameters": {
       "path"?: never;
@@ -609,9 +579,6 @@ export interface paths {
   };
   "/api/v1/chat/delete": {
     "post": operations["api_delete_conversations_api_v1_chat_delete_post"];
-  };
-  "/api/v1/chat/draft/{conversation_id}": {
-    "delete": operations["api_delete_draft_conversation_api_v1_chat_draft__conversation_id__delete"];
   };
   "/api/v1/chat/ls": {
     "get": operations["api_get_conversations_api_v1_chat_ls_get"];

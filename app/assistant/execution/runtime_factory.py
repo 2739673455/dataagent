@@ -1,15 +1,11 @@
-"""编译 Conversation 图，并按执行需要初始化模型、MCP 和沙箱。"""
+"""管理应用共享模型和工具，并装配每次 Run 使用的 Agent 图。"""
 
-import asyncio
 from contextlib import AsyncExitStack
-from typing import cast
 from uuid import UUID
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.language_models.model_profile import ModelProfile
 from langchain_core.tools import BaseTool
 
-from app.assistant.agents.deferred import DeferredChatModel
 from app.assistant.agents.explorer.tools import (
     create_execute_sql_tool,
     create_semantic_recall_tool,
@@ -26,7 +22,6 @@ from app.assistant.agents.specialists import (
     build_specialist_definitions,
 )
 from app.assistant.execution.session_service import AgentSessionService
-from app.assistant.execution.session_store import PostgresSandboxSessionStore
 from app.assistant.execution.types import ConversationAgentRuntime
 from app.assistant.model_factory import create_configured_model
 from app.metadata.services.recall_handler import SemanticRecallHandler
@@ -39,7 +34,7 @@ from app.shared.contracts.analysis import AGENT_TYPES, AgentType
 
 
 class ConversationAgentRuntimeFactory:
-    """图结构使用延迟资源引用，执行资源由 init/create 持有。"""
+    """模型与 MCP 工具随应用初始化，Agent 图按 Run 创建。"""
 
     def __init__(
         self,
@@ -50,7 +45,6 @@ class ConversationAgentRuntimeFactory:
     ) -> None:
         self._persistence = persistence
         self._sandbox = sandbox
-        self._init_lock = asyncio.Lock()
         self._models: dict[str, BaseChatModel] = {}
         self._mcp_tools: list[BaseTool] = []
         self._model_contexts = AsyncExitStack()
@@ -64,53 +58,36 @@ class ConversationAgentRuntimeFactory:
             for kind in AGENT_TYPES
         }
         self._model_names = {active, *names.values()}
-        deferred = {}
-        for name in self._model_names:
-            config = app_config.cfg.lm_config.models[name]
-            deferred[name] = DeferredChatModel(
-                resolve=lambda name=name: self._models[name],
-                profile=cast(
-                    ModelProfile,
-                    {
-                        **config.profile.model_dump(),
-                        "image_tool_message": config.api_protocol == "responses"
-                        and config.profile.image_inputs,
-                    },
-                ),
-            )
-        self._planner_model = deferred[active]
+        self._planner_model_name = active
+        self._specialist_model_names = names
         self._definitions = build_specialist_definitions(
             [create_semantic_recall_tool(recall), create_execute_sql_tool(query)]
         )
-        self._specialist_models: dict[AgentType, BaseChatModel] = {
-            kind: deferred[name] for kind, name in names.items()
-        }
 
     def specialists(self) -> SpecialistAgentFactory:
         """装配专业图工厂，绑定当前 Checkpointer。"""
         return SpecialistAgentFactory(
             self._definitions,
-            self._specialist_models,
+            {
+                kind: self._models[name]
+                for kind, name in self._specialist_model_names.items()
+            },
             self._sandbox,
             self._persistence.get_checkpointer(),
-            self.init,
-            lambda: self._mcp_tools,
+            self._mcp_tools,
         )
 
     async def init(self) -> None:
         """初始化共享执行资源，失败时释放已创建的客户端。"""
-        async with self._init_lock:
-            if self._models:
-                return
-            async with AsyncExitStack() as stack:
-                models = {
-                    name: await stack.enter_async_context(create_configured_model(name))
-                    for name in self._model_names
-                }
-                mcp_tools = await get_mcp_tools()
-                self._models = models
-                self._mcp_tools = mcp_tools
-                self._model_contexts = stack.pop_all()
+        async with AsyncExitStack() as stack:
+            models = {
+                name: await stack.enter_async_context(create_configured_model(name))
+                for name in self._model_names
+            }
+            mcp_tools = await get_mcp_tools()
+            self._models = models
+            self._mcp_tools = mcp_tools
+            self._model_contexts = stack.pop_all()
 
     def build(
         self,
@@ -121,23 +98,16 @@ class ConversationAgentRuntimeFactory:
         """编译 Planner 与 Session 工具，供状态读取或执行使用。"""
         checkpointer = self._persistence.get_checkpointer()
         specialist_factory = self.specialists()
-        session_store = PostgresSandboxSessionStore(
-            user_id=user_id,
-            conversation_id=conversation_id,
-            persistence=self._persistence,
-            checkpointer=checkpointer,
-            sandbox=self._sandbox,
-            build_agent=specialist_factory.build,
-        )
         session_service = AgentSessionService(
-            build_agent=specialist_factory.create,
-            session_store=session_store,
+            agents=specialist_factory,
+            persistence=self._persistence,
+            sandbox=self._sandbox,
             user_id=user_id,
             conversation_id=conversation_id,
         )
 
         planner = create_planner_agent(
-            model=self._planner_model,
+            model=self._models[self._planner_model_name],
             tools=[
                 create_delegation_tool(session_service),
                 create_list_sessions_tool(session_service),
@@ -156,7 +126,6 @@ class ConversationAgentRuntimeFactory:
         self, user_id: int, conversation_id: UUID
     ) -> ConversationAgentRuntime:
         """准备会话执行资源并编译图。"""
-        await self.init()
         backend = await self._sandbox.get_backend(user_id, conversation_id)
         return self.build(user_id, conversation_id, backend)
 

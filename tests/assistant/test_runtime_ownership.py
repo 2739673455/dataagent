@@ -1,4 +1,4 @@
-"""运行时构建、借用、淘汰和删除的交错测试。"""
+"""Run 独占运行时，构建与执行取消后不保留内存状态。"""
 
 import asyncio
 import unittest
@@ -8,91 +8,87 @@ from uuid import uuid4
 from app.assistant.execution.manager import AgentManager
 
 
-def _runtime():
-    return MagicMock()
-
-
 class RuntimeOwnershipTest(unittest.IsolatedAsyncioTestCase):
     def manager(self, create):
-        manager = AgentManager(
-            MagicMock(delete_thread=AsyncMock(), list_threads=AsyncMock(return_value=[])),
+        return AgentManager(
+            MagicMock(
+                delete_thread=AsyncMock(), list_threads=AsyncMock(return_value=[])
+            ),
             MagicMock(exists=AsyncMock(return_value=False), save=AsyncMock()),
-            MagicMock(init=AsyncMock(), create=create, close=AsyncMock()),
-            max_cached_runtimes=1,
+            MagicMock(create=create),
         )
-        self.addAsyncCleanup(manager.close)
-        return manager
 
-    async def test_borrowed_runtime_survives_eviction_until_released(self):
-        first, second, third = _runtime(), _runtime(), _runtime()
-        manager = self.manager(AsyncMock(side_effect=[first, second, third]))
+    async def test_each_run_builds_new_runtime_and_only_registers_active_sessions(self):
+        first, second = MagicMock(), MagicMock()
+        create = AsyncMock(side_effect=[first, second])
+        manager = self.manager(create)
+        conversation = uuid4()
+        for expected in (first, second):
+            async with manager.use_runtime(1, conversation) as runtime:
+                self.assertIs(runtime, expected)
+                self.assertIs(
+                    manager._active_sessions[(1, conversation)], runtime.session_service
+                )
+            self.assertFalse(manager._active_sessions)
+        self.assertEqual(create.await_count, 2)
+
+    async def test_different_conversations_register_and_release_independently(self):
+        first, second = MagicMock(), MagicMock()
+        manager = self.manager(AsyncMock(side_effect=[first, second]))
         first_id, second_id = uuid4(), uuid4()
-        async with manager.use_runtime(1, first_id) as borrowed:
-            self.assertIs(borrowed, first)
+        async with manager.use_runtime(1, first_id):
             async with manager.use_runtime(1, second_id):
-                first.session_service.clear.assert_not_called()
-            async with manager.use_runtime(1, first_id) as reused:
-                self.assertIs(reused, first)
-        async with manager.use_runtime(1, uuid4()):
-            first.session_service.clear.assert_called_once()
-            second.session_service.clear.assert_called_once()
+                self.assertEqual(len(manager._active_sessions), 2)
+            self.assertEqual(
+                manager._active_sessions, {(1, first_id): first.session_service}
+            )
+        self.assertFalse(manager._active_sessions)
 
-    async def test_cancelled_waiter_does_not_cancel_shared_build(self):
-        entered, release = asyncio.Event(), asyncio.Event()
-        runtime = _runtime()
-
-        async def create(*args):
-            entered.set()
-            await release.wait()
-            return runtime
-
-        factory = AsyncMock(side_effect=create)
-        manager = self.manager(factory)
-        conversation_id = uuid4()
-
-        async def borrow():
-            async with manager.use_runtime(1, conversation_id) as result:
-                return result
-
-        async with asyncio.timeout(1):
-            first = asyncio.create_task(borrow())
-            await entered.wait()
-            first.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await first
-            second = asyncio.create_task(borrow())
-            release.set()
-            self.assertIs(await second, runtime)
-        factory.assert_awaited_once()
-        self.assertEqual(manager._runtime_users, {})
-
-    async def test_deletion_discards_late_result_even_if_builder_swallows_cancel(self):
-        entered = asyncio.Event()
-        runtime = _runtime()
+    async def test_run_cancellation_cancels_build_in_same_task(self):
+        entered, cleaned = asyncio.Event(), asyncio.Event()
 
         async def create(*args):
             entered.set()
             try:
                 await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                return runtime
+            finally:
+                cleaned.set()
 
         manager = self.manager(AsyncMock(side_effect=create))
-        conversation_id = uuid4()
 
-        async def borrow():
-            async with manager.use_runtime(1, conversation_id):
-                self.fail("deleted runtime must never be borrowed")
+        async def run():
+            async with manager.use_runtime(1, uuid4()):
+                self.fail("cancelled build must not enter execution")
 
-        async with asyncio.timeout(1):
-            waiting = asyncio.create_task(borrow())
-            await entered.wait()
-            await manager.delete_agent_under_lifecycle_lock(1, conversation_id)
-            with self.assertRaisesRegex(RuntimeError, "构建已失效"):
-                await waiting
-        runtime.session_service.clear.assert_called_once()
-        self.assertEqual(manager._conversation_runtimes, {})
-        self.assertEqual(manager._runtime_users, {})
+        task = asyncio.create_task(run())
+        await asyncio.wait_for(entered.wait(), 1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertTrue(cleaned.is_set())
+        self.assertFalse(manager._active_sessions)
+
+    async def test_cancellation_unregisters_sessions(self):
+        manager = self.manager(AsyncMock(return_value=MagicMock()))
+        entered = asyncio.Event()
+
+        async def run():
+            async with manager.use_runtime(1, uuid4()):
+                entered.set()
+                await asyncio.Event().wait()
+
+        task = asyncio.create_task(run())
+        await asyncio.wait_for(entered.wait(), 1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertFalse(manager._active_sessions)
+
+    async def test_deleted_conversation_does_not_build(self):
+        create = AsyncMock()
+        manager = self.manager(create)
+        manager._tombstones.exists.return_value = True
         with self.assertRaisesRegex(RuntimeError, "已被删除"):
-            async with manager.use_runtime(1, conversation_id):
-                self.fail("deleted runtime must never be rebuilt")
+            async with manager.use_runtime(1, uuid4()):
+                self.fail("deleted conversation entered execution")
+        create.assert_not_awaited()

@@ -43,6 +43,7 @@ class WebResources:
     es: ESClientManager
     persistence: LangGraphPostgresManager
     sandbox: DockerSandboxManager
+    agent_factory: ConversationAgentRuntimeFactory
     agents: AgentManager
     runs: ConversationRunService
     conversations: ConversationLifecycleService
@@ -89,6 +90,7 @@ def _create_resources() -> WebResources:
         es=es,
         persistence=persistence,
         sandbox=sandbox,
+        agent_factory=factory,
         agents=agents,
         runs=runs,
         conversations=conversations,
@@ -112,7 +114,7 @@ async def lifespan(app: FastAPI):
             resources.embedding,
             resources.persistence,
             resources.sandbox,
-            resources.agents,
+            resources.agent_factory,
             resources.runs,
             resources.tasks,
         ):
@@ -122,6 +124,7 @@ async def lifespan(app: FastAPI):
         resources.es.init()
         await resources.persistence.init()
         await resources.sandbox.init()
+        await resources.agent_factory.init()
         for postgres in (resources.auth, resources.meta, resources.assistant):
             postgres.init()
             await postgres.init_tables()

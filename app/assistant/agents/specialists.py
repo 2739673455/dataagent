@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,7 +12,6 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
 from app.assistant.agents.analyst.prompt import ANALYST_SYSTEM_PROMPT
-from app.assistant.agents.deferred import DynamicToolsMiddleware
 from app.assistant.agents.explorer.prompt import EXPLORER_SYSTEM_PROMPT
 from app.assistant.agents.filesystem import agent_skills_mount_path
 from app.assistant.agents.reviewer.prompt import REVIEWER_SYSTEM_PROMPT
@@ -68,8 +67,7 @@ class SpecialistAgentFactory:
         models: Mapping[AgentType, BaseChatModel],
         sandbox: DockerSandboxManager,
         checkpointer: BaseCheckpointSaver,
-        initialize: Callable[[], Awaitable[None]],
-        mcp_tools: Callable[[], list[BaseTool]],
+        mcp_tools: Sequence[BaseTool],
     ) -> None:
         """绑定专业能力、模型和运行时依赖。"""
         expected_types = set(AGENT_TYPES)
@@ -77,7 +75,6 @@ class SpecialistAgentFactory:
             raise ValueError("专业 Agent 定义必须覆盖所有 Agent 类型")
         if set(models) != expected_types:
             raise ValueError("专业 Agent 模型必须覆盖所有 Agent 类型")
-        self._initialize = initialize
         self._mcp_tools = mcp_tools
         self._definitions = dict(definitions)
         self._models = dict(models)
@@ -86,7 +83,6 @@ class SpecialistAgentFactory:
 
     async def create(self, session_key: AgentSessionKey) -> CompiledStateGraph:
         """为一次委派创建专业 Agent 运行图。"""
-        await self._initialize()
         backend = await self._sandbox.get_session_backend(
             session_key.user_id,
             session_key.conversation_id,
@@ -99,7 +95,7 @@ class SpecialistAgentFactory:
     def build(
         self, session_key: AgentSessionKey, backend: DockerSandboxBackend | None = None
     ) -> CompiledStateGraph:
-        """编译 Session 图；模型、工具和文件后端在执行时解析。"""
+        """使用共享模型和工具编译 Session 图；读取状态时无需准备沙箱。"""
         definition = self._definitions[session_key.agent_type]
 
         if backend is None:
@@ -117,11 +113,10 @@ class SpecialistAgentFactory:
             system_prompt=definition.system_prompt,
             skill_directory=definition.skill_directory,
             model=self._models[session_key.agent_type],
-            tools=definition.tools,
-            backend=backend,
-            extra_middleware=[DynamicToolsMiddleware(self._mcp_tools)]
+            tools=[*self._mcp_tools, *definition.tools]
             if session_key.agent_type == "explorer"
-            else [],
+            else definition.tools,
+            backend=backend,
             checkpointer=self._checkpointer,
             skills=definition.skills,
         )

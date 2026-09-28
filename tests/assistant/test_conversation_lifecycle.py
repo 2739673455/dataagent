@@ -71,12 +71,10 @@ class ConversationLifecycleBusyTest(unittest.IsolatedAsyncioTestCase):
 
         repository_factory.assert_not_called()
 
-    async def test_non_draft_deletion_does_not_stop_active_run(self):
+    async def test_missing_conversation_does_not_stop_active_run(self):
         service, stop, repository_factory = _build_service()
-        repository_factory.return_value.__aenter__.return_value.get.return_value.is_draft = False
+        repository_factory.return_value.__aenter__.return_value.get.return_value = None
         self.assertFalse(
-            await service.request_conversation_deletion(
-                1, _CONVERSATION_ID, draft_only=True
-            )
+            await service.request_conversation_deletion(1, _CONVERSATION_ID)
         )
         stop.assert_not_awaited()

@@ -154,7 +154,7 @@ type SubagentActivityWriter = Callable[[SubagentActivity], None]
 
 @dataclass(slots=True)
 class ConversationAgentRuntime:
-    """一个用户会话内的 Agent 运行时资源。"""
+    """一次 Run 使用的 Planner 图与专业 Session 服务。"""
 
     planner: CompiledStateGraph
     session_service: AgentSessionService

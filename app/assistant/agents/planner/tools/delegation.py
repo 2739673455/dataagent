@@ -32,14 +32,11 @@ def create_delegation_tool(service: AgentSessionService) -> BaseTool:
             session_id=session_id,
             message=message,
         )
-        delegation_id = runtime.tool_call_id
-        if delegation_id is None:
-            raise RuntimeError("delegation 工具缺少 tool_call_id")
         try:
             result = await service.execute_delegation(
                 request,
                 cast(RunnableConfig, runtime.config),
-                delegation_id=delegation_id,
+                delegation_id=runtime.tool_call_id,
                 activity_writer=runtime.stream_writer,
             )
         except Exception as exc:  # noqa: BLE001

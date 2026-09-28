@@ -49,7 +49,6 @@ def create_specialist_agent(
     backend: DockerSandboxBackend,
     checkpointer: BaseCheckpointSaver,
     skills: Sequence[str],
-    extra_middleware: Sequence = (),
 ) -> CompiledStateGraph:
     """编译共享文件、附件和 Shell 生命周期的专业 Agent。"""
     resolved_backend, filesystem = build_specialist_filesystem(
@@ -57,13 +56,18 @@ def create_specialist_agent(
         skill_directory,
         skills,
     )
+    # 同名时内置工具覆盖 MCP 工具；同名 MCP 工具取最后一个。
+    merged_tools = {tool.name: tool for tool in tools}
+    for tool in [
+        *create_view_image_tools(model),
+        create_shell_tool(backend.shell_jobs),
+    ]:
+        merged_tools[tool.name] = tool
+    for tool in filesystem.tools:
+        merged_tools.pop(tool.name, None)
     return create_deep_agent(
         model=model,
-        tools=[
-            *tools,
-            *create_view_image_tools(model),
-            create_shell_tool(backend.shell_jobs),
-        ],
+        tools=list(merged_tools.values()),
         system_prompt=system_prompt,
         middleware=[
             filesystem,
@@ -71,7 +75,6 @@ def create_specialist_agent(
                 resolved_backend,
             ),
             MessageTimestampMiddleware(),
-            *extra_middleware,
         ],
         backend=resolved_backend,
         skills=list(skills),

@@ -22,9 +22,6 @@ from app.assistant.api.dependencies import (
     SandboxManagerDep,
 )
 from app.assistant.conversations import history as conversation_history
-from app.assistant.conversations.title import (
-    initial_conversation_title,
-)
 from app.assistant.events import schemas as chat_schema
 from app.identity.api.dependencies import CurrentUserDep
 from app.shared.contracts.analysis import AgentType
@@ -43,25 +40,20 @@ async def api_create_conversation(
 ) -> chat_schema.ConversationResponse:
     """创建新对话。"""
     user_id = current_user.id
+    initial_message = (body.initial_message or "").strip()
     async with conversation_repo.session.begin():
         conversation = await conversation_repo.create(
             user_id,
-            initial_conversation_title(body.initial_message),
+            initial_message[:64] or "新对话",
             is_draft=body.is_draft,
         )
-    initial_message = (body.initial_message or "").strip()
     if initial_message and not body.is_draft:
-        try:
-            tasks.generate_title(
-                user_id,
-                conversation.id,
-                conversation.title,
-                initial_message,
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                f"提交会话标题任务失败，保留即时标题: conversation_id={conversation.id}"
-            )
+        tasks.generate_title(
+            user_id,
+            conversation.id,
+            conversation.title,
+            initial_message,
+        )
 
     logger.info(
         f"创建对话: conversation_id={conversation.id}, is_draft={conversation.is_draft}"
@@ -98,32 +90,6 @@ async def api_delete_conversations(
             )
 
     logger.info(f"删除对话: conversation_ids={body.conversation_ids}")
-
-
-@router.delete(
-    "/draft/{conversation_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def api_delete_draft_conversation(
-    conversation_id: UUID,
-    current_user: CurrentUserDep,
-    lifecycle: ConversationLifecycleServiceDep,
-    tasks: ConversationTasksDep,
-) -> Response:
-    """幂等删除当前用户主动放弃的草稿会话。"""
-    requested = await lifecycle.request_conversation_deletion(
-        current_user.id,
-        conversation_id,
-        draft_only=True,
-    )
-    if requested:
-        try:
-            tasks.delete_conversation(current_user.id, conversation_id)
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                f"提交草稿删除任务失败，等待定时补偿: conversation_id={conversation_id}"
-            )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/update")

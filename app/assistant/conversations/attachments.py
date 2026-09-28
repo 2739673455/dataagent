@@ -23,7 +23,6 @@ class AttachmentService:
         conversation = await self._repository.get(user_id, conversation_id)
         if conversation is None:
             raise errors.ConversationNotFoundError
-
         try:
             content = await self._sandbox.download_file(
                 user_id,

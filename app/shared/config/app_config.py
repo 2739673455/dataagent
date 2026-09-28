@@ -76,8 +76,8 @@ class MetadataConfig(AppConfigModel):
 class LifecycleConfig(AppConfigModel):
     """跨存储资源生命周期配置。"""
 
-    cleanup_interval_seconds: int = Field(default=300, gt=0)
-    task_timeout_seconds: int = Field(default=3600, gt=0)
+    cleanup_interval_seconds: int = Field(gt=0)
+    task_timeout_seconds: int = Field(gt=0)
     draft_ttl_minutes: int = Field(gt=0)
     cleanup_batch_size: int = Field(gt=0, le=1000)
 
@@ -106,7 +106,7 @@ class SandboxConfig(AppConfigModel):
     memory_limit: str = Field(min_length=1)
     nano_cpus: int = Field(gt=0)
     pids_limit: int = Field(gt=0)
-    internal_command_timeout_seconds: int = Field(default=60, gt=0, le=600)
+    internal_command_timeout_seconds: int = Field(gt=0, le=600)
     max_file_bytes: int = Field(gt=0)
     max_user_storage_bytes: int = Field(gt=0)
     volume_driver: str = Field(min_length=1)

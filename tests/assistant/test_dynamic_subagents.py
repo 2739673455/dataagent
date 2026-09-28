@@ -28,8 +28,6 @@ from langgraph._internal._constants import (
     CONFIG_KEY_SCRATCHPAD,
     CONFIG_KEY_TASK_ID,
 )
-from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import StateSnapshot
 from pydantic import Field
 
 from app.assistant.agents.specialists import (
@@ -39,7 +37,6 @@ from app.assistant.agents.specialists import (
 from app.assistant.execution.manager import AgentManager
 from app.assistant.execution.run import ConversationRunService
 from app.assistant.execution.session_service import AgentSessionService
-from app.assistant.execution.session_store import PostgresSandboxSessionStore
 from app.assistant.execution.types import (
     DELEGATION_CONTEXT_KEY,
     DelegationMessageContext,
@@ -229,7 +226,9 @@ class _FakeAgent:
             checkpoint = self.checkpoints.get(namespace, {})
             channel_values = checkpoint.get("channel_values")
             values = channel_values if isinstance(channel_values, dict) else {}
-        return SimpleNamespace(values=values)
+        return SimpleNamespace(
+            values=values, created_at=self.checkpoints.get(namespace, {}).get("ts")
+        )
 
     async def aupdate_state(
         self,
@@ -285,113 +284,83 @@ class _DistributedLockRegistry:
         return self.acquire(session_key.thread_id)
 
 
-class _FakeSessionStore:
-    def __init__(
-        self,
-        fake: _FakeAgent,
-        *,
-        lock_factory: Callable[
-            [AgentSessionKey],
-            AbstractAsyncContextManager[None],
-        ]
-        | None = None,
-    ) -> None:
+class _FakeSessionResources:
+    """替换 PostgreSQL 和沙箱 I/O，Session 编排使用生产实现。"""
+
+    def __init__(self, fake, lock_factory=None):
         self._fake = fake
         self._lock_factory = lock_factory
-        self._session_locks: dict[str, asyncio.Lock] = {}
+        self._session_locks = {}
         self.workspace_delete_failures = 0
 
-    async def list_threads(self, analysis_id: str | None) -> list[str]:
-        prefix = f"{get_thread_id(12, _CONVERSATION_ID)}/subagents/" + (
-            f"{analysis_id}/" if analysis_id else ""
-        )
+    async def list_threads(self, *, prefix):
         return sorted(
-            namespace
-            for namespace in self._fake.persisted_sessions
-            if namespace.startswith(prefix)
+            thread
+            for thread in self._fake.persisted_sessions
+            if thread.startswith(prefix)
         )
 
-    async def read_state(
-        self,
-        session_key: AgentSessionKey,
-    ) -> StateSnapshot:
-        namespace = session_key.thread_id
-        values = self._fake.state_values.get(namespace)
-        checkpoint = self._fake.checkpoints.get(namespace)
-        if values is None and checkpoint is not None:
-            raw_values = checkpoint.get("channel_values")
-            values = raw_values if isinstance(raw_values, dict) else {}
-        return StateSnapshot(
-            values=values or {},
-            next=(),
-            config={},
-            metadata=None,
-            parent_config=None,
-            tasks=(),
-            interrupts=(),
-            created_at=(str(checkpoint.get("ts")) if checkpoint is not None else None),
-        )
+    def get_checkpointer(self):
+        return self
 
-    async def delete_checkpoint(self, session_key: AgentSessionKey) -> bool:
-        namespace = session_key.thread_id
-        existed = (
-            namespace in self._fake.persisted_sessions
-            or namespace in self._fake.checkpoints
-        )
-        self._fake.persisted_sessions.discard(namespace)
-        self._fake.checkpoints.pop(namespace, None)
-        return existed
+    async def aget_tuple(self, config):
+        thread = config["configurable"]["thread_id"]
+        if thread in self._fake.persisted_sessions or thread in self._fake.checkpoints:
+            return object()
+        return None
 
-    async def delete_workspace(self, session_key: AgentSessionKey) -> bool:
+    async def adelete_thread(self, thread):
+        self._fake.persisted_sessions.discard(thread)
+        self._fake.checkpoints.pop(thread, None)
+        self._fake.state_values.pop(thread, None)
+
+    async def delete_session(
+        self, user_id, conversation_id, analysis_id, agent_type, session_id
+    ):
         if self.workspace_delete_failures:
             self.workspace_delete_failures -= 1
             raise RuntimeError("sensitive container failure")
-        namespace = session_key.thread_id
-        existed = namespace in self._fake.workspace_sessions
-        self._fake.workspace_sessions.discard(namespace)
+        thread = AgentSessionKey(
+            user_id, conversation_id, analysis_id, agent_type, session_id
+        ).thread_id
+        existed = thread in self._fake.workspace_sessions
+        self._fake.workspace_sessions.discard(thread)
         return existed
 
-    def lock(self, session_key: AgentSessionKey) -> AbstractAsyncContextManager[None]:
-        if self._lock_factory is not None:
-            return self._lock_factory(session_key)
-        return self._local_session_lock(session_key)
-
     @asynccontextmanager
-    async def _local_session_lock(
-        self,
-        session_key: AgentSessionKey,
-    ) -> AsyncGenerator[None]:
-        lock = self._session_locks.setdefault(session_key.thread_id, asyncio.Lock())
+    async def advisory_lock(self, name):
+        thread = name.removeprefix("specialist:")
+        if self._lock_factory is not None:
+            analysis_id, agent_type, session_id = thread.split("/subagents/")[1].split(
+                "/"
+            )
+            key = AgentSessionKey(
+                12, _CONVERSATION_ID, analysis_id, agent_type, session_id
+            )
+            async with self._lock_factory(key):
+                yield
+            return
+        lock = self._session_locks.setdefault(thread, asyncio.Lock())
         if lock.locked():
             raise RuntimeError("Session 正在执行或删除")
-        await lock.acquire()
-        try:
+        async with lock:
             yield
-        finally:
-            lock.release()
 
 
 def _service(
     fake: _FakeAgent,
     *,
-    session_store: _FakeSessionStore | None = None,
-    session_lock_factory: Callable[
-        [AgentSessionKey],
-        AbstractAsyncContextManager[None],
-    ]
+    resources: _FakeSessionResources | None = None,
+    session_lock_factory: Callable[[AgentSessionKey], AbstractAsyncContextManager[None]]
     | None = None,
 ) -> AgentSessionService:
-    graph = cast(CompiledStateGraph, fake)
-
-    async def build_agent(session_key: AgentSessionKey) -> CompiledStateGraph:
-        return graph
-
+    resources = resources or _FakeSessionResources(fake, session_lock_factory)
     return AgentSessionService(
-        build_agent=build_agent,
-        session_store=cast(
-            PostgresSandboxSessionStore,
-            session_store or _FakeSessionStore(fake, lock_factory=session_lock_factory),
+        agents=MagicMock(
+            build=MagicMock(return_value=fake), create=AsyncMock(return_value=fake)
         ),
+        persistence=cast(Any, resources),
+        sandbox=cast(Any, resources),
         user_id=12,
         conversation_id=_CONVERSATION_ID,
     )
@@ -491,8 +460,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
                         {kind: model for kind in AGENT_TYPES},
                         sandbox,
                         InMemorySaver(),
-                        AsyncMock(),
-                        list,
+                        [],
                     )
                     run = asyncio.run(
                         factory.create(
@@ -667,9 +635,9 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_delete_session_retry_finishes_partial_cleanup(self) -> None:
         fake = _FakeAgent()
-        store = _FakeSessionStore(fake)
+        store = _FakeSessionResources(fake)
         store.workspace_delete_failures = 1
-        service = _service(fake, session_store=store)
+        service = _service(fake, resources=store)
         config = build_planner_config(12, _CONVERSATION_ID)
         request = DeleteSessionRequest(
             analysis_id="sales-decline",
@@ -964,7 +932,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([activity.delta for activity in message_deltas], ["开始查询"])
         self.assertTrue(message_deltas[0].reset)
 
-    async def test_history_uses_cached_activity_without_building_a_runtime(
+    async def test_history_uses_active_sessions_without_building_a_runtime(
         self,
     ) -> None:
         fake = _FakeAgent()
@@ -985,7 +953,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         manager = _history_manager(fake)
         runtime = MagicMock()
         runtime.session_service.is_session_active.return_value = True
-        manager._conversation_runtimes[(12, _CONVERSATION_ID)] = runtime
+        manager._active_sessions[(12, _CONVERSATION_ID)] = runtime.session_service
         with patch.object(
             manager._runtime_factory, "create", new_callable=AsyncMock
         ) as create:
@@ -1000,7 +968,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             assert active is not None
             self.assertEqual(active.status, "running")
             runtime.session_service.is_session_active.assert_called_once_with(namespace)
-            manager._conversation_runtimes.clear()
+            manager._active_sessions.clear()
             interrupted = await manager.read_delegation_activity(
                 12,
                 _CONVERSATION_ID,

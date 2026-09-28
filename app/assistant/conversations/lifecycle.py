@@ -61,16 +61,14 @@ class ConversationLifecycleService:
         self,
         user_id: int,
         conversation_id: UUID,
-        *,
-        draft_only: bool = False,
     ) -> bool:
         """写入删除墓碑并使会话立即从接口中消失。"""
-        # 先确认删除请求有效，避免 draft_only/no-op 取消正常执行。
+        # 先确认会话存在且属于当前用户，再停止对应的执行。
         async with self._repository_factory() as repository:
             conversation = await repository.get(
                 user_id, conversation_id, include_deleting=True
             )
-            if conversation is None or (draft_only and not conversation.is_draft):
+            if conversation is None:
                 return False
         if self._runs is not None:
             await self._runs.stop(user_id, conversation_id)
@@ -85,8 +83,6 @@ class ConversationLifecycleService:
                     include_deleting=True,
                 )
                 if conversation is None:
-                    return False
-                if draft_only and not conversation.is_draft:
                     return False
                 if conversation.deletion_requested_at is None:
                     await repository.update(
@@ -105,7 +101,6 @@ class ConversationLifecycleService:
         conversation_id: UUID,
         *,
         draft_expired_before: datetime | None = None,
-        draft_only: bool = False,
     ) -> bool:
         """幂等删除一个会话的全部跨存储资源。"""
         async with self.lock(user_id, conversation_id):
@@ -116,8 +111,6 @@ class ConversationLifecycleService:
                     include_deleting=True,
                 )
             if conversation is None:
-                return False
-            if draft_only and not conversation.is_draft:
                 return False
             if draft_expired_before is not None and (
                 not conversation.is_draft

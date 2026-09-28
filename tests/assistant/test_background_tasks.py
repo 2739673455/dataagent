@@ -6,6 +6,8 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+from langchain_core.messages import AIMessage
+
 from app.assistant.tasks import ConversationTasks
 from app.shared.config.app_config import LifecycleConfig
 from app.shared.errors.infrastructure import AdvisoryLockBusyError
@@ -27,7 +29,12 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
             MagicMock(),
             self.lifecycle,
             self.persistence,
-            LifecycleConfig(draft_ttl_minutes=1440, cleanup_batch_size=100),
+            LifecycleConfig(
+                draft_ttl_minutes=1440,
+                cleanup_batch_size=100,
+                cleanup_interval_seconds=300,
+                task_timeout_seconds=60,
+            ),
         )
         self.addAsyncCleanup(self.tasks.close)
 
@@ -110,7 +117,9 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_title_commits_and_closes_scoped_resources(self):
         closed = []
-        model = MagicMock()
+        model = MagicMock(
+            ainvoke=AsyncMock(return_value=AIMessage(content="  订单分析\n  "))
+        )
         session = MagicMock(commit=AsyncMock())
 
         @asynccontextmanager
@@ -127,20 +136,85 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 closed.append("session")
 
-        title_service = MagicMock(generate_and_update=AsyncMock())
+        repo = MagicMock(replace_title_if_current=AsyncMock())
         conversation_id = uuid4()
         with (
             patch.object(self.tasks._postgres, "session", session_scope),
-            patch("app.assistant.tasks.create_configured_model", model_scope),
             patch(
-                "app.assistant.tasks.ConversationTitleService",
-                return_value=title_service,
+                "app.assistant.conversations.title.create_configured_model", model_scope
+            ),
+            patch(
+                "app.assistant.conversations.title.ConversationPGRepo",
+                return_value=repo,
             ),
         ):
             self.tasks.generate_title(1, conversation_id, "即时标题", "分析订单")
             await asyncio.gather(*self.tasks._tasks)
-        args = title_service.generate_and_update.await_args.args
-        self.assertEqual(args[1:], (1, conversation_id, "即时标题", "分析订单"))
+        model.ainvoke.assert_awaited_once()
+        self.assertEqual(model.ainvoke.await_args.args[0][1].content, "分析订单")
+        repo.replace_title_if_current.assert_awaited_once_with(
+            1, conversation_id, expected_title="即时标题", title="订单分析"
+        )
         session.commit.assert_awaited_once()
-        self.assertEqual(closed, ["session", "model"])
+        self.assertEqual(closed, ["model", "session"])
+        self.assertFalse(self.tasks._tasks)
+
+    async def test_title_failure_does_not_retry_or_open_database(self):
+        model = MagicMock(ainvoke=AsyncMock(side_effect=RuntimeError("unavailable")))
+
+        @asynccontextmanager
+        async def model_scope(*args):
+            yield model
+
+        with patch(
+            "app.assistant.conversations.title.create_configured_model", model_scope
+        ):
+            self.tasks.generate_title(1, uuid4(), "即时标题", "分析订单")
+            await asyncio.gather(*self.tasks._tasks)
+        model.ainvoke.assert_awaited_once()
+        self.tasks._postgres.session.assert_not_called()
+
+    async def test_empty_title_keeps_initial_title(self):
+        model = MagicMock(ainvoke=AsyncMock(return_value=AIMessage(content=" \n\t ")))
+
+        @asynccontextmanager
+        async def model_scope(*args):
+            yield model
+
+        with patch(
+            "app.assistant.conversations.title.create_configured_model", model_scope
+        ):
+            self.tasks.generate_title(1, uuid4(), "即时标题", "分析订单")
+            await asyncio.gather(*self.tasks._tasks)
+        self.tasks._postgres.session.assert_not_called()
+
+    async def test_title_timeout_closes_model_without_retry(self):
+        closed = []
+
+        @asynccontextmanager
+        async def model_scope(*args):
+            try:
+                yield model
+            finally:
+                closed.append(True)
+
+        async def invoke(*args):
+            await asyncio.Event().wait()
+
+        model = MagicMock(ainvoke=AsyncMock(side_effect=invoke))
+        self.tasks._config = self.tasks._config.model_copy(
+            update={"task_timeout_seconds": 0.001}
+        )
+        with patch(
+            "app.assistant.conversations.title.create_configured_model", model_scope
+        ):
+            self.tasks.generate_title(1, uuid4(), "即时标题", "分析订单")
+            await asyncio.gather(*self.tasks._tasks)
+        model.ainvoke.assert_awaited_once()
+        self.assertEqual(closed, [True])
+        self.tasks._postgres.session.assert_not_called()
+
+    async def test_title_submission_during_shutdown_does_not_fail_caller(self):
+        await self.tasks.close()
+        self.tasks.generate_title(1, uuid4(), "即时标题", "分析订单")
         self.assertFalse(self.tasks._tasks)
