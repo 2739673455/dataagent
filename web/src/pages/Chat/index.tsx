@@ -63,22 +63,12 @@ export default function ChatPage() {
     : {};
   const currentMessageCount = currentMessages.length;
 
-  const {
-    isStreaming,
-    attachments,
-    isUploadingAttachments,
-    handleAttachmentsSelected,
-    handleRemoveAttachment,
-    handleResume,
-    handleSend,
-    handleStop,
-    abortConversationStream,
-    clearAttachments,
-  } = useChatStream({
-    routeConversationId,
-    onNavigateToConversation: (id) => navigate(ROUTES.chatConversation(id)),
-    onRedirectToUserSelection: (returnTo) => redirectToUserSelection(returnTo),
-  });
+  const { isStreaming, handleResume, handleSend, handleStop, abortConversationStream } =
+    useChatStream({
+      routeConversationId,
+      onNavigateToConversation: (id) => navigate(ROUTES.chatConversation(id)),
+      onRedirectToUserSelection: (returnTo) => redirectToUserSelection(returnTo),
+    });
   const executionStatus = getConversationExecutionStatus(
     routeConversationId,
     currentMessages,
@@ -136,7 +126,6 @@ export default function ChatPage() {
 
   // 新建对话
   const handleCreateConversation = () => {
-    clearAttachments();
     navigate(ROUTES.chat);
   };
 
@@ -213,12 +202,8 @@ export default function ChatPage() {
         <div className="flex min-w-0 flex-1 items-center bg-[#f4f4f0] p-3">
           <div className="mx-auto w-full max-w-4xl">
             <ChatComposer
-              attachments={attachments}
               canResume={executionStatus === "interrupted"}
               isStreaming={isStreaming}
-              isUploading={isUploadingAttachments}
-              onAttachmentsSelected={handleAttachmentsSelected}
-              onRemoveAttachment={handleRemoveAttachment}
               onResume={handleResume}
               onStop={handleStop}
               onSubmit={handleSend}

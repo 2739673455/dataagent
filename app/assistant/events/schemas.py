@@ -1,7 +1,7 @@
 """Assistant 对话、消息与流事件契约。"""
 
 from datetime import datetime
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import (
@@ -10,7 +10,6 @@ from pydantic import (
     Field,
     RootModel,
     StringConstraints,
-    model_validator,
 )
 
 from app.shared.contracts.analysis import AgentType
@@ -119,7 +118,7 @@ class ToolResultPart(BaseModel):
 MessageRole = Literal["user", "assistant", "tool", "system"]
 FinishReason = str
 UserMessagePart = Annotated[
-    TextContent | ImageContent,
+    TextContent,
     Field(discriminator="type"),
 ]
 MessagePart = Annotated[
@@ -136,31 +135,12 @@ class Attachment(BaseModel):
     description: str | None = Field(default=None, description="附件说明")
 
 
-class AttachmentReference(BaseModel):
-    """用户消息引用的已上传附件。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    f_path: str = Field(..., description="工作区内的文件路径")
-
-
 class UserMessageRequest(BaseModel):
     """用户提交给 Agent 的消息。"""
 
     model_config = ConfigDict(extra="forbid")
 
-    parts: list[UserMessagePart] = Field(..., description="文本和图片片段")
-    attachments: list[AttachmentReference] | None = Field(
-        default=None,
-        description="已上传附件引用",
-    )
-
-    @model_validator(mode="after")
-    def validate_content(self) -> Self:
-        """校验消息至少包含一个片段或附件。"""
-        if not self.parts and not self.attachments:
-            raise ValueError("消息内容或附件不能为空")
-        return self
+    parts: list[UserMessagePart] = Field(..., min_length=1, description="文本片段")
 
 
 class MessageResponse(BaseModel):
@@ -181,15 +161,6 @@ class ChatStreamRequest(BaseModel):
 
     conversation_id: UUID = Field(..., description="对话ID")
     message: UserMessageRequest = Field(..., description="用户消息")
-
-
-class DeleteAttachmentRequest(BaseModel):
-    """删除附件请求。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    conversation_id: UUID = Field(..., description="对话ID")
-    f_path: str = Field(..., min_length=1, description="工作区内的文件路径")
 
 
 class MessageListResponse(BaseModel):
@@ -335,9 +306,3 @@ ChatStreamEventPayload = Annotated[
 
 class ChatStreamEvent(RootModel[ChatStreamEventPayload]):
     """单个 SSE data 帧的 JSON 事件。"""
-
-
-class UploadAttachmentResponse(BaseModel):
-    """上传附件响应。"""
-
-    attachment: Attachment = Field(..., description="上传后的附件信息")

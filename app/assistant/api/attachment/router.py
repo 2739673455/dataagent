@@ -1,51 +1,17 @@
-"""会话附件上传、下载与删除路由。"""
+"""会话产物下载路由。"""
 
 import mimetypes
-from typing import Annotated
 from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter
 from fastapi.responses import Response
 from loguru import logger
 
 from app.assistant.api.attachment.dependencies import AttachmentServiceDep
-from app.assistant.events import schemas as chat_schema
 from app.identity.api.dependencies import CurrentUserDep
 
 router = APIRouter(tags=["attachment"])
-
-
-@router.post("/upload")
-async def api_upload_attachment(
-    service: AttachmentServiceDep,
-    current_user: CurrentUserDep,
-    conversation_id: Annotated[UUID, Form()],
-    file: Annotated[UploadFile, File()],
-) -> chat_schema.UploadAttachmentResponse:
-    """上传附件到当前会话工作区。"""
-    user_id = current_user.id
-    f_path = await service.upload(
-        user_id, conversation_id, file.filename or "upload", file.file
-    )
-
-    logger.info(f"上传附件: conversation_id={conversation_id}, file={f_path}")
-    return chat_schema.UploadAttachmentResponse(
-        attachment=chat_schema.Attachment(f_path=f_path)
-    )
-
-
-@router.post("/delete")
-async def api_delete_attachment(
-    body: chat_schema.DeleteAttachmentRequest,
-    service: AttachmentServiceDep,
-    current_user: CurrentUserDep,
-) -> None:
-    """删除当前会话工作区中的附件。"""
-    user_id = current_user.id
-    await service.delete(user_id, body.conversation_id, body.f_path)
-
-    logger.info(f"删除附件: conversation_id={body.conversation_id}, file={body.f_path}")
 
 
 @router.get("/get")

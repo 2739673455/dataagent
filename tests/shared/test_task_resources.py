@@ -2,48 +2,8 @@
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
 import pytest
-
-from app.assistant import tasks as assistant_tasks
-from app.assistant.conversations import resources as lifecycle_runtime
-
-
-def test_lifecycle_task_cleans_up_after_sandbox_init_failure() -> None:
-    persistence = MagicMock(init=AsyncMock(), close=AsyncMock())
-    databases = []
-
-    def postgres(*args):
-        manager = MagicMock(close=AsyncMock())
-        databases.append(manager)
-        return manager
-
-    sandbox = MagicMock(
-        init=AsyncMock(side_effect=RuntimeError("sandbox init")),
-        disconnect=AsyncMock(),
-    )
-    agents = MagicMock(close=AsyncMock(side_effect=RuntimeError("agents close")))
-
-    with (
-        patch.object(
-            lifecycle_runtime, "LangGraphPostgresManager", return_value=persistence
-        ),
-        patch.object(lifecycle_runtime, "PostgresClientManager", side_effect=postgres),
-        patch.object(lifecycle_runtime, "create_sandbox_manager", return_value=sandbox),
-        patch.object(lifecycle_runtime, "AgentManager", return_value=agents),
-        patch.object(
-            lifecycle_runtime,
-            "build_conversation_lifecycle_service",
-            return_value=MagicMock(),
-        ),
-        pytest.raises(RuntimeError, match="agents close"),
-    ):
-        assistant_tasks.delete_conversation_resources_task(1, str(uuid4()))
-    persistence.close.assert_awaited_once()
-    sandbox.disconnect.assert_awaited_once()
-    for database in databases:
-        database.close.assert_awaited_once()
 
 
 def test_web_shutdown_attempts_every_resource_after_startup_failure() -> None:
@@ -61,6 +21,7 @@ def test_web_shutdown_attempts_every_resource_after_startup_failure() -> None:
         "sandbox",
         "agents",
         "runs",
+        "tasks",
     ]
     managers = {name: MagicMock(close=AsyncMock()) for name in names}
     resources = MagicMock(**managers)
@@ -102,7 +63,7 @@ def test_web_applications_own_separate_resources_and_request_dependencies() -> N
             resource.init = MagicMock()
         for resource in (resources.auth, resources.meta, resources.assistant):
             resource.init_tables = AsyncMock()
-        for resource in (resources.persistence, resources.sandbox, resources.agents):
+        for resource in (resources.persistence, resources.sandbox):
             resource.init = AsyncMock()
         for resource in (
             resources.auth,
@@ -116,8 +77,10 @@ def test_web_applications_own_separate_resources_and_request_dependencies() -> N
             resources.sandbox,
             resources.agents,
             resources.runs,
+            resources.tasks,
         ):
             resource.close = AsyncMock()
+        resources.tasks.start = MagicMock()
         created.append(resources)
         return resources
 

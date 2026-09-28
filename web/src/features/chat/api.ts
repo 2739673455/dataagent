@@ -11,13 +11,11 @@ import type {
   MessageListResponse,
   SubagentMessageListResponse,
   SubagentRunIdentity,
-  UploadAttachmentResponse,
 } from "@/features/chat/types";
 import appClient from "@/api/appClient";
 
 type ApiSchemas = components["schemas"];
 type CreateConversationRequest = ApiSchemas["CreateConversationRequest"];
-type DeleteAttachmentRequest = ApiSchemas["DeleteAttachmentRequest"];
 type DeleteConversationRequest = ApiSchemas["DeleteConversationRequest"];
 type UpdateConversationRequest = ApiSchemas["UpdateConversationRequest"];
 
@@ -119,20 +117,6 @@ export const chatApi = {
     );
   },
 
-  uploadAttachment(conversationId: string, file: File) {
-    const formData = new FormData();
-    formData.append("conversation_id", String(conversationId));
-    formData.append("file", file);
-    return appClient.post<UploadAttachmentResponse>(CHAT_API_ROUTES.uploadAttachment, formData);
-  },
-
-  deleteAttachment(conversationId: string, f_path: string) {
-    return appClient.post(CHAT_API_ROUTES.deleteAttachment, {
-      conversation_id: conversationId,
-      f_path,
-    } satisfies DeleteAttachmentRequest);
-  },
-
   fetchAttachmentFile(conversationId: string, f_path: string) {
     return appClient.get<Blob>(CHAT_API_ROUTES.getAttachment, {
       params: {
@@ -154,10 +138,6 @@ export const chatApi = {
     return appClient.post(CHAT_API_ROUTES.deleteConversations, {
       conversation_ids: conversationIds,
     } satisfies DeleteConversationRequest);
-  },
-
-  deleteDraftConversation(conversationId: string) {
-    return appClient.delete(CHAT_API_ROUTES.deleteDraftConversation(conversationId));
   },
 
   streamChat(

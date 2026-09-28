@@ -11,7 +11,7 @@ class QueryExecutionOptions(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    batch_size: int = Field(gt=0)
+    batch_size: int = Field(default=100, gt=0)
     sample_rows: int = Field(default=5, ge=0, le=100)
 
 

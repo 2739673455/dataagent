@@ -77,8 +77,6 @@ class NativeSessionTest(unittest.IsolatedAsyncioTestCase):
             session_store=self.store,
             user_id=12,
             conversation_id=self.conversation_id,
-            max_parallel_sessions=3,
-            max_sessions=10,
         )
         parent = StateGraph(MessagesState)
         parent.add_node("tools", ToolNode([create_delegation_tool(self.service)]))
@@ -196,6 +194,11 @@ class NativeSessionTest(unittest.IsolatedAsyncioTestCase):
                 {"configurable": {"thread_id": self.key("other").thread_id}}
             )
         )
+        await self.delegate("recreated")
+        state = await self.agent.aget_state(
+            {"configurable": {"thread_id": self.key().thread_id}}
+        )
+        self.assertEqual(state.values["messages"][-1].content, "child reply 1")
         unrelated = build_planner_config(99, uuid4())
         await self.agent.ainvoke(
             {"messages": [HumanMessage(content="other user")]}, unrelated

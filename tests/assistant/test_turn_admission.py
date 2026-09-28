@@ -70,8 +70,9 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
             get=AsyncMock(return_value=conversation),
             update=AsyncMock(return_value=conversation),
         )
+        self.tasks = MagicMock()
         self.turn = ConversationTurnService(
-            repository=self.repo, runs=self.runs, agents=self.agents
+            repository=self.repo, runs=self.runs, agents=self.agents, tasks=self.tasks
         )
 
     def new_worker(self):
@@ -84,11 +85,12 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
     ):
         message = UserMessageRequest(parts=[TextContent(type="text", text="分析")])
         other = ConversationTurnService(
-            repository=self.repo, runs=self.new_worker(), agents=self.agents
+            repository=self.repo,
+            runs=self.new_worker(),
+            agents=self.agents,
+            tasks=self.tasks,
         )
-        with patch(
-            "app.assistant.execution.turn.enqueue_conversation_title"
-        ) as enqueue:
+        with patch.object(self.tasks, "generate_title") as enqueue:
             stream = await self.turn.start(1, self.conversation_id, message)
             await self.started.wait()
             with self.assertRaises(ConversationBusyError):
@@ -155,7 +157,7 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
             MagicMock(),
             runs=self.runs,
         )
-        with patch("app.assistant.execution.turn.enqueue_conversation_title"):
+        with patch.object(self.tasks, "generate_title"):
             stream = await self.turn.start(1, self.conversation_id, message)
             await self.started.wait()
             self.assertTrue(

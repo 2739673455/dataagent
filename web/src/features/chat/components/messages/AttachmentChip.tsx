@@ -8,7 +8,6 @@ import {
   FileSpreadsheet,
   FileText,
   Globe,
-  X,
 } from "lucide-react";
 import { type ComponentType, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -146,13 +145,9 @@ function useAttachmentImageUrl(
   conversationId: string | null | undefined,
   isImage: boolean
 ) {
-  const [imageUrl, setImageUrl] = useState<string | null>(attachment.preview_url ?? null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    if (attachment.preview_url) {
-      setImageUrl(attachment.preview_url);
-      return;
-    }
     if (!conversationId || !isImage) {
       setImageUrl(null);
       return;
@@ -175,7 +170,7 @@ function useAttachmentImageUrl(
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [attachment.f_path, attachment.preview_url, conversationId, isImage]);
+  }, [attachment.f_path, conversationId, isImage]);
 
   return imageUrl;
 }
@@ -218,12 +213,10 @@ export function AttachmentChip({
   attachment,
   conversationId,
   isUser,
-  onRemove,
 }: {
   attachment: Attachment;
   conversationId?: string | null;
   isUser: boolean;
-  onRemove?: () => void;
 }) {
   const [isDownloading, setIsDownloading] = useState(false);
   const [isImagePreviewOpen, setIsImagePreviewOpen] = useState(false);
@@ -321,17 +314,6 @@ export function AttachmentChip({
               ) : (
                 <Download className="h-3 w-3" />
               )}
-            </button>
-          )}
-
-          {onRemove && (
-            <button
-              type="button"
-              onClick={onRemove}
-              className="rounded p-0.5 text-[#71717a] transition hover:bg-[#ebebe5] hover:text-[#dc2626]"
-              title="移除附件"
-            >
-              <X className="h-3.5 w-3.5" />
             </button>
           )}
         </div>

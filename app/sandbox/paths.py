@@ -9,8 +9,7 @@ from app.sandbox.errors import SandboxPathError
 
 SANDBOX_DATA_ROOT = "/data"
 SANDBOX_STAGING_ROOT = "/data/.dataagent-staging"
-USER_ATTACHMENT_ROOT = "uploads"
-_CONVERSATION_FILE_ROOTS = frozenset({"sessions", USER_ATTACHMENT_ROOT})
+_CONVERSATION_FILE_ROOTS = frozenset({"sessions"})
 _PATH_MAX_BYTES = 4096
 _PATH_COMPONENT_MAX_BYTES = 255
 
@@ -159,11 +158,3 @@ def conversation_relative_path(path: str, conversation_id: UUID) -> str:
     if not relative or PurePosixPath(relative).parts[0] not in _CONVERSATION_FILE_ROOTS:
         raise SandboxPathError(path)
     return relative
-
-
-def normalize_user_attachment_path(path: str) -> str:
-    """将用户可变附件路径限制在统一上传目录。"""
-    normalized_path = normalize_attachment_path(path)
-    if PurePosixPath(normalized_path).parts[0] == USER_ATTACHMENT_ROOT:
-        return normalized_path
-    return f"{USER_ATTACHMENT_ROOT}/{normalized_path}"

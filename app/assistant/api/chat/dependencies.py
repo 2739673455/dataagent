@@ -8,6 +8,7 @@ from fastapi import Depends
 from app.assistant.api.dependencies import (
     AgentManagerDep,
     ConversationRunServiceDep,
+    ConversationTasksDep,
 )
 from app.assistant.execution.turn import ConversationTurnService
 from app.assistant.repositories.conversation import ConversationPGRepo
@@ -32,9 +33,12 @@ def _get_conversation_turn_service(
     repository: ConversationPGRepoDep,
     runs: ConversationRunServiceDep,
     agents: AgentManagerDep,
+    tasks: ConversationTasksDep,
 ) -> ConversationTurnService:
     """组装请求级会话回合用例。"""
-    return ConversationTurnService(repository=repository, runs=runs, agents=agents)
+    return ConversationTurnService(
+        repository=repository, runs=runs, agents=agents, tasks=tasks
+    )
 
 
 ConversationTurnServiceDep = Annotated[

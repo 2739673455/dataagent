@@ -49,7 +49,7 @@ TAVILY_API_KEY=
 
 ### 模型配置
 
-在 [conf/app_config.yaml](conf/app_config.yaml) 中配置语言模型和向量模型，API 密钥通过 `${oc.env:变量名}` 从 `conf/.env` 或进程环境变量读取。修改后重启相关后端和 Worker 进程。
+在 [conf/app_config.yaml](conf/app_config.yaml) 中配置语言模型和向量模型，API 密钥通过 `${oc.env:变量名}` 从 `conf/.env` 或进程环境变量读取。修改后重启后端进程。
 
 **语言模型（`lm_config`）**
 
@@ -142,7 +142,9 @@ uv run -m scripts.bootstrap_users
 
 ### 5. 启动应用
 
-在四个项目根目录终端中分别启动后端、前端、Celery Worker 和 Celery Beat：
+标题生成和会话删除由后端的异步任务执行；过期草稿及待删除会话在启动时和每隔 300 秒清理一次，间隔与任务超时通过 `lifecycle` 配置。进程退出会取消后台任务；删除记录在下次扫描时继续处理，标题生成中断后保留即时标题。
+
+在两个项目根目录终端中分别启动后端和前端：
 
 ```bash
 # 终端 1：后端
@@ -150,12 +152,6 @@ uv run main.py
 
 # 终端 2：前端
 npm --prefix web run dev
-
-# 终端 3：Celery Worker
-uv run celery --app app.shared.tasks.celery_app:celery_app worker -l INFO
-
-# 终端 4：Celery Beat
-uv run celery --app app.shared.tasks.celery_app:celery_app beat -l INFO
 ```
 
 启动后访问：
@@ -187,7 +183,7 @@ uv run -m scripts.import_metadata --incremental
 
 增量脚本使用已导入目录中的 `value_index_cursor_column`，每张表读取一次最大水位。水位未推进则跳过；有新数据时读取 `(上次水位, 本次最大水位]` 中启用 `index_values` 的字段取值，索引写入成功后提交新水位。未配置水位的表跳过，全量时为空的表可在后续有数据时开始增量导入。
 
-水位字段需要在新增或更新时递增；相同或更旧水位的迟到数据、源数据删除不会由增量脚本修复，应重新全量导入。增量失败可直接重跑，已完成字段保留水位，失败字段从旧水位重试；全量失败重新执行全量脚本。两种模式互斥运行，失败返回非零退出码，不依赖 API、Celery Worker 或 Beat。
+水位字段需要在新增或更新时递增；相同或更旧水位的迟到数据、源数据删除不会由增量脚本修复，应重新全量导入。增量失败可直接重跑，已完成字段保留水位，失败字段从旧水位重试；全量失败重新执行全量脚本。两种模式互斥运行，失败返回非零退出码，由脚本独立执行。
 
 ### 2. 预定义用户与数据权限
 

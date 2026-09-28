@@ -55,6 +55,6 @@ async def build_semantic_resource_recall_service(
             metrics={item.name: item for item in metrics},
         ),
         asset_policy=policy,
-        data_source=cfg.query.data_source,
+        data_source="doris",
         database_name=cfg.doris.database,
     )

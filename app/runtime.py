@@ -13,6 +13,7 @@ from app.assistant.execution.manager import AgentManager
 from app.assistant.execution.run import ConversationRunService
 from app.assistant.execution.runtime_factory import ConversationAgentRuntimeFactory
 from app.assistant.providers import build_conversation_lifecycle_service
+from app.assistant.tasks import ConversationTasks
 from app.metadata.services.recall_handler import SemanticRecallHandler
 from app.query.providers import build_query_execution_handler
 from app.sandbox.manager import DockerSandboxManager
@@ -46,6 +47,7 @@ class WebResources:
     runs: ConversationRunService
     conversations: ConversationLifecycleService
     recall: SemanticRecallHandler
+    tasks: ConversationTasks
 
 
 def _create_resources() -> WebResources:
@@ -91,6 +93,7 @@ def _create_resources() -> WebResources:
         runs=runs,
         conversations=conversations,
         recall=recall,
+        tasks=ConversationTasks(assistant, conversations, persistence, cfg.lifecycle),
     )
 
 
@@ -111,6 +114,7 @@ async def lifespan(app: FastAPI):
             resources.sandbox,
             resources.agents,
             resources.runs,
+            resources.tasks,
         ):
             stack.push_async_callback(resource.close)
         logger.info("开始初始化应用资源")
@@ -123,6 +127,7 @@ async def lifespan(app: FastAPI):
             await postgres.init_tables()
         resources.admin_doris.init()
         logger.info("应用资源初始化完成")
+        resources.tasks.start()
         app.state.resources = resources
         try:
             yield

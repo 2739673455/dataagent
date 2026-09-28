@@ -18,6 +18,7 @@ from app.assistant.api.dependencies import (
     AgentManagerDep,
     ConversationLifecycleServiceDep,
     ConversationRunServiceDep,
+    ConversationTasksDep,
     SandboxManagerDep,
 )
 from app.assistant.conversations import history as conversation_history
@@ -25,10 +26,6 @@ from app.assistant.conversations.title import (
     initial_conversation_title,
 )
 from app.assistant.events import schemas as chat_schema
-from app.assistant.task_scheduler import (
-    enqueue_conversation_deletion,
-    enqueue_conversation_title,
-)
 from app.identity.api.dependencies import CurrentUserDep
 from app.shared.contracts.analysis import AgentType
 from app.shared.observability import context
@@ -42,6 +39,7 @@ async def api_create_conversation(
     body: chat_schema.CreateConversationRequest,
     conversation_repo: ConversationPGRepoDep,
     current_user: CurrentUserDep,
+    tasks: ConversationTasksDep,
 ) -> chat_schema.ConversationResponse:
     """创建新对话。"""
     user_id = current_user.id
@@ -54,7 +52,7 @@ async def api_create_conversation(
     initial_message = (body.initial_message or "").strip()
     if initial_message and not body.is_draft:
         try:
-            enqueue_conversation_title(
+            tasks.generate_title(
                 user_id,
                 conversation.id,
                 conversation.title,
@@ -81,6 +79,7 @@ async def api_delete_conversations(
     body: chat_schema.DeleteConversationRequest,
     current_user: CurrentUserDep,
     lifecycle: ConversationLifecycleServiceDep,
+    tasks: ConversationTasksDep,
 ) -> None:
     """删除对话。"""
     user_id = current_user.id
@@ -92,7 +91,7 @@ async def api_delete_conversations(
         ):
             raise chat_error.ConversationNotFoundError
         try:
-            enqueue_conversation_deletion(user_id, conversation_id)
+            tasks.delete_conversation(user_id, conversation_id)
         except Exception:  # noqa: BLE001
             logger.exception(
                 f"提交会话删除任务失败，等待定时补偿: conversation_id={conversation_id}"
@@ -109,6 +108,7 @@ async def api_delete_draft_conversation(
     conversation_id: UUID,
     current_user: CurrentUserDep,
     lifecycle: ConversationLifecycleServiceDep,
+    tasks: ConversationTasksDep,
 ) -> Response:
     """幂等删除当前用户主动放弃的草稿会话。"""
     requested = await lifecycle.request_conversation_deletion(
@@ -118,7 +118,7 @@ async def api_delete_draft_conversation(
     )
     if requested:
         try:
-            enqueue_conversation_deletion(current_user.id, conversation_id)
+            tasks.delete_conversation(current_user.id, conversation_id)
         except Exception:  # noqa: BLE001
             logger.exception(
                 f"提交草稿删除任务失败，等待定时补偿: conversation_id={conversation_id}"
@@ -136,11 +136,9 @@ async def api_update_conversation(
     user_id = current_user.id
 
     async with conversation_repo.session.begin():
-        # 检查对话是否存在且属于当前用户。
         conversation = await conversation_repo.get(user_id, body.conversation_id)
         if conversation is None:
             raise chat_error.ConversationNotFoundError
-
         await conversation_repo.update(
             conversation,
             title=body.title,

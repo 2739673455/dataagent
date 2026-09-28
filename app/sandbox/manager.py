@@ -23,7 +23,6 @@ from app.sandbox.paths import (
     SandboxReadonlyMount,
     SandboxSessionScope,
     normalize_attachment_path,
-    normalize_user_attachment_path,
 )
 from app.sandbox.runtime_pool import DockerRuntimePool
 from app.shared.config.app_config import SandboxConfig
@@ -537,23 +536,6 @@ class DockerSandboxManager:
             content,
         )
 
-    async def upload_user_attachment(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        path: str,
-        content: BinaryIO,
-    ) -> str:
-        """上传用户可变附件并返回规范化路径。"""
-        normalized_path = normalize_user_attachment_path(path)
-        await self._upload_normalized_file(
-            user_id,
-            conversation_id,
-            normalized_path,
-            content,
-        )
-        return normalized_path
-
     async def download_file(
         self,
         user_id: int,
@@ -574,30 +556,6 @@ class DockerSandboxManager:
             raise FileNotFoundError(normalized_path) from None
         await asyncio.to_thread(self._touch_user, user_id)
         return content
-
-    async def delete_user_attachment(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        path: str,
-    ) -> None:
-        """删除用户可变附件。"""
-        normalized_path = normalize_user_attachment_path(path)
-        await self.init()
-
-        def delete() -> None:
-            """只删除已有文件，避免空删除创建沙箱资源。"""
-            with self._ownership.conversation_maintenance(user_id, conversation_id):
-                self._ownership.assert_available(user_id, conversation_id)
-                container = self._get_running_storage_container_sync(user_id)
-                if container is not None:
-                    with self._ownership.user_mutation(user_id):
-                        self._archive.delete_file(
-                            container, conversation_id, normalized_path
-                        )
-
-        await asyncio.to_thread(delete)
-        await asyncio.to_thread(self._touch_user, user_id)
 
     async def is_downloadable_file(
         self,

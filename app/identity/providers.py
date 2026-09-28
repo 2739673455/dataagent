@@ -17,6 +17,6 @@ async def load_asset_policy(
         return await IdentityService(IdentityPGRepo(session)).get_asset_policy(
             user_id,
             DorisRoleRepository(doris),
-            data_source=cfg.query.data_source,
+            data_source="doris",
             database=cfg.doris.database,
         )

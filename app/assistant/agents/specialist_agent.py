@@ -69,7 +69,6 @@ def create_specialist_agent(
             filesystem,
             UserMessageContextMiddleware(
                 resolved_backend,
-                backend.conversation_dir,
             ),
             MessageTimestampMiddleware(),
             *extra_middleware,

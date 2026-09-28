@@ -71,6 +71,7 @@ class UserMessageRequestTest(unittest.TestCase):
             ("message_id", "client-message"),
             ("role", "user"),
             ("finish_reason", "stop"),
+            ("attachments", [{"f_path": "uploads/report.csv"}]),
         ):
             with self.subTest(field=field), self.assertRaises(ValidationError):
                 chat_schema.UserMessageRequest.model_validate(
@@ -109,30 +110,6 @@ class UserMessageRequestTest(unittest.TestCase):
                 }
             )
 
-    def test_accepts_uploaded_attachment_references(self) -> None:
-        message = chat_schema.UserMessageRequest(
-            parts=[],
-            attachments=[chat_schema.AttachmentReference(f_path="uploads/report.csv")],
-        )
-
-        self.assertIsNotNone(message.attachments)
-        assert message.attachments is not None
-        self.assertEqual(message.attachments[0].f_path, "uploads/report.csv")
-
-
-class ChatMutationRequestTest(unittest.TestCase):
-    def test_delete_conversations_requires_at_least_one_id(self) -> None:
-        with self.assertRaises(ValidationError):
-            chat_schema.DeleteConversationRequest(conversation_ids=[])
-
-    def test_delete_attachment_requires_a_path(self) -> None:
-        with self.assertRaises(ValidationError):
-            chat_schema.DeleteAttachmentRequest(
-                conversation_id=_CONVERSATION_ID,
-                f_path="",
-            )
-
-
 class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
     async def test_user_message_creation_time_is_persisted(self) -> None:
         message = message_projection.schema_to_human_message(
@@ -165,40 +142,6 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(USER_MESSAGE_CONTEXT_KEY, payload)
         self.assertIsNotNone(payload["created_at"])
         self.assertNotIn("<user_message_context>", json.dumps(payload))
-
-    async def test_attachment_references_are_private_and_content_stays_raw(
-        self,
-    ) -> None:
-        message = message_projection.schema_to_human_message(
-            chat_schema.UserMessageRequest(
-                parts=[chat_schema.TextContent(type="text", text="analyze")],
-                attachments=[
-                    chat_schema.AttachmentReference(f_path="uploads/report.csv"),
-                    chat_schema.AttachmentReference(f_path="uploads/chart.png"),
-                ],
-            )
-        )
-
-        self.assertEqual(message.content, [{"type": "text", "text": "analyze"}])
-        context = UserMessageContext.model_validate(
-            message.additional_kwargs[USER_MESSAGE_CONTEXT_KEY]
-        )
-        self.assertEqual(
-            [item.f_path for item in context.attachments],
-            ["uploads/report.csv", "uploads/chart.png"],
-        )
-        response = message_projection.langchain_message_to_schema(
-            message, _CONVERSATION_ID
-        )
-        assert response is not None
-        self.assertEqual(
-            [item.f_path for item in response.attachments or ()],
-            ["uploads/report.csv", "uploads/chart.png"],
-        )
-        self.assertNotIn(
-            USER_MESSAGE_CONTEXT_KEY,
-            response.model_dump(mode="json"),
-        )
 
     async def test_model_response_creation_time_is_persisted(self) -> None:
         middleware = MessageTimestampMiddleware()
@@ -733,28 +676,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 ),
             ],
         )
-
-    async def test_final_artifact_directive_returns_uploaded_image(self) -> None:
-        relative_path = "uploads/PixPin_2026-09-19_14-21-52.png"
-        message = AIMessage(
-            content=f"图片见附件。\n[[DATAAGENT_ARTIFACT:{_SANDBOX_ROOT}/{relative_path}]]",
-            response_metadata={"finish_reason": "stop"},
-        )
-        files = _FileInspectorStub({(7, _CONVERSATION_ID, relative_path)})
-
-        schema = await message_projection.langchain_message_to_schema_with_artifacts(
-            message, cast(DockerSandboxManager, files), 7, _CONVERSATION_ID
-        )
-
-        assert schema is not None
-        self.assertEqual(
-            schema.attachments,
-            [chat_schema.Attachment(f_path=relative_path, media_type="image/png")],
-        )
-        self.assertEqual(
-            schema.parts, [chat_schema.TextContent(type="text", text="图片见附件。\n")]
-        )
-        self.assertEqual(files.calls, [(7, _CONVERSATION_ID, relative_path)])
 
     async def test_artifact_directives_reject_paths_outside_public_roots(self) -> None:
         files = _FileInspectorStub(set())

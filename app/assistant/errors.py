@@ -62,7 +62,7 @@ class AttachmentNotFoundError(ProblemError):
 
 
 class AttachmentTooLargeError(ProblemError):
-    """表示附件大小超过上传限制。"""
+    """表示文件大小超过读取限制。"""
 
     type = "attachment-too-large"
     title = "附件过大"

@@ -72,45 +72,17 @@ class MetadataConfig(AppConfigModel):
     redis_url: SecretStr = Field(min_length=1)
 
 
-# 后台任务配置。
-class TaskQueueConfig(AppConfigModel):
-    """Celery 任务队列配置。"""
-
-    broker_url: SecretStr = Field(min_length=1)
-    result_backend: SecretStr = Field(min_length=1)
-    result_expires_seconds: int = Field(gt=0)
-    task_time_limit_seconds: int = Field(gt=0)
-    task_soft_time_limit_seconds: int = Field(gt=0)
-    worker_prefetch_multiplier: int = Field(gt=0)
-    lifecycle_schedule_seconds: int = Field(gt=0)
-
-    @model_validator(mode="after")
-    def validate_time_limits(self) -> "TaskQueueConfig":
-        """校验后台任务软硬超时关系。"""
-        if self.task_soft_time_limit_seconds >= self.task_time_limit_seconds:
-            raise ValueError(
-                "task_soft_time_limit_seconds 必须小于 task_time_limit_seconds"
-            )
-        return self
-
-
 # 身份与生命周期配置。
 class LifecycleConfig(AppConfigModel):
     """跨存储资源生命周期配置。"""
 
+    cleanup_interval_seconds: int = Field(default=300, gt=0)
+    task_timeout_seconds: int = Field(default=3600, gt=0)
     draft_ttl_minutes: int = Field(gt=0)
     cleanup_batch_size: int = Field(gt=0, le=1000)
 
 
-# 查询与沙箱配置。
-class QueryConfig(AppConfigModel):
-    """只读分析查询配置。"""
-
-    data_source: str = Field(min_length=1)
-    batch_size: int = Field(gt=0)
-    sample_rows: int = Field(ge=0, le=100)
-
-
+# 沙箱配置。
 class SandboxOwnershipConfig(AppConfigModel):
     """沙箱跨进程所有权配置。"""
 
@@ -214,8 +186,6 @@ class LMConfigCfg(AppConfigModel):
 class OrchestrationConfig(AppConfigModel):
     """动态专业 Agent 编排限制。"""
 
-    max_parallel_sessions: int = Field(gt=0)
-    max_sessions: int = Field(gt=0)
     max_continuations: int = Field(ge=0)
 
 
@@ -306,14 +276,10 @@ class Cfg(AppConfigModel):
     # 元数据索引配置。
     metadata: MetadataConfig
 
-    # 后台任务配置。
-    task_queue: TaskQueueConfig
-
     # 身份与生命周期配置。
     lifecycle: LifecycleConfig
 
-    # 查询与沙箱配置。
-    query: QueryConfig
+    # 沙箱配置。
     sandbox: SandboxConfig
 
     # 模型与智能体配置。

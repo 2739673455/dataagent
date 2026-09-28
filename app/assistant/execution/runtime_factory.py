@@ -132,14 +132,11 @@ class ConversationAgentRuntimeFactory:
             sandbox=self._sandbox,
             build_agent=specialist_factory.build,
         )
-        orchestration = app_config.cfg.agent.orchestration
         session_service = AgentSessionService(
             build_agent=specialist_factory.create,
             session_store=session_store,
             user_id=user_id,
             conversation_id=conversation_id,
-            max_parallel_sessions=orchestration.max_parallel_sessions,
-            max_sessions=orchestration.max_sessions,
         )
 
         planner = create_planner_agent(

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from uuid import UUID
 
 from langchain_core.runnables import RunnableConfig
@@ -15,7 +15,6 @@ from app.assistant.execution.types import get_thread_id
 from app.sandbox.manager import DockerSandboxManager
 from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 from app.shared.contracts.analysis import AgentSessionKey
-from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 
 class PostgresSandboxSessionStore:
@@ -85,32 +84,3 @@ class PostgresSandboxSessionStore:
         return self._persistence.advisory_lock(
             f"specialist:{session_key.thread_id}",
         )
-
-    @asynccontextmanager
-    async def reserve_capacity(
-        self,
-        session_key: AgentSessionKey,
-        max_sessions: int,
-    ) -> AsyncGenerator[None]:
-        """为新 Session 获取一个跨进程容量槽位。
-
-        新 Session 在首个 Checkpoint 写入前不会出现在持久化线程列表中。
-        槽位持有到本次执行结束，使并发进程也会计入这段空窗口。
-        """
-        threads = set(await self.list_threads(None))
-        if session_key.thread_id in threads:
-            yield
-            return
-        if len(threads) >= max_sessions:
-            raise RuntimeError("当前 Conversation 的 Session 数量已达上限")
-
-        for slot in range(len(threads), max_sessions):
-            try:
-                async with self._persistence.advisory_lock(
-                    f"specialist-capacity:{self._thread_id}:{slot}"
-                ):
-                    yield
-                    return
-            except AdvisoryLockBusyError:
-                continue
-        raise RuntimeError("当前 Conversation 的 Session 数量已达上限")

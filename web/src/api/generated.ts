@@ -9,13 +9,6 @@ export interface components {
       "f_path": string;
       "media_type"?: (string | null);
     };
-    "AttachmentReference": {
-      "f_path": string;
-    };
-    "Body_api_upload_attachment_api_v1_chat_attachment_upload_post": {
-      "conversation_id": string;
-      "file": string;
-    };
     "ChatStreamDoneEvent": {
       "type": "done";
     };
@@ -96,10 +89,6 @@ export interface components {
       "initial_message"?: (string | null);
       "is_draft"?: boolean;
     };
-    "DeleteAttachmentRequest": {
-      "conversation_id": string;
-      "f_path": string;
-    };
     "DeleteConversationRequest": {
       "conversation_ids": Array<string>;
     };
@@ -157,12 +146,8 @@ export interface components {
       "conversation_id": string;
       "title": string;
     };
-    "UploadAttachmentResponse": {
-      "attachment": components["schemas"]["Attachment"];
-    };
     "UserMessageRequest": {
-      "attachments"?: (Array<components["schemas"]["AttachmentReference"]> | null);
-      "parts": Array<(components["schemas"]["TextContent"] | components["schemas"]["ImageContent"])>;
+      "parts": Array<(components["schemas"]["TextContent"])>;
     };
     "UserResponse": {
       "doris_role_name": string;
@@ -189,38 +174,6 @@ export interface operations {
       "201": {
         "content": {
         "application/json": components["schemas"]["ConversationResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "api_delete_attachment_api_v1_chat_attachment_delete_post": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header": {
-        "X-User-ID"?: (number | null);
-      };
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["DeleteAttachmentRequest"];
-    };
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": unknown;
       };
       };
       "422": {
@@ -617,38 +570,6 @@ export interface operations {
       };
     };
   };
-  "api_upload_attachment_api_v1_chat_attachment_upload_post": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header": {
-        "X-User-ID"?: (number | null);
-      };
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "multipart/form-data": components["schemas"]["Body_api_upload_attachment_api_v1_chat_attachment_upload_post"];
-    };
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": components["schemas"]["UploadAttachmentResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
   "list_users_api_v1_users_get": {
     "parameters": {
       "path"?: never;
@@ -680,14 +601,8 @@ export interface operations {
 }
 
 export interface paths {
-  "/api/v1/chat/attachment/delete": {
-    "post": operations["api_delete_attachment_api_v1_chat_attachment_delete_post"];
-  };
   "/api/v1/chat/attachment/get": {
     "get": operations["api_get_attachment_api_v1_chat_attachment_get_get"];
-  };
-  "/api/v1/chat/attachment/upload": {
-    "post": operations["api_upload_attachment_api_v1_chat_attachment_upload_post"];
   };
   "/api/v1/chat/create": {
     "post": operations["api_create_conversation_api_v1_chat_create_post"];

@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import Awaitable, Callable, Mapping
 from contextvars import Context, copy_context
 from datetime import UTC, datetime
 from functools import partial
@@ -41,21 +40,6 @@ from app.sandbox.paths import SandboxSessionScope
 from app.shared.contracts.analysis import AgentSessionKey, validate_agent_type
 
 
-@asynccontextmanager
-async def _acquire_nowait(
-    guard: asyncio.Lock | asyncio.Semaphore,
-    busy_message: str,
-) -> AsyncGenerator[None]:
-    """立即竞争进程内并发许可，已占用时直接失败。"""
-    if guard.locked():
-        raise RuntimeError(busy_message)
-    await guard.acquire()
-    try:
-        yield
-    finally:
-        guard.release()
-
-
 class AgentSessionService:
     """绑定一个用户会话并安全调用专业 Agent。"""
 
@@ -66,21 +50,12 @@ class AgentSessionService:
         session_store: PostgresSandboxSessionStore,
         user_id: int,
         conversation_id: UUID,
-        max_parallel_sessions: int,
-        max_sessions: int,
     ) -> None:
-        """初始化会话身份、并发控制和执行限制。"""
-        if max_parallel_sessions <= 0:
-            raise ValueError("max_parallel_sessions 必须为正整数")
-        if max_sessions <= 0:
-            raise ValueError("max_sessions 必须为正整数")
-
+        """初始化会话身份、状态访问与 Agent 工厂。"""
         self._build_agent = build_agent
         self._session_store = session_store
         self._user_id = user_id
         self._conversation_id = conversation_id
-        self._parallelism = asyncio.Semaphore(max_parallel_sessions)
-        self._max_sessions = max_sessions
         self._active_sessions: dict[str, datetime] = {}
         self._runtime_state_lock = ThreadLock()
 
@@ -367,14 +342,7 @@ class AgentSessionService:
         )
         config = self.build_subagent_config(parent_config, session_key)
         try:
-            async with (
-                self._session_store.lock(session_key),
-                self._session_store.reserve_capacity(session_key, self._max_sessions),
-                _acquire_nowait(
-                    self._parallelism,
-                    "当前 Conversation 的并行 Session 已满",
-                ),
-            ):
+            async with self._session_store.lock(session_key):
                 agent = await self._build_agent(session_key)
                 state = await agent.aget_state(config)
                 replayed_result = SpecialistCheckpointView(

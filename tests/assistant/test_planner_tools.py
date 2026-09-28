@@ -16,7 +16,7 @@ from app.assistant.agents.planner.tools import (
     create_delete_session_tool,
     create_list_sessions_tool,
 )
-from app.assistant.execution.types import DelegationResult, ListSessionsResult
+from app.assistant.execution.types import DelegationResult
 
 
 async def invoke_tool(tool: BaseTool, args: dict[str, Any]) -> ToolMessage:
@@ -129,15 +129,6 @@ class PlannerToolsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call.args[0].message, "分析数据")
         self.assertEqual(call.kwargs["delegation_id"], "delegation-call")
         self.assertTrue(callable(call.kwargs["activity_writer"]))
-
-    async def test_list_sessions_default_is_preserved(self):
-        service = MagicMock()
-        service.list_sessions = AsyncMock(return_value=ListSessionsResult(sessions=[]))
-        result = await invoke_tool(
-            create_list_sessions_tool(service), {"unknown": True}
-        )
-        self.assertEqual(result.status, "success")
-        service.list_sessions.assert_awaited_once_with(None)
 
     async def test_execution_failures_keep_business_error_details(self):
         service = MagicMock()

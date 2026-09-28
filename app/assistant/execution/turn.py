@@ -16,7 +16,7 @@ from app.assistant.errors import (
 from app.assistant.events import schemas as chat_contract
 from app.assistant.execution.run import ConversationRunService
 from app.assistant.repositories.conversation import ConversationPGRepo
-from app.assistant.task_scheduler import enqueue_conversation_title
+from app.assistant.tasks import ConversationTasks
 
 if TYPE_CHECKING:
     from app.assistant.execution.manager import AgentManager
@@ -31,11 +31,13 @@ class ConversationTurnService:
         repository: ConversationPGRepo,
         runs: ConversationRunService,
         agents: AgentManager,
+        tasks: ConversationTasks,
     ) -> None:
         """绑定 Conversation 持久化、后台 Run 和 Checkpoint 读取能力。"""
         self._repository = repository
         self._runs = runs
         self._agents = agents
+        self._tasks = tasks
 
     async def start(
         self,
@@ -80,7 +82,7 @@ class ConversationTurnService:
             if title_submission is not None:
                 target_id, expected_title, source = title_submission
                 try:
-                    enqueue_conversation_title(
+                    self._tasks.generate_title(
                         user_id,
                         target_id,
                         expected_title,
@@ -88,7 +90,7 @@ class ConversationTurnService:
                     )
                 except Exception:  # noqa: BLE001
                     logger.exception(
-                        "提交会话标题任务失败，等待定时补偿: "
+                        "提交会话标题任务失败，保留即时标题: "
                         f"conversation_id={target_id}"
                     )
 

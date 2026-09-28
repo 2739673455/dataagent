@@ -48,7 +48,6 @@ def create_planner_agent(
                 filesystem,
                 UserMessageContextMiddleware(
                     backend,
-                    backend.conversation_dir,
                 ),
                 MessageTimestampMiddleware(),
             ],

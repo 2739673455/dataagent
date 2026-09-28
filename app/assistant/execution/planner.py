@@ -47,8 +47,7 @@ async def run_agent_turn(
     logger.info(
         f"智能体回合开始: conversation_id={conversation_id}, "
         f"resume={user_message is None}, "
-        f"parts={len(user_message.parts) if user_message is not None else 0}, "
-        f"attachments={len(user_message.attachments or ()) if user_message is not None else 0}"
+        f"parts={len(user_message.parts) if user_message is not None else 0}"
     )
     async with agents.use_runtime(user_id, conversation_id) as runtime:
         continuation_count = 0

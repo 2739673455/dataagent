@@ -22,7 +22,6 @@ from loguru import logger
 
 from app.assistant.agents.middleware.user_message_context import (
     USER_MESSAGE_CONTEXT_KEY,
-    UserMessageAttachment,
     UserMessageContext,
     read_user_message_context,
 )
@@ -351,7 +350,7 @@ def langchain_message_to_schema(
             for tool_call in message.tool_calls
         )
 
-    # UserMessageContext 是 Checkpoint 私有状态，API 只公开其中的时间和附件引用。
+    # UserMessageContext 是 Checkpoint 私有状态，API 只公开其中的接收时间。
     context = (
         read_user_message_context(message)
         if isinstance(message, HumanMessage)
@@ -364,11 +363,6 @@ def langchain_message_to_schema(
         ),
         role=role,
         parts=parts,
-        attachments=(
-            [chat_schema.Attachment(f_path=item.f_path) for item in context.attachments]
-            if context is not None and context.attachments
-            else None
-        ),
         finish_reason=normalize_finish_reason(
             message.response_metadata.get("finish_reason")
         ),
@@ -440,10 +434,6 @@ def schema_to_human_message(
     received_at = datetime.now(UTC)
     context = UserMessageContext(
         received_at=received_at,
-        attachments=[
-            UserMessageAttachment(f_path=attachment.f_path)
-            for attachment in message.attachments or ()
-        ],
     )
     return HumanMessage(
         id=str(uuid.uuid4()),

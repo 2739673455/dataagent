@@ -73,7 +73,7 @@ def build_specialist_filesystem(
 当前 Session 工作目录是 `{workspace_dir}`。
 
 - 文件工具、`view_image` 和 `shell` 使用同一套容器路径：相对路径从当前 Session 工作目录解析，绝对路径直接使用。
-- `write_file` 和 `edit_file` 只能修改当前 Session 工作目录；同一 Conversation 的其他 Session 和上传文件只读。
+- `write_file` 和 `edit_file` 只能修改当前 Session 工作目录；同一 Conversation 的其他 Session 文件只读。
 - `artifacts` 可以使用相对当前 Session 的路径或完整绝对路径；跨 Agent 传递前会统一解析为绝对路径。
 - 内置技能位于只读 `/skills/...`。
 """,

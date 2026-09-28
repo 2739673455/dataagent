@@ -39,7 +39,7 @@ class RecallHandlerTest(unittest.IsolatedAsyncioTestCase):
         )
         self.policy = AssetAccessPolicy(
             grants=frozenset(
-                {AssetIdentity(cfg.query.data_source, cfg.doris.database)}
+                {AssetIdentity("doris", cfg.doris.database)}
             ),
         )
         self.request = SemanticResourceRecallRequest(

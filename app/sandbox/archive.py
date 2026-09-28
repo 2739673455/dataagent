@@ -671,41 +671,6 @@ class SandboxArchiveStore:
         target = self._accessible_file(container, conversation_id, relative_path)
         return target is not None and target.size <= self._max_file_bytes
 
-    def delete_file(
-        self,
-        container: Container,
-        conversation_id: UUID,
-        relative_path: str,
-    ) -> bool:
-        """删除已存在且属于当前 Conversation 的普通文件。"""
-        registry = self._load_registry(container)
-        conversation_uid = self._existing_workspace_uid(
-            container, conversation_id, registry
-        )
-        if conversation_uid is None:
-            return False
-        target_path = posixpath.join(
-            SANDBOX_DATA_ROOT, str(conversation_id), relative_path
-        )
-        if self.inspect_path(container, target_path) is None:
-            return False
-        self._validate_target(
-            container,
-            conversation_id,
-            conversation_uid,
-            registry,
-            relative_path,
-        )
-        result = container.exec_run(
-            ["rm", "-f", "--", target_path],
-            user="0",
-            privileged=True,
-            workdir=SANDBOX_DATA_ROOT,
-        )
-        if result.exit_code != 0:
-            raise OSError("删除沙箱文件失败")
-        return True
-
     def _accessible_file(
         self,
         container: Container,

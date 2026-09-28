@@ -37,10 +37,7 @@ class DatabaseQueryExecutionRuntime:
         self._credential_cipher = DorisCredentialCipher(
             cfg.doris_credentials.encryption_key.get_secret_value()
         )
-        self._options = QueryExecutionOptions(
-            batch_size=cfg.query.batch_size,
-            sample_rows=cfg.query.sample_rows,
-        )
+        self._options = QueryExecutionOptions()
 
     async def resolve_principal(
         self,

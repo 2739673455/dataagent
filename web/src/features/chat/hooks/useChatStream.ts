@@ -1,25 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { chatApi } from "@/features/chat/api";
 import { getApiErrorMessage } from "@/api/errors";
 import { getSelectedUserId } from "@/identity/index";
 import { sessionLifecycle } from "@/identity/sessionLifecycle";
 import { useChatStore } from "@/features/chat/store";
-import type {
-  Attachment,
-  ChatStreamEvent,
-  MessageResponse,
-  UserMessageRequest,
-} from "@/features/chat/types";
+import type { ChatStreamEvent, MessageResponse, UserMessageRequest } from "@/features/chat/types";
 
 type StreamConnectionMode =
   | { type: "start"; message: UserMessageRequest }
   | { type: "resume" }
   | { type: "subscribe" };
-
-function isImageFile(name: string) {
-  return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
-}
 
 export function useChatStream({
   onNavigateToConversation,
@@ -33,7 +24,6 @@ export function useChatStream({
   const streamingConversations = useChatStore((state) => state.streamingConversations);
   const markStreaming = useChatStore((state) => state.markStreaming);
   const finishStreaming = useChatStore((state) => state.finishStreaming);
-  const ensureConversation = useChatStore((state) => state.ensureConversation);
   const appendMessage = useChatStore((state) => state.appendMessage);
   const appendThinking = useChatStore((state) => state.appendThinking);
   const appendMessageDelta = useChatStore((state) => state.appendMessageDelta);
@@ -48,36 +38,8 @@ export function useChatStream({
 
   const streamControllersRef = useRef<Map<string, AbortController>>(new Map());
   const interruptedConversationsRef = useRef<Set<string>>(new Set());
-  const draftConversationIdRef = useRef<string | null>(null);
-  const attachmentsRef = useRef<Attachment[]>([]);
-
-  const [draftConversationId, setDraftConversationId] = useState<string | null>(null);
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [isUploadingAttachments, setIsUploadingAttachments] = useState(false);
-
   const isStreaming =
     routeConversationId != null && streamingConversations.has(routeConversationId);
-
-  useEffect(() => {
-    attachmentsRef.current = attachments;
-  }, [attachments]);
-
-  const abandonDraftConversation = useCallback(() => {
-    const conversationId = draftConversationIdRef.current;
-    if (!conversationId) return;
-    draftConversationIdRef.current = null;
-    setDraftConversationId(null);
-    void chatApi.deleteDraftConversation(conversationId).catch(() => {
-      // 服务端 TTL 会回收网络异常时遗留的草稿
-    });
-  }, []);
-
-  // 路由切到具体会话后回收旧草稿
-  useEffect(() => {
-    if (!routeConversationId) return;
-    abandonDraftConversation();
-    setAttachments([]);
-  }, [abandonDraftConversation, routeConversationId]);
 
   const runStream = useCallback(
     (conversationId: string, mode: StreamConnectionMode) => {
@@ -220,15 +182,12 @@ export function useChatStream({
   // 卸载时取消所有进行中的请求
   useEffect(() => {
     const controllers = streamControllersRef.current;
-    const generation = sessionLifecycle.current();
     return () => {
       for (const controller of controllers.values()) controller.abort();
       controllers.clear();
       interruptedConversationsRef.current.clear();
-      // 身份切换后不使用新用户的身份清理旧草稿，由服务端 TTL 回收。
-      if (sessionLifecycle.isCurrent(generation)) abandonDraftConversation();
     };
-  }, [abandonDraftConversation]);
+  }, []);
 
   const handleStop = useCallback(async () => {
     if (!routeConversationId) return;
@@ -273,62 +232,6 @@ export function useChatStream({
     streamControllersRef.current.get(conversationId)?.abort();
   }, []);
 
-  const handleAttachmentsSelected = async (files: File[]) => {
-    const generation = sessionLifecycle.current();
-    const userId = getSelectedUserId();
-    if (!userId) {
-      onRedirectToUserSelection();
-      return;
-    }
-
-    setIsUploadingAttachments(true);
-    try {
-      let nextConversationId = routeConversationId ?? draftConversationId;
-      if (!nextConversationId) {
-        const response = await chatApi.createConversation(true);
-        if (!sessionLifecycle.isCurrent(generation)) return;
-        nextConversationId = response.data.conversation_id;
-        draftConversationIdRef.current = nextConversationId;
-        setDraftConversationId(nextConversationId);
-        void loadConversations();
-      }
-      const nextAttachments: Attachment[] = [];
-      for (const file of files) {
-        const response = await chatApi.uploadAttachment(nextConversationId, file);
-        if (!sessionLifecycle.isCurrent(generation)) return;
-        nextAttachments.push({
-          ...response.data.attachment,
-          preview_url: isImageFile(file.name) ? URL.createObjectURL(file) : undefined,
-        });
-      }
-      if (nextAttachments.length > 0) {
-        setAttachments((current) => [...current, ...nextAttachments]);
-      }
-    } catch (error) {
-      toast.error(getApiErrorMessage(error, "附件上传失败"));
-    } finally {
-      setIsUploadingAttachments(false);
-    }
-  };
-
-  const handleRemoveAttachment = async (attachmentName: string) => {
-    const targetConversationId = routeConversationId ?? draftConversationId;
-    if (!targetConversationId) return;
-
-    try {
-      await chatApi.deleteAttachment(targetConversationId, attachmentName);
-      setAttachments((current) => {
-        const target = current.find((attachment) => attachment.f_path === attachmentName);
-        if (target?.preview_url) {
-          URL.revokeObjectURL(target.preview_url);
-        }
-        return current.filter((attachment) => attachment.f_path !== attachmentName);
-      });
-    } catch (error) {
-      toast.error(getApiErrorMessage(error, "附件删除失败"));
-    }
-  };
-
   const handleSend = async (value: string): Promise<boolean> => {
     const generation = sessionLifecycle.current();
     const userId = getSelectedUserId();
@@ -340,50 +243,23 @@ export function useChatStream({
     try {
       const requestMessage: UserMessageRequest = {
         parts: value ? [{ type: "text", text: value }] : [],
-        attachments:
-          attachments.length > 0
-            ? attachments.map((attachment) => ({ f_path: attachment.f_path }))
-            : undefined,
       };
-      // preview_url 只属于编辑器持有的本地 Blob。已发送消息从服务端读取附件，
-      // 这样发送后释放 Blob 不会破坏消息中的图片缩略图。
-      const messageAttachments = attachments.map((attachment) => ({
-        f_path: attachment.f_path,
-        media_type: attachment.media_type,
-        description: attachment.description,
-      }));
       const userMessage: MessageResponse = {
         message_id: crypto.randomUUID(),
         created_at: new Date().toISOString(),
         role: "user",
         parts: requestMessage.parts,
-        attachments: messageAttachments.length > 0 ? messageAttachments : undefined,
       };
 
-      let conversationId = routeConversationId ?? draftConversationId;
+      let conversationId = routeConversationId;
       if (!conversationId) {
         const conversation = await createConversation(value);
         if (!conversation || !sessionLifecycle.isCurrent(generation)) return false;
         conversationId = conversation.conversation_id;
-      } else if (!routeConversationId) {
-        draftConversationIdRef.current = null;
-        setDraftConversationId(null);
-        ensureConversation({
-          conversation_id: conversationId,
-          title: value.trim().slice(0, 64) || "新对话",
-          update_at: new Date().toISOString(),
-          running: false,
-        });
       }
 
       appendMessage(conversationId, userMessage);
       markStreaming(conversationId);
-      for (const attachment of attachments) {
-        if (attachment.preview_url) {
-          URL.revokeObjectURL(attachment.preview_url);
-        }
-      }
-      setAttachments([]);
       if (routeConversationId !== conversationId) {
         onNavigateToConversation(conversationId);
       }
@@ -397,26 +273,11 @@ export function useChatStream({
     }
   };
 
-  const clearAttachments = useCallback(() => {
-    abandonDraftConversation();
-    for (const attachment of attachmentsRef.current) {
-      if (attachment.preview_url) {
-        URL.revokeObjectURL(attachment.preview_url);
-      }
-    }
-    setAttachments([]);
-  }, [abandonDraftConversation]);
-
   return {
     isStreaming,
-    attachments,
-    isUploadingAttachments,
-    handleAttachmentsSelected,
-    handleRemoveAttachment,
     handleSend,
     handleResume,
     handleStop,
     abortConversationStream,
-    clearAttachments,
   };
 }

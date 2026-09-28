@@ -4,11 +4,8 @@ type ApiSchemas = components["schemas"];
 
 export type ConversationResponse = ApiSchemas["ConversationResponse"];
 export type ConversationListResponse = ApiSchemas["ConversationListResponse"];
-export type AttachmentReference = ApiSchemas["AttachmentReference"];
 
-export type Attachment = ApiSchemas["Attachment"] & {
-  preview_url?: string;
-};
+export type Attachment = ApiSchemas["Attachment"];
 
 export type TextContent = ApiSchemas["TextContent"];
 export type ImageContent = ApiSchemas["ImageContent"];
@@ -23,13 +20,6 @@ export type MessageResponse = Omit<ApiSchemas["MessageResponse"], "attachments">
 
 export type MessageListResponse = Omit<ApiSchemas["MessageListResponse"], "messages"> & {
   messages: MessageResponse[];
-};
-
-export type UploadAttachmentResponse = Omit<
-  ApiSchemas["UploadAttachmentResponse"],
-  "attachment"
-> & {
-  attachment: Attachment;
 };
 
 export type ChatStreamRequest = ApiSchemas["ChatStreamRequest"];

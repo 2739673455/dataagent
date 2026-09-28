@@ -8,7 +8,7 @@
 
 - Python：将包加入 `requirements.txt`。
 - Node.js：将包加入 `package.json` 的 `dependencies`。
-- 修改依赖或 Dockerfile 后执行 `docker compose -f docker/compose.yml build sandbox-image`，再重启 API 和需要访问沙箱的 Worker。
+- 修改依赖或 Dockerfile 后执行 `docker compose -f docker/compose.yml build sandbox-image`，再重启 API。
 - 日常启动和重启服务直接复用 `dataagent-sandbox:latest`，无需重新构建。
 
 首次执行 `docker compose -f docker/compose.yml up -d` 时，Compose 会在镜像缺失时自动构建沙箱镜像。沙箱服务设置 `pull_policy: never`，跳过远端拉取，已有镜像直接复用。`sandbox-image` 配置为零副本，只负责声明镜像构建规则，不会创建固定沙箱容器。

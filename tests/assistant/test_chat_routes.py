@@ -67,6 +67,7 @@ def test_stream_routes_preserve_frames_headers_and_business_errors(entry, failur
         return resolve
 
     app.dependency_overrides = {
+        runtime_dependencies._get_conversation_tasks: dependency(MagicMock()),
         _get_current_user: dependency(SimpleNamespace(id=12)),
         chat_dependencies._get_conversation_pg_repo: dependency(repository),
         runtime_dependencies._get_agent_manager: dependency(agents),

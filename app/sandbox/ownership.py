@@ -110,7 +110,7 @@ class SandboxOwnership(Protocol):
 
 
 class RedisSandboxOwnership:
-    """使用 Redis 协调同一部署中的 API 和 Celery 进程。"""
+    """使用 Redis 协调同一部署中的多个 API 进程。"""
 
     def __init__(
         self,

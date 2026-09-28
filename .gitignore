@@ -10,5 +10,4 @@ wheels/
 .env
 logs
 node_modules
-celerybeat-schedule*
 .deepagents/workspaces/

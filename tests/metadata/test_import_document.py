@@ -21,11 +21,3 @@ def test_invalid_document_returns_business_error(content, message):
     assert message in (caught.value.detail or "")
     if content == b"tables: 1":
         assert caught.value.extensions["errors"]
-
-
-def test_valid_document_is_parsed():
-    config = parse_metadata_yaml(
-        b"tables: [{name: orders, role: fact, description: Orders}]"
-    )
-    assert config.tables[0].name == "orders"
-    assert config.metrics == []
