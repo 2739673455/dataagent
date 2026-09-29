@@ -38,25 +38,17 @@ def _content_to_parts(content: Any) -> list[chat_schema.MessagePart]:
     """将 LangChain 消息内容转换为接口消息片段。"""
     parts: list[chat_schema.MessagePart] = []
     for item in normalized_content_blocks(content):
-        if isinstance(item, str):
-            parts.append(chat_schema.TextContent(type="text", text=item))
-            continue
-        if not isinstance(item, dict):
-            continue
-        if item.get("type") in {"text", "input_text", "output_text"} and isinstance(
-            item.get("text"), str
-        ):
-            parts.append(chat_schema.TextContent(type="text", text=item["text"]))
-            continue
-        if item.get("type") != "image_url":
-            continue
-        image_url = item.get("image_url")
-        if isinstance(image_url, dict):
-            image_url = image_url.get("url")
-        if isinstance(image_url, str):
-            parts.append(
-                chat_schema.ImageContent(type="image_url", image_url=image_url)
-            )
+        match item:
+            case str(text):
+                parts.append(chat_schema.TextContent(type="text", text=text))
+            case {"type": "text" | "input_text" | "output_text", "text": str(text)}:
+                parts.append(chat_schema.TextContent(type="text", text=text))
+            case {"type": "image_url", "image_url": image_url}:
+                url = image_url.get("url") if isinstance(image_url, dict) else image_url
+                if isinstance(url, str):
+                    parts.append(
+                        chat_schema.ImageContent(type="image_url", image_url=url)
+                    )
     return parts
 
 
@@ -73,23 +65,16 @@ def _transform_artifact_directives(
     for line in text.splitlines(keepends=True):
         content = line.rstrip("\r\n")
         fence_match = _MARKDOWN_FENCE_PATTERN.match(content)
-        if fence_character is None:
-            if fence_match is not None:
-                marker = fence_match.group("marker")
-                fence_character = marker[0]
-                fence_length = len(marker)
-                output.append(line)
-                continue
-        elif fence_match is not None:
+        if fence_match is not None:
             marker = fence_match.group("marker")
-            suffix = content[fence_match.end() :]
-            if (
+            if fence_character is None:
+                fence_character, fence_length = marker[0], len(marker)
+            elif (
                 marker[0] == fence_character
                 and len(marker) >= fence_length
-                and not suffix.strip()
+                and not content[fence_match.end() :].strip()
             ):
                 fence_character = None
-                fence_length = 0
             output.append(line)
             continue
 
@@ -116,8 +101,7 @@ async def _resolve_artifacts(
         path for text in texts for path in _transform_artifact_directives(text)[1]
     )
     accepted_paths: set[str] = set()
-    attachments: list[chat_schema.Attachment] = []
-    seen_paths: set[str] = set()
+    attachments: dict[str, chat_schema.Attachment] = {}
     for directive_path in candidate_paths:
         try:
             relative_path = conversation_relative_path(
@@ -130,7 +114,7 @@ async def _resolve_artifacts(
                 f"conversation_id={conversation_id}, path={directive_path!r}"
             )
             continue
-        if relative_path in seen_paths:
+        if relative_path in attachments:
             accepted_paths.add(directive_path)
             continue
         try:
@@ -151,17 +135,13 @@ async def _resolve_artifacts(
                 f"conversation_id={conversation_id}, path={relative_path!r}"
             )
             continue
-        seen_paths.add(relative_path)
         accepted_paths.add(directive_path)
-        media_type, _ = mimetypes.guess_type(relative_path)
-        attachments.append(
-            chat_schema.Attachment(
-                f_path=relative_path,
-                media_type=media_type,
-            )
+        attachments[relative_path] = chat_schema.Attachment(
+            f_path=relative_path,
+            media_type=mimetypes.guess_type(relative_path)[0],
         )
 
-    return accepted_paths, attachments
+    return accepted_paths, list(attachments.values())
 
 
 async def langchain_message_to_schema_with_artifacts(
@@ -202,15 +182,14 @@ async def langchain_message_to_schema_with_artifacts(
         return schema
     schema.attachments = attachments
     if is_final_answer:
-        parts: list[chat_schema.MessagePart] = []
         for part in schema.parts:
-            if not isinstance(part, chat_schema.TextContent):
-                parts.append(part)
-                continue
-            cleaned, _ = _transform_artifact_directives(part.text, accepted_paths)
-            if cleaned:
-                parts.append(part.model_copy(update={"text": cleaned}))
-        schema.parts = parts
+            if isinstance(part, chat_schema.TextContent):
+                part.text = _transform_artifact_directives(part.text, accepted_paths)[0]
+        schema.parts = [
+            part
+            for part in schema.parts
+            if not isinstance(part, chat_schema.TextContent) or part.text
+        ]
     return schema
 
 

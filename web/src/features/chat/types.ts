@@ -10,17 +10,12 @@ export type Attachment = ApiSchemas["Attachment"];
 export type TextContent = ApiSchemas["TextContent"];
 export type ImageContent = ApiSchemas["ImageContent"];
 export type ThinkingContent = ApiSchemas["ThinkingContent"];
-export type UserMessagePart = ApiSchemas["UserMessageRequest"]["parts"][number];
 export type MessagePart = ApiSchemas["MessageResponse"]["parts"][number];
 export type UserMessageRequest = ApiSchemas["UserMessageRequest"];
 
-export type MessageResponse = Omit<ApiSchemas["MessageResponse"], "attachments"> & {
-  attachments?: Attachment[] | null;
-};
+export type MessageResponse = ApiSchemas["MessageResponse"];
 
-export type MessageListResponse = Omit<ApiSchemas["MessageListResponse"], "messages"> & {
-  messages: MessageResponse[];
-};
+export type MessageListResponse = ApiSchemas["MessageListResponse"];
 
 export type ChatStreamRequest = ApiSchemas["ChatStreamRequest"];
 export type ConversationRunStatusResponse = ApiSchemas["ConversationRunStatusResponse"];

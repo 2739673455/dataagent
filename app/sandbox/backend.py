@@ -78,9 +78,7 @@ class DockerSandboxBackend(BaseSandbox):
         """初始化会话级 Docker 沙箱后端。"""
         self._user_id = user_id
         self._conversation_id = conversation_id
-        self._conversation_dir = conversation_workspace_path(conversation_id)
-        self._workspace_dir = self._conversation_dir
-        self._conversation_uid = conversation_uid
+        self._workspace_dir = conversation_workspace_path(conversation_id)
         self._execution_uid = conversation_uid
         self._execution_gid = conversation_uid
         self._file_mode = 0o600
@@ -118,11 +116,6 @@ class DockerSandboxBackend(BaseSandbox):
     def workspace_dir(self) -> str:
         """获取会话在容器中的实际工作目录。"""
         return self._workspace_dir
-
-    @property
-    def conversation_dir(self) -> str:
-        """获取当前 Conversation 在容器中的实际根目录。"""
-        return self._conversation_dir
 
     def _resolve_path(self, path: str) -> str:
         """按 execute 的工作目录语义解析文件工具路径。"""
