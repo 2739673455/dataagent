@@ -37,10 +37,6 @@ interface ChatState {
   appendSubagentMessageDelta: (conversationId: string, event: SubagentMessageDeltaEvent) => void;
   appendSubagentThinking: (conversationId: string, event: SubagentThinkingEvent) => void;
   updateSubagentStatus: (conversationId: string, event: SubagentStatusEvent) => void;
-  loadSubagentMessages: (
-    conversationId: string,
-    run: SubagentRunIdentity
-  ) => Promise<MessageResponse[]>;
   interruptRunningSubagents: (conversationId: string) => void;
   markStreaming: (conversationId: string) => void;
   finishStreaming: (conversationId: string, outcome: "complete" | "interrupted") => void;
@@ -65,8 +61,6 @@ function createSubagentRun(
     ...identity,
     status,
     messages: [],
-    historyLoaded: false,
-    historyLoading: false,
   };
 }
 
@@ -85,9 +79,7 @@ function updateSubagentRun(
   const conversationRuns = state.subagentRunsByConversation[conversationId] ?? {};
   const identity: SubagentRunIdentity = {
     delegationId: event.delegation_id,
-    analysisId: event.analysis_id,
     agentType: event.agent_type,
-    sessionId: event.session_id,
   };
   const current = conversationRuns[event.delegation_id] ?? createSubagentRun(identity);
   const updated = update(current);
@@ -249,7 +241,7 @@ function settleThinking(
   return changed ? next : messages;
 }
 
-export const useChatStore = create<ChatState>()((set, get) => ({
+export const useChatStore = create<ChatState>()((set) => ({
   ...emptyChatState(),
 
   loadConversations: async () => {
@@ -455,81 +447,9 @@ export const useChatStore = create<ChatState>()((set, get) => ({
             thinkingStatus === null
               ? current.messages
               : settleThinking(current.messages, thinkingStatus),
-          historyLoaded: event.status === "running" ? current.historyLoaded : true,
         };
       })
     ),
-
-  loadSubagentMessages: async (conversationId, identity) => {
-    const existing = get().subagentRunsByConversation[conversationId]?.[identity.delegationId];
-    if (existing?.historyLoaded) return existing.messages;
-    if (existing?.historyLoading) return existing.messages;
-    const generation = sessionLifecycle.current();
-    set((state) => {
-      const conversationRuns = state.subagentRunsByConversation[conversationId] ?? {};
-      const current =
-        conversationRuns[identity.delegationId] ?? createSubagentRun(identity, "interrupted");
-      return {
-        subagentRunsByConversation: {
-          ...state.subagentRunsByConversation,
-          [conversationId]: {
-            ...conversationRuns,
-            [identity.delegationId]: { ...current, ...identity, historyLoading: true },
-          },
-        },
-      };
-    });
-    try {
-      const response = await chatApi.getSubagentMessages(conversationId, identity);
-      const messages = response.data.messages;
-      if (sessionLifecycle.isCurrent(generation)) {
-        set((state) => {
-          const conversationRuns = state.subagentRunsByConversation[conversationId] ?? {};
-          const current =
-            conversationRuns[identity.delegationId] ?? createSubagentRun(identity, "interrupted");
-          let merged = [...current.messages];
-          for (const message of messages) {
-            merged = upsertMessage(merged, message);
-          }
-          return {
-            subagentRunsByConversation: {
-              ...state.subagentRunsByConversation,
-              [conversationId]: {
-                ...conversationRuns,
-                [identity.delegationId]: {
-                  ...current,
-                  ...identity,
-                  status: response.data.status,
-                  messages: merged,
-                  historyLoaded: true,
-                  historyLoading: false,
-                },
-              },
-            },
-          };
-        });
-      }
-      return messages;
-    } catch (error) {
-      if (sessionLifecycle.isCurrent(generation)) {
-        set((state) => {
-          const conversationRuns = state.subagentRunsByConversation[conversationId] ?? {};
-          const current = conversationRuns[identity.delegationId];
-          if (!current) return state;
-          return {
-            subagentRunsByConversation: {
-              ...state.subagentRunsByConversation,
-              [conversationId]: {
-                ...conversationRuns,
-                [identity.delegationId]: { ...current, historyLoading: false },
-              },
-            },
-          };
-        });
-      }
-      throw error;
-    }
-  },
 
   interruptRunningSubagents: (conversationId) =>
     set((state) => {

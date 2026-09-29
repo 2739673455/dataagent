@@ -1,6 +1,5 @@
-from datetime import timedelta
 from pathlib import Path
-from typing import Annotated, Any, Literal, cast
+from typing import Any, Literal, cast
 
 import dotenv
 from omegaconf import OmegaConf
@@ -73,15 +72,6 @@ class MetadataConfig(AppConfigModel):
 
 
 # 身份与生命周期配置。
-class LifecycleConfig(AppConfigModel):
-    """跨存储资源生命周期配置。"""
-
-    cleanup_interval_seconds: int = Field(gt=0)
-    task_timeout_seconds: int = Field(gt=0)
-    draft_ttl_minutes: int = Field(gt=0)
-    cleanup_batch_size: int = Field(gt=0, le=1000)
-
-
 # 沙箱配置。
 class SandboxOwnershipConfig(AppConfigModel):
     """沙箱跨进程所有权配置。"""
@@ -205,57 +195,6 @@ class AgentConfig(AppConfigModel):
     ]
 
 
-# 外部工具配置。
-class SSEMCPCfg(AppConfigModel):
-    """SSE 传输方式的 MCP 服务配置。"""
-
-    transport: Literal["sse"]
-    url: SecretStr = Field(min_length=1)
-    headers: dict[str, SecretStr] | None = None
-    timeout: float | None = Field(default=None, gt=0)
-    sse_read_timeout: float | None = Field(default=None, gt=0)
-    session_kwargs: dict[str, Any] | None = None
-
-
-class StdioMCPCfg(AppConfigModel):
-    """标准输入输出传输方式的 MCP 服务配置。"""
-
-    transport: Literal["stdio"]
-    command: str = Field(min_length=1)
-    args: list[str] = Field(default_factory=list)
-    env: dict[str, SecretStr] | None = None
-    cwd: str | None = None
-    encoding: str | None = None
-    encoding_error_handler: Literal["strict", "ignore", "replace"] | None = None
-    session_kwargs: dict[str, Any] | None = None
-
-
-class WebsocketMCPCfg(AppConfigModel):
-    """WebSocket 传输方式的 MCP 服务配置。"""
-
-    transport: Literal["websocket"]
-    url: SecretStr = Field(min_length=1)
-    session_kwargs: dict[str, Any] | None = None
-
-
-class StreamableHttpMCPCfg(AppConfigModel):
-    """可流式 HTTP 传输方式的 MCP 服务配置。"""
-
-    transport: Literal["streamable_http"]
-    url: SecretStr = Field(min_length=1)
-    headers: dict[str, SecretStr] | None = None
-    timeout: timedelta | None = Field(default=None, gt=timedelta(0))
-    sse_read_timeout: timedelta | None = Field(default=None, gt=timedelta(0))
-    terminate_on_close: bool | None = None
-    session_kwargs: dict[str, Any] | None = None
-
-
-MCPCfg = Annotated[
-    SSEMCPCfg | StdioMCPCfg | WebsocketMCPCfg | StreamableHttpMCPCfg,
-    Field(discriminator="transport"),
-]
-
-
 class Cfg(AppConfigModel):
     """应用全局配置。"""
 
@@ -276,18 +215,12 @@ class Cfg(AppConfigModel):
     # 元数据索引配置。
     metadata: MetadataConfig
 
-    # 身份与生命周期配置。
-    lifecycle: LifecycleConfig
-
     # 沙箱配置。
     sandbox: SandboxConfig
 
     # 模型与智能体配置。
     lm_config: LMConfigCfg
     agent: AgentConfig
-
-    # 外部工具配置。
-    mcp: dict[str, MCPCfg]
 
     @model_validator(mode="after")
     def validate_agent_models(self) -> "Cfg":

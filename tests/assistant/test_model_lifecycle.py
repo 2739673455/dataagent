@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -82,6 +82,8 @@ def test_runtime_init_failure_closes_already_created_models() -> None:
 
     @asynccontextmanager
     async def model_context(name: str) -> AsyncGenerator[MagicMock]:
+        if opened:
+            raise RuntimeError("model initialization")
         opened.append(name)
         try:
             yield MagicMock()
@@ -92,17 +94,14 @@ def test_runtime_init_failure_closes_already_created_models() -> None:
         MagicMock(), MagicMock(), recall=MagicMock(), query=MagicMock()
     )
 
+    factory._model_names = {"first", "second"}
+
     async def run() -> None:
-        with pytest.raises(RuntimeError, match="mcp"):
+        with pytest.raises(RuntimeError, match="model initialization"):
             await factory.init()
         assert opened
         assert closed == list(reversed(opened))
         await factory.close()
 
-    with (
-        patch.object(runtime_factory, "create_configured_model", model_context),
-        patch.object(
-            runtime_factory, "get_mcp_tools", AsyncMock(side_effect=RuntimeError("mcp"))
-        ),
-    ):
+    with patch.object(runtime_factory, "create_configured_model", model_context):
         asyncio.run(run())

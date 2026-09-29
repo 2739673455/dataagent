@@ -10,7 +10,6 @@ from app.assistant.repositories.conversation import ConversationPGRepo
 from app.sandbox.manager import DockerSandboxManager
 from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 from app.shared.clients.postgres_client_manager import PostgresClientManager
-from app.shared.config.app_config import LifecycleConfig
 
 
 @asynccontextmanager
@@ -27,7 +26,6 @@ def build_conversation_lifecycle_service(
     assistant_postgres: PostgresClientManager,
     agents: AgentManager,
     sandbox: DockerSandboxManager,
-    config: LifecycleConfig,
     runs: ConversationRunService | None = None,
 ) -> ConversationLifecycleService:
     """组装会话跨存储生命周期服务。"""
@@ -36,6 +34,5 @@ def build_conversation_lifecycle_service(
         persistence,
         agents,
         sandbox,
-        config,
         runs,
     )

@@ -1,24 +1,33 @@
 import unittest
-from pathlib import Path
 from typing import Any, cast
 
 from deepagents.backends import StateBackend
 from langchain.tools import ToolRuntime
 from langchain_core.messages import ToolMessage
 
-from app.assistant.agents.analyst import prompt as analyst_prompt
 from app.assistant.agents.filesystem import (
     agent_skills_mount_path,
     build_specialist_filesystem,
+    packaged_skill_readonly_mounts,
 )
+from app.assistant.resources import ASSISTANT_RESOURCES_DIR
 from app.sandbox.backend import DockerSandboxBackend
 
 _ANALYST_SKILLS_PATH = agent_skills_mount_path("analyst")
 
 
 class AgentSkillsTest(unittest.TestCase):
+    def test_skills_mount_from_external_resource_directory(self) -> None:
+        mounts = packaged_skill_readonly_mounts()
+        analyst = next(
+            mount for mount in mounts if str(mount.target) == "/skills/analyst"
+        )
+        self.assertEqual(analyst.source, ASSISTANT_RESOURCES_DIR / "analyst" / "skills")
+        self.assertTrue((analyst.source / "analysis" / "SKILL.md").is_file())
+        self.assertTrue((analyst.source / "visualization" / "SKILL.md").is_file())
+
     def test_agent_cannot_modify_mounted_skill(self) -> None:
-        skill_directory = Path(analyst_prompt.__file__).with_name("skills")
+        skill_directory = ASSISTANT_RESOURCES_DIR / "analyst" / "skills"
         state_backend = StateBackend()
         cast(
             Any, state_backend

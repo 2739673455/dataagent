@@ -1,8 +1,8 @@
 import { ChevronRight } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { cn } from "@/lib/utils";
-import type { MessageResponse, SubagentRun } from "@/features/chat/types";
+import type { SubagentRun } from "@/features/chat/types";
 import { AttachmentChip } from "@/features/chat/components/messages/AttachmentChip";
 import {
   buildDisplayItems,
@@ -21,12 +21,9 @@ import { PartView } from "@/features/chat/components/messages/MarkdownRenderer";
 import { MessageBubble } from "@/features/chat/components/messages/MessageBubble";
 import type {
   DisplayItem,
-  SubagentRunIdentity,
   SubagentRunMap,
   ToolRunDisplayItem,
 } from "@/features/chat/components/messages/types";
-
-const SPECIALIST_HISTORY_RETRY_COUNT = 3;
 
 export function ToolArgsView({ args }: { args?: Record<string, unknown> }) {
   if (!args || typeof args !== "object") return null;
@@ -83,11 +80,7 @@ export function ToolArgsView({ args }: { args?: Record<string, unknown> }) {
 /**
  * 普通工具调用的紧凑条目组件
  */
-export function GenericToolRunBar({
-  item,
-}: {
-  item: ToolRunDisplayItem;
-}) {
+export function GenericToolRunBar({ item }: { item: ToolRunDisplayItem }) {
   const [isOpen, setIsOpen] = useState(false);
   const argsPreview = getToolArgsPreview(item.args);
   const hasAttachments = item.completed && (item.attachments?.length ?? 0) > 0;
@@ -189,17 +182,12 @@ export function ExecutionProcessCollapse({
   hasFinalItem,
   isStreaming,
   items,
-  loadSubagentMessages,
   subagentRuns = {},
 }: {
   executionStatus?: Exclude<ExecutionStatus, "idle">;
   hasFinalItem: boolean;
   isStreaming: boolean;
   items: DisplayItem[];
-  loadSubagentMessages?: (
-    conversationId: string,
-    run: SubagentRunIdentity
-  ) => Promise<MessageResponse[]>;
   subagentRuns?: SubagentRunMap;
 }) {
   const [userToggledOpen, setUserToggledOpen] = useState<boolean | null>(null);
@@ -262,12 +250,11 @@ export function ExecutionProcessCollapse({
               return <MessageBubble key={item.key} message={item.message} />;
             }
 
-            if (item.name === "delegation") {
+            if (item.name === "task") {
               return (
                 <DelegationToolRunBar
                   key={item.key}
                   item={item}
-                  loadSubagentMessages={loadSubagentMessages}
                   subagentRun={subagentRuns[item.toolCallId]}
                 />
               );
@@ -286,14 +273,9 @@ export function ExecutionProcessCollapse({
  */
 export function DelegationToolRunBar({
   item,
-  loadSubagentMessages,
   subagentRun,
 }: {
   item: ToolRunDisplayItem;
-  loadSubagentMessages?: (
-    conversationId: string,
-    run: SubagentRunIdentity
-  ) => Promise<MessageResponse[]>;
   subagentRun?: SubagentRun;
 }) {
   const identity = getSubagentRunIdentity(item);
@@ -301,34 +283,18 @@ export function DelegationToolRunBar({
     return <GenericToolRunBar item={item} />;
   }
 
-  return (
-    <DelegationRunBarInternal
-      identity={identity}
-      item={item}
-      loadSubagentMessages={loadSubagentMessages}
-      subagentRun={subagentRun}
-    />
-  );
+  return <DelegationRunBarInternal item={item} subagentRun={subagentRun} />;
 }
 
 function DelegationRunBarInternal({
-  identity,
   item,
-  loadSubagentMessages,
   subagentRun,
 }: {
-  identity: SubagentRunIdentity;
   item: ToolRunDisplayItem;
-  loadSubagentMessages?: (
-    conversationId: string,
-    run: SubagentRunIdentity
-  ) => Promise<MessageResponse[]>;
   subagentRun?: SubagentRun;
 }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [historyError, setHistoryError] = useState<string | null>(null);
-  const historyRequestRef = useRef<Promise<void> | null>(null);
-  const instruction = typeof item.args?.message === "string" ? item.args.message : null;
+  const instruction = typeof item.args?.description === "string" ? item.args.description : null;
   const hasAttachments = (item.attachments?.length ?? 0) > 0;
 
   const runStatus = resolveDelegationRunStatus(
@@ -344,52 +310,6 @@ function DelegationRunBarInternal({
       ? "interrupted"
       : "completed";
 
-  const loadHistory = useCallback(() => {
-    if (!item.conversationId || !loadSubagentMessages || !identity || historyRequestRef.current) {
-      return;
-    }
-    const conversationId = item.conversationId;
-    setHistoryError(null);
-    const request = (async () => {
-      for (let attempt = 0; attempt <= SPECIALIST_HISTORY_RETRY_COUNT; attempt += 1) {
-        try {
-          await loadSubagentMessages(conversationId, identity);
-          return;
-        } catch {
-          if (attempt === SPECIALIST_HISTORY_RETRY_COUNT) {
-            setHistoryError("加载执行过程失败，点击重试");
-          }
-        }
-      }
-    })().finally(() => {
-      historyRequestRef.current = null;
-    });
-    historyRequestRef.current = request;
-  }, [identity, item.conversationId, loadSubagentMessages]);
-
-  useEffect(() => {
-    if (
-      isOpen &&
-      item.conversationId &&
-      loadSubagentMessages &&
-      identity &&
-      !subagentRun?.historyLoaded &&
-      !subagentRun?.historyLoading &&
-      !historyError
-    ) {
-      loadHistory();
-    }
-  }, [
-    isOpen,
-    item.conversationId,
-    loadHistory,
-    loadSubagentMessages,
-    identity,
-    historyError,
-    subagentRun?.historyLoaded,
-    subagentRun?.historyLoading,
-  ]);
-
   // 解析 subagentRun 的消息流
   const subagentDisplayItems = subagentRun
     ? buildDisplayItems(item.conversationId ?? null, subagentRun.messages, isRunning)
@@ -400,15 +320,8 @@ function DelegationRunBarInternal({
 
   const parsedDelegationResult = parseDelegationResult(item.result);
 
-  const agentType = typeof item.args?.agent_type === "string" ? item.args.agent_type : null;
+  const agentType = typeof item.args?.subagent_type === "string" ? item.args.subagent_type : null;
   const displayName = agentType ? `${item.name}(${agentType})` : item.name;
-
-  const delegationArgsPreview = [
-    typeof item.args?.analysis_id === "string" ? `analysis_id=${item.args.analysis_id}` : null,
-    typeof item.args?.session_id === "string" ? `session_id=${item.args.session_id}` : null,
-  ]
-    .filter(Boolean)
-    .join(" ");
 
   return (
     <div
@@ -450,14 +363,6 @@ function DelegationRunBarInternal({
           <span className={cn("font-medium shrink-0", !isRunning && "text-[#18181b]")}>
             {displayName}
           </span>
-          {delegationArgsPreview ? (
-            <span
-              className={cn("ml-4 truncate text-[11px]", !isRunning && "text-[#71717a]")}
-              title={delegationArgsPreview}
-            >
-              {delegationArgsPreview}
-            </span>
-          ) : null}
         </span>
       </button>
 
@@ -481,27 +386,12 @@ function DelegationRunBarInternal({
               hasFinalItem={subagentFinalItem !== null || parsedDelegationResult !== null}
               isStreaming={isRunning}
               items={subagentIntermediateItems}
-              loadSubagentMessages={loadSubagentMessages}
               subagentRuns={subagentRun ? { [item.toolCallId]: subagentRun } : {}}
             />
           ) : isRunning ? (
             <div className="py-1">
               <DotMatrixLoader label="Specialist 正在执行" className="text-[#18181b]" />
             </div>
-          ) : subagentRun?.historyLoading ? (
-            <div className="flex items-center gap-1.5 py-1 text-xs text-[#71717a]">
-              <DotMatrixLoader label="正在加载执行过程" className="text-[#18181b]" />
-              <span>正在加载执行过程...</span>
-            </div>
-          ) : historyError ? (
-            <button
-              type="button"
-              onClick={loadHistory}
-              className="flex items-center gap-1.5 py-1 text-left text-xs text-[#b91c1c] transition hover:text-[#991b1b]"
-            >
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#ef4444]" />
-              <span className="underline underline-offset-2">{historyError}</span>
-            </button>
           ) : null}
 
           {/* 3. 结果（下面） */}

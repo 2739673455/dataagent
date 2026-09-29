@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { chatApi } from "../src/features/chat/api";
 import { sessionLifecycle } from "../src/identity/sessionLifecycle";
 import { useChatStore } from "../src/features/chat/store";
 
@@ -67,9 +66,7 @@ describe("subagent activity state", () => {
     store.appendSubagentThinking(conversationId, {
       type: "subagent_thinking",
       delegation_id: "call-reasoning",
-      analysis_id: "sales",
       agent_type: "reviewer",
-      session_id: "review",
       message_id: "review-answer",
       delta: "复核指标",
       reset: true,
@@ -77,9 +74,7 @@ describe("subagent activity state", () => {
     store.appendSubagentMessageDelta(conversationId, {
       type: "subagent_message_delta",
       delegation_id: "call-reasoning",
-      analysis_id: "sales",
       agent_type: "reviewer",
-      session_id: "review",
       message_id: "review-answer",
       delta: "开始输出结论",
       reset: true,
@@ -87,9 +82,7 @@ describe("subagent activity state", () => {
     store.updateSubagentStatus(conversationId, {
       type: "subagent_status",
       delegation_id: "call-reasoning",
-      analysis_id: "sales",
       agent_type: "reviewer",
-      session_id: "review",
       status: "completed",
     });
 
@@ -112,25 +105,19 @@ describe("subagent activity state", () => {
     store.updateSubagentStatus(conversationId, {
       type: "subagent_status",
       delegation_id: "call-region",
-      analysis_id: "sales",
       agent_type: "explorer",
-      session_id: "region",
       status: "running",
     });
     store.updateSubagentStatus(conversationId, {
       type: "subagent_status",
       delegation_id: "call-product",
-      analysis_id: "sales",
       agent_type: "analyst",
-      session_id: "product",
       status: "running",
     });
     const event = {
       type: "subagent_message" as const,
       delegation_id: "call-region",
-      analysis_id: "sales",
       agent_type: "explorer" as const,
-      session_id: "region",
       message: {
         message_id: "specialist-message",
         role: "assistant" as const,
@@ -148,35 +135,5 @@ describe("subagent activity state", () => {
     const interrupted = useChatStore.getState().subagentRunsByConversation[conversationId];
     expect(interrupted["call-region"].status).toBe("interrupted");
     expect(interrupted["call-product"].status).toBe("interrupted");
-  });
-
-  test("loads historical run messages on demand and caches them", async () => {
-    const getMessages = vi.spyOn(chatApi, "getSubagentMessages").mockResolvedValue({
-      data: {
-        status: "completed",
-        messages: [
-          {
-            message_id: "historical-message",
-            role: "assistant",
-            parts: [{ type: "text", text: "历史分析详情" }],
-          },
-        ],
-      },
-    } as Awaited<ReturnType<typeof chatApi.getSubagentMessages>>);
-    const identity = {
-      delegationId: "call-history",
-      analysisId: "sales",
-      agentType: "reviewer" as const,
-      sessionId: "review",
-    };
-
-    await useChatStore.getState().loadSubagentMessages(conversationId, identity);
-    await useChatStore.getState().loadSubagentMessages(conversationId, identity);
-
-    const run = useChatStore.getState().subagentRunsByConversation[conversationId]["call-history"];
-    expect(getMessages).toHaveBeenCalledTimes(1);
-    expect(run.historyLoaded).toBe(true);
-    expect(run.status).toBe("completed");
-    expect(run.messages[0].message_id).toBe("historical-message");
   });
 });

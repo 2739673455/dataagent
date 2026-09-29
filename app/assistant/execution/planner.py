@@ -93,6 +93,12 @@ async def run_agent_turn(
                                 yield event
                         continue
                     if chunk.get("type") == "messages":
+                        data = chunk.get("data")
+                        if (
+                            isinstance(data, tuple)
+                            and data[1].get("lc_agent_name", "planner") != "planner"
+                        ):
+                            continue
                         for kind, delta in deltas.parse(chunk.get("data")):
                             if kind == "thinking":
                                 yield chat_schema.ChatStreamThinkingEvent(

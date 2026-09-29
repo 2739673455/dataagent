@@ -33,38 +33,30 @@ export interface components {
     };
     "ChatStreamSubagentMessageDeltaEvent": {
       "agent_type": components["schemas"]["AgentType"];
-      "analysis_id": string;
       "delegation_id": string;
       "delta": string;
       "message_id": string;
       "reset"?: boolean;
-      "session_id": string;
       "type": "subagent_message_delta";
     };
     "ChatStreamSubagentMessageEvent": {
       "agent_type": components["schemas"]["AgentType"];
-      "analysis_id": string;
       "delegation_id": string;
       "message": components["schemas"]["MessageResponse"];
-      "session_id": string;
       "type": "subagent_message";
     };
     "ChatStreamSubagentStatusEvent": {
       "agent_type": components["schemas"]["AgentType"];
-      "analysis_id": string;
       "delegation_id": string;
-      "session_id": string;
       "status": "running" | "completed" | "failed" | "cancelled";
       "type": "subagent_status";
     };
     "ChatStreamSubagentThinkingEvent": {
       "agent_type": components["schemas"]["AgentType"];
-      "analysis_id": string;
       "delegation_id": string;
       "delta": string;
       "message_id": string;
       "reset"?: boolean;
-      "session_id": string;
       "type": "subagent_thinking";
     };
     "ChatStreamThinkingEvent": {
@@ -101,7 +93,6 @@ export interface components {
     };
     "MessageResponse": {
       "attachments"?: (Array<components["schemas"]["Attachment"]> | null);
-      "created_at"?: (string | null);
       "finish_reason"?: (string | null);
       "message_id"?: (string | null);
       "parts": Array<(components["schemas"]["TextContent"] | components["schemas"]["ImageContent"] | components["schemas"]["ThinkingContent"] | components["schemas"]["ToolCallPart"] | components["schemas"]["ToolResultPart"])>;
@@ -114,10 +105,6 @@ export interface components {
       "title": string;
       "type": string;
       [key: string]: unknown;
-    };
-    "SubagentMessageListResponse": {
-      "messages": Array<components["schemas"]["MessageResponse"]>;
-      "status": "running" | "completed" | "failed" | "cancelled";
     };
     "TextContent": {
       "text": string;
@@ -333,42 +320,6 @@ export interface operations {
       "200": {
         "content": {
         "application/json": components["schemas"]["MessageListResponse"];
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
-  "api_get_subagent_messages_api_v1_chat__conversation_id__subagents__analysis_id___agent_type___session_id__runs__delegation_id__messages_get": {
-    "parameters": {
-      "path": {
-        "agent_type": "explorer" | "analyst" | "reviewer";
-        "analysis_id": string;
-        "conversation_id": string;
-        "delegation_id": string;
-        "session_id": string;
-      };
-      "query"?: never;
-      "header": {
-        "X-User-ID"?: (number | null);
-      };
-      "cookie"?: never;
-    };
-    "requestBody"?: never;
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": components["schemas"]["SubagentMessageListResponse"];
       };
       };
       "422": {
@@ -603,9 +554,6 @@ export interface paths {
   };
   "/api/v1/chat/{conversation_id}/stop": {
     "post": operations["api_stop_conversation_run_api_v1_chat__conversation_id__stop_post"];
-  };
-  "/api/v1/chat/{conversation_id}/subagents/{analysis_id}/{agent_type}/{session_id}/runs/{delegation_id}/messages": {
-    "get": operations["api_get_subagent_messages_api_v1_chat__conversation_id__subagents__analysis_id___agent_type___session_id__runs__delegation_id__messages_get"];
   };
   "/api/v1/users": {
     "get": operations["list_users_api_v1_users_get"];

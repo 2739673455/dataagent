@@ -23,7 +23,6 @@ from app.sandbox.errors import (
 from app.sandbox.paths import (
     SANDBOX_DATA_ROOT,
     SANDBOX_STAGING_ROOT,
-    SandboxSessionScope,
 )
 
 _SANDBOX_UID_REGISTRY = f"{SANDBOX_DATA_ROOT}/.dataagent-uids.json"
@@ -35,10 +34,9 @@ _ARCHIVE_SPOOL_BYTES = 8 * 1024 * 1024
 
 @dataclass(slots=True)
 class _UidRegistry:
-    """持久化 conversation 和 Agent Session 的 Linux UID。"""
+    """持久化会话的 Linux UID。"""
 
     conversations: dict[str, int]
-    sessions: dict[str, int]
 
 
 class _IteratorReader(io.RawIOBase):
@@ -166,7 +164,6 @@ class SandboxArchiveStore:
             {
                 "version": _UID_REGISTRY_VERSION,
                 "conversations": registry.conversations,
-                "sessions": registry.sessions,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -188,20 +185,9 @@ class SandboxArchiveStore:
         )
 
     @staticmethod
-    def _validate_session_key(key: str) -> str:
-        """校验并规范化 UID 注册表中的 Session 键。"""
-        parts = PurePosixPath(key).parts
-        if len(parts) != 5 or parts[1] != "sessions":
-            raise ValueError("沙箱 Session UID 键无效")
-        conversation_id = UUID(parts[0])
-        return SandboxSessionScope(parts[2], parts[3], parts[4]).registry_key(
-            conversation_id
-        )
-
-    @staticmethod
     def _validate_registry(registry: _UidRegistry) -> None:
-        """校验 conversation 和 Session UID 全局唯一。"""
-        values = [*registry.conversations.values(), *registry.sessions.values()]
+        """校验 会话 UID 全局唯一。"""
+        values = list(registry.conversations.values())
         if len(values) != len(set(values)):
             raise RuntimeError("沙箱 UID 注册表包含重复的 UID")
         if any(uid < _MIN_SANDBOX_UID or uid > _MAX_SANDBOX_UID for uid in values):
@@ -216,7 +202,7 @@ class SandboxArchiveStore:
                 4 * 1024 * 1024,
             )
         except (NotFound, FileNotFoundError):
-            registry = _UidRegistry(conversations={}, sessions={})
+            registry = _UidRegistry(conversations={})
             self._write_registry(container, registry)
             return registry
         if member.uid != 0:
@@ -225,19 +211,11 @@ class SandboxArchiveStore:
         if payload.get("version") != _UID_REGISTRY_VERSION:
             raise RuntimeError("不支持的沙箱 UID 注册表版本")
         raw_conversations = payload.get("conversations")
-        raw_sessions = payload.get("sessions")
-        if not isinstance(raw_conversations, dict) or not isinstance(
-            raw_sessions,
-            dict,
-        ):
+        if not isinstance(raw_conversations, dict):
             raise TypeError("沙箱 UID 注册表格式无效")
         registry = _UidRegistry(
             conversations={
                 str(UUID(key)): int(value) for key, value in raw_conversations.items()
-            },
-            sessions={
-                self._validate_session_key(key): int(value)
-                for key, value in raw_sessions.items()
             },
         )
         self._validate_registry(registry)
@@ -275,7 +253,7 @@ class SandboxArchiveStore:
         if conversation_uid is None:
             conversation_uid = self._allocate_uid(
                 conversation_id.bytes,
-                {*registry.conversations.values(), *registry.sessions.values()},
+                set(registry.conversations.values()),
             )
             registry.conversations[key] = conversation_uid
             self._write_registry(container, registry)
@@ -331,180 +309,15 @@ class SandboxArchiveStore:
         )
         return conversation_uid
 
-    def ensure_session_workspace(
-        self,
-        container: Container,
-        conversation_id: UUID,
-        scope: SandboxSessionScope,
-    ) -> tuple[int, int]:
-        """创建 Agent Session 目录并返回 conversation/session UID。"""
-        registry = self._load_registry(container)
-        conversation_uid = self.ensure_workspace(container, conversation_id, registry)
-        registry_key = scope.registry_key(conversation_id)
-        session_uid = registry.sessions.get(registry_key)
-        if session_uid is None:
-            session_uid = self._allocate_uid(
-                f"session:{registry_key}".encode(),
-                {*registry.conversations.values(), *registry.sessions.values()},
-            )
-            registry.sessions[registry_key] = session_uid
-            self._write_registry(container, registry)
-
-        conversation_name = str(conversation_id)
-        session_relative = scope.relative_workspace
-        session_path = posixpath.join(
-            SANDBOX_DATA_ROOT,
-            conversation_name,
-            session_relative,
-        )
-        existing = self.inspect_path(container, session_path)
-        if existing is not None and (
-            not existing.isdir()
-            or existing.uid not in {conversation_uid, session_uid}
-            or existing.gid != conversation_uid
-        ):
-            raise RuntimeError("Agent Session 工作区所有者无效")
-
-        sessions_root = "sessions"
-        analysis_root = f"{sessions_root}/{scope.analysis_id}"
-        agent_root = f"{analysis_root}/{scope.agent_type}"
-        self.put(
-            container,
-            f"{SANDBOX_DATA_ROOT}/{conversation_name}",
-            [
-                (sessions_root, conversation_uid, conversation_uid, 0o750),
-                (analysis_root, conversation_uid, conversation_uid, 0o750),
-                (agent_root, conversation_uid, conversation_uid, 0o750),
-                (session_relative, session_uid, conversation_uid, 0o750),
-                (f"{session_relative}/.home", session_uid, conversation_uid, 0o700),
-                (f"{session_relative}/.cache", session_uid, conversation_uid, 0o700),
-                (f"{session_relative}/.cache/uv", session_uid, conversation_uid, 0o700),
-                (f"{session_relative}/.tmp", session_uid, conversation_uid, 0o700),
-            ],
-            [],
-        )
-        self.put(
-            container,
-            posixpath.join(SANDBOX_STAGING_ROOT, conversation_name),
-            [(str(session_uid), 0, 0, 0o700)],
-            [],
-        )
-        prepared = self.inspect_path(container, session_path)
-        if (
-            prepared is None
-            or not prepared.isdir()
-            or prepared.uid != session_uid
-            or prepared.gid != conversation_uid
-            or prepared.mode & 0o777 != 0o750
-        ):
-            raise RuntimeError("Agent Session 工作区权限设置失败")
-        return conversation_uid, session_uid
-
-    def delete_session(
-        self,
-        container: Container,
-        conversation_id: UUID,
-        scope: SandboxSessionScope,
-    ) -> bool:
-        """删除 Agent Session 工作区、暂存目录和 UID 映射。"""
-        registry = self._load_registry(container)
-        registry_key = scope.registry_key(conversation_id)
-        session_uid = registry.sessions.get(registry_key)
-        session_path = posixpath.join(
-            SANDBOX_DATA_ROOT,
-            str(conversation_id),
-            scope.relative_workspace,
-        )
-        session_exists = self.inspect_path(container, session_path) is not None
-        staging_path = (
-            posixpath.join(
-                SANDBOX_STAGING_ROOT,
-                str(conversation_id),
-                str(session_uid),
-            )
-            if session_uid is not None
-            else None
-        )
-        staging_exists = bool(
-            staging_path is not None
-            and self.inspect_path(container, staging_path) is not None
-        )
-        targets = [session_path]
-        if staging_path is not None:
-            targets.append(staging_path)
-        result = container.exec_run(
-            ["rm", "-rf", "--", *targets],
-            user="0",
-            privileged=True,
-            workdir=SANDBOX_DATA_ROOT,
-        )
-        if result.exit_code != 0:
-            raw_output = result.output or b""
-            detail = (
-                raw_output.decode("utf-8", errors="replace")
-                if isinstance(raw_output, bytes)
-                else str(raw_output)
-            ).strip()
-            raise OSError(detail or "删除 Agent Session 沙箱失败")
-        mapping_existed = registry.sessions.pop(registry_key, None) is not None
-        if mapping_existed:
-            self._write_registry(container, registry)
-        return session_exists or staging_exists or mapping_existed
-
-    @staticmethod
-    def _registered_session_uid(
-        registry: _UidRegistry,
-        conversation_id: UUID,
-        relative_path: str,
-    ) -> int | None:
-        """返回与产物路径精确绑定的 Session UID。"""
-        parts = PurePosixPath(relative_path).parts
-        if not parts or parts[0] != "sessions":
-            return None
-        if len(parts) < 5:
-            raise SandboxPathError(relative_path)
-        try:
-            scope = SandboxSessionScope(parts[1], parts[2], parts[3])
-        except ValueError as exc:
-            raise SandboxPathError(relative_path) from exc
-        session_uid = registry.sessions.get(scope.registry_key(conversation_id))
-        if session_uid is None:
-            raise SandboxPathError(relative_path)
-        return session_uid
-
-    def _allowed_file_uids(
-        self,
-        registry: _UidRegistry,
-        conversation_id: UUID,
-        conversation_uid: int,
-        relative_path: str,
-    ) -> set[int]:
-        """返回给定会话文件路径允许使用的属主 UID。"""
-        allowed = {conversation_uid}
-        session_uid = self._registered_session_uid(
-            registry,
-            conversation_id,
-            relative_path,
-        )
-        if session_uid is not None:
-            allowed.add(session_uid)
-        return allowed
-
     def _validate_target(
         self,
         container: Container,
         conversation_id: UUID,
         conversation_uid: int,
-        registry: _UidRegistry,
         relative_path: str,
     ) -> tuple[list[tuple[str, int, int, int]], int]:
         """校验文件路径并返回待创建目录和被替换大小。"""
         workspace = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
-        session_uid = self._registered_session_uid(
-            registry,
-            conversation_id,
-            relative_path,
-        )
         root_info = self.inspect_path(container, workspace)
         if (
             root_info is None
@@ -520,26 +333,14 @@ class SandboxArchiveStore:
         for index, component in enumerate(parts[:-1], start=1):
             current_path = posixpath.join(current_path, component)
             info = self.inspect_path(container, current_path)
-            # sessions/<analysis>/<agent>/<session>/ 以内由 Session UID 持有；其上层
-            # 目录继续属于 Conversation UID，保证不同 Agent Session 彼此隔离。
-            directory_uid = (
-                session_uid
-                if session_uid is not None and index >= 4
-                else conversation_uid
-            )
             if info is None:
                 directories.append(
-                    ("/".join(parts[:index]), directory_uid, conversation_uid, 0o750)
+                    ("/".join(parts[:index]), conversation_uid, conversation_uid, 0o750)
                 )
                 continue
-            allowed_uids = (
-                {conversation_uid, session_uid}
-                if session_uid is not None and index >= 4
-                else {conversation_uid}
-            )
             if (
                 not info.isdir()
-                or info.uid not in allowed_uids
+                or info.uid != conversation_uid
                 or info.gid != conversation_uid
             ):
                 raise SandboxPathError(relative_path)
@@ -549,12 +350,9 @@ class SandboxArchiveStore:
         )
         if target_info is None:
             return directories, 0
-        allowed_target_uids = {conversation_uid}
-        if session_uid is not None:
-            allowed_target_uids.add(session_uid)
         if (
             not target_info.isreg()
-            or target_info.uid not in allowed_target_uids
+            or target_info.uid != conversation_uid
             or target_info.gid != conversation_uid
         ):
             raise SandboxPathError(relative_path)
@@ -601,7 +399,6 @@ class SandboxArchiveStore:
             container,
             conversation_id,
             conversation_uid,
-            registry,
             relative_path,
         )
         workspace = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
@@ -643,7 +440,7 @@ class SandboxArchiveStore:
         if conversation_uid is None:
             raise FileNotFoundError(relative_path)
         self._validate_target(
-            container, conversation_id, conversation_uid, registry, relative_path
+            container, conversation_id, conversation_uid, relative_path
         )
         workspace = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
         content, member = self.read_file(
@@ -651,13 +448,7 @@ class SandboxArchiveStore:
             posixpath.join(workspace, relative_path),
             self._max_file_bytes,
         )
-        allowed_uids = self._allowed_file_uids(
-            registry,
-            conversation_id,
-            conversation_uid,
-            relative_path,
-        )
-        if member.uid not in allowed_uids or member.gid != conversation_uid:
+        if member.uid != conversation_uid or member.gid != conversation_uid:
             raise FileNotFoundError(relative_path)
         return content
 
@@ -689,13 +480,6 @@ class SandboxArchiveStore:
                 container,
                 conversation_id,
                 conversation_uid,
-                registry,
-                relative_path,
-            )
-            allowed_uids = self._allowed_file_uids(
-                registry,
-                conversation_id,
-                conversation_uid,
                 relative_path,
             )
         except SandboxPathError:
@@ -707,7 +491,7 @@ class SandboxArchiveStore:
         if (
             target is not None
             and target.isreg()
-            and target.uid in allowed_uids
+            and target.uid == conversation_uid
             and target.gid == conversation_uid
         ):
             return target
@@ -741,10 +525,4 @@ class SandboxArchiveStore:
             ).strip()
             raise OSError(detail or "删除对话沙箱失败")
         registry.conversations.pop(str(conversation_id), None)
-        session_prefix = f"{conversation_id}/"
-        registry.sessions = {
-            key: value
-            for key, value in registry.sessions.items()
-            if not key.startswith(session_prefix)
-        }
         self._write_registry(container, registry)

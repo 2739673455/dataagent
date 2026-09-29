@@ -28,7 +28,6 @@ export default function ChatPage() {
   const deleteConversation = useChatStore((state) => state.deleteConversation);
   const renameConversation = useChatStore((state) => state.renameConversation);
   const loadMessages = useChatStore((state) => state.loadMessages);
-  const loadSubagentMessages = useChatStore((state) => state.loadSubagentMessages);
   const user = useIdentityStore((state) => state.user);
 
   const handleSelectUser = (nextUser: UserResponse) => {
@@ -187,7 +186,6 @@ export default function ChatPage() {
             isStreaming={isStreaming}
             messages={currentMessages}
             subagentRuns={currentSubagentRuns}
-            loadSubagentMessages={loadSubagentMessages}
             viewportRef={messageViewportRef}
           />
         </div>

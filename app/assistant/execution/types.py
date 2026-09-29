@@ -1,47 +1,22 @@
-"""Dynamic Subagents 的公共协议。"""
+"""Agent 执行与实时活动协议。"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from langchain_core.messages import BaseMessage
 from langchain_core.runnables import RunnableConfig
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    StringConstraints,
-)
 
 from app.sandbox.paths import (
     conversation_workspace_path,
 )
-from app.shared.contracts.analysis import IDENTIFIER_PATTERN, AgentType
+from app.shared.contracts.analysis import AgentType
 
 if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
-
-    from app.assistant.execution.session_service import AgentSessionService
-
-Identifier = Annotated[
-    str,
-    StringConstraints(
-        strip_whitespace=True,
-        min_length=1,
-        max_length=64,
-        pattern=IDENTIFIER_PATTERN.pattern,
-    ),
-]
-NonEmptyText = Annotated[
-    str,
-    StringConstraints(strip_whitespace=True, min_length=1),
-]
-MESSAGE_CREATED_AT_KEY = "dataagent_created_at"
-DELEGATION_CONTEXT_KEY = "dataagent_delegation_context"
 
 
 def get_thread_id(user_id: int, conversation_id: UUID) -> str:
@@ -100,9 +75,7 @@ class SubagentMessageActivity:
     """一次 Specialist 执行产生的公开候选消息。"""
 
     delegation_id: str
-    analysis_id: str
     agent_type: AgentType
-    session_id: str
     message: BaseMessage
 
 
@@ -111,9 +84,7 @@ class SubagentThinkingDeltaActivity:
     """一次 Specialist 模型调用产生的思考增量。"""
 
     delegation_id: str
-    analysis_id: str
     agent_type: AgentType
-    session_id: str
     message_id: str
     delta: str
     reset: bool = False
@@ -124,9 +95,7 @@ class SubagentMessageDeltaActivity:
     """一次 Specialist 模型调用产生的正文增量。"""
 
     delegation_id: str
-    analysis_id: str
     agent_type: AgentType
-    session_id: str
     message_id: str
     delta: str
     reset: bool = False
@@ -137,9 +106,7 @@ class SubagentStatusActivity:
     """一次 Specialist 执行的状态变化。"""
 
     delegation_id: str
-    analysis_id: str
     agent_type: AgentType
-    session_id: str
     status: SubagentRunStatus
 
 
@@ -154,120 +121,6 @@ type SubagentActivityWriter = Callable[[SubagentActivity], None]
 
 @dataclass(slots=True)
 class ConversationAgentRuntime:
-    """一次 Run 使用的 Planner 图与专业 Session 服务。"""
+    """一次 Run 使用的 Planner 图。"""
 
     planner: CompiledStateGraph
-    session_service: AgentSessionService
-
-
-class StrictProtocolModel(BaseModel):
-    """拒绝未知字段的协议模型基类。"""
-
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-
-class DelegationMessageContext(StrictProtocolModel):
-    """持久化在 Specialist 输入消息中的委派边界。"""
-
-    delegation_id: Annotated[
-        str,
-        StringConstraints(strip_whitespace=True, min_length=1, max_length=255),
-    ]
-
-
-class DelegationRequest(BaseModel):
-    """创建或续接专业 Agent Session 的委派请求。"""
-
-    model_config = ConfigDict(strict=True)
-
-    analysis_id: Identifier = Field(
-        description="分析标识，只能包含小写字母、数字、连字符和下划线，最长 64 字符"
-    )
-    agent_type: AgentType = Field(description="专业 Agent 类型")
-    session_id: Identifier = Field(
-        description="专业 Session 标识，首次创建后续接和修补时必须复用"
-    )
-    message: NonEmptyText = Field(
-        description="交给专业 Agent 的完整目标、输入产物路径和约束"
-    )
-
-
-class ListSessionsRequest(BaseModel):
-    """查询当前 Conversation 内专业 Session 的请求。"""
-
-    model_config = ConfigDict(strict=True)
-
-    analysis_id: Identifier | None = Field(
-        default=None,
-        description="可选分析标识；省略时查询当前 Conversation 的全部专业 Session",
-    )
-
-
-class DeleteSessionRequest(BaseModel):
-    """删除专业 Agent Session 的请求。"""
-
-    model_config = ConfigDict(strict=True)
-
-    analysis_id: Identifier = Field(description="待删除 Session 所属分析标识")
-    agent_type: AgentType = Field(description="待删除的专业 Agent 类型")
-    session_id: Identifier = Field(description="待删除的专业 Session 标识")
-
-
-class DelegationCheckpointRecord(StrictProtocolModel):
-    """一次委派的运行状态与最终文本。"""
-
-    delegation_id: NonEmptyText
-    status: SubagentRunStatus
-    result: str | None = None
-
-
-class DelegationResult(StrictProtocolModel):
-    """程序记录的委派状态和文本结果。"""
-
-    status: Literal["completed", "failed"]
-    content: str
-    analysis_id: Identifier
-    agent_type: AgentType
-    session_id: Identifier
-
-
-@dataclass(frozen=True, slots=True)
-class DelegationActivityHistory:
-    """一次 delegation 的公开消息和真实执行状态。"""
-
-    messages: list[BaseMessage]
-    status: SubagentRunStatus
-
-
-class SessionSummary(StrictProtocolModel):
-    """单个专业 Agent Session 的结构化摘要。"""
-
-    analysis_id: Identifier
-    agent_type: AgentType
-    session_id: Identifier
-    status: Literal[
-        "active",
-        "completed",
-        "failed",
-        "interrupted",
-    ]
-    summary: NonEmptyText | None = None
-    updated_at: datetime | None = None
-
-
-class ListSessionsResult(StrictProtocolModel):
-    """当前 Conversation 内的专业 Session 列表。"""
-
-    analysis_id: Identifier | None = None
-    sessions: list[SessionSummary]
-
-
-class DeleteSessionResult(StrictProtocolModel):
-    """删除专业 Agent Session 的成功响应。"""
-
-    status: Literal["success"] = "success"
-    analysis_id: Identifier
-    agent_type: AgentType
-    session_id: Identifier
-    existed: bool
-    message: NonEmptyText

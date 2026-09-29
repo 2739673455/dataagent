@@ -77,7 +77,6 @@ def _create_resources() -> WebResources:
         assistant,
         agents,
         sandbox,
-        cfg.lifecycle,
         runs,
     )
     return WebResources(
@@ -95,7 +94,7 @@ def _create_resources() -> WebResources:
         runs=runs,
         conversations=conversations,
         recall=recall,
-        tasks=ConversationTasks(assistant, conversations, persistence, cfg.lifecycle),
+        tasks=ConversationTasks(assistant, conversations, persistence),
     )
 
 

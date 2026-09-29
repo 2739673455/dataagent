@@ -39,10 +39,7 @@ DEEPSEEK_API_KEY=
 # SiliconFlow 模型服务密钥
 SILICONFLOW_API_KEY=
 
-# ==================== MCP 工具 ====================
 
-# Tavily MCP 搜索服务密钥
-TAVILY_API_KEY=
 ```
 
 按注释中的命令生成 Doris 凭据加密密钥。
@@ -63,6 +60,12 @@ TAVILY_API_KEY=
 `embedding` 的 `base_url`、`api_key` 和 `model` 指定文本向量化服务，用于元数据的语义检索。
 
 `elasticsearch.embedding_size` 必须等于向量模型实际输出的维度；它只定义 ES 索引的向量维度，不会改变模型输出。更换向量模型后需重新生成索引中的向量；如果维度变化，还需按新维度重建相关 ES 索引。
+
+### 提示词与技能资源
+
+静态提示词位于 `resources/assistant/<角色>/prompt.md`，标题提示词位于 `resources/assistant/title.md`；Analyst 技能位于 `resources/assistant/analyst/skills/`，以只读方式挂载到沙箱的 `/skills/analyst/`。
+
+提示词在后端进程加载时读取，修改后重启后端。路径根据项目位置解析，不依赖启动目录。部署时须将 `resources/` 与 `app/` 一起交付，并保留相同目录关系；缺少提示词文件会导致启动失败。
 
 ### 前端代理
 

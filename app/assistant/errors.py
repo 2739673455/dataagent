@@ -13,14 +13,6 @@ class ConversationNotFoundError(ProblemError):
     status = HTTPStatus.NOT_FOUND
 
 
-class SubagentRunNotFoundError(ProblemError):
-    """表示目标 Specialist delegation 不存在。"""
-
-    type = "subagent-run-not-found"
-    title = "子 Agent 执行记录不存在"
-    status = HTTPStatus.NOT_FOUND
-
-
 class ConversationNotResumableError(ProblemError):
     """表示会话当前没有可恢复的 Planner 待执行任务。"""
 

@@ -9,7 +9,6 @@ from uuid import uuid4
 from langchain_core.messages import AIMessage
 
 from app.assistant.tasks import ConversationTasks
-from app.shared.config.app_config import LifecycleConfig
 from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 
@@ -29,12 +28,6 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
             MagicMock(),
             self.lifecycle,
             self.persistence,
-            LifecycleConfig(
-                draft_ttl_minutes=1440,
-                cleanup_batch_size=100,
-                cleanup_interval_seconds=300,
-                task_timeout_seconds=60,
-            ),
         )
         self.addAsyncCleanup(self.tasks.close)
 
@@ -65,9 +58,9 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 released.append(True)
 
-        self.tasks._config = self.tasks._config.model_copy(
-            update={"task_timeout_seconds": 0.001}
-        )
+        timeout = patch("app.assistant.tasks._TASK_TIMEOUT_SECONDS", 0.001)
+        timeout.start()
+        self.addCleanup(timeout.stop)
         with patch("app.assistant.tasks.asyncio.sleep", new_callable=AsyncMock):
             await self.tasks._run("timeout", operation)
         self.assertEqual(len(released), 4)
@@ -202,9 +195,9 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.Event().wait()
 
         model = MagicMock(ainvoke=AsyncMock(side_effect=invoke))
-        self.tasks._config = self.tasks._config.model_copy(
-            update={"task_timeout_seconds": 0.001}
-        )
+        timeout = patch("app.assistant.tasks._TASK_TIMEOUT_SECONDS", 0.001)
+        timeout.start()
+        self.addCleanup(timeout.stop)
         with patch(
             "app.assistant.conversations.title.create_configured_model", model_scope
         ):

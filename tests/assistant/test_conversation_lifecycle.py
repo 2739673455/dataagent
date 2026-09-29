@@ -44,7 +44,6 @@ def _build_service() -> tuple[
         lock_provider=cast(LangGraphPostgresManager, _BusyLockProvider()),
         agents=agents,
         sandbox=MagicMock(),
-        config=MagicMock(),
         runs=runs,
     )
     return service, runs.stop, repository_factory

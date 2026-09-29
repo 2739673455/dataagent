@@ -129,22 +129,6 @@ class LangGraphPostgresManager:
         """删除会话线程的全部 Checkpoint。"""
         await self.get_checkpointer().adelete_thread(thread_id)
 
-    async def list_threads(self, *, prefix: str) -> list[str]:
-        """列出具有指定业务前缀的持久化线程。"""
-        if self._pool is None:
-            raise RuntimeError("LangGraph PostgreSQL 管理器尚未初始化")
-        async with self._pool.connection() as connection:
-            cursor = await connection.execute(
-                """
-                SELECT DISTINCT thread_id FROM checkpoints
-                WHERE left(thread_id, length(%s)) = %s
-                ORDER BY thread_id
-                """,
-                (prefix, prefix),
-            )
-            rows = await cursor.fetchall()
-        return [str(row["thread_id"]) for row in rows]
-
     async def close(self) -> None:
         """关闭连接池并释放持久化组件。"""
         pool, advisory_pool = self._pool, self._advisory_pool

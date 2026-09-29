@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
-import { formatMessageTime } from "@/features/chat/components/messages/displayModel";
 import type { UserMessageNavigationItem } from "@/features/chat/components/messages/types";
 
 export function findActiveUserMessageKey(viewport: HTMLDivElement): string | null {
@@ -118,9 +117,6 @@ export function UserMessageQuickNavigation({
               }}
               className="pointer-events-none z-[100] w-72 rounded border border-zinc-200/90 bg-white/95 p-3 text-left shadow-md backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/95 dark:shadow-black/30"
             >
-              <div className="mb-1.5 text-[11px] font-mono text-zinc-400 dark:text-zinc-500">
-                {formatMessageTime(hoveredTooltip.item.createdAt) ?? "时间未记录"}
-              </div>
               <div className="max-h-24 overflow-hidden whitespace-pre-wrap break-words text-xs leading-5 text-zinc-700 dark:text-zinc-200">
                 {hoveredTooltip.item.preview}
               </div>

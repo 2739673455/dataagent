@@ -11,14 +11,12 @@ from app.assistant.execution.manager import AgentManager
 class RuntimeOwnershipTest(unittest.IsolatedAsyncioTestCase):
     def manager(self, create):
         return AgentManager(
-            MagicMock(
-                delete_thread=AsyncMock(), list_threads=AsyncMock(return_value=[])
-            ),
+            MagicMock(delete_thread=AsyncMock()),
             MagicMock(exists=AsyncMock(return_value=False), save=AsyncMock()),
             MagicMock(create=create),
         )
 
-    async def test_each_run_builds_new_runtime_and_only_registers_active_sessions(self):
+    async def test_each_run_builds_new_runtime(self):
         first, second = MagicMock(), MagicMock()
         create = AsyncMock(side_effect=[first, second])
         manager = self.manager(create)
@@ -26,23 +24,7 @@ class RuntimeOwnershipTest(unittest.IsolatedAsyncioTestCase):
         for expected in (first, second):
             async with manager.use_runtime(1, conversation) as runtime:
                 self.assertIs(runtime, expected)
-                self.assertIs(
-                    manager._active_sessions[(1, conversation)], runtime.session_service
-                )
-            self.assertFalse(manager._active_sessions)
         self.assertEqual(create.await_count, 2)
-
-    async def test_different_conversations_register_and_release_independently(self):
-        first, second = MagicMock(), MagicMock()
-        manager = self.manager(AsyncMock(side_effect=[first, second]))
-        first_id, second_id = uuid4(), uuid4()
-        async with manager.use_runtime(1, first_id):
-            async with manager.use_runtime(1, second_id):
-                self.assertEqual(len(manager._active_sessions), 2)
-            self.assertEqual(
-                manager._active_sessions, {(1, first_id): first.session_service}
-            )
-        self.assertFalse(manager._active_sessions)
 
     async def test_run_cancellation_cancels_build_in_same_task(self):
         entered, cleaned = asyncio.Event(), asyncio.Event()
@@ -66,9 +48,8 @@ class RuntimeOwnershipTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await task
         self.assertTrue(cleaned.is_set())
-        self.assertFalse(manager._active_sessions)
 
-    async def test_cancellation_unregisters_sessions(self):
+    async def test_cancellation_propagates_to_execution(self):
         manager = self.manager(AsyncMock(return_value=MagicMock()))
         entered = asyncio.Event()
 
@@ -82,7 +63,6 @@ class RuntimeOwnershipTest(unittest.IsolatedAsyncioTestCase):
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await task
-        self.assertFalse(manager._active_sessions)
 
     async def test_deleted_conversation_does_not_build(self):
         create = AsyncMock()

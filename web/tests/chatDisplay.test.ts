@@ -90,7 +90,7 @@ describe("chat message display and turn grouping", () => {
           {
             type: "tool_call",
             tool_call_id: "call-pending",
-            name: "delegation",
+            name: "task",
             args: {},
           },
         ],
@@ -168,11 +168,9 @@ describe("chat message display and turn grouping", () => {
           {
             type: "tool_call",
             tool_call_id: "call-del",
-            name: "delegation",
+            name: "task",
             args: {
-              analysis_id: "sales",
-              agent_type: "analyst",
-              session_id: "gmv",
+              subagent_type: "analyst",
               message: "查询近30天GMV",
             },
           },
@@ -185,7 +183,7 @@ describe("chat message display and turn grouping", () => {
           {
             type: "tool_result",
             tool_call_id: "call-del",
-            name: "delegation",
+            name: "task",
             content: JSON.stringify({
               status: "completed",
               content: "GMV总计100万",
@@ -267,11 +265,9 @@ describe("chat message display and turn grouping", () => {
           {
             type: "tool_call",
             tool_call_id: "call-del",
-            name: "delegation",
+            name: "task",
             args: {
-              analysis_id: "sales",
-              agent_type: "analyst",
-              session_id: "s1",
+              subagent_type: "analyst",
               message: "执行查询",
             },
           },

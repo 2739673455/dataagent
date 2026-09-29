@@ -62,26 +62,6 @@ export function getMessagePartKey(part: MessagePart): string {
   }
 }
 
-const messageTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  hourCycle: "h23",
-});
-
-export function formatMessageTime(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  const parts = Object.fromEntries(
-    messageTimeFormatter.formatToParts(date).map((part) => [part.type, part.value])
-  );
-  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
-}
-
 export function getUserMessagePreview(message: MessageDisplayItem["message"]): string {
   const content = message.parts
     .map((part) => (part.type === "text" ? part.text : "[图片]"))
@@ -193,7 +173,6 @@ export function buildDisplayItems(
         message: {
           key: getMessageKey(message),
           conversationId,
-          createdAt: message.created_at,
           finishReason: message.finish_reason,
           role: message.role,
           attachments: message.attachments,
@@ -466,22 +445,6 @@ export function resolveDelegationRunStatus(
 }
 
 export function getSubagentRunIdentity(item: ToolRunDisplayItem): SubagentRunIdentity | null {
-  if (item.name !== "delegation" || !item.args) return null;
-  const analysisId = item.args.analysis_id;
-  const agentType = item.args.agent_type;
-  const sessionId = item.args.session_id;
-  if (
-    typeof analysisId !== "string" ||
-    typeof agentType !== "string" ||
-    agentType.length === 0 ||
-    typeof sessionId !== "string"
-  ) {
-    return null;
-  }
-  return {
-    delegationId: item.toolCallId,
-    analysisId,
-    agentType: agentType as AgentType,
-    sessionId,
-  };
+  if (item.name !== "task" || typeof item.args?.subagent_type !== "string") return null;
+  return { delegationId: item.toolCallId, agentType: item.args.subagent_type as AgentType };
 }

@@ -1,27 +1,28 @@
+from functools import partial
+
+from deepagents.middleware.subagents import CompiledSubAgent
+from langchain_core.runnables import RunnableLambda
+
+from app.assistant.agents.middleware.task_activity import stream_task
+
 """专业 Agent 的能力定义与实例创建。"""
 
-from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
-from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.graph.state import CompiledStateGraph
 
-from app.assistant.agents.analyst.prompt import ANALYST_SYSTEM_PROMPT
-from app.assistant.agents.explorer.prompt import EXPLORER_SYSTEM_PROMPT
-from app.assistant.agents.filesystem import agent_skills_mount_path
-from app.assistant.agents.reviewer.prompt import REVIEWER_SYSTEM_PROMPT
-from app.assistant.agents.specialist_agent import create_specialist_agent
+from app.assistant.agents.agent import create_agent
+from app.assistant.agents.filesystem import (
+    agent_skills_mount_path,
+    build_specialist_filesystem,
+)
+from app.assistant.resources import ASSISTANT_RESOURCES_DIR, SYSTEM_PROMPTS
 from app.sandbox.backend import DockerSandboxBackend
-from app.sandbox.manager import DockerSandboxManager
-from app.sandbox.paths import SandboxSessionScope
 from app.shared.contracts.analysis import (
-    AGENT_TYPES,
-    AgentSessionKey,
     AgentType,
 )
 
@@ -42,81 +43,53 @@ def build_specialist_definitions(
     """构造专业 Agent 定义，并将数据访问能力限定给 Explorer。"""
     return {
         "explorer": SpecialistDefinition(
-            system_prompt=EXPLORER_SYSTEM_PROMPT,
-            skill_directory=Path(__file__).parent / "explorer" / "skills",
+            system_prompt=SYSTEM_PROMPTS["explorer"],
+            skill_directory=ASSISTANT_RESOURCES_DIR / "explorer" / "skills",
             tools=tuple(explorer_tools),
         ),
         "analyst": SpecialistDefinition(
-            system_prompt=ANALYST_SYSTEM_PROMPT,
-            skill_directory=Path(__file__).parent / "analyst" / "skills",
+            system_prompt=SYSTEM_PROMPTS["analyst"],
+            skill_directory=ASSISTANT_RESOURCES_DIR / "analyst" / "skills",
             skills=(agent_skills_mount_path("analyst"),),
         ),
         "reviewer": SpecialistDefinition(
-            system_prompt=REVIEWER_SYSTEM_PROMPT,
-            skill_directory=Path(__file__).parent / "reviewer" / "skills",
+            system_prompt=SYSTEM_PROMPTS["reviewer"],
+            skill_directory=ASSISTANT_RESOURCES_DIR / "reviewer" / "skills",
         ),
     }
 
 
-class SpecialistAgentFactory:
-    """按 Session 创建绑定专属 Sandbox 的专业 Agent。"""
-
-    def __init__(
-        self,
-        definitions: Mapping[AgentType, SpecialistDefinition],
-        models: Mapping[AgentType, BaseChatModel],
-        sandbox: DockerSandboxManager,
-        checkpointer: BaseCheckpointSaver,
-        mcp_tools: Sequence[BaseTool],
-    ) -> None:
-        """绑定专业能力、模型和运行时依赖。"""
-        expected_types = set(AGENT_TYPES)
-        if set(definitions) != expected_types:
-            raise ValueError("专业 Agent 定义必须覆盖所有 Agent 类型")
-        if set(models) != expected_types:
-            raise ValueError("专业 Agent 模型必须覆盖所有 Agent 类型")
-        self._mcp_tools = mcp_tools
-        self._definitions = dict(definitions)
-        self._models = dict(models)
-        self._sandbox = sandbox
-        self._checkpointer = checkpointer
-
-    async def create(self, session_key: AgentSessionKey) -> CompiledStateGraph:
-        """为一次委派创建专业 Agent 运行图。"""
-        backend = await self._sandbox.get_session_backend(
-            session_key.user_id,
-            session_key.conversation_id,
-            session_key.analysis_id,
-            session_key.agent_type,
-            session_key.session_id,
+def build_specialists(
+    definitions: Mapping[AgentType, SpecialistDefinition],
+    models: Mapping[AgentType, BaseChatModel],
+    backend: DockerSandboxBackend,
+) -> list[CompiledSubAgent]:
+    """构造无 Checkpoint 的专业图，共用当前会话工作区。"""
+    descriptions = {
+        "explorer": "检索元数据、执行 SQL，取得可信数据并返回文件路径。",
+        "analyst": "基于数据文件进行分析、计算和可视化。",
+        "reviewer": "检查分析口径、计算过程与交付物。",
+    }
+    agents = []
+    for kind, definition in definitions.items():
+        _, filesystem = build_specialist_filesystem(
+            backend, definition.skill_directory, definition.skills
         )
-        return self.build(session_key, backend)
-
-    def build(
-        self, session_key: AgentSessionKey, backend: DockerSandboxBackend | None = None
-    ) -> CompiledStateGraph:
-        """使用共享模型和工具编译 Session 图；读取状态时无需准备沙箱。"""
-        definition = self._definitions[session_key.agent_type]
-
-        if backend is None:
-            backend = self._sandbox.graph_backend(
-                session_key.user_id,
-                session_key.conversation_id,
-                SandboxSessionScope(
-                    session_key.analysis_id,
-                    session_key.agent_type,
-                    session_key.session_id,
-                ),
-            )
-        return create_specialist_agent(
-            name=session_key.agent_type,
+        graph = create_agent(
+            name=kind,
             system_prompt=definition.system_prompt,
-            skill_directory=definition.skill_directory,
-            model=self._models[session_key.agent_type],
-            tools=[*self._mcp_tools, *definition.tools]
-            if session_key.agent_type == "explorer"
-            else definition.tools,
-            backend=backend,
-            checkpointer=self._checkpointer,
+            model=models[kind],
+            tools=definition.tools,
+            sandbox=backend,
+            filesystem=filesystem,
             skills=definition.skills,
+            checkpointer=False,
         )
+        agents.append(
+            CompiledSubAgent(
+                name=kind,
+                description=descriptions[kind],
+                runnable=RunnableLambda(partial(stream_task, graph)),
+            )
+        )
+    return agents

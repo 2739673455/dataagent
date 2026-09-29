@@ -8,6 +8,7 @@ from deepagents.backends import CompositeBackend, FilesystemBackend
 from deepagents.backends.protocol import BackendProtocol
 from deepagents.middleware.filesystem import FilesystemPermission
 
+from app.assistant.resources import ASSISTANT_RESOURCES_DIR
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.paths import SandboxReadonlyMount
 from app.shared.contracts.analysis import AGENT_TYPES, AgentType
@@ -22,14 +23,13 @@ def agent_skills_mount_path(agent_type: AgentType) -> str:
 
 def packaged_skill_readonly_mounts() -> tuple[SandboxReadonlyMount, ...]:
     """收集随应用发布且需要暴露给沙箱的技能目录。"""
-    agents_directory = Path(__file__).parent
     return tuple(
         SandboxReadonlyMount(
             source=skill_directory,
             target=PurePosixPath(agent_skills_mount_path(agent_type)),
         )
         for agent_type in AGENT_TYPES
-        if (skill_directory := agents_directory / agent_type / "skills").is_dir()
+        if (skill_directory := ASSISTANT_RESOURCES_DIR / agent_type / "skills").is_dir()
     )
 
 
@@ -70,11 +70,11 @@ def build_specialist_filesystem(
         backend=resolved_backend,
         system_prompt=f"""## 沙箱路径
 
-当前 Session 工作目录是 `{workspace_dir}`。
+当前会话工作目录是 `{workspace_dir}`。
 
-- 文件工具、`view_image` 和 `shell` 使用同一套容器路径：相对路径从当前 Session 工作目录解析，绝对路径直接使用。
-- `write_file` 和 `edit_file` 只能修改当前 Session 工作目录；同一 Conversation 的其他 Session 文件只读。
-- `artifacts` 可以使用相对当前 Session 的路径或完整绝对路径；跨 Agent 传递前会统一解析为绝对路径。
+- 文件工具、`view_image` 和 `shell` 使用同一套容器路径：相对路径从当前会话工作目录解析，绝对路径直接使用。
+- 所有 Agent 共用当前会话目录；`write_file` 和 `edit_file` 只能修改该目录，避免覆盖其他任务的同名文件。
+- 跨 Agent 传递和文件交付必须使用完整绝对路径，文件交付指令独占一行，格式为 `[[DATAAGENT_ARTIFACT:<absolute_path>]]`。
 - 内置技能位于只读 `/skills/...`。
 """,
         tools=[

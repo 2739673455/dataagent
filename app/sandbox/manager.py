@@ -21,7 +21,6 @@ from app.sandbox.ownership import SandboxOwnership
 from app.sandbox.paths import (
     SANDBOX_DATA_ROOT,
     SandboxReadonlyMount,
-    SandboxSessionScope,
     normalize_attachment_path,
 )
 from app.sandbox.runtime_pool import DockerRuntimePool
@@ -358,8 +357,6 @@ class DockerSandboxManager:
         user_id: int,
         conversation_id: UUID,
         conversation_uid: int | None,
-        scope: SandboxSessionScope | None,
-        execution_uid: int | None,
     ) -> DockerSandboxBackend:
         """使用已准备的工作区构造沙箱后端。"""
         return DockerSandboxBackend(
@@ -370,105 +367,34 @@ class DockerSandboxManager:
             self._ownership,
             lambda: self._touch_user(user_id),
             lambda cancel_event: self._runtime_pool.get_running(user_id, cancel_event),
-            session_scope=scope,
-            execution_uid=execution_uid,
         )
 
     def graph_backend(
         self,
         user_id: int,
         conversation_id: UUID,
-        scope: SandboxSessionScope | None = None,
     ) -> DockerSandboxBackend:
         """构造图所需的路径和工具后端对象，执行身份由工作区准备流程取得。"""
-        return self._build_backend(user_id, conversation_id, None, scope, None)
+        return self._build_backend(user_id, conversation_id, None)
 
-    async def _prepare_backend(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        scope: SandboxSessionScope | None = None,
+    async def get_backend(
+        self, user_id: int, conversation_id: UUID
     ) -> DockerSandboxBackend:
-        """准备工作区并创建普通或 Session 后端。"""
+        """准备当前会话共享工作区并构造后端。"""
         await self.init()
 
-        def prepare() -> tuple[int, int | None]:
-            """在独占维护窗口中准备工作区。"""
+        def prepare() -> int:
             with (
                 self._ownership.conversation_maintenance(user_id, conversation_id),
                 self._ownership.user_mutation(user_id),
             ):
                 self._ownership.assert_available(user_id, conversation_id)
                 container = self._get_or_create_storage_container_sync(user_id)
-                if scope is None:
-                    return self._archive.ensure_workspace(
-                        container, conversation_id
-                    ), None
-                return self._archive.ensure_session_workspace(
-                    container,
-                    conversation_id,
-                    scope,
-                )
+                return self._archive.ensure_workspace(container, conversation_id)
 
-        conversation_uid, execution_uid = await asyncio.to_thread(prepare)
+        conversation_uid = await asyncio.to_thread(prepare)
         await asyncio.to_thread(self._touch_user, user_id)
-        return self._build_backend(
-            user_id,
-            conversation_id,
-            conversation_uid,
-            scope,
-            execution_uid,
-        )
-
-    async def get_backend(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-    ) -> DockerSandboxBackend:
-        """获取用户指定会话的沙箱后端。"""
-        return await self._prepare_backend(user_id, conversation_id)
-
-    async def get_session_backend(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        analysis_id: str,
-        agent_type: str,
-        session_id: str,
-    ) -> DockerSandboxBackend:
-        """获取独立 Linux 身份的专业 Agent Session 后端。"""
-        scope = SandboxSessionScope(analysis_id, agent_type, session_id)
-        return await self._prepare_backend(user_id, conversation_id, scope)
-
-    async def delete_session(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        analysis_id: str,
-        agent_type: str,
-        session_id: str,
-    ) -> bool:
-        """幂等删除专业 Agent Session 的全部沙箱资源。"""
-        scope = SandboxSessionScope(analysis_id, agent_type, session_id)
-        await self.init()
-
-        def delete() -> bool:
-            """在独占维护窗口中删除 Session 沙箱资源。"""
-            with self._ownership.conversation_maintenance(user_id, conversation_id):
-                self._ownership.assert_available(user_id, conversation_id)
-                container = self._get_running_storage_container_sync(user_id)
-                if container is None:
-                    return False
-                with self._ownership.user_mutation(user_id):
-                    return self._archive.delete_session(
-                        container,
-                        conversation_id,
-                        scope,
-                    )
-
-        deleted = await asyncio.to_thread(delete)
-        await asyncio.to_thread(self._touch_user, user_id)
-        return deleted
+        return self._build_backend(user_id, conversation_id, conversation_uid)
 
     def _upload_attachment_sync(
         self,

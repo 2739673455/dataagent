@@ -1,17 +1,12 @@
 import { useState } from "react";
-import { cn } from "@/lib/utils";
 import { AttachmentChip } from "@/features/chat/components/messages/AttachmentChip";
-import {
-  formatMessageTime,
-  getMessagePartKey,
-} from "@/features/chat/components/messages/displayModel";
+import { getMessagePartKey } from "@/features/chat/components/messages/displayModel";
 import { ImagePreview } from "@/features/chat/components/messages/ImagePreview";
 import { PartView } from "@/features/chat/components/messages/MarkdownRenderer";
 import type { MessageDisplayItem } from "@/features/chat/components/messages/types";
 
 export function MessageBubble({ message }: { message: MessageDisplayItem["message"] }) {
   const isUser = message.role === "user";
-  const createdAt = formatMessageTime(message.createdAt);
   const [previewImage, setPreviewImage] = useState<{
     src: string;
     alt: string;
@@ -48,14 +43,6 @@ export function MessageBubble({ message }: { message: MessageDisplayItem["messag
 
             {isUser ? null : attachmentChips}
           </div>
-
-          {createdAt ? (
-            <div className="mt-1.5 flex justify-start">
-              <time className={cn("text-[11px]", isUser ? "text-[#3b82f6]" : "text-[#71717a]")}>
-                {createdAt}
-              </time>
-            </div>
-          ) : null}
         </div>
       </div>
 

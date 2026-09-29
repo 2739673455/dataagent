@@ -27,7 +27,6 @@ describe("chat messages", () => {
         isStreaming
         messages={messages}
         subagentRuns={{}}
-        loadSubagentMessages={async () => []}
         viewportRef={{ current: null }}
       />
     );

@@ -14,13 +14,16 @@ from app.assistant.execution.types import (
     conversation_lifecycle_lock_name,
 )
 from app.assistant.repositories.conversation import ConversationPGRepo
-from app.shared.config.app_config import LifecycleConfig
 from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 if TYPE_CHECKING:
     from app.assistant.execution.manager import AgentManager
     from app.sandbox.manager import DockerSandboxManager
     from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
+
+
+_DRAFT_TTL_MINUTES = 1440
+_CLEANUP_BATCH_SIZE = 100
 
 
 class ConversationLifecycleService:
@@ -34,7 +37,6 @@ class ConversationLifecycleService:
         lock_provider: LangGraphPostgresManager,
         agents: AgentManager,
         sandbox: DockerSandboxManager,
-        config: LifecycleConfig,
         runs: ConversationRunService | None = None,
     ) -> None:
         """初始化跨存储会话资源和生命周期锁依赖。"""
@@ -42,7 +44,6 @@ class ConversationLifecycleService:
         self._lock_provider = lock_provider
         self._agents = agents
         self._sandbox = sandbox
-        self._config = config
         self._runs = runs
 
     @asynccontextmanager
@@ -129,11 +130,11 @@ class ConversationLifecycleService:
 
     async def cleanup_expired_drafts(self) -> int:
         """执行一批过期草稿回收。"""
-        cutoff = datetime.now(UTC) - timedelta(minutes=self._config.draft_ttl_minutes)
+        cutoff = datetime.now(UTC) - timedelta(minutes=_DRAFT_TTL_MINUTES)
         async with self._repository_factory() as repository:
             drafts = await repository.list_expired_drafts(
                 cutoff,
-                limit=self._config.cleanup_batch_size,
+                limit=_CLEANUP_BATCH_SIZE,
             )
         deleted = 0
         for draft in drafts:
@@ -149,7 +150,7 @@ class ConversationLifecycleService:
         """执行一批已有删除墓碑的物理资源清理。"""
         async with self._repository_factory() as repository:
             conversations = await repository.list_pending_deletions(
-                limit=self._config.cleanup_batch_size
+                limit=_CLEANUP_BATCH_SIZE
             )
         deleted = 0
         for conversation in conversations:

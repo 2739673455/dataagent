@@ -9,7 +9,6 @@ from app.sandbox.errors import SandboxPathError
 
 SANDBOX_DATA_ROOT = "/data"
 SANDBOX_STAGING_ROOT = "/data/.dataagent-staging"
-_CONVERSATION_FILE_ROOTS = frozenset({"sessions"})
 _PATH_MAX_BYTES = 4096
 _PATH_COMPONENT_MAX_BYTES = 255
 
@@ -42,51 +41,6 @@ class SandboxReadonlyMount:
         ):
             raise ValueError(f"沙箱只读挂载目标路径无效: {target}")
         object.__setattr__(self, "source", source)
-
-
-@dataclass(frozen=True, slots=True)
-class SandboxSessionScope:
-    """定位一个专业 Agent Session 工作区。"""
-
-    analysis_id: str
-    agent_type: str
-    session_id: str
-
-    def __post_init__(self) -> None:
-        """校验 Agent Session 路径字段可安全用于工作区。"""
-        for field_name, value in (
-            ("analysis_id", self.analysis_id),
-            ("agent_type", self.agent_type),
-            ("session_id", self.session_id),
-        ):
-            if (
-                not value
-                or len(value.encode("utf-8")) > 64
-                or not value[0].isalnum()
-                or any(
-                    not character.islower()
-                    and not character.isdigit()
-                    and character not in {"-", "_"}
-                    for character in value
-                )
-            ):
-                raise ValueError(f"沙箱 Session 字段无效: {field_name}")
-
-    @property
-    def relative_workspace(self) -> str:
-        """生成 conversation 根目录下的 Session 路径。"""
-        return f"sessions/{self.analysis_id}/{self.agent_type}/{self.session_id}"
-
-    def registry_key(self, conversation_id: UUID) -> str:
-        """生成 UID 注册表中的稳定 Session 键。"""
-        return f"{conversation_id}/{self.relative_workspace}"
-
-    def workspace_path(self, conversation_id: UUID) -> str:
-        """生成 Session 在容器中的完整工作目录。"""
-        return posixpath.join(
-            conversation_workspace_path(conversation_id),
-            self.relative_workspace,
-        )
 
 
 def normalize_attachment_path(path: str) -> str:
@@ -155,6 +109,8 @@ def conversation_relative_path(path: str, conversation_id: UUID) -> str:
     if not candidate.is_relative_to(root):
         raise SandboxPathError(path)
     relative = candidate.relative_to(root).as_posix()
-    if not relative or PurePosixPath(relative).parts[0] not in _CONVERSATION_FILE_ROOTS:
+    if relative == "." or any(
+        part.startswith(".") for part in PurePosixPath(relative).parts
+    ):
         raise SandboxPathError(path)
     return relative

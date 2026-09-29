@@ -6,24 +6,17 @@ import json
 import unittest
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
-from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import StateSnapshot
 from pydantic import ValidationError
 
-from app.assistant.agents.middleware.message_timestamp import (
-    MessageTimestampMiddleware,
-)
-from app.assistant.agents.middleware.user_message_context import (
-    USER_MESSAGE_CONTEXT_KEY,
-    UserMessageContext,
-)
 from app.assistant.conversations import history as conversation_history
 from app.assistant.errors import PlannerContinuationLimitError
 from app.assistant.events import projection as message_projection
@@ -31,9 +24,7 @@ from app.assistant.events import schemas as chat_schema
 from app.assistant.execution import planner as planner_turn
 from app.assistant.execution.manager import AgentManager
 from app.assistant.execution.types import (
-    MESSAGE_CREATED_AT_KEY,
     ConversationAgentRuntime,
-    DelegationActivityHistory,
     PlannerTurnContext,
     SubagentMessageActivity,
     SubagentMessageDeltaActivity,
@@ -110,49 +101,26 @@ class UserMessageRequestTest(unittest.TestCase):
                 }
             )
 
-class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
-    async def test_user_message_creation_time_is_persisted(self) -> None:
-        message = message_projection.schema_to_human_message(
+
+class MessageProjectionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_message_time_is_recorded_but_not_exposed_in_api(self) -> None:
+        user = message_projection.schema_to_human_message(
             chat_schema.UserMessageRequest(
                 parts=[chat_schema.TextContent(type="text", text="analyze")]
-            ),
+            )
         )
-
-        context = UserMessageContext.model_validate(
-            message.additional_kwargs[USER_MESSAGE_CONTEXT_KEY]
-        )
-        self.assertIsNotNone(context.received_at)
-
-    async def test_private_user_message_context_is_not_exposed_by_api_schema(
-        self,
-    ) -> None:
-        message = message_projection.schema_to_human_message(
-            chat_schema.UserMessageRequest(
-                parts=[chat_schema.TextContent(type="text", text="analyze")]
-            ),
-        )
-
-        response = message_projection.langchain_message_to_schema(
-            message, _CONVERSATION_ID
-        )
-
-        self.assertIsNotNone(response)
-        assert response is not None
-        payload = response.model_dump(mode="json")
-        self.assertNotIn(USER_MESSAGE_CONTEXT_KEY, payload)
-        self.assertIsNotNone(payload["created_at"])
-        self.assertNotIn("<user_message_context>", json.dumps(payload))
-
-    async def test_model_response_creation_time_is_persisted(self) -> None:
-        middleware = MessageTimestampMiddleware()
-        response_message = AIMessage(content="result")
-
-        async def handler(_: Any) -> ModelResponse[Any]:
-            return ModelResponse(result=[response_message])
-
-        await middleware.awrap_model_call(MagicMock(), handler)
-
-        self.assertIn(MESSAGE_CREATED_AT_KEY, response_message.additional_kwargs)
+        received_at = datetime.fromisoformat(user.additional_kwargs["received_at"])
+        self.assertIsNotNone(received_at.tzinfo)
+        for message in (user, AIMessage(content="result")):
+            response = message_projection.langchain_message_to_schema(
+                message, _CONVERSATION_ID
+            )
+            assert response is not None
+            self.assertNotIn("created_at", response.model_dump())
+            self.assertEqual(
+                response.parts[0].model_dump()["text"],
+                "analyze" if message is user else "result",
+            )
 
     async def test_reasoning_block_is_projected_as_completed_thinking(self) -> None:
         response = message_projection.langchain_message_to_schema(
@@ -311,31 +279,15 @@ class _TurnManagerStub:
             {"configurable": {"thread_id": "test"}}
         )
         return StateSnapshot(
+            created_at=None,
             values=state.values,
             next=tuple(state.next) if hasattr(state, "next") else (),
-            created_at=None,
             config={},
             metadata=None,
             parent_config=None,
             tasks=(),
             interrupts=(),
         )
-
-    async def read_delegation_activity(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        analysis_id: str,
-        agent_type: str,
-        session_id: str,
-        delegation_id: str,
-    ) -> DelegationActivityHistory | None:
-        """通过测试运行时读取 Specialist 活动。"""
-        if user_id != self.turn_context.user_id:
-            raise AssertionError("unexpected user_id")
-        if conversation_id != self.turn_context.conversation_id:
-            raise AssertionError("unexpected conversation_id")
-        raise AssertionError("回合执行测试不应读取专业 Agent 历史")
 
     @asynccontextmanager
     async def use_runtime(
@@ -588,9 +540,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
 def _delegation_payload() -> dict[str, object]:
     return {
         "status": "completed",
-        "analysis_id": "sales-review",
         "agent_type": "analyst",
-        "session_id": "chart-1",
         "content": "Chart generated",
     }
 
@@ -681,7 +631,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         files = _FileInspectorStub(set())
         for path in (
             "/data/660e8400-e29b-41d4-a716-446655440000/uploads/image.png",
-            f"{_SANDBOX_ROOT}/private/image.png",
+            f"{_SANDBOX_ROOT}/.private/image.png",
             f"{_SANDBOX_ROOT}/uploads/../../image.png",
         ):
             with self.subTest(path=path):
@@ -710,7 +660,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             tool_calls=[
                 {
                     "id": "call-1",
-                    "name": "delegation",
+                    "name": "task",
                     "args": {},
                 }
             ],
@@ -877,9 +827,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 "ns": (),
                 "data": SubagentStatusActivity(
                     delegation_id="delegation-1",
-                    analysis_id="sales-review",
                     agent_type="explorer",
-                    session_id="source-1",
                     status="running",
                 ),
             }
@@ -888,9 +836,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 "ns": (),
                 "data": SubagentThinkingDeltaActivity(
                     delegation_id="delegation-1",
-                    analysis_id="sales-review",
                     agent_type="explorer",
-                    session_id="source-1",
                     message_id="specialist-1",
                     delta="先检查数据",
                     reset=True,
@@ -901,9 +847,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 "ns": (),
                 "data": SubagentMessageDeltaActivity(
                     delegation_id="delegation-1",
-                    analysis_id="sales-review",
                     agent_type="explorer",
-                    session_id="source-1",
                     message_id="specialist-1",
                     delta="正在检查数据",
                     reset=True,
@@ -914,9 +858,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 "ns": (),
                 "data": SubagentMessageActivity(
                     delegation_id="delegation-1",
-                    analysis_id="sales-review",
                     agent_type="explorer",
-                    session_id="source-1",
                     message=AIMessage(id="specialist-1", content="正在检查数据"),
                 ),
             }
@@ -980,9 +922,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         )
         activity = SubagentMessageActivity(
             delegation_id="delegation-1",
-            analysis_id="sales-review",
             agent_type="explorer",
-            session_id="source-1",
             message=message,
         )
         stream_event = await message_projection.subagent_activity_to_event(
@@ -991,23 +931,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             cast(DockerSandboxManager, _FileInspectorStub()),
             7,
         )
-        agents = MagicMock()
-        agents.read_delegation_activity = AsyncMock(
-            return_value=DelegationActivityHistory(
-                messages=[message], status="completed"
-            )
-        )
-        history = await conversation_history.get_subagent_activity(
-            agents,
-            cast(DockerSandboxManager, _FileInspectorStub()),
-            7,
-            _CONVERSATION_ID,
-            "sales-review",
-            "explorer",
-            "source-1",
-            "delegation-1",
-        )
-
         self.assertIsInstance(
             stream_event,
             chat_schema.ChatStreamSubagentMessageEvent,
@@ -1017,19 +940,12 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(stream_part, chat_schema.ToolResultPart)
         assert isinstance(stream_part, chat_schema.ToolResultPart)
         self.assertEqual(stream_part.content, detailed_content)
-        self.assertIsNotNone(history)
-        assert history is not None
-        self.assertEqual(history.status, "completed")
-        history_part = history.messages[0].parts[0]
-        self.assertIsInstance(history_part, chat_schema.ToolResultPart)
-        assert isinstance(history_part, chat_schema.ToolResultPart)
-        self.assertEqual(history_part.content, detailed_content)
         self.assertEqual(message.content, detailed_content)
 
     async def test_delegation_artifacts_are_restored_from_history(self) -> None:
         message = ToolMessage(
             id="message-1",
-            name="delegation",
+            name="task",
             tool_call_id="call-1",
             content=f"报告完成\n[[DATAAGENT_ARTIFACT:/data/{_CONVERSATION_ID}/sessions/sales-review/analyst/chart-1/report.html]]",
         )
@@ -1071,7 +987,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
     async def test_delegation_artifacts_are_in_stream_updates(self) -> None:
         message = ToolMessage(
             id="message-1",
-            name="delegation",
+            name="task",
             tool_call_id="call-1",
             content=f"报告完成\n[[DATAAGENT_ARTIFACT:/data/{_CONVERSATION_ID}/sessions/sales-review/analyst/chart-1/report.html]]",
         )
@@ -1140,33 +1056,13 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         )
         activity = SubagentMessageActivity(
             delegation_id="d1",
-            analysis_id="sales-review",
             agent_type="analyst",
-            session_id="chart-1",
             message=message,
         )
         event = await message_projection.subagent_activity_to_event(
             activity, _CONVERSATION_ID, cast(DockerSandboxManager, files), 7
         )
-        agents = MagicMock(
-            read_delegation_activity=AsyncMock(
-                return_value=DelegationActivityHistory(
-                    messages=[message], status="completed"
-                )
-            )
-        )
-        history = await conversation_history.get_subagent_activity(
-            agents,
-            cast(DockerSandboxManager, files),
-            7,
-            _CONVERSATION_ID,
-            "sales-review",
-            "analyst",
-            "chart-1",
-            "d1",
-        )
         assert isinstance(event, chat_schema.ChatStreamSubagentMessageEvent)
-        self.assertEqual(event.message, history.messages[0])
         assert event.message.attachments is not None
         assert isinstance(event.message.parts[0], chat_schema.TextContent)
         self.assertEqual(event.message.attachments[0].f_path, path)
@@ -1178,7 +1074,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         for path in ("/data/another-user/report.html", f"{_SANDBOX_ROOT}/missing.html"):
             with self.subTest(path=path):
                 message = ToolMessage(
-                    name="delegation",
+                    name="task",
                     tool_call_id="d1",
                     content=f"[[DATAAGENT_ARTIFACT:{path}]]",
                 )

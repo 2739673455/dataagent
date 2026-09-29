@@ -24,7 +24,6 @@ from app.assistant.api.dependencies import (
 from app.assistant.conversations import history as conversation_history
 from app.assistant.events import schemas as chat_schema
 from app.identity.api.dependencies import CurrentUserDep
-from app.shared.contracts.analysis import AgentType
 from app.shared.observability import context
 
 router = APIRouter(tags=["chat"])
@@ -159,38 +158,6 @@ async def api_get_messages(
         f"获取消息列表: conversation_id={conversation_id}, count={len(messages)}"
     )
     return chat_schema.MessageListResponse(messages=messages)
-
-
-@router.get(
-    "/{conversation_id}/subagents/{analysis_id}/{agent_type}/{session_id}/"
-    "runs/{delegation_id}/messages"
-)
-async def api_get_subagent_messages(
-    conversation_id: UUID,
-    analysis_id: str,
-    agent_type: AgentType,
-    session_id: str,
-    delegation_id: str,
-    conversation_repo: ConversationPGRepoDep,
-    current_user: CurrentUserDep,
-    agents: AgentManagerDep,
-    files: SandboxManagerDep,
-) -> chat_schema.SubagentMessageListResponse:
-    """读取一次 Specialist delegation 的公开工作消息。"""
-    user_id = current_user.id
-    conversation = await conversation_repo.get(user_id, conversation_id)
-    if conversation is None:
-        raise chat_error.ConversationNotFoundError
-    return await conversation_history.get_subagent_activity(
-        agents,
-        files,
-        user_id,
-        conversation_id,
-        analysis_id,
-        agent_type,
-        session_id,
-        delegation_id,
-    )
 
 
 async def _stream_run_events(

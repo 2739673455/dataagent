@@ -1,9 +1,6 @@
 """验证新建图读取 Checkpoint、恢复执行与工具绑定。"""
 
-import asyncio
-import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from unittest.mock import AsyncMock, MagicMock
 
 from deepagents import (
     GeneralPurposeSubagentProfile,
@@ -11,17 +8,12 @@ from deepagents import (
     register_harness_profile,
 )
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langchain_core.tools import tool
-from langgraph.checkpoint.memory import InMemorySaver
+from langchain_core.messages import AIMessage
 from pydantic import Field
 
 from app.assistant.execution import runtime_factory
-from app.assistant.execution.manager import AgentManager
-from app.assistant.execution.types import build_planner_config
 from app.sandbox.manager import DockerSandboxManager
 from app.shared.config import app_config
-from app.shared.contracts.analysis import AgentSessionKey
 
 
 class ToolModel(FakeMessagesListChatModel):
@@ -30,6 +22,11 @@ class ToolModel(FakeMessagesListChatModel):
         return self
 
     seen_tools: list = Field(default_factory=list)
+    inputs: list = Field(default_factory=list)
+
+    def _generate(self, messages, *args, **kwargs):
+        self.inputs.append(list(messages))
+        return super()._generate(messages, *args, **kwargs)
 
 
 register_harness_profile(
@@ -43,7 +40,6 @@ register_harness_profile(
 def make_factory(saver):
     persistence = MagicMock()
     persistence.get_checkpointer.return_value = saver
-    persistence.list_threads = AsyncMock(return_value=[])
     sandbox = DockerSandboxManager(app_config.cfg.sandbox, MagicMock(), [])
     sandbox.init = AsyncMock(
         side_effect=AssertionError("Docker initialized during read")
@@ -58,272 +54,258 @@ def make_factory(saver):
     return factory, persistence, sandbox
 
 
-class GraphStateTest(unittest.IsolatedAsyncioTestCase):
-    async def test_new_graph_restores_pending_tools_without_model_or_sandbox_calls(
+import unittest
+from uuid import uuid4
+
+from langchain_core.messages import HumanMessage, ToolMessage
+from langgraph.checkpoint.memory import InMemorySaver
+
+from app.assistant.execution.manager import AgentManager
+from app.assistant.execution.types import (
+    SubagentMessageActivity,
+    SubagentStatusActivity,
+    build_planner_config,
+)
+from app.query.models.execution import AnalysisQueryResult
+
+
+class NativeTaskTest(unittest.IsolatedAsyncioTestCase):
+    async def test_task_shares_identity_has_fresh_messages_and_no_child_checkpoints(
         self,
     ):
         saver = InMemorySaver()
-        factory, persistence, sandbox = make_factory(saver)
+        factory, _, sandbox = make_factory(saver)
         conversation = uuid4()
-        config = build_planner_config(12, conversation)
-        model = ToolModel(
-            responses=[
-                AIMessage(
-                    content="",
-                    tool_calls=[{"id": "list", "name": "list_sessions", "args": {}}],
-                ),
-                AIMessage(content="finished"),
-            ]
+        sql_result = AnalysisQueryResult(
+            path=f"/data/{conversation}/result.csv", columns=[], row_count=0, sample=[]
         )
-        factory._models = {name: model for name in factory._model_names}
-        graph = factory.build(12, conversation).planner
-        # list_sessions 不读沙箱；真实模型/工具路由先停在工具节点。
-        await graph.ainvoke(
-            {"messages": [HumanMessage(content="sessions")]},
-            config,
-            interrupt_before=["tools"],
-        )
-        assert "task" not in [t.name for t in model.seen_tools]
-        expected = await graph.aget_state(config)
-        cold, _, _ = make_factory(saver)
-        manager = AgentManager(
-            persistence, MagicMock(exists=AsyncMock(return_value=False)), cold
-        )
-        with (
-            patch.object(
-                runtime_factory,
-                "create_configured_model",
-                side_effect=AssertionError("model initialized"),
-            ),
-            patch.object(
-                runtime_factory,
-                "get_mcp_tools",
-                side_effect=AssertionError("MCP connected"),
-            ),
-        ):
-            actual = await manager.read_planner_state(12, conversation)
-            assert actual.values == expected.values
-            assert actual.next == ("tools",)
-            assert await manager.can_resume_planner(12, conversation)
-        await graph.ainvoke(None, config)
-        assert not (await manager.read_planner_state(12, conversation)).next
-        assert (await manager.read_planner_state(12, conversation)).values["messages"][
-            -1
-        ].content == "finished"
-        sandbox.init.assert_not_awaited()
+        handler = MagicMock(execute=AsyncMock(return_value=sql_result))
+        from app.assistant.agents.specialists import build_specialist_definitions
+        from app.assistant.agents.tools.execute_sql import create_execute_sql_tool
 
-    async def test_specialist_cold_graph_preserves_messages_and_delegation_records(
-        self,
-    ):
-        saver = InMemorySaver()
-        factory, _, _ = make_factory(saver)
-        key = AgentSessionKey(12, uuid4(), "sales", "reviewer", "check")
-        config = {"configurable": {"thread_id": key.thread_id}}
-        model = ToolModel(responses=[AIMessage(content="reviewed")])
-        factory._models = {name: model for name in factory._model_names}
-        graph = factory.specialists().build(key)
-        await graph.ainvoke(
-            {
-                "messages": [HumanMessage(content="review")],
-                "delegation_records": {"one": {"status": "running"}},
-            },
-            config,
+        factory._definitions = build_specialist_definitions(
+            [create_execute_sql_tool(handler)]
         )
-        await graph.aupdate_state(
-            config,
-            {
-                "delegation_records": {
-                    "one": {"status": "completed", "result": "reviewed"}
-                }
-            },
-        )
-        cold, _, sandbox = make_factory(saver)
-        state = await cold.specialists().build(key).aget_state(config)
-        assert state.values["messages"][-1].content == "reviewed"
-        assert state.values["delegation_records"]["one"]["status"] == "completed"
-        assert state.next == ()
-        sandbox.init.assert_not_awaited()
-
-    async def test_mcp_tools_bind_at_build_and_survive_resume(self):
-        calls = []
-
-        @tool
-        async def lookup(value: str) -> str:
-            """Return a lookup result."""
-            calls.append(value)
-            return f"found {value}"
-
-        saver = InMemorySaver()
-        factory, _, _ = make_factory(saver)
-        key = AgentSessionKey(12, uuid4(), "sales", "explorer", "lookup")
-        config = {"configurable": {"thread_id": key.thread_id}}
-        model = ToolModel(
+        planner = ToolModel(
             responses=[
                 AIMessage(
                     content="",
                     tool_calls=[
-                        {"id": "mcp", "name": "lookup", "args": {"value": "sales"}}
+                        {
+                            "id": "first",
+                            "name": "task",
+                            "args": {
+                                "subagent_type": "explorer",
+                                "description": "查数",
+                            },
+                        }
                     ],
                 ),
-                AIMessage(content="finished"),
-            ]
-        )
-        factory._models = {name: model for name in factory._model_names}
-        factory._mcp_tools = [lookup]
-        graph = factory.specialists().build(key)
-        await graph.ainvoke(
-            {"messages": [HumanMessage(content="lookup")]},
-            config,
-            interrupt_before=["tools"],
-        )
-        assert "lookup" in [t.name for t in model.seen_tools]
-        assert "task" not in [t.name for t in model.seen_tools]
-        cold, _, _ = make_factory(saver)
-        state = await cold.specialists().build(key).aget_state(config)
-        assert state.next == ("tools",)
-        await graph.ainvoke(None, config)
-        assert calls == ["sales"]
-        state = await graph.aget_state(config)
-        assert any(
-            isinstance(m, ToolMessage) and m.content == "found sales"
-            for m in state.values["messages"]
-        )
-
-    async def test_static_tools_keep_builtin_priority_and_last_mcp_duplicate(self):
-        @tool("semantic_recall")
-        def mcp_recall(query: str) -> str:
-            """Conflicting MCP tool."""
-            raise AssertionError("MCP replaced builtin")
-
-        @tool("read_file")
-        def mcp_read_file(path: str) -> str:
-            """Conflicting filesystem tool."""
-            raise AssertionError("MCP replaced filesystem")
-
-        @tool("shell")
-        def mcp_shell(command: str) -> str:
-            """Conflicting shell tool."""
-            raise AssertionError("MCP replaced shell")
-
-        @tool("lookup")
-        def first_lookup(value: str) -> str:
-            """Earlier MCP tool."""
-            raise AssertionError("Earlier duplicate was selected")
-
-        @tool("lookup")
-        def last_lookup(value: str) -> str:
-            """Later MCP tool."""
-            return f"mcp:{value}"
-
-        saver = InMemorySaver()
-        factory, _, _ = make_factory(saver)
-        # 使用实际内置工具的名字制造冲突，验证模型只看到内置定义。
-        builtin = factory._definitions["explorer"].tools[0]
-        mcp_recall.name = builtin.name
-        model = ToolModel(
-            responses=[
                 AIMessage(
                     content="",
                     tool_calls=[
-                        {"id": "lookup", "name": "lookup", "args": {"value": "sales"}}
+                        {
+                            "id": "second",
+                            "name": "task",
+                            "args": {
+                                "subagent_type": "explorer",
+                                "description": "重新查数",
+                            },
+                        }
                     ],
                 ),
                 AIMessage(content="done"),
             ]
         )
-        factory._models = {name: model for name in factory._model_names}
-        factory._mcp_tools = [
-            mcp_recall,
-            mcp_read_file,
-            mcp_shell,
-            first_lookup,
-            last_lookup,
-        ]
-        key = AgentSessionKey(12, uuid4(), "sales", "explorer", "lookup")
-        graph = factory.specialists().build(key)
-        state = await graph.ainvoke(
-            {"messages": [HumanMessage(content="run")]},
-            {"configurable": {"thread_id": key.thread_id}},
-        )
-        tools = {tool.name: tool for tool in model.seen_tools}
-        self.assertIs(tools[builtin.name], builtin)
-        self.assertIs(tools["lookup"], last_lookup)
-        self.assertIsNot(tools["read_file"], mcp_read_file)
-        self.assertIsNot(tools["shell"], mcp_shell)
-        self.assertIn(
-            "mcp:sales",
-            [m.content for m in state["messages"] if isinstance(m, ToolMessage)],
-        )
-
-    async def test_cold_state_includes_completed_parallel_tool_writes(self):
-        committed = asyncio.Event()
-        release = asyncio.Event()
-        count = 0
-
-        class Saver(InMemorySaver):
-            async def aput_writes(self, config, writes, task_id, task_path=""):
-                await super().aput_writes(config, writes, task_id, task_path)
-                if any(
-                    channel == "messages"
-                    and isinstance(value, list)
-                    and any(
-                        isinstance(m, ToolMessage) and m.tool_call_id == "good"
-                        for m in value
-                    )
-                    for channel, value in writes
-                ):
-                    committed.set()
-
-        @tool
-        async def good() -> str:
-            """Complete a lookup."""
-            nonlocal count
-            count += 1
-            return "completed lookup"
-
-        @tool
-        async def blocked() -> str:
-            """Wait for another lookup."""
-            await release.wait()
-            return "released"
-
-        saver = Saver()
-        factory, _, _ = make_factory(saver)
-        key = AgentSessionKey(12, uuid4(), "sales", "explorer", "parallel")
-        config = {"configurable": {"thread_id": key.thread_id}}
-        model = ToolModel(
+        specialist = ToolModel(
             responses=[
                 AIMessage(
                     content="",
                     tool_calls=[
-                        {"id": "good", "name": "good", "args": {}},
-                        {"id": "blocked", "name": "blocked", "args": {}},
+                        {
+                            "id": "sql",
+                            "name": "execute_sql",
+                            "args": {"sql": "SELECT 1", "purpose": "统计"},
+                        }
                     ],
                 ),
-                AIMessage(content="finished"),
+                AIMessage(
+                    content=f"[[DATAAGENT_ARTIFACT:/data/{conversation}/result.csv]]"
+                ),
             ]
         )
-        factory._models = {name: model for name in factory._model_names}
-        factory._mcp_tools = [good, blocked]
-        graph = factory.specialists().build(key)
-        task = asyncio.create_task(
-            graph.ainvoke({"messages": [HumanMessage(content="lookups")]}, config)
+        factory._planner_model_name = "planner"
+        factory._specialist_model_names = {
+            kind: "specialist" for kind in factory._specialist_model_names
+        }
+        factory._models = {"planner": planner, "specialist": specialist}
+        graph = factory.build(12, conversation).planner
+        config = build_planner_config(12, conversation)
+        chunks = [
+            c
+            async for c in graph.astream(
+                {"messages": [HumanMessage(content="开始")]},
+                config,
+                stream_mode=["custom", "messages", "updates"],
+                version="v2",
+            )
+        ]
+        self.assertEqual(handler.execute.await_count, 2)
+        self.assertEqual(
+            [
+                len([m for m in messages if isinstance(m, HumanMessage)])
+                for messages in specialist.inputs
+            ],
+            [1, 1, 1, 1],
         )
-        try:
-            await asyncio.wait_for(committed.wait(), 3)
-        finally:
-            task.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await task
+        for call in handler.execute.await_args_list:
+            self.assertEqual(call.args, (12, conversation, "SELECT 1"))
+        self.assertIn("task", [t.name for t in planner.seen_tools])
+        self.assertNotIn("delegation", [t.name for t in planner.seen_tools])
+        self.assertNotIn("task", [t.name for t in specialist.seen_tools])
+        events = [c["data"] for c in chunks if c["type"] == "custom"]
+        self.assertEqual(
+            [
+                (e.delegation_id, e.status)
+                for e in events
+                if isinstance(e, SubagentStatusActivity)
+            ],
+            [
+                ("first", "running"),
+                ("first", "completed"),
+                ("second", "running"),
+                ("second", "completed"),
+            ],
+        )
+        self.assertTrue(any(isinstance(e, SubagentMessageActivity) for e in events))
+        for checkpoint in saver.list(None):
+            self.assertEqual(checkpoint.config["configurable"]["checkpoint_ns"], "")
+        state = await graph.aget_state(config)
+        results = [m for m in state.values["messages"] if isinstance(m, ToolMessage)]
+        self.assertEqual(len(results), 2)
+        self.assertTrue(all(m.name == "task" for m in results))
+        self.assertTrue(all("result.csv" in str(m.content) for m in results))
+        sandbox.init.assert_not_awaited()
+
+    async def test_cold_planner_reads_and_resumes_pending_native_task(self):
+        saver = InMemorySaver()
+        factory, persistence, _ = make_factory(saver)
+        conversation = uuid4()
+        planner = ToolModel(
+            responses=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "work",
+                            "name": "task",
+                            "args": {
+                                "subagent_type": "reviewer",
+                                "description": "检查",
+                            },
+                        }
+                    ],
+                ),
+                AIMessage(content="done"),
+            ]
+        )
+        factory._planner_model_name = "planner"
+        factory._models["planner"] = planner
+        graph = factory.build(12, conversation).planner
+        config = build_planner_config(12, conversation)
+        await graph.ainvoke(
+            {"messages": [HumanMessage(content="开始")]},
+            config,
+            interrupt_before=["tools"],
+        )
         cold, _, _ = make_factory(saver)
-        actual = await cold.specialists().build(key).aget_state(config)
-        expected = await graph.aget_state(config)
-        assert actual.values == expected.values
-        assert actual.next == ("tools",)
-        assert any(
-            isinstance(m, ToolMessage) and m.tool_call_id == "good"
-            for m in actual.values["messages"]
+        manager = AgentManager(
+            persistence, MagicMock(exists=AsyncMock(return_value=False)), cold
         )
-        release.set()
+        self.assertTrue(await manager.can_resume_planner(12, conversation))
         await graph.ainvoke(None, config)
-        assert count == 1
+        self.assertFalse(await manager.can_resume_planner(12, conversation))
+
+    async def test_parallel_native_tasks_keep_activity_and_cancellation_isolated(self):
+        import asyncio
+
+        from langchain.tools import tool
+
+        from app.assistant.agents.specialists import build_specialist_definitions
+
+        saver = InMemorySaver()
+        factory, _, _ = make_factory(saver)
+        started = asyncio.Event()
+        entered = 0
+        cleaned = 0
+
+        @tool
+        async def wait_for_cancel() -> str:
+            """Wait until the caller cancels."""
+            nonlocal entered, cleaned
+            entered += 1
+            if entered == 2:
+                started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleaned += 1
+            return "done"
+
+        factory._definitions = build_specialist_definitions([wait_for_cancel])
+        planner = ToolModel(
+            responses=[
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": id,
+                            "name": "task",
+                            "args": {"subagent_type": "explorer", "description": id},
+                        }
+                        for id in ("one", "two")
+                    ],
+                )
+            ]
+        )
+        specialist = ToolModel(
+            responses=[
+                AIMessage(
+                    content="",
+                    tool_calls=[{"id": "wait", "name": "wait_for_cancel", "args": {}}],
+                )
+            ]
+        )
+        factory._planner_model_name = "planner"
+        factory._specialist_model_names = {
+            kind: "specialist" for kind in factory._specialist_model_names
+        }
+        factory._models = {"planner": planner, "specialist": specialist}
+        graph = factory.build(12, uuid4()).planner
+        events = []
+
+        async def consume():
+            async for chunk in graph.astream(
+                {"messages": [HumanMessage(content="开始")]},
+                build_planner_config(12, uuid4()),
+                stream_mode="custom",
+                version="v2",
+            ):
+                events.append(chunk["data"])
+
+        running = asyncio.create_task(consume())
+        await asyncio.wait_for(started.wait(), 3)
+        running.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await running
+        self.assertEqual(cleaned, 2)
+        self.assertEqual(
+            {
+                e.delegation_id
+                for e in events
+                if isinstance(e, SubagentStatusActivity) and e.status == "running"
+            },
+            {"one", "two"},
+        )
+        for checkpoint in saver.list(None):
+            self.assertEqual(checkpoint.config["configurable"]["checkpoint_ns"], "")

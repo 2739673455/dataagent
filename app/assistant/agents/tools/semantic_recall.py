@@ -3,7 +3,6 @@
 from typing import Any
 
 from langchain.tools import ToolRuntime, tool
-from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from loguru import logger
 
@@ -13,36 +12,6 @@ from app.metadata.models.search import (
     SemanticResourceType,
 )
 from app.metadata.services.recall_handler import SemanticRecallHandler
-
-
-async def _recall_context(
-    config: RunnableConfig,
-    resource_types: list[SemanticResourceType],
-    terms: list[str],
-    limit_per_type: int,
-    *,
-    recall: SemanticRecallHandler,
-) -> dict[str, Any]:
-    """直接返回本次召回结果，供后续轮次持续使用。"""
-    request = SemanticResourceRecallRequest.model_construct(
-        terms=terms, resource_types=resource_types, limit_per_type=limit_per_type
-    )
-    try:
-        user_id = config.get("configurable", {})["user_id"]
-        response = await recall.search(user_id, request)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("语义资源召回失败")
-        return {
-            "status": "error",
-            "message": "语义资源召回失败",
-            "details": [
-                {
-                    "type": type(exc).__name__,
-                    "msg": str(exc).strip() or "异常未提供详情",
-                }
-            ],
-        }
-    return _semantic_recall_payload(response)
 
 
 def _semantic_recall_payload(
@@ -101,12 +70,24 @@ def create_semantic_recall_tool(recall: SemanticRecallHandler) -> BaseTool:
         limit_per_type: int = 5,
     ) -> dict[str, Any]:
         """检索字段、指标和字段取值，直接返回本次元数据结果。"""
-        return await _recall_context(
-            runtime.config,
-            resource_types,
-            terms,
-            limit_per_type,
-            recall=recall,
+        request = SemanticResourceRecallRequest.model_construct(
+            terms=terms, resource_types=resource_types, limit_per_type=limit_per_type
         )
+        try:
+            user_id = runtime.config.get("configurable", {})["user_id"]
+            response = await recall.search(user_id, request)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("语义资源召回失败")
+            return {
+                "status": "error",
+                "message": "语义资源召回失败",
+                "details": [
+                    {
+                        "type": type(exc).__name__,
+                        "msg": str(exc).strip() or "异常未提供详情",
+                    }
+                ],
+            }
+        return _semantic_recall_payload(response)
 
     return recall_context

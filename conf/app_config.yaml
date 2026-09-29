@@ -54,12 +54,6 @@ embedding: # 文本向量化服务配置。
 metadata: # 元数据全量和增量导入共用的 Redis 租约锁。
   redis_url: redis://127.0.0.1:6379/4 # 同一元数据目录的所有导入进程必须使用相同地址。
 
-lifecycle: # 跨存储 Conversation 资源清理策略。
-  cleanup_interval_seconds: 300 # 会话清理扫描间隔，单位为秒。
-  task_timeout_seconds: 3600 # 后台任务每次尝试的超时，单位为秒。
-  draft_ttl_minutes: 1440 # 未完成草稿保留时间，单位为分钟。
-  cleanup_batch_size: 100 # 单次清理或任务领取的最大记录数。
-
 sandbox: # 每用户 Docker 沙箱及其持久化数据卷配置。
   deployment_namespace: local # 同一 Docker 主机上的部署实例必须使用不同命名空间。
   ownership: # 跨 API 进程的沙箱所有权协调。
@@ -109,8 +103,3 @@ agent: # Planner 和 Specialist 运行时配置。
       model: default
     reviewer: # 结果审查 Specialist。
       model: default
-
-mcp: # 格式参考：https://docs.langchain.com/oss/python/langchain/mcp#transports。
-  tavily: # MCP 服务配置名。
-    transport: streamable_http # MCP 连接传输方式。
-    url: https://mcp.tavily.com/mcp/?tavilyApiKey=${oc.env:TAVILY_API_KEY} # MCP 服务地址。

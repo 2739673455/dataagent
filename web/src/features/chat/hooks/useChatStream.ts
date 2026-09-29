@@ -246,7 +246,6 @@ export function useChatStream({
       };
       const userMessage: MessageResponse = {
         message_id: crypto.randomUUID(),
-        created_at: new Date().toISOString(),
         role: "user",
         parts: requestMessage.parts,
       };

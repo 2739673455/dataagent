@@ -11,8 +11,10 @@ from app.assistant.conversations.lifecycle import ConversationLifecycleService
 from app.assistant.conversations.title import ConversationTitleService
 from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 from app.shared.clients.postgres_client_manager import PostgresClientManager
-from app.shared.config.app_config import LifecycleConfig
 from app.shared.errors.infrastructure import AdvisoryLockBusyError
+
+_CLEANUP_INTERVAL_SECONDS = 300
+_TASK_TIMEOUT_SECONDS = 3600
 
 
 class ConversationTasks:
@@ -23,12 +25,10 @@ class ConversationTasks:
         postgres: PostgresClientManager,
         conversations: ConversationLifecycleService,
         persistence: LangGraphPostgresManager,
-        config: LifecycleConfig,
     ) -> None:
         self._postgres = postgres
         self._conversations = conversations
         self._persistence = persistence
-        self._config = config
         self._tasks: set[asyncio.Task] = set()
         self._closing = False
 
@@ -56,7 +56,7 @@ class ConversationTasks:
         """执行资源清理；失败后最多重试三次，取消直接向上传播。"""
         for attempt in range(4):
             try:
-                async with asyncio.timeout(self._config.task_timeout_seconds):
+                async with asyncio.timeout(_TASK_TIMEOUT_SECONDS):
                     await operation()
                 return
             except Exception:  # noqa: BLE001
@@ -73,7 +73,7 @@ class ConversationTasks:
 
         async def generate() -> None:
             try:
-                async with asyncio.timeout(self._config.task_timeout_seconds):
+                async with asyncio.timeout(_TASK_TIMEOUT_SECONDS):
                     await ConversationTitleService(self._postgres).generate_and_update(
                         user_id, conversation_id, expected_title, user_text
                     )
@@ -117,7 +117,7 @@ class ConversationTasks:
                 pass
             except Exception:  # noqa: BLE001
                 logger.exception("会话周期清理失败")
-            await asyncio.sleep(self._config.cleanup_interval_seconds)
+            await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
 
     async def close(self) -> None:
         """取消并等待任务退出，随后应用可关闭数据库和沙箱。"""

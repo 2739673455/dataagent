@@ -14,7 +14,6 @@ export type MessageDisplayItem = {
     messageId?: string;
     role: "user" | "assistant" | "system" | "tool";
     parts: MessagePart[];
-    createdAt?: string | null;
     finishReason?: string | null;
     attachments?: Attachment[] | null;
   };
@@ -31,7 +30,6 @@ export type ToolRunDisplayItem = {
   interrupted?: boolean;
   attachments?: Attachment[] | null;
   conversationId?: string | null;
-  createdAt?: string | null;
 };
 
 export type DisplayItem = MessageDisplayItem | ToolRunDisplayItem;
@@ -49,6 +47,5 @@ export type SubagentRunMap = Record<string, SubagentRun>;
 
 export type UserMessageNavigationItem = {
   key: string;
-  createdAt: string | null;
   preview: string;
 };

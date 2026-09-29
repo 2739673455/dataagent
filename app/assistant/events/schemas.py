@@ -147,7 +147,6 @@ class MessageResponse(BaseModel):
     """返回给客户端的消息。"""
 
     message_id: str | None = Field(default=None, description="LangGraph 消息ID")
-    created_at: datetime | None = Field(default=None, description="消息创建时间")
     role: MessageRole = Field(..., description="发送者")
     parts: list[MessagePart] = Field(..., description="消息片段")
     attachments: list[Attachment] | None = Field(default=None, description="附件列表")
@@ -173,18 +172,6 @@ class ConversationRunStatusResponse(BaseModel):
     """Conversation 后台 Planner Run 状态。"""
 
     running: bool
-
-
-class SubagentMessageListResponse(BaseModel):
-    """一次 Specialist delegation 的公开工作消息。"""
-
-    status: Literal[
-        "running",
-        "completed",
-        "failed",
-        "cancelled",
-    ]
-    messages: list[MessageResponse]
 
 
 class ChatStreamMessageEvent(BaseModel):
@@ -236,9 +223,7 @@ class ChatStreamSubagentMessageEvent(BaseModel):
 
     type: Literal["subagent_message"]
     delegation_id: str
-    analysis_id: str
     agent_type: AgentType
-    session_id: str
     message: MessageResponse
 
 
@@ -247,9 +232,7 @@ class ChatStreamSubagentThinkingEvent(BaseModel):
 
     type: Literal["subagent_thinking"]
     delegation_id: str
-    analysis_id: str
     agent_type: AgentType
-    session_id: str
     message_id: str = Field(..., description="所属 assistant 消息ID")
     delta: str = Field(..., description="本次新增的思考文本")
     reset: bool = Field(
@@ -263,9 +246,7 @@ class ChatStreamSubagentMessageDeltaEvent(BaseModel):
 
     type: Literal["subagent_message_delta"]
     delegation_id: str
-    analysis_id: str
     agent_type: AgentType
-    session_id: str
     message_id: str = Field(..., description="所属 assistant 消息ID")
     delta: str = Field(..., description="本次新增的正文文本")
     reset: bool = Field(
@@ -279,9 +260,7 @@ class ChatStreamSubagentStatusEvent(BaseModel):
 
     type: Literal["subagent_status"]
     delegation_id: str
-    analysis_id: str
     agent_type: AgentType
-    session_id: str
     status: Literal[
         "running",
         "completed",

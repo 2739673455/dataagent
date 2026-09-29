@@ -19,14 +19,3 @@ class QueryRejectedError(ValueError):
 
 class QueryResultShapeError(RuntimeError):
     """数据库返回的结果结构不稳定或不适合文件输出。"""
-
-
-def classify_query_error(error: Exception) -> str:
-    """返回查询工具使用的错误码。"""
-    if isinstance(error, QueryRejectedError):
-        return "sql_validation_failed"
-    if isinstance(error, QueryExecutionTimeoutError):
-        return "query_timeout"
-    if isinstance(error, QueryResultShapeError):
-        return "query_result_invalid"
-    return "readonly_query_failed"

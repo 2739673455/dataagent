@@ -11,7 +11,6 @@ import { MessageBubble } from "@/features/chat/components/messages/MessageBubble
 import { ExecutionProcessCollapse } from "@/features/chat/components/messages/ToolRunBars";
 import { StickyExpandableHeader } from "@/features/chat/components/messages/StickyExpandableHeader";
 import type {
-  SubagentRunIdentity,
   SubagentRunMap,
   UserMessageNavigationItem,
 } from "@/features/chat/components/messages/types";
@@ -27,10 +26,6 @@ export interface ChatMessagesProps {
   isStreaming: boolean;
   messages: MessageResponse[];
   subagentRuns: SubagentRunMap;
-  loadSubagentMessages: (
-    conversationId: string,
-    run: SubagentRunIdentity
-  ) => Promise<MessageResponse[]>;
   viewportRef: RefObject<HTMLDivElement | null>;
 }
 
@@ -41,7 +36,6 @@ export function ChatMessages({
   isStreaming,
   messages,
   subagentRuns,
-  loadSubagentMessages,
   viewportRef,
 }: ChatMessagesProps) {
   const displayItems = buildDisplayItems(conversationId, messages, isStreaming);
@@ -181,7 +175,6 @@ export function ChatMessages({
       ? [
           {
             key: turn.userItem.key,
-            createdAt: turn.userItem.message.createdAt ?? null,
             preview: getUserMessagePreview(turn.userItem.message),
           },
         ]
@@ -306,7 +299,6 @@ export function ChatMessages({
                       hasFinalItem={turn.finalItem !== null}
                       isStreaming={isTurnStreaming}
                       items={turn.intermediateItems}
-                      loadSubagentMessages={loadSubagentMessages}
                       subagentRuns={subagentRuns}
                     />
                   )}

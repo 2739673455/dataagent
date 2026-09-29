@@ -20,15 +20,9 @@ from langchain_core.messages import (
 )
 from loguru import logger
 
-from app.assistant.agents.middleware.user_message_context import (
-    USER_MESSAGE_CONTEXT_KEY,
-    UserMessageContext,
-    read_user_message_context,
-)
 from app.assistant.events import schemas as chat_schema
 from app.assistant.events.content import normalized_content_blocks, reasoning_text
 from app.assistant.execution.types import (
-    MESSAGE_CREATED_AT_KEY,
     SubagentActivity,
     SubagentMessageActivity,
     SubagentMessageDeltaActivity,
@@ -68,19 +62,6 @@ def normalize_finish_reason(value: object) -> str | None:
         if repeat_count > 1 and remainder == 0 and value == reason * repeat_count:
             return reason
     return value
-
-
-def _message_created_at(message: BaseMessage) -> datetime | None:
-    """读取消息创建时间。"""
-    value = message.additional_kwargs.get(MESSAGE_CREATED_AT_KEY)
-    if isinstance(value, datetime):
-        return value
-    if not isinstance(value, str):
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        return None
 
 
 def _content_to_parts(content: Any) -> list[chat_schema.MessagePart]:
@@ -254,7 +235,7 @@ async def langchain_message_to_schema_with_artifacts(
     if schema is None:
         return None
     if isinstance(message, ToolMessage):
-        if message.name == "delegation" and isinstance(message.content, str):
+        if message.name == "task" and isinstance(message.content, str):
             projected = await langchain_message_to_schema_with_artifacts(
                 AIMessage(content=message.content), files, user_id, conversation_id
             )
@@ -300,7 +281,6 @@ def langchain_message_to_schema(
     if isinstance(message, ToolMessage):
         return chat_schema.MessageResponse(
             message_id=message.id,
-            created_at=_message_created_at(message),
             role="tool",
             parts=[
                 chat_schema.ToolResultPart(
@@ -350,17 +330,8 @@ def langchain_message_to_schema(
             for tool_call in message.tool_calls
         )
 
-    # UserMessageContext 是 Checkpoint 私有状态，API 只公开其中的接收时间。
-    context = (
-        read_user_message_context(message)
-        if isinstance(message, HumanMessage)
-        else None
-    )
     return chat_schema.MessageResponse(
         message_id=message.id,
-        created_at=(
-            context.received_at if context is not None else _message_created_at(message)
-        ),
         role=role,
         parts=parts,
         finish_reason=normalize_finish_reason(
@@ -371,9 +342,7 @@ def langchain_message_to_schema(
 
 class _SubagentEventContext(TypedDict):
     delegation_id: str
-    analysis_id: str
     agent_type: AgentType
-    session_id: str
 
 
 async def subagent_activity_to_event(
@@ -385,9 +354,7 @@ async def subagent_activity_to_event(
     """把受信任的 Agent 内部活动投影为公开聊天事件。"""
     common = _SubagentEventContext(
         delegation_id=activity.delegation_id,
-        analysis_id=activity.analysis_id,
         agent_type=activity.agent_type,
-        session_id=activity.session_id,
     )
     if isinstance(activity, SubagentMessageActivity):
         messages = await project_messages(
@@ -428,17 +395,11 @@ async def subagent_activity_to_event(
 def schema_to_human_message(
     message: chat_schema.UserMessageRequest,
 ) -> HumanMessage:
-    """将用户消息转换为 LangChain 消息。"""
+    """转换用户消息并记录带时区的接收时间，作为模型的时间基准。"""
     content_parts = [part.model_dump() for part in message.parts]
 
-    received_at = datetime.now(UTC)
-    context = UserMessageContext(
-        received_at=received_at,
-    )
     return HumanMessage(
         id=str(uuid.uuid4()),
         content=cast(list[str | dict[Any, Any]], content_parts),
-        additional_kwargs={
-            USER_MESSAGE_CONTEXT_KEY: context.model_dump(mode="json"),
-        },
+        additional_kwargs={"received_at": datetime.now(UTC).isoformat()},
     )

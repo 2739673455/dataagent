@@ -154,7 +154,6 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
             self.locks,
             self.agents,
             MagicMock(),
-            MagicMock(),
             runs=self.runs,
         )
         with patch.object(self.tasks, "generate_title"):

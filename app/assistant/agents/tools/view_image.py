@@ -1,31 +1,17 @@
-"""Agent 工作区图片查看工具及其请求契约。"""
+"""Agent 工作区图片查看工具。"""
 
-from typing import Annotated, Literal
+from typing import Annotated
 
 from langchain.tools import tool
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
-from pydantic import field_validator
+from pydantic import StringConstraints
 
-from app.assistant.execution.types import NonEmptyText, StrictProtocolModel
 from app.sandbox.errors import SandboxPathError
 from app.sandbox.paths import normalize_sandbox_path
 
 IMAGE_VIEW_TOOL_NAME = "view_image"
 _IMAGE_SUFFIXES = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
-
-
-class ImageViewRequest(StrictProtocolModel):
-    """请求附件 Middleware 在下一次模型调用前临时加载一张图片。"""
-
-    type: Literal["image_view_request"] = "image_view_request"
-    f_path: NonEmptyText
-
-    @field_validator("f_path")
-    @classmethod
-    def validate_sandbox_path(cls, value: str) -> str:
-        """按文件工具规则规范化相对路径或绝对路径。"""
-        return normalize_sandbox_path(value)
 
 
 def is_supported_image_path(path: str) -> bool:
@@ -42,7 +28,7 @@ def supports_view_image_tool(model: BaseChatModel) -> bool:
 def create_view_image_tools(model: BaseChatModel) -> tuple[BaseTool, ...]:
     """创建图片查看请求工具。
 
-    工具结果只持久化图片路径。UserMessageContextMiddleware 会在下一次
+    工具结果只持久化图片路径。MessageContextMiddleware 会在下一次
     模型调用前读取该请求，把图片内容临时投影到 ToolMessage 副本中，避免
     base64 图片进入 LangGraph Checkpoint。
     """
@@ -53,8 +39,9 @@ def create_view_image_tools(model: BaseChatModel) -> tuple[BaseTool, ...]:
     @tool(IMAGE_VIEW_TOOL_NAME)
     def view_image(
         f_path: Annotated[
-            NonEmptyText,
-            "图片路径；相对路径从当前 Session 工作目录解析，绝对路径直接使用。",
+            str,
+            StringConstraints(strip_whitespace=True, min_length=1),
+            "图片路径；相对路径从当前会话工作目录解析，绝对路径直接使用。",
         ],
     ) -> dict[str, object]:
         """请求加载沙箱内的图片。"""
@@ -63,13 +50,13 @@ def create_view_image_tools(model: BaseChatModel) -> tuple[BaseTool, ...]:
         except SandboxPathError:
             return {
                 "status": "error",
-                "code": "invalid_path",
+                "message": "图片路径无效，请使用相对当前会话目录的路径或完整绝对路径",
                 "path": f_path,
             }
         if not is_supported_image_path(normalized_path):
             return {
                 "status": "error",
-                "code": "unsupported_image_type",
+                "message": "不支持的图片类型，请使用 PNG、JPEG、GIF、WebP 或 BMP 图片",
                 "path": normalized_path,
             }
         return {"type": "image_view_request", "f_path": normalized_path}

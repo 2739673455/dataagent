@@ -12,6 +12,7 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from io import TextIOWrapper
 from typing import Any, TextIO
+from uuid import UUID, uuid4
 
 from app.query.errors import QueryResultShapeError
 from app.query.models.execution import (
@@ -20,8 +21,7 @@ from app.query.models.execution import (
 )
 from app.query.repositories.doris import DorisQueryRepository
 from app.sandbox.manager import DockerSandboxManager
-from app.sandbox.paths import SandboxSessionScope
-from app.shared.contracts.analysis import AgentSessionKey
+from app.sandbox.paths import conversation_workspace_path
 
 _SAMPLE_STRING_MAX_CHARS = 512
 
@@ -42,20 +42,16 @@ class AnalysisQueryService:
 
     async def execute(
         self,
-        session_key: AgentSessionKey,
+        user_id: int,
+        conversation_id: UUID,
         sql: str,
         *,
         purpose: str,
     ) -> AnalysisQueryResult:
         """执行已校验查询，返回会话产物及结果摘要。"""
-        scope = SandboxSessionScope(
-            session_key.analysis_id,
-            session_key.agent_type,
-            session_key.session_id,
-        )
         normalized = unicodedata.normalize("NFKC", purpose).strip()
         stem = re.sub(r"[\W_]+", "_", normalized).strip("_") or "query_result"
-        relative_path = f"{scope.relative_workspace}/{stem}.csv"
+        relative_path = f"{stem}_{uuid4().hex}.csv"
         with (
             tempfile.TemporaryFile(mode="w+b") as temporary_file,
             TextIOWrapper(temporary_file, encoding="utf-8", newline="") as csv_file,
@@ -67,12 +63,12 @@ class AnalysisQueryService:
             csv_file.flush()
             temporary_file.seek(0)
             await self._artifact_store.write_artifact(
-                session_key.user_id,
-                session_key.conversation_id,
+                user_id,
+                conversation_id,
                 relative_path,
                 temporary_file,
             )
-        workspace = scope.workspace_path(session_key.conversation_id)
+        workspace = conversation_workspace_path(conversation_id)
         result = AnalysisQueryResult(
             path=f"{workspace}/{relative_path.rsplit('/', 1)[-1]}",
             columns=summary.columns,

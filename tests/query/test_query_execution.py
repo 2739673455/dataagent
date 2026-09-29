@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from langchain.tools import ToolRuntime
 
-from app.assistant.agents.explorer.tools.execute_sql import _execute_sql
+from app.assistant.agents.tools.execute_sql import create_execute_sql_tool
 from app.identity import errors as auth_error
 from app.identity.errors import QueryPrincipalNotConfiguredError
 from app.identity.services.identity import IdentityService
@@ -30,7 +30,6 @@ from app.query.repositories.doris import DorisQueryRepository
 from app.query.runtime import DatabaseQueryExecutionRuntime
 from app.query.services.execution_handler import QueryExecutionHandler
 from app.query.services.executor import AnalysisQueryService
-from app.shared.contracts.analysis import AgentSessionKey
 
 
 def valid():
@@ -50,7 +49,7 @@ def result():
 
 
 def key():
-    return AgentSessionKey(7, uuid4(), "sales", "explorer", "daily")
+    return SimpleNamespace(user_id=7, conversation_id=uuid4())
 
 
 class QueryPrincipalTest(unittest.IsolatedAsyncioTestCase):
@@ -86,6 +85,7 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
             create_executor=AsyncMock(return_value=self.service),
         )
         self.handler = QueryExecutionHandler(self.runtime)
+        self.tool = create_execute_sql_tool(self.handler)
         self.tool_runtime = ToolRuntime(
             state={},
             context=None,
@@ -93,8 +93,6 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
                 "configurable": {
                     "user_id": self.key.user_id,
                     "conversation_id": str(self.key.conversation_id),
-                    "analysis_id": self.key.analysis_id,
-                    "session_id": self.key.session_id,
                 }
             },
             stream_writer=lambda _: None,
@@ -104,14 +102,20 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
 
     async def execute(self):
         return await self.handler.execute(
-            self.key, " select 1 as value ", purpose="统计"
+            self.key.user_id,
+            self.key.conversation_id,
+            " select 1 as value ",
+            purpose="统计",
         )
 
     async def test_success_returns_executor_result(self):
         actual = await self.execute()
         self.assertIs(actual, self.service.execute.return_value)
         self.service.execute.assert_awaited_once_with(
-            self.key, self.runtime.validate.return_value.normalized_sql, purpose="统计"
+            self.key.user_id,
+            self.key.conversation_id,
+            self.runtime.validate.return_value.normalized_sql,
+            purpose="统计",
         )
 
     async def test_rejection_never_creates_executor(self):
@@ -120,22 +124,25 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
             await self.execute()
         self.runtime.create_executor.assert_not_awaited()
 
-    async def test_tool_classifies_errors_and_handler_preserves_original_error(self):
-        for error, code in (
-            (QueryRejectedError(rejected()), "sql_validation_failed"),
-            (QueryExecutionTimeoutError("超时"), "query_timeout"),
-            (QueryResultShapeError("列结构错误"), "query_result_invalid"),
-            (OSError("artifact unavailable"), "readonly_query_failed"),
+    async def test_tool_returns_error_details_without_codes_and_handler_preserves_error(
+        self,
+    ):
+        for error in (
+            QueryRejectedError(rejected()),
+            QueryExecutionTimeoutError("超时"),
+            QueryResultShapeError("列结构错误"),
+            OSError("artifact unavailable"),
         ):
-            with self.subTest(code=code):
+            with self.subTest(error=type(error).__name__):
                 self.service.execute.side_effect = error
                 with self.assertRaises(type(error)) as raised:
                     await self.execute()
                 self.assertIs(raised.exception, error)
-                payload = await _execute_sql(
-                    self.handler, self.tool_runtime, "SELECT 1", "统计"
+                payload = await self.tool.ainvoke(
+                    {"runtime": self.tool_runtime, "sql": "SELECT 1", "purpose": "统计"}
                 )
-                self.assertEqual(payload["code"], code)
+                self.assertNotIn("code", payload)
+                self.assertEqual(payload["status"], "error")
                 if isinstance(error, QueryRejectedError):
                     self.assertEqual(
                         payload["validation"], error.result.model_dump(mode="json")
@@ -146,7 +153,9 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
     async def test_cancellation_propagates_through_tool(self):
         self.service.execute.side_effect = asyncio.CancelledError()
         with self.assertRaises(asyncio.CancelledError):
-            await _execute_sql(self.handler, self.tool_runtime, "SELECT 1", "统计")
+            await self.tool.ainvoke(
+                {"runtime": self.tool_runtime, "sql": "SELECT 1", "purpose": "统计"}
+            )
 
     async def test_identity_failure_does_not_execute(self):
         self.runtime.resolve_principal.side_effect = QueryPrincipalNotConfiguredError(
@@ -187,7 +196,12 @@ class QueryExecutorTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def execute(self):
-        return await self.service.execute(self.key, "SELECT 1 AS value", purpose="统计")
+        return await self.service.execute(
+            self.key.user_id,
+            self.key.conversation_id,
+            "SELECT 1 AS value",
+            purpose="统计",
+        )
 
     async def test_multibatch_output_scope_and_bounded_sample(self):
         actual = await self.execute()
@@ -197,11 +211,10 @@ class QueryExecutorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             (user, conversation), (self.key.user_id, self.key.conversation_id)
         )
-        self.assertIn("sales", path)
-        self.assertIn("explorer", path)
-        self.assertIn("daily", path)
-        self.assertEqual(path.rsplit("/", 1)[-1], "统计.csv")
-        self.assertTrue(actual.path.endswith("/统计.csv"))
+        self.assertRegex(path, r"^统计_[a-f0-9]{32}\.csv$")
+        self.assertEqual(actual.path, f"/data/{self.key.conversation_id}/{path}")
+        second = await self.execute()
+        self.assertNotEqual(actual.path, second.path)
         self.assertEqual(
             list(csv.reader(io.StringIO(content.decode()))),
             [["value"], ["1"], ["2"], ["3"]],
@@ -359,7 +372,7 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 clients,
             )
             actual = await QueryExecutionHandler(runtime).execute(
-                key(), "SELECT 1", purpose="统计"
+                7, uuid4(), "SELECT 1", purpose="统计"
             )
         self.assertEqual(actual.row_count, 1)
         repo.get_user_by_id.assert_awaited_once_with(7)

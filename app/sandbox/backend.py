@@ -34,7 +34,6 @@ from app.sandbox.ownership import SandboxOwnership
 from app.sandbox.paths import (
     SANDBOX_DATA_ROOT,
     SANDBOX_STAGING_ROOT,
-    SandboxSessionScope,
     conversation_workspace_path,
     resolve_sandbox_path,
 )
@@ -65,7 +64,7 @@ def _close_exec_stream(stream: object) -> None:
 
 
 class DockerSandboxBackend(BaseSandbox):
-    """在一个用户容器中执行受 Conversation 和 Session 隔离的操作。"""
+    """在一个用户容器中执行受 Conversation 隔离的操作。"""
 
     def __init__(
         self,
@@ -76,26 +75,18 @@ class DockerSandboxBackend(BaseSandbox):
         ownership: SandboxOwnership,
         touch: Callable[[], None],
         get_running_container: Callable[[threading.Event | None], Container],
-        *,
-        session_scope: SandboxSessionScope | None = None,
-        execution_uid: int | None = None,
     ) -> None:
         """初始化会话级 Docker 沙箱后端。"""
         self._user_id = user_id
         self._conversation_id = conversation_id
         self._conversation_dir = conversation_workspace_path(conversation_id)
-        self._session_scope = session_scope
-        self._workspace_dir = (
-            session_scope.workspace_path(conversation_id)
-            if session_scope is not None
-            else self._conversation_dir
-        )
+        self._workspace_dir = self._conversation_dir
         self._conversation_uid = conversation_uid
-        self._execution_uid = execution_uid or conversation_uid
+        self._execution_uid = conversation_uid
         self._execution_gid = conversation_uid
-        self._file_mode = 0o640 if session_scope is not None else 0o600
-        self._directory_mode = 0o750 if session_scope is not None else 0o700
-        self._umask = 0o027 if session_scope is not None else 0o077
+        self._file_mode = 0o600
+        self._directory_mode = 0o700
+        self._umask = 0o077
         self._internal_command_timeout_seconds = (
             sandbox_config.internal_command_timeout_seconds
         )
@@ -122,12 +113,7 @@ class DockerSandboxBackend(BaseSandbox):
     @property
     def id(self) -> str:
         """获取沙箱后端唯一标识。"""
-        scope = (
-            f":{self._session_scope.relative_workspace}"
-            if self._session_scope is not None
-            else ""
-        )
-        return f"docker:{self._user_id}:{self._conversation_id}{scope}"
+        return f"docker:{self._user_id}:{self._conversation_id}"
 
     @property
     def workspace_dir(self) -> str:

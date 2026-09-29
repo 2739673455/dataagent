@@ -12,8 +12,9 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 from pydantic import BaseModel, ValidationError
 
-from app.assistant.agents.explorer.tools import create_semantic_recall_tool
-from app.assistant.agents.explorer.tools.semantic_recall import _recall_context
+from app.assistant.agents.tools.semantic_recall import (
+    create_semantic_recall_tool,
+)
 from app.metadata.models.search import (
     SemanticColumnRecallResult,
     SemanticMetricRecallResult,
@@ -206,9 +207,32 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
     async def test_search_failure_returns_error(self):
         runtime = MagicMock(spec=SemanticRecallHandler)
         runtime.search = AsyncMock(side_effect=RuntimeError("检索不可用"))
-        result = await _recall_context(
-            {"configurable": {"user_id": 7}}, ["column"], ["金额"], 5, recall=runtime
+        tool = create_semantic_recall_tool(runtime)
+        builder = StateGraph(MessagesState)
+        builder.add_node("tools", ToolNode([tool]))
+        builder.add_edge(START, "tools")
+        builder.add_edge("tools", END)
+        output = await builder.compile().ainvoke(
+            {
+                "messages": [
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "failed-search",
+                                "name": "recall_context",
+                                "args": {
+                                    "resource_types": ["column"],
+                                    "terms": ["金额"],
+                                },
+                            }
+                        ],
+                    )
+                ]
+            },
+            {"configurable": {"user_id": 7}},
         )
+        result = json.loads(output["messages"][-1].content)
         self.assertEqual(result["status"], "error")
         self.assertEqual(result["details"][0]["msg"], "检索不可用")
 
