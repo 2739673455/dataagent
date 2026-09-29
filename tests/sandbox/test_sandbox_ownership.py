@@ -24,7 +24,7 @@ def test_manager_only_finalizes_containers_for_last_runtime() -> None:
 
     async def run(last_runtime: bool) -> int:
         ownership = FakeSandboxOwnership(last_runtime=last_runtime)
-        manager = DockerSandboxManager(ownership, ())
+        manager = DockerSandboxManager(ownership=ownership)
         manager._client = MagicMock()
         manager._ownership_started = True
         with (

@@ -33,7 +33,7 @@ from app.assistant.models import chat as chat_schema
 
 if TYPE_CHECKING:
     from app.assistant.agents.manager import AgentManager
-    from app.sandbox.manager import DockerSandboxManager
+    from app.sandbox import DockerSandboxManager
 
 type ConversationRunKey = tuple[int, UUID]
 type RunEvent = chat_schema.ChatStreamEventPayload

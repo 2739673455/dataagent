@@ -13,11 +13,7 @@ class SandboxDeletedError(RuntimeError):
     """沙箱资源已被删除。"""
 
 
-class SandboxCapacityError(RuntimeError):
-    """沙箱运行容量不可用。"""
-
-
-class SandboxCapacityUnavailableError(SandboxCapacityError):
+class SandboxCapacityUnavailableError(RuntimeError):
     """运行容器已满且没有可回收的空闲容器。"""
 
 

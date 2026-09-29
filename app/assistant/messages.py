@@ -21,11 +21,10 @@ from langchain_core.messages import (
 from loguru import logger
 
 from app.assistant.models import chat as chat_schema
-from app.sandbox.errors import SandboxPathError
-from app.sandbox.paths import conversation_relative_path
+from app.sandbox import SandboxPathError, conversation_relative_path
 
 if TYPE_CHECKING:
-    from app.sandbox.manager import DockerSandboxManager
+    from app.sandbox import DockerSandboxManager
 
 _ARTIFACT_DIRECTIVE_PATTERN = re.compile(
     r"^[ ]{0,3}\[\[DATAAGENT_ARTIFACT:(/[^\r\n]+?)\]\][\t ]*$"

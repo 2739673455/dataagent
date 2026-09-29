@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from pydantic import SecretStr
 
 from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.config.app_config import EmbeddingConfig
@@ -30,7 +31,7 @@ from app.shared.config.app_config import EmbeddingConfig
 def test_embedding_request_preserves_order_and_checks_count(payload, error):
     config = EmbeddingConfig(
         base_url="https://example.invalid/v1",
-        api_key="secret",
+        api_key=SecretStr("secret"),
         model="embedding",
         timeout=10,
     )

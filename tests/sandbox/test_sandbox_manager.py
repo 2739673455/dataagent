@@ -13,10 +13,7 @@ from tests.sandbox.fakes import FakeSandboxOwnership
 
 def _manager() -> tuple[DockerSandboxManager, MagicMock, MagicMock]:
     """构造已经完成初始化的沙箱管理器。"""
-    manager = DockerSandboxManager(
-        FakeSandboxOwnership(),
-        (),
-    )
+    manager = DockerSandboxManager(ownership=FakeSandboxOwnership())
     client = MagicMock()
     archive = MagicMock()
     manager._client = client
@@ -55,7 +52,7 @@ def _delete_conversation(
         try:
             await manager.delete_conversation(7, conversation_id)
         finally:
-            await manager.disconnect()
+            await manager._close(finalize_containers=False)
 
     with patch("app.sandbox.manager.asyncio.to_thread", side_effect=run_inline):
         asyncio.run(run())
@@ -124,7 +121,7 @@ def test_init_cancellation_waits_for_thread_then_releases_resources() -> None:
 
     import pytest
 
-    manager = DockerSandboxManager(FakeSandboxOwnership(), ())
+    manager = DockerSandboxManager(ownership=FakeSandboxOwnership())
     client = MagicMock()
     started, finish = Event(), Event()
 
@@ -157,7 +154,7 @@ def test_init_failure_closes_client_created_before_reconcile() -> None:
     """Docker 已连接但运行时校验失败时，客户端仍被关闭。"""
     import pytest
 
-    manager = DockerSandboxManager(FakeSandboxOwnership(), ())
+    manager = DockerSandboxManager(ownership=FakeSandboxOwnership())
     client = MagicMock()
 
     def initialize() -> None:

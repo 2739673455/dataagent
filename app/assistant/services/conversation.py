@@ -18,12 +18,12 @@ from app.assistant.messages import project_messages
 from app.assistant.models import chat as chat_schema
 from app.assistant.repositories.conversation import ConversationPGRepo
 from app.assistant.services.run import ConversationRunService
-from app.sandbox.errors import SandboxFileTooLargeError, SandboxPathError
+from app.sandbox import SandboxFileTooLargeError, SandboxPathError
 
 if TYPE_CHECKING:
     from app.assistant.agents.manager import AgentManager
     from app.assistant.services.tasks import ConversationTasks
-    from app.sandbox.manager import DockerSandboxManager
+    from app.sandbox import DockerSandboxManager
 
 _DRAFT_TTL_MINUTES = 1440
 _CLEANUP_BATCH_SIZE = 100

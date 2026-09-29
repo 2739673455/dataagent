@@ -13,14 +13,14 @@ doris: # Doris 管理连接，用于角色权限管理等平台操作。
   password: ${oc.env:DORIS_ADMIN_PASSWORD} # 连接密码，使用环境变量注入。
   database: ecommerce # 默认连接数据库。
 
-auth_postgresql: # 用户、令牌、Doris 查询身份、权限指纹和注销任务数据库。
+auth_postgresql: # 用户与加密的 Doris 查询凭据数据库。
   host: 127.0.0.1
   port: 5432
   user: atguigu
   password: ${oc.env:POSTGRES_PASSWORD}
   database: auth
 
-meta_postgresql: # 元数据、执行记录和召回快照数据库。
+meta_postgresql: # 元数据目录、字段关联和取值水位数据库。
   host: 127.0.0.1
   port: 5432
   user: atguigu

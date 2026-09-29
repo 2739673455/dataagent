@@ -9,8 +9,10 @@ import secrets
 import shlex
 import tarfile
 import threading
+import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
+from dataclasses import replace
 from typing import BinaryIO, TypeVar
 from uuid import UUID
 
@@ -28,8 +30,10 @@ from deepagents.backends.protocol import (
 from deepagents.backends.sandbox import BaseSandbox
 from docker.errors import APIError, NotFound
 from docker.models.containers import Container
+from loguru import logger
 
 from app.sandbox import constants
+from app.sandbox.docker_stream import close_exec_stream
 from app.sandbox.errors import SandboxPathError
 from app.sandbox.ownership import SandboxOwnership
 from app.sandbox.paths import (
@@ -42,25 +46,11 @@ from app.sandbox.scripts import (
     _COMMIT_UPLOAD_SCRIPT,
     _LARGE_EDIT_SCRIPT,
 )
-from app.sandbox.shell_runner import DockerShellJobRunner
+from app.sandbox.shell_runner import DockerShellJobRunner, ShellResult
 
 _ResultT = TypeVar("_ResultT")
-_SANDBOX_STAGING_ROOT = SANDBOX_STAGING_ROOT
 _INLINE_OUTPUT_BYTES = 80_000
-_SHELL_JOB_CANCEL_GRACE_SECONDS = 1.0
 _OUTPUT_TRUNCATION_MARKER = b"\n...[middle output truncated]...\n"
-
-
-def _close_exec_stream(stream: object) -> None:
-    """关闭 Docker exec 流及其底层 HTTP 响应。"""
-    close_stream = getattr(stream, "close", None)
-    if callable(close_stream):
-        close_stream()
-    # Docker SDK 的可取消流持有 Response；显式关闭它可在提前取消时及时归还连接。
-    response = getattr(stream, "_response", None)
-    close_response = getattr(response, "close", None)
-    if callable(close_response):
-        close_response()
 
 
 class DockerSandboxBackend(BaseSandbox):
@@ -88,7 +78,7 @@ class DockerSandboxBackend(BaseSandbox):
             constants.INTERNAL_COMMAND_TIMEOUT_SECONDS
         )
         self._staging_dir = posixpath.join(
-            _SANDBOX_STAGING_ROOT,
+            SANDBOX_STAGING_ROOT,
             str(conversation_id),
             str(self._execution_uid),
         )
@@ -97,15 +87,7 @@ class DockerSandboxBackend(BaseSandbox):
         self._touch = touch
         self._get_running_container = get_running_container
         self._operation_local = threading.local()
-        self.shell_jobs = DockerShellJobRunner(self)
-
-    @property
-    def _container(self) -> Container:
-        """获取当前操作持有的容器实例。"""
-        container = getattr(self._operation_local, "container", None)
-        if container is None:
-            raise RuntimeError("Docker 容器仅在操作期间可用")
-        return container
+        self._shell_jobs = DockerShellJobRunner(self)
 
     @property
     def id(self) -> str:
@@ -116,6 +98,256 @@ class DockerSandboxBackend(BaseSandbox):
     def workspace_dir(self) -> str:
         """获取会话在容器中的实际工作目录。"""
         return self._workspace_dir
+
+    def execute(
+        self,
+        command: str,
+        *,
+        timeout: int | None = None,
+    ) -> ExecuteResponse:
+        """在用户容器的当前会话目录中执行命令。"""
+        with self._operation():
+            return self._execute_unlocked(command, timeout=timeout)
+
+    async def aexecute(
+        self,
+        command: str,
+        *,
+        timeout: int | None = None,
+    ) -> ExecuteResponse:
+        """异步执行命令并支持取消容量等待。"""
+        return await self._run_async(lambda: self.execute(command, timeout=timeout))
+
+    async def run_shell(self, command: str) -> ShellResult:
+        """等待 Shell 完成，管理任务清理，并为截断输出返回完整日志路径。"""
+        job_id = f"job_{secrets.token_hex(4)}"
+        keep_log = False
+        try:
+            result = await self._shell_jobs.arun(job_id, command)
+            keep_log = result.output_inline_truncated
+            if keep_log:
+                result = replace(
+                    result,
+                    output_path=f"{self.workspace_dir}/large_tool_results/shell_jobs/{job_id}.log",
+                )
+            return result
+        finally:
+            try:
+                await self._shell_jobs.acleanup(job_id, remove_log=not keep_log)
+            except Exception:  # noqa: BLE001
+                logger.exception("清理 Shell 临时文件失败: job_id={}", job_id)
+
+    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        """读取当前会话文件。"""
+        with self._resolved_operation(file_path) as resolved_path:
+            if resolved_path is None:
+                return ReadResult(error=INVALID_PATH)
+            result = super().read(resolved_path, offset, limit)
+            result.error = self._sanitize_output(result.error)
+            return result
+
+    async def aread(
+        self,
+        file_path: str,
+        offset: int = 0,
+        limit: int = 2000,
+    ) -> ReadResult:
+        """异步读取当前会话文件。"""
+        return await self._run_async(lambda: self.read(file_path, offset, limit))
+
+    def write(self, file_path: str, content: str) -> WriteResult:
+        """写入当前会话文件。"""
+        with self._resolved_operation(file_path, mutation=True) as resolved_path:
+            if resolved_path is None:
+                return WriteResult(error=INVALID_PATH)
+            preflight_error = self._write_preflight(resolved_path)
+            if preflight_error is not None:
+                preflight_error.error = self._sanitize_output(preflight_error.error)
+                return preflight_error
+            response = self.upload_fileobj(
+                resolved_path,
+                io.BytesIO(content.encode()),
+            )
+            if response.error:
+                return WriteResult(
+                    error=f"写入文件 '{file_path}' 失败: {response.error}"
+                )
+            return WriteResult(path=resolved_path)
+
+    async def awrite(self, file_path: str, content: str) -> WriteResult:
+        """异步写入当前会话文件。"""
+        return await self._run_async(lambda: self.write(file_path, content))
+
+    def edit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> EditResult:
+        """编辑当前会话文件。"""
+        with self._resolved_operation(file_path, mutation=True) as resolved_path:
+            if resolved_path is None:
+                return EditResult(error=INVALID_PATH)
+            result = self._edit_file(
+                resolved_path,
+                old_string,
+                new_string,
+                replace_all,
+            )
+            return EditResult(
+                error=self._sanitize_output(result.error),
+                path=result.path,
+                occurrences=result.occurrences,
+            )
+
+    async def aedit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> EditResult:
+        """异步编辑当前会话文件。"""
+        return await self._run_async(
+            lambda: self.edit(
+                file_path,
+                old_string,
+                new_string,
+                replace_all,
+            )
+        )
+
+    def upload_fileobj(self, path: str, content: BinaryIO) -> FileUploadResponse:
+        """上传文件对象到当前会话。"""
+        try:
+            resolved_path = self._resolve_mutation_path(path)
+            with self._operation():
+                content.seek(0, io.SEEK_END)
+                size = content.tell()
+                content.seek(0)
+                if size > self._max_file_bytes:
+                    return FileUploadResponse(
+                        path=path,
+                        error=f"file_too_large:{self._max_file_bytes}",
+                    )
+                self._put_archive(resolved_path, content, size)
+        except SandboxPathError:
+            return FileUploadResponse(path=path, error=INVALID_PATH)
+        except (APIError, OSError, tarfile.TarError) as exc:
+            return FileUploadResponse(path=path, error=str(exc))
+        return FileUploadResponse(path=path)
+
+    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+        """批量上传字节内容到当前会话。"""
+        return [
+            self.upload_fileobj(path, io.BytesIO(content)) for path, content in files
+        ]
+
+    async def aupload_files(
+        self,
+        files: list[tuple[str, bytes]],
+    ) -> list[FileUploadResponse]:
+        """异步批量上传字节内容到当前会话。"""
+        return await self._run_async(lambda: self.upload_files(files))
+
+    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        """批量下载当前会话文件。"""
+        responses: list[FileDownloadResponse] = []
+        with self._operation():
+            for path in paths:
+                try:
+                    resolved_path = self._resolve_path(path)
+                    inspect_result = self._execute_unlocked(
+                        f"if [ -d {shlex.quote(resolved_path)} ]; then exit 45; "
+                        f"elif [ ! -f {shlex.quote(resolved_path)} ]; then exit 44; "
+                        f"else stat -c %s -- {shlex.quote(resolved_path)}; fi"
+                    )
+                    if inspect_result.exit_code == 44:
+                        responses.append(
+                            FileDownloadResponse(path=path, error=FILE_NOT_FOUND)
+                        )
+                        continue
+                    if inspect_result.exit_code == 45:
+                        responses.append(
+                            FileDownloadResponse(path=path, error=IS_DIRECTORY)
+                        )
+                        continue
+                    if inspect_result.exit_code != 0:
+                        responses.append(
+                            FileDownloadResponse(
+                                path=path,
+                                error=inspect_result.output.strip()
+                                or "failed_to_inspect_file",
+                            )
+                        )
+                        continue
+                    try:
+                        size = int(inspect_result.output.strip())
+                    except ValueError:
+                        responses.append(
+                            FileDownloadResponse(
+                                path=path,
+                                error="invalid_file_size_response",
+                            )
+                        )
+                        continue
+                    if size > self._max_file_bytes:
+                        responses.append(
+                            FileDownloadResponse(
+                                path=path,
+                                error=f"file_too_large:{self._max_file_bytes}",
+                            )
+                        )
+                        continue
+                    # stat 与读取之间文件可能变化，读取后再次校验长度才能守住上限。
+                    content, exit_code = self._read_limited_file_bytes_unlocked(
+                        resolved_path, self._max_file_bytes + 1
+                    )
+                    if len(content) > self._max_file_bytes:
+                        responses.append(
+                            FileDownloadResponse(
+                                path=path,
+                                error=f"file_too_large:{self._max_file_bytes}",
+                            )
+                        )
+                        continue
+                    if exit_code != 0:
+                        responses.append(
+                            FileDownloadResponse(
+                                path=path,
+                                error=content.decode("utf-8", errors="replace").strip()
+                                or "failed_to_read_file",
+                            )
+                        )
+                        continue
+                    responses.append(FileDownloadResponse(path=path, content=content))
+                except SandboxPathError:
+                    responses.append(
+                        FileDownloadResponse(path=path, error=INVALID_PATH)
+                    )
+                except NotFound:
+                    responses.append(
+                        FileDownloadResponse(path=path, error=FILE_NOT_FOUND)
+                    )
+                except (APIError, OSError) as exc:
+                    responses.append(FileDownloadResponse(path=path, error=str(exc)))
+        return responses
+
+    async def adownload_files(
+        self,
+        paths: list[str],
+    ) -> list[FileDownloadResponse]:
+        """异步批量下载当前会话文件。"""
+        return await self._run_async(lambda: self.download_files(paths))
+
+    @property
+    def _container(self) -> Container:
+        """获取当前操作持有的容器实例。"""
+        container = getattr(self._operation_local, "container", None)
+        if container is None:
+            raise RuntimeError("Docker 容器仅在操作期间可用")
+        return container
 
     def _resolve_path(self, path: str) -> str:
         """按 execute 的工作目录语义解析文件工具路径。"""
@@ -269,7 +501,7 @@ class DockerSandboxBackend(BaseSandbox):
                     del output_tail[:overflow]
                 output_tail.extend(chunk)
         finally:
-            _close_exec_stream(output_stream)
+            close_exec_stream(output_stream)
 
         inspected = api_client.exec_inspect(exec_id)
         output_truncated = output_size > _INLINE_OUTPUT_BYTES
@@ -283,89 +515,6 @@ class DockerSandboxBackend(BaseSandbox):
             exit_code=inspected.get("ExitCode"),
             truncated=output_truncated,
         )
-
-    def execute(
-        self,
-        command: str,
-        *,
-        timeout: int | None = None,
-    ) -> ExecuteResponse:
-        """在用户容器的当前会话目录中执行命令。"""
-        with self._operation():
-            return self._execute_unlocked(command, timeout=timeout)
-
-    async def aexecute(
-        self,
-        command: str,
-        *,
-        timeout: int | None = None,
-    ) -> ExecuteResponse:
-        """异步执行命令并支持取消容量等待。"""
-        return await self._run_async(lambda: self.execute(command, timeout=timeout))
-
-    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
-        """读取当前会话文件。"""
-        with self._resolved_operation(file_path) as resolved_path:
-            if resolved_path is None:
-                return ReadResult(error=INVALID_PATH)
-            result = super().read(resolved_path, offset, limit)
-            result.error = self._sanitize_output(result.error)
-            return result
-
-    async def aread(
-        self,
-        file_path: str,
-        offset: int = 0,
-        limit: int = 2000,
-    ) -> ReadResult:
-        """异步读取当前会话文件。"""
-        return await self._run_async(lambda: self.read(file_path, offset, limit))
-
-    def write(self, file_path: str, content: str) -> WriteResult:
-        """写入当前会话文件。"""
-        with self._resolved_operation(file_path, mutation=True) as resolved_path:
-            if resolved_path is None:
-                return WriteResult(error=INVALID_PATH)
-            preflight_error = self._write_preflight(resolved_path)
-            if preflight_error is not None:
-                preflight_error.error = self._sanitize_output(preflight_error.error)
-                return preflight_error
-            response = self.upload_fileobj(
-                resolved_path,
-                io.BytesIO(content.encode()),
-            )
-            if response.error:
-                return WriteResult(
-                    error=f"写入文件 '{file_path}' 失败: {response.error}"
-                )
-            return WriteResult(path=resolved_path)
-
-    async def awrite(self, file_path: str, content: str) -> WriteResult:
-        """异步写入当前会话文件。"""
-        return await self._run_async(lambda: self.write(file_path, content))
-
-    def edit(
-        self,
-        file_path: str,
-        old_string: str,
-        new_string: str,
-        replace_all: bool = False,
-    ) -> EditResult:
-        """编辑当前会话文件。"""
-        with self._resolved_operation(file_path, mutation=True) as resolved_path:
-            if resolved_path is None:
-                return EditResult(error=INVALID_PATH)
-            result = self._edit_file(
-                resolved_path,
-                old_string,
-                new_string,
-                replace_all,
-            )
-            return EditResult(
-                error=self._sanitize_output(result.error),
-                path=result.path,
-                occurrences=result.occurrences,
-            )
 
     def _edit_file(
         self,
@@ -417,23 +566,6 @@ class DockerSandboxBackend(BaseSandbox):
             return EditResult(error=f"编辑文件 '{file_path}' 失败: {error}")
         return EditResult(path=file_path, occurrences=response.get("count", 1))
 
-    async def aedit(
-        self,
-        file_path: str,
-        old_string: str,
-        new_string: str,
-        replace_all: bool = False,
-    ) -> EditResult:
-        """异步编辑当前会话文件。"""
-        return await self._run_async(
-            lambda: self.edit(
-                file_path,
-                old_string,
-                new_string,
-                replace_all,
-            )
-        )
-
     def _put_archive(self, path: str, content: BinaryIO, size: int) -> None:
         """先写入受保护的暂存目录，再提交到当前可写根。"""
         relative_target = posixpath.relpath(path, self._workspace_dir)
@@ -447,6 +579,7 @@ class DockerSandboxBackend(BaseSandbox):
             with io.BytesIO() as archive_buffer:
                 with tarfile.open(fileobj=archive_buffer, mode="w") as archive:
                     info = tarfile.TarInfo(name=staging_name)
+                    info.mtime = int(time.time())
                     info.size = size
                     info.mode = 0o600
                     info.uid = 0
@@ -529,129 +662,6 @@ class DockerSandboxBackend(BaseSandbox):
             for chunk in output_stream:
                 output.extend(chunk)
         finally:
-            _close_exec_stream(output_stream)
+            close_exec_stream(output_stream)
         inspected = api_client.exec_inspect(exec_id)
         return bytes(output), inspected.get("ExitCode")
-
-    def upload_fileobj(self, path: str, content: BinaryIO) -> FileUploadResponse:
-        """上传文件对象到当前会话。"""
-        try:
-            resolved_path = self._resolve_mutation_path(path)
-            with self._operation():
-                content.seek(0, io.SEEK_END)
-                size = content.tell()
-                content.seek(0)
-                if size > self._max_file_bytes:
-                    return FileUploadResponse(
-                        path=path,
-                        error=f"file_too_large:{self._max_file_bytes}",
-                    )
-                self._put_archive(resolved_path, content, size)
-        except SandboxPathError:
-            return FileUploadResponse(path=path, error=INVALID_PATH)
-        except (APIError, OSError, tarfile.TarError) as exc:
-            return FileUploadResponse(path=path, error=str(exc))
-        return FileUploadResponse(path=path)
-
-    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
-        """批量上传字节内容到当前会话。"""
-        return [
-            self.upload_fileobj(path, io.BytesIO(content)) for path, content in files
-        ]
-
-    async def aupload_files(
-        self,
-        files: list[tuple[str, bytes]],
-    ) -> list[FileUploadResponse]:
-        """异步批量上传字节内容到当前会话。"""
-        return await self._run_async(lambda: self.upload_files(files))
-
-    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
-        """批量下载当前会话文件。"""
-        responses: list[FileDownloadResponse] = []
-        with self._operation():
-            for path in paths:
-                try:
-                    resolved_path = self._resolve_path(path)
-                    inspect_result = self._execute_unlocked(
-                        f"if [ -d {shlex.quote(resolved_path)} ]; then exit 45; "
-                        f"elif [ ! -f {shlex.quote(resolved_path)} ]; then exit 44; "
-                        f"else stat -c %s -- {shlex.quote(resolved_path)}; fi"
-                    )
-                    if inspect_result.exit_code == 44:
-                        responses.append(
-                            FileDownloadResponse(path=path, error=FILE_NOT_FOUND)
-                        )
-                        continue
-                    if inspect_result.exit_code == 45:
-                        responses.append(
-                            FileDownloadResponse(path=path, error=IS_DIRECTORY)
-                        )
-                        continue
-                    if inspect_result.exit_code != 0:
-                        responses.append(
-                            FileDownloadResponse(
-                                path=path,
-                                error=inspect_result.output.strip()
-                                or "failed_to_inspect_file",
-                            )
-                        )
-                        continue
-                    try:
-                        size = int(inspect_result.output.strip())
-                    except ValueError:
-                        responses.append(
-                            FileDownloadResponse(
-                                path=path,
-                                error="invalid_file_size_response",
-                            )
-                        )
-                        continue
-                    if size > self._max_file_bytes:
-                        responses.append(
-                            FileDownloadResponse(
-                                path=path,
-                                error=f"file_too_large:{self._max_file_bytes}",
-                            )
-                        )
-                        continue
-                    # stat 与读取之间文件可能变化，读取后再次校验长度才能守住上限。
-                    content, exit_code = self._read_limited_file_bytes_unlocked(
-                        resolved_path, self._max_file_bytes + 1
-                    )
-                    if len(content) > self._max_file_bytes:
-                        responses.append(
-                            FileDownloadResponse(
-                                path=path,
-                                error=f"file_too_large:{self._max_file_bytes}",
-                            )
-                        )
-                        continue
-                    if exit_code != 0:
-                        responses.append(
-                            FileDownloadResponse(
-                                path=path,
-                                error=content.decode("utf-8", errors="replace").strip()
-                                or "failed_to_read_file",
-                            )
-                        )
-                        continue
-                    responses.append(FileDownloadResponse(path=path, content=content))
-                except SandboxPathError:
-                    responses.append(
-                        FileDownloadResponse(path=path, error=INVALID_PATH)
-                    )
-                except NotFound:
-                    responses.append(
-                        FileDownloadResponse(path=path, error=FILE_NOT_FOUND)
-                    )
-                except (APIError, OSError) as exc:
-                    responses.append(FileDownloadResponse(path=path, error=str(exc)))
-        return responses
-
-    async def adownload_files(
-        self,
-        paths: list[str],
-    ) -> list[FileDownloadResponse]:
-        """异步批量下载当前会话文件。"""
-        return await self._run_async(lambda: self.download_files(paths))

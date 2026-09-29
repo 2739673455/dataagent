@@ -6,6 +6,7 @@ import json
 import posixpath
 import tarfile
 import tempfile
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -83,8 +84,201 @@ class SandboxArchiveStore:
         """初始化单文件大小限制。"""
         self._max_file_bytes = max_file_bytes
 
+    def ensure_workspace(
+        self,
+        container: Container,
+        conversation_id: UUID,
+        registry: _UidRegistry | None = None,
+    ) -> int:
+        """创建会话工作区并返回稳定 UID。"""
+        self._put(
+            container,
+            SANDBOX_DATA_ROOT,
+            [
+                (PurePosixPath(SANDBOX_STAGING_ROOT).name, 0, 0, 0o700),
+            ],
+            [],
+        )
+        registry = registry or self._load_registry(container)
+        key = str(conversation_id)
+        conversation_uid = registry.conversations.get(key)
+        if conversation_uid is None:
+            conversation_uid = self._allocate_uid(
+                conversation_id.bytes,
+                set(registry.conversations.values()),
+            )
+            registry.conversations[key] = conversation_uid
+            self._write_registry(container, registry)
+
+        target_path = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
+        existing = self._inspect_path(container, target_path)
+        if existing is not None and (
+            not existing.isdir() or existing.uid != conversation_uid
+        ):
+            raise RuntimeError("对话工作区所有者与 UID 注册表不一致")
+
+        conversation_name = str(conversation_id)
+        self._put(
+            container,
+            SANDBOX_DATA_ROOT,
+            [
+                (conversation_name, conversation_uid, conversation_uid, 0o750),
+                (
+                    f"{conversation_name}/.home",
+                    conversation_uid,
+                    conversation_uid,
+                    0o700,
+                ),
+                (
+                    f"{conversation_name}/.cache",
+                    conversation_uid,
+                    conversation_uid,
+                    0o700,
+                ),
+                (
+                    f"{conversation_name}/.cache/uv",
+                    conversation_uid,
+                    conversation_uid,
+                    0o700,
+                ),
+                (
+                    f"{conversation_name}/.tmp",
+                    conversation_uid,
+                    conversation_uid,
+                    0o700,
+                ),
+            ],
+            [],
+        )
+        self._put(
+            container,
+            SANDBOX_STAGING_ROOT,
+            [
+                (conversation_name, 0, 0, 0o700),
+                (f"{conversation_name}/{conversation_uid}", 0, 0, 0o700),
+            ],
+            [],
+        )
+        return conversation_uid
+
+    def upload_file(
+        self,
+        container: Container,
+        conversation_id: UUID,
+        relative_path: str,
+        content: BinaryIO,
+    ) -> None:
+        """上传并校验会话文件。"""
+        registry = self._load_registry(container)
+        conversation_uid = self.ensure_workspace(container, conversation_id, registry)
+        content.seek(0, io.SEEK_END)
+        size = content.tell()
+        content.seek(0)
+        if size > self._max_file_bytes:
+            raise SandboxFileTooLargeError(
+                f"文件大小超出限制: {size} > {self._max_file_bytes}"
+            )
+        directories, _ = self._validate_target(
+            container,
+            conversation_id,
+            conversation_uid,
+            relative_path,
+        )
+        workspace = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
+        self._put(
+            container,
+            workspace,
+            directories,
+            [
+                (
+                    relative_path,
+                    conversation_uid,
+                    conversation_uid,
+                    0o640,
+                    content,
+                    size,
+                )
+            ],
+        )
+        written = self._inspect_path(
+            container, posixpath.join(workspace, relative_path)
+        )
+        if (
+            written is None
+            or not written.isreg()
+            or written.uid != conversation_uid
+            or written.size != size
+        ):
+            raise OSError("上传附件未通过校验")
+
+    def download_file(
+        self,
+        container: Container,
+        conversation_id: UUID,
+        relative_path: str,
+    ) -> bytes:
+        """下载并校验会话文件。"""
+        registry = self._load_registry(container)
+        conversation_uid = self._existing_workspace_uid(
+            container, conversation_id, registry
+        )
+        if conversation_uid is None:
+            raise FileNotFoundError(relative_path)
+        self._validate_target(
+            container, conversation_id, conversation_uid, relative_path
+        )
+        workspace = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
+        content, member = self._read_file(
+            container,
+            posixpath.join(workspace, relative_path),
+            self._max_file_bytes,
+        )
+        if member.uid != conversation_uid or member.gid != conversation_uid:
+            raise FileNotFoundError(relative_path)
+        return content
+
+    def is_downloadable_file(
+        self,
+        container: Container,
+        conversation_id: UUID,
+        relative_path: str,
+    ) -> bool:
+        """检查路径是否为当前会话可下载的普通文件。"""
+        target = self._accessible_file(container, conversation_id, relative_path)
+        return target is not None and target.size <= self._max_file_bytes
+
+    def delete_conversation(
+        self,
+        container: Container,
+        conversation_id: UUID,
+    ) -> None:
+        """删除会话工作区并更新 UID 注册表。"""
+        registry = self._load_registry(container)
+        result = container.exec_run(
+            [
+                "rm",
+                "-rf",
+                "--",
+                f"{SANDBOX_DATA_ROOT}/{conversation_id}",
+                posixpath.join(SANDBOX_STAGING_ROOT, str(conversation_id)),
+            ],
+            user="0",
+            privileged=True,
+            workdir=SANDBOX_DATA_ROOT,
+        )
+        if result.exit_code != 0:
+            raw_output = result.output or b""
+            detail = (
+                raw_output.decode("utf-8", errors="replace")
+                if isinstance(raw_output, bytes)
+                else str(raw_output)
+            ).strip()
+            raise OSError(detail or "删除对话沙箱失败")
+        registry.conversations.pop(str(conversation_id), None)
+        self._write_registry(container, registry)
+
     @contextmanager
-    def open_archive(
+    def _open_archive(
         self,
         container: Container,
         path: str,
@@ -99,22 +293,22 @@ class SandboxArchiveStore:
         finally:
             buffered_reader.close()
 
-    def inspect_path(self, container: Container, path: str) -> tarfile.TarInfo | None:
+    def _inspect_path(self, container: Container, path: str) -> tarfile.TarInfo | None:
         """读取容器路径对应的首个 archive 条目。"""
         try:
-            with self.open_archive(container, path) as archive:
+            with self._open_archive(container, path) as archive:
                 return next(iter(archive), None)
         except NotFound:
             return None
 
-    def read_file(
+    def _read_file(
         self,
         container: Container,
         path: str,
         max_bytes: int,
     ) -> tuple[bytes, tarfile.TarInfo]:
         """从容器读取一个限长普通文件。"""
-        with self.open_archive(container, path) as archive:
+        with self._open_archive(container, path) as archive:
             member = next(iter(archive), None)
             if member is None or not member.isreg():
                 raise FileNotFoundError(path)
@@ -130,7 +324,7 @@ class SandboxArchiveStore:
                 raise SandboxFileTooLargeError(f"文件大小超出限制: > {max_bytes}")
             return content, member
 
-    def put(
+    def _put(
         self,
         container: Container,
         base_path: str,
@@ -142,6 +336,7 @@ class SandboxArchiveStore:
             with tarfile.open(fileobj=buffer, mode="w") as archive:
                 for name, owner_uid, owner_gid, mode in directories:
                     info = tarfile.TarInfo(name=name.rstrip("/") + "/")
+                    info.mtime = int(time.time())
                     info.type = tarfile.DIRTYPE
                     info.mode = mode
                     info.uid = owner_uid
@@ -149,6 +344,7 @@ class SandboxArchiveStore:
                     archive.addfile(info)
                 for name, owner_uid, owner_gid, mode, content, size in files:
                     info = tarfile.TarInfo(name=name)
+                    info.mtime = int(time.time())
                     info.size = size
                     info.mode = mode
                     info.uid = owner_uid
@@ -168,7 +364,7 @@ class SandboxArchiveStore:
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
-        self.put(
+        self._put(
             container,
             SANDBOX_DATA_ROOT,
             [],
@@ -186,7 +382,7 @@ class SandboxArchiveStore:
 
     @staticmethod
     def _validate_registry(registry: _UidRegistry) -> None:
-        """校验 会话 UID 全局唯一。"""
+        """校验用户卷内的会话 UID 唯一且处于允许范围。"""
         values = list(registry.conversations.values())
         if len(values) != len(set(values)):
             raise RuntimeError("沙箱 UID 注册表包含重复的 UID")
@@ -194,9 +390,9 @@ class SandboxArchiveStore:
             raise RuntimeError("沙箱 UID 注册表包含无效的 UID")
 
     def _load_registry(self, container: Container) -> _UidRegistry:
-        """读取当前格式的 UID 注册表。"""
+        """读取 UID 注册表并校验格式及文件属主。"""
         try:
-            content, member = self.read_file(
+            content, member = self._read_file(
                 container,
                 _SANDBOX_UID_REGISTRY,
                 4 * 1024 * 1024,
@@ -232,83 +428,6 @@ class SandboxArchiveStore:
                 return candidate
         raise RuntimeError("沙箱 UID 分配范围已耗尽")
 
-    def ensure_workspace(
-        self,
-        container: Container,
-        conversation_id: UUID,
-        registry: _UidRegistry | None = None,
-    ) -> int:
-        """创建会话工作区并返回稳定 UID。"""
-        self.put(
-            container,
-            SANDBOX_DATA_ROOT,
-            [
-                (PurePosixPath(SANDBOX_STAGING_ROOT).name, 0, 0, 0o700),
-            ],
-            [],
-        )
-        registry = registry or self._load_registry(container)
-        key = str(conversation_id)
-        conversation_uid = registry.conversations.get(key)
-        if conversation_uid is None:
-            conversation_uid = self._allocate_uid(
-                conversation_id.bytes,
-                set(registry.conversations.values()),
-            )
-            registry.conversations[key] = conversation_uid
-            self._write_registry(container, registry)
-
-        target_path = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
-        existing = self.inspect_path(container, target_path)
-        if existing is not None and (
-            not existing.isdir() or existing.uid != conversation_uid
-        ):
-            raise RuntimeError("对话工作区所有者与 UID 注册表不一致")
-
-        conversation_name = str(conversation_id)
-        self.put(
-            container,
-            SANDBOX_DATA_ROOT,
-            [
-                (conversation_name, conversation_uid, conversation_uid, 0o750),
-                (
-                    f"{conversation_name}/.home",
-                    conversation_uid,
-                    conversation_uid,
-                    0o700,
-                ),
-                (
-                    f"{conversation_name}/.cache",
-                    conversation_uid,
-                    conversation_uid,
-                    0o700,
-                ),
-                (
-                    f"{conversation_name}/.cache/uv",
-                    conversation_uid,
-                    conversation_uid,
-                    0o700,
-                ),
-                (
-                    f"{conversation_name}/.tmp",
-                    conversation_uid,
-                    conversation_uid,
-                    0o700,
-                ),
-            ],
-            [],
-        )
-        self.put(
-            container,
-            SANDBOX_STAGING_ROOT,
-            [
-                (conversation_name, 0, 0, 0o700),
-                (f"{conversation_name}/{conversation_uid}", 0, 0, 0o700),
-            ],
-            [],
-        )
-        return conversation_uid
-
     def _validate_target(
         self,
         container: Container,
@@ -318,7 +437,7 @@ class SandboxArchiveStore:
     ) -> tuple[list[tuple[str, int, int, int]], int]:
         """校验文件路径并返回待创建目录和被替换大小。"""
         workspace = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
-        root_info = self.inspect_path(container, workspace)
+        root_info = self._inspect_path(container, workspace)
         if (
             root_info is None
             or not root_info.isdir()
@@ -332,7 +451,7 @@ class SandboxArchiveStore:
         current_path = workspace
         for index, component in enumerate(parts[:-1], start=1):
             current_path = posixpath.join(current_path, component)
-            info = self.inspect_path(container, current_path)
+            info = self._inspect_path(container, current_path)
             if info is None:
                 directories.append(
                     ("/".join(parts[:index]), conversation_uid, conversation_uid, 0o750)
@@ -345,7 +464,7 @@ class SandboxArchiveStore:
             ):
                 raise SandboxPathError(relative_path)
 
-        target_info = self.inspect_path(
+        target_info = self._inspect_path(
             container, posixpath.join(workspace, relative_path)
         )
         if target_info is None:
@@ -368,7 +487,7 @@ class SandboxArchiveStore:
         conversation_uid = registry.conversations.get(str(conversation_id))
         if conversation_uid is None:
             return None
-        root = self.inspect_path(container, f"{SANDBOX_DATA_ROOT}/{conversation_id}")
+        root = self._inspect_path(container, f"{SANDBOX_DATA_ROOT}/{conversation_id}")
         if (
             root is None
             or not root.isdir()
@@ -377,90 +496,6 @@ class SandboxArchiveStore:
         ):
             return None
         return conversation_uid
-
-    def upload_file(
-        self,
-        container: Container,
-        conversation_id: UUID,
-        relative_path: str,
-        content: BinaryIO,
-    ) -> None:
-        """上传并校验会话文件。"""
-        registry = self._load_registry(container)
-        conversation_uid = self.ensure_workspace(container, conversation_id, registry)
-        content.seek(0, io.SEEK_END)
-        size = content.tell()
-        content.seek(0)
-        if size > self._max_file_bytes:
-            raise SandboxFileTooLargeError(
-                f"文件大小超出限制: {size} > {self._max_file_bytes}"
-            )
-        directories, _ = self._validate_target(
-            container,
-            conversation_id,
-            conversation_uid,
-            relative_path,
-        )
-        workspace = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
-        self.put(
-            container,
-            workspace,
-            directories,
-            [
-                (
-                    relative_path,
-                    conversation_uid,
-                    conversation_uid,
-                    0o640,
-                    content,
-                    size,
-                )
-            ],
-        )
-        written = self.inspect_path(container, posixpath.join(workspace, relative_path))
-        if (
-            written is None
-            or not written.isreg()
-            or written.uid != conversation_uid
-            or written.size != size
-        ):
-            raise OSError("上传附件未通过校验")
-
-    def download_file(
-        self,
-        container: Container,
-        conversation_id: UUID,
-        relative_path: str,
-    ) -> bytes:
-        """下载并校验会话文件。"""
-        registry = self._load_registry(container)
-        conversation_uid = self._existing_workspace_uid(
-            container, conversation_id, registry
-        )
-        if conversation_uid is None:
-            raise FileNotFoundError(relative_path)
-        self._validate_target(
-            container, conversation_id, conversation_uid, relative_path
-        )
-        workspace = f"{SANDBOX_DATA_ROOT}/{conversation_id}"
-        content, member = self.read_file(
-            container,
-            posixpath.join(workspace, relative_path),
-            self._max_file_bytes,
-        )
-        if member.uid != conversation_uid or member.gid != conversation_uid:
-            raise FileNotFoundError(relative_path)
-        return content
-
-    def is_downloadable_file(
-        self,
-        container: Container,
-        conversation_id: UUID,
-        relative_path: str,
-    ) -> bool:
-        """检查路径是否为当前会话可下载的普通文件。"""
-        target = self._accessible_file(container, conversation_id, relative_path)
-        return target is not None and target.size <= self._max_file_bytes
 
     def _accessible_file(
         self,
@@ -484,7 +519,7 @@ class SandboxArchiveStore:
             )
         except SandboxPathError:
             return None
-        target = self.inspect_path(
+        target = self._inspect_path(
             container,
             posixpath.join(SANDBOX_DATA_ROOT, str(conversation_id), relative_path),
         )
@@ -496,33 +531,3 @@ class SandboxArchiveStore:
         ):
             return target
         return None
-
-    def delete_conversation(
-        self,
-        container: Container,
-        conversation_id: UUID,
-    ) -> None:
-        """删除会话工作区并更新 UID 注册表。"""
-        registry = self._load_registry(container)
-        result = container.exec_run(
-            [
-                "rm",
-                "-rf",
-                "--",
-                f"{SANDBOX_DATA_ROOT}/{conversation_id}",
-                posixpath.join(SANDBOX_STAGING_ROOT, str(conversation_id)),
-            ],
-            user="0",
-            privileged=True,
-            workdir=SANDBOX_DATA_ROOT,
-        )
-        if result.exit_code != 0:
-            raw_output = result.output or b""
-            detail = (
-                raw_output.decode("utf-8", errors="replace")
-                if isinstance(raw_output, bytes)
-                else str(raw_output)
-            ).strip()
-            raise OSError(detail or "删除对话沙箱失败")
-        registry.conversations.pop(str(conversation_id), None)
-        self._write_registry(container, registry)

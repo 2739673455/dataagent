@@ -10,7 +10,7 @@ from app.query.models.execution import AnalysisQueryResult, QueryExecutionOption
 from app.query.repositories.doris import DorisQueryRepository
 from app.query.services.executor import AnalysisQueryService
 from app.query.services.guard import QueryGuardService
-from app.sandbox.manager import DockerSandboxManager
+from app.sandbox import DockerSandboxManager
 from app.shared.clients.doris_client_manager import DorisQueryClientRegistry
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg

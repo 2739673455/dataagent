@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 from langchain_openai import ChatOpenAI
+from pydantic import SecretStr
 
 from app.assistant.agents import manager as agent_manager
 from app.assistant.agents import model_factory
@@ -155,7 +156,7 @@ def test_deepseek_stream_and_tool_continuation_preserve_reasoning() -> None:
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
             model = model_factory.DataAgentDeepSeek(
                 model="deepseek-flash",
-                api_key="test",
+                api_key=SecretStr("test"),
                 base_url="https://example.invalid/v1",
                 http_async_client=client,
                 use_responses_api=False,
@@ -186,6 +187,6 @@ def test_deepseek_stream_and_tool_continuation_preserve_reasoning() -> None:
             assert requests[1]["messages"][2]["tool_call_id"] == "call_1"
             payload = model._get_request_payload([AIMessage(content="无思考历史")])
             assert payload["messages"][0]["reasoning_content"] == ""
-            assert model._get_ls_params()["ls_provider"] == "deepseek"
+            assert model._get_ls_params().get("ls_provider") == "deepseek"
 
     asyncio.run(run())

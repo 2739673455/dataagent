@@ -15,7 +15,7 @@ from app.assistant.services.conversation import (
 from app.assistant.services.run import ConversationRunService
 from app.assistant.services.tasks import ConversationTasks
 from app.dependencies import WebResourcesDep
-from app.sandbox.manager import DockerSandboxManager
+from app.sandbox import DockerSandboxManager
 
 
 def _get_sandbox_manager(resources: WebResourcesDep) -> DockerSandboxManager:

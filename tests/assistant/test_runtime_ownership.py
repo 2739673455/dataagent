@@ -16,7 +16,9 @@ class RuntimeOwnershipTest(unittest.IsolatedAsyncioTestCase):
             MagicMock(),
             MagicMock(),
         )
-        manager._build_planner = lambda user_id, conversation_id, backend: backend
+        manager._build_planner = MagicMock(
+            side_effect=lambda user_id, conversation_id, backend=None: backend
+        )
         return manager
 
     async def test_each_run_builds_new_runtime(self):

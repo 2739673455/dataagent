@@ -13,11 +13,6 @@ _PATH_MAX_BYTES = 4096
 _PATH_COMPONENT_MAX_BYTES = 255
 
 
-def conversation_workspace_path(conversation_id: UUID) -> str:
-    """生成 Conversation 在容器中的完整工作目录。"""
-    return posixpath.join(SANDBOX_DATA_ROOT, str(conversation_id))
-
-
 @dataclass(frozen=True, slots=True)
 class SandboxReadonlyMount:
     """一个暴露给沙箱容器的宿主机只读目录。"""
@@ -41,6 +36,26 @@ class SandboxReadonlyMount:
         ):
             raise ValueError(f"沙箱只读挂载目标路径无效: {target}")
         object.__setattr__(self, "source", source)
+
+
+def conversation_workspace_path(conversation_id: UUID) -> str:
+    """生成 Conversation 在容器中的完整工作目录。"""
+    return posixpath.join(SANDBOX_DATA_ROOT, str(conversation_id))
+
+
+def conversation_relative_path(path: str, conversation_id: UUID) -> str:
+    """将 Conversation 内的沙箱绝对路径转换为公开相对路径。"""
+    normalized = normalize_sandbox_absolute_path(path)
+    root = PurePosixPath(conversation_workspace_path(conversation_id))
+    candidate = PurePosixPath(normalized)
+    if not candidate.is_relative_to(root):
+        raise SandboxPathError(path)
+    relative = candidate.relative_to(root).as_posix()
+    if relative == "." or any(
+        part.startswith(".") for part in PurePosixPath(relative).parts
+    ):
+        raise SandboxPathError(path)
+    return relative
 
 
 def normalize_attachment_path(path: str) -> str:
@@ -99,18 +114,3 @@ def resolve_sandbox_path(path: str, working_directory: str) -> str:
     if normalized.startswith("/"):
         return normalized
     return posixpath.normpath(posixpath.join(working_directory, normalized))
-
-
-def conversation_relative_path(path: str, conversation_id: UUID) -> str:
-    """将 Conversation 内的沙箱绝对路径转换为公开相对路径。"""
-    normalized = normalize_sandbox_absolute_path(path)
-    root = PurePosixPath(conversation_workspace_path(conversation_id))
-    candidate = PurePosixPath(normalized)
-    if not candidate.is_relative_to(root):
-        raise SandboxPathError(path)
-    relative = candidate.relative_to(root).as_posix()
-    if relative == "." or any(
-        part.startswith(".") for part in PurePosixPath(relative).parts
-    ):
-        raise SandboxPathError(path)
-    return relative

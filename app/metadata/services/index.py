@@ -262,90 +262,98 @@ class MetaIndexService:
 
     async def _build_column_indexes(self, columns: list[ColumnInfo]) -> None:
         """构建字段的名称、说明与别名索引。"""
-        for column in columns:
-            documents = await self._build_semantic_documents(
-                "column",
-                column_resource_key(column.t_name, column.name),
-                {
-                    "t_name": column.t_name,
-                    "name": column.name,
-                    "type": column.type,
-                    "examples": column.examples,
-                    "description": column.description,
-                    "alias": column.alias,
-                    "index_values": column.index_values,
-                    "reference_t_name": column.reference_t_name,
-                    "reference_c_name": column.reference_c_name,
-                },
-                column.name,
-                column.description,
-                column.alias,
-            )
-            await self._column_repo.write_documents(documents)
+        documents = await self._build_semantic_documents(
+            "column",
+            [
+                (
+                    column_resource_key(column.t_name, column.name),
+                    {
+                        "t_name": column.t_name,
+                        "name": column.name,
+                        "type": column.type,
+                        "examples": column.examples,
+                        "description": column.description,
+                        "alias": column.alias,
+                        "index_values": column.index_values,
+                        "reference_t_name": column.reference_t_name,
+                        "reference_c_name": column.reference_c_name,
+                    },
+                )
+                for column in columns
+            ],
+        )
+        await self._column_repo.write_documents(documents)
 
     async def _build_metric_indexes(self, metrics: list[MetricInfo]) -> None:
         """构建指标的名称、说明与别名索引。"""
-        for metric in metrics:
-            documents = await self._build_semantic_documents(
-                "metric",
-                metric.name,
-                {
-                    "name": metric.name,
-                    "description": metric.description,
-                    "relevant_columns": metric.relevant_columns,
-                    "alias": metric.alias,
-                },
-                metric.name,
-                metric.description,
-                metric.alias,
-            )
-            await self._metric_repo.write_documents(documents)
+        documents = await self._build_semantic_documents(
+            "metric",
+            [
+                (
+                    metric.name,
+                    {
+                        "name": metric.name,
+                        "description": metric.description,
+                        "relevant_columns": metric.relevant_columns,
+                        "alias": metric.alias,
+                    },
+                )
+                for metric in metrics
+            ],
+        )
+        await self._metric_repo.write_documents(documents)
 
     async def _build_semantic_documents(
         self,
         resource_type: str,
-        resource_key: str,
-        payload: dict[str, Any],
-        name: str,
-        description: str,
-        aliases: list[str],
+        resources: list[tuple[str, dict[str, Any]]],
     ) -> list[SemanticIndexDocument]:
-        """生成规范化、去重且编号稳定的目标文档。"""
-        entries: dict[str, SemanticTextType] = {}
-        source_texts: list[tuple[str, SemanticTextType]] = [
-            (name, "name"),
-            (description, "description"),
-        ]
-        source_texts.extend((alias, "alias") for alias in aliases)
-        for text_value, text_type in source_texts:
-            canonical = unicodedata.normalize("NFC", text_value).strip()
-            if canonical:
-                entries.setdefault(canonical, text_type)
-        texts = sorted(entries)
-        embeddings: list[list[float]] = []
+        """资源内规范化去重，跨资源分批生成向量并保持文档对应关系。"""
+        texts: list[tuple[str, str, SemanticTextType, dict[str, Any]]] = []
+        for resource_key, payload in resources:
+            entries: dict[str, SemanticTextType] = {}
+            source_texts: list[tuple[str, SemanticTextType]] = [
+                (payload["name"], "name"),
+                (payload["description"], "description"),
+            ]
+            source_texts.extend((alias, "alias") for alias in payload["alias"])
+            for text_value, text_type in source_texts:
+                canonical = unicodedata.normalize("NFC", text_value).strip()
+                if canonical:
+                    entries.setdefault(canonical, text_type)
+            texts.extend(
+                (resource_key, text_value, entries[text_value], payload)
+                for text_value in sorted(entries)
+            )
+        documents: list[SemanticIndexDocument] = []
         for index in range(0, len(texts), self._embedding_batch_size):
             batch = texts[index : index + self._embedding_batch_size]
-            embeddings.extend(await self._embedding_client.aembed_documents(batch))
-        return [
-            SemanticIndexDocument(
-                id=str(
-                    uuid.uuid5(
-                        uuid.NAMESPACE_URL,
-                        json.dumps(
-                            [resource_type, resource_key, text_value],
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                        ),
-                    )
-                ),
-                resource_key=resource_key,
-                text=text_value,
-                text_type=entries[text_value],
-                embedding=embedding,
-                payload=payload,
+            embeddings = await self._embedding_client.aembed_documents(
+                [text_value for _, text_value, _, _ in batch]
             )
-            for text_value, embedding in zip(texts, embeddings, strict=True)
-        ]
+            for (resource_key, text_value, text_type, payload), embedding in zip(
+                batch, embeddings, strict=True
+            ):
+                documents.append(
+                    SemanticIndexDocument(
+                        id=str(
+                            uuid.uuid5(
+                                uuid.NAMESPACE_URL,
+                                json.dumps(
+                                    [resource_type, resource_key, text_value],
+                                    ensure_ascii=False,
+                                    separators=(",", ":"),
+                                ),
+                            )
+                        ),
+                        resource_key=resource_key,
+                        text=text_value,
+                        text_type=text_type,
+                        embedding=embedding,
+                        payload=payload,
+                    )
+                )
+        return documents
 
     async def _sync_column_values(
         self,

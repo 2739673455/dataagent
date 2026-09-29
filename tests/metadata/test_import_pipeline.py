@@ -13,7 +13,13 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.mysql import dialect
 
 from app.metadata.errors import InvalidMetadataError
-from app.metadata.models.catalog import ColumnInfo, ColumnMetric, MetricInfo, TableInfo
+from app.metadata.models.catalog import (
+    ColumnInfo,
+    ColumnMetric,
+    MetricInfo,
+    TableInfo,
+    column_resource_key,
+)
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
 from app.metadata.services.index import MetaIndexService, parse_metadata_yaml
@@ -549,3 +555,83 @@ def test_source_and_index_io_run_outside_postgres_transactions():
     values.refresh.side_effect = write
     asyncio.run(service._sync_column_values([("orders", "status")], mode="incremental"))
     assert len(transactions) == 2
+
+
+@pytest.mark.parametrize("kind", ["column", "metric"])
+@pytest.mark.parametrize("count", [0, 32, 33])
+def test_semantic_indexes_batch_across_resources(kind, count):
+    items = [
+        SimpleNamespace(
+            name=f"field_{i:03d}",
+            description="说明",
+            alias=["说明", " "],
+            t_name="orders",
+            type="TEXT",
+            examples=[],
+            index_values=False,
+            reference_t_name=None,
+            reference_c_name=None,
+            relevant_columns=[],
+        )
+        for i in range(count)
+    ]
+    expected_texts = [text for item in items for text in (item.name, "说明")]
+    offset = 0
+
+    async def embed(texts):
+        nonlocal offset
+        vectors = [[float(i)] for i in range(offset, offset + len(texts))]
+        offset += len(texts)
+        return vectors
+
+    embedding = MagicMock(aembed_documents=AsyncMock(side_effect=embed))
+    index = MagicMock(write_documents=AsyncMock())
+    service = MetaIndexService(
+        MagicMock(), MagicMock(), index, index, embedding, MagicMock()
+    )
+    if kind == "column":
+        asyncio.run(service._build_column_indexes(cast(list[ColumnInfo], items)))
+    else:
+        asyncio.run(service._build_metric_indexes(cast(list[MetricInfo], items)))
+
+    assert [call.args[0] for call in embedding.aembed_documents.await_args_list] == [
+        expected_texts[i : i + 64] for i in range(0, len(expected_texts), 64)
+    ]
+    index.write_documents.assert_awaited_once()
+    documents = index.write_documents.await_args.args[0]
+    assert [doc.text for doc in documents] == expected_texts
+    assert [doc.embedding for doc in documents] == [
+        [float(i)] for i in range(count * 2)
+    ]
+    assert len({doc.id for doc in documents}) == count * 2
+    for item, pair in zip(
+        items, [documents[i : i + 2] for i in range(0, len(documents), 2)], strict=True
+    ):
+        key = (
+            column_resource_key(item.t_name, item.name)
+            if kind == "column"
+            else item.name
+        )
+        assert all(
+            doc.resource_key == key and doc.payload["name"] == item.name for doc in pair
+        )
+        assert [doc.text_type for doc in pair] == ["name", "description"]
+
+
+def test_semantic_embedding_failure_does_not_write_incomplete_documents():
+    embedding = MagicMock(
+        aembed_documents=AsyncMock(
+            side_effect=[[[1.0]], RuntimeError("embedding failed")]
+        )
+    )
+    index = MagicMock(write_documents=AsyncMock())
+    service = MetaIndexService(
+        MagicMock(), MagicMock(), index, index, embedding, MagicMock()
+    )
+    service._embedding_batch_size = 1
+    item = SimpleNamespace(
+        name="amount", description="金额", alias=[], relevant_columns=[]
+    )
+    with pytest.raises(RuntimeError, match="embedding failed"):
+        asyncio.run(service._build_metric_indexes([cast(MetricInfo, item)]))
+    index.write_documents.assert_not_awaited()

@@ -20,8 +20,7 @@ from app.query.models.execution import (
     QueryExecutionOptions,
 )
 from app.query.repositories.doris import DorisQueryRepository
-from app.sandbox.manager import DockerSandboxManager
-from app.sandbox.paths import conversation_workspace_path
+from app.sandbox import DockerSandboxManager
 
 _SAMPLE_STRING_MAX_CHARS = 512
 
@@ -62,15 +61,14 @@ class AnalysisQueryService:
             )
             csv_file.flush()
             temporary_file.seek(0)
-            await self._artifact_store.write_artifact(
+            artifact_path = await self._artifact_store.write_artifact(
                 user_id,
                 conversation_id,
                 relative_path,
                 temporary_file,
             )
-        workspace = conversation_workspace_path(conversation_id)
         result = AnalysisQueryResult(
-            path=f"{workspace}/{relative_path.rsplit('/', 1)[-1]}",
+            path=artifact_path,
             columns=summary.columns,
             row_count=summary.row_count,
             sample=summary.sample,

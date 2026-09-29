@@ -209,6 +209,7 @@ class QueryExecutorTest(unittest.IsolatedAsyncioTestCase):
         async def write(user_id, conversation_id, path, content):
             self.assertTrue(self.closed)
             self.files.append((user_id, conversation_id, path, content.read()))
+            return f"/data/{conversation_id}/{path}"
 
         self.store = MagicMock(write_artifact=AsyncMock(side_effect=write))
         self.service = AnalysisQueryService(
@@ -369,7 +370,7 @@ class QuerySessionBoundaryTest(unittest.IsolatedAsyncioTestCase):
             get_query_identity=AsyncMock(return_value=identity),
         )
         clients = MagicMock(get_or_create=MagicMock(return_value=MagicMock()))
-        store = MagicMock(write_artifact=AsyncMock())
+        store = MagicMock(write_artifact=AsyncMock(return_value="/data/result.csv"))
         guard = MagicMock(check=MagicMock(return_value=valid()))
 
         async def stream(*args):

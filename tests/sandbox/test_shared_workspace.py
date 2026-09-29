@@ -23,7 +23,6 @@ def test_shared_backend_resolves_tools_and_artifact_paths_to_conversation():
     )
     root = f"/data/{conversation}"
     assert backend.workspace_dir == root
-    assert backend.shell_jobs.workspace_dir == root
     for path in ("query.csv", "uploads/image.png", "report/index.html"):
         assert backend._resolve_path(path) == f"{root}/{path}"
         assert backend._resolve_mutation_path(path) == f"{root}/{path}"

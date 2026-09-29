@@ -1,12 +1,14 @@
-.PHONY: help start run web init-db bootstrap-users clean
+.PHONY: help start run web init-db bootstrap-users import-full import-incremental clean
 
 help:
-	@echo "make start           - 启动前端和后端"
-	@echo "make run             - 启动后端服务"
-	@echo "make web             - 启动前端开发服务"
-	@echo "make init-db         - 初始化数据库"
-	@echo "make bootstrap-users - 初始化预定义用户和角色"
-	@echo "make clean           - 清理临时文件"
+	@echo "make start              - 启动前端和后端"
+	@echo "make run                - 启动后端服务"
+	@echo "make web                - 启动前端开发服务"
+	@echo "make init-db            - 初始化数据库"
+	@echo "make bootstrap-users    - 初始化预定义用户和角色"
+	@echo "make import-full        - 全量导入元数据（重建目录和索引）"
+	@echo "make import-incremental - 增量导入字段取值"
+	@echo "make clean              - 清理临时文件"
 
 start:
 	$(MAKE) --no-print-directory -j2 run web
@@ -22,6 +24,12 @@ init-db:
 
 bootstrap-users:
 	uv run -m scripts.bootstrap_users
+
+import-full:
+	uv run -m scripts.import_metadata --full
+
+import-incremental:
+	uv run -m scripts.import_metadata --incremental
 
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true

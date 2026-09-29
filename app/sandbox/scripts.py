@@ -1,4 +1,4 @@
-"""沙箱内受控文件操作脚本。"""
+"""容器内的 Shell 执行、进程组取消与文件操作脚本。"""
 
 _SHELL_JOB_STARTED_MARKER = "__DATAAGENT_SHELL_JOB_STARTED__"
 
@@ -11,6 +11,7 @@ import signal
 import stat
 import subprocess
 import sys
+import time
 
 payload = json.loads(base64.b64decode(sys.argv[1]).decode())
 workspace = payload["workspace"]
@@ -145,11 +146,9 @@ try:
         raise PermissionError("shell job control directory owner is invalid")
     os.fchmod(control_fd, 0o700)
 
-    environment = os.environ.copy()
     process = subprocess.Popen(
         ["/bin/sh", "-lc", command],
         cwd=workspace,
-        env=environment,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         start_new_session=True,
@@ -175,7 +174,6 @@ try:
             output_truncated = True
     exit_code = process.wait()
     while process_group_alive(process.pid):
-        import time
         time.sleep(0.05)
     write_control(
         {
@@ -245,50 +243,39 @@ def process_group_alive(pgid):
 try:
     control_fd = os.open(control_path, os.O_RDONLY | os.O_NOFOLLOW)
 except FileNotFoundError:
-    print(json.dumps({"ready": False, "signal_sent": False, "exited": False}))
     sys.exit(0)
 try:
     with os.fdopen(control_fd, "r") as control_file:
         state = json.load(control_file)
 except (OSError, ValueError):
-    print(json.dumps({"ready": False, "signal_sent": False, "exited": False}))
     sys.exit(0)
 
 if state.get("status") != "running":
-    print(json.dumps({"ready": True, "signal_sent": False, "exited": True}))
     sys.exit(0)
 pgid = state.get("pgid")
 if not isinstance(pgid, int) or pgid <= 1:
-    print(json.dumps({"ready": False, "signal_sent": False, "exited": False}))
     sys.exit(0)
 
-signal_sent = False
 try:
     os.killpg(pgid, signal.SIGTERM)
-    signal_sent = True
 except ProcessLookupError:
-    print(json.dumps({"ready": True, "signal_sent": False, "exited": True}))
     sys.exit(0)
 
 deadline = time.monotonic() + grace_seconds
 while time.monotonic() < deadline:
     if not process_group_alive(pgid):
-        print(json.dumps({"ready": True, "signal_sent": signal_sent, "exited": True}))
         sys.exit(0)
     time.sleep(0.05)
 
 try:
     os.killpg(pgid, signal.SIGKILL)
-    signal_sent = True
 except ProcessLookupError:
     pass
 deadline = time.monotonic() + grace_seconds
 while time.monotonic() < deadline:
     if not process_group_alive(pgid):
-        print(json.dumps({"ready": True, "signal_sent": signal_sent, "exited": True}))
         sys.exit(0)
     time.sleep(0.05)
-print(json.dumps({"ready": True, "signal_sent": signal_sent, "exited": False}))
 """.strip()
 
 _COMMIT_UPLOAD_SCRIPT = """

@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -71,7 +72,7 @@ def test_conflict_does_not_initialize_database_or_release_other_lock(dependencie
         runtime.AsyncElasticsearch,
         runtime.EmbeddingClient,
     ):
-        constructor.assert_not_called()
+        cast(MagicMock, constructor).assert_not_called()
     lock.release.assert_not_awaited()
     redis.__aexit__.assert_awaited_once()
     assert redis.lock.call_args.kwargs["blocking"] is False

@@ -68,7 +68,7 @@ export function ChatUserFooter({
   }, [open]);
 
   return (
-    <div ref={containerRef} className={cn("relative", !compact && "h-full bg-[#e4e4df] p-3")}>
+    <div ref={containerRef} className={cn("relative", !compact && "p-3")}>
       <button
         ref={triggerRef}
         type="button"

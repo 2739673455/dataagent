@@ -28,7 +28,8 @@ POSTGRES_PASSWORD=123123
 DORIS_ADMIN_PASSWORD=123123
 
 # Doris 查询身份凭据加密密钥
-# python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+# 在项目根目录执行：
+# uv run python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
 DORIS_CREDENTIAL_ENCRYPTION_KEY=
 
 # ==================== 模型服务 ====================
@@ -38,11 +39,9 @@ DEEPSEEK_API_KEY=
 
 # SiliconFlow 模型服务密钥
 SILICONFLOW_API_KEY=
-
-
 ```
 
-按注释中的命令生成 Doris 凭据加密密钥。
+在项目根目录执行注释中的命令，通过 `uv run python` 使用项目依赖环境生成 Doris 凭据加密密钥，并将输出填入 `DORIS_CREDENTIAL_ENCRYPTION_KEY`。
 
 ### 模型配置
 
@@ -52,7 +51,7 @@ SILICONFLOW_API_KEY=
 
 - `models`：按配置名声明模型，填写 `model_provider`、`model`、`base_url` 和 `api_key`；`params` 用于传入推理强度等附加参数。统一使用 Chat Completions；DeepSeek 使用 langchain-deepseek 并补充思考内容回传，其余供应商使用 OpenAI 兼容客户端；供应商扩展请求字段放在 `params.extra_body` 中。
 - `active`：选择 `models` 中的一个配置名，作为 Planner 的默认模型。
-- `profile`：按模型实际能力填写图片输入支持（`image_inputs`）、结构化输出支持（`structured_output`）和上下文长度（`max_input_tokens`）。
+- `profile`：填写图片输入支持（`image_inputs`）和上下文长度（`max_input_tokens`）。
 - `agent.specialists`：可为 Explorer、Analyst、Reviewer 单独指定模型配置名；填写 `default` 时跟随 `lm_config.active`。
 
 **向量模型（`embedding`）与 ES 维度**
@@ -100,12 +99,6 @@ docker compose -f docker/compose.yml up -d
 
 该命令启动 PostgreSQL、Elasticsearch、Redis 和 Doris，并在缺少 `dataagent-sandbox:latest` 时构建沙箱镜像。PostgreSQL 的 `auth`、`meta` 和 `langgraph` 数据库会在首次创建数据卷时自动初始化。
 
-查看服务状态：
-
-```bash
-docker compose -f docker/compose.yml ps
-```
-
 ### 3. 准备 Doris 全量数据
 
 默认应用连接 Doris 的 `ecommerce` 数据库。`dbmock` 作为 Git 子模块固定到指定提交，其数据文件由子仓库的 Git LFS 管理。先在项目根目录初始化子模块并拉取数据：
@@ -143,7 +136,7 @@ uv run -m scripts.bootstrap_users
 
 ### 5. 启动应用
 
-标题生成和会话删除由后端的异步任务执行；过期草稿及待删除会话在启动时和每隔 300 秒清理一次，间隔与任务超时通过 `lifecycle` 配置。进程退出会取消后台任务；删除记录在下次扫描时继续处理，标题生成中断后保留即时标题。
+标题生成和会话删除由后端的异步任务执行；过期草稿及待删除会话在启动时和每隔 300 秒清理一次，间隔与任务超时定义在 `app/assistant/services/tasks.py` 中。进程退出会取消后台任务；删除记录在下次扫描时继续处理，标题生成中断后保留即时标题。
 
 在两个项目根目录终端中分别启动后端和前端：
 
@@ -162,7 +155,7 @@ npm --prefix web run dev
 
 ## 启动后使用
 
-在前端选择 `admin` 开始分析，聊天页可切换用户。请求通过 `X-User-ID` 选择身份，不进行密码认证；会话和沙箱仍按用户 ID 隔离。
+在前端选择 `admin` 开始分析，聊天页可切换用户。请求通过 `X-User-ID` 选择身份；会话和沙箱仍按用户 ID 隔离。
 
 ### 1. 元数据导入
 
@@ -185,7 +178,3 @@ uv run -m scripts.import_metadata --incremental
 增量脚本使用已导入目录中的 `value_index_cursor_column`，每张表读取一次最大水位。水位未推进则跳过；有新数据时读取 `(上次水位, 本次最大水位]` 中启用 `index_values` 的字段取值，索引写入成功后提交新水位。未配置水位的表跳过，全量时为空的表可在后续有数据时开始增量导入。
 
 水位字段需要在新增或更新时递增；相同或更旧水位的迟到数据、源数据删除不会由增量脚本修复，应重新全量导入。增量失败可直接重跑，已完成字段保留水位，失败字段从旧水位重试；全量失败重新执行全量脚本。两种模式互斥运行，失败返回非零退出码，由脚本独立执行。
-
-### 2. 预定义用户与数据权限
-
-用户、角色及绑定在 `scripts/bootstrap_users.py` 中定义，执行 `uv run -m scripts.bootstrap_users` 初始化。当前 `admin` 拥有业务库全部表的只读查询权限；Doris 内置的全局 `admin` 角色不用于业务查询。

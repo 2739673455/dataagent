@@ -65,8 +65,7 @@ class DockerRuntimePool:
         for idle_user_id in candidates:
             if self._ownership.is_user_active(idle_user_id):
                 continue
-            # 所有调用路径都先取得用户维护租约、再取得容量锁。若持有容量锁
-            # 等待 operation lease，用户删除会等待该 lease 后再申请容量锁，形成死锁。
+            # 先等待用户操作结束，再获取容量锁，避免阻塞其他操作的容器启动。
             with (
                 self._ownership.user_maintenance(idle_user_id),
                 self._ownership.capacity(),

@@ -82,10 +82,6 @@ class FakeSandboxOwnership:
         """返回测试记录的用户活动时间。"""
         return self._activity.get(user_id, 0.0)
 
-    def forget_user(self, user_id: int) -> None:
-        """删除测试记录的用户活动时间。"""
-        self._activity.pop(user_id, None)
-
     def is_user_active(self, user_id: int) -> bool:
         """测试替身不存在活动操作。"""
         del user_id

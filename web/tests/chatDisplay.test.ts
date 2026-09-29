@@ -11,7 +11,6 @@ import {
   resolveDelegationRunStatus,
   splitFinalAssistantMessage,
 } from "../src/features/chat/components/messages/displayModel";
-import type { ToolRunDisplayItem } from "../src/features/chat/components/messages/types";
 import type { MessageResponse } from "../src/features/chat/types";
 
 describe("chat message display and turn grouping", () => {

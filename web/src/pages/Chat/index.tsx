@@ -166,13 +166,18 @@ export default function ChatPage() {
       {/* 主工作区分栏 */}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* 左侧会话管理器 */}
-        <div className="w-64 shrink-0 overflow-hidden hidden md:block">
-          <ChatSidebar
-            conversations={conversations}
-            activeConversationId={routeConversationId}
-            onCreate={handleCreateConversation}
-            onDelete={(conversationId) => void handleDeleteConversation(conversationId)}
-          />
+        <div className="hidden w-64 shrink-0 flex-col overflow-hidden bg-[#ebebe6] md:flex">
+          <div className="min-h-0 flex-1">
+            <ChatSidebar
+              conversations={conversations}
+              activeConversationId={routeConversationId}
+              onCreate={handleCreateConversation}
+              onDelete={(conversationId) => void handleDeleteConversation(conversationId)}
+            />
+          </div>
+          <div className="shrink-0 border-r border-[#d4d4ce]">
+            <ChatUserFooter user={user} onSelectUser={handleSelectUser} />
+          </div>
         </div>
 
         {/* 中间聊天主执行区 */}
@@ -186,24 +191,16 @@ export default function ChatPage() {
             subagentRuns={currentSubagentRuns}
             viewportRef={messageViewportRef}
           />
-        </div>
-      </div>
-
-      {/* 底部统一操作栏 */}
-      <div className="flex shrink-0 border-t border-[#d4d4ce]">
-        <div className="w-64 shrink-0 border-r border-[#d4d4ce] hidden md:block">
-          <ChatUserFooter user={user} onSelectUser={handleSelectUser} />
-        </div>
-
-        <div className="flex min-w-0 flex-1 items-center bg-[#f4f4f0] p-3">
-          <div className="mx-auto w-full max-w-4xl">
-            <ChatComposer
-              canResume={executionStatus === "interrupted"}
-              isStreaming={isStreaming}
-              onResume={handleResume}
-              onStop={handleStop}
-              onSubmit={handleSend}
-            />
+          <div className="flex shrink-0 items-center border-t border-[#d4d4ce] p-3">
+            <div className="mx-auto w-full max-w-4xl">
+              <ChatComposer
+                canResume={executionStatus === "interrupted"}
+                isStreaming={isStreaming}
+                onResume={handleResume}
+                onStop={handleStop}
+                onSubmit={handleSend}
+              />
+            </div>
           </div>
         </div>
       </div>

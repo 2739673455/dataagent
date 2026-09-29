@@ -11,6 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from app.sandbox.docker_stream import close_exec_stream
 from app.sandbox.paths import SANDBOX_DATA_ROOT
 from app.sandbox.scripts import (
     _CANCEL_SHELL_JOB_SCRIPT,
@@ -28,8 +29,8 @@ _OUTPUT_TRUNCATION_MARKER = b"\n...[middle output truncated]...\n"
 
 
 @dataclass(frozen=True, slots=True)
-class SandboxShellJobExecution:
-    """Sandbox Shell Job 的最终执行信息。"""
+class ShellResult:
+    """Shell 执行结果与输出日志路径。"""
 
     status: Literal["completed", "failed", "interrupted"]
     exit_code: int | None = None
@@ -37,32 +38,135 @@ class SandboxShellJobExecution:
     output_inline_truncated: bool = False
     output_truncated: bool = False
     error: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class SandboxShellJobCancellation:
-    """Sandbox 进程组取消结果。"""
-
-    ready: bool
-    signal_sent: bool
-    exited: bool
+    output_path: str | None = None
 
 
 class DockerShellJobRunner:
-    """在一个会话 Backend 的 operation lease 中运行长时 Shell Job。"""
+    """在会话操作租约内执行 Shell 命令并管理进程组。"""
 
     def __init__(self, backend: DockerSandboxBackend) -> None:
         """绑定 Shell Job 所属的会话 Backend。"""
         self._backend = backend
 
-    @property
-    def workspace_dir(self) -> str:
-        """返回模型可访问的 Shell Job 日志目录根路径。"""
-        return self._backend.workspace_dir
+    def run(
+        self,
+        job_id: str,
+        command: str,
+        started_callback: Callable[[], None] | None = None,
+    ) -> ShellResult:
+        """在会话工作目录执行 Shell 命令并等待结束。"""
+        self._validate_job_id(job_id)
+        if not command.strip():
+            raise ValueError("Shell 命令不能为空")
+        try:
+            with self._backend._operation():
+                return self._run_unlocked(job_id, command, started_callback)
+        except Exception as exc:  # noqa: BLE001
+            detail = self._backend._sanitize_output(str(exc).strip())
+            return ShellResult(
+                status="failed",
+                error=detail or type(exc).__name__,
+            )
+
+    async def arun(
+        self,
+        job_id: str,
+        command: str,
+    ) -> ShellResult:
+        """等待命令结束；调用取消时终止进程组并等待执行线程退出。"""
+        cancel_event = threading.Event()
+        started = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def notify_started() -> None:
+            loop.call_soon_threadsafe(started.set)
+
+        def run() -> ShellResult:
+            self._backend._operation_local.cancel_event = cancel_event
+            try:
+                return self.run(job_id, command, notify_started)
+            finally:
+                del self._backend._operation_local.cancel_event
+
+        task = asyncio.create_task(asyncio.to_thread(run))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancel_event.set()
+
+            async def stop() -> None:
+                ready = asyncio.create_task(started.wait())
+                try:
+                    await asyncio.wait(
+                        {ready, task}, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    if not task.done():
+                        await self.acancel(job_id)
+                    await task
+                finally:
+                    ready.cancel()
+                    await asyncio.gather(ready, return_exceptions=True)
+
+            cleanup = asyncio.create_task(stop())
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                await cleanup
+            raise
+
+    def cancel(self, job_id: str) -> None:
+        """先 TERM 后 KILL 终止 Shell Job 的整个进程组。"""
+        _, control_path = self._paths(job_id)
+        with self._backend._operation():
+            result = self._backend._container.exec_run(
+                [
+                    "timeout",
+                    "--signal=KILL",
+                    str(self._backend._internal_command_timeout_seconds),
+                    "python3",
+                    "-c",
+                    _CANCEL_SHELL_JOB_SCRIPT,
+                    control_path,
+                    str(_SHELL_JOB_CANCEL_GRACE_SECONDS),
+                ],
+                user="0",
+                privileged=True,
+                workdir=SANDBOX_DATA_ROOT,
+            )
+        raw_output = result.output or b""
+        output = (
+            raw_output.decode("utf-8", errors="replace")
+            if isinstance(raw_output, bytes)
+            else str(raw_output)
+        )
+        if result.exit_code != 0:
+            raise OSError(
+                self._backend._sanitize_output(output.strip()) or "取消 Shell Job 失败"
+            )
+
+    async def acancel(self, job_id: str) -> None:
+        """异步取消 Shell Job。"""
+        await asyncio.to_thread(self.cancel, job_id)
+
+    def cleanup(self, job_id: str, *, remove_log: bool = False) -> None:
+        """清除 Shell Job 控制文件，并按需移除未公开的日志文件。"""
+        log_path, control_path = self._paths(job_id)
+        paths = [control_path, *([log_path] if remove_log else [])]
+        with self._backend._operation():
+            self._backend._container.exec_run(
+                ["rm", "-f", "--", *paths],
+                user="0",
+                privileged=True,
+                workdir=SANDBOX_DATA_ROOT,
+            )
+
+    async def acleanup(self, job_id: str, *, remove_log: bool = False) -> None:
+        """异步清除 Shell Job 控制文件，并按需移除日志文件。"""
+        await asyncio.to_thread(self.cleanup, job_id, remove_log=remove_log)
 
     @staticmethod
     def _validate_job_id(job_id: str) -> None:
-        """只接受 Runtime 生成的短随机 Shell Job 标识。"""
+        """校验后端生成的任务标识，确保控制文件路径有效。"""
         if (
             len(job_id) != 12
             or not job_id.startswith("job_")
@@ -113,7 +217,7 @@ class DockerShellJobRunner:
         job_id: str,
         command: str,
         started_callback: Callable[[], None] | None,
-    ) -> SandboxShellJobExecution:
+    ) -> ShellResult:
         """启动包装进程并持续监控到业务命令终态。"""
         log_path, control_path = self._paths(job_id)
         backend = self._backend
@@ -136,7 +240,7 @@ class DockerShellJobRunner:
         ).decode()
         docker_client = backend._container.client
         if docker_client is None:
-            return SandboxShellJobExecution(
+            return ShellResult(
                 status="failed",
                 error="Docker 容器客户端不可用",
             )
@@ -180,25 +284,19 @@ class DockerShellJobRunner:
             inspected = api_client.exec_inspect(exec_id)
         except Exception as exc:  # noqa: BLE001
             detail = backend._sanitize_output(str(exc).strip())
-            return SandboxShellJobExecution(
+            return ShellResult(
                 status="interrupted" if started else "failed",
                 error=detail or type(exc).__name__,
             )
         finally:
             if output_stream is not None:
-                close_stream = getattr(output_stream, "close", None)
-                if callable(close_stream):
-                    close_stream()
-                response = getattr(output_stream, "_response", None)
-                close_response = getattr(response, "close", None)
-                if callable(close_response):
-                    close_response()
+                close_exec_stream(output_stream)
 
         control = self._read_control(control_path)
         if control is None:
             diagnostic_text = diagnostics.decode("utf-8", errors="replace").strip()
             detail = backend._sanitize_output(diagnostic_text)
-            return SandboxShellJobExecution(
+            return ShellResult(
                 status="interrupted" if started else "failed",
                 error=detail or "Shell Job 未产生可读取的最终状态",
             )
@@ -208,7 +306,7 @@ class DockerShellJobRunner:
         output_truncated = control.get("output_truncated") is True
         if control_status == "failed":
             raw_error = control.get("error")
-            return SandboxShellJobExecution(
+            return ShellResult(
                 status="failed",
                 exit_code=normalized_exit_code,
                 output_truncated=output_truncated,
@@ -217,7 +315,7 @@ class DockerShellJobRunner:
                 ),
             )
         if control_status != "finished" or normalized_exit_code is None:
-            return SandboxShellJobExecution(
+            return ShellResult(
                 status="interrupted",
                 exit_code=normalized_exit_code,
                 output_truncated=output_truncated,
@@ -248,7 +346,7 @@ class DockerShellJobRunner:
         if read_exit_code != 0:
             output = ""
         if inspected.get("ExitCode") is None:
-            return SandboxShellJobExecution(
+            return ShellResult(
                 status="interrupted",
                 exit_code=normalized_exit_code,
                 output=output,
@@ -256,138 +354,10 @@ class DockerShellJobRunner:
                 output_truncated=output_truncated,
                 error="Shell Job 包装进程状态不可用",
             )
-        return SandboxShellJobExecution(
+        return ShellResult(
             status="completed" if normalized_exit_code == 0 else "failed",
             exit_code=normalized_exit_code,
             output=output,
             output_inline_truncated=inline_truncated,
             output_truncated=output_truncated,
         )
-
-    def run(
-        self,
-        job_id: str,
-        command: str,
-        started_callback: Callable[[], None] | None = None,
-    ) -> SandboxShellJobExecution:
-        """执行无固定总时限的 Specialist Shell Job。"""
-        self._validate_job_id(job_id)
-        if not command.strip():
-            raise ValueError("Shell 命令不能为空")
-        try:
-            with self._backend._operation():
-                return self._run_unlocked(job_id, command, started_callback)
-        except Exception as exc:  # noqa: BLE001
-            detail = self._backend._sanitize_output(str(exc).strip())
-            return SandboxShellJobExecution(
-                status="failed",
-                error=detail or type(exc).__name__,
-            )
-
-    async def arun(
-        self,
-        job_id: str,
-        command: str,
-        started_callback: Callable[[], None] | None = None,
-    ) -> SandboxShellJobExecution:
-        """等待命令结束；调用取消时终止进程组并等待执行线程退出。"""
-        cancel_event = threading.Event()
-        started = asyncio.Event()
-        loop = asyncio.get_running_loop()
-
-        def notify_started() -> None:
-            loop.call_soon_threadsafe(started.set)
-            if started_callback is not None:
-                started_callback()
-
-        def run() -> SandboxShellJobExecution:
-            self._backend._operation_local.cancel_event = cancel_event
-            try:
-                return self.run(job_id, command, notify_started)
-            finally:
-                del self._backend._operation_local.cancel_event
-
-        task = asyncio.create_task(asyncio.to_thread(run))
-        try:
-            return await asyncio.shield(task)
-        except asyncio.CancelledError:
-            cancel_event.set()
-
-            async def stop() -> None:
-                ready = asyncio.create_task(started.wait())
-                try:
-                    await asyncio.wait(
-                        {ready, task}, return_when=asyncio.FIRST_COMPLETED
-                    )
-                    if not task.done():
-                        await self.acancel(job_id)
-                    await task
-                finally:
-                    ready.cancel()
-                    await asyncio.gather(ready, return_exceptions=True)
-
-            cleanup = asyncio.create_task(stop())
-            try:
-                await asyncio.shield(cleanup)
-            except asyncio.CancelledError:
-                await cleanup
-            raise
-
-    def cancel(self, job_id: str) -> SandboxShellJobCancellation:
-        """先 TERM 后 KILL 终止 Shell Job 的整个进程组。"""
-        _, control_path = self._paths(job_id)
-        with self._backend._operation():
-            result = self._backend._container.exec_run(
-                [
-                    "timeout",
-                    "--signal=KILL",
-                    str(self._backend._internal_command_timeout_seconds),
-                    "python3",
-                    "-c",
-                    _CANCEL_SHELL_JOB_SCRIPT,
-                    control_path,
-                    str(_SHELL_JOB_CANCEL_GRACE_SECONDS),
-                ],
-                user="0",
-                privileged=True,
-                workdir=SANDBOX_DATA_ROOT,
-            )
-        raw_output = result.output or b""
-        output = (
-            raw_output.decode("utf-8", errors="replace")
-            if isinstance(raw_output, bytes)
-            else str(raw_output)
-        )
-        if result.exit_code != 0:
-            raise OSError(
-                self._backend._sanitize_output(output.strip()) or "取消 Shell Job 失败"
-            )
-        try:
-            response = json.loads(output)
-        except json.JSONDecodeError as exc:
-            raise OSError("取消 Shell Job 的响应格式无效") from exc
-        return SandboxShellJobCancellation(
-            ready=response.get("ready") is True,
-            signal_sent=response.get("signal_sent") is True,
-            exited=response.get("exited") is True,
-        )
-
-    async def acancel(self, job_id: str) -> SandboxShellJobCancellation:
-        """异步取消 Shell Job。"""
-        return await asyncio.to_thread(self.cancel, job_id)
-
-    def cleanup(self, job_id: str, *, remove_log: bool = False) -> None:
-        """清除 Shell Job 控制文件，并按需移除未公开的日志文件。"""
-        log_path, control_path = self._paths(job_id)
-        paths = [control_path, *([log_path] if remove_log else [])]
-        with self._backend._operation():
-            self._backend._container.exec_run(
-                ["rm", "-f", "--", *paths],
-                user="0",
-                privileged=True,
-                workdir=SANDBOX_DATA_ROOT,
-            )
-
-    async def acleanup(self, job_id: str, *, remove_log: bool = False) -> None:
-        """异步清除 Shell Job 控制文件，并按需移除日志文件。"""
-        await asyncio.to_thread(self.cleanup, job_id, remove_log=remove_log)

@@ -18,8 +18,9 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
             cleanup_pending_deletions=AsyncMock(),
             cleanup_expired_drafts=AsyncMock(),
         )
+        self.postgres = MagicMock()
         self.tasks = ConversationTasks(
-            MagicMock(),
+            self.postgres,
             self.lifecycle,
         )
         self.addAsyncCleanup(self.tasks.close)
@@ -125,7 +126,7 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
             self.tasks.generate_title(1, uuid4(), "分析订单")
             await asyncio.gather(*self.tasks._tasks)
         model.ainvoke.assert_awaited_once()
-        self.tasks._postgres.session.assert_not_called()
+        self.postgres.session.assert_not_called()
 
     async def test_empty_title_keeps_initial_title(self):
         model = MagicMock(ainvoke=AsyncMock(return_value=AIMessage(content=" \n\t ")))
@@ -137,7 +138,7 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
         with patch("app.assistant.services.title.create_configured_model", model_scope):
             self.tasks.generate_title(1, uuid4(), "分析订单")
             await asyncio.gather(*self.tasks._tasks)
-        self.tasks._postgres.session.assert_not_called()
+        self.postgres.session.assert_not_called()
 
     async def test_title_timeout_closes_model_without_retry(self):
         closed = []
@@ -161,7 +162,7 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.gather(*self.tasks._tasks)
         model.ainvoke.assert_awaited_once()
         self.assertEqual(closed, [True])
-        self.tasks._postgres.session.assert_not_called()
+        self.postgres.session.assert_not_called()
 
     async def test_title_submission_during_shutdown_does_not_fail_caller(self):
         await self.tasks.close()

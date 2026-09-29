@@ -31,9 +31,7 @@ from app.assistant.agents.tools.semantic_recall import create_semantic_recall_to
 from app.assistant.agents.tools.shell import create_shell_tool
 from app.metadata.services.recall_handler import SemanticRecallHandler
 from app.query.services.execution_handler import QueryExecutionHandler
-from app.sandbox.backend import DockerSandboxBackend
-from app.sandbox.manager import DockerSandboxManager
-from app.sandbox.paths import SandboxReadonlyMount
+from app.sandbox import DockerSandboxBackend, DockerSandboxManager, SandboxReadonlyMount
 from app.shared.config import app_config
 from app.shared.contracts.analysis import AGENT_TYPES, AgentType
 
@@ -134,7 +132,7 @@ class AgentManager:
             name="planner",
             system_prompt=SYSTEM_PROMPTS["planner"],
             model=self._models[self._planner_model_name],
-            tools=[create_shell_tool(backend.shell_jobs)],
+            tools=[create_shell_tool(backend)],
             subagents=self._build_specialists(backend),
             middleware=[
                 FilesystemMiddleware(backend=backend, tools=["read_file"]),
@@ -170,7 +168,7 @@ class AgentManager:
                     tools=[
                         create_semantic_recall_tool(self._recall),
                         create_execute_sql_tool(self._query),
-                        create_shell_tool(backend.shell_jobs),
+                        create_shell_tool(backend),
                     ],
                     middleware=[explorer_filesystem, MessageContextMiddleware()],
                     backend=explorer_filesystem.backend,
@@ -184,7 +182,7 @@ class AgentManager:
                     name="analyst",
                     system_prompt=SYSTEM_PROMPTS["analyst"],
                     model=self._models[self._specialist_model_names["analyst"]],
-                    tools=[create_shell_tool(backend.shell_jobs)],
+                    tools=[create_shell_tool(backend)],
                     middleware=[analyst_filesystem, MessageContextMiddleware()],
                     backend=analyst_filesystem.backend,
                     skills=[analyst_skills],
@@ -198,7 +196,7 @@ class AgentManager:
                     name="reviewer",
                     system_prompt=SYSTEM_PROMPTS["reviewer"],
                     model=self._models[self._specialist_model_names["reviewer"]],
-                    tools=[create_shell_tool(backend.shell_jobs)],
+                    tools=[create_shell_tool(backend)],
                     middleware=[reviewer_filesystem, MessageContextMiddleware()],
                     backend=reviewer_filesystem.backend,
                     checkpointer=False,

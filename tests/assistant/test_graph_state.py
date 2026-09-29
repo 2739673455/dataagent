@@ -1,5 +1,6 @@
 """验证新建图读取 Checkpoint、恢复执行与工具绑定。"""
 
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from deepagents import (
@@ -39,7 +40,7 @@ register_harness_profile(
 
 
 def make_factory(saver):
-    sandbox = DockerSandboxManager(MagicMock(), [])
+    sandbox = DockerSandboxManager(ownership=MagicMock())
     sandbox.init = AsyncMock(
         side_effect=AssertionError("Docker initialized during read")
     )
@@ -133,9 +134,8 @@ class NativeTaskTest(unittest.IsolatedAsyncioTestCase):
             ]
         )
         factory._planner_model_name = "planner"
-        factory._specialist_model_names = {
-            kind: "specialist" for kind in factory._specialist_model_names
-        }
+        for kind in factory._specialist_model_names:
+            factory._specialist_model_names[kind] = "specialist"
         factory._models = {"planner": planner, "specialist": specialist}
         graph = factory._build_planner(12, conversation)
         config = build_planner_config(12, conversation)
@@ -177,13 +177,15 @@ class NativeTaskTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(all(isinstance(e, SubagentStatusActivity) for e in events))
         for checkpoint in saver.list(None):
-            self.assertEqual(checkpoint.config["configurable"]["checkpoint_ns"], "")
+            self.assertEqual(
+                checkpoint.config.get("configurable", {})["checkpoint_ns"], ""
+            )
         state = await graph.aget_state(config)
         results = [m for m in state.values["messages"] if isinstance(m, ToolMessage)]
         self.assertEqual(len(results), 2)
         self.assertTrue(all(m.name == "task" for m in results))
         self.assertTrue(all("result.csv" in str(m.content) for m in results))
-        sandbox.init.assert_not_awaited()
+        cast(AsyncMock, sandbox.init).assert_not_awaited()
 
     async def test_cold_planner_reads_and_resumes_pending_native_task(self):
         saver = InMemorySaver()
@@ -270,9 +272,8 @@ class NativeTaskTest(unittest.IsolatedAsyncioTestCase):
             ]
         )
         factory._planner_model_name = "planner"
-        factory._specialist_model_names = {
-            kind: "specialist" for kind in factory._specialist_model_names
-        }
+        for kind in factory._specialist_model_names:
+            factory._specialist_model_names[kind] = "specialist"
         factory._models = {"planner": planner, "specialist": specialist}
         with patch(
             "app.assistant.agents.manager.create_execute_sql_tool",
@@ -305,7 +306,9 @@ class NativeTaskTest(unittest.IsolatedAsyncioTestCase):
             {"one", "two"},
         )
         for checkpoint in saver.list(None):
-            self.assertEqual(checkpoint.config["configurable"]["checkpoint_ns"], "")
+            self.assertEqual(
+                checkpoint.config.get("configurable", {})["checkpoint_ns"], ""
+            )
 
 
 class CheckpointDeletionTest(unittest.IsolatedAsyncioTestCase):
@@ -321,5 +324,5 @@ class CheckpointDeletionTest(unittest.IsolatedAsyncioTestCase):
         await manager.delete_conversation_state(1, conversation)
         self.assertFalse((await manager.read_planner_state(1, conversation)).values)
         self.assertTrue((await manager.read_planner_state(2, conversation)).values)
-        sandbox.init.assert_not_awaited()
-        sandbox.get_backend.assert_not_awaited()
+        cast(AsyncMock, sandbox.init).assert_not_awaited()
+        cast(AsyncMock, sandbox.get_backend).assert_not_awaited()

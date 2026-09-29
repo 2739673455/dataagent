@@ -101,10 +101,6 @@ class SandboxOwnership(Protocol):
         """检查用户是否仍有活跃操作租约。"""
         ...
 
-    def forget_user(self, user_id: int) -> None:
-        """清除用户沙箱的活动记录。"""
-        ...
-
     def close(self) -> None:
         """关闭协调器持有的外部资源。"""
         ...
@@ -126,6 +122,179 @@ class RedisSandboxOwnership:
         self._operation_leases: dict[str, tuple[str, str]] = {}
         self._operation_renewal_failures: set[str] = set()
         self._operation_leases_lock = threading.Lock()
+
+    def start_runtime(self) -> None:
+        """登记当前进程并启动运行时租约续期线程。"""
+        if self._runtime_stop is not None:
+            return
+        with self._short_lock("runtimes"):
+            self._prune_active(self._runtimes_key())
+            self._redis.zadd(
+                self._runtimes_key(),
+                {
+                    self._runtime_token: (
+                        time.time() + constants.OWNERSHIP_LEASE_SECONDS
+                    )
+                },
+            )
+        self._runtime_stop = threading.Event()
+        self._runtime_renewal = threading.Thread(
+            target=self._renew_runtime,
+            name="sandbox-runtime-renewal",
+            daemon=True,
+        )
+        self._runtime_renewal.start()
+
+    @contextmanager
+    def release_runtime(self) -> Generator[bool]:
+        """停止续期并释放当前进程的运行时租约。"""
+        stop = self._runtime_stop
+        renewal = self._runtime_renewal
+        self._runtime_stop = None
+        self._runtime_renewal = None
+        if stop is not None:
+            stop.set()
+        if renewal is not None:
+            renewal.join(timeout=2)
+        with self._lock("runtimes"):
+            self._redis.zrem(self._runtimes_key(), self._runtime_token)
+            active_runtimes = self._prune_active(self._runtimes_key())
+            yield active_runtimes == 0
+
+    @contextmanager
+    def capacity(self) -> Generator[None]:
+        """通过分布式锁串行化全局容量操作。"""
+        with self._lock("capacity"):
+            yield
+
+    @contextmanager
+    def user_mutation(self, user_id: int) -> Generator[None]:
+        """通过分布式锁串行化用户沙箱变更。"""
+        with self._lock(f"user:{user_id}:mutation"):
+            yield
+
+    def assert_available(
+        self,
+        user_id: int,
+        conversation_id: UUID | None = None,
+    ) -> None:
+        """从 Redis 墓碑检查会话是否可用。"""
+        if conversation_id is not None and self._redis.exists(
+            self._deleted_conversation_key(user_id, conversation_id)
+        ):
+            raise SandboxDeletedError("会话沙箱已被删除")
+
+    def mark_conversation_deleted(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+    ) -> None:
+        """持久化会话删除墓碑。"""
+        self._redis.set(
+            self._deleted_conversation_key(user_id, conversation_id),
+            "1",
+        )
+
+    @contextmanager
+    def operation(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+    ) -> Generator[None]:
+        """登记并续期一个跨进程会话沙箱操作。"""
+        key = (user_id, conversation_id)
+        depths = getattr(self._local, "operation_depths", None)
+        if depths is None:
+            depths = {}
+            self._local.operation_depths = depths
+        if key in depths:
+            depths[key] += 1
+            try:
+                yield
+            finally:
+                depths[key] -= 1
+            return
+
+        if self._runtime_stop is None:
+            raise SandboxOwnershipError("沙箱运行时尚未启动")
+
+        token = uuid4().hex
+        user_active_key = self._active_user_key(user_id)
+        conversation_active_key = self._active_conversation_key(
+            user_id,
+            conversation_id,
+        )
+        self._register_operation(
+            user_id,
+            conversation_id,
+            token,
+            user_active_key,
+            conversation_active_key,
+        )
+        with self._operation_leases_lock:
+            # 后台续租线程只读取该表；先登记 Redis 再公开本地租约，避免续租不存在的操作。
+            self._operation_leases[token] = (
+                user_active_key,
+                conversation_active_key,
+            )
+        depths[key] = 1
+        try:
+            yield
+            with self._operation_leases_lock:
+                renewal_failed = token in self._operation_renewal_failures
+            if renewal_failed:
+                raise SandboxOwnershipError("沙箱操作租约续期失败")
+        finally:
+            depths.pop(key, None)
+            with self._operation_leases_lock:
+                self._operation_leases.pop(token, None)
+                self._operation_renewal_failures.discard(token)
+            pipe = self._redis.pipeline(transaction=True)
+            pipe.zrem(user_active_key, token)
+            pipe.zrem(conversation_active_key, token)
+            pipe.execute()
+
+    def is_user_active(self, user_id: int) -> bool:
+        """返回用户是否仍有未过期的操作租约。"""
+        return self._prune_active(self._active_user_key(user_id)) > 0
+
+    @contextmanager
+    def conversation_maintenance(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+    ) -> Generator[None]:
+        """独占会话入口并等待跨进程操作结束。"""
+        label = f"conversation:{user_id}:{conversation_id}"
+        with self._lock(f"{label}:gate"):
+            self._wait_for_idle(
+                self._active_conversation_key(user_id, conversation_id),
+                label,
+            )
+            yield
+
+    @contextmanager
+    def user_maintenance(self, user_id: int) -> Generator[None]:
+        """独占用户入口并等待跨进程操作结束。"""
+        label = f"user:{user_id}"
+        with self._lock(f"{label}:gate"):
+            self._wait_for_idle(self._active_user_key(user_id), label)
+            yield
+
+    def touch(self, user_id: int, activity_at: float) -> None:
+        """将用户最后活动时间写入 Redis。"""
+        self._redis.set(self._key(f"activity:{user_id}"), activity_at)
+
+    def last_activity(self, user_id: int) -> float:
+        """从 Redis 读取用户最后活动时间。"""
+        value = self._redis.get(self._key(f"activity:{user_id}"))
+        if isinstance(value, (bytes, str, int, float)):
+            return float(value)
+        return 0.0
+
+    def close(self) -> None:
+        """关闭 Redis 客户端连接。"""
+        self._redis.close()
 
     def _key(self, suffix: str) -> str:
         """构造当前部署隔离的 Redis 键。"""
@@ -220,56 +389,6 @@ class RedisSandboxOwnership:
         while not stop.wait(interval):
             self._renew_leases()
 
-    def start_runtime(self) -> None:
-        """登记当前进程并启动运行时租约续期线程。"""
-        if self._runtime_stop is not None:
-            return
-        with self._short_lock("runtimes"):
-            self._prune_active(self._runtimes_key())
-            self._redis.zadd(
-                self._runtimes_key(),
-                {
-                    self._runtime_token: (
-                        time.time() + constants.OWNERSHIP_LEASE_SECONDS
-                    )
-                },
-            )
-        self._runtime_stop = threading.Event()
-        self._runtime_renewal = threading.Thread(
-            target=self._renew_runtime,
-            name="sandbox-runtime-renewal",
-            daemon=True,
-        )
-        self._runtime_renewal.start()
-
-    @contextmanager
-    def release_runtime(self) -> Generator[bool]:
-        """停止续期并释放当前进程的运行时租约。"""
-        stop = self._runtime_stop
-        renewal = self._runtime_renewal
-        self._runtime_stop = None
-        self._runtime_renewal = None
-        if stop is not None:
-            stop.set()
-        if renewal is not None:
-            renewal.join(timeout=2)
-        with self._lock("runtimes"):
-            self._redis.zrem(self._runtimes_key(), self._runtime_token)
-            active_runtimes = self._prune_active(self._runtimes_key())
-            yield active_runtimes == 0
-
-    @contextmanager
-    def capacity(self) -> Generator[None]:
-        """通过分布式锁串行化全局容量操作。"""
-        with self._lock("capacity"):
-            yield
-
-    @contextmanager
-    def user_mutation(self, user_id: int) -> Generator[None]:
-        """通过分布式锁串行化用户沙箱变更。"""
-        with self._lock(f"user:{user_id}:mutation"):
-            yield
-
     def _deleted_conversation_key(
         self,
         user_id: int,
@@ -277,28 +396,6 @@ class RedisSandboxOwnership:
     ) -> str:
         """构造会话删除墓碑键。"""
         return self._key(f"deleted:conversation:{user_id}:{conversation_id}")
-
-    def assert_available(
-        self,
-        user_id: int,
-        conversation_id: UUID | None = None,
-    ) -> None:
-        """从 Redis 墓碑检查会话是否可用。"""
-        if conversation_id is not None and self._redis.exists(
-            self._deleted_conversation_key(user_id, conversation_id)
-        ):
-            raise SandboxDeletedError("会话沙箱已被删除")
-
-    def mark_conversation_deleted(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-    ) -> None:
-        """持久化会话删除墓碑。"""
-        self._redis.set(
-            self._deleted_conversation_key(user_id, conversation_id),
-            "1",
-        )
 
     def _active_user_key(self, user_id: int) -> str:
         """构造用户活跃操作集合键。"""
@@ -364,65 +461,6 @@ class RedisSandboxOwnership:
                 raise SandboxOwnershipError("等待沙箱维护结束超时")
             time.sleep(0.1)
 
-    @contextmanager
-    def operation(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-    ) -> Generator[None]:
-        """登记并续期一个跨进程会话沙箱操作。"""
-        key = (user_id, conversation_id)
-        depths = getattr(self._local, "operation_depths", None)
-        if depths is None:
-            depths = {}
-            self._local.operation_depths = depths
-        if key in depths:
-            depths[key] += 1
-            try:
-                yield
-            finally:
-                depths[key] -= 1
-            return
-
-        if self._runtime_stop is None:
-            raise SandboxOwnershipError("沙箱运行时尚未启动")
-
-        token = uuid4().hex
-        user_active_key = self._active_user_key(user_id)
-        conversation_active_key = self._active_conversation_key(
-            user_id,
-            conversation_id,
-        )
-        self._register_operation(
-            user_id,
-            conversation_id,
-            token,
-            user_active_key,
-            conversation_active_key,
-        )
-        with self._operation_leases_lock:
-            # 后台续租线程只读取该表；先登记 Redis 再公开本地租约，避免续租不存在的操作。
-            self._operation_leases[token] = (
-                user_active_key,
-                conversation_active_key,
-            )
-        depths[key] = 1
-        try:
-            yield
-            with self._operation_leases_lock:
-                renewal_failed = token in self._operation_renewal_failures
-            if renewal_failed:
-                raise SandboxOwnershipError("沙箱操作租约续期失败")
-        finally:
-            depths.pop(key, None)
-            with self._operation_leases_lock:
-                self._operation_leases.pop(token, None)
-                self._operation_renewal_failures.discard(token)
-            pipe = self._redis.pipeline(transaction=True)
-            pipe.zrem(user_active_key, token)
-            pipe.zrem(conversation_active_key, token)
-            pipe.execute()
-
     def _wait_for_idle(self, key: str, label: str) -> None:
         """等待指定活动租约集合清空。"""
         deadline = time.monotonic() + constants.OWNERSHIP_WAIT_TIMEOUT_SECONDS
@@ -430,49 +468,3 @@ class RedisSandboxOwnership:
             if time.monotonic() >= deadline:
                 raise SandboxOwnershipError(f"等待沙箱操作结束超时: {label}")
             time.sleep(0.1)
-
-    def is_user_active(self, user_id: int) -> bool:
-        """返回用户是否仍有未过期的操作租约。"""
-        return self._prune_active(self._active_user_key(user_id)) > 0
-
-    @contextmanager
-    def conversation_maintenance(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-    ) -> Generator[None]:
-        """独占会话入口并等待跨进程操作结束。"""
-        label = f"conversation:{user_id}:{conversation_id}"
-        with self._lock(f"{label}:gate"):
-            self._wait_for_idle(
-                self._active_conversation_key(user_id, conversation_id),
-                label,
-            )
-            yield
-
-    @contextmanager
-    def user_maintenance(self, user_id: int) -> Generator[None]:
-        """独占用户入口并等待跨进程操作结束。"""
-        label = f"user:{user_id}"
-        with self._lock(f"{label}:gate"):
-            self._wait_for_idle(self._active_user_key(user_id), label)
-            yield
-
-    def touch(self, user_id: int, activity_at: float) -> None:
-        """将用户最后活动时间写入 Redis。"""
-        self._redis.set(self._key(f"activity:{user_id}"), activity_at)
-
-    def last_activity(self, user_id: int) -> float:
-        """从 Redis 读取用户最后活动时间。"""
-        value = self._redis.get(self._key(f"activity:{user_id}"))
-        if isinstance(value, (bytes, str, int, float)):
-            return float(value)
-        return 0.0
-
-    def forget_user(self, user_id: int) -> None:
-        """删除 Redis 中的用户活动记录。"""
-        self._redis.delete(self._key(f"activity:{user_id}"))
-
-    def close(self) -> None:
-        """关闭 Redis 客户端连接。"""
-        self._redis.close()

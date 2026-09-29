@@ -18,10 +18,11 @@ import docker
 from app.sandbox import constants
 from app.sandbox.archive import SandboxArchiveStore
 from app.sandbox.backend import DockerSandboxBackend
-from app.sandbox.ownership import SandboxOwnership
+from app.sandbox.ownership import RedisSandboxOwnership, SandboxOwnership
 from app.sandbox.paths import (
     SANDBOX_DATA_ROOT,
     SandboxReadonlyMount,
+    conversation_workspace_path,
     normalize_attachment_path,
 )
 from app.sandbox.runtime_pool import DockerRuntimePool
@@ -37,11 +38,11 @@ class DockerSandboxManager:
 
     def __init__(
         self,
-        ownership: SandboxOwnership,
-        readonly_mounts: Sequence[SandboxReadonlyMount],
+        readonly_mounts: Sequence[SandboxReadonlyMount] = (),
+        *,
+        ownership: SandboxOwnership | None = None,
     ) -> None:
         """初始化 Docker 沙箱管理器。"""
-        self._ownership = ownership
         self._readonly_mounts = tuple(
             sorted(readonly_mounts, key=lambda mount: mount.target.as_posix())
         )
@@ -57,12 +58,15 @@ class DockerSandboxManager:
             for right in targets[index + 1 :]
         ):
             raise ValueError("沙箱只读挂载目标路径不能互相嵌套")
+        self._ownership = (
+            ownership if ownership is not None else RedisSandboxOwnership()
+        )
         self._client: docker.DockerClient | None = None
         self._container_spec: str | None = None
         self._init_lock = asyncio.Lock()
         self._archive = SandboxArchiveStore(constants.MAX_FILE_BYTES)
         self._runtime_pool = DockerRuntimePool(
-            ownership,
+            self._ownership,
             get_or_create_container=self._get_or_create_storage_container_sync,
             get_existing_container=self._get_existing_container_sync,
             running_containers=self._running_containers_sync,
@@ -70,6 +74,146 @@ class DockerSandboxManager:
         self._cleanup_consecutive_failures = 0
         self._cleanup_task: asyncio.Task[None] | None = None
         self._ownership_started = False
+
+    async def init(self, *, start_cleanup: bool = True) -> None:
+        """初始化 Docker 沙箱，失败或取消时释放已取得的资源。"""
+        async with self._init_lock:
+            if not self._ownership_started or self._client is None:
+                initialization = asyncio.create_task(
+                    asyncio.to_thread(self._initialize_runtime_sync)
+                )
+                try:
+                    # 取消等待不会停止线程；必须等线程结束后再释放它创建的资源。
+                    await asyncio.shield(initialization)
+                except BaseException:
+                    try:
+                        await initialization
+                    finally:
+                        await self._close(finalize_containers=False)
+                    raise
+            if start_cleanup and self._cleanup_task is None:
+                self._cleanup_task = asyncio.create_task(
+                    self._cleanup_idle_containers()
+                )
+
+    def graph_backend(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+    ) -> DockerSandboxBackend:
+        """构造图所需的路径和工具后端对象，执行身份由工作区准备流程取得。"""
+        return self._build_backend(user_id, conversation_id, None)
+
+    async def get_backend(
+        self, user_id: int, conversation_id: UUID
+    ) -> DockerSandboxBackend:
+        """准备当前会话共享工作区并构造后端。"""
+        await self.init()
+
+        def prepare() -> int:
+            with (
+                self._ownership.conversation_maintenance(user_id, conversation_id),
+                self._ownership.user_mutation(user_id),
+            ):
+                self._ownership.assert_available(user_id, conversation_id)
+                container = self._get_or_create_storage_container_sync(user_id)
+                return self._archive.ensure_workspace(container, conversation_id)
+
+        conversation_uid = await asyncio.to_thread(prepare)
+        await asyncio.to_thread(self._touch_user, user_id)
+        return self._build_backend(user_id, conversation_id, conversation_uid)
+
+    async def write_artifact(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        path: str,
+        content: BinaryIO,
+    ) -> str:
+        """写入会话内的相对路径，返回产物在沙箱中的完整绝对路径。"""
+        normalized_path = normalize_attachment_path(path)
+        await self.init()
+        await asyncio.to_thread(
+            self._upload_attachment_sync,
+            user_id,
+            conversation_id,
+            normalized_path,
+            content,
+        )
+        await asyncio.to_thread(self._touch_user, user_id)
+        return f"{conversation_workspace_path(conversation_id)}/{normalized_path}"
+
+    async def download_file(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        path: str,
+    ) -> bytes:
+        """下载用户会话目录中的文件。"""
+        normalized_path = normalize_attachment_path(path)
+        await self.init()
+        try:
+            content = await asyncio.to_thread(
+                self._download_attachment_sync,
+                user_id,
+                conversation_id,
+                normalized_path,
+            )
+        except NotFound:
+            raise FileNotFoundError(normalized_path) from None
+        await asyncio.to_thread(self._touch_user, user_id)
+        return content
+
+    async def is_downloadable_file(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        path: str,
+    ) -> bool:
+        """检查用户会话目录中的文件是否可通过附件接口下载。"""
+        normalized_path = normalize_attachment_path(path)
+        await self.init()
+
+        def inspect() -> bool:
+            """检查已有沙箱中是否存在可下载文件。"""
+            container = self._get_existing_container_sync(user_id)
+            return container is not None and self._archive.is_downloadable_file(
+                container, conversation_id, normalized_path
+            )
+
+        result = await asyncio.to_thread(inspect)
+        await asyncio.to_thread(self._touch_user, user_id)
+        return result
+
+    async def delete_conversation(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+    ) -> None:
+        """删除用户沙箱中的会话目录。"""
+        await self.init()
+
+        def delete() -> None:
+            """删除会话工作区并更新 UID 注册表。"""
+            with self._ownership.conversation_maintenance(
+                user_id,
+                conversation_id,
+            ):
+                self._ownership.mark_conversation_deleted(
+                    user_id,
+                    conversation_id,
+                )
+                container = self._get_running_storage_container_sync(user_id)
+                if container is not None:
+                    with self._ownership.user_mutation(user_id):
+                        self._archive.delete_conversation(container, conversation_id)
+
+        await asyncio.to_thread(delete)
+        await asyncio.to_thread(self._touch_user, user_id)
+
+    async def close(self) -> None:
+        """停止后台任务并关闭 Docker 客户端。"""
+        await self._close(finalize_containers=True)
 
     def _get_client(self) -> docker.DockerClient:
         """获取已初始化的 Docker 客户端。"""
@@ -105,27 +249,6 @@ class DockerSandboxManager:
         if self._client is None:
             self._init_sync()
             self._runtime_pool.reconcile()
-
-    async def init(self, *, start_cleanup: bool = True) -> None:
-        """初始化 Docker 沙箱，失败或取消时释放已取得的资源。"""
-        async with self._init_lock:
-            if not self._ownership_started or self._client is None:
-                initialization = asyncio.create_task(
-                    asyncio.to_thread(self._initialize_runtime_sync)
-                )
-                try:
-                    # 取消等待不会停止线程；必须等线程结束后再释放它创建的资源。
-                    await asyncio.shield(initialization)
-                except BaseException:
-                    try:
-                        await initialization
-                    finally:
-                        await self.disconnect()
-                    raise
-            if start_cleanup and self._cleanup_task is None:
-                self._cleanup_task = asyncio.create_task(
-                    self._cleanup_idle_containers()
-                )
 
     def _touch_user(self, user_id: int) -> None:
         """记录用户沙箱最近活动时间。"""
@@ -363,33 +486,6 @@ class DockerSandboxManager:
             lambda cancel_event: self._runtime_pool.get_running(user_id, cancel_event),
         )
 
-    def graph_backend(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-    ) -> DockerSandboxBackend:
-        """构造图所需的路径和工具后端对象，执行身份由工作区准备流程取得。"""
-        return self._build_backend(user_id, conversation_id, None)
-
-    async def get_backend(
-        self, user_id: int, conversation_id: UUID
-    ) -> DockerSandboxBackend:
-        """准备当前会话共享工作区并构造后端。"""
-        await self.init()
-
-        def prepare() -> int:
-            with (
-                self._ownership.conversation_maintenance(user_id, conversation_id),
-                self._ownership.user_mutation(user_id),
-            ):
-                self._ownership.assert_available(user_id, conversation_id)
-                container = self._get_or_create_storage_container_sync(user_id)
-                return self._archive.ensure_workspace(container, conversation_id)
-
-        conversation_uid = await asyncio.to_thread(prepare)
-        await asyncio.to_thread(self._touch_user, user_id)
-        return self._build_backend(user_id, conversation_id, conversation_uid)
-
     def _upload_attachment_sync(
         self,
         user_id: int,
@@ -422,107 +518,6 @@ class DockerSandboxManager:
         if container is None:
             raise FileNotFoundError(normalized_path)
         return self._archive.download_file(container, conversation_id, normalized_path)
-
-    async def _upload_normalized_file(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        normalized_path: str,
-        content: BinaryIO,
-    ) -> None:
-        """将已校验路径的文件对象写入用户会话目录。"""
-        await self.init()
-        await asyncio.to_thread(
-            self._upload_attachment_sync,
-            user_id,
-            conversation_id,
-            normalized_path,
-            content,
-        )
-        await asyncio.to_thread(self._touch_user, user_id)
-
-    async def write_artifact(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        path: str,
-        content: BinaryIO,
-    ) -> None:
-        """写入可信系统分析产物。"""
-        await self._upload_normalized_file(
-            user_id,
-            conversation_id,
-            normalize_attachment_path(path),
-            content,
-        )
-
-    async def download_file(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        path: str,
-    ) -> bytes:
-        """下载用户会话目录中的文件。"""
-        normalized_path = normalize_attachment_path(path)
-        await self.init()
-        try:
-            content = await asyncio.to_thread(
-                self._download_attachment_sync,
-                user_id,
-                conversation_id,
-                normalized_path,
-            )
-        except NotFound:
-            raise FileNotFoundError(normalized_path) from None
-        await asyncio.to_thread(self._touch_user, user_id)
-        return content
-
-    async def is_downloadable_file(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        path: str,
-    ) -> bool:
-        """检查用户会话目录中的文件是否可通过附件接口下载。"""
-        normalized_path = normalize_attachment_path(path)
-        await self.init()
-
-        def inspect() -> bool:
-            """检查已有沙箱中是否存在可下载文件。"""
-            container = self._get_existing_container_sync(user_id)
-            return container is not None and self._archive.is_downloadable_file(
-                container, conversation_id, normalized_path
-            )
-
-        result = await asyncio.to_thread(inspect)
-        await asyncio.to_thread(self._touch_user, user_id)
-        return result
-
-    async def delete_conversation(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-    ) -> None:
-        """删除用户沙箱中的会话目录。"""
-        await self.init()
-
-        def delete() -> None:
-            """删除会话工作区并更新 UID 注册表。"""
-            with self._ownership.conversation_maintenance(
-                user_id,
-                conversation_id,
-            ):
-                self._ownership.mark_conversation_deleted(
-                    user_id,
-                    conversation_id,
-                )
-                container = self._get_running_storage_container_sync(user_id)
-                if container is not None:
-                    with self._ownership.user_mutation(user_id):
-                        self._archive.delete_conversation(container, conversation_id)
-
-        await asyncio.to_thread(delete)
-        await asyncio.to_thread(self._touch_user, user_id)
 
     def _record_cleanup_result(self, errors: list[str]) -> None:
         """更新连续失败计数，并在达到阈值时记录告警。"""
@@ -589,14 +584,6 @@ class DockerSandboxManager:
                     f"忽略包含无效用户标签的 Docker 沙箱: container={container.name}"
                 )
         return user_ids
-
-    async def close(self) -> None:
-        """停止后台任务并关闭 Docker 客户端。"""
-        await self._close(finalize_containers=True)
-
-    async def disconnect(self) -> None:
-        """释放短生命周期管理器且保留运行中的沙箱容器。"""
-        await self._close(finalize_containers=False)
 
     async def _close(self, *, finalize_containers: bool) -> None:
         """按调用场景释放 Docker 管理资源。"""

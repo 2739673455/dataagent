@@ -20,8 +20,7 @@ from app.assistant.services.run import ConversationRunService
 from app.assistant.services.tasks import ConversationTasks
 from app.metadata.services.recall_handler import SemanticRecallHandler
 from app.query.services.execution_handler import QueryExecutionHandler
-from app.sandbox.manager import DockerSandboxManager
-from app.sandbox.providers import create_sandbox_manager
+from app.sandbox import DockerSandboxManager
 from app.shared.clients.doris_client_manager import (
     DorisClientManager,
     DorisQueryClientRegistry,
@@ -88,7 +87,7 @@ def _create_resources(stack: AsyncExitStack) -> WebResources:
     )
     stack.push_async_callback(checkpoint_pool.close)
     checkpointer = AsyncPostgresSaver(checkpoint_pool)
-    sandbox = create_sandbox_manager(packaged_skill_readonly_mounts())
+    sandbox = DockerSandboxManager(packaged_skill_readonly_mounts())
     stack.push_async_callback(sandbox.close)
     recall = SemanticRecallHandler(auth, meta, embedding, es, admin_doris)
     agents = AgentManager(

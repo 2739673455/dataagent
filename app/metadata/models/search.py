@@ -31,6 +31,7 @@ class SearchHit[SearchItemT]:
     item: SearchItemT
     score: float
 
+
 class SemanticResourceRecallRequest(BaseModel):
     """语义资源召回请求。"""
 
