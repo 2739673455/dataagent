@@ -298,8 +298,6 @@ class SemanticResourceRecallService:
         max_concurrent_index_queries: int = _DEFAULT_INDEX_QUERY_CONCURRENCY,
     ) -> None:
         """初始化元数据语义资源召回服务。"""
-        if max_concurrent_index_queries <= 0:
-            raise ValueError("max_concurrent_index_queries 必须为正整数")
         self._embedding_client = embedding_client
         self._column_repo = column_repo
         self._metric_repo = metric_repo

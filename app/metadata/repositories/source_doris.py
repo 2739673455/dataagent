@@ -73,7 +73,6 @@ class SourceDorisRepo:
         """读取至多 limit 行，为指定字段收集去重的非空样例。"""
         if not column_names:
             return {}
-        self._validate_positive_limit(limit, "limit")
         table_identifier = self._quote_identifier(table_name)
         quoted_cols = [self._quote_identifier(c) for c in column_names]
         sql = f"select {', '.join(quoted_cols)} from {table_identifier} limit {limit}"
@@ -107,7 +106,6 @@ class SourceDorisRepo:
         batch_size: int = 1000,
     ) -> AsyncIterator[list[Any]]:
         """全表去重后流式分批读取字段取值，空值由调用方过滤。"""
-        self._validate_positive_limit(batch_size, "batch_size")
         table_identifier = self._quote_identifier(table_name)
         column_identifier = self._quote_identifier(column_name)
         sql = f"select distinct {column_identifier} from {table_identifier}"
@@ -128,7 +126,6 @@ class SourceDorisRepo:
         batch_size: int = 1000,
     ) -> AsyncIterator[list[Any]]:
         """按左开右闭水位窗口读取去重取值，无已提交水位时不限制下界。"""
-        self._validate_positive_limit(batch_size, "batch_size")
         table_identifier = self._quote_identifier(table_name)
         column_identifier = self._quote_identifier(column_name)
         cursor_identifier = self._quote_identifier(cursor_column)
@@ -154,9 +151,3 @@ class SourceDorisRepo:
         if not identifier or "\x00" in identifier:
             raise ValueError(f"数据库标识符无效: {identifier}")
         return self._connection.dialect.identifier_preparer.quote_identifier(identifier)
-
-    @staticmethod
-    def _validate_positive_limit(value: int, name: str) -> None:
-        """校验采样数量或读取批次大小，拒绝布尔值和非正整数。"""
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            raise ValueError(f"{name} 必须为正整数")

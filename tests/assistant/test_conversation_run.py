@@ -255,3 +255,83 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
                 await request
             self.assertTrue(cleaned.is_set())
             self.assertFalse(self.started.is_set())
+
+    async def test_waiting_readers_receive_updates_and_completion(self):
+        async with asyncio.timeout(1):
+            first = await self.service.start(
+                1, _CONVERSATION_ID, None, prepare=AsyncMock()
+            )
+            second = self.service.subscribe(1, _CONVERSATION_ID)
+            run = self.service._runs[(1, _CONVERSATION_ID)]
+            for delta in ("第一段", "第二段"):
+                readers = [asyncio.create_task(anext(s)) for s in (first, second)]
+                await asyncio.sleep(0)
+                event = chat_schema.ChatStreamMessageDeltaEvent(
+                    type="message_delta", message_id="answer", delta=delta
+                )
+                self.service._publish(run, event)
+                self.assertEqual(await asyncio.gather(*readers), [event, event])
+            readers = [asyncio.create_task(anext(s)) for s in (first, second)]
+            await asyncio.sleep(0)
+            self.release.set()
+            self.assertEqual(
+                [e.type for e in await asyncio.gather(*readers)], ["done", "done"]
+            )
+            for stream in (first, second):
+                self.assertEqual([event async for event in stream], [])
+
+    async def test_cancelled_reader_does_not_affect_other_reader(self):
+        async with asyncio.timeout(1):
+            first = await self.service.start(
+                1, _CONVERSATION_ID, None, prepare=AsyncMock()
+            )
+            second = self.service.subscribe(1, _CONVERSATION_ID)
+            waiting = asyncio.create_task(anext(first))
+            remaining = asyncio.create_task(anext(second))
+            await asyncio.sleep(0)
+            waiting.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await waiting
+            self.assertTrue(self.service.is_running(1, _CONVERSATION_ID))
+            self.release.set()
+            self.assertEqual((await remaining).type, "done")
+            await second.aclose()
+
+    async def test_eviction_disconnects_lagging_reader_and_replays_retained_events(
+        self,
+    ):
+        event = chat_schema.ChatStreamMessageDeltaEvent(
+            type="message_delta", message_id="answer", delta="中文增量"
+        )
+        event_bytes = len(event.model_dump_json().encode("utf-8"))
+        for count_limit, byte_limit, retained in (
+            (2, 10000, 2),
+            (512, event_bytes * 2, 2),
+            (512, event_bytes - 1, 0),
+        ):
+            with (
+                self.subTest(count_limit=count_limit, byte_limit=byte_limit),
+                patch("app.assistant.services.run._REPLAY_EVENT_LIMIT", count_limit),
+                patch("app.assistant.services.run._REPLAY_BYTE_LIMIT", byte_limit),
+            ):
+                async with asyncio.timeout(1):
+                    slow = await self.service.start(
+                        1, _CONVERSATION_ID, None, prepare=AsyncMock()
+                    )
+                    fast = self.service.subscribe(1, _CONVERSATION_ID)
+                    run = self.service._runs[(1, _CONVERSATION_ID)]
+                    for _ in range(3):
+                        self.service._publish(run, event)
+                        if retained:
+                            self.assertEqual(await anext(fast), event)
+                    self.assertEqual([e.type async for e in slow], ["error"])
+                    reconnected = self.service.subscribe(1, _CONVERSATION_ID)
+                    await self.service.stop(1, _CONVERSATION_ID)
+                    self.assertEqual(
+                        [e.type async for e in reconnected],
+                        ["message_delta"] * retained + ["done"],
+                    )
+                    self.assertEqual(
+                        [e.type async for e in fast],
+                        ["done"] if retained else ["error"],
+                    )

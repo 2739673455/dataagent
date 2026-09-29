@@ -3,8 +3,7 @@
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -15,33 +14,20 @@ from app.assistant.agents import model_factory
 from app.shared.config.app_config import LMConfigCfg, ModelCfg, ModelProfileCfg, cfg
 
 
-@pytest.mark.parametrize(
-    ("provider", "protocol"),
-    [
-        ("openai", "responses"),
-        ("deepseek", "responses"),
-        ("openai", "chat_completions"),
-        ("openrouter", "chat_completions"),
-        ("openrouter", "responses"),
-        ("deepseek", "chat_completions"),
-        ("custom", "chat_completions"),
-    ],
-)
-def test_clients_are_scoped_to_each_model_context(provider: str, protocol: str) -> None:
+@pytest.mark.parametrize("provider", ["openai", "deepseek", "openrouter", "custom"])
+def test_clients_are_scoped_to_each_model_context(provider: str) -> None:
     config = LMConfigCfg(
         active="test",
         models={
             "test": ModelCfg.model_validate(
                 {
                     "model_provider": provider,
-                    "api_protocol": protocol,
                     "model": "test-model",
                     "base_url": "https://example.invalid/v1",
                     "api_key": "test-key",
                     "params": {"default_headers": {"X-Test": "1"}},
                     "profile": ModelProfileCfg(
                         image_inputs=False,
-                        structured_output=False,
                         max_input_tokens=1024,
                     ),
                 }
@@ -54,12 +40,12 @@ def test_clients_are_scoped_to_each_model_context(provider: str, protocol: str) 
         with pytest.raises(RuntimeError, match="operation"):
             async with model_factory.create_configured_model("test") as model:
                 expected_class = (
-                    model_factory.DataAgentDeepSeekResponses
-                    if provider == "deepseek" and protocol == "responses"
+                    model_factory.DataAgentDeepSeek
+                    if provider == "deepseek"
                     else ChatOpenAI
                 )
                 assert type(model) is expected_class
-                assert model.use_responses_api is (protocol == "responses")
+                assert model.use_responses_api is False
                 sync_client = model.http_client
                 async_client = model.http_async_client
                 assert isinstance(sync_client, httpx.Client)
@@ -108,49 +94,98 @@ def test_runtime_init_failure_closes_already_created_models() -> None:
         asyncio.run(run())
 
 
-def test_deepseek_async_stream_preserves_reasoning_and_message_id() -> None:
-    response = MagicMock()
-    response.__aiter__.return_value = [
-        SimpleNamespace(
-            type="response.reasoning_text.delta",
-            output_index=0,
-            content_index=0,
-            delta="思考",
-        ),
-        SimpleNamespace(
-            type="response.output_text.delta",
-            output_index=1,
-            content_index=0,
-            delta="回答",
-        ),
-    ]
-    stream = MagicMock()
-    stream.__aenter__ = AsyncMock(return_value=response)
-    model = MagicMock(output_version="responses/v1")
-    model.root_async_client.responses.create = AsyncMock(return_value=stream)
-    callback = AsyncMock()
+def test_deepseek_stream_and_tool_continuation_preserve_reasoning() -> None:
+    import json
 
-    async def run() -> None:
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    from app.assistant.messages.content import reasoning_text
+
+    requests = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/chat/completions"
+        requests.append(json.loads(request.content))
+        deltas = (
+            [
+                {"role": "assistant", "reasoning_content": "先查"},
+                {"reasoning_content": "数据"},
+                {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "lookup", "arguments": "{}"},
+                        }
+                    ]
+                },
+            ]
+            if len(requests) == 1
+            else [{"role": "assistant", "content": "回答"}]
+        )
         chunks = [
-            chunk
-            async for chunk in model_factory.DataAgentDeepSeekResponses._astream(
-                model,
-                [],
-                run_manager=callback,
-            )
-        ]
-        assert len(chunks) == 2
-        assert chunks[0].message.id
-        assert chunks[0].message.id == chunks[1].message.id
-        assert chunks[0].message.content == [
             {
-                "type": "reasoning",
-                "content": [{"type": "reasoning_text", "text": "思考", "index": 0}],
-                "index": 0,
+                "id": "answer",
+                "model": "deepseek-flash",
+                "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
             }
+            for delta in deltas
         ]
-        assert chunks[1].text == "回答"
-        assert callback.on_llm_new_token.await_count == 2
-        stream.__aexit__.assert_awaited_once()
+        chunks.append(
+            {
+                "id": "answer",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "tool_calls" if len(requests) == 1 else "stop",
+                    }
+                ],
+            }
+        )
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text="".join(f"data: {json.dumps(c)}\n\n" for c in chunks)
+            + "data: [DONE]\n\n",
+        )
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            model = model_factory.DataAgentDeepSeek(
+                model="deepseek-flash",
+                api_key="test",
+                base_url="https://example.invalid/v1",
+                http_async_client=client,
+                use_responses_api=False,
+            )
+            chunks = [
+                chunk async for chunk in model.astream([HumanMessage(content="查询")])
+            ]
+            assert (
+                "".join(reasoning_text(chunk) or "" for chunk in chunks) == "先查数据"
+            )
+            combined = chunks[0]
+            for chunk in chunks[1:]:
+                combined += chunk
+            assistant = AIMessage(
+                content=combined.content,
+                additional_kwargs=combined.additional_kwargs,
+                tool_calls=combined.tool_calls,
+            )
+            messages = [
+                HumanMessage(content="查询"),
+                assistant,
+                ToolMessage(content="结果", tool_call_id="call_1"),
+            ]
+            answer = [chunk async for chunk in model.astream(messages)]
+            assert "".join(chunk.text for chunk in answer) == "回答"
+            assert requests[1]["messages"][1]["reasoning_content"] == "先查数据"
+            assert requests[1]["messages"][1]["tool_calls"][0]["id"] == "call_1"
+            assert requests[1]["messages"][2]["tool_call_id"] == "call_1"
+            payload = model._get_request_payload([AIMessage(content="无思考历史")])
+            assert payload["messages"][0]["reasoning_content"] == ""
+            assert model._get_ls_params()["ls_provider"] == "deepseek"
 
     asyncio.run(run())

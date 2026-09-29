@@ -55,20 +55,16 @@ lm_config: # 可用语言模型集合及默认模型。
   active: deepseek-deepseek-flash # Planner 和默认 Specialist 使用的模型配置名。
   models: # 按配置名声明可用语言模型。
     deepseek-deepseek-flash: # 模型配置名，可由 active 或 Specialist 引用。
-      model_provider: deepseek # 使用 DeepSeek 无状态 Responses 专属适配器。
-      api_protocol: responses # 显式选择 Responses API，失败时不回退到 Chat Completions。
+      model_provider: deepseek # 使用 DeepSeek Chat Completions 客户端。
       model: deepseek-flash # 供应商侧模型标识。
       base_url: https://api.deepseek.com # 模型供应商 API 地址。
       api_key: ${oc.env:DEEPSEEK_API_KEY} # 模型供应商 API 密钥。
       params: {} # 传给模型客户端的附加初始化参数。
       profile: # 模型能力描述和上下文限制。
         image_inputs: true # 当前模型是否支持识别图片内容。
-        structured_output: false # DeepSeek Responses 原生 JSON Schema 可能返回空正文，Specialist 使用工具调用输出。
         max_input_tokens: 1048576 # 模型上下文长度，用于计算对话压缩阈值。
 
 agent: # Planner 和 Specialist 运行时配置。
-  orchestration: # 动态 Specialist 编排限制。
-    max_continuations: 3 # 单个用户回合允许 Planner 自动续写的最大次数。
   specialists: # 各 Specialist 的模型选择，default 表示跟随 lm_config.active。
     explorer: # 数据发现 Specialist。
       model: default # Specialist 使用的语言模型配置名。

@@ -1,24 +1,39 @@
 """管理应用共享模型和工具，并装配每次 Run 使用的 Agent 图。"""
 
 from contextlib import AsyncExitStack
+from pathlib import PurePosixPath
 from uuid import UUID
 
-from deepagents import FilesystemMiddleware
+from deepagents import (
+    FilesystemMiddleware,
+    GeneralPurposeSubagentProfile,
+    HarnessProfile,
+    create_deep_agent,
+    register_harness_profile,
+)
+from deepagents.middleware.subagents import CompiledSubAgent
 from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import StateSnapshot
 
-from app.assistant.agents.agent import create_agent
 from app.assistant.agents.context import build_planner_config, get_thread_id
+from app.assistant.agents.filesystem import (
+    agent_skills_mount_path,
+    build_specialist_filesystem,
+)
+from app.assistant.agents.middleware.message_context import MessageContextMiddleware
 from app.assistant.agents.middleware.task_activity import TaskActivityMiddleware
 from app.assistant.agents.model_factory import create_configured_model
-from app.assistant.agents.resources import SYSTEM_PROMPTS
-from app.assistant.agents.specialists import build_specialists
+from app.assistant.agents.resources import ASSISTANT_RESOURCES_DIR, SYSTEM_PROMPTS
+from app.assistant.agents.tools import create_shell_tool
+from app.assistant.agents.tools.execute_sql import create_execute_sql_tool
+from app.assistant.agents.tools.semantic_recall import create_semantic_recall_tool
 from app.metadata.services.recall_handler import SemanticRecallHandler
 from app.query.services.execution_handler import QueryExecutionHandler
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.manager import DockerSandboxManager
+from app.sandbox.paths import SandboxReadonlyMount
 from app.shared.config import app_config
 from app.shared.contracts.analysis import AGENT_TYPES, AgentType
 
@@ -59,6 +74,16 @@ class AgentManager:
                 name: await stack.enter_async_context(create_configured_model(name))
                 for name in self._model_names
             }
+            for model in models.values():
+                model_params = dict(model._get_ls_params())  # pyright: ignore[reportPrivateUsage]
+                register_harness_profile(
+                    f"{model_params['ls_provider']}:{model_params['ls_model_name']}",
+                    HarnessProfile(
+                        general_purpose_subagent=GeneralPurposeSubagentProfile(
+                            enabled=False
+                        ),
+                    ),
+                )
             self._models = models
             self._model_contexts = stack.pop_all()
 
@@ -105,22 +130,78 @@ class AgentManager:
         """编译 Planner 与 task 子 Agent，供状态读取或执行使用。"""
         if backend is None:
             backend = self._sandbox.graph_backend(user_id, conversation_id)
-        return create_agent(
+        return create_deep_agent(
             name="planner",
             system_prompt=SYSTEM_PROMPTS["planner"],
-            filesystem=FilesystemMiddleware(backend=backend, tools=["read_file"]),
             model=self._models[self._planner_model_name],
-            tools=[],
-            subagents=build_specialists(
-                {
-                    kind: self._models[name]
-                    for kind, name in self._specialist_model_names.items()
-                },
-                backend,
-                self._recall,
-                self._query,
-            ),
-            middleware=[TaskActivityMiddleware()],
-            sandbox=backend,
+            tools=[create_shell_tool(backend.shell_jobs)],
+            subagents=self._build_specialists(backend),
+            middleware=[
+                FilesystemMiddleware(backend=backend, tools=["read_file"]),
+                TaskActivityMiddleware(),
+                MessageContextMiddleware(),
+            ],
+            backend=backend,
             checkpointer=self._checkpointer,
         )
+
+    def _build_specialists(
+        self, backend: DockerSandboxBackend
+    ) -> list[CompiledSubAgent]:
+        """构造无 Checkpoint 的专业图，共用当前会话工作区。"""
+        analyst_skills = agent_skills_mount_path("analyst")
+        explorer_filesystem = build_specialist_filesystem(backend)
+        analyst_filesystem = build_specialist_filesystem(
+            backend,
+            skill_mount=SandboxReadonlyMount(
+                source=ASSISTANT_RESOURCES_DIR / "analyst" / "skills",
+                target=PurePosixPath(analyst_skills),
+            ),
+        )
+        reviewer_filesystem = build_specialist_filesystem(backend)
+        return [
+            CompiledSubAgent(
+                name="explorer",
+                description="检索元数据、执行 SQL，取得可信数据并返回文件路径。",
+                runnable=create_deep_agent(
+                    name="explorer",
+                    system_prompt=SYSTEM_PROMPTS["explorer"],
+                    model=self._models[self._specialist_model_names["explorer"]],
+                    tools=[
+                        create_semantic_recall_tool(self._recall),
+                        create_execute_sql_tool(self._query),
+                        create_shell_tool(backend.shell_jobs),
+                    ],
+                    middleware=[explorer_filesystem, MessageContextMiddleware()],
+                    backend=explorer_filesystem.backend,
+                    checkpointer=False,
+                ),
+            ),
+            CompiledSubAgent(
+                name="analyst",
+                description="基于数据文件进行分析、计算和可视化。",
+                runnable=create_deep_agent(
+                    name="analyst",
+                    system_prompt=SYSTEM_PROMPTS["analyst"],
+                    model=self._models[self._specialist_model_names["analyst"]],
+                    tools=[create_shell_tool(backend.shell_jobs)],
+                    middleware=[analyst_filesystem, MessageContextMiddleware()],
+                    backend=analyst_filesystem.backend,
+                    skills=[analyst_skills],
+                    checkpointer=False,
+                ),
+            ),
+            CompiledSubAgent(
+                name="reviewer",
+                description="检查分析口径、计算过程与交付物。",
+                runnable=create_deep_agent(
+                    name="reviewer",
+                    system_prompt=SYSTEM_PROMPTS["reviewer"],
+                    model=self._models[self._specialist_model_names["reviewer"]],
+                    tools=[create_shell_tool(backend.shell_jobs)],
+                    middleware=[reviewer_filesystem, MessageContextMiddleware()],
+                    backend=reviewer_filesystem.backend,
+                    checkpointer=False,
+                ),
+            ),
+        ]

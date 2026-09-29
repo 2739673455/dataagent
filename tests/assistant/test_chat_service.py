@@ -1,4 +1,4 @@
-"""聊天回合与 Planner 自动续写测试。"""
+"""聊天回合与 Planner 事件流测试。"""
 
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ from app.assistant.agents.context import (
     SubagentStatusActivity,
 )
 from app.assistant.agents.manager import AgentManager
-from app.assistant.errors import PlannerContinuationLimitError
 from app.assistant.messages import projection as message_projection
 from app.assistant.models import chat as chat_schema
 from app.assistant.services import history as conversation_history
@@ -139,70 +138,20 @@ class MessageProjectionTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_responses_reasoning_item_is_projected_as_completed_thinking(
-        self,
-    ) -> None:
-        response = message_projection.langchain_message_to_schema(
+    async def test_deepseek_checkpoint_reasoning_is_projected(self) -> None:
+        message = AIMessage.model_validate_json(
             AIMessage(
                 id="answer-1",
-                content=[
-                    {
-                        "type": "reasoning",
-                        "id": "rs_1",
-                        "summary": [],
-                        "content": [{"type": "reasoning_text", "text": "先核对数据。"}],
-                    },
-                    {"type": "text", "text": "最终回答"},
-                ],
-            ),
+                content="你好",
+                additional_kwargs={"reasoning_content": "先判断用户意图。"},
+            ).model_dump_json()
         )
-
-        assert response is not None
-        thinking = response.parts[0]
-        self.assertIsInstance(thinking, chat_schema.ThinkingContent)
-        self.assertEqual(
-            cast(chat_schema.ThinkingContent, thinking).text,
-            "先核对数据。",
-        )
-
-    async def test_deepseek_checkpoint_reasoning_extras_are_projected(self) -> None:
-        message = AIMessage(
-            id="answer-1",
-            response_metadata={"model_provider": "openai"},
-            content=[
-                {
-                    "type": "reasoning",
-                    "id": "rs_1",
-                    "summary": [],
-                    "content": [
-                        {
-                            "type": "reasoning_text",
-                            "text": "先判断用户意图。",
-                            "index": 0,
-                        }
-                    ],
-                    "encrypted_content": "encrypted-reasoning",
-                    "status": "in_progress",
-                    "index": 0,
-                },
-                {"type": "text", "text": "你好", "index": 1},
-            ],
-        )
-
-        # LangChain 会把扩展 Responses reasoning 的 content 移到 extras，
-        # 历史投影仍应从 Checkpoint 原始 content 恢复思考过程。
-        self.assertNotIn("content", message.content_blocks[0])
-        response = message_projection.langchain_message_to_schema(
-            message,
-        )
-
+        response = message_projection.langchain_message_to_schema(message)
         assert response is not None
         self.assertEqual(
             response.parts[0],
             chat_schema.ThinkingContent(
-                type="thinking",
-                text="先判断用户意图。",
-                status="complete",
+                type="thinking", text="先判断用户意图。", status="complete"
             ),
         )
 
@@ -289,7 +238,7 @@ class _TurnManagerStub:
         return self.runtime
 
 
-class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
+class PlannerTurnTest(unittest.IsolatedAsyncioTestCase):
     async def test_planner_reasoning_streams_incrementally_then_is_completed(
         self,
     ) -> None:
@@ -306,16 +255,8 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                     "data": (
                         AIMessageChunk(
                             id="answer-1",
-                            content=[
-                                {
-                                    "type": "reasoning",
-                                    "id": "rs_1",
-                                    "summary": [],
-                                    "content": [
-                                        {"type": "reasoning_text", "text": delta}
-                                    ],
-                                }
-                            ],
+                            content="",
+                            additional_kwargs={"reasoning_content": delta},
                         ),
                         {"langgraph_node": "model"},
                     ),
@@ -340,20 +281,8 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                         "messages": [
                             AIMessage(
                                 id="answer-1",
-                                content=[
-                                    {
-                                        "type": "reasoning",
-                                        "id": "rs_1",
-                                        "summary": [],
-                                        "content": [
-                                            {
-                                                "type": "reasoning_text",
-                                                "text": "先定位数据源",
-                                            }
-                                        ],
-                                    },
-                                    {"type": "text", "text": "完成"},
-                                ],
+                                content="完成",
+                                additional_kwargs={"reasoning_content": "先定位数据源"},
                                 response_metadata={"finish_reason": "stop"},
                             )
                         ]
@@ -368,7 +297,6 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
             PlannerTurnContext(
                 user_id=7,
                 conversation_id=_CONVERSATION_ID,
-                max_continuations=0,
             ),
         )
 
@@ -441,7 +369,6 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
             PlannerTurnContext(
                 user_id=7,
                 conversation_id=_CONVERSATION_ID,
-                max_continuations=0,
             ),
         )
 
@@ -463,14 +390,14 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         assert isinstance(part, chat_schema.TextContent)
         self.assertEqual(part.text, "恢复后的最终回答")
 
-    async def test_repeated_finish_reason_reuses_turn_budget_and_hits_limit(
+    async def test_non_stop_finish_reason_does_not_restart_graph(
         self,
     ) -> None:
         for finish_reason in ("length", "content_filter"):
             with self.subTest(finish_reason=finish_reason):
-                await self._assert_repeated_finish_reason_is_bounded(finish_reason)
+                await self._assert_finishes_without_continuation(finish_reason)
 
-    async def _assert_repeated_finish_reason_is_bounded(
+    async def _assert_finishes_without_continuation(
         self,
         finish_reason: str,
     ) -> None:
@@ -479,7 +406,6 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         turn_context = PlannerTurnContext(
             user_id=7,
             conversation_id=_CONVERSATION_ID,
-            max_continuations=2,
         )
         manager = _TurnManagerStub(runtime, turn_context)
 
@@ -487,29 +413,18 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
             parts=[chat_schema.TextContent(type="text", text="analyze")],
         )
         events: list[chat_schema.ChatStreamEventPayload] = []
-        with (
-            patch.object(
-                run_service,
-                "schema_to_human_message",
-                new=MagicMock(return_value=HumanMessage(content="analyze")),
-            ),
-            self.assertRaisesRegex(
-                PlannerContinuationLimitError,
-                "连续续写次数超过上限",
-            ),
+        async for event in run_service.run_agent_turn(
+            cast(AgentManager, manager),
+            cast(DockerSandboxManager, _FileInspectorStub()),
+            manager.turn_context,
+            user_message,
         ):
-            async for event in run_service.run_agent_turn(
-                cast(AgentManager, manager),
-                cast(DockerSandboxManager, _FileInspectorStub()),
-                manager.turn_context,
-                user_message,
-            ):
-                events.append(event)
+            events.append(event)
 
         self.assertEqual(manager.execution_count, 1)
-        self.assertEqual(len(planner.configs), 3)
-        self.assertEqual(planner.input_sizes, [1, 0, 0])
-        self.assertEqual(len(events), 3)
+        self.assertEqual(len(planner.configs), 1)
+        self.assertEqual(planner.input_sizes, [1])
+        self.assertEqual(len(events), 1)
         self.assertTrue(
             all(
                 isinstance(event, chat_schema.ChatStreamMessageEvent)
@@ -726,7 +641,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             PlannerTurnContext(
                 user_id=7,
                 conversation_id=_CONVERSATION_ID,
-                max_continuations=0,
             ),
         )
         files = _FileInspectorStub({(7, _CONVERSATION_ID, path.removeprefix("/"))})
@@ -827,7 +741,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             PlannerTurnContext(
                 user_id=7,
                 conversation_id=_CONVERSATION_ID,
-                max_continuations=0,
             ),
         )
         events: list[chat_schema.ChatStreamEventPayload] = []
@@ -919,7 +832,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         turn_context = PlannerTurnContext(
             user_id=7,
             conversation_id=_CONVERSATION_ID,
-            max_continuations=0,
         )
         manager = _TurnManagerStub(runtime, turn_context)
         user_message = chat_schema.UserMessageRequest(

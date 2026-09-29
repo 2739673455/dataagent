@@ -1,92 +1,22 @@
-"""语言模型实例构建。"""
+"""Chat Completions 模型构建与 DeepSeek 思考内容回传。"""
 
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any, cast
-from uuid import uuid4
+from typing import Any
 
 import httpx
-from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
-from langchain_core.language_models import (
-    BaseChatModel,
-    LangSmithParams,
-    LanguageModelInput,
-    ModelProfile,
-)
-from langchain_core.messages import AIMessageChunk, BaseMessage
-from langchain_core.outputs import ChatGenerationChunk
+from langchain_core.language_models import BaseChatModel, LanguageModelInput
+from langchain_core.messages import AIMessage
+from langchain_deepseek import ChatDeepSeek
 from langchain_openai import ChatOpenAI
-from langchain_openai.chat_models import base as openai_chat_base
 
 from app.shared.config import app_config
 
 _REQUEST_TIMEOUT_SECONDS = 30
 
 
-def _convert_deepseek_responses_chunk(
-    chunk: Any,
-    current_index: int,
-    current_output_index: int,
-    current_sub_index: int,
-    *,
-    schema: Any,
-    metadata: dict[str, Any],
-    has_reasoning: bool,
-    output_version: str | None,
-) -> tuple[int, int, int, ChatGenerationChunk | None]:
-    """补充 LangChain 尚未处理的 DeepSeek 明文思考增量。"""
-    if chunk.type != "response.reasoning_text.delta":
-        return openai_chat_base._convert_responses_chunk_to_generation_chunk(  # pyright: ignore[reportPrivateUsage]
-            chunk,
-            current_index,
-            current_output_index,
-            current_sub_index,
-            schema=schema,
-            metadata=metadata,
-            has_reasoning=has_reasoning,
-            output_version=output_version,
-        )
-
-    if current_output_index != chunk.output_index:
-        current_index += 1
-    current_output_index = chunk.output_index
-    current_sub_index = chunk.content_index
-    return (
-        current_index,
-        current_output_index,
-        current_sub_index,
-        ChatGenerationChunk(
-            message=AIMessageChunk(
-                content=[
-                    {
-                        "type": "reasoning",
-                        "content": [
-                            {
-                                "type": "reasoning_text",
-                                "text": chunk.delta,
-                                "index": chunk.content_index,
-                            }
-                        ],
-                        "index": current_index,
-                    }
-                ]
-            )
-        ),
-    )
-
-
-class DataAgentDeepSeekResponses(ChatOpenAI):
-    """适配 DeepSeek 无状态 Responses thinking 续轮。"""
-
-    def _get_ls_params(
-        self,
-        stop: list[str] | None = None,
-        **kwargs: Any,
-    ) -> LangSmithParams:
-        """将 OpenAI 协议客户端调用归属到真实的 DeepSeek Provider。"""
-        params = super()._get_ls_params(stop=stop, **kwargs)
-        params["ls_provider"] = "deepseek"
-        return params
+class DataAgentDeepSeek(ChatDeepSeek):
+    """工具调用后将思考内容随历史消息回传给 DeepSeek。"""
 
     def _get_request_payload(
         self,
@@ -95,52 +25,14 @@ class DataAgentDeepSeekResponses(ChatOpenAI):
         stop: list[str] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """保留 DeepSeek 下一次工具调用必须回传的明文 reasoning item。"""
-        # LangChain 会在 store=false 时移除 OpenAI 无法无状态重放的明文
-        # reasoning。DeepSeek 本身始终无状态，并要求客户端完整回传该 item，
-        # 因此先按完整历史序列化，再把发往 Provider 的 store 恢复为 false。
-        kwargs["store"] = True
-        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
-        payload["store"] = False
-        return payload
-
-    async def _astream(
-        self,
-        messages: list[BaseMessage],
-        stop: list[str] | None = None,
-        run_manager: AsyncCallbackManagerForLLMRun | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[ChatGenerationChunk]:
-        """转换 DeepSeek Responses 异步流，包含明文思考增量。"""
-        kwargs["stream"] = True
-        payload = self._get_request_payload(messages, stop=stop, **kwargs)
-        context_manager = await self.root_async_client.responses.create(**payload)
-        message_id = str(uuid4())
-
-        async with context_manager as response:
-            index = output_index = sub_index = -1
-            async for provider_chunk in response:
-                index, output_index, sub_index, generation_chunk = (
-                    _convert_deepseek_responses_chunk(
-                        provider_chunk,
-                        index,
-                        output_index,
-                        sub_index,
-                        schema=kwargs.get("response_format"),
-                        metadata={},
-                        has_reasoning=False,
-                        output_version=self.output_version,
-                    )
+        messages = self._convert_input(input_).to_messages()
+        payload = super()._get_request_payload(messages, stop=stop, **kwargs)
+        for message, item in zip(messages, payload["messages"], strict=True):
+            if isinstance(message, AIMessage):
+                item["reasoning_content"] = message.additional_kwargs.get(
+                    "reasoning_content", ""
                 )
-                if generation_chunk is None:
-                    continue
-                generation_chunk.message.id = message_id
-                if run_manager is not None:
-                    await run_manager.on_llm_new_token(
-                        generation_chunk.text,
-                        chunk=generation_chunk,
-                    )
-                yield generation_chunk
+        return payload
 
 
 @asynccontextmanager
@@ -150,33 +42,18 @@ async def create_configured_model(model_name: str) -> AsyncGenerator[BaseChatMod
         model_cfg = app_config.cfg.lm_config.models[model_name]
     except KeyError as exc:
         raise ValueError(f"未知的语言模型配置: {model_name}") from exc
-    deepseek_responses = (
-        model_cfg.model_provider == "deepseek" and model_cfg.api_protocol == "responses"
-    )
-    profile = cast(
-        ModelProfile,
-        {
-            **model_cfg.profile.model_dump(),
-            "image_tool_message": model_cfg.api_protocol == "responses"
-            and model_cfg.profile.image_inputs,
-        },
-    )
     model_kwargs = {
         **model_cfg.params,
         "model": model_cfg.model,
         "base_url": model_cfg.base_url,
         "api_key": model_cfg.api_key.get_secret_value(),
-        "profile": profile,
+        "profile": model_cfg.profile.model_dump(),
         "max_retries": 0,
         "streaming": True,
     }
-    model_class = DataAgentDeepSeekResponses if deepseek_responses else ChatOpenAI
-    if model_cfg.api_protocol == "responses":
-        model_kwargs.update(
-            output_version="responses/v1",
-            store=False,
-            use_previous_response_id=False,
-        )
+    model_class = (
+        DataAgentDeepSeek if model_cfg.model_provider == "deepseek" else ChatOpenAI
+    )
     with httpx.Client(
         timeout=_REQUEST_TIMEOUT_SECONDS, follow_redirects=True
     ) as http_client:
@@ -190,5 +67,5 @@ async def create_configured_model(model_name: str) -> AsyncGenerator[BaseChatMod
             yield model_class(
                 **model_kwargs,
                 timeout=_REQUEST_TIMEOUT_SECONDS,
-                use_responses_api=model_cfg.api_protocol == "responses",
+                use_responses_api=False,
             )

@@ -33,7 +33,7 @@ def test_graph_stream_closes_on_exit_or_projection_error(exit_mode) -> None:
         events = run_service.run_agent_turn(
             manager,
             MagicMock(),
-            PlannerTurnContext(1, conversation_id, 0),
+            PlannerTurnContext(1, conversation_id),
             None,
         )
         if exit_mode == "projection_error":

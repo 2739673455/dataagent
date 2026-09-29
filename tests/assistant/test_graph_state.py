@@ -275,7 +275,7 @@ class NativeTaskTest(unittest.IsolatedAsyncioTestCase):
         }
         factory._models = {"planner": planner, "specialist": specialist}
         with patch(
-            "app.assistant.agents.specialists.create_execute_sql_tool",
+            "app.assistant.agents.manager.create_execute_sql_tool",
             return_value=wait_for_cancel,
         ):
             graph = factory._build_planner(12, uuid4())

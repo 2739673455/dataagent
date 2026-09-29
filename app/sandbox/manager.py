@@ -289,8 +289,6 @@ class DockerSandboxManager:
 
     def _get_or_create_storage_container_sync(self, user_id: int) -> Container:
         """获取或创建容器，但不启动容器。"""
-        if user_id < 0:
-            raise ValueError("user_id 不能为负数")
         name = self._container_name(user_id)
         container = self._get_existing_container_sync(user_id)
         if container is not None:

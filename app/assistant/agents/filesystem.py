@@ -65,7 +65,7 @@ def build_specialist_filesystem(
 
 当前会话工作目录是 `{workspace_dir}`。
 
-- 文件工具、`view_image` 和 `shell` 使用同一套容器路径：相对路径从当前会话工作目录解析，绝对路径直接使用。
+- 文件工具和 `shell` 使用同一套容器路径：相对路径从当前会话工作目录解析，绝对路径直接使用。
 - 所有 Agent 共用当前会话目录；`write_file` 和 `edit_file` 只能修改该目录，避免覆盖其他任务的同名文件。
 - 跨 Agent 传递和文件交付必须使用完整绝对路径，文件交付指令独占一行，格式为 `[[DATAAGENT_ARTIFACT:<absolute_path>]]`。
 - 内置技能位于只读 `/skills/...`。

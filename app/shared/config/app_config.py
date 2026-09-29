@@ -71,7 +71,6 @@ class ModelProfileCfg(AppConfigModel):
     """应用实际使用的语言模型能力。"""
 
     image_inputs: bool
-    structured_output: bool
     max_input_tokens: int = Field(gt=0)
 
 
@@ -79,7 +78,6 @@ class ModelCfg(AppConfigModel):
     """语言模型配置。"""
 
     model_provider: str = Field(min_length=1)
-    api_protocol: Literal["chat_completions", "responses"]
     model: str = Field(min_length=1)
     base_url: str = Field(min_length=1)
     api_key: SecretStr = Field(min_length=1)
@@ -101,12 +99,6 @@ class LMConfigCfg(AppConfigModel):
         return self
 
 
-class OrchestrationConfig(AppConfigModel):
-    """动态专业 Agent 编排限制。"""
-
-    max_continuations: int = Field(ge=0)
-
-
 class SpecialistConfig(AppConfigModel):
     """专业 Agent 模型选择。"""
 
@@ -116,7 +108,6 @@ class SpecialistConfig(AppConfigModel):
 class AgentConfig(AppConfigModel):
     """多 Agent 运行时配置。"""
 
-    orchestration: OrchestrationConfig
     specialists: dict[
         Literal["explorer", "analyst", "reviewer"],
         SpecialistConfig,
