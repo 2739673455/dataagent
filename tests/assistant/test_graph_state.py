@@ -11,7 +11,7 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage
 from pydantic import Field
 
-from app.assistant.services import manager as agent_manager
+from app.assistant.agents import manager as agent_manager
 from app.sandbox.manager import DockerSandboxManager
 
 
@@ -49,7 +49,6 @@ def make_factory(saver):
     factory = agent_manager.AgentManager(
         saver,
         sandbox,
-        MagicMock(exists=AsyncMock(return_value=False)),
         MagicMock(),
         MagicMock(),
     )
@@ -66,7 +65,7 @@ from uuid import uuid4
 from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 
-from app.assistant.services.types import (
+from app.assistant.agents.context import (
     SubagentStatusActivity,
     build_planner_config,
 )
@@ -307,3 +306,20 @@ class NativeTaskTest(unittest.IsolatedAsyncioTestCase):
         )
         for checkpoint in saver.list(None):
             self.assertEqual(checkpoint.config["configurable"]["checkpoint_ns"], "")
+
+
+class CheckpointDeletionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_delete_only_removes_target_thread_without_preparing_sandbox(self):
+        manager, _, sandbox = make_factory(InMemorySaver())
+        conversation = uuid4()
+        for user_id in (1, 2):
+            graph = manager._build_planner(user_id, conversation)
+            await graph.ainvoke(
+                {"messages": [HumanMessage(content="hello")]},
+                build_planner_config(user_id, conversation),
+            )
+        await manager.delete_conversation_state(1, conversation)
+        self.assertFalse((await manager.read_planner_state(1, conversation)).values)
+        self.assertTrue((await manager.read_planner_state(2, conversation)).values)
+        sandbox.init.assert_not_awaited()
+        sandbox.get_backend.assert_not_awaited()

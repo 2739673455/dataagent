@@ -38,9 +38,7 @@ class RecallHandlerTest(unittest.IsolatedAsyncioTestCase):
             MagicMock(),
         )
         self.policy = AssetAccessPolicy(
-            grants=frozenset(
-                {AssetIdentity("doris", cfg.doris.database)}
-            ),
+            grants=frozenset({AssetIdentity("doris", cfg.doris.database)}),
         )
         self.request = SemanticResourceRecallRequest(
             terms=["收入"], resource_types=["column"]
@@ -74,9 +72,7 @@ class RecallHandlerTest(unittest.IsolatedAsyncioTestCase):
 
         async def hits(*args, **kwargs):
             self.assertEqual(self.open_sessions, set())
-            self.assertEqual(
-                kwargs["allowed_columns"], frozenset({("orders", "amount")})
-            )
+            self.assertEqual(kwargs["allowed_keys"], frozenset({("orders", "amount")}))
             return []
 
         async def embed(terms):

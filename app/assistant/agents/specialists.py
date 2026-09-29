@@ -11,9 +11,9 @@ from app.assistant.agents.filesystem import (
     agent_skills_mount_path,
     build_specialist_filesystem,
 )
+from app.assistant.agents.resources import ASSISTANT_RESOURCES_DIR, SYSTEM_PROMPTS
 from app.assistant.agents.tools.execute_sql import create_execute_sql_tool
 from app.assistant.agents.tools.semantic_recall import create_semantic_recall_tool
-from app.assistant.resources import ASSISTANT_RESOURCES_DIR, SYSTEM_PROMPTS
 from app.metadata.services.recall_handler import SemanticRecallHandler
 from app.query.services.execution_handler import QueryExecutionHandler
 from app.sandbox.backend import DockerSandboxBackend

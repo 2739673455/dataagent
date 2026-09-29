@@ -10,12 +10,11 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import StateSnapshot
 
 from app.assistant.agents.agent import create_agent
+from app.assistant.agents.context import build_planner_config, get_thread_id
 from app.assistant.agents.middleware.task_activity import TaskActivityMiddleware
+from app.assistant.agents.model_factory import create_configured_model
+from app.assistant.agents.resources import SYSTEM_PROMPTS
 from app.assistant.agents.specialists import build_specialists
-from app.assistant.model_factory import create_configured_model
-from app.assistant.resources import SYSTEM_PROMPTS
-from app.assistant.services.tombstones import ConversationTombstoneStore
-from app.assistant.services.types import build_planner_config, get_thread_id
 from app.metadata.services.recall_handler import SemanticRecallHandler
 from app.query.services.execution_handler import QueryExecutionHandler
 from app.sandbox.backend import DockerSandboxBackend
@@ -31,13 +30,11 @@ class AgentManager:
         self,
         checkpointer: AsyncPostgresSaver,
         sandbox: DockerSandboxManager,
-        tombstones: ConversationTombstoneStore,
         recall: SemanticRecallHandler,
         query: QueryExecutionHandler,
     ) -> None:
         self._checkpointer = checkpointer
         self._sandbox = sandbox
-        self._tombstones = tombstones
         self._models: dict[str, BaseChatModel] = {}
         self._model_contexts = AsyncExitStack()
         active = app_config.cfg.lm_config.active
@@ -69,8 +66,6 @@ class AgentManager:
         self, user_id: int, conversation_id: UUID
     ) -> CompiledStateGraph:
         """准备会话执行资源并编译图。"""
-        if await self._tombstones.exists(user_id, conversation_id):
-            raise RuntimeError("该会话已被删除")
         backend = await self._sandbox.get_backend(user_id, conversation_id)
         return self._build_planner(user_id, conversation_id, backend)
 
@@ -84,8 +79,6 @@ class AgentManager:
         conversation_id: UUID,
     ) -> StateSnapshot:
         """编译 Planner 并读取原生图状态。"""
-        if await self._tombstones.exists(user_id, conversation_id):
-            raise RuntimeError("该会话已被删除")
         graph = self._build_planner(user_id, conversation_id)
         return await graph.aget_state(build_planner_config(user_id, conversation_id))
 
@@ -94,9 +87,7 @@ class AgentManager:
         user_id: int,
         conversation_id: UUID,
     ) -> None:
-        """写入删除墓碑并清理会话 Checkpoint。"""
-        # 先持久化墓碑再删除 Checkpoint，防止删除中的会话重新构建执行状态。
-        await self._tombstones.save(user_id, conversation_id)
+        """由生命周期服务等待 Run 退出后清理会话 Checkpoint。"""
         thread_id = get_thread_id(user_id, conversation_id)
         await self._checkpointer.adelete_thread(thread_id)
 

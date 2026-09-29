@@ -8,7 +8,6 @@ from elasticsearch import AsyncElasticsearch
 
 from app.metadata.models.catalog import ColumnKey, ValueInfo, column_resource_key
 from app.metadata.repositories.semantic_index import column_resource_terms_filter
-from app.shared.config.app_config import cfg
 from app.shared.contracts.search import SearchHit
 
 
@@ -25,7 +24,7 @@ def _value_document_id(value_info: ValueInfo) -> str:
 class ValueESRepo:
     """字段取值索引存储。"""
 
-    _index_name = cfg.elasticsearch.value_index
+    _index_name = "data-agent-value"
     _index_mappings: ClassVar[dict[str, Any]] = {
         "dynamic": False,
         "properties": {

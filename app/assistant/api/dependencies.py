@@ -1,13 +1,17 @@
-"""Assistant 模块运行时依赖。"""
+"""Assistant HTTP 接口的应用资源与请求级服务依赖。"""
 
+from collections.abc import AsyncIterator
 from typing import Annotated
 
 from fastapi import Depends
 
+from app.assistant.agents.manager import AgentManager
+from app.assistant.repositories.conversation import ConversationPGRepo
+from app.assistant.services.attachments import AttachmentService
 from app.assistant.services.lifecycle import ConversationLifecycleService
-from app.assistant.services.manager import AgentManager
 from app.assistant.services.run import ConversationRunService
-from app.assistant.tasks import ConversationTasks
+from app.assistant.services.tasks import ConversationTasks
+from app.assistant.services.turn import ConversationTurnService
 from app.dependencies import WebResourcesDep
 from app.sandbox.manager import DockerSandboxManager
 
@@ -58,3 +62,45 @@ def _get_conversation_tasks(resources: WebResourcesDep) -> ConversationTasks:
 
 
 ConversationTasksDep = Annotated[ConversationTasks, Depends(_get_conversation_tasks)]
+
+
+async def _get_conversation_pg_repo(
+    resources: WebResourcesDep,
+) -> AsyncIterator[ConversationPGRepo]:
+    """创建会话目录数据访问。"""
+    async with resources.assistant.session() as session:
+        yield ConversationPGRepo(session)
+
+
+ConversationPGRepoDep = Annotated[
+    ConversationPGRepo,
+    Depends(_get_conversation_pg_repo),
+]
+
+
+def _get_conversation_turn_service(
+    repository: ConversationPGRepoDep,
+    runs: ConversationRunServiceDep,
+    agents: AgentManagerDep,
+    tasks: ConversationTasksDep,
+) -> ConversationTurnService:
+    """组装请求级会话回合用例。"""
+    return ConversationTurnService(
+        repository=repository, runs=runs, agents=agents, tasks=tasks
+    )
+
+
+ConversationTurnServiceDep = Annotated[
+    ConversationTurnService, Depends(_get_conversation_turn_service)
+]
+
+
+def _get_attachment_service(
+    repository: ConversationPGRepoDep,
+    sandbox: SandboxManagerDep,
+) -> AttachmentService:
+    """绑定当前请求的附件服务资源。"""
+    return AttachmentService(repository, sandbox)
+
+
+AttachmentServiceDep = Annotated[AttachmentService, Depends(_get_attachment_service)]

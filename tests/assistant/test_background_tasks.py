@@ -1,4 +1,4 @@
-"""应用内任务的重试、取消和周期补偿。"""
+"""应用内任务的失败处理、取消和周期补偿。"""
 
 import asyncio
 import unittest
@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from langchain_core.messages import AIMessage
 
-from app.assistant.tasks import ConversationTasks
+from app.assistant.services.tasks import ConversationTasks
 
 
 class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
@@ -24,25 +24,14 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
         )
         self.addAsyncCleanup(self.tasks.close)
 
-    async def test_transient_failure_retries_and_stops_on_success(self):
-        operation = AsyncMock(side_effect=[RuntimeError("temporary"), None])
-        with patch(
-            "app.assistant.tasks.asyncio.sleep", new_callable=AsyncMock
-        ) as sleep:
-            await self.tasks._run("test", operation)
-        self.assertEqual(operation.await_count, 2)
-        sleep.assert_awaited_once_with(1)
-
-    async def test_permanent_failure_is_bounded(self):
+    async def test_failure_is_logged_without_retry(self):
         operation = AsyncMock(side_effect=RuntimeError("unavailable"))
-        with patch(
-            "app.assistant.tasks.asyncio.sleep", new_callable=AsyncMock
-        ) as sleep:
+        with patch("app.assistant.services.tasks.logger.exception") as log:
             await self.tasks._run("test", operation)
-        self.assertEqual(operation.await_count, 4)
-        self.assertEqual([call.args[0] for call in sleep.await_args_list], [1, 2, 4])
+        operation.assert_awaited_once()
+        log.assert_called_once_with("后台任务失败: name={}", "test")
 
-    async def test_timeout_cancels_operation_before_retry(self):
+    async def test_timeout_cancels_operation_without_retry(self):
         released = []
 
         async def operation():
@@ -51,12 +40,11 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 released.append(True)
 
-        timeout = patch("app.assistant.tasks._TASK_TIMEOUT_SECONDS", 0.001)
+        timeout = patch("app.assistant.services.tasks._TASK_TIMEOUT_SECONDS", 0.001)
         timeout.start()
         self.addCleanup(timeout.stop)
-        with patch("app.assistant.tasks.asyncio.sleep", new_callable=AsyncMock):
-            await self.tasks._run("timeout", operation)
-        self.assertEqual(len(released), 4)
+        await self.tasks._run("timeout", operation)
+        self.assertEqual(len(released), 1)
 
     async def test_shutdown_waits_for_operation_cleanup_without_retry(self):
         started, cleaned = asyncio.Event(), asyncio.Event()
@@ -165,7 +153,7 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.Event().wait()
 
         model = MagicMock(ainvoke=AsyncMock(side_effect=invoke))
-        timeout = patch("app.assistant.tasks._TASK_TIMEOUT_SECONDS", 0.001)
+        timeout = patch("app.assistant.services.tasks._TASK_TIMEOUT_SECONDS", 0.001)
         timeout.start()
         self.addCleanup(timeout.stop)
         with patch("app.assistant.services.title.create_configured_model", model_scope):

@@ -5,13 +5,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from app.assistant.events import schemas as chat_schema
-from app.assistant.events.projection import (
+from app.assistant.messages.projection import (
     project_messages,
 )
+from app.assistant.models import chat as chat_schema
 
 if TYPE_CHECKING:
-    from app.assistant.services.manager import AgentManager
+    from app.assistant.agents.manager import AgentManager
     from app.sandbox.manager import DockerSandboxManager
 
 

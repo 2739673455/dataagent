@@ -49,16 +49,12 @@ class ConversationTasks:
         task.add_done_callback(self._tasks.discard)
 
     async def _run(self, name: str, operation: Callable[[], Awaitable[object]]) -> None:
-        """执行资源清理；失败后最多重试三次，取消直接向上传播。"""
-        for attempt in range(4):
-            try:
-                async with asyncio.timeout(_TASK_TIMEOUT_SECONDS):
-                    await operation()
-                return
-            except Exception:  # noqa: BLE001
-                logger.exception("后台任务失败: name={}, attempt={}", name, attempt + 1)
-                if attempt < 3:
-                    await asyncio.sleep(2**attempt)
+        """执行一次资源清理，失败记录日志，取消直接向上传播。"""
+        try:
+            async with asyncio.timeout(_TASK_TIMEOUT_SECONDS):
+                await operation()
+        except Exception:  # noqa: BLE001
+            logger.exception("后台任务失败: name={}", name)
 
     def generate_title(
         self, user_id: int, conversation_id: UUID, user_text: str

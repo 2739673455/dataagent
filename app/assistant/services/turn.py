@@ -10,13 +10,13 @@ from app.assistant.errors import (
     ConversationNotFoundError,
     ConversationNotResumableError,
 )
-from app.assistant.events import schemas as chat_contract
+from app.assistant.models import chat as chat_contract
 from app.assistant.repositories.conversation import ConversationPGRepo
 from app.assistant.services.run import ConversationRunService
-from app.assistant.tasks import ConversationTasks
+from app.assistant.services.tasks import ConversationTasks
 
 if TYPE_CHECKING:
-    from app.assistant.services.manager import AgentManager
+    from app.assistant.agents.manager import AgentManager
 
 
 class ConversationTurnService:

@@ -1,5 +1,7 @@
 """PostgreSQL 会话目录数据访问。"""
 
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -7,6 +9,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.assistant.models.conversation import Conversation
+from app.shared.clients.postgres_client_manager import PostgresClientManager
 
 
 class ConversationPGRepo:
@@ -118,7 +121,7 @@ class ConversationPGRepo:
         return list(result)
 
     async def list_pending_deletions(self, *, limit: int) -> list[Conversation]:
-        """跨用户列出已写入墓碑且待物理清理的会话。"""
+        """跨用户列出已标记删除且待物理清理的会话。"""
         result = await self._session.scalars(
             select(Conversation)
             .where(Conversation.deletion_requested_at.is_not(None))
@@ -136,3 +139,12 @@ class ConversationPGRepo:
             )
         )
         await self._session.flush()
+
+
+@asynccontextmanager
+async def conversation_repository(
+    postgres: PostgresClientManager,
+) -> AsyncGenerator[ConversationPGRepo]:
+    """为会话生命周期操作创建短事务仓库。"""
+    async with postgres.session() as session, session.begin():
+        yield ConversationPGRepo(session)

@@ -103,11 +103,6 @@ class ToolResultPart(BaseModel):
 
 
 MessageRole = Literal["user", "assistant", "tool", "system"]
-FinishReason = str
-UserMessagePart = Annotated[
-    TextContent,
-    Field(discriminator="type"),
-]
 MessagePart = Annotated[
     TextContent | ImageContent | ThinkingContent | ToolCallPart | ToolResultPart,
     Field(discriminator="type"),
@@ -127,7 +122,9 @@ class UserMessageRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    parts: list[UserMessagePart] = Field(..., min_length=1, description="文本片段")
+    parts: list[Annotated[TextContent, Field(discriminator="type")]] = Field(
+        ..., min_length=1, description="文本片段"
+    )
 
 
 class MessageResponse(BaseModel):
@@ -137,7 +134,7 @@ class MessageResponse(BaseModel):
     role: MessageRole = Field(..., description="发送者")
     parts: list[MessagePart] = Field(..., description="消息片段")
     attachments: list[Attachment] | None = Field(default=None, description="附件列表")
-    finish_reason: FinishReason | None = Field(default=None, description="完成原因")
+    finish_reason: str | None = Field(default=None, description="完成原因")
 
 
 class ChatStreamRequest(BaseModel):

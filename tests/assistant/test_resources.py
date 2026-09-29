@@ -2,7 +2,7 @@
 
 import runpy
 
-from app.assistant import resources
+from app.assistant.agents import resources
 
 
 def test_prompts_load_outside_project_directory(tmp_path, monkeypatch):

@@ -5,7 +5,7 @@ from pathlib import Path
 from app.shared.contracts.analysis import AGENT_TYPES
 
 ASSISTANT_RESOURCES_DIR = (
-    Path(__file__).resolve().parents[2] / "resources" / "assistant"
+    Path(__file__).resolve().parents[3] / "resources" / "assistant"
 )
 
 SYSTEM_PROMPTS = {

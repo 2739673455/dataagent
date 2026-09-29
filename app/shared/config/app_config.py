@@ -43,13 +43,10 @@ class DorisCredentialConfig(AppConfigModel):
 
 
 class ESConfig(AppConfigModel):
-    """Elasticsearch 连接与索引配置。"""
+    """Elasticsearch 连接与向量维度配置。"""
 
     host: str = Field(min_length=1)
     port: int = Field(ge=1, le=65535)
-    column_index: str = Field(min_length=1)
-    metric_index: str = Field(min_length=1)
-    value_index: str = Field(min_length=1)
     embedding_size: int = Field(gt=0)
 
 

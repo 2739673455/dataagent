@@ -20,8 +20,8 @@ from langchain_core.messages import (
 )
 from loguru import logger
 
-from app.assistant.events import schemas as chat_schema
-from app.assistant.events.content import normalized_content_blocks, reasoning_text
+from app.assistant.messages.content import normalized_content_blocks, reasoning_text
+from app.assistant.models import chat as chat_schema
 from app.sandbox.errors import SandboxPathError
 from app.sandbox.paths import conversation_relative_path
 

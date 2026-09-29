@@ -40,21 +40,6 @@ class PlannerTurnContext:
     conversation_id: UUID
     max_continuations: int
 
-    def __post_init__(self) -> None:
-        """校验 Planner 回合上下文中的身份和续写参数。"""
-        if isinstance(self.user_id, bool) or self.user_id <= 0:
-            raise ValueError("user_id 必须为正整数")
-        if self.max_continuations < 0:
-            raise ValueError("max_continuations 不能为负数")
-
-
-type SubagentRunStatus = Literal[
-    "running",
-    "completed",
-    "failed",
-    "cancelled",
-]
-
 
 @dataclass(frozen=True, slots=True)
 class SubagentStatusActivity:
@@ -62,4 +47,4 @@ class SubagentStatusActivity:
 
     delegation_id: str
     agent_type: AgentType
-    status: SubagentRunStatus
+    status: Literal["running", "completed", "failed", "cancelled"]

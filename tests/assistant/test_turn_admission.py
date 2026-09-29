@@ -7,11 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from app.assistant.errors import (
+    ConversationBusyError,
     ConversationNotFoundError,
     ConversationNotResumableError,
     ConversationRunConflictError,
 )
-from app.assistant.events.schemas import TextContent, UserMessageRequest
+from app.assistant.models.chat import TextContent, UserMessageRequest
 from app.assistant.services.lifecycle import ConversationLifecycleService
 from app.assistant.services.run import ConversationRunService
 from app.assistant.services.turn import (
@@ -141,3 +142,43 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(conversation.deletion_requested_at)
             with self.assertRaises(ConversationNotFoundError):
                 await self.turn.start(1, self.conversation_id, message)
+
+    async def test_deletion_cancels_admission_before_agent_is_created(self):
+        entered, cleaned = asyncio.Event(), asyncio.Event()
+
+        async def read_conversation(*args):
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleaned.set()
+
+        self.repo.get.side_effect = read_conversation
+        deletion_repo = MagicMock(
+            get=AsyncMock(return_value=MagicMock(deletion_requested_at=None)),
+            update=AsyncMock(),
+        )
+
+        @asynccontextmanager
+        async def repository():
+            yield deletion_repo
+
+        lifecycle = ConversationLifecycleService(
+            repository, self.agents, MagicMock(), self.runs
+        )
+        async with asyncio.timeout(1):
+            request = asyncio.create_task(
+                self.turn.start(
+                    1,
+                    self.conversation_id,
+                    UserMessageRequest(parts=[TextContent(type="text", text="分析")]),
+                )
+            )
+            await entered.wait()
+            await lifecycle.request_conversation_deletion(1, self.conversation_id)
+            with self.assertRaises(ConversationBusyError):
+                await request
+        self.assertTrue(cleaned.is_set())
+        self.assertFalse(self.started.is_set())
+        self.tasks.generate_title.assert_not_called()
+        self.repo.update.assert_not_awaited()

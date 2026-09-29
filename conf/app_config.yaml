@@ -27,7 +27,7 @@ meta_postgresql: # 元数据、执行记录和召回快照数据库。
   password: ${oc.env:POSTGRES_PASSWORD}
   database: meta
 
-langgraph_postgresql: # Conversation 目录、删除墓碑和 LangGraph Checkpoint 数据库。
+langgraph_postgresql: # Conversation 目录和 LangGraph Checkpoint 数据库。
   host: 127.0.0.1
   port: 5432
   user: atguigu
@@ -37,12 +37,9 @@ langgraph_postgresql: # Conversation 目录、删除墓碑和 LangGraph Checkpoi
 doris_credentials: # Doris 查询身份密码的应用侧加密配置。
   encryption_key: ${oc.env:DORIS_CREDENTIAL_ENCRYPTION_KEY} # Fernet 密钥。
 
-elasticsearch: # 语义检索使用的 Elasticsearch 连接和索引名称。
+elasticsearch: # 语义检索使用的 Elasticsearch 连接和向量维度。
   host: 127.0.0.1
   port: 9200
-  column_index: data-agent-column # 元数据字段语义索引。
-  metric_index: data-agent-metric # 指标语义索引。
-  value_index: data-agent-value # 字段取值语义索引。
   embedding_size: 1024 # 索引向量维度，必须与嵌入模型输出一致。
 
 embedding: # 文本向量化服务配置。

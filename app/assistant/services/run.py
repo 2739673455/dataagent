@@ -14,23 +14,23 @@ from langchain_core.messages import BaseMessage
 from langgraph.types import StreamPart
 from loguru import logger
 
+from app.assistant.agents.context import (
+    PlannerTurnContext,
+    SubagentStatusActivity,
+    build_planner_config,
+)
 from app.assistant.errors import (
     ConversationBusyError,
     ConversationRunConflictError,
     PlannerContinuationLimitError,
 )
-from app.assistant.events import schemas as chat_schema
-from app.assistant.events.projection import project_messages, schema_to_human_message
-from app.assistant.events.stream import MessageDeltaParser, update_messages
-from app.assistant.services.types import (
-    PlannerTurnContext,
-    SubagentStatusActivity,
-    build_planner_config,
-)
+from app.assistant.messages.projection import project_messages, schema_to_human_message
+from app.assistant.messages.stream import MessageDeltaParser, update_messages
+from app.assistant.models import chat as chat_schema
 from app.shared.config.app_config import cfg
 
 if TYPE_CHECKING:
-    from app.assistant.services.manager import AgentManager
+    from app.assistant.agents.manager import AgentManager
     from app.sandbox.manager import DockerSandboxManager
 
 type ConversationRunKey = tuple[int, UUID]
@@ -60,7 +60,10 @@ class _ConversationRun:
 
 
 class ConversationRunService:
-    """后台执行 Planner Run，并向任意数量的 SSE 连接发布事件。"""
+    """在单 Web 事件循环中管理后台 Run 和 SSE 订阅。
+
+    注册、缓存和订阅修改均同步完成；仅准备、执行和取消等待让出执行权。
+    """
 
     def __init__(
         self,
@@ -71,7 +74,6 @@ class ConversationRunService:
         self._agents = agents
         self._files = files
         self._runs: dict[ConversationRunKey, _ConversationRun] = {}
-        self._lock = asyncio.Lock()
 
     async def start(
         self,
@@ -88,21 +90,20 @@ class ConversationRunService:
         )
         run = _ConversationRun(ready=asyncio.get_running_loop().create_future())
         run.subscribers.add(queue)
-        async with self._lock:
-            existing = self._runs.get(key)
-            if (
-                existing is not None
-                and existing.task is not None
-                and not existing.task.done()
-            ):
-                raise ConversationRunConflictError
-            self._runs[key] = run
-            run.task = asyncio.create_task(
-                self._execute(key, run, user_message, prepare),
-                name=f"conversation-run:{user_id}:{conversation_id}",
-            )
-            # Task 完成回调也覆盖协程首次执行前被取消的情况。
-            run.task.add_done_callback(lambda _: self._finish(key, run))
+        existing = self._runs.get(key)
+        if (
+            existing is not None
+            and existing.task is not None
+            and not existing.task.done()
+        ):
+            raise ConversationRunConflictError
+        self._runs[key] = run
+        run.task = asyncio.create_task(
+            self._execute(key, run, user_message, prepare),
+            name=f"conversation-run:{user_id}:{conversation_id}",
+        )
+        # Task 完成回调也覆盖协程首次执行前被取消的情况。
+        run.task.add_done_callback(lambda _: self._finish(key, run))
         try:
             failure = await asyncio.shield(run.ready)
             if failure is not None:
@@ -116,7 +117,7 @@ class ConversationRunService:
             raise
         return self._consume(run, queue, ())
 
-    async def subscribe(
+    def subscribe(
         self,
         user_id: int,
         conversation_id: UUID,
@@ -126,40 +127,34 @@ class ConversationRunService:
         queue: asyncio.Queue[RunEvent | None] = asyncio.Queue(
             maxsize=_SUBSCRIBER_QUEUE_LIMIT
         )
-        async with self._lock:
-            run = self._runs.get(key)
-            if run is None:
-                return self._completed_subscription()
-            replay = tuple(run.events)
-            run.subscribers.add(queue)
+        run = self._runs.get(key)
+        if run is None:
+            return self._completed_subscription()
+        replay = tuple(run.events)
+        run.subscribers.add(queue)
         return self._consume(run, queue, replay)
 
-    async def is_running(self, user_id: int, conversation_id: UUID) -> bool:
+    def is_running(self, user_id: int, conversation_id: UUID) -> bool:
         """返回指定 Conversation 是否存在后台 Planner Run。"""
-        async with self._lock:
-            run = self._runs.get((user_id, conversation_id))
-            return run is not None and run.task is not None and not run.task.done()
+        run = self._runs.get((user_id, conversation_id))
+        return run is not None and run.task is not None and not run.task.done()
 
-    async def running_conversation_ids(self, user_id: int) -> set[UUID]:
+    def running_conversation_ids(self, user_id: int) -> set[UUID]:
         """返回指定用户当前仍在后台执行的 Conversation ID。"""
-        async with self._lock:
-            return {
-                conversation_id
-                for (run_user_id, conversation_id), run in self._runs.items()
-                if run_user_id == user_id
-                and run.task is not None
-                and not run.task.done()
-            }
+        return {
+            conversation_id
+            for (run_user_id, conversation_id), run in self._runs.items()
+            if run_user_id == user_id and run.task is not None and not run.task.done()
+        }
 
     async def stop(self, user_id: int, conversation_id: UUID) -> bool:
         """显式停止指定 Conversation 的 Planner Run。"""
-        async with self._lock:
-            run = self._runs.get((user_id, conversation_id))
-            if run is None or run.task is None or run.task.done():
-                return False
-            task = run.task
-            if not task.cancelling():
-                task.cancel()
+        run = self._runs.get((user_id, conversation_id))
+        if run is None or run.task is None or run.task.done():
+            return False
+        task = run.task
+        if not task.cancelling():
+            task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         return True
 
@@ -187,7 +182,7 @@ class ConversationRunService:
             )
             try:
                 async for event in responses:
-                    await self._publish(run, event)
+                    self._publish(run, event)
             finally:
                 await responses.aclose()
         except asyncio.CancelledError:
@@ -198,7 +193,7 @@ class ConversationRunService:
                 run.ready.set_result(exc)
             else:
                 logger.exception(f"智能体执行异常: conversation_id={conversation_id}")
-                await self._publish(
+                self._publish(
                     run,
                     chat_schema.ChatStreamErrorEvent(
                         type="error",
@@ -206,20 +201,16 @@ class ConversationRunService:
                     ),
                 )
 
-    async def _publish(self, run: _ConversationRun, event: RunEvent) -> None:
+    def _publish(self, run: _ConversationRun, event: RunEvent) -> None:
         """按产生顺序缓存事件并广播给所有当前订阅者。"""
-        async with self._lock:
-            # 缓存快照与订阅登记共用一把锁：订阅者要么从 replay 得到该事件，
-            # 要么已进入 subscribers 接收实时事件，不能漏收或重复接收。
-            self._cache_event(run, event)
-            subscribers = tuple(run.subscribers)
+        self._cache_event(run, event)
+        subscribers = tuple(run.subscribers)
         for queue in subscribers:
             if not self._offer_event(queue, event):
                 self._drop_slow_subscriber(run, queue)
 
     def _finish(self, key: ConversationRunKey, run: _ConversationRun) -> None:
         """仅由 Task 完成回调收尾；同步执行，不产生可重复进入的 await 窗口。"""
-        # 所有注册表和订阅修改均在同一事件循环内，且持锁区间不让出执行权。
         # 回调只执行一次，并且在执行流及其清理完全退出后通知订阅者。
         if self._runs.get(key) is run:
             self._runs.pop(key, None)
@@ -307,8 +298,7 @@ class ConversationRunService:
                     break
                 yield event
         finally:
-            async with self._lock:
-                run.subscribers.discard(queue)
+            run.subscribers.discard(queue)
 
     async def _completed_subscription(self) -> AsyncGenerator[RunEvent]:
         """构造已结束 Run 的空订阅。"""
@@ -316,14 +306,13 @@ class ConversationRunService:
 
     async def close(self) -> None:
         """应用停止时取消进程内全部后台 Run。"""
-        async with self._lock:
-            runs = tuple(self._runs.values())
-            tasks = tuple(
-                run.task for run in runs if run.task is not None and not run.task.done()
-            )
-            for task in tasks:
-                if not task.cancelling():
-                    task.cancel()
+        runs = tuple(self._runs.values())
+        tasks = tuple(
+            run.task for run in runs if run.task is not None and not run.task.done()
+        )
+        for task in tasks:
+            if not task.cancelling():
+                task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 

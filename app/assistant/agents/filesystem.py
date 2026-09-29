@@ -7,7 +7,7 @@ from deepagents.backends import CompositeBackend, FilesystemBackend
 from deepagents.backends.protocol import BackendProtocol
 from deepagents.middleware.filesystem import FilesystemPermission
 
-from app.assistant.resources import ASSISTANT_RESOURCES_DIR
+from app.assistant.agents.resources import ASSISTANT_RESOURCES_DIR
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.paths import SandboxReadonlyMount
 from app.shared.contracts.analysis import AGENT_TYPES, AgentType

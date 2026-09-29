@@ -13,7 +13,7 @@ from app.assistant.repositories.conversation import ConversationPGRepo
 from app.assistant.services.run import ConversationRunService
 
 if TYPE_CHECKING:
-    from app.assistant.services.manager import AgentManager
+    from app.assistant.agents.manager import AgentManager
     from app.sandbox.manager import DockerSandboxManager
 
 
@@ -75,7 +75,7 @@ class ConversationLifecycleService:
             if (
                 draft_expired_before is not None
                 and self._runs is not None
-                and await self._runs.is_running(user_id, conversation_id)
+                and self._runs.is_running(user_id, conversation_id)
             ):
                 return False
             async with self._repository_factory() as repository:
@@ -124,7 +124,7 @@ class ConversationLifecycleService:
         return deleted
 
     async def cleanup_pending_deletions(self) -> int:
-        """执行一批已有删除墓碑的物理资源清理。"""
+        """执行一批已标记删除的物理资源清理。"""
         async with self._repository_factory() as repository:
             conversations = await repository.list_pending_deletions(
                 limit=_CLEANUP_BATCH_SIZE

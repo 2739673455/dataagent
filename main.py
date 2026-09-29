@@ -4,8 +4,8 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.assistant.api.attachment.router import router as attachment_router
-from app.assistant.api.chat.router import router as chat_router
+from app.assistant.api.attachments import router as attachment_router
+from app.assistant.api.chat import router as chat_router
 from app.identity.api.router import router as users_router
 from app.runtime import lifespan
 from app.shared.config.app_config import cfg

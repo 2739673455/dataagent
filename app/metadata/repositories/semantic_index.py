@@ -1,6 +1,6 @@
 """语义索引写入与检索。"""
 
-from collections.abc import Callable
+from abc import ABC, abstractmethod
 from typing import Any, ClassVar, cast
 
 from elasticsearch import AsyncElasticsearch
@@ -14,6 +14,7 @@ from app.metadata.models.search import (
 )
 from app.shared.config.app_config import cfg
 from app.shared.contracts.search import SearchHit
+from app.shared.database.base import MetaBase
 
 _EXACT_TEXT_BOOSTS: dict[SemanticTextType, float] = {
     "name": 8.0,
@@ -23,23 +24,24 @@ _EXACT_TEXT_BOOSTS: dict[SemanticTextType, float] = {
 
 
 def column_resource_terms_filter(
-    allowed_columns: frozenset[ColumnKey],
+    allowed_keys: frozenset[ColumnKey],
 ) -> dict[str, Any]:
     """构造字段资源键白名单 Elasticsearch filter。"""
     return {
         "terms": {
             "resource_key": [
                 column_resource_key(t_name, c_name)
-                for t_name, c_name in sorted(allowed_columns)
+                for t_name, c_name in sorted(allowed_keys)
             ]
         }
     }
 
 
-class SemanticIndexRepo:
+class SemanticIndexRepo[ItemT: MetaBase, KeyT](ABC):
     """字段和指标索引共用的 Elasticsearch 技术实现。"""
 
     _index_name: ClassVar[str]
+    _payload_type: type[ItemT]
 
     _index_mappings: ClassVar[dict[str, Any]] = {
         "dynamic": False,
@@ -114,14 +116,16 @@ class SemanticIndexRepo:
         if documents:
             await self._client.indices.refresh(index=self._index_name)
 
-    async def search_text(
+    async def search_text_hits(
         self,
         query: str,
         *,
-        limit: int,
-        resource_filter: dict[str, Any] | None,
-    ) -> dict[str, Any]:
-        """执行语义索引全文检索。"""
+        allowed_keys: frozenset[KeyT] | None,
+        limit: int = 5,
+    ) -> list[SearchHit[ItemT]]:
+        """按资源白名单执行全文检索并解析命中。"""
+        if allowed_keys is not None and not allowed_keys:
+            return []
         exact_queries = [
             {
                 "bool": {
@@ -150,11 +154,11 @@ class SemanticIndexRepo:
                 ]
             }
         }
-        if resource_filter is not None:
+        if allowed_keys is not None:
             text_query = {
                 "bool": {
                     "must": [text_query],
-                    "filter": [resource_filter],
+                    "filter": [self._resource_filter(allowed_keys)],
                 }
             }
         result = await self._client.search(
@@ -162,17 +166,19 @@ class SemanticIndexRepo:
             query=text_query,
             size=limit,
         )
-        return cast(dict[str, Any], result.body)
+        return self._parse_hits(cast(dict[str, Any], result.body))
 
-    async def search_vector(
+    async def search_vector_hits(
         self,
         embedding: list[float],
         *,
-        score_threshold: float,
-        limit: int,
-        resource_filter: dict[str, Any] | None,
-    ) -> dict[str, Any]:
-        """执行语义索引向量检索。"""
+        allowed_keys: frozenset[KeyT] | None,
+        score_threshold: float = 0.6,
+        limit: int = 5,
+    ) -> list[SearchHit[ItemT]]:
+        """按资源白名单执行向量检索并解析命中。"""
+        if allowed_keys is not None and not allowed_keys:
+            return []
         knn: dict[str, Any] = {
             "field": "embedding",
             "query_vector": embedding,
@@ -180,44 +186,35 @@ class SemanticIndexRepo:
             "num_candidates": min(10_000, max(100, limit * 10)),
             "similarity": score_threshold,
         }
-        if resource_filter is not None:
-            knn["filter"] = resource_filter
+        if allowed_keys is not None:
+            knn["filter"] = self._resource_filter(allowed_keys)
         result = await self._client.search(
             index=self._index_name,
             knn=knn,
             size=limit,
         )
-        return cast(dict[str, Any], result.body)
+        return self._parse_hits(cast(dict[str, Any], result.body))
 
-    def parse_hits[T](
+    @staticmethod
+    @abstractmethod
+    def _resource_filter(allowed_keys: frozenset[KeyT]) -> dict[str, Any]:
+        """构造当前资源类型的权限白名单过滤条件。"""
+
+    def _parse_hits(
         self,
         result: dict[str, Any],
-        parse_payload: Callable[[dict[str, Any]], T],
-    ) -> list[SearchHit[T]]:
+    ) -> list[SearchHit[ItemT]]:
         """将 Elasticsearch 命中转换为领域结果。"""
         search_hits = result["hits"]["hits"]
-        converted: list[SearchHit[T]] = []
+        converted: list[SearchHit[ItemT]] = []
         for hit in search_hits:
             document_id = "<missing>"
-            resource_key = "<missing>"
             try:
-                if not isinstance(hit, dict):
-                    raise TypeError("搜索命中不是对象")
-                raw_id = hit.get("_id")
-                if raw_id is not None:
-                    document_id = str(raw_id)
-                source = hit.get("_source")
-                if not isinstance(source, dict):
-                    raise TypeError("搜索命中缺少对象类型的 _source")
-                raw_key = source.get("resource_key")
-                if isinstance(raw_key, str):
-                    resource_key = raw_key
-                payload = source.get("payload")
-                if not isinstance(payload, dict):
-                    raise TypeError("搜索命中 payload 必须为对象")
+                document_id = str(hit["_id"])
+                payload = hit["_source"]["payload"]
                 converted.append(
                     SearchHit(
-                        item=parse_payload(payload),
+                        item=self._payload_type(**payload),
                         score=float(hit.get("_score") or 0.0),
                     )
                 )
@@ -225,7 +222,6 @@ class SemanticIndexRepo:
                 logger.bind(
                     index_name=self._index_name,
                     document_id=document_id,
-                    resource_key=resource_key,
                     stage="read-corrupted-document",
                 ).warning("语义索引读取到损坏文档")
                 raise CorruptedSemanticIndexDocumentError(

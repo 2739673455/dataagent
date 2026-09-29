@@ -4,7 +4,6 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-TableRole = Literal["fact", "dim"]
 MetadataName = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=256),
@@ -54,7 +53,7 @@ class TableConfig(MetaConfigModel):
     """表元数据配置。"""
 
     name: MetadataName
-    role: TableRole
+    role: Literal["fact", "dim"]
     description: MetadataDescription
     value_index_cursor_column: MetadataName | None = None
     columns: list[ColumnConfig] = Field(default_factory=list)

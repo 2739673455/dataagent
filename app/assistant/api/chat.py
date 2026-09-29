@@ -10,18 +10,16 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from app.assistant import errors as chat_error
-from app.assistant.api.chat.dependencies import (
-    ConversationPGRepoDep,
-    ConversationTurnServiceDep,
-)
 from app.assistant.api.dependencies import (
     AgentManagerDep,
     ConversationLifecycleServiceDep,
+    ConversationPGRepoDep,
     ConversationRunServiceDep,
     ConversationTasksDep,
+    ConversationTurnServiceDep,
     SandboxManagerDep,
 )
-from app.assistant.events import schemas as chat_schema
+from app.assistant.models import chat as chat_schema
 from app.assistant.services import history as conversation_history
 from app.identity.api.dependencies import CurrentUserDep
 from app.shared.observability import context
@@ -99,7 +97,7 @@ async def api_get_conversations(
     """获取所有对话。"""
     user_id = current_user.id
     conversations = await conversation_repo.list_by_user(user_id)
-    running_conversation_ids = await runs.running_conversation_ids(user_id)
+    running_conversation_ids = runs.running_conversation_ids(user_id)
     logger.info(f"获取对话列表: conversation_ids={[item.id for item in conversations]}")
     return chat_schema.ConversationListResponse(
         conversations=[
@@ -238,7 +236,7 @@ async def api_get_conversation_run_status(
     if await conversation_repo.get(user_id, conversation_id) is None:
         raise chat_error.ConversationNotFoundError
     return chat_schema.ConversationRunStatusResponse(
-        running=await runs.is_running(user_id, conversation_id)
+        running=runs.is_running(user_id, conversation_id)
     )
 
 
@@ -254,7 +252,7 @@ async def api_subscribe_conversation_run(
     if await conversation_repo.get(user_id, conversation_id) is None:
         raise chat_error.ConversationNotFoundError
     context.user_id_ctx.set(str(user_id))
-    events = await runs.subscribe(user_id, conversation_id)
+    events = runs.subscribe(user_id, conversation_id)
     return _sse_response(conversation_id, events)
 
 

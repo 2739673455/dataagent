@@ -10,8 +10,8 @@ import httpx
 import pytest
 from langchain_openai import ChatOpenAI
 
-from app.assistant import model_factory
-from app.assistant.services import manager as agent_manager
+from app.assistant.agents import manager as agent_manager
+from app.assistant.agents import model_factory
 from app.shared.config.app_config import LMConfigCfg, ModelCfg, ModelProfileCfg, cfg
 
 
@@ -92,7 +92,7 @@ def test_runtime_init_failure_closes_already_created_models() -> None:
             closed.append(name)
 
     factory = agent_manager.AgentManager(
-        MagicMock(), MagicMock(), MagicMock(), recall=MagicMock(), query=MagicMock()
+        MagicMock(), MagicMock(), recall=MagicMock(), query=MagicMock()
     )
 
     factory._model_names = {"first", "second"}

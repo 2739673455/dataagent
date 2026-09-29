@@ -9,7 +9,7 @@ from langchain.agents.middleware.types import ToolCallRequest
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
-from app.assistant.services.types import (
+from app.assistant.agents.context import (
     SubagentStatusActivity,
 )
 from app.shared.contracts.analysis import AGENT_TYPES

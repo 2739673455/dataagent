@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter
 from fastapi.responses import Response
 
-from app.assistant.api.attachment.dependencies import AttachmentServiceDep
+from app.assistant.api.dependencies import AttachmentServiceDep
 from app.identity.api.dependencies import CurrentUserDep
 
 router = APIRouter(tags=["attachment"])

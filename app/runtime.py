@@ -12,14 +12,13 @@ from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from app.assistant.agents.filesystem import packaged_skill_readonly_mounts
-from app.assistant.providers import build_conversation_lifecycle_service
+from app.assistant.agents.manager import AgentManager
+from app.assistant.repositories.conversation import conversation_repository
 from app.assistant.services.lifecycle import ConversationLifecycleService
-from app.assistant.services.manager import AgentManager
 from app.assistant.services.run import ConversationRunService
-from app.assistant.services.tombstones import ConversationTombstoneStore
-from app.assistant.tasks import ConversationTasks
+from app.assistant.services.tasks import ConversationTasks
 from app.metadata.services.recall_handler import SemanticRecallHandler
-from app.query.providers import build_query_execution_handler
+from app.query.services.execution_handler import QueryExecutionHandler
 from app.sandbox.manager import DockerSandboxManager
 from app.sandbox.providers import create_sandbox_manager
 from app.shared.clients.doris_client_manager import (
@@ -80,18 +79,16 @@ def _create_resources() -> WebResources:
     )
     checkpointer = AsyncPostgresSaver(checkpoint_pool)
     sandbox = create_sandbox_manager(packaged_skill_readonly_mounts())
-    tombstones = ConversationTombstoneStore(assistant)
     recall = SemanticRecallHandler(auth, meta, embedding, es, admin_doris)
     agents = AgentManager(
         checkpointer,
         sandbox,
-        tombstones,
         recall,
-        build_query_execution_handler(sandbox, auth, query_clients),
+        QueryExecutionHandler(sandbox, auth, query_clients),
     )
     runs = ConversationRunService(agents, sandbox)
-    conversations = build_conversation_lifecycle_service(
-        assistant,
+    conversations = ConversationLifecycleService(
+        lambda: conversation_repository(assistant),
         agents,
         sandbox,
         runs,

@@ -38,14 +38,14 @@ def test_search_preserves_payload_score_and_permission_filter(repo_class) -> Non
         hits = asyncio.run(
             repo.search_text_hits(
                 "销售额",
-                allowed_columns=frozenset({("orders", "amount")}),
+                allowed_keys=frozenset({("orders", "amount")}),
             )
         )
     else:
         hits = asyncio.run(
             repo.search_text_hits(
                 "销售额",
-                allowed_metrics=frozenset({"amount"}),
+                allowed_keys=frozenset({"amount"}),
             )
         )
     assert hits[0].item.name == "amount"
@@ -71,11 +71,7 @@ def test_search_reports_corrupted_payload_with_document_identity(
         )
     )
     repo = repo_class(client)
-    allowed = (
-        {"allowed_columns": None}
-        if repo_class is ColumnESRepo
-        else {"allowed_metrics": None}
-    )
+    allowed = {"allowed_keys": None}
     with pytest.raises(CorruptedSemanticIndexDocumentError) as caught:
         asyncio.run(repo.search_text_hits("x", **allowed))
     assert caught.value.document_id == "broken-doc"
@@ -140,9 +136,9 @@ def test_metric_allowlist_distinguishes_empty_and_unrestricted(channel, allowed)
     )
     repo = MetricESRepo(client)
     operation = (
-        repo.search_text_hits("金额", allowed_metrics=allowed)
+        repo.search_text_hits("金额", allowed_keys=allowed)
         if channel == "text"
-        else repo.search_vector_hits([0.1], allowed_metrics=allowed)
+        else repo.search_vector_hits([0.1], allowed_keys=allowed)
     )
     assert asyncio.run(operation) == []
     if allowed == frozenset():
@@ -177,13 +173,9 @@ def test_column_allowlist_distinguishes_empty_and_unrestricted(channel, allowed)
     if channel == "value":
         operation = ValueESRepo(client).search_hits("金额", allowed_columns=allowed)
     elif channel == "vector":
-        operation = ColumnESRepo(client).search_vector_hits(
-            [0.1], allowed_columns=allowed
-        )
+        operation = ColumnESRepo(client).search_vector_hits([0.1], allowed_keys=allowed)
     else:
-        operation = ColumnESRepo(client).search_text_hits(
-            "金额", allowed_columns=allowed
-        )
+        operation = ColumnESRepo(client).search_text_hits("金额", allowed_keys=allowed)
     assert asyncio.run(operation) == []
     if allowed == frozenset():
         client.search.assert_not_awaited()
@@ -206,22 +198,24 @@ def test_column_allowlist_distinguishes_empty_and_unrestricted(channel, allowed)
 
 
 @pytest.mark.parametrize(
-    "hit, document_id",
+    "hit, document_id, cause",
     [
-        (None, "<missing>"),
-        ({}, "<missing>"),
-        ({"_id": 0, "_source": []}, "0"),
-        ({"_id": "broken", "_source": None}, "broken"),
+        (None, "<missing>", TypeError),
+        ({}, "<missing>", KeyError),
+        ({"_id": 0, "_source": []}, "0", TypeError),
+        ({"_id": "broken", "_source": None}, "broken", TypeError),
+        ({"_id": "broken", "_source": {}}, "broken", KeyError),
         (
             {"_id": "broken", "_source": {"resource_key": "key", "payload": []}},
             "broken",
+            TypeError,
         ),
     ],
 )
-def test_corrupted_hit_preserves_available_document_identity(hit, document_id):
+def test_corrupted_hit_preserves_available_document_identity(hit, document_id, cause):
     repo = ColumnESRepo(MagicMock())
     with pytest.raises(CorruptedSemanticIndexDocumentError) as caught:
-        repo.parse_hits({"hits": {"hits": [hit]}}, lambda payload: payload)
+        repo._parse_hits({"hits": {"hits": [hit]}})
     assert caught.value.document_id == document_id
     assert caught.value.index_name == repo._index_name
-    assert isinstance(caught.value.__cause__, TypeError)
+    assert isinstance(caught.value.__cause__, cause)

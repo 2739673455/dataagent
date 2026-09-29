@@ -4,9 +4,9 @@ from uuid import UUID
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.assistant.model_factory import create_configured_model
+from app.assistant.agents.model_factory import create_configured_model
+from app.assistant.agents.resources import TITLE_PROMPT
 from app.assistant.repositories.conversation import ConversationPGRepo
-from app.assistant.resources import TITLE_PROMPT
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
 

@@ -81,3 +81,16 @@ class ConversationDeletionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await asyncio.gather(first, second), [True, False])
         self.agents.delete_conversation_state.assert_awaited_once()
         self.sandbox.delete_conversation.assert_awaited_once()
+
+    async def test_cleanup_failure_keeps_deletion_marker_for_next_scan(self):
+        self.agents.delete_conversation_state.side_effect = RuntimeError("checkpoint")
+        with self.assertRaisesRegex(RuntimeError, "checkpoint"):
+            await self.service.delete_conversation_resources(1, self.conversation_id)
+        self.assertIsNotNone(self.conversation.deletion_requested_at)
+        self.repo.delete.assert_not_awaited()
+        self.sandbox.delete_conversation.assert_not_awaited()
+        self.agents.delete_conversation_state.side_effect = None
+        await self.service.delete_conversation_resources(1, self.conversation_id)
+        self.repo.update.assert_awaited_once()
+        self.sandbox.delete_conversation.assert_awaited_once()
+        self.repo.delete.assert_awaited_once_with(1, self.conversation_id)

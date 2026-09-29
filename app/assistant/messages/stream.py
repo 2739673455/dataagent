@@ -5,7 +5,7 @@ from typing import Literal, TypedDict
 
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
-from app.assistant.events.content import reasoning_text, text_content
+from app.assistant.messages.content import reasoning_text, text_content
 
 
 class MessageDelta(TypedDict):

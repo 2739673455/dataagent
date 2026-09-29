@@ -11,7 +11,7 @@ from app.assistant.agents.filesystem import (
     build_specialist_filesystem,
     packaged_skill_readonly_mounts,
 )
-from app.assistant.resources import ASSISTANT_RESOURCES_DIR
+from app.assistant.agents.resources import ASSISTANT_RESOURCES_DIR
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.paths import SandboxReadonlyMount
 

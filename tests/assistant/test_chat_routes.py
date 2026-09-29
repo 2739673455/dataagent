@@ -10,13 +10,12 @@ import pytest
 from fastapi import FastAPI
 
 from app.assistant.api import dependencies as runtime_dependencies
-from app.assistant.api.chat import dependencies as chat_dependencies
-from app.assistant.api.chat.router import router
+from app.assistant.api.chat import router
 from app.assistant.errors import (
     ConversationNotFoundError,
     ConversationNotResumableError,
 )
-from app.assistant.events.schemas import ChatStreamDoneEvent
+from app.assistant.models.chat import ChatStreamDoneEvent
 from app.identity.api.dependencies import _get_current_user
 from app.shared.errors.exc_handlers import register_exception_handlers
 
@@ -43,8 +42,8 @@ def test_stream_routes_preserve_frames_headers_and_business_errors(entry, failur
         finally:
             closed.append(True)
 
-    for method in ("start", "subscribe"):
-        setattr(runs, method, AsyncMock(side_effect=lambda *args: events()))
+    runs.start = AsyncMock(side_effect=lambda *args: events())
+    runs.subscribe = MagicMock(side_effect=lambda *args: events())
 
     # 保留真实 ConversationTurnService 的依赖组装；仅替换其资源与方法行为。
     async def start(service, user_id, conversation_id, message):
@@ -69,7 +68,7 @@ def test_stream_routes_preserve_frames_headers_and_business_errors(entry, failur
     app.dependency_overrides = {
         runtime_dependencies._get_conversation_tasks: dependency(MagicMock()),
         _get_current_user: dependency(SimpleNamespace(id=12)),
-        chat_dependencies._get_conversation_pg_repo: dependency(repository),
+        runtime_dependencies._get_conversation_pg_repo: dependency(repository),
         runtime_dependencies._get_agent_manager: dependency(agents),
         runtime_dependencies._get_conversation_run_service: dependency(runs),
         runtime_dependencies._get_conversation_lifecycle_service: dependency(lifecycle),
@@ -112,7 +111,7 @@ def test_stream_routes_preserve_frames_headers_and_business_errors(entry, failur
         assert response.text == 'data: {"type":"done"}\n\n'
         assert closed == [True]
         if entry == "subscribe":
-            runs.subscribe.assert_awaited_once_with(12, _ID)
+            runs.subscribe.assert_called_once_with(12, _ID)
         elif entry == "resume":
             runs.start.assert_awaited_once_with(12, _ID, None)
         else:

@@ -1,9 +1,6 @@
 """Doris 客户端管理。"""
 
-import asyncio
-import hashlib
 from contextlib import AsyncExitStack
-from dataclasses import dataclass
 
 from pydantic import SecretStr
 from sqlalchemy import URL
@@ -63,57 +60,33 @@ class DorisClientManager:
 
 
 class DorisQueryClientRegistry:
-    """按数据库中的稳定查询身份动态管理 Doris 连接池。"""
+    """按预定义角色缓存查询连接池，凭据变更后需重启应用。"""
 
     def __init__(self, endpoint: DBConfig) -> None:
-        """初始化查询端点和按角色隔离的连接池注册表。"""
         self._endpoint = endpoint
-        self._entries: dict[str, _QueryClientEntry] = {}
-        self._lock = asyncio.Lock()
+        self._clients: dict[str, DorisClientManager] = {}
 
-    async def get_or_create(
+    def get_or_create(
         self,
         role_name: str,
         query_user: str,
         password: str,
     ) -> DorisClientManager:
-        """读取或创建与当前查询凭据一致的连接池。"""
-        fingerprint = hashlib.sha256(f"{query_user}\0{password}".encode()).hexdigest()
-        stale: DorisClientManager | None = None
-        async with self._lock:
-            current = self._entries.get(role_name)
-            if current is not None and current.fingerprint == fingerprint:
-                return current.manager
-            if current is not None:
-                stale = current.manager
+        """在当前事件循环中读取或同步创建角色专属连接池。"""
+        if role_name not in self._clients:
             manager = DorisClientManager(
-                DBConfig(
-                    host=self._endpoint.host,
-                    port=self._endpoint.port,
-                    user=query_user,
-                    password=SecretStr(password),
-                    database=self._endpoint.database,
+                self._endpoint.model_copy(
+                    update={"user": query_user, "password": SecretStr(password)}
                 )
             )
             manager.init()
-            self._entries[role_name] = _QueryClientEntry(fingerprint, manager)
-        if stale is not None:
-            await stale.close()
-        return manager
+            self._clients[role_name] = manager
+        return self._clients[role_name]
 
     async def close(self) -> None:
         """关闭全部查询身份连接池。"""
-        async with self._lock:
-            entries = tuple(self._entries.values())
-            self._entries.clear()
+        clients = tuple(self._clients.values())
+        self._clients.clear()
         async with AsyncExitStack() as stack:
-            for entry in entries:
-                stack.push_async_callback(entry.manager.close)
-
-
-@dataclass(frozen=True, slots=True)
-class _QueryClientEntry:
-    """记录查询连接池的凭据指纹和客户端实例。"""
-
-    fingerprint: str
-    manager: DorisClientManager
+            for client in clients:
+                stack.push_async_callback(client.close)

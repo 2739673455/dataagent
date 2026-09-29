@@ -27,7 +27,6 @@ from app.query.models.execution import (
 )
 from app.query.models.validation import QueryValidationResult
 from app.query.repositories.doris import DorisQueryRepository
-from app.query.runtime import DatabaseQueryExecutionRuntime
 from app.query.services.execution_handler import QueryExecutionHandler
 from app.query.services.executor import AnalysisQueryService
 
@@ -77,14 +76,37 @@ class QueryPrincipalTest(unittest.IsolatedAsyncioTestCase):
 class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.key = key()
-        self.principal = SimpleNamespace(role_name="reader")
-        self.service = MagicMock(execute=AsyncMock(return_value=result()))
-        self.runtime = MagicMock(
-            resolve_principal=AsyncMock(return_value=self.principal),
-            validate=AsyncMock(return_value=valid()),
-            create_executor=AsyncMock(return_value=self.service),
+        self.principal = SimpleNamespace(
+            role_name="reader", query_user="query_reader", password="password"
         )
-        self.handler = QueryExecutionHandler(self.runtime)
+        self.service = MagicMock(execute=AsyncMock(return_value=result()))
+        self.identity = MagicMock(
+            get_query_principal=AsyncMock(return_value=self.principal)
+        )
+        self.guard = MagicMock(check=MagicMock(return_value=valid()))
+        self.clients = MagicMock(get_or_create=MagicMock())
+        for name, value in (
+            ("IdentityService", self.identity),
+            ("QueryGuardService", self.guard),
+            ("AnalysisQueryService", self.service),
+        ):
+            patcher = patch(
+                f"app.query.services.execution_handler.{name}", return_value=value
+            )
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+        @asynccontextmanager
+        async def transaction():
+            yield
+
+        @asynccontextmanager
+        async def session():
+            yield MagicMock(begin=transaction)
+
+        self.handler = QueryExecutionHandler(
+            MagicMock(), MagicMock(session=session), self.clients
+        )
         self.tool = create_execute_sql_tool(self.handler)
         self.tool_runtime = ToolRuntime(
             state={},
@@ -114,15 +136,15 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.service.execute.assert_awaited_once_with(
             self.key.user_id,
             self.key.conversation_id,
-            self.runtime.validate.return_value.normalized_sql,
+            self.guard.check.return_value.normalized_sql,
             purpose="统计",
         )
 
     async def test_rejection_never_creates_executor(self):
-        self.runtime.validate.return_value = rejected()
+        self.guard.check.return_value = rejected()
         with self.assertRaises(QueryRejectedError):
             await self.execute()
-        self.runtime.create_executor.assert_not_awaited()
+        self.clients.get_or_create.assert_not_called()
 
     async def test_tool_returns_error_details_without_codes_and_handler_preserves_error(
         self,
@@ -158,13 +180,13 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_identity_failure_does_not_execute(self):
-        self.runtime.resolve_principal.side_effect = QueryPrincipalNotConfiguredError(
-            "no role"
+        self.identity.get_query_principal.side_effect = (
+            QueryPrincipalNotConfiguredError("no role")
         )
         with self.assertRaises(QueryPrincipalNotConfiguredError):
             await self.execute()
-        self.runtime.validate.assert_not_awaited()
-        self.runtime.create_executor.assert_not_awaited()
+        self.guard.check.assert_not_called()
+        self.clients.get_or_create.assert_not_called()
 
 
 class QueryExecutorTest(unittest.IsolatedAsyncioTestCase):
@@ -310,7 +332,7 @@ class DorisStreamTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.exited)
 
 
-class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
+class QuerySessionBoundaryTest(unittest.IsolatedAsyncioTestCase):
     async def test_role_credentials_are_used_and_doris_runs_outside_pg_sessions(self):
         active = set()
         events = []
@@ -344,7 +366,7 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
             ),
             get_query_identity=AsyncMock(return_value=identity),
         )
-        clients = MagicMock(get_or_create=AsyncMock(return_value=MagicMock()))
+        clients = MagicMock(get_or_create=MagicMock(return_value=MagicMock()))
         store = MagicMock(write_artifact=AsyncMock())
         guard = MagicMock(check=MagicMock(return_value=valid()))
 
@@ -359,25 +381,28 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
         guard.check.side_effect = validate
         with (
             patch(
-                "app.query.runtime.DorisCredentialCipher",
+                "app.query.services.execution_handler.DorisCredentialCipher",
                 return_value=MagicMock(decrypt=lambda _: "password"),
             ),
-            patch("app.query.runtime.IdentityPGRepo", return_value=repo),
-            patch("app.query.runtime.QueryGuardService", return_value=guard),
+            patch(
+                "app.query.services.execution_handler.IdentityPGRepo", return_value=repo
+            ),
+            patch(
+                "app.query.services.execution_handler.QueryGuardService",
+                return_value=guard,
+            ),
             patch.object(DorisQueryRepository, "stream", stream),
         ):
-            runtime = DatabaseQueryExecutionRuntime(
+            handler = QueryExecutionHandler(
                 store,
                 manager("auth"),
                 clients,
             )
-            actual = await QueryExecutionHandler(runtime).execute(
-                7, uuid4(), "SELECT 1", purpose="统计"
-            )
+            actual = await handler.execute(7, uuid4(), "SELECT 1", purpose="统计")
         self.assertEqual(actual.row_count, 1)
         repo.get_user_by_id.assert_awaited_once_with(7)
         repo.get_query_identity.assert_awaited_once_with("reader")
-        clients.get_or_create.assert_awaited_once_with(
+        clients.get_or_create.assert_called_once_with(
             "reader", "query_reader", "password"
         )
         guard.check.assert_called_once_with("SELECT 1")

@@ -12,7 +12,7 @@ from uuid import UUID
 from langchain_core.messages import AIMessageChunk
 
 from app.assistant.errors import ConversationBusyError, ConversationRunConflictError
-from app.assistant.events import schemas as chat_schema
+from app.assistant.models import chat as chat_schema
 from app.assistant.services.run import (
     ConversationRunService,
 )
@@ -74,11 +74,11 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
                 prepare=AsyncMock(),
             )
             await self.started.wait()
-            second = await self.service.subscribe(1, _CONVERSATION_ID)
+            second = self.service.subscribe(1, _CONVERSATION_ID)
             self.assertTrue(await self.service.stop(1, _CONVERSATION_ID))
             self.assertTrue(self.cancelled.is_set())
             self.assertTrue(self.cleaned.is_set())
-            self.assertFalse(await self.service.is_running(1, _CONVERSATION_ID))
+            self.assertFalse(self.service.is_running(1, _CONVERSATION_ID))
             for subscription in (stream, second):
                 self.assertEqual([event.type async for event in subscription], ["done"])
             self.assertFalse(await self.service.stop(1, _CONVERSATION_ID))
@@ -110,7 +110,7 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             )
             self.assertTrue(self.cleaned.is_set())
             self.assertFalse(self.cancelled.is_set())
-            self.assertFalse(await self.service.is_running(1, _CONVERSATION_ID))
+            self.assertFalse(self.service.is_running(1, _CONVERSATION_ID))
 
     async def test_close_interrupts_running_turn_and_finishes_subscription(
         self,
@@ -124,7 +124,7 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(self.cancelled.is_set())
             self.assertTrue(self.cleaned.is_set())
             self.assertEqual([event.type async for event in stream], ["done"])
-            self.assertEqual(await self.service.running_conversation_ids(1), set())
+            self.assertEqual(self.service.running_conversation_ids(1), set())
 
     async def test_cancel_before_background_task_starts_returns_to_caller(self) -> None:
         original = asyncio.create_task
@@ -145,9 +145,9 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             ):
                 await self.service.start(1, _CONVERSATION_ID, None, prepare=AsyncMock())
             self.assertFalse(self.started.is_set())
-            stream = await self.service.subscribe(1, _CONVERSATION_ID)
+            stream = self.service.subscribe(1, _CONVERSATION_ID)
             self.assertEqual([event.type async for event in stream], ["done"])
-            self.assertFalse(await self.service.is_running(1, _CONVERSATION_ID))
+            self.assertFalse(self.service.is_running(1, _CONVERSATION_ID))
 
     async def test_close_during_admission_finishes_waiting_request(self) -> None:
         entered = asyncio.Event()
@@ -165,7 +165,7 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ConversationBusyError):
                 await request
             self.assertFalse(self.started.is_set())
-            stream = await self.service.subscribe(1, _CONVERSATION_ID)
+            stream = self.service.subscribe(1, _CONVERSATION_ID)
             self.assertEqual([event.type async for event in stream], ["done"])
 
     async def test_execution_error_cleans_up_before_terminal_events(self) -> None:
@@ -178,7 +178,7 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             self.release.set()
             self.assertEqual([event.type async for event in stream], ["error", "done"])
             self.assertTrue(self.cleaned.is_set())
-            self.assertFalse(await self.service.is_running(1, _CONVERSATION_ID))
+            self.assertFalse(self.service.is_running(1, _CONVERSATION_ID))
             await self.service.close()
 
     async def test_disconnecting_subscriber_does_not_stop_execution(self) -> None:
@@ -189,9 +189,9 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual((await anext(stream)).type, "message_delta")
             await stream.aclose()
-            self.assertTrue(await self.service.is_running(1, _CONVERSATION_ID))
+            self.assertTrue(self.service.is_running(1, _CONVERSATION_ID))
             self.assertFalse(self.cancelled.is_set())
-            reconnected = await self.service.subscribe(1, _CONVERSATION_ID)
+            reconnected = self.service.subscribe(1, _CONVERSATION_ID)
             self.release.set()
             self.assertEqual(
                 [event.type async for event in reconnected], ["message_delta", "done"]
@@ -203,7 +203,7 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
         release = asyncio.Event()
 
         async def prepare():
-            self.assertTrue(await self.service.is_running(1, _CONVERSATION_ID))
+            self.assertTrue(self.service.is_running(1, _CONVERSATION_ID))
             entered.set()
             await release.wait()
 
@@ -219,7 +219,7 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             release.set()
             stream = await first
             await self.started.wait()
-            self.assertTrue(await self.service.is_running(1, _CONVERSATION_ID))
+            self.assertTrue(self.service.is_running(1, _CONVERSATION_ID))
             await self.service.stop(1, _CONVERSATION_ID)
             self.assertEqual([event.type async for event in stream], ["done"])
 
@@ -231,7 +231,7 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             )
         self.assertIs(caught.exception, failure)
         self.assertFalse(self.started.is_set())
-        self.assertFalse(await self.service.is_running(1, _CONVERSATION_ID))
+        self.assertFalse(self.service.is_running(1, _CONVERSATION_ID))
 
     async def test_request_cancel_waits_for_admission_cleanup(self):
         entered = asyncio.Event()

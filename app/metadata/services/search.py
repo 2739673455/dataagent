@@ -27,10 +27,12 @@ from app.metadata.models.search import (
 )
 from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
+from app.metadata.repositories.semantic_index import SemanticIndexRepo
 from app.metadata.repositories.value_index import ValueESRepo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
 from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.contracts.search import SearchHit
+from app.shared.database.base import MetaBase
 
 _RRF_K = 60
 _INDEX_SEARCH_LIMIT_MULTIPLIER = 3
@@ -38,7 +40,7 @@ _MAX_RANKED_CONTEXT_COLUMNS = 30
 _COLUMN_EXAMPLE_LIMIT = 3
 _DEFAULT_INDEX_QUERY_CONCURRENCY = 8
 
-CandidateItemT = TypeVar("CandidateItemT")
+CandidateItemT = TypeVar("CandidateItemT", bound=MetaBase)
 CandidateKeyT = TypeVar("CandidateKeyT")
 IndexResultT = TypeVar("IndexResultT")
 ValueKey = tuple[str, str, str]
@@ -396,54 +398,15 @@ class SemanticResourceRecallService:
         embeddings: list[list[float]] | None,
     ) -> None:
         """收集并融合字段的全文和向量命中。"""
-        allowed_columns = frozenset(context.catalog.columns)
-        results = await asyncio.gather(
-            *(
-                self._run_index_query(
-                    self._column_repo.search_text_hits(
-                        term,
-                        allowed_columns=allowed_columns,
-                        limit=context.search_limit,
-                    )
-                )
-                for term in context.request.terms
-            ),
-            return_exceptions=True,
-        )
-        self._merge_hits(
+        await self._collect_semantic_matches(
             context,
-            results,
+            embeddings,
+            self._column_repo,
             resource_type="column",
-            allowed_keys=allowed_columns,
+            allowed_keys=frozenset(context.catalog.columns),
             scores=context.column_scores,
             key_of=lambda item: (item.t_name, item.name),
-            backend_name="字段全文",
-            match_type="fulltext",
-        )
-        if embeddings is None:
-            return
-        results = await asyncio.gather(
-            *(
-                self._run_index_query(
-                    self._column_repo.search_vector_hits(
-                        embedding,
-                        allowed_columns=allowed_columns,
-                        limit=context.search_limit,
-                    )
-                )
-                for embedding in embeddings
-            ),
-            return_exceptions=True,
-        )
-        self._merge_hits(
-            context,
-            results,
-            resource_type="column",
-            allowed_keys=allowed_columns,
-            scores=context.column_scores,
-            key_of=lambda item: (item.t_name, item.name),
-            backend_name="字段向量",
-            match_type="vector",
+            backend_name="字段",
         )
 
     async def _collect_metric_matches(
@@ -452,55 +415,62 @@ class SemanticResourceRecallService:
         embeddings: list[list[float]] | None,
     ) -> None:
         """收集并融合指标的全文和向量命中。"""
-        allowed_metrics = frozenset(context.catalog.metrics)
-        results = await asyncio.gather(
-            *(
-                self._run_index_query(
-                    self._metric_repo.search_text_hits(
-                        term,
-                        allowed_metrics=allowed_metrics,
-                        limit=context.search_limit,
-                    )
-                )
-                for term in context.request.terms
-            ),
-            return_exceptions=True,
-        )
-        self._merge_hits(
+        await self._collect_semantic_matches(
             context,
-            results,
+            embeddings,
+            self._metric_repo,
             resource_type="metric",
-            allowed_keys=allowed_metrics,
+            allowed_keys=frozenset(context.catalog.metrics),
             scores=context.metric_scores,
             key_of=lambda item: item.name,
-            backend_name="指标全文",
-            match_type="fulltext",
+            backend_name="指标",
         )
-        if embeddings is None:
-            return
-        results = await asyncio.gather(
-            *(
-                self._run_index_query(
-                    self._metric_repo.search_vector_hits(
-                        embedding,
-                        allowed_metrics=allowed_metrics,
-                        limit=context.search_limit,
+
+    async def _collect_semantic_matches(
+        self,
+        context: RecallContext,
+        embeddings: list[list[float]] | None,
+        repo: SemanticIndexRepo[CandidateItemT, CandidateKeyT],
+        *,
+        resource_type: Literal["column", "metric"],
+        allowed_keys: frozenset[CandidateKeyT],
+        scores: dict[CandidateKeyT, float],
+        key_of: Callable[[CandidateItemT], CandidateKeyT],
+        backend_name: str,
+    ) -> None:
+        """共用批量查询与排名融合，各通道失败独立记录。"""
+        for channel in ("fulltext", "vector"):
+            if channel == "fulltext":
+                operations = [
+                    repo.search_text_hits(
+                        term, allowed_keys=allowed_keys, limit=context.search_limit
                     )
-                )
-                for embedding in embeddings
-            ),
-            return_exceptions=True,
-        )
-        self._merge_hits(
-            context,
-            results,
-            resource_type="metric",
-            allowed_keys=allowed_metrics,
-            scores=context.metric_scores,
-            key_of=lambda item: item.name,
-            backend_name="指标向量",
-            match_type="vector",
-        )
+                    for term in context.request.terms
+                ]
+            elif embeddings is not None:
+                operations = [
+                    repo.search_vector_hits(
+                        embedding, allowed_keys=allowed_keys, limit=context.search_limit
+                    )
+                    for embedding in embeddings
+                ]
+            else:
+                continue
+            results = await asyncio.gather(
+                *(self._run_index_query(operation) for operation in operations),
+                return_exceptions=True,
+            )
+            self._merge_hits(
+                context,
+                results,
+                resource_type=resource_type,
+                allowed_keys=allowed_keys,
+                scores=scores,
+                key_of=key_of,
+                backend_name=backend_name
+                + ("全文" if channel == "fulltext" else "向量"),
+                match_type=channel,
+            )
 
     async def _collect_value_matches(
         self,

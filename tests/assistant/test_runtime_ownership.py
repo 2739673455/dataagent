@@ -1,11 +1,11 @@
-"""每次运行独立构图，准备资源时取消与删除检查。"""
+"""每次运行独立构图，准备资源时取消向下传播。"""
 
 import asyncio
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
-from app.assistant.services.manager import AgentManager
+from app.assistant.agents.manager import AgentManager
 
 
 class RuntimeOwnershipTest(unittest.IsolatedAsyncioTestCase):
@@ -13,7 +13,6 @@ class RuntimeOwnershipTest(unittest.IsolatedAsyncioTestCase):
         manager = AgentManager(
             MagicMock(adelete_thread=AsyncMock()),
             MagicMock(get_backend=create),
-            MagicMock(exists=AsyncMock(return_value=False), save=AsyncMock()),
             MagicMock(),
             MagicMock(),
         )
@@ -67,11 +66,3 @@ class RuntimeOwnershipTest(unittest.IsolatedAsyncioTestCase):
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await task
-
-    async def test_deleted_conversation_does_not_build(self):
-        create = AsyncMock()
-        manager = self.manager(create)
-        manager._tombstones.exists.return_value = True
-        with self.assertRaisesRegex(RuntimeError, "已被删除"):
-            await manager.create_planner(1, uuid4())
-        create.assert_not_awaited()

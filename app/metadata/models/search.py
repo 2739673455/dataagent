@@ -9,7 +9,6 @@ from app.metadata.models.catalog import ColumnReference
 
 SemanticResourceType = Literal["column", "metric", "value"]
 SemanticTextType = Literal["name", "description", "alias"]
-SemanticMatchType = Literal["fulltext", "vector"]
 ValueIndexSyncMode = Literal["full", "incremental"]
 
 
@@ -111,7 +110,7 @@ class SemanticRecallFailure(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     resource_type: SemanticResourceType
-    channel: SemanticMatchType
+    channel: Literal["fulltext", "vector"]
     term: str | None
 
 
