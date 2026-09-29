@@ -1,12 +1,24 @@
 """沙箱运行时异常。"""
 
+from http import HTTPStatus
 
-class SandboxPathError(ValueError):
+from app.shared.errors.base import ProblemError
+
+
+class SandboxPathError(ProblemError):
     """沙箱路径非法。"""
 
+    type = "sandbox-path-invalid"
+    title = "路径非法"
+    status = HTTPStatus.FORBIDDEN
 
-class SandboxFileTooLargeError(OSError):
+
+class SandboxFileTooLargeError(ProblemError):
     """沙箱文件超过大小限制。"""
+
+    type = "sandbox-file-too-large"
+    title = "文件过大"
+    status = HTTPStatus.CONTENT_TOO_LARGE
 
 
 class SandboxDeletedError(RuntimeError):

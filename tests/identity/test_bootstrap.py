@@ -11,7 +11,7 @@ from asyncmy.cursors import Cursor
 from sqlalchemy.dialects.mysql.asyncmy import dialect
 
 from app.identity.services.credential import DorisCredentialCipher
-from scripts.bootstrap_users import RolePreset, bootstrap
+from scripts.bootstrap_users import ROLES, USERS, RolePreset, bootstrap
 
 
 @pytest.mark.parametrize(
@@ -26,6 +26,11 @@ from scripts.bootstrap_users import RolePreset, bootstrap
             RolePreset("role`%; DROP ROLE other", "查询权限", "user'\\%", "group`%"),
             "db`%",
             "password'\\%",
+        ),
+        (
+            RolePreset("growth", "增长", "growth_query", tables=("table`%", "other")),
+            "ecommerce",
+            "password",
         ),
     ],
 )
@@ -111,7 +116,13 @@ def test_bootstrap_grants_escaping_and_retry(role, database, password):
         password_sql = driver.escape(password)
         assert rendered == [
             f"CREATE ROLE IF NOT EXISTS {role_sql}",
-            f"GRANT SELECT_PRIV ON `internal`.{database_sql}.* TO ROLE {role_sql}",
+            *[
+                f"GRANT SELECT_PRIV ON `internal`.{database_sql}.{table_sql} TO ROLE {role_sql}"
+                for table_sql in (
+                    "*" if table == "*" else "`" + table.replace("`", "``") + "`"
+                    for table in role.tables
+                )
+            ],
             f"GRANT USAGE_PRIV ON WORKLOAD GROUP {group_sql} TO ROLE {role_sql}",
             (
                 f"CREATE USER IF NOT EXISTS {user_sql}@'%' IDENTIFIED BY {password_sql} "
@@ -131,7 +142,32 @@ def test_bootstrap_grants_escaping_and_retry(role, database, password):
             return_value=doris,
         ),
         patch("scripts.bootstrap_users.ROLES", (role,)),
+        patch("scripts.bootstrap_users.USERS", USERS[:1]),
         patch("scripts.bootstrap_users.secrets.token_urlsafe", return_value=password),
         patch.object(cfg.doris, "database", database),
     ):
         asyncio.run(run())
+
+
+def test_business_roles_only_grant_existing_scoped_tables():
+    from pathlib import Path
+
+    import yaml
+
+    config = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / "conf/meta_config.yaml").read_text()
+    )
+    tables = {table["name"] for table in config["tables"]}
+    assert len({user.id for user in USERS}) == len(USERS)
+    assert {user.role_name for user in USERS} == {role.name for role in ROLES}
+    growth, supply = ROLES[1:]
+    for role in (growth, supply):
+        assert set(role.tables) <= tables
+        assert len(set(role.tables)) == len(role.tables)
+        assert "*" not in role.tables
+        assert "dim_user_info_zip" not in role.tables
+        assert "dwd_trade_pay_detail_di" not in role.tables
+    assert "dwd_traffic_session_di" in growth.tables
+    assert "dwd_inventory_daily_snapshot_df" not in growth.tables
+    assert "dwd_inventory_daily_snapshot_df" in supply.tables
+    assert "dwd_traffic_session_di" not in supply.tables

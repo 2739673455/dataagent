@@ -9,7 +9,8 @@ from uuid import uuid4
 
 import pytest
 
-from app.sandbox import DockerSandboxBackend, DockerSandboxManager, SandboxPathError
+from app.sandbox import DockerSandboxBackend, DockerSandboxManager
+from app.sandbox.errors import SandboxPathError
 from tests.sandbox.fakes import FakeSandboxOwnership
 
 
@@ -71,5 +72,52 @@ def test_shell_cancellation_cleans_up_before_propagating():
         runner.acleanup.assert_awaited_once_with(
             runner.arun.call_args.args[0], remove_log=True
         )
+
+    asyncio.run(run())
+
+
+def test_artifact_resolution_validates_scope_and_downloadability():
+    manager = DockerSandboxManager(ownership=FakeSandboxOwnership())
+    conversation = uuid4()
+    container = MagicMock()
+
+    async def run():
+        with (
+            patch.object(manager, "init", new_callable=AsyncMock) as initialize,
+            patch.object(
+                manager, "_get_existing_container_sync", return_value=container
+            ),
+            patch.object(
+                manager._archive, "is_downloadable_file", return_value=True
+            ) as inspect,
+        ):
+            for path in (
+                "report.csv",
+                f"/data/{uuid4()}/report.csv",
+                f"/data/{conversation}/.private/report.csv",
+                f"/data/{conversation}/../report.csv",
+            ):
+                assert await manager.resolve_artifact(1, conversation, path) is None
+            initialize.assert_not_awaited()
+            inspect.assert_not_called()
+            assert (
+                await manager.resolve_artifact(
+                    1, conversation, f"/data/{conversation}/reports//data.csv"
+                )
+                == "reports/data.csv"
+            )
+            inspect.assert_called_once_with(container, conversation, "reports/data.csv")
+            inspect.return_value = False
+            assert (
+                await manager.resolve_artifact(
+                    1, conversation, f"/data/{conversation}/missing.csv"
+                )
+                is None
+            )
+            inspect.side_effect = OSError("Docker unavailable")
+            with pytest.raises(OSError, match="Docker unavailable"):
+                await manager.resolve_artifact(
+                    1, conversation, f"/data/{conversation}/report.csv"
+                )
 
     asyncio.run(run())

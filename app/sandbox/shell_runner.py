@@ -55,7 +55,6 @@ class DockerShellJobRunner:
         started_callback: Callable[[], None] | None = None,
     ) -> ShellResult:
         """在会话工作目录执行 Shell 命令并等待结束。"""
-        self._validate_job_id(job_id)
         if not command.strip():
             raise ValueError("Shell 命令不能为空")
         try:
@@ -164,19 +163,8 @@ class DockerShellJobRunner:
         """异步清除 Shell Job 控制文件，并按需移除日志文件。"""
         await asyncio.to_thread(self.cleanup, job_id, remove_log=remove_log)
 
-    @staticmethod
-    def _validate_job_id(job_id: str) -> None:
-        """校验后端生成的任务标识，确保控制文件路径有效。"""
-        if (
-            len(job_id) != 12
-            or not job_id.startswith("job_")
-            or any(character not in "0123456789abcdef" for character in job_id[4:])
-        ):
-            raise ValueError("Shell Job 标识无效")
-
     def _paths(self, job_id: str) -> tuple[str, str]:
         """生成受控日志路径和模型不可见的控制路径。"""
-        self._validate_job_id(job_id)
         relative_log_path = f"large_tool_results/shell_jobs/{job_id}.log"
         return (
             posixpath.join(self._backend.workspace_dir, relative_log_path),

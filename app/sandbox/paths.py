@@ -21,21 +21,8 @@ class SandboxReadonlyMount:
     target: PurePosixPath
 
     def __post_init__(self) -> None:
-        """规范化源目录并校验容器目标路径。"""
-        source = self.source.resolve(strict=True)
-        if not source.is_dir():
-            raise ValueError(f"沙箱只读挂载源不是目录: {source}")
-        target = self.target
-        if (
-            not target.is_absolute()
-            or target == PurePosixPath("/")
-            or target == PurePosixPath(SANDBOX_DATA_ROOT)
-            or target.is_relative_to(PurePosixPath(SANDBOX_DATA_ROOT))
-            or target == PurePosixPath("/tmp")
-            or target.is_relative_to(PurePosixPath("/tmp"))
-        ):
-            raise ValueError(f"沙箱只读挂载目标路径无效: {target}")
-        object.__setattr__(self, "source", source)
+        """解析代码配置的宿主目录，保持 Docker 挂载源为绝对路径。"""
+        object.__setattr__(self, "source", self.source.resolve(strict=True))
 
 
 def conversation_workspace_path(conversation_id: UUID) -> str:
@@ -45,16 +32,16 @@ def conversation_workspace_path(conversation_id: UUID) -> str:
 
 def conversation_relative_path(path: str, conversation_id: UUID) -> str:
     """将 Conversation 内的沙箱绝对路径转换为公开相对路径。"""
-    normalized = normalize_sandbox_absolute_path(path)
+    normalized = normalize_sandbox_path(path)
     root = PurePosixPath(conversation_workspace_path(conversation_id))
     candidate = PurePosixPath(normalized)
     if not candidate.is_relative_to(root):
-        raise SandboxPathError(path)
+        raise SandboxPathError(detail=path)
     relative = candidate.relative_to(root).as_posix()
     if relative == "." or any(
         part.startswith(".") for part in PurePosixPath(relative).parts
     ):
-        raise SandboxPathError(path)
+        raise SandboxPathError(detail=path)
     return relative
 
 
@@ -68,14 +55,14 @@ def normalize_attachment_path(path: str) -> str:
         or any(character == "\x7f" or ord(character) < 32 for character in path)
         or len(encoded_path) > _PATH_MAX_BYTES
     ):
-        raise SandboxPathError(path)
+        raise SandboxPathError(detail=path)
     parts = PurePosixPath(path).parts
     if not parts or any(
         part in {"", ".", ".."}
         or len(part.encode("utf-8", errors="surrogatepass")) > _PATH_COMPONENT_MAX_BYTES
         for part in parts
     ):
-        raise SandboxPathError(path)
+        raise SandboxPathError(detail=path)
     return PurePosixPath(*parts).as_posix()
 
 
@@ -89,22 +76,14 @@ def normalize_sandbox_path(path: str) -> str:
         or any(character == "\x7f" or ord(character) < 32 for character in path)
         or len(encoded_path) > _PATH_MAX_BYTES
     ):
-        raise SandboxPathError(path)
+        raise SandboxPathError(detail=path)
     normalized = posixpath.normpath(path)
     parts = PurePosixPath(normalized).parts
     if any(
         len(part.encode("utf-8", errors="surrogatepass")) > _PATH_COMPONENT_MAX_BYTES
         for part in parts
     ):
-        raise SandboxPathError(path)
-    return normalized
-
-
-def normalize_sandbox_absolute_path(path: str) -> str:
-    """校验并规范化沙箱内的绝对路径。"""
-    normalized = normalize_sandbox_path(path)
-    if not normalized.startswith("/"):
-        raise SandboxPathError(path)
+        raise SandboxPathError(detail=path)
     return normalized
 
 

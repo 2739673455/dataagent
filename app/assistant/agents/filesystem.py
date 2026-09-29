@@ -1,11 +1,11 @@
-"""专业 Agent 文件系统装配。"""
+"""Agent 文件系统装配。"""
 
 from pathlib import PurePosixPath
 
 from deepagents import FilesystemMiddleware
 from deepagents.backends import CompositeBackend, FilesystemBackend
 from deepagents.backends.protocol import BackendProtocol
-from deepagents.middleware.filesystem import FilesystemPermission
+from deepagents.middleware.filesystem import FilesystemPermission, FsToolName
 
 from app.assistant.agents.resources import ASSISTANT_RESOURCES_DIR
 from app.sandbox import DockerSandboxBackend, SandboxReadonlyMount
@@ -31,12 +31,13 @@ def packaged_skill_readonly_mounts() -> tuple[SandboxReadonlyMount, ...]:
     )
 
 
-def build_specialist_filesystem(
+def build_agent_filesystem(
     backend: DockerSandboxBackend,
     *,
+    tools: list[FsToolName] | None = None,
     skill_mount: SandboxReadonlyMount | None = None,
 ) -> FilesystemMiddleware:
-    """创建带只读技能目录的 Specialist 文件系统。"""
+    """统一装配会话文件工具、交付规则和可选只读技能目录。"""
     workspace_dir = backend.workspace_dir
     permissions: list[FilesystemPermission] = []
     routes: dict[str, BackendProtocol] = {}
@@ -65,21 +66,15 @@ def build_specialist_filesystem(
 当前会话工作目录是 `{workspace_dir}`。
 
 - 文件工具和 `shell` 使用同一套容器路径：相对路径从当前会话工作目录解析，绝对路径直接使用。
-- 所有 Agent 共用当前会话目录；`write_file` 和 `edit_file` 只能修改该目录，避免覆盖其他任务的同名文件。
+- 所有 Agent 共用当前会话目录；写入或编辑文件时只能修改该目录，避免覆盖其他任务的同名文件。
 - 跨 Agent 传递文件使用完整绝对路径。
 - 内置技能位于只读 `/skills/...`。
 
-## 任务结果与文件交付
+## 文件交付
 
-- 用文本说明结论、证据、限制和未完成事项，不需要输出固定 JSON 结构。
-- 数据或上游产物不足时，说明具体问题、所需输入和目标 Agent，由 Planner 调度新任务；不要假定本次执行能等待上游修复后自动恢复。
 - 交付文件必须已写入当前会话目录并确认存在，使用工具返回或经 shell 确认的完整绝对路径。
 - 每个交付标记独占一行：`[[DATAAGENT_ARTIFACT:<absolute_path>]]`。不要放在列表、表格或代码块中，文件用途在正文另行说明。
 """,
-        tools=[
-            "read_file",
-            "write_file",
-            "edit_file",
-        ],
+        tools=tools if tools is not None else ["read_file", "write_file", "edit_file"],
         _permissions=permissions,
     )

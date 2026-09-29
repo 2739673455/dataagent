@@ -18,10 +18,12 @@ import docker
 from app.sandbox import constants
 from app.sandbox.archive import SandboxArchiveStore
 from app.sandbox.backend import DockerSandboxBackend
+from app.sandbox.errors import SandboxPathError
 from app.sandbox.ownership import RedisSandboxOwnership, SandboxOwnership
 from app.sandbox.paths import (
     SANDBOX_DATA_ROOT,
     SandboxReadonlyMount,
+    conversation_relative_path,
     conversation_workspace_path,
     normalize_attachment_path,
 )
@@ -46,18 +48,6 @@ class DockerSandboxManager:
         self._readonly_mounts = tuple(
             sorted(readonly_mounts, key=lambda mount: mount.target.as_posix())
         )
-        sources = [mount.source for mount in self._readonly_mounts]
-        targets = [mount.target for mount in self._readonly_mounts]
-        if len(sources) != len(set(sources)):
-            raise ValueError("沙箱只读挂载包含重复源目录")
-        if len(targets) != len(set(targets)):
-            raise ValueError("沙箱只读挂载包含重复目标路径")
-        if any(
-            left != right and (left.is_relative_to(right) or right.is_relative_to(left))
-            for index, left in enumerate(targets)
-            for right in targets[index + 1 :]
-        ):
-            raise ValueError("沙箱只读挂载目标路径不能互相嵌套")
         self._ownership = (
             ownership if ownership is not None else RedisSandboxOwnership()
         )
@@ -164,26 +154,28 @@ class DockerSandboxManager:
         await asyncio.to_thread(self._touch_user, user_id)
         return content
 
-    async def is_downloadable_file(
+    async def resolve_artifact(
         self,
         user_id: int,
         conversation_id: UUID,
         path: str,
-    ) -> bool:
-        """检查用户会话目录中的文件是否可通过附件接口下载。"""
-        normalized_path = normalize_attachment_path(path)
+    ) -> str | None:
+        """校验绝对产物引用，返回可下载的会话相对路径；无效引用返回 None。"""
+        try:
+            relative_path = conversation_relative_path(path, conversation_id)
+        except SandboxPathError:
+            return None
         await self.init()
 
         def inspect() -> bool:
-            """检查已有沙箱中是否存在可下载文件。"""
             container = self._get_existing_container_sync(user_id)
             return container is not None and self._archive.is_downloadable_file(
-                container, conversation_id, normalized_path
+                container, conversation_id, relative_path
             )
 
-        result = await asyncio.to_thread(inspect)
+        downloadable = await asyncio.to_thread(inspect)
         await asyncio.to_thread(self._touch_user, user_id)
-        return result
+        return relative_path if downloadable else None
 
     async def delete_conversation(
         self,

@@ -25,8 +25,9 @@ from app.assistant.agents.manager import AgentManager
 from app.assistant.models import chat as chat_schema
 from app.assistant.services import conversation as conversation_service
 from app.assistant.services import run as run_service
+from app.sandbox.errors import SandboxPathError
 from app.sandbox.manager import DockerSandboxManager
-from app.sandbox.paths import normalize_attachment_path
+from app.sandbox.paths import conversation_relative_path, normalize_attachment_path
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
 _SANDBOX_ROOT = f"/data/{_CONVERSATION_ID}"
@@ -39,15 +40,19 @@ class _FileInspectorStub:
         self.available = available or set()
         self.calls: list[tuple[int, UUID, str]] = []
 
-    async def is_downloadable_file(
+    async def resolve_artifact(
         self,
         user_id: int,
         conversation_id: UUID,
         path: str,
-    ) -> bool:
-        call = (user_id, conversation_id, path)
+    ) -> str | None:
+        try:
+            relative = conversation_relative_path(path, conversation_id)
+        except SandboxPathError:
+            return None
+        call = (user_id, conversation_id, relative)
         self.calls.append(call)
-        return call in self.available
+        return relative if call in self.available else None
 
 
 class UserMessageRequestTest(unittest.TestCase):
@@ -108,7 +113,7 @@ class MessageProjectionTest(unittest.IsolatedAsyncioTestCase):
             ]
         )
         original = message.model_dump()
-        files = MagicMock(is_downloadable_file=AsyncMock())
+        files = MagicMock(resolve_artifact=AsyncMock())
         response = await message_projection.langchain_message_to_schema(
             message, files, 7, _CONVERSATION_ID
         )
@@ -117,7 +122,7 @@ class MessageProjectionTest(unittest.IsolatedAsyncioTestCase):
             response.parts, [chat_schema.TextContent(type="text", text=message.text)]
         )
         self.assertFalse(response.attachments)
-        files.is_downloadable_file.assert_not_awaited()
+        files.resolve_artifact.assert_not_awaited()
         self.assertEqual(message.model_dump(), original)
 
     async def test_message_time_is_recorded_but_not_exposed_in_api(self) -> None:

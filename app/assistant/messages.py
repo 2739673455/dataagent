@@ -21,7 +21,6 @@ from langchain_core.messages import (
 from loguru import logger
 
 from app.assistant.models import chat as chat_schema
-from app.sandbox import SandboxPathError, conversation_relative_path
 
 if TYPE_CHECKING:
     from app.sandbox import DockerSandboxManager
@@ -281,36 +280,22 @@ async def _resolve_artifacts(
     accepted_paths: set[str] = set()
     attachments: dict[str, chat_schema.Attachment] = {}
     for directive_path in candidate_paths:
-        try:
-            relative_path = conversation_relative_path(
-                directive_path,
-                conversation_id,
-            )
-        except SandboxPathError:
-            logger.warning(
-                "最终产物指令路径无效: "
-                f"conversation_id={conversation_id}, path={directive_path!r}"
-            )
-            continue
-        if relative_path in attachments:
-            accepted_paths.add(directive_path)
+        if directive_path in accepted_paths:
             continue
         try:
-            downloadable = await files.is_downloadable_file(
-                user_id,
-                conversation_id,
-                relative_path,
+            relative_path = await files.resolve_artifact(
+                user_id, conversation_id, directive_path
             )
         except Exception:  # noqa: BLE001
             logger.exception(
                 "检查最终产物指令文件失败: "
-                f"conversation_id={conversation_id}, path={relative_path!r}"
+                f"conversation_id={conversation_id}, path={directive_path!r}"
             )
             continue
-        if not downloadable:
+        if relative_path is None:
             logger.warning(
-                "最终产物指令文件不可下载: "
-                f"conversation_id={conversation_id}, path={relative_path!r}"
+                "最终产物指令无效或文件不可下载: "
+                f"conversation_id={conversation_id}, path={directive_path!r}"
             )
             continue
         accepted_paths.add(directive_path)

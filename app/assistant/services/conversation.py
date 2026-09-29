@@ -18,7 +18,6 @@ from app.assistant.messages import project_messages
 from app.assistant.models import chat as chat_schema
 from app.assistant.repositories.conversation import ConversationPGRepo
 from app.assistant.services.run import ConversationRunService
-from app.sandbox import SandboxFileTooLargeError, SandboxPathError
 
 if TYPE_CHECKING:
     from app.assistant.agents.manager import AgentManager
@@ -139,12 +138,8 @@ class AttachmentService:
                 conversation_id,
                 f_path,
             )
-        except SandboxPathError:
-            raise errors.PathTraversalError from None
         except FileNotFoundError:
             raise errors.AttachmentNotFoundError(detail=f_path) from None
-        except SandboxFileTooLargeError:
-            raise errors.AttachmentTooLargeError from None
         return content
 
 

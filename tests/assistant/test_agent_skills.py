@@ -8,7 +8,7 @@ from langchain_core.messages import ToolMessage
 
 from app.assistant.agents.filesystem import (
     agent_skills_mount_path,
-    build_specialist_filesystem,
+    build_agent_filesystem,
     packaged_skill_readonly_mounts,
 )
 from app.assistant.agents.resources import ASSISTANT_RESOURCES_DIR
@@ -28,12 +28,21 @@ class AgentSkillsTest(unittest.TestCase):
         self.assertTrue((analyst.source / "analysis" / "SKILL.md").is_file())
         self.assertTrue((analyst.source / "visualization" / "SKILL.md").is_file())
 
+    def test_planner_only_exposes_read_file(self) -> None:
+        backend = StateBackend()
+        cast(Any, backend).workspace_dir = "/data/conversation"
+        filesystem = build_agent_filesystem(
+            cast(DockerSandboxBackend, backend), tools=["read_file"]
+        )
+        self.assertEqual([tool.name for tool in filesystem.tools], ["read_file"])
+        self.assertIs(filesystem.backend.default, backend)
+
     def test_agent_cannot_modify_mounted_skill(self) -> None:
         state_backend = StateBackend()
         cast(
             Any, state_backend
         ).workspace_dir = "/data/conversation/sessions/analysis/analyst/session"
-        filesystem = build_specialist_filesystem(
+        filesystem = build_agent_filesystem(
             cast(DockerSandboxBackend, state_backend),
             skill_mount=SandboxReadonlyMount(
                 source=ASSISTANT_RESOURCES_DIR / "analyst" / "skills",

@@ -14,6 +14,7 @@ class RolePreset:
     description: str
     query_user: str
     workload_group: str = "normal"
+    tables: tuple[str, ...] = ("*",)
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,8 +27,57 @@ class UserPreset:
 # Doris 内置 admin 是全局管理员，业务查询使用独立角色。
 ROLES = (
     RolePreset("dataagent_admin", "业务库全部表的查询权限", "dataagent_admin_query"),
+    RolePreset(
+        "dataagent_growth",
+        "增长运营：渠道流量、浏览转化、加购收藏与优惠券触达",
+        "dataagent_growth_query",
+        tables=(
+            "dim_date",
+            "dim_channel_info",
+            "dim_page_info",
+            "dim_category_info_zip",
+            "dim_brand_info",
+            "dim_spu_info_zip",
+            "dim_sku_info_zip",
+            "dim_coupon_template_version",
+            "bridge_coupon_scope",
+            "dwd_traffic_session_di",
+            "dwd_traffic_page_view_di",
+            "dwd_traffic_search_di",
+            "dwd_traffic_search_click_di",
+            "dwd_interaction_cart_event_di",
+            "dwd_interaction_favor_event_di",
+            "dwd_marketing_user_coupon_event_di",
+        ),
+    ),
+    RolePreset(
+        "dataagent_supply_chain",
+        "供应链：商品仓储、库存变动、物流履约与配送效率",
+        "dataagent_supply_chain_query",
+        tables=(
+            "dim_date",
+            "dim_geo_region_zip",
+            "dim_seller_info_zip",
+            "dim_shop_info_zip",
+            "dim_category_info_zip",
+            "dim_brand_info",
+            "dim_spu_info_zip",
+            "dim_sku_info_zip",
+            "dim_warehouse_info_zip",
+            "dim_logistics_company",
+            "dwd_trade_delivery_di",
+            "dwd_trade_delivery_item_di",
+            "dwd_trade_delivery_status_event_di",
+            "dwd_inventory_change_di",
+            "dwd_inventory_daily_snapshot_df",
+        ),
+    ),
 )
-USERS = (UserPreset(1, "admin", "dataagent_admin"),)
+USERS = (
+    UserPreset(1, "admin", "dataagent_admin"),
+    UserPreset(2, "growth", "dataagent_growth"),
+    UserPreset(3, "supply_chain", "dataagent_supply_chain"),
+)
 
 
 async def bootstrap() -> None:
@@ -82,10 +132,12 @@ async def bootstrap() -> None:
                 await connection.exec_driver_sql(
                     f"CREATE ROLE IF NOT EXISTS {role_sql}", ()
                 )
-                await connection.exec_driver_sql(
-                    f"GRANT SELECT_PRIV ON `internal`.{database_sql}.* TO ROLE {role_sql}",
-                    (),
-                )
+                for table in role.tables:
+                    table_sql = "*" if table == "*" else quote(table)
+                    await connection.exec_driver_sql(
+                        f"GRANT SELECT_PRIV ON `internal`.{database_sql}.{table_sql} TO ROLE {role_sql}",
+                        (),
+                    )
                 await connection.exec_driver_sql(
                     f"GRANT USAGE_PRIV ON WORKLOAD GROUP {group_sql} TO ROLE {role_sql}",
                     (),
@@ -102,7 +154,10 @@ async def bootstrap() -> None:
                 await connection.exec_driver_sql(
                     f"GRANT {role_sql} TO %s@%s", (role.query_user, "%")
                 )
-            print(f"角色已就绪: {role.name}，查询范围: {cfg.doris.database}.*")
+            scope = (
+                "全部表" if role.tables == ("*",) else f"{len(role.tables)} 张业务表"
+            )
+            print(f"角色已就绪: {role.name}，查询范围: {cfg.doris.database}（{scope}）")
 
         # 全部角色初始化成功后才发布用户，避免前端选择到未就绪的新用户。
         async with postgres.session() as session, session.begin():

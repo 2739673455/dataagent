@@ -360,7 +360,7 @@ class DockerSandboxBackend(BaseSandbox):
             resolved_path == self._workspace_dir
             or resolved_path.startswith(f"{self._workspace_dir}/")
         ):
-            raise SandboxPathError(path)
+            raise SandboxPathError(detail=path)
         return resolved_path
 
     def _sanitize_output(self, message: str | None) -> str | None:
@@ -447,14 +447,14 @@ class DockerSandboxBackend(BaseSandbox):
             f"umask {self._umask:03o}; ulimit -f {file_limit_blocks}; "
             f"exec /bin/sh -lc {shlex.quote(command)}"
         )
-        shell_command = ["/bin/sh", "-lc", command_shell]
-        if effective_timeout > 0:
-            shell_command = [
-                "timeout",
-                "--signal=KILL",
-                str(effective_timeout),
-                *shell_command,
-            ]
+        shell_command = [
+            "timeout",
+            "--signal=KILL",
+            str(effective_timeout),
+            "/bin/sh",
+            "-lc",
+            command_shell,
+        ]
 
         docker_client = self._container.client
         if docker_client is None:
@@ -570,7 +570,7 @@ class DockerSandboxBackend(BaseSandbox):
         """先写入受保护的暂存目录，再提交到当前可写根。"""
         relative_target = posixpath.relpath(path, self._workspace_dir)
         if relative_target == "." or relative_target.startswith("../"):
-            raise SandboxPathError(path)
+            raise SandboxPathError(detail=path)
         staging_name = f"upload-{secrets.token_hex(20)}"
         staging_path = posixpath.join(self._staging_dir, staging_name)
         try:

@@ -5,7 +5,6 @@ from pathlib import PurePosixPath
 from uuid import UUID
 
 from deepagents import (
-    FilesystemMiddleware,
     GeneralPurposeSubagentProfile,
     HarnessProfile,
     create_deep_agent,
@@ -20,7 +19,7 @@ from langgraph.types import StateSnapshot
 from app.assistant.agents.context import build_planner_config, get_thread_id
 from app.assistant.agents.filesystem import (
     agent_skills_mount_path,
-    build_specialist_filesystem,
+    build_agent_filesystem,
 )
 from app.assistant.agents.middleware.message_context import MessageContextMiddleware
 from app.assistant.agents.middleware.task_activity import TaskActivityMiddleware
@@ -128,6 +127,7 @@ class AgentManager:
         """编译 Planner 与 task 子 Agent，供状态读取或执行使用。"""
         if backend is None:
             backend = self._sandbox.graph_backend(user_id, conversation_id)
+        filesystem = build_agent_filesystem(backend, tools=["read_file"])
         return create_deep_agent(
             name="planner",
             system_prompt=SYSTEM_PROMPTS["planner"],
@@ -135,11 +135,11 @@ class AgentManager:
             tools=[create_shell_tool(backend)],
             subagents=self._build_specialists(backend),
             middleware=[
-                FilesystemMiddleware(backend=backend, tools=["read_file"]),
+                filesystem,
                 TaskActivityMiddleware(),
                 MessageContextMiddleware(),
             ],
-            backend=backend,
+            backend=filesystem.backend,
             checkpointer=self._checkpointer,
         )
 
@@ -148,15 +148,15 @@ class AgentManager:
     ) -> list[CompiledSubAgent]:
         """构造无 Checkpoint 的专业图，共用当前会话工作区。"""
         analyst_skills = agent_skills_mount_path("analyst")
-        explorer_filesystem = build_specialist_filesystem(backend)
-        analyst_filesystem = build_specialist_filesystem(
+        explorer_filesystem = build_agent_filesystem(backend)
+        analyst_filesystem = build_agent_filesystem(
             backend,
             skill_mount=SandboxReadonlyMount(
                 source=ASSISTANT_RESOURCES_DIR / "analyst" / "skills",
                 target=PurePosixPath(analyst_skills),
             ),
         )
-        reviewer_filesystem = build_specialist_filesystem(backend)
+        reviewer_filesystem = build_agent_filesystem(backend)
         return [
             CompiledSubAgent(
                 name="explorer",

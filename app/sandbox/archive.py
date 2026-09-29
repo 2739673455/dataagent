@@ -176,7 +176,7 @@ class SandboxArchiveStore:
         content.seek(0)
         if size > self._max_file_bytes:
             raise SandboxFileTooLargeError(
-                f"文件大小超出限制: {size} > {self._max_file_bytes}"
+                detail=f"文件大小超出限制: {size} > {self._max_file_bytes}"
             )
         directories, _ = self._validate_target(
             container,
@@ -314,14 +314,12 @@ class SandboxArchiveStore:
                 raise FileNotFoundError(path)
             if member.size > max_bytes:
                 raise SandboxFileTooLargeError(
-                    f"文件大小超出限制: {member.size} > {max_bytes}"
+                    detail=f"文件大小超出限制: {member.size} > {max_bytes}"
                 )
             extracted = archive.extractfile(member)
             if extracted is None:
                 raise FileNotFoundError(path)
-            content = extracted.read(max_bytes + 1)
-            if len(content) > max_bytes:
-                raise SandboxFileTooLargeError(f"文件大小超出限制: > {max_bytes}")
+            content = extracted.read()
             return content, member
 
     def _put(
@@ -462,7 +460,7 @@ class SandboxArchiveStore:
                 or info.uid != conversation_uid
                 or info.gid != conversation_uid
             ):
-                raise SandboxPathError(relative_path)
+                raise SandboxPathError(detail=relative_path)
 
         target_info = self._inspect_path(
             container, posixpath.join(workspace, relative_path)
@@ -474,7 +472,7 @@ class SandboxArchiveStore:
             or target_info.uid != conversation_uid
             or target_info.gid != conversation_uid
         ):
-            raise SandboxPathError(relative_path)
+            raise SandboxPathError(detail=relative_path)
         return directories, target_info.size
 
     def _existing_workspace_uid(
