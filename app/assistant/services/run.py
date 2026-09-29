@@ -1,30 +1,37 @@
-"""与客户端连接解耦的 Conversation Agent 执行管理。"""
+"""会话后台运行、Planner 回合执行与聊天事件订阅。"""
 
 from __future__ import annotations
 
 import asyncio
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import aclosing
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
+from langchain_core.messages import BaseMessage
+from langgraph.types import StreamPart
 from loguru import logger
 
-from app.assistant.errors import ConversationBusyError, ConversationRunConflictError
+from app.assistant.errors import (
+    ConversationBusyError,
+    ConversationRunConflictError,
+    PlannerContinuationLimitError,
+)
 from app.assistant.events import schemas as chat_schema
-from app.assistant.services import planner as planner_turn
+from app.assistant.events.projection import project_messages, schema_to_human_message
+from app.assistant.events.stream import MessageDeltaParser, update_messages
 from app.assistant.services.types import (
     PlannerTurnContext,
-    conversation_lifecycle_lock_name,
+    SubagentStatusActivity,
+    build_planner_config,
 )
 from app.shared.config.app_config import cfg
-from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 if TYPE_CHECKING:
     from app.assistant.services.manager import AgentManager
     from app.sandbox.manager import DockerSandboxManager
-    from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 
 type ConversationRunKey = tuple[int, UUID]
 type RunEvent = chat_schema.ChatStreamEventPayload
@@ -35,8 +42,6 @@ _SUBSCRIBER_QUEUE_LIMIT = 256
 _DELTA_EVENT_TYPES = (
     chat_schema.ChatStreamThinkingEvent,
     chat_schema.ChatStreamMessageDeltaEvent,
-    chat_schema.ChatStreamSubagentThinkingEvent,
-    chat_schema.ChatStreamSubagentMessageDeltaEvent,
 )
 
 
@@ -61,12 +66,10 @@ class ConversationRunService:
         self,
         agents: AgentManager,
         files: DockerSandboxManager,
-        locks: LangGraphPostgresManager,
     ) -> None:
         """绑定 Agent 执行依赖并初始化进程内 Run 注册表。"""
         self._agents = agents
         self._files = files
-        self._locks = locks
         self._runs: dict[ConversationRunKey, _ConversationRun] = {}
         self._lock = asyncio.Lock()
 
@@ -104,8 +107,6 @@ class ConversationRunService:
             failure = await asyncio.shield(run.ready)
             if failure is not None:
                 await asyncio.gather(run.task, return_exceptions=True)
-                if isinstance(failure, AdvisoryLockBusyError):
-                    raise ConversationBusyError(detail=str(failure)) from failure
                 raise failure
         except BaseException:
             run.subscribers.discard(queue)
@@ -172,27 +173,23 @@ class ConversationRunService:
         """执行新回合或恢复回合，并把结果发布给全部订阅者。"""
         user_id, conversation_id = key
         try:
-            # 同一后台 Task 持锁完成受理和执行，不跨任务交接锁，也不重复获取。
-            async with self._locks.advisory_lock(
-                conversation_lifecycle_lock_name(user_id, conversation_id)
-            ):
-                await prepare()
-                run.ready.set_result(None)
-                responses = planner_turn.run_agent_turn(
-                    self._agents,
-                    self._files,
-                    PlannerTurnContext(
-                        user_id,
-                        conversation_id,
-                        cfg.agent.orchestration.max_continuations,
-                    ),
-                    user_message,
-                )
-                try:
-                    async for event in responses:
-                        await self._publish(run, event)
-                finally:
-                    await responses.aclose()
+            await prepare()
+            run.ready.set_result(None)
+            responses = run_agent_turn(
+                self._agents,
+                self._files,
+                PlannerTurnContext(
+                    user_id,
+                    conversation_id,
+                    cfg.agent.orchestration.max_continuations,
+                ),
+                user_message,
+            )
+            try:
+                async for event in responses:
+                    await self._publish(run, event)
+            finally:
+                await responses.aclose()
         except asyncio.CancelledError:
             logger.info(f"智能体执行已停止: conversation_id={conversation_id}")
         except Exception as exc:  # noqa: BLE001
@@ -248,10 +245,7 @@ class ConversationRunService:
                 and isinstance(event, _DELTA_EVENT_TYPES)
                 and type(previous) is type(event)
                 and not event.reset
-                and all(
-                    getattr(previous, field, None) == getattr(event, field, None)
-                    for field in ("message_id", "delegation_id")
-                )
+                and previous.message_id == event.message_id
             ):
                 run.events.pop()
                 run.replay_bytes -= self._event_size(previous)
@@ -332,3 +326,99 @@ class ConversationRunService:
                     task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def run_agent_turn(
+    agents: AgentManager,
+    files: DockerSandboxManager,
+    turn_context: PlannerTurnContext,
+    user_message: chat_schema.UserMessageRequest | None,
+) -> AsyncGenerator[chat_schema.ChatStreamEventPayload]:
+    """执行新回合或从待执行 Checkpoint 恢复同一回合。"""
+    user_id, conversation_id = turn_context.user_id, turn_context.conversation_id
+    input_messages: list[BaseMessage] | None = (
+        [schema_to_human_message(user_message)] if user_message is not None else None
+    )
+    logger.info(
+        f"智能体回合开始: conversation_id={conversation_id}, "
+        f"resume={user_message is None}, "
+        f"parts={len(user_message.parts) if user_message is not None else 0}"
+    )
+    planner = await agents.create_planner(user_id, conversation_id)
+    continuation_count = 0
+    deltas = MessageDeltaParser()
+    while True:
+        last_finish_reason: str | None = None
+
+        # LangGraph 的重载声明返回 AsyncIterator，实际 astream 是异步生成器。
+        async with aclosing(
+            cast(
+                AsyncGenerator[StreamPart[Any, Any]],
+                planner.astream(
+                    input={"messages": input_messages}
+                    if input_messages is not None
+                    else None,
+                    config=build_planner_config(
+                        turn_context.user_id, turn_context.conversation_id
+                    ),
+                    stream_mode=["updates", "custom", "messages"],
+                    version="v2",
+                ),
+            )
+        ) as stream:
+            async for chunk in stream:
+                if chunk.get("type") == "custom":
+                    activity = chunk.get("data")
+                    if isinstance(activity, SubagentStatusActivity):
+                        yield chat_schema.ChatStreamSubagentStatusEvent(
+                            type="subagent_status",
+                            delegation_id=activity.delegation_id,
+                            agent_type=activity.agent_type,
+                            status=activity.status,
+                        )
+                    continue
+                if chunk.get("type") == "messages":
+                    data = chunk.get("data")
+                    if (
+                        isinstance(data, tuple)
+                        and data[1].get("lc_agent_name", "planner") != "planner"
+                    ):
+                        continue
+                    for kind, delta in deltas.parse(chunk.get("data")):
+                        if kind == "thinking":
+                            yield chat_schema.ChatStreamThinkingEvent(
+                                type="thinking", **delta
+                            )
+                        else:
+                            yield chat_schema.ChatStreamMessageDeltaEvent(
+                                type="message_delta", **delta
+                            )
+                    continue
+                if chunk.get("type") != "updates":
+                    continue
+                responses = await project_messages(
+                    update_messages(chunk.get("data")),
+                    files,
+                    user_id,
+                    conversation_id,
+                )
+                for response in responses:
+                    last_finish_reason = response.finish_reason
+                    yield chat_schema.ChatStreamMessageEvent(
+                        type="message",
+                        message=response,
+                    )
+
+        if last_finish_reason is None or last_finish_reason == "stop":
+            break
+        if continuation_count >= turn_context.max_continuations:
+            raise PlannerContinuationLimitError(
+                turn_context.max_continuations,
+                last_finish_reason,
+            )
+
+        continuation_count += 1
+        # 空增量会保留 Checkpointer 中的已有状态并继续生成。
+        input_messages = []
+
+    logger.info(f"智能体回合结束: conversation_id={conversation_id}")

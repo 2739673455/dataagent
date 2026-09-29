@@ -5,12 +5,8 @@ import type {
   ConversationResponse,
   MessageDeltaEvent,
   MessageResponse,
-  SubagentMessageDeltaEvent,
-  SubagentMessageEvent,
   SubagentRun,
-  SubagentRunIdentity,
   SubagentStatusEvent,
-  SubagentThinkingEvent,
   ThinkingEvent,
 } from "@/features/chat/types";
 
@@ -32,9 +28,6 @@ interface ChatState {
   appendMessage: (conversationId: string, message: MessageResponse) => void;
   appendThinking: (conversationId: string, event: ThinkingEvent) => void;
   appendMessageDelta: (conversationId: string, event: MessageDeltaEvent) => void;
-  appendSubagentMessage: (conversationId: string, event: SubagentMessageEvent) => void;
-  appendSubagentMessageDelta: (conversationId: string, event: SubagentMessageDeltaEvent) => void;
-  appendSubagentThinking: (conversationId: string, event: SubagentThinkingEvent) => void;
   updateSubagentStatus: (conversationId: string, event: SubagentStatusEvent) => void;
   interruptRunningSubagents: (conversationId: string) => void;
   markStreaming: (conversationId: string) => void;
@@ -49,48 +42,6 @@ function emptyChatState() {
     subagentRunsByConversation: {},
     isLoadingMessages: false,
     streamingConversations: new Set<string>(),
-  };
-}
-
-function createSubagentRun(
-  identity: SubagentRunIdentity,
-  status: SubagentRun["status"] = "running"
-): SubagentRun {
-  return {
-    ...identity,
-    status,
-    messages: [],
-  };
-}
-
-type SubagentEvent =
-  | SubagentMessageEvent
-  | SubagentMessageDeltaEvent
-  | SubagentThinkingEvent
-  | SubagentStatusEvent;
-
-function updateSubagentRun(
-  state: ChatState,
-  conversationId: string,
-  event: SubagentEvent,
-  update: (run: SubagentRun) => SubagentRun
-): Partial<ChatState> {
-  const conversationRuns = state.subagentRunsByConversation[conversationId] ?? {};
-  const identity: SubagentRunIdentity = {
-    delegationId: event.delegation_id,
-    agentType: event.agent_type,
-  };
-  const current = conversationRuns[event.delegation_id] ?? createSubagentRun(identity);
-  const updated = update(current);
-  if (updated === current) return state;
-  return {
-    subagentRunsByConversation: {
-      ...state.subagentRunsByConversation,
-      [conversationId]: {
-        ...conversationRuns,
-        [event.delegation_id]: { ...updated, ...identity },
-      },
-    },
   };
 }
 
@@ -379,49 +330,20 @@ export const useChatStore = create<ChatState>()((set) => ({
       };
     }),
 
-  appendSubagentMessage: (conversationId, event) =>
-    set((state) =>
-      updateSubagentRun(state, conversationId, event, (current) => {
-        const messages = upsertMessage(current.messages, event.message);
-        return messages === current.messages ? current : { ...current, messages };
-      })
-    ),
-
-  appendSubagentMessageDelta: (conversationId, event) =>
-    set((state) =>
-      updateSubagentRun(state, conversationId, event, (current) => ({
-        ...current,
-        messages: appendTextDelta(current.messages, event.message_id, event.delta, event.reset),
-      }))
-    ),
-
-  appendSubagentThinking: (conversationId, event) =>
-    set((state) =>
-      updateSubagentRun(state, conversationId, event, (current) => ({
-        ...current,
-        messages: appendThinkingDelta(current.messages, event.message_id, event.delta, event.reset),
-      }))
-    ),
-
   updateSubagentStatus: (conversationId, event) =>
-    set((state) =>
-      updateSubagentRun(state, conversationId, event, (current) => {
-        const thinkingStatus =
-          event.status === "completed"
-            ? "complete"
-            : event.status === "running"
-              ? null
-              : "interrupted";
-        return {
-          ...current,
-          status: event.status,
-          messages:
-            thinkingStatus === null
-              ? current.messages
-              : settleThinking(current.messages, thinkingStatus),
-        };
-      })
-    ),
+    set((state) => ({
+      subagentRunsByConversation: {
+        ...state.subagentRunsByConversation,
+        [conversationId]: {
+          ...state.subagentRunsByConversation[conversationId],
+          [event.delegation_id]: {
+            delegationId: event.delegation_id,
+            agentType: event.agent_type,
+            status: event.status,
+          },
+        },
+      },
+    })),
 
   interruptRunningSubagents: (conversationId) =>
     set((state) => {
@@ -437,7 +359,6 @@ export const useChatStore = create<ChatState>()((set) => ({
             {
               ...run,
               status: "interrupted" as const,
-              messages: settleThinking(run.messages, "interrupted"),
             },
           ];
         })

@@ -1,30 +1,20 @@
 """语言模型实例构建。"""
 
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any, cast
 from uuid import uuid4
 
 import httpx
-from deepagents import (
-    GeneralPurposeSubagentProfile,
-    HarnessProfile,
-    register_harness_profile,
-)
-from langchain_core.callbacks import (
-    AsyncCallbackManagerForLLMRun,
-    CallbackManagerForLLMRun,
-)
+from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
 from langchain_core.language_models import (
     BaseChatModel,
     LangSmithParams,
     LanguageModelInput,
     ModelProfile,
 )
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
+from langchain_core.messages import AIMessageChunk, BaseMessage
 from langchain_core.outputs import ChatGenerationChunk
-from langchain_core.runnables import Runnable
-from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langchain_openai.chat_models import base as openai_chat_base
 
@@ -88,44 +78,6 @@ def _convert_deepseek_responses_chunk(
 class DataAgentDeepSeekResponses(ChatOpenAI):
     """适配 DeepSeek 无状态 Responses thinking 续轮。"""
 
-    def _stream(self, *args: Any, **kwargs: Any) -> Iterator[ChatGenerationChunk]:
-        """统一同一次同步流式调用的 chunk ID。"""
-        message_id = str(uuid4())
-        for chunk in self._stream_responses(*args, **kwargs):
-            chunk.message.id = message_id
-            yield chunk
-
-    async def _astream(
-        self,
-        *args: Any,
-        **kwargs: Any,
-    ) -> AsyncIterator[ChatGenerationChunk]:
-        """统一同一次异步流式调用的 chunk ID。"""
-        message_id = str(uuid4())
-        async for chunk in self._astream_responses(*args, **kwargs):
-            chunk.message.id = message_id
-            yield chunk
-
-    def bind_tools(
-        self,
-        tools: Sequence[dict[str, Any] | type | Callable | BaseTool],
-        *,
-        tool_choice: dict | str | bool | None = None,
-        strict: bool | None = None,
-        parallel_tool_calls: bool | None = None,
-        response_format: Any = None,
-        **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, AIMessage]:
-        """绑定工具但不发送 DeepSeek thinking 模式不支持的 tool_choice。"""
-        del tool_choice
-        return super().bind_tools(
-            tools,
-            strict=strict,
-            parallel_tool_calls=parallel_tool_calls,
-            response_format=response_format,
-            **kwargs,
-        )
-
     def _get_ls_params(
         self,
         stop: list[str] | None = None,
@@ -152,43 +104,7 @@ class DataAgentDeepSeekResponses(ChatOpenAI):
         payload["store"] = False
         return payload
 
-    def _stream_responses(
-        self,
-        messages: list[BaseMessage],
-        stop: list[str] | None = None,
-        run_manager: CallbackManagerForLLMRun | None = None,
-        **kwargs: Any,
-    ) -> Iterator[ChatGenerationChunk]:
-        """转换 DeepSeek Responses 同步流，包含明文思考增量。"""
-        self._ensure_sync_client_available()
-        kwargs["stream"] = True
-        payload = self._get_request_payload(messages, stop=stop, **kwargs)
-        context_manager = self.root_client.responses.create(**payload)
-        original_schema = kwargs.get("response_format")
-
-        with context_manager as response:
-            state = (-1, -1, -1)
-            has_reasoning = False
-            for provider_chunk in response:
-                *state_values, generation_chunk = _convert_deepseek_responses_chunk(
-                    provider_chunk,
-                    *state,
-                    schema=original_schema,
-                    metadata={},
-                    has_reasoning=has_reasoning,
-                    output_version=self.output_version,
-                )
-                state = tuple(state_values)
-                if generation_chunk is None:
-                    continue
-                if run_manager is not None:
-                    run_manager.on_llm_new_token(
-                        generation_chunk.text,
-                        chunk=generation_chunk,
-                    )
-                yield generation_chunk
-
-    async def _astream_responses(
+    async def _astream(
         self,
         messages: list[BaseMessage],
         stop: list[str] | None = None,
@@ -199,23 +115,26 @@ class DataAgentDeepSeekResponses(ChatOpenAI):
         kwargs["stream"] = True
         payload = self._get_request_payload(messages, stop=stop, **kwargs)
         context_manager = await self.root_async_client.responses.create(**payload)
-        original_schema = kwargs.get("response_format")
+        message_id = str(uuid4())
 
         async with context_manager as response:
-            state = (-1, -1, -1)
-            has_reasoning = False
+            index = output_index = sub_index = -1
             async for provider_chunk in response:
-                *state_values, generation_chunk = _convert_deepseek_responses_chunk(
-                    provider_chunk,
-                    *state,
-                    schema=original_schema,
-                    metadata={},
-                    has_reasoning=has_reasoning,
-                    output_version=self.output_version,
+                index, output_index, sub_index, generation_chunk = (
+                    _convert_deepseek_responses_chunk(
+                        provider_chunk,
+                        index,
+                        output_index,
+                        sub_index,
+                        schema=kwargs.get("response_format"),
+                        metadata={},
+                        has_reasoning=False,
+                        output_version=self.output_version,
+                    )
                 )
-                state = tuple(state_values)
                 if generation_chunk is None:
                     continue
+                generation_chunk.message.id = message_id
                 if run_manager is not None:
                     await run_manager.on_llm_new_token(
                         generation_chunk.text,
@@ -234,13 +153,6 @@ async def create_configured_model(model_name: str) -> AsyncGenerator[BaseChatMod
     deepseek_responses = (
         model_cfg.model_provider == "deepseek" and model_cfg.api_protocol == "responses"
     )
-    provider = "deepseek" if deepseek_responses else "openai"
-    register_harness_profile(
-        f"{provider}:{model_cfg.model}",
-        HarnessProfile(
-            general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
-        ),
-    )
     profile = cast(
         ModelProfile,
         {
@@ -258,32 +170,25 @@ async def create_configured_model(model_name: str) -> AsyncGenerator[BaseChatMod
         "max_retries": 0,
         "streaming": True,
     }
-    async with AsyncExitStack() as stack:
-        http_client = stack.enter_context(
-            httpx.Client(
-                timeout=_REQUEST_TIMEOUT_SECONDS,
-                follow_redirects=True,
-            )
-        )
-        http_async_client = await stack.enter_async_context(
-            httpx.AsyncClient(
-                timeout=_REQUEST_TIMEOUT_SECONDS,
-                follow_redirects=True,
-            )
-        )
+    model_class = DataAgentDeepSeekResponses if deepseek_responses else ChatOpenAI
+    if model_cfg.api_protocol == "responses":
         model_kwargs.update(
-            http_client=http_client,
-            http_async_client=http_async_client,
+            output_version="responses/v1",
+            store=False,
+            use_previous_response_id=False,
         )
-        model_class = DataAgentDeepSeekResponses if deepseek_responses else ChatOpenAI
-        if model_cfg.api_protocol == "responses":
+    with httpx.Client(
+        timeout=_REQUEST_TIMEOUT_SECONDS, follow_redirects=True
+    ) as http_client:
+        async with httpx.AsyncClient(
+            timeout=_REQUEST_TIMEOUT_SECONDS, follow_redirects=True
+        ) as http_async_client:
             model_kwargs.update(
-                output_version="responses/v1",
-                store=False,
-                use_previous_response_id=False,
+                http_client=http_client,
+                http_async_client=http_async_client,
             )
-        yield model_class(
-            **model_kwargs,
-            timeout=_REQUEST_TIMEOUT_SECONDS,
-            use_responses_api=model_cfg.api_protocol == "responses",
-        )
+            yield model_class(
+                **model_kwargs,
+                timeout=_REQUEST_TIMEOUT_SECONDS,
+                use_responses_api=model_cfg.api_protocol == "responses",
+            )

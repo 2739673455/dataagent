@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import unittest
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -27,7 +26,6 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
         self.release = asyncio.Event()
         self.cancelled = asyncio.Event()
         self.cleaned = asyncio.Event()
-        self.execution_lock = asyncio.Lock()
         self.emit_delta = False
         self.fail_execution = False
 
@@ -51,22 +49,15 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 self.cleaned.set()
 
-        @asynccontextmanager
-        async def lock(name):
-            async with self.execution_lock:
-                yield
-
-        @asynccontextmanager
-        async def use_runtime(*args):
-            yield runtime
+        async def create_planner(*args):
+            return runtime
 
         runtime = MagicMock()
-        runtime.planner.astream = stream
-        manager = MagicMock(use_runtime=use_runtime)
+        runtime.astream = stream
+        manager = MagicMock(create_planner=create_planner)
         self.service = ConversationRunService(
             manager,
             MagicMock(),
-            locks=MagicMock(advisory_lock=lock),
         )
         self.addAsyncCleanup(self.service.close)
 
@@ -87,7 +78,6 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(await self.service.stop(1, _CONVERSATION_ID))
             self.assertTrue(self.cancelled.is_set())
             self.assertTrue(self.cleaned.is_set())
-            self.assertFalse(self.execution_lock.locked())
             self.assertFalse(await self.service.is_running(1, _CONVERSATION_ID))
             for subscription in (stream, second):
                 self.assertEqual([event.type async for event in subscription], ["done"])
@@ -106,7 +96,6 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([event.type async for event in stream], ["done"])
             self.assertTrue(self.cancelled.is_set())
             self.assertTrue(self.cleaned.is_set())
-            self.assertFalse(self.execution_lock.locked())
 
             self.started.clear()
             self.cleaned.clear()
@@ -122,7 +111,6 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(self.cleaned.is_set())
             self.assertFalse(self.cancelled.is_set())
             self.assertFalse(await self.service.is_running(1, _CONVERSATION_ID))
-            self.assertFalse(self.execution_lock.locked())
 
     async def test_close_interrupts_running_turn_and_finishes_subscription(
         self,
@@ -179,7 +167,6 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(self.started.is_set())
             stream = await self.service.subscribe(1, _CONVERSATION_ID)
             self.assertEqual([event.type async for event in stream], ["done"])
-            self.assertFalse(self.execution_lock.locked())
 
     async def test_execution_error_cleans_up_before_terminal_events(self) -> None:
         async with asyncio.timeout(1):
@@ -191,7 +178,6 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             self.release.set()
             self.assertEqual([event.type async for event in stream], ["error", "done"])
             self.assertTrue(self.cleaned.is_set())
-            self.assertFalse(self.execution_lock.locked())
             self.assertFalse(await self.service.is_running(1, _CONVERSATION_ID))
             await self.service.close()
 
@@ -217,7 +203,7 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
         release = asyncio.Event()
 
         async def prepare():
-            self.assertTrue(self.execution_lock.locked())
+            self.assertTrue(await self.service.is_running(1, _CONVERSATION_ID))
             entered.set()
             await release.wait()
 
@@ -233,7 +219,7 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             release.set()
             stream = await first
             await self.started.wait()
-            self.assertTrue(self.execution_lock.locked())
+            self.assertTrue(await self.service.is_running(1, _CONVERSATION_ID))
             await self.service.stop(1, _CONVERSATION_ID)
             self.assertEqual([event.type async for event in stream], ["done"])
 
@@ -245,7 +231,6 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             )
         self.assertIs(caught.exception, failure)
         self.assertFalse(self.started.is_set())
-        self.assertFalse(self.execution_lock.locked())
         self.assertFalse(await self.service.is_running(1, _CONVERSATION_ID))
 
     async def test_request_cancel_waits_for_admission_cleanup(self):
@@ -269,5 +254,4 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await request
             self.assertTrue(cleaned.is_set())
-            self.assertFalse(self.execution_lock.locked())
             self.assertFalse(self.started.is_set())

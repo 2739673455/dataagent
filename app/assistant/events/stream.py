@@ -1,11 +1,11 @@
-"""Planner 与 Specialist 共用的模型消息增量解析。"""
+"""Planner 模型消息增量解析。"""
 
 from collections.abc import Iterator, Mapping
 from typing import Literal, TypedDict
 
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
-from app.assistant.events.content import message_text, reasoning_text
+from app.assistant.events.content import reasoning_text, text_content
 
 
 class MessageDelta(TypedDict):
@@ -34,7 +34,7 @@ class MessageDeltaParser:
         message_id = str(message.id)
         parts: tuple[tuple[Literal["thinking", "text"], str | None], ...] = (
             ("thinking", reasoning_text(message)),
-            ("text", message_text(message)),
+            ("text", text_content(message.content)),
         )
         for kind, text in parts:
             if text is None or (kind == "text" and not text):
@@ -46,7 +46,7 @@ class MessageDeltaParser:
 
 
 def update_messages(data: object) -> Iterator[AIMessage | ToolMessage]:
-    """从 Planner 或专家的节点更新中提取完整模型与工具消息。"""
+    """从 Planner 节点更新中提取完整模型与工具消息。"""
     if not isinstance(data, Mapping):
         return
     for node in ("model", "tools"):

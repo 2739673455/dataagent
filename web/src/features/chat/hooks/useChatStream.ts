@@ -27,9 +27,6 @@ export function useChatStream({
   const appendMessage = useChatStore((state) => state.appendMessage);
   const appendThinking = useChatStore((state) => state.appendThinking);
   const appendMessageDelta = useChatStore((state) => state.appendMessageDelta);
-  const appendSubagentMessage = useChatStore((state) => state.appendSubagentMessage);
-  const appendSubagentMessageDelta = useChatStore((state) => state.appendSubagentMessageDelta);
-  const appendSubagentThinking = useChatStore((state) => state.appendSubagentThinking);
   const updateSubagentStatus = useChatStore((state) => state.updateSubagentStatus);
   const loadConversations = useChatStore((state) => state.loadConversations);
   const syncMessages = useChatStore((state) => state.syncMessages);
@@ -58,12 +55,6 @@ export function useChatStream({
           appendThinking(conversationId, event);
         } else if (event.type === "message_delta") {
           appendMessageDelta(conversationId, event);
-        } else if (event.type === "subagent_message") {
-          appendSubagentMessage(conversationId, event);
-        } else if (event.type === "subagent_message_delta") {
-          appendSubagentMessageDelta(conversationId, event);
-        } else if (event.type === "subagent_thinking") {
-          appendSubagentThinking(conversationId, event);
         } else if (event.type === "subagent_status") {
           updateSubagentStatus(conversationId, event);
         } else if (event.type === "error") {
@@ -143,9 +134,6 @@ export function useChatStream({
       appendMessage,
       appendMessageDelta,
       appendThinking,
-      appendSubagentMessage,
-      appendSubagentMessageDelta,
-      appendSubagentThinking,
       interruptRunningSubagents,
       loadConversations,
       syncMessages,

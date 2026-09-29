@@ -61,46 +61,7 @@ describe("subagent activity state", () => {
     expect(messages[0].parts[0]).toMatchObject({ status: "complete" });
   });
 
-  test("tracks specialist reasoning inside its delegation and settles it at terminal status", () => {
-    const store = useChatStore.getState();
-    store.appendSubagentThinking(conversationId, {
-      type: "subagent_thinking",
-      delegation_id: "call-reasoning",
-      agent_type: "reviewer",
-      message_id: "review-answer",
-      delta: "复核指标",
-      reset: true,
-    });
-    store.appendSubagentMessageDelta(conversationId, {
-      type: "subagent_message_delta",
-      delegation_id: "call-reasoning",
-      agent_type: "reviewer",
-      message_id: "review-answer",
-      delta: "开始输出结论",
-      reset: true,
-    });
-    store.updateSubagentStatus(conversationId, {
-      type: "subagent_status",
-      delegation_id: "call-reasoning",
-      agent_type: "reviewer",
-      status: "completed",
-    });
-
-    const run =
-      useChatStore.getState().subagentRunsByConversation[conversationId]["call-reasoning"];
-    expect(run.messages[0].parts[0]).toEqual({
-      type: "thinking",
-      text: "复核指标",
-      status: "complete",
-    });
-    expect(run.messages[0].parts[1]).toEqual({
-      type: "text",
-      text: "开始输出结论",
-    });
-    expect(run.messages[0].finish_reason).toBe("stop");
-  });
-
-  test("keeps parallel delegations isolated and deduplicates messages", () => {
+  test("keeps parallel task statuses isolated and interrupts only running tasks", () => {
     const store = useChatStore.getState();
     store.updateSubagentStatus(conversationId, {
       type: "subagent_status",
@@ -114,26 +75,20 @@ describe("subagent activity state", () => {
       agent_type: "analyst",
       status: "running",
     });
-    const event = {
-      type: "subagent_message" as const,
+    store.updateSubagentStatus(conversationId, {
+      type: "subagent_status",
       delegation_id: "call-region",
-      agent_type: "explorer" as const,
-      message: {
-        message_id: "specialist-message",
-        role: "assistant" as const,
-        parts: [{ type: "text" as const, text: "正在查询区域数据" }],
-      },
-    };
-    store.appendSubagentMessage(conversationId, event);
-    store.appendSubagentMessage(conversationId, event);
-
+      agent_type: "explorer",
+      status: "completed",
+    });
     const runs = useChatStore.getState().subagentRunsByConversation[conversationId];
-    expect(runs["call-region"].messages).toHaveLength(1);
-    expect(runs["call-product"].messages).toEqual([]);
+    expect(runs["call-region"].status).toBe("completed");
+    expect(runs["call-product"].status).toBe("running");
+    expect(runs["call-region"]).not.toHaveProperty("messages");
 
     store.interruptRunningSubagents(conversationId);
     const interrupted = useChatStore.getState().subagentRunsByConversation[conversationId];
-    expect(interrupted["call-region"].status).toBe("interrupted");
+    expect(interrupted["call-region"].status).toBe("completed");
     expect(interrupted["call-product"].status).toBe("interrupted");
   });
 });

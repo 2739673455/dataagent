@@ -17,9 +17,9 @@ def test_web_shutdown_attempts_every_resource_after_startup_failure() -> None:
         "assistant",
         "es",
         "embedding",
-        "persistence",
+        "checkpoint_pool",
         "sandbox",
-        "agent_factory",
+        "agents",
         "runs",
         "tasks",
     ]
@@ -31,13 +31,13 @@ def test_web_shutdown_attempts_every_resource_after_startup_failure() -> None:
         for name in names
     }
     resources = MagicMock(**managers)
-    managers["persistence"].init = AsyncMock(side_effect=RuntimeError("startup"))
+    managers["checkpoint_pool"].open = AsyncMock(side_effect=RuntimeError("startup"))
 
     async def fail_close():
-        closed.append("agent_factory")
+        closed.append("agents")
         raise RuntimeError("shutdown")
 
-    managers["agent_factory"].close.side_effect = fail_close
+    managers["agents"].close.side_effect = fail_close
 
     async def run() -> None:
         with pytest.raises(RuntimeError, match="shutdown"):
@@ -75,10 +75,11 @@ def test_web_applications_own_separate_resources_and_request_dependencies() -> N
             resource.init = MagicMock()
         for resource in (resources.auth, resources.meta, resources.assistant):
             resource.init_tables = AsyncMock()
+        resources.checkpoint_pool.open = AsyncMock()
+        resources.checkpointer.setup = AsyncMock()
         for resource in (
-            resources.persistence,
             resources.sandbox,
-            resources.agent_factory,
+            resources.agents,
         ):
             resource.init = AsyncMock()
         for resource in (
@@ -89,9 +90,9 @@ def test_web_applications_own_separate_resources_and_request_dependencies() -> N
             resources.query_clients,
             resources.embedding,
             resources.es,
-            resources.persistence,
+            resources.checkpoint_pool,
             resources.sandbox,
-            resources.agent_factory,
+            resources.agents,
             resources.runs,
             resources.tasks,
         ):

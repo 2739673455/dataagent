@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import unittest
-from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, cast
@@ -14,6 +12,7 @@ from uuid import UUID
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import StateSnapshot
 from pydantic import ValidationError
 
@@ -21,15 +20,11 @@ from app.assistant.errors import PlannerContinuationLimitError
 from app.assistant.events import projection as message_projection
 from app.assistant.events import schemas as chat_schema
 from app.assistant.services import history as conversation_history
-from app.assistant.services import planner as planner_turn
+from app.assistant.services import run as run_service
 from app.assistant.services.manager import AgentManager
 from app.assistant.services.types import (
-    ConversationAgentRuntime,
     PlannerTurnContext,
-    SubagentMessageActivity,
-    SubagentMessageDeltaActivity,
     SubagentStatusActivity,
-    SubagentThinkingDeltaActivity,
 )
 from app.sandbox.manager import DockerSandboxManager
 from app.sandbox.paths import normalize_attachment_path
@@ -112,9 +107,7 @@ class MessageProjectionTest(unittest.IsolatedAsyncioTestCase):
         received_at = datetime.fromisoformat(user.additional_kwargs["received_at"])
         self.assertIsNotNone(received_at.tzinfo)
         for message in (user, AIMessage(content="result")):
-            response = message_projection.langchain_message_to_schema(
-                message, _CONVERSATION_ID
-            )
+            response = message_projection.langchain_message_to_schema(message)
             assert response is not None
             self.assertNotIn("created_at", response.model_dump())
             self.assertEqual(
@@ -131,7 +124,6 @@ class MessageProjectionTest(unittest.IsolatedAsyncioTestCase):
                     {"type": "text", "text": "最终回答"},
                 ],
             ),
-            _CONVERSATION_ID,
         )
 
         assert response is not None
@@ -163,7 +155,6 @@ class MessageProjectionTest(unittest.IsolatedAsyncioTestCase):
                     {"type": "text", "text": "最终回答"},
                 ],
             ),
-            _CONVERSATION_ID,
         )
 
         assert response is not None
@@ -203,7 +194,6 @@ class MessageProjectionTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("content", message.content_blocks[0])
         response = message_projection.langchain_message_to_schema(
             message,
-            _CONVERSATION_ID,
         )
 
         assert response is not None
@@ -252,11 +242,11 @@ class _RepeatingPlanner:
 
 
 class _TurnManagerStub:
-    """记录一个聊天回合进入的执行上下文次数。"""
+    """记录一个聊天回合创建 Planner 的次数。"""
 
     def __init__(
         self,
-        runtime: ConversationAgentRuntime,
+        runtime: CompiledStateGraph,
         turn_context: PlannerTurnContext,
     ) -> None:
         self.runtime = runtime
@@ -275,9 +265,7 @@ class _TurnManagerStub:
             raise AssertionError("unexpected user_id")
         if conversation_id != self.turn_context.conversation_id:
             raise AssertionError("unexpected conversation_id")
-        state = await self.runtime.planner.aget_state(
-            {"configurable": {"thread_id": "test"}}
-        )
+        state = await self.runtime.aget_state({"configurable": {"thread_id": "test"}})
         return StateSnapshot(
             created_at=None,
             values=state.values,
@@ -289,17 +277,16 @@ class _TurnManagerStub:
             interrupts=(),
         )
 
-    @asynccontextmanager
-    async def use_runtime(
+    async def create_planner(
         self, user_id: int, conversation_id: UUID
-    ) -> AsyncGenerator[ConversationAgentRuntime]:
+    ) -> CompiledStateGraph:
         if (user_id, conversation_id) != (
             self.turn_context.user_id,
             self.turn_context.conversation_id,
         ):
             raise AssertionError("unexpected conversation identity")
         self.execution_count += 1
-        yield self.runtime
+        return self.runtime
 
 
 class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
@@ -375,9 +362,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
             }
 
         planner.astream = stream_reasoning
-        runtime_mock = MagicMock()
-        runtime_mock.planner = planner
-        runtime = cast(ConversationAgentRuntime, runtime_mock)
+        runtime = cast(CompiledStateGraph, planner)
         manager = _TurnManagerStub(
             runtime,
             PlannerTurnContext(
@@ -389,7 +374,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
 
         events = [
             event
-            async for event in planner_turn.run_agent_turn(
+            async for event in run_service.run_agent_turn(
                 cast(AgentManager, manager),
                 cast(DockerSandboxManager, _FileInspectorStub()),
                 manager.turn_context,
@@ -450,9 +435,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
             }
 
         planner.astream = resume_stream
-        runtime_mock = MagicMock()
-        runtime_mock.planner = planner
-        runtime = cast(ConversationAgentRuntime, runtime_mock)
+        runtime = cast(CompiledStateGraph, planner)
         manager = _TurnManagerStub(
             runtime,
             PlannerTurnContext(
@@ -464,7 +447,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
 
         events = [
             event
-            async for event in planner_turn.run_agent_turn(
+            async for event in run_service.run_agent_turn(
                 cast(AgentManager, manager),
                 cast(DockerSandboxManager, _FileInspectorStub()),
                 manager.turn_context,
@@ -492,9 +475,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         finish_reason: str,
     ) -> None:
         planner = _RepeatingPlanner(finish_reason)
-        runtime_mock = MagicMock()
-        runtime_mock.planner = planner
-        runtime = cast(ConversationAgentRuntime, runtime_mock)
+        runtime = cast(CompiledStateGraph, planner)
         turn_context = PlannerTurnContext(
             user_id=7,
             conversation_id=_CONVERSATION_ID,
@@ -508,7 +489,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
         events: list[chat_schema.ChatStreamEventPayload] = []
         with (
             patch.object(
-                planner_turn,
+                run_service,
                 "schema_to_human_message",
                 new=MagicMock(return_value=HumanMessage(content="analyze")),
             ),
@@ -517,7 +498,7 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                 "连续续写次数超过上限",
             ),
         ):
-            async for event in planner_turn.run_agent_turn(
+            async for event in run_service.run_agent_turn(
                 cast(AgentManager, manager),
                 cast(DockerSandboxManager, _FileInspectorStub()),
                 manager.turn_context,
@@ -739,9 +720,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             }
 
         planner.astream = stream_final_message
-        runtime_mock = MagicMock()
-        runtime_mock.planner = planner
-        runtime = cast(ConversationAgentRuntime, runtime_mock)
+        runtime = cast(CompiledStateGraph, planner)
         manager = _TurnManagerStub(
             runtime,
             PlannerTurnContext(
@@ -760,7 +739,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         )
         events = [
             event
-            async for event in planner_turn.run_agent_turn(
+            async for event in run_service.run_agent_turn(
                 cast(AgentManager, manager),
                 cast(DockerSandboxManager, files),
                 manager.turn_context,
@@ -792,7 +771,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                     }
                 ],
             ),
-            _CONVERSATION_ID,
         )
         result_schema = message_projection.langchain_message_to_schema(
             ToolMessage(
@@ -800,7 +778,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 name="execute_sql",
                 tool_call_id="large-call",
             ),
-            _CONVERSATION_ID,
         )
 
         self.assertIsNotNone(call_schema)
@@ -815,7 +792,9 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call_part.args, {"sql": "x" * 25_000})
         self.assertEqual(result_part.content, "x" * 55_000)
 
-    async def test_subagent_custom_stream_is_projected_to_public_events(self) -> None:
+    async def test_subagent_status_is_projected_and_unknown_custom_events_are_ignored(
+        self,
+    ) -> None:
         planner = MagicMock()
 
         async def stream_subagent_activity(
@@ -831,43 +810,18 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                     status="running",
                 ),
             }
-            yield {
-                "type": "custom",
-                "ns": (),
-                "data": SubagentThinkingDeltaActivity(
-                    delegation_id="delegation-1",
-                    agent_type="explorer",
-                    message_id="specialist-1",
-                    delta="先检查数据",
-                    reset=True,
-                ),
-            }
-            yield {
-                "type": "custom",
-                "ns": (),
-                "data": SubagentMessageDeltaActivity(
-                    delegation_id="delegation-1",
-                    agent_type="explorer",
-                    message_id="specialist-1",
-                    delta="正在检查数据",
-                    reset=True,
-                ),
-            }
-            yield {
-                "type": "custom",
-                "ns": (),
-                "data": SubagentMessageActivity(
-                    delegation_id="delegation-1",
-                    agent_type="explorer",
-                    message=AIMessage(id="specialist-1", content="正在检查数据"),
-                ),
-            }
             yield {"type": "custom", "ns": (), "data": {"private": True}}
+            yield {
+                "type": "messages",
+                "ns": (),
+                "data": (
+                    AIMessageChunk(id="specialist-1", content="子任务内部消息"),
+                    {"lc_agent_name": "explorer"},
+                ),
+            }
 
         planner.astream = stream_subagent_activity
-        runtime_mock = MagicMock()
-        runtime_mock.planner = planner
-        runtime = cast(ConversationAgentRuntime, runtime_mock)
+        runtime = cast(CompiledStateGraph, planner)
         manager = _TurnManagerStub(
             runtime,
             PlannerTurnContext(
@@ -879,11 +833,11 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         events: list[chat_schema.ChatStreamEventPayload] = []
 
         with patch.object(
-            planner_turn,
+            run_service,
             "schema_to_human_message",
             new=MagicMock(return_value=HumanMessage(content="analyze")),
         ):
-            async for event in planner_turn.run_agent_turn(
+            async for event in run_service.run_agent_turn(
                 cast(AgentManager, manager),
                 cast(DockerSandboxManager, _FileInspectorStub()),
                 manager.turn_context,
@@ -893,54 +847,11 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             ):
                 events.append(event)
 
-        self.assertEqual(len(events), 4)
+        self.assertEqual(len(events), 1)
         self.assertIsInstance(events[0], chat_schema.ChatStreamSubagentStatusEvent)
-        self.assertIsInstance(events[1], chat_schema.ChatStreamSubagentThinkingEvent)
-        self.assertIsInstance(
-            events[2], chat_schema.ChatStreamSubagentMessageDeltaEvent
-        )
-        self.assertIsInstance(events[3], chat_schema.ChatStreamSubagentMessageEvent)
-        thinking_event = cast(chat_schema.ChatStreamSubagentThinkingEvent, events[1])
-        self.assertEqual(thinking_event.delta, "先检查数据")
-        self.assertTrue(thinking_event.reset)
-        delta_event = cast(chat_schema.ChatStreamSubagentMessageDeltaEvent, events[2])
-        self.assertEqual(delta_event.delta, "正在检查数据")
-        message_event = cast(chat_schema.ChatStreamSubagentMessageEvent, events[3])
-        self.assertEqual(message_event.delegation_id, "delegation-1")
-        self.assertEqual(message_event.message.parts[0].type, "text")
-
-    async def test_semantic_recall_result_is_preserved_in_stream_and_history(self):
-        detailed_content = json.dumps(
-            {"tables": {"orders": {"columns": {"amount": {"type": "DECIMAL"}}}}},
-            ensure_ascii=False,
-        )
-        message = ToolMessage(
-            id="recall-message",
-            name="recall_context",
-            tool_call_id="recall-call",
-            content=detailed_content,
-        )
-        activity = SubagentMessageActivity(
-            delegation_id="delegation-1",
-            agent_type="explorer",
-            message=message,
-        )
-        stream_event = await message_projection.subagent_activity_to_event(
-            activity,
-            _CONVERSATION_ID,
-            cast(DockerSandboxManager, _FileInspectorStub()),
-            7,
-        )
-        self.assertIsInstance(
-            stream_event,
-            chat_schema.ChatStreamSubagentMessageEvent,
-        )
-        assert isinstance(stream_event, chat_schema.ChatStreamSubagentMessageEvent)
-        stream_part = stream_event.message.parts[0]
-        self.assertIsInstance(stream_part, chat_schema.ToolResultPart)
-        assert isinstance(stream_part, chat_schema.ToolResultPart)
-        self.assertEqual(stream_part.content, detailed_content)
-        self.assertEqual(message.content, detailed_content)
+        event = cast(chat_schema.ChatStreamSubagentStatusEvent, events[0])
+        self.assertEqual(event.delegation_id, "delegation-1")
+        self.assertEqual(event.status, "running")
 
     async def test_delegation_artifacts_are_restored_from_history(self) -> None:
         message = ToolMessage(
@@ -971,6 +882,9 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(schema)
         assert schema is not None
         self.assertEqual(schema.role, "tool")
+        part = schema.parts[0]
+        assert isinstance(part, chat_schema.ToolResultPart)
+        self.assertEqual(part.content, message.content)
         self.assertEqual(len(schema.attachments or []), 1)
         attachment = (schema.attachments or [])[0]
         self.assertEqual(
@@ -1001,9 +915,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             }
 
         planner.astream = stream_tool_message
-        runtime_mock = MagicMock()
-        runtime_mock.planner = planner
-        runtime = cast(ConversationAgentRuntime, runtime_mock)
+        runtime = cast(CompiledStateGraph, planner)
         turn_context = PlannerTurnContext(
             user_id=7,
             conversation_id=_CONVERSATION_ID,
@@ -1017,12 +929,12 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(
-                planner_turn,
+                run_service,
                 "schema_to_human_message",
                 new=MagicMock(return_value=HumanMessage(content="analyze")),
             ),
         ):
-            async for event in planner_turn.run_agent_turn(
+            async for event in run_service.run_agent_turn(
                 cast(AgentManager, manager),
                 cast(
                     DockerSandboxManager,
@@ -1046,28 +958,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(event, chat_schema.ChatStreamMessageEvent)
         assert isinstance(event, chat_schema.ChatStreamMessageEvent)
         self.assertEqual(len(event.message.attachments or []), 1)
-
-    async def test_subagent_artifacts_use_same_projection_in_stream_and_history(self):
-        path = "sessions/sales-review/analyst/chart-1/report.html"
-        files = _FileInspectorStub({(7, _CONVERSATION_ID, path)})
-        message = AIMessage(
-            id="specialist-final",
-            content=f"结论\n[[DATAAGENT_ARTIFACT:{_SANDBOX_ROOT}/{path}]]",
-        )
-        activity = SubagentMessageActivity(
-            delegation_id="d1",
-            agent_type="analyst",
-            message=message,
-        )
-        event = await message_projection.subagent_activity_to_event(
-            activity, _CONVERSATION_ID, cast(DockerSandboxManager, files), 7
-        )
-        assert isinstance(event, chat_schema.ChatStreamSubagentMessageEvent)
-        assert event.message.attachments is not None
-        assert isinstance(event.message.parts[0], chat_schema.TextContent)
-        self.assertEqual(event.message.attachments[0].f_path, path)
-        self.assertEqual(event.message.parts[0].text, "结论\n")
-        self.assertIn("DATAAGENT_ARTIFACT", message.content)
 
     async def test_invalid_delegation_file_directives_are_not_attachments(self):
         files = _FileInspectorStub()

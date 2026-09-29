@@ -128,7 +128,9 @@ def test_image_projection_deduplicates_downloads_and_preserves_failed_messages(
             ["/data/chart.png", "/data/failed.png", "/data/missing.png"]
         )
         assert projected[0].content == projected[1].content
-        assert projected[0].content[1]["base64"] == "aW1hZ2U="
+        assert projected[0].content == [
+            {"type": "image", "base64": "aW1hZ2U=", "mime_type": "image/png"}
+        ]
         assert "file_not_found" in projected[2].text
         assert "unavailable" in projected[3].text
         for index in range(4, len(messages)):

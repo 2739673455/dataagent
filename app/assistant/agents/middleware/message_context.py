@@ -84,12 +84,7 @@ def _project_messages(
             continue
         if (path := image_paths.get(index)) is not None:
             response = downloaded.get(path)
-            view_content: list[dict[str, Any]] = [
-                {
-                    "type": "text",
-                    "text": f"图片路径：`{path}`",
-                }
-            ]
+            view_content: list[dict[str, Any]] = []
             if response is not None and response.content is not None:
                 view_content.append(_image_content_block(path, response.content))
             else:

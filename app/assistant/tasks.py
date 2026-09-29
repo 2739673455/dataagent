@@ -9,9 +9,7 @@ from loguru import logger
 
 from app.assistant.services.lifecycle import ConversationLifecycleService
 from app.assistant.services.title import ConversationTitleService
-from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 from app.shared.clients.postgres_client_manager import PostgresClientManager
-from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 _CLEANUP_INTERVAL_SECONDS = 300
 _TASK_TIMEOUT_SECONDS = 3600
@@ -24,11 +22,9 @@ class ConversationTasks:
         self,
         postgres: PostgresClientManager,
         conversations: ConversationLifecycleService,
-        persistence: LangGraphPostgresManager,
     ) -> None:
         self._postgres = postgres
         self._conversations = conversations
-        self._persistence = persistence
         self._tasks: set[asyncio.Task] = set()
         self._closing = False
 
@@ -102,19 +98,16 @@ class ConversationTasks:
         )
 
     async def _cleanup_loop(self) -> None:
-        """使用数据库互斥锁协调多个 API 进程的周期扫描。"""
+        """在当前 Web 进程中串行执行周期扫描。"""
         while True:
             try:
-                async with self._persistence.advisory_lock("conversation-cleanup"):
-                    await self._run(
-                        "pending-deletions",
-                        self._conversations.cleanup_pending_deletions,
-                    )
-                    await self._run(
-                        "expired-drafts", self._conversations.cleanup_expired_drafts
-                    )
-            except AdvisoryLockBusyError:
-                pass
+                await self._run(
+                    "pending-deletions",
+                    self._conversations.cleanup_pending_deletions,
+                )
+                await self._run(
+                    "expired-drafts", self._conversations.cleanup_expired_drafts
+                )
             except Exception:  # noqa: BLE001
                 logger.exception("会话周期清理失败")
             await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)

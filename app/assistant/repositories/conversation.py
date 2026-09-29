@@ -59,27 +59,21 @@ class ConversationPGRepo:
 
     async def update(
         self,
-        conversation: Conversation,
+        user_id: int,
+        conversation_id: UUID,
         *,
         title: str | None = None,
         is_draft: bool | None = None,
         deletion_requested_at: datetime | None = None,
-    ) -> Conversation:
-        """更新会话目录信息和最后活动时间。"""
-        conversation.update_at = datetime.now(UTC)
-        if title is not None:
-            conversation.title = title
-        if is_draft is not None:
-            conversation.is_draft = is_draft
-        if deletion_requested_at is not None:
-            conversation.deletion_requested_at = deletion_requested_at
-        await self._session.flush()
-        return conversation
-
-    async def set_title(
-        self, user_id: int, conversation_id: UUID, *, title: str
     ) -> None:
-        """更新当前用户尚未删除的会话标题。"""
+        """更新当前用户未删除会话的指定字段和最后活动时间。"""
+        values: dict[str, str | bool | datetime] = {"update_at": datetime.now(UTC)}
+        if title is not None:
+            values["title"] = title
+        if is_draft is not None:
+            values["is_draft"] = is_draft
+        if deletion_requested_at is not None:
+            values["deletion_requested_at"] = deletion_requested_at
         await self._session.execute(
             update(Conversation)
             .where(
@@ -87,7 +81,7 @@ class ConversationPGRepo:
                 Conversation.id == conversation_id,
                 Conversation.deletion_requested_at.is_(None),
             )
-            .values(title=title, update_at=datetime.now(UTC))
+            .values(**values)
         )
         await self._session.flush()
 

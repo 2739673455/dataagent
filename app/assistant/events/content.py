@@ -32,11 +32,6 @@ def text_content(content: Any) -> str | None:
     return "".join(parts) or None
 
 
-def message_text(message: BaseMessage) -> str | None:
-    """读取消息正文文本或流式正文增量。"""
-    return text_content(message.content)
-
-
 def reasoning_text(message: BaseMessage) -> str | None:
     """合并模型消息中的思考文本。"""
 

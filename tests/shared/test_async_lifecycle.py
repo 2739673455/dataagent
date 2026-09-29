@@ -6,9 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.shared import async_runtime
-from app.shared.clients import langgraph_postgres_manager as persistence_module
-from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
-from app.shared.config.app_config import cfg
 
 
 def test_runner_uses_selector_on_windows_and_closes_loop() -> None:
@@ -32,54 +29,53 @@ def test_runner_uses_selector_on_windows_and_closes_loop() -> None:
     assert all(loop.is_closed() for loop in loops)
 
 
-@pytest.mark.parametrize("failure_stage", ["open", "setup", "cancel"])
-def test_persistence_init_rolls_back_both_pools(failure_stage: str) -> None:
-    pools = [MagicMock(), MagicMock()]
-    for pool in pools:
-        pool.open = AsyncMock()
-        pool.close = AsyncMock()
-    saver = MagicMock()
-    saver.setup = AsyncMock()
+@pytest.mark.parametrize("failure_stage", ["open", "setup", "cancel", "close"])
+def test_lifespan_closes_checkpoint_pool_on_failure(failure_stage: str) -> None:
+    from app import runtime
+
+    checkpoint_pool = MagicMock(open=AsyncMock(), close=AsyncMock())
+    saver = MagicMock(setup=AsyncMock())
     error = (
-        asyncio.CancelledError() if failure_stage == "cancel" else RuntimeError("init")
+        asyncio.CancelledError()
+        if failure_stage == "cancel"
+        else RuntimeError("failure")
     )
     if failure_stage == "open":
-        pools[1].open.side_effect = error
+        checkpoint_pool.open.side_effect = error
+    elif failure_stage == "close":
+        checkpoint_pool.close.side_effect = error
     else:
         saver.setup.side_effect = error
-    factory = MagicMock(side_effect=pools)
-    factory.__getitem__.return_value = factory
-    manager = LangGraphPostgresManager(cfg.langgraph_postgresql)
+    resources = MagicMock(
+        checkpoint_pool=checkpoint_pool,
+        checkpointer=saver,
+    )
+    for name in (
+        "query_clients",
+        "admin_doris",
+        "auth",
+        "meta",
+        "assistant",
+        "es",
+        "embedding",
+        "sandbox",
+        "agents",
+        "runs",
+        "tasks",
+    ):
+        setattr(
+            resources,
+            name,
+            MagicMock(close=AsyncMock(), init=AsyncMock(), init_tables=AsyncMock()),
+        )
+    for name in ("admin_doris", "auth", "meta", "assistant", "es", "embedding"):
+        getattr(resources, name).init = MagicMock()
 
     async def run() -> None:
         with pytest.raises(type(error)):
-            await manager.init()
-        for pool in pools:
-            pool.close.assert_awaited_once()
-        with pytest.raises(RuntimeError, match="尚未初始化"):
-            manager.get_checkpointer()
-        await manager.close()
+            async with runtime.lifespan(MagicMock()):
+                assert failure_stage == "close"
+        checkpoint_pool.close.assert_awaited_once()
 
-    with (
-        patch.object(persistence_module, "AsyncConnectionPool", factory),
-        patch.object(persistence_module, "AsyncPostgresSaver", return_value=saver),
-    ):
+    with patch.object(runtime, "_create_resources", return_value=resources):
         asyncio.run(run())
-
-
-def test_persistence_close_attempts_other_pool_after_failure() -> None:
-    manager = LangGraphPostgresManager(cfg.langgraph_postgresql)
-    pool, advisory = MagicMock(), MagicMock()
-    pool.close = AsyncMock()
-    advisory.close = AsyncMock(side_effect=RuntimeError("close"))
-    manager._pool = pool
-    manager._advisory_pool = advisory
-
-    async def run() -> None:
-        with pytest.raises(RuntimeError, match="close"):
-            await manager.close()
-        pool.close.assert_awaited_once()
-        advisory.close.assert_awaited_once()
-        await manager.close()
-
-    asyncio.run(run())

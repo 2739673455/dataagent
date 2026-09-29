@@ -3,7 +3,13 @@
 from collections.abc import Sequence
 from typing import Literal
 
-from deepagents import FilesystemMiddleware, create_deep_agent
+from deepagents import (
+    FilesystemMiddleware,
+    GeneralPurposeSubagentProfile,
+    HarnessProfile,
+    create_deep_agent,
+    register_harness_profile,
+)
 from deepagents.middleware.subagents import CompiledSubAgent
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
@@ -32,6 +38,13 @@ def create_agent(
     middleware: Sequence[AgentMiddleware] = (),
 ) -> CompiledStateGraph:
     """按调用方配置装配工具、中间件和持久化状态，不区分 Agent 角色。"""
+    model_params = dict(model._get_ls_params())  # pyright: ignore[reportPrivateUsage]
+    register_harness_profile(
+        f"{model_params['ls_provider']}:{model_params['ls_model_name']}",
+        HarnessProfile(
+            general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
+        ),
+    )
     return create_deep_agent(
         model=model,
         tools=[

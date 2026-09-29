@@ -1,6 +1,6 @@
 """验证新建图读取 Checkpoint、恢复执行与工具绑定。"""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from deepagents import (
     GeneralPurposeSubagentProfile,
@@ -11,11 +11,13 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage
 from pydantic import Field
 
-from app.assistant.services import runtime_factory
+from app.assistant.services import manager as agent_manager
 from app.sandbox.manager import DockerSandboxManager
 
 
 class ToolModel(FakeMessagesListChatModel):
+    model_name: str = "test-tool-model"
+
     def bind_tools(self, tools, **kwargs):
         self.seen_tools = tools
         return self
@@ -37,20 +39,25 @@ register_harness_profile(
 
 
 def make_factory(saver):
-    persistence = MagicMock()
-    persistence.get_checkpointer.return_value = saver
     sandbox = DockerSandboxManager(MagicMock(), [])
     sandbox.init = AsyncMock(
         side_effect=AssertionError("Docker initialized during read")
     )
-    factory = runtime_factory.ConversationAgentRuntimeFactory(
-        persistence, sandbox, MagicMock(), MagicMock()
+    sandbox.get_backend = AsyncMock(
+        side_effect=AssertionError("Sandbox prepared during state read")
+    )
+    factory = agent_manager.AgentManager(
+        saver,
+        sandbox,
+        MagicMock(exists=AsyncMock(return_value=False)),
+        MagicMock(),
+        MagicMock(),
     )
     factory._models = {
         name: ToolModel(responses=[AIMessage(content="unused")])
         for name in factory._model_names
     }
-    return factory, persistence, sandbox
+    return factory, saver, sandbox
 
 
 import unittest
@@ -59,9 +66,7 @@ from uuid import uuid4
 from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 
-from app.assistant.services.manager import AgentManager
 from app.assistant.services.types import (
-    SubagentMessageActivity,
     SubagentStatusActivity,
     build_planner_config,
 )
@@ -79,12 +84,7 @@ class NativeTaskTest(unittest.IsolatedAsyncioTestCase):
             path=f"/data/{conversation}/result.csv", columns=[], row_count=0, sample=[]
         )
         handler = MagicMock(execute=AsyncMock(return_value=sql_result))
-        from app.assistant.agents.specialists import build_specialist_definitions
-        from app.assistant.agents.tools.execute_sql import create_execute_sql_tool
-
-        factory._definitions = build_specialist_definitions(
-            [create_execute_sql_tool(handler)]
-        )
+        factory._query = handler
         planner = ToolModel(
             responses=[
                 AIMessage(
@@ -138,7 +138,7 @@ class NativeTaskTest(unittest.IsolatedAsyncioTestCase):
             kind: "specialist" for kind in factory._specialist_model_names
         }
         factory._models = {"planner": planner, "specialist": specialist}
-        graph = factory.build(12, conversation).planner
+        graph = factory._build_planner(12, conversation)
         config = build_planner_config(12, conversation)
         chunks = [
             c
@@ -176,7 +176,7 @@ class NativeTaskTest(unittest.IsolatedAsyncioTestCase):
                 ("second", "completed"),
             ],
         )
-        self.assertTrue(any(isinstance(e, SubagentMessageActivity) for e in events))
+        self.assertTrue(all(isinstance(e, SubagentStatusActivity) for e in events))
         for checkpoint in saver.list(None):
             self.assertEqual(checkpoint.config["configurable"]["checkpoint_ns"], "")
         state = await graph.aget_state(config)
@@ -188,7 +188,7 @@ class NativeTaskTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_cold_planner_reads_and_resumes_pending_native_task(self):
         saver = InMemorySaver()
-        factory, persistence, _ = make_factory(saver)
+        factory, _, _ = make_factory(saver)
         conversation = uuid4()
         planner = ToolModel(
             responses=[
@@ -210,7 +210,7 @@ class NativeTaskTest(unittest.IsolatedAsyncioTestCase):
         )
         factory._planner_model_name = "planner"
         factory._models["planner"] = planner
-        graph = factory.build(12, conversation).planner
+        graph = factory._build_planner(12, conversation)
         config = build_planner_config(12, conversation)
         await graph.ainvoke(
             {"messages": [HumanMessage(content="开始")]},
@@ -218,9 +218,7 @@ class NativeTaskTest(unittest.IsolatedAsyncioTestCase):
             interrupt_before=["tools"],
         )
         cold, _, _ = make_factory(saver)
-        manager = AgentManager(
-            persistence, MagicMock(exists=AsyncMock(return_value=False)), cold
-        )
+        manager = cold
         self.assertTrue(await manager.can_resume_planner(12, conversation))
         await graph.ainvoke(None, config)
         self.assertFalse(await manager.can_resume_planner(12, conversation))
@@ -229,8 +227,6 @@ class NativeTaskTest(unittest.IsolatedAsyncioTestCase):
         import asyncio
 
         from langchain.tools import tool
-
-        from app.assistant.agents.specialists import build_specialist_definitions
 
         saver = InMemorySaver()
         factory, _, _ = make_factory(saver)
@@ -251,7 +247,6 @@ class NativeTaskTest(unittest.IsolatedAsyncioTestCase):
                 cleaned += 1
             return "done"
 
-        factory._definitions = build_specialist_definitions([wait_for_cancel])
         planner = ToolModel(
             responses=[
                 AIMessage(
@@ -280,7 +275,11 @@ class NativeTaskTest(unittest.IsolatedAsyncioTestCase):
             kind: "specialist" for kind in factory._specialist_model_names
         }
         factory._models = {"planner": planner, "specialist": specialist}
-        graph = factory.build(12, uuid4()).planner
+        with patch(
+            "app.assistant.agents.specialists.create_execute_sql_tool",
+            return_value=wait_for_cancel,
+        ):
+            graph = factory._build_planner(12, uuid4())
         events = []
 
         async def consume():

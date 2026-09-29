@@ -1,19 +1,18 @@
-"""Planner 流提前退出时，图资源必须先于执行锁释放。"""
+"""Planner 流提前退出或转换失败时关闭底层图流。"""
 
 import asyncio
-from contextlib import asynccontextmanager
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 from langchain_core.messages import AIMessageChunk
 
-from app.assistant.services import planner
+from app.assistant.services import run as run_service
 from app.assistant.services.types import PlannerTurnContext
 
 
 @pytest.mark.parametrize("exit_mode", ["close", "projection_error"])
-def test_graph_stream_closes_before_execution_context_exits(exit_mode) -> None:
+def test_graph_stream_closes_on_exit_or_projection_error(exit_mode) -> None:
     order = []
     conversation_id = uuid4()
 
@@ -27,19 +26,11 @@ def test_graph_stream_closes_before_execution_context_exits(exit_mode) -> None:
             await asyncio.sleep(0)
             order.append("graph closed")
 
-    @asynccontextmanager
-    async def execution(*args, **kwargs):
-        try:
-            yield runtime
-        finally:
-            order.append("execution released")
-
-    runtime = MagicMock()
-    runtime.planner.astream = graph_stream
-    manager = MagicMock(use_runtime=execution)
+    graph = MagicMock(astream=graph_stream)
+    manager = MagicMock(create_planner=AsyncMock(return_value=graph))
 
     async def run():
-        events = planner.run_agent_turn(
+        events = run_service.run_agent_turn(
             manager,
             MagicMock(),
             PlannerTurnContext(1, conversation_id, 0),
@@ -48,7 +39,7 @@ def test_graph_stream_closes_before_execution_context_exits(exit_mode) -> None:
         if exit_mode == "projection_error":
             with (
                 patch.object(
-                    planner.MessageDeltaParser,
+                    run_service.MessageDeltaParser,
                     "parse",
                     side_effect=ValueError("invalid message"),
                 ),
@@ -59,6 +50,6 @@ def test_graph_stream_closes_before_execution_context_exits(exit_mode) -> None:
             assert (await anext(events)).type == "message_delta"
             assert order == []
             await events.aclose()
-        assert order == ["graph closed", "execution released"]
+        assert order == ["graph closed"]
 
     asyncio.run(run())

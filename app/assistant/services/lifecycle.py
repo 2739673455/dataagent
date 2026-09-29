@@ -2,24 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+import asyncio
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from app.assistant.errors import ConversationBusyError
 from app.assistant.repositories.conversation import ConversationPGRepo
 from app.assistant.services.run import ConversationRunService
-from app.assistant.services.types import (
-    conversation_lifecycle_lock_name,
-)
-from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 if TYPE_CHECKING:
     from app.assistant.services.manager import AgentManager
     from app.sandbox.manager import DockerSandboxManager
-    from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 
 
 _DRAFT_TTL_MINUTES = 1440
@@ -34,67 +29,39 @@ class ConversationLifecycleService:
         repository_factory: Callable[
             [], AbstractAsyncContextManager[ConversationPGRepo]
         ],
-        lock_provider: LangGraphPostgresManager,
         agents: AgentManager,
         sandbox: DockerSandboxManager,
         runs: ConversationRunService | None = None,
     ) -> None:
-        """初始化跨存储会话资源和生命周期锁依赖。"""
+        """初始化会话资源与进程内删除协调。"""
         self._repository_factory = repository_factory
-        self._lock_provider = lock_provider
+        self._deletion_lock = asyncio.Lock()
         self._agents = agents
         self._sandbox = sandbox
         self._runs = runs
-
-    @asynccontextmanager
-    async def lock(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-    ) -> AsyncGenerator[None]:
-        """获取跨进程会话生命周期锁。"""
-        async with self._lock_provider.advisory_lock(
-            conversation_lifecycle_lock_name(user_id, conversation_id),
-        ):
-            yield
 
     async def request_conversation_deletion(
         self,
         user_id: int,
         conversation_id: UUID,
     ) -> bool:
-        """写入删除墓碑并使会话立即从接口中消失。"""
-        # 先确认会话存在且属于当前用户，再停止对应的执行。
-        async with self._repository_factory() as repository:
-            conversation = await repository.get(
-                user_id, conversation_id, include_deleting=True
-            )
-            if conversation is None:
-                return False
-        if self._runs is not None:
-            await self._runs.stop(user_id, conversation_id)
-        try:
-            async with (
-                self.lock(user_id, conversation_id),
-                self._repository_factory() as repository,
-            ):
+        """先隐藏会话阻止新回合，再取消并等待当前执行退出。"""
+        async with self._deletion_lock:
+            async with self._repository_factory() as repository:
                 conversation = await repository.get(
-                    user_id,
-                    conversation_id,
-                    include_deleting=True,
+                    user_id, conversation_id, include_deleting=True
                 )
                 if conversation is None:
                     return False
                 if conversation.deletion_requested_at is None:
                     await repository.update(
-                        conversation,
+                        user_id,
+                        conversation_id,
                         deletion_requested_at=datetime.now(UTC),
                     )
-                return True
-        except AdvisoryLockBusyError as exc:
-            raise ConversationBusyError(
-                detail="对话正在运行或清理，请稍后重试"
-            ) from exc
+            if self._runs is not None:
+                await self._runs.stop(user_id, conversation_id)
+            return True
 
     async def delete_conversation_resources(
         self,
@@ -103,26 +70,36 @@ class ConversationLifecycleService:
         *,
         draft_expired_before: datetime | None = None,
     ) -> bool:
-        """幂等删除一个会话的全部跨存储资源。"""
-        async with self.lock(user_id, conversation_id):
+        """串行执行幂等资源清理，避免即时删除与周期补偿重复清理。"""
+        async with self._deletion_lock:
+            if (
+                draft_expired_before is not None
+                and self._runs is not None
+                and await self._runs.is_running(user_id, conversation_id)
+            ):
+                return False
             async with self._repository_factory() as repository:
                 conversation = await repository.get(
                     user_id,
                     conversation_id,
                     include_deleting=True,
                 )
-            if conversation is None:
-                return False
-            if draft_expired_before is not None and (
-                not conversation.is_draft
-                or conversation.update_at > draft_expired_before
-            ):
-                return False
-
-            await self._agents.delete_agent_under_lifecycle_lock(
-                user_id,
-                conversation_id,
-            )
+                if conversation is None:
+                    return False
+                if draft_expired_before is not None and (
+                    not conversation.is_draft
+                    or conversation.update_at > draft_expired_before
+                ):
+                    return False
+                if conversation.deletion_requested_at is None:
+                    await repository.update(
+                        user_id,
+                        conversation_id,
+                        deletion_requested_at=datetime.now(UTC),
+                    )
+            if self._runs is not None:
+                await self._runs.stop(user_id, conversation_id)
+            await self._agents.delete_conversation_state(user_id, conversation_id)
             await self._sandbox.delete_conversation(user_id, conversation_id)
             async with self._repository_factory() as repository:
                 await repository.delete(user_id, conversation_id)

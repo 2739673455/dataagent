@@ -16,7 +16,7 @@ export interface components {
       "content": string;
       "type": "error";
     };
-    "ChatStreamEvent": (components["schemas"]["ChatStreamMessageEvent"] | components["schemas"]["ChatStreamThinkingEvent"] | components["schemas"]["ChatStreamMessageDeltaEvent"] | components["schemas"]["ChatStreamErrorEvent"] | components["schemas"]["ChatStreamDoneEvent"] | components["schemas"]["ChatStreamSubagentMessageEvent"] | components["schemas"]["ChatStreamSubagentThinkingEvent"] | components["schemas"]["ChatStreamSubagentMessageDeltaEvent"] | components["schemas"]["ChatStreamSubagentStatusEvent"]);
+    "ChatStreamEvent": (components["schemas"]["ChatStreamMessageEvent"] | components["schemas"]["ChatStreamThinkingEvent"] | components["schemas"]["ChatStreamMessageDeltaEvent"] | components["schemas"]["ChatStreamErrorEvent"] | components["schemas"]["ChatStreamDoneEvent"] | components["schemas"]["ChatStreamSubagentStatusEvent"]);
     "ChatStreamMessageDeltaEvent": {
       "delta": string;
       "message_id": string;
@@ -31,33 +31,11 @@ export interface components {
       "conversation_id": string;
       "message": components["schemas"]["UserMessageRequest"];
     };
-    "ChatStreamSubagentMessageDeltaEvent": {
-      "agent_type": components["schemas"]["AgentType"];
-      "delegation_id": string;
-      "delta": string;
-      "message_id": string;
-      "reset"?: boolean;
-      "type": "subagent_message_delta";
-    };
-    "ChatStreamSubagentMessageEvent": {
-      "agent_type": components["schemas"]["AgentType"];
-      "delegation_id": string;
-      "message": components["schemas"]["MessageResponse"];
-      "type": "subagent_message";
-    };
     "ChatStreamSubagentStatusEvent": {
       "agent_type": components["schemas"]["AgentType"];
       "delegation_id": string;
       "status": "running" | "completed" | "failed" | "cancelled";
       "type": "subagent_status";
-    };
-    "ChatStreamSubagentThinkingEvent": {
-      "agent_type": components["schemas"]["AgentType"];
-      "delegation_id": string;
-      "delta": string;
-      "message_id": string;
-      "reset"?: boolean;
-      "type": "subagent_thinking";
     };
     "ChatStreamThinkingEvent": {
       "delta": string;

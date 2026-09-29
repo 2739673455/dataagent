@@ -3,14 +3,15 @@
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 from langchain_openai import ChatOpenAI
 
 from app.assistant import model_factory
-from app.assistant.services import runtime_factory
+from app.assistant.services import manager as agent_manager
 from app.shared.config.app_config import LMConfigCfg, ModelCfg, ModelProfileCfg, cfg
 
 
@@ -90,8 +91,8 @@ def test_runtime_init_failure_closes_already_created_models() -> None:
         finally:
             closed.append(name)
 
-    factory = runtime_factory.ConversationAgentRuntimeFactory(
-        MagicMock(), MagicMock(), recall=MagicMock(), query=MagicMock()
+    factory = agent_manager.AgentManager(
+        MagicMock(), MagicMock(), MagicMock(), recall=MagicMock(), query=MagicMock()
     )
 
     factory._model_names = {"first", "second"}
@@ -103,5 +104,53 @@ def test_runtime_init_failure_closes_already_created_models() -> None:
         assert closed == list(reversed(opened))
         await factory.close()
 
-    with patch.object(runtime_factory, "create_configured_model", model_context):
+    with patch.object(agent_manager, "create_configured_model", model_context):
         asyncio.run(run())
+
+
+def test_deepseek_async_stream_preserves_reasoning_and_message_id() -> None:
+    response = MagicMock()
+    response.__aiter__.return_value = [
+        SimpleNamespace(
+            type="response.reasoning_text.delta",
+            output_index=0,
+            content_index=0,
+            delta="思考",
+        ),
+        SimpleNamespace(
+            type="response.output_text.delta",
+            output_index=1,
+            content_index=0,
+            delta="回答",
+        ),
+    ]
+    stream = MagicMock()
+    stream.__aenter__ = AsyncMock(return_value=response)
+    model = MagicMock(output_version="responses/v1")
+    model.root_async_client.responses.create = AsyncMock(return_value=stream)
+    callback = AsyncMock()
+
+    async def run() -> None:
+        chunks = [
+            chunk
+            async for chunk in model_factory.DataAgentDeepSeekResponses._astream(
+                model,
+                [],
+                run_manager=callback,
+            )
+        ]
+        assert len(chunks) == 2
+        assert chunks[0].message.id
+        assert chunks[0].message.id == chunks[1].message.id
+        assert chunks[0].message.content == [
+            {
+                "type": "reasoning",
+                "content": [{"type": "reasoning_text", "text": "思考", "index": 0}],
+                "index": 0,
+            }
+        ]
+        assert chunks[1].text == "回答"
+        assert callback.on_llm_new_token.await_count == 2
+        stream.__aexit__.assert_awaited_once()
+
+    asyncio.run(run())

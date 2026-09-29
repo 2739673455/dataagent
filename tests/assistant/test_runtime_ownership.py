@@ -1,4 +1,4 @@
-"""Run 独占运行时，构建与执行取消后不保留内存状态。"""
+"""每次运行独立构图，准备资源时取消与删除检查。"""
 
 import asyncio
 import unittest
@@ -10,11 +10,15 @@ from app.assistant.services.manager import AgentManager
 
 class RuntimeOwnershipTest(unittest.IsolatedAsyncioTestCase):
     def manager(self, create):
-        return AgentManager(
-            MagicMock(delete_thread=AsyncMock()),
+        manager = AgentManager(
+            MagicMock(adelete_thread=AsyncMock()),
+            MagicMock(get_backend=create),
             MagicMock(exists=AsyncMock(return_value=False), save=AsyncMock()),
-            MagicMock(create=create),
+            MagicMock(),
+            MagicMock(),
         )
+        manager._build_planner = lambda user_id, conversation_id, backend: backend
+        return manager
 
     async def test_each_run_builds_new_runtime(self):
         first, second = MagicMock(), MagicMock()
@@ -22,8 +26,8 @@ class RuntimeOwnershipTest(unittest.IsolatedAsyncioTestCase):
         manager = self.manager(create)
         conversation = uuid4()
         for expected in (first, second):
-            async with manager.use_runtime(1, conversation) as runtime:
-                self.assertIs(runtime, expected)
+            graph = await manager.create_planner(1, conversation)
+            self.assertIs(graph, expected)
         self.assertEqual(create.await_count, 2)
 
     async def test_run_cancellation_cancels_build_in_same_task(self):
@@ -39,8 +43,8 @@ class RuntimeOwnershipTest(unittest.IsolatedAsyncioTestCase):
         manager = self.manager(AsyncMock(side_effect=create))
 
         async def run():
-            async with manager.use_runtime(1, uuid4()):
-                self.fail("cancelled build must not enter execution")
+            await manager.create_planner(1, uuid4())
+            self.fail("cancelled build must not enter execution")
 
         task = asyncio.create_task(run())
         await asyncio.wait_for(entered.wait(), 1)
@@ -54,9 +58,9 @@ class RuntimeOwnershipTest(unittest.IsolatedAsyncioTestCase):
         entered = asyncio.Event()
 
         async def run():
-            async with manager.use_runtime(1, uuid4()):
-                entered.set()
-                await asyncio.Event().wait()
+            await manager.create_planner(1, uuid4())
+            entered.set()
+            await asyncio.Event().wait()
 
         task = asyncio.create_task(run())
         await asyncio.wait_for(entered.wait(), 1)
@@ -69,6 +73,5 @@ class RuntimeOwnershipTest(unittest.IsolatedAsyncioTestCase):
         manager = self.manager(create)
         manager._tombstones.exists.return_value = True
         with self.assertRaisesRegex(RuntimeError, "已被删除"):
-            async with manager.use_runtime(1, uuid4()):
-                self.fail("deleted conversation entered execution")
+            await manager.create_planner(1, uuid4())
         create.assert_not_awaited()

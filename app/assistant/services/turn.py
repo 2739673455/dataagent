@@ -45,42 +45,25 @@ class ConversationTurnService:
         """更新 Conversation 状态、提交标题任务并启动 Planner Run。"""
 
         async def prepare() -> None:
-            """在 Run 持有生命周期锁时更新目录并调度标题。"""
-            title_submission: tuple[UUID, str] | None = None
+            """在注册的 Run 中更新目录并调度标题。"""
             async with self._repository.session.begin():
                 conversation = await self._repository.get(user_id, conversation_id)
                 if conversation is None:
                     raise ConversationNotFoundError
 
-                user_text = "\n".join(
-                    part.text
-                    for part in message.parts
-                    if isinstance(part, chat_contract.TextContent)
-                ).strip()
-                if user_text and (
+                user_text = "\n".join(part.text for part in message.parts).strip()
+                generate_title = bool(user_text) and (
                     conversation.is_draft or conversation.title == "新对话"
-                ):
-                    conversation = await self._repository.update(
-                        conversation,
-                        title=user_text[:64],
-                        is_draft=False,
-                    )
-                    title_submission = (
-                        conversation.id,
-                        user_text,
-                    )
-                elif conversation.is_draft:
-                    await self._repository.update(conversation, is_draft=False)
-                else:
-                    await self._repository.update(conversation)
-
-            if title_submission is not None:
-                target_id, source = title_submission
-                self._tasks.generate_title(
-                    user_id,
-                    target_id,
-                    source,
                 )
+                await self._repository.update(
+                    user_id,
+                    conversation_id,
+                    title=user_text[:64] if generate_title else None,
+                    is_draft=False,
+                )
+
+            if generate_title:
+                self._tasks.generate_title(user_id, conversation_id, user_text)
 
         return await self._runs.start(
             user_id,
@@ -97,7 +80,7 @@ class ConversationTurnService:
         """验证 Conversation 和 Checkpoint 后恢复 Planner Run。"""
 
         async def prepare() -> None:
-            """检查与执行使用同一把锁，并在进入模型前结束数据库事务。"""
+            """检查会话与图状态，并在进入模型前结束数据库事务。"""
             async with self._repository.session.begin():
                 if await self._repository.get(user_id, conversation_id) is None:
                     raise ConversationNotFoundError

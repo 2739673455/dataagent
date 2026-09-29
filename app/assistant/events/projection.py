@@ -7,7 +7,7 @@ import re
 import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from langchain_core.messages import (
@@ -22,46 +22,16 @@ from loguru import logger
 
 from app.assistant.events import schemas as chat_schema
 from app.assistant.events.content import normalized_content_blocks, reasoning_text
-from app.assistant.services.types import (
-    SubagentActivity,
-    SubagentMessageActivity,
-    SubagentMessageDeltaActivity,
-    SubagentStatusActivity,
-    SubagentThinkingDeltaActivity,
-)
 from app.sandbox.errors import SandboxPathError
 from app.sandbox.paths import conversation_relative_path
-from app.shared.contracts.analysis import AgentType
 
 if TYPE_CHECKING:
     from app.sandbox.manager import DockerSandboxManager
 
-_KNOWN_FINISH_REASONS = (
-    "content_filter",
-    "function_call",
-    "tool_calls",
-    "length",
-    "stop",
-)
 _ARTIFACT_DIRECTIVE_PATTERN = re.compile(
     r"^[ ]{0,3}\[\[DATAAGENT_ARTIFACT:(/[^\r\n]+?)\]\][\t ]*$"
 )
 _MARKDOWN_FENCE_PATTERN = re.compile(r"^[ ]{0,3}(?P<marker>`{3,}|~{3,})")
-
-
-def normalize_finish_reason(value: object) -> str | None:
-    """还原流式消息元数据中被重复拼接的已知结束原因。
-
-    LangChain 合并流式 Chunk 时会拼接重复出现的字符串元数据，例如两个
-    ``stop`` 可能变成 ``stopstop``。未知供应商值保持原样，避免掩盖新状态。
-    """
-    if not isinstance(value, str):
-        return None
-    for reason in _KNOWN_FINISH_REASONS:
-        repeat_count, remainder = divmod(len(value), len(reason))
-        if repeat_count > 1 and remainder == 0 and value == reason * repeat_count:
-            return reason
-    return value
 
 
 def _content_to_parts(content: Any) -> list[chat_schema.MessagePart]:
@@ -135,30 +105,16 @@ def _transform_artifact_directives(
     return "".join(output), paths
 
 
-async def _project_final_artifact_directives(
-    message: BaseMessage,
-    schema: chat_schema.MessageResponse,
+async def _resolve_artifacts(
+    texts: Iterable[str],
     files: DockerSandboxManager,
     user_id: int,
     conversation_id: UUID,
-) -> chat_schema.MessageResponse:
-    """把 Agent 最终消息中的有效文件指令投影为附件。"""
-    if not isinstance(message, AIMessage) or message.tool_calls:
-        return schema
-    if normalize_finish_reason(message.response_metadata.get("finish_reason")) not in {
-        None,
-        "stop",
-    }:
-        return schema
-
-    candidate_paths: list[str] = []
-    for part in schema.parts:
-        if isinstance(part, chat_schema.TextContent):
-            _, paths = _transform_artifact_directives(part.text)
-            candidate_paths.extend(paths)
-    if not candidate_paths:
-        return schema
-
+) -> tuple[set[str], list[chat_schema.Attachment]]:
+    """解析文本中的文件指令，验证路径与下载资格并去重。"""
+    candidate_paths = (
+        path for text in texts for path in _transform_artifact_directives(text)[1]
+    )
     accepted_paths: set[str] = set()
     attachments: list[chat_schema.Attachment] = []
     seen_paths: set[str] = set()
@@ -205,23 +161,7 @@ async def _project_final_artifact_directives(
             )
         )
 
-    if not accepted_paths:
-        return schema
-
-    parts: list[chat_schema.MessagePart] = []
-    for part in schema.parts:
-        if not isinstance(part, chat_schema.TextContent):
-            parts.append(part)
-            continue
-        cleaned, _ = _transform_artifact_directives(part.text, accepted_paths)
-        if cleaned:
-            parts.append(part.model_copy(update={"text": cleaned}))
-    return schema.model_copy(
-        update={
-            "parts": parts,
-            "attachments": attachments or None,
-        }
-    )
+    return accepted_paths, attachments
 
 
 async def langchain_message_to_schema_with_artifacts(
@@ -230,27 +170,48 @@ async def langchain_message_to_schema_with_artifacts(
     user_id: int,
     conversation_id: UUID,
 ) -> chat_schema.MessageResponse | None:
-    """转换消息，并为 Agent 最终回答解析文件交付指令。"""
-    schema = langchain_message_to_schema(message, conversation_id)
+    """转换消息，为最终回答和 task 结果解析附件。"""
+    schema = langchain_message_to_schema(message)
     if schema is None:
         return None
-    if isinstance(message, ToolMessage):
-        if message.name == "task" and isinstance(message.content, str):
-            projected = await langchain_message_to_schema_with_artifacts(
-                AIMessage(content=message.content), files, user_id, conversation_id
-            )
-            if projected is not None:
-                schema = schema.model_copy(
-                    update={"attachments": projected.attachments}
-                )
-        return schema
-    return await _project_final_artifact_directives(
-        message,
-        schema,
-        files,
-        user_id,
-        conversation_id,
+    is_task_result = (
+        isinstance(message, ToolMessage)
+        and message.name == "task"
+        and isinstance(message.content, str)
     )
+    is_final_answer = (
+        isinstance(message, AIMessage)
+        and not message.tool_calls
+        and schema.finish_reason in {None, "stop"}
+    )
+    if not (is_task_result or is_final_answer):
+        return schema
+    texts = (
+        [cast(str, message.content)]
+        if is_task_result
+        else [
+            part.text
+            for part in schema.parts
+            if isinstance(part, chat_schema.TextContent)
+        ]
+    )
+    accepted_paths, attachments = await _resolve_artifacts(
+        texts, files, user_id, conversation_id
+    )
+    if not accepted_paths:
+        return schema
+    schema.attachments = attachments
+    if is_final_answer:
+        parts: list[chat_schema.MessagePart] = []
+        for part in schema.parts:
+            if not isinstance(part, chat_schema.TextContent):
+                parts.append(part)
+                continue
+            cleaned, _ = _transform_artifact_directives(part.text, accepted_paths)
+            if cleaned:
+                parts.append(part.model_copy(update={"text": cleaned}))
+        schema.parts = parts
+    return schema
 
 
 async def project_messages(
@@ -275,7 +236,6 @@ async def project_messages(
 
 def langchain_message_to_schema(
     message: BaseMessage,
-    conversation_id: UUID,
 ) -> chat_schema.MessageResponse | None:
     """将 LangChain 消息转换为接口消息。"""
     if isinstance(message, ToolMessage):
@@ -334,62 +294,8 @@ def langchain_message_to_schema(
         message_id=message.id,
         role=role,
         parts=parts,
-        finish_reason=normalize_finish_reason(
-            message.response_metadata.get("finish_reason")
-        ),
+        finish_reason=message.response_metadata.get("finish_reason"),
     )
-
-
-class _SubagentEventContext(TypedDict):
-    delegation_id: str
-    agent_type: AgentType
-
-
-async def subagent_activity_to_event(
-    activity: SubagentActivity,
-    conversation_id: UUID,
-    files: DockerSandboxManager,
-    user_id: int,
-) -> chat_schema.ChatStreamEventPayload | None:
-    """把受信任的 Agent 内部活动投影为公开聊天事件。"""
-    common = _SubagentEventContext(
-        delegation_id=activity.delegation_id,
-        agent_type=activity.agent_type,
-    )
-    if isinstance(activity, SubagentMessageActivity):
-        messages = await project_messages(
-            [activity.message], files, user_id, conversation_id
-        )
-        if not messages:
-            return None
-        return chat_schema.ChatStreamSubagentMessageEvent(
-            **common,
-            type="subagent_message",
-            message=messages[0],
-        )
-    if isinstance(activity, SubagentThinkingDeltaActivity):
-        return chat_schema.ChatStreamSubagentThinkingEvent(
-            **common,
-            type="subagent_thinking",
-            message_id=activity.message_id,
-            delta=activity.delta,
-            reset=activity.reset,
-        )
-    if isinstance(activity, SubagentMessageDeltaActivity):
-        return chat_schema.ChatStreamSubagentMessageDeltaEvent(
-            **common,
-            type="subagent_message_delta",
-            message_id=activity.message_id,
-            delta=activity.delta,
-            reset=activity.reset,
-        )
-    if isinstance(activity, SubagentStatusActivity):
-        return chat_schema.ChatStreamSubagentStatusEvent(
-            **common,
-            type="subagent_status",
-            status=activity.status,
-        )
-    return None
 
 
 def schema_to_human_message(

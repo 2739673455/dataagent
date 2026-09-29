@@ -1,79 +1,83 @@
-"""会话生命周期锁冲突处理测试。"""
+"""运行中删除会话时，先隐藏、等待执行退出，再清理资源。"""
 
+import asyncio
 import unittest
 from contextlib import asynccontextmanager
-from http import HTTPStatus
-from typing import cast
 from unittest.mock import AsyncMock, MagicMock
-from uuid import UUID
+from uuid import uuid4
 
-from app.assistant.errors import ConversationBusyError
-from app.assistant.services.lifecycle import (
-    ConversationLifecycleService,
-)
-from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
-from app.shared.errors.infrastructure import AdvisoryLockBusyError
-
-_CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
+from app.assistant.services.lifecycle import ConversationLifecycleService
 
 
-class _BusyLockProvider:
-    """始终报告咨询锁被占用。"""
+class ConversationDeletionTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.conversation_id = uuid4()
+        self.events = []
+        self.conversation = MagicMock(deletion_requested_at=None)
 
-    @asynccontextmanager
-    async def advisory_lock(self, name: str):
-        """在进入锁上下文时报告占用。"""
-        raise AdvisoryLockBusyError(f"咨询锁正在使用: {name}")
-        yield
+        async def update(user_id, conversation_id, **fields):
+            self.conversation.deletion_requested_at = fields["deletion_requested_at"]
+            self.events.append("marked")
 
-
-def _build_service() -> tuple[
-    ConversationLifecycleService,
-    AsyncMock,
-    MagicMock,
-]:
-    """创建只会走锁冲突分支的生命周期服务。"""
-    agents = MagicMock()
-    runs = MagicMock(stop=AsyncMock())
-    repository_factory = MagicMock()
-    repository_factory.return_value.__aenter__.return_value.get = AsyncMock(
-        return_value=MagicMock()
-    )
-    service = ConversationLifecycleService(
-        repository_factory=repository_factory,
-        lock_provider=cast(LangGraphPostgresManager, _BusyLockProvider()),
-        agents=agents,
-        sandbox=MagicMock(),
-        runs=runs,
-    )
-    return service, runs.stop, repository_factory
-
-
-class ConversationLifecycleBusyTest(unittest.IsolatedAsyncioTestCase):
-    async def test_deletion_request_translates_busy_advisory_lock(self) -> None:
-        service, cancel_execution, repository_factory = _build_service()
-
-        with self.assertRaises(ConversationBusyError) as caught:
-            await service.request_conversation_deletion(1, _CONVERSATION_ID)
-
-        self.assertIsInstance(caught.exception.__cause__, AdvisoryLockBusyError)
-        self.assertEqual(caught.exception.status, HTTPStatus.CONFLICT)
-        self.assertEqual(caught.exception.detail, "对话正在运行或清理，请稍后重试")
-        cancel_execution.assert_awaited_once_with(1, _CONVERSATION_ID)
-        repository_factory.assert_called_once()
-
-    async def test_physical_cleanup_keeps_lock_error_for_task_retry(self) -> None:
-        service, _, repository_factory = _build_service()
-
-        with self.assertRaises(AdvisoryLockBusyError):
-            await service.delete_conversation_resources(1, _CONVERSATION_ID)
-
-        repository_factory.assert_not_called()
-
-    async def test_missing_conversation_does_not_stop_active_run(self):
-        service, stop, repository_factory = _build_service()
-        repository_factory.return_value.__aenter__.return_value.get.return_value = None
-        self.assertFalse(
-            await service.request_conversation_deletion(1, _CONVERSATION_ID)
+        self.repo = MagicMock(
+            get=AsyncMock(return_value=self.conversation),
+            update=AsyncMock(side_effect=update),
+            delete=AsyncMock(),
         )
-        stop.assert_not_awaited()
+
+        @asynccontextmanager
+        async def repository():
+            yield self.repo
+            self.events.append("committed")
+
+        async def stop(*args):
+            self.assertIsNotNone(self.conversation.deletion_requested_at)
+            self.assertIn("committed", self.events)
+            self.events.append("stopped")
+
+        self.runs = MagicMock(stop=AsyncMock(side_effect=stop))
+        self.agents = MagicMock(delete_conversation_state=AsyncMock())
+        self.sandbox = MagicMock(delete_conversation=AsyncMock())
+        self.service = ConversationLifecycleService(
+            repository, self.agents, self.sandbox, self.runs
+        )
+
+    async def test_deletion_marks_and_commits_before_stopping_run(self):
+        self.assertTrue(
+            await self.service.request_conversation_deletion(1, self.conversation_id)
+        )
+        self.assertEqual(self.events, ["marked", "committed", "stopped"])
+        self.sandbox.delete_conversation.assert_not_awaited()
+
+    async def test_missing_or_foreign_conversation_does_not_stop_run(self):
+        self.repo.get.return_value = None
+        self.assertFalse(
+            await self.service.request_conversation_deletion(1, self.conversation_id)
+        )
+        self.runs.stop.assert_not_awaited()
+
+    async def test_cleanup_waits_for_run_exit_and_serializes_duplicate_deletes(self):
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def stop(*args):
+            entered.set()
+            await release.wait()
+
+        self.runs.stop.side_effect = stop
+        self.repo.delete.side_effect = lambda *_: setattr(
+            self.repo.get, "return_value", None
+        )
+        first = asyncio.create_task(
+            self.service.delete_conversation_resources(1, self.conversation_id)
+        )
+        await entered.wait()
+        second = asyncio.create_task(
+            self.service.delete_conversation_resources(1, self.conversation_id)
+        )
+        await asyncio.sleep(0)
+        self.agents.delete_conversation_state.assert_not_awaited()
+        self.sandbox.delete_conversation.assert_not_awaited()
+        release.set()
+        self.assertEqual(await asyncio.gather(first, second), [True, False])
+        self.agents.delete_conversation_state.assert_awaited_once()
+        self.sandbox.delete_conversation.assert_awaited_once()

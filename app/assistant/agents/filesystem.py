@@ -1,7 +1,6 @@
 """专业 Agent 文件系统装配。"""
 
-from collections.abc import Sequence
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 
 from deepagents import FilesystemMiddleware
 from deepagents.backends import CompositeBackend, FilesystemBackend
@@ -35,23 +34,17 @@ def packaged_skill_readonly_mounts() -> tuple[SandboxReadonlyMount, ...]:
 
 def build_specialist_filesystem(
     backend: DockerSandboxBackend,
-    skill_directory: Path,
-    skills: Sequence[str],
-) -> tuple[BackendProtocol, FilesystemMiddleware]:
+    *,
+    skill_mount: SandboxReadonlyMount | None = None,
+) -> FilesystemMiddleware:
     """创建带只读技能目录的 Specialist 文件系统。"""
     workspace_dir = backend.workspace_dir
     permissions: list[FilesystemPermission] = []
     routes: dict[str, BackendProtocol] = {}
-    if skills:
-        if len(skills) != 1:
-            raise ValueError("每个 Agent 只能配置一个技能根目录")
-        if not skill_directory.is_dir():
-            raise ValueError(f"Agent 技能目录不存在: {skill_directory}")
-        mount_path = skills[0]
-        if not mount_path.startswith("/") or not mount_path.endswith("/"):
-            raise ValueError(f"Agent 技能挂载路径无效: {mount_path}")
+    if skill_mount is not None:
+        mount_path = f"{skill_mount.target.as_posix().rstrip('/')}/"
         routes[mount_path] = FilesystemBackend(
-            root_dir=skill_directory,
+            root_dir=skill_mount.source,
             virtual_mode=True,
         )
         permissions.append(
@@ -66,7 +59,7 @@ def build_specialist_filesystem(
         routes=routes,
         artifacts_root=workspace_dir,
     )
-    filesystem = FilesystemMiddleware(
+    return FilesystemMiddleware(
         backend=resolved_backend,
         system_prompt=f"""## 沙箱路径
 
@@ -84,4 +77,3 @@ def build_specialist_filesystem(
         ],
         _permissions=permissions,
     )
-    return resolved_backend, filesystem

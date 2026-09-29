@@ -35,7 +35,7 @@ class ConversationTitleService:
             return
 
         async with self._postgres.session() as session:
-            await ConversationPGRepo(session).set_title(
+            await ConversationPGRepo(session).update(
                 user_id,
                 conversation_id,
                 title=title,

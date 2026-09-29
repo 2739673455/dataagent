@@ -5,19 +5,15 @@ import { cn } from "@/lib/utils";
 import type { SubagentRun } from "@/features/chat/types";
 import { AttachmentChip } from "@/features/chat/components/messages/AttachmentChip";
 import {
-  buildDisplayItems,
   type ExecutionStatus,
   formatToolResult,
   getExecutionStatus,
-  getMessagePartKey,
   getSubagentRunIdentity,
   getToolArgsPreview,
   isToolResultFailure,
   parseDelegationResult,
   resolveDelegationRunStatus,
-  splitFinalAssistantMessage,
 } from "@/features/chat/components/messages/displayModel";
-import { PartView } from "@/features/chat/components/messages/MarkdownRenderer";
 import { MessageBubble } from "@/features/chat/components/messages/MessageBubble";
 import type {
   DisplayItem,
@@ -304,20 +300,6 @@ function DelegationRunBarInternal({
     subagentRun?.status
   );
   const isRunning = runStatus === "running";
-  const specialistExecutionStatus: Exclude<ExecutionStatus, "idle"> = isRunning
-    ? "processing"
-    : runStatus === "cancelled" || runStatus === "interrupted"
-      ? "interrupted"
-      : "completed";
-
-  // 解析 subagentRun 的消息流
-  const subagentDisplayItems = subagentRun
-    ? buildDisplayItems(item.conversationId ?? null, subagentRun.messages, isRunning)
-    : [];
-
-  const { finalItem: subagentFinalItem, intermediateItems: subagentIntermediateItems } =
-    splitFinalAssistantMessage(subagentDisplayItems, !isRunning);
-
   const parsedDelegationResult = parseDelegationResult(item.result);
 
   const agentType = typeof item.args?.subagent_type === "string" ? item.args.subagent_type : null;
@@ -349,7 +331,7 @@ function DelegationRunBarInternal({
               ? "bg-[#a1a1aa] animate-pulse"
               : runStatus === "failed"
                 ? "bg-[#ef4444]"
-                : specialistExecutionStatus === "interrupted"
+                : runStatus === "cancelled" || runStatus === "interrupted"
                   ? "bg-[#eab308]"
                   : "bg-[#16a34a]"
           )}
@@ -366,7 +348,7 @@ function DelegationRunBarInternal({
         </span>
       </button>
 
-      {/* 展开后的主体内容（向右缩进）：目标在最上，中间处理过程在中间，结果在下面 */}
+      {/* 任务目标、执行状态和最终结果 */}
       {isOpen && (
         <div className="mt-1 space-y-2 border-l border-[#e5e5df] ml-1.5 pl-3.5 text-[11px]">
           {/* 1. 目标（最上面） */}
@@ -379,34 +361,13 @@ function DelegationRunBarInternal({
             </div>
           ) : null}
 
-          {/* 2. 中间处理过程展示（使用与外层完全相同的 ExecutionProcessCollapse 逻辑） */}
-          {subagentIntermediateItems.length > 0 ? (
-            <ExecutionProcessCollapse
-              executionStatus={specialistExecutionStatus}
-              hasFinalItem={subagentFinalItem !== null || parsedDelegationResult !== null}
-              isStreaming={isRunning}
-              items={subagentIntermediateItems}
-              subagentRuns={subagentRun ? { [item.toolCallId]: subagentRun } : {}}
-            />
-          ) : isRunning ? (
+          {isRunning ? (
             <div className="py-1">
               <DotMatrixLoader label="Specialist 正在执行" className="text-[#18181b]" />
             </div>
           ) : null}
 
-          {/* 3. 结果（下面） */}
-          {subagentFinalItem ? (
-            <div className="space-y-1">
-              <p className="font-medium text-[#71717a]">输出</p>
-              <div className="rounded border border-[#e0e0da] bg-[#f0f0eb] p-2 text-xs leading-relaxed text-[#27272a]">
-                <div className="space-y-1.5">
-                  {subagentFinalItem.message.parts.map((part) => (
-                    <PartView key={getMessagePartKey(part)} part={part} renderMarkdown={true} />
-                  ))}
-                </div>
-              </div>
-            </div>
-          ) : parsedDelegationResult?.content ? (
+          {parsedDelegationResult?.content ? (
             <div className="space-y-1">
               <p className="font-medium text-[#71717a]">输出</p>
               <div className="rounded border border-[#e0e0da] bg-[#f0f0eb] p-2 text-xs leading-relaxed text-[#27272a]">

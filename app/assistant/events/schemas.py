@@ -205,43 +205,6 @@ class ChatStreamDoneEvent(BaseModel):
     type: Literal["done"]
 
 
-class ChatStreamSubagentMessageEvent(BaseModel):
-    """Specialist 执行期间产生的公开消息事件。"""
-
-    type: Literal["subagent_message"]
-    delegation_id: str
-    agent_type: AgentType
-    message: MessageResponse
-
-
-class ChatStreamSubagentThinkingEvent(BaseModel):
-    """Specialist 模型思考增量事件。"""
-
-    type: Literal["subagent_thinking"]
-    delegation_id: str
-    agent_type: AgentType
-    message_id: str = Field(..., description="所属 assistant 消息ID")
-    delta: str = Field(..., description="本次新增的思考文本")
-    reset: bool = Field(
-        default=False,
-        description="是否在追加本增量前清空该消息已有思考文本",
-    )
-
-
-class ChatStreamSubagentMessageDeltaEvent(BaseModel):
-    """Specialist assistant 正文增量事件。"""
-
-    type: Literal["subagent_message_delta"]
-    delegation_id: str
-    agent_type: AgentType
-    message_id: str = Field(..., description="所属 assistant 消息ID")
-    delta: str = Field(..., description="本次新增的正文文本")
-    reset: bool = Field(
-        default=False,
-        description="是否在追加本增量前清空该消息已有正文文本",
-    )
-
-
 class ChatStreamSubagentStatusEvent(BaseModel):
     """Specialist 执行状态事件。"""
 
@@ -262,9 +225,6 @@ ChatStreamEventPayload = Annotated[
     | ChatStreamMessageDeltaEvent
     | ChatStreamErrorEvent
     | ChatStreamDoneEvent
-    | ChatStreamSubagentMessageEvent
-    | ChatStreamSubagentThinkingEvent
-    | ChatStreamSubagentMessageDeltaEvent
     | ChatStreamSubagentStatusEvent,
     Field(discriminator="type"),
 ]

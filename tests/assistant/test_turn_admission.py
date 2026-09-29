@@ -1,4 +1,4 @@
-"""通过真实 Turn → Run 验证受理与执行共用生命周期锁。"""
+"""通过真实 Turn → Run 验证单进程受理互斥、事务范围及运行中删除。"""
 
 import asyncio
 import unittest
@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from app.assistant.errors import (
-    ConversationBusyError,
     ConversationNotFoundError,
     ConversationNotResumableError,
+    ConversationRunConflictError,
 )
 from app.assistant.events.schemas import TextContent, UserMessageRequest
 from app.assistant.services.lifecycle import ConversationLifecycleService
@@ -17,32 +17,17 @@ from app.assistant.services.run import ConversationRunService
 from app.assistant.services.turn import (
     ConversationTurnService,
 )
-from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 
 class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.conversation_id = uuid4()
-        self.owner = None
-        self.acquisitions = 0
         self.transaction_open = False
         self.started = asyncio.Event()
         self.release = asyncio.Event()
 
         @asynccontextmanager
-        async def lock(name):
-            if self.owner is not None:
-                raise AdvisoryLockBusyError("busy")
-            self.owner = asyncio.current_task()
-            self.acquisitions += 1
-            try:
-                yield
-            finally:
-                self.owner = None
-
-        @asynccontextmanager
         async def transaction():
-            self.assertIs(self.owner, asyncio.current_task())
             self.transaction_open = True
             try:
                 yield
@@ -50,19 +35,16 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
                 self.transaction_open = False
 
         async def graph(**kwargs):
-            self.assertIs(self.owner, asyncio.current_task())
             self.assertFalse(self.transaction_open)
             self.started.set()
             await self.release.wait()
             if False:
                 yield
 
-        @asynccontextmanager
-        async def use_runtime(*args):
-            yield MagicMock(planner=MagicMock(astream=graph))
+        async def create_planner(*args):
+            return MagicMock(astream=graph)
 
-        self.agents = MagicMock(use_runtime=use_runtime)
-        self.locks = MagicMock(advisory_lock=lock)
+        self.agents = MagicMock(create_planner=create_planner)
         self.runs = self.new_worker()
         conversation = MagicMock(id=self.conversation_id, is_draft=True, title="未命名")
         self.repo = MagicMock(
@@ -76,35 +58,32 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
         )
 
     def new_worker(self):
-        runs = ConversationRunService(self.agents, MagicMock(), self.locks)
+        runs = ConversationRunService(self.agents, MagicMock())
         self.addAsyncCleanup(runs.close)
         return runs
 
-    async def test_start_holds_one_lock_and_duplicate_worker_cannot_update_directory(
+    async def test_duplicate_request_cannot_update_directory(
         self,
     ):
         message = UserMessageRequest(parts=[TextContent(type="text", text="分析")])
         other = ConversationTurnService(
             repository=self.repo,
-            runs=self.new_worker(),
+            runs=self.runs,
             agents=self.agents,
             tasks=self.tasks,
         )
         with patch.object(self.tasks, "generate_title") as enqueue:
             stream = await self.turn.start(1, self.conversation_id, message)
             await self.started.wait()
-            with self.assertRaises(ConversationBusyError):
+            with self.assertRaises(ConversationRunConflictError):
                 await other.start(1, self.conversation_id, message)
             self.repo.update.assert_awaited_once()
             enqueue.assert_called_once()
-            self.assertEqual(self.acquisitions, 1)
             self.release.set()
             self.assertEqual([event.type async for event in stream], ["done"])
-            self.assertIsNone(self.owner)
 
-    async def test_resume_rechecks_state_under_lock_before_execution(self):
+    async def test_resume_rechecks_state_before_execution(self):
         async def can_resume(*args):
-            self.assertIs(self.owner, asyncio.current_task())
             self.assertFalse(self.transaction_open)
             return False
 
@@ -118,7 +97,6 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
         ):
             await self.turn.resume(1, self.conversation_id)
         self.assertFalse(self.started.is_set())
-        self.assertIsNone(self.owner)
         self.repo.update.assert_not_awaited()
 
     async def test_deleted_conversation_rejected_before_runtime_creation(self):
@@ -126,9 +104,8 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ConversationNotFoundError):
             await self.turn.resume(1, self.conversation_id)
         self.assertFalse(self.started.is_set())
-        self.assertIsNone(self.owner)
 
-    async def test_deletion_stops_run_before_marking_and_rejects_next_message(self):
+    async def test_deletion_stops_run_and_rejects_next_message(self):
         message = UserMessageRequest(parts=[TextContent(type="text", text="分析")])
         conversation = self.repo.get.return_value
         conversation.deletion_requested_at = None
@@ -138,10 +115,9 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
                 return None
             return conversation
 
-        async def update(row, **fields):
+        async def update(user_id, conversation_id, **fields):
             for name, value in fields.items():
-                setattr(row, name, value)
-            return row
+                setattr(conversation, name, value)
 
         @asynccontextmanager
         async def repository():
@@ -151,7 +127,6 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
         self.repo.update.side_effect = update
         lifecycle = ConversationLifecycleService(
             repository,
-            self.locks,
             self.agents,
             MagicMock(),
             runs=self.runs,
@@ -166,4 +141,3 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(conversation.deletion_requested_at)
             with self.assertRaises(ConversationNotFoundError):
                 await self.turn.start(1, self.conversation_id, message)
-        self.assertIsNone(self.owner)

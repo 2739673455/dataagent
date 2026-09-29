@@ -1,4 +1,5 @@
 import unittest
+from pathlib import PurePosixPath
 from typing import Any, cast
 
 from deepagents.backends import StateBackend
@@ -12,6 +13,7 @@ from app.assistant.agents.filesystem import (
 )
 from app.assistant.resources import ASSISTANT_RESOURCES_DIR
 from app.sandbox.backend import DockerSandboxBackend
+from app.sandbox.paths import SandboxReadonlyMount
 
 _ANALYST_SKILLS_PATH = agent_skills_mount_path("analyst")
 
@@ -27,16 +29,18 @@ class AgentSkillsTest(unittest.TestCase):
         self.assertTrue((analyst.source / "visualization" / "SKILL.md").is_file())
 
     def test_agent_cannot_modify_mounted_skill(self) -> None:
-        skill_directory = ASSISTANT_RESOURCES_DIR / "analyst" / "skills"
         state_backend = StateBackend()
         cast(
             Any, state_backend
         ).workspace_dir = "/data/conversation/sessions/analysis/analyst/session"
-        backend, filesystem = build_specialist_filesystem(
+        filesystem = build_specialist_filesystem(
             cast(DockerSandboxBackend, state_backend),
-            skill_directory,
-            [_ANALYST_SKILLS_PATH],
+            skill_mount=SandboxReadonlyMount(
+                source=ASSISTANT_RESOURCES_DIR / "analyst" / "skills",
+                target=PurePosixPath(_ANALYST_SKILLS_PATH),
+            ),
         )
+        backend = filesystem.backend
         skill_path = f"{_ANALYST_SKILLS_PATH}analysis/SKILL.md"
         original = backend.read(skill_path)
         write_tool = next(

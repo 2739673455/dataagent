@@ -9,25 +9,18 @@ from uuid import uuid4
 from langchain_core.messages import AIMessage
 
 from app.assistant.tasks import ConversationTasks
-from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 
 class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        @asynccontextmanager
-        async def lock(name):
-            yield
-
         self.lifecycle = MagicMock(
             delete_conversation_resources=AsyncMock(),
             cleanup_pending_deletions=AsyncMock(),
             cleanup_expired_drafts=AsyncMock(),
         )
-        self.persistence = MagicMock(advisory_lock=lock)
         self.tasks = ConversationTasks(
             MagicMock(),
             self.lifecycle,
-            self.persistence,
         )
         self.addAsyncCleanup(self.tasks.close)
 
@@ -93,21 +86,6 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
         self.lifecycle.cleanup_pending_deletions.assert_awaited_once()
         self.lifecycle.cleanup_expired_drafts.assert_awaited_once()
 
-    async def test_busy_cleanup_lock_skips_scan(self):
-        attempted = asyncio.Event()
-
-        @asynccontextmanager
-        async def lock(name):
-            attempted.set()
-            raise AdvisoryLockBusyError("busy")
-            yield
-
-        self.persistence.advisory_lock = lock
-        self.tasks.start()
-        await asyncio.wait_for(attempted.wait(), 1)
-        self.lifecycle.cleanup_pending_deletions.assert_not_awaited()
-        self.lifecycle.cleanup_expired_drafts.assert_not_awaited()
-
     async def test_title_commits_and_closes_scoped_resources(self):
         closed = []
         model = MagicMock(
@@ -129,7 +107,7 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 closed.append("session")
 
-        repo = MagicMock(set_title=AsyncMock())
+        repo = MagicMock(update=AsyncMock())
         conversation_id = uuid4()
         with (
             patch.object(self.tasks._postgres, "session", session_scope),
@@ -143,7 +121,7 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.gather(*self.tasks._tasks)
         model.ainvoke.assert_awaited_once()
         self.assertEqual(model.ainvoke.await_args.args[0][1].content, "分析订单")
-        repo.set_title.assert_awaited_once_with(1, conversation_id, title="订单分析")
+        repo.update.assert_awaited_once_with(1, conversation_id, title="订单分析")
         session.commit.assert_awaited_once()
         self.assertEqual(closed, ["model", "session"])
         self.assertFalse(self.tasks._tasks)
