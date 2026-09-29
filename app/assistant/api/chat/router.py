@@ -21,8 +21,8 @@ from app.assistant.api.dependencies import (
     ConversationTasksDep,
     SandboxManagerDep,
 )
-from app.assistant.conversations import history as conversation_history
 from app.assistant.events import schemas as chat_schema
+from app.assistant.services import history as conversation_history
 from app.identity.api.dependencies import CurrentUserDep
 from app.shared.observability import context
 
@@ -50,7 +50,6 @@ async def api_create_conversation(
         tasks.generate_title(
             user_id,
             conversation.id,
-            conversation.title,
             initial_message,
         )
 
@@ -89,26 +88,6 @@ async def api_delete_conversations(
             )
 
     logger.info(f"删除对话: conversation_ids={body.conversation_ids}")
-
-
-@router.post("/update")
-async def api_update_conversation(
-    body: chat_schema.UpdateConversationRequest,
-    conversation_repo: ConversationPGRepoDep,
-    current_user: CurrentUserDep,
-) -> None:
-    """修改对话信息。"""
-    user_id = current_user.id
-
-    async with conversation_repo.session.begin():
-        conversation = await conversation_repo.get(user_id, body.conversation_id)
-        if conversation is None:
-            raise chat_error.ConversationNotFoundError
-        await conversation_repo.update(
-            conversation,
-            title=body.title,
-        )
-    logger.info(f"更新对话: conversation_id={body.conversation_id}")
 
 
 @router.get("/ls")

@@ -7,10 +7,10 @@ from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
-from app.assistant.conversations.lifecycle import (
+from app.assistant.errors import ConversationBusyError
+from app.assistant.services.lifecycle import (
     ConversationLifecycleService,
 )
-from app.assistant.errors import ConversationBusyError
 from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 from app.shared.errors.infrastructure import AdvisoryLockBusyError
 

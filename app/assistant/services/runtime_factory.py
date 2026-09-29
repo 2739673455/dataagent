@@ -14,9 +14,9 @@ from app.assistant.agents.specialists import (
 )
 from app.assistant.agents.tools.execute_sql import create_execute_sql_tool
 from app.assistant.agents.tools.semantic_recall import create_semantic_recall_tool
-from app.assistant.execution.types import ConversationAgentRuntime
 from app.assistant.model_factory import create_configured_model
 from app.assistant.resources import SYSTEM_PROMPTS
+from app.assistant.services.types import ConversationAgentRuntime
 from app.metadata.services.recall_handler import SemanticRecallHandler
 from app.query.services.execution_handler import QueryExecutionHandler
 from app.sandbox.backend import DockerSandboxBackend

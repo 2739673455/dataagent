@@ -1,11 +1,9 @@
 """PostgreSQL 会话目录数据访问。"""
 
 from datetime import UTC, datetime
-from typing import cast
 from uuid import UUID
 
 from sqlalchemy import delete, select, update
-from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.assistant.models.conversation import Conversation
@@ -78,30 +76,20 @@ class ConversationPGRepo:
         await self._session.flush()
         return conversation
 
-    async def replace_title_if_current(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        *,
-        expected_title: str,
-        title: str,
-    ) -> bool:
-        """仅在即时标题未被用户修改时替换为模型标题。"""
-        result = cast(
-            CursorResult[object],
-            await self._session.execute(
-                update(Conversation)
-                .where(
-                    Conversation.user_id == user_id,
-                    Conversation.id == conversation_id,
-                    Conversation.title == expected_title,
-                    Conversation.deletion_requested_at.is_(None),
-                )
-                .values(title=title, update_at=datetime.now(UTC))
-            ),
+    async def set_title(
+        self, user_id: int, conversation_id: UUID, *, title: str
+    ) -> None:
+        """更新当前用户尚未删除的会话标题。"""
+        await self._session.execute(
+            update(Conversation)
+            .where(
+                Conversation.user_id == user_id,
+                Conversation.id == conversation_id,
+                Conversation.deletion_requested_at.is_(None),
+            )
+            .values(title=title, update_at=datetime.now(UTC))
         )
         await self._session.flush()
-        return bool(result.rowcount)
 
     async def list_by_user(self, user_id: int) -> list[Conversation]:
         """按最后活动时间倒序获取用户的正式会话。"""

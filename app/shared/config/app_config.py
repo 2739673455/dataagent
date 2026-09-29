@@ -5,8 +5,6 @@ import dotenv
 from omegaconf import OmegaConf
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
-from app.shared.contracts.analysis import AGENT_TYPES
-
 # 路径常量。
 ROOT_DIR = Path(__file__).parents[3]
 CONFIG_DIR = ROOT_DIR / "conf"
@@ -69,73 +67,6 @@ class MetadataConfig(AppConfigModel):
     """元数据导入互斥配置。"""
 
     redis_url: SecretStr = Field(min_length=1)
-
-
-# 身份与生命周期配置。
-# 沙箱配置。
-class SandboxOwnershipConfig(AppConfigModel):
-    """沙箱跨进程所有权配置。"""
-
-    redis_url: SecretStr = Field(min_length=1)
-    lock_timeout_seconds: float = Field(gt=0)
-    wait_timeout_seconds: float = Field(gt=0)
-    lease_seconds: float = Field(gt=0)
-
-
-class SandboxConfig(AppConfigModel):
-    """本地 Docker 沙箱配置。"""
-
-    deployment_namespace: str = Field(
-        min_length=1,
-        max_length=32,
-        pattern=r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
-    )
-    ownership: SandboxOwnershipConfig
-    image: str = Field(min_length=1)
-    network_mode: Literal["none", "bridge"]
-    memory_limit: str = Field(min_length=1)
-    nano_cpus: int = Field(gt=0)
-    pids_limit: int = Field(gt=0)
-    internal_command_timeout_seconds: int = Field(gt=0, le=600)
-    max_file_bytes: int = Field(gt=0)
-    max_user_storage_bytes: int = Field(gt=0)
-    volume_driver: str = Field(min_length=1)
-    volume_driver_options: dict[str, str]
-    max_running_containers: int = Field(gt=0)
-    idle_stop_seconds: int = Field(gt=0)
-    idle_remove_seconds: int = Field(gt=0)
-    cleanup_interval_seconds: int = Field(gt=0)
-    cleanup_failure_alert_threshold: int = Field(gt=0)
-    stop_containers_on_shutdown: bool
-
-    @model_validator(mode="after")
-    def validate_size_limits(self) -> "SandboxConfig":
-        """校验沙箱容量限制之间的关系。"""
-        if self.max_file_bytes > self.max_user_storage_bytes:
-            raise ValueError("max_file_bytes 不能大于 max_user_storage_bytes")
-        if self.idle_stop_seconds >= self.idle_remove_seconds:
-            raise ValueError("idle_stop_seconds 必须小于 idle_remove_seconds")
-        option_fields = {
-            "deployment_namespace": self.deployment_namespace,
-            "user_id": 1,
-            "max_user_storage_bytes": self.max_user_storage_bytes,
-        }
-        try:
-            rendered_options = {
-                key: value.format_map(option_fields)
-                for key, value in self.volume_driver_options.items()
-            }
-        except (KeyError, ValueError) as exc:
-            placeholder = exc.args[0] if exc.args else "格式无效"
-            raise ValueError(f"数据卷驱动选项模板无效: {placeholder}") from exc
-        if any(not key or not value for key, value in rendered_options.items()):
-            raise ValueError("数据卷驱动选项不能包含空键或空值")
-        if self.volume_driver != "local" and not any(
-            "{max_user_storage_bytes}" in value
-            for value in self.volume_driver_options.values()
-        ):
-            raise ValueError("数据卷驱动选项必须包含 max_user_storage_bytes 占位符")
-        return self
 
 
 # 模型与智能体配置。
@@ -215,28 +146,9 @@ class Cfg(AppConfigModel):
     # 元数据索引配置。
     metadata: MetadataConfig
 
-    # 沙箱配置。
-    sandbox: SandboxConfig
-
     # 模型与智能体配置。
     lm_config: LMConfigCfg
     agent: AgentConfig
-
-    @model_validator(mode="after")
-    def validate_agent_models(self) -> "Cfg":
-        """要求所有专业 Agent 均显式配置且引用可用模型。"""
-        required_specialists = set(AGENT_TYPES)
-        configured_specialists = set(self.agent.specialists)
-        missing = sorted(required_specialists - configured_specialists)
-        if missing:
-            raise ValueError("agent.specialists 缺少配置: " + ", ".join(missing))
-        for agent_type, specialist in self.agent.specialists.items():
-            if specialist.model not in {"default", *self.lm_config.models}:
-                raise ValueError(
-                    f"agent.specialists.{agent_type}.model 引用了未知模型: "
-                    f"{specialist.model}"
-                )
-        return self
 
 
 def _load_config() -> Cfg:

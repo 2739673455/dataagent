@@ -6,14 +6,14 @@ from uuid import UUID, uuid4
 
 from docker.errors import NotFound
 
+from app.sandbox import constants
 from app.sandbox.manager import DockerSandboxManager
-from tests.sandbox.fakes import FakeSandboxOwnership, build_sandbox_config
+from tests.sandbox.fakes import FakeSandboxOwnership
 
 
 def _manager() -> tuple[DockerSandboxManager, MagicMock, MagicMock]:
     """构造已经完成初始化的沙箱管理器。"""
     manager = DockerSandboxManager(
-        build_sandbox_config(),
         FakeSandboxOwnership(),
         (),
     )
@@ -86,7 +86,7 @@ def test_delete_conversation_recreates_container_for_existing_volume() -> None:
     volume.name = manager._volume_name(7)
     volume.attrs = {
         "Labels": manager._resource_labels(7),
-        "Driver": manager._config.volume_driver,
+        "Driver": constants.VOLUME_DRIVER,
         "Options": manager._volume_driver_options(7),
     }
     client.containers.get.side_effect = NotFound("missing")
@@ -124,7 +124,7 @@ def test_init_cancellation_waits_for_thread_then_releases_resources() -> None:
 
     import pytest
 
-    manager = DockerSandboxManager(build_sandbox_config(), FakeSandboxOwnership(), ())
+    manager = DockerSandboxManager(FakeSandboxOwnership(), ())
     client = MagicMock()
     started, finish = Event(), Event()
 
@@ -157,7 +157,7 @@ def test_init_failure_closes_client_created_before_reconcile() -> None:
     """Docker 已连接但运行时校验失败时，客户端仍被关闭。"""
     import pytest
 
-    manager = DockerSandboxManager(build_sandbox_config(), FakeSandboxOwnership(), ())
+    manager = DockerSandboxManager(FakeSandboxOwnership(), ())
     client = MagicMock()
 
     def initialize() -> None:

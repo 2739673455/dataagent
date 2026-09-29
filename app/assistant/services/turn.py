@@ -11,12 +11,12 @@ from app.assistant.errors import (
     ConversationNotResumableError,
 )
 from app.assistant.events import schemas as chat_contract
-from app.assistant.execution.run import ConversationRunService
 from app.assistant.repositories.conversation import ConversationPGRepo
+from app.assistant.services.run import ConversationRunService
 from app.assistant.tasks import ConversationTasks
 
 if TYPE_CHECKING:
-    from app.assistant.execution.manager import AgentManager
+    from app.assistant.services.manager import AgentManager
 
 
 class ConversationTurnService:
@@ -46,7 +46,7 @@ class ConversationTurnService:
 
         async def prepare() -> None:
             """在 Run 持有生命周期锁时更新目录并调度标题。"""
-            title_submission: tuple[UUID, str, str] | None = None
+            title_submission: tuple[UUID, str] | None = None
             async with self._repository.session.begin():
                 conversation = await self._repository.get(user_id, conversation_id)
                 if conversation is None:
@@ -67,7 +67,6 @@ class ConversationTurnService:
                     )
                     title_submission = (
                         conversation.id,
-                        conversation.title,
                         user_text,
                     )
                 elif conversation.is_draft:
@@ -76,11 +75,10 @@ class ConversationTurnService:
                     await self._repository.update(conversation)
 
             if title_submission is not None:
-                target_id, expected_title, source = title_submission
+                target_id, source = title_submission
                 self._tasks.generate_title(
                     user_id,
                     target_id,
-                    expected_title,
                     source,
                 )
 

@@ -11,9 +11,8 @@ from langchain_core.language_models.fake_chat_models import FakeMessagesListChat
 from langchain_core.messages import AIMessage
 from pydantic import Field
 
-from app.assistant.execution import runtime_factory
+from app.assistant.services import runtime_factory
 from app.sandbox.manager import DockerSandboxManager
-from app.shared.config import app_config
 
 
 class ToolModel(FakeMessagesListChatModel):
@@ -40,7 +39,7 @@ register_harness_profile(
 def make_factory(saver):
     persistence = MagicMock()
     persistence.get_checkpointer.return_value = saver
-    sandbox = DockerSandboxManager(app_config.cfg.sandbox, MagicMock(), [])
+    sandbox = DockerSandboxManager(MagicMock(), [])
     sandbox.init = AsyncMock(
         side_effect=AssertionError("Docker initialized during read")
     )
@@ -60,8 +59,8 @@ from uuid import uuid4
 from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 
-from app.assistant.execution.manager import AgentManager
-from app.assistant.execution.types import (
+from app.assistant.services.manager import AgentManager
+from app.assistant.services.types import (
     SubagentMessageActivity,
     SubagentStatusActivity,
     build_planner_config,

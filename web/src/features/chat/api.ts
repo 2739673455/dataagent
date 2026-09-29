@@ -15,7 +15,6 @@ import appClient from "@/api/appClient";
 type ApiSchemas = components["schemas"];
 type CreateConversationRequest = ApiSchemas["CreateConversationRequest"];
 type DeleteConversationRequest = ApiSchemas["DeleteConversationRequest"];
-type UpdateConversationRequest = ApiSchemas["UpdateConversationRequest"];
 
 function parseStreamEvent(frame: string): ChatStreamEvent | null {
   const payload = frame
@@ -111,13 +110,6 @@ export const chatApi = {
       },
       responseType: "blob",
     });
-  },
-
-  updateConversation(conversationId: string, title: string) {
-    return appClient.post(CHAT_API_ROUTES.updateConversation, {
-      conversation_id: conversationId,
-      title,
-    } satisfies UpdateConversationRequest);
   },
 
   deleteConversations(conversationIds: string[]) {

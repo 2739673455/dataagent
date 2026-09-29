@@ -10,9 +10,9 @@ from docker.errors import NotFound
 from docker.models.containers import Container
 from loguru import logger
 
+from app.sandbox import constants
 from app.sandbox.errors import SandboxCapacityUnavailableError
 from app.sandbox.ownership import SandboxOwnership
-from app.shared.config.app_config import SandboxConfig
 
 
 class DockerRuntimePool:
@@ -20,7 +20,6 @@ class DockerRuntimePool:
 
     def __init__(
         self,
-        config: SandboxConfig,
         ownership: SandboxOwnership,
         *,
         get_or_create_container: Callable[[int], Container],
@@ -28,7 +27,6 @@ class DockerRuntimePool:
         running_containers: Callable[[], list[tuple[int, Container]]],
     ) -> None:
         """绑定 Container 存储操作和跨进程协调器。"""
-        self._config = config
         self._ownership = ownership
         self._get_or_create_container = get_or_create_container
         self._get_existing_container = get_existing_container
@@ -50,7 +48,7 @@ class DockerRuntimePool:
                 return container
 
             running = self._running_containers()
-            if len(running) < self._config.max_running_containers:
+            if len(running) < constants.MAX_RUNNING_CONTAINERS:
                 container.start()
                 container.reload()
                 logger.info(f"启动 Docker 沙箱: user_id={user_id}")
@@ -81,7 +79,7 @@ class DockerRuntimePool:
                 ):
                     continue
                 running = self._running_containers()
-                if len(running) < self._config.max_running_containers:
+                if len(running) < constants.MAX_RUNNING_CONTAINERS:
                     break
                 current.stop(timeout=10)
                 logger.info(f"因容量限制停止空闲 Docker 沙箱: user_id={idle_user_id}")
@@ -94,10 +92,7 @@ class DockerRuntimePool:
             with self._ownership.user_mutation(user_id):
                 container = self._get_or_create_container(user_id)
             if container.status != "running":
-                if (
-                    len(self._running_containers())
-                    >= self._config.max_running_containers
-                ):
+                if len(self._running_containers()) >= constants.MAX_RUNNING_CONTAINERS:
                     raise SandboxCapacityUnavailableError("Docker 沙箱运行容量已满")
                 container.start()
                 container.reload()
@@ -113,7 +108,7 @@ class DockerRuntimePool:
         running.sort(
             key=lambda item: self._ownership.last_activity(item[0]), reverse=True
         )
-        for user_id, _ in running[self._config.max_running_containers :]:
+        for user_id, _ in running[constants.MAX_RUNNING_CONTAINERS :]:
             with self._ownership.user_maintenance(user_id), self._ownership.capacity():
                 current = self._get_existing_container(user_id)
                 if current is not None and current.status == "running":
@@ -129,9 +124,9 @@ class DockerRuntimePool:
             idle_seconds = max(
                 0.0, time.time() - self._ownership.last_activity(user_id)
             )
-            if idle_seconds < self._config.idle_stop_seconds:
+            if idle_seconds < constants.IDLE_STOP_SECONDS:
                 return
-            if idle_seconds >= self._config.idle_remove_seconds:
+            if idle_seconds >= constants.IDLE_REMOVE_SECONDS:
                 container.remove(force=True)
                 logger.info(
                     f"删除空闲 Docker 沙箱并保留持久化数据卷: user_id={user_id}"
@@ -157,7 +152,7 @@ class DockerRuntimePool:
                 current = self._get_existing_container(user_id)
                 if (
                     current is not None
-                    and self._config.stop_containers_on_shutdown
+                    and constants.STOP_CONTAINERS_ON_SHUTDOWN
                     and current.status == "running"
                 ):
                     current.stop(timeout=10)

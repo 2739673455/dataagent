@@ -13,7 +13,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
 from app.assistant.events.stream import MessageDeltaParser, update_messages
-from app.assistant.execution.types import (
+from app.assistant.services.types import (
     SubagentActivityWriter,
     SubagentMessageActivity,
     SubagentMessageDeltaActivity,

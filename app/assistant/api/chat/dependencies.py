@@ -10,8 +10,8 @@ from app.assistant.api.dependencies import (
     ConversationRunServiceDep,
     ConversationTasksDep,
 )
-from app.assistant.execution.turn import ConversationTurnService
 from app.assistant.repositories.conversation import ConversationPGRepo
+from app.assistant.services.turn import ConversationTurnService
 from app.dependencies import WebResourcesDep
 
 

@@ -29,6 +29,7 @@ from deepagents.backends.sandbox import BaseSandbox
 from docker.errors import APIError, NotFound
 from docker.models.containers import Container
 
+from app.sandbox import constants
 from app.sandbox.errors import SandboxPathError
 from app.sandbox.ownership import SandboxOwnership
 from app.sandbox.paths import (
@@ -42,7 +43,6 @@ from app.sandbox.scripts import (
     _LARGE_EDIT_SCRIPT,
 )
 from app.sandbox.shell_runner import DockerShellJobRunner
-from app.shared.config.app_config import SandboxConfig
 
 _ResultT = TypeVar("_ResultT")
 _SANDBOX_STAGING_ROOT = SANDBOX_STAGING_ROOT
@@ -71,7 +71,6 @@ class DockerSandboxBackend(BaseSandbox):
         user_id: int,
         conversation_id: UUID,
         conversation_uid: int | None,
-        sandbox_config: SandboxConfig,
         ownership: SandboxOwnership,
         touch: Callable[[], None],
         get_running_container: Callable[[threading.Event | None], Container],
@@ -88,14 +87,14 @@ class DockerSandboxBackend(BaseSandbox):
         self._directory_mode = 0o700
         self._umask = 0o077
         self._internal_command_timeout_seconds = (
-            sandbox_config.internal_command_timeout_seconds
+            constants.INTERNAL_COMMAND_TIMEOUT_SECONDS
         )
         self._staging_dir = posixpath.join(
             _SANDBOX_STAGING_ROOT,
             str(conversation_id),
             str(self._execution_uid),
         )
-        self._max_file_bytes = sandbox_config.max_file_bytes
+        self._max_file_bytes = constants.MAX_FILE_BYTES
         self._ownership = ownership
         self._touch = touch
         self._get_running_container = get_running_container

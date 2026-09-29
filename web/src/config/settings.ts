@@ -12,7 +12,6 @@ export const CHAT_API_ROUTES = {
   createConversation: "/api/v1/chat/create",
   listConversations: "/api/v1/chat/ls",
   deleteConversations: "/api/v1/chat/delete",
-  updateConversation: "/api/v1/chat/update",
   getMessages: (conversationId: string) => `/api/v1/chat/ls/${conversationId}`,
   getAttachment: "/api/v1/chat/attachment/get",
   stream: "/api/v1/chat/stream",

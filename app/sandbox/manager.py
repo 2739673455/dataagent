@@ -15,6 +15,7 @@ from docker.models.volumes import Volume
 from loguru import logger
 
 import docker
+from app.sandbox import constants
 from app.sandbox.archive import SandboxArchiveStore
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.ownership import SandboxOwnership
@@ -24,7 +25,6 @@ from app.sandbox.paths import (
     normalize_attachment_path,
 )
 from app.sandbox.runtime_pool import DockerRuntimePool
-from app.shared.config.app_config import SandboxConfig
 
 _DEPLOYMENT_LABEL = "dataagent.sandbox.deployment"
 _USER_LABEL = "dataagent.sandbox.user_id"
@@ -37,12 +37,10 @@ class DockerSandboxManager:
 
     def __init__(
         self,
-        sandbox_config: SandboxConfig,
         ownership: SandboxOwnership,
         readonly_mounts: Sequence[SandboxReadonlyMount],
     ) -> None:
         """初始化 Docker 沙箱管理器。"""
-        self._config = sandbox_config
         self._ownership = ownership
         self._readonly_mounts = tuple(
             sorted(readonly_mounts, key=lambda mount: mount.target.as_posix())
@@ -62,9 +60,8 @@ class DockerSandboxManager:
         self._client: docker.DockerClient | None = None
         self._container_spec: str | None = None
         self._init_lock = asyncio.Lock()
-        self._archive = SandboxArchiveStore(sandbox_config.max_file_bytes)
+        self._archive = SandboxArchiveStore(constants.MAX_FILE_BYTES)
         self._runtime_pool = DockerRuntimePool(
-            sandbox_config,
             ownership,
             get_or_create_container=self._get_or_create_storage_container_sync,
             get_existing_container=self._get_existing_container_sync,
@@ -86,10 +83,10 @@ class DockerSandboxManager:
         try:
             client.ping()
             try:
-                image = client.images.get(self._config.image)
+                image = client.images.get(constants.IMAGE)
             except ImageNotFound as exc:
                 raise RuntimeError(
-                    f"Docker 沙箱镜像不存在: {self._config.image}，"
+                    f"Docker 沙箱镜像不存在: {constants.IMAGE}，"
                     "请先执行 docker compose -f docker/compose.yml up -d"
                 ) from exc
             if image.id is None:
@@ -137,7 +134,7 @@ class DockerSandboxManager:
 
     def _container_name(self, user_id: int) -> str:
         """构造用户容器名称。"""
-        return f"dataagent-{self._config.deployment_namespace}-sandbox-user-{user_id}"
+        return f"dataagent-{constants.DEPLOYMENT_NAMESPACE}-sandbox-user-{user_id}"
 
     def _volume_name(self, user_id: int) -> str:
         """构造用户数据卷名称。"""
@@ -146,16 +143,16 @@ class DockerSandboxManager:
     def _resource_labels(self, user_id: int) -> dict[str, str]:
         """构造容器和卷的归属标签。"""
         return {
-            _DEPLOYMENT_LABEL: self._config.deployment_namespace,
+            _DEPLOYMENT_LABEL: constants.DEPLOYMENT_NAMESPACE,
             _USER_LABEL: str(user_id),
-            _QUOTA_BYTES_LABEL: str(self._config.max_user_storage_bytes),
+            _QUOTA_BYTES_LABEL: str(constants.MAX_USER_STORAGE_BYTES),
         }
 
     def _container_filters(self) -> dict[str, str | list[str] | bool]:
         """构造当前部署实例的 Docker 资源过滤条件。"""
         return {
             "label": [
-                f"{_DEPLOYMENT_LABEL}={self._config.deployment_namespace}",
+                f"{_DEPLOYMENT_LABEL}={constants.DEPLOYMENT_NAMESPACE}",
                 _USER_LABEL,
             ]
         }
@@ -163,13 +160,13 @@ class DockerSandboxManager:
     def _volume_driver_options(self, user_id: int) -> dict[str, str]:
         """渲染用户卷驱动参数。"""
         fields = {
-            "deployment_namespace": self._config.deployment_namespace,
+            "deployment_namespace": constants.DEPLOYMENT_NAMESPACE,
             "user_id": user_id,
-            "max_user_storage_bytes": self._config.max_user_storage_bytes,
+            "max_user_storage_bytes": constants.MAX_USER_STORAGE_BYTES,
         }
         return {
             key: value.format_map(fields)
-            for key, value in self._config.volume_driver_options.items()
+            for key, value in constants.VOLUME_DRIVER_OPTIONS.items()
         }
 
     def _runtime_container_spec(self) -> dict[str, Any]:
@@ -183,10 +180,10 @@ class DockerSandboxManager:
             "tmpfs": {"/tmp": "rw,nosuid,nodev,size=256m"},
             "cap_drop": ["ALL"],
             "security_opt": ["no-new-privileges:true"],
-            "mem_limit": self._config.memory_limit,
-            "nano_cpus": self._config.nano_cpus,
-            "pids_limit": self._config.pids_limit,
-            "network_mode": self._config.network_mode,
+            "mem_limit": constants.MEMORY_LIMIT,
+            "nano_cpus": constants.NANO_CPUS,
+            "pids_limit": constants.PIDS_LIMIT,
+            "network_mode": constants.NETWORK_MODE,
             "environment": {"HOME": "/tmp"},
         }
 
@@ -219,9 +216,9 @@ class DockerSandboxManager:
                 for mount in self._readonly_mounts
             ],
             "volume": {
-                "driver": self._config.volume_driver,
-                "driver_options": self._config.volume_driver_options,
-                "quota_bytes": self._config.max_user_storage_bytes,
+                "driver": constants.VOLUME_DRIVER,
+                "driver_options": constants.VOLUME_DRIVER_OPTIONS,
+                "quota_bytes": constants.MAX_USER_STORAGE_BYTES,
             },
         }
         return hashlib.sha256(
@@ -247,7 +244,7 @@ class DockerSandboxManager:
         actual_options = volume.attrs.get("Options") or {}
         expected_options = self._volume_driver_options(user_id)
         if (
-            actual_driver != self._config.volume_driver
+            actual_driver != constants.VOLUME_DRIVER
             or actual_options != expected_options
         ):
             raise RuntimeError(
@@ -262,7 +259,7 @@ class DockerSandboxManager:
             return volume
         return self._get_client().volumes.create(
             name=self._volume_name(user_id),
-            driver=self._config.volume_driver,
+            driver=constants.VOLUME_DRIVER,
             driver_opts=self._volume_driver_options(user_id),
             labels=self._resource_labels(user_id),
         )
@@ -275,7 +272,7 @@ class DockerSandboxManager:
             raise RuntimeError("Docker 沙箱容器配置不可用")
 
         container = client.containers.create(
-            self._config.image,
+            constants.IMAGE,
             name=self._container_name(user_id),
             volumes={
                 volume.name: {"bind": SANDBOX_DATA_ROOT, "mode": "rw"},
@@ -363,7 +360,6 @@ class DockerSandboxManager:
             user_id,
             conversation_id,
             conversation_uid,
-            self._config,
             self._ownership,
             lambda: self._touch_user(user_id),
             lambda cancel_event: self._runtime_pool.get_running(user_id, cancel_event),
@@ -538,7 +534,7 @@ class DockerSandboxManager:
         else:
             self._cleanup_consecutive_failures = 0
             failures = 0
-        if failures >= self._config.cleanup_failure_alert_threshold:
+        if failures >= constants.CLEANUP_FAILURE_ALERT_THRESHOLD:
             logger.error(
                 f"Docker 沙箱清理连续失败: consecutive_failures={failures}, last_error={errors[-1]}"
             )
@@ -570,7 +566,7 @@ class DockerSandboxManager:
         """定期停止或删除空闲容器，并始终保留数据卷。"""
         while True:
             try:
-                await asyncio.sleep(self._config.cleanup_interval_seconds)
+                await asyncio.sleep(constants.CLEANUP_INTERVAL_SECONDS)
                 await self._run_cleanup_cycle()
             except asyncio.CancelledError:
                 raise

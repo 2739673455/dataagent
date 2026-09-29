@@ -26,7 +26,6 @@ export default function ChatPage() {
   const isLoadingMessages = useChatStore((state) => state.isLoadingMessages);
   const loadConversations = useChatStore((state) => state.loadConversations);
   const deleteConversation = useChatStore((state) => state.deleteConversation);
-  const renameConversation = useChatStore((state) => state.renameConversation);
   const loadMessages = useChatStore((state) => state.loadMessages);
   const user = useIdentityStore((state) => state.user);
 
@@ -173,7 +172,6 @@ export default function ChatPage() {
             activeConversationId={routeConversationId}
             onCreate={handleCreateConversation}
             onDelete={(conversationId) => void handleDeleteConversation(conversationId)}
-            onRename={renameConversation}
           />
         </div>
 

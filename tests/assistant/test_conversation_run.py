@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessageChunk
 
 from app.assistant.errors import ConversationBusyError, ConversationRunConflictError
 from app.assistant.events import schemas as chat_schema
-from app.assistant.execution.run import (
+from app.assistant.services.run import (
     ConversationRunService,
 )
 
@@ -150,7 +150,7 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
         async with asyncio.timeout(1):
             with (
                 patch(
-                    "app.assistant.execution.run.asyncio.create_task",
+                    "app.assistant.services.run.asyncio.create_task",
                     side_effect=cancel_new_run,
                 ),
                 self.assertRaises(ConversationBusyError),

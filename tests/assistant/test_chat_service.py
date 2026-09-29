@@ -17,13 +17,13 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.types import StateSnapshot
 from pydantic import ValidationError
 
-from app.assistant.conversations import history as conversation_history
 from app.assistant.errors import PlannerContinuationLimitError
 from app.assistant.events import projection as message_projection
 from app.assistant.events import schemas as chat_schema
-from app.assistant.execution import planner as planner_turn
-from app.assistant.execution.manager import AgentManager
-from app.assistant.execution.types import (
+from app.assistant.services import history as conversation_history
+from app.assistant.services import planner as planner_turn
+from app.assistant.services.manager import AgentManager
+from app.assistant.services.types import (
     ConversationAgentRuntime,
     PlannerTurnContext,
     SubagentMessageActivity,

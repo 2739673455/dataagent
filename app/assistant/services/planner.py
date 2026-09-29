@@ -19,7 +19,7 @@ from app.assistant.events.projection import (
     subagent_activity_to_event,
 )
 from app.assistant.events.stream import MessageDeltaParser, update_messages
-from app.assistant.execution.types import (
+from app.assistant.services.types import (
     PlannerTurnContext,
     SubagentMessageActivity,
     SubagentMessageDeltaActivity,
@@ -29,7 +29,7 @@ from app.assistant.execution.types import (
 )
 
 if TYPE_CHECKING:
-    from app.assistant.execution.manager import AgentManager
+    from app.assistant.services.manager import AgentManager
     from app.sandbox.manager import DockerSandboxManager
 
 

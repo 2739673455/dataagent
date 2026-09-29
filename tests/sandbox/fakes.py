@@ -4,39 +4,6 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from uuid import UUID
 
-from app.shared.config.app_config import SandboxConfig
-
-
-def build_sandbox_config(**updates: object) -> SandboxConfig:
-    """构造沙箱管理器测试所需的最小配置。"""
-    values = {
-        "deployment_namespace": "test",
-        "ownership": {
-            "redis_url": "redis://127.0.0.1:6379/15",
-            "lock_timeout_seconds": 60,
-            "wait_timeout_seconds": 2,
-            "lease_seconds": 10,
-        },
-        "image": "dataagent-sandbox:latest",
-        "memory_limit": "512m",
-        "nano_cpus": 1_000_000_000,
-        "pids_limit": 64,
-        "network_mode": "none",
-        "internal_command_timeout_seconds": 60,
-        "max_file_bytes": 6 * 1024 * 1024,
-        "max_user_storage_bytes": 24 * 1024 * 1024,
-        "volume_driver": "local",
-        "volume_driver_options": {},
-        "idle_stop_seconds": 60,
-        "idle_remove_seconds": 120,
-        "cleanup_interval_seconds": 60,
-        "cleanup_failure_alert_threshold": 3,
-        "max_running_containers": 2,
-        "stop_containers_on_shutdown": True,
-    }
-    values.update(updates)
-    return SandboxConfig.model_validate(values)
-
 
 class FakeSandboxOwnership:
     """提供无跨进程协调的 SandboxOwnership 测试替身。"""

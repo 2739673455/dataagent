@@ -22,7 +22,7 @@ from loguru import logger
 
 from app.assistant.events import schemas as chat_schema
 from app.assistant.events.content import normalized_content_blocks, reasoning_text
-from app.assistant.execution.types import (
+from app.assistant.services.types import (
     SubagentActivity,
     SubagentMessageActivity,
     SubagentMessageDeltaActivity,

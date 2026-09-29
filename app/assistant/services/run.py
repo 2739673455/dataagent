@@ -13,8 +13,8 @@ from loguru import logger
 
 from app.assistant.errors import ConversationBusyError, ConversationRunConflictError
 from app.assistant.events import schemas as chat_schema
-from app.assistant.execution import planner as planner_turn
-from app.assistant.execution.types import (
+from app.assistant.services import planner as planner_turn
+from app.assistant.services.types import (
     PlannerTurnContext,
     conversation_lifecycle_lock_name,
 )
@@ -22,7 +22,7 @@ from app.shared.config.app_config import cfg
 from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 if TYPE_CHECKING:
-    from app.assistant.execution.manager import AgentManager
+    from app.assistant.services.manager import AgentManager
     from app.sandbox.manager import DockerSandboxManager
     from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 

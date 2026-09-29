@@ -6,15 +6,15 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from app.assistant.conversations.lifecycle import ConversationLifecycleService
 from app.assistant.errors import (
     ConversationBusyError,
     ConversationNotFoundError,
     ConversationNotResumableError,
 )
 from app.assistant.events.schemas import TextContent, UserMessageRequest
-from app.assistant.execution.run import ConversationRunService
-from app.assistant.execution.turn import (
+from app.assistant.services.lifecycle import ConversationLifecycleService
+from app.assistant.services.run import ConversationRunService
+from app.assistant.services.turn import (
     ConversationTurnService,
 )
 from app.shared.errors.infrastructure import AdvisoryLockBusyError

@@ -8,7 +8,7 @@ from app.assistant.api.chat.dependencies import ConversationPGRepoDep
 from app.assistant.api.dependencies import (
     SandboxManagerDep,
 )
-from app.assistant.conversations.attachments import AttachmentService
+from app.assistant.services.attachments import AttachmentService
 
 
 def _get_attachment_service(

@@ -10,7 +10,7 @@ import pytest
 from langchain_openai import ChatOpenAI
 
 from app.assistant import model_factory
-from app.assistant.execution import runtime_factory
+from app.assistant.services import runtime_factory
 from app.shared.config.app_config import LMConfigCfg, ModelCfg, ModelProfileCfg, cfg
 
 

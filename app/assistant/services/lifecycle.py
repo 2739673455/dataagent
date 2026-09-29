@@ -9,15 +9,15 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from app.assistant.errors import ConversationBusyError
-from app.assistant.execution.run import ConversationRunService
-from app.assistant.execution.types import (
+from app.assistant.repositories.conversation import ConversationPGRepo
+from app.assistant.services.run import ConversationRunService
+from app.assistant.services.types import (
     conversation_lifecycle_lock_name,
 )
-from app.assistant.repositories.conversation import ConversationPGRepo
 from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 if TYPE_CHECKING:
-    from app.assistant.execution.manager import AgentManager
+    from app.assistant.services.manager import AgentManager
     from app.sandbox.manager import DockerSandboxManager
     from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 

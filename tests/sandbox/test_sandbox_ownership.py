@@ -9,19 +9,13 @@ from redis.exceptions import RedisError
 from app.sandbox.errors import SandboxDeletedError, SandboxOwnershipError
 from app.sandbox.manager import DockerSandboxManager
 from app.sandbox.ownership import RedisSandboxOwnership
-from tests.sandbox.fakes import FakeSandboxOwnership, build_sandbox_config
+from tests.sandbox.fakes import FakeSandboxOwnership
 
 
 def _redis_ownership(redis: MagicMock) -> RedisSandboxOwnership:
     """构造使用模拟 Redis 客户端的 ownership。"""
     with patch("app.sandbox.ownership.Redis.from_url", return_value=redis):
-        return RedisSandboxOwnership(
-            "redis://localhost/0",
-            "test",
-            lock_timeout_seconds=10,
-            wait_timeout_seconds=1,
-            lease_seconds=3,
-        )
+        return RedisSandboxOwnership()
 
 
 def test_manager_only_finalizes_containers_for_last_runtime() -> None:
@@ -30,7 +24,7 @@ def test_manager_only_finalizes_containers_for_last_runtime() -> None:
 
     async def run(last_runtime: bool) -> int:
         ownership = FakeSandboxOwnership(last_runtime=last_runtime)
-        manager = DockerSandboxManager(build_sandbox_config(), ownership, ())
+        manager = DockerSandboxManager(ownership, ())
         manager._client = MagicMock()
         manager._ownership_started = True
         with (

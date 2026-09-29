@@ -4,9 +4,9 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from app.assistant.conversations.lifecycle import ConversationLifecycleService
-from app.assistant.execution.manager import AgentManager
-from app.assistant.execution.run import ConversationRunService
+from app.assistant.services.lifecycle import ConversationLifecycleService
+from app.assistant.services.manager import AgentManager
+from app.assistant.services.run import ConversationRunService
 from app.assistant.tasks import ConversationTasks
 from app.dependencies import WebResourcesDep
 from app.sandbox.manager import DockerSandboxManager

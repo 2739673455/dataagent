@@ -11,7 +11,7 @@ from app.assistant.events.projection import (
 )
 
 if TYPE_CHECKING:
-    from app.assistant.execution.manager import AgentManager
+    from app.assistant.services.manager import AgentManager
     from app.sandbox.manager import DockerSandboxManager
 
 

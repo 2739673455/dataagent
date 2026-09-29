@@ -7,8 +7,8 @@ from uuid import UUID
 
 from loguru import logger
 
-from app.assistant.conversations.lifecycle import ConversationLifecycleService
-from app.assistant.conversations.title import ConversationTitleService
+from app.assistant.services.lifecycle import ConversationLifecycleService
+from app.assistant.services.title import ConversationTitleService
 from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.errors.infrastructure import AdvisoryLockBusyError
@@ -65,7 +65,7 @@ class ConversationTasks:
                     await asyncio.sleep(2**attempt)
 
     def generate_title(
-        self, user_id: int, conversation_id: UUID, expected_title: str, user_text: str
+        self, user_id: int, conversation_id: UUID, user_text: str
     ) -> None:
         """后台生成标题；关闭期间跳过，失败保留即时标题，不重试。"""
         if self._closing:
@@ -75,7 +75,7 @@ class ConversationTasks:
             try:
                 async with asyncio.timeout(_TASK_TIMEOUT_SECONDS):
                     await ConversationTitleService(self._postgres).generate_and_update(
-                        user_id, conversation_id, expected_title, user_text
+                        user_id, conversation_id, user_text
                     )
             except Exception:  # noqa: BLE001
                 logger.exception(

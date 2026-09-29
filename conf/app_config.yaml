@@ -54,30 +54,6 @@ embedding: # 文本向量化服务配置。
 metadata: # 元数据全量和增量导入共用的 Redis 租约锁。
   redis_url: redis://127.0.0.1:6379/4 # 同一元数据目录的所有导入进程必须使用相同地址。
 
-sandbox: # 每用户 Docker 沙箱及其持久化数据卷配置。
-  deployment_namespace: local # 同一 Docker 主机上的部署实例必须使用不同命名空间。
-  ownership: # 跨 API 进程的沙箱所有权协调。
-    redis_url: redis://127.0.0.1:6379/2 # 所有权锁、租约和活动状态 Redis 地址。
-    lock_timeout_seconds: 60 # 分布式锁租期，持锁期间自动续期，单位为秒。
-    wait_timeout_seconds: 60 # 等待锁、维护或活跃操作结束的上限，单位为秒。
-    lease_seconds: 30 # 普通沙箱操作租约时长，执行期间自动续期，单位为秒。
-  image: dataagent-sandbox:latest # 用户沙箱使用的 Docker 镜像。
-  network_mode: none # 运行时断网，依赖统一构建到沙箱镜像。
-  memory_limit: 2g # 单个用户容器的 Docker 内存限制。
-  nano_cpus: 2000000000 # 每个用户沙箱最多使用 2 个 CPU 核心。
-  pids_limit: 256 # 单个用户容器允许的最大进程数。
-  internal_command_timeout_seconds: 60 # Sandbox 内部辅助命令硬超时。
-  max_file_bytes: 52428800 # 单个工作区文件上限，单位为字节。
-  max_user_storage_bytes: 1073741824 # 单个用户数据卷容量上限，单位为字节。
-  volume_driver: local # 用户持久化数据卷使用的 Docker Volume Driver。
-  volume_driver_options: {} # local 驱动不支持硬配额；生产驱动应使用 {max_user_storage_bytes}。
-  max_running_containers: 8 # 按部署机器容量调整，满载时回收空闲容器或返回容量不足。
-  idle_stop_seconds: 600 # 空闲 10 分钟后停止容器。
-  idle_remove_seconds: 3600 # 空闲 1 小时后删除容器，但保留用户数据卷。
-  cleanup_interval_seconds: 60 # 沙箱空闲资源扫描间隔，单位为秒。
-  cleanup_failure_alert_threshold: 3 # 连续清理失败达到该次数后记录告警。
-  stop_containers_on_shutdown: true # 服务关闭时是否停止本实例管理的用户容器。
-
 lm_config: # 可用语言模型集合及默认模型。
   active: deepseek-deepseek-flash # Planner 和默认 Specialist 使用的模型配置名。
   models: # 按配置名声明可用语言模型。

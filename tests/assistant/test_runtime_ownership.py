@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
-from app.assistant.execution.manager import AgentManager
+from app.assistant.services.manager import AgentManager
 
 
 class RuntimeOwnershipTest(unittest.IsolatedAsyncioTestCase):

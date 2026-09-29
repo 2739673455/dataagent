@@ -7,12 +7,12 @@ from fastapi import FastAPI
 from loguru import logger
 
 from app.assistant.agents.filesystem import packaged_skill_readonly_mounts
-from app.assistant.conversations.lifecycle import ConversationLifecycleService
-from app.assistant.conversations.tombstones import ConversationTombstoneStore
-from app.assistant.execution.manager import AgentManager
-from app.assistant.execution.run import ConversationRunService
-from app.assistant.execution.runtime_factory import ConversationAgentRuntimeFactory
 from app.assistant.providers import build_conversation_lifecycle_service
+from app.assistant.services.lifecycle import ConversationLifecycleService
+from app.assistant.services.manager import AgentManager
+from app.assistant.services.run import ConversationRunService
+from app.assistant.services.runtime_factory import ConversationAgentRuntimeFactory
+from app.assistant.services.tombstones import ConversationTombstoneStore
 from app.assistant.tasks import ConversationTasks
 from app.metadata.services.recall_handler import SemanticRecallHandler
 from app.query.providers import build_query_execution_handler
@@ -61,7 +61,7 @@ def _create_resources() -> WebResources:
     embedding = EmbeddingClientManager(cfg.embedding)
     es = ESClientManager(cfg.elasticsearch)
     persistence = LangGraphPostgresManager(cfg.langgraph_postgresql)
-    sandbox = create_sandbox_manager(cfg.sandbox, packaged_skill_readonly_mounts())
+    sandbox = create_sandbox_manager(packaged_skill_readonly_mounts())
     tombstones = ConversationTombstoneStore(assistant)
     recall = SemanticRecallHandler(auth, meta, embedding, es, admin_doris)
     factory = ConversationAgentRuntimeFactory(

@@ -7,9 +7,9 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
-from app.assistant.execution.manager import AgentManager
-from app.assistant.execution.run import ConversationRunService
-from app.assistant.execution.types import conversation_lifecycle_lock_name
+from app.assistant.services.manager import AgentManager
+from app.assistant.services.run import ConversationRunService
+from app.assistant.services.types import conversation_lifecycle_lock_name
 
 _CONVERSATION_ID = uuid4()
 

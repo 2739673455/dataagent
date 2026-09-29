@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 
 from app.assistant import errors
-from app.assistant.conversations.attachments import AttachmentService
+from app.assistant.services.attachments import AttachmentService
 from app.sandbox.errors import SandboxFileTooLargeError, SandboxPathError
 
 

@@ -129,10 +129,6 @@ export interface components {
       "tool_call_id": string;
       "type": "tool_result";
     };
-    "UpdateConversationRequest": {
-      "conversation_id": string;
-      "title": string;
-    };
     "UserMessageRequest": {
       "parts": Array<(components["schemas"]["TextContent"])>;
     };
@@ -459,38 +455,6 @@ export interface operations {
       };
     };
   };
-  "api_update_conversation_api_v1_chat_update_post": {
-    "parameters": {
-      "path"?: never;
-      "query"?: never;
-      "header": {
-        "X-User-ID"?: (number | null);
-      };
-      "cookie"?: never;
-    };
-    "requestBody": {
-      "application/json": components["schemas"]["UpdateConversationRequest"];
-    };
-    "responses": {
-      "200": {
-        "content": {
-        "application/json": unknown;
-      };
-      };
-      "422": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-      "default": {
-        "content": {
-        "application/json": components["schemas"]["ProblemDetails"];
-        "application/problem+json": components["schemas"]["ProblemDetails"];
-      };
-      };
-    };
-  };
   "list_users_api_v1_users_get": {
     "parameters": {
       "path"?: never;
@@ -539,9 +503,6 @@ export interface paths {
   };
   "/api/v1/chat/stream": {
     "post": operations["api_stream_chat_api_v1_chat_stream_post"];
-  };
-  "/api/v1/chat/update": {
-    "post": operations["api_update_conversation_api_v1_chat_update_post"];
   };
   "/api/v1/chat/{conversation_id}/events": {
     "get": operations["api_subscribe_conversation_run_api_v1_chat__conversation_id__events_get"];

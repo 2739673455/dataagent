@@ -8,7 +8,7 @@ import pytest
 from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.errors import SandboxPathError
 from app.sandbox.paths import conversation_relative_path
-from tests.sandbox.fakes import FakeSandboxOwnership, build_sandbox_config
+from tests.sandbox.fakes import FakeSandboxOwnership
 
 
 def test_shared_backend_resolves_tools_and_artifact_paths_to_conversation():
@@ -17,7 +17,6 @@ def test_shared_backend_resolves_tools_and_artifact_paths_to_conversation():
         7,
         conversation,
         10001,
-        build_sandbox_config(),
         FakeSandboxOwnership(),
         lambda: None,
         MagicMock(),

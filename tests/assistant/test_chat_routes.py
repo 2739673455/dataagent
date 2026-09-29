@@ -93,7 +93,7 @@ def test_stream_routes_preserve_frames_headers_and_business_errors(entry, failur
 
     from unittest.mock import patch
 
-    from app.assistant.execution.turn import ConversationTurnService
+    from app.assistant.services.turn import ConversationTurnService
 
     with (
         patch.object(ConversationTurnService, "start", start),

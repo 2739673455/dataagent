@@ -12,7 +12,6 @@ export interface ChatSidebarProps {
   activeConversationId: string | null;
   onCreate: () => void;
   onDelete: (conversationId: string) => void;
-  onRename: (conversationId: string, title: string) => Promise<void>;
 }
 
 export function ChatSidebar({
@@ -20,7 +19,6 @@ export function ChatSidebar({
   activeConversationId,
   onCreate,
   onDelete,
-  onRename,
 }: ChatSidebarProps) {
   return (
     <div className="flex h-full flex-col overflow-hidden border-r border-[#d4d4ce] bg-[#ebebe6] font-mono text-[#27272a]">
@@ -53,7 +51,6 @@ export function ChatSidebar({
               conversation={conversation}
               isActive={conversation.conversation_id === activeConversationId}
               onDelete={onDelete}
-              onRename={onRename}
             />
           ))}
 

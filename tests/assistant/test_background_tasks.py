@@ -129,25 +129,21 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 closed.append("session")
 
-        repo = MagicMock(replace_title_if_current=AsyncMock())
+        repo = MagicMock(set_title=AsyncMock())
         conversation_id = uuid4()
         with (
             patch.object(self.tasks._postgres, "session", session_scope),
+            patch("app.assistant.services.title.create_configured_model", model_scope),
             patch(
-                "app.assistant.conversations.title.create_configured_model", model_scope
-            ),
-            patch(
-                "app.assistant.conversations.title.ConversationPGRepo",
+                "app.assistant.services.title.ConversationPGRepo",
                 return_value=repo,
             ),
         ):
-            self.tasks.generate_title(1, conversation_id, "即时标题", "分析订单")
+            self.tasks.generate_title(1, conversation_id, "分析订单")
             await asyncio.gather(*self.tasks._tasks)
         model.ainvoke.assert_awaited_once()
         self.assertEqual(model.ainvoke.await_args.args[0][1].content, "分析订单")
-        repo.replace_title_if_current.assert_awaited_once_with(
-            1, conversation_id, expected_title="即时标题", title="订单分析"
-        )
+        repo.set_title.assert_awaited_once_with(1, conversation_id, title="订单分析")
         session.commit.assert_awaited_once()
         self.assertEqual(closed, ["model", "session"])
         self.assertFalse(self.tasks._tasks)
@@ -159,10 +155,8 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
         async def model_scope(*args):
             yield model
 
-        with patch(
-            "app.assistant.conversations.title.create_configured_model", model_scope
-        ):
-            self.tasks.generate_title(1, uuid4(), "即时标题", "分析订单")
+        with patch("app.assistant.services.title.create_configured_model", model_scope):
+            self.tasks.generate_title(1, uuid4(), "分析订单")
             await asyncio.gather(*self.tasks._tasks)
         model.ainvoke.assert_awaited_once()
         self.tasks._postgres.session.assert_not_called()
@@ -174,10 +168,8 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
         async def model_scope(*args):
             yield model
 
-        with patch(
-            "app.assistant.conversations.title.create_configured_model", model_scope
-        ):
-            self.tasks.generate_title(1, uuid4(), "即时标题", "分析订单")
+        with patch("app.assistant.services.title.create_configured_model", model_scope):
+            self.tasks.generate_title(1, uuid4(), "分析订单")
             await asyncio.gather(*self.tasks._tasks)
         self.tasks._postgres.session.assert_not_called()
 
@@ -198,10 +190,8 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
         timeout = patch("app.assistant.tasks._TASK_TIMEOUT_SECONDS", 0.001)
         timeout.start()
         self.addCleanup(timeout.stop)
-        with patch(
-            "app.assistant.conversations.title.create_configured_model", model_scope
-        ):
-            self.tasks.generate_title(1, uuid4(), "即时标题", "分析订单")
+        with patch("app.assistant.services.title.create_configured_model", model_scope):
+            self.tasks.generate_title(1, uuid4(), "分析订单")
             await asyncio.gather(*self.tasks._tasks)
         model.ainvoke.assert_awaited_once()
         self.assertEqual(closed, [True])
@@ -209,5 +199,5 @@ class BackgroundTasksTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_title_submission_during_shutdown_does_not_fail_caller(self):
         await self.tasks.close()
-        self.tasks.generate_title(1, uuid4(), "即时标题", "分析订单")
+        self.tasks.generate_title(1, uuid4(), "分析订单")
         self.assertFalse(self.tasks._tasks)

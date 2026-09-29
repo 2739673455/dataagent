@@ -3,10 +3,10 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from app.assistant.conversations.lifecycle import ConversationLifecycleService
-from app.assistant.execution.manager import AgentManager
-from app.assistant.execution.run import ConversationRunService
 from app.assistant.repositories.conversation import ConversationPGRepo
+from app.assistant.services.lifecycle import ConversationLifecycleService
+from app.assistant.services.manager import AgentManager
+from app.assistant.services.run import ConversationRunService
 from app.sandbox.manager import DockerSandboxManager
 from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
 from app.shared.clients.postgres_client_manager import PostgresClientManager

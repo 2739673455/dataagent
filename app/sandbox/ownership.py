@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 from redis import Redis
 from redis.exceptions import LockError, RedisError
 
+from app.sandbox import constants
 from app.sandbox.errors import SandboxDeletedError, SandboxOwnershipError
 
 _REGISTER_OPERATION_SCRIPT = """
@@ -112,21 +113,12 @@ class SandboxOwnership(Protocol):
 class RedisSandboxOwnership:
     """使用 Redis 协调同一部署中的多个 API 进程。"""
 
-    def __init__(
-        self,
-        redis_url: str,
-        deployment_namespace: str,
-        *,
-        lock_timeout_seconds: float,
-        wait_timeout_seconds: float,
-        lease_seconds: float = 30.0,
-    ) -> None:
-        """初始化 Redis 键空间、锁参数和运行时租约。"""
-        self._redis = Redis.from_url(redis_url, decode_responses=True)
-        self._prefix = f"dataagent:sandbox:{deployment_namespace}"
-        self._lock_timeout_seconds = lock_timeout_seconds
-        self._wait_timeout_seconds = wait_timeout_seconds
-        self._lease_seconds = lease_seconds
+    def __init__(self) -> None:
+        """初始化 Redis 键空间与运行时租约。"""
+        self._redis = Redis.from_url(
+            constants.OWNERSHIP_REDIS_URL, decode_responses=True
+        )
+        self._prefix = f"dataagent:sandbox:{constants.DEPLOYMENT_NAMESPACE}"
         self._local = threading.local()
         self._runtime_token = uuid4().hex
         self._runtime_stop: threading.Event | None = None
@@ -144,8 +136,8 @@ class RedisSandboxOwnership:
         """获取支持后台续期的 Redis 分布式锁。"""
         lock = self._redis.lock(
             self._key(f"lock:{suffix}"),
-            timeout=self._lock_timeout_seconds,
-            blocking_timeout=self._wait_timeout_seconds,
+            timeout=constants.OWNERSHIP_LOCK_TIMEOUT_SECONDS,
+            blocking_timeout=constants.OWNERSHIP_WAIT_TIMEOUT_SECONDS,
             thread_local=False,
         )
         if not lock.acquire(blocking=True):
@@ -155,10 +147,12 @@ class RedisSandboxOwnership:
 
         def renew() -> None:
             """定期延长当前分布式锁的有效期。"""
-            interval = max(1.0, self._lock_timeout_seconds / 3)
+            interval = max(1.0, constants.OWNERSHIP_LOCK_TIMEOUT_SECONDS / 3)
             while not stop.wait(interval):
                 try:
-                    lock.extend(self._lock_timeout_seconds, replace_ttl=True)
+                    lock.extend(
+                        constants.OWNERSHIP_LOCK_TIMEOUT_SECONDS, replace_ttl=True
+                    )
                 except (LockError, RedisError):
                     renewal_failed.set()
                     return
@@ -184,8 +178,8 @@ class RedisSandboxOwnership:
         """获取只保护短时 Redis 事务的分布式锁。"""
         lock = self._redis.lock(
             self._key(f"lock:{suffix}"),
-            timeout=self._lock_timeout_seconds,
-            blocking_timeout=self._wait_timeout_seconds,
+            timeout=constants.OWNERSHIP_LOCK_TIMEOUT_SECONDS,
+            blocking_timeout=constants.OWNERSHIP_WAIT_TIMEOUT_SECONDS,
             thread_local=False,
         )
         if not lock.acquire(blocking=True):
@@ -204,7 +198,7 @@ class RedisSandboxOwnership:
         """续期当前运行时及其全部活跃操作。"""
         with self._operation_leases_lock:
             operation_leases = tuple(self._operation_leases.items())
-            expires_at = time.time() + self._lease_seconds
+            expires_at = time.time() + constants.OWNERSHIP_LEASE_SECONDS
             pipe = self._redis.pipeline(transaction=True)
             pipe.zadd(self._runtimes_key(), {self._runtime_token: expires_at})
             for token, (user_active_key, conversation_active_key) in operation_leases:
@@ -222,7 +216,7 @@ class RedisSandboxOwnership:
         stop = self._runtime_stop
         if stop is None:
             return
-        interval = max(1.0, self._lease_seconds / 3)
+        interval = max(1.0, constants.OWNERSHIP_LEASE_SECONDS / 3)
         while not stop.wait(interval):
             self._renew_leases()
 
@@ -234,7 +228,11 @@ class RedisSandboxOwnership:
             self._prune_active(self._runtimes_key())
             self._redis.zadd(
                 self._runtimes_key(),
-                {self._runtime_token: (time.time() + self._lease_seconds)},
+                {
+                    self._runtime_token: (
+                        time.time() + constants.OWNERSHIP_LEASE_SECONDS
+                    )
+                },
             )
         self._runtime_stop = threading.Event()
         self._runtime_renewal = threading.Thread(
@@ -332,7 +330,7 @@ class RedisSandboxOwnership:
         conversation_active_key: str,
     ) -> None:
         """原子检查维护和删除状态并登记操作租约。"""
-        deadline = time.monotonic() + self._wait_timeout_seconds
+        deadline = time.monotonic() + constants.OWNERSHIP_WAIT_TIMEOUT_SECONDS
         keys = (
             self._deleted_conversation_key(user_id, conversation_id),
             self._key(f"lock:user:{user_id}:gate"),
@@ -349,7 +347,7 @@ class RedisSandboxOwnership:
                             _REGISTER_OPERATION_SCRIPT,
                             len(keys),
                             *keys,
-                            str(time.time() + self._lease_seconds),
+                            str(time.time() + constants.OWNERSHIP_LEASE_SECONDS),
                             token,
                         ),
                     )
@@ -427,7 +425,7 @@ class RedisSandboxOwnership:
 
     def _wait_for_idle(self, key: str, label: str) -> None:
         """等待指定活动租约集合清空。"""
-        deadline = time.monotonic() + self._wait_timeout_seconds
+        deadline = time.monotonic() + constants.OWNERSHIP_WAIT_TIMEOUT_SECONDS
         while self._prune_active(key):
             if time.monotonic() >= deadline:
                 raise SandboxOwnershipError(f"等待沙箱操作结束超时: {label}")

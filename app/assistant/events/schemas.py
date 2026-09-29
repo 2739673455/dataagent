@@ -9,7 +9,6 @@ from pydantic import (
     ConfigDict,
     Field,
     RootModel,
-    StringConstraints,
 )
 
 from app.shared.contracts.analysis import AgentType
@@ -37,18 +36,6 @@ class DeleteConversationRequest(BaseModel):
         min_length=1,
         description="对话ID列表",
     )
-
-
-class UpdateConversationRequest(BaseModel):
-    """更新对话请求。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    conversation_id: UUID = Field(..., description="对话ID")
-    title: Annotated[
-        str,
-        StringConstraints(strip_whitespace=True, min_length=1, max_length=64),
-    ] = Field(description="对话标题")
 
 
 class ConversationResponse(BaseModel):

@@ -8,11 +8,11 @@ from uuid import UUID
 
 from langgraph.types import StateSnapshot
 
-from app.assistant.conversations.tombstones import (
+from app.assistant.services.runtime_factory import ConversationAgentRuntimeFactory
+from app.assistant.services.tombstones import (
     ConversationTombstoneStore,
 )
-from app.assistant.execution.runtime_factory import ConversationAgentRuntimeFactory
-from app.assistant.execution.types import (
+from app.assistant.services.types import (
     ConversationAgentRuntime,
     build_planner_config,
     get_thread_id,
