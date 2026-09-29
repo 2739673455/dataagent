@@ -14,6 +14,40 @@ from app.metadata.models.search import (
 from app.metadata.services.recall_handler import SemanticRecallHandler
 
 
+def create_semantic_recall_tool(recall: SemanticRecallHandler) -> BaseTool:
+    """创建只负责协议转换的 Explorer 语义召回工具。"""
+
+    @tool(args_schema=SemanticResourceRecallRequest)
+    async def recall_context(
+        runtime: ToolRuntime,
+        resource_types: list[SemanticResourceType],
+        terms: list[str],
+        limit_per_type: int = 5,
+    ) -> dict[str, Any]:
+        """检索字段、指标和字段取值，直接返回本次元数据结果。"""
+        request = SemanticResourceRecallRequest.model_construct(
+            terms=terms, resource_types=resource_types, limit_per_type=limit_per_type
+        )
+        try:
+            user_id = runtime.config.get("configurable", {})["user_id"]
+            response = await recall.search(user_id, request)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("语义资源召回失败")
+            return {
+                "status": "error",
+                "message": "语义资源召回失败",
+                "details": [
+                    {
+                        "type": type(exc).__name__,
+                        "msg": str(exc).strip() or "异常未提供详情",
+                    }
+                ],
+            }
+        return _semantic_recall_payload(response)
+
+    return recall_context
+
+
 def _semantic_recall_payload(
     response: SemanticResourceRecallResponse,
 ) -> dict[str, Any]:
@@ -57,37 +91,3 @@ def _semantic_recall_payload(
             for item in response.metrics
         },
     }
-
-
-def create_semantic_recall_tool(recall: SemanticRecallHandler) -> BaseTool:
-    """创建只负责协议转换的 Explorer 语义召回工具。"""
-
-    @tool(args_schema=SemanticResourceRecallRequest)
-    async def recall_context(
-        runtime: ToolRuntime,
-        resource_types: list[SemanticResourceType],
-        terms: list[str],
-        limit_per_type: int = 5,
-    ) -> dict[str, Any]:
-        """检索字段、指标和字段取值，直接返回本次元数据结果。"""
-        request = SemanticResourceRecallRequest.model_construct(
-            terms=terms, resource_types=resource_types, limit_per_type=limit_per_type
-        )
-        try:
-            user_id = runtime.config.get("configurable", {})["user_id"]
-            response = await recall.search(user_id, request)
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("语义资源召回失败")
-            return {
-                "status": "error",
-                "message": "语义资源召回失败",
-                "details": [
-                    {
-                        "type": type(exc).__name__,
-                        "msg": str(exc).strip() or "异常未提供详情",
-                    }
-                ],
-            }
-        return _semantic_recall_payload(response)
-
-    return recall_context

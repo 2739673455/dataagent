@@ -17,12 +17,7 @@ class ConversationPGRepo:
 
     def __init__(self, session: AsyncSession) -> None:
         """绑定当前操作使用的异步数据库会话。"""
-        self._session = session
-
-    @property
-    def session(self) -> AsyncSession:
-        """返回当前数据访问绑定的数据库会话。"""
-        return self._session
+        self.session = session
 
     async def create(
         self,
@@ -40,8 +35,8 @@ class ConversationPGRepo:
             create_at=now,
             update_at=now,
         )
-        self._session.add(conversation)
-        await self._session.flush()
+        self.session.add(conversation)
+        await self.session.flush()
         return conversation
 
     async def get(
@@ -58,7 +53,49 @@ class ConversationPGRepo:
         )
         if not include_deleting:
             statement = statement.where(Conversation.deletion_requested_at.is_(None))
-        return await self._session.scalar(statement)
+        return await self.session.scalar(statement)
+
+    async def list_by_user(self, user_id: int) -> list[Conversation]:
+        """按最后活动时间倒序获取用户的正式会话。"""
+        result = await self.session.scalars(
+            select(Conversation)
+            .where(
+                Conversation.user_id == user_id,
+                Conversation.is_draft.is_(False),
+                Conversation.deletion_requested_at.is_(None),
+            )
+            .order_by(Conversation.update_at.desc(), Conversation.id.desc())
+        )
+        return list(result)
+
+    async def list_expired_drafts(
+        self,
+        cutoff: datetime,
+        *,
+        limit: int,
+    ) -> list[Conversation]:
+        """跨用户列出最后活动时间已过期的草稿。"""
+        result = await self.session.scalars(
+            select(Conversation)
+            .where(
+                Conversation.is_draft.is_(True),
+                Conversation.deletion_requested_at.is_(None),
+                Conversation.update_at <= cutoff,
+            )
+            .order_by(Conversation.update_at, Conversation.id)
+            .limit(limit)
+        )
+        return list(result)
+
+    async def list_pending_deletions(self, *, limit: int) -> list[Conversation]:
+        """跨用户列出已标记删除且待物理清理的会话。"""
+        result = await self.session.scalars(
+            select(Conversation)
+            .where(Conversation.deletion_requested_at.is_not(None))
+            .order_by(Conversation.deletion_requested_at, Conversation.id)
+            .limit(limit)
+        )
+        return list(result)
 
     async def update(
         self,
@@ -77,7 +114,7 @@ class ConversationPGRepo:
             values["is_draft"] = is_draft
         if deletion_requested_at is not None:
             values["deletion_requested_at"] = deletion_requested_at
-        await self._session.execute(
+        await self.session.execute(
             update(Conversation)
             .where(
                 Conversation.user_id == user_id,
@@ -86,59 +123,17 @@ class ConversationPGRepo:
             )
             .values(**values)
         )
-        await self._session.flush()
-
-    async def list_by_user(self, user_id: int) -> list[Conversation]:
-        """按最后活动时间倒序获取用户的正式会话。"""
-        result = await self._session.scalars(
-            select(Conversation)
-            .where(
-                Conversation.user_id == user_id,
-                Conversation.is_draft.is_(False),
-                Conversation.deletion_requested_at.is_(None),
-            )
-            .order_by(Conversation.update_at.desc(), Conversation.id.desc())
-        )
-        return list(result)
-
-    async def list_expired_drafts(
-        self,
-        cutoff: datetime,
-        *,
-        limit: int,
-    ) -> list[Conversation]:
-        """跨用户列出最后活动时间已过期的草稿。"""
-        result = await self._session.scalars(
-            select(Conversation)
-            .where(
-                Conversation.is_draft.is_(True),
-                Conversation.deletion_requested_at.is_(None),
-                Conversation.update_at <= cutoff,
-            )
-            .order_by(Conversation.update_at, Conversation.id)
-            .limit(limit)
-        )
-        return list(result)
-
-    async def list_pending_deletions(self, *, limit: int) -> list[Conversation]:
-        """跨用户列出已标记删除且待物理清理的会话。"""
-        result = await self._session.scalars(
-            select(Conversation)
-            .where(Conversation.deletion_requested_at.is_not(None))
-            .order_by(Conversation.deletion_requested_at, Conversation.id)
-            .limit(limit)
-        )
-        return list(result)
+        await self.session.flush()
 
     async def delete(self, user_id: int, conversation_id: UUID) -> None:
         """删除会话目录信息。"""
-        await self._session.execute(
+        await self.session.execute(
             delete(Conversation).where(
                 Conversation.user_id == user_id,
                 Conversation.id == conversation_id,
             )
         )
-        await self._session.flush()
+        await self.session.flush()
 
 
 @asynccontextmanager

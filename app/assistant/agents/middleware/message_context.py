@@ -11,6 +11,28 @@ from langchain.agents.middleware.types import (
 from langchain_core.messages import AnyMessage, HumanMessage
 
 
+class MessageContextMiddleware(AgentMiddleware[Any, Any, Any]):
+    """向模型提供用户消息时间，不影响前端展示。"""
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest[Any],
+        handler: Callable[[ModelRequest[Any]], ModelResponse[Any]],
+    ) -> ModelResponse[Any]:
+        """同步投影用户消息时间。"""
+        return handler(request.override(messages=_project_messages(request.messages)))
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest[Any],
+        handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
+    ) -> ModelResponse[Any]:
+        """异步投影用户消息时间。"""
+        return await handler(
+            request.override(messages=_project_messages(request.messages))
+        )
+
+
 def _project_messages(messages: list[AnyMessage]) -> list[AnyMessage]:
     """向用户消息添加时间提示，不改写持久化消息。"""
     projected: list[AnyMessage] = []
@@ -32,25 +54,3 @@ def _project_messages(messages: list[AnyMessage]) -> list[AnyMessage]:
             continue
         projected.append(message)
     return projected
-
-
-class MessageContextMiddleware(AgentMiddleware[Any, Any, Any]):
-    """向模型提供用户消息时间，不影响前端展示。"""
-
-    def wrap_model_call(
-        self,
-        request: ModelRequest[Any],
-        handler: Callable[[ModelRequest[Any]], ModelResponse[Any]],
-    ) -> ModelResponse[Any]:
-        """同步投影用户消息时间。"""
-        return handler(request.override(messages=_project_messages(request.messages)))
-
-    async def awrap_model_call(
-        self,
-        request: ModelRequest[Any],
-        handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
-    ) -> ModelResponse[Any]:
-        """异步投影用户消息时间。"""
-        return await handler(
-            request.override(messages=_project_messages(request.messages))
-        )

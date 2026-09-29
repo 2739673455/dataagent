@@ -1,7 +1,6 @@
 import { getAttachmentName } from "@/lib/utils";
 import type {
   AgentType,
-  ImageContent,
   MessagePart,
   MessageResponse,
   SubagentRunStatus,
@@ -51,8 +50,6 @@ export function getMessagePartKey(part: MessagePart): string {
   switch (part.type) {
     case "text":
       return `text-${part.text}`;
-    case "image_url":
-      return `image-${part.image_url}`;
     case "thinking":
       return "thinking";
     case "tool_call":
@@ -64,7 +61,8 @@ export function getMessagePartKey(part: MessagePart): string {
 
 export function getUserMessagePreview(message: MessageDisplayItem["message"]): string {
   const content = message.parts
-    .map((part) => (part.type === "text" ? part.text : "[图片]"))
+    .filter((part): part is TextContent => part.type === "text")
+    .map((part) => part.text)
     .join("\n")
     .trim();
   if (content) return content;
@@ -138,7 +136,7 @@ export function buildDisplayItems(
   const toolRuns = new Map<string, ToolRunDisplayItem>();
 
   for (const message of messages) {
-    const regularParts: Array<TextContent | ImageContent | ThinkingContent> = [];
+    const regularParts: Array<TextContent | ThinkingContent> = [];
     const toolParts: Array<Extract<MessagePart, { type: "tool_call" | "tool_result" }>> = [];
 
     for (const part of message.parts) {
@@ -146,11 +144,6 @@ export function buildDisplayItems(
         if (part.text.trim()) {
           regularParts.push(part);
         }
-        continue;
-      }
-
-      if (part.type === "image_url") {
-        regularParts.push(part);
         continue;
       }
 

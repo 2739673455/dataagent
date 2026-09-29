@@ -16,6 +16,7 @@ from app.metadata.models.catalog import (
     column_reference_key,
 )
 from app.metadata.models.search import (
+    SearchHit,
     SemanticColumnRecallResult,
     SemanticMetricRecallResult,
     SemanticRecallFailure,
@@ -31,7 +32,6 @@ from app.metadata.repositories.semantic_index import SemanticIndexRepo
 from app.metadata.repositories.value_index import ValueESRepo
 from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
 from app.shared.clients.embedding_client_manager import EmbeddingClient
-from app.shared.contracts.search import SearchHit
 from app.shared.database.base import MetaBase
 
 _RRF_K = 60

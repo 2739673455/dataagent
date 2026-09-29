@@ -7,8 +7,8 @@ from typing import Any, ClassVar
 from elasticsearch import AsyncElasticsearch
 
 from app.metadata.models.catalog import ColumnKey, ValueInfo, column_resource_key
+from app.metadata.models.search import SearchHit
 from app.metadata.repositories.semantic_index import column_resource_terms_filter
-from app.shared.contracts.search import SearchHit
 
 
 def _value_document_id(value_info: ValueInfo) -> str:

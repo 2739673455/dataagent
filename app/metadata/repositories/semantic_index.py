@@ -9,11 +9,11 @@ from loguru import logger
 from app.metadata.errors import CorruptedSemanticIndexDocumentError
 from app.metadata.models.catalog import ColumnKey, column_resource_key
 from app.metadata.models.search import (
+    SearchHit,
     SemanticIndexDocument,
     SemanticTextType,
 )
 from app.shared.config.app_config import cfg
-from app.shared.contracts.search import SearchHit
 from app.shared.database.base import MetaBase
 
 _EXACT_TEXT_BOOSTS: dict[SemanticTextType, float] = {

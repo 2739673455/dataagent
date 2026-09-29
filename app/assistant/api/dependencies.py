@@ -7,11 +7,13 @@ from fastapi import Depends
 
 from app.assistant.agents.manager import AgentManager
 from app.assistant.repositories.conversation import ConversationPGRepo
-from app.assistant.services.attachments import AttachmentService
-from app.assistant.services.lifecycle import ConversationLifecycleService
+from app.assistant.services.conversation import (
+    AttachmentService,
+    ConversationLifecycleService,
+    ConversationTurnService,
+)
 from app.assistant.services.run import ConversationRunService
 from app.assistant.services.tasks import ConversationTasks
-from app.assistant.services.turn import ConversationTurnService
 from app.dependencies import WebResourcesDep
 from app.sandbox.manager import DockerSandboxManager
 

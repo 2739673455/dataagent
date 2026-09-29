@@ -53,6 +53,12 @@ class ConversationListResponse(BaseModel):
     conversations: list[ConversationResponse]
 
 
+class ConversationRunStatusResponse(BaseModel):
+    """Conversation 后台 Planner Run 状态。"""
+
+    running: bool
+
+
 class TextContent(BaseModel):
     """消息中的文本内容。"""
 
@@ -60,15 +66,6 @@ class TextContent(BaseModel):
 
     type: Literal["text"]
     text: str = Field(..., description="文本内容")
-
-
-class ImageContent(BaseModel):
-    """消息中的图片内容。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    type: Literal["image_url"]
-    image_url: str = Field(..., description="图片链接")
 
 
 class ThinkingContent(BaseModel):
@@ -104,7 +101,7 @@ class ToolResultPart(BaseModel):
 
 MessageRole = Literal["user", "assistant", "tool", "system"]
 MessagePart = Annotated[
-    TextContent | ImageContent | ThinkingContent | ToolCallPart | ToolResultPart,
+    TextContent | ThinkingContent | ToolCallPart | ToolResultPart,
     Field(discriminator="type"),
 ]
 
@@ -150,12 +147,6 @@ class MessageListResponse(BaseModel):
     """消息列表响应。"""
 
     messages: list[MessageResponse]
-
-
-class ConversationRunStatusResponse(BaseModel):
-    """Conversation 后台 Planner Run 状态。"""
-
-    running: bool
 
 
 class ChatStreamMessageEvent(BaseModel):

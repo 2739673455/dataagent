@@ -139,9 +139,7 @@ cd ..
 uv run -m scripts.bootstrap_users
 ```
 
-预定义配置位于 `scripts/bootstrap_users.py`，当前包含用户 `admin` 和角色 `dataagent_admin`。脚本授予该角色 `cfg.doris.database` 全部表的查询权限，并创建专用查询账号。脚本可重复执行，查询密码加密保存在身份数据库中；不再需要平台登录密码或 JWT 配置。
-
-开发数据库中已有旧版用户表时，需先按项目初始化流程重建表，再执行本脚本；脚本本身不会迁移或删除旧表。
+预定义配置位于 `scripts/bootstrap_users.py`，当前包含用户 `admin` 和角色 `dataagent_admin`。脚本授予该角色 `cfg.doris.database` 全部表的查询权限，并创建专用查询账号。脚本可重复执行，查询密码加密保存在身份数据库中。
 
 ### 5. 启动应用
 
@@ -190,4 +188,4 @@ uv run -m scripts.import_metadata --incremental
 
 ### 2. 预定义用户与数据权限
 
-用户、角色及绑定在 `scripts/bootstrap_users.py` 中定义，执行 `uv run -m scripts.bootstrap_users` 初始化。当前 `admin` 拥有业务库全部表的只读查询权限；Doris 内置的全局 `admin` 角色不用于业务查询。应用不再提供用户和角色管理页面或写入接口。
+用户、角色及绑定在 `scripts/bootstrap_users.py` 中定义，执行 `uv run -m scripts.bootstrap_users` 初始化。当前 `admin` 拥有业务库全部表的只读查询权限；Doris 内置的全局 `admin` 角色不用于业务查询。

@@ -38,7 +38,7 @@ def dependencies():
         init_tables=AsyncMock(),
         close=AsyncMock(side_effect=lambda: events.append("postgres_closed")),
     )
-    doris = MagicMock(connection=connection_context, close=AsyncMock())
+    doris = MagicMock(engine=MagicMock(connect=connection_context), close=AsyncMock())
     es = MagicMock(close=AsyncMock())
     embedding = MagicMock(close=AsyncMock())
     service = MagicMock()
@@ -46,15 +46,15 @@ def dependencies():
         patch("app.metadata.runtime.Redis.from_url", return_value=redis),
         patch("app.metadata.runtime.PostgresClientManager", return_value=postgres),
         patch("app.metadata.runtime.DorisClientManager", return_value=doris),
-        patch("app.metadata.runtime.ESClientManager", return_value=es),
-        patch("app.metadata.runtime.EmbeddingClientManager", return_value=embedding),
+        patch("app.metadata.runtime.AsyncElasticsearch", return_value=es),
+        patch("app.metadata.runtime.EmbeddingClient", return_value=embedding),
         patch("app.metadata.runtime.build_meta_index_service", return_value=service),
     ):
         yield lock, redis, [postgres, doris, es, embedding], service, events, session
 
 
 def test_conflict_does_not_initialize_database_or_release_other_lock(dependencies):
-    lock, redis, managers, _, _, _ = dependencies
+    lock, redis, _, _, _, _ = dependencies
     lock.acquire.return_value = False
 
     async def run():
@@ -63,8 +63,15 @@ def test_conflict_does_not_initialize_database_or_release_other_lock(dependencie
                 pytest.fail("must not enter")
 
     asyncio.run(run())
-    for manager in managers:
-        manager.init.assert_not_called()
+    from app.metadata import runtime
+
+    for constructor in (
+        runtime.PostgresClientManager,
+        runtime.DorisClientManager,
+        runtime.AsyncElasticsearch,
+        runtime.EmbeddingClient,
+    ):
+        constructor.assert_not_called()
     lock.release.assert_not_awaited()
     redis.__aexit__.assert_awaited_once()
     assert redis.lock.call_args.kwargs["blocking"] is False

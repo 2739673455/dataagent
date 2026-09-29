@@ -84,7 +84,7 @@ def test_bootstrap_grants_escaping_and_retry(role, database, password):
     async def connect():
         yield connection
 
-    doris = MagicMock(connection=connect, close=AsyncMock())
+    doris = MagicMock(engine=MagicMock(connect=connect), close=AsyncMock())
 
     async def run():
         with pytest.raises(RuntimeError, match="Doris unavailable"):

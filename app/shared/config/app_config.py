@@ -3,7 +3,7 @@ from typing import Any, Literal, cast
 
 import dotenv
 from omegaconf import OmegaConf
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 # 路径常量。
 ROOT_DIR = Path(__file__).parents[3]
@@ -90,13 +90,6 @@ class LMConfigCfg(AppConfigModel):
 
     active: str = Field(min_length=1)
     models: dict[str, ModelCfg]
-
-    @model_validator(mode="after")
-    def validate_active_model(self) -> "LMConfigCfg":
-        """要求默认模型引用已声明的模型配置。"""
-        if self.active not in self.models:
-            raise ValueError(f"lm_config.active 引用了未知模型: {self.active}")
-        return self
 
 
 class SpecialistConfig(AppConfigModel):

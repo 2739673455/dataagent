@@ -11,6 +11,23 @@ from langchain_core.runnables import RunnableConfig
 from app.shared.contracts.analysis import AgentType
 
 
+@dataclass(frozen=True, slots=True)
+class PlannerTurnContext:
+    """一次新回合或检查点恢复所用的用户与会话身份。"""
+
+    user_id: int
+    conversation_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
+class SubagentStatusActivity:
+    """一次 Specialist 执行的状态变化。"""
+
+    delegation_id: str
+    agent_type: AgentType
+    status: Literal["running", "completed", "failed", "cancelled"]
+
+
 def get_thread_id(user_id: int, conversation_id: UUID) -> str:
     """构造全局唯一的 LangGraph 会话线程 ID。"""
     return f"user_{user_id}:conversation_{conversation_id}"
@@ -26,22 +43,3 @@ def build_planner_config(user_id: int, conversation_id: UUID) -> RunnableConfig:
             "conversation_id": str(conversation_id),
         }
     )
-
-
-@dataclass(frozen=True, slots=True)
-class PlannerTurnContext:
-    """Turn 是处理一次用户输入的逻辑回合。
-
-    中断后恢复仍处理同一回合；Run 则是承载执行与订阅的进程内实例。"""
-
-    user_id: int
-    conversation_id: UUID
-
-
-@dataclass(frozen=True, slots=True)
-class SubagentStatusActivity:
-    """一次 Specialist 执行的状态变化。"""
-
-    delegation_id: str
-    agent_type: AgentType
-    status: Literal["running", "completed", "failed", "cancelled"]

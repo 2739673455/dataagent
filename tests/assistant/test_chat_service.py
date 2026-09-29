@@ -16,14 +16,14 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import StateSnapshot
 from pydantic import ValidationError
 
+from app.assistant import messages as message_projection
 from app.assistant.agents.context import (
     PlannerTurnContext,
     SubagentStatusActivity,
 )
 from app.assistant.agents.manager import AgentManager
-from app.assistant.messages import projection as message_projection
 from app.assistant.models import chat as chat_schema
-from app.assistant.services import history as conversation_history
+from app.assistant.services import conversation as conversation_service
 from app.assistant.services import run as run_service
 from app.sandbox.manager import DockerSandboxManager
 from app.sandbox.paths import normalize_attachment_path
@@ -97,6 +97,29 @@ class UserMessageRequestTest(unittest.TestCase):
 
 
 class MessageProjectionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_text_blocks_merge_without_resolving_fenced_artifact(self) -> None:
+        message = AIMessage(
+            content=[
+                {"type": "text", "text": "示例：\n```text\n"},
+                {
+                    "type": "text",
+                    "text": f"[[DATAAGENT_ARTIFACT:/data/{_CONVERSATION_ID}/report.csv]]\n```",
+                },
+            ]
+        )
+        original = message.model_dump()
+        files = MagicMock(is_downloadable_file=AsyncMock())
+        response = await message_projection.langchain_message_to_schema(
+            message, files, 7, _CONVERSATION_ID
+        )
+        assert response is not None
+        self.assertEqual(
+            response.parts, [chat_schema.TextContent(type="text", text=message.text)]
+        )
+        self.assertFalse(response.attachments)
+        files.is_downloadable_file.assert_not_awaited()
+        self.assertEqual(message.model_dump(), original)
+
     async def test_message_time_is_recorded_but_not_exposed_in_api(self) -> None:
         user = message_projection.schema_to_human_message(
             chat_schema.UserMessageRequest(
@@ -106,7 +129,12 @@ class MessageProjectionTest(unittest.IsolatedAsyncioTestCase):
         received_at = datetime.fromisoformat(user.additional_kwargs["received_at"])
         self.assertIsNotNone(received_at.tzinfo)
         for message in (user, AIMessage(content="result")):
-            response = message_projection.langchain_message_to_schema(message)
+            response = await message_projection.langchain_message_to_schema(
+                message,
+                files=cast(DockerSandboxManager, _FileInspectorStub()),
+                user_id=7,
+                conversation_id=_CONVERSATION_ID,
+            )
             assert response is not None
             self.assertNotIn("created_at", response.model_dump())
             self.assertEqual(
@@ -115,7 +143,7 @@ class MessageProjectionTest(unittest.IsolatedAsyncioTestCase):
             )
 
     async def test_reasoning_block_is_projected_as_completed_thinking(self) -> None:
-        response = message_projection.langchain_message_to_schema(
+        response = await message_projection.langchain_message_to_schema(
             AIMessage(
                 id="answer-1",
                 content=[
@@ -123,6 +151,9 @@ class MessageProjectionTest(unittest.IsolatedAsyncioTestCase):
                     {"type": "text", "text": "最终回答"},
                 ],
             ),
+            files=cast(DockerSandboxManager, _FileInspectorStub()),
+            user_id=7,
+            conversation_id=_CONVERSATION_ID,
         )
 
         assert response is not None
@@ -146,7 +177,12 @@ class MessageProjectionTest(unittest.IsolatedAsyncioTestCase):
                 additional_kwargs={"reasoning_content": "先判断用户意图。"},
             ).model_dump_json()
         )
-        response = message_projection.langchain_message_to_schema(message)
+        response = await message_projection.langchain_message_to_schema(
+            message,
+            files=cast(DockerSandboxManager, _FileInspectorStub()),
+            user_id=7,
+            conversation_id=_CONVERSATION_ID,
+        )
         assert response is not None
         self.assertEqual(
             response.parts[0],
@@ -476,7 +512,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        schema = await message_projection.langchain_message_to_schema_with_artifacts(
+        schema = await message_projection.langchain_message_to_schema(
             message,
             cast(DockerSandboxManager, files),
             7,
@@ -532,13 +568,11 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(path=path):
                 text = f"[[DATAAGENT_ARTIFACT:{path}]]"
-                schema = (
-                    await message_projection.langchain_message_to_schema_with_artifacts(
-                        AIMessage(content=text),
-                        cast(DockerSandboxManager, files),
-                        7,
-                        _CONVERSATION_ID,
-                    )
+                schema = await message_projection.langchain_message_to_schema(
+                    AIMessage(content=text),
+                    cast(DockerSandboxManager, files),
+                    7,
+                    _CONVERSATION_ID,
                 )
                 assert schema is not None
                 self.assertIsNone(schema.attachments)
@@ -564,7 +598,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         )
         files = _FileInspectorStub({(7, _CONVERSATION_ID, path.removeprefix("/"))})
 
-        schema = await message_projection.langchain_message_to_schema_with_artifacts(
+        schema = await message_projection.langchain_message_to_schema(
             message,
             cast(DockerSandboxManager, files),
             7,
@@ -592,7 +626,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         relative_path = "sessions/sales-review/analyst/main/final.csv"
         files = _FileInspectorStub({(7, other_conversation_id, relative_path)})
 
-        schema = await message_projection.langchain_message_to_schema_with_artifacts(
+        schema = await message_projection.langchain_message_to_schema(
             message,
             cast(DockerSandboxManager, files),
             7,
@@ -645,7 +679,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         )
         files = _FileInspectorStub({(7, _CONVERSATION_ID, path.removeprefix("/"))})
 
-        history = await conversation_history.list_messages(
+        history = await conversation_service.list_messages(
             cast(AgentManager, manager),
             cast(DockerSandboxManager, files),
             7,
@@ -673,8 +707,8 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             event.message.model_dump(mode="json"),
         )
 
-    def test_large_subagent_tool_payloads_are_preserved(self) -> None:
-        call_schema = message_projection.langchain_message_to_schema(
+    async def test_large_subagent_tool_payloads_are_preserved(self) -> None:
+        call_schema = await message_projection.langchain_message_to_schema(
             AIMessage(
                 content="",
                 tool_calls=[
@@ -685,13 +719,19 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                     }
                 ],
             ),
+            files=cast(DockerSandboxManager, _FileInspectorStub()),
+            user_id=7,
+            conversation_id=_CONVERSATION_ID,
         )
-        result_schema = message_projection.langchain_message_to_schema(
+        result_schema = await message_projection.langchain_message_to_schema(
             ToolMessage(
                 content="x" * 55_000,
                 name="execute_sql",
                 tool_call_id="large-call",
             ),
+            files=cast(DockerSandboxManager, _FileInspectorStub()),
+            user_id=7,
+            conversation_id=_CONVERSATION_ID,
         )
 
         self.assertIsNotNone(call_schema)
@@ -774,7 +814,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             content=f"报告完成\n[[DATAAGENT_ARTIFACT:/data/{_CONVERSATION_ID}/sessions/sales-review/analyst/chart-1/report.html]]",
         )
 
-        schema = await message_projection.langchain_message_to_schema_with_artifacts(
+        schema = await message_projection.langchain_message_to_schema(
             message,
             cast(
                 DockerSandboxManager,
@@ -880,10 +920,8 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                     tool_call_id="d1",
                     content=f"[[DATAAGENT_ARTIFACT:{path}]]",
                 )
-                schema = (
-                    await message_projection.langchain_message_to_schema_with_artifacts(
-                        message, cast(DockerSandboxManager, files), 7, _CONVERSATION_ID
-                    )
+                schema = await message_projection.langchain_message_to_schema(
+                    message, cast(DockerSandboxManager, files), 7, _CONVERSATION_ID
                 )
                 assert schema is not None
                 assert isinstance(schema.parts[0], chat_schema.ToolResultPart)

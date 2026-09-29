@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.metadata.models.catalog import ColumnInfo, MetricInfo
-from app.metadata.models.search import SemanticResourceRecallRequest
+from app.metadata.models.search import SearchHit, SemanticResourceRecallRequest
 from app.metadata.services.search import (
     ColumnContextBuilder,
     RankedCandidates,
@@ -14,7 +14,6 @@ from app.metadata.services.search import (
     SemanticCatalog,
     SemanticResourceRecallService,
 )
-from app.shared.contracts.search import SearchHit
 
 
 def test_fused_scores_keep_order_normalization_and_truncation():

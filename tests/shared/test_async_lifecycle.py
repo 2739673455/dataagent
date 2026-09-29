@@ -68,8 +68,6 @@ def test_lifespan_closes_checkpoint_pool_on_failure(failure_stage: str) -> None:
             name,
             MagicMock(close=AsyncMock(), init=AsyncMock(), init_tables=AsyncMock()),
         )
-    for name in ("admin_doris", "auth", "meta", "assistant", "es", "embedding"):
-        getattr(resources, name).init = MagicMock()
 
     async def run() -> None:
         with pytest.raises(type(error)):
@@ -77,5 +75,23 @@ def test_lifespan_closes_checkpoint_pool_on_failure(failure_stage: str) -> None:
                 assert failure_stage == "close"
         checkpoint_pool.close.assert_awaited_once()
 
-    with patch.object(runtime, "_create_resources", return_value=resources):
+    def create(stack):
+        for name in (
+            "query_clients",
+            "admin_doris",
+            "auth",
+            "meta",
+            "assistant",
+            "es",
+            "embedding",
+            "checkpoint_pool",
+            "sandbox",
+            "agents",
+            "runs",
+            "tasks",
+        ):
+            stack.push_async_callback(getattr(resources, name).close)
+        return resources
+
+    with patch.object(runtime, "_create_resources", side_effect=create):
         asyncio.run(run())

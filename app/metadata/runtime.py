@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 
+from elasticsearch import AsyncElasticsearch
 from loguru import logger
 from redis.asyncio import Redis
 from redis.asyncio.lock import Lock
@@ -14,8 +15,7 @@ from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
 from app.metadata.services.index import MetaIndexService
 from app.shared.clients.doris_client_manager import DorisClientManager
-from app.shared.clients.embedding_client_manager import EmbeddingClientManager
-from app.shared.clients.es_client_manager import ESClientManager
+from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
 from app.shared.database.base import MetaBase
@@ -47,20 +47,27 @@ async def metadata_import_service() -> AsyncGenerator[MetaIndexService]:
                 try:
                     async with AsyncExitStack() as stack:
                         postgres = PostgresClientManager(cfg.meta_postgresql, MetaBase)
+                        stack.push_async_callback(postgres.close)
                         doris = DorisClientManager(cfg.doris)
-                        es = ESClientManager(cfg.elasticsearch)
-                        embedding = EmbeddingClientManager(cfg.embedding)
-                        for manager in (postgres, doris, es, embedding):
-                            stack.push_async_callback(manager.close)
-                            manager.init()
+                        stack.push_async_callback(doris.close)
+                        es = AsyncElasticsearch(
+                            hosts=[
+                                f"http://{cfg.elasticsearch.host}:{cfg.elasticsearch.port}"
+                            ]
+                        )
+                        stack.push_async_callback(es.close)
+                        embedding = EmbeddingClient(cfg.embedding)
+                        stack.push_async_callback(embedding.close)
                         await postgres.init_tables()
                         session = await stack.enter_async_context(postgres.session())
-                        connection = await stack.enter_async_context(doris.connection())
+                        connection = await stack.enter_async_context(
+                            doris.engine.connect()
+                        )
                         service = build_meta_index_service(
                             MetaPGRepo(session),
                             SourceDorisRepo(connection),
-                            es.get_client(),
-                            embedding.get_client(),
+                            es,
+                            embedding,
                         )
                         yield service
                 finally:

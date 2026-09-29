@@ -62,10 +62,6 @@ export interface components {
     "DeleteConversationRequest": {
       "conversation_ids": Array<string>;
     };
-    "ImageContent": {
-      "image_url": string;
-      "type": "image_url";
-    };
     "MessageListResponse": {
       "messages": Array<components["schemas"]["MessageResponse"]>;
     };
@@ -73,7 +69,7 @@ export interface components {
       "attachments"?: (Array<components["schemas"]["Attachment"]> | null);
       "finish_reason"?: (string | null);
       "message_id"?: (string | null);
-      "parts": Array<(components["schemas"]["TextContent"] | components["schemas"]["ImageContent"] | components["schemas"]["ThinkingContent"] | components["schemas"]["ToolCallPart"] | components["schemas"]["ToolResultPart"])>;
+      "parts": Array<(components["schemas"]["TextContent"] | components["schemas"]["ThinkingContent"] | components["schemas"]["ToolCallPart"] | components["schemas"]["ToolResultPart"])>;
       "role": "user" | "assistant" | "tool" | "system";
     };
     "ProblemDetails": {

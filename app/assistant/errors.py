@@ -30,7 +30,7 @@ class ConversationRunConflictError(ProblemError):
 
 
 class ConversationBusyError(ProblemError):
-    """表示目标对话正在运行或执行生命周期操作。"""
+    """表示回合在受理完成前已停止。"""
 
     type = "conversation-busy"
     title = "对话正在处理中"

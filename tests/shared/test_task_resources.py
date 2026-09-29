@@ -1,6 +1,7 @@
 """任务资源初始化失败及同进程并发隔离测试。"""
 
 import asyncio
+from contextlib import AsyncExitStack
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -47,7 +48,12 @@ def test_web_shutdown_attempts_every_resource_after_startup_failure() -> None:
         for manager in managers.values():
             manager.close.assert_awaited_once()
 
-    with patch.object(runtime, "_create_resources", return_value=resources):
+    def create(stack):
+        for manager in managers.values():
+            stack.push_async_callback(manager.close)
+        return resources
+
+    with patch.object(runtime, "_create_resources", side_effect=create):
         asyncio.run(run())
 
 
@@ -61,18 +67,11 @@ def test_web_applications_own_separate_resources_and_request_dependencies() -> N
     created = []
     original_create = runtime._create_resources
 
-    def create():
+    def create(stack):
         # 保留真实依赖组装，仅替换联网初始化和关闭。
-        resources = original_create()
-        for resource in (
-            resources.auth,
-            resources.meta,
-            resources.assistant,
-            resources.admin_doris,
-            resources.embedding,
-            resources.es,
-        ):
-            resource.init = MagicMock()
+        construction_stack = AsyncExitStack()
+        resources = original_create(construction_stack)
+        construction_stack.pop_all()
         for resource in (resources.auth, resources.meta, resources.assistant):
             resource.init_tables = AsyncMock()
         resources.checkpoint_pool.open = AsyncMock()
@@ -96,7 +95,8 @@ def test_web_applications_own_separate_resources_and_request_dependencies() -> N
             resources.runs,
             resources.tasks,
         ):
-            resource.close = AsyncMock()
+            resource.close = AsyncMock(wraps=resource.close)
+            stack.push_async_callback(resource.close)
         resources.tasks.start = MagicMock()
         created.append(resources)
         return resources
@@ -140,4 +140,31 @@ def test_web_applications_own_separate_resources_and_request_dependencies() -> N
         first_resources.auth.close.assert_awaited_once()
 
     with patch.object(runtime, "_create_resources", side_effect=create):
+        asyncio.run(run())
+
+
+def test_resource_construction_failure_closes_already_created_clients():
+    from app import runtime
+
+    postgres = [MagicMock(close=AsyncMock()) for _ in range(3)]
+    doris = MagicMock(close=AsyncMock())
+    registry = MagicMock(close=AsyncMock())
+    embedding = MagicMock(close=AsyncMock())
+
+    async def run():
+        with pytest.raises(ValueError, match="invalid ES"):
+            async with runtime.lifespan(MagicMock()):
+                pytest.fail("construction must fail")
+        for client in [*postgres, doris, registry, embedding]:
+            client.close.assert_awaited_once()
+
+    with (
+        patch.object(runtime, "PostgresClientManager", side_effect=postgres),
+        patch.object(runtime, "DorisClientManager", return_value=doris),
+        patch.object(runtime, "DorisQueryClientRegistry", return_value=registry),
+        patch.object(runtime, "EmbeddingClient", return_value=embedding),
+        patch.object(
+            runtime, "AsyncElasticsearch", side_effect=ValueError("invalid ES")
+        ),
+    ):
         asyncio.run(run())

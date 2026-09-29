@@ -26,8 +26,6 @@ def test_role_pools_are_isolated_and_credentials_stay_fixed_until_restart():
         ("query_admin", "admin"),
     ]
     assert all(item.host == cfg.doris.host for item in configs)
-    for client in (first, second):
-        client.init.assert_called_once()
     asyncio.run(registry.close())
     for client in (first, second):
         client.close.assert_awaited_once()

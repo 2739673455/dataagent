@@ -27,7 +27,7 @@ class DorisQueryRepository:
         options: QueryExecutionOptions,
     ) -> AsyncGenerator[QueryBatch]:
         """流式返回查询结果分区。"""
-        async with self._connection_provider.connection() as connection:
+        async with self._connection_provider.engine.connect() as connection:
             try:
                 result = await connection.stream(
                     # 避免将 SQL 字符串中的冒号识别为绑定参数。

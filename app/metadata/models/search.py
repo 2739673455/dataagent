@@ -24,6 +24,13 @@ class SemanticIndexDocument:
     payload: dict[str, Any]
 
 
+@dataclass(frozen=True, slots=True)
+class SearchHit[SearchItemT]:
+    """索引命中项及原始分数。"""
+
+    item: SearchItemT
+    score: float
+
 class SemanticResourceRecallRequest(BaseModel):
     """语义资源召回请求。"""
 

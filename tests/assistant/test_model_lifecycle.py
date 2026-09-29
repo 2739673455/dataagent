@@ -99,7 +99,7 @@ def test_deepseek_stream_and_tool_continuation_preserve_reasoning() -> None:
 
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-    from app.assistant.messages.content import reasoning_text
+    from app.assistant.messages import reasoning_text
 
     requests = []
 

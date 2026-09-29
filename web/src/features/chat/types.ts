@@ -8,7 +8,6 @@ export type ConversationListResponse = ApiSchemas["ConversationListResponse"];
 export type Attachment = ApiSchemas["Attachment"];
 
 export type TextContent = ApiSchemas["TextContent"];
-export type ImageContent = ApiSchemas["ImageContent"];
 export type ThinkingContent = ApiSchemas["ThinkingContent"];
 export type MessagePart = ApiSchemas["MessageResponse"]["parts"][number];
 export type UserMessageRequest = ApiSchemas["UserMessageRequest"];

@@ -26,9 +26,9 @@ from app.assistant.agents.middleware.message_context import MessageContextMiddle
 from app.assistant.agents.middleware.task_activity import TaskActivityMiddleware
 from app.assistant.agents.model_factory import create_configured_model
 from app.assistant.agents.resources import ASSISTANT_RESOURCES_DIR, SYSTEM_PROMPTS
-from app.assistant.agents.tools import create_shell_tool
 from app.assistant.agents.tools.execute_sql import create_execute_sql_tool
 from app.assistant.agents.tools.semantic_recall import create_semantic_recall_tool
+from app.assistant.agents.tools.shell import create_shell_tool
 from app.metadata.services.recall_handler import SemanticRecallHandler
 from app.query.services.execution_handler import QueryExecutionHandler
 from app.sandbox.backend import DockerSandboxBackend
@@ -94,18 +94,18 @@ class AgentManager:
         backend = await self._sandbox.get_backend(user_id, conversation_id)
         return self._build_planner(user_id, conversation_id, backend)
 
-    async def can_resume_planner(self, user_id: int, conversation_id: UUID) -> bool:
-        """通过图状态判断 Planner 是否还有待执行节点。"""
-        return bool((await self.read_planner_state(user_id, conversation_id)).next)
-
     async def read_planner_state(
         self,
         user_id: int,
         conversation_id: UUID,
     ) -> StateSnapshot:
-        """编译 Planner 并读取原生图状态。"""
+        """编译 Planner 并读取检查点状态。"""
         graph = self._build_planner(user_id, conversation_id)
         return await graph.aget_state(build_planner_config(user_id, conversation_id))
+
+    async def can_resume_planner(self, user_id: int, conversation_id: UUID) -> bool:
+        """通过图状态判断 Planner 是否还有待执行节点。"""
+        return bool((await self.read_planner_state(user_id, conversation_id)).next)
 
     async def delete_conversation_state(
         self,

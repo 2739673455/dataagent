@@ -84,9 +84,12 @@ class RecallHandlerTest(unittest.IsolatedAsyncioTestCase):
             search_text_hits=AsyncMock(side_effect=hits),
             search_vector_hits=AsyncMock(side_effect=hits),
         )
-        embedding = MagicMock(aembed_documents=AsyncMock(side_effect=embed))
         with (
-            patch.object(self.handler.embedding, "get_client", return_value=embedding),
+            patch.object(
+                self.handler.embedding,
+                "aembed_documents",
+                new=AsyncMock(side_effect=embed),
+            ) as embed_client,
             patch(
                 "app.identity.providers.IdentityService",
                 return_value=MagicMock(
@@ -107,7 +110,7 @@ class RecallHandlerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, "success")
         index.search_text_hits.assert_awaited_once()
         index.search_vector_hits.assert_awaited_once()
-        embedding.aembed_documents.assert_awaited_once()
+        embed_client.assert_awaited_once()
         self.assertEqual(self.closed, ["auth", "meta"])
 
     async def test_cancel_during_catalog_loading_closes_read_session(self):

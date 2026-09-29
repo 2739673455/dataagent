@@ -23,8 +23,12 @@ from app.assistant.errors import (
     ConversationBusyError,
     ConversationRunConflictError,
 )
-from app.assistant.messages.projection import project_messages, schema_to_human_message
-from app.assistant.messages.stream import MessageDeltaParser, update_messages
+from app.assistant.messages import (
+    MessageDeltaParser,
+    project_messages,
+    schema_to_human_message,
+    update_messages,
+)
 from app.assistant.models import chat as chat_schema
 
 if TYPE_CHECKING:
@@ -143,6 +147,18 @@ class ConversationRunService:
         await asyncio.gather(task, return_exceptions=True)
         return True
 
+    async def close(self) -> None:
+        """应用停止时取消进程内全部后台 Run。"""
+        runs = tuple(self._runs.values())
+        tasks = tuple(
+            run.task for run in runs if run.task is not None and not run.task.done()
+        )
+        for task in tasks:
+            if not task.cancelling():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     async def _execute(
         self,
         key: ConversationRunKey,
@@ -173,7 +189,7 @@ class ConversationRunService:
             logger.info(f"智能体执行已停止: conversation_id={conversation_id}")
         except Exception as exc:  # noqa: BLE001
             if not run.ready.done():
-                # HTTP 受理阶段的业务错误直接返回调用方，不伪装成模型 SSE 错误。
+                # 受理失败交由请求返回 HTTP 错误；执行失败通过 SSE 通知。
                 run.ready.set_result(exc)
             else:
                 logger.exception(f"智能体执行异常: conversation_id={conversation_id}")
@@ -200,8 +216,7 @@ class ConversationRunService:
         run.changed.set()
 
     def _finish(self, key: ConversationRunKey, run: _ConversationRun) -> None:
-        """仅由 Task 完成回调收尾；同步执行，不产生可重复进入的 await 窗口。"""
-        # 回调只执行一次，并且在执行流及其清理完全退出后通知订阅者。
+        """任务退出后移除运行记录并通知订阅者。"""
         if self._runs.get(key) is run:
             self._runs.pop(key, None)
         if not run.ready.done():
@@ -237,18 +252,6 @@ class ConversationRunService:
     async def _completed_subscription(self) -> AsyncGenerator[RunEvent]:
         """构造已结束 Run 的空订阅。"""
         yield chat_schema.ChatStreamDoneEvent(type="done")
-
-    async def close(self) -> None:
-        """应用停止时取消进程内全部后台 Run。"""
-        runs = tuple(self._runs.values())
-        tasks = tuple(
-            run.task for run in runs if run.task is not None and not run.task.done()
-        )
-        for task in tasks:
-            if not task.cancelling():
-                task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def run_agent_turn(

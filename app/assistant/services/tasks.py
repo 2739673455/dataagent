@@ -7,7 +7,7 @@ from uuid import UUID
 
 from loguru import logger
 
-from app.assistant.services.lifecycle import ConversationLifecycleService
+from app.assistant.services.conversation import ConversationLifecycleService
 from app.assistant.services.title import ConversationTitleService
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 
@@ -33,28 +33,6 @@ class ConversationTasks:
         task = asyncio.create_task(self._cleanup_loop(), name="conversation-cleanup")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
-
-    def _submit(
-        self, name: str, operation: Callable[[], Coroutine[object, object, object]]
-    ) -> None:
-        if self._closing:
-            raise RuntimeError("后台任务服务正在关闭")
-        coroutine = operation()
-        try:
-            task = asyncio.create_task(coroutine, name=name)
-        except Exception:
-            coroutine.close()
-            raise
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
-
-    async def _run(self, name: str, operation: Callable[[], Awaitable[object]]) -> None:
-        """执行一次资源清理，失败记录日志，取消直接向上传播。"""
-        try:
-            async with asyncio.timeout(_TASK_TIMEOUT_SECONDS):
-                await operation()
-        except Exception:  # noqa: BLE001
-            logger.exception("后台任务失败: name={}", name)
 
     def generate_title(
         self, user_id: int, conversation_id: UUID, user_text: str
@@ -93,21 +71,6 @@ class ConversationTasks:
             ),
         )
 
-    async def _cleanup_loop(self) -> None:
-        """在当前 Web 进程中串行执行周期扫描。"""
-        while True:
-            try:
-                await self._run(
-                    "pending-deletions",
-                    self._conversations.cleanup_pending_deletions,
-                )
-                await self._run(
-                    "expired-drafts", self._conversations.cleanup_expired_drafts
-                )
-            except Exception:  # noqa: BLE001
-                logger.exception("会话周期清理失败")
-            await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
-
     async def close(self) -> None:
         """取消并等待任务退出，随后应用可关闭数据库和沙箱。"""
         self._closing = True
@@ -116,3 +79,37 @@ class ConversationTasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
+
+    def _submit(
+        self, name: str, operation: Callable[[], Coroutine[object, object, object]]
+    ) -> None:
+        if self._closing:
+            raise RuntimeError("后台任务服务正在关闭")
+        coroutine = operation()
+        try:
+            task = asyncio.create_task(coroutine, name=name)
+        except Exception:
+            coroutine.close()
+            raise
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _run(self, name: str, operation: Callable[[], Awaitable[object]]) -> None:
+        """执行一次资源清理，失败记录日志，取消直接向上传播。"""
+        try:
+            async with asyncio.timeout(_TASK_TIMEOUT_SECONDS):
+                await operation()
+        except Exception:  # noqa: BLE001
+            logger.exception("后台任务失败: name={}", name)
+
+    async def _cleanup_loop(self) -> None:
+        """在当前 Web 进程中串行执行周期扫描。"""
+        while True:
+            await self._run(
+                "pending-deletions",
+                self._conversations.cleanup_pending_deletions,
+            )
+            await self._run(
+                "expired-drafts", self._conversations.cleanup_expired_drafts
+            )
+            await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)

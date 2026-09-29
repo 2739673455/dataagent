@@ -27,7 +27,7 @@ class DorisRoleRepository:
         database: str,
     ) -> frozenset[AssetIdentity]:
         """读取查询账号授权，提取指定业务库的 SELECT 资产范围。"""
-        async with self._provider.connection() as connection:
+        async with self._provider.engine.connect() as connection:
             await connection.exec_driver_sql("SET show_user_default_role = false")
             result = await connection.exec_driver_sql(
                 "SHOW GRANTS FOR %s@%s", (query_user, "%")

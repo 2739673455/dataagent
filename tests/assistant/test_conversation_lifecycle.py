@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
-from app.assistant.services.lifecycle import ConversationLifecycleService
+from app.assistant.services.conversation import ConversationLifecycleService
 
 
 class ConversationDeletionTest(unittest.IsolatedAsyncioTestCase):

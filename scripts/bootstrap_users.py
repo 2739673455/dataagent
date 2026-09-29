@@ -2,6 +2,7 @@
 
 import argparse
 import secrets
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 
 from app.shared.async_runtime import run_async
@@ -40,14 +41,14 @@ async def bootstrap() -> None:
     from app.shared.config.app_config import cfg
     from app.shared.database.base import AuthBase
 
-    postgres = PostgresClientManager(cfg.auth_postgresql, AuthBase)
-    doris = DorisClientManager(cfg.doris)
-    cipher = DorisCredentialCipher(
-        cfg.doris_credentials.encryption_key.get_secret_value()
-    )
-    try:
-        postgres.init()
-        doris.init()
+    async with AsyncExitStack() as stack:
+        postgres = PostgresClientManager(cfg.auth_postgresql, AuthBase)
+        stack.push_async_callback(postgres.close)
+        doris = DorisClientManager(cfg.doris)
+        stack.push_async_callback(doris.close)
+        cipher = DorisCredentialCipher(
+            cfg.doris_credentials.encryption_key.get_secret_value()
+        )
         await postgres.init_tables()
         for role in ROLES:
             # 先保存随机凭据，Doris 初始化失败后重试沿用同一密码。
@@ -73,7 +74,7 @@ async def bootstrap() -> None:
                 identity = await session.get(DorisQueryIdentity, role.name)
                 assert identity is not None
                 password = cipher.decrypt(identity.encrypted_password)
-            async with doris.connection() as connection:
+            async with doris.engine.connect() as connection:
                 quote = connection.dialect.identifier_preparer.quote_identifier
                 role_sql = quote(role.name)
                 group_sql = quote(role.workload_group)
@@ -122,9 +123,6 @@ async def bootstrap() -> None:
                     )
                 )
                 print(f"预定义用户: {user.username}，角色: {user.role_name}")
-    finally:
-        await doris.close()
-        await postgres.close()
 
 
 if __name__ == "__main__":

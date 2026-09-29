@@ -3,6 +3,7 @@
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 
+from elasticsearch import AsyncElasticsearch
 from fastapi import FastAPI
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from loguru import logger
@@ -14,7 +15,7 @@ from psycopg_pool import AsyncConnectionPool
 from app.assistant.agents.filesystem import packaged_skill_readonly_mounts
 from app.assistant.agents.manager import AgentManager
 from app.assistant.repositories.conversation import conversation_repository
-from app.assistant.services.lifecycle import ConversationLifecycleService
+from app.assistant.services.conversation import ConversationLifecycleService
 from app.assistant.services.run import ConversationRunService
 from app.assistant.services.tasks import ConversationTasks
 from app.metadata.services.recall_handler import SemanticRecallHandler
@@ -25,8 +26,7 @@ from app.shared.clients.doris_client_manager import (
     DorisClientManager,
     DorisQueryClientRegistry,
 )
-from app.shared.clients.embedding_client_manager import EmbeddingClientManager
-from app.shared.clients.es_client_manager import ESClientManager
+from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
 from app.shared.database.base import AssistantBase, AuthBase, MetaBase
@@ -41,8 +41,8 @@ class WebResources:
     assistant: PostgresClientManager
     admin_doris: DorisClientManager
     query_clients: DorisQueryClientRegistry
-    embedding: EmbeddingClientManager
-    es: ESClientManager
+    embedding: EmbeddingClient
+    es: AsyncElasticsearch
     checkpoint_pool: AsyncConnectionPool[AsyncConnection[DictRow]]
     checkpointer: AsyncPostgresSaver
     sandbox: DockerSandboxManager
@@ -53,15 +53,24 @@ class WebResources:
     tasks: ConversationTasks
 
 
-def _create_resources() -> WebResources:
-    """组装当前 lifespan 的资源，联网初始化由 lifespan 执行。"""
+def _create_resources(stack: AsyncExitStack) -> WebResources:
+    """构造资源后立即注册清理，联网初始化由 lifespan 执行。"""
     auth = PostgresClientManager(cfg.auth_postgresql, AuthBase)
+    stack.push_async_callback(auth.close)
     meta = PostgresClientManager(cfg.meta_postgresql, MetaBase)
+    stack.push_async_callback(meta.close)
     assistant = PostgresClientManager(cfg.langgraph_postgresql, AssistantBase)
+    stack.push_async_callback(assistant.close)
     admin_doris = DorisClientManager(cfg.doris)
+    stack.push_async_callback(admin_doris.close)
     query_clients = DorisQueryClientRegistry(cfg.doris)
-    embedding = EmbeddingClientManager(cfg.embedding)
-    es = ESClientManager(cfg.elasticsearch)
+    stack.push_async_callback(query_clients.close)
+    embedding = EmbeddingClient(cfg.embedding)
+    stack.push_async_callback(embedding.close)
+    es = AsyncElasticsearch(
+        hosts=[f"http://{cfg.elasticsearch.host}:{cfg.elasticsearch.port}"]
+    )
+    stack.push_async_callback(es.close)
     db = cfg.langgraph_postgresql
     conninfo = make_conninfo(
         host=db.host,
@@ -77,8 +86,10 @@ def _create_resources() -> WebResources:
         open=False,
         kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
     )
+    stack.push_async_callback(checkpoint_pool.close)
     checkpointer = AsyncPostgresSaver(checkpoint_pool)
     sandbox = create_sandbox_manager(packaged_skill_readonly_mounts())
+    stack.push_async_callback(sandbox.close)
     recall = SemanticRecallHandler(auth, meta, embedding, es, admin_doris)
     agents = AgentManager(
         checkpointer,
@@ -86,13 +97,17 @@ def _create_resources() -> WebResources:
         recall,
         QueryExecutionHandler(sandbox, auth, query_clients),
     )
+    stack.push_async_callback(agents.close)
     runs = ConversationRunService(agents, sandbox)
+    stack.push_async_callback(runs.close)
     conversations = ConversationLifecycleService(
         lambda: conversation_repository(assistant),
         agents,
         sandbox,
         runs,
     )
+    tasks = ConversationTasks(assistant, conversations)
+    stack.push_async_callback(tasks.close)
     return WebResources(
         auth=auth,
         meta=meta,
@@ -108,41 +123,22 @@ def _create_resources() -> WebResources:
         runs=runs,
         conversations=conversations,
         recall=recall,
-        tasks=ConversationTasks(assistant, conversations),
+        tasks=tasks,
     )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """启动时创建资源，失败及退出时逆序清理，避免应用实例之间共享连接。"""
-    resources = _create_resources()
     async with AsyncExitStack() as stack:
-        for resource in (
-            resources.query_clients,
-            resources.admin_doris,
-            resources.auth,
-            resources.meta,
-            resources.assistant,
-            resources.es,
-            resources.embedding,
-            resources.checkpoint_pool,
-            resources.sandbox,
-            resources.agents,
-            resources.runs,
-            resources.tasks,
-        ):
-            stack.push_async_callback(resource.close)
+        resources = _create_resources(stack)
         logger.info("开始初始化应用资源")
-        resources.embedding.init()
-        resources.es.init()
         await resources.checkpoint_pool.open(wait=True)
         await resources.checkpointer.setup()
         await resources.sandbox.init()
         await resources.agents.init()
         for postgres in (resources.auth, resources.meta, resources.assistant):
-            postgres.init()
             await postgres.init_tables()
-        resources.admin_doris.init()
         logger.info("应用资源初始化完成")
         resources.tasks.start()
         app.state.resources = resources

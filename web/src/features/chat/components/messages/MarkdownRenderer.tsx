@@ -282,25 +282,6 @@ export function PartView({
     );
   }
 
-  if (part.type === "image_url") {
-    return (
-      <button
-        type="button"
-        onClick={() => onPreview?.(part.image_url, "asset")}
-        className="mt-2 block w-fit max-w-full cursor-zoom-in overflow-hidden rounded border border-[#d4d4ce] bg-[#ffffff] p-1 text-left"
-        title="点击查看大图"
-      >
-        <img
-          src={part.image_url}
-          alt="asset"
-          loading="lazy"
-          className="block h-auto max-h-80 max-w-full rounded object-contain"
-          style={{ maxWidth: "min(100%, 640px)" }}
-        />
-      </button>
-    );
-  }
-
   if (part.type === "thinking") {
     return <ThinkingView part={part} />;
   }

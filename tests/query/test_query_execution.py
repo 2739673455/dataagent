@@ -299,7 +299,9 @@ class DorisStreamTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 self.exited = True
 
-        self.repo = DorisQueryRepository(MagicMock(connection=connection))
+        self.repo = DorisQueryRepository(
+            MagicMock(engine=MagicMock(connect=connection))
+        )
         self.options = QueryExecutionOptions(batch_size=2)
 
     async def consume(self):

@@ -13,11 +13,11 @@ from app.assistant.errors import (
     ConversationRunConflictError,
 )
 from app.assistant.models.chat import TextContent, UserMessageRequest
-from app.assistant.services.lifecycle import ConversationLifecycleService
-from app.assistant.services.run import ConversationRunService
-from app.assistant.services.turn import (
+from app.assistant.services.conversation import (
+    ConversationLifecycleService,
     ConversationTurnService,
 )
+from app.assistant.services.run import ConversationRunService
 
 
 class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
