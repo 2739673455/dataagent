@@ -44,7 +44,6 @@ def test_graph_stream_closes_before_execution_context_exits(exit_mode) -> None:
             MagicMock(),
             PlannerTurnContext(1, conversation_id, 0),
             None,
-            recall=MagicMock(),
         )
         if exit_mode == "projection_error":
             with (

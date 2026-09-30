@@ -35,7 +35,6 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import Field, ValidationError
 
 from app.assistant.agents.filesystem import agent_skills_mount_path
-from app.assistant.agents.middleware.eval_delegations import EvalDelegationMiddleware
 from app.assistant.agents.specialists import (
     SpecialistAgentFactory,
     SpecialistAgentRun,
@@ -49,12 +48,9 @@ from app.assistant.execution.session_store import PostgresSandboxSessionStore
 from app.assistant.execution.shell_jobs import ShellJobRuntime
 from app.assistant.execution.types import (
     DELEGATION_CONTEXT_KEY,
-    EVAL_DELEGATIONS_KEY,
     DelegationMessageContext,
     DelegationRequest,
-    DelegationResult,
     DeleteSessionRequest,
-    EvalDelegationRecord,
     SubagentActivity,
     SubagentMessageActivity,
     SubagentMessageDeltaActivity,
@@ -541,7 +537,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
                 execute_sql,
             ],
             [mcp_web_search],
-            recall=MagicMock(),
         )
 
         self.assertEqual(
@@ -570,7 +565,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
                 execute_sql,
             ],
             [],
-            recall=MagicMock(),
         )
 
         self.assertEqual(
@@ -582,7 +576,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
 
     def test_specialist_definitions_require_explorer_data_tools(self) -> None:
         with self.assertRaisesRegex(ValueError, "Explorer 缺少必需工具"):
-            build_specialist_definitions([recall_context], [], recall=MagicMock())
+            build_specialist_definitions([recall_context], [])
 
     def test_specialist_definitions_reject_reserved_mcp_tool_names(self) -> None:
         @tool("shell")
@@ -597,7 +591,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
                     execute_sql,
                 ],
                 [conflicting_mcp_tool],
-                recall=MagicMock(),
             )
 
     def test_specialist_agents_expose_shell_and_file_tools(self) -> None:
@@ -616,9 +609,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
                 general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)
             ),
         )
-        definitions = build_specialist_definitions(
-            [recall_context, execute_sql], [], recall=MagicMock()
-        )
+        definitions = build_specialist_definitions([recall_context, execute_sql], [])
         required_tools = {
             "read_file",
             "write_file",
@@ -682,18 +673,46 @@ class DynamicSubagentContractTest(unittest.TestCase):
                     )
                     self.assertEqual(second["messages"][-1].content, "second answer")
 
-    def test_planner_exposes_tools_with_only_delegation_in_ptc(self) -> None:
+    def test_planner_exposes_direct_delegation_without_interpreter(self) -> None:
         from deepagents import (
             GeneralPurposeSubagentProfile,
             HarnessProfile,
             register_harness_profile,
         )
         from deepagents.backends import LocalShellBackend
-        from langchain.agents.middleware.types import AgentMiddleware
         from langchain_core.messages import HumanMessage
         from langgraph.checkpoint.memory import InMemorySaver
 
-        from app.assistant.agents.planner.agent import create_planner_agent
+        from app.assistant.agents.agent import create_agent
+        from app.assistant.resource_loader import load_prompt
+
+        class DirectDelegationModel(RecordingChatModel):
+            def _generate(
+                self,
+                messages: list[BaseMessage],
+                stop: list[str] | None = None,
+                run_manager: Any = None,
+                **kwargs: Any,
+            ) -> ChatResult:
+                if any(isinstance(message, ToolMessage) for message in messages):
+                    return super()._generate(messages, stop, run_manager, **kwargs)
+                return ChatResult(
+                    generations=[
+                        ChatGeneration(
+                            message=AIMessage(
+                                content="",
+                                tool_calls=[
+                                    {
+                                        "id": f"delegate-{name}",
+                                        "name": "delegation",
+                                        "args": {"message": name},
+                                    }
+                                    for name in ("region", "product")
+                                ],
+                            )
+                        )
+                    ]
+                )
 
         @tool
         def delegation(message: str) -> str:
@@ -710,27 +729,13 @@ class DynamicSubagentContractTest(unittest.TestCase):
             """删除测试专业 Session。"""
             return session_id
 
-        @tool
-        def eval(code: str) -> str:
-            """模拟 Planner 解释器工具。"""
-            return code
-
-        interpreter_kwargs: dict[str, object] = {}
-
-        class InterpreterStub(AgentMiddleware):
-            """只用于验证 Planner 工具暴露边界。"""
-
-            def __init__(self, **kwargs: object) -> None:
-                interpreter_kwargs.update(kwargs)
-                self.tools = [eval]
-
         register_harness_profile(
             "recordingchatmodel",
             HarnessProfile(
                 general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)
             ),
         )
-        model = RecordingChatModel(
+        model = DirectDelegationModel(
             profile={
                 "image_inputs": True,
                 "image_tool_message": True,
@@ -742,21 +747,18 @@ class DynamicSubagentContractTest(unittest.TestCase):
             cast(Any, backend).conversation_dir = workspace
             planner_shell_jobs = MagicMock(spec=ShellJobRuntime)
             planner_shell_jobs.list.return_value = []
-            with patch(
-                "app.assistant.agents.planner.agent.CodeInterpreterMiddleware",
-                InterpreterStub,
-            ):
-                graph = create_planner_agent(
-                    model=model,
-                    tools=[delegation, list_sessions, delete_session],
-                    backend=cast(Any, backend),
-                    checkpointer=InMemorySaver(),
-                    session_service=_service(_FakeAgent()),
-                    shell_jobs=planner_shell_jobs,
-                    interpreter_memory_limit_bytes=2 * 1024 * 1024,
-                )
+            graph = create_agent(
+                name="planner",
+                system_prompt=load_prompt("agents/planner"),
+                filesystem_tools=["read_file"],
+                model=model,
+                tools=[delegation, list_sessions, delete_session],
+                backend=cast(Any, backend),
+                checkpointer=InMemorySaver(),
+                shell_jobs=planner_shell_jobs,
+            )
 
-            graph.invoke(
+            state = graph.invoke(
                 {"messages": [HumanMessage(content="inspect tools")]},
                 {"configurable": {"thread_id": "planner-tools"}},
             )
@@ -785,134 +787,19 @@ class DynamicSubagentContractTest(unittest.TestCase):
         self.assertIn("list_sessions", model.seen_tools)
         self.assertIn("delete_session", model.seen_tools)
         self.assertIn("view_image", model.seen_tools)
-        self.assertEqual(interpreter_kwargs["ptc"], ["delegation"])
+        self.assertNotIn("eval", model.seen_tools)
+        self.assertEqual(
+            {
+                message.tool_call_id: message.content
+                for message in state["messages"]
+                if isinstance(message, ToolMessage)
+            },
+            {"delegate-region": "region", "delegate-product": "product"},
+        )
 
 
 class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
     """验证 Session 隔离、并发和修补限制。"""
-
-    def test_collects_eval_delegations_until_parent_result_is_persisted(
-        self,
-    ) -> None:
-        service = _service(_FakeAgent())
-        request = DelegationRequest(
-            analysis_id="sales",
-            agent_type="explorer",
-            session_id="source",
-            message="定位销售数据",
-        )
-        result = service._failed_result(request, "执行失败", "RuntimeError: failed")
-
-        service.begin_eval_delegation("eval-1", "ptc-delegation-1", request)
-        service.finish_eval_delegation("eval-1", "ptc-delegation-1", result)
-
-        records = service.take_eval_delegations("eval-1")
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0].message, "定位销售数据")
-        self.assertEqual(records[0].result, result)
-        self.assertEqual(service.take_eval_delegations("eval-1"), [])
-
-    async def test_eval_middleware_persists_collected_delegations(self) -> None:
-        service = MagicMock(spec=AgentSessionService)
-        service.take_eval_delegations.return_value = [
-            EvalDelegationRecord(
-                delegation_id="ptc-delegation-1",
-                analysis_id="sales",
-                agent_type="explorer",
-                session_id="source",
-                message="定位销售数据",
-            )
-        ]
-        middleware = EvalDelegationMiddleware(service)
-        request = cast(
-            Any,
-            SimpleNamespace(tool_call={"name": "eval", "id": "eval-1"}),
-        )
-
-        async def handler(_: object) -> ToolMessage:
-            return ToolMessage(content="done", tool_call_id="eval-1", name="eval")
-
-        response = await middleware.awrap_tool_call(request, cast(Any, handler))
-
-        self.assertIsInstance(response, ToolMessage)
-        assert isinstance(response, ToolMessage)
-        records = response.additional_kwargs[EVAL_DELEGATIONS_KEY]
-        self.assertEqual(records[0]["delegation_id"], "ptc-delegation-1")
-        service.take_eval_delegations.assert_called_once_with("eval-1")
-
-    async def test_ptc_delegation_emits_activity_linked_to_parent_eval(self) -> None:
-        from langchain.tools import ToolRuntime
-
-        from app.assistant.agents.planner.tools import create_delegation_tool
-
-        service = MagicMock(spec=AgentSessionService)
-        activities: list[SubagentActivity] = []
-        result = DelegationResult(
-            status="completed",
-            analysis_id="sales",
-            agent_type="explorer",
-            session_id="source",
-            content="定位完成",
-        )
-
-        async def execute(
-            request: DelegationRequest,
-            _: RunnableConfig,
-            *,
-            delegation_id: str,
-            activity_writer: Callable[[SubagentActivity], None],
-        ) -> DelegationResult:
-            activity_writer(
-                SubagentStatusActivity(
-                    delegation_id=delegation_id,
-                    analysis_id=request.analysis_id,
-                    agent_type=request.agent_type,
-                    session_id=request.session_id,
-                    status="running",
-                )
-            )
-            return result
-
-        service.execute_delegation = AsyncMock(side_effect=execute)
-        runtime = ToolRuntime(
-            state={
-                "messages": [
-                    AIMessage(
-                        content="",
-                        tool_calls=[
-                            {
-                                "id": "eval-1",
-                                "name": "eval",
-                                "args": {"code": "await tools.delegation({})"},
-                            }
-                        ],
-                    )
-                ]
-            },
-            context=None,
-            config=build_planner_config(12, _CONVERSATION_ID),
-            stream_writer=activities.append,
-            tool_call_id="ptc_delegation_a1b2c3d4",
-            store=None,
-        )
-        delegation_tool = create_delegation_tool(service)
-
-        await cast(Any, delegation_tool).coroutine(
-            runtime=runtime,
-            analysis_id="sales",
-            agent_type="explorer",
-            session_id="source",
-            message="定位销售数据",
-        )
-
-        service.begin_eval_delegation.assert_called_once()
-        service.finish_eval_delegation.assert_called_once_with(
-            "eval-1",
-            "ptc_delegation_a1b2c3d4",
-            result,
-        )
-        self.assertEqual(activities[0].parent_tool_call_id, "eval-1")
-        self.assertEqual(activities[0].instruction, "定位销售数据")
 
     async def test_specialist_factory_builds_a_fresh_agent_per_call(self) -> None:
         built_agents: list[CompiledStateGraph] = []
@@ -923,11 +810,9 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             built_agents.append(agent)
             return agent
 
-        definitions = build_specialist_definitions(
-            [recall_context, execute_sql], [], recall=MagicMock()
-        )
+        definitions = build_specialist_definitions([recall_context, execute_sql], [])
         builder_patch = patch(
-            "app.assistant.agents.specialists.create_specialist_agent",
+            "app.assistant.agents.specialists.create_agent",
             side_effect=build_agent,
         )
         builder_patch.start()
@@ -1994,10 +1879,10 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         runtime = MagicMock()
         runtime.planner.astream = stream
         first = ConversationRunService(
-            MagicMock(use_runtime=use_runtime), MagicMock(), MagicMock(), provider
+            MagicMock(use_runtime=use_runtime), MagicMock(), provider
         )
         second = ConversationRunService(
-            MagicMock(use_runtime=use_runtime), MagicMock(), MagicMock(), provider
+            MagicMock(use_runtime=use_runtime), MagicMock(), provider
         )
         try:
             events = await first.start(12, _CONVERSATION_ID, None, prepare=AsyncMock())

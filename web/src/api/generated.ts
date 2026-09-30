@@ -58,9 +58,7 @@ export interface components {
       "analysis_id": string;
       "delegation_id": string;
       "delta": string;
-      "instruction"?: (string | null);
       "message_id": string;
-      "parent_tool_call_id"?: (string | null);
       "reset"?: boolean;
       "session_id": string;
       "type": "subagent_message_delta";
@@ -69,9 +67,7 @@ export interface components {
       "agent_type": components["schemas"]["AgentType"];
       "analysis_id": string;
       "delegation_id": string;
-      "instruction"?: (string | null);
       "message": components["schemas"]["MessageResponse"];
-      "parent_tool_call_id"?: (string | null);
       "session_id": string;
       "type": "subagent_message";
     };
@@ -79,8 +75,6 @@ export interface components {
       "agent_type": components["schemas"]["AgentType"];
       "analysis_id": string;
       "delegation_id": string;
-      "instruction"?: (string | null);
-      "parent_tool_call_id"?: (string | null);
       "session_id": string;
       "status": "running" | "completed" | "failed" | "cancelled";
       "type": "subagent_status";
@@ -90,9 +84,7 @@ export interface components {
       "analysis_id": string;
       "delegation_id": string;
       "delta": string;
-      "instruction"?: (string | null);
       "message_id": string;
-      "parent_tool_call_id"?: (string | null);
       "reset"?: boolean;
       "session_id": string;
       "type": "subagent_thinking";
@@ -194,17 +186,6 @@ export interface components {
       "policy_name": string;
       "table_name": string;
     };
-    "EvalDelegationResponse": {
-      "agent_type": components["schemas"]["AgentType"];
-      "analysis_id": string;
-      "attachments"?: (Array<components["schemas"]["Attachment"]> | null);
-      "delegation_id": string;
-      "message": string;
-      "result"?: ({
-        [key: string]: unknown;
-      } | null);
-      "session_id": string;
-    };
     "ImageContent": {
       "image_url": string;
       "type": "image_url";
@@ -223,7 +204,6 @@ export interface components {
     "MessageResponse": {
       "attachments"?: (Array<components["schemas"]["Attachment"]> | null);
       "created_at"?: (string | null);
-      "eval_delegations"?: (Array<components["schemas"]["EvalDelegationResponse"]> | null);
       "finish_reason"?: (string | null);
       "message_id"?: (string | null);
       "parts": Array<(components["schemas"]["TextContent"] | components["schemas"]["ImageContent"] | components["schemas"]["ThinkingContent"] | components["schemas"]["ToolCallPart"] | components["schemas"]["ToolResultPart"])>;

@@ -12,9 +12,9 @@ from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph.message import add_messages
 
-from app.assistant.agents.middleware.user_message_context import (
+from app.assistant.agents.middleware.message_context import (
     SHELL_JOB_CONTEXT_KEY,
-    UserMessageContextMiddleware,
+    MessageContextMiddleware,
 )
 from app.assistant.agents.tools.shell import create_shell_tools
 from app.assistant.execution.shell_jobs import (
@@ -265,8 +265,8 @@ class ShellJobToolSchemaTest(unittest.TestCase):
 
 class UserMessageShellJobContextTest(unittest.TestCase):
     @staticmethod
-    def _middleware(runtime: Any) -> UserMessageContextMiddleware:
-        return UserMessageContextMiddleware(
+    def _middleware(runtime: Any) -> MessageContextMiddleware:
+        return MessageContextMiddleware(
             cast(Any, MagicMock()),
             "/data/conversation",
             cast(Any, runtime),

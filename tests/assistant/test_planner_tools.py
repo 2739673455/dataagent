@@ -7,11 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 from langchain.tools import ToolRuntime
 from pydantic import ValidationError
 
-from app.assistant.agents.planner.tools import (
-    create_delegation_tool,
-    create_delete_session_tool,
-    create_list_sessions_tool,
-)
+from app.assistant.agents.tools.delegation import create_delegation_tools
 
 
 def make_runtime() -> ToolRuntime:
@@ -30,7 +26,7 @@ class PlannerToolsTest(unittest.IsolatedAsyncioTestCase):
     """验证 Planner 工具将入口错误转为结构化结果。"""
 
     async def test_invalid_request_returns_validation_details(self) -> None:
-        tool = create_delegation_tool(MagicMock())
+        tool = create_delegation_tools(MagicMock())[0]
 
         with self.assertRaises(ValidationError) as caught:
             await tool.ainvoke(
@@ -49,7 +45,7 @@ class PlannerToolsTest(unittest.IsolatedAsyncioTestCase):
         service.execute_delegation = AsyncMock(
             side_effect=RuntimeError("Planner 执行状态不可用")
         )
-        tool = create_delegation_tool(service)
+        tool = create_delegation_tools(service)[0]
         runtime = make_runtime()
 
         result = await cast(Any, tool).coroutine(
@@ -68,13 +64,13 @@ class PlannerToolsTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(call.kwargs["activity_writer"], runtime.stream_writer)
 
     async def test_list_sessions_rejects_invalid_analysis_id(self) -> None:
-        tool = create_list_sessions_tool(MagicMock())
+        tool = create_delegation_tools(MagicMock())[1]
 
         with self.assertRaises(ValidationError):
             await tool.ainvoke({"analysis_id": "Invalid ID"})
 
     async def test_delete_session_rejects_invalid_request(self) -> None:
-        tool = create_delete_session_tool(MagicMock())
+        tool = create_delegation_tools(MagicMock())[2]
         with self.assertRaises(ValidationError):
             await tool.ainvoke(
                 {"analysis_id": "analysis", "agent_type": "analyst", "session_id": ""}
@@ -83,7 +79,7 @@ class PlannerToolsTest(unittest.IsolatedAsyncioTestCase):
     async def test_delete_session_includes_execution_error_detail(self) -> None:
         service = MagicMock()
         service.delete_session = AsyncMock(side_effect=TimeoutError("获取锁超时"))
-        tool = create_delete_session_tool(service)
+        tool = create_delegation_tools(service)[2]
 
         result = await cast(Any, tool).coroutine(
             analysis_id="analysis",

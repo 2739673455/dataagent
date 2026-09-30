@@ -1,5 +1,6 @@
 """语义召回记录模型。"""
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Any
 from uuid import UUID
@@ -85,6 +86,15 @@ class SemanticRecallRecord(BaseModel):
     source_queries: list[str]
     created_at: datetime
     updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticRecallUpdate:
+    """一次召回事务的前后快照及本次实际检索结果。"""
+
+    record: SemanticRecallRecord
+    previous: SemanticRecallRecord | None
+    recalled: SemanticResourceRecallResponse
 
 
 class SemanticRecallColumnDeletion(BaseModel):

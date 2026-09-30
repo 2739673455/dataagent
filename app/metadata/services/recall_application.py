@@ -15,6 +15,7 @@ from app.metadata.errors import SemanticRecallSaveError
 from app.metadata.models.recall import (
     SemanticRecallRecord,
     SemanticRecallResourceDeletion,
+    SemanticRecallUpdate,
 )
 from app.metadata.models.search import (
     SemanticResourceRecallRequest,
@@ -105,8 +106,8 @@ class SemanticRecallService:
         conversation_id: UUID,
         query: str,
         request: SemanticResourceRecallRequest,
-    ) -> SemanticRecallRecord:
-        """共用本次授权快照，完成语义检索、经验召回和记录保存。"""
+    ) -> SemanticRecallUpdate:
+        """共用本次授权快照，完成检索并返回事务内的累计结果变化。"""
         policy, response = await self.search(user_id, request)
         experiences, retrieved_at = await self.query_experiences(
             user_id, conversation_id, query, policy

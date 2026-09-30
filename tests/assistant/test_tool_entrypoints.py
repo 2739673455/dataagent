@@ -3,7 +3,7 @@
 import asyncio
 import json
 from typing import cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -12,14 +12,10 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 from pydantic import BaseModel, ValidationError
 
-from app.assistant.agents.explorer.tools.execute_sql import create_execute_sql_tool
-from app.assistant.agents.explorer.tools.semantic_recall import (
+from app.assistant.agents.tools.delegation import create_delegation_tools
+from app.assistant.agents.tools.execute_sql import create_execute_sql_tool
+from app.assistant.agents.tools.semantic_recall import (
     create_semantic_recall_tools,
-)
-from app.assistant.agents.planner.tools import (
-    create_delegation_tool,
-    create_delete_session_tool,
-    create_list_sessions_tool,
 )
 from app.assistant.agents.tools.shell import create_shell_tools
 from app.assistant.agents.tools.view_image import (
@@ -72,7 +68,7 @@ def test_invalid_tool_arguments_never_execute_business(kind):
     service = MagicMock()
     if kind == "delegation":
         tool, args = (
-            create_delegation_tool(service),
+            create_delegation_tools(service)[0],
             {
                 "analysis_id": "INVALID",
                 "agent_type": "analyst",
@@ -81,10 +77,10 @@ def test_invalid_tool_arguments_never_execute_business(kind):
             },
         )
     elif kind == "list":
-        tool, args = create_list_sessions_tool(service), {"analysis_id": "INVALID"}
+        tool, args = create_delegation_tools(service)[1], {"analysis_id": "INVALID"}
     elif kind == "delete":
         tool, args = (
-            create_delete_session_tool(service),
+            create_delegation_tools(service)[2],
             {"analysis_id": "a", "agent_type": "analyst", "session_id": ""},
         )
     elif kind == "recall":
@@ -120,7 +116,7 @@ def test_delegation_schema_injects_runtime_and_normalizes_request_once():
             return_value=MagicMock(model_dump=lambda **_: {"status": "completed"})
         )
     )
-    tool = create_delegation_tool(service)
+    tool = create_delegation_tools(service)[0]
     assert (
         "runtime"
         not in cast(type[BaseModel], tool.tool_call_schema).model_json_schema()[
@@ -148,18 +144,23 @@ def test_delegation_schema_injects_runtime_and_normalizes_request_once():
 def test_recall_normalizes_schema_and_passes_only_search_fields_to_metadata():
     service = MagicMock(recall_context=AsyncMock(return_value=MagicMock(query="收入")))
     tool = create_semantic_recall_tools(service)[0]
-    message = asyncio.run(
-        _invoke(
-            tool,
-            {
-                "query": " 收入 ",
-                "resource_types": ["column", "column"],
-                "terms": [" 金额 ", "金额"],
-                "limit_per_type": 3,
-            },
+    payload = {"status": "success", "mode": "full", "query": "收入"}
+    with patch(
+        "app.assistant.agents.tools.semantic_recall.semantic_recall_update",
+        return_value=payload,
+    ):
+        message = asyncio.run(
+            _invoke(
+                tool,
+                {
+                    "query": " 收入 ",
+                    "resource_types": ["column", "column"],
+                    "terms": [" 金额 ", "金额"],
+                    "limit_per_type": 3,
+                },
+            )
         )
-    )
-    assert json.loads(message.content) == {"status": "stored", "query": "收入"}
+    assert json.loads(message.content) == payload
     user_id, _, query, request = service.recall_context.await_args.args
     assert user_id == 7 and query == "收入"
     assert request.model_dump() == {
@@ -182,7 +183,7 @@ def test_tool_cancellation_is_not_converted_to_business_error(kind):
         tool = create_semantic_recall_tools(MagicMock(recall_context=cancel))[0]
         args = {"query": "q", "resource_types": ["column"], "terms": ["收入"]}
     elif kind == "delegation":
-        tool = create_delegation_tool(MagicMock(execute_delegation=cancel))
+        tool = create_delegation_tools(MagicMock(execute_delegation=cancel))[0]
         args = {
             "analysis_id": "a",
             "agent_type": "analyst",

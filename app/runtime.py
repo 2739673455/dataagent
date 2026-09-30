@@ -50,7 +50,6 @@ class WebResources:
     runs: ConversationRunService
     conversations: ConversationLifecycleService
     user_deletion: UserDeletionService
-    recall: SemanticRecallService
     auth_rate_limit: AuthRateLimitService
 
 
@@ -91,7 +90,7 @@ def _create_resources(stack: AsyncExitStack) -> WebResources:
     )
     agents = AgentManager(persistence, tombstones, locks, factory)
     stack.push_async_callback(agents.close)
-    runs = ConversationRunService(agents, sandbox, recall, locks)
+    runs = ConversationRunService(agents, sandbox, locks)
     stack.push_async_callback(runs.close)
     conversations = build_conversation_lifecycle_service(
         locks,
@@ -125,7 +124,6 @@ def _create_resources(stack: AsyncExitStack) -> WebResources:
             sandbox,
             conversations,
         ),
-        recall=recall,
         auth_rate_limit=auth_rate_limit,
     )
 

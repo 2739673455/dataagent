@@ -11,6 +11,7 @@ from app.metadata.errors import SemanticQueriesNotFoundError
 from app.metadata.models.recall import (
     SemanticRecallRecord,
     SemanticRecallResourceDeletion,
+    SemanticRecallUpdate,
 )
 from app.metadata.models.search import (
     SemanticColumnRecallResult,
@@ -56,14 +57,16 @@ class SemanticRecallContextService:
         response: SemanticResourceRecallResponse,
         query_experiences: list[QueryExperienceRecallResult],
         query_experiences_retrieved_at: datetime,
-    ) -> SemanticRecallRecord:
-        """将一次检索结果增量合入 query 的持续上下文。"""
+    ) -> SemanticRecallUpdate:
+        """在同一 query 锁内保存累计快照并返回前后版本。"""
         await self._repo.acquire_query_lock(user_id, conversation_id, query)
         previous = await self._repo.get_latest_by_query(
             user_id,
             conversation_id,
             query,
         )
+        recalled = self._authorization_filter.filter_recall_response(response)
+        response = recalled
         if previous is not None:
             previous = self._authorize_record(previous)
             response = _merge_semantic_recall_responses(
@@ -90,7 +93,7 @@ class SemanticRecallContextService:
             updated_at=now,
         )
         await self._repo.save(record)
-        return record
+        return SemanticRecallUpdate(record=record, previous=previous, recalled=recalled)
 
     async def get(
         self,
@@ -107,20 +110,6 @@ class SemanticRecallContextService:
         if record is None:
             raise SemanticQueriesNotFoundError([query])
         return self._authorize_record(record)
-
-    async def get_many(
-        self,
-        user_id: int,
-        conversation_id: UUID,
-        queries: list[str],
-    ) -> dict[str, SemanticRecallRecord]:
-        """批量返回按当前权限过滤的最新记录，允许部分 query 不存在。"""
-        return {
-            record.query: self._authorize_record(record)
-            for record in await self._repo.get_latest_by_queries(
-                user_id, conversation_id, queries
-            )
-        }
 
     async def list(
         self,

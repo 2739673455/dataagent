@@ -1,6 +1,5 @@
 import type {
   Attachment,
-  EvalDelegationResponse,
   MessagePart,
   SubagentRun,
   SubagentRunIdentity,
@@ -33,7 +32,6 @@ export type ToolRunDisplayItem = {
   attachments?: Attachment[] | null;
   conversationId?: string | null;
   createdAt?: string | null;
-  evalDelegations?: EvalDelegationResponse[] | null;
 };
 
 export type DisplayItem = MessageDisplayItem | ToolRunDisplayItem;

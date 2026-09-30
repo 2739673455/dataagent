@@ -27,7 +27,6 @@ from app.assistant.execution.types import (
     SubagentThinkingDeltaActivity,
     build_planner_config,
 )
-from app.metadata.services.recall_application import SemanticRecallService
 
 if TYPE_CHECKING:
     from app.assistant.execution.manager import AgentManager
@@ -39,8 +38,6 @@ async def run_agent_turn(
     files: DockerSandboxManager,
     turn_context: PlannerTurnContext,
     user_message: chat_schema.UserMessageRequest | None,
-    *,
-    recall: SemanticRecallService,
 ) -> AsyncGenerator[chat_schema.ChatStreamEventPayload]:
     """执行新回合或从待执行 Checkpoint 恢复同一回合。"""
     user_id, conversation_id = turn_context.user_id, turn_context.conversation_id
@@ -91,7 +88,6 @@ async def run_agent_turn(
                                 activity,
                                 user_id,
                                 conversation_id,
-                                recall=recall,
                                 files=files,
                             )
                             if event is not None:

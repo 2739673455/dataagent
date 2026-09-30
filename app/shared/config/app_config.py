@@ -285,12 +285,6 @@ class OrchestrationConfig(AppConfigModel):
     max_continuations: int = Field(ge=0)
 
 
-class InterpreterConfig(AppConfigModel):
-    """Planner 内嵌解释器配置。"""
-
-    memory_limit_bytes: int = Field(gt=0)
-
-
 class SpecialistConfig(AppConfigModel):
     """专业 Agent 模型选择。"""
 
@@ -301,7 +295,6 @@ class AgentConfig(AppConfigModel):
     """多 Agent 运行时配置。"""
 
     orchestration: OrchestrationConfig
-    interpreter: InterpreterConfig
     specialists: dict[
         Literal["explorer", "analyst", "reviewer"],
         SpecialistConfig,

@@ -17,7 +17,7 @@ def _dump(result: BaseModel) -> dict[str, Any]:
     return result.model_dump(mode="json", exclude_none=True)
 
 
-def create_shell_tools(runtime: ShellJobRuntime) -> tuple[BaseTool, ...]:
+def create_shell_tools(runtime: ShellJobRuntime) -> list[BaseTool]:
     """创建绑定当前 Agent Run Registry 的四个 Shell 工具。"""
 
     @tool("shell")
@@ -64,4 +64,4 @@ def create_shell_tools(runtime: ShellJobRuntime) -> tuple[BaseTool, ...]:
         """取消一个 Shell Job，并终止命令所属的整个进程组；终态会被消费。"""
         return _dump(await runtime.cancel(job_id))
 
-    return shell, list_shell_jobs, get_shell_job, cancel_shell_job
+    return [shell, list_shell_jobs, get_shell_job, cancel_shell_job]

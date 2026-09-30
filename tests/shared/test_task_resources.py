@@ -152,6 +152,8 @@ def _web_dependencies(
                 raise RuntimeError("construct")
             owner_loop = asyncio.get_running_loop()
             resource = MagicMock()
+            if name == "AgentManager":
+                resource._runtime_factory = args[3]
             created.append((name, resource))
 
             async def close():
@@ -270,8 +272,14 @@ def test_web_applications_own_separate_resources_and_request_dependencies() -> N
                     assert getattr(first_resources, name) is not getattr(
                         second_resources, name
                     )
-                assert first_resources.recall.auth is first_resources.auth
-                assert second_resources.recall.auth is second_resources.auth
+                assert (
+                    first_resources.agents._runtime_factory._recall.auth
+                    is first_resources.auth
+                )
+                assert (
+                    second_resources.agents._runtime_factory._recall.auth
+                    is second_resources.auth
+                )
             assert not hasattr(second.state, "resources")
             assert await read_owner(first) == id(first_resources.auth)
             first_resources.auth.close.assert_not_awaited()

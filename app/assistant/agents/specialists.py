@@ -5,21 +5,18 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated
 
-from langchain.agents.middleware.types import AgentMiddleware
+from deepagents.graph import DeepAgentState
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
+from app.assistant.agents.agent import create_agent
 from app.assistant.agents.filesystem import agent_skills_mount_path
-from app.assistant.agents.middleware.semantic_recall_expansion import (
-    SemanticRecallExpansionMiddleware,
-)
-from app.assistant.agents.specialist_agent import create_specialist_agent
 from app.assistant.execution.shell_jobs import ShellJobRuntime
 from app.assistant.resource_loader import SKILLS_DIRECTORY, load_prompt
-from app.metadata.services.recall_application import SemanticRecallService
 from app.sandbox import DockerSandboxManager
 from app.shared.contracts.analysis import (
     AGENT_TYPES,
@@ -32,7 +29,6 @@ _RESERVED_MCP_TOOL_NAMES = frozenset(
     {
         "delegation",
         "task",
-        "eval",
         "ls",
         "read_file",
         "write_file",
@@ -49,6 +45,23 @@ _RESERVED_MCP_TOOL_NAMES = frozenset(
 )
 
 
+def _merge_delegation_records(
+    current: dict[str, object],
+    updates: dict[str, object],
+) -> dict[str, object]:
+    """按 delegation ID 覆盖单条状态，同时保留同 Session 的历史记录。"""
+    return {**current, **updates}
+
+
+class SpecialistAgentState(DeepAgentState):
+    """增加显式 delegation 状态的专业 Agent Checkpoint。"""
+
+    delegation_records: Annotated[
+        dict[str, object],
+        _merge_delegation_records,
+    ]
+
+
 @dataclass(frozen=True, slots=True)
 class SpecialistAgentRun:
     """一次 delegation 共用的 Agent 图和 Shell Job Runtime。"""
@@ -63,7 +76,6 @@ class SpecialistDefinition:
 
     system_prompt: str
     skill_directory: Path | None = None
-    extra_middleware: tuple[AgentMiddleware, ...] = ()
     tools: tuple[BaseTool, ...] = ()
     skills: tuple[str, ...] = ()
 
@@ -71,8 +83,6 @@ class SpecialistDefinition:
 def build_specialist_definitions(
     explorer_tools: Iterable[BaseTool],
     explorer_mcp_tools: Iterable[BaseTool],
-    *,
-    recall: SemanticRecallService,
 ) -> dict[AgentType, SpecialistDefinition]:
     """构造专业 Agent 定义，并将数据访问能力限定给 Explorer。"""
     builtin_tools = tuple(explorer_tools)
@@ -101,7 +111,6 @@ def build_specialist_definitions(
     return {
         "explorer": SpecialistDefinition(
             system_prompt=load_prompt("agents/explorer"),
-            extra_middleware=(SemanticRecallExpansionMiddleware(recall),),
             tools=tuple(tools_by_name[name] for name in sorted(explorer_tool_names)),
         ),
         "analyst": SpecialistDefinition(
@@ -147,11 +156,12 @@ class SpecialistAgentFactory:
             session_key.session_id,
         )
         shell_jobs = ShellJobRuntime(backend.shell_jobs)
-        agent = create_specialist_agent(
+        agent = create_agent(
             name=session_key.agent_type,
+            filesystem_tools=["read_file", "write_file", "edit_file"],
+            state_schema=SpecialistAgentState,
             system_prompt=definition.system_prompt,
             skill_directory=definition.skill_directory,
-            extra_middleware=definition.extra_middleware,
             model=self._models[session_key.agent_type],
             tools=definition.tools,
             backend=backend,

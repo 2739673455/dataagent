@@ -8,7 +8,6 @@ from app.assistant.conversations.lifecycle import ConversationLifecycleService
 from app.assistant.execution.manager import AgentManager
 from app.assistant.execution.run import ConversationRunService
 from app.dependencies import WebResourcesDep
-from app.metadata.services.recall_application import SemanticRecallService
 from app.sandbox import DockerSandboxManager
 
 
@@ -43,14 +42,4 @@ ConversationLifecycleServiceDep = Annotated[
 ConversationRunServiceDep = Annotated[
     ConversationRunService,
     Depends(_get_conversation_run_service),
-]
-
-
-def _get_recall_runtime(resources: WebResourcesDep) -> SemanticRecallService:
-    """获取当前应用的召回能力资源。"""
-    return resources.recall
-
-
-SemanticRecallServiceDep = Annotated[
-    SemanticRecallService, Depends(_get_recall_runtime)
 ]

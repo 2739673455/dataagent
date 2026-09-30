@@ -43,7 +43,6 @@ NonEmptyText = Annotated[
 ]
 MESSAGE_CREATED_AT_KEY = "dataagent_created_at"
 DELEGATION_CONTEXT_KEY = "dataagent_delegation_context"
-EVAL_DELEGATIONS_KEY = "dataagent_eval_delegations"
 
 
 def get_thread_id(user_id: int, conversation_id: UUID) -> str:
@@ -106,8 +105,6 @@ class SubagentMessageActivity:
     agent_type: AgentType
     session_id: str
     message: BaseMessage
-    parent_tool_call_id: str | None = None
-    instruction: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,8 +118,6 @@ class SubagentThinkingDeltaActivity:
     message_id: str
     delta: str
     reset: bool = False
-    parent_tool_call_id: str | None = None
-    instruction: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,8 +131,6 @@ class SubagentMessageDeltaActivity:
     message_id: str
     delta: str
     reset: bool = False
-    parent_tool_call_id: str | None = None
-    instruction: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,8 +142,6 @@ class SubagentStatusActivity:
     agent_type: AgentType
     session_id: str
     status: SubagentRunStatus
-    parent_tool_call_id: str | None = None
-    instruction: str | None = None
 
 
 type SubagentActivity = (
@@ -227,17 +218,6 @@ class DelegationCheckpointRecord(StrictProtocolModel):
 
     delegation_id: NonEmptyText
     status: SubagentRunStatus
-    result: DelegationResult | None = None
-
-
-class EvalDelegationRecord(StrictProtocolModel):
-    """持久化在 eval ToolMessage 中的内部委派记录。"""
-
-    delegation_id: NonEmptyText
-    analysis_id: Identifier
-    agent_type: AgentType
-    session_id: Identifier
-    message: NonEmptyText
     result: DelegationResult | None = None
 
 

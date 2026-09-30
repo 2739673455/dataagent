@@ -73,7 +73,6 @@ describe("subagent activity state", () => {
       message_id: "review-answer",
       delta: "复核指标",
       reset: true,
-      parent_tool_call_id: "eval-call",
     });
     store.appendSubagentMessageDelta(conversationId, {
       type: "subagent_message_delta",
@@ -84,7 +83,6 @@ describe("subagent activity state", () => {
       message_id: "review-answer",
       delta: "开始输出结论",
       reset: true,
-      parent_tool_call_id: "eval-call",
     });
     store.updateSubagentStatus(conversationId, {
       type: "subagent_status",
@@ -93,12 +91,10 @@ describe("subagent activity state", () => {
       agent_type: "reviewer",
       session_id: "review",
       status: "completed",
-      parent_tool_call_id: "eval-call",
     });
 
     const run =
       useChatStore.getState().subagentRunsByConversation[conversationId]["call-reasoning"];
-    expect(run.parentToolCallId).toBe("eval-call");
     expect(run.messages[0].parts[0]).toEqual({
       type: "thinking",
       text: "复核指标",

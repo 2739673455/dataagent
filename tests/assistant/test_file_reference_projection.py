@@ -6,7 +6,7 @@ from unittest.mock import patch
 from deepagents.backends.protocol import FileDownloadResponse
 from langchain_core.messages import AnyMessage, ToolMessage
 
-from app.assistant.agents.middleware import user_message_context as context
+from app.assistant.agents.middleware import message_context as context
 
 
 def test_images_without_message_ids_reuse_parsing_and_downloads():

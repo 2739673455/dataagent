@@ -66,7 +66,6 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
         self.service = ConversationRunService(
             manager,
             MagicMock(),
-            recall=MagicMock(),
             locks=MagicMock(advisory_lock=lock),
         )
         self.addAsyncCleanup(self.service.close)

@@ -11,16 +11,14 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
-from langchain.agents.middleware.types import ModelResponse
+from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from pydantic import ValidationError
 
-from app.assistant.agents.middleware.message_timestamp import (
-    MessageTimestampMiddleware,
-)
-from app.assistant.agents.middleware.user_message_context import (
+from app.assistant.agents.middleware.message_context import (
     USER_MESSAGE_CONTEXT_KEY,
+    MessageContextMiddleware,
     UserMessageContext,
 )
 from app.assistant.checkpoints.reader import CheckpointState
@@ -31,7 +29,6 @@ from app.assistant.events import schemas as chat_schema
 from app.assistant.execution import planner as planner_turn
 from app.assistant.execution.manager import AgentManager
 from app.assistant.execution.types import (
-    EVAL_DELEGATIONS_KEY,
     MESSAGE_CREATED_AT_KEY,
     ConversationAgentRuntime,
     DelegationActivityHistory,
@@ -224,15 +221,59 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_model_response_creation_time_is_persisted(self) -> None:
-        middleware = MessageTimestampMiddleware()
-        response_message = AIMessage(content="result")
-
-        async def handler(_: Any) -> ModelResponse[Any]:
-            return ModelResponse(result=[response_message])
-
-        await middleware.awrap_model_call(MagicMock(), handler)
-
-        self.assertIn(MESSAGE_CREATED_AT_KEY, response_message.additional_kwargs)
+        middleware = MessageContextMiddleware(
+            MagicMock(), "/data/conversation", MagicMock()
+        )
+        for asynchronous in (False, True):
+            for project_context in (False, True):
+                with self.subTest(
+                    asynchronous=asynchronous, project_context=project_context
+                ):
+                    user_message = (
+                        message_projection.schema_to_human_message(
+                            chat_schema.UserMessageRequest(
+                                parts=[
+                                    chat_schema.TextContent(
+                                        type="text", text="question"
+                                    )
+                                ]
+                            )
+                        )
+                        if project_context
+                        else HumanMessage(content="question")
+                    )
+                    original = user_message.model_dump()
+                    response_message = AIMessage(content="result")
+                    existing = AIMessage(
+                        content="earlier",
+                        additional_kwargs={
+                            MESSAGE_CREATED_AT_KEY: "2026-01-01T00:00:00+00:00"
+                        },
+                    )
+                    response = ModelResponse(result=[response_message, existing])
+                    handler = (
+                        AsyncMock(return_value=response)
+                        if asynchronous
+                        else MagicMock(return_value=response)
+                    )
+                    request = ModelRequest(
+                        model=MagicMock(profile={}), messages=[user_message], tools=[]
+                    )
+                    if asynchronous:
+                        actual = await middleware.awrap_model_call(request, handler)
+                    else:
+                        actual = middleware.wrap_model_call(request, handler)
+                    self.assertIs(actual, response)
+                    self.assertIn(
+                        MESSAGE_CREATED_AT_KEY, response_message.additional_kwargs
+                    )
+                    self.assertEqual(
+                        existing.additional_kwargs[MESSAGE_CREATED_AT_KEY],
+                        "2026-01-01T00:00:00+00:00",
+                    )
+                    self.assertEqual(user_message.model_dump(), original)
+                    projected = handler.call_args.args[0]
+                    self.assertEqual(projected is request, not project_context)
 
     async def test_reasoning_block_is_projected_as_completed_thinking(self) -> None:
         response = await message_projection.langchain_message_to_schema(
@@ -524,7 +565,6 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                 manager,
                 _FileInspectorStub(),
                 manager.turn_context,
-                recall=MagicMock(),
                 user_message=None,
             )
         ]
@@ -600,7 +640,6 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                 manager,
                 _FileInspectorStub(),
                 manager.turn_context,
-                recall=MagicMock(),
                 user_message=None,
             )
         ]
@@ -655,7 +694,6 @@ class PlannerContinuationTest(unittest.IsolatedAsyncioTestCase):
                 _FileInspectorStub(),
                 manager.turn_context,
                 user_message,
-                recall=MagicMock(),
             ):
                 events.append(event)
 
@@ -920,7 +958,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 chat_schema.UserMessageRequest(
                     parts=[chat_schema.TextContent(type="text", text="分析")]
                 ),
-                recall=MagicMock(),
             )
         ]
 
@@ -932,43 +969,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             history[0].model_dump(mode="json"),
             event.message.model_dump(mode="json"),
-        )
-
-    async def test_eval_internal_delegations_are_projected_from_tool_metadata(
-        self,
-    ) -> None:
-        payload = _delegation_payload()
-        schema = await message_projection.langchain_message_to_schema(
-            ToolMessage(
-                id="eval-result",
-                content="done",
-                name="eval",
-                tool_call_id="eval-call",
-                additional_kwargs={
-                    EVAL_DELEGATIONS_KEY: [
-                        {
-                            "delegation_id": "ptc-delegation-1",
-                            "analysis_id": "sales-review",
-                            "agent_type": "analyst",
-                            "session_id": "chart-1",
-                            "message": "生成销售图表",
-                            "result": payload,
-                        }
-                    ]
-                },
-            ),
-            _projection_files(),
-            7,
-            _CONVERSATION_ID,
-        )
-
-        self.assertIsNotNone(schema)
-        assert schema is not None and schema.eval_delegations is not None
-        self.assertEqual(schema.eval_delegations[0].delegation_id, "ptc-delegation-1")
-        self.assertEqual(schema.eval_delegations[0].message, "生成销售图表")
-        self.assertEqual(
-            schema.eval_delegations[0].result,
-            {**payload, "content": "Chart generated\n"},
         )
 
     async def test_large_subagent_tool_payloads_are_preserved(self) -> None:
@@ -1026,8 +1026,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                     agent_type="explorer",
                     session_id="source-1",
                     status="running",
-                    parent_tool_call_id="eval-call",
-                    instruction="定位销售数据",
                 ),
             }
             yield {
@@ -1041,8 +1039,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                     message_id="specialist-1",
                     delta="先检查数据",
                     reset=True,
-                    parent_tool_call_id="eval-call",
-                    instruction="定位销售数据",
                 ),
             }
             yield {
@@ -1056,8 +1052,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                     message_id="specialist-1",
                     delta="正在检查数据",
                     reset=True,
-                    parent_tool_call_id="eval-call",
-                    instruction="定位销售数据",
                 ),
             }
             yield {
@@ -1099,7 +1093,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 chat_schema.UserMessageRequest(
                     parts=[chat_schema.TextContent(type="text", text="analyze")]
                 ),
-                recall=MagicMock(),
             ):
                 events.append(event)
 
@@ -1118,19 +1111,10 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         message_event = cast(chat_schema.ChatStreamSubagentMessageEvent, events[3])
         self.assertEqual(message_event.delegation_id, "delegation-1")
         self.assertEqual(message_event.message.parts[0].type, "text")
-        status_event = cast(chat_schema.ChatStreamSubagentStatusEvent, events[0])
-        self.assertEqual(status_event.parent_tool_call_id, "eval-call")
-        self.assertEqual(status_event.instruction, "定位销售数据")
 
-    async def test_semantic_recall_result_is_expanded_in_stream_and_history(
+    async def test_semantic_recall_result_is_unchanged_in_stream_and_history(
         self,
     ) -> None:
-        reference = ToolMessage(
-            id="recall-message",
-            name="recall_context",
-            tool_call_id="recall-call",
-            content=json.dumps({"status": "stored", "query": "收入趋势"}),
-        )
         detailed_content = json.dumps(
             {
                 "query": "收入趋势",
@@ -1138,8 +1122,12 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             },
             ensure_ascii=False,
         )
-        expanded = reference.model_copy(update={"content": detailed_content})
-        expander = AsyncMock(return_value=[expanded])
+        reference = ToolMessage(
+            id="recall-message",
+            name="recall_context",
+            tool_call_id="recall-call",
+            content=detailed_content,
+        )
         activity = SubagentMessageActivity(
             delegation_id="delegation-1",
             analysis_id="sales-review",
@@ -1148,44 +1136,30 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             message=reference,
         )
 
-        with (
-            patch.object(
-                message_projection,
-                "expand_semantic_recall_messages_for_display",
-                new=expander,
-            ),
-            patch.object(
-                conversation_history,
-                "expand_semantic_recall_messages_for_display",
-                new=expander,
-            ),
-        ):
-            stream_event = await message_projection.subagent_activity_to_event(
-                activity,
-                7,
-                _CONVERSATION_ID,
-                recall=MagicMock(),
-                files=_projection_files(),
-            )
+        stream_event = await message_projection.subagent_activity_to_event(
+            activity,
+            7,
+            _CONVERSATION_ID,
+            files=_projection_files(),
+        )
 
-            agents = MagicMock()
-            agents.read_delegation_activity = AsyncMock(
-                return_value=DelegationActivityHistory(
-                    messages=[reference],
-                    status="completed",
-                )
+        agents = MagicMock()
+        agents.read_delegation_activity = AsyncMock(
+            return_value=DelegationActivityHistory(
+                messages=[reference],
+                status="completed",
             )
-            history = await conversation_history.get_subagent_activity(
-                agents,
-                7,
-                _CONVERSATION_ID,
-                "sales-review",
-                "explorer",
-                "source-1",
-                "delegation-1",
-                recall=MagicMock(),
-                files=_projection_files(),
-            )
+        )
+        history = await conversation_history.get_subagent_activity(
+            agents,
+            7,
+            _CONVERSATION_ID,
+            "sales-review",
+            "explorer",
+            "source-1",
+            "delegation-1",
+            files=_projection_files(),
+        )
 
         self.assertIsInstance(
             stream_event,
@@ -1203,10 +1177,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(history_part, chat_schema.ToolResultPart)
         assert isinstance(history_part, chat_schema.ToolResultPart)
         self.assertEqual(history_part.content, detailed_content)
-        self.assertEqual(
-            reference.content,
-            json.dumps({"status": "stored", "query": "收入趋势"}),
-        )
+        self.assertEqual(reference.content, detailed_content)
 
     async def test_subagent_attachments_match_planner_in_stream_and_history(
         self,
@@ -1227,7 +1198,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             ),
             7,
             _CONVERSATION_ID,
-            recall=MagicMock(),
             files=files,
         )
         agents = MagicMock()
@@ -1245,7 +1215,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             "analyst",
             "chart-1",
             "delegation-files",
-            recall=MagicMock(),
             files=files,
         )
         assert isinstance(stream, chat_schema.ChatStreamSubagentMessageEvent)
@@ -1327,7 +1296,6 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 _projection_files(),
                 manager.turn_context,
                 user_message,
-                recall=MagicMock(),
             ):
                 events.append(event)
 
@@ -1347,45 +1315,20 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             + str(payload["content"])
             + f"\n[[DATAAGENT_ARTIFACT:{_SANDBOX_ROOT}/uploads/missing.csv]]"
         )
-        for name in ("delegation", "eval"):
-            message = ToolMessage(
-                name=name,
-                tool_call_id="call",
-                content=json.dumps(payload) if name == "delegation" else "done",
-                additional_kwargs={
-                    EVAL_DELEGATIONS_KEY: [
-                        {
-                            "delegation_id": "delegation",
-                            "analysis_id": "sales-review",
-                            "agent_type": "analyst",
-                            "session_id": "chart-1",
-                            "message": "报告",
-                            "result": payload,
-                        }
-                    ]
-                }
-                if name == "eval"
-                else {},
-            )
-            for exists in (True, False):
-                with self.subTest(name=name, exists=exists):
-                    files = _projection_files() if exists else _FileInspectorStub()
-                    schema = await message_projection.langchain_message_to_schema(
-                        message, files, 7, _CONVERSATION_ID
-                    )
-                    assert schema is not None
-                    if name == "delegation":
-                        attachments = schema.attachments
-                    else:
-                        assert schema.eval_delegations is not None
-                        attachments = schema.eval_delegations[0].attachments
-                    self.assertEqual(len(attachments or []), 1 if exists else 0)
-                    self.assertEqual(
-                        message.additional_kwargs.get(EVAL_DELEGATIONS_KEY, [{}])[
-                            0
-                        ].get("result", payload),
-                        payload,
-                    )
+        message = ToolMessage(
+            name="delegation",
+            tool_call_id="call",
+            content=json.dumps(payload),
+        )
+        for exists in (True, False):
+            with self.subTest(exists=exists):
+                files = _projection_files() if exists else _FileInspectorStub()
+                schema = await message_projection.langchain_message_to_schema(
+                    message, files, 7, _CONVERSATION_ID
+                )
+                assert schema is not None
+                self.assertEqual(len(schema.attachments or []), 1 if exists else 0)
+                self.assertEqual(json.loads(str(message.content)), payload)
 
     async def test_invalid_delegation_artifact_payload_is_not_exposed(self) -> None:
         payload = _delegation_payload()

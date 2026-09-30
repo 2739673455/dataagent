@@ -28,7 +28,6 @@ from app.assistant.execution.types import (
     DelegationResult,
     DeleteSessionRequest,
     DeleteSessionResult,
-    EvalDelegationRecord,
     ListSessionsResult,
     SessionSummary,
     SubagentActivityWriter,
@@ -87,56 +86,12 @@ class AgentSessionService:
         self._parallelism = asyncio.Semaphore(max_parallel_sessions)
         self._max_sessions = max_sessions
         self._active_sessions: dict[str, datetime] = {}
-        self._eval_delegations: dict[str, dict[str, EvalDelegationRecord]] = {}
         self._runtime_state_lock = ThreadLock()
-
-    def begin_eval_delegation(
-        self,
-        parent_tool_call_id: str,
-        delegation_id: str,
-        request: DelegationRequest,
-    ) -> None:
-        """登记一次由 eval 发起、尚未完成的内部委派。"""
-        record = EvalDelegationRecord(
-            delegation_id=delegation_id,
-            analysis_id=request.analysis_id,
-            agent_type=request.agent_type,
-            session_id=request.session_id,
-            message=request.message,
-        )
-        with self._runtime_state_lock:
-            self._eval_delegations.setdefault(parent_tool_call_id, {})[
-                delegation_id
-            ] = record
 
     def is_session_active(self, checkpoint_ns: str) -> bool:
         """返回指定 Session 是否正在当前进程执行。"""
         with self._runtime_state_lock:
             return checkpoint_ns in self._active_sessions
-
-    def finish_eval_delegation(
-        self,
-        parent_tool_call_id: str,
-        delegation_id: str,
-        result: DelegationResult,
-    ) -> None:
-        """把 eval 内部委派的最终结果写入待持久化记录。"""
-        with self._runtime_state_lock:
-            records = self._eval_delegations.get(parent_tool_call_id)
-            if records is None or delegation_id not in records:
-                return
-            records[delegation_id] = records[delegation_id].model_copy(
-                update={"result": result}
-            )
-
-    def take_eval_delegations(
-        self,
-        parent_tool_call_id: str,
-    ) -> list[EvalDelegationRecord]:
-        """取出并清除一个 eval 收集到的内部委派记录。"""
-        with self._runtime_state_lock:
-            records = self._eval_delegations.pop(parent_tool_call_id, {})
-        return list(records.values())
 
     def _parse_session_namespace(self, checkpoint_ns: str) -> AgentSessionKey | None:
         """把受控专业 Session namespace 还原为身份键。"""
@@ -191,8 +146,7 @@ class AgentSessionService:
     ) -> RunnableConfig:
         """复制父配置并替换为专业 Session namespace。"""
         config = dict(parent_config)
-        # Specialist 使用独立的持久化 namespace，不能继承父任务的子图计数器；
-        # 否则 PTC 内部调用会被 LangGraph 自动写入 `<namespace>|N`。
+        # Specialist 使用独立的持久化 namespace，不能继承父任务的子图计数器。
         parent_configurable = {
             key: value
             for key, value in parent_config.get("configurable", {}).items()
@@ -635,4 +589,3 @@ class AgentSessionService:
         """清除无运行任务时的 Session 内存状态。"""
         with self._runtime_state_lock:
             self._active_sessions.clear()
-            self._eval_delegations.clear()

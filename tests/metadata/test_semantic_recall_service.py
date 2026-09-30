@@ -10,27 +10,14 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from langchain.agents.middleware.types import ModelRequest, ModelResponse
-from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import AIMessage
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
-from langgraph.runtime import Runtime
 from pydantic import BaseModel, ValidationError
-from sqlalchemy.dialects import postgresql
 
-from app.assistant.agents.explorer.semantic_recall_messages import (
-    expand_semantic_recall_messages_for_display,
-)
-from app.assistant.agents.explorer.semantic_recall_protocol import (
-    parse_semantic_recall_references,
+from app.assistant.agents.tools.semantic_recall import (
+    create_semantic_recall_tools,
     semantic_recall_payload,
-    semantic_recall_reference,
-)
-from app.assistant.agents.explorer.tools import create_semantic_recall_tools
-from app.assistant.agents.middleware.semantic_recall_expansion import (
-    SemanticRecallExpansionMiddleware,
 )
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
 from app.metadata.errors import SemanticQueriesNotFoundError
@@ -119,21 +106,6 @@ class InMemorySemanticRecallRepo:
             key=lambda record: (record.updated_at, record.response.recall_id),
             default=None,
         )
-
-    async def get_latest_by_queries(
-        self, user_id: int, conversation_id: object, queries: list[str]
-    ) -> list[SemanticRecallRecord]:
-        """模拟批量查询的最新快照语义。"""
-        return [
-            record
-            for query in dict.fromkeys(queries)
-            if (
-                record := await self.get_latest_by_query(
-                    user_id, conversation_id, query
-                )
-            )
-            is not None
-        ]
 
     async def list(
         self,
@@ -349,306 +321,6 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             datetime.now(UTC),
         )
 
-    async def test_batch_expansion_preserves_order_duplicates_missing_and_current_permissions(
-        self,
-    ):
-        await self._record("old_a", "A", 0.4, "old")
-        await self._record("new_a", "A", 0.8, "new")
-        await self._record("record_b", "B", 0.5, "second")
-        restricted = SemanticRecallContextService(
-            recall_repo(self.repo),
-            build_authorization_filter(),
-            query_experience_role_name=None,
-            query_experience_authorization_fingerprint=None,
-        )
-        messages = [
-            ToolMessage(
-                name="get_recall",
-                tool_call_id=str(index),
-                content=json.dumps({"status": "stored", "query": query}),
-            )
-            for index, query in enumerate(["B", "A", "missing", "A"])
-        ]
-        original_contents = [message.content for message in messages]
-        with (
-            patch.object(
-                _RECALL,
-                "context_service",
-                side_effect=lambda *args: object_context(restricted),
-            ) as context,
-            patch.object(
-                self.repo,
-                "get_latest_by_queries",
-                wraps=self.repo.get_latest_by_queries,
-            ) as batch,
-        ):
-            expanded = await expand_semantic_recall_messages_for_display(
-                messages, self.user_id, self.conversation_id, recall=_RECALL
-            )
-        context.assert_called_once_with(self.user_id)
-        batch.assert_awaited_once_with(
-            self.user_id, self.conversation_id, ["B", "A", "missing"]
-        )
-        self.assertEqual(
-            [message.tool_call_id for message in expanded], ["0", "1", "2", "3"]
-        )
-        payloads = [json.loads(message.content) for message in expanded]
-        self.assertEqual([payloads[i]["query"] for i in (0, 1, 3)], ["B", "A", "A"])
-        self.assertEqual(payloads[1], payloads[3])
-        self.assertEqual(payloads[2]["queries"], ["missing"])
-        self.assertEqual(payloads[2]["status"], "error")
-        for index in (0, 1, 3):
-            self.assertEqual(payloads[index]["tables"], {})
-            self.assertEqual(payloads[index]["metrics"], {})
-        self.assertEqual([message.content for message in messages], original_contents)
-        records = await restricted.get_many(
-            self.user_id, self.conversation_id, ["A", "B", "missing"]
-        )
-        self.assertEqual(records["A"].response.recall_id, "new_a")
-        self.assertEqual(
-            await restricted.get_many(self.user_id + 1, self.conversation_id, ["A"]), {}
-        )
-        self.assertEqual(await restricted.get_many(self.user_id, uuid4(), ["A"]), {})
-
-    async def test_batch_repo_uses_one_scoped_latest_per_query_statement(self):
-        session = MagicMock(scalars=AsyncMock(return_value=MagicMock(all=list)))
-        repo = SemanticRecallPGRepo(session)
-        self.assertEqual(
-            await repo.get_latest_by_queries(
-                self.user_id, self.conversation_id, ["A", "B", "A"]
-            ),
-            [],
-        )
-        session.scalars.assert_awaited_once()
-        statement = session.scalars.await_args.args[0].compile(
-            dialect=postgresql.dialect()
-        )
-        sql = str(statement)
-        self.assertIn("DISTINCT ON (semantic_recall_snapshots.query)", sql)
-        self.assertIn("semantic_recall_snapshots.user_id =", sql)
-        self.assertIn("semantic_recall_snapshots.conversation_id =", sql)
-        self.assertIn(
-            "ORDER BY semantic_recall_snapshots.query, semantic_recall_snapshots.updated_at DESC, semantic_recall_snapshots.recall_id DESC",
-            sql,
-        )
-        self.assertIn(["A", "B"], statement.params.values())
-        self.assertIn(self.user_id, statement.params.values())
-        self.assertIn(self.conversation_id, statement.params.values())
-
-    async def test_empty_batch_does_not_query_database(self):
-        session = MagicMock(scalars=AsyncMock())
-        self.assertEqual(
-            await SemanticRecallPGRepo(session).get_latest_by_queries(
-                self.user_id, self.conversation_id, []
-            ),
-            [],
-        )
-        session.scalars.assert_not_awaited()
-
-    async def test_delete_tool_persists_references_and_rechecks_permissions_on_both_read_paths(
-        self,
-    ):
-        await self._record("record_a", "A", 0.8, "first")
-        await self._record("record_b", "B", 0.8, "second")
-        builder = StateGraph(MessagesState)
-        builder.add_node("tools", ToolNode([delete_recalls]))
-        builder.add_edge(START, "tools")
-        builder.add_edge("tools", END)
-        config: RunnableConfig = {
-            "configurable": {
-                "user_id": self.user_id,
-                "conversation_id": str(self.conversation_id),
-            }
-        }
-        with patch.object(
-            _RECALL,
-            "context_service",
-            side_effect=lambda *args: object_context(self.service),
-        ):
-            result = await builder.compile().ainvoke(
-                {
-                    "messages": [
-                        AIMessage(
-                            content="",
-                            tool_calls=[
-                                {
-                                    "name": "delete_recalls",
-                                    "id": "delete_call",
-                                    "type": "tool_call",
-                                    "args": {
-                                        "deletions": [
-                                            {"query": "A", "metrics": {"revenue": {}}},
-                                            {"query": "B"},
-                                        ]
-                                    },
-                                }
-                            ],
-                        )
-                    ]
-                },
-                config,
-            )
-            message = result["messages"][-1]
-            original = message.content
-            visible = await expand_semantic_recall_messages_for_display(
-                [message], self.user_id, self.conversation_id, recall=_RECALL
-            )
-        self.assertEqual(
-            json.loads(original),
-            {
-                "status": "success",
-                "recalls": [
-                    {"status": "stored", "query": "A"},
-                    {"status": "deleted", "query": "B"},
-                ],
-            },
-        )
-        self.assertIn("orders", json.loads(visible[0].content)["recalls"][0]["tables"])
-        self.assertNotIn("amount", original)
-        self.assertIsNone(
-            await self.repo.get_latest_by_query(self.user_id, self.conversation_id, "B")
-        )
-        # 同名 query 重建也不能把过去的删除确认变成新内容。
-        await self._record("recreated_b", "B", 0.8, "new")
-        revoked = SemanticRecallContextService(
-            recall_repo(self.repo),
-            build_authorization_filter(),
-            query_experience_role_name=None,
-            query_experience_authorization_fingerprint=None,
-        )
-        request = ModelRequest(
-            model=GenericFakeChatModel(messages=iter([AIMessage(content="ok")])),
-            messages=[HumanMessage(content="继续"), message],
-            runtime=Runtime(),
-        )
-        seen = []
-
-        async def model_handler(model_request):
-            seen.extend(model_request.messages)
-            return ModelResponse(result=[AIMessage(content="ok")])
-
-        with (
-            patch.object(
-                _RECALL,
-                "context_service",
-                side_effect=lambda *args: object_context(revoked),
-            ),
-            patch.object(
-                self.repo,
-                "get_latest_by_queries",
-                wraps=self.repo.get_latest_by_queries,
-            ) as batch,
-            patch(
-                "app.assistant.agents.middleware.semantic_recall_expansion.get_config",
-                return_value=config,
-            ),
-        ):
-            await SemanticRecallExpansionMiddleware(_RECALL).awrap_model_call(
-                request, model_handler
-            )
-            displayed = await expand_semantic_recall_messages_for_display(
-                [message], self.user_id, self.conversation_id, recall=_RECALL
-            )
-        self.assertEqual(batch.await_count, 2)
-        for call in batch.await_args_list:
-            self.assertEqual(call.args, (self.user_id, self.conversation_id, ["A"]))
-        for content in (seen[-1].content, displayed[0].content):
-            payload = json.loads(content)
-            self.assertEqual(payload["recalls"][0]["tables"], {})
-            self.assertEqual(payload["recalls"][0]["metrics"], {})
-            self.assertEqual(payload["recalls"][0]["query_experiences"], [])
-            self.assertEqual(payload["recalls"][1], {"status": "deleted", "query": "B"})
-        self.assertEqual(message.content, original)
-        await self.repo.delete_by_query(self.user_id, self.conversation_id, "A")
-        with patch.object(
-            _RECALL,
-            "context_service",
-            side_effect=lambda *args: object_context(revoked),
-        ):
-            missing = await expand_semantic_recall_messages_for_display(
-                [message], self.user_id, self.conversation_id, recall=_RECALL
-            )
-        results = json.loads(missing[0].content)["recalls"]
-        self.assertEqual(results[0]["status"], "error")
-        self.assertEqual(results[0]["queries"], ["A"])
-        self.assertEqual(results[1], {"status": "deleted", "query": "B"})
-
-    async def test_whole_deletion_confirmation_does_not_read_snapshots(self):
-        message = ToolMessage(
-            name="delete_recalls",
-            tool_call_id="delete",
-            content=json.dumps(
-                {
-                    "status": "success",
-                    "recalls": [{"status": "deleted", "query": "A"}],
-                }
-            ),
-        )
-        with patch.object(
-            _RECALL, "context_service", side_effect=AssertionError("unexpected read")
-        ) as context:
-            displayed = await expand_semantic_recall_messages_for_display(
-                [message], self.user_id, self.conversation_id, recall=_RECALL
-            )
-        context.assert_not_called()
-        self.assertEqual(
-            json.loads(displayed[0].content), json.loads(str(message.content))
-        )
-
-    async def test_failed_batch_expansion_preserves_deletion_confirmation(self):
-        message = ToolMessage(
-            name="delete_recalls",
-            tool_call_id="delete",
-            content=json.dumps(
-                {
-                    "status": "success",
-                    "recalls": [
-                        {"status": "stored", "query": "A"},
-                        {"status": "deleted", "query": "B"},
-                    ],
-                }
-            ),
-        )
-        request = ModelRequest(
-            model=GenericFakeChatModel(messages=iter([AIMessage(content="ok")])),
-            messages=[HumanMessage(content="继续"), message],
-            runtime=Runtime(),
-        )
-        seen = []
-
-        async def model_handler(model_request):
-            seen.extend(model_request.messages)
-            return ModelResponse(result=[AIMessage(content="ok")])
-
-        with (
-            patch.object(
-                _RECALL,
-                "context_service",
-                side_effect=RuntimeError("authorization unavailable"),
-            ),
-            patch(
-                "app.assistant.agents.middleware.semantic_recall_expansion.get_config",
-                return_value={
-                    "configurable": {
-                        "user_id": self.user_id,
-                        "conversation_id": str(self.conversation_id),
-                    }
-                },
-            ),
-        ):
-            await SemanticRecallExpansionMiddleware(_RECALL).awrap_model_call(
-                request, model_handler
-            )
-            displayed = await expand_semantic_recall_messages_for_display(
-                [message], self.user_id, self.conversation_id, recall=_RECALL
-            )
-        results = json.loads(seen[-1].content)["recalls"]
-        self.assertEqual(
-            results[0], {"status": "error", "message": "语义召回记录暂不可用"}
-        )
-        self.assertEqual(results[1], {"status": "deleted", "query": "B"})
-        self.assertEqual(displayed[0].content, message.content)
-
     async def test_each_search_is_persisted_with_request_and_result(self) -> None:
         await self._record("recall_a", "本月收入", 0.4, "query_a")
         await self._record("recall_b", "订单金额", 0.8, "query_b")
@@ -677,15 +349,17 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_postgres_repo_round_trips_combined_recall_payload(self) -> None:
         experience = build_query_experience()
-        record = await self.service.record(
-            self.user_id,
-            self.conversation_id,
-            "本月收入",
-            build_request("本月收入", ["column"]),
-            build_response("recall_a", "本月收入", score=0.8, reason="收入"),
-            [experience],
-            datetime.now(UTC),
-        )
+        record = (
+            await self.service.record(
+                self.user_id,
+                self.conversation_id,
+                "本月收入",
+                build_request("本月收入", ["column"]),
+                build_response("recall_a", "本月收入", score=0.8, reason="收入"),
+                [experience],
+                datetime.now(UTC),
+            )
+        ).record
         session = MagicMock()
         session.flush = AsyncMock()
         repo = SemanticRecallPGRepo(cast(Any, session))
@@ -762,15 +436,17 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             datetime.now(UTC),
         )
 
-        refreshed = await self.service.record(
-            self.user_id,
-            self.conversation_id,
-            "本月收入",
-            build_request("本月收入", ["column"]),
-            build_response("recall_b", "本月收入", score=0.8, reason="second"),
-            [],
-            datetime.now(UTC),
-        )
+        refreshed = (
+            await self.service.record(
+                self.user_id,
+                self.conversation_id,
+                "本月收入",
+                build_request("本月收入", ["column"]),
+                build_response("recall_b", "本月收入", score=0.8, reason="second"),
+                [],
+                datetime.now(UTC),
+            )
+        ).record
 
         self.assertEqual(refreshed.response.status, "success")
         self.assertEqual(refreshed.response.failures, [])
@@ -795,15 +471,17 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             datetime.now(UTC),
         )
 
-        refreshed = await self.service.record(
-            self.user_id,
-            self.conversation_id,
-            "收入分析",
-            build_request("GMV", ["column"]),
-            build_response("recall_b", "GMV", score=0.8, reason="second"),
-            [],
-            datetime.now(UTC),
-        )
+        refreshed = (
+            await self.service.record(
+                self.user_id,
+                self.conversation_id,
+                "收入分析",
+                build_request("GMV", ["column"]),
+                build_response("recall_b", "GMV", score=0.8, reason="second"),
+                [],
+                datetime.now(UTC),
+            )
+        ).record
 
         self.assertEqual(refreshed.response.status, "partial")
         self.assertEqual(refreshed.response.failures, failed.failures)
@@ -969,15 +647,17 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        continued = await self.service.record(
-            self.user_id,
-            self.conversation_id,
-            "本月收入",
-            build_request("本月收入", ["column"]),
-            build_response("recall_c", "本月收入", score=0.6, reason="query_c"),
-            [target_experience],
-            target_retrieved_at,
-        )
+        continued = (
+            await self.service.record(
+                self.user_id,
+                self.conversation_id,
+                "本月收入",
+                build_request("本月收入", ["column"]),
+                build_response("recall_c", "本月收入", score=0.6, reason="query_c"),
+                [target_experience],
+                target_retrieved_at,
+            )
+        ).record
 
         self.assertEqual(continued.source_queries, ["订单金额"])
         self.assertEqual(continued.query_experiences, [target_experience])
@@ -1016,15 +696,17 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             [],
             datetime.now(UTC),
         )
-        record = await self.service.record(
-            self.user_id,
-            self.conversation_id,
-            "收入",
-            build_request("收入", ["column", "metric"]),
-            latest,
-            [],
-            datetime.now(UTC),
-        )
+        record = (
+            await self.service.record(
+                self.user_id,
+                self.conversation_id,
+                "收入",
+                build_request("收入", ["column", "metric"]),
+                latest,
+                [],
+                datetime.now(UTC),
+            )
+        ).record
 
         metric = record.response.metrics[0]
         self.assertEqual(metric.meta_version, 2)
@@ -1424,7 +1106,8 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
                 "recalls": [
                     {
                         "query": "本月收入",
-                        "status": "stored",
+                        "status": "updated",
+                        **deletion.model_dump(mode="json", exclude_defaults=True),
                     }
                 ],
             },
@@ -1433,16 +1116,6 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
     async def test_delete_recalls_rejects_empty_deletions(self) -> None:
         with self.assertRaises(ValidationError):
             await delete_recalls.ainvoke({"deletions": []})
-
-    def test_reference_loader_rejects_noncanonical_query(self) -> None:
-        message = ToolMessage(
-            id="message-1",
-            tool_call_id="call-1",
-            name="recall_context",
-            content=json.dumps({"status": "stored", "query": " revenue "}),
-        )
-
-        self.assertIsNone(parse_semantic_recall_references(message))
 
     async def test_merged_source_queries_are_hidden_from_model_payloads(
         self,
@@ -1502,21 +1175,28 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         )
         response = build_response("recall_a", "本月收入", score=0.8, reason="收入")
         response.values[0].c_name = "amount"
-        record = await service.record(
-            7,
-            uuid4(),
-            "本月收入",
-            build_request("本月收入", ["column"]),
-            response,
-            [build_query_experience()],
-            datetime.now(UTC),
-        )
+        record = (
+            await service.record(
+                7,
+                uuid4(),
+                "本月收入",
+                build_request("本月收入", ["column"]),
+                response,
+                [build_query_experience()],
+                datetime.now(UTC),
+            )
+        ).record
 
         payload = semantic_recall_payload(record)
 
         self.assertEqual(
             set(payload),
             {
+                "status",
+                "mode",
+                "failures",
+                "warnings",
+                "truncated",
                 "query",
                 "created_at",
                 "updated_at",
@@ -1524,17 +1204,6 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
                 "tables",
                 "query_experiences",
             },
-        )
-        self.assertEqual(
-            list(payload),
-            [
-                "query",
-                "tables",
-                "metrics",
-                "query_experiences",
-                "created_at",
-                "updated_at",
-            ],
         )
         self.assertEqual(payload["query"], "本月收入")
         self.assertEqual(payload["created_at"], record.created_at.isoformat())
@@ -1582,7 +1251,6 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             return set()
 
         forbidden_fields = {
-            "status",
             "terms",
             "rank_score",
             "match_reasons",
@@ -1592,9 +1260,6 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             "inclusion_reasons",
             "sync_status",
             "synced_at",
-            "failures",
-            "warnings",
-            "truncated",
             "query_experiences_retrieved_at",
         }
         self.assertTrue(forbidden_fields.isdisjoint(keys(payload)))
@@ -1746,24 +1411,19 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
                 for call in experience_service.recall.await_args_list
             )
         )
-        self.assertEqual(
-            first_result,
-            {"status": "stored", "query": "统计本月订单收入"},
-        )
-        self.assertEqual(
-            second_result,
-            {"status": "stored", "query": "统计本月订单收入"},
-        )
-        self.assertEqual(
-            third_result,
-            {"status": "stored", "query": "统计今日订单收入"},
-        )
+        self.assertEqual(first_result["mode"], "full")
+        self.assertEqual(second_result["mode"], "delta")
+        self.assertEqual(third_result["mode"], "full")
+        self.assertIn("amount", first_result["tables"]["orders"]["columns"])
+        self.assertEqual(set(second_result["tables"]["orders"]["columns"]), {"status"})
+        self.assertEqual(second_result["query_experiences"], [])
+        self.assertEqual(second_result["recalled_counts"]["query_experiences"], 1)
         self.assertEqual(
             resource_error,
             {
                 "status": "error",
                 "message": "语义资源召回失败",
-                "details": [{"type": "RuntimeError", "msg": "resource recall down"}],
+                "error": "resource recall down",
             },
         )
         second_stored = await repo.get_latest_by_query(
@@ -1800,203 +1460,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             datetime.min.replace(tzinfo=UTC),
         )
 
-    async def test_tool_message_persists_reference_and_model_sees_authorized_record(
-        self,
-    ) -> None:
-        repo = InMemorySemanticRecallRepo()
-        service_with_full_database_grant = SemanticRecallContextService(
-            recall_repo(repo),
-            build_authorization_filter(_FULL_DATABASE_GRANT),
-            query_experience_role_name=None,
-            query_experience_authorization_fingerprint=None,
-        )
-        conversation_id = uuid4()
-        experience = build_query_experience(column="status")
-        response = build_response("recall_a", "revenue", score=0.8, reason="query")
-        response.columns.append(
-            response.columns[0].model_copy(
-                update={
-                    "name": "status",
-                    "type": "string",
-                    "description": "订单状态",
-                    "alias": ["状态"],
-                    "examples": ["paid"],
-                }
-            )
-        )
-        record = await service_with_full_database_grant.record(
-            7,
-            conversation_id,
-            "revenue",
-            build_request("revenue", ["column"]),
-            response,
-            [experience],
-            datetime.now(UTC),
-        )
-        reference_content = json.dumps(
-            semantic_recall_reference(record),
-            ensure_ascii=False,
-        )
-        old_reference = ToolMessage(
-            id="old_message",
-            tool_call_id="old_call",
-            name="recall_context",
-            content=reference_content,
-        )
-        current_reference = ToolMessage(
-            id="current_message",
-            tool_call_id="current_call",
-            name="recall_context",
-            content=reference_content,
-        )
-        messages = [
-            old_reference,
-            HumanMessage(content="continue"),
-            current_reference,
-        ]
-        request = ModelRequest(
-            model=GenericFakeChatModel(messages=iter([AIMessage(content="ok")])),
-            messages=messages,
-            runtime=Runtime(),
-        )
-        restricted_service = SemanticRecallContextService(
-            recall_repo(repo),
-            build_authorization_filter(
-                AssetIdentity("doris", "analytics", "orders", "status")
-            ),
-            query_experience_role_name=None,
-            query_experience_authorization_fingerprint=None,
-        )
-        seen_messages: list[object] = []
-
-        async def handler(model_request: ModelRequest[Any]) -> ModelResponse[Any]:
-            seen_messages.extend(model_request.messages)
-            return ModelResponse(result=[AIMessage(content="ok")])
-
-        with (
-            patch(
-                "app.assistant.agents.middleware.semantic_recall_expansion.get_config",
-                return_value={
-                    "configurable": {
-                        "user_id": 7,
-                        "conversation_id": str(conversation_id),
-                    }
-                },
-            ),
-            patch.object(
-                _RECALL,
-                "context_service",
-                side_effect=lambda *args, **kwargs: object_context(restricted_service),
-            ),
-        ):
-            await SemanticRecallExpansionMiddleware(recall=_RECALL).awrap_model_call(
-                request,
-                handler,
-            )
-            display_messages = await expand_semantic_recall_messages_for_display(
-                [current_reference], 7, conversation_id, recall=_RECALL
-            )
-
-        self.assertEqual(current_reference.content, reference_content)
-        self.assertNotIn("recall_id", reference_content)
-        self.assertNotIn("amount", reference_content)
-        self.assertNotIn("SELECT status", reference_content)
-        self.assertEqual(getattr(seen_messages[0], "content", None), reference_content)
-        expanded_content = str(getattr(seen_messages[2], "content", ""))
-        self.assertNotIn("recall_id", expanded_content)
-        self.assertNotIn("amount", expanded_content)
-        self.assertIn("paid", expanded_content)
-        self.assertIn("SELECT status", expanded_content)
-        display_content = str(getattr(display_messages[0], "content", ""))
-        self.assertIn("paid", display_content)
-        self.assertIn("SELECT status", display_content)
-
-    async def test_missing_reference_does_not_hide_successful_current_turn_recall(
-        self,
-    ) -> None:
-        repo = InMemorySemanticRecallRepo()
-        conversation_id = uuid4()
-        service = SemanticRecallContextService(
-            recall_repo(repo),
-            build_authorization_filter(_FULL_DATABASE_GRANT),
-            query_experience_role_name=None,
-            query_experience_authorization_fingerprint=None,
-        )
-        current_record = await service.record(
-            7,
-            conversation_id,
-            "当前有效问题",
-            build_request("收入", ["column"]),
-            build_response("recall_current", "收入", score=0.8, reason="收入"),
-            [],
-            datetime.now(UTC),
-        )
-        missing_reference = ToolMessage(
-            tool_call_id="missing_call",
-            name="recall_context",
-            content=json.dumps({"status": "stored", "query": "已删除问题"}),
-        )
-        current_reference = ToolMessage(
-            tool_call_id="current_call",
-            name="recall_context",
-            content=json.dumps(semantic_recall_reference(current_record)),
-        )
-        messages = [
-            HumanMessage(content="继续探索"),
-            missing_reference,
-            current_reference,
-        ]
-        request = ModelRequest(
-            model=GenericFakeChatModel(messages=iter([AIMessage(content="ok")])),
-            messages=messages,
-            runtime=Runtime(),
-        )
-        seen_messages: list[object] = []
-
-        async def handler(model_request: ModelRequest[Any]) -> ModelResponse[Any]:
-            seen_messages.extend(model_request.messages)
-            return ModelResponse(result=[AIMessage(content="ok")])
-
-        with (
-            patch(
-                "app.assistant.agents.middleware.semantic_recall_expansion.get_config",
-                return_value={
-                    "configurable": {
-                        "user_id": 7,
-                        "conversation_id": str(conversation_id),
-                    }
-                },
-            ),
-            patch.object(
-                _RECALL,
-                "context_service",
-                side_effect=lambda *args, **kwargs: object_context(service),
-            ),
-        ):
-            await SemanticRecallExpansionMiddleware(recall=_RECALL).awrap_model_call(
-                request,
-                handler,
-            )
-            display_messages = await expand_semantic_recall_messages_for_display(
-                [missing_reference, current_reference],
-                7,
-                conversation_id,
-                recall=_RECALL,
-            )
-
-        model_missing = json.loads(str(getattr(seen_messages[1], "content", "")))
-        model_current = json.loads(str(getattr(seen_messages[2], "content", "")))
-        self.assertEqual(model_missing["status"], "error")
-        self.assertEqual(model_missing["queries"], ["已删除问题"])
-        self.assertEqual(model_current["query"], "当前有效问题")
-        self.assertIn("orders", model_current["tables"])
-
-        display_missing = json.loads(str(display_messages[0].content))
-        display_current = json.loads(str(display_messages[1].content))
-        self.assertEqual(display_missing["queries"], ["已删除问题"])
-        self.assertEqual(display_current["query"], "当前有效问题")
-
-    async def test_get_tool_writes_only_recall_reference_to_state(self) -> None:
+    async def test_get_tool_writes_full_result_to_state(self) -> None:
         repo = InMemorySemanticRecallRepo()
         service = SemanticRecallContextService(
             recall_repo(repo),
@@ -2054,10 +1518,10 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         content = str(result["messages"][-1].content)
         payload = json.loads(content)
         self.assertEqual(payload["query"], "revenue")
-        self.assertEqual(payload["status"], "stored")
+        self.assertEqual(payload["status"], "success")
         self.assertNotIn("recall_id", payload)
         self.assertNotIn("semantic_recall", payload)
-        self.assertNotIn("amount", content)
+        self.assertIn("amount", content)
 
     async def test_tool_node_injects_conversation_context(self) -> None:
         repo = InMemorySemanticRecallRepo()

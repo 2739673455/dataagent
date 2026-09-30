@@ -11,22 +11,16 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
-from app.assistant.agents.explorer.tools import (
-    create_execute_sql_tool,
-    create_semantic_recall_tools,
-)
+from app.assistant.agents.agent import create_agent
 from app.assistant.agents.mcp import get_mcp_tools
-from app.assistant.agents.planner.agent import create_planner_agent
-from app.assistant.agents.planner.tools import (
-    create_delegation_tool,
-    create_delete_session_tool,
-    create_list_sessions_tool,
-)
 from app.assistant.agents.specialists import (
     SpecialistAgentFactory,
     SpecialistDefinition,
     build_specialist_definitions,
 )
+from app.assistant.agents.tools.delegation import create_delegation_tools
+from app.assistant.agents.tools.execute_sql import create_execute_sql_tool
+from app.assistant.agents.tools.semantic_recall import create_semantic_recall_tools
 from app.assistant.checkpoints.postgres import (
     PostgresCheckpointStore,
 )
@@ -37,6 +31,7 @@ from app.assistant.execution.types import (
     ConversationAgentRuntime,
 )
 from app.assistant.model_factory import create_configured_model
+from app.assistant.resource_loader import load_prompt
 from app.metadata.services.recall_application import SemanticRecallService
 from app.query.services.execution_handler import QueryExecutionHandler
 from app.sandbox import DockerSandboxBackend, DockerSandboxManager
@@ -116,7 +111,6 @@ class ConversationAgentRuntimeFactory:
                     specialist_definitions=build_specialist_definitions(
                         explorer_tools,
                         explorer_mcp_tools,
-                        recall=self._recall,
                     ),
                 )
                 self._model_contexts = stack.pop_all()
@@ -183,20 +177,15 @@ class ConversationAgentRuntimeFactory:
         checkpointer: BaseCheckpointSaver,
     ) -> CompiledStateGraph:
         """构建绑定 Session 生命周期工具的 Planner。"""
-        planner_tools = [
-            create_delegation_tool(session_service),
-            create_list_sessions_tool(session_service),
-            create_delete_session_tool(session_service),
-        ]
-        interpreter = app_config.cfg.agent.interpreter
-        return create_planner_agent(
+        return create_agent(
+            name="planner",
+            system_prompt=load_prompt("agents/planner"),
+            filesystem_tools=["read_file"],
             model=model,
-            tools=planner_tools,
+            tools=create_delegation_tools(session_service),
             backend=backend,
             checkpointer=checkpointer,
-            session_service=session_service,
             shell_jobs=shell_jobs,
-            interpreter_memory_limit_bytes=interpreter.memory_limit_bytes,
         )
 
     async def close(self) -> None:

@@ -18,7 +18,6 @@ from app.assistant.execution.types import (
     PlannerTurnContext,
     conversation_lifecycle_lock_name,
 )
-from app.metadata.services.recall_application import SemanticRecallService
 from app.shared.config.app_config import cfg
 from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
@@ -62,13 +61,11 @@ class ConversationRunService:
         self,
         agents: AgentManager,
         files: DockerSandboxManager,
-        recall: SemanticRecallService,
         locks: PostgresAdvisoryLocks,
     ) -> None:
         """绑定 Agent 执行依赖并初始化进程内 Run 注册表。"""
         self._agents = agents
         self._files = files
-        self._recall = recall
         self._locks = locks
         self._runs: dict[ConversationRunKey, _ConversationRun] = {}
         self._lock = asyncio.Lock()
@@ -190,7 +187,6 @@ class ConversationRunService:
                         cfg.agent.orchestration.max_continuations,
                     ),
                     user_message,
-                    recall=self._recall,
                 )
                 try:
                     async for event in responses:
@@ -254,7 +250,7 @@ class ConversationRunService:
             return None
         if event.reset:
             return None
-        identity_fields = ("message_id", "delegation_id", "parent_tool_call_id")
+        identity_fields = ("message_id", "delegation_id")
         if any(
             getattr(previous, field, None) != getattr(event, field, None)
             for field in identity_fields

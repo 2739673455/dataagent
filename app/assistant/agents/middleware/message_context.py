@@ -1,4 +1,4 @@
-"""所有 Agent 共用的用户消息私有上下文与模型输入投影。"""
+"""Agent 共用的消息上下文、模型输入投影与响应时间戳。"""
 
 from __future__ import annotations
 
@@ -28,7 +28,11 @@ from app.assistant.agents.tools.view_image import (
     supports_view_image_tool,
 )
 from app.assistant.execution.shell_jobs import ShellJobRuntime
-from app.assistant.execution.types import NonEmptyText, StrictProtocolModel
+from app.assistant.execution.types import (
+    MESSAGE_CREATED_AT_KEY,
+    NonEmptyText,
+    StrictProtocolModel,
+)
 from app.sandbox import normalize_attachment_path, resolve_sandbox_path
 
 USER_MESSAGE_CONTEXT_KEY = "dataagent_user_message_context"
@@ -373,8 +377,18 @@ def _image_projection_options(request: ModelRequest[Any]) -> tuple[bool, bool]:
     )
 
 
-class UserMessageContextMiddleware(AgentMiddleware[Any, Any, Any]):
-    """持久化并投影用户接收时间、附件、图片和 Shell Job 上下文。"""
+def _stamp_response(response: ModelResponse[Any]) -> ModelResponse[Any]:
+    """为模型响应中的消息补充统一创建时间。"""
+    for message in response.result:
+        message.additional_kwargs.setdefault(
+            MESSAGE_CREATED_AT_KEY,
+            datetime.now(UTC).isoformat(),
+        )
+    return response
+
+
+class MessageContextMiddleware(AgentMiddleware[Any, Any, Any]):
+    """准备用户消息上下文，并在模型响应进入状态前补充创建时间。"""
 
     def __init__(
         self,
@@ -451,12 +465,12 @@ class UserMessageContextMiddleware(AgentMiddleware[Any, Any, Any]):
             project_user_images=user_images,
             project_tool_images=tool_images,
         )
-        if all(
+        if not all(
             projected is original
             for projected, original in zip(messages, request.messages, strict=True)
         ):
-            return handler(request)
-        return handler(request.override(messages=messages))
+            request = request.override(messages=messages)
+        return _stamp_response(handler(request))
 
     async def awrap_model_call(
         self,
@@ -483,9 +497,9 @@ class UserMessageContextMiddleware(AgentMiddleware[Any, Any, Any]):
             project_user_images=user_images,
             project_tool_images=tool_images,
         )
-        if all(
+        if not all(
             projected is original
             for projected, original in zip(messages, request.messages, strict=True)
         ):
-            return await handler(request)
-        return await handler(request.override(messages=messages))
+            request = request.override(messages=messages)
+        return _stamp_response(await handler(request))

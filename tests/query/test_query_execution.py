@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from langchain.tools import ToolRuntime
 
-from app.assistant.agents.explorer.tools.execute_sql import create_execute_sql_tool
+from app.assistant.agents.tools.execute_sql import create_execute_sql_tool
 from app.identity import errors as auth_error
 from app.identity.errors import QueryPrincipalNotConfiguredError
 from app.identity.models.doris import DorisAuthorizationSnapshot

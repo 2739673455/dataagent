@@ -1,10 +1,8 @@
-"""专业 Agent 委派工具。"""
+"""Planner 的专业 Agent 委派与 Session 管理工具。"""
 
-from dataclasses import replace
 from typing import Annotated, cast
 
 from langchain.tools import ToolRuntime, tool
-from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from loguru import logger
@@ -14,8 +12,8 @@ from app.assistant.agents.tools.errors import tool_error
 from app.assistant.execution.session_service import AgentSessionService
 from app.assistant.execution.types import (
     DelegationRequest,
-    SubagentActivity,
-    SubagentActivityWriter,
+    DeleteSessionRequest,
+    ListSessionsRequest,
 )
 from app.shared.contracts.analysis import AgentType
 
@@ -27,28 +25,8 @@ class _DelegationToolRequest(DelegationRequest):
     runtime: ToolRuntime
 
 
-_PTC_DELEGATION_ID_PREFIX = "ptc_delegation_"
-
-
-def _parent_eval_tool_call_id(runtime: ToolRuntime) -> str | None:
-    """从 QuickJS PTC 的派生运行时中定位父 eval 工具调用。"""
-    tool_call_id = runtime.tool_call_id
-    if not tool_call_id or not tool_call_id.startswith(_PTC_DELEGATION_ID_PREFIX):
-        return None
-    messages = runtime.state.get("messages")
-    if not isinstance(messages, list):
-        return None
-    for message in reversed(messages):
-        if not isinstance(message, AIMessage):
-            continue
-        for tool_call in reversed(message.tool_calls):
-            if tool_call.get("name") == "eval" and tool_call.get("id"):
-                return str(tool_call["id"])
-    return None
-
-
-def create_delegation_tool(service: AgentSessionService) -> BaseTool:
-    """创建只绑定当前用户会话的 delegation Tool。"""
+def create_delegation_tools(service: AgentSessionService) -> list[BaseTool]:
+    """创建绑定当前用户会话的委派、查询和删除工具。"""
 
     @tool("delegation", args_schema=_DelegationToolRequest)
     async def delegation(
@@ -77,47 +55,53 @@ def create_delegation_tool(service: AgentSessionService) -> BaseTool:
             session_id=session_id,
             message=message,
         )
-        parent_tool_call_id = _parent_eval_tool_call_id(runtime)
         delegation_id = runtime.tool_call_id
         if delegation_id is None:
             raise RuntimeError("delegation 工具缺少 tool_call_id")
-        activity_writer: SubagentActivityWriter = runtime.stream_writer
-        if parent_tool_call_id is not None:
-            service.begin_eval_delegation(
-                parent_tool_call_id,
-                delegation_id,
-                request,
-            )
-
-            def write_eval_activity(activity: SubagentActivity) -> None:
-                """为 eval 内部委派活动补充父工具调用和原始指令。"""
-                activity_writer(
-                    replace(
-                        activity,
-                        parent_tool_call_id=parent_tool_call_id,
-                        instruction=request.message,
-                    )
-                )
-
-            delegated_activity_writer = write_eval_activity
-        else:
-            delegated_activity_writer = activity_writer
         try:
             result = await service.execute_delegation(
                 request,
                 cast(RunnableConfig, runtime.config),
                 delegation_id=delegation_id,
-                activity_writer=delegated_activity_writer,
+                activity_writer=runtime.stream_writer,
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("执行专业 Agent 委派失败")
             return tool_error("专业 Agent 委派失败", exc, code="delegation_failed")
-        if parent_tool_call_id is not None:
-            service.finish_eval_delegation(
-                parent_tool_call_id,
-                delegation_id,
-                result,
-            )
         return result.model_dump(mode="json")
 
-    return delegation
+    @tool("list_sessions", args_schema=ListSessionsRequest)
+    async def list_sessions(
+        analysis_id: Annotated[
+            str | None,
+            "可选分析标识；省略时查询当前 Conversation 的全部专业 Session",
+        ] = None,
+    ) -> dict[str, object]:
+        """查询已有专业 Agent Session 的最新持久化状态。"""
+        try:
+            result = await service.list_sessions(analysis_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("查询专业 Agent Session 失败")
+            return tool_error("Session 查询失败", exc, code="list_sessions_failed")
+        return result.model_dump(mode="json")
+
+    @tool("delete_session", args_schema=DeleteSessionRequest)
+    async def delete_session(
+        analysis_id: Annotated[str, "待删除 Session 所属分析标识"],
+        agent_type: Annotated[AgentType, "待删除的专业 Agent 类型"],
+        session_id: Annotated[str, "待删除的专业 Session 标识"],
+    ) -> dict[str, object]:
+        """幂等删除专业 Agent Session 的 Checkpoint 和沙箱资源。"""
+        request = DeleteSessionRequest.model_construct(
+            analysis_id=analysis_id,
+            agent_type=agent_type,
+            session_id=session_id,
+        )
+        try:
+            result = await service.delete_session(request)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("删除专业 Agent Session 失败")
+            return tool_error("Session 删除失败", exc, code="delete_session_failed")
+        return result.model_dump(mode="json")
+
+    return [delegation, list_sessions, delete_session]

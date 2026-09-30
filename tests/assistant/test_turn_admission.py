@@ -75,7 +75,7 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
         )
 
     def new_worker(self):
-        runs = ConversationRunService(self.agents, MagicMock(), MagicMock(), self.locks)
+        runs = ConversationRunService(self.agents, MagicMock(), self.locks)
         self.addAsyncCleanup(runs.close)
         return runs
 
