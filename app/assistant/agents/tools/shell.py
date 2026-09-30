@@ -2,7 +2,7 @@
 
 from typing import Annotated, Any
 
-from langchain.tools import ToolRuntime, tool
+from langchain.tools import tool
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
@@ -22,7 +22,6 @@ def create_shell_tools(runtime: ShellJobRuntime) -> tuple[BaseTool, ...]:
 
     @tool("shell")
     async def shell(
-        runtime_context: ToolRuntime,
         command: Annotated[
             str,
             Field(
@@ -35,21 +34,16 @@ def create_shell_tools(runtime: ShellJobRuntime) -> tuple[BaseTool, ...]:
         ],
     ) -> str | dict[str, Any]:
         """运行 Shell 命令；前台截断输出附带路径，超时后返回后台 job_id。"""
-        del runtime_context
         result = await runtime.start(command)
         return result if isinstance(result, str) else _dump(result)
 
     @tool("list_shell_jobs")
-    async def list_shell_jobs(
-        runtime_context: ToolRuntime,
-    ) -> list[dict[str, Any]]:
+    async def list_shell_jobs() -> list[dict[str, Any]]:
         """列出当前 Agent Run 尚未消费的后台 Shell Job。"""
-        del runtime_context
         return [_dump(item) for item in runtime.list()]
 
     @tool("get_shell_job")
     async def get_shell_job(
-        runtime_context: ToolRuntime,
         job_id: Annotated[str, Field(min_length=1, description="shell 返回的 job_id")],
         wait_seconds: Annotated[
             float,
@@ -61,16 +55,13 @@ def create_shell_tools(runtime: ShellJobRuntime) -> tuple[BaseTool, ...]:
         ] = 0,
     ) -> dict[str, Any]:
         """查看或短暂等待 Shell Job；完整输出在 output_path，终态仅可读取一次。"""
-        del runtime_context
         return _dump(await runtime.get(job_id, wait_seconds=wait_seconds))
 
     @tool("cancel_shell_job")
     async def cancel_shell_job(
-        runtime_context: ToolRuntime,
         job_id: Annotated[str, Field(min_length=1, description="shell 返回的 job_id")],
     ) -> dict[str, Any]:
         """取消一个 Shell Job，并终止命令所属的整个进程组；终态会被消费。"""
-        del runtime_context
         return _dump(await runtime.cancel(job_id))
 
     return shell, list_shell_jobs, get_shell_job, cancel_shell_job

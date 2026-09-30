@@ -20,8 +20,8 @@ from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 if TYPE_CHECKING:
     from app.assistant.execution.manager import AgentManager
-    from app.sandbox.manager import DockerSandboxManager
-    from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
+    from app.sandbox import DockerSandboxManager
+    from app.shared.clients.postgres_advisory_locks import PostgresAdvisoryLocks
 
 
 class ConversationLifecycleService:
@@ -33,7 +33,7 @@ class ConversationLifecycleService:
             [], AbstractAsyncContextManager[ConversationPGRepo]
         ],
         recall_cleaner: RecallCleanupService,
-        lock_provider: LangGraphPostgresManager,
+        lock_provider: PostgresAdvisoryLocks,
         agents: AgentManager,
         sandbox: DockerSandboxManager,
         config: LifecycleConfig,

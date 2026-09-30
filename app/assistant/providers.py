@@ -8,8 +8,8 @@ from app.assistant.execution.manager import AgentManager
 from app.assistant.execution.run import ConversationRunService
 from app.assistant.repositories.conversation import ConversationPGRepo
 from app.metadata.services.recall_cleanup import RecallCleanupService
-from app.sandbox.manager import DockerSandboxManager
-from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
+from app.sandbox import DockerSandboxManager
+from app.shared.clients.postgres_advisory_locks import PostgresAdvisoryLocks
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import LifecycleConfig
 
@@ -24,7 +24,7 @@ async def _conversation_repository(
 
 
 def build_conversation_lifecycle_service(
-    persistence: LangGraphPostgresManager,
+    locks: PostgresAdvisoryLocks,
     assistant_postgres: PostgresClientManager,
     meta_postgres: PostgresClientManager,
     agents: AgentManager,
@@ -36,7 +36,7 @@ def build_conversation_lifecycle_service(
     return ConversationLifecycleService(
         lambda: _conversation_repository(assistant_postgres),
         RecallCleanupService(meta_postgres),
-        persistence,
+        locks,
         agents,
         sandbox,
         config,

@@ -37,7 +37,7 @@ class MessageDeltaParser:
             ("text", message_text(message)),
         )
         for kind, text in parts:
-            if text is None or (kind == "text" and not text):
+            if not text:
                 continue
             key = (kind, message_id)
             reset = key not in self._seen

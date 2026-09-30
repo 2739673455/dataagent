@@ -39,6 +39,7 @@ from app.identity.services.credential import DorisCredentialCipher
 from app.shared.clients.doris_client_manager import DorisQueryClientRegistry
 from app.shared.config.app_config import AuthConfig
 from app.shared.contracts.assets import asset_resource_key
+from app.shared.contracts.doris import validate_doris_identifier
 
 if TYPE_CHECKING:
     from app.identity.services.auth import Argon2PasswordManager
@@ -289,8 +290,8 @@ class DorisRoleManagementService:
     ) -> DorisQueryIdentity:
         """创建 Doris 角色及唯一稳定查询身份。"""
         role = normalize_doris_role_name(role_name)
-        self._doris_repo.quote_identifier(query_user)
-        self._doris_repo.quote_identifier(workload_group)
+        validate_doris_identifier(query_user)
+        validate_doris_identifier(workload_group)
         await self._require_workload_group(workload_group)
         password = self._cipher.generate_password()
         doris_created = False

@@ -6,6 +6,10 @@
 
 推荐使用 **Ubuntu Linux**；Windows 开发环境建议通过 **WSL2 + Ubuntu** 运行项目。
 
+## 提示词与技能
+
+角色提示词位于 `resources/prompts/agents/`，公共文件协议和标题提示词位于 `resources/prompts/`，内置技能位于 `resources/skills/`。部署时将 `resources/` 与 `app/` 一同复制。
+
 ## 配置
 
 ### 后端环境变量

@@ -30,7 +30,7 @@ class DorisQueryRepository:
         options: QueryExecutionOptions,
     ) -> AsyncGenerator[QueryBatch]:
         """设置会话限制并流式返回查询结果分区。"""
-        async with self._connection_provider.connection() as connection:
+        async with self._connection_provider.engine.connect() as connection:
             try:
                 await self._apply_session_limits(connection, limits)
                 result = await connection.stream(

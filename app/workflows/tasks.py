@@ -37,11 +37,10 @@ async def _record_failure_safely(
 async def _process_user_deletion(user_id: int) -> bool:
     """先互斥检查任务，再初始化清理资源；失败由数据库安排重试。"""
     auth_postgres = PostgresClientManager(cfg.auth_postgresql, AuthBase)
-    state_store = PostgresUserDeletionStateStore(auth_postgres)
     async with AsyncExitStack() as stack:
         stack.push_async_callback(auth_postgres.close)
+        state_store = PostgresUserDeletionStateStore(auth_postgres)
         try:
-            auth_postgres.init()
             acquired = await stack.enter_async_context(
                 state_store.execution_lock(user_id)
             )
@@ -76,7 +75,6 @@ async def _dispatch_due_user_deletions() -> int:
     """原子领取到期注销记录并向生命周期队列提交任务。"""
     auth_postgres = PostgresClientManager(cfg.auth_postgresql, AuthBase)
     try:
-        auth_postgres.init()
         state_store = PostgresUserDeletionStateStore(auth_postgres)
         claimed_at = datetime.now(UTC)
         user_ids = await state_store.claim_due_user_ids(

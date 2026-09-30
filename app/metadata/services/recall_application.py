@@ -1,4 +1,4 @@
-"""Explorer Agent 语义召回运行时依赖。"""
+"""语义召回的授权、检索与记录用例。"""
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -6,11 +6,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from langchain_core.runnables import RunnableConfig
+from elasticsearch import AsyncElasticsearch
 from loguru import logger
 
 from app.identity.providers import load_asset_policy
 from app.identity.services.authorization import AssetAccessPolicy
+from app.metadata.errors import SemanticRecallSaveError
+from app.metadata.models.recall import (
+    SemanticRecallRecord,
+    SemanticRecallResourceDeletion,
+)
 from app.metadata.models.search import (
     SemanticResourceRecallRequest,
     SemanticResourceRecallResponse,
@@ -22,8 +27,7 @@ from app.metadata.providers import (
 from app.metadata.services.recall import SemanticRecallContextService
 from app.query.providers import build_query_experience_recall_service
 from app.shared.clients.doris_client_manager import DorisClientManager
-from app.shared.clients.embedding_client_manager import EmbeddingClientManager
-from app.shared.clients.es_client_manager import ESClientManager
+from app.shared.clients.embedding_client import EmbeddingClient
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.contracts.query_experience import (
     QUERY_EXPERIENCE_RECALL_LIMIT,
@@ -31,26 +35,14 @@ from app.shared.contracts.query_experience import (
 )
 
 
-def resolve_semantic_recall_identity(
-    config: RunnableConfig,
-) -> tuple[int, UUID]:
-    """从服务端运行配置解析会话身份。"""
-    configurable = config.get("configurable", {})
-    user_id = configurable.get("user_id")
-    raw_conversation_id = configurable.get("conversation_id")
-    if not isinstance(user_id, int) or not isinstance(raw_conversation_id, str):
-        raise TypeError("配置中未找到语义召回上下文")
-    return user_id, UUID(raw_conversation_id)
-
-
-@dataclass(frozen=True, slots=True)
-class SemanticRecallRuntime:
+@dataclass
+class SemanticRecallService:
     """召回能力使用的资源，由所属 Web 进程显式注入。"""
 
     auth: PostgresClientManager
     meta: PostgresClientManager
-    embedding: EmbeddingClientManager
-    es: ESClientManager
+    embedding: EmbeddingClient
+    es: AsyncElasticsearch
     doris: DorisClientManager
 
     async def search(
@@ -59,7 +51,7 @@ class SemanticRecallRuntime:
         """取得本次策略和目录，再在读取会话之外执行外部检索。"""
         policy = await load_asset_policy(self.auth, self.doris, user_id)
         service = await build_semantic_resource_recall_service(
-            self.meta, self.es.get_client(), self.embedding.get_client(), policy
+            self.meta, self.es, self.embedding, policy
         )
         return policy, await service.recall(request)
 
@@ -92,7 +84,7 @@ class SemanticRecallRuntime:
                 return [], datetime.now(UTC)
             async with self.meta.session() as session:
                 result = await build_query_experience_recall_service(
-                    session, self.es.get_client(), self.embedding.get_client()
+                    session, self.es, self.embedding
                 ).recall(
                     role_name=policy.role_name,
                     authorization_fingerprint=policy.authorization_fingerprint,
@@ -106,3 +98,62 @@ class SemanticRecallRuntime:
         except Exception:  # noqa: BLE001
             logger.exception("查询经验检索失败")
         return [], datetime.min.replace(tzinfo=UTC)
+
+    async def recall_context(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        query: str,
+        request: SemanticResourceRecallRequest,
+    ) -> SemanticRecallRecord:
+        """共用本次授权快照，完成语义检索、经验召回和记录保存。"""
+        policy, response = await self.search(user_id, request)
+        experiences, retrieved_at = await self.query_experiences(
+            user_id, conversation_id, query, policy
+        )
+        try:
+            async with self.context_service(user_id, policy=policy) as service:
+                return await service.record(
+                    user_id,
+                    conversation_id,
+                    query,
+                    request,
+                    response,
+                    experiences,
+                    retrieved_at,
+                )
+        except Exception as exc:
+            raise SemanticRecallSaveError("无法保存语义召回快照") from exc
+
+    async def list_recalls(
+        self, user_id: int, conversation_id: UUID, limit: int
+    ) -> list[SemanticRecallRecord]:
+        """按最新权限读取会话召回记录。"""
+        async with self.context_service(user_id) as service:
+            return await service.list(user_id, conversation_id, limit=limit)
+
+    async def get_recall(
+        self, user_id: int, conversation_id: UUID, query: str
+    ) -> SemanticRecallRecord:
+        """按最新权限读取指定记录。"""
+        async with self.context_service(user_id) as service:
+            return await service.get(user_id, conversation_id, query)
+
+    async def merge_recalls(
+        self, user_id: int, conversation_id: UUID, target_query: str, source_query: str
+    ) -> SemanticRecallRecord:
+        """在同一事务中合并已授权记录并删除来源。"""
+        async with self.context_service(user_id) as service:
+            return await service.merge(
+                user_id, conversation_id, target_query, source_query
+            )
+
+    async def delete_recalls(
+        self,
+        user_id: int,
+        conversation_id: UUID,
+        deletions: list[SemanticRecallResourceDeletion],
+    ) -> None:
+        """在同一事务中删除指定上下文资源。"""
+        async with self.context_service(user_id) as service:
+            await service.delete(user_id, conversation_id, deletions)

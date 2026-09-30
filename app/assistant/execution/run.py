@@ -11,7 +11,6 @@ from uuid import UUID
 
 from loguru import logger
 
-from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
 from app.assistant.errors import ConversationBusyError, ConversationRunConflictError
 from app.assistant.events import schemas as chat_schema
 from app.assistant.execution import planner as planner_turn
@@ -19,13 +18,14 @@ from app.assistant.execution.types import (
     PlannerTurnContext,
     conversation_lifecycle_lock_name,
 )
+from app.metadata.services.recall_application import SemanticRecallService
 from app.shared.config.app_config import cfg
 from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 if TYPE_CHECKING:
     from app.assistant.execution.manager import AgentManager
-    from app.sandbox.manager import DockerSandboxManager
-    from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
+    from app.sandbox import DockerSandboxManager
+    from app.shared.clients.postgres_advisory_locks import PostgresAdvisoryLocks
 
 type ConversationRunKey = tuple[int, UUID]
 type RunEvent = chat_schema.ChatStreamEventPayload
@@ -62,8 +62,8 @@ class ConversationRunService:
         self,
         agents: AgentManager,
         files: DockerSandboxManager,
-        recall: SemanticRecallRuntime,
-        locks: LangGraphPostgresManager,
+        recall: SemanticRecallService,
+        locks: PostgresAdvisoryLocks,
     ) -> None:
         """绑定 Agent 执行依赖并初始化进程内 Run 注册表。"""
         self._agents = agents

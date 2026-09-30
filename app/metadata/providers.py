@@ -23,14 +23,14 @@ from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
 
 if TYPE_CHECKING:
-    from app.shared.clients.embedding_client_manager import RemoteEmbeddingClient
+    from app.shared.clients.embedding_client import EmbeddingClient
 
 
 def build_meta_index_service(
     meta_repo: MetaPGRepo,
     source_repo: SourceDorisRepo,
     es_client: AsyncElasticsearch,
-    embedding_client: RemoteEmbeddingClient,
+    embedding_client: EmbeddingClient,
 ) -> MetaIndexService:
     """创建元数据索引同步服务。"""
     return MetaIndexService(
@@ -46,7 +46,7 @@ def build_meta_index_service(
 async def build_semantic_resource_recall_service(
     postgres: PostgresClientManager,
     es_client: AsyncElasticsearch,
-    embedding_client: RemoteEmbeddingClient,
+    embedding_client: EmbeddingClient,
     policy: AssetAccessPolicy,
 ) -> SemanticResourceRecallService:
     """先读取完整目录并关闭会话，再构建不依赖数据库事务的检索服务。"""

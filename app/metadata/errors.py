@@ -54,3 +54,7 @@ class SemanticQueriesNotFoundError(Exception):
         """初始化未找到的查询业务键。"""
         self.queries = queries
         super().__init__(", ".join(queries))
+
+
+class SemanticRecallSaveError(RuntimeError):
+    """召回成功但快照未能持久化。"""

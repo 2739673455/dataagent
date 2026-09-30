@@ -28,8 +28,8 @@ from app.shared.config.app_config import cfg
 
 if TYPE_CHECKING:
     from app.query.task_scheduler import CeleryQueryExperienceIndexScheduler
-    from app.sandbox.manager import DockerSandboxManager
-    from app.shared.clients.embedding_client_manager import RemoteEmbeddingClient
+    from app.sandbox import DockerSandboxManager
+    from app.shared.clients.embedding_client import EmbeddingClient
 
 
 def build_query_execution_handler(
@@ -70,7 +70,7 @@ def build_query_execution_recorder(
 def build_query_experience_recall_service(
     session: AsyncSession,
     es_client: AsyncElasticsearch,
-    embedding_client: RemoteEmbeddingClient,
+    embedding_client: EmbeddingClient,
     *,
     index_scheduler: CeleryQueryExperienceIndexScheduler = query_experience_index_scheduler,
 ) -> QueryExperienceRecallService:
@@ -88,7 +88,7 @@ def build_query_experience_recall_service(
 def build_query_experience_indexer(
     session: AsyncSession,
     es_client: AsyncElasticsearch,
-    embedding_client: RemoteEmbeddingClient,
+    embedding_client: EmbeddingClient,
 ) -> QueryExperienceIndexer:
     """创建查询经验索引同步服务。"""
     return QueryExperienceIndexer(

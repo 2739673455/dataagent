@@ -82,7 +82,7 @@ export interface components {
       "instruction"?: (string | null);
       "parent_tool_call_id"?: (string | null);
       "session_id": string;
-      "status": "running" | "completed" | "needs_repair" | "failed" | "cancelled";
+      "status": "running" | "completed" | "failed" | "cancelled";
       "type": "subagent_status";
     };
     "ChatStreamSubagentThinkingEvent": {
@@ -374,7 +374,7 @@ export interface components {
     };
     "SubagentMessageListResponse": {
       "messages": Array<components["schemas"]["MessageResponse"]>;
-      "status": "running" | "completed" | "needs_repair" | "failed" | "cancelled";
+      "status": "running" | "completed" | "failed" | "cancelled";
     };
     "TableBatchDeleteRequest": {
       "tables": Array<string>;

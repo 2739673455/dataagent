@@ -51,8 +51,10 @@ embedding: # 文本向量化服务配置。
   api_key: ${oc.env:SILICONFLOW_API_KEY} # API 密钥，使用环境变量注入。
   model: BAAI/bge-m3 # 嵌入模型标识。
   timeout: 30.0 # 单次嵌入请求超时，单位为秒。
+  batch_size: 32 # 单次向量请求的文本数；按所用服务的数组上限配置。
 
 metadata_index: # 元数据索引同步策略。
+  semantic_resource_batch_size: 32 # 每批持锁并提交的字段或指标数，限制事务范围。
   value_lookback_seconds: 300 # 增量取值索引同步的回看窗口，单位为秒。
 
 task_queue: # Celery 队列、任务生命周期和定时调度配置。
@@ -127,17 +129,6 @@ lm_config: # 可用语言模型集合及默认模型。
         image_inputs: true # 当前模型是否支持识别图片内容。
         structured_output: false # DeepSeek Responses 原生 JSON Schema 可能返回空正文，Specialist 使用工具调用输出。
         max_input_tokens: 1048576 # 模型上下文长度，用于计算对话压缩阈值。
-    # openrouter-deepseek-v4.1-flash:
-    #   model_provider: openrouter
-    #   api_protocol: chat_completions
-    #   model: deepseek/deepseek-v4.1-flash
-    #   base_url: https://openrouter.ai/api/v1
-    #   api_key: ${oc.env:OPENROUTER_API_KEY}
-    #   params: {}
-    #   profile:
-    #     image_inputs: false
-    #     structured_output: true
-    #     max_input_tokens: 1048576
     # openrouter-glm-5.3-flash:
     #   model_provider: openrouter
     #   api_protocol: chat_completions

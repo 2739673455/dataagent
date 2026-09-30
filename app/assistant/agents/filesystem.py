@@ -1,4 +1,4 @@
-"""专业 Agent 文件系统装配。"""
+"""Agent 共用文件系统装配与路径交付协议。"""
 
 from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
@@ -6,11 +6,11 @@ from pathlib import Path, PurePosixPath
 from deepagents import FilesystemMiddleware
 from deepagents.backends import CompositeBackend, FilesystemBackend
 from deepagents.backends.protocol import BackendProtocol
-from deepagents.middleware.filesystem import FilesystemPermission
+from deepagents.middleware.filesystem import FilesystemPermission, FsToolName
 
-from app.sandbox.backend import DockerSandboxBackend
-from app.sandbox.paths import SandboxReadonlyMount
-from app.shared.contracts.analysis import AGENT_TYPES, AgentType
+from app.assistant.resource_loader import SKILLS_DIRECTORY, load_prompt
+from app.sandbox import DockerSandboxBackend, SandboxReadonlyMount
+from app.shared.contracts.analysis import AgentType
 
 _AGENT_SKILLS_MOUNT_ROOT = "/skills"
 
@@ -22,43 +22,29 @@ def agent_skills_mount_path(agent_type: AgentType) -> str:
 
 def packaged_skill_readonly_mounts() -> tuple[SandboxReadonlyMount, ...]:
     """收集随应用发布且需要暴露给沙箱的技能目录。"""
-    agents_directory = Path(__file__).parent
-    return tuple(
+    return (
         SandboxReadonlyMount(
-            source=skill_directory,
-            target=PurePosixPath(agent_skills_mount_path(agent_type)),
-        )
-        for agent_type in AGENT_TYPES
-        if (skill_directory := agents_directory / agent_type / "skills").is_dir()
+            source=SKILLS_DIRECTORY,
+            target=PurePosixPath(agent_skills_mount_path("analyst")),
+        ),
     )
 
 
-def _filesystem_system_prompt(workspace_dir: str) -> str:
-    """生成 Specialist 文件工具与 Shell 路径边界说明。"""
-    return f"""## 沙箱路径
-
-当前 Session 工作目录是 `{workspace_dir}`。
-
-- 文件工具、`view_image` 和 `shell` 使用同一套容器路径：相对路径从当前 Session 工作目录解析，绝对路径直接使用。
-- `write_file` 和 `edit_file` 只能修改当前 Session 工作目录；同一 Conversation 的其他 Session 和上传文件只读。
-- `artifacts` 可以使用相对当前 Session 的路径或完整绝对路径；跨 Agent 传递前会统一解析为绝对路径。
-- 内置技能位于只读 `/skills/...`。
-"""
-
-
-def build_specialist_filesystem(
+def build_agent_filesystem(
     backend: DockerSandboxBackend,
-    skill_directory: Path,
-    skills: Sequence[str],
+    *,
+    tools: Sequence[FsToolName],
+    skill_directory: Path | None = None,
+    skills: Sequence[str] = (),
 ) -> tuple[BackendProtocol, FilesystemMiddleware]:
-    """创建带只读技能目录的 Specialist 文件系统。"""
+    """按角色工具范围创建文件系统，并挂载可选的只读技能。"""
     workspace_dir = backend.workspace_dir
     permissions: list[FilesystemPermission] = []
     routes: dict[str, BackendProtocol] = {}
     if skills:
         if len(skills) != 1:
             raise ValueError("每个 Agent 只能配置一个技能根目录")
-        if not skill_directory.is_dir():
+        if skill_directory is None or not skill_directory.is_dir():
             raise ValueError(f"Agent 技能目录不存在: {skill_directory}")
         mount_path = skills[0]
         if not mount_path.startswith("/") or not mount_path.endswith("/"):
@@ -81,12 +67,10 @@ def build_specialist_filesystem(
     )
     filesystem = FilesystemMiddleware(
         backend=resolved_backend,
-        system_prompt=_filesystem_system_prompt(workspace_dir),
-        tools=[
-            "read_file",
-            "write_file",
-            "edit_file",
-        ],
+        system_prompt=load_prompt("filesystem").format(
+            workspace_dir=workspace_dir,
+        ),
+        tools=list(tools),
         _permissions=permissions,
     )
     return resolved_backend, filesystem

@@ -132,14 +132,6 @@ def normalize_sandbox_path(path: str) -> str:
     return normalized
 
 
-def normalize_sandbox_absolute_path(path: str) -> str:
-    """校验并规范化沙箱内的绝对路径。"""
-    normalized = normalize_sandbox_path(path)
-    if not normalized.startswith("/"):
-        raise SandboxPathError(path)
-    return normalized
-
-
 def resolve_sandbox_path(path: str, working_directory: str) -> str:
     """像 Shell 一样以当前工作目录解析相对路径，并保留绝对路径。"""
     normalized = normalize_sandbox_path(path)
@@ -148,17 +140,39 @@ def resolve_sandbox_path(path: str, working_directory: str) -> str:
     return posixpath.normpath(posixpath.join(working_directory, normalized))
 
 
-def conversation_relative_path(path: str, conversation_id: UUID) -> str:
-    """将 Conversation 内的沙箱绝对路径转换为公开相对路径。"""
-    normalized = normalize_sandbox_absolute_path(path)
+@dataclass(frozen=True, slots=True)
+class SandboxArtifact:
+    """产物的容器绝对路径与会话下载相对路径。"""
+
+    path: str
+    relative_path: str
+
+
+def resolve_artifact_path(
+    path: str,
+    conversation_id: UUID,
+    session_scope: SandboxSessionScope | None = None,
+) -> SandboxArtifact:
+    """解析公开产物路径；指定 Session 时允许相对引用并限制在该目录内。"""
+    normalized = normalize_sandbox_path(path)
     root = PurePosixPath(conversation_workspace_path(conversation_id))
     candidate = PurePosixPath(normalized)
+    if session_scope is not None:
+        session_root = PurePosixPath(session_scope.workspace_path(conversation_id))
+        if not candidate.is_absolute():
+            candidate = PurePosixPath(posixpath.normpath(str(session_root / candidate)))
+        if candidate == session_root or not candidate.is_relative_to(session_root):
+            raise SandboxPathError(path)
     if not candidate.is_relative_to(root):
         raise SandboxPathError(path)
-    relative = candidate.relative_to(root).as_posix()
-    if not relative or PurePosixPath(relative).parts[0] not in _CONVERSATION_FILE_ROOTS:
+    relative = candidate.relative_to(root)
+    if (
+        not relative.parts
+        or relative.parts[0] not in _CONVERSATION_FILE_ROOTS
+        or any(part.startswith(".") for part in relative.parts)
+    ):
         raise SandboxPathError(path)
-    return relative
+    return SandboxArtifact(candidate.as_posix(), relative.as_posix())
 
 
 def normalize_user_attachment_path(path: str) -> str:

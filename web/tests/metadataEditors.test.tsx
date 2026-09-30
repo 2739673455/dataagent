@@ -91,12 +91,12 @@ describe.each(editors)("$name editor", ({ render, nameId, fieldValue }) => {
     expect(edit).toContain(`value="${fieldValue}"`);
   });
 
-  test.each([
-    "create",
-    "edit",
-  ] as const)("%s disables submission for blank descriptions or pending saves", (mode) => {
-    expect(render(mode, "  ")).toContain('type="submit" disabled=""');
-    expect(render(mode, "说明", true)).toContain('type="submit" disabled=""');
-    expect(render(mode)).not.toContain('type="submit" disabled=""');
-  });
+  test.each(["create", "edit"] as const)(
+    "%s disables submission for blank descriptions or pending saves",
+    (mode) => {
+      expect(render(mode, "  ")).toContain('type="submit" disabled=""');
+      expect(render(mode, "说明", true)).toContain('type="submit" disabled=""');
+      expect(render(mode)).not.toContain('type="submit" disabled=""');
+    }
+  );
 });

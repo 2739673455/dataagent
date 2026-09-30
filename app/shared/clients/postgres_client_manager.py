@@ -1,47 +1,27 @@
-"""PostgreSQL 客户端管理。"""
+"""PostgreSQL 引擎、会话工厂与建表操作。"""
 
 from sqlalchemy import URL
-from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from app.shared.config.app_config import DBConfig
 
 
 class PostgresClientManager:
-    """PostgreSQL 客户端管理器。"""
+    """持有 PostgreSQL 引擎和可直接调用的会话工厂。"""
 
-    def __init__(
-        self,
-        db_config: DBConfig,
-        base: type[DeclarativeBase],
-    ) -> None:
-        """初始化 PostgreSQL 客户端管理器。"""
-        self._db_config = db_config
+    def __init__(self, db_config: DBConfig, base: type[DeclarativeBase]) -> None:
+        """创建连接池和会话工厂；连接按需建立。"""
         self._base = base
-        self._engine: AsyncEngine | None = None
-        self._session_maker: async_sessionmaker[AsyncSession] | None = None
-
-    @property
-    def _url(self) -> URL:
-        """获取异步数据库连接 URL。"""
-        return URL.create(
-            drivername="postgresql+psycopg",
-            username=self._db_config.user,
-            password=self._db_config.password.get_secret_value(),
-            host=self._db_config.host,
-            port=self._db_config.port,
-            database=self._db_config.database,
-        )
-
-    def init(self) -> None:
-        """初始化数据库引擎和会话工厂。"""
-        self._engine = create_async_engine(
-            self._url,
+        self.engine = create_async_engine(
+            URL.create(
+                drivername="postgresql+psycopg",
+                username=db_config.user,
+                password=db_config.password.get_secret_value(),
+                host=db_config.host,
+                port=db_config.port,
+                database=db_config.database,
+            ),
             echo=False,
             pool_size=10,
             max_overflow=20,
@@ -49,33 +29,17 @@ class PostgresClientManager:
             pool_recycle=1800,
             pool_timeout=30,
         )
-        self._session_maker = async_sessionmaker(
-            self._engine,
+        self.session = async_sessionmaker(
+            self.engine,
             class_=AsyncSession,
             expire_on_commit=False,
         )
 
-    def _get_session_maker(self) -> async_sessionmaker[AsyncSession]:
-        """获取数据库会话工厂。"""
-        if self._session_maker is None:
-            raise RuntimeError("PostgreSQL 客户端管理器尚未初始化")
-        return self._session_maker
-
-    def session(self) -> AsyncSession:
-        """创建数据库会话。"""
-        return self._get_session_maker()()
-
     async def close(self) -> None:
-        """关闭数据库引擎并释放资源。"""
-        resource = self._engine
-        self._engine = None
-        self._session_maker = None
-        if resource is not None:
-            await resource.dispose()
+        """释放连接池。"""
+        await self.engine.dispose()
 
     async def init_tables(self) -> None:
         """根据当前 ORM 模型创建尚未存在的数据表。"""
-        if self._engine is None:
-            raise RuntimeError("PostgreSQL 客户端管理器尚未初始化")
-        async with self._engine.begin() as connection:
+        async with self.engine.begin() as connection:
             await connection.run_sync(self._base.metadata.create_all)

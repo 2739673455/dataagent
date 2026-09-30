@@ -2,22 +2,21 @@
 
 from __future__ import annotations
 
-import shlex
-from collections.abc import AsyncGenerator, Collection
+from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from uuid import UUID
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
+from app.assistant.checkpoints.postgres import PostgresCheckpointStore
 from app.assistant.checkpoints.reader import (
     CheckpointState,
     CheckpointStateReader,
 )
 from app.assistant.execution.types import get_thread_id
-from app.sandbox.backend import DockerSandboxBackend
-from app.sandbox.manager import DockerSandboxManager
-from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
+from app.sandbox import DockerSandboxManager
+from app.shared.clients.postgres_advisory_locks import PostgresAdvisoryLocks
 from app.shared.contracts.analysis import AgentSessionKey
 from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
@@ -30,18 +29,18 @@ class PostgresSandboxSessionStore:
         *,
         user_id: int,
         conversation_id: UUID,
-        persistence: LangGraphPostgresManager,
+        persistence: PostgresCheckpointStore,
+        locks: PostgresAdvisoryLocks,
         checkpointer: AsyncPostgresSaver,
         sandbox: DockerSandboxManager,
-        conversation_backend: DockerSandboxBackend,
     ) -> None:
         """初始化 Conversation 级状态访问上下文。"""
         self._user_id = user_id
         self._conversation_id = conversation_id
         self._thread_id = get_thread_id(user_id, conversation_id)
         self._persistence = persistence
+        self._locks = locks
         self._sandbox = sandbox
-        self._conversation_backend = conversation_backend
         self._state_reader = CheckpointStateReader(checkpointer)
 
     async def list_namespaces(self, analysis_id: str | None) -> list[str]:
@@ -85,29 +84,12 @@ class PostgresSandboxSessionStore:
             session_key.session_id,
         )
 
-    async def find_missing_files(self, paths: Collection[str]) -> set[str]:
-        """批量返回当前 Conversation 工作区中不存在的文件。"""
-        if not paths:
-            return set()
-        arguments = " ".join(shlex.quote(path) for path in sorted(paths))
-        command = (
-            f"set -- {arguments}; "
-            'for path do [ -f "$path" ] || printf \'%s\\0\' "$path"; done'
-        )
-        result = await self._conversation_backend.aexecute(
-            command,
-            timeout=10,
-        )
-        if result.exit_code != 0 or result.truncated:
-            raise RuntimeError("批量验证产物文件失败")
-        return {path for path in result.output.split("\0") if path}
-
     def lock(
         self,
         session_key: AgentSessionKey,
     ) -> AbstractAsyncContextManager[None]:
         """获取专业 Session 的跨进程互斥锁。"""
-        return self._persistence.advisory_lock(
+        return self._locks.advisory_lock(
             f"specialist:{self._thread_id}:{session_key.checkpoint_ns}",
         )
 
@@ -131,7 +113,7 @@ class PostgresSandboxSessionStore:
 
         for slot in range(len(namespaces), max_sessions):
             try:
-                async with self._persistence.advisory_lock(
+                async with self._locks.advisory_lock(
                     f"specialist-capacity:{self._thread_id}:{slot}"
                 ):
                     yield

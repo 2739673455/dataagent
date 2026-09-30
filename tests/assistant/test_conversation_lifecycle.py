@@ -10,7 +10,7 @@ from app.assistant.conversations.lifecycle import (
     ConversationLifecycleService,
 )
 from app.assistant.errors import ConversationBusyError
-from app.shared.clients.langgraph_postgres_manager import LangGraphPostgresManager
+from app.shared.clients.postgres_advisory_locks import PostgresAdvisoryLocks
 from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -42,7 +42,7 @@ def _build_service() -> tuple[
         repository_factory=repository_factory,
         recall_cleaner=MagicMock(),
         lock_provider=MagicMock(
-            spec=LangGraphPostgresManager,
+            spec=PostgresAdvisoryLocks,
             advisory_lock=_BusyLockProvider().advisory_lock,
         ),
         agents=agents,

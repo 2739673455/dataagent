@@ -64,6 +64,7 @@ class EmbeddingConfig(AppConfigModel):
     api_key: SecretStr | None
     model: str = Field(min_length=1)
     timeout: float = Field(gt=0)
+    batch_size: int = Field(gt=0)
 
 
 # 元数据索引配置。
@@ -71,6 +72,7 @@ class MetadataIndexConfig(AppConfigModel):
     """元数据索引同步策略配置。"""
 
     value_lookback_seconds: int = Field(gt=0)
+    semantic_resource_batch_size: int = Field(gt=0)
 
 
 # 后台任务配置。

@@ -12,10 +12,6 @@ from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.config import get_config
 from loguru import logger
 
-from app.assistant.agents.explorer.recall_runtime import (
-    SemanticRecallRuntime,
-    resolve_semantic_recall_identity,
-)
 from app.assistant.agents.explorer.semantic_recall_messages import (
     load_recall_records,
     replace_reference_content,
@@ -23,6 +19,10 @@ from app.assistant.agents.explorer.semantic_recall_messages import (
 from app.assistant.agents.explorer.semantic_recall_protocol import (
     SemanticRecallReference,
     parse_semantic_recall_references,
+    resolve_semantic_recall_identity,
+)
+from app.metadata.services.recall_application import (
+    SemanticRecallService,
 )
 
 
@@ -32,9 +32,7 @@ def _current_turn_references(
     """提取当前用户回合产生的语义召回引用。"""
     last_human_index = -1
     for index, message in enumerate(messages):
-        if isinstance(message, HumanMessage) and not message.additional_kwargs.get(
-            "dataagent_internal_retry"
-        ):
+        if isinstance(message, HumanMessage):
             last_human_index = index
     return [
         (index, reference)
@@ -48,7 +46,7 @@ def _current_turn_references(
 class SemanticRecallExpansionMiddleware(AgentMiddleware[Any, Any, Any]):
     """仅在当前模型请求中展开已授权的召回记录。"""
 
-    def __init__(self, recall: SemanticRecallRuntime) -> None:
+    def __init__(self, recall: SemanticRecallService) -> None:
         """绑定当前进程的召回资源。"""
         self._recall = recall
 

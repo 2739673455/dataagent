@@ -6,7 +6,7 @@ import hashlib
 import json
 import unicodedata
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -33,12 +33,13 @@ from app.metadata.models.search import (
 from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
 from app.metadata.repositories.postgres import MetaPGRepo
+from app.metadata.repositories.semantic_index import SemanticIndexRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
 from app.metadata.repositories.value_index import ValueESRepo
 from app.shared.config.app_config import cfg
 
 if TYPE_CHECKING:
-    from app.shared.clients.embedding_client_manager import RemoteEmbeddingClient
+    from app.shared.clients.embedding_client import EmbeddingClient
 
 _SEMANTIC_PREPROCESS_VERSION = "v1"
 
@@ -61,15 +62,13 @@ class _ValueIndexRun:
 class MetaIndexService:
     """同步字段、字段值和指标检索索引。"""
 
-    _embedding_batch_size = 64
-
     def __init__(
         self,
         meta_repo: MetaPGRepo,
         source_repo: SourceDorisRepo,
         column_repo: ColumnESRepo,
         metric_repo: MetricESRepo,
-        embedding_client: RemoteEmbeddingClient,
+        embedding_client: EmbeddingClient,
         value_repo: ValueESRepo,
     ) -> None:
         """初始化元数据检索索引同步服务。"""
@@ -93,43 +92,115 @@ class MetaIndexService:
         column_keys: list[ColumnKey],
     ) -> dict[ColumnKey, SemanticIndexSyncResult]:
         """按资源锁差量同步字段语义索引，并条件提交索引版本。"""
-        results: dict[ColumnKey, SemanticIndexSyncResult] = {}
-        for t_name, c_name in dict.fromkeys(column_keys):
-            resource_key = column_resource_key(t_name, c_name)
-            async with self._meta_repo.session.begin():
-                await self._meta_repo.acquire_index_lock("column", resource_key)
-                column_info = await self._meta_repo.get_column_info(t_name, c_name)
-                result = await self._sync_column_index(column_info)
-                committed = await self._meta_repo.mark_column_indexed_if_current(
-                    t_name,
-                    c_name,
-                    result.target_version,
-                )
-            results[(t_name, c_name)] = replace(
-                result,
-                version_committed=committed,
-            )
-        return results
+        return await self._sync_semantic_indexes(
+            column_keys,
+            resource_type="column",
+            repo=self._column_repo,
+            resource_key=lambda key: column_resource_key(*key),
+            load=lambda key: self._meta_repo.get_column_info(*key),
+            payload_of=self._column_payload,
+            mark_indexed=lambda key, version: (
+                self._meta_repo.mark_column_indexed_if_current(*key, version)
+            ),
+        )
 
     async def sync_metric_indexes(
         self,
         metric_names: list[str],
     ) -> dict[str, SemanticIndexSyncResult]:
-        """按资源锁差量同步指标语义索引，并条件提交索引版本。"""
-        results: dict[str, SemanticIndexSyncResult] = {}
-        for metric_name in dict.fromkeys(metric_names):
+        """按有界批次同步指标，持锁直到向量、ES 写入和版本检查完成。"""
+        return await self._sync_semantic_indexes(
+            metric_names,
+            resource_type="metric",
+            repo=self._metric_repo,
+            resource_key=lambda key: key,
+            load=self._meta_repo.get_metric_info,
+            payload_of=self._metric_payload,
+            mark_indexed=self._meta_repo.mark_metric_indexed_if_current,
+        )
+
+    async def _sync_semantic_indexes[KeyT, ItemT: (ColumnInfo, MetricInfo)](
+        self,
+        keys: list[KeyT],
+        *,
+        resource_type: str,
+        repo: SemanticIndexRepo[ItemT, KeyT],
+        resource_key: Callable[[KeyT], str],
+        load: Callable[[KeyT], Awaitable[ItemT]],
+        payload_of: Callable[[ItemT], dict[str, Any]],
+        mark_indexed: Callable[[KeyT, int], Awaitable[bool]],
+    ) -> dict[KeyT, SemanticIndexSyncResult]:
+        """同类资源批量向量化与写入，失败批次不确认版本，先前批次保留提交。"""
+        unique_keys = list(dict.fromkeys(keys))
+        if not unique_keys:
+            return {}
+        await repo.ensure_index()
+        results: dict[KeyT, SemanticIndexSyncResult] = {}
+        batch_size = cfg.metadata_index.semantic_resource_batch_size
+        for offset in range(0, len(unique_keys), batch_size):
+            batch = unique_keys[offset : offset + batch_size]
             async with self._meta_repo.session.begin():
-                await self._meta_repo.acquire_index_lock("metric", metric_name)
-                metric_info = await self._meta_repo.get_metric_info(metric_name)
-                result = await self._sync_metric_index(metric_info)
-                committed = await self._meta_repo.mark_metric_indexed_if_current(
-                    metric_name,
-                    result.target_version,
+                # 所有批次采用相同锁顺序，避免重叠资源以不同输入顺序加锁时死锁。
+                for key in sorted(batch, key=resource_key):
+                    await self._meta_repo.acquire_index_lock(
+                        resource_type, resource_key(key)
+                    )
+                prepared = []
+                embedding_targets: list[
+                    tuple[list[SemanticIndexDocument], int, SemanticIndexDocument]
+                ] = []
+                for key in batch:
+                    info = await load(key)
+                    targets = self._target_semantic_documents(
+                        resource_type,
+                        resource_key(key),
+                        info.meta_version,
+                        payload_of(info),
+                        info.name,
+                        info.description,
+                        info.alias,
+                    )
+                    current = await repo.list_resource_documents(resource_key(key))
+                    delta, pending = self._semantic_delta(targets, current)
+                    prepared.append((key, info.meta_version, delta, len(pending)))
+                    embedding_targets.extend(pending)
+                embeddings = await self._embed_texts(
+                    [target.text for _, _, target in embedding_targets]
                 )
-            results[metric_name] = replace(
-                result,
-                version_committed=committed,
-            )
+                for (documents, index, target), embedding in zip(
+                    embedding_targets, embeddings, strict=True
+                ):
+                    documents[index] = replace(target, embedding=embedding)
+                await repo.apply_delta(
+                    SemanticIndexDelta(
+                        create=[
+                            document
+                            for _, _, delta, _ in prepared
+                            for document in delta.create
+                        ],
+                        update=[
+                            document
+                            for _, _, delta, _ in prepared
+                            for document in delta.update
+                        ],
+                        delete_ids=[
+                            document_id
+                            for _, _, delta, _ in prepared
+                            for document_id in delta.delete_ids
+                        ],
+                        unchanged_count=sum(
+                            delta.unchanged_count for _, _, delta, _ in prepared
+                        ),
+                    )
+                )
+                batch_results = {}
+                for key, version, delta, embedded_count in prepared:
+                    committed = await mark_indexed(key, version)
+                    batch_results[key] = replace(
+                        self._semantic_result(delta, embedded_count, version),
+                        version_committed=committed,
+                    )
+            results.update(batch_results)
         return results
 
     async def sync_table_values(
@@ -188,51 +259,6 @@ class MetaIndexService:
             )
         return [(column_info.t_name, column_info.name) for column_info in column_infos]
 
-    async def _sync_column_index(
-        self,
-        column_info: ColumnInfo,
-    ) -> SemanticIndexSyncResult:
-        """差量替换字段内部发生变化的语义文档。"""
-        await self._column_repo.ensure_index()
-        resource_key = column_resource_key(column_info.t_name, column_info.name)
-        payload = self._column_payload(column_info)
-        targets = self._target_semantic_documents(
-            "column",
-            resource_key,
-            column_info.meta_version,
-            payload,
-            column_info.name,
-            column_info.description,
-            column_info.alias,
-        )
-        current = await self._column_repo.list_resource_documents(
-            resource_key,
-        )
-        delta, embedded_count = await self._semantic_delta(targets, current)
-        await self._column_repo.apply_delta(delta)
-        return self._semantic_result(delta, embedded_count, column_info.meta_version)
-
-    async def _sync_metric_index(
-        self,
-        metric_info: MetricInfo,
-    ) -> SemanticIndexSyncResult:
-        """差量替换指标内部发生变化的语义文档。"""
-        await self._metric_repo.ensure_index()
-        payload = self._metric_payload(metric_info)
-        targets = self._target_semantic_documents(
-            "metric",
-            metric_info.name,
-            metric_info.meta_version,
-            payload,
-            metric_info.name,
-            metric_info.description,
-            metric_info.alias,
-        )
-        current = await self._metric_repo.list_resource_documents(metric_info.name)
-        delta, embedded_count = await self._semantic_delta(targets, current)
-        await self._metric_repo.apply_delta(delta)
-        return self._semantic_result(delta, embedded_count, metric_info.meta_version)
-
     def _target_semantic_documents(
         self,
         resource_type: str,
@@ -287,22 +313,27 @@ class MetaIndexService:
             for text_value, text_type in sorted(entries.items())
         ]
 
-    async def _semantic_delta(
-        self,
+    @staticmethod
+    def _semantic_delta(
         targets: list[SemanticIndexDocument],
         current: list[SemanticIndexDocument],
-    ) -> tuple[SemanticIndexDelta, int]:
-        """计算文档差异并只补充必要的向量。"""
+    ) -> tuple[
+        SemanticIndexDelta,
+        list[tuple[list[SemanticIndexDocument], int, SemanticIndexDocument]],
+    ]:
+        """计算差异并标记需向量化的文档，载荷更新保留原向量。"""
         current_by_id = {document.id: document for document in current}
         target_ids = {document.id for document in targets}
         create: list[SemanticIndexDocument] = []
         update: list[SemanticIndexDocument] = []
         unchanged_count = 0
-        embedding_targets: list[tuple[str, int, SemanticIndexDocument]] = []
+        embedding_targets: list[
+            tuple[list[SemanticIndexDocument], int, SemanticIndexDocument]
+        ] = []
         for target in targets:
             existing = current_by_id.get(target.id)
             if existing is None:
-                embedding_targets.append(("create", len(create), target))
+                embedding_targets.append((create, len(create), target))
                 create.append(target)
                 continue
             needs_embedding = (
@@ -321,24 +352,8 @@ class MetaIndexService:
                 unchanged_count += 1
                 continue
             if needs_embedding:
-                embedding_targets.append(("update", len(update), target))
+                embedding_targets.append((update, len(update), target))
             update.append(target)
-
-        if embedding_targets:
-            # 仅为新增或文本、模型版本变化的文档生成向量；载荷更新复用已存储向量。
-            embeddings = await self._embed_texts(
-                [target.text for _, _, target in embedding_targets]
-            )
-            for (operation, index, target), embedding in zip(
-                embedding_targets,
-                embeddings,
-                strict=True,
-            ):
-                embedded = replace(target, embedding=embedding)
-                if operation == "create":
-                    create[index] = embedded
-                else:
-                    update[index] = embedded
 
         return (
             SemanticIndexDelta(
@@ -349,14 +364,14 @@ class MetaIndexService:
                 ),
                 unchanged_count=unchanged_count,
             ),
-            len(embedding_targets),
+            embedding_targets,
         )
 
     async def _embed_texts(self, texts: list[str]) -> list[list[float]]:
         """分批生成文本向量。"""
         embeddings: list[list[float]] = []
-        for index in range(0, len(texts), self._embedding_batch_size):
-            batch = texts[index : index + self._embedding_batch_size]
+        for index in range(0, len(texts), cfg.embedding.batch_size):
+            batch = texts[index : index + cfg.embedding.batch_size]
             embeddings.extend(await self._embedding_client.aembed_documents(batch))
         return embeddings
 

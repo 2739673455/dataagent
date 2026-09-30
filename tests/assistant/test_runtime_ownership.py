@@ -15,8 +15,9 @@ def _runtime():
 class RuntimeOwnershipTest(unittest.IsolatedAsyncioTestCase):
     def manager(self, create):
         manager = AgentManager(
-            MagicMock(delete_thread=AsyncMock()),
+            MagicMock(checkpointer=MagicMock(adelete_thread=AsyncMock())),
             MagicMock(exists=AsyncMock(return_value=False), save=AsyncMock()),
+            MagicMock(),
             MagicMock(init=AsyncMock(), create=create, close=AsyncMock()),
             max_cached_runtimes=1,
         )

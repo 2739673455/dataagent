@@ -61,7 +61,6 @@ async def _bootstrap_admin() -> None:
     auth_postgres_client_manager = PostgresClientManager(cfg.auth_postgresql, AuthBase)
 
     try:
-        auth_postgres_client_manager.init()
         await auth_postgres_client_manager.init_tables()
         async with auth_postgres_client_manager.session() as session:
             result = await AuthService(

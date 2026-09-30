@@ -3,7 +3,15 @@
 from collections.abc import Mapping
 from typing import Any
 
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage
+
+_KNOWN_FINISH_REASONS = (
+    "content_filter",
+    "function_call",
+    "tool_calls",
+    "length",
+    "stop",
+)
 
 _TEXT_BLOCK_TYPES = frozenset({"text", "input_text", "output_text"})
 
@@ -76,3 +84,32 @@ def reasoning_text(message: BaseMessage) -> str | None:
         if block.get("type") == "reasoning" and (text := block_text(block)):
             parts.append(text)
     return "".join(parts) or None
+
+
+def normalize_finish_reason(value: object) -> str | None:
+    """还原流式消息元数据中被重复拼接的已知结束原因。
+
+    LangChain 合并流式 Chunk 时会拼接重复出现的字符串元数据，例如两个
+    ``stop`` 可能变成 ``stopstop``。未知供应商值保持原样，避免掩盖新状态。
+    """
+    if not isinstance(value, str):
+        return None
+    for reason in _KNOWN_FINISH_REASONS:
+        repeat_count, remainder = divmod(len(value), len(reason))
+        if repeat_count > 1 and remainder == 0 and value == reason * repeat_count:
+            return reason
+    return value
+
+
+def is_final_assistant_message(message: BaseMessage) -> bool:
+    """判断消息是否为可交付附件的完整 Agent 终答。"""
+    if (
+        not isinstance(message, AIMessage)
+        or message.tool_calls
+        or message.invalid_tool_calls
+    ):
+        return False
+    finish_reason = normalize_finish_reason(
+        message.response_metadata.get("finish_reason")
+    )
+    return finish_reason in {None, "stop"}

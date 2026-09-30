@@ -10,12 +10,11 @@ from langchain_core.messages import BaseMessage
 from langgraph.types import StreamPart
 from loguru import logger
 
-from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
 from app.assistant.errors import PlannerContinuationLimitError
 from app.assistant.events import schemas as chat_schema
+from app.assistant.events.content import normalize_finish_reason
 from app.assistant.events.projection import (
-    langchain_message_to_schema_with_artifacts,
-    normalize_finish_reason,
+    langchain_message_to_schema,
     schema_to_human_message,
     subagent_activity_to_event,
 )
@@ -28,10 +27,11 @@ from app.assistant.execution.types import (
     SubagentThinkingDeltaActivity,
     build_planner_config,
 )
+from app.metadata.services.recall_application import SemanticRecallService
 
 if TYPE_CHECKING:
     from app.assistant.execution.manager import AgentManager
-    from app.sandbox.manager import DockerSandboxManager
+    from app.sandbox import DockerSandboxManager
 
 
 async def run_agent_turn(
@@ -40,7 +40,7 @@ async def run_agent_turn(
     turn_context: PlannerTurnContext,
     user_message: chat_schema.UserMessageRequest | None,
     *,
-    recall: SemanticRecallRuntime,
+    recall: SemanticRecallService,
 ) -> AsyncGenerator[chat_schema.ChatStreamEventPayload]:
     """执行新回合或从待执行 Checkpoint 恢复同一回合。"""
     user_id, conversation_id = turn_context.user_id, turn_context.conversation_id
@@ -92,6 +92,7 @@ async def run_agent_turn(
                                 user_id,
                                 conversation_id,
                                 recall=recall,
+                                files=files,
                             )
                             if event is not None:
                                 yield event
@@ -122,7 +123,7 @@ async def run_agent_turn(
                         if not isinstance(messages, list):
                             continue
                         for message in messages:
-                            response = await langchain_message_to_schema_with_artifacts(
+                            response = await langchain_message_to_schema(
                                 message,
                                 files,
                                 user_id,

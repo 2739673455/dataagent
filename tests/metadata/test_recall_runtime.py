@@ -7,10 +7,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
 from app.identity.services.authorization import AssetAccessPolicy, AssetIdentity
 from app.metadata.models.catalog import ColumnInfo, TableInfo
 from app.metadata.models.search import SemanticResourceRecallRequest
+from app.metadata.services.recall_application import SemanticRecallService
 from app.shared.config.app_config import cfg
 
 
@@ -32,7 +32,7 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 self.open_sessions.remove(name)
                 self.closed.append(name)
 
-        self.runtime = SemanticRecallRuntime(
+        self.runtime = SemanticRecallService(
             MagicMock(session=lambda: session("auth")),
             MagicMock(session=lambda: session("meta")),
             MagicMock(),
@@ -80,9 +80,7 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         async def hits(*args, **kwargs):
             self.assertEqual(self.open_sessions, set())
-            self.assertEqual(
-                kwargs["allowed_columns"], frozenset({("orders", "amount")})
-            )
+            self.assertEqual(kwargs["allowed_keys"], frozenset({("orders", "amount")}))
             return []
 
         async def embed(terms):
@@ -94,9 +92,9 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
             search_text_hits=AsyncMock(side_effect=hits),
             search_vector_hits=AsyncMock(side_effect=hits),
         )
-        embedding = MagicMock(aembed_documents=AsyncMock(side_effect=embed))
+        embedding = self.runtime.embedding
+        embedding.aembed_documents = AsyncMock(side_effect=embed)
         with (
-            patch.object(self.runtime.embedding, "get_client", return_value=embedding),
             patch(
                 "app.identity.providers.AuthorizationService",
                 return_value=MagicMock(
@@ -130,7 +128,7 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.assistant.agents.explorer.recall_runtime.load_asset_policy",
+                "app.metadata.services.recall_application.load_asset_policy",
                 new=AsyncMock(return_value=self.policy),
             ),
             patch(
@@ -164,11 +162,11 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.assistant.agents.explorer.recall_runtime.load_asset_policy",
+                "app.metadata.services.recall_application.load_asset_policy",
                 new=AsyncMock(side_effect=[self.policy, revoked]),
             ) as load,
             patch(
-                "app.assistant.agents.explorer.recall_runtime.semantic_recall_context",
+                "app.metadata.services.recall_application.semantic_recall_context",
                 side_effect=context,
             ),
         ):
@@ -192,11 +190,11 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.assistant.agents.explorer.recall_runtime.semantic_recall_context",
+                "app.metadata.services.recall_application.semantic_recall_context",
                 side_effect=context,
             ),
             patch(
-                "app.assistant.agents.explorer.recall_runtime.build_query_experience_recall_service",
+                "app.metadata.services.recall_application.build_query_experience_recall_service",
                 return_value=MagicMock(
                     recall=AsyncMock(return_value=SimpleNamespace(status="failed"))
                 ),

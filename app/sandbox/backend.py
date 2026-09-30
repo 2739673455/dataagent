@@ -11,6 +11,7 @@ import secrets
 import shlex
 import tarfile
 import threading
+import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, BinaryIO, TypeVar
@@ -31,6 +32,7 @@ from deepagents.backends.sandbox import BaseSandbox
 from docker.errors import APIError, NotFound
 from docker.models.containers import Container
 
+from app.sandbox.docker_stream import close_exec_stream
 from app.sandbox.errors import SandboxPathError
 from app.sandbox.paths import (
     SANDBOX_DATA_ROOT,
@@ -50,22 +52,8 @@ if TYPE_CHECKING:
     from app.sandbox.ownership import RedisSandboxOwnership
 
 _ResultT = TypeVar("_ResultT")
-_SANDBOX_STAGING_ROOT = SANDBOX_STAGING_ROOT
 _INLINE_OUTPUT_BYTES = 80_000
-_SHELL_JOB_CANCEL_GRACE_SECONDS = 1.0
 _OUTPUT_TRUNCATION_MARKER = b"\n...[middle output truncated]...\n"
-
-
-def _close_exec_stream(stream: object) -> None:
-    """关闭 Docker exec 流及其底层 HTTP 响应。"""
-    close_stream = getattr(stream, "close", None)
-    if callable(close_stream):
-        close_stream()
-    # Docker SDK 的可取消流持有 Response；显式关闭它可在提前取消时及时归还连接。
-    response = getattr(stream, "_response", None)
-    close_response = getattr(response, "close", None)
-    if callable(close_response):
-        close_response()
 
 
 class DockerSandboxBackend(BaseSandbox):
@@ -94,7 +82,6 @@ class DockerSandboxBackend(BaseSandbox):
             if session_scope is not None
             else self._conversation_dir
         )
-        self._conversation_uid = conversation_uid
         self._execution_uid = execution_uid or conversation_uid
         self._execution_gid = conversation_uid
         self._file_mode = 0o640 if session_scope is not None else 0o600
@@ -104,7 +91,7 @@ class DockerSandboxBackend(BaseSandbox):
             sandbox_config.internal_command_timeout_seconds
         )
         self._staging_dir = posixpath.join(
-            _SANDBOX_STAGING_ROOT,
+            SANDBOX_STAGING_ROOT,
             str(conversation_id),
             str(self._execution_uid),
         )
@@ -293,7 +280,7 @@ class DockerSandboxBackend(BaseSandbox):
                     del output_tail[:overflow]
                 output_tail.extend(chunk)
         finally:
-            _close_exec_stream(output_stream)
+            close_exec_stream(output_stream)
 
         inspected = api_client.exec_inspect(exec_id)
         output_truncated = output_size > _INLINE_OUTPUT_BYTES
@@ -471,6 +458,7 @@ class DockerSandboxBackend(BaseSandbox):
             with io.BytesIO() as archive_buffer:
                 with tarfile.open(fileobj=archive_buffer, mode="w") as archive:
                     info = tarfile.TarInfo(name=staging_name)
+                    info.mtime = int(time.time())
                     info.size = size
                     info.mode = 0o600
                     info.uid = 0
@@ -553,7 +541,7 @@ class DockerSandboxBackend(BaseSandbox):
             for chunk in output_stream:
                 output.extend(chunk)
         finally:
-            _close_exec_stream(output_stream)
+            close_exec_stream(output_stream)
         inspected = api_client.exec_inspect(exec_id)
         return bytes(output), inspected.get("ExitCode")
 

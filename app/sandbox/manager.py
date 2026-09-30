@@ -6,9 +6,9 @@ import asyncio
 import hashlib
 import json
 import time
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from contextlib import AsyncExitStack, suppress
-from typing import TYPE_CHECKING, Any, BinaryIO
+from typing import Any, BinaryIO
 from uuid import UUID
 
 from docker.errors import APIError, ImageNotFound, NotFound
@@ -19,18 +19,19 @@ from loguru import logger
 import docker
 from app.sandbox.archive import SandboxArchiveStore
 from app.sandbox.backend import DockerSandboxBackend
+from app.sandbox.errors import SandboxPathError
+from app.sandbox.ownership import RedisSandboxOwnership
 from app.sandbox.paths import (
     SANDBOX_DATA_ROOT,
+    SandboxArtifact,
     SandboxReadonlyMount,
     SandboxSessionScope,
     normalize_attachment_path,
     normalize_user_attachment_path,
+    resolve_artifact_path,
 )
 from app.sandbox.runtime_pool import DockerRuntimePool
 from app.shared.config.app_config import SandboxConfig
-
-if TYPE_CHECKING:
-    from app.sandbox.ownership import RedisSandboxOwnership
 
 _DEPLOYMENT_LABEL = "dataagent.sandbox.deployment"
 _USER_LABEL = "dataagent.sandbox.user_id"
@@ -44,12 +45,22 @@ class DockerSandboxManager:
     def __init__(
         self,
         sandbox_config: SandboxConfig,
-        ownership: RedisSandboxOwnership,
-        readonly_mounts: Sequence[SandboxReadonlyMount],
+        ownership: RedisSandboxOwnership | None = None,
+        readonly_mounts: Sequence[SandboxReadonlyMount] = (),
     ) -> None:
         """初始化 Docker 沙箱管理器。"""
         self._config = sandbox_config
-        self._ownership = ownership
+        self._ownership = (
+            ownership
+            if ownership is not None
+            else RedisSandboxOwnership(
+                sandbox_config.ownership.redis_url.get_secret_value(),
+                sandbox_config.deployment_namespace,
+                lock_timeout_seconds=sandbox_config.ownership.lock_timeout_seconds,
+                wait_timeout_seconds=sandbox_config.ownership.wait_timeout_seconds,
+                lease_seconds=sandbox_config.ownership.lease_seconds,
+            )
+        )
         self._readonly_mounts = tuple(
             sorted(readonly_mounts, key=lambda mount: mount.target.as_posix())
         )
@@ -71,7 +82,7 @@ class DockerSandboxManager:
         self._archive = SandboxArchiveStore(sandbox_config.max_file_bytes)
         self._runtime_pool = DockerRuntimePool(
             sandbox_config,
-            ownership,
+            self._ownership,
             get_or_create_container=self._get_or_create_storage_container_sync,
             get_existing_container=self._get_existing_container_sync,
             running_containers=self._running_containers_sync,
@@ -523,14 +534,18 @@ class DockerSandboxManager:
         conversation_id: UUID,
         path: str,
         content: BinaryIO,
-    ) -> None:
-        """写入可信系统分析产物。"""
+        *,
+        session_scope: SandboxSessionScope,
+    ) -> str:
+        """在指定 Session 内写入产物并返回绝对路径。"""
+        artifact = resolve_artifact_path(path, conversation_id, session_scope)
         await self._upload_normalized_file(
             user_id,
             conversation_id,
-            normalize_attachment_path(path),
+            artifact.relative_path,
             content,
         )
+        return artifact.path
 
     async def upload_user_attachment(
         self,
@@ -594,22 +609,42 @@ class DockerSandboxManager:
         await asyncio.to_thread(delete)
         await asyncio.to_thread(self._touch_user, user_id)
 
-    async def is_downloadable_file(
+    async def resolve_artifacts(
         self,
         user_id: int,
         conversation_id: UUID,
-        path: str,
-    ) -> bool:
-        """检查用户会话目录中的文件是否可通过附件接口下载。"""
-        normalized_path = normalize_attachment_path(path)
+        paths: Collection[str],
+        *,
+        session_scope: SandboxSessionScope | None = None,
+    ) -> dict[str, SandboxArtifact]:
+        """批量解析可下载产物，以输入引用为键；无效文件省略，设施错误抛出。"""
+        candidates: dict[str, SandboxArtifact] = {}
+        for path in dict.fromkeys(paths):
+            try:
+                candidates[path] = resolve_artifact_path(
+                    path, conversation_id, session_scope
+                )
+            except SandboxPathError:
+                continue
+        if not candidates:
+            return {}
         await self.init()
 
-        def inspect() -> bool:
-            """检查已有沙箱中是否存在可下载文件。"""
+        def inspect() -> dict[str, SandboxArtifact]:
             container = self._get_existing_container_sync(user_id)
-            return container is not None and self._archive.is_downloadable_file(
-                container, conversation_id, normalized_path
-            )
+            if container is None:
+                return {}
+            downloadable = {
+                path: self._archive.is_downloadable_file(
+                    container, conversation_id, path
+                )
+                for path in {artifact.relative_path for artifact in candidates.values()}
+            }
+            return {
+                reference: artifact
+                for reference, artifact in candidates.items()
+                if downloadable[artifact.relative_path]
+            }
 
         result = await asyncio.to_thread(inspect)
         await asyncio.to_thread(self._touch_user, user_id)

@@ -10,7 +10,7 @@ from app.query.repositories.experience_index import QueryExperienceESRepo
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
 
 if TYPE_CHECKING:
-    from app.shared.clients.embedding_client_manager import RemoteEmbeddingClient
+    from app.shared.clients.embedding_client import EmbeddingClient
 
 _INDEX_TEXT_MAX_CHARS = 8000
 
@@ -22,7 +22,7 @@ class QueryExperienceIndexer:
         self,
         repo: QueryExperiencePGRepo,
         index_repo: QueryExperienceESRepo,
-        embedding_client: RemoteEmbeddingClient,
+        embedding_client: EmbeddingClient,
     ) -> None:
         """绑定查询经验事实、索引和向量生成依赖。"""
         self._repo = repo

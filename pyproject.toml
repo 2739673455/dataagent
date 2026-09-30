@@ -22,7 +22,7 @@ dependencies = [
   "python-dotenv>=1.2.2",
   "python-multipart>=0.0.32",
   "pyyaml>=6.0.3",
-  "sqlalchemy>=2.0.46",
+  "sqlalchemy[asyncio]>=2.0.46",
   "sqlglot>=27.0.0",
   "uvicorn[standard]>=0.52.0",
 ]

@@ -7,20 +7,20 @@ from uuid import UUID
 from langchain_core.messages import ToolMessage
 from loguru import logger
 
-from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
 from app.assistant.agents.explorer.semantic_recall_protocol import (
     SemanticRecallReference,
     parse_semantic_recall_references,
     semantic_recall_payload,
 )
 from app.metadata.models.recall import SemanticRecallRecord
+from app.metadata.services.recall_application import SemanticRecallService
 
 
 async def load_recall_records(
     user_id: int,
     conversation_id: UUID,
     references: list[tuple[int, tuple[SemanticRecallReference, ...]]],
-    recall: SemanticRecallRuntime,
+    recall: SemanticRecallService,
 ) -> tuple[dict[str, SemanticRecallRecord], set[str]]:
     """批量加载不同 query 的最新记录，缺失项独立处理。"""
     queries = list(
@@ -80,7 +80,7 @@ async def expand_semantic_recall_messages_for_display(
     user_id: int,
     conversation_id: UUID,
     *,
-    recall: SemanticRecallRuntime,
+    recall: SemanticRecallService,
 ) -> list[Any]:
     """在公开消息投影中展开语义召回引用，不修改持久化消息。"""
     references = [

@@ -12,17 +12,15 @@ from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
-from app.assistant.agents.analyst.prompt import ANALYST_SYSTEM_PROMPT
-from app.assistant.agents.explorer.prompt import EXPLORER_SYSTEM_PROMPT
-from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
 from app.assistant.agents.filesystem import agent_skills_mount_path
 from app.assistant.agents.middleware.semantic_recall_expansion import (
     SemanticRecallExpansionMiddleware,
 )
-from app.assistant.agents.reviewer.prompt import REVIEWER_SYSTEM_PROMPT
 from app.assistant.agents.specialist_agent import create_specialist_agent
 from app.assistant.execution.shell_jobs import ShellJobRuntime
-from app.sandbox.manager import DockerSandboxManager
+from app.assistant.resource_loader import SKILLS_DIRECTORY, load_prompt
+from app.metadata.services.recall_application import SemanticRecallService
+from app.sandbox import DockerSandboxManager
 from app.shared.contracts.analysis import (
     AGENT_TYPES,
     AgentSessionKey,
@@ -64,7 +62,7 @@ class SpecialistDefinition:
     """一种专业 Agent 的提示词、技能目录和专属能力。"""
 
     system_prompt: str
-    skill_directory: Path
+    skill_directory: Path | None = None
     extra_middleware: tuple[AgentMiddleware, ...] = ()
     tools: tuple[BaseTool, ...] = ()
     skills: tuple[str, ...] = ()
@@ -74,7 +72,7 @@ def build_specialist_definitions(
     explorer_tools: Iterable[BaseTool],
     explorer_mcp_tools: Iterable[BaseTool],
     *,
-    recall: SemanticRecallRuntime,
+    recall: SemanticRecallService,
 ) -> dict[AgentType, SpecialistDefinition]:
     """构造专业 Agent 定义，并将数据访问能力限定给 Explorer。"""
     builtin_tools = tuple(explorer_tools)
@@ -102,19 +100,17 @@ def build_specialist_definitions(
     }
     return {
         "explorer": SpecialistDefinition(
-            system_prompt=EXPLORER_SYSTEM_PROMPT,
-            skill_directory=Path(__file__).parent / "explorer" / "skills",
+            system_prompt=load_prompt("agents/explorer"),
             extra_middleware=(SemanticRecallExpansionMiddleware(recall),),
             tools=tuple(tools_by_name[name] for name in sorted(explorer_tool_names)),
         ),
         "analyst": SpecialistDefinition(
-            system_prompt=ANALYST_SYSTEM_PROMPT,
-            skill_directory=Path(__file__).parent / "analyst" / "skills",
+            system_prompt=load_prompt("agents/analyst"),
+            skill_directory=SKILLS_DIRECTORY,
             skills=(agent_skills_mount_path("analyst"),),
         ),
         "reviewer": SpecialistDefinition(
-            system_prompt=REVIEWER_SYSTEM_PROMPT,
-            skill_directory=Path(__file__).parent / "reviewer" / "skills",
+            system_prompt=load_prompt("agents/reviewer"),
         ),
     }
 

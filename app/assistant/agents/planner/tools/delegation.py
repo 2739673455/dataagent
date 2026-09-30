@@ -8,8 +8,9 @@ from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from loguru import logger
-from pydantic import ValidationError
+from pydantic import ConfigDict
 
+from app.assistant.agents.tools.errors import tool_error
 from app.assistant.execution.session_service import AgentSessionService
 from app.assistant.execution.types import (
     DelegationRequest,
@@ -17,6 +18,14 @@ from app.assistant.execution.types import (
     SubagentActivityWriter,
 )
 from app.shared.contracts.analysis import AgentType
+
+
+class _DelegationToolRequest(DelegationRequest):
+    """框架注入运行时；业务请求字段及约束继承自 DelegationRequest。"""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    runtime: ToolRuntime
+
 
 _PTC_DELEGATION_ID_PREFIX = "ptc_delegation_"
 
@@ -41,7 +50,7 @@ def _parent_eval_tool_call_id(runtime: ToolRuntime) -> str | None:
 def create_delegation_tool(service: AgentSessionService) -> BaseTool:
     """创建只绑定当前用户会话的 delegation Tool。"""
 
-    @tool("delegation")
+    @tool("delegation", args_schema=_DelegationToolRequest)
     async def delegation(
         runtime: ToolRuntime,
         analysis_id: Annotated[
@@ -61,21 +70,13 @@ def create_delegation_tool(service: AgentSessionService) -> BaseTool:
             "交给专业 Agent 的完整目标、输入产物路径和约束",
         ],
     ) -> dict[str, object]:
-        """创建或恢复专业 Agent Session 并返回可验证的结构化结果。"""
-        try:
-            request = DelegationRequest(
-                analysis_id=analysis_id,
-                agent_type=agent_type,
-                session_id=session_id,
-                message=message,
-            )
-        except ValidationError as exc:
-            return {
-                "status": "error",
-                "code": "invalid_delegation_request",
-                "message": "委派请求无效",
-                "details": exc.errors(include_url=False),
-            }
+        """创建或恢复专业 Agent Session，返回执行状态、Session 身份和原始文本回答。"""
+        request = DelegationRequest.model_construct(
+            analysis_id=analysis_id,
+            agent_type=agent_type,
+            session_id=session_id,
+            message=message,
+        )
         parent_tool_call_id = _parent_eval_tool_call_id(runtime)
         delegation_id = runtime.tool_call_id
         if delegation_id is None:
@@ -110,17 +111,7 @@ def create_delegation_tool(service: AgentSessionService) -> BaseTool:
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("执行专业 Agent 委派失败")
-            return {
-                "status": "error",
-                "code": "delegation_failed",
-                "message": "专业 Agent 委派失败",
-                "details": [
-                    {
-                        "type": type(exc).__name__,
-                        "msg": str(exc).strip() or "异常未提供详情",
-                    }
-                ],
-            }
+            return tool_error("专业 Agent 委派失败", exc, code="delegation_failed")
         if parent_tool_call_id is not None:
             service.finish_eval_delegation(
                 parent_tool_call_id,

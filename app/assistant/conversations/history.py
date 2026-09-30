@@ -7,7 +7,6 @@ from uuid import UUID
 
 from langchain_core.messages import BaseMessage
 
-from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
 from app.assistant.agents.explorer.semantic_recall_messages import (
     expand_semantic_recall_messages_for_display,
 )
@@ -15,12 +14,12 @@ from app.assistant.errors import SubagentRunNotFoundError
 from app.assistant.events import schemas as chat_schema
 from app.assistant.events.projection import (
     langchain_message_to_schema,
-    langchain_message_to_schema_with_artifacts,
 )
+from app.metadata.services.recall_application import SemanticRecallService
 
 if TYPE_CHECKING:
     from app.assistant.execution.manager import AgentManager
-    from app.sandbox.manager import DockerSandboxManager
+    from app.sandbox import DockerSandboxManager
 
 
 async def list_messages(
@@ -39,7 +38,7 @@ async def list_messages(
     for message in messages:
         if not isinstance(message, BaseMessage):
             continue
-        if schema := await langchain_message_to_schema_with_artifacts(
+        if schema := await langchain_message_to_schema(
             message,
             files,
             user_id,
@@ -58,7 +57,8 @@ async def get_subagent_activity(
     session_id: str,
     delegation_id: str,
     *,
-    recall: SemanticRecallRuntime,
+    recall: SemanticRecallService,
+    files: DockerSandboxManager,
 ) -> chat_schema.SubagentMessageListResponse:
     """读取一次 Specialist delegation 的公开工作消息和状态。"""
     try:
@@ -85,7 +85,11 @@ async def get_subagent_activity(
         messages=[
             schema
             for message in messages
-            if (schema := langchain_message_to_schema(message, conversation_id))
+            if (
+                schema := await langchain_message_to_schema(
+                    message, files, user_id, conversation_id
+                )
+            )
             is not None
         ],
     )

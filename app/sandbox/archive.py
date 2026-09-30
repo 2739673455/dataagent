@@ -6,6 +6,7 @@ import json
 import posixpath
 import tarfile
 import tempfile
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -127,10 +128,7 @@ class SandboxArchiveStore:
             extracted = archive.extractfile(member)
             if extracted is None:
                 raise FileNotFoundError(path)
-            content = extracted.read(max_bytes + 1)
-            if len(content) > max_bytes:
-                raise SandboxFileTooLargeError(f"文件大小超出限制: > {max_bytes}")
-            return content, member
+            return extracted.read(), member
 
     def put(
         self,
@@ -144,6 +142,7 @@ class SandboxArchiveStore:
             with tarfile.open(fileobj=buffer, mode="w") as archive:
                 for name, owner_uid, owner_gid, mode in directories:
                     info = tarfile.TarInfo(name=name.rstrip("/") + "/")
+                    info.mtime = int(time.time())
                     info.type = tarfile.DIRTYPE
                     info.mode = mode
                     info.uid = owner_uid
@@ -151,6 +150,7 @@ class SandboxArchiveStore:
                     archive.addfile(info)
                 for name, owner_uid, owner_gid, mode, content, size in files:
                     info = tarfile.TarInfo(name=name)
+                    info.mtime = int(time.time())
                     info.size = size
                     info.mode = mode
                     info.uid = owner_uid

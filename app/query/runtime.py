@@ -38,7 +38,7 @@ from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
 
 if TYPE_CHECKING:
-    from app.sandbox.manager import DockerSandboxManager
+    from app.sandbox import DockerSandboxManager
 
 
 class DatabaseQueryExecutionRuntime:

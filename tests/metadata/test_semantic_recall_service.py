@@ -14,14 +14,12 @@ from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_core.tools import StructuredTool
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode
 from langgraph.runtime import Runtime
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.dialects import postgresql
 
-from app.assistant.agents.explorer.semantic_recall_handler import _record_summary
 from app.assistant.agents.explorer.semantic_recall_messages import (
     expand_semantic_recall_messages_for_display,
 )
@@ -63,9 +61,11 @@ from app.shared.contracts.query_experience import (
 _FULL_DATABASE_GRANT = AssetIdentity("doris", "analytics")
 _CONFIGURED_DATABASE_GRANT = AssetIdentity("doris", "ecommerce")
 
-from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
+from app.metadata.services.recall_application import SemanticRecallService
 
-_RECALL = MagicMock(spec=SemanticRecallRuntime)
+_RECALL = SemanticRecallService(
+    MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()
+)
 
 _SEMANTIC_RECALL_TOOLS = {
     semantic_tool.name: semantic_tool
@@ -1349,34 +1349,24 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             ),
         ]
 
-        for tool, arguments, location, message in cases:
-            with self.subTest(location=location):
-                result = await tool.coroutine(runtime=MagicMock(), **arguments)
-                self.assertEqual(result["status"], "error")
-                self.assertEqual(result["message"], message)
-                self.assertEqual(result["details"][0]["loc"], location)
-                self.assertEqual(result["details"][0]["msg"], "query 不能为空")
+        for tool, arguments, location, _message in cases:
+            with (
+                self.subTest(location=location),
+                self.assertRaises(ValidationError) as caught,
+            ):
+                await tool.ainvoke(arguments)
+            self.assertEqual(list(caught.exception.errors()[0]["loc"]), location)
 
     async def test_merge_same_query_reports_argument_detail(self) -> None:
-        coroutine = cast(StructuredTool, merge_recalls).coroutine
-        assert coroutine is not None
-        result = await coroutine(
-            runtime=MagicMock(),
-            target_query="本月收入",
-            source_query="本月收入",
-        )
-
-        self.assertEqual(result["status"], "error")
-        self.assertEqual(result["message"], "语义召回请求无效")
-        self.assertEqual(
-            result["details"],
-            [
+        with self.assertRaisesRegex(
+            ValidationError, "目标 query 和来源 query 不能相同"
+        ):
+            await merge_recalls.ainvoke(
                 {
-                    "loc": ["source_query"],
-                    "msg": "目标 query 和来源 query 不能相同",
+                    "target_query": "本月收入",
+                    "source_query": " 本月收入 ",
                 }
-            ],
-        )
+            )
 
     async def test_delete_recalls_accepts_hierarchical_resource_selectors(
         self,
@@ -1401,21 +1391,21 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
                 side_effect=lambda *args, **kwargs: object_context(service),
             ),
         ):
-            coroutine = cast(StructuredTool, delete_recalls).coroutine
-            assert coroutine is not None
-            result = await coroutine(
-                runtime=runtime,
-                deletions=[
-                    {
-                        "query": " 本月收入 ",
-                        "tables": {
-                            "customers": {},
-                            "orders": {"columns": {"status": {"values": ["paid"]}}},
-                        },
-                        "metrics": {"revenue": {}},
-                        "query_experiences": [{"id": str(experience_id)}],
-                    }
-                ],
+            result = await delete_recalls.ainvoke(
+                {
+                    "deletions": [
+                        {
+                            "query": " 本月收入 ",
+                            "tables": {
+                                "customers": {},
+                                "orders": {"columns": {"status": {"values": ["paid"]}}},
+                            },
+                            "metrics": {"revenue": {}},
+                            "query_experiences": [{"id": str(experience_id)}],
+                        }
+                    ],
+                },
+                config=runtime.config,
             )
 
         deletion = service.delete.await_args.args[2][0]
@@ -1441,21 +1431,8 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_delete_recalls_rejects_empty_deletions(self) -> None:
-        coroutine = cast(StructuredTool, delete_recalls).coroutine
-        assert coroutine is not None
-        result = await coroutine(
-            runtime=MagicMock(),
-            deletions=[],
-        )
-
-        self.assertEqual(
-            result,
-            {
-                "status": "error",
-                "message": "删除请求无效",
-                "details": [{"loc": ["deletions"], "msg": "至少需要一个删除项"}],
-            },
-        )
+        with self.assertRaises(ValidationError):
+            await delete_recalls.ainvoke({"deletions": []})
 
     def test_reference_loader_rejects_noncanonical_query(self) -> None:
         message = ToolMessage(
@@ -1490,7 +1467,17 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             )
         merged = await service.merge(7, conversation_id, "本月收入", "订单金额")
 
-        summary = _record_summary(merged)
+        with patch.object(_RECALL, "list_recalls", AsyncMock(return_value=[merged])):
+            runtime = SimpleNamespace(
+                config={
+                    "configurable": {
+                        "user_id": 7,
+                        "conversation_id": str(conversation_id),
+                    }
+                }
+            )
+            listed = await list_recalls.ainvoke({}, config=runtime.config)
+        summary = listed["recalls"][0]
         expanded = semantic_recall_payload(merged)
 
         self.assertEqual(merged.source_queries, ["订单金额"])
@@ -1668,7 +1655,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        recall_runtime = SemanticRecallRuntime(
+        recall_runtime = SemanticRecallService(
             MagicMock(), MagicMock(), MagicMock(), MagicMock(), MagicMock()
         )
         recall_tool = create_semantic_recall_tools(recall_runtime)[0]
@@ -1680,19 +1667,19 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch(
-                "app.assistant.agents.explorer.recall_runtime.load_asset_policy",
+                "app.metadata.services.recall_application.load_asset_policy",
                 new=AsyncMock(return_value=policy),
             ),
             patch(
-                "app.assistant.agents.explorer.recall_runtime.build_semantic_resource_recall_service",
+                "app.metadata.services.recall_application.build_semantic_resource_recall_service",
                 new=AsyncMock(return_value=resource_recall_service),
             ),
             patch(
-                "app.assistant.agents.explorer.recall_runtime.build_query_experience_recall_service",
+                "app.metadata.services.recall_application.build_query_experience_recall_service",
                 return_value=experience_service,
             ),
             patch(
-                "app.assistant.agents.explorer.recall_runtime.semantic_recall_context",
+                "app.metadata.services.recall_application.semantic_recall_context",
                 side_effect=lambda *args: object_context(context_service),
             ),
             patch.object(
@@ -1702,7 +1689,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             first_result = await cast(Any, recall_tool).coroutine(
-                runtime=runtime,
+                config=runtime.config,
                 resource_types=["column", "metric"],
                 query="统计本月订单收入",
                 terms=["收入", "订单金额"],
@@ -1713,19 +1700,19 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
                 "统计本月订单收入",
             )
             second_result = await cast(Any, recall_tool).coroutine(
-                runtime=runtime,
+                config=runtime.config,
                 resource_types=["column", "metric"],
                 query="统计本月订单收入",
                 terms=["订单状态"],
             )
             third_result = await cast(Any, recall_tool).coroutine(
-                runtime=runtime,
+                config=runtime.config,
                 resource_types=["column"],
                 query="统计今日订单收入",
                 terms=["今日收入"],
             )
             resource_error = await cast(Any, recall_tool).coroutine(
-                runtime=runtime,
+                config=runtime.config,
                 resource_types=["column"],
                 query="统计明日订单收入",
                 terms=["明日收入"],

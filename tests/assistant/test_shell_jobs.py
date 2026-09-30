@@ -311,12 +311,7 @@ class UserMessageShellJobContextTest(unittest.TestCase):
         runtime = MagicMock()
         runtime.list.return_value = [self._job()]
         user_message = HumanMessage(id="user-1", content="question")
-        internal_retry = HumanMessage(
-            id="retry-1",
-            content="continue",
-            additional_kwargs={"dataagent_internal_retry": True},
-        )
-        state = {"messages": [user_message, internal_retry]}
+        state = {"messages": [HumanMessage(content="previous"), user_message]}
 
         update = self._middleware(runtime).before_model(
             cast(Any, state),
@@ -346,7 +341,7 @@ class UserMessageShellJobContextTest(unittest.TestCase):
             ),
         )
         self.assertEqual(len(merged), 2)
-        self.assertIn(SHELL_JOB_CONTEXT_KEY, merged[0].additional_kwargs)
+        self.assertIn(SHELL_JOB_CONTEXT_KEY, merged[1].additional_kwargs)
 
     def test_before_model_does_not_change_frozen_snapshot(self) -> None:
         runtime = MagicMock()

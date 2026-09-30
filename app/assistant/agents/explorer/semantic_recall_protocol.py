@@ -3,8 +3,10 @@
 import json
 from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
 
 from langchain_core.messages import ToolMessage
+from langchain_core.runnables import RunnableConfig
 
 from app.metadata.models.recall import (
     SemanticRecallRecord,
@@ -14,6 +16,18 @@ from app.metadata.models.recall import (
 _REFERENCE_TOOLS = frozenset(
     {"recall_context", "get_recall", "merge_recalls", "delete_recalls"}
 )
+
+
+def resolve_semantic_recall_identity(
+    config: RunnableConfig,
+) -> tuple[int, UUID]:
+    """从服务端运行配置解析会话身份。"""
+    configurable = config.get("configurable", {})
+    user_id = configurable.get("user_id")
+    raw_conversation_id = configurable.get("conversation_id")
+    if not isinstance(user_id, int) or not isinstance(raw_conversation_id, str):
+        raise TypeError("配置中未找到语义召回上下文")
+    return user_id, UUID(raw_conversation_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,14 +132,17 @@ def semantic_recall_payload(
         table = tables.get(item.t_name)
         if table is None:
             continue
-        column = {
-            "type": item.type,
-            "description": item.description,
-            "alias": item.alias,
-            "examples": item.examples,
-            "reference_t_name": item.reference_t_name,
-            "reference_c_name": item.reference_c_name,
-        }
+        column = item.model_dump(
+            mode="json",
+            include={
+                "type",
+                "description",
+                "alias",
+                "examples",
+                "reference_t_name",
+                "reference_c_name",
+            },
+        )
         values = values_by_column.get((item.t_name, item.name))
         if values:
             column["values"] = values
@@ -135,28 +152,21 @@ def semantic_recall_payload(
         "query": record.query,
         "tables": tables,
         "metrics": {
-            item.name: {
-                "description": item.description,
-                "alias": item.alias,
-                "relevant_columns": item.relevant_columns,
-            }
+            item.name: item.model_dump(
+                mode="json", include={"description", "alias", "relevant_columns"}
+            )
             for item in response.metrics
         },
         "query_experiences": [
-            {
-                "id": str(experience.id),
-                "purpose": experience.purpose,
-                "sql_template": experience.sql_template,
-                "assets": [
-                    {
-                        "kind": asset.kind,
-                        "database": asset.database,
-                        "table": asset.table,
-                        "column": asset.column,
-                    }
-                    for asset in experience.assets
-                ],
-            }
+            experience.model_dump(
+                mode="json",
+                include={
+                    "id": True,
+                    "purpose": True,
+                    "sql_template": True,
+                    "assets": {"__all__": {"kind", "database", "table", "column"}},
+                },
+            )
             for experience in record.query_experiences
         ],
         "created_at": record.created_at.isoformat(),

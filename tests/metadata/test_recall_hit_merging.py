@@ -222,9 +222,7 @@ def test_resource_routing_shared_embeddings_and_fulltext_fallback(
         )
         if not embedding_fails:
             assert repo.search_vector_hits.call_args.args[0] is embeddings[0]
-            permission = (
-                "allowed_columns" if resource == "column" else "allowed_metrics"
-            )
+            permission = "allowed_keys"
             assert (
                 repo.search_text_hits.call_args.kwargs[permission]
                 is repo.search_vector_hits.call_args.kwargs[permission]

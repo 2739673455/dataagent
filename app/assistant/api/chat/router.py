@@ -19,7 +19,7 @@ from app.assistant.api.dependencies import (
     ConversationLifecycleServiceDep,
     ConversationRunServiceDep,
     SandboxManagerDep,
-    SemanticRecallRuntimeDep,
+    SemanticRecallServiceDep,
 )
 from app.assistant.conversations import history as conversation_history
 from app.assistant.conversations.title import (
@@ -203,7 +203,7 @@ async def api_get_messages(
     "runs/{delegation_id}/messages"
 )
 async def api_get_subagent_messages(
-    recall: SemanticRecallRuntimeDep,
+    recall: SemanticRecallServiceDep,
     conversation_id: UUID,
     analysis_id: str,
     agent_type: AgentType,
@@ -212,6 +212,7 @@ async def api_get_subagent_messages(
     conversation_repo: ConversationPGRepoDep,
     current_user: CurrentUserDep,
     agents: AgentManagerDep,
+    files: SandboxManagerDep,
 ) -> chat_schema.SubagentMessageListResponse:
     """读取一次 Specialist delegation 的公开工作消息。"""
     user_id = current_user.id
@@ -227,6 +228,7 @@ async def api_get_subagent_messages(
         session_id,
         delegation_id,
         recall=recall,
+        files=files,
     )
 
 

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from sqlalchemy import DateTime, Index, Integer, String, Uuid, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -20,16 +20,6 @@ SemanticResourceName = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=1000),
 ]
-
-
-def normalize_semantic_recall_query(query: str) -> str:
-    """校验并清理查询业务键。"""
-    normalized = query.strip()
-    if not normalized:
-        raise ValueError("query 不能为空")
-    if len(normalized) > 1000:
-        raise ValueError("query 长度不能超过 1000")
-    return normalized
 
 
 class SemanticRecallSnapshot(MetaBase):
@@ -144,7 +134,7 @@ class SemanticRecallResourceDeletion(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    query: str = Field(
+    query: SemanticResourceName = Field(
         description=(
             "待删除资源所属的稳定 query 业务键，必须与 recall_context 使用的 query "
             "完全一致"
@@ -170,3 +160,61 @@ class SemanticRecallResourceDeletion(BaseModel):
                 self.query_experiences,
             )
         )
+
+
+class RecallContextRequest(SemanticResourceRecallRequest):
+    """按稳定业务键补充检索并累计召回上下文。"""
+
+    query: SemanticResourceName = Field(
+        description="当前会话的稳定业务键；后续补充检索原样复用，只调整 terms 和 resource_types"
+    )
+
+
+class ListRecallsRequest(BaseModel):
+    """读取最近召回记录。"""
+
+    model_config = ConfigDict(extra="forbid")
+    limit: int = Field(default=20, ge=1, le=100, description="返回最近记录的数量")
+
+
+class GetRecallRequest(BaseModel):
+    """按稳定业务键读取召回记录。"""
+
+    model_config = ConfigDict(extra="forbid")
+    query: SemanticResourceName = Field(
+        description="与 recall_context 完全一致的 query"
+    )
+
+
+class MergeRecallsRequest(BaseModel):
+    """将来源上下文合并到目标。"""
+
+    model_config = ConfigDict(extra="forbid")
+    target_query: SemanticResourceName = Field(
+        description="接收累计结果并保留的目标 query"
+    )
+    source_query: SemanticResourceName = Field(
+        description="提供结果并在合并后删除的来源 query"
+    )
+
+    @model_validator(mode="after")
+    def different_queries(self) -> "MergeRecallsRequest":
+        if self.target_query == self.source_query:
+            raise ValueError("目标 query 和来源 query 不能相同")
+        return self
+
+
+class DeleteRecallsRequest(BaseModel):
+    """删除上下文或其中的资源；同一业务键仅能出现一次。"""
+
+    model_config = ConfigDict(extra="forbid")
+    deletions: list[SemanticRecallResourceDeletion] = Field(
+        min_length=1, description="未提供资源选择器时删除整个 query"
+    )
+
+    @model_validator(mode="after")
+    def unique_queries(self) -> "DeleteRecallsRequest":
+        queries = [item.query for item in self.deletions]
+        if len(set(queries)) != len(queries):
+            raise ValueError("同一 query 只能出现一次")
+        return self

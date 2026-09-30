@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import unittest
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Collection
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any, cast
@@ -41,8 +41,10 @@ from app.assistant.execution.types import (
     SubagentStatusActivity,
     SubagentThinkingDeltaActivity,
 )
+from app.sandbox import SandboxArtifact, SandboxSessionScope
+from app.sandbox.errors import SandboxPathError
 from app.sandbox.manager import DockerSandboxManager
-from app.sandbox.paths import normalize_attachment_path
+from app.sandbox.paths import normalize_attachment_path, resolve_artifact_path
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
 _SANDBOX_ROOT = f"/data/{_CONVERSATION_ID}"
@@ -55,15 +57,31 @@ class _FileInspectorStub(DockerSandboxManager):
         self.available = available or set()
         self.calls: list[tuple[int, UUID, str]] = []
 
-    async def is_downloadable_file(
+    async def resolve_artifacts(
         self,
         user_id: int,
         conversation_id: UUID,
-        path: str,
-    ) -> bool:
-        call = (user_id, conversation_id, path)
-        self.calls.append(call)
-        return call in self.available
+        paths: Collection[str],
+        *,
+        session_scope: SandboxSessionScope | None = None,
+    ) -> dict[str, SandboxArtifact]:
+        resolved = {}
+        for path in dict.fromkeys(paths):
+            try:
+                artifact = resolve_artifact_path(path, conversation_id, session_scope)
+            except SandboxPathError:
+                continue
+            call = (user_id, conversation_id, artifact.relative_path)
+            self.calls.append(call)
+            if call in self.available:
+                resolved[path] = artifact
+        return resolved
+
+
+def _projection_files() -> _FileInspectorStub:
+    return _FileInspectorStub(
+        {(7, _CONVERSATION_ID, "sessions/sales-review/analyst/chart-1/report.html")}
+    )
 
 
 class UserMessageRequestTest(unittest.TestCase):
@@ -156,8 +174,8 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-        response = message_projection.langchain_message_to_schema(
-            message, _CONVERSATION_ID
+        response = await message_projection.langchain_message_to_schema(
+            message, _projection_files(), 7, _CONVERSATION_ID
         )
 
         self.assertIsNotNone(response)
@@ -188,8 +206,8 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
             [item.f_path for item in context.attachments],
             ["uploads/report.csv", "uploads/chart.png"],
         )
-        response = message_projection.langchain_message_to_schema(
-            message, _CONVERSATION_ID
+        response = await message_projection.langchain_message_to_schema(
+            message, _projection_files(), 7, _CONVERSATION_ID
         )
         assert response is not None
         self.assertEqual(
@@ -213,7 +231,7 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(MESSAGE_CREATED_AT_KEY, response_message.additional_kwargs)
 
     async def test_reasoning_block_is_projected_as_completed_thinking(self) -> None:
-        response = message_projection.langchain_message_to_schema(
+        response = await message_projection.langchain_message_to_schema(
             AIMessage(
                 id="answer-1",
                 content=[
@@ -221,6 +239,8 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
                     {"type": "text", "text": "最终回答"},
                 ],
             ),
+            _projection_files(),
+            7,
             _CONVERSATION_ID,
         )
 
@@ -240,7 +260,7 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
     async def test_responses_reasoning_item_is_projected_as_completed_thinking(
         self,
     ) -> None:
-        response = message_projection.langchain_message_to_schema(
+        response = await message_projection.langchain_message_to_schema(
             AIMessage(
                 id="answer-1",
                 content=[
@@ -253,6 +273,8 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
                     {"type": "text", "text": "最终回答"},
                 ],
             ),
+            _projection_files(),
+            7,
             _CONVERSATION_ID,
         )
 
@@ -291,8 +313,10 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
         # LangChain 会把扩展 Responses reasoning 的 content 移到 extras，
         # 历史投影仍应从 Checkpoint 原始 content 恢复思考过程。
         self.assertNotIn("content", message.content_blocks[0])
-        response = message_projection.langchain_message_to_schema(
+        response = await message_projection.langchain_message_to_schema(
             message,
+            _projection_files(),
+            7,
             _CONVERSATION_ID,
         )
 
@@ -649,18 +673,7 @@ def _delegation_payload() -> dict[str, object]:
         "analysis_id": "sales-review",
         "agent_type": "analyst",
         "session_id": "chart-1",
-        "content": "Chart generated",
-        "artifacts": [
-            {
-                "path": (
-                    f"{_SANDBOX_ROOT}/sessions/sales-review/analyst/chart-1/report.html"
-                ),
-                "media_type": "text/html",
-                "description": "Interactive report",
-            }
-        ],
-        "repair_requests": [],
-        "failure_reasons": [],
+        "content": f"Chart generated\n[[DATAAGENT_ARTIFACT:{_SANDBOX_ROOT}/sessions/sales-review/analyst/chart-1/report.html]]",
     }
 
 
@@ -699,7 +712,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        schema = await message_projection.langchain_message_to_schema_with_artifacts(
+        schema = await message_projection.langchain_message_to_schema(
             message,
             files,
             7,
@@ -754,7 +767,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         )
         files = _FileInspectorStub({(7, _CONVERSATION_ID, relative_path)})
 
-        schema = await message_projection.langchain_message_to_schema_with_artifacts(
+        schema = await message_projection.langchain_message_to_schema(
             message, files, 7, _CONVERSATION_ID
         )
 
@@ -777,10 +790,8 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(path=path):
                 text = f"[[DATAAGENT_ARTIFACT:{path}]]"
-                schema = (
-                    await message_projection.langchain_message_to_schema_with_artifacts(
-                        AIMessage(content=text), files, 7, _CONVERSATION_ID
-                    )
+                schema = await message_projection.langchain_message_to_schema(
+                    AIMessage(content=text), files, 7, _CONVERSATION_ID
                 )
                 assert schema is not None
                 self.assertIsNone(schema.attachments)
@@ -806,7 +817,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         )
         files = _FileInspectorStub({(7, _CONVERSATION_ID, path.removeprefix("/"))})
 
-        schema = await message_projection.langchain_message_to_schema_with_artifacts(
+        schema = await message_projection.langchain_message_to_schema(
             message,
             files,
             7,
@@ -834,7 +845,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         relative_path = "sessions/sales-review/analyst/main/final.csv"
         files = _FileInspectorStub({(7, other_conversation_id, relative_path)})
 
-        schema = await message_projection.langchain_message_to_schema_with_artifacts(
+        schema = await message_projection.langchain_message_to_schema(
             message,
             files,
             7,
@@ -919,9 +930,11 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             event.message.model_dump(mode="json"),
         )
 
-    def test_eval_internal_delegations_are_projected_from_tool_metadata(self) -> None:
+    async def test_eval_internal_delegations_are_projected_from_tool_metadata(
+        self,
+    ) -> None:
         payload = _delegation_payload()
-        schema = message_projection.langchain_message_to_schema(
+        schema = await message_projection.langchain_message_to_schema(
             ToolMessage(
                 id="eval-result",
                 content="done",
@@ -940,6 +953,8 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                     ]
                 },
             ),
+            _projection_files(),
+            7,
             _CONVERSATION_ID,
         )
 
@@ -947,10 +962,13 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         assert schema is not None and schema.eval_delegations is not None
         self.assertEqual(schema.eval_delegations[0].delegation_id, "ptc-delegation-1")
         self.assertEqual(schema.eval_delegations[0].message, "生成销售图表")
-        self.assertEqual(schema.eval_delegations[0].result, payload)
+        self.assertEqual(
+            schema.eval_delegations[0].result,
+            {**payload, "content": "Chart generated\n"},
+        )
 
-    def test_large_subagent_tool_payloads_are_preserved(self) -> None:
-        call_schema = message_projection.langchain_message_to_schema(
+    async def test_large_subagent_tool_payloads_are_preserved(self) -> None:
+        call_schema = await message_projection.langchain_message_to_schema(
             AIMessage(
                 content="",
                 tool_calls=[
@@ -961,14 +979,18 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                     }
                 ],
             ),
+            _projection_files(),
+            7,
             _CONVERSATION_ID,
         )
-        result_schema = message_projection.langchain_message_to_schema(
+        result_schema = await message_projection.langchain_message_to_schema(
             ToolMessage(
                 content="x" * 55_000,
                 name="execute_sql",
                 tool_call_id="large-call",
             ),
+            _projection_files(),
+            7,
             _CONVERSATION_ID,
         )
 
@@ -1135,7 +1157,11 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             stream_event = await message_projection.subagent_activity_to_event(
-                activity, 7, _CONVERSATION_ID, recall=MagicMock()
+                activity,
+                7,
+                _CONVERSATION_ID,
+                recall=MagicMock(),
+                files=_projection_files(),
             )
 
             agents = MagicMock()
@@ -1154,6 +1180,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
                 "source-1",
                 "delegation-1",
                 recall=MagicMock(),
+                files=_projection_files(),
             )
 
         self.assertIsInstance(
@@ -1177,7 +1204,55 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             json.dumps({"status": "stored", "query": "收入趋势"}),
         )
 
-    def test_delegation_artifacts_are_restored_from_history(self) -> None:
+    async def test_subagent_attachments_match_planner_in_stream_and_history(
+        self,
+    ) -> None:
+        content = str(_delegation_payload()["content"])
+        message = AIMessage(id="specialist-final", content=content)
+        files = _projection_files()
+        expected = await message_projection.langchain_message_to_schema(
+            message, files, 7, _CONVERSATION_ID
+        )
+        stream = await message_projection.subagent_activity_to_event(
+            SubagentMessageActivity(
+                delegation_id="delegation-files",
+                analysis_id="sales-review",
+                agent_type="analyst",
+                session_id="chart-1",
+                message=message,
+            ),
+            7,
+            _CONVERSATION_ID,
+            recall=MagicMock(),
+            files=files,
+        )
+        agents = MagicMock()
+        agents.read_delegation_activity = AsyncMock(
+            return_value=DelegationActivityHistory(
+                messages=[message],
+                status="completed",
+            )
+        )
+        history = await conversation_history.get_subagent_activity(
+            agents,
+            7,
+            _CONVERSATION_ID,
+            "sales-review",
+            "analyst",
+            "chart-1",
+            "delegation-files",
+            recall=MagicMock(),
+            files=files,
+        )
+        assert isinstance(stream, chat_schema.ChatStreamSubagentMessageEvent)
+        assert expected is not None
+        self.assertEqual(stream.message, expected)
+        self.assertEqual(history.messages, [expected])
+        self.assertEqual(len(expected.attachments or []), 1)
+        self.assertNotIn("DATAAGENT_ARTIFACT", str(expected.parts))
+        self.assertEqual(message.content, content)
+
+    async def test_delegation_artifacts_are_restored_from_history(self) -> None:
         message = ToolMessage(
             id="message-1",
             name="delegation",
@@ -1185,8 +1260,8 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             content=json.dumps(_delegation_payload()),
         )
 
-        schema = message_projection.langchain_message_to_schema(
-            message, _CONVERSATION_ID
+        schema = await message_projection.langchain_message_to_schema(
+            message, _projection_files(), 7, _CONVERSATION_ID
         )
 
         self.assertIsNotNone(schema)
@@ -1199,7 +1274,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             "sessions/sales-review/analyst/chart-1/report.html",
         )
         self.assertEqual(attachment.media_type, "text/html")
-        self.assertEqual(attachment.description, "Interactive report")
+        self.assertIsNone(attachment.description)
         self.assertEqual(
             normalize_attachment_path(attachment.f_path),
             attachment.f_path,
@@ -1245,7 +1320,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         ):
             async for event in planner_turn.run_agent_turn(
                 manager,
-                _FileInspectorStub(),
+                _projection_files(),
                 manager.turn_context,
                 user_message,
                 recall=MagicMock(),
@@ -1258,9 +1333,59 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         assert isinstance(event, chat_schema.ChatStreamMessageEvent)
         self.assertEqual(len(event.message.attachments or []), 1)
 
-    def test_invalid_delegation_artifact_payload_is_not_exposed(self) -> None:
+    async def test_all_artifact_sources_filter_missing_files_and_deduplicate(
+        self,
+    ) -> None:
         payload = _delegation_payload()
-        payload["artifacts"] = [{"path": "/sessions/../secret"}]
+        payload["content"] = (
+            str(payload["content"])
+            + "\n"
+            + str(payload["content"])
+            + f"\n[[DATAAGENT_ARTIFACT:{_SANDBOX_ROOT}/uploads/missing.csv]]"
+        )
+        for name in ("delegation", "eval"):
+            message = ToolMessage(
+                name=name,
+                tool_call_id="call",
+                content=json.dumps(payload) if name == "delegation" else "done",
+                additional_kwargs={
+                    EVAL_DELEGATIONS_KEY: [
+                        {
+                            "delegation_id": "delegation",
+                            "analysis_id": "sales-review",
+                            "agent_type": "analyst",
+                            "session_id": "chart-1",
+                            "message": "报告",
+                            "result": payload,
+                        }
+                    ]
+                }
+                if name == "eval"
+                else {},
+            )
+            for exists in (True, False):
+                with self.subTest(name=name, exists=exists):
+                    files = _projection_files() if exists else _FileInspectorStub()
+                    schema = await message_projection.langchain_message_to_schema(
+                        message, files, 7, _CONVERSATION_ID
+                    )
+                    assert schema is not None
+                    if name == "delegation":
+                        attachments = schema.attachments
+                    else:
+                        assert schema.eval_delegations is not None
+                        attachments = schema.eval_delegations[0].attachments
+                    self.assertEqual(len(attachments or []), 1 if exists else 0)
+                    self.assertEqual(
+                        message.additional_kwargs.get(EVAL_DELEGATIONS_KEY, [{}])[
+                            0
+                        ].get("result", payload),
+                        payload,
+                    )
+
+    async def test_invalid_delegation_artifact_payload_is_not_exposed(self) -> None:
+        payload = _delegation_payload()
+        payload["content"] = "[[DATAAGENT_ARTIFACT:/sessions/../secret]]"
         message = ToolMessage(
             id="message-1",
             name="delegation",
@@ -1268,23 +1393,19 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             content=json.dumps(payload),
         )
 
-        schema = message_projection.langchain_message_to_schema(
-            message, _CONVERSATION_ID
+        schema = await message_projection.langchain_message_to_schema(
+            message, _projection_files(), 7, _CONVERSATION_ID
         )
 
         self.assertIsNotNone(schema)
         assert schema is not None
         self.assertIsNone(schema.attachments)
 
-    def test_noncanonical_delegation_payload_is_not_exposed(self) -> None:
+    async def test_noncanonical_delegation_payload_is_not_exposed(self) -> None:
         payload = _delegation_payload()
-        payload["artifacts"] = [
-            {
-                "path": "/sessions/sales-review/analyst/chart-1/report.html ",
-                "media_type": "text/html",
-                "description": "Interactive report",
-            }
-        ]
+        payload["content"] = (
+            "[[DATAAGENT_ARTIFACT:/sessions/sales-review/analyst/chart-1/report.html ]]"
+        )
         message = ToolMessage(
             id="message-1",
             name="delegation",
@@ -1292,8 +1413,8 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
             content=json.dumps(payload),
         )
 
-        schema = message_projection.langchain_message_to_schema(
-            message, _CONVERSATION_ID
+        schema = await message_projection.langchain_message_to_schema(
+            message, _projection_files(), 7, _CONVERSATION_ID
         )
 
         self.assertIsNotNone(schema)

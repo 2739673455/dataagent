@@ -11,7 +11,6 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
-from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
 from app.assistant.agents.explorer.tools import (
     create_execute_sql_tool,
     create_semantic_recall_tools,
@@ -28,6 +27,9 @@ from app.assistant.agents.specialists import (
     SpecialistDefinition,
     build_specialist_definitions,
 )
+from app.assistant.checkpoints.postgres import (
+    PostgresCheckpointStore,
+)
 from app.assistant.execution.session_service import AgentSessionService
 from app.assistant.execution.session_store import PostgresSandboxSessionStore
 from app.assistant.execution.shell_jobs import ShellJobRuntime
@@ -35,12 +37,10 @@ from app.assistant.execution.types import (
     ConversationAgentRuntime,
 )
 from app.assistant.model_factory import create_configured_model
+from app.metadata.services.recall_application import SemanticRecallService
 from app.query.services.execution_handler import QueryExecutionHandler
-from app.sandbox.backend import DockerSandboxBackend
-from app.sandbox.manager import DockerSandboxManager
-from app.shared.clients.langgraph_postgres_manager import (
-    LangGraphPostgresManager,
-)
+from app.sandbox import DockerSandboxBackend, DockerSandboxManager
+from app.shared.clients.postgres_advisory_locks import PostgresAdvisoryLocks
 from app.shared.config import app_config
 from app.shared.contracts.analysis import AGENT_TYPES, AgentType
 
@@ -59,15 +59,17 @@ class ConversationAgentRuntimeFactory:
 
     def __init__(
         self,
-        persistence: LangGraphPostgresManager,
+        persistence: PostgresCheckpointStore,
+        locks: PostgresAdvisoryLocks,
         sandbox: DockerSandboxManager,
-        recall: SemanticRecallRuntime,
+        recall: SemanticRecallService,
         query: QueryExecutionHandler,
     ) -> None:
         """保存运行时依赖，模型和工具在首次使用时初始化。"""
         self._recall = recall
         self._query = query
         self._persistence = persistence
+        self._locks = locks
         self._sandbox = sandbox
         self._init_lock = asyncio.Lock()
         self._resources: _SharedAgentResources | None = None
@@ -134,15 +136,15 @@ class ConversationAgentRuntimeFactory:
             user_id,
             conversation_id,
         )
-        checkpointer = self._persistence.get_checkpointer()
+        checkpointer = self._persistence.checkpointer
         orchestration = app_config.cfg.agent.orchestration
         session_store = PostgresSandboxSessionStore(
             user_id=user_id,
             conversation_id=conversation_id,
             persistence=self._persistence,
+            locks=self._locks,
             checkpointer=checkpointer,
             sandbox=self._sandbox,
-            conversation_backend=conversation_backend,
         )
         specialist_factory = SpecialistAgentFactory(
             resources.specialist_definitions,

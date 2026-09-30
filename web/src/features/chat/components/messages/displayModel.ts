@@ -483,7 +483,6 @@ export function getToolResultStatus(result: string | undefined): string | null {
 export interface DelegationResultPayload {
   status: string | null;
   content: string | null;
-  failureReasons: string[];
 }
 
 export function parseDelegationResult(result: string | undefined): DelegationResultPayload | null {
@@ -496,18 +495,7 @@ export function parseDelegationResult(result: string | undefined): DelegationRes
       "status" in payload && typeof payload.status === "string" ? payload.status : null;
     const content =
       "content" in payload && typeof payload.content === "string" ? payload.content : null;
-    const failureReasons =
-      "failure_reasons" in payload && Array.isArray(payload.failure_reasons)
-        ? [
-            ...new Set(
-              payload.failure_reasons.filter(
-                (reason): reason is string => typeof reason === "string" && reason.trim().length > 0
-              )
-            ),
-          ]
-        : [];
-
-    return { status, content, failureReasons };
+    return { status, content };
   } catch {
     return null;
   }
@@ -526,7 +514,7 @@ export function resolveDelegationRunStatus(
 ): SubagentRunStatus {
   const resultStatus = getToolResultStatus(result);
   if (resultStatus === "error" || resultStatus === "failed") return "failed";
-  if (resultStatus === "completed" || resultStatus === "needs_repair") return resultStatus;
+  if (resultStatus === "completed") return resultStatus;
   if (interrupted) return "interrupted";
   if (activityStatus !== undefined) return activityStatus;
   return completed ? "completed" : "running";

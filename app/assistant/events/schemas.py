@@ -226,7 +226,6 @@ class SubagentMessageListResponse(BaseModel):
     status: Literal[
         "running",
         "completed",
-        "needs_repair",
         "failed",
         "cancelled",
     ]
@@ -339,7 +338,6 @@ class ChatStreamSubagentStatusEvent(BaseModel):
     status: Literal[
         "running",
         "completed",
-        "needs_repair",
         "failed",
         "cancelled",
     ]

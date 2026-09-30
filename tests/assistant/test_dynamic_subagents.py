@@ -6,7 +6,7 @@ import asyncio
 import tempfile
 import unittest
 from collections import Counter
-from collections.abc import AsyncGenerator, Awaitable, Callable, Collection
+from collections.abc import AsyncGenerator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime
 from types import SimpleNamespace
@@ -36,10 +36,6 @@ from pydantic import Field, ValidationError
 
 from app.assistant.agents.filesystem import agent_skills_mount_path
 from app.assistant.agents.middleware.eval_delegations import EvalDelegationMiddleware
-from app.assistant.agents.specialist_agent import (
-    SpecialistAgentState,
-    _specialist_response_format,
-)
 from app.assistant.agents.specialists import (
     SpecialistAgentFactory,
     SpecialistAgentRun,
@@ -54,14 +50,11 @@ from app.assistant.execution.shell_jobs import ShellJobRuntime
 from app.assistant.execution.types import (
     DELEGATION_CONTEXT_KEY,
     EVAL_DELEGATIONS_KEY,
-    ArtifactReference,
     DelegationMessageContext,
     DelegationRequest,
     DelegationResult,
     DeleteSessionRequest,
     EvalDelegationRecord,
-    RepairRequest,
-    SpecialistResult,
     SubagentActivity,
     SubagentMessageActivity,
     SubagentMessageDeltaActivity,
@@ -193,32 +186,26 @@ class _FakeAgent:
                 configurable = config.get("configurable", {})
                 artifact_path = f"{configurable['workspace_dir']}/result.json"
                 output = {
-                    "structured_response": SpecialistResult(
-                        status="completed",
-                        content="analysis complete",
-                        artifacts=[ArtifactReference(path=artifact_path)],
-                    )
+                    "messages": self.stream_messages
+                    or [
+                        AIMessage(
+                            content=f"analysis complete\n[[DATAAGENT_ARTIFACT:{artifact_path}]]"
+                        )
+                    ]
                 }
-            structured_response = (
-                output.get("structured_response")
-                if isinstance(output, dict)
-                else output
-            )
             existing = self.checkpoints.get(namespace, {}).get("channel_values")
             channel_values = dict(existing) if isinstance(existing, dict) else {}
-            channel_values.update(
-                {
-                    "structured_response": structured_response,
-                    "messages": [
-                        *(
-                            input.get("messages", [])
-                            if isinstance(input.get("messages"), list)
-                            else []
-                        ),
-                        *self.stream_messages,
-                    ],
-                }
-            )
+            messages = output.get("messages", []) if isinstance(output, dict) else []
+            if not any(
+                DELEGATION_CONTEXT_KEY in message.additional_kwargs
+                for message in messages
+            ):
+                messages = [
+                    *channel_values.get("messages", []),
+                    *input.get("messages", []),
+                    *messages,
+                ]
+            channel_values["messages"] = messages
             records = input.get("delegation_records")
             if isinstance(records, dict):
                 channel_values["delegation_records"] = {
@@ -233,7 +220,7 @@ class _FakeAgent:
                 "ts": "2026-08-29T12:00:00+00:00",
                 "channel_values": channel_values,
             }
-            return output
+            return channel_values
         finally:
             self.active_by_namespace[namespace] -= 1
             self.active -= 1
@@ -260,7 +247,7 @@ class _FakeAgent:
                 "ns": (),
                 "data": {node_name: {"messages": [message]}},
             }
-        values = output if isinstance(output, dict) else {"structured_response": output}
+        values = output if isinstance(output, dict) else {}
         yield {"type": "values", "ns": (), "data": values}
 
     async def aget_state(self, config: RunnableConfig) -> Any:
@@ -317,10 +304,8 @@ def _history_manager(fake: _FakeAgent) -> AgentManager:
         )
 
     persistence = MagicMock()
-    persistence.get_checkpointer.return_value.aget_tuple = AsyncMock(
-        side_effect=get_tuple
-    )
-    return AgentManager(persistence, MagicMock(), MagicMock())
+    persistence.checkpointer.aget_tuple = AsyncMock(side_effect=get_tuple)
+    return AgentManager(persistence, MagicMock(), MagicMock(), MagicMock())
 
 
 class _DistributedLockRegistry:
@@ -350,8 +335,6 @@ class _FakeSessionStore(PostgresSandboxSessionStore):
         self,
         fake: _FakeAgent,
         *,
-        artifact_verifier: Callable[[Collection[str]], Awaitable[set[str]]]
-        | None = None,
         lock_factory: Callable[
             [AgentSessionKey],
             AbstractAsyncContextManager[None],
@@ -359,7 +342,6 @@ class _FakeSessionStore(PostgresSandboxSessionStore):
         | None = None,
     ) -> None:
         self._fake = fake
-        self._artifact_verifier = artifact_verifier
         self._lock_factory = lock_factory
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._reserved_session_namespaces: set[str] = set()
@@ -412,11 +394,6 @@ class _FakeSessionStore(PostgresSandboxSessionStore):
         self._fake.workspace_sessions.discard(namespace)
         return existed
 
-    async def find_missing_files(self, paths: Collection[str]) -> set[str]:
-        if self._artifact_verifier is None:
-            return set()
-        return await self._artifact_verifier(paths)
-
     def lock(
         self,
         session_key: AgentSessionKey,
@@ -464,8 +441,6 @@ def _service(
     *,
     max_parallel_sessions: int = 8,
     max_sessions: int = 128,
-    artifacts_exist: bool = True,
-    artifact_verifier: Callable[[Collection[str]], Awaitable[set[str]]] | None = None,
     session_store: PostgresSandboxSessionStore | None = None,
     session_lock_factory: Callable[
         [AgentSessionKey],
@@ -473,9 +448,6 @@ def _service(
     ]
     | None = None,
 ) -> AgentSessionService:
-    async def find_missing_files(paths: Collection[str]) -> set[str]:
-        return set() if artifacts_exist else set(paths)
-
     graph = cast(CompiledStateGraph, fake)
 
     async def build_agent(session_key: AgentSessionKey) -> SpecialistAgentRun:
@@ -492,7 +464,6 @@ def _service(
         session_store=session_store
         or _FakeSessionStore(
             fake,
-            artifact_verifier=artifact_verifier or find_missing_files,
             lock_factory=session_lock_factory,
         ),
         user_id=12,
@@ -551,33 +522,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
                     session_id="base",
                 )
 
-    def test_repair_request_rejects_extra_fields(self) -> None:
-        repair = RepairRequest.model_validate(
-            {
-                "target_agent_type": "explorer",
-                "target_session_id": "base",
-                "reason": "region field is missing",
-                "expected_result": "add region_name",
-            }
-        )
-        result = SpecialistResult(
-            status="needs_repair",
-            content="region field is missing",
-            repair_requests=[repair],
-        )
-        self.assertEqual(result.repair_requests, [repair])
-
-        with self.assertRaises(ValidationError):
-            RepairRequest.model_validate(
-                {
-                    "target_agent_type": "explorer",
-                    "target_session_id": "base",
-                    "reason": "region field is missing",
-                    "evidence": [],
-                    "expected_result": "add region_name",
-                }
-            )
-
+    def test_delegation_request_rejects_extra_fields(self) -> None:
         with self.assertRaises(ValidationError):
             DelegationRequest.model_validate(
                 {
@@ -588,99 +533,6 @@ class DynamicSubagentContractTest(unittest.TestCase):
                     "checkpoint_ns": "attacker-controlled",
                 }
             )
-
-    def test_specialist_result_enforces_status_payload(self) -> None:
-        completed = SpecialistResult(
-            status="completed",
-            content="conclusion only",
-        )
-        self.assertEqual(completed.artifacts, [])
-        self.assertEqual(completed.warnings, [])
-        with self.assertRaises(ValidationError):
-            SpecialistResult(
-                status="needs_repair",
-                content="missing input",
-                repair_requests=[],
-            )
-
-    def test_specialist_profile_selects_native_structured_output(self) -> None:
-        from langchain.agents import create_agent
-
-        expected = SpecialistResult(
-            status="completed",
-            content="analysis complete",
-        )
-        model = RecordingChatModel(
-            profile={"structured_output": True},
-            response_content=expected.model_dump_json(),
-        )
-        agent = create_agent(
-            model=model,
-            tools=[execute_sql],
-            response_format=_specialist_response_format(model),
-        )
-
-        state = agent.invoke({"messages": [HumanMessage(content="analyze")]})
-
-        self.assertEqual(state["structured_response"], expected)
-        self.assertNotIn("SpecialistResult", model.seen_tools)
-        self.assertIsNone(model.seen_tool_choice)
-        self.assertEqual(
-            model.seen_bind_kwargs["response_format"]["type"],
-            "json_schema",
-        )
-        self.assertEqual(
-            model.seen_bind_kwargs["response_format"]["json_schema"]["name"],
-            "SpecialistResult",
-        )
-        self.assertTrue(
-            model.seen_bind_kwargs["response_format"]["json_schema"]["strict"]
-        )
-
-    def test_specialist_profile_without_native_selects_tool_output(self) -> None:
-        from langchain.agents.structured_output import ToolStrategy
-
-        model = RecordingChatModel(profile={"structured_output": False})
-
-        response_format = _specialist_response_format(model)
-
-        self.assertIsInstance(response_format, ToolStrategy)
-        assert isinstance(response_format, ToolStrategy)
-        self.assertEqual(response_format.schema, SpecialistResult)
-        self.assertTrue(response_format.handle_errors)
-
-    def test_specialist_structured_response_is_scoped_to_current_run(self) -> None:
-        from langchain.agents import create_agent
-        from langgraph.checkpoint.memory import InMemorySaver
-
-        first = SpecialistResult(status="completed", content="first answer")
-        second = SpecialistResult(status="completed", content="second answer")
-        model = RecordingChatModel(
-            profile={"structured_output": True},
-            response_contents=[first.model_dump_json(), second.model_dump_json()],
-        )
-        agent = create_agent(
-            model=model,
-            tools=[execute_sql],
-            response_format=_specialist_response_format(model),
-            state_schema=SpecialistAgentState,
-            checkpointer=InMemorySaver(),
-        )
-        config = RunnableConfig(
-            configurable={"thread_id": "sequential-specialist-runs"}
-        )
-
-        first_state = agent.invoke(
-            {"messages": [HumanMessage(content="first question")]},
-            config,
-        )
-        second_state = agent.invoke(
-            {"messages": [HumanMessage(content="second question")]},
-            config,
-        )
-
-        self.assertEqual(first_state["structured_response"], first)
-        self.assertEqual(second_state["structured_response"], second)
 
     def test_specialist_definitions_assign_data_tools_only_to_explorer(self) -> None:
         definitions = build_specialist_definitions(
@@ -785,6 +637,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
                         profile={
                             "image_inputs": True,
                             "image_tool_message": True,
+                            "structured_output": True,
                         },
                     )
                     shell_backend = LocalShellBackend(root_dir=workspace)
@@ -812,13 +665,22 @@ class DynamicSubagentContractTest(unittest.TestCase):
                     )
                     graph = run.agent
 
-                    graph.invoke(
+                    state = graph.invoke(
                         {"messages": [HumanMessage(content="inspect tools")]},
                         {"configurable": {"thread_id": agent_type}},
                     )
 
                     self.assertTrue(required_tools.issubset(model.seen_tools))
                     self.assertNotIn("task", model.seen_tools)
+                    self.assertNotIn("SpecialistResult", model.seen_tools)
+                    self.assertNotIn("response_format", model.seen_bind_kwargs)
+                    self.assertEqual(state["messages"][-1].content, "done")
+                    model.response_content = "second answer"
+                    second = graph.invoke(
+                        {"messages": [HumanMessage(content="continue")]},
+                        {"configurable": {"thread_id": agent_type}},
+                    )
+                    self.assertEqual(second["messages"][-1].content, "second answer")
 
     def test_planner_exposes_tools_with_only_delegation_in_ptc(self) -> None:
         from deepagents import (
@@ -876,6 +738,7 @@ class DynamicSubagentContractTest(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as workspace:
             backend = LocalShellBackend(root_dir=workspace)
+            cast(Any, backend).workspace_dir = workspace
             cast(Any, backend).conversation_dir = workspace
             planner_shell_jobs = MagicMock(spec=ShellJobRuntime)
             planner_shell_jobs.list.return_value = []
@@ -1152,16 +1015,11 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                         "delegation_id": "delegation-completed",
                         "status": "completed",
                         "result": {
+                            "analysis_id": "sales-decline",
+                            "agent_type": "analyst",
+                            "session_id": "region",
                             "status": "completed",
                             "content": "region complete",
-                            "artifacts": [
-                                {
-                                    "path": (
-                                        f"{_CONVERSATION_ROOT}/sessions/"
-                                        "sales-decline/analyst/region/result.json"
-                                    )
-                                }
-                            ],
                         },
                     }
                 },
@@ -1182,7 +1040,6 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(filtered.sessions), 1)
         self.assertEqual(filtered.sessions[0].summary, "region complete")
-        self.assertEqual(filtered.sessions[0].artifact_count, 1)
 
     async def test_list_sessions_reads_latest_delegation_record_result(self) -> None:
         fake = _FakeAgent()
@@ -1205,16 +1062,11 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                         "delegation_id": "delegation-latest",
                         "status": "completed",
                         "result": {
+                            "analysis_id": "sales-decline",
+                            "agent_type": "analyst",
+                            "session_id": "region",
                             "status": "completed",
                             "content": "latest answer",
-                            "artifacts": [
-                                {
-                                    "path": (
-                                        f"{_CONVERSATION_ROOT}/sessions/"
-                                        "sales-decline/analyst/region/result.json"
-                                    )
-                                }
-                            ],
                         },
                     }
                 },
@@ -1226,7 +1078,6 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(sessions.sessions), 1)
         self.assertEqual(sessions.sessions[0].status, "completed")
         self.assertEqual(sessions.sessions[0].summary, "latest answer")
-        self.assertEqual(sessions.sessions[0].artifact_count, 1)
 
     async def test_list_sessions_reports_active_session_before_checkpoint(
         self,
@@ -1343,7 +1194,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             2,
         )
         failed = next(result for result in results if result.status == "failed")
-        self.assertIn("Session 正在执行或删除", failed.failure_reasons[0])
+        self.assertIn("Session 正在执行或删除", failed.content)
         region_ns = "subagents/sales-decline/analyst/region"
         self.assertEqual(fake.max_active_by_namespace[region_ns], 1)
         self.assertGreaterEqual(fake.max_active, 2)
@@ -1364,10 +1215,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             ["completed", "failed", "failed"],
         )
         self.assertTrue(
-            all(
-                "并行 Session 已满" in result.failure_reasons[0]
-                for result in results[1:]
-            )
+            all("并行 Session 已满" in result.content for result in results[1:])
         )
 
     async def test_session_limit_rejects_new_id_but_allows_existing_session(
@@ -1384,7 +1232,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.status, "completed")
         self.assertEqual(resumed.status, "completed")
         self.assertEqual(excess.status, "failed")
-        self.assertIn("Session 数量已达上限", excess.failure_reasons[0])
+        self.assertIn("Session 数量已达上限", excess.content)
 
     async def test_same_session_conflict_fails_across_service_instances(self) -> None:
         fake = _FakeAgent(delay=0.03)
@@ -1442,38 +1290,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn(CONFIG_KEY_SCRATCHPAD, invoked_configurable)
 
-    async def test_self_repair_is_rejected_after_structured_retry(self) -> None:
-        repair = RepairRequest(
-            target_agent_type="analyst",
-            target_session_id="region",
-            reason="retry the same calculation",
-            expected_result="replace result",
-        )
-        fake = _FakeAgent(
-            output={
-                "structured_response": SpecialistResult(
-                    status="needs_repair",
-                    content="self repair requested",
-                    repair_requests=[repair],
-                )
-            }
-        )
-        service = _service(fake)
-        config = build_planner_config(12, _CONVERSATION_ID)
-        result = await service.execute_delegation(_request("region"), config)
-
-        self.assertEqual(result.status, "failed")
-        self.assertIn("修补自身", result.failure_reasons[0])
-        self.assertEqual(len(fake.configs), 2)
-        initial_message = cast(HumanMessage, fake.inputs[0]["messages"][0])
-        retry_message = cast(HumanMessage, fake.inputs[1]["messages"][0])
-        self.assertEqual(
-            retry_message.additional_kwargs[DELEGATION_CONTEXT_KEY],
-            initial_message.additional_kwargs[DELEGATION_CONTEXT_KEY],
-        )
-        self.assertTrue(retry_message.additional_kwargs["dataagent_internal_retry"])
-
-    async def test_plain_final_answer_is_kept_without_structured_retry(self) -> None:
+    async def test_plain_final_answer_is_kept_without_retry(self) -> None:
         delegation_id = "delegation-current-answer"
         current_answer = "有使用 skill：analysis 与 visualization。"
         fake = _FakeAgent(
@@ -1513,10 +1330,9 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.content, current_answer)
-        self.assertEqual(result.artifacts, [])
         self.assertEqual(len(fake.configs), 1)
 
-    async def test_malformed_structured_answer_still_retries_once(self) -> None:
+    async def test_unfinished_tool_call_fails_without_format_retry(self) -> None:
         delegation_id = "delegation-malformed-result"
         fake = _FakeAgent(
             output={
@@ -1533,7 +1349,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                         content="",
                         tool_calls=[
                             {
-                                "name": "SpecialistResult",
+                                "name": "execute_sql",
                                 "args": {},
                                 "id": "malformed-result",
                                 "type": "tool_call",
@@ -1555,178 +1371,68 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result.status, "failed")
-        self.assertEqual(len(fake.configs), 2)
-
-    async def test_missing_artifact_is_filtered_without_structured_retry(self) -> None:
-        fake = _FakeAgent()
-        service = _service(fake, artifacts_exist=False)
-        config = build_planner_config(12, _CONVERSATION_ID)
-        result = await service.execute_delegation(_request("region"), config)
-
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(result.content, "analysis complete")
-        self.assertEqual(result.artifacts, [])
-        self.assertEqual(len(result.warnings), 1)
-        self.assertIn("忽略不存在的产物", result.warnings[0])
         self.assertEqual(len(fake.configs), 1)
 
-    async def test_artifact_verification_batches_all_paths(self) -> None:
-        artifacts = [
-            ArtifactReference(
-                path=(
-                    f"{_CONVERSATION_ROOT}/sessions/sales-decline/analyst/"
-                    f"region/result_{index}.json"
+    async def test_incomplete_answers_fail_once_and_keep_failure_record(self) -> None:
+        answers = [
+            [],
+            [AIMessage(content="   ")],
+            [
+                AIMessage(
+                    content="cut off", response_metadata={"finish_reason": "length"}
                 )
-            )
-            for index in range(50)
+            ],
+            [
+                AIMessage(content="working"),
+                ToolMessage(content="data", tool_call_id="sql"),
+            ],
+            [
+                AIMessage(
+                    content="blocked",
+                    response_metadata={"finish_reason": "content_filter"},
+                )
+            ],
         ]
-        fake = _FakeAgent(
-            output={
-                "structured_response": SpecialistResult(
-                    status="completed",
-                    content="analysis complete",
-                    artifacts=artifacts,
+        for messages in answers:
+            with self.subTest(messages=messages):
+                fake = _FakeAgent(output={"messages": messages})
+                result = await _service(fake).execute_delegation(
+                    _request("region"),
+                    build_planner_config(12, _CONVERSATION_ID),
+                    delegation_id="incomplete",
                 )
-            }
-        )
-        verified_batches: list[set[str]] = []
-
-        async def verify(paths: Collection[str]) -> set[str]:
-            verified_batches.append(set(paths))
-            return set()
-
-        service = _service(fake, artifact_verifier=verify)
-        config = build_planner_config(12, _CONVERSATION_ID)
-        result = await service.execute_delegation(_request("region"), config)
-
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(verified_batches, [{artifact.path for artifact in artifacts}])
-
-    async def test_artifact_sanitization_keeps_valid_entries(self) -> None:
-        valid_path = (
-            f"{_CONVERSATION_ROOT}/sessions/sales-decline/analyst/region/valid.json"
-        )
-        missing_path = (
-            f"{_CONVERSATION_ROOT}/sessions/sales-decline/analyst/region/missing.json"
-        )
-        out_of_scope_path = (
-            f"{_CONVERSATION_ROOT}/sessions/sales-decline/analyst/other/foreign.json"
-        )
-        fake = _FakeAgent(
-            output={
-                "structured_response": SpecialistResult(
-                    status="completed",
-                    content="analysis complete",
-                    artifacts=[
-                        ArtifactReference(path=valid_path),
-                        ArtifactReference(path=missing_path),
-                        ArtifactReference(path=out_of_scope_path),
+                self.assertEqual(result.status, "failed")
+                self.assertEqual(len(fake.inputs), 1)
+                values = cast(
+                    dict[str, Any],
+                    fake.checkpoints["subagents/sales-decline/analyst/region"][
+                        "channel_values"
                     ],
                 )
-            }
-        )
-
-        async def verify(paths: Collection[str]) -> set[str]:
-            self.assertEqual(paths, {valid_path, missing_path})
-            return {missing_path}
-
-        service = _service(fake, artifact_verifier=verify)
-        result = await service.execute_delegation(
-            _request("region"),
-            build_planner_config(12, _CONVERSATION_ID),
-        )
-
-        self.assertEqual(result.status, "completed")
-        self.assertEqual(
-            [artifact.path for artifact in result.artifacts],
-            [valid_path],
-        )
-        self.assertEqual(
-            result.warnings,
-            [
-                f"忽略越界产物：{out_of_scope_path}",
-                f"忽略不存在的产物：{missing_path}",
-            ],
-        )
-        self.assertEqual(len(fake.configs), 1)
-
-    async def test_relative_artifact_is_resolved_from_specialist_workspace(
-        self,
-    ) -> None:
-        fake = _FakeAgent(
-            output={
-                "structured_response": SpecialistResult(
-                    status="completed",
-                    content="analysis complete",
-                    artifacts=[ArtifactReference(path="evidence/result.json")],
+                self.assertEqual(
+                    values["delegation_records"]["incomplete"]["status"], "failed"
                 )
-            }
-        )
-        verified_batches: list[set[str]] = []
 
-        async def verify(paths: Collection[str]) -> set[str]:
-            verified_batches.append(set(paths))
-            return set()
-
-        service = _service(fake, artifact_verifier=verify)
-        result = await service.execute_delegation(
-            _request("region"),
-            build_planner_config(12, _CONVERSATION_ID),
-        )
-
-        expected_path = (
-            f"{_CONVERSATION_ROOT}/sessions/sales-decline/analyst/region/"
-            "evidence/result.json"
+    async def test_json_shaped_text_is_not_parsed_as_result_protocol(self) -> None:
+        answer = '  {"status":"needs_repair","content":"示例文本"}  '
+        fake = _FakeAgent(output={"messages": [AIMessage(content=answer)]})
+        result = await _service(fake).execute_delegation(
+            _request("region"), build_planner_config(12, _CONVERSATION_ID)
         )
         self.assertEqual(result.status, "completed")
-        self.assertEqual(result.artifacts[0].path, expected_path)
-        self.assertEqual(verified_batches, [{expected_path}])
+        self.assertEqual(result.content, answer)
+        self.assertEqual(len(fake.inputs), 1)
 
-    async def test_completed_artifact_outside_session_is_filtered(self) -> None:
-        fake = _FakeAgent(
-            output={
-                "structured_response": SpecialistResult(
-                    status="completed",
-                    content="analysis complete",
-                    artifacts=[ArtifactReference(path="/outputs/old.json")],
-                )
-            }
+    async def test_file_directive_is_returned_as_original_text(self) -> None:
+        fake = _FakeAgent()
+        result = await _service(fake).execute_delegation(
+            _request("region"), build_planner_config(12, _CONVERSATION_ID)
         )
-        service = _service(fake)
-        config = build_planner_config(12, _CONVERSATION_ID)
-        result = await service.execute_delegation(_request("region"), config)
-
         self.assertEqual(result.status, "completed")
-        self.assertEqual(result.content, "analysis complete")
-        self.assertEqual(result.artifacts, [])
-        self.assertEqual(result.warnings, ["忽略越界产物：/outputs/old.json"])
-        self.assertEqual(len(fake.configs), 1)
+        self.assertIn("[[DATAAGENT_ARTIFACT:", result.content)
+        self.assertEqual(len(fake.inputs), 1)
 
-    async def test_unknown_repair_target_is_rejected(self) -> None:
-        repair = RepairRequest(
-            target_agent_type="explorer",
-            target_session_id="unknown",
-            reason="missing dimension",
-            expected_result="add dimension",
-        )
-        fake = _FakeAgent(
-            output={
-                "structured_response": SpecialistResult(
-                    status="needs_repair",
-                    content="input is incomplete",
-                    repair_requests=[repair],
-                )
-            }
-        )
-        service = _service(fake)
-        config = build_planner_config(12, _CONVERSATION_ID)
-        result = await service.execute_delegation(_request("region"), config)
-
-        self.assertEqual(result.status, "failed")
-        self.assertIn("已存在的 Session", result.failure_reasons[0])
-        self.assertEqual(len(fake.configs), 2)
-
-    async def test_repair_target_survives_service_restart(self) -> None:
+    async def test_repair_request_is_plain_text_after_service_restart(self) -> None:
         fake = _FakeAgent()
         first_service = _service(fake)
         first_config = build_planner_config(12, _CONVERSATION_ID)
@@ -1737,18 +1443,12 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(created.status, "completed")
         first_service.clear()
 
-        repair = RepairRequest(
-            target_agent_type="explorer",
-            target_session_id="base",
-            reason="missing dimension",
-            expected_result="add dimension",
-        )
         fake.output = {
-            "structured_response": SpecialistResult(
-                status="needs_repair",
-                content="input is incomplete",
-                repair_requests=[repair],
-            )
+            "messages": [
+                AIMessage(
+                    content="输入缺少维度，请 Planner 续接 explorer/base，补充区域字段。"
+                )
+            ]
         }
         restarted_service = _service(fake)
         restarted_config = build_planner_config(12, _CONVERSATION_ID)
@@ -1757,7 +1457,8 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             restarted_config,
         )
 
-        self.assertEqual(result.status, "needs_repair")
+        self.assertEqual(result.status, "completed")
+        self.assertIn("explorer/base", result.content)
 
     async def test_delegation_streams_public_messages_and_statuses(self) -> None:
         tool_call = AIMessage(
@@ -1777,19 +1478,16 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
             name="execute_sql",
             tool_call_id="sql-call",
         )
-        structured_response = AIMessage(
-            id="structured-response",
-            content=SpecialistResult(
-                status="completed",
-                content="analysis complete",
-            ).model_dump_json(),
+        final_response = AIMessage(
+            id="final-response",
+            content="analysis complete",
         )
         fake = _FakeAgent(
             stream_messages=[
                 tool_call,
                 tool_call,
                 tool_result,
-                structured_response,
+                final_response,
             ],
         )
         service = _service(fake)
@@ -1819,7 +1517,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(
             [activity.message.id for activity in messages],
-            ["specialist-tool-call", "specialist-tool-result"],
+            ["specialist-tool-call", "specialist-tool-result", "final-response"],
         )
         self.assertTrue(
             all(activity.delegation_id == "delegation-region" for activity in messages)
@@ -1946,6 +1644,9 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                     "delegation_id": "delegation-first",
                     "status": "completed",
                     "result": {
+                        "analysis_id": "sales-decline",
+                        "agent_type": "analyst",
+                        "session_id": "region",
                         "status": "completed",
                         "content": "第一轮完成",
                     },
@@ -1961,11 +1662,8 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 first_ai,
                 first_tool,
                 AIMessage(
-                    id="provider-structured-response",
-                    content=SpecialistResult(
-                        status="completed",
-                        content="第一轮完成",
-                    ).model_dump_json(),
+                    id="provider-final-response",
+                    content="第一轮完成",
                 ),
                 HumanMessage(
                     content="second",
@@ -1997,7 +1695,8 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(activity)
         assert activity is not None
-        self.assertEqual(activity.messages, [first_ai, first_tool])
+        self.assertEqual(activity.messages[:2], [first_ai, first_tool])
+        self.assertEqual(activity.messages[-1].content, "第一轮完成")
         self.assertEqual(activity.status, "completed")
         self.assertIsNone(missing)
         self.assertEqual(fake.state_configs, [])
@@ -2019,12 +1718,12 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                 ),
                 AIMessage(id="first-ai", content="尚未完成"),
                 AIMessage(
-                    id="invalid-structured-response",
+                    id="pending-tool-call",
                     content="",
                     tool_calls=[
                         {
-                            "id": "invalid-result-call",
-                            "name": "SpecialistResult",
+                            "id": "pending-query-call",
+                            "name": "execute_sql",
                             "args": {"status": "completed"},
                         }
                     ],
@@ -2051,63 +1750,11 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(activity)
         assert activity is not None
         self.assertEqual(
-            activity.messages, [AIMessage(id="first-ai", content="尚未完成")]
+            activity.messages[:1], [AIMessage(id="first-ai", content="尚未完成")]
         )
         self.assertEqual(activity.status, "cancelled")
 
-    async def test_read_delegation_activity_accepts_same_run_retry_boundary(
-        self,
-    ) -> None:
-        fake = _FakeAgent()
-        namespace = "subagents/sales-decline/analyst/region"
-        context = DelegationMessageContext(delegation_id="delegation-first")
-        context_payload = context.model_dump(mode="json")
-        retry_result = AIMessage(id="retry-result", content="修正后的结果")
-        fake.state_values[namespace] = {
-            "delegation_records": {
-                "delegation-first": {
-                    "delegation_id": "delegation-first",
-                    "status": "completed",
-                    "result": {
-                        "status": "completed",
-                        "content": "修正完成",
-                    },
-                }
-            },
-            "messages": [
-                HumanMessage(
-                    content="first",
-                    additional_kwargs={DELEGATION_CONTEXT_KEY: context_payload},
-                ),
-                AIMessage(id="first-result", content="首次结果"),
-                HumanMessage(
-                    content="retry",
-                    additional_kwargs={
-                        DELEGATION_CONTEXT_KEY: context_payload,
-                        "dataagent_internal_retry": True,
-                    },
-                ),
-                retry_result,
-            ],
-        }
-
-        activity = await _history_manager(fake).read_delegation_activity(
-            12,
-            _CONVERSATION_ID,
-            "sales-decline",
-            "analyst",
-            "region",
-            "delegation-first",
-        )
-
-        assert activity is not None
-        self.assertEqual(
-            activity.messages,
-            [AIMessage(id="first-result", content="首次结果"), retry_result],
-        )
-        self.assertEqual(activity.status, "completed")
-
-    async def test_read_delegation_activity_keeps_structured_response_reasoning(
+    async def test_read_delegation_activity_keeps_final_text_and_reasoning(
         self,
     ) -> None:
         fake = _FakeAgent()
@@ -2118,6 +1765,9 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                     "delegation_id": "delegation-first",
                     "status": "completed",
                     "result": {
+                        "analysis_id": "sales-decline",
+                        "agent_type": "analyst",
+                        "session_id": "region",
                         "status": "completed",
                         "content": "完成",
                     },
@@ -2133,19 +1783,13 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                     },
                 ),
                 AIMessage(
-                    id="structured-response",
+                    id="final-response",
                     content=[
                         {
                             "type": "reasoning",
                             "reasoning": "检查完成，准备返回结果。",
-                        }
-                    ],
-                    tool_calls=[
-                        {
-                            "id": "structured-call",
-                            "name": "SpecialistResult",
-                            "args": {"status": "completed", "content": "完成"},
-                        }
+                        },
+                        {"type": "text", "text": "完成"},
                     ],
                 ),
             ],
@@ -2164,14 +1808,19 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(activity.status, "completed")
         self.assertEqual(len(activity.messages), 1)
         reasoning_message = cast(AIMessage, activity.messages[0])
-        self.assertEqual(reasoning_message.id, "structured-response")
+        self.assertEqual(reasoning_message.id, "final-response")
         self.assertEqual(reasoning_message.tool_calls, [])
         self.assertEqual(
             reasoning_message.content,
-            [{"type": "reasoning", "reasoning": "检查完成，准备返回结果。"}],
+            [
+                {"type": "reasoning", "reasoning": "检查完成，准备返回结果。"},
+                {"type": "text", "text": "完成"},
+            ],
         )
 
-    async def test_replayed_delegation_reuses_latest_structured_result(self) -> None:
+    async def test_replayed_delegation_reuses_saved_text_without_model_call(
+        self,
+    ) -> None:
         fake = _FakeAgent()
         namespace = "subagents/sales-decline/analyst/region"
         context = DelegationMessageContext(delegation_id="delegation-replay")
@@ -2181,9 +1830,11 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                     "delegation_id": "delegation-replay",
                     "status": "completed",
                     "result": {
+                        "analysis_id": "sales-decline",
+                        "agent_type": "analyst",
+                        "session_id": "region",
                         "status": "completed",
                         "content": "已完成的分析结果",
-                        "warnings": ["历史警告"],
                     },
                 }
             },
@@ -2195,10 +1846,6 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
                     },
                 )
             ],
-            "structured_response": SpecialistResult(
-                status="completed",
-                content="已完成的分析结果",
-            ).model_dump(mode="json"),
         }
         service = _service(fake)
 
@@ -2210,7 +1857,6 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.content, "已完成的分析结果")
-        self.assertEqual(result.warnings, ["历史警告"])
         self.assertEqual(fake.inputs, [])
         self.assertTrue(
             all(
@@ -2379,16 +2025,17 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         tombstones.exists = AsyncMock(side_effect=lambda *_: tombstone)
         tombstones.delete_by_user = AsyncMock()
         persistence = MagicMock()
-        persistence.delete_thread = AsyncMock()
-        persistence.advisory_lock = lambda *args, **kwargs: distributed_locks.acquire(
+        persistence.checkpointer.adelete_thread = AsyncMock()
+        locks = MagicMock()
+        locks.advisory_lock = lambda *args, **kwargs: distributed_locks.acquire(
             "conversation"
         )
-        deleting_worker = AgentManager(persistence, tombstones, MagicMock())
-        serving_worker = AgentManager(MagicMock(), tombstones, MagicMock())
+        deleting_worker = AgentManager(persistence, tombstones, locks, MagicMock())
+        serving_worker = AgentManager(MagicMock(), tombstones, locks, MagicMock())
 
         await deleting_worker.delete_agent(12, _CONVERSATION_ID)
 
         with self.assertRaisesRegex(RuntimeError, "已被删除"):
             async with serving_worker.use_runtime(12, _CONVERSATION_ID):
                 self.fail("deleted conversation entered execution")
-        persistence.delete_thread.assert_awaited_once()
+        persistence.checkpointer.adelete_thread.assert_awaited_once()

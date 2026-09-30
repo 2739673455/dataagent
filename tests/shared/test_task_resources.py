@@ -2,7 +2,7 @@
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack, asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from threading import Barrier
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -46,11 +46,16 @@ def test_lifecycle_task_cleans_up_after_sandbox_init_failure(module) -> None:
             workflow_tasks, "PostgresUserDeletionStateStore", return_value=state_store
         ),
         patch.object(
-            lifecycle_runtime, "LangGraphPostgresManager", return_value=persistence
+            lifecycle_runtime, "PostgresCheckpointStore", return_value=persistence
+        ),
+        patch.object(
+            lifecycle_runtime,
+            "PostgresAdvisoryLocks",
+            return_value=MagicMock(init=AsyncMock(), close=AsyncMock()),
         ),
         patch.object(lifecycle_runtime, "PostgresClientManager", side_effect=postgres),
         patch.object(workflow_tasks, "PostgresClientManager", side_effect=postgres),
-        patch.object(lifecycle_runtime, "create_sandbox_manager", return_value=sandbox),
+        patch.object(lifecycle_runtime, "DockerSandboxManager", return_value=sandbox),
         patch.object(lifecycle_runtime, "AgentManager", return_value=agents),
         patch.object(
             lifecycle_runtime,
@@ -75,11 +80,11 @@ def test_index_task_resources_are_isolated_between_threads(module) -> None:
     managers = []
     clients_seen = []
 
-    def manager_factory(*args):
+    def manager_factory(*args, **kwargs):
         owner_loop = asyncio.get_running_loop()
         manager = MagicMock()
         manager.session.return_value.__aenter__.return_value = MagicMock()
-        manager.connection.return_value.__aenter__.return_value = MagicMock()
+        manager.engine.connect.return_value.__aenter__.return_value = MagicMock()
 
         async def close():
             assert asyncio.get_running_loop() is owner_loop
@@ -108,8 +113,8 @@ def test_index_task_resources_are_isolated_between_threads(module) -> None:
     with ExitStack() as stack:
         for name in (
             "PostgresClientManager",
-            "ESClientManager",
-            "EmbeddingClientManager",
+            "AsyncElasticsearch",
+            "EmbeddingClient",
         ):
             stack.enter_context(patch.object(module, name, side_effect=manager_factory))
         if module is metadata_tasks:
@@ -128,40 +133,104 @@ def test_index_task_resources_are_isolated_between_threads(module) -> None:
     assert clients_seen[0][0] is not clients_seen[1][0]
     assert clients_seen[0][1] is not clients_seen[1][1]
     for manager in managers:
-        manager.init.assert_called_once()
         manager.close.assert_awaited_once()
 
 
-def test_web_shutdown_attempts_every_resource_after_startup_failure() -> None:
+@contextmanager
+def _web_dependencies(
+    *, construct_failure=None, init_failure=None, close_failure=False
+):
+    """保留 Web 的真实装配与清理注册，只替换外部资源。"""
     from app import runtime
 
-    names = [
-        "query_clients",
-        "admin_doris",
-        "auth",
-        "meta",
-        "assistant",
-        "es",
-        "embedding",
-        "persistence",
-        "sandbox",
-        "agents",
-        "runs",
-    ]
-    managers = {name: MagicMock(close=AsyncMock()) for name in names}
-    resources = MagicMock(**managers)
-    managers["persistence"].init = AsyncMock(side_effect=RuntimeError("startup"))
-    managers["agents"].close.side_effect = RuntimeError("shutdown")
+    created = []
+    closed = []
 
-    async def run() -> None:
+    def factory(name):
+        def create(*args, **kwargs):
+            if name == construct_failure:
+                raise RuntimeError("construct")
+            owner_loop = asyncio.get_running_loop()
+            resource = MagicMock()
+            created.append((name, resource))
+
+            async def close():
+                assert asyncio.get_running_loop() is owner_loop
+                closed.append(resource)
+                if name == "AgentManager" and close_failure:
+                    raise RuntimeError("shutdown")
+
+            resource.close = AsyncMock(side_effect=close)
+            resource.init_tables = AsyncMock()
+            if name in {
+                "PostgresCheckpointStore",
+                "PostgresAdvisoryLocks",
+                "DockerSandboxManager",
+                "AgentManager",
+            }:
+                resource.init = AsyncMock(
+                    side_effect=init_failure
+                    if name == "PostgresCheckpointStore"
+                    else None
+                )
+            if name == "AuthRateLimitService":
+                resource.close = MagicMock(side_effect=lambda: closed.append(resource))
+            return resource
+
+        return create
+
+    with ExitStack() as stack:
+        for name in (
+            "PostgresClientManager",
+            "DorisClientManager",
+            "DorisQueryClientRegistry",
+            "EmbeddingClient",
+            "AsyncElasticsearch",
+            "PostgresCheckpointStore",
+            "PostgresAdvisoryLocks",
+            "DockerSandboxManager",
+            "AgentManager",
+            "ConversationRunService",
+            "AuthRateLimitService",
+        ):
+            stack.enter_context(patch.object(runtime, name, side_effect=factory(name)))
+        yield created, closed
+
+
+@pytest.mark.parametrize("error", [RuntimeError("startup"), asyncio.CancelledError()])
+def test_web_shutdown_attempts_every_resource_after_startup_failure(error) -> None:
+    from app import runtime
+
+    async def run():
+        application = MagicMock()
         with pytest.raises(RuntimeError, match="shutdown"):
-            async with runtime.lifespan(MagicMock()):
+            async with runtime.lifespan(application):
                 pytest.fail("启动失败不应进入业务阶段")
-        for manager in managers.values():
-            manager.close.assert_awaited_once()
-        resources.auth_rate_limit.close.assert_called_once()
+        assert closed == [resource for _, resource in reversed(created)]
+        for name, resource in created:
+            if name == "AuthRateLimitService":
+                resource.close.assert_called_once()
+            else:
+                resource.close.assert_awaited_once()
 
-    with patch.object(runtime, "_create_resources", return_value=resources):
+    with _web_dependencies(init_failure=error, close_failure=True) as (created, closed):
+        asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "failure", ["EmbeddingClient", "AsyncElasticsearch", "AgentManager"]
+)
+def test_web_construction_failure_releases_preceding_resources(failure):
+    from app import runtime
+
+    async def run():
+        with pytest.raises(RuntimeError, match="construct"):
+            async with runtime.lifespan(MagicMock()):
+                pytest.fail("构造失败不应进入业务阶段")
+        assert created
+        assert closed == [resource for _, resource in reversed(created)]
+
+    with _web_dependencies(construct_failure=failure) as (created, closed):
         asyncio.run(run())
 
 
@@ -171,42 +240,6 @@ def test_web_applications_own_separate_resources_and_request_dependencies() -> N
 
     from app import runtime
     from app.dependencies import WebResourcesDep
-
-    created = []
-    original_create = runtime._create_resources
-
-    def create():
-        # 保留真实依赖组装，仅替换联网初始化和关闭。
-        resources = original_create()
-        for resource in (
-            resources.auth,
-            resources.meta,
-            resources.assistant,
-            resources.admin_doris,
-            resources.embedding,
-            resources.es,
-        ):
-            resource.init = MagicMock()
-        for resource in (resources.auth, resources.meta, resources.assistant):
-            resource.init_tables = AsyncMock()
-        for resource in (resources.persistence, resources.sandbox, resources.agents):
-            resource.init = AsyncMock()
-        for resource in (
-            resources.auth,
-            resources.meta,
-            resources.assistant,
-            resources.admin_doris,
-            resources.query_clients,
-            resources.embedding,
-            resources.es,
-            resources.persistence,
-            resources.sandbox,
-            resources.agents,
-            resources.runs,
-        ):
-            resource.close = AsyncMock()
-        created.append(resources)
-        return resources
 
     def app():
         application = FastAPI()
@@ -246,5 +279,60 @@ def test_web_applications_own_separate_resources_and_request_dependencies() -> N
         assert not hasattr(first.state, "resources")
         first_resources.auth.close.assert_awaited_once()
 
-    with patch.object(runtime, "_create_resources", side_effect=create):
+    with _web_dependencies():
+        asyncio.run(run())
+
+
+@pytest.mark.parametrize("module", [metadata_tasks, query_tasks])
+def test_index_task_constructor_failure_closes_existing_clients(module):
+    embedding = MagicMock(close=AsyncMock())
+    es = MagicMock(close=AsyncMock(side_effect=RuntimeError("close")))
+    operation = AsyncMock()
+
+    async def run():
+        with pytest.raises(RuntimeError, match="close"):
+            if module is metadata_tasks:
+                await module._run_with_metadata_resources(operation)
+            else:
+                await module._sync_index(uuid4(), 1)
+        embedding.close.assert_awaited_once()
+        es.close.assert_awaited_once()
+        operation.assert_not_awaited()
+
+    with (
+        patch.object(module, "EmbeddingClient", return_value=embedding),
+        patch.object(module, "AsyncElasticsearch", return_value=es),
+        patch.object(
+            module, "PostgresClientManager", side_effect=RuntimeError("construct")
+        ),
+    ):
+        asyncio.run(run())
+
+
+def test_lifecycle_construction_failure_closes_previous_database():
+    persistence = MagicMock(close=AsyncMock())
+    postgres = MagicMock(close=AsyncMock())
+
+    async def run():
+        with pytest.raises(RuntimeError, match="construct"):
+            async with lifecycle_runtime.conversation_lifecycle_resources():
+                pytest.fail("构造失败不应进入业务阶段")
+        postgres.close.assert_awaited_once()
+        persistence.close.assert_awaited_once()
+
+    with (
+        patch.object(
+            lifecycle_runtime,
+            "PostgresAdvisoryLocks",
+            return_value=MagicMock(close=AsyncMock()),
+        ),
+        patch.object(
+            lifecycle_runtime, "PostgresCheckpointStore", return_value=persistence
+        ),
+        patch.object(
+            lifecycle_runtime,
+            "PostgresClientManager",
+            side_effect=[postgres, RuntimeError("construct")],
+        ),
+    ):
         asyncio.run(run())

@@ -108,14 +108,14 @@ def test_search_preserves_payload_score_and_permission_filter(repo_class) -> Non
         hits = asyncio.run(
             repo.search_text_hits(
                 "销售额",
-                allowed_columns=frozenset({("orders", "amount")}),
+                allowed_keys=frozenset({("orders", "amount")}),
             )
         )
     else:
         hits = asyncio.run(
             repo.search_text_hits(
                 "销售额",
-                allowed_metrics=frozenset({"amount"}),
+                allowed_keys=frozenset({"amount"}),
             )
         )
     assert hits[0].item.name == "amount"
@@ -141,11 +141,7 @@ def test_search_reports_corrupted_payload_with_document_identity(
         )
     )
     repo = repo_class(client)
-    allowed = (
-        {"allowed_columns": None}
-        if repo_class is ColumnESRepo
-        else {"allowed_metrics": None}
-    )
+    allowed = {"allowed_keys": None}
     with pytest.raises(CorruptedSemanticIndexDocumentError) as caught:
         asyncio.run(repo.search_text_hits("x", **allowed))
     assert caught.value.document_id == "broken-doc"
@@ -176,18 +172,18 @@ def test_corrupted_resource_is_removed_before_rebuild(repo_class) -> None:
             ColumnESRepo,
             "search_text_hits",
             "x",
-            "allowed_columns",
+            "allowed_keys",
             ("orders", "amount"),
         ),
         (
             ColumnESRepo,
             "search_vector_hits",
             [0.1],
-            "allowed_columns",
+            "allowed_keys",
             ("orders", "amount"),
         ),
-        (MetricESRepo, "search_text_hits", "x", "allowed_metrics", "amount"),
-        (MetricESRepo, "search_vector_hits", [0.1], "allowed_metrics", "amount"),
+        (MetricESRepo, "search_text_hits", "x", "allowed_keys", "amount"),
+        (MetricESRepo, "search_vector_hits", [0.1], "allowed_keys", "amount"),
         (ValueESRepo, "search_hits", "x", "allowed_columns", ("orders", "amount")),
     ],
 )

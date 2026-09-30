@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 from docker.errors import NotFound
 
-from app.sandbox.manager import DockerSandboxManager
+from app.sandbox import DockerSandboxManager, SandboxArtifact, SandboxSessionScope
 from tests.sandbox.fakes import FakeSandboxOwnership, build_sandbox_config
 
 
@@ -177,3 +177,178 @@ def test_init_failure_closes_client_created_before_reconcile() -> None:
         ),
     ):
         asyncio.run(run())
+
+
+def test_write_artifact_returns_written_absolute_path() -> None:
+    import io
+    from unittest.mock import AsyncMock
+
+    manager, _, _ = _manager()
+    conversation_id = uuid4()
+    content = io.BytesIO(b"data")
+    with patch.object(
+        manager, "_upload_normalized_file", new_callable=AsyncMock
+    ) as upload:
+        result = asyncio.run(
+            manager.write_artifact(
+                7,
+                conversation_id,
+                "./result.csv",
+                content,
+                session_scope=SandboxSessionScope("analysis", "analyst", "session"),
+            )
+        )
+    assert (
+        result
+        == f"/data/{conversation_id}/sessions/analysis/analyst/session/result.csv"
+    )
+    upload.assert_awaited_once_with(
+        7,
+        conversation_id,
+        "sessions/analysis/analyst/session/result.csv",
+        content,
+    )
+
+
+def test_resolve_artifact_rejects_invalid_paths_without_storage_access() -> None:
+    from unittest.mock import AsyncMock
+
+    manager, client, archive = _manager()
+    conversation_id = uuid4()
+    paths = (
+        "uploads/file.csv",
+        f"/data/{uuid4()}/uploads/file.csv",
+        f"/data/{conversation_id}",
+        f"/data/{conversation_id}/private/file.csv",
+        f"/data/{conversation_id}/uploads/../../file.csv",
+        f"/data/{conversation_id}/sessions/a/analyst/b/.cache/file.csv",
+    )
+    with patch.object(manager, "init", new_callable=AsyncMock) as initialize:
+        for path in paths:
+            assert (
+                asyncio.run(manager.resolve_artifacts(7, conversation_id, [path])) == {}
+            )
+    initialize.assert_not_awaited()
+    client.containers.get.assert_not_called()
+    archive.is_downloadable_file.assert_not_called()
+
+
+def test_resolve_artifact_checks_storage_and_propagates_infrastructure_errors() -> None:
+    from unittest.mock import AsyncMock
+
+    import pytest
+
+    manager, client, archive = _manager()
+    conversation_id = uuid4()
+    path = "sessions/analysis/analyst/session/result.csv"
+    with (
+        patch.object(manager, "init", new_callable=AsyncMock),
+        patch.object(manager, "_get_existing_container_sync", return_value=client),
+        patch.object(manager, "_touch_user"),
+    ):
+        for available in (True, False):
+            archive.is_downloadable_file.return_value = available
+            assert asyncio.run(
+                manager.resolve_artifacts(
+                    7,
+                    conversation_id,
+                    [f"/data/{conversation_id}/{path}"],
+                )
+            ) == (
+                {
+                    f"/data/{conversation_id}/{path}": SandboxArtifact(
+                        f"/data/{conversation_id}/{path}", path
+                    )
+                }
+                if available
+                else {}
+            )
+        archive.is_downloadable_file.assert_called_with(client, conversation_id, path)
+        archive.is_downloadable_file.side_effect = OSError("storage unavailable")
+        with pytest.raises(OSError, match="storage unavailable"):
+            asyncio.run(
+                manager.resolve_artifacts(
+                    7, conversation_id, [f"/data/{conversation_id}/{path}"]
+                )
+            )
+
+
+def test_session_artifacts_share_one_scope_check_and_inspect_alias_once() -> None:
+    from unittest.mock import AsyncMock
+
+    manager, container, archive = _manager()
+    conversation_id = uuid4()
+    scope = SandboxSessionScope("analysis", "analyst", "session")
+    absolute = scope.workspace_path(conversation_id) + "/result.csv"
+    missing = scope.workspace_path(conversation_id) + "/missing.csv"
+    references = [
+        "result.csv",
+        "./result.csv",
+        absolute,
+        "missing.csv",
+        "../other/result.csv",
+        f"/data/{uuid4()}/uploads/result.csv",
+        ".cache/result.csv",
+        ".",
+        "result.csv",
+    ]
+    archive.is_downloadable_file.side_effect = lambda container, cid, path: (
+        path.endswith("/result.csv")
+    )
+    with (
+        patch.object(manager, "init", new_callable=AsyncMock) as initialize,
+        patch.object(
+            manager, "_get_existing_container_sync", return_value=container
+        ) as lookup,
+        patch.object(manager, "_touch_user"),
+    ):
+        resolved = asyncio.run(
+            manager.resolve_artifacts(
+                7,
+                conversation_id,
+                references,
+                session_scope=scope,
+            )
+        )
+    assert set(resolved) == {"result.csv", "./result.csv", absolute}
+    assert all(item.path == absolute for item in resolved.values())
+    assert all(
+        item.relative_path == scope.relative_workspace + "/result.csv"
+        for item in resolved.values()
+    )
+    assert missing not in {item.path for item in resolved.values()}
+    initialize.assert_awaited_once()
+    lookup.assert_called_once_with(7)
+    assert archive.is_downloadable_file.call_count == 2
+
+
+def test_write_artifact_cannot_escape_session() -> None:
+    import io
+    from unittest.mock import AsyncMock
+
+    import pytest
+
+    from app.sandbox import SandboxPathError
+
+    manager, _, _ = _manager()
+    conversation_id = uuid4()
+    scope = SandboxSessionScope("analysis", "analyst", "session")
+    with patch.object(
+        manager, "_upload_normalized_file", new_callable=AsyncMock
+    ) as upload:
+        for path in (
+            "../other/result.csv",
+            f"/data/{conversation_id}/uploads/result.csv",
+            ".",
+        ):
+            with pytest.raises(SandboxPathError):
+                asyncio.run(
+                    manager.write_artifact(
+                        7,
+                        conversation_id,
+                        path,
+                        io.BytesIO(b"data"),
+                        session_scope=scope,
+                    )
+                )
+    upload.assert_not_awaited()

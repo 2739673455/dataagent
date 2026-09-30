@@ -16,14 +16,14 @@ from app.query.providers import build_query_experience_invalidation_service
 from app.workflows.metadata_changes import MetadataChangeWorkflow
 
 if TYPE_CHECKING:
-    from app.shared.clients.embedding_client_manager import RemoteEmbeddingClient
+    from app.shared.clients.embedding_client import EmbeddingClient
 
 
 def build_meta_import_service(
     meta_repo: MetaPGRepo,
     source_repo: SourceDorisRepo,
     es_client: AsyncElasticsearch,
-    embedding_client: RemoteEmbeddingClient,
+    embedding_client: EmbeddingClient,
 ) -> MetaImportService:
     """创建元数据批量导入服务。"""
     return MetaImportService(
@@ -43,7 +43,7 @@ def build_meta_catalog_service(
     meta_repo: MetaPGRepo,
     source_repo: SourceDorisRepo,
     es_client: AsyncElasticsearch,
-    embedding_client: RemoteEmbeddingClient,
+    embedding_client: EmbeddingClient,
 ) -> MetaCatalogService:
     """创建元数据目录管理服务。"""
     return MetaCatalogService(

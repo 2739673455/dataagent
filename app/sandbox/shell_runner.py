@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from app.sandbox.docker_stream import close_exec_stream
 from app.sandbox.paths import SANDBOX_DATA_ROOT
 from app.sandbox.scripts import (
     _CANCEL_SHELL_JOB_SCRIPT,
@@ -185,13 +186,7 @@ class DockerShellJobRunner:
             )
         finally:
             if output_stream is not None:
-                close_stream = getattr(output_stream, "close", None)
-                if callable(close_stream):
-                    close_stream()
-                response = getattr(output_stream, "_response", None)
-                close_response = getattr(response, "close", None)
-                if callable(close_response):
-                    close_response()
+                close_exec_stream(output_stream)
 
         control = self._read_control(control_path)
         if control is None:

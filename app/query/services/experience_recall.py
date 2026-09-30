@@ -26,7 +26,7 @@ from app.shared.contracts.search import SearchHit
 
 if TYPE_CHECKING:
     from app.query.task_scheduler import CeleryQueryExperienceIndexScheduler
-    from app.shared.clients.embedding_client_manager import RemoteEmbeddingClient
+    from app.shared.clients.embedding_client import EmbeddingClient
 
 _SEARCH_POOL_SIZE = 100
 _RRF_K = 60
@@ -47,7 +47,7 @@ class QueryExperienceRecallService:
         self,
         repo: QueryExperiencePGRepo,
         index_repo: QueryExperienceESRepo,
-        embedding_client: RemoteEmbeddingClient,
+        embedding_client: EmbeddingClient,
         index_scheduler: CeleryQueryExperienceIndexScheduler,
         *,
         data_source: str,

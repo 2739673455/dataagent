@@ -1,5 +1,6 @@
 """语义索引差量读写原语。"""
 
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
@@ -55,7 +56,7 @@ def column_resource_terms_filter(
     }
 
 
-class SemanticIndexRepo:
+class SemanticIndexRepo[ItemT, KeyT](ABC):
     """字段和指标索引共用的 Elasticsearch 技术实现。"""
 
     _index_name: ClassVar[str]
@@ -93,6 +94,64 @@ class SemanticIndexRepo:
     def __init__(self, client: AsyncElasticsearch) -> None:
         """绑定 Elasticsearch 客户端。"""
         self._client = client
+
+    @staticmethod
+    @abstractmethod
+    def _resource_key(key: KeyT) -> str:
+        """将领域主键转换为索引资源键。"""
+
+    @staticmethod
+    @abstractmethod
+    def _parse_payload(payload: dict[str, Any]) -> ItemT:
+        """解析领域载荷。"""
+
+    async def search_text_hits(
+        self,
+        query: str,
+        *,
+        allowed_keys: frozenset[KeyT] | None,
+        limit: int = 5,
+    ) -> list[SearchHit[ItemT]]:
+        """按资源白名单执行全文检索并解析命中。"""
+        if allowed_keys is not None and not allowed_keys:
+            return []
+        result = await self.search_text(
+            query,
+            limit=limit,
+            resource_filter=self._resource_filter(allowed_keys),
+        )
+        return self.parse_hits(result, self._parse_payload)
+
+    async def search_vector_hits(
+        self,
+        embedding: list[float],
+        *,
+        allowed_keys: frozenset[KeyT] | None,
+        score_threshold: float = 0.6,
+        limit: int = 5,
+    ) -> list[SearchHit[ItemT]]:
+        """按资源白名单执行向量检索并解析命中。"""
+        if allowed_keys is not None and not allowed_keys:
+            return []
+        result = await self.search_vector(
+            embedding,
+            score_threshold=score_threshold,
+            limit=limit,
+            resource_filter=self._resource_filter(allowed_keys),
+        )
+        return self.parse_hits(result, self._parse_payload)
+
+    def _resource_filter(
+        self, allowed_keys: frozenset[KeyT] | None
+    ) -> dict[str, Any] | None:
+        """None 不限制资源，空集合由检索入口直接短路。"""
+        if allowed_keys is None:
+            return None
+        return {
+            "terms": {
+                "resource_key": sorted(self._resource_key(key) for key in allowed_keys)
+            }
+        }
 
     async def ensure_index(self) -> None:
         """确保语义索引存在。"""

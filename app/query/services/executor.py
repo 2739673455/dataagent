@@ -28,12 +28,12 @@ from app.query.models.execution import (
     QueryTimeRange,
 )
 from app.query.models.validation import QueryValidationResult
-from app.sandbox.paths import SandboxSessionScope
+from app.sandbox import SandboxSessionScope
 from app.shared.contracts.analysis import AgentSessionKey
 
 if TYPE_CHECKING:
     from app.query.repositories.doris import DorisQueryRepository
-    from app.sandbox.manager import DockerSandboxManager
+    from app.sandbox import DockerSandboxManager
 
 _SAMPLE_STRING_MAX_CHARS = 512
 _SAMPLE_COLLECTION_MAX_ITEMS = 20
@@ -120,7 +120,6 @@ class AnalysisQueryService:
         )
         normalized = unicodedata.normalize("NFKC", purpose).strip()
         stem = re.sub(r"[\W_]+", "_", normalized).strip("_") or "query_result"
-        relative_path = f"{scope.relative_workspace}/{stem}.csv"
         with (
             tempfile.TemporaryFile(mode="w+b") as temporary_file,
             TextIOWrapper(temporary_file, encoding="utf-8", newline="") as csv_file,
@@ -130,15 +129,15 @@ class AnalysisQueryService:
                 normalized_sql,
             )
             temporary_file.seek(0)
-            await self._artifact_store.write_artifact(
+            artifact_path = await self._artifact_store.write_artifact(
                 session_key.user_id,
                 session_key.conversation_id,
-                relative_path,
+                f"{stem}.csv",
                 temporary_file,
+                session_scope=scope,
             )
-        workspace = scope.workspace_path(session_key.conversation_id)
         result = AnalysisQueryResult(
-            path=f"{workspace}/{stem}.csv",
+            path=artifact_path,
             columns=summary.columns,
             row_count=summary.row_count,
             time_range=summary.time_range,

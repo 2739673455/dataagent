@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from typing import Any, cast
 
-from deepagents import FilesystemMiddleware, create_deep_agent
+from deepagents import create_deep_agent
 from langchain.agents.middleware.types import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
@@ -11,6 +11,7 @@ from langchain_quickjs import CodeInterpreterMiddleware
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph.state import CompiledStateGraph
 
+from app.assistant.agents.filesystem import build_agent_filesystem
 from app.assistant.agents.middleware.eval_delegations import (
     EvalDelegationMiddleware,
 )
@@ -20,12 +21,15 @@ from app.assistant.agents.middleware.message_timestamp import (
 from app.assistant.agents.middleware.user_message_context import (
     UserMessageContextMiddleware,
 )
-from app.assistant.agents.tools import create_shell_tools, create_view_image_tools
+from app.assistant.agents.tools import (
+    create_shell_tools,
+    create_view_image_tool,
+    supports_view_image_tool,
+)
 from app.assistant.execution.session_service import AgentSessionService
 from app.assistant.execution.shell_jobs import ShellJobRuntime
-from app.sandbox.backend import DockerSandboxBackend
-
-from .prompt import PLANNER_SYSTEM_PROMPT
+from app.assistant.resource_loader import load_prompt
+from app.sandbox import DockerSandboxBackend
 
 _INTERPRETER_PTC = ("delegation",)
 
@@ -48,18 +52,18 @@ def create_planner_agent(
         memory_limit=interpreter_memory_limit_bytes,
         max_ptc_calls=None,
     )
-    filesystem = FilesystemMiddleware(
-        backend=backend,
+    resolved_backend, filesystem = build_agent_filesystem(
+        backend,
         tools=["read_file"],
     )
     return create_deep_agent(
         model=model,
         tools=[
             *tools,
-            *create_view_image_tools(model),
+            *([create_view_image_tool()] if supports_view_image_tool(model) else []),
             *create_shell_tools(shell_jobs),
         ],
-        system_prompt=PLANNER_SYSTEM_PROMPT,
+        system_prompt=load_prompt("agents/planner"),
         middleware=cast(
             "Sequence[AgentMiddleware[Any, Any, Any]]",
             [
@@ -67,7 +71,7 @@ def create_planner_agent(
                 filesystem,
                 interpreter,
                 UserMessageContextMiddleware(
-                    backend,
+                    resolved_backend,
                     backend.conversation_dir,
                     shell_jobs,
                 ),
@@ -75,7 +79,7 @@ def create_planner_agent(
             ],
         ),
         subagents=[],
-        backend=backend,
+        backend=resolved_backend,
         checkpointer=checkpointer,
         name="planner",
     )

@@ -20,7 +20,6 @@ from langchain_core.messages import (
 )
 from loguru import logger
 
-from app.assistant.agents.explorer.recall_runtime import SemanticRecallRuntime
 from app.assistant.agents.explorer.semantic_recall_messages import (
     expand_semantic_recall_messages_for_display,
 )
@@ -31,7 +30,12 @@ from app.assistant.agents.middleware.user_message_context import (
     read_user_message_context,
 )
 from app.assistant.events import schemas as chat_schema
-from app.assistant.events.content import normalized_content_blocks, reasoning_text
+from app.assistant.events.content import (
+    is_final_assistant_message,
+    normalize_finish_reason,
+    normalized_content_blocks,
+    reasoning_text,
+)
 from app.assistant.execution.types import (
     EVAL_DELEGATIONS_KEY,
     MESSAGE_CREATED_AT_KEY,
@@ -41,39 +45,16 @@ from app.assistant.execution.types import (
     SubagentStatusActivity,
     SubagentThinkingDeltaActivity,
 )
-from app.sandbox.errors import SandboxPathError
-from app.sandbox.paths import conversation_relative_path
+from app.metadata.services.recall_application import SemanticRecallService
 from app.shared.contracts.analysis import AgentType
 
 if TYPE_CHECKING:
-    from app.sandbox.manager import DockerSandboxManager
+    from app.sandbox import DockerSandboxManager
 
-_KNOWN_FINISH_REASONS = (
-    "content_filter",
-    "function_call",
-    "tool_calls",
-    "length",
-    "stop",
-)
 _ARTIFACT_DIRECTIVE_PATTERN = re.compile(
     r"^[ ]{0,3}\[\[DATAAGENT_ARTIFACT:(/[^\r\n]+?)\]\][\t ]*$"
 )
 _MARKDOWN_FENCE_PATTERN = re.compile(r"^[ ]{0,3}(?P<marker>`{3,}|~{3,})")
-
-
-def normalize_finish_reason(value: object) -> str | None:
-    """还原流式消息元数据中被重复拼接的已知结束原因。
-
-    LangChain 合并流式 Chunk 时会拼接重复出现的字符串元数据，例如两个
-    ``stop`` 可能变成 ``stopstop``。未知供应商值保持原样，避免掩盖新状态。
-    """
-    if not isinstance(value, str):
-        return None
-    for reason in _KNOWN_FINISH_REASONS:
-        repeat_count, remainder = divmod(len(value), len(reason))
-        if repeat_count > 1 and remainder == 0 and value == reason * repeat_count:
-            return reason
-    return value
 
 
 def _message_created_at(message: BaseMessage) -> datetime | None:
@@ -115,118 +96,68 @@ def _content_to_parts(content: Any) -> list[chat_schema.MessagePart]:
     return parts
 
 
-def _transform_artifact_directives(
-    text: str,
-    removable_paths: set[str] | None = None,
-) -> tuple[str, list[str]]:
-    """查找非代码块独占行指令，并按需移除已验证指令。"""
-    paths: list[str] = []
-    output: list[str] = []
-    fence_character: str | None = None
-    fence_length = 0
-
+def _artifact_directives(text: str) -> list[tuple[int, int, str]]:
+    """一次扫描全文，记录代码围栏外独占行指令的位置。"""
+    directives: list[tuple[int, int, str]] = []
+    fence: str | None = None
+    offset = 0
     for line in text.splitlines(keepends=True):
         content = line.rstrip("\r\n")
-        fence_match = _MARKDOWN_FENCE_PATTERN.match(content)
-        if fence_character is None:
-            if fence_match is not None:
-                marker = fence_match.group("marker")
-                fence_character = marker[0]
-                fence_length = len(marker)
-                output.append(line)
-                continue
-        elif fence_match is not None:
-            marker = fence_match.group("marker")
-            suffix = content[fence_match.end() :]
-            if (
-                marker[0] == fence_character
-                and len(marker) >= fence_length
-                and not suffix.strip()
+        if match := _MARKDOWN_FENCE_PATTERN.match(content):
+            marker = match.group("marker")
+            if fence is None:
+                fence = marker
+            elif (
+                marker[0] == fence[0]
+                and len(marker) >= len(fence)
+                and not content[match.end() :].strip()
             ):
-                fence_character = None
-                fence_length = 0
-            output.append(line)
-            continue
-
-        if fence_character is None:
-            directive_match = _ARTIFACT_DIRECTIVE_PATTERN.fullmatch(content)
-            if directive_match is not None:
-                path = directive_match.group(1)
-                paths.append(path)
-                if removable_paths is not None and path in removable_paths:
-                    continue
-        output.append(line)
-
-    return "".join(output), paths
+                fence = None
+        elif fence is None and (
+            match := _ARTIFACT_DIRECTIVE_PATTERN.fullmatch(content)
+        ):
+            directives.append((offset, offset + len(line), match.group(1)))
+        offset += len(line)
+    return directives
 
 
-def _is_final_assistant_message(message: BaseMessage) -> bool:
-    """判断消息是否可以承载 Planner 最终产物指令。"""
-    if not isinstance(message, AIMessage) or message.tool_calls:
-        return False
-    finish_reason = normalize_finish_reason(
-        message.response_metadata.get("finish_reason")
-    )
-    return finish_reason in {None, "stop"}
-
-
-async def _project_final_artifact_directives(
-    message: BaseMessage,
+async def _project_artifact_directives(
     schema: chat_schema.MessageResponse,
     files: DockerSandboxManager,
     user_id: int,
     conversation_id: UUID,
 ) -> chat_schema.MessageResponse:
-    """把 Planner 最终消息中的有效文件指令投影为附件。"""
-    if not _is_final_assistant_message(message):
-        return schema
+    """把统一文件指令投影为附件，保留无效指令及代码示例。"""
 
-    candidate_paths: list[str] = []
-    for part in schema.parts:
-        if isinstance(part, chat_schema.TextContent):
-            _, paths = _transform_artifact_directives(part.text)
-            candidate_paths.extend(paths)
-    if not candidate_paths:
+    # 文本块可以在围栏或指令中间断开；合并扫描，输出仍保留原块顺序。
+    directives = _artifact_directives(
+        "".join(
+            part.text
+            for part in schema.parts
+            if isinstance(part, chat_schema.TextContent)
+        )
+    )
+    if not directives:
         return schema
+    candidate_paths = [path for _, _, path in directives]
 
     accepted_paths: set[str] = set()
     attachments: list[chat_schema.Attachment] = []
     seen_paths: set[str] = set()
-    for directive_path in candidate_paths:
-        try:
-            relative_path = conversation_relative_path(
-                directive_path,
-                conversation_id,
-            )
-        except SandboxPathError:
+    resolved = await files.resolve_artifacts(user_id, conversation_id, candidate_paths)
+    for directive_path in dict.fromkeys(candidate_paths):
+        artifact = resolved.get(directive_path)
+        if artifact is None:
             logger.warning(
-                "最终产物指令路径无效: "
+                "最终产物指令无效或文件不可下载: "
                 f"conversation_id={conversation_id}, path={directive_path!r}"
             )
             continue
+        relative_path = artifact.relative_path
+        accepted_paths.add(directive_path)
         if relative_path in seen_paths:
-            accepted_paths.add(directive_path)
-            continue
-        try:
-            downloadable = await files.is_downloadable_file(
-                user_id,
-                conversation_id,
-                relative_path,
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "检查最终产物指令文件失败: "
-                f"conversation_id={conversation_id}, path={relative_path!r}"
-            )
-            continue
-        if not downloadable:
-            logger.warning(
-                "最终产物指令文件不可下载: "
-                f"conversation_id={conversation_id}, path={relative_path!r}"
-            )
             continue
         seen_paths.add(relative_path)
-        accepted_paths.add(directive_path)
         media_type, _ = mimetypes.guess_type(relative_path)
         attachments.append(
             chat_schema.Attachment(
@@ -239,13 +170,24 @@ async def _project_final_artifact_directives(
         return schema
 
     parts: list[chat_schema.MessagePart] = []
+    offset = 0
     for part in schema.parts:
         if not isinstance(part, chat_schema.TextContent):
             parts.append(part)
             continue
-        cleaned, _ = _transform_artifact_directives(part.text, accepted_paths)
+        end = offset + len(part.text)
+        cursor = offset
+        kept: list[str] = []
+        for start, stop, path in directives:
+            if path not in accepted_paths or stop <= offset or start >= end:
+                continue
+            kept.append(part.text[cursor - offset : max(start, offset) - offset])
+            cursor = min(stop, end)
+        kept.append(part.text[cursor - offset :])
+        cleaned = "".join(kept)
         if cleaned:
             parts.append(part.model_copy(update={"text": cleaned}))
+        offset = end
     return schema.model_copy(
         update={
             "parts": parts,
@@ -254,74 +196,37 @@ async def _project_final_artifact_directives(
     )
 
 
-async def langchain_message_to_schema_with_artifacts(
-    message: BaseMessage,
+async def _project_delegation_result(
+    result: dict[str, object] | None,
     files: DockerSandboxManager,
     user_id: int,
     conversation_id: UUID,
-) -> chat_schema.MessageResponse | None:
-    """转换消息，并为 Planner 最终回答解析文件交付指令。"""
-    schema = langchain_message_to_schema(message, conversation_id)
-    if schema is None:
-        return None
-    return await _project_final_artifact_directives(
-        message,
-        schema,
+) -> tuple[dict[str, object] | None, list[chat_schema.Attachment]]:
+    """以相同文件协议展示委派文本，原始工具结果和 Checkpoint 不变。"""
+    if result is None or not isinstance(content := result.get("content"), str):
+        return result, []
+    projected = await _project_artifact_directives(
+        chat_schema.MessageResponse(
+            role="assistant", parts=[chat_schema.TextContent(type="text", text=content)]
+        ),
         files,
         user_id,
         conversation_id,
     )
+    return {
+        **result,
+        "content": "".join(
+            part.text
+            for part in projected.parts
+            if isinstance(part, chat_schema.TextContent)
+        ),
+    }, projected.attachments or []
 
 
-def _delegation_result_attachments(
-    message: ToolMessage,
-    conversation_id: UUID,
-) -> list[chat_schema.Attachment]:
-    """从委派结果的稳定协议中提取可下载产物。"""
-    if message.name != "delegation":
-        return []
-    content = message.content
-    if isinstance(content, str):
-        try:
-            payload = json.loads(content)
-        except json.JSONDecodeError:
-            return []
-    elif isinstance(content, dict):
-        payload = content
-    else:
-        return []
-    return _artifact_attachments(cast(dict[str, object], payload), conversation_id)
-
-
-def _artifact_attachments(
-    result: dict[str, object] | None,
-    conversation_id: UUID,
-) -> list[chat_schema.Attachment]:
-    """从受控委派结果的产物载荷投影可下载附件。"""
-    if result is None:
-        return []
-    attachments: list[chat_schema.Attachment] = []
-    for artifact in cast(list[dict[str, object]], result.get("artifacts", [])):
-        artifact_path = cast(str, artifact["path"])
-        try:
-            path = conversation_relative_path(artifact_path, conversation_id)
-        except SandboxPathError:
-            logger.warning(
-                f"委派结果产物路径超出当前 Conversation: path={artifact_path!r}"
-            )
-            continue
-        attachments.append(
-            chat_schema.Attachment(
-                f_path=path,
-                media_type=cast(str | None, artifact.get("media_type")),
-                description=cast(str | None, artifact.get("description")),
-            )
-        )
-    return attachments
-
-
-def langchain_message_to_schema(
+async def langchain_message_to_schema(
     message: BaseMessage,
+    files: DockerSandboxManager,
+    user_id: int,
     conversation_id: UUID,
 ) -> chat_schema.MessageResponse | None:
     """将 LangChain 消息转换为接口消息。"""
@@ -331,17 +236,35 @@ def langchain_message_to_schema(
         eval_delegations: list[chat_schema.EvalDelegationResponse] | None = None
         raw_eval_delegations = message.additional_kwargs.get(EVAL_DELEGATIONS_KEY)
         if isinstance(raw_eval_delegations, list):
-            eval_delegations = [
-                chat_schema.EvalDelegationResponse.model_construct(
-                    **cast(Any, record),
-                    attachments=_artifact_attachments(
-                        cast(dict[str, object] | None, record.get("result")),
-                        conversation_id,
-                    )
-                    or None,
+            eval_delegations = []
+            for record in cast(list[dict[str, object]], raw_eval_delegations):
+                result, attachments = await _project_delegation_result(
+                    cast(dict[str, object] | None, record.get("result")),
+                    files,
+                    user_id,
+                    conversation_id,
                 )
-                for record in cast(list[dict[str, object]], raw_eval_delegations)
-            ]
+                eval_delegations.append(
+                    chat_schema.EvalDelegationResponse.model_construct(
+                        **{**record, "result": result},
+                        attachments=attachments or None,
+                    )
+                )
+        content = str(message.content)
+        attachments = []
+        if message.name == "delegation" and isinstance(message.content, str):
+            try:
+                payload = json.loads(message.content)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict):
+                result, attachments = await _project_delegation_result(
+                    payload,
+                    files,
+                    user_id,
+                    conversation_id,
+                )
+                content = json.dumps(result, ensure_ascii=False)
         return chat_schema.MessageResponse(
             message_id=message.id,
             created_at=_message_created_at(message),
@@ -351,12 +274,10 @@ def langchain_message_to_schema(
                     type="tool_result",
                     tool_call_id=message.tool_call_id,
                     name=message.name or "",
-                    content=str(message.content),
+                    content=content,
                 )
             ],
-            attachments=(
-                _delegation_result_attachments(message, conversation_id) or None
-            ),
+            attachments=attachments or None,
             eval_delegations=eval_delegations,
         )
 
@@ -404,7 +325,7 @@ def langchain_message_to_schema(
         if isinstance(message, HumanMessage)
         else None
     )
-    return chat_schema.MessageResponse(
+    schema = chat_schema.MessageResponse(
         message_id=message.id,
         created_at=(
             context.received_at if context is not None else _message_created_at(message)
@@ -421,6 +342,12 @@ def langchain_message_to_schema(
         ),
     )
 
+    if is_final_assistant_message(message):
+        return await _project_artifact_directives(
+            schema, files, user_id, conversation_id
+        )
+    return schema
+
 
 class _SubagentEventContext(TypedDict):
     delegation_id: str
@@ -436,7 +363,8 @@ async def subagent_activity_to_event(
     user_id: int,
     conversation_id: UUID,
     *,
-    recall: SemanticRecallRuntime,
+    recall: SemanticRecallService,
+    files: DockerSandboxManager,
 ) -> chat_schema.ChatStreamEventPayload | None:
     """把受信任的 Agent 内部活动投影为公开聊天事件。"""
     common = _SubagentEventContext(
@@ -454,7 +382,9 @@ async def subagent_activity_to_event(
             conversation_id,
             recall=recall,
         )
-        message = langchain_message_to_schema(expanded[0], conversation_id)
+        message = await langchain_message_to_schema(
+            expanded[0], files, user_id, conversation_id
+        )
         if message is None:
             return None
         return chat_schema.ChatStreamSubagentMessageEvent(

@@ -22,25 +22,19 @@ async def _generate_conversation_title(
     user_text: str,
 ) -> bool:
     """创建短生命周期资源并生成单个会话标题。"""
-    assistant_postgres = PostgresClientManager(
-        cfg.langgraph_postgresql,
-        AssistantBase,
-    )
+    async with create_configured_model(cfg.lm_config.active) as model:
+        title = await ConversationTitleService(model).generate(user_text)
+    if title is None:
+        return False
+    assistant_postgres = PostgresClientManager(cfg.langgraph_postgresql, AssistantBase)
     try:
-        assistant_postgres.init()
-        async with (
-            create_configured_model(cfg.lm_config.active) as model,
-            assistant_postgres.session() as session,
-        ):
-            updated = await ConversationTitleService(model).generate_and_update(
-                ConversationPGRepo(session),
+        async with assistant_postgres.session() as session, session.begin():
+            return await ConversationPGRepo(session).replace_title_if_current(
                 user_id,
                 conversation_id,
-                expected_title,
-                user_text,
+                expected_title=expected_title,
+                title=title,
             )
-            await session.commit()
-            return updated
     finally:
         await assistant_postgres.close()
 

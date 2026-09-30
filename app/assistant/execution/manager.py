@@ -10,6 +10,9 @@ from uuid import UUID
 
 from langchain_core.runnables import RunnableConfig
 
+from app.assistant.checkpoints.postgres import (
+    PostgresCheckpointStore,
+)
 from app.assistant.checkpoints.reader import (
     CheckpointState,
     CheckpointStateReader,
@@ -26,9 +29,7 @@ from app.assistant.execution.types import (
     conversation_lifecycle_lock_name,
     get_thread_id,
 )
-from app.shared.clients.langgraph_postgres_manager import (
-    LangGraphPostgresManager,
-)
+from app.shared.clients.postgres_advisory_locks import PostgresAdvisoryLocks
 from app.shared.contracts.analysis import AgentSessionKey, validate_agent_type
 
 type ConversationKey = tuple[int, UUID]
@@ -41,8 +42,9 @@ class AgentManager:
 
     def __init__(
         self,
-        persistence_manager: LangGraphPostgresManager,
+        persistence_manager: PostgresCheckpointStore,
         tombstones: ConversationTombstoneStore,
+        locks: PostgresAdvisoryLocks,
         runtime_factory: ConversationAgentRuntimeFactory | None = None,
         max_cached_runtimes: int = _DEFAULT_MAX_CACHED_RUNTIMES,
     ) -> None:
@@ -50,6 +52,7 @@ class AgentManager:
         if max_cached_runtimes <= 0:
             raise ValueError("max_cached_runtimes 必须为正整数")
         self._persistence_manager = persistence_manager
+        self._locks = locks
         self._tombstones = tombstones
         self._runtime_factory = runtime_factory
         self._max_cached_runtimes = max_cached_runtimes
@@ -156,7 +159,7 @@ class AgentManager:
         """检查 Planner 待执行任务，不还原历史消息或创建运行时。"""
         if await self._tombstones.exists(user_id, conversation_id):
             raise RuntimeError("该会话已被删除")
-        reader = CheckpointStateReader(self._persistence_manager.get_checkpointer())
+        reader = CheckpointStateReader(self._persistence_manager.checkpointer)
         return await reader.has_pending_tasks(
             build_planner_config(user_id, conversation_id)
         )
@@ -169,7 +172,7 @@ class AgentManager:
         """读取 Planner 根 namespace，且不创建 Conversation 运行时。"""
         if await self._tombstones.exists(user_id, conversation_id):
             raise RuntimeError("该会话已被删除")
-        reader = CheckpointStateReader(self._persistence_manager.get_checkpointer())
+        reader = CheckpointStateReader(self._persistence_manager.checkpointer)
         return await reader.read(build_planner_config(user_id, conversation_id))
 
     async def read_delegation_activity(
@@ -189,7 +192,7 @@ class AgentManager:
             agent_type=validate_agent_type(agent_type),
             session_id=session_id,
         )
-        reader = CheckpointStateReader(self._persistence_manager.get_checkpointer())
+        reader = CheckpointStateReader(self._persistence_manager.checkpointer)
         state = await reader.read(
             RunnableConfig(
                 configurable={
@@ -220,7 +223,7 @@ class AgentManager:
 
     async def delete_agent(self, user_id: int, conversation_id: UUID) -> None:
         """删除会话 Agent 集合及 Planner 和全部 SubAgent namespace。"""
-        async with self._persistence_manager.advisory_lock(
+        async with self._locks.advisory_lock(
             conversation_lifecycle_lock_name(user_id, conversation_id),
         ):
             await self.delete_agent_under_lifecycle_lock(user_id, conversation_id)
@@ -240,7 +243,7 @@ class AgentManager:
             await runtime.shell_jobs.cleanup()
         # 先持久化墓碑再删除 Checkpoint，避免其他进程在删除窗口重建会话状态。
         await self._tombstones.save(user_id, conversation_id)
-        await self._persistence_manager.delete_thread(
+        await self._persistence_manager.checkpointer.adelete_thread(
             get_thread_id(user_id, conversation_id)
         )
 

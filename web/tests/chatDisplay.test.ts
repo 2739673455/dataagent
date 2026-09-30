@@ -79,9 +79,6 @@ describe("chat message display and turn grouping", () => {
               agent_type: "explorer",
               session_id: "source",
               content: "完成",
-              artifacts: [],
-              repair_requests: [],
-              failure_reasons: [],
             },
           },
         ],
@@ -133,19 +130,17 @@ describe("chat message display and turn grouping", () => {
     expect(isToolResultFailure(undefined)).toBe(false);
   });
 
-  test("parses delegation failure reasons", () => {
+  test("parses delegation failure text", () => {
     expect(
       parseDelegationResult(
         JSON.stringify({
           status: "failed",
-          content: "专家智能体会话执行失败",
-          failure_reasons: ["ConnectError: connection reset"],
+          content: "专家智能体会话执行失败：ConnectError: connection reset",
         })
       )
     ).toEqual({
       status: "failed",
-      content: "专家智能体会话执行失败",
-      failureReasons: ["ConnectError: connection reset"],
+      content: "专家智能体会话执行失败：ConnectError: connection reset",
     });
     expect(parseDelegationResult("plain text")).toBeNull();
   });

@@ -14,7 +14,7 @@ from typing import Final, Literal
 from loguru import logger
 from pydantic import BaseModel, ConfigDict
 
-from app.sandbox.shell_runner import (
+from app.sandbox import (
     DockerShellJobRunner,
     SandboxShellJobCancellation,
     SandboxShellJobExecution,

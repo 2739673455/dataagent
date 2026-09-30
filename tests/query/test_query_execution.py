@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from langchain.tools import ToolRuntime
 
-from app.assistant.agents.explorer.tools.execute_sql import _execute_sql
+from app.assistant.agents.explorer.tools.execute_sql import create_execute_sql_tool
 from app.identity import errors as auth_error
 from app.identity.errors import QueryPrincipalNotConfiguredError
 from app.identity.models.doris import DorisAuthorizationSnapshot
@@ -174,8 +174,8 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(type(error)) as raised:
                     await self.execute()
                 self.assertIs(raised.exception, error)
-                payload = await _execute_sql(
-                    self.handler, self.tool_runtime, "SELECT 1", "统计"
+                payload = await create_execute_sql_tool(self.handler).ainvoke(
+                    {"runtime": self.tool_runtime, "sql": "SELECT 1", "purpose": "统计"}
                 )
                 self.assertEqual(payload["code"], code)
                 self.assertEqual(
@@ -191,7 +191,9 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
     async def test_cancellation_propagates_through_tool_without_failure_record(self):
         self.service.execute.side_effect = asyncio.CancelledError()
         with self.assertRaises(asyncio.CancelledError):
-            await _execute_sql(self.handler, self.tool_runtime, "SELECT 1")
+            await create_execute_sql_tool(self.handler).ainvoke(
+                {"runtime": self.tool_runtime, "sql": "SELECT 1"}
+            )
         self.runtime.record_failure.assert_not_awaited()
         self.runtime.record_success.assert_not_awaited()
 
@@ -223,9 +225,11 @@ class QueryExecutorTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 self.closed = True
 
-        async def write(user_id, conversation_id, path, content):
+        async def write(user_id, conversation_id, path, content, *, session_scope):
             self.assertTrue(self.closed)
-            self.files.append((user_id, conversation_id, path, content.read()))
+            relative_path = f"{session_scope.relative_workspace}/{path}"
+            self.files.append((user_id, conversation_id, relative_path, content.read()))
+            return f"{session_scope.workspace_path(conversation_id)}/{path}"
 
         self.store = MagicMock(write_artifact=AsyncMock(side_effect=write))
         self.service = AnalysisQueryService(
@@ -236,6 +240,12 @@ class QueryExecutorTest(unittest.IsolatedAsyncioTestCase):
             ),
             QueryExecutionOptions(batch_size=2, sample_rows=1),
         )
+
+    async def test_uses_path_returned_by_artifact_store(self):
+        self.store.write_artifact.side_effect = None
+        self.store.write_artifact.return_value = "/data/written/result.csv"
+        result = await self.execute()
+        self.assertEqual(result.path, "/data/written/result.csv")
 
     async def execute(self):
         return await self.service.execute(self.key, valid(), purpose="统计")
@@ -393,7 +403,9 @@ class DorisStreamTest(unittest.IsolatedAsyncioTestCase):
             finally:
                 self.exited = True
 
-        self.repo = DorisQueryRepository(MagicMock(connection=connection))
+        self.repo = DorisQueryRepository(
+            MagicMock(engine=MagicMock(connect=connection))
+        )
         self.limits = QueryExecutionLimits(
             workload_group="readers", timeout_seconds=17, memory_limit_bytes=2048
         )
@@ -479,7 +491,7 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
         clients = MagicMock(get_or_create=AsyncMock(return_value=MagicMock()))
         recorder = MagicMock(record_success=AsyncMock())
-        store = MagicMock(write_artifact=AsyncMock())
+        store = MagicMock(write_artifact=AsyncMock(return_value="/data/result.csv"))
         guard = MagicMock(check=AsyncMock(return_value=valid()))
 
         async def stream(*args):

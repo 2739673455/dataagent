@@ -10,7 +10,7 @@ from app.assistant.conversations.lifecycle import (
 )
 from app.identity import errors as auth_error
 from app.identity.services.user_deletion_store import PostgresUserDeletionStateStore
-from app.sandbox.manager import DockerSandboxManager
+from app.sandbox import DockerSandboxManager
 from app.workflows.task_scheduler import enqueue_user_deletion
 
 
