@@ -41,10 +41,14 @@ from app.assistant.execution.types import (
     SubagentStatusActivity,
     SubagentThinkingDeltaActivity,
 )
-from app.sandbox import SandboxArtifact, SandboxSessionScope
+from app.sandbox import SandboxSessionScope
 from app.sandbox.errors import SandboxPathError
 from app.sandbox.manager import DockerSandboxManager
-from app.sandbox.paths import normalize_attachment_path, resolve_artifact_path
+from app.sandbox.paths import (
+    SandboxArtifact,
+    normalize_attachment_path,
+    resolve_artifact_path,
+)
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
 _SANDBOX_ROOT = f"/data/{_CONVERSATION_ID}"

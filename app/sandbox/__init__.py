@@ -4,7 +4,6 @@ from app.sandbox.backend import DockerSandboxBackend
 from app.sandbox.errors import SandboxFileTooLargeError, SandboxPathError
 from app.sandbox.manager import DockerSandboxManager
 from app.sandbox.paths import (
-    SandboxArtifact,
     SandboxReadonlyMount,
     SandboxSessionScope,
     conversation_workspace_path,
@@ -22,7 +21,6 @@ __all__ = [
     "DockerSandboxBackend",
     "DockerSandboxManager",
     "DockerShellJobRunner",
-    "SandboxArtifact",
     "SandboxFileTooLargeError",
     "SandboxPathError",
     "SandboxReadonlyMount",

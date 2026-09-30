@@ -2,7 +2,7 @@
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from langchain_core.messages import ToolMessage
@@ -22,12 +22,8 @@ def resolve_semantic_recall_identity(
     config: RunnableConfig,
 ) -> tuple[int, UUID]:
     """从服务端运行配置解析会话身份。"""
-    configurable = config.get("configurable", {})
-    user_id = configurable.get("user_id")
-    raw_conversation_id = configurable.get("conversation_id")
-    if not isinstance(user_id, int) or not isinstance(raw_conversation_id, str):
-        raise TypeError("配置中未找到语义召回上下文")
-    return user_id, UUID(raw_conversation_id)
+    configurable = cast(dict[str, Any], config)["configurable"]
+    return configurable["user_id"], UUID(configurable["conversation_id"])
 
 
 @dataclass(frozen=True, slots=True)

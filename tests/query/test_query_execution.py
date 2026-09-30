@@ -161,7 +161,7 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
             self.runtime.record_failure.call_args.kwargs["status"], "rejected"
         )
 
-    async def test_tool_and_record_share_codes_and_record_failure_preserves_error(self):
+    async def test_tool_returns_details_and_record_failure_preserves_error(self):
         for error, code in (
             (QueryRejectedError(rejected()), "sql_validation_failed"),
             (QueryExecutionTimeoutError("超时"), "query_timeout"),
@@ -177,22 +177,25 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
                 payload = await create_execute_sql_tool(self.handler).ainvoke(
                     {"runtime": self.tool_runtime, "sql": "SELECT 1", "purpose": "统计"}
                 )
-                self.assertEqual(payload["code"], code)
+                self.assertEqual(payload["status"], "error")
+                self.assertNotIn("code", payload)
                 self.assertEqual(
                     self.runtime.record_failure.call_args.kwargs["error_code"], code
                 )
                 if isinstance(error, QueryRejectedError):
                     self.assertEqual(
-                        payload["validation"], error.result.model_dump(mode="json")
+                        payload["message"], "SQL 在提交 Doris 执行前未通过校验"
                     )
+                    self.assertIn(str(error), payload["error"])
+                    self.assertIn("修正 SQL", payload["error"])
                 else:
-                    self.assertEqual(payload["details"][0]["msg"], str(error))
+                    self.assertEqual(payload["error"], str(error))
 
     async def test_cancellation_propagates_through_tool_without_failure_record(self):
         self.service.execute.side_effect = asyncio.CancelledError()
         with self.assertRaises(asyncio.CancelledError):
             await create_execute_sql_tool(self.handler).ainvoke(
-                {"runtime": self.tool_runtime, "sql": "SELECT 1"}
+                {"runtime": self.tool_runtime, "sql": "SELECT 1", "purpose": "统计"}
             )
         self.runtime.record_failure.assert_not_awaited()
         self.runtime.record_success.assert_not_awaited()

@@ -103,7 +103,7 @@ def test_invalid_tool_arguments_never_execute_business(kind):
             {"deletions": [{"query": "q"}, {"query": " q "}]},
         )
     elif kind == "sql":
-        tool, args = create_execute_sql_tool(service), {"sql": 42}
+        tool, args = create_execute_sql_tool(service), {"sql": 42, "purpose": "统计"}
     elif kind == "shell":
         tool, args = create_shell_tools(service)[2], {"job_id": "j", "wait_seconds": 61}
     else:

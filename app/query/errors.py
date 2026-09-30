@@ -42,7 +42,7 @@ class QueryExecutionTimeoutError(RuntimeError):
 
 
 def classify_query_error(error: Exception) -> tuple[QueryExecutionStatus, str]:
-    """供执行记录和工具协议共用的查询失败分类。"""
+    """查询执行记录的失败分类。"""
     if isinstance(error, QueryRejectedError):
         return "rejected", "sql_validation_failed"
     if isinstance(error, QueryExecutionTimeoutError):

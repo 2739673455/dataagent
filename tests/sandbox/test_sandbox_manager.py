@@ -6,7 +6,8 @@ from uuid import UUID, uuid4
 
 from docker.errors import NotFound
 
-from app.sandbox import DockerSandboxManager, SandboxArtifact, SandboxSessionScope
+from app.sandbox import DockerSandboxManager, SandboxSessionScope
+from app.sandbox.paths import SandboxArtifact
 from tests.sandbox.fakes import FakeSandboxOwnership, build_sandbox_config
 
 

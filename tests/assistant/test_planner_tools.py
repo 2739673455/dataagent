@@ -62,10 +62,7 @@ class PlannerToolsTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "error")
         self.assertEqual(result["code"], "delegation_failed")
-        self.assertEqual(
-            result["details"],
-            [{"type": "RuntimeError", "msg": "Planner 执行状态不可用"}],
-        )
+        self.assertEqual(result["error"], "Planner 执行状态不可用")
         call = service.execute_delegation.await_args
         self.assertEqual(call.kwargs["delegation_id"], "delegation-call")
         self.assertIs(call.kwargs["activity_writer"], runtime.stream_writer)
@@ -96,7 +93,4 @@ class PlannerToolsTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["status"], "error")
         self.assertEqual(result["code"], "delete_session_failed")
-        self.assertEqual(
-            result["details"],
-            [{"type": "TimeoutError", "msg": "获取锁超时"}],
-        )
+        self.assertEqual(result["error"], "获取锁超时")
