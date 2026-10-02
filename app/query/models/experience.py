@@ -18,12 +18,12 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.shared.database.base import MetaBase
+from app.shared.database.base import QueryBase
 
 QUERY_EXPERIENCE_PURPOSE_LIMIT = 5
 
 
-class QueryExperience(MetaBase):
+class QueryExperience(QueryBase):
     """按角色、授权指纹和 SQL 结构聚合的共享查询经验。"""
 
     __tablename__ = "query_experiences"
@@ -138,7 +138,17 @@ class QueryExperience(MetaBase):
         return True
 
 
-class QueryExperienceAsset(MetaBase):
+@dataclass(frozen=True, slots=True)
+class QueryExperienceOverview:
+    """查询经验及其资产、执行聚合统计。"""
+
+    experience: QueryExperience
+    asset_count: int
+    execution_count: int
+    last_executed_at: datetime | None
+
+
+class QueryExperienceAsset(QueryBase):
     """查询经验关联的表或字段元数据快照。"""
 
     __tablename__ = "query_experience_assets"
@@ -176,13 +186,3 @@ class QueryExperienceAsset(MetaBase):
             "column_name",
         ),
     )
-
-
-@dataclass(frozen=True, slots=True)
-class QueryExperienceOverview:
-    """查询经验及其资产、执行聚合统计。"""
-
-    experience: QueryExperience
-    asset_count: int
-    execution_count: int
-    last_executed_at: datetime | None

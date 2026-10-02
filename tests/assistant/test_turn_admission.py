@@ -6,17 +6,15 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from app.assistant.conversations.lifecycle import ConversationLifecycleService
+from app.assistant.application.lifecycle import ConversationLifecycleService
+from app.assistant.contracts import TextContent, UserMessageRequest
 from app.assistant.errors import (
     ConversationBusyError,
     ConversationNotFoundError,
     ConversationNotResumableError,
 )
-from app.assistant.events.schemas import TextContent, UserMessageRequest
-from app.assistant.execution.run import ConversationRunService
-from app.assistant.execution.turn import (
-    ConversationTurnService,
-)
+from app.assistant.services.conversation_run import ConversationRunService
+from app.assistant.services.conversation_turn import ConversationTurnService
 from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 
@@ -87,7 +85,7 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
             repository=self.repo, runs=self.new_worker(), agents=self.agents
         )
         with patch(
-            "app.assistant.execution.turn.enqueue_conversation_title"
+            "app.assistant.services.conversation_turn.enqueue_conversation_title"
         ) as enqueue:
             stream = await self.turn.start(1, self.conversation_id, message)
             await self.started.wait()
@@ -156,7 +154,9 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
             MagicMock(),
             runs=self.runs,
         )
-        with patch("app.assistant.execution.turn.enqueue_conversation_title"):
+        with patch(
+            "app.assistant.services.conversation_turn.enqueue_conversation_title"
+        ):
             stream = await self.turn.start(1, self.conversation_id, message)
             await self.started.wait()
             self.assertTrue(

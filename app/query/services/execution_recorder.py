@@ -9,20 +9,21 @@ from uuid import UUID, uuid4
 
 from sqlglot import exp, parse_one
 
-from app.query.models.execution import (
+from app.metadata.application import MetadataReader
+from app.query.contracts import (
     AnalysisQueryResult,
-    QueryExecution,
     QueryExecutionStatus,
+    QueryValidationResult,
 )
+from app.query.models.execution import QueryExecution
 from app.query.models.experience import QueryExperience, QueryExperienceAsset
-from app.query.models.validation import QueryValidationResult
 from app.query.repositories.execution_postgres import QueryExecutionPGRepo
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
 from app.shared.contracts.analysis import AgentSessionKey
 from app.shared.contracts.assets import asset_resource_key
 
 if TYPE_CHECKING:
-    from app.query.task_scheduler import CeleryQueryExperienceIndexScheduler
+    from app.query.application.index_tasks import CeleryQueryExperienceIndexScheduler
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +45,7 @@ class QueryExecutionRecorder:
         execution_repo: QueryExecutionPGRepo,
         experience_repo: QueryExperiencePGRepo,
         index_scheduler: CeleryQueryExperienceIndexScheduler,
+        metadata: MetadataReader,
         *,
         data_source: str,
         database_name: str,
@@ -52,6 +54,7 @@ class QueryExecutionRecorder:
         self._execution_repo = execution_repo
         self._experience_repo = experience_repo
         self._index_scheduler = index_scheduler
+        self._metadata = metadata
         self._data_source = data_source
         self._database_name = database_name
 
@@ -81,11 +84,8 @@ class QueryExecutionRecorder:
         execution.fingerprint = fingerprint
         tables = {item.name for item in validation.tables}
         columns = {(item.table, item.name) for item in validation.columns}
+        versions = await self._metadata.asset_versions(tables, columns)
         async with self._experience_repo.session.begin():
-            (
-                table_versions,
-                column_versions,
-            ) = await self._experience_repo.metadata_versions(tables, columns)
             experience_id = uuid4()
             experience = QueryExperience(
                 id=experience_id,
@@ -98,8 +98,8 @@ class QueryExecutionRecorder:
             assets = self._build_assets(
                 experience_id,
                 validation,
-                table_versions,
-                column_versions,
+                versions.tables,
+                versions.columns,
             )
             stored = await self._experience_repo.upsert_from_success(
                 experience,

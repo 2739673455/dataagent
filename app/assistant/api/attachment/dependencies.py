@@ -9,7 +9,7 @@ from app.assistant.api.dependencies import (
     ConversationLifecycleServiceDep,
     SandboxManagerDep,
 )
-from app.assistant.conversations.attachments import AttachmentService
+from app.assistant.services.attachments import AttachmentService
 
 
 def _get_attachment_service(

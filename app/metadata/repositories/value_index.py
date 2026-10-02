@@ -6,20 +6,11 @@ from typing import Any, ClassVar
 
 from elasticsearch import AsyncElasticsearch
 
-from app.metadata.models.catalog import ColumnKey, ValueInfo, column_resource_key
+from app.metadata.contracts import ColumnKey
+from app.metadata.models.catalog import ValueInfo, column_resource_key
 from app.metadata.repositories.semantic_index import column_resource_terms_filter
 from app.shared.config.app_config import cfg
 from app.shared.contracts.search import SearchHit
-
-
-def _value_document_id(value_info: ValueInfo) -> str:
-    """生成无歧义且稳定的字段取值文档编号。"""
-    identity = json.dumps(
-        ["value", value_info.t_name, value_info.c_name, value_info.value],
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, identity))
 
 
 class ValueESRepo:
@@ -177,3 +168,13 @@ class ValueESRepo:
         if body.get("failures"):
             raise RuntimeError("Elasticsearch 批量删除取值索引存在失败项")
         return int(body.get("deleted") or 0)
+
+
+def _value_document_id(value_info: ValueInfo) -> str:
+    """生成无歧义且稳定的字段取值文档编号。"""
+    identity = json.dumps(
+        ["value", value_info.t_name, value_info.c_name, value_info.value],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, identity))

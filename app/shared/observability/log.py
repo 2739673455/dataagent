@@ -19,6 +19,37 @@ LOG_DIR = Path(__file__).parents[3] / "logs"
 _JSON_LINE_KEY = "_json_line"
 
 
+@cache
+def setup_logger() -> None:
+    """初始化日志配置。"""
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    logger.configure(
+        handlers=[
+            {
+                "sink": sys.stdout,
+                "level": cfg.log.level,
+                "format": _console_formatter,
+                "colorize": True,
+                "backtrace": False,
+                "diagnose": False,
+                "catch": True,
+                "enqueue": True,
+            },
+            {
+                "sink": str(LOG_DIR / "{time:YYYY-MM-DD}.jsonl"),
+                "level": cfg.log.level,
+                "format": _json_formatter,
+                "rotation": cfg.log.rotation,
+                "encoding": "utf-8",
+                "backtrace": False,
+                "diagnose": False,
+                "catch": True,
+                "enqueue": True,
+            },
+        ],
+    )
+
+
 def _build_log_payload(record: Record) -> dict[str, Any]:
     """构造结构化日志载荷。"""
     name = record.get("name") or ""
@@ -103,34 +134,3 @@ def _console_formatter(record: Record) -> str:
         template += "\n  <yellow>detail:</yellow> <level>{extra[detail]}</level>"
 
     return template + "\n{exception}"
-
-
-@cache
-def setup_logger() -> None:
-    """初始化日志配置。"""
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    logger.configure(
-        handlers=[
-            {
-                "sink": sys.stdout,
-                "level": cfg.log.level,
-                "format": _console_formatter,
-                "colorize": True,
-                "backtrace": False,
-                "diagnose": False,
-                "catch": True,
-                "enqueue": True,
-            },
-            {
-                "sink": str(LOG_DIR / "{time:YYYY-MM-DD}.jsonl"),
-                "level": cfg.log.level,
-                "format": _json_formatter,
-                "rotation": cfg.log.rotation,
-                "encoding": "utf-8",
-                "backtrace": False,
-                "diagnose": False,
-                "catch": True,
-                "enqueue": True,
-            },
-        ],
-    )

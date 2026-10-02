@@ -18,6 +18,7 @@ from pwdlib import PasswordHash
 from sqlalchemy.exc import IntegrityError
 
 from app.identity import errors as auth_error
+from app.identity.contracts import AuthenticatedUser
 from app.identity.models.account import RefreshToken, User
 from app.identity.repositories.identity import IdentityPGRepo
 from app.identity.services.account_validation import (
@@ -28,36 +29,6 @@ from app.identity.services.account_validation import (
 from app.shared.config.app_config import AuthConfig
 
 ARGON2_MAX_CONCURRENCY = 2
-
-
-class Argon2PasswordManager:
-    """基于 Argon2id 的异步密码哈希实现。"""
-
-    def __init__(self, *, max_concurrency: int = ARGON2_MAX_CONCURRENCY) -> None:
-        """初始化 Argon2id 哈希器和并发限制。"""
-        if max_concurrency <= 0:
-            raise ValueError("max_concurrency 必须为正整数")
-        self._password_hash = PasswordHash.recommended()
-        self._dummy_hash = self._password_hash.hash("dataagent-dummy-password")
-        self._semaphore = asyncio.Semaphore(max_concurrency)
-
-    async def hash(self, password: str) -> str:
-        """在线程池计算密码哈希。"""
-        async with self._semaphore:
-            return await to_thread.run_sync(self._password_hash.hash, password)
-
-    async def verify(self, password: str, password_hash: str) -> bool:
-        """在线程池校验密码。"""
-        async with self._semaphore:
-            return await to_thread.run_sync(
-                self._password_hash.verify,
-                password,
-                password_hash,
-            )
-
-    async def verify_dummy_password(self, password: str) -> None:
-        """为未知账号执行等价密码校验，避免暴露账号是否存在。"""
-        await self.verify(password, self._dummy_hash)
 
 
 @dataclass(frozen=True)
@@ -96,38 +67,34 @@ class BootstrapAdminResult:
     admin_granted: bool
 
 
-@dataclass(frozen=True, slots=True)
-class AuthenticatedUser:
-    """脱离数据库会话的认证用户快照。"""
+class Argon2PasswordManager:
+    """基于 Argon2id 的异步密码哈希实现。"""
 
-    id: int
-    username: str
-    email: str
-    auth_version: int
-    is_active: bool
-    is_admin: bool
-    doris_role_name: str | None
-    created_at: datetime
+    def __init__(self, *, max_concurrency: int = ARGON2_MAX_CONCURRENCY) -> None:
+        """初始化 Argon2id 哈希器和并发限制。"""
+        if max_concurrency <= 0:
+            raise ValueError("max_concurrency 必须为正整数")
+        self._password_hash = PasswordHash.recommended()
+        self._dummy_hash = self._password_hash.hash("dataagent-dummy-password")
+        self._semaphore = asyncio.Semaphore(max_concurrency)
 
-    @classmethod
-    def from_user(cls, user: User) -> AuthenticatedUser:
-        """从持久化用户创建不可变快照。"""
-        return cls(
-            id=user.id,
-            username=user.username,
-            email=user.email,
-            auth_version=user.auth_version,
-            is_active=user.is_active,
-            is_admin=user.is_admin,
-            doris_role_name=user.doris_role_name,
-            created_at=user.created_at,
-        )
+    async def hash(self, password: str) -> str:
+        """在线程池计算密码哈希。"""
+        async with self._semaphore:
+            return await to_thread.run_sync(self._password_hash.hash, password)
 
+    async def verify(self, password: str, password_hash: str) -> bool:
+        """在线程池校验密码。"""
+        async with self._semaphore:
+            return await to_thread.run_sync(
+                self._password_hash.verify,
+                password,
+                password_hash,
+            )
 
-def _ensure_active_user(user: User) -> None:
-    """确保用户仍可登录。"""
-    if not user.is_active:
-        raise auth_error.InactiveUserError
+    async def verify_dummy_password(self, password: str) -> None:
+        """为未知账号执行等价密码校验，避免暴露账号是否存在。"""
+        await self.verify(password, self._dummy_hash)
 
 
 class JWTCodec:
@@ -284,7 +251,16 @@ class AccessTokenAuthenticator:
         _ensure_active_user(user)
         if user.auth_version != claims.auth_version:
             raise auth_error.InvalidTokenError
-        return AuthenticatedUser.from_user(user)
+        return AuthenticatedUser(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            auth_version=user.auth_version,
+            is_active=user.is_active,
+            is_admin=user.is_admin,
+            doris_role_name=user.doris_role_name,
+            created_at=user.created_at,
+        )
 
 
 class AuthService:
@@ -482,6 +458,11 @@ class AuthService:
             await self._repo.revoke_user_refresh_tokens(user.id, self._now())
         logger.info(f"用户密码修改成功并吊销既有令牌: user_id={user_id}")
 
+    @staticmethod
+    def digest_token(token: str) -> str:
+        """计算令牌的不可逆存储摘要。"""
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
     async def _issue_token_pair(
         self,
         user: User,
@@ -526,7 +507,8 @@ class AuthService:
         except ValueError as exc:
             raise auth_error.WeakPasswordError(detail=str(exc)) from exc
 
-    @staticmethod
-    def digest_token(token: str) -> str:
-        """计算令牌的不可逆存储摘要。"""
-        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+def _ensure_active_user(user: User) -> None:
+    """确保用户仍可登录。"""
+    if not user.is_active:
+        raise auth_error.InactiveUserError

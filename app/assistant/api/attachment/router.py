@@ -9,9 +9,9 @@ from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import Response
 from loguru import logger
 
+from app.assistant import contracts as chat_schema
 from app.assistant.api.attachment.dependencies import AttachmentServiceDep
-from app.assistant.events import schemas as chat_schema
-from app.identity.api.auth.dependencies import AnalysisUserDep, CurrentUserDep
+from app.dependencies import AnalysisUserDep, CurrentUserDep
 
 router = APIRouter(tags=["attachment"])
 
@@ -59,7 +59,6 @@ async def api_get_attachment(
     user_id = current_user.id
     content = await service.download(user_id, conversation_id, f_path)
 
-    # 获取文件 MIME 类型。
     media_type, _ = mimetypes.guess_type(f_path)
 
     logger.info(f"获取附件: conversation_id={conversation_id}, file={f_path}")

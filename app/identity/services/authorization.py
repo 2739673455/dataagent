@@ -11,6 +11,7 @@ from loguru import logger
 from sqlalchemy.exc import IntegrityError
 
 from app.identity import errors as auth_error
+from app.identity.contracts import AssetAccessPolicy, AssetIdentity
 from app.identity.errors import (
     DorisQueryUserAlreadyExistsError,
     DorisRoleAlreadyExistsError,
@@ -18,7 +19,6 @@ from app.identity.errors import (
 )
 from app.identity.models.account import User
 from app.identity.models.doris import (
-    AssetScope,
     DorisAuthorizationSnapshot,
     DorisQueryIdentity,
     normalize_doris_role_name,
@@ -34,105 +34,22 @@ from app.identity.services.account_validation import (
     validate_password_length,
     validate_username,
 )
-from app.identity.services.auth import AuthenticatedUser
 from app.identity.services.credential import DorisCredentialCipher
 from app.shared.clients.doris_client_manager import DorisQueryClientRegistry
 from app.shared.config.app_config import AuthConfig
-from app.shared.contracts.assets import asset_resource_key
 from app.shared.contracts.doris import validate_doris_identifier
 
 if TYPE_CHECKING:
     from app.identity.services.auth import Argon2PasswordManager
 
 
-@dataclass(frozen=True)
-class AssetIdentity:
-    """层级化数据资产标识。"""
+@dataclass(frozen=True, slots=True)
+class DorisExistingRoleDescriptor:
+    """Doris 中已存在的角色及平台管理状态。"""
 
-    data_source: str
-    database_name: str | None = None
-    table_name: str | None = None
-    column_name: str | None = None
-
-    def __post_init__(self) -> None:
-        """校验资产层级字段之间的依赖关系。"""
-        values = (
-            self.data_source,
-            self.database_name,
-            self.table_name,
-            self.column_name,
-        )
-        if any(
-            value is not None and (not value or value != value.strip())
-            for value in values
-        ):
-            raise ValueError("资产标识符不能为空且不能包含前后空白字符")
-        if not self.data_source:
-            raise ValueError("data_source 不能为空")
-        if self.column_name is not None and self.table_name is None:
-            raise ValueError("指定 column_name 时必须同时指定 table_name")
-        if self.table_name is not None and self.database_name is None:
-            raise ValueError("指定 table_name 时必须同时指定 database_name")
-
-    @property
-    def scope(self) -> AssetScope:
-        """返回资产层级。"""
-        if self.column_name is not None:
-            return AssetScope.COLUMN
-        if self.table_name is not None:
-            return AssetScope.TABLE
-        if self.database_name is not None:
-            return AssetScope.DATABASE
-        return AssetScope.DATA_SOURCE
-
-    @property
-    def resource_key(self) -> str:
-        """返回无歧义的持久化资源键。"""
-        return asset_resource_key(
-            self.data_source,
-            self.database_name,
-            self.table_name,
-            self.column_name,
-        )
-
-    def encompasses(self, other: AssetIdentity) -> bool:
-        """判断当前授权是否覆盖目标资产。"""
-        own_parts = (
-            self.data_source,
-            self.database_name,
-            self.table_name,
-            self.column_name,
-        )
-        other_parts = (
-            other.data_source,
-            other.database_name,
-            other.table_name,
-            other.column_name,
-        )
-        return all(
-            own is None or own == target
-            for own, target in zip(own_parts, other_parts, strict=True)
-        )
-
-
-@dataclass(frozen=True)
-class AssetAccessPolicy:
-    """用户资产访问策略快照。"""
-
-    user_id: int
-    role_name: str | None = None
-    authorization_fingerprint: str | None = None
-    grants: frozenset[AssetIdentity] = frozenset()
-
-    def allows(self, asset: AssetIdentity) -> bool:
-        """判断是否拥有目标资产的完整访问权。"""
-        return any(grant.encompasses(asset) for grant in self.grants)
-
-    def is_visible(self, asset: AssetIdentity) -> bool:
-        """判断资产或其任一下级资产是否可见。"""
-        return self.allows(asset) or any(
-            asset.encompasses(grant) for grant in self.grants
-        )
+    name: str
+    managed: bool
+    doris_users: tuple[str, ...]
 
 
 class AuthorizationService:
@@ -147,6 +64,7 @@ class AuthorizationService:
         database: str,
         catalog: str = "internal",
     ) -> None:
+        """绑定身份与 Doris 角色仓储，以及授权策略对应的数据范围。"""
         self._repo = repo
         self._doris_repo = doris_repo
         self._data_source = data_source
@@ -189,6 +107,7 @@ class AuthorizationService:
         user_id: int,
         role_name: str,
     ) -> AssetAccessPolicy:
+        """在调用方事务内观察角色当前授权，并构造指定用户的资产访问策略。"""
         identity, snapshot = await self.observe_role(role_name)
         return self.policy_from_snapshot(user_id, identity, snapshot)
 
@@ -213,30 +132,6 @@ class AuthorizationService:
                 for grant in snapshot.grants
             ),
         )
-
-    @staticmethod
-    def require_admin(user: AuthenticatedUser) -> None:
-        """要求用户是平台管理员。"""
-        if not user.is_admin:
-            raise auth_error.PermissionDeniedError(detail="需要平台管理员权限")
-
-    @staticmethod
-    def require_analysis_access(
-        user: AuthenticatedUser,
-        identity: DorisQueryIdentity | None,
-    ) -> None:
-        """要求用户绑定了 Doris 查询身份。"""
-        if user.doris_role_name is None or identity is None:
-            raise auth_error.PermissionDeniedError(detail="分配的 Doris 角色不可用")
-
-
-@dataclass(frozen=True, slots=True)
-class DorisExistingRoleDescriptor:
-    """Doris 中已存在的角色及平台管理状态。"""
-
-    name: str
-    managed: bool
-    doris_users: tuple[str, ...]
 
 
 class DorisRoleManagementService:
@@ -347,20 +242,6 @@ class DorisRoleManagementService:
                 raise self._workload_group_not_found(workload_group) from exc
             raise
 
-    async def _require_workload_group(self, workload_group: str) -> None:
-        """要求 Doris 工作组存在。"""
-        if not await self._doris_repo.workload_group_exists(workload_group):
-            raise self._workload_group_not_found(workload_group)
-
-    @staticmethod
-    def _workload_group_not_found(
-        workload_group: str,
-    ) -> auth_error.WorkloadGroupNotFoundError:
-        """构造可返回客户端的工作组不存在异常。"""
-        return auth_error.WorkloadGroupNotFoundError(
-            detail=f"Doris 工作组 {workload_group} 不存在，请选择已创建的工作组"
-        )
-
     async def set_default_role(self, role_name: str) -> DorisQueryIdentity:
         """替换新用户使用的缺省 Doris 角色。"""
         role = normalize_doris_role_name(role_name)
@@ -415,27 +296,6 @@ class DorisRoleManagementService:
         )
         total = await self._repo.count_users(query=normalized_query)
         return users, total
-
-    @staticmethod
-    def _validate_account_field(
-        value: str,
-        validator: Callable[[str], str],
-    ) -> str:
-        """执行账号字段规则并转换为稳定的用户修改错误。"""
-        try:
-            return validator(value)
-        except ValueError as exc:
-            raise auth_error.InvalidUserMutationError(detail=str(exc)) from exc
-
-    def _validate_password(self, password: str) -> None:
-        """校验管理员写入的密码并转换错误协议。"""
-        try:
-            validate_password_length(
-                password,
-                min_length=self._auth_config.password_min_length,
-            )
-        except ValueError as exc:
-            raise auth_error.WeakPasswordError(detail=str(exc)) from exc
 
     async def create_user(
         self,
@@ -582,3 +442,38 @@ class DorisRoleManagementService:
                 return updated
         except IntegrityError as exc:
             raise auth_error.UserAlreadyExistsError from exc
+
+    async def _require_workload_group(self, workload_group: str) -> None:
+        """要求 Doris 工作组存在。"""
+        if not await self._doris_repo.workload_group_exists(workload_group):
+            raise self._workload_group_not_found(workload_group)
+
+    @staticmethod
+    def _workload_group_not_found(
+        workload_group: str,
+    ) -> auth_error.WorkloadGroupNotFoundError:
+        """构造可返回客户端的工作组不存在异常。"""
+        return auth_error.WorkloadGroupNotFoundError(
+            detail=f"Doris 工作组 {workload_group} 不存在，请选择已创建的工作组"
+        )
+
+    @staticmethod
+    def _validate_account_field(
+        value: str,
+        validator: Callable[[str], str],
+    ) -> str:
+        """执行账号字段规则并转换为稳定的用户修改错误。"""
+        try:
+            return validator(value)
+        except ValueError as exc:
+            raise auth_error.InvalidUserMutationError(detail=str(exc)) from exc
+
+    def _validate_password(self, password: str) -> None:
+        """校验管理员写入的密码并转换错误协议。"""
+        try:
+            validate_password_length(
+                password,
+                min_length=self._auth_config.password_min_length,
+            )
+        except ValueError as exc:
+            raise auth_error.WeakPasswordError(detail=str(exc)) from exc

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 from app.metadata import errors as meta_error
 from app.metadata.config import (
@@ -13,23 +13,23 @@ from app.metadata.config import (
     TableConfig,
     TableRole,
 )
+from app.metadata.contracts import (
+    MetadataChangeHandler,
+    MetadataChanges,
+    column_key_reference,
+    column_reference_key,
+)
 from app.metadata.models.catalog import (
     COLUMN_EXAMPLE_LIMIT,
     ColumnInfo,
     MetricInfo,
     TableInfo,
-    column_key_reference,
-    column_reference_key,
     serialize_column_examples,
 )
-from app.metadata.models.changes import MetadataChanges
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
 from app.metadata.services.index import MetaIndexService
 from app.shared.tasks.submission import TaskSubmission
-
-if TYPE_CHECKING:
-    from app.workflows.metadata_changes import MetadataChangeWorkflow
 
 
 class MetaCatalogService:
@@ -40,7 +40,7 @@ class MetaCatalogService:
         meta_repo: MetaPGRepo,
         source_repo: SourceDorisRepo,
         meta_index_service: MetaIndexService,
-        change_handler: MetadataChangeWorkflow,
+        change_handler: MetadataChangeHandler,
     ) -> None:
         """初始化元数据目录管理服务。"""
         self._meta_repo = meta_repo

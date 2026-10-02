@@ -40,13 +40,7 @@ from app.assistant.agents.specialists import (
     SpecialistAgentRun,
     build_specialist_definitions,
 )
-from app.assistant.checkpoints.reader import CheckpointState
-from app.assistant.execution.manager import AgentManager
-from app.assistant.execution.run import ConversationRunService
-from app.assistant.execution.session_service import AgentSessionService
-from app.assistant.execution.session_store import PostgresSandboxSessionStore
-from app.assistant.execution.shell_jobs import ShellJobRuntime
-from app.assistant.execution.types import (
+from app.assistant.contracts import (
     DELEGATION_CONTEXT_KEY,
     DelegationMessageContext,
     DelegationRequest,
@@ -56,8 +50,14 @@ from app.assistant.execution.types import (
     SubagentMessageDeltaActivity,
     SubagentStatusActivity,
     SubagentThinkingDeltaActivity,
-    build_planner_config,
 )
+from app.assistant.repositories.checkpoint_reader import CheckpointState
+from app.assistant.repositories.session import PostgresSandboxSessionStore
+from app.assistant.services.agent_manager import AgentManager
+from app.assistant.services.conversation_context import build_planner_config
+from app.assistant.services.conversation_run import ConversationRunService
+from app.assistant.services.session import AgentSessionService
+from app.assistant.services.shell_jobs import ShellJobRuntime
 from app.shared.contracts.analysis import AGENT_TYPES, AgentSessionKey, AgentType
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -1205,7 +1205,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         service = _service(fake)
 
         with patch(
-            "app.assistant.execution.session_service.uuid4",
+            "app.assistant.services.session.uuid4",
             return_value=SimpleNamespace(hex=delegation_id),
         ):
             result = await service.execute_delegation(
@@ -1247,7 +1247,7 @@ class AgentSessionServiceTest(unittest.IsolatedAsyncioTestCase):
         service = _service(fake)
 
         with patch(
-            "app.assistant.execution.session_service.uuid4",
+            "app.assistant.services.session.uuid4",
             return_value=SimpleNamespace(hex=delegation_id),
         ):
             result = await service.execute_delegation(

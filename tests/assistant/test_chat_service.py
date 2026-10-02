@@ -16,21 +16,14 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 from langchain_core.runnables import RunnableConfig
 from pydantic import ValidationError
 
+from app.assistant import contracts as chat_schema
 from app.assistant.agents.middleware.message_context import (
     USER_MESSAGE_CONTEXT_KEY,
     MessageContextMiddleware,
     UserMessageContext,
 )
-from app.assistant.checkpoints.reader import CheckpointState
-from app.assistant.conversations import history as conversation_history
-from app.assistant.errors import PlannerContinuationLimitError
-from app.assistant.events import projection as message_projection
-from app.assistant.events import schemas as chat_schema
-from app.assistant.execution import planner as planner_turn
-from app.assistant.execution.manager import AgentManager
-from app.assistant.execution.types import (
+from app.assistant.contracts import (
     MESSAGE_CREATED_AT_KEY,
-    ConversationAgentRuntime,
     DelegationActivityHistory,
     PlannerTurnContext,
     SubagentMessageActivity,
@@ -38,14 +31,20 @@ from app.assistant.execution.types import (
     SubagentStatusActivity,
     SubagentThinkingDeltaActivity,
 )
-from app.sandbox import SandboxSessionScope
-from app.sandbox.errors import SandboxPathError
-from app.sandbox.manager import DockerSandboxManager
-from app.sandbox.paths import (
-    SandboxArtifact,
-    normalize_attachment_path,
+from app.assistant.errors import PlannerContinuationLimitError
+from app.assistant.repositories.checkpoint_reader import CheckpointState
+from app.assistant.runtime import ConversationAgentRuntime
+from app.assistant.services import history as conversation_history
+from app.assistant.services import message_projection
+from app.assistant.services import planner as planner_turn
+from app.assistant.services.agent_manager import AgentManager
+from app.sandbox.application.manager import DockerSandboxManager
+from app.sandbox.application.paths import (
     resolve_artifact_path,
+    resolve_attachment_path,
 )
+from app.sandbox.contracts import SandboxArtifact, SandboxSessionScope
+from app.sandbox.errors import SandboxPathError
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
 _SANDBOX_ROOT = f"/data/{_CONVERSATION_ID}"
@@ -159,6 +158,7 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
             chat_schema.UserMessageRequest(
                 parts=[chat_schema.TextContent(type="text", text="analyze")]
             ),
+            _CONVERSATION_ID,
         )
 
         context = UserMessageContext.model_validate(
@@ -173,6 +173,7 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
             chat_schema.UserMessageRequest(
                 parts=[chat_schema.TextContent(type="text", text="analyze")]
             ),
+            _CONVERSATION_ID,
         )
 
         response = await message_projection.langchain_message_to_schema(
@@ -196,7 +197,8 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
                     chat_schema.AttachmentReference(f_path="uploads/report.csv"),
                     chat_schema.AttachmentReference(f_path="uploads/chart.png"),
                 ],
-            )
+            ),
+            _CONVERSATION_ID,
         )
 
         self.assertEqual(message.content, [{"type": "text", "text": "analyze"}])
@@ -220,9 +222,45 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
             response.model_dump(mode="json"),
         )
 
+    async def test_attachment_paths_are_resolved_before_persisting_message(
+        self,
+    ) -> None:
+        message = message_projection.schema_to_human_message(
+            chat_schema.UserMessageRequest(
+                parts=[],
+                attachments=[
+                    chat_schema.AttachmentReference(
+                        f_path=f"{_SANDBOX_ROOT}/uploads/report.csv"
+                    ),
+                    chat_schema.AttachmentReference(f_path="uploads/tmp/../report.csv"),
+                ],
+            ),
+            _CONVERSATION_ID,
+        )
+        context = UserMessageContext.model_validate(
+            message.additional_kwargs[USER_MESSAGE_CONTEXT_KEY]
+        )
+        self.assertEqual(
+            [item.f_path for item in context.attachments],
+            ["uploads/report.csv", "uploads/report.csv"],
+        )
+        with self.assertRaises(SandboxPathError):
+            message_projection.schema_to_human_message(
+                chat_schema.UserMessageRequest(
+                    parts=[],
+                    attachments=[
+                        chat_schema.AttachmentReference(f_path="../other/private.csv")
+                    ],
+                ),
+                _CONVERSATION_ID,
+            )
+
     async def test_model_response_creation_time_is_persisted(self) -> None:
         middleware = MessageContextMiddleware(
-            MagicMock(), "/data/conversation", MagicMock()
+            MagicMock(),
+            "/data/conversation",
+            MagicMock(),
+            working_directory="/data/conversation",
         )
         for asynchronous in (False, True):
             for project_context in (False, True):
@@ -237,7 +275,8 @@ class MessageTimestampTest(unittest.IsolatedAsyncioTestCase):
                                         type="text", text="question"
                                     )
                                 ]
-                            )
+                            ),
+                            _CONVERSATION_ID,
                         )
                         if project_context
                         else HumanMessage(content="question")
@@ -1249,7 +1288,7 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(attachment.media_type, "text/html")
         self.assertIsNone(attachment.description)
         self.assertEqual(
-            normalize_attachment_path(attachment.f_path),
+            resolve_attachment_path(attachment.f_path, _CONVERSATION_ID).relative_path,
             attachment.f_path,
         )
 

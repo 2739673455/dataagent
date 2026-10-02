@@ -11,17 +11,7 @@ from typing import Any
 from elasticsearch import AsyncElasticsearch
 from loguru import logger
 
-from app.metadata.config import MetaConfig
-from app.metadata.models.search import (
-    RequestedValueIndexSyncMode,
-    SemanticIndexSyncResult,
-    ValueIndexSyncResult,
-)
-from app.metadata.providers import build_meta_index_service
-from app.metadata.repositories.postgres import MetaPGRepo
-from app.metadata.repositories.source_doris import SourceDorisRepo
-from app.metadata.services.import_service import ImportMode, MetaImportResult
-from app.metadata.task_scheduler import (
+from app.metadata.application.index_tasks import (
     DISPATCH_VALUE_INDEXES_TASK,
     IMPORT_METADATA_TASK,
     SYNC_COLUMN_INDEXES_TASK,
@@ -31,14 +21,24 @@ from app.metadata.task_scheduler import (
     SYNC_TABLE_VALUES_TASK,
     enqueue_column_values,
 )
+from app.metadata.config import MetaConfig
+from app.metadata.contracts import (
+    RequestedValueIndexSyncMode,
+    SemanticIndexSyncResult,
+    ValueIndexSyncResult,
+)
+from app.metadata.providers import build_meta_import_service, build_meta_index_service
+from app.metadata.repositories.postgres import MetaPGRepo
+from app.metadata.repositories.source_doris import SourceDorisRepo
+from app.metadata.services.import_service import ImportMode, MetaImportResult
 from app.shared.async_runtime import run_async
 from app.shared.clients.doris_client_manager import DorisClientManager
 from app.shared.clients.embedding_client import EmbeddingClient
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
-from app.shared.database.base import MetaBase
+from app.shared.database.base import MetaBase, QueryBase
 from app.shared.tasks.celery_app import celery_app
-from app.workflows.providers import build_meta_import_service
+from app.workflows.application import build_metadata_change_workflow
 
 _PERIODIC_BATCH_SIZE = 50
 
@@ -257,13 +257,19 @@ def import_metadata_task(payload: dict[str, Any], mode: str) -> dict[str, Any]:
         embedding_client: EmbeddingClient,
     ) -> Any:
         """使用任务级仓储执行元数据导入。"""
-        return await build_meta_import_service(
-            meta_repo, source_repo, es_client, embedding_client
-        ).import_metadata(
-            MetaConfig.model_validate(payload),
-            ImportMode(mode),
-            False,
-        )
+        query_postgres = PostgresClientManager(cfg.meta_postgresql, QueryBase)
+        try:
+            return await build_meta_import_service(
+                meta_repo,
+                source_repo,
+                es_client,
+                embedding_client,
+                build_metadata_change_workflow(query_postgres),
+            ).import_metadata(
+                MetaConfig.model_validate(payload), ImportMode(mode), False
+            )
+        finally:
+            await query_postgres.close()
 
     result = _import_result(run_async(_run_with_metadata_resources(operation)))
     logger.info(

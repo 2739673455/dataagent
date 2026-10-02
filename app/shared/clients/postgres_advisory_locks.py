@@ -14,12 +14,6 @@ from app.shared.config.app_config import DBConfig
 from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 
-def _advisory_lock_key(name: str) -> int:
-    """把业务锁名称稳定映射为 PostgreSQL bigint。"""
-    digest = hashlib.sha256(name.encode("utf-8")).digest()
-    return int.from_bytes(digest[:8], byteorder="big", signed=True)
-
-
 class PostgresAdvisoryLocks:
     """业务锁使用独立连接池，不占用 Checkpoint 连接。"""
 
@@ -88,3 +82,9 @@ class PostgresAdvisoryLocks:
                     )
         finally:
             local_lock.release()
+
+
+def _advisory_lock_key(name: str) -> int:
+    """把业务锁名称稳定映射为 PostgreSQL bigint。"""
+    digest = hashlib.sha256(name.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], byteorder="big", signed=True)

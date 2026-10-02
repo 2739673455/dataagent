@@ -2,11 +2,11 @@
 
 from fastapi import APIRouter, Request, Response, status
 
+from app.dependencies import CurrentUserDep
 from app.identity.api.auth import schemas
 from app.identity.api.auth.dependencies import (
     AuthRateLimitServiceDep,
     AuthServiceDep,
-    CurrentUserDep,
     get_client_ip,
 )
 

@@ -9,11 +9,11 @@ from uuid import uuid4
 
 import pytest
 
-from app.sandbox import DockerSandboxBackend
+from app.sandbox.application import DockerSandboxBackend
+from app.sandbox.application.shell_runner import DockerShellJobRunner
 from app.sandbox.archive import SandboxArchiveStore
 from app.sandbox.docker_stream import close_exec_stream
-from app.sandbox.errors import SandboxFileTooLargeError
-from app.sandbox.shell_runner import DockerShellJobRunner
+from app.sandbox.errors import SandboxFileTooLargeError, SandboxPathError
 from tests.sandbox.fakes import FakeSandboxOwnership, build_sandbox_config
 
 
@@ -30,6 +30,23 @@ def _backend():
     )
     backend._operation_local.container = container
     return backend, container
+
+
+def test_agent_reads_and_writes_share_resolution_with_distinct_scopes():
+    backend, _ = _backend()
+    assert backend._resolve_mutation_path("tmp/../report.csv") == (
+        f"{backend.workspace_dir}/report.csv"
+    )
+    assert backend._resolve_path("/skills/analyst/reference.csv") == (
+        "/skills/analyst/reference.csv"
+    )
+    for path in (
+        "../other/report.csv",
+        "/skills/analyst/reference.csv",
+        f"{backend.workspace_dir}-other/report.csv",
+    ):
+        with pytest.raises(SandboxPathError):
+            backend._resolve_mutation_path(path)
 
 
 @pytest.mark.parametrize("error_number", [None, errno.ENOTCONN, errno.EIO])

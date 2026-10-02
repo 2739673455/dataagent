@@ -7,15 +7,19 @@ from sqlalchemy import delete, select, text, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.metadata import errors as meta_error
+from app.metadata.contracts import (
+    AssetVersions,
+    ColumnKey,
+    ColumnReference,
+    column_key_reference,
+    column_reference_key,
+)
 from app.metadata.models.catalog import (
     ColumnInfo,
     ColumnMetric,
-    ColumnReference,
     MetricInfo,
     TableInfo,
     ValueIndexSyncState,
-    column_key_reference,
-    column_reference_key,
 )
 
 
@@ -538,6 +542,28 @@ class MetaPGRepo:
                 ValueIndexSyncState.c_name == c_name,
             )
         )
+
+    async def asset_versions(
+        self, table_names: set[str], column_keys: set[ColumnKey]
+    ) -> AssetVersions:
+        """读取本模块拥有的资产版本，缺失资产不出现在结果中。"""
+        tables = {}
+        columns = {}
+        if table_names:
+            rows = await self._session.execute(
+                select(TableInfo.name, TableInfo.meta_version).where(
+                    TableInfo.name.in_(table_names)
+                )
+            )
+            tables = {name: version for name, version in rows.tuples()}
+        if column_keys:
+            rows = await self._session.execute(
+                select(
+                    ColumnInfo.t_name, ColumnInfo.name, ColumnInfo.meta_version
+                ).where(tuple_(ColumnInfo.t_name, ColumnInfo.name).in_(column_keys))
+            )
+            columns = {(table, name): version for table, name, version in rows.tuples()}
+        return AssetVersions(tables=tables, columns=columns)
 
     async def _load_column_value_states(
         self,

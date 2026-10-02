@@ -4,11 +4,11 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from app.assistant.conversations.lifecycle import ConversationLifecycleService
-from app.assistant.execution.manager import AgentManager
-from app.assistant.execution.run import ConversationRunService
+from app.assistant.application.lifecycle import ConversationLifecycleService
+from app.assistant.services.agent_manager import AgentManager
+from app.assistant.services.conversation_run import ConversationRunService
 from app.dependencies import WebResourcesDep
-from app.sandbox import DockerSandboxManager
+from app.sandbox.application import DockerSandboxManager
 
 
 def _get_agent_manager(resources: WebResourcesDep) -> AgentManager:

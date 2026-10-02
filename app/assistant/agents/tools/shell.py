@@ -6,15 +6,10 @@ from langchain.tools import tool
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from app.assistant.execution.shell_jobs import (
+from app.assistant.services.shell_jobs import (
     SHELL_JOB_MAX_STATUS_WAIT_SECONDS,
     ShellJobRuntime,
 )
-
-
-def _dump(result: BaseModel) -> dict[str, Any]:
-    """把公开结果模型转换为紧凑 JSON 字典。"""
-    return result.model_dump(mode="json", exclude_none=True)
 
 
 def create_shell_tools(runtime: ShellJobRuntime) -> list[BaseTool]:
@@ -65,3 +60,8 @@ def create_shell_tools(runtime: ShellJobRuntime) -> list[BaseTool]:
         return _dump(await runtime.cancel(job_id))
 
     return [shell, list_shell_jobs, get_shell_job, cancel_shell_job]
+
+
+def _dump(result: BaseModel) -> dict[str, Any]:
+    """把公开结果模型转换为紧凑 JSON 字典。"""
+    return result.model_dump(mode="json", exclude_none=True)

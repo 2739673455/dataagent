@@ -3,7 +3,6 @@
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
 from typing import Literal
 
 from sqlalchemy import (
@@ -17,26 +16,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.identity.contracts import AssetScope
 from app.shared.database.base import AuthBase
 
 DORIS_ROLE_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
-
-
-def normalize_doris_role_name(value: str) -> str:
-    """校验并规范化 Doris 角色名。"""
-    normalized = value.strip()
-    if DORIS_ROLE_NAME_PATTERN.fullmatch(normalized) is None:
-        raise ValueError("Doris 角色名称格式无效")
-    return normalized
-
-
-class AssetScope(StrEnum):
-    """数据资产授权粒度。"""
-
-    DATA_SOURCE = "data_source"
-    DATABASE = "database"
-    TABLE = "table"
-    COLUMN = "column"
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +32,36 @@ class DorisRowPolicy:
     table_name: str
     policy_type: Literal["RESTRICTIVE", "PERMISSIVE"]
     predicate: str
+
+
+@dataclass(frozen=True, slots=True)
+class DorisSelectGrant:
+    """查询账号在当前业务数据库中的一项有效 SELECT 授权。"""
+
+    role_name: str
+    data_source: str
+    database_name: str
+    table_name: str | None = None
+    column_name: str | None = None
+
+    @property
+    def scope(self) -> str:
+        """根据授权目标返回字段、表或数据库级别的资产范围。"""
+        if self.column_name is not None:
+            return AssetScope.COLUMN.value
+        if self.table_name is not None:
+            return AssetScope.TABLE.value
+        return AssetScope.DATABASE.value
+
+
+@dataclass(frozen=True, slots=True)
+class DorisAuthorizationSnapshot:
+    """Doris 当前有效 SELECT 授权、权限指纹及上级 SELECT 授权标志。"""
+
+    grants: tuple[DorisSelectGrant, ...]
+    fingerprint: str
+    # 全局或 Catalog SELECT 不能通过当前数据库的撤权入口消除。
+    has_broad_select: bool = False
 
 
 class DorisQueryIdentity(AuthBase):
@@ -90,28 +103,9 @@ class DorisQueryIdentity(AuthBase):
     )
 
 
-@dataclass(frozen=True, slots=True)
-class DorisSelectGrant:
-    """查询账号在当前业务数据库中的一项有效 SELECT 授权。"""
-
-    role_name: str
-    data_source: str
-    database_name: str
-    table_name: str | None = None
-    column_name: str | None = None
-
-    @property
-    def scope(self) -> str:
-        if self.column_name is not None:
-            return AssetScope.COLUMN.value
-        if self.table_name is not None:
-            return AssetScope.TABLE.value
-        return AssetScope.DATABASE.value
-
-
-@dataclass(frozen=True, slots=True)
-class DorisAuthorizationSnapshot:
-    grants: tuple[DorisSelectGrant, ...]
-    fingerprint: str
-    # 全局或 Catalog SELECT 不能通过当前数据库的撤权入口消除。
-    has_broad_select: bool = False
+def normalize_doris_role_name(value: str) -> str:
+    """校验并规范化 Doris 角色名。"""
+    normalized = value.strip()
+    if DORIS_ROLE_NAME_PATTERN.fullmatch(normalized) is None:
+        raise ValueError("Doris 角色名称格式无效")
+    return normalized

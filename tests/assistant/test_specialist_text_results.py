@@ -2,8 +2,8 @@
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from app.assistant.checkpoints.specialist import SpecialistCheckpointView
-from app.assistant.execution.types import DELEGATION_CONTEXT_KEY
+from app.assistant.contracts import DELEGATION_CONTEXT_KEY
+from app.assistant.services.specialist_checkpoint import SpecialistCheckpointView
 
 
 def _boundary(delegation_id: str) -> HumanMessage:

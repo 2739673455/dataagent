@@ -8,13 +8,14 @@ from typing import Any, ClassVar, cast
 from elasticsearch import AsyncElasticsearch
 from loguru import logger
 
-from app.metadata.errors import CorruptedSemanticIndexDocumentError
-from app.metadata.models.catalog import ColumnKey, column_resource_key
-from app.metadata.models.search import (
+from app.metadata.contracts import (
+    ColumnKey,
     SemanticIndexDelta,
     SemanticIndexDocument,
     SemanticTextType,
 )
+from app.metadata.errors import CorruptedSemanticIndexDocumentError
+from app.metadata.models.catalog import column_resource_key
 from app.shared.config.app_config import cfg
 from app.shared.contracts.search import SearchHit
 
@@ -40,20 +41,6 @@ class SemanticIndexDocumentReadResult:
 
     documents: list[SemanticIndexDocument]
     corrupted_document_ids: list[str]
-
-
-def column_resource_terms_filter(
-    allowed_columns: frozenset[ColumnKey],
-) -> dict[str, Any]:
-    """构造字段资源键白名单 Elasticsearch filter。"""
-    return {
-        "terms": {
-            "resource_key": [
-                column_resource_key(t_name, c_name)
-                for t_name, c_name in sorted(allowed_columns)
-            ]
-        }
-    }
 
 
 class SemanticIndexRepo[ItemT, KeyT](ABC):
@@ -95,16 +82,6 @@ class SemanticIndexRepo[ItemT, KeyT](ABC):
         """绑定 Elasticsearch 客户端。"""
         self._client = client
 
-    @staticmethod
-    @abstractmethod
-    def _resource_key(key: KeyT) -> str:
-        """将领域主键转换为索引资源键。"""
-
-    @staticmethod
-    @abstractmethod
-    def _parse_payload(payload: dict[str, Any]) -> ItemT:
-        """解析领域载荷。"""
-
     async def search_text_hits(
         self,
         query: str,
@@ -140,18 +117,6 @@ class SemanticIndexRepo[ItemT, KeyT](ABC):
             resource_filter=self._resource_filter(allowed_keys),
         )
         return self.parse_hits(result, self._parse_payload)
-
-    def _resource_filter(
-        self, allowed_keys: frozenset[KeyT] | None
-    ) -> dict[str, Any] | None:
-        """None 不限制资源，空集合由检索入口直接短路。"""
-        if allowed_keys is None:
-            return None
-        return {
-            "terms": {
-                "resource_key": sorted(self._resource_key(key) for key in allowed_keys)
-            }
-        }
 
     async def ensure_index(self) -> None:
         """确保语义索引存在。"""
@@ -436,6 +401,28 @@ class SemanticIndexRepo[ItemT, KeyT](ABC):
         return converted
 
     @staticmethod
+    @abstractmethod
+    def _resource_key(key: KeyT) -> str:
+        """将领域主键转换为索引资源键。"""
+
+    @staticmethod
+    @abstractmethod
+    def _parse_payload(payload: dict[str, Any]) -> ItemT:
+        """解析领域载荷。"""
+
+    def _resource_filter(
+        self, allowed_keys: frozenset[KeyT] | None
+    ) -> dict[str, Any] | None:
+        """None 不限制资源，空集合由检索入口直接短路。"""
+        if allowed_keys is None:
+            return None
+        return {
+            "terms": {
+                "resource_key": sorted(self._resource_key(key) for key in allowed_keys)
+            }
+        }
+
+    @staticmethod
     def _document_source(
         document: SemanticIndexDocument,
         *,
@@ -454,3 +441,17 @@ class SemanticIndexRepo[ItemT, KeyT](ABC):
         if include_embedding:
             source["embedding"] = document.embedding
         return source
+
+
+def column_resource_terms_filter(
+    allowed_columns: frozenset[ColumnKey],
+) -> dict[str, Any]:
+    """构造字段资源键白名单 Elasticsearch filter。"""
+    return {
+        "terms": {
+            "resource_key": [
+                column_resource_key(t_name, c_name)
+                for t_name, c_name in sorted(allowed_columns)
+            ]
+        }
+    }

@@ -12,12 +12,12 @@ from fastapi import FastAPI
 from app.assistant.api import dependencies as runtime_dependencies
 from app.assistant.api.chat import dependencies as chat_dependencies
 from app.assistant.api.chat.router import router
+from app.assistant.contracts import ChatStreamDoneEvent
 from app.assistant.errors import (
     ConversationNotFoundError,
     ConversationNotResumableError,
 )
-from app.assistant.events.schemas import ChatStreamDoneEvent
-from app.identity.api.auth.dependencies import _require_analysis_access
+from app.dependencies import _require_analysis_access
 from app.shared.errors.exc_handlers import register_exception_handlers
 
 _ID = UUID("550e8400-e29b-41d4-a716-446655440000")
@@ -92,7 +92,7 @@ def test_stream_routes_preserve_frames_headers_and_business_errors(entry, failur
 
     from unittest.mock import patch
 
-    from app.assistant.execution.turn import ConversationTurnService
+    from app.assistant.services.conversation_turn import ConversationTurnService
 
     with (
         patch.object(ConversationTurnService, "start", start),

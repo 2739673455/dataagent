@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import yaml
 from loguru import logger
@@ -13,58 +13,23 @@ from yaml import YAMLError
 
 from app.metadata import errors as meta_error
 from app.metadata.config import MetaConfig
+from app.metadata.contracts import (
+    ColumnKey,
+    MetadataChangeHandler,
+    MetadataChanges,
+    column_key_reference,
+    column_reference_key,
+)
 from app.metadata.models.catalog import (
     COLUMN_EXAMPLE_LIMIT,
     ColumnInfo,
-    ColumnKey,
     MetricInfo,
     TableInfo,
-    column_key_reference,
-    column_reference_key,
     serialize_column_examples,
 )
-from app.metadata.models.changes import MetadataChanges
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.source_doris import SourceDorisRepo
 from app.metadata.services.index import MetaIndexService
-
-if TYPE_CHECKING:
-    from app.workflows.metadata_changes import MetadataChangeWorkflow
-
-
-def parse_metadata_yaml(content: bytes) -> MetaConfig:
-    """解析并校验 UTF-8 YAML 元数据文档。"""
-    if not content:
-        raise meta_error.InvalidMetadataError(detail="元数据 YAML 文件不能为空")
-
-    try:
-        raw_config = yaml.safe_load(content.decode("utf-8"))
-        return MetaConfig.model_validate(raw_config)
-    except UnicodeDecodeError as exc:
-        raise meta_error.InvalidMetadataError(
-            detail="元数据 YAML 文件必须使用 UTF-8 编码",
-        ) from exc
-    except YAMLError as exc:
-        raise meta_error.InvalidMetadataError(
-            detail=f"元数据 YAML 格式解析失败: {exc}",
-        ) from exc
-    except PydanticValidationError as exc:
-        errors = exc.errors(
-            include_url=False,
-            include_context=False,
-            include_input=False,
-        )
-        raise meta_error.InvalidMetadataError(
-            detail="元数据 YAML 结构不符合规范要求",
-            extensions={"errors": errors},
-        ) from exc
-
-
-class ImportMode(StrEnum):
-    """元数据导入模式。"""
-
-    MERGE = "merge"
-    REPLACE = "replace"
 
 
 @dataclass(frozen=True)
@@ -87,6 +52,13 @@ class MetaImportResult:
     metrics: ResourceChanges[str]
 
 
+class ImportMode(StrEnum):
+    """元数据导入模式。"""
+
+    MERGE = "merge"
+    REPLACE = "replace"
+
+
 class MetaImportService:
     """从配置批量导入元数据。"""
 
@@ -95,7 +67,7 @@ class MetaImportService:
         meta_repo: MetaPGRepo,
         source_repo: SourceDorisRepo,
         meta_index_service: MetaIndexService,
-        change_handler: MetadataChangeWorkflow,
+        change_handler: MetadataChangeHandler,
     ) -> None:
         """初始化元数据批量导入服务。"""
         self._meta_repo = meta_repo
@@ -466,3 +438,31 @@ class MetaImportService:
             metric_name: item.metadata_snapshot()
             for metric_name, item in metric_infos.items()
         }
+
+
+def parse_metadata_yaml(content: bytes) -> MetaConfig:
+    """解析并校验 UTF-8 YAML 元数据文档。"""
+    if not content:
+        raise meta_error.InvalidMetadataError(detail="元数据 YAML 文件不能为空")
+
+    try:
+        raw_config = yaml.safe_load(content.decode("utf-8"))
+        return MetaConfig.model_validate(raw_config)
+    except UnicodeDecodeError as exc:
+        raise meta_error.InvalidMetadataError(
+            detail="元数据 YAML 文件必须使用 UTF-8 编码",
+        ) from exc
+    except YAMLError as exc:
+        raise meta_error.InvalidMetadataError(
+            detail=f"元数据 YAML 格式解析失败: {exc}",
+        ) from exc
+    except PydanticValidationError as exc:
+        errors = exc.errors(
+            include_url=False,
+            include_context=False,
+            include_input=False,
+        )
+        raise meta_error.InvalidMetadataError(
+            detail="元数据 YAML 结构不符合规范要求",
+            extensions={"errors": errors},
+        ) from exc

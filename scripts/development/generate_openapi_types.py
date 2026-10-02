@@ -16,6 +16,30 @@ HTTP_METHODS = ("get", "post", "put", "patch", "delete", "options", "head")
 PARAMETER_LOCATIONS = ("path", "query", "header", "cookie")
 
 
+def main() -> int:
+    """生成或校验前端 OpenAPI TypeScript 协议文件。"""
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="检查已提交类型是否与当前 OpenAPI 一致",
+    )
+    args = parser.parse_args()
+    generated = _render_openapi_types(_load_openapi())
+    if args.check:
+        if not OUTPUT_PATH.exists() or OUTPUT_PATH.read_text() != generated:
+            print(
+                "OpenAPI TypeScript contract is stale; run "
+                "uv run python scripts/development/generate_openapi_types.py",
+                file=sys.stderr,
+            )
+            return 1
+        return 0
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT_PATH.write_text(generated)
+    return 0
+
+
 def _load_openapi() -> dict[str, Any]:
     """加载当前 FastAPI 应用生成的 OpenAPI。"""
     project_root = str(PROJECT_ROOT)
@@ -46,7 +70,7 @@ def _literal(value: Any) -> str:
 
 
 def _unique(items: Sequence[str]) -> list[str]:
-    """按原有顺序移除重复类型表达式。"""
+    """按输入顺序移除重复类型表达式。"""
     return list(dict.fromkeys(items))
 
 
@@ -275,30 +299,6 @@ def _render_openapi_types(document: Mapping[str, Any]) -> str:
             lines.append("  };")
     lines.extend(["}", ""])
     return "\n".join(lines)
-
-
-def main() -> int:
-    """生成或校验前端 OpenAPI TypeScript 协议文件。"""
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="检查已提交类型是否与当前 OpenAPI 一致",
-    )
-    args = parser.parse_args()
-    generated = _render_openapi_types(_load_openapi())
-    if args.check:
-        if not OUTPUT_PATH.exists() or OUTPUT_PATH.read_text() != generated:
-            print(
-                "OpenAPI TypeScript contract is stale; run "
-                "uv run python scripts/development/generate_openapi_types.py",
-                file=sys.stderr,
-            )
-            return 1
-        return 0
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_PATH.write_text(generated)
-    return 0
 
 
 if __name__ == "__main__":

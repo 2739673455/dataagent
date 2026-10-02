@@ -216,7 +216,7 @@ class ModelProfileCfg(AppConfigModel):
 class ModelCfg(AppConfigModel):
     """语言模型配置。"""
 
-    model_provider: str = Field(min_length=1)
+    model_provider: Literal["openai", "deepseek"]
     api_protocol: Literal["chat_completions", "responses"]
     model: str = Field(min_length=1)
     base_url: str = Field(min_length=1)
@@ -255,11 +255,6 @@ class ModelCfg(AppConfigModel):
         conflicts = sorted(reserved & self.params.keys())
         if conflicts:
             raise ValueError("params 不能覆盖模型配置字段: " + ", ".join(conflicts))
-        if self.api_protocol == "responses" and self.model_provider not in {
-            "deepseek",
-            "openai",
-        }:
-            raise ValueError("Responses API 仅支持 model_provider: deepseek 或 openai")
         return self
 
 

@@ -409,6 +409,41 @@ class IndentDumper(yaml.SafeDumper):
         return True
 
 
+def main() -> int:
+    """解析命令行参数并生成元数据 YAML 配置。"""
+    parser = argparse.ArgumentParser(description="生成电商数仓语义元数据配置")
+    parser.add_argument("--ddl", type=Path, default=DEFAULT_DDL_PATH)
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="检查已提交配置是否与 DDL 和语义规则一致",
+    )
+    args = parser.parse_args()
+    config = _build_config(args.ddl.resolve())
+    rendered = _render_config(config)
+    if args.check:
+        if (
+            not args.output.exists()
+            or args.output.read_text(encoding="utf-8") != rendered
+        ):
+            print(
+                "语义元数据配置已过期，请重新运行生成命令",
+                file=sys.stderr,
+            )
+            return 1
+        return 0
+
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(rendered, encoding="utf-8")
+    print(
+        f"元数据配置生成完成 tables={len(config['tables'])} "
+        f"columns={sum(len(table['columns']) for table in config['tables'])} "
+        f"metrics={len(config['metrics'])} output={args.output}"
+    )
+    return 0
+
+
 def _matching_parenthesis(sql: str, opening_index: int) -> int:
     """查找 SQL 表定义起始括号对应的结束位置。"""
     depth = 0
@@ -1825,41 +1860,6 @@ def _render_config(config: dict[str, Any]) -> str:
         sort_keys=False,
         width=120,
     )
-
-
-def main() -> int:
-    """解析命令行参数并生成元数据 YAML 配置。"""
-    parser = argparse.ArgumentParser(description="生成电商数仓语义元数据配置")
-    parser.add_argument("--ddl", type=Path, default=DEFAULT_DDL_PATH)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="检查已提交配置是否与 DDL 和语义规则一致",
-    )
-    args = parser.parse_args()
-    config = _build_config(args.ddl.resolve())
-    rendered = _render_config(config)
-    if args.check:
-        if (
-            not args.output.exists()
-            or args.output.read_text(encoding="utf-8") != rendered
-        ):
-            print(
-                "语义元数据配置已过期，请重新运行生成命令",
-                file=sys.stderr,
-            )
-            return 1
-        return 0
-
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(rendered, encoding="utf-8")
-    print(
-        f"元数据配置生成完成 tables={len(config['tables'])} "
-        f"columns={sum(len(table['columns']) for table in config['tables'])} "
-        f"metrics={len(config['metrics'])} output={args.output}"
-    )
-    return 0
 
 
 if __name__ == "__main__":

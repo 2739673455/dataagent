@@ -20,8 +20,8 @@ from app.assistant.agents.tools.view_image import (
     create_view_image_tool,
     supports_view_image_tool,
 )
-from app.assistant.execution.shell_jobs import ShellJobRuntime
-from app.sandbox import DockerSandboxBackend
+from app.assistant.services.shell_jobs import ShellJobRuntime
+from app.sandbox.application import DockerSandboxBackend
 
 
 def create_agent(
@@ -49,7 +49,11 @@ def create_agent(
         model=model,
         tools=[
             *tools,
-            *([create_view_image_tool()] if supports_view_image_tool(model) else []),
+            *(
+                [create_view_image_tool(backend.workspace_dir)]
+                if supports_view_image_tool(model)
+                else []
+            ),
             *create_shell_tools(shell_jobs),
         ],
         system_prompt=system_prompt,
@@ -59,6 +63,7 @@ def create_agent(
                 resolved_backend,
                 backend.conversation_dir,
                 shell_jobs,
+                working_directory=backend.workspace_dir,
             ),
         ],
         backend=resolved_backend,

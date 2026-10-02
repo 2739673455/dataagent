@@ -5,16 +5,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.metadata.models.catalog import ColumnInfo, MetricInfo
-from app.metadata.models.search import (
-    SemanticRecallFailure,
-    SemanticResourceRecallRequest,
-)
-from app.metadata.services.search import (
+from app.metadata.application.search import (
     SemanticCatalog,
-    SemanticResourceRecallService,
+    SemanticResourceService,
     _RecallContext,
 )
+from app.metadata.contracts import SemanticRecallFailure, SemanticResourceRecallRequest
+from app.metadata.models.catalog import ColumnInfo, MetricInfo
 from app.shared.contracts.search import SearchHit
 
 
@@ -79,16 +76,14 @@ def test_collect_preserves_ranking_reasons_and_failure_scope(
         "search_text_hits" if channel == "fulltext" else "search_vector_hits",
         search,
     )
-    service = SemanticResourceRecallService(
-        MagicMock(aembed_documents=AsyncMock(return_value=[[0.1], [0.2], [0.3]])),
-        column_repo,
-        metric_repo,
-        value_repo,
-        context.catalog,
+    service = SemanticResourceService(
         MagicMock(),
-        "source",
-        "db",
+        MagicMock(),
+        MagicMock(aembed_documents=AsyncMock(return_value=[[0.1], [0.2], [0.3]])),
     )
+    service._column_repo = column_repo
+    service._metric_repo = metric_repo
+    service._value_repo = value_repo
     if second_result == "cancel":
         with pytest.raises(asyncio.CancelledError):
             asyncio.run(service._retrieve(context))
@@ -180,16 +175,10 @@ def test_resource_routing_shared_embeddings_and_fulltext_fallback(
         search_vector_hits=search("metric/vector", [SearchHit(item=metric, score=0.8)]),
     )
     value_repo = MagicMock(search_hits=search("value/fulltext", []))
-    service = SemanticResourceRecallService(
-        embedding,
-        column_repo,
-        metric_repo,
-        value_repo,
-        context.catalog,
-        MagicMock(),
-        "source",
-        "db",
-    )
+    service = SemanticResourceService(MagicMock(), MagicMock(), embedding)
+    service._column_repo = column_repo
+    service._metric_repo = metric_repo
+    service._value_repo = value_repo
     asyncio.run(service._retrieve(context))
     selected = [
         resource

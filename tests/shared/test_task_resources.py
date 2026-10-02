@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from app.assistant import tasks as assistant_tasks
-from app.assistant.conversations import resources as lifecycle_runtime
+from app.assistant.application import resources as lifecycle_runtime
 from app.metadata import tasks as metadata_tasks
 from app.query import tasks as query_tasks
 from app.workflows import tasks as workflow_tasks
@@ -43,7 +43,7 @@ def test_lifecycle_task_cleans_up_after_sandbox_init_failure(module) -> None:
     )
     with (
         patch.object(
-            workflow_tasks, "PostgresUserDeletionStateStore", return_value=state_store
+            workflow_tasks, "UserDeletionStateService", return_value=state_store
         ),
         patch.object(
             lifecycle_runtime, "PostgresCheckpointStore", return_value=persistence
@@ -273,13 +273,18 @@ def test_web_applications_own_separate_resources_and_request_dependencies() -> N
                         second_resources, name
                     )
                 assert (
-                    first_resources.agents._runtime_factory._recall.auth
+                    first_resources.agents._runtime_factory._recall.identity._postgres
                     is first_resources.auth
                 )
                 assert (
-                    second_resources.agents._runtime_factory._recall.auth
+                    second_resources.agents._runtime_factory._recall.identity._postgres
                     is second_resources.auth
                 )
+                for resources in (first_resources, second_resources):
+                    recall = resources.agents._runtime_factory._recall
+                    assert recall.postgres is resources.assistant
+                    assert recall.metadata._postgres is resources.meta
+                    assert recall.query._postgres is resources.query
             assert not hasattr(second.state, "resources")
             assert await read_owner(first) == id(first_resources.auth)
             first_resources.auth.close.assert_not_awaited()
@@ -340,7 +345,12 @@ def test_lifecycle_construction_failure_closes_previous_database():
         patch.object(
             lifecycle_runtime,
             "PostgresClientManager",
-            side_effect=[postgres, RuntimeError("construct")],
+            return_value=postgres,
+        ),
+        patch.object(
+            lifecycle_runtime,
+            "DockerSandboxManager",
+            side_effect=RuntimeError("construct"),
         ),
     ):
         asyncio.run(run())

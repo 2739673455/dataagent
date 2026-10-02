@@ -7,12 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.identity import errors
-from app.identity.models.doris import (
-    DorisQueryIdentity,
-    DorisSelectGrant,
-)
+from app.identity.contracts import AssetIdentity
+from app.identity.models.doris import DorisQueryIdentity, DorisSelectGrant
 from app.identity.repositories.doris_authorization import parse_authorization
-from app.identity.services.authorization import AssetIdentity, AuthorizationService
+from app.identity.services.authorization import AuthorizationService
 from app.identity.services.doris_permission import DorisPermissionService
 
 

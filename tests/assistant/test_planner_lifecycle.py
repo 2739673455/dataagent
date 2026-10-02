@@ -8,8 +8,8 @@ from uuid import uuid4
 import pytest
 from langchain_core.messages import AIMessageChunk
 
-from app.assistant.execution import planner
-from app.assistant.execution.types import PlannerTurnContext
+from app.assistant.contracts import PlannerTurnContext
+from app.assistant.services import planner
 
 
 @pytest.mark.parametrize("exit_mode", ["close", "projection_error"])

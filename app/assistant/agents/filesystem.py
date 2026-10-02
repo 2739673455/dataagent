@@ -9,7 +9,8 @@ from deepagents.backends.protocol import BackendProtocol
 from deepagents.middleware.filesystem import FilesystemPermission, FsToolName
 
 from app.assistant.resource_loader import SKILLS_DIRECTORY, load_prompt
-from app.sandbox import DockerSandboxBackend, SandboxReadonlyMount
+from app.sandbox.application import DockerSandboxBackend
+from app.sandbox.contracts import SandboxReadonlyMount
 from app.shared.contracts.analysis import AgentType
 
 _AGENT_SKILLS_MOUNT_ROOT = "/skills"

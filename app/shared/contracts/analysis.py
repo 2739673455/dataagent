@@ -20,22 +20,6 @@ AGENT_TYPES: tuple[AgentType, ...] = (
 IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
-def validate_agent_type(value: str) -> AgentType:
-    """校验并收窄专业 Agent 类型。"""
-    if value not in AGENT_TYPES:
-        raise ValueError(f"未知的智能体类型: {value}")
-    return value
-
-
-def _validate_identifier(value: str, field_name: str) -> str:
-    """校验 Analysis 和 Session 标识。"""
-    if not isinstance(value, str) or IDENTIFIER_PATTERN.fullmatch(value) is None:
-        raise ValueError(
-            f"{field_name} 必须以字母或数字开头，且仅包含 1-64 位小写字母、数字、下划线或连字符"
-        )
-    return value
-
-
 @dataclass(frozen=True, slots=True)
 class AgentSessionKey:
     """定位专业 Agent 的工作会话 Session，可由多次 Delegation 续接。
@@ -61,3 +45,19 @@ class AgentSessionKey:
     def checkpoint_ns(self) -> str:
         """生成受控的 Checkpoint namespace。"""
         return f"subagents/{self.analysis_id}/{self.agent_type}/{self.session_id}"
+
+
+def validate_agent_type(value: str) -> AgentType:
+    """校验并收窄专业 Agent 类型。"""
+    if value not in AGENT_TYPES:
+        raise ValueError(f"未知的智能体类型: {value}")
+    return value
+
+
+def _validate_identifier(value: str, field_name: str) -> str:
+    """校验 Analysis 和 Session 标识。"""
+    if not isinstance(value, str) or IDENTIFIER_PATTERN.fullmatch(value) is None:
+        raise ValueError(
+            f"{field_name} 必须以字母或数字开头，且仅包含 1-64 位小写字母、数字、下划线或连字符"
+        )
+    return value

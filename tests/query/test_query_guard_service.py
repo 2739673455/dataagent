@@ -1,62 +1,48 @@
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
-from app.metadata.models.catalog import ColumnInfo, TableInfo
-from app.metadata.repositories.postgres import MetaPGRepo
+from app.metadata.contracts import QueryCatalogColumn, QueryCatalogSnapshot
 from app.query.services.guard import QueryGuardService
 
 
-def make_column(table: str, name: str, data_type: str) -> ColumnInfo:
-    return ColumnInfo(
-        t_name=table,
-        name=name,
-        type=data_type,
-        description="",
-        examples=[],
-        alias=[],
-        index_values=False,
-    )
-
-
-class FakeCatalogRepo:
-    def __init__(self) -> None:
-        self.tables = [
-            TableInfo(
-                name="orders",
-                role="fact",
-                primary_key_columns=["id"],
-                description="",
-            ),
-            TableInfo(
-                name="users",
-                role="dim",
-                primary_key_columns=["id"],
-                description="",
-            ),
-        ]
-        self.columns = [
-            make_column("orders", "id", "BIGINT"),
-            make_column("orders", "user_id", "BIGINT"),
-            make_column("orders", "amount", "DECIMAL(18, 2)"),
-            make_column("orders", "created_at", "DATETIME"),
-            make_column("users", "id", "BIGINT"),
-            make_column("users", "name", "VARCHAR(100)"),
-        ]
-
-
 def make_guard() -> QueryGuardService:
-    catalog = FakeCatalogRepo()
     return QueryGuardService(
-        MagicMock(
-            spec=MetaPGRepo,
-            list_table_infos=AsyncMock(return_value=catalog.tables),
-            list_column_infos=AsyncMock(return_value=catalog.columns),
+        AsyncMock(
+            return_value=QueryCatalogSnapshot(
+                table_names=("orders", "users"),
+                columns=(
+                    QueryCatalogColumn("orders", "id", "BIGINT"),
+                    QueryCatalogColumn("orders", "user_id", "BIGINT"),
+                    QueryCatalogColumn("orders", "amount", "DECIMAL(18, 2)"),
+                    QueryCatalogColumn("orders", "created_at", "DATETIME"),
+                    QueryCatalogColumn("users", "id", "BIGINT"),
+                    QueryCatalogColumn("users", "name", "VARCHAR(100)"),
+                ),
+            )
         ),
         current_database="analytics",
     )
 
 
 class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
+    async def test_catalog_discovery_and_static_rejections_skip_metadata(self) -> None:
+        for sql, valid in (
+            ("SHOW TABLES", True),
+            ("SELECT table_name FROM information_schema.tables", True),
+            ("DELETE FROM orders", False),
+            ("SELECT 1; SELECT 2", False),
+            ("SELECT SLEEP(1)", False),
+        ):
+            with self.subTest(sql=sql):
+                catalog_loader = AsyncMock(
+                    side_effect=AssertionError("此 SQL 不应读取元数据目录")
+                )
+                result = await QueryGuardService(
+                    catalog_loader, current_database="analytics"
+                ).check(sql)
+                self.assertEqual(result.valid, valid)
+                catalog_loader.assert_not_awaited()
+
     async def test_allows_role_filtered_catalog_discovery_queries(self) -> None:
         for sql in (
             "SHOW TABLES",
@@ -239,11 +225,7 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_empty_catalog_does_not_block_query(self) -> None:
         guard = QueryGuardService(
-            MagicMock(
-                spec=MetaPGRepo,
-                list_table_infos=AsyncMock(return_value=[]),
-                list_column_infos=AsyncMock(return_value=[]),
-            ),
+            AsyncMock(return_value=QueryCatalogSnapshot(table_names=(), columns=())),
             current_database="analytics",
         )
         result = await guard.check("SELECT id FROM orders WHERE amount > 10")

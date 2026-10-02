@@ -23,7 +23,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.types import Command, Overwrite, Send, interrupt
 
-from app.assistant.checkpoints.reader import CheckpointStateReader
+from app.assistant.repositories.checkpoint_reader import CheckpointStateReader
 
 
 class _ToolModel(FakeMessagesListChatModel):

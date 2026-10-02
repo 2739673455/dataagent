@@ -9,25 +9,6 @@ from app.identity import errors as auth_error
 from app.identity.models.doris import DorisAuthorizationSnapshot, DorisSelectGrant
 
 
-def _text(row: Mapping[str, object], key: str) -> str:
-    if key in row and row[key] is None:
-        return ""
-    if key not in row or not isinstance(row[key], str):
-        raise auth_error.InvalidDorisPermissionError(
-            detail=f"Doris 授权结果缺少有效的 {key} 字段"
-        )
-    return str(row[key]).strip()
-
-
-def _privileges(value: str) -> tuple[str, ...]:
-    if value in {"", "NULL"}:
-        return ()
-    tokens = tuple(sorted(item.strip().lower() for item in value.split(",")))
-    if any(not re.fullmatch(r"[a-z_]+_priv", token) for token in tokens):
-        raise auth_error.InvalidDorisPermissionError(detail="无法解析 Doris 权限标识")
-    return tokens
-
-
 def parse_authorization(
     row: Mapping[str, object],
     policies: Sequence[Mapping[str, object]],
@@ -38,7 +19,7 @@ def parse_authorization(
     catalog: str,
     database: str,
 ) -> DorisAuthorizationSnapshot:
-    """严格解析有效权限；无法识别的格式拒绝使用，不回退到旧策略。"""
+    """解析有效权限；身份、角色或权限格式无效时拒绝使用结果。"""
     if _text(row, "UserIdentity") != f"'{query_user}'@'%'":
         raise auth_error.InvalidDorisPermissionError(
             detail="Doris 查询用户身份与平台配置不一致"
@@ -165,3 +146,24 @@ def parse_authorization(
         fingerprint=fingerprint,
         has_broad_select=broad,
     )
+
+
+def _text(row: Mapping[str, object], key: str) -> str:
+    """读取授权结果的文本字段，空值转为空串，缺失或类型错误时拒绝解析。"""
+    if key in row and row[key] is None:
+        return ""
+    if key not in row or not isinstance(row[key], str):
+        raise auth_error.InvalidDorisPermissionError(
+            detail=f"Doris 授权结果缺少有效的 {key} 字段"
+        )
+    return str(row[key]).strip()
+
+
+def _privileges(value: str) -> tuple[str, ...]:
+    """校验逗号分隔的权限标识，按小写排序返回；空值表示无权限。"""
+    if value in {"", "NULL"}:
+        return ()
+    tokens = tuple(sorted(item.strip().lower() for item in value.split(",")))
+    if any(not re.fullmatch(r"[a-z_]+_priv", token) for token in tokens):
+        raise auth_error.InvalidDorisPermissionError(detail="无法解析 Doris 权限标识")
+    return tokens

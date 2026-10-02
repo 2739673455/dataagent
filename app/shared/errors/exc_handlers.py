@@ -14,6 +14,26 @@ from starlette.types import ExceptionHandler
 from app.shared.errors.base import ProblemError
 
 
+def register_exception_handlers(app: FastAPI) -> None:
+    """注册全局异常处理器。"""
+    app.add_exception_handler(
+        ProblemError,
+        cast(ExceptionHandler, _problem_error_handler),
+    )
+    app.add_exception_handler(
+        RequestValidationError,
+        cast(ExceptionHandler, _validation_error_handler),
+    )
+    app.add_exception_handler(
+        HTTPException,
+        cast(ExceptionHandler, _http_exception_handler),
+    )
+    app.add_exception_handler(
+        Exception,
+        cast(ExceptionHandler, _unhandled_exception_handler),
+    )
+
+
 def _build_response(
     request: Request,
     exc: ProblemError,
@@ -105,23 +125,3 @@ def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONRespon
     problem = ProblemError()
     _log_problem(problem, exc)
     return _build_response(request, problem)
-
-
-def register_exception_handlers(app: FastAPI) -> None:
-    """注册全局异常处理器。"""
-    app.add_exception_handler(
-        ProblemError,
-        cast(ExceptionHandler, _problem_error_handler),
-    )
-    app.add_exception_handler(
-        RequestValidationError,
-        cast(ExceptionHandler, _validation_error_handler),
-    )
-    app.add_exception_handler(
-        HTTPException,
-        cast(ExceptionHandler, _http_exception_handler),
-    )
-    app.add_exception_handler(
-        Exception,
-        cast(ExceptionHandler, _unhandled_exception_handler),
-    )

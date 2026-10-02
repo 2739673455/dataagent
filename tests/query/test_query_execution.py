@@ -15,29 +15,28 @@ from langchain.tools import ToolRuntime
 
 from app.assistant.agents.tools.execute_sql import create_execute_sql_tool
 from app.identity import errors as auth_error
+from app.identity.application import IdentityService
 from app.identity.errors import QueryPrincipalNotConfiguredError
 from app.identity.models.doris import DorisAuthorizationSnapshot
-from app.identity.services.query_principal import QueryPrincipalService
+from app.metadata.application import MetadataReader
+from app.metadata.contracts import AssetVersions
+from app.query.application import QueryExecutionService
+from app.query.contracts import (
+    AnalysisQueryResult,
+    QueryBatch,
+    QueryColumnRef,
+    QueryExecutionLimits,
+    QueryExecutionOptions,
+    QueryTableRef,
+    QueryValidationIssue,
+    QueryValidationResult,
+)
 from app.query.errors import (
     QueryExecutionTimeoutError,
     QueryRejectedError,
     QueryResultShapeError,
 )
-from app.query.models.execution import (
-    AnalysisQueryResult,
-    QueryBatch,
-    QueryExecutionLimits,
-    QueryExecutionOptions,
-)
-from app.query.models.validation import (
-    QueryColumnRef,
-    QueryTableRef,
-    QueryValidationIssue,
-    QueryValidationResult,
-)
 from app.query.repositories.doris import DorisQueryRepository
-from app.query.runtime import DatabaseQueryExecutionRuntime
-from app.query.services.execution_handler import QueryExecutionHandler
 from app.query.services.execution_recorder import (
     QueryExecutionContext,
     QueryExecutionRecorder,
@@ -90,35 +89,84 @@ class QueryPrincipalTest(unittest.IsolatedAsyncioTestCase):
                     get_query_identity=AsyncMock(return_value=identity),
                 )
                 cipher = MagicMock()
-                with self.assertRaises(expected):
-                    await QueryPrincipalService(
-                        repo,
-                        cipher,
-                        MagicMock(
-                            observe_role=AsyncMock(
-                                side_effect=auth_error.RoleNotFoundError
-                            )
-                        ),
-                    ).resolve(7)
+                postgres = MagicMock()
+                postgres.session.return_value.__aenter__.return_value = MagicMock()
+                authorization = MagicMock(
+                    observe_role=AsyncMock(side_effect=auth_error.RoleNotFoundError)
+                )
+                with (
+                    patch(
+                        "app.identity.application.identity.IdentityPGRepo",
+                        return_value=repo,
+                    ),
+                    patch(
+                        "app.identity.application.identity.DorisCredentialCipher",
+                        return_value=cipher,
+                    ),
+                    patch(
+                        "app.identity.application.identity.AuthorizationService",
+                        return_value=authorization,
+                    ),
+                    self.assertRaises(expected),
+                ):
+                    await IdentityService(
+                        postgres, MagicMock()
+                    ).resolve_query_principal(7)
 
                 cipher.decrypt.assert_not_called()
+                if (
+                    user is not None
+                    and getattr(user, "doris_role_name", None) is not None
+                ):
+                    authorization.observe_role.assert_awaited_once_with("reader")
+                else:
+                    authorization.observe_role.assert_not_awaited()
 
 
-class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
+class QueryExecutionServiceTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.key = key()
         self.principal = SimpleNamespace(
-            role_name="reader", authorization_fingerprint="a" * 64
+            role_name="reader",
+            authorization_fingerprint="a" * 64,
+            query_user="query_reader",
+            password="password",
+            workload_group="readers",
         )
         self.service = MagicMock(execute=AsyncMock(return_value=result()))
-        self.runtime = MagicMock(
-            resolve_principal=AsyncMock(return_value=self.principal),
-            validate=AsyncMock(return_value=valid()),
-            create_executor=AsyncMock(return_value=self.service),
+        self.identity = MagicMock(
+            resolve_query_principal=AsyncMock(return_value=self.principal)
+        )
+        self.guard = MagicMock(check=AsyncMock(return_value=valid()))
+        self.recorder = MagicMock(
             record_success=AsyncMock(),
             record_failure=AsyncMock(),
         )
-        self.handler = QueryExecutionHandler(self.runtime)
+        self.query_clients = MagicMock(
+            get_or_create=AsyncMock(return_value=MagicMock())
+        )
+        self.executor_factory = self.enterContext(
+            patch(
+                "app.query.application.queries.AnalysisQueryService",
+                return_value=self.service,
+            )
+        )
+        self.enterContext(
+            patch(
+                "app.query.application.queries.QueryExecutionRecorder",
+                return_value=self.recorder,
+            )
+        )
+        with patch(
+            "app.query.application.queries.QueryGuardService", return_value=self.guard
+        ):
+            self.handler = QueryExecutionService(
+                identity=self.identity,
+                metadata=MagicMock(),
+                postgres=MagicMock(),
+                query_clients=self.query_clients,
+                artifact_store=MagicMock(),
+            )
         self.tool_runtime = ToolRuntime(
             state={},
             context=None,
@@ -141,24 +189,25 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_success_record_failure_does_not_change_result(self):
-        self.runtime.record_success.side_effect = OSError("record unavailable")
+        self.recorder.record_success.side_effect = OSError("record unavailable")
         actual = await self.execute()
         self.assertIs(actual, self.service.execute.return_value)
-        args = self.runtime.record_success.call_args
+        args = self.recorder.record_success.call_args
         self.assertEqual(args.args[0].session_key, self.key)
         self.assertEqual(args.args[0].role_name, "reader")
         self.assertEqual(args.kwargs["raw_sql"], " select 1 as value ")
-        self.assertIs(args.kwargs["validation"], self.runtime.validate.return_value)
+        self.assertIs(args.kwargs["validation"], self.guard.check.return_value)
         self.assertIs(args.kwargs["result"], actual)
-        self.runtime.record_failure.assert_not_awaited()
+        self.recorder.record_failure.assert_not_awaited()
 
     async def test_rejection_never_creates_executor(self):
-        self.runtime.validate.return_value = rejected()
+        self.guard.check.return_value = rejected()
         with self.assertRaises(QueryRejectedError):
             await self.execute()
-        self.runtime.create_executor.assert_not_awaited()
+        self.query_clients.get_or_create.assert_not_awaited()
+        self.executor_factory.assert_not_called()
         self.assertEqual(
-            self.runtime.record_failure.call_args.kwargs["status"], "rejected"
+            self.recorder.record_failure.call_args.kwargs["status"], "rejected"
         )
 
     async def test_tool_returns_details_and_record_failure_preserves_error(self):
@@ -170,7 +219,7 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(code=code):
                 self.service.execute.side_effect = error
-                self.runtime.record_failure.side_effect = OSError("record unavailable")
+                self.recorder.record_failure.side_effect = OSError("record unavailable")
                 with self.assertRaises(type(error)) as raised:
                     await self.execute()
                 self.assertIs(raised.exception, error)
@@ -180,7 +229,7 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(payload["status"], "error")
                 self.assertNotIn("code", payload)
                 self.assertEqual(
-                    self.runtime.record_failure.call_args.kwargs["error_code"], code
+                    self.recorder.record_failure.call_args.kwargs["error_code"], code
                 )
                 if isinstance(error, QueryRejectedError):
                     self.assertEqual(
@@ -197,18 +246,19 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
             await create_execute_sql_tool(self.handler).ainvoke(
                 {"runtime": self.tool_runtime, "sql": "SELECT 1", "purpose": "统计"}
             )
-        self.runtime.record_failure.assert_not_awaited()
-        self.runtime.record_success.assert_not_awaited()
+        self.recorder.record_failure.assert_not_awaited()
+        self.recorder.record_success.assert_not_awaited()
 
     async def test_identity_failure_does_not_execute_or_record_under_unknown_role(self):
-        self.runtime.resolve_principal.side_effect = QueryPrincipalNotConfiguredError(
-            "no role"
+        self.identity.resolve_query_principal.side_effect = (
+            QueryPrincipalNotConfiguredError("no role")
         )
         with self.assertRaises(QueryPrincipalNotConfiguredError):
             await self.execute()
-        self.runtime.validate.assert_not_awaited()
-        self.runtime.create_executor.assert_not_awaited()
-        self.runtime.record_failure.assert_not_awaited()
+        self.guard.check.assert_not_awaited()
+        self.query_clients.get_or_create.assert_not_awaited()
+        self.executor_factory.assert_not_called()
+        self.recorder.record_failure.assert_not_awaited()
 
 
 class QueryExecutorTest(unittest.IsolatedAsyncioTestCase):
@@ -454,7 +504,7 @@ class DorisStreamTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.exited)
 
 
-class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
+class QuerySessionBoundariesTest(unittest.IsolatedAsyncioTestCase):
     async def test_identity_policy_share_reads_and_doris_runs_outside_pg_sessions(self):
         active = set()
         events = []
@@ -495,47 +545,53 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
         clients = MagicMock(get_or_create=AsyncMock(return_value=MagicMock()))
         recorder = MagicMock(record_success=AsyncMock())
         store = MagicMock(write_artifact=AsyncMock(return_value="/data/result.csv"))
-        guard = MagicMock(check=AsyncMock(return_value=valid()))
 
         async def stream(*args):
             self.assertEqual(active, set())
             yield QueryBatch(("value",), ((1,),))
 
-        async def validate(*args):
-            self.assertEqual(active, {"meta"})
-            return valid()
-
         async def record(*args, **kwargs):
-            self.assertEqual(active, {"meta"})
+            self.assertEqual(active, {"query"})
 
-        guard.check.side_effect = validate
         recorder.record_success.side_effect = record
         with (
             patch(
-                "app.query.runtime.DorisCredentialCipher",
+                "app.identity.application.identity.DorisCredentialCipher",
                 return_value=MagicMock(decrypt=lambda _: "password"),
             ),
-            patch("app.query.runtime.IdentityPGRepo", return_value=repo),
             patch(
-                "app.query.runtime.DorisRoleRepository",
+                "app.identity.application.identity.IdentityPGRepo", return_value=repo
+            ),
+            patch(
+                "app.identity.application.identity.DorisRoleRepository",
                 return_value=MagicMock(
                     read_authorization=AsyncMock(
                         return_value=DorisAuthorizationSnapshot((), "same")
                     )
                 ),
             ),
-            patch("app.query.runtime.QueryGuardService", return_value=guard),
+            patch(
+                "app.metadata.application.resources.MetaPGRepo",
+                return_value=MagicMock(
+                    list_table_infos=AsyncMock(return_value=[]),
+                    list_column_infos=AsyncMock(return_value=[]),
+                ),
+            ),
             patch.object(DorisQueryRepository, "stream", stream),
+            patch(
+                "app.query.application.queries.QueryExecutionRecorder",
+                return_value=recorder,
+            ),
         ):
-            runtime = DatabaseQueryExecutionRuntime(
-                store,
-                lambda _: recorder,
-                manager("auth"),
-                manager("meta"),
-                clients,
-                MagicMock(),
+            identity_service = IdentityService(manager("auth"), MagicMock())
+            service = QueryExecutionService(
+                identity=identity_service,
+                metadata=MetadataReader(manager("meta")),
+                postgres=manager("query"),
+                query_clients=clients,
+                artifact_store=store,
             )
-            actual = await QueryExecutionHandler(runtime).execute(
+            actual = await service.execute(
                 key(), "SELECT 1", purpose="统计", tool_call_id=None
             )
         self.assertEqual(actual.row_count, 1)
@@ -544,7 +600,6 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
         clients.get_or_create.assert_awaited_once_with(
             "reader", "query_reader", "password"
         )
-        guard.check.assert_awaited_once_with("SELECT 1")
         context = recorder.record_success.call_args.args[0]
         self.assertEqual(
             (context.role_name, context.authorization_fingerprint), ("reader", "same")
@@ -556,8 +611,8 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 ("auth", "exit"),
                 ("meta", "enter"),
                 ("meta", "exit"),
-                ("meta", "enter"),
-                ("meta", "exit"),
+                ("query", "enter"),
+                ("query", "exit"),
             ],
         )
 
@@ -565,6 +620,7 @@ class QueryRuntimeTest(unittest.IsolatedAsyncioTestCase):
 class QueryRecorderTest(unittest.IsolatedAsyncioTestCase):
     def test_cross_database_assets_do_not_use_local_metadata_versions(self):
         recorder = QueryExecutionRecorder(
+            MagicMock(),
             MagicMock(),
             MagicMock(),
             MagicMock(),
@@ -610,7 +666,6 @@ class QueryRecorderTest(unittest.IsolatedAsyncioTestCase):
                 executions = MagicMock(record=AsyncMock())
                 experiences = MagicMock(
                     session=MagicMock(begin=transaction),
-                    metadata_versions=AsyncMock(return_value=({}, {})),
                     upsert_from_success=AsyncMock(return_value=stored),
                 )
                 scheduler = MagicMock()
@@ -621,6 +676,9 @@ class QueryRecorderTest(unittest.IsolatedAsyncioTestCase):
                     executions,
                     experiences,
                     scheduler,
+                    MagicMock(
+                        asset_versions=AsyncMock(return_value=AssetVersions({}, {}))
+                    ),
                     data_source="doris",
                     database_name="analytics",
                 )

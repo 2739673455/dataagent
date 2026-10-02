@@ -8,8 +8,8 @@ from uuid import uuid4
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk
 
-from app.assistant.events.projection import langchain_message_to_schema
-from app.assistant.events.stream import MessageDeltaParser
+from app.assistant.services.message_projection import langchain_message_to_schema
+from app.assistant.services.message_stream import MessageDeltaParser
 
 
 @pytest.mark.parametrize("fence", ["```", "~~~~"])

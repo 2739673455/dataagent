@@ -4,39 +4,15 @@ from uuid import UUID
 
 from loguru import logger
 
-from app.assistant.conversations.resources import conversation_lifecycle_resources
-from app.assistant.conversations.title import ConversationTitleService
-from app.assistant.model_factory import create_configured_model
+from app.assistant.agents.model_factory import create_configured_model
+from app.assistant.application.resources import conversation_lifecycle_resources
 from app.assistant.repositories.conversation import ConversationPGRepo
+from app.assistant.services.title import ConversationTitleService
 from app.shared.async_runtime import run_async
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
 from app.shared.database.base import AssistantBase
 from app.shared.tasks.celery_app import celery_app
-
-
-async def _generate_conversation_title(
-    user_id: int,
-    conversation_id: UUID,
-    expected_title: str,
-    user_text: str,
-) -> bool:
-    """创建短生命周期资源并生成单个会话标题。"""
-    async with create_configured_model(cfg.lm_config.active) as model:
-        title = await ConversationTitleService(model).generate(user_text)
-    if title is None:
-        return False
-    assistant_postgres = PostgresClientManager(cfg.langgraph_postgresql, AssistantBase)
-    try:
-        async with assistant_postgres.session() as session, session.begin():
-            return await ConversationPGRepo(session).replace_title_if_current(
-                user_id,
-                conversation_id,
-                expected_title=expected_title,
-                title=title,
-            )
-    finally:
-        await assistant_postgres.close()
 
 
 @celery_app.task(
@@ -131,3 +107,27 @@ def cleanup_expired_drafts_task() -> dict[str, int]:
         "pending_deleted_count": pending_count,
         "draft_deleted_count": draft_count,
     }
+
+
+async def _generate_conversation_title(
+    user_id: int,
+    conversation_id: UUID,
+    expected_title: str,
+    user_text: str,
+) -> bool:
+    """创建短生命周期资源并生成单个会话标题。"""
+    async with create_configured_model(cfg.lm_config.active) as model:
+        title = await ConversationTitleService(model).generate(user_text)
+    if title is None:
+        return False
+    assistant_postgres = PostgresClientManager(cfg.langgraph_postgresql, AssistantBase)
+    try:
+        async with assistant_postgres.session() as session, session.begin():
+            return await ConversationPGRepo(session).replace_title_if_current(
+                user_id,
+                conversation_id,
+                expected_title=expected_title,
+                title=title,
+            )
+    finally:
+        await assistant_postgres.close()

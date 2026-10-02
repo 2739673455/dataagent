@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from sqlalchemy.dialects import postgresql
 
 from app.identity import errors
+from app.identity.application.user_deletion import UserDeletionStateService
 from app.identity.repositories.identity import IdentityPGRepo
-from app.identity.services.user_deletion_store import PostgresUserDeletionStateStore
 from app.shared.config.app_config import cfg
 from app.shared.tasks.celery_app import celery_app
 from app.workflows import tasks
-from app.workflows.user_deletion import UserDeletionService
+from app.workflows.application.user_deletion import UserDeletionService
 
 
 class DeletionSubmissionTest(unittest.IsolatedAsyncioTestCase):
@@ -34,7 +34,8 @@ class DeletionSubmissionTest(unittest.IsolatedAsyncioTestCase):
         store = MagicMock(request=AsyncMock(side_effect=request))
         service = UserDeletionService(store, MagicMock(), MagicMock())
         with patch(
-            "app.workflows.user_deletion.enqueue_user_deletion", side_effect=publish
+            "app.workflows.application.user_deletion.enqueue_user_deletion",
+            side_effect=publish,
         ):
             self.assertTrue(await service.request_deletion(7, operator_id=1))
         self.assertEqual(events, ["committed", "published"])
@@ -43,7 +44,7 @@ class DeletionSubmissionTest(unittest.IsolatedAsyncioTestCase):
         store = MagicMock(request=AsyncMock(return_value=True))
         service = UserDeletionService(store, MagicMock(), MagicMock())
         with patch(
-            "app.workflows.user_deletion.enqueue_user_deletion",
+            "app.workflows.application.user_deletion.enqueue_user_deletion",
             side_effect=OSError("broker offline"),
         ) as publish:
             self.assertTrue(await service.request_deletion(7, operator_id=1))
@@ -54,7 +55,9 @@ class DeletionSubmissionTest(unittest.IsolatedAsyncioTestCase):
     async def test_duplicate_or_failed_request_does_not_publish(self):
         store = MagicMock(request=AsyncMock(return_value=False))
         service = UserDeletionService(store, MagicMock(), MagicMock())
-        with patch("app.workflows.user_deletion.enqueue_user_deletion") as publish:
+        with patch(
+            "app.workflows.application.user_deletion.enqueue_user_deletion"
+        ) as publish:
             self.assertFalse(await service.request_deletion(7, operator_id=1))
             store.request.side_effect = OSError("transaction failed")
             with self.assertRaises(OSError):
@@ -132,7 +135,7 @@ class DeletionWorkerTest(unittest.IsolatedAsyncioTestCase):
         self.db = MagicMock(close=AsyncMock())
         for target, value in (
             ("PostgresClientManager", self.db),
-            ("PostgresUserDeletionStateStore", self.store),
+            ("UserDeletionStateService", self.store),
         ):
             patcher = patch.object(tasks, target, return_value=value)
             patcher.start()
@@ -230,7 +233,7 @@ class DeletionDispatchTest(unittest.IsolatedAsyncioTestCase):
         before = datetime.now(UTC)
         with (
             patch.object(tasks, "PostgresClientManager", return_value=db),
-            patch.object(tasks, "PostgresUserDeletionStateStore", return_value=store),
+            patch.object(tasks, "UserDeletionStateService", return_value=store),
             patch.object(
                 tasks,
                 "enqueue_user_deletion",
@@ -272,7 +275,7 @@ class DeletionStateTest(unittest.IsolatedAsyncioTestCase):
         async def session():
             yield self.session
 
-        self.store = PostgresUserDeletionStateStore(MagicMock(session=session))
+        self.store = UserDeletionStateService(MagicMock(session=session))
         self.user = SimpleNamespace(id=1, is_active=True, is_admin=False)
         self.task = SimpleNamespace(status="pending")
         self.repo = MagicMock(
@@ -288,7 +291,7 @@ class DeletionStateTest(unittest.IsolatedAsyncioTestCase):
             record_user_deletion_failure=AsyncMock(),
         )
         patcher = patch(
-            "app.identity.services.user_deletion_store.IdentityPGRepo",
+            "app.identity.application.user_deletion.IdentityPGRepo",
             return_value=self.repo,
         )
         patcher.start()

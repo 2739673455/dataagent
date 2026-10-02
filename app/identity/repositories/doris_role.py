@@ -310,24 +310,6 @@ class DorisRoleRepository:
         return f"SELECT_PRIV({quoted_columns})"
 
 
-def _row_policy_from_row(row: Mapping[str, object]) -> DorisRowPolicy:
-    """将 Doris SHOW ROW POLICY 结果转换为稳定模型。"""
-    raw_policy_type = str(row["FilterType"]).upper()
-    if raw_policy_type not in {"RESTRICTIVE", "PERMISSIVE"}:
-        raise ValueError(f"Doris 行策略组合类型无效: {raw_policy_type}")
-    return DorisRowPolicy(
-        policy_name=str(row["PolicyName"]),
-        catalog_name=str(row["CatalogName"]),
-        database_name=str(row["DbName"]),
-        table_name=str(row["TableName"]),
-        policy_type=cast(
-            Literal["RESTRICTIVE", "PERMISSIVE"],
-            raw_policy_type,
-        ),
-        predicate=str(row["WherePredicate"]),
-    )
-
-
 def role_name_from_row(row: Mapping[str, object]) -> str | None:
     """从不同 Doris 小版本的 SHOW ROLES 结果读取角色名。"""
     for key in ("Name", "Role", "RoleName"):
@@ -351,3 +333,21 @@ def role_users_from_row(row: Mapping[str, object]) -> tuple[str, ...]:
     if identities:
         return identities
     return tuple(item.strip() for item in text.split(",") if item.strip())
+
+
+def _row_policy_from_row(row: Mapping[str, object]) -> DorisRowPolicy:
+    """将 Doris SHOW ROW POLICY 结果转换为稳定模型。"""
+    raw_policy_type = str(row["FilterType"]).upper()
+    if raw_policy_type not in {"RESTRICTIVE", "PERMISSIVE"}:
+        raise ValueError(f"Doris 行策略组合类型无效: {raw_policy_type}")
+    return DorisRowPolicy(
+        policy_name=str(row["PolicyName"]),
+        catalog_name=str(row["CatalogName"]),
+        database_name=str(row["DbName"]),
+        table_name=str(row["TableName"]),
+        policy_type=cast(
+            Literal["RESTRICTIVE", "PERMISSIVE"],
+            raw_policy_type,
+        ),
+        predicate=str(row["WherePredicate"]),
+    )

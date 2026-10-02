@@ -1,24 +1,29 @@
 """召回取消传播和字段上下文边界回归。"""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from collections import defaultdict
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
 
-from app.metadata.models.catalog import ColumnInfo, TableInfo
-from app.metadata.models.search import (
-    SemanticMatchReason,
-    SemanticMetricRecallResult,
-    SemanticResourceRecallRequest,
-)
-from app.metadata.services.search import (
+from app.identity.contracts import AssetAccessPolicy, AssetIdentity
+from app.metadata.application.search import (
     SemanticCatalog,
-    SemanticResourceRecallService,
+    SemanticResourceService,
     _ColumnContextBuilder,
     _RankedCandidates,
     _RecallContext,
 )
+from app.metadata.contracts import (
+    SemanticMatchReason,
+    SemanticMetricRecallResult,
+    SemanticResourceRecallRequest,
+)
+from app.metadata.models.catalog import ColumnInfo, TableInfo
+from app.shared.config.app_config import cfg
+from app.shared.contracts.search import SearchHit
 
 
 def test_context_preserves_examples_and_deduplicates_inclusion_reasons():
@@ -174,15 +179,10 @@ def test_cancellation_propagates_without_recording_backend_failure(stage):
         context.catalog.columns[("orders", "amount")] = ColumnInfo(
             t_name="orders", name="amount"
         )
-        service = SemanticResourceRecallService(
+        service = SemanticResourceService(
+            MagicMock(),
+            MagicMock(),
             MagicMock(aembed_documents=AsyncMock(side_effect=asyncio.CancelledError())),
-            MagicMock(),
-            MagicMock(),
-            MagicMock(),
-            context.catalog,
-            MagicMock(),
-            "source",
-            "db",
         )
         with pytest.raises(asyncio.CancelledError):
             asyncio.run(service._retrieve(context))
@@ -198,3 +198,110 @@ def test_candidate_expansion_respects_request_boundaries(limit):
         catalog=SemanticCatalog(tables={}, columns={}, metrics={}),
     )
     assert context.search_limit == limit * 3
+
+
+def test_shared_service_keeps_concurrent_permissions_and_query_limits_per_request():
+    columns = [
+        ColumnInfo(
+            t_name="orders",
+            name=name,
+            type="BIGINT",
+            description=name,
+            alias=[],
+            examples=[],
+            index_values=False,
+            meta_version=1,
+            index_version=1,
+        )
+        for name in ("amount", "cost")
+    ]
+    table = TableInfo(
+        name="orders",
+        role="fact",
+        description="订单",
+        primary_key_columns=[],
+        meta_version=1,
+    )
+    catalog_repo = MagicMock(
+        list_table_infos=AsyncMock(return_value=[table]),
+        list_column_infos=AsyncMock(return_value=columns),
+        list_metric_infos=AsyncMock(return_value=[]),
+    )
+
+    @asynccontextmanager
+    async def session():
+        yield MagicMock()
+
+    async def run():
+        both_started = asyncio.Event()
+        started = set()
+        active = defaultdict(int)
+        allowed = defaultdict(set)
+
+        async def hits(term, *, allowed_keys, limit):
+            request_name = term.split("-")[0]
+            active[request_name] += 1
+            assert active[request_name] == 1
+            allowed[request_name].add(allowed_keys)
+            started.add(request_name)
+            if len(started) == 2:
+                both_started.set()
+            try:
+                await both_started.wait()
+                await asyncio.sleep(0)
+                return [SearchHit(item=column, score=1.0) for column in columns]
+            finally:
+                active[request_name] -= 1
+
+        service = SemanticResourceService(
+            MagicMock(session=session),
+            MagicMock(),
+            MagicMock(aembed_documents=AsyncMock(return_value=[[0.1], [0.2]])),
+            max_concurrent_index_queries=1,
+        )
+        service._column_repo = MagicMock(
+            search_text_hits=AsyncMock(side_effect=hits),
+            search_vector_hits=AsyncMock(return_value=[]),
+        )
+        with patch(
+            "app.metadata.application.search.MetaPGRepo", return_value=catalog_repo
+        ):
+            async with asyncio.timeout(1):
+                responses = await asyncio.gather(
+                    *(
+                        service.recall(
+                            SemanticResourceRecallRequest(
+                                terms=[f"{request_name}-1", f"{request_name}-2"],
+                                resource_types=["column"],
+                            ),
+                            AssetAccessPolicy(
+                                user_id,
+                                grants=frozenset(
+                                    {
+                                        AssetIdentity(
+                                            cfg.query.data_source,
+                                            cfg.doris.database,
+                                            "orders",
+                                            column_name,
+                                        )
+                                    }
+                                ),
+                            ),
+                        )
+                        for user_id, request_name, column_name in (
+                            (7, "left", "amount"),
+                            (8, "right", "cost"),
+                        )
+                    )
+                )
+        assert [
+            [column.name for column in response.columns] for response in responses
+        ] == [["amount"], ["cost"]]
+        assert all(response.status == "success" for response in responses)
+        assert allowed == {
+            "left": {frozenset({("orders", "amount")})},
+            "right": {frozenset({("orders", "cost")})},
+        }
+        assert dict(active) == {"left": 0, "right": 0}
+
+    asyncio.run(run())

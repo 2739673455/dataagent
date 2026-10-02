@@ -271,6 +271,15 @@ class AuthRateLimitService:
                 if isinstance(limiter, RedisBoundedRateLimiter):
                     stack.callback(limiter.close)
 
+    async def check_login(self, client_ip: str, identifier: str) -> None:
+        """同时限制登录来源 IP 与账号标识。"""
+        await self._login_ip.consume(self._normalize_ip(client_ip))
+        await self._login_identifier.consume(self._normalize_identifier(identifier))
+
+    async def check_refresh(self, client_ip: str) -> None:
+        """限制单个来源 IP 的令牌刷新频率。"""
+        await self._refresh_ip.consume(self._normalize_ip(client_ip))
+
     @staticmethod
     def _build_limiter(
         rule: RateLimitRule,
@@ -288,15 +297,6 @@ class AuthRateLimitService:
             redis_url=redis_url,
             bucket_name=bucket_name,
         )
-
-    async def check_login(self, client_ip: str, identifier: str) -> None:
-        """同时限制登录来源 IP 与账号标识。"""
-        await self._login_ip.consume(self._normalize_ip(client_ip))
-        await self._login_identifier.consume(self._normalize_identifier(identifier))
-
-    async def check_refresh(self, client_ip: str) -> None:
-        """限制单个来源 IP 的令牌刷新频率。"""
-        await self._refresh_ip.consume(self._normalize_ip(client_ip))
 
     @staticmethod
     def _normalize_ip(client_ip: str) -> str:

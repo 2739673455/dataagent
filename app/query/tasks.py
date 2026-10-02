@@ -6,14 +6,14 @@ from uuid import UUID
 from elasticsearch import AsyncElasticsearch
 from loguru import logger
 
+from app.query.application.index_tasks import query_experience_index_scheduler
 from app.query.providers import build_query_experience_indexer
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
-from app.query.task_scheduler import query_experience_index_scheduler
 from app.shared.async_runtime import run_async
 from app.shared.clients.embedding_client import EmbeddingClient
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
-from app.shared.database.base import MetaBase
+from app.shared.database.base import QueryBase
 from app.shared.tasks.celery_app import celery_app
 
 _REPAIR_BATCH_SIZE = 500
@@ -61,7 +61,7 @@ async def _sync_index(experience_id: UUID, revision: int) -> int:
             hosts=[f"http://{cfg.elasticsearch.host}:{cfg.elasticsearch.port}"]
         )
         stack.push_async_callback(es.close)
-        postgres = PostgresClientManager(cfg.meta_postgresql, MetaBase)
+        postgres = PostgresClientManager(cfg.meta_postgresql, QueryBase)
         stack.push_async_callback(postgres.close)
         async with postgres.session() as session:
             return await build_query_experience_indexer(
@@ -73,7 +73,7 @@ async def _sync_index(experience_id: UUID, revision: int) -> int:
 
 async def _repair_indexes() -> dict[str, int]:
     """扫描索引版本落后的查询经验并提交补偿任务。"""
-    postgres = PostgresClientManager(cfg.meta_postgresql, MetaBase)
+    postgres = PostgresClientManager(cfg.meta_postgresql, QueryBase)
     try:
         async with postgres.session() as session, session.begin():
             pending = await QueryExperiencePGRepo(session).list_pending_index_repairs(

@@ -103,7 +103,7 @@ def test_invalid_tool_arguments_never_execute_business(kind):
     elif kind == "shell":
         tool, args = create_shell_tools(service)[2], {"job_id": "j", "wait_seconds": 61}
     else:
-        tool, args = create_view_image_tool(), {"f_path": " "}
+        tool, args = create_view_image_tool("/data/conversation"), {"f_path": " "}
     message = asyncio.run(_invoke(tool, args))
     assert message.status == "error"
     assert "Error invoking tool" in message.content
@@ -206,13 +206,22 @@ def test_tool_cancellation_is_not_converted_to_business_error(kind):
 
 
 def test_image_tool_normalizes_path_but_stored_payload_is_still_validated():
-    tool = create_view_image_tool()
+    tool = create_view_image_tool("/data/conversation")
     assert tool.invoke({"f_path": " ./chart.png "}) == {
         "type": "image_view_request",
-        "f_path": "chart.png",
+        "f_path": "/data/conversation/chart.png",
     }
     assert tool.invoke({"f_path": "report.csv"})["code"] == "unsupported_image_type"
     with pytest.raises(ValidationError):
         ImageViewRequest.model_validate_json(
             '{"type":"image_view_request","f_path":" "}'
         )
+
+
+def test_image_tool_resolves_session_paths_and_rejects_invalid_text():
+    tool = create_view_image_tool("/data/conversation/sessions/analyst/session")
+    assert tool.invoke({"f_path": "tmp/../chart.png"})["f_path"] == (
+        "/data/conversation/sessions/analyst/session/chart.png"
+    )
+    assert tool.invoke({"f_path": "/skills/chart.png"})["f_path"] == "/skills/chart.png"
+    assert tool.invoke({"f_path": "chart\\image.png"})["code"] == "invalid_path"

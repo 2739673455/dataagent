@@ -3,15 +3,11 @@
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, exists, func, or_, select, tuple_, update
+from sqlalchemy import delete, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.metadata.models.catalog import (
-    ColumnInfo,
-    TableInfo,
-)
 from app.query.models.execution import QueryExecution
 from app.query.models.experience import (
     QueryExperience,
@@ -129,6 +125,7 @@ class QueryExperiencePGRepo:
         result = await self._session.scalars(
             select(QueryExperience)
             .options(selectinload(QueryExperience.assets))
+            .execution_options(populate_existing=True)
             .where(*conditions)
         )
         by_id = {item.id: item for item in result.unique().all()}
@@ -386,65 +383,3 @@ class QueryExperiencePGRepo:
             .limit(limit)
         )
         return {experience_id: revision for experience_id, revision in result.tuples()}
-
-    async def current_asset_versions(
-        self,
-        experiences: list[QueryExperience],
-    ) -> dict[str, int]:
-        """批量读取经验资产当前对应的元数据版本。"""
-        table_names = {
-            asset.table_name
-            for experience in experiences
-            for asset in experience.assets
-            if asset.kind == "table"
-        }
-        column_keys = {
-            (asset.table_name, asset.column_name)
-            for experience in experiences
-            for asset in experience.assets
-            if asset.kind == "column" and asset.column_name is not None
-        }
-        table_versions, column_versions = await self.metadata_versions(
-            table_names,
-            {
-                (table_name, column_name)
-                for table_name, column_name in column_keys
-                if column_name is not None
-            },
-        )
-        versions: dict[str, int] = {}
-        for experience in experiences:
-            for asset in experience.assets:
-                if asset.kind == "table":
-                    version = table_versions.get(asset.table_name)
-                else:
-                    version = column_versions.get(
-                        (asset.table_name, asset.column_name or "")
-                    )
-                if version is not None:
-                    versions[asset.resource_key] = version
-        return versions
-
-    async def metadata_versions(
-        self,
-        table_names: set[str],
-        column_keys: set[tuple[str, str]],
-    ) -> tuple[dict[str, int], dict[tuple[str, str], int]]:
-        """批量读取指定表和字段的当前元数据版本。"""
-        table_versions: dict[str, int] = {}
-        column_versions: dict[tuple[str, str], int] = {}
-        if table_names:
-            tables = await self._session.scalars(
-                select(TableInfo).where(TableInfo.name.in_(table_names))
-            )
-            for table in tables:
-                table_versions[table.name] = table.meta_version
-        if column_keys:
-            columns = await self._session.scalars(
-                select(ColumnInfo).where(
-                    tuple_(ColumnInfo.t_name, ColumnInfo.name).in_(column_keys)
-                )
-            )
-            for column in columns:
-                column_versions[(column.t_name, column.name)] = column.meta_version
-        return table_versions, column_versions

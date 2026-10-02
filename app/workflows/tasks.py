@@ -5,22 +5,35 @@ from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 
-from app.assistant.conversations.resources import conversation_lifecycle_resources
-from app.identity.services.user_deletion_store import PostgresUserDeletionStateStore
+from app.assistant.application import conversation_lifecycle_resources
+from app.identity.application import UserDeletionStateService
 from app.shared.async_runtime import run_async
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
 from app.shared.database.base import AuthBase
 from app.shared.tasks.celery_app import celery_app
+from app.workflows.application.user_deletion import UserDeletionService
 from app.workflows.task_scheduler import enqueue_user_deletion
-from app.workflows.user_deletion import UserDeletionService
 
 # 数据库领取租约覆盖一次任务硬时限和退出余量，与 Broker 可见性分别维护。
 USER_DELETION_CLAIM_SECONDS = cfg.task_queue.task_time_limit_seconds + 300
 
 
+@celery_app.task(name="dataagent.workflows.delete_user")
+def delete_user_task(user_id: int) -> dict[str, object]:
+    """执行注销或跳过重复消息；业务重试统一由数据库调度。"""
+    processed = run_async(_process_user_deletion(user_id))
+    return {"user_id": user_id, "processed": processed}
+
+
+@celery_app.task(name="dataagent.workflows.dispatch_due_user_deletions")
+def dispatch_due_user_deletions_task() -> dict[str, int]:
+    """提交已到重试时间的用户注销任务。"""
+    return {"dispatched_count": run_async(_dispatch_due_user_deletions())}
+
+
 async def _record_failure_safely(
-    state_store: PostgresUserDeletionStateStore, user_id: int, error: Exception
+    state_store: UserDeletionStateService, user_id: int, error: Exception
 ) -> None:
     """尽力保存下一次重试时间，不遮蔽原始异常或中断批量投递。"""
     try:
@@ -39,7 +52,7 @@ async def _process_user_deletion(user_id: int) -> bool:
     auth_postgres = PostgresClientManager(cfg.auth_postgresql, AuthBase)
     async with AsyncExitStack() as stack:
         stack.push_async_callback(auth_postgres.close)
-        state_store = PostgresUserDeletionStateStore(auth_postgres)
+        state_store = UserDeletionStateService(auth_postgres)
         try:
             acquired = await stack.enter_async_context(
                 state_store.execution_lock(user_id)
@@ -64,18 +77,11 @@ async def _process_user_deletion(user_id: int) -> bool:
             raise
 
 
-@celery_app.task(name="dataagent.workflows.delete_user")
-def delete_user_task(user_id: int) -> dict[str, object]:
-    """执行注销或跳过重复消息；业务重试统一由数据库调度。"""
-    processed = run_async(_process_user_deletion(user_id))
-    return {"user_id": user_id, "processed": processed}
-
-
 async def _dispatch_due_user_deletions() -> int:
     """原子领取到期注销记录并向生命周期队列提交任务。"""
     auth_postgres = PostgresClientManager(cfg.auth_postgresql, AuthBase)
     try:
-        state_store = PostgresUserDeletionStateStore(auth_postgres)
+        state_store = UserDeletionStateService(auth_postgres)
         claimed_at = datetime.now(UTC)
         user_ids = await state_store.claim_due_user_ids(
             claimed_at,
@@ -101,9 +107,3 @@ async def _dispatch_due_user_deletions() -> int:
         return dispatched_count
     finally:
         await auth_postgres.close()
-
-
-@celery_app.task(name="dataagent.workflows.dispatch_due_user_deletions")
-def dispatch_due_user_deletions_task() -> dict[str, int]:
-    """提交已到重试时间的用户注销任务。"""
-    return {"dispatched_count": run_async(_dispatch_due_user_deletions())}

@@ -2,8 +2,7 @@
 
 from http import HTTPStatus
 
-from app.query.models.execution import QueryExecutionStatus
-from app.query.models.validation import QueryValidationResult
+from app.query.contracts import QueryExecutionStatus, QueryValidationResult
 from app.shared.errors.base import ProblemError
 
 

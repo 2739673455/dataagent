@@ -62,7 +62,7 @@ export function ExperienceDetailDialog({ experienceId, onClose }: Props) {
               <dd>{detail.status}</dd>
             </div>
             <div>
-              <dt className="text-[#71717a]">指纹</dt>
+              <dt className="text-[#71717a]">SQL 模板指纹</dt>
               <dd className="truncate font-mono" title={detail.fingerprint}>
                 {detail.fingerprint}
               </dd>

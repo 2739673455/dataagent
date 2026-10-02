@@ -79,3 +79,16 @@ class PlannerContinuationLimitError(RuntimeError):
         super().__init__(
             f"规划器在结束原因 {finish_reason!r} 下连续续写次数超过上限 ({max_continuations} 次)"
         )
+
+
+class SemanticQueriesNotFoundError(Exception):
+    """一个或多个查询业务键不存在。"""
+
+    def __init__(self, queries: list[str]) -> None:
+        """初始化未找到的查询业务键。"""
+        self.queries = queries
+        super().__init__(", ".join(queries))
+
+
+class SemanticRecallSaveError(RuntimeError):
+    """召回成功但快照未能持久化。"""

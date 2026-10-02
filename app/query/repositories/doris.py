@@ -7,12 +7,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from app.query.contracts import QueryBatch, QueryExecutionLimits, QueryExecutionOptions
 from app.query.errors import QueryExecutionTimeoutError
-from app.query.models.execution import (
-    QueryBatch,
-    QueryExecutionLimits,
-    QueryExecutionOptions,
-)
 from app.shared.clients.doris_client_manager import DorisClientManager
 
 

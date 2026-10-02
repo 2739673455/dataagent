@@ -6,8 +6,8 @@ from uuid import uuid4
 import pytest
 from redis.exceptions import RedisError
 
+from app.sandbox.application.manager import DockerSandboxManager
 from app.sandbox.errors import SandboxDeletedError, SandboxOwnershipError
-from app.sandbox.manager import DockerSandboxManager
 from app.sandbox.ownership import RedisSandboxOwnership
 from tests.sandbox.fakes import FakeSandboxOwnership, build_sandbox_config
 
@@ -35,7 +35,10 @@ def test_manager_only_finalizes_containers_for_last_runtime() -> None:
         manager._ownership_started = True
         with (
             patch.object(manager._runtime_pool, "finalize") as finalize,
-            patch("app.sandbox.manager.asyncio.to_thread", side_effect=run_inline),
+            patch(
+                "app.sandbox.application.manager.asyncio.to_thread",
+                side_effect=run_inline,
+            ),
         ):
             await manager.close()
         return finalize.call_count

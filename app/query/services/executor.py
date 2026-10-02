@@ -19,21 +19,21 @@ from typing import TYPE_CHECKING, Any, TextIO
 
 from loguru import logger
 
-from app.query.errors import QueryRejectedError, QueryResultShapeError
-from app.query.models.execution import (
+from app.query.contracts import (
     AnalysisQueryResult,
     QueryExecutionLimits,
     QueryExecutionOptions,
     QueryResultColumn,
     QueryTimeRange,
+    QueryValidationResult,
 )
-from app.query.models.validation import QueryValidationResult
-from app.sandbox import SandboxSessionScope
+from app.query.errors import QueryRejectedError, QueryResultShapeError
+from app.sandbox.contracts import SandboxSessionScope
 from app.shared.contracts.analysis import AgentSessionKey
 
 if TYPE_CHECKING:
     from app.query.repositories.doris import DorisQueryRepository
-    from app.sandbox import DockerSandboxManager
+    from app.sandbox.application import DockerSandboxManager
 
 _SAMPLE_STRING_MAX_CHARS = 512
 _SAMPLE_COLLECTION_MAX_ITEMS = 20

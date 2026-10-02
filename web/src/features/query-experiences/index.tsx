@@ -210,7 +210,7 @@ export function QueryExperienceManagement() {
               type="text"
               value={query}
               onChange={(event) => changeFilter(() => setQuery(event.target.value))}
-              placeholder="搜索目的、SQL 或指纹"
+              placeholder="搜索目的、SQL 或 SQL 模板指纹"
               className="h-7 w-full rounded border border-[#d4d4ce] pl-8 pr-7 text-xs focus:border-[#1e2024] focus:outline-none"
             />
             {query && (

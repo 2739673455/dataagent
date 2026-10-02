@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.assistant.checkpoints import postgres as persistence_module
-from app.assistant.checkpoints.postgres import PostgresCheckpointStore
+from app.assistant.repositories import checkpoint as persistence_module
+from app.assistant.repositories.checkpoint import PostgresCheckpointStore
 from app.shared import async_runtime
 from app.shared.clients import postgres_advisory_locks as locks_module
 from app.shared.clients.postgres_advisory_locks import PostgresAdvisoryLocks

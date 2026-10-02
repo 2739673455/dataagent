@@ -3,15 +3,35 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from app.assistant.conversations.lifecycle import ConversationLifecycleService
-from app.assistant.execution.manager import AgentManager
-from app.assistant.execution.run import ConversationRunService
+from app.assistant.application.lifecycle import ConversationLifecycleService
 from app.assistant.repositories.conversation import ConversationPGRepo
-from app.metadata.services.recall_cleanup import RecallCleanupService
-from app.sandbox import DockerSandboxManager
+from app.assistant.services.agent_manager import AgentManager
+from app.assistant.services.conversation_run import ConversationRunService
+from app.assistant.services.recall_cleanup import RecallCleanupService
+from app.sandbox.application import DockerSandboxManager
 from app.shared.clients.postgres_advisory_locks import PostgresAdvisoryLocks
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import LifecycleConfig
+
+
+def build_conversation_lifecycle_service(
+    locks: PostgresAdvisoryLocks,
+    assistant_postgres: PostgresClientManager,
+    agents: AgentManager,
+    sandbox: DockerSandboxManager,
+    config: LifecycleConfig,
+    runs: ConversationRunService | None = None,
+) -> ConversationLifecycleService:
+    """组装会话跨存储生命周期服务。"""
+    return ConversationLifecycleService(
+        lambda: _conversation_repository(assistant_postgres),
+        RecallCleanupService(assistant_postgres),
+        locks,
+        agents,
+        sandbox,
+        config,
+        runs,
+    )
 
 
 @asynccontextmanager
@@ -21,24 +41,3 @@ async def _conversation_repository(
     """创建带事务边界的会话目录数据访问。"""
     async with postgres.session() as session, session.begin():
         yield ConversationPGRepo(session)
-
-
-def build_conversation_lifecycle_service(
-    locks: PostgresAdvisoryLocks,
-    assistant_postgres: PostgresClientManager,
-    meta_postgres: PostgresClientManager,
-    agents: AgentManager,
-    sandbox: DockerSandboxManager,
-    config: LifecycleConfig,
-    runs: ConversationRunService | None = None,
-) -> ConversationLifecycleService:
-    """组装会话跨存储生命周期服务。"""
-    return ConversationLifecycleService(
-        lambda: _conversation_repository(assistant_postgres),
-        RecallCleanupService(meta_postgres),
-        locks,
-        agents,
-        sandbox,
-        config,
-        runs,
-    )

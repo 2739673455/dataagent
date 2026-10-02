@@ -13,7 +13,7 @@ from app.assistant.agents.filesystem import (
     packaged_skill_readonly_mounts,
 )
 from app.assistant.resource_loader import SKILLS_DIRECTORY, load_prompt
-from app.sandbox.backend import DockerSandboxBackend
+from app.sandbox.application.backend import DockerSandboxBackend
 
 _ANALYST_SKILLS_PATH = agent_skills_mount_path("analyst")
 

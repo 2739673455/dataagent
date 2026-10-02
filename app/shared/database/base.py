@@ -13,3 +13,7 @@ class MetaBase(DeclarativeBase):
 
 class AssistantBase(DeclarativeBase):
     """助手运行数据 ORM 声明基类。"""
+
+
+class QueryBase(DeclarativeBase):
+    """查询执行和经验数据的 ORM 声明基类。"""

@@ -32,13 +32,13 @@ POSTGRES_PASSWORD=123123
 DORIS_ADMIN_PASSWORD=123123
 
 # Doris 查询身份凭据加密密钥
-# python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+# uv run python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
 DORIS_CREDENTIAL_ENCRYPTION_KEY=
 
 # ==================== 身份认证与管理员 ====================
 
 # JWT 签名密钥，必须使用至少 32 字符的随机值
-# python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
+# uv run python -c 'import secrets; print(secrets.token_urlsafe(48))'
 JWT_SECRET=
 
 # 初始管理员引导凭据（scripts/bootstrap_admin.py）
@@ -51,9 +51,6 @@ ADMIN_PASSWORD=123123
 
 # DeepSeek 官方 API 密钥
 DEEPSEEK_API_KEY=
-
-# OpenRouter 模型服务密钥
-OPENROUTER_API_KEY=
 
 # SiliconFlow 模型服务密钥
 SILICONFLOW_API_KEY=
@@ -72,7 +69,7 @@ TAVILY_API_KEY=
 
 **语言模型（`lm_config`）**
 
-- `models`：按配置名声明模型，填写 `model_provider`、`api_protocol`、`model`、`base_url` 和 `api_key`；`params` 用于传入推理强度等附加参数。
+- `models`：按配置名声明模型，`model_provider` 支持 `openai` 和 `deepseek`，其余字段为 `api_protocol`、`model`、`base_url` 和 `api_key`；`params` 用于传入推理强度等附加参数。
 - `active`：选择 `models` 中的一个配置名，作为 Planner 的默认模型。
 - `profile`：按模型实际能力填写图片输入支持（`image_inputs`）、结构化输出支持（`structured_output`）和上下文长度（`max_input_tokens`）。
 - `agent.specialists`：可为 Explorer、Analyst、Reviewer 单独指定模型配置名；填写 `default` 时跟随 `lm_config.active`。

@@ -2,11 +2,8 @@
 
 from typing import Any
 
-from app.metadata.models.catalog import (
-    ColumnInfo,
-    ColumnKey,
-    column_resource_key,
-)
+from app.metadata.contracts import ColumnKey
+from app.metadata.models.catalog import ColumnInfo, column_resource_key
 from app.metadata.repositories.semantic_index import (
     SemanticIndexRepo,
 )

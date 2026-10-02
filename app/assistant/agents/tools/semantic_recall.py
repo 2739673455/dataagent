@@ -1,6 +1,8 @@
 """Explorer 召回工具：参数校验、用例调用和结果投影。"""
 
-from typing import Any, cast
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from langchain.tools import tool
@@ -9,8 +11,7 @@ from langchain_core.tools import BaseTool
 from loguru import logger
 
 from app.assistant.agents.tools.errors import tool_error
-from app.metadata.errors import SemanticQueriesNotFoundError, SemanticRecallSaveError
-from app.metadata.models.recall import (
+from app.assistant.contracts import (
     DeleteRecallsRequest,
     GetRecallRequest,
     ListRecallsRequest,
@@ -20,36 +21,15 @@ from app.metadata.models.recall import (
     SemanticRecallResourceDeletion,
     SemanticRecallUpdate,
 )
-from app.metadata.models.search import (
-    SemanticResourceRecallRequest,
-    SemanticResourceType,
-)
-from app.metadata.services.recall_application import SemanticRecallService
+from app.assistant.errors import SemanticQueriesNotFoundError, SemanticRecallSaveError
+from app.metadata.contracts import SemanticResourceRecallRequest, SemanticResourceType
 
-
-def _recall_identity(config: RunnableConfig) -> tuple[int, UUID]:
-    """读取服务端注入的会话身份。"""
-    configurable = cast(dict[str, Any], config)["configurable"]
-    return configurable["user_id"], UUID(configurable["conversation_id"])
-
-
-def _recall_error(
-    message: str, error: Exception, *, missing_message: str = ""
-) -> dict[str, Any]:
-    """保留记录缺失与其他业务失败的不同响应。"""
-    if missing_message and isinstance(error, SemanticQueriesNotFoundError):
-        return {"status": "error", "message": missing_message, "queries": error.queries}
-    logger.opt(exception=error).error(message)
-    if isinstance(error, SemanticRecallSaveError):
-        cause = error.__cause__
-        return tool_error(
-            "无法保存语义召回快照", cause if isinstance(cause, Exception) else error
-        )
-    return tool_error(message, error)
+if TYPE_CHECKING:
+    from app.assistant.application.recall import SemanticRecallService
 
 
 def create_semantic_recall_tools(recall: SemanticRecallService) -> list[BaseTool]:
-    """请求模型由工具框架校验，业务编排由 metadata 承担。"""
+    """请求模型由工具框架校验，业务编排由召回用例承担。"""
 
     @tool(args_schema=RecallContextRequest)
     async def recall_context(
@@ -315,3 +295,24 @@ def semantic_recall_update(update: SemanticRecallUpdate) -> dict[str, Any]:
     if any(removed.values()):
         payload["removed"] = removed
     return payload
+
+
+def _recall_identity(config: RunnableConfig) -> tuple[int, UUID]:
+    """读取服务端注入的会话身份。"""
+    configurable = cast(dict[str, Any], config)["configurable"]
+    return configurable["user_id"], UUID(configurable["conversation_id"])
+
+
+def _recall_error(
+    message: str, error: Exception, *, missing_message: str = ""
+) -> dict[str, Any]:
+    """保留记录缺失与其他业务失败的不同响应。"""
+    if missing_message and isinstance(error, SemanticQueriesNotFoundError):
+        return {"status": "error", "message": missing_message, "queries": error.queries}
+    logger.opt(exception=error).error(message)
+    if isinstance(error, SemanticRecallSaveError):
+        cause = error.__cause__
+        return tool_error(
+            "无法保存语义召回快照", cause if isinstance(cause, Exception) else error
+        )
+    return tool_error(message, error)

@@ -15,9 +15,9 @@ from langgraph.graph.state import CompiledStateGraph
 
 from app.assistant.agents.agent import create_agent
 from app.assistant.agents.filesystem import agent_skills_mount_path
-from app.assistant.execution.shell_jobs import ShellJobRuntime
 from app.assistant.resource_loader import SKILLS_DIRECTORY, load_prompt
-from app.sandbox import DockerSandboxManager
+from app.assistant.services.shell_jobs import ShellJobRuntime
+from app.sandbox.application import DockerSandboxManager
 from app.shared.contracts.analysis import (
     AGENT_TYPES,
     AgentSessionKey,
@@ -45,23 +45,6 @@ _RESERVED_MCP_TOOL_NAMES = frozenset(
 )
 
 
-def _merge_delegation_records(
-    current: dict[str, object],
-    updates: dict[str, object],
-) -> dict[str, object]:
-    """按 delegation ID 覆盖单条状态，同时保留同 Session 的历史记录。"""
-    return {**current, **updates}
-
-
-class SpecialistAgentState(DeepAgentState):
-    """增加显式 delegation 状态的专业 Agent Checkpoint。"""
-
-    delegation_records: Annotated[
-        dict[str, object],
-        _merge_delegation_records,
-    ]
-
-
 @dataclass(frozen=True, slots=True)
 class SpecialistAgentRun:
     """一次 delegation 共用的 Agent 图和 Shell Job Runtime。"""
@@ -80,48 +63,13 @@ class SpecialistDefinition:
     skills: tuple[str, ...] = ()
 
 
-def build_specialist_definitions(
-    explorer_tools: Iterable[BaseTool],
-    explorer_mcp_tools: Iterable[BaseTool],
-) -> dict[AgentType, SpecialistDefinition]:
-    """构造专业 Agent 定义，并将数据访问能力限定给 Explorer。"""
-    builtin_tools = tuple(explorer_tools)
-    mcp_tools = tuple(explorer_mcp_tools)
-    tools_by_name: dict[str, BaseTool] = {}
-    for tool in (*builtin_tools, *mcp_tools):
-        if tool.name in tools_by_name:
-            raise ValueError(f"存在重名工具: {tool.name}")
-        tools_by_name[tool.name] = tool
+class SpecialistAgentState(DeepAgentState):
+    """增加显式 delegation 状态的专业 Agent Checkpoint。"""
 
-    mcp_tool_names = frozenset(tool.name for tool in mcp_tools)
-    reserved_mcp_names = sorted(mcp_tool_names & _RESERVED_MCP_TOOL_NAMES)
-    if reserved_mcp_names:
-        raise ValueError(
-            f"MCP 工具名称与运行时内置工具冲突: {', '.join(reserved_mcp_names)}"
-        )
-
-    missing_tools = sorted(_REQUIRED_EXPLORER_TOOLS - tools_by_name.keys())
-    if missing_tools:
-        raise ValueError(f"Explorer 缺少必需工具: {', '.join(missing_tools)}")
-
-    explorer_tool_names = {
-        *(tool.name for tool in builtin_tools),
-        *mcp_tool_names,
-    }
-    return {
-        "explorer": SpecialistDefinition(
-            system_prompt=load_prompt("agents/explorer"),
-            tools=tuple(tools_by_name[name] for name in sorted(explorer_tool_names)),
-        ),
-        "analyst": SpecialistDefinition(
-            system_prompt=load_prompt("agents/analyst"),
-            skill_directory=SKILLS_DIRECTORY,
-            skills=(agent_skills_mount_path("analyst"),),
-        ),
-        "reviewer": SpecialistDefinition(
-            system_prompt=load_prompt("agents/reviewer"),
-        ),
-    }
+    delegation_records: Annotated[
+        dict[str, object],
+        _merge_delegation_records,
+    ]
 
 
 class SpecialistAgentFactory:
@@ -170,3 +118,55 @@ class SpecialistAgentFactory:
             skills=definition.skills,
         )
         return SpecialistAgentRun(agent=agent, shell_jobs=shell_jobs)
+
+
+def build_specialist_definitions(
+    explorer_tools: Iterable[BaseTool],
+    explorer_mcp_tools: Iterable[BaseTool],
+) -> dict[AgentType, SpecialistDefinition]:
+    """构造专业 Agent 定义，并将数据访问能力限定给 Explorer。"""
+    builtin_tools = tuple(explorer_tools)
+    mcp_tools = tuple(explorer_mcp_tools)
+    tools_by_name: dict[str, BaseTool] = {}
+    for tool in (*builtin_tools, *mcp_tools):
+        if tool.name in tools_by_name:
+            raise ValueError(f"存在重名工具: {tool.name}")
+        tools_by_name[tool.name] = tool
+
+    mcp_tool_names = frozenset(tool.name for tool in mcp_tools)
+    reserved_mcp_names = sorted(mcp_tool_names & _RESERVED_MCP_TOOL_NAMES)
+    if reserved_mcp_names:
+        raise ValueError(
+            f"MCP 工具名称与运行时内置工具冲突: {', '.join(reserved_mcp_names)}"
+        )
+
+    missing_tools = sorted(_REQUIRED_EXPLORER_TOOLS - tools_by_name.keys())
+    if missing_tools:
+        raise ValueError(f"Explorer 缺少必需工具: {', '.join(missing_tools)}")
+
+    explorer_tool_names = {
+        *(tool.name for tool in builtin_tools),
+        *mcp_tool_names,
+    }
+    return {
+        "explorer": SpecialistDefinition(
+            system_prompt=load_prompt("agents/explorer"),
+            tools=tuple(tools_by_name[name] for name in sorted(explorer_tool_names)),
+        ),
+        "analyst": SpecialistDefinition(
+            system_prompt=load_prompt("agents/analyst"),
+            skill_directory=SKILLS_DIRECTORY,
+            skills=(agent_skills_mount_path("analyst"),),
+        ),
+        "reviewer": SpecialistDefinition(
+            system_prompt=load_prompt("agents/reviewer"),
+        ),
+    }
+
+
+def _merge_delegation_records(
+    current: dict[str, object],
+    updates: dict[str, object],
+) -> dict[str, object]:
+    """按 delegation ID 覆盖单条状态，同时保留同 Session 的历史记录。"""
+    return {**current, **updates}

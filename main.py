@@ -6,11 +6,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.assistant.api.attachment.router import router as attachment_router
 from app.assistant.api.chat.router import router as chat_router
-from app.identity.api.admin.router import router as admin_router
-from app.identity.api.admin.task_router import router as task_router
 from app.identity.api.auth.router import router as auth_router
-from app.metadata.api.meta.router import router as meta_router
-from app.query.api.admin.router import router as query_experience_admin_router
+from app.identity.api.router import router as admin_router
+from app.identity.api.router import task_router
+from app.metadata.api.router import router as meta_router
+from app.query.api.router import router as query_experience_admin_router
 from app.runtime import lifespan
 from app.shared.config.app_config import cfg
 from app.shared.errors.base import ProblemDetails

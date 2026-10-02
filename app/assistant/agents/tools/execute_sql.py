@@ -8,12 +8,12 @@ from langchain_core.tools import BaseTool
 from loguru import logger
 
 from app.assistant.agents.tools.errors import tool_error
+from app.query.application import QueryExecutionService
 from app.query.errors import QueryRejectedError
-from app.query.services.execution_handler import QueryExecutionHandler
 from app.shared.contracts.analysis import AgentSessionKey
 
 
-def create_execute_sql_tool(handler: QueryExecutionHandler) -> BaseTool:
+def create_execute_sql_tool(service: QueryExecutionService) -> BaseTool:
     """使用查询用例处理器构建只读 SQL 工具。"""
 
     @tool("execute_sql")
@@ -32,7 +32,7 @@ def create_execute_sql_tool(handler: QueryExecutionHandler) -> BaseTool:
             session_id=configurable["session_id"],
         )
         try:
-            result = await handler.execute(
+            result = await service.execute(
                 session_key,
                 sql,
                 purpose=purpose,

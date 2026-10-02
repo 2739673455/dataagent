@@ -16,7 +16,7 @@ from app.query.repositories.execution_postgres import QueryExecutionPGRepo
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
 
 if TYPE_CHECKING:
-    from app.query.task_scheduler import CeleryQueryExperienceIndexScheduler
+    from app.query.application.index_tasks import CeleryQueryExperienceIndexScheduler
 
 
 @dataclass(frozen=True, slots=True)

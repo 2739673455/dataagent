@@ -6,9 +6,7 @@ from http import HTTPStatus
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
-from app.assistant.conversations.lifecycle import (
-    ConversationLifecycleService,
-)
+from app.assistant.application.lifecycle import ConversationLifecycleService
 from app.assistant.errors import ConversationBusyError
 from app.shared.clients.postgres_advisory_locks import PostgresAdvisoryLocks
 from app.shared.errors.infrastructure import AdvisoryLockBusyError

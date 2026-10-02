@@ -5,12 +5,15 @@ from uuid import UUID
 
 import pytest
 
-from app.assistant.task_scheduler import (
+from app.assistant.application.conversation_tasks import (
     enqueue_conversation_deletion,
     enqueue_conversation_title,
 )
-from app.metadata.task_scheduler import SYNC_COLUMN_INDEXES_TASK, submit_metadata_task
-from app.query.task_scheduler import query_experience_index_scheduler
+from app.metadata.application.index_tasks import (
+    SYNC_COLUMN_INDEXES_TASK,
+    submit_metadata_task,
+)
+from app.query.application.index_tasks import query_experience_index_scheduler
 from app.shared.tasks.celery_app import celery_app
 from app.workflows.task_scheduler import enqueue_user_deletion
 

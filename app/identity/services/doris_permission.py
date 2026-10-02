@@ -8,15 +8,15 @@ import sqlglot
 from sqlglot.errors import ParseError
 
 from app.identity import errors as auth_error
+from app.identity.contracts import AssetIdentity, AssetScope
 from app.identity.models.doris import (
-    AssetScope,
     DorisRowPolicy,
     DorisSelectGrant,
     normalize_doris_role_name,
 )
 from app.identity.repositories.doris_role import DorisRoleRepository, role_name_from_row
 from app.identity.repositories.identity import IdentityPGRepo
-from app.identity.services.authorization import AssetIdentity, AuthorizationService
+from app.identity.services.authorization import AuthorizationService
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +103,7 @@ class DorisPermissionService:
         table_name: str | None,
         columns: Sequence[str],
     ) -> list[DorisSelectGrant]:
+        """校验授权目标并授予角色 SELECT 权限，刷新指纹后返回有效授权。"""
         role = self._normalize_role(role_name)
         columns = self._normalize_columns(columns)
         async with self._repo.session.begin():
@@ -126,6 +127,7 @@ class DorisPermissionService:
         table_name: str | None,
         columns: Sequence[str],
     ) -> None:
+        """撤销角色指定范围的 SELECT 权限，并确认目标已无有效访问权限。"""
         role = self._normalize_role(role_name)
         columns = self._normalize_columns(columns)
         async with self._repo.session.begin():
@@ -154,6 +156,7 @@ class DorisPermissionService:
                 )
 
     async def revoke_all_select(self, role_name: str) -> int:
+        """清空角色在业务数据库内的 SELECT 授权，返回撤销前的授权条目数。"""
         role = self._normalize_role(role_name)
         async with self._repo.session.begin():
             await self._repo.lock_security_mutation()
@@ -178,6 +181,7 @@ class DorisPermissionService:
             return len(snapshot.grants)
 
     async def list_row_policies(self, role_name: str) -> list[DorisRowPolicy]:
+        """确认角色存在并读取其当前行级过滤策略。"""
         role = await self._require_role(role_name)
         return await self._doris_repo.list_role_row_policies(role)
 
@@ -190,6 +194,7 @@ class DorisPermissionService:
         policy_type: Literal["RESTRICTIVE", "PERMISSIVE"],
         predicate: str,
     ) -> None:
+        """校验过滤谓词并创建角色行级策略，随后刷新授权指纹。"""
         role = self._normalize_role(role_name)
         predicate_sql = self._validate_predicate(predicate)
         async with self._repo.session.begin():
@@ -213,6 +218,7 @@ class DorisPermissionService:
         policy_name: str,
         table_name: str,
     ) -> None:
+        """删除角色绑定的指定行级策略，并刷新授权指纹。"""
         role = self._normalize_role(role_name)
         async with self._repo.session.begin():
             await self._repo.lock_security_mutation()

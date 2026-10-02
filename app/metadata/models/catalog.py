@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import (
@@ -22,30 +22,108 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.metadata.contracts import ColumnReference, column_reference_key
 from app.shared.database.base import MetaBase
-
-
-class ColumnReference(TypedDict):
-    """字段联合主键引用。"""
-
-    t_name: str
-    c_name: str
-
-
-type ColumnKey = tuple[str, str]
 
 # 字段示例采集数量上限；批量采样时按源表行数计。
 COLUMN_EXAMPLE_LIMIT = 10
 
 
-def column_reference_key(reference: ColumnReference) -> ColumnKey:
-    """将字段引用转换为可用于集合和映射的联合键。"""
-    return reference["t_name"], reference["c_name"]
+@dataclass
+class ValueInfo:
+    """字段取值信息。"""
+
+    value: str
+    t_name: str
+    c_name: str
 
 
-def column_key_reference(key: ColumnKey) -> ColumnReference:
-    """将字段联合键转换为 JSON 可序列化的字段引用。"""
-    return ColumnReference(t_name=key[0], c_name=key[1])
+class ColumnMetric(MetaBase):
+    """字段与指标关联。"""
+
+    __tablename__ = "column_metric"
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["t_name", "c_name"],
+            ["column_info.t_name", "column_info.name"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    t_name: Mapped[str] = mapped_column(
+        String(256),
+        primary_key=True,
+        comment="表名称",
+    )
+    c_name: Mapped[str] = mapped_column(
+        String(256),
+        primary_key=True,
+        comment="字段名称",
+    )
+    metric_name: Mapped[str] = mapped_column(
+        String(256),
+        ForeignKey("metric_info.name", ondelete="CASCADE"),
+        primary_key=True,
+        comment="指标名称",
+    )
+
+
+class ValueIndexSyncState(MetaBase):
+    """字段取值索引的运行归属、水位和全量同步代次。"""
+
+    __tablename__ = "value_index_sync_state"
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["t_name", "c_name"],
+            ["column_info.t_name", "column_info.name"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    t_name: Mapped[str] = mapped_column(String(256), primary_key=True)
+    c_name: Mapped[str] = mapped_column(String(256), primary_key=True)
+    cursor_value: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    active_run_id: Mapped[UUID | None] = mapped_column(Uuid)
+    current_generation: Mapped[UUID | None] = mapped_column(Uuid)
+    active_generation: Mapped[UUID | None] = mapped_column(Uuid)
+    last_incremental_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    last_full_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    last_error: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    @property
+    def last_synced_at(self) -> datetime | None:
+        """返回最近一次成功的增量或全量同步时间。"""
+        timestamps = [
+            timestamp
+            for timestamp in (
+                self.last_incremental_synced_at,
+                self.last_full_synced_at,
+            )
+            if timestamp is not None
+        ]
+        return max(timestamps, default=None)
+
+    @property
+    def last_sync_mode(self) -> Literal["full", "incremental"] | None:
+        """返回最近一次成功同步的模式。"""
+        if self.last_full_synced_at is None:
+            return "incremental" if self.last_incremental_synced_at else None
+        if self.last_incremental_synced_at is None:
+            return "full"
+        if self.last_full_synced_at >= self.last_incremental_synced_at:
+            return "full"
+        return "incremental"
 
 
 def column_resource_key(t_name: str, c_name: str) -> str:
@@ -213,100 +291,3 @@ class MetricInfo(MetaBase):
             ),
             tuple(sorted(self.alias)),
         )
-
-
-class ColumnMetric(MetaBase):
-    """字段与指标关联。"""
-
-    __tablename__ = "column_metric"
-
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["t_name", "c_name"],
-            ["column_info.t_name", "column_info.name"],
-            ondelete="CASCADE",
-        ),
-    )
-
-    t_name: Mapped[str] = mapped_column(
-        String(256),
-        primary_key=True,
-        comment="表名称",
-    )
-    c_name: Mapped[str] = mapped_column(
-        String(256),
-        primary_key=True,
-        comment="字段名称",
-    )
-    metric_name: Mapped[str] = mapped_column(
-        String(256),
-        ForeignKey("metric_info.name", ondelete="CASCADE"),
-        primary_key=True,
-        comment="指标名称",
-    )
-
-
-class ValueIndexSyncState(MetaBase):
-    """字段取值索引的运行归属、水位和全量同步代次。"""
-
-    __tablename__ = "value_index_sync_state"
-
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["t_name", "c_name"],
-            ["column_info.t_name", "column_info.name"],
-            ondelete="CASCADE",
-        ),
-    )
-
-    t_name: Mapped[str] = mapped_column(String(256), primary_key=True)
-    c_name: Mapped[str] = mapped_column(String(256), primary_key=True)
-    cursor_value: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
-    status: Mapped[str] = mapped_column(String(16), nullable=False)
-    active_run_id: Mapped[UUID | None] = mapped_column(Uuid)
-    current_generation: Mapped[UUID | None] = mapped_column(Uuid)
-    active_generation: Mapped[UUID | None] = mapped_column(Uuid)
-    last_incremental_synced_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    last_full_synced_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    last_error: Mapped[str | None] = mapped_column(Text)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-    )
-
-    @property
-    def last_synced_at(self) -> datetime | None:
-        """返回最近一次成功的增量或全量同步时间。"""
-        timestamps = [
-            timestamp
-            for timestamp in (
-                self.last_incremental_synced_at,
-                self.last_full_synced_at,
-            )
-            if timestamp is not None
-        ]
-        return max(timestamps, default=None)
-
-    @property
-    def last_sync_mode(self) -> Literal["full", "incremental"] | None:
-        """返回最近一次成功同步的模式。"""
-        if self.last_full_synced_at is None:
-            return "incremental" if self.last_incremental_synced_at else None
-        if self.last_incremental_synced_at is None:
-            return "full"
-        if self.last_full_synced_at >= self.last_incremental_synced_at:
-            return "full"
-        return "incremental"
-
-
-@dataclass
-class ValueInfo:
-    """字段取值信息。"""
-
-    value: str
-    t_name: str
-    c_name: str

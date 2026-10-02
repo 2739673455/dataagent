@@ -5,10 +5,11 @@ from typing import Literal
 from langchain.tools import tool
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
-from pydantic import Field, field_validator
+from pydantic import Field
 
-from app.assistant.execution.types import NonEmptyText, StrictProtocolModel
-from app.sandbox import normalize_sandbox_path
+from app.assistant.contracts import NonEmptyText, StrictProtocolModel
+from app.sandbox.application import resolve_sandbox_path
+from app.sandbox.errors import SandboxPathError
 
 IMAGE_VIEW_TOOL_NAME = "view_image"
 _IMAGE_SUFFIXES = {"png", "jpg", "jpeg", "gif", "webp", "bmp"}
@@ -21,15 +22,9 @@ class ImageViewInput(StrictProtocolModel):
         description="图片路径；相对路径从当前 Session 工作目录解析，绝对路径直接使用。"
     )
 
-    @field_validator("f_path")
-    @classmethod
-    def validate_sandbox_path(cls, value: str) -> str:
-        """按文件工具规则规范化相对路径或绝对路径。"""
-        return normalize_sandbox_path(value)
-
 
 class ImageViewRequest(ImageViewInput):
-    """持久化的图片引用，读取时重新校验。"""
+    """持久化的图片加载请求，文件访问时校验路径。"""
 
     type: Literal["image_view_request"] = "image_view_request"
 
@@ -45,7 +40,7 @@ def supports_view_image_tool(model: BaseChatModel) -> bool:
     return bool(model.profile and model.profile.get("image_tool_message"))
 
 
-def create_view_image_tool() -> BaseTool:
+def create_view_image_tool(working_directory: str) -> BaseTool:
     """创建图片查看请求工具。
 
     工具结果只持久化图片路径。MessageContextMiddleware 会在下一次
@@ -56,7 +51,11 @@ def create_view_image_tool() -> BaseTool:
     @tool(IMAGE_VIEW_TOOL_NAME, args_schema=ImageViewInput)
     def view_image(f_path: str) -> dict[str, object]:
         """请求加载沙箱内的图片。"""
-        request = ImageViewRequest.model_construct(f_path=f_path)
+        try:
+            path = resolve_sandbox_path(f_path, working_directory)
+        except SandboxPathError:
+            return {"status": "error", "code": "invalid_path", "path": f_path}
+        request = ImageViewRequest.model_construct(f_path=path)
         if not is_supported_image_path(request.f_path):
             return {
                 "status": "error",

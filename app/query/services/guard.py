@@ -1,5 +1,6 @@
 """只读 SQL 的静态规则检查与查询依赖收集。"""
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import cast
 
@@ -10,9 +11,8 @@ from sqlglot.expressions.dml import DML
 from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.scope import Scope, traverse_scope
 
-from app.metadata.models.catalog import ColumnInfo
-from app.metadata.repositories.postgres import MetaPGRepo
-from app.query.models.validation import (
+from app.metadata.contracts import QueryCatalogColumn, QueryCatalogSnapshot
+from app.query.contracts import (
     QueryColumnRef,
     QueryKind,
     QueryTableRef,
@@ -26,7 +26,7 @@ class _Catalog:
     """用于辅助解析查询依赖的元数据目录快照。"""
 
     table_names: dict[str, str]
-    columns: dict[str, dict[str, ColumnInfo]]
+    columns: dict[str, dict[str, QueryCatalogColumn]]
 
     @property
     def sqlglot_schema(self) -> dict[str, dict[str, str]]:
@@ -45,12 +45,12 @@ class QueryGuardService:
 
     def __init__(
         self,
-        catalog_repo: MetaPGRepo,
+        catalog_loader: Callable[[], Awaitable[QueryCatalogSnapshot]],
         *,
         current_database: str,
     ) -> None:
-        """绑定元数据仓储和未限定表名使用的默认数据库。"""
-        self._catalog_repo = catalog_repo
+        """按需读取普通目录快照，不将存储实现带入校验。"""
+        self._catalog_loader = catalog_loader
         self._current_database = current_database
 
     async def check(
@@ -58,26 +58,20 @@ class QueryGuardService:
         sql: str,
     ) -> QueryValidationResult:
         """检查本地查询规则，并返回执行 SQL 与可解析的依赖信息。"""
-        # 后续静态检查依赖单条语句的语法树。
         expression, issues = self._parse_single_query(sql)
         if expression is None:
             return self._result(None, issues)
 
-        # SHOW 分支仅允许 SHOW TABLES，并将结果标记为目录查询。
         if isinstance(expression, exp.Show):
             return self._check_show_tables(expression)
-        # 引用 information_schema 的查询检查只读和显式 Catalog。
         if self._references_information_schema(expression):
             return self._check_information_schema_query(expression)
 
-        # 检查 SELECT 查询结构、禁止的 AST 节点及未识别函数的白名单。
         issues.extend(self._check_readonly(expression))
         if issues:
             return self._result(None, issues)
 
-        # 读取表和字段元数据，供后续字段来源分析使用。
         catalog = await self._load_catalog()
-        # 收集物理表引用，报告显式 Catalog。
         raw_tables, table_issues = self._resolve_tables(expression, catalog)
         issues.extend(table_issues)
         if issues:
@@ -91,7 +85,6 @@ class QueryGuardService:
         columns = self._collect_physical_columns(qualified, catalog)
         issues.extend(self._check_joins(qualified))
 
-        # 从原始语法树生成执行 SQL。
         return self._result(
             expression.sql(dialect="doris", pretty=False) if not issues else None,
             issues,
@@ -110,7 +103,6 @@ class QueryGuardService:
                 QueryValidationIssue(code="empty_sql", message="SQL 语句不能为空")
             ]
         try:
-            # 使用 Doris 方言解析语句。
             parsed = sqlglot.parse(sql, read="doris")
         except ParseError as exc:
             return None, [
@@ -119,13 +111,11 @@ class QueryGuardService:
                     message=f"SQL 语法解析失败: {exc}",
                 )
             ]
-        # 过滤空项和分号节点，再统计有效语句数量。
         statements = [
             statement
             for statement in parsed
             if statement is not None and not isinstance(statement, exp.Semicolon)
         ]
-        # 既拒绝多条语句，也拒绝只包含注释或分隔符、没有有效语句的输入。
         if len(statements) != 1:
             return None, [
                 QueryValidationIssue(
@@ -249,22 +239,17 @@ class QueryGuardService:
         return issues
 
     async def _load_catalog(self) -> _Catalog:
-        """读取仓储中的表、字段记录，建立忽略大小写的查找映射。"""
-        table_infos = await self._catalog_repo.list_table_infos()
-        column_infos = await self._catalog_repo.list_column_infos()
-        # 查找键忽略大小写，返回的资产名称使用元数据原名。
-        table_names = {table.name.casefold(): table.name for table in table_infos}
-        columns: dict[str, dict[str, ColumnInfo]] = {
-            table_key: {} for table_key in table_names
+        """收到普通目录快照后建立忽略大小写的查询映射。"""
+        snapshot = await self._catalog_loader()
+        table_names = {name.casefold(): name for name in snapshot.table_names}
+        columns: dict[str, dict[str, QueryCatalogColumn]] = {
+            table: {} for table in table_names
         }
-        for column in column_infos:
-            table_key = column.t_name.casefold()
-            if table_key in columns:
-                columns[table_key][column.name.casefold()] = column
-        return _Catalog(
-            table_names=table_names,
-            columns=columns,
-        )
+        for column in snapshot.columns:
+            table = column.t_name.casefold()
+            if table in columns:
+                columns[table][column.name.casefold()] = column
+        return _Catalog(table_names, columns)
 
     def _resolve_tables(
         self,
@@ -293,7 +278,6 @@ class QueryGuardService:
         schema = catalog.sqlglot_schema
         if self._current_database:
             schema = {self._current_database: schema}
-        # 复制语法树并补全字段来源，供依赖收集和 JOIN 检查使用。
         return cast(
             exp.Query,
             qualify(
@@ -304,7 +288,6 @@ class QueryGuardService:
                 # 展开别名和星号以收集目录中已知的字段依赖。
                 expand_alias_refs=True,
                 expand_stars=True,
-                # 按目录校验字段补全结果，失败时抛给调用方处理。
                 infer_schema=False,
                 validate_qualify_columns=True,
                 quote_identifiers=False,
@@ -426,7 +409,6 @@ class QueryGuardService:
                 else source.name
             )
             table_ref = QueryTableRef(database=database, name=table_name)
-            # 显式指定 Catalog 时记录校验问题。
             if issues is not None and catalog_name:
                 issues.append(
                     QueryValidationIssue(
@@ -446,14 +428,12 @@ class QueryGuardService:
         right_alias: str,
     ) -> bool:
         """递归检查跨来源比较：OR/XOR 要求各分支成立，其他包装节点取任一子项。"""
-        # 接受等值及大小比较等跨来源条件。
         if isinstance(
             condition,
             (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.NullSafeEQ),
         ):
             return cls._comparison_links_sources(condition, left_aliases, right_alias)
         if isinstance(condition, (exp.Paren, exp.Not)):
-            # 递归检查括号或 NOT 内部的条件。
             children = (condition.this,)
         elif isinstance(condition, (exp.And, exp.Or, exp.Xor)):
             children = (condition.this, condition.expression)

@@ -39,6 +39,14 @@ class DorisClientManager:
         await self.engine.dispose()
 
 
+@dataclass(frozen=True, slots=True)
+class _QueryClientEntry:
+    """记录查询连接池的凭据指纹和客户端实例。"""
+
+    fingerprint: str
+    manager: DorisClientManager
+
+
 class DorisQueryClientRegistry:
     """按数据库中的稳定查询身份动态管理 Doris 连接池。"""
 
@@ -92,11 +100,3 @@ class DorisQueryClientRegistry:
         async with AsyncExitStack() as stack:
             for entry in entries:
                 stack.push_async_callback(entry.manager.close)
-
-
-@dataclass(frozen=True, slots=True)
-class _QueryClientEntry:
-    """记录查询连接池的凭据指纹和客户端实例。"""
-
-    fingerprint: str
-    manager: DorisClientManager

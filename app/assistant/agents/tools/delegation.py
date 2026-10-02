@@ -9,20 +9,13 @@ from loguru import logger
 from pydantic import ConfigDict
 
 from app.assistant.agents.tools.errors import tool_error
-from app.assistant.execution.session_service import AgentSessionService
-from app.assistant.execution.types import (
+from app.assistant.contracts import (
     DelegationRequest,
     DeleteSessionRequest,
     ListSessionsRequest,
 )
+from app.assistant.services.session import AgentSessionService
 from app.shared.contracts.analysis import AgentType
-
-
-class _DelegationToolRequest(DelegationRequest):
-    """框架注入运行时；业务请求字段及约束继承自 DelegationRequest。"""
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-    runtime: ToolRuntime
 
 
 def create_delegation_tools(service: AgentSessionService) -> list[BaseTool]:
@@ -105,3 +98,10 @@ def create_delegation_tools(service: AgentSessionService) -> list[BaseTool]:
         return result.model_dump(mode="json")
 
     return [delegation, list_sessions, delete_session]
+
+
+class _DelegationToolRequest(DelegationRequest):
+    """框架注入运行时；业务请求字段及约束继承自 DelegationRequest。"""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    runtime: ToolRuntime

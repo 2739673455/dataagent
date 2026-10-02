@@ -9,8 +9,8 @@ from app.assistant.api.dependencies import (
     AgentManagerDep,
     ConversationRunServiceDep,
 )
-from app.assistant.execution.turn import ConversationTurnService
 from app.assistant.repositories.conversation import ConversationPGRepo
+from app.assistant.services.conversation_turn import ConversationTurnService
 from app.dependencies import WebResourcesDep
 
 

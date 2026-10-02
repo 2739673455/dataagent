@@ -45,16 +45,3 @@ class CorruptedSemanticIndexDocumentError(RuntimeError):
         super().__init__(
             f"{resource_label}文档损坏: index={index_name}, document_id={document_id}"
         )
-
-
-class SemanticQueriesNotFoundError(Exception):
-    """一个或多个查询业务键不存在。"""
-
-    def __init__(self, queries: list[str]) -> None:
-        """初始化未找到的查询业务键。"""
-        self.queries = queries
-        super().__init__(", ".join(queries))
-
-
-class SemanticRecallSaveError(RuntimeError):
-    """召回成功但快照未能持久化。"""

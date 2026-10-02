@@ -12,16 +12,8 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
-from app.metadata.models.catalog import (
-    ColumnInfo,
+from app.metadata.contracts import (
     ColumnKey,
-    MetricInfo,
-    ValueIndexSyncState,
-    ValueInfo,
-    column_resource_key,
-    serialize_column_examples,
-)
-from app.metadata.models.search import (
     RequestedValueIndexSyncMode,
     SemanticIndexDelta,
     SemanticIndexDocument,
@@ -29,6 +21,14 @@ from app.metadata.models.search import (
     SemanticTextType,
     ValueIndexSyncMode,
     ValueIndexSyncResult,
+)
+from app.metadata.models.catalog import (
+    ColumnInfo,
+    MetricInfo,
+    ValueIndexSyncState,
+    ValueInfo,
+    column_resource_key,
+    serialize_column_examples,
 )
 from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
@@ -119,6 +119,48 @@ class MetaIndexService:
             mark_indexed=self._meta_repo.mark_metric_indexed_if_current,
         )
 
+    async def sync_table_values(
+        self,
+        table_names: list[str],
+        *,
+        mode: RequestedValueIndexSyncMode,
+    ) -> dict[ColumnKey, ValueIndexSyncResult]:
+        """同步多个表下已开启字段的取值索引。"""
+        column_keys = await self._get_column_keys_by_table_names(
+            table_names,
+            index_values=True,
+        )
+        return await self.sync_column_values(
+            column_keys,
+            mode=mode,
+        )
+
+    async def sync_column_values(
+        self,
+        column_keys: list[ColumnKey],
+        *,
+        mode: RequestedValueIndexSyncMode,
+    ) -> dict[ColumnKey, ValueIndexSyncResult]:
+        """按水位或全量校准模式同步多个字段取值。"""
+        results: dict[ColumnKey, ValueIndexSyncResult] = {}
+        for column_key in dict.fromkeys(column_keys):
+            results[column_key] = await self._sync_column_value_index(
+                *column_key,
+                requested_mode=mode,
+            )
+        return results
+
+    async def delete_column_indexes(self, column_keys: list[ColumnKey]) -> None:
+        """删除多个字段的语义和取值索引。"""
+        for t_name, c_name in dict.fromkeys(column_keys):
+            await self._column_repo.delete(t_name, c_name)
+            await self._value_repo.delete_by_column(t_name, c_name)
+
+    async def delete_metric_indexes(self, metric_names: list[str]) -> None:
+        """删除多个指标的语义索引。"""
+        for metric_name in dict.fromkeys(metric_names):
+            await self._metric_repo.delete(metric_name)
+
     async def _sync_semantic_indexes[KeyT, ItemT: (ColumnInfo, MetricInfo)](
         self,
         keys: list[KeyT],
@@ -202,48 +244,6 @@ class MetaIndexService:
                     )
             results.update(batch_results)
         return results
-
-    async def sync_table_values(
-        self,
-        table_names: list[str],
-        *,
-        mode: RequestedValueIndexSyncMode,
-    ) -> dict[ColumnKey, ValueIndexSyncResult]:
-        """同步多个表下已开启字段的取值索引。"""
-        column_keys = await self._get_column_keys_by_table_names(
-            table_names,
-            index_values=True,
-        )
-        return await self.sync_column_values(
-            column_keys,
-            mode=mode,
-        )
-
-    async def sync_column_values(
-        self,
-        column_keys: list[ColumnKey],
-        *,
-        mode: RequestedValueIndexSyncMode,
-    ) -> dict[ColumnKey, ValueIndexSyncResult]:
-        """按水位或全量校准模式同步多个字段取值。"""
-        results: dict[ColumnKey, ValueIndexSyncResult] = {}
-        for column_key in dict.fromkeys(column_keys):
-            results[column_key] = await self._sync_column_value_index(
-                *column_key,
-                requested_mode=mode,
-            )
-        return results
-
-    async def delete_column_indexes(self, column_keys: list[ColumnKey]) -> None:
-        """删除多个字段的语义和取值索引。"""
-        for t_name, c_name in dict.fromkeys(column_keys):
-            await self._column_repo.delete(t_name, c_name)
-            await self._value_repo.delete_by_column(t_name, c_name)
-
-    async def delete_metric_indexes(self, metric_names: list[str]) -> None:
-        """删除多个指标的语义索引。"""
-        for metric_name in dict.fromkeys(metric_names):
-            await self._metric_repo.delete(metric_name)
 
     async def _get_column_keys_by_table_names(
         self,

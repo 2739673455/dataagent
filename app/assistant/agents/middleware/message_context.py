@@ -27,13 +27,14 @@ from app.assistant.agents.tools.view_image import (
     is_supported_image_path,
     supports_view_image_tool,
 )
-from app.assistant.execution.shell_jobs import ShellJobRuntime
-from app.assistant.execution.types import (
+from app.assistant.contracts import (
     MESSAGE_CREATED_AT_KEY,
     NonEmptyText,
     StrictProtocolModel,
 )
-from app.sandbox import normalize_attachment_path, resolve_sandbox_path
+from app.assistant.services.shell_jobs import ShellJobRuntime
+from app.sandbox.application import resolve_sandbox_path
+from app.sandbox.errors import SandboxPathError
 
 USER_MESSAGE_CONTEXT_KEY = "dataagent_user_message_context"
 SHELL_JOB_CONTEXT_KEY = "dataagent_shell_jobs"
@@ -47,12 +48,6 @@ class UserMessageAttachment(StrictProtocolModel):
     """一项用户消息附件引用。"""
 
     f_path: NonEmptyText
-
-    @field_validator("f_path")
-    @classmethod
-    def validate_relative_path(cls, value: str) -> str:
-        """只持久化规范的 Conversation 内相对路径。"""
-        return normalize_attachment_path(value)
 
 
 class UserMessageContext(StrictProtocolModel):
@@ -92,6 +87,127 @@ class ShellJobMessageContext(TypedDict):
     """持久化在真实用户消息中的 Shell Job 快照。"""
 
     jobs: list[ShellJobReference]
+
+
+class MessageContextMiddleware(AgentMiddleware[Any, Any, Any]):
+    """准备用户消息上下文，并在模型响应进入状态前补充创建时间。"""
+
+    def __init__(
+        self,
+        backend: BackendProtocol,
+        conversation_dir: str,
+        shell_jobs: ShellJobRuntime,
+        *,
+        working_directory: str,
+    ) -> None:
+        """绑定当前 Agent 的文件后端和 Shell Job Runtime。"""
+        self._backend = backend
+        self._conversation_dir = conversation_dir
+        self._working_directory = working_directory
+        self._shell_jobs = shell_jobs
+
+    def before_model(
+        self,
+        state: AgentState[Any],
+        runtime: Runtime[Any],
+    ) -> dict[str, Any] | None:
+        """在模型调用前把首次出现的后台任务引用冻结到当前用户回合。"""
+        del runtime
+        jobs = self._shell_jobs.list()
+        if not jobs:
+            return None
+        for message in reversed(state["messages"]):
+            if not isinstance(message, HumanMessage):
+                continue
+            if SHELL_JOB_CONTEXT_KEY in message.additional_kwargs:
+                return None
+            additional_kwargs = {
+                **message.additional_kwargs,
+                SHELL_JOB_CONTEXT_KEY: {
+                    "jobs": [
+                        {"job_id": job.job_id, "output_path": job.output_path}
+                        for job in jobs
+                    ]
+                },
+            }
+            return {
+                "messages": [
+                    message.model_copy(update={"additional_kwargs": additional_kwargs})
+                ]
+            }
+        return None
+
+    async def abefore_model(
+        self,
+        state: AgentState[Any],
+        runtime: Runtime[Any],
+    ) -> dict[str, Any] | None:
+        """异步模型调用沿用相同的 Shell Job 快照规则。"""
+        return self.before_model(state, runtime)
+
+    def wrap_model_call(
+        self,
+        request: ModelRequest[Any],
+        handler: Callable[[ModelRequest[Any]], ModelResponse[Any]],
+    ) -> ModelResponse[Any]:
+        """同步读取当前需要查看的图片并投影模型请求。"""
+        user_images, tool_images = _image_projection_options(request)
+        attachment_paths, image_requests = _file_references(
+            request.messages, self._conversation_dir, self._working_directory
+        )
+        paths = _download_paths(
+            attachment_paths,
+            image_requests,
+            load_user_images=user_images,
+            load_tool_images=tool_images,
+        )
+        responses = self._backend.download_files(paths) if paths else []
+        messages = _project_messages(
+            request.messages,
+            responses,
+            attachment_paths=attachment_paths,
+            image_requests=image_requests,
+            project_user_images=user_images,
+            project_tool_images=tool_images,
+        )
+        if not all(
+            projected is original
+            for projected, original in zip(messages, request.messages, strict=True)
+        ):
+            request = request.override(messages=messages)
+        return _stamp_response(handler(request))
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest[Any],
+        handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
+    ) -> ModelResponse[Any]:
+        """异步读取当前需要查看的图片并投影模型请求。"""
+        user_images, tool_images = _image_projection_options(request)
+        attachment_paths, image_requests = _file_references(
+            request.messages, self._conversation_dir, self._working_directory
+        )
+        paths = _download_paths(
+            attachment_paths,
+            image_requests,
+            load_user_images=user_images,
+            load_tool_images=tool_images,
+        )
+        responses = await self._backend.adownload_files(paths) if paths else []
+        messages = _project_messages(
+            request.messages,
+            responses,
+            attachment_paths=attachment_paths,
+            image_requests=image_requests,
+            project_user_images=user_images,
+            project_tool_images=tool_images,
+        )
+        if not all(
+            projected is original
+            for projected, original in zip(messages, request.messages, strict=True)
+        ):
+            request = request.override(messages=messages)
+        return _stamp_response(await handler(request))
 
 
 def read_user_message_context(message: HumanMessage) -> UserMessageContext | None:
@@ -145,7 +261,10 @@ def _attachment_context_block(
     files: list[dict[str, str]] = []
     images: list[dict[str, str]] = []
     for attachment in attachments.attachments:
-        item = {"path": attachment_paths[attachment.f_path]}
+        path = attachment_paths.get(attachment.f_path)
+        if path is None:
+            continue
+        item = {"path": path}
         if is_supported_image_path(attachment.f_path):
             images.append(item)
         else:
@@ -225,6 +344,7 @@ def _content_list(message: BaseMessage) -> list[str | dict[str, Any]] | None:
 def _file_references(
     messages: list[AnyMessage],
     conversation_dir: str,
+    working_directory: str,
 ) -> tuple[dict[str, str], dict[int, ImageViewRequest]]:
     """每次模型请求只解析一次附件路径与持久化图片请求。"""
     attachments: dict[str, str] = {}
@@ -235,13 +355,22 @@ def _file_references(
             if context is not None:
                 for item in context.attachments:
                     if item.f_path not in attachments:
-                        attachments[item.f_path] = resolve_sandbox_path(
-                            item.f_path, conversation_dir
-                        )
+                        try:
+                            attachments[item.f_path] = resolve_sandbox_path(
+                                item.f_path,
+                                conversation_dir,
+                                allowed_root=conversation_dir,
+                            )
+                        except SandboxPathError:
+                            continue
         elif isinstance(message, ToolMessage):
             request = _read_image_view_request(message)
             if request is not None:
-                images[index] = request
+                try:
+                    path = resolve_sandbox_path(request.f_path, working_directory)
+                except SandboxPathError:
+                    continue
+                images[index] = request.model_copy(update={"f_path": path})
     return attachments, images
 
 
@@ -290,25 +419,27 @@ def _project_human_message(
                     image_inputs_enabled=project_user_images,
                 )
             )
-            if project_user_images:
-                for attachment in context.attachments:
-                    if not is_supported_image_path(attachment.f_path):
-                        continue
-                    model_path = attachment_paths[attachment.f_path]
-                    response = downloaded.get(model_path)
-                    if response is not None and response.content is not None:
-                        content.append(
-                            _image_content_block(model_path, response.content)
+            for attachment in context.attachments:
+                model_path = attachment_paths.get(attachment.f_path)
+                if model_path is None:
+                    content.append(
+                        _attachment_error_block(attachment.f_path, "invalid_path")
+                    )
+                    continue
+                if not project_user_images or not is_supported_image_path(model_path):
+                    continue
+                response = downloaded.get(model_path)
+                if response is not None and response.content is not None:
+                    content.append(_image_content_block(model_path, response.content))
+                else:
+                    content.append(
+                        _attachment_error_block(
+                            model_path,
+                            str(response.error)
+                            if response is not None
+                            else "unavailable",
                         )
-                    else:
-                        content.append(
-                            _attachment_error_block(
-                                model_path,
-                                str(response.error)
-                                if response is not None
-                                else "unavailable",
-                            )
-                        )
+                    )
     if shell_block is not None:
         content.append(shell_block)
     return message.model_copy(update={"content": cast(Any, content)})
@@ -385,121 +516,3 @@ def _stamp_response(response: ModelResponse[Any]) -> ModelResponse[Any]:
             datetime.now(UTC).isoformat(),
         )
     return response
-
-
-class MessageContextMiddleware(AgentMiddleware[Any, Any, Any]):
-    """准备用户消息上下文，并在模型响应进入状态前补充创建时间。"""
-
-    def __init__(
-        self,
-        backend: BackendProtocol,
-        conversation_dir: str,
-        shell_jobs: ShellJobRuntime,
-    ) -> None:
-        """绑定当前 Agent 的文件后端和 Shell Job Runtime。"""
-        self._backend = backend
-        self._conversation_dir = conversation_dir
-        self._shell_jobs = shell_jobs
-
-    def before_model(
-        self,
-        state: AgentState[Any],
-        runtime: Runtime[Any],
-    ) -> dict[str, Any] | None:
-        """在模型调用前把首次出现的后台任务引用冻结到当前用户回合。"""
-        del runtime
-        jobs = self._shell_jobs.list()
-        if not jobs:
-            return None
-        for message in reversed(state["messages"]):
-            if not isinstance(message, HumanMessage):
-                continue
-            if SHELL_JOB_CONTEXT_KEY in message.additional_kwargs:
-                return None
-            additional_kwargs = {
-                **message.additional_kwargs,
-                SHELL_JOB_CONTEXT_KEY: {
-                    "jobs": [
-                        {"job_id": job.job_id, "output_path": job.output_path}
-                        for job in jobs
-                    ]
-                },
-            }
-            return {
-                "messages": [
-                    message.model_copy(update={"additional_kwargs": additional_kwargs})
-                ]
-            }
-        return None
-
-    async def abefore_model(
-        self,
-        state: AgentState[Any],
-        runtime: Runtime[Any],
-    ) -> dict[str, Any] | None:
-        """异步模型调用沿用相同的 Shell Job 快照规则。"""
-        return self.before_model(state, runtime)
-
-    def wrap_model_call(
-        self,
-        request: ModelRequest[Any],
-        handler: Callable[[ModelRequest[Any]], ModelResponse[Any]],
-    ) -> ModelResponse[Any]:
-        """同步读取当前需要查看的图片并投影模型请求。"""
-        user_images, tool_images = _image_projection_options(request)
-        attachment_paths, image_requests = _file_references(
-            request.messages, self._conversation_dir
-        )
-        paths = _download_paths(
-            attachment_paths,
-            image_requests,
-            load_user_images=user_images,
-            load_tool_images=tool_images,
-        )
-        responses = self._backend.download_files(paths) if paths else []
-        messages = _project_messages(
-            request.messages,
-            responses,
-            attachment_paths=attachment_paths,
-            image_requests=image_requests,
-            project_user_images=user_images,
-            project_tool_images=tool_images,
-        )
-        if not all(
-            projected is original
-            for projected, original in zip(messages, request.messages, strict=True)
-        ):
-            request = request.override(messages=messages)
-        return _stamp_response(handler(request))
-
-    async def awrap_model_call(
-        self,
-        request: ModelRequest[Any],
-        handler: Callable[[ModelRequest[Any]], Awaitable[ModelResponse[Any]]],
-    ) -> ModelResponse[Any]:
-        """异步读取当前需要查看的图片并投影模型请求。"""
-        user_images, tool_images = _image_projection_options(request)
-        attachment_paths, image_requests = _file_references(
-            request.messages, self._conversation_dir
-        )
-        paths = _download_paths(
-            attachment_paths,
-            image_requests,
-            load_user_images=user_images,
-            load_tool_images=tool_images,
-        )
-        responses = await self._backend.adownload_files(paths) if paths else []
-        messages = _project_messages(
-            request.messages,
-            responses,
-            attachment_paths=attachment_paths,
-            image_requests=image_requests,
-            project_user_images=user_images,
-            project_tool_images=tool_images,
-        )
-        if not all(
-            projected is original
-            for projected, original in zip(messages, request.messages, strict=True)
-        ):
-            request = request.override(messages=messages)
-        return _stamp_response(await handler(request))
