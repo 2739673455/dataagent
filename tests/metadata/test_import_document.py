@@ -2,8 +2,8 @@
 
 import pytest
 
+from app.metadata.catalog.importer import parse_metadata_yaml
 from app.metadata.errors import InvalidMetadataError
-from app.metadata.services.import_service import parse_metadata_yaml
 
 
 @pytest.mark.parametrize(

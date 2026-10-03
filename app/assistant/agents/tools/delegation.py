@@ -14,11 +14,14 @@ from app.assistant.contracts import (
     DeleteSessionRequest,
     ListSessionsRequest,
 )
-from app.assistant.services.session import AgentSessionService
+from app.assistant.execution.delegation import DelegationExecutor
+from app.assistant.sessions.management import AgentSessionService
 from app.shared.contracts.analysis import AgentType
 
 
-def create_delegation_tools(service: AgentSessionService) -> list[BaseTool]:
+def create_delegation_tools(
+    service: AgentSessionService, executor: DelegationExecutor
+) -> list[BaseTool]:
     """创建绑定当前用户会话的委派、查询和删除工具。"""
 
     @tool("delegation", args_schema=_DelegationToolRequest)
@@ -52,7 +55,7 @@ def create_delegation_tools(service: AgentSessionService) -> list[BaseTool]:
         if delegation_id is None:
             raise RuntimeError("delegation 工具缺少 tool_call_id")
         try:
-            result = await service.execute_delegation(
+            result = await executor.execute_delegation(
                 request,
                 cast(RunnableConfig, runtime.config),
                 delegation_id=delegation_id,

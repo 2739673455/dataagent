@@ -16,6 +16,7 @@ interface AdminDialogHeaderProps {
   onClose: () => void;
 }
 
+/** 展示管理编辑弹窗的标题和关闭入口。 */
 function AdminDialogHeader({ children, onClose }: AdminDialogHeaderProps) {
   return (
     <div className="mb-3 flex items-center justify-between border-b border-[#e5e5df] pb-1.5 text-[#18181b]">
@@ -32,6 +33,7 @@ function AdminDialogHeader({ children, onClose }: AdminDialogHeaderProps) {
   );
 }
 
+/** 排列管理编辑弹窗底部的操作按钮。 */
 export function AdminDialogActions({ children }: { children: ReactNode }) {
   return <div className="mt-4 flex justify-end gap-2">{children}</div>;
 }
@@ -42,6 +44,7 @@ interface AdminDialogButtonProps {
   onClick: () => void;
 }
 
+/** 管理编辑弹窗的取消按钮。 */
 export function AdminDialogCancelButton({ children, disabled, onClick }: AdminDialogButtonProps) {
   return (
     <Button
@@ -56,6 +59,7 @@ export function AdminDialogCancelButton({ children, disabled, onClick }: AdminDi
   );
 }
 
+/** 管理编辑弹窗的主要提交按钮。 */
 export function AdminDialogPrimaryButton({ children, disabled, onClick }: AdminDialogButtonProps) {
   return (
     <Button size="sm" disabled={disabled} onClick={onClick} className="h-7 px-2 text-xs">
@@ -64,6 +68,7 @@ export function AdminDialogPrimaryButton({ children, disabled, onClick }: AdminD
   );
 }
 
+/** 承载管理表单的弹窗布局及关闭交互。 */
 export function AdminEditorDialog({
   ariaLabel,
   children,

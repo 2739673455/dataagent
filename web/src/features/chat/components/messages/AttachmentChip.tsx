@@ -81,6 +81,7 @@ export const FILE_TYPE_CONFIGS: Record<
   },
 };
 
+/** 根据附件类型展示文件标识。 */
 export function AttachmentIconBadge({
   attachment,
   imageUrl,
@@ -141,6 +142,7 @@ export function AttachmentIconBadge({
   );
 }
 
+/** 加载附件图片预览，并管理下载得到的 Blob URL 生命周期。 */
 function useAttachmentImageUrl(
   attachment: Attachment,
   conversationId: string | null | undefined,
@@ -180,6 +182,7 @@ function useAttachmentImageUrl(
   return imageUrl;
 }
 
+/** 加载 HTML 附件并在独立窗口展示经过清理的预览。 */
 function openHtmlPreview(conversationId: string, attachment: Attachment) {
   // 先同步创建标签页，避免异步下载完成后被浏览器当作弹窗拦截。
   const previewWindow = window.open("about:blank", "_blank");
@@ -214,6 +217,7 @@ function openHtmlPreview(conversationId: string, attachment: Attachment) {
     });
 }
 
+/** 展示附件摘要，并提供预览、下载或移除操作。 */
 export function AttachmentChip({
   attachment,
   conversationId,

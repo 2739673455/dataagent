@@ -3,6 +3,7 @@ interface SemanticIndexStatusProps {
   metaVersion: number;
 }
 
+/** 展示资源语义索引的版本与同步状态。 */
 export function SemanticIndexStatus({ indexVersion, metaVersion }: SemanticIndexStatusProps) {
   if (indexVersion >= metaVersion && indexVersion > 0) {
     return (

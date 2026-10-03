@@ -10,23 +10,11 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from app.assistant import contracts as chat_schema
-from app.assistant import errors as chat_error
 from app.assistant.api.chat.dependencies import (
-    ConversationPGRepoDep,
+    ConversationServiceDep,
     ConversationTurnServiceDep,
 )
-from app.assistant.api.dependencies import (
-    AgentManagerDep,
-    ConversationLifecycleServiceDep,
-    ConversationRunServiceDep,
-    SandboxManagerDep,
-)
-from app.assistant.application.conversation_tasks import (
-    enqueue_conversation_deletion,
-    enqueue_conversation_title,
-)
-from app.assistant.services import history as conversation_history
-from app.assistant.services.title import initial_conversation_title
+from app.assistant.contracts.base import Identifier
 from app.dependencies import AnalysisUserDep, CurrentUserDep
 from app.shared.contracts.analysis import AgentType
 from app.shared.observability import context
@@ -38,65 +26,21 @@ _SSE_HEARTBEAT_SECONDS = 15
 @router.post("/create", status_code=status.HTTP_201_CREATED)
 async def api_create_conversation(
     body: chat_schema.CreateConversationRequest,
-    conversation_repo: ConversationPGRepoDep,
+    conversations: ConversationServiceDep,
     current_user: AnalysisUserDep,
 ) -> chat_schema.ConversationResponse:
     """创建新对话。"""
-    user_id = current_user.id
-    async with conversation_repo.session.begin():
-        conversation = await conversation_repo.create(
-            user_id,
-            initial_conversation_title(body.initial_message),
-            is_draft=body.is_draft,
-        )
-    initial_message = (body.initial_message or "").strip()
-    if initial_message and not body.is_draft:
-        try:
-            enqueue_conversation_title(
-                user_id,
-                conversation.id,
-                conversation.title,
-                initial_message,
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                f"提交会话标题任务失败，保留即时标题: conversation_id={conversation.id}"
-            )
-
-    logger.info(
-        f"创建对话: conversation_id={conversation.id}, is_draft={conversation.is_draft}"
-    )
-    return chat_schema.ConversationResponse(
-        conversation_id=conversation.id,
-        title=conversation.title,
-        update_at=conversation.update_at,
-        running=False,
-    )
+    return await conversations.create(current_user.id, body)
 
 
 @router.post("/delete")
 async def api_delete_conversations(
     body: chat_schema.DeleteConversationRequest,
+    conversations: ConversationServiceDep,
     current_user: CurrentUserDep,
-    lifecycle: ConversationLifecycleServiceDep,
 ) -> None:
     """删除对话。"""
-    user_id = current_user.id
-
-    for conversation_id in body.conversation_ids:
-        if not await lifecycle.request_conversation_deletion(
-            user_id,
-            conversation_id,
-        ):
-            raise chat_error.ConversationNotFoundError
-        try:
-            enqueue_conversation_deletion(user_id, conversation_id)
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                f"提交会话删除任务失败，等待定时补偿: conversation_id={conversation_id}"
-            )
-
-    logger.info(f"删除对话: conversation_ids={body.conversation_ids}")
+    return await conversations.delete(current_user.id, body)
 
 
 @router.delete(
@@ -105,93 +49,40 @@ async def api_delete_conversations(
 )
 async def api_delete_draft_conversation(
     conversation_id: UUID,
+    conversations: ConversationServiceDep,
     current_user: CurrentUserDep,
-    lifecycle: ConversationLifecycleServiceDep,
 ) -> Response:
     """幂等删除当前用户主动放弃的草稿会话。"""
-    requested = await lifecycle.request_conversation_deletion(
-        current_user.id,
-        conversation_id,
-        draft_only=True,
-    )
-    if requested:
-        try:
-            enqueue_conversation_deletion(current_user.id, conversation_id)
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                f"提交草稿删除任务失败，等待定时补偿: conversation_id={conversation_id}"
-            )
+    await conversations.delete_draft(current_user.id, conversation_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/update")
 async def api_update_conversation(
     body: chat_schema.UpdateConversationRequest,
-    conversation_repo: ConversationPGRepoDep,
+    conversations: ConversationServiceDep,
     current_user: CurrentUserDep,
 ) -> None:
     """修改对话信息。"""
-    user_id = current_user.id
-
-    async with conversation_repo.session.begin():
-        conversation = await conversation_repo.get(user_id, body.conversation_id)
-        if conversation is None:
-            raise chat_error.ConversationNotFoundError
-
-        await conversation_repo.update(
-            conversation,
-            title=body.title,
-        )
-    logger.info(f"更新对话: conversation_id={body.conversation_id}")
+    return await conversations.rename(current_user.id, body)
 
 
 @router.get("/ls")
 async def api_get_conversations(
-    conversation_repo: ConversationPGRepoDep,
-    current_user: CurrentUserDep,
-    runs: ConversationRunServiceDep,
+    conversations: ConversationServiceDep, current_user: CurrentUserDep
 ) -> chat_schema.ConversationListResponse:
     """获取所有对话。"""
-    user_id = current_user.id
-    conversations = await conversation_repo.list_by_user(user_id)
-    running_conversation_ids = await runs.running_conversation_ids(user_id)
-    logger.info(f"获取对话列表: conversation_ids={[item.id for item in conversations]}")
-    return chat_schema.ConversationListResponse(
-        conversations=[
-            chat_schema.ConversationResponse(
-                conversation_id=item.id,
-                title=item.title,
-                update_at=item.update_at,
-                running=item.id in running_conversation_ids,
-            )
-            for item in conversations
-        ]
-    )
+    return await conversations.list(current_user.id)
 
 
 @router.get("/ls/{conversation_id}")
 async def api_get_messages(
     conversation_id: UUID,
-    conversation_repo: ConversationPGRepoDep,
+    conversations: ConversationServiceDep,
     current_user: CurrentUserDep,
-    agents: AgentManagerDep,
-    sandbox: SandboxManagerDep,
 ) -> chat_schema.MessageListResponse:
     """从 LangGraph 状态获取某个对话的所有消息。"""
-    user_id = current_user.id
-    conversation = await conversation_repo.get(user_id, conversation_id)
-    if conversation is None:
-        raise chat_error.ConversationNotFoundError
-    messages = await conversation_history.list_messages(
-        agents,
-        sandbox,
-        user_id,
-        conversation_id,
-    )
-    logger.info(
-        f"获取消息列表: conversation_id={conversation_id}, count={len(messages)}"
-    )
-    return chat_schema.MessageListResponse(messages=messages)
+    return await conversations.messages(current_user.id, conversation_id)
 
 
 @router.get(
@@ -200,29 +91,21 @@ async def api_get_messages(
 )
 async def api_get_subagent_messages(
     conversation_id: UUID,
-    analysis_id: str,
+    analysis_id: Identifier,
     agent_type: AgentType,
-    session_id: str,
+    session_id: Identifier,
     delegation_id: str,
-    conversation_repo: ConversationPGRepoDep,
+    conversations: ConversationServiceDep,
     current_user: CurrentUserDep,
-    agents: AgentManagerDep,
-    files: SandboxManagerDep,
 ) -> chat_schema.SubagentMessageListResponse:
     """读取一次 Specialist delegation 的公开工作消息。"""
-    user_id = current_user.id
-    conversation = await conversation_repo.get(user_id, conversation_id)
-    if conversation is None:
-        raise chat_error.ConversationNotFoundError
-    return await conversation_history.get_subagent_activity(
-        agents,
-        user_id,
+    return await conversations.delegation_messages(
+        current_user.id,
         conversation_id,
         analysis_id,
         agent_type,
         session_id,
         delegation_id,
-        files=files,
     )
 
 
@@ -269,47 +152,33 @@ async def api_resume_chat(
 @router.get("/{conversation_id}/run")
 async def api_get_conversation_run_status(
     conversation_id: UUID,
-    conversation_repo: ConversationPGRepoDep,
+    turns: ConversationTurnServiceDep,
     current_user: AnalysisUserDep,
-    runs: ConversationRunServiceDep,
 ) -> chat_schema.ConversationRunStatusResponse:
     """查询 Conversation 是否有正在后台执行的 Planner Run。"""
-    user_id = current_user.id
-    if await conversation_repo.get(user_id, conversation_id) is None:
-        raise chat_error.ConversationNotFoundError
-    return chat_schema.ConversationRunStatusResponse(
-        running=await runs.is_running(user_id, conversation_id)
-    )
+    return await turns.status(current_user.id, conversation_id)
 
 
 @router.get("/{conversation_id}/events", response_class=StreamingResponse)
 async def api_subscribe_conversation_run(
     conversation_id: UUID,
-    conversation_repo: ConversationPGRepoDep,
+    turns: ConversationTurnServiceDep,
     current_user: AnalysisUserDep,
-    runs: ConversationRunServiceDep,
 ) -> StreamingResponse:
     """订阅已经启动的后台 Planner Run。"""
-    user_id = current_user.id
-    if await conversation_repo.get(user_id, conversation_id) is None:
-        raise chat_error.ConversationNotFoundError
-    context.user_id_ctx.set(str(user_id))
-    events = await runs.subscribe(user_id, conversation_id)
+    context.user_id_ctx.set(str(current_user.id))
+    events = await turns.subscribe(current_user.id, conversation_id)
     return _sse_response(conversation_id, events)
 
 
 @router.post("/{conversation_id}/stop", status_code=status.HTTP_204_NO_CONTENT)
 async def api_stop_conversation_run(
     conversation_id: UUID,
-    conversation_repo: ConversationPGRepoDep,
+    turns: ConversationTurnServiceDep,
     current_user: AnalysisUserDep,
-    runs: ConversationRunServiceDep,
 ) -> Response:
     """由用户显式停止 Conversation 当前的 Planner Run。"""
-    user_id = current_user.id
-    if await conversation_repo.get(user_id, conversation_id) is None:
-        raise chat_error.ConversationNotFoundError
-    await runs.stop(user_id, conversation_id)
+    await turns.stop(current_user.id, conversation_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

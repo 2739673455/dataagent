@@ -71,6 +71,7 @@ interface TaskStatusResponse<T> {
 const METADATA_UPSERT_TASK_TIMEOUT_MS = 10 * 60 * 1000;
 const BATCH_TASK_TIMEOUT_MS = 60 * 60 * 1000;
 
+/** 根据已等待时间逐步延长后台任务的轮询间隔。 */
 function getTaskPollInterval(elapsedMs: number): number {
   if (elapsedMs < 10 * 1000) return 1000;
   if (elapsedMs < 60 * 1000) return 2000;
@@ -78,6 +79,7 @@ function getTaskPollInterval(elapsedMs: number): number {
   return 10 * 1000;
 }
 
+/** 在等待期限内轮询任务状态，并返回结果或抛出失败信息。 */
 async function waitForTask<T>(
   taskId: string,
   timeoutMs: number = BATCH_TASK_TIMEOUT_MS
@@ -101,6 +103,7 @@ async function waitForTask<T>(
   throw new Error("前端等待后台任务超时，任务仍可能在后台执行，请稍后刷新查看结果");
 }
 
+/** 提交后台任务，并等待任务结果。 */
 async function submitTask<T>(url: string, data: unknown): Promise<T> {
   const response = await appClient.post<TaskAcceptedResponse>(url, data);
   return waitForTask<T>(response.data.task_id);

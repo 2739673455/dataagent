@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 from docker.errors import NotFound
 
-from app.sandbox.application import DockerSandboxManager
+from app.sandbox import DockerSandboxManager
 from app.sandbox.contracts import SandboxArtifact, SandboxSessionScope
 from tests.sandbox.fakes import FakeSandboxOwnership, build_sandbox_config
 
@@ -20,10 +20,10 @@ def _manager() -> tuple[DockerSandboxManager, MagicMock, MagicMock]:
     )
     client = MagicMock()
     archive = MagicMock()
-    manager._client = client
-    manager._container_spec = "test-spec"
+    manager._runtime._client = client
+    manager._runtime._container_spec = "test-spec"
     manager._ownership_started = True
-    manager._archive = archive
+    manager._storage = archive
     return manager, client, archive
 
 
@@ -32,7 +32,7 @@ def _stopped_container(manager: DockerSandboxManager) -> MagicMock:
     container = MagicMock()
     container.status = "exited"
     container.labels = {
-        **manager._resource_labels(7),
+        **manager._runtime._resource_labels(7),
         "dataagent.sandbox.spec": "test-spec",
     }
 
@@ -59,9 +59,7 @@ def _delete_conversation(
         finally:
             await manager.disconnect()
 
-    with patch(
-        "app.sandbox.application.manager.asyncio.to_thread", side_effect=_run_inline
-    ):
+    with patch("app.sandbox.manager.asyncio.to_thread", side_effect=_run_inline):
         asyncio.run(run())
 
 
@@ -87,11 +85,11 @@ def test_delete_conversation_recreates_container_for_existing_volume() -> None:
     manager, client, archive = _manager()
     container = _stopped_container(manager)
     volume = MagicMock()
-    volume.name = manager._volume_name(7)
+    volume.name = manager._runtime._volume_name(7)
     volume.attrs = {
-        "Labels": manager._resource_labels(7),
+        "Labels": manager._runtime._resource_labels(7),
         "Driver": manager._config.volume_driver,
-        "Options": manager._volume_driver_options(7),
+        "Options": manager._runtime._volume_driver_options(7),
     }
     client.containers.get.side_effect = NotFound("missing")
     client.containers.create.return_value = container
@@ -135,7 +133,7 @@ def test_init_cancellation_waits_for_thread_then_releases_resources() -> None:
     def initialize() -> None:
         started.set()
         assert finish.wait(5)
-        manager._client = client
+        manager._runtime._client = client
         manager._ownership_started = True
 
     async def run() -> None:
@@ -150,7 +148,7 @@ def test_init_cancellation_waits_for_thread_then_releases_resources() -> None:
         with pytest.raises(asyncio.CancelledError):
             await task
         client.close.assert_called_once()
-        assert manager._client is None
+        assert manager._runtime._client is None
         assert not manager._ownership_started
 
     with patch.object(manager, "_initialize_runtime_sync", side_effect=initialize):
@@ -164,20 +162,19 @@ def test_init_failure_closes_client_created_before_reconcile() -> None:
     manager = DockerSandboxManager(build_sandbox_config(), FakeSandboxOwnership(), ())
     client = MagicMock()
 
-    def initialize() -> None:
-        manager._client = client
+    client.images.get.return_value.id = "sha256:test"
 
     async def run() -> None:
         with pytest.raises(RuntimeError, match="reconcile"):
             await manager.init(start_cleanup=False)
         client.close.assert_called_once()
-        assert manager._client is None
+        assert manager._runtime._client is None
         assert not manager._ownership_started
 
     with (
-        patch.object(manager, "_init_sync", side_effect=initialize),
+        patch("app.sandbox.runtime.docker.from_env", return_value=client),
         patch.object(
-            manager._runtime_pool, "reconcile", side_effect=RuntimeError("reconcile")
+            manager._runtime, "reconcile", side_effect=RuntimeError("reconcile")
         ),
     ):
         asyncio.run(run())
@@ -247,11 +244,9 @@ def test_resolve_artifact_checks_storage_and_propagates_infrastructure_errors() 
     references = [path, f"/data/{conversation_id}/{path}"]
     with (
         patch.object(manager, "init", new_callable=AsyncMock),
-        patch.object(manager, "_get_existing_container_sync", return_value=client),
-        patch.object(manager, "_touch_user"),
-        patch(
-            "app.sandbox.application.manager.asyncio.to_thread", side_effect=_run_inline
-        ),
+        patch.object(manager._runtime, "get_existing", return_value=client),
+        patch.object(manager._runtime, "touch"),
+        patch("app.sandbox.manager.asyncio.to_thread", side_effect=_run_inline),
     ):
         for available in (True, False):
             archive.is_downloadable_file.return_value = available
@@ -305,12 +300,10 @@ def test_session_artifacts_share_one_scope_check_and_inspect_alias_once() -> Non
     with (
         patch.object(manager, "init", new_callable=AsyncMock) as initialize,
         patch.object(
-            manager, "_get_existing_container_sync", return_value=container
+            manager._runtime, "get_existing", return_value=container
         ) as lookup,
-        patch.object(manager, "_touch_user"),
-        patch(
-            "app.sandbox.application.manager.asyncio.to_thread", side_effect=_run_inline
-        ),
+        patch.object(manager._runtime, "touch"),
+        patch("app.sandbox.manager.asyncio.to_thread", side_effect=_run_inline),
     ):
         resolved = asyncio.run(
             manager.resolve_artifacts(
@@ -378,14 +371,10 @@ def test_attachment_operations_share_resolved_paths() -> None:
         patch.object(
             manager, "_upload_normalized_file", new_callable=AsyncMock
         ) as upload,
-        patch.object(manager, "_get_existing_container_sync", return_value=container),
-        patch.object(
-            manager, "_get_running_storage_container_sync", return_value=container
-        ),
-        patch.object(manager, "_touch_user"),
-        patch(
-            "app.sandbox.application.manager.asyncio.to_thread", side_effect=_run_inline
-        ),
+        patch.object(manager._runtime, "get_existing", return_value=container),
+        patch.object(manager._runtime, "get_existing_running", return_value=container),
+        patch.object(manager._runtime, "touch"),
+        patch("app.sandbox.manager.asyncio.to_thread", side_effect=_run_inline),
     ):
         for path in ("uploads/tmp/../report.csv", absolute):
             assert (
@@ -439,3 +428,81 @@ def test_attachment_scope_is_checked_before_storage_access() -> None:
     initialize.assert_not_awaited()
     upload.assert_not_awaited()
     assert not archive.mock_calls
+
+
+def test_get_backend_preserves_conversation_and_session_execution_identity():
+    """统一入口仍按工作区分配 UID、GID 和可写范围，执行时才启动容器。"""
+    from unittest.mock import AsyncMock
+
+    import pytest
+
+    from app.sandbox.errors import SandboxPathError
+
+    manager, _, storage = _manager()
+    conversation_id = uuid4()
+    scope = SandboxSessionScope("analysis", "analyst", "session")
+    storage.ensure_workspace.return_value = 100_001
+    storage.ensure_session_workspace.return_value = (100_001, 100_002)
+    container = MagicMock()
+    container.client.api.exec_start.side_effect = lambda *a, **k: iter([b"ok"])
+    container.client.api.exec_inspect.return_value = {"ExitCode": 0}
+
+    async def run():
+        conversation = await manager.get_backend(7, conversation_id)
+        specialist = await manager.get_backend(7, conversation_id, scope=scope)
+        assert conversation.workspace_dir == f"/data/{conversation_id}"
+        assert specialist.workspace_dir == scope.workspace_path(conversation_id)
+        assert specialist.shell_jobs.workspace_dir == specialist.workspace_dir
+        assert conversation.id != specialist.id
+        with pytest.raises(SandboxPathError):
+            specialist._resolve_mutation_path("../other/result.csv")
+        running.assert_not_called()
+        assert (await conversation.aexecute("id")).output == "ok"
+        assert (await specialist.aexecute("id")).output == "ok"
+        users = [
+            call.kwargs["user"]
+            for call in container.client.api.exec_create.call_args_list
+        ]
+        assert users == ["100001:100001", "100002:100001"]
+
+    with (
+        patch.object(manager, "init", new_callable=AsyncMock),
+        patch.object(manager._runtime, "get_or_create_storage", return_value=container),
+        patch.object(
+            manager._runtime, "get_running", return_value=container
+        ) as running,
+        patch("app.sandbox.manager.asyncio.to_thread", side_effect=_run_inline),
+    ):
+        asyncio.run(run())
+    storage.ensure_session_workspace.assert_called_once_with(
+        container, conversation_id, scope
+    )
+
+
+def test_capacity_reclaims_idle_container_and_preserves_its_volume():
+    """启动另一个用户沙箱时回收空闲容器，保留已有数据卷。"""
+    manager, client, _ = _manager()
+    runtime = manager._runtime
+    runtime._config.max_running_containers = 1
+    idle = _stopped_container(manager)
+    idle.status = "running"
+    incoming = _stopped_container(manager)
+
+    def stop(timeout):
+        idle.status = "exited"
+
+    idle.stop.side_effect = stop
+    with (
+        patch.object(runtime, "get_or_create_storage", return_value=incoming),
+        patch.object(runtime, "get_existing", return_value=idle),
+        patch.object(
+            runtime,
+            "_running_containers_sync",
+            side_effect=lambda: [(7, idle)] if idle.status == "running" else [],
+        ),
+    ):
+        assert runtime.get_running(8) is incoming
+    idle.stop.assert_called_once_with(timeout=10)
+    incoming.start.assert_called_once()
+    idle.remove.assert_not_called()
+    client.volumes.get.assert_not_called()

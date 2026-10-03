@@ -15,7 +15,7 @@ from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 
 class PostgresAdvisoryLocks:
-    """业务锁使用独立连接池，不占用 Checkpoint 连接。"""
+    """通过独立连接池管理业务操作的 PostgreSQL advisory lock。"""
 
     def __init__(self, db_config: DBConfig) -> None:
         """构造专用连接池，并保留同进程非重入检查。"""
@@ -53,9 +53,6 @@ class PostgresAdvisoryLocks:
         name: str,
     ) -> AsyncGenerator[None]:
         """非阻塞获取连接级 PostgreSQL advisory lock。"""
-        if not name:
-            raise ValueError("咨询锁名称不能为空")
-
         lock_key = _advisory_lock_key(name)
         advisory_pool = self._pool
         local_lock = self._advisory_locks.setdefault(name, asyncio.Lock())

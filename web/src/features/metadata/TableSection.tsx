@@ -21,6 +21,7 @@ interface TableSectionProps {
   onReloadCatalog: () => Promise<void>;
 }
 
+/** 管理表目录的查询、编辑和索引同步。 */
 export function TableSection({
   tables,
   selectedTable,

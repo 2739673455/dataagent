@@ -3,13 +3,15 @@
 import unittest
 from contextlib import asynccontextmanager
 from dataclasses import fields, replace
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import _get_current_user
-from app.identity.application import IdentityService
+from app.identity import IdentityService
+from app.identity.auth.tokens import JWTCodec
 from app.identity.contracts import AuthenticatedUser
 from app.identity.errors import AuthenticationRequiredError, PermissionDeniedError
 from app.shared.config.app_config import cfg
@@ -32,12 +34,12 @@ class AuthDependencyTest(unittest.IsolatedAsyncioTestCase):
                 for field in fields(AuthenticatedUser)
             }
         )
-        authenticator = MagicMock()
-        authenticator.authenticate = AsyncMock(return_value=principal)
         repo = MagicMock()
+        repo.get_user_by_id = AsyncMock(return_value=user)
+        token = JWTCodec(cfg.auth).issue_access_token(user, datetime.now(UTC))
         credentials = HTTPAuthorizationCredentials(
             scheme="Bearer",
-            credentials="access-token",
+            credentials=token,
         )
 
         resources = MagicMock()
@@ -49,21 +51,17 @@ class AuthDependencyTest(unittest.IsolatedAsyncioTestCase):
                 return_value=session_scope(),
             ) as create_session,
             patch(
-                "app.identity.application.identity.IdentityPGRepo",
+                "app.identity.service.IdentityPGRepo",
                 return_value=repo,
             ) as create_repo,
-            patch(
-                "app.identity.application.identity.AccessTokenAuthenticator",
-                return_value=authenticator,
-            ) as create_authenticator,
         ):
             result = await _get_current_user(resources, credentials)
 
-        self.assertIs(result, principal)
+        self.assertEqual(result, principal)
         create_session.assert_called_once_with()
         create_repo.assert_called_once_with(session)
-        create_authenticator.assert_called_once_with(repo, cfg.auth)
-        authenticator.authenticate.assert_awaited_once_with("access-token")
+        repo.get_user_by_id.assert_awaited_once_with(user.id)
+        self.assertFalse(session.in_transaction())
 
     async def test_missing_bearer_credentials_do_not_call_identity(self) -> None:
         for credentials in (
@@ -116,7 +114,7 @@ class AuthDependencyTest(unittest.IsolatedAsyncioTestCase):
                 repo = MagicMock()
                 repo.get_query_identity = AsyncMock(side_effect=get_identity)
                 with patch(
-                    "app.identity.application.identity.IdentityPGRepo",
+                    "app.identity.service.IdentityPGRepo",
                     return_value=repo,
                 ):
                     if managed:

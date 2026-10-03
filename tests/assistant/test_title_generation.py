@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage
 from sqlalchemy.dialects import postgresql
 
 from app.assistant import tasks
-from app.assistant.services.title import ConversationTitleService
+from app.assistant.messages.title import ConversationTitleService
 
 
 @pytest.mark.parametrize("concurrent_change", [None, "rename", "delete"])

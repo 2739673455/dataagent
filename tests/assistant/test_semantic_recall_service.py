@@ -21,10 +21,9 @@ from app.assistant.agents.tools.semantic_recall import (
 )
 from app.assistant.contracts import SemanticRecallRecord, SemanticRecallResourceDeletion
 from app.assistant.errors import SemanticQueriesNotFoundError
+from app.assistant.recall.context import SemanticRecallContextService
 from app.assistant.repositories.recall import SemanticRecallPGRepo
-from app.assistant.services.recall import SemanticRecallContextService
 from app.identity.contracts import AssetAccessPolicy, AssetIdentity
-from app.metadata.application.authorization import SemanticRecallAuthorization
 from app.metadata.contracts import (
     SemanticColumnRecallResult,
     SemanticMatchReason,
@@ -36,6 +35,7 @@ from app.metadata.contracts import (
     SemanticTableContext,
     SemanticValueRecallResult,
 )
+from app.metadata.search.authorization import SemanticRecallAuthorization
 from app.query.contracts import (
     QueryAssetSnapshot,
     QueryExperienceRecall,
@@ -45,7 +45,7 @@ from app.query.contracts import (
 _FULL_DATABASE_GRANT = AssetIdentity("doris", "analytics")
 _CONFIGURED_DATABASE_GRANT = AssetIdentity("doris", "ecommerce")
 
-from app.assistant.application.recall import SemanticRecallService
+from app.assistant.recall.service import SemanticRecallService
 
 _RECALL = SemanticRecallService(MagicMock(), MagicMock(), MagicMock(), MagicMock())
 
@@ -108,7 +108,6 @@ class InMemorySemanticRecallRepo:
         conversation_id: object,
         *,
         limit: int,
-        offset: int = 0,
     ) -> list[SemanticRecallRecord]:
         """按更新时间倒序列出每个 query 的最新召回记录。"""
         latest_by_query: dict[str, SemanticRecallRecord] = {}
@@ -126,7 +125,7 @@ class InMemorySemanticRecallRepo:
             key=lambda record: (record.updated_at, record.response.recall_id),
             reverse=True,
         )
-        return records[offset : offset + limit]
+        return records[:limit]
 
     async def delete_by_query(
         self,
@@ -1064,7 +1063,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 _RECALL,
-                "context_service",
+                "_context_service",
                 side_effect=lambda *args, **kwargs: object_context(service),
             ),
         ):
@@ -1334,8 +1333,8 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             patch.object(recall_runtime, "metadata", resource_recall_service),
             patch.object(recall_runtime, "query", experience_service),
             patch(
-                "app.assistant.application.recall.semantic_recall_context",
-                side_effect=lambda *args: object_context(context_service),
+                "app.assistant.recall.service.SemanticRecallService._context_service",
+                side_effect=lambda *args, **kwargs: object_context(context_service),
             ),
         ):
             first_result = await cast(Any, recall_tool).coroutine(
@@ -1470,7 +1469,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 _RECALL,
-                "context_service",
+                "_context_service",
                 side_effect=lambda *args, **kwargs: object_context(service),
             ),
         ):
@@ -1524,7 +1523,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(
                 _RECALL,
-                "context_service",
+                "_context_service",
                 side_effect=lambda *args, **kwargs: object_context(service),
             ),
         ):

@@ -15,6 +15,7 @@ export interface ChatSidebarProps {
   onRename: (conversationId: string, title: string) => Promise<void>;
 }
 
+/** 展示会话目录及其创建、重命名和删除入口。 */
 export function ChatSidebar({
   conversations,
   activeConversationId,

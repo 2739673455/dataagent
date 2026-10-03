@@ -20,6 +20,7 @@ export const TOOL_ARGS_PREVIEW_MAX_LENGTH = 80;
 
 export type ExecutionStatus = "idle" | "processing" | "completed" | "interrupted";
 
+/** 根据生成状态和最终回复是否存在确定回合状态。 */
 export function getExecutionStatus(
   hasFinalItem: boolean,
   isStreaming: boolean
@@ -28,6 +29,7 @@ export function getExecutionStatus(
   return hasFinalItem ? "completed" : "interrupted";
 }
 
+/** 根据最新用户回合和流式状态确定会话执行状态。 */
 export function getConversationExecutionStatus(
   conversationId: string | null,
   messages: MessageResponse[],
@@ -40,6 +42,7 @@ export function getConversationExecutionStatus(
   return getExecutionStatus(latestTurn.finalItem !== null, false);
 }
 
+/** 优先使用消息 ID，缺少 ID 时根据角色和内容生成展示键。 */
 export function getMessageKey(message: MessageResponse): string {
   if (message.message_id != null) {
     return `message-${message.message_id}`;
@@ -47,6 +50,7 @@ export function getMessageKey(message: MessageResponse): string {
   return `message-draft-${message.role}-${JSON.stringify(message.parts)}`;
 }
 
+/** 按内容片段类型和标识生成渲染键。 */
 export function getMessagePartKey(part: MessagePart): string {
   switch (part.type) {
     case "text":
@@ -72,6 +76,7 @@ const messageTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
   hourCycle: "h23",
 });
 
+/** 将有效时间转换为中文日期时间格式，无效值返回空结果。 */
 export function formatMessageTime(value: string | null | undefined): string | null {
   if (!value) return null;
   const date = new Date(value);
@@ -82,6 +87,7 @@ export function formatMessageTime(value: string | null | undefined): string | nu
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
 }
 
+/** 提取用户消息摘要，正文为空时使用附件名称。 */
 export function getUserMessagePreview(message: MessageDisplayItem["message"]): string {
   const content = message.parts
     .map((part) => (part.type === "text" ? part.text : "[图片]"))
@@ -106,6 +112,7 @@ export type AttachmentFileType =
   | "archive"
   | "generic";
 
+/** 结合媒体类型和文件扩展名确定附件的展示类别。 */
 export function getAttachmentFileType(
   filePath: string,
   mediaType?: string | null
@@ -141,14 +148,17 @@ export function getAttachmentFileType(
   return "generic";
 }
 
+/** 根据文件扩展名判断附件是否支持图片预览。 */
 export function isImageAttachment(name: string): boolean {
   return /\.(png|jpe?g|gif|webp|bmp)$/i.test(name);
 }
 
+/** 根据文件扩展名识别 HTML 预览附件。 */
 export function isHtmlAttachment(name: string): boolean {
   return /\.(html?)$/i.test(name);
 }
 
+/** 将消息转换为正文和工具执行项，并按调用 ID 合并工具结果。 */
 export function buildDisplayItems(
   conversationId: string | null,
   messages: MessageResponse[],
@@ -240,7 +250,7 @@ export function buildDisplayItems(
     }
   }
 
-  // 会话不再生成时，将未配对的 tool_call 标记为已中断
+  // 会话生成结束后，将缺少结果的 tool_call 标记为已中断
   if (!isStreaming) {
     for (const run of toolRuns.values()) {
       if (!run.completed) {
@@ -252,6 +262,7 @@ export function buildDisplayItems(
   return items;
 }
 
+/** 提取回合末尾的可见终答，将思考内容保留在中间过程。 */
 export function splitFinalAssistantMessage(
   items: DisplayItem[],
   allowFinalMessage = true
@@ -309,6 +320,7 @@ export function splitFinalAssistantMessage(
   };
 }
 
+/** 以用户消息划分回合，并分离每个回合的执行过程和终答。 */
 export function groupDisplayItemsIntoTurns(
   displayItems: DisplayItem[],
   allowLatestTurnFinalMessage = true
@@ -353,6 +365,7 @@ export function groupDisplayItemsIntoTurns(
   return turns;
 }
 
+/** 将工具参数压缩为单行摘要，并按参数类别限制文本长度。 */
 export function formatToolArgValue(key: string, value: unknown): string {
   if (value === null) return "null";
   if (value === undefined) return "undefined";
@@ -384,6 +397,7 @@ export function formatToolArgValue(key: string, value: unknown): string {
   return "{...}";
 }
 
+/** 组合工具参数摘要，并限制整体展示长度。 */
 export function getToolArgsPreview(args?: Record<string, unknown>): string | null {
   if (!args) return null;
   const entries = Object.entries(args);
@@ -398,6 +412,7 @@ export function getToolArgsPreview(args?: Record<string, unknown>): string | nul
   return `${preview.slice(0, TOOL_ARGS_PREVIEW_MAX_LENGTH).trimEnd()}...`;
 }
 
+/** 格式化 JSON 工具结果，其他内容按原文展示。 */
 export function formatToolResult(result: string): string {
   try {
     return JSON.stringify(JSON.parse(result), null, 2);
@@ -406,6 +421,7 @@ export function formatToolResult(result: string): string {
   }
 }
 
+/** 从 JSON 工具结果中读取字符串状态。 */
 export function getToolResultStatus(result: string | undefined): string | null {
   if (result === undefined) return null;
   try {
@@ -430,6 +446,7 @@ export interface DelegationResultPayload {
   content: string | null;
 }
 
+/** 从委派结果中读取展示所需的状态和文本。 */
 export function parseDelegationResult(result: string | undefined): DelegationResultPayload | null {
   if (result === undefined) return null;
   try {
@@ -446,11 +463,13 @@ export function parseDelegationResult(result: string | undefined): DelegationRes
   }
 }
 
+/** 根据工具结果中的状态判断调用是否失败。 */
 export function isToolResultFailure(result: string | undefined): boolean {
   const status = getToolResultStatus(result);
   return status === "error" || status === "failed";
 }
 
+/** 结合最终结果、中断标记和活动事件确定委派状态。 */
 export function resolveDelegationRunStatus(
   result: string | undefined,
   completed: boolean,
@@ -465,6 +484,7 @@ export function resolveDelegationRunStatus(
   return completed ? "completed" : "running";
 }
 
+/** 从委派工具调用中提取会话和委派标识。 */
 export function getSubagentRunIdentity(item: ToolRunDisplayItem): SubagentRunIdentity | null {
   if (item.name !== "delegation" || !item.args) return null;
   const analysisId = item.args.analysis_id;

@@ -5,15 +5,14 @@ from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 
-from app.assistant.application import conversation_lifecycle_resources
-from app.identity.application import UserDeletionStateService
+from app.assistant import conversation_lifecycle_resources
+from app.identity import UserDeletionStateService
 from app.shared.async_runtime import run_async
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
-from app.shared.database.base import AuthBase
 from app.shared.tasks.celery_app import celery_app
-from app.workflows.application.user_deletion import UserDeletionService
 from app.workflows.task_scheduler import enqueue_user_deletion
+from app.workflows.user_deletion import UserDeletionService
 
 # 数据库领取租约覆盖一次任务硬时限和退出余量，与 Broker 可见性分别维护。
 USER_DELETION_CLAIM_SECONDS = cfg.task_queue.task_time_limit_seconds + 300
@@ -35,7 +34,7 @@ def dispatch_due_user_deletions_task() -> dict[str, int]:
 async def _record_failure_safely(
     state_store: UserDeletionStateService, user_id: int, error: Exception
 ) -> None:
-    """尽力保存下一次重试时间，不遮蔽原始异常或中断批量投递。"""
+    """保存下次重试时间，写入失败时记录日志并继续处理后续任务。"""
     try:
         await state_store.record_failure(
             user_id,
@@ -49,7 +48,7 @@ async def _record_failure_safely(
 
 async def _process_user_deletion(user_id: int) -> bool:
     """先互斥检查任务，再初始化清理资源；失败由数据库安排重试。"""
-    auth_postgres = PostgresClientManager(cfg.auth_postgresql, AuthBase)
+    auth_postgres = PostgresClientManager(cfg.auth_postgresql)
     async with AsyncExitStack() as stack:
         stack.push_async_callback(auth_postgres.close)
         state_store = UserDeletionStateService(auth_postgres)
@@ -79,7 +78,7 @@ async def _process_user_deletion(user_id: int) -> bool:
 
 async def _dispatch_due_user_deletions() -> int:
     """原子领取到期注销记录并向生命周期队列提交任务。"""
-    auth_postgres = PostgresClientManager(cfg.auth_postgresql, AuthBase)
+    auth_postgres = PostgresClientManager(cfg.auth_postgresql)
     try:
         state_store = UserDeletionStateService(auth_postgres)
         claimed_at = datetime.now(UTC)

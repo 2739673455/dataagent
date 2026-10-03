@@ -19,18 +19,21 @@ const REFRESH_LOCK_NAME = "dataagent:refresh-token";
 
 class SessionSupersededError extends Error {}
 
+/** 保存令牌并发布服务端返回的用户身份。 */
 function establishSession(payload: TokenResponse): string {
   setTokens(payload.access_token, payload.refresh_token);
   useAuthStore.getState().setAuth(payload.user);
   return payload.access_token;
 }
 
+/** 开启新的登录代次，并在响应仍属于该代次时保存身份。 */
 export async function loginUser(body: LoginRequest): Promise<void> {
   const generation = clearSession();
   const payload = (await authApi.login(body)).data;
   if (sessionLifecycle.isCurrent(generation)) establishSession(payload);
 }
 
+/** 合并当前登录代次的刷新请求，并通过浏览器锁协调令牌轮换。 */
 export async function refreshAccessToken(): Promise<string> {
   const expectedRefreshToken = getRefreshToken();
   if (!expectedRefreshToken) throw new Error("登录状态已失效");
@@ -81,6 +84,7 @@ export async function refreshAccessToken(): Promise<string> {
   return currentTask;
 }
 
+/** 校验访问令牌，按需刷新，并将身份同步到认证状态。 */
 export async function checkAuth(): Promise<void> {
   const generation = sessionLifecycle.current();
   const token = getAccessToken();
@@ -108,6 +112,7 @@ export async function checkAuth(): Promise<void> {
   }
 }
 
+/** 推进登录代次并清理用户状态，按参数决定是否删除令牌。 */
 function resetSession(clearStoredTokens: boolean): number {
   const generation = sessionLifecycle.transition();
   if (clearStoredTokens) clearTokens();
@@ -115,16 +120,19 @@ function resetSession(clearStoredTokens: boolean): number {
   return generation;
 }
 
+/** 清除本地令牌和用户状态，并使正在执行的身份请求失效。 */
 function clearSession(): number {
   return resetSession(true);
 }
 
+/** 先清理本地登录状态，再请求服务端吊销刷新令牌。 */
 export async function logoutUser(): Promise<void> {
   const refreshToken = getRefreshToken();
   clearSession();
   if (refreshToken) await authApi.logout(refreshToken);
 }
 
+/** 提交密码修改，并在成功后清理本地登录状态。 */
 export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
   const accessToken = getAccessToken() ?? (await refreshAccessToken());
   await authApi.changePassword(accessToken, {
@@ -134,11 +142,13 @@ export async function changePassword(currentPassword: string, newPassword: strin
   clearSession();
 }
 
+/** 读取当前存储的令牌，重新校验并同步用户身份。 */
 export async function synchronizeSession(): Promise<void> {
   resetSession(false);
   await checkAuth();
 }
 
+/** 跳转登录页，并携带登录后返回的页面地址。 */
 export function redirectToLogin(returnTo?: string): void {
   const target = returnTo ?? `${window.location.pathname}${window.location.search}`;
   const query = new URLSearchParams({ return_to: target });

@@ -16,6 +16,7 @@ export interface TableDraft {
   cursorColumn: string;
 }
 
+/** 编辑表的业务定义和语义角色。 */
 export function TableEditorDialog({
   draft,
   onChange,

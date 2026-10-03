@@ -9,6 +9,7 @@ import type { MessagePart, ThinkingContent } from "@/features/chat/types";
 
 const IsInsidePreContext = createContext(false);
 
+/** 以代码块样式展示内容，并提供复制操作。 */
 export function CodeBlock({ children }: { children?: React.ReactNode }) {
   const [copied, setCopied] = useState(false);
 
@@ -62,6 +63,7 @@ export function CodeBlock({ children }: { children?: React.ReactNode }) {
   );
 }
 
+/** 为 Markdown 的块级代码提供展示容器。 */
 export function MarkdownPre({ children }: { children?: React.ReactNode }) {
   return (
     <IsInsidePreContext.Provider value={true}>
@@ -70,6 +72,7 @@ export function MarkdownPre({ children }: { children?: React.ReactNode }) {
   );
 }
 
+/** 按内容上下文渲染行内代码或代码块。 */
 export function MarkdownCode({
   className,
   children,
@@ -96,6 +99,7 @@ export function MarkdownCode({
   );
 }
 
+/** 渲染支持 GFM 的 Markdown 消息正文。 */
 export function MarkdownText({
   text,
   className,
@@ -210,6 +214,7 @@ export function MarkdownText({
   );
 }
 
+/** 展示可折叠的思考内容及其生成状态。 */
 function ThinkingView({ part }: { part: ThinkingContent }) {
   const [open, setOpen] = useState(part.status === "streaming");
 
@@ -255,6 +260,7 @@ function ThinkingView({ part }: { part: ThinkingContent }) {
   );
 }
 
+/** 按消息片段类型选择文本、图片或思考内容视图。 */
 export function PartView({
   part,
   onPreview,

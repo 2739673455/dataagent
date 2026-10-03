@@ -10,17 +10,50 @@ import pytest
 from fastapi import FastAPI
 
 from app.assistant.api import dependencies as runtime_dependencies
-from app.assistant.api.chat import dependencies as chat_dependencies
+from app.assistant.api.chat.dependencies import _get_conversation_service
 from app.assistant.api.chat.router import router
 from app.assistant.contracts import ChatStreamDoneEvent
 from app.assistant.errors import (
     ConversationNotFoundError,
     ConversationNotResumableError,
 )
-from app.dependencies import _require_analysis_access
+from app.dependencies import _get_current_user, _require_analysis_access
 from app.shared.errors.exc_handlers import register_exception_handlers
 
 _ID = UUID("550e8400-e29b-41d4-a716-446655440000")
+
+
+@pytest.mark.parametrize("field", ["analysis_id", "session_id"])
+@pytest.mark.parametrize("value", ["INVALID", "a b", "a" * 65])
+def test_session_history_rejects_invalid_identifiers_at_http_entry(field, value):
+    app = FastAPI()
+    app.include_router(router, prefix="/chat")
+    service = MagicMock(delegation_messages=AsyncMock())
+
+    async def current_user():
+        return SimpleNamespace(id=12)
+
+    async def conversations():
+        return service
+
+    app.dependency_overrides = {
+        _get_current_user: current_user,
+        _get_conversation_service: conversations,
+    }
+    identifiers = {"analysis_id": "sales", "session_id": "daily", field: value}
+
+    async def request():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            return await client.get(
+                f"/chat/{_ID}/subagents/{identifiers['analysis_id']}/analyst/"
+                f"{identifiers['session_id']}/runs/run-1/messages"
+            )
+
+    response = asyncio.run(request())
+    assert response.status_code == 422
+    assert not service.mock_calls
 
 
 @pytest.mark.parametrize("entry", ["start", "resume", "subscribe"])
@@ -49,7 +82,7 @@ def test_stream_routes_preserve_frames_headers_and_business_errors(entry, failur
     # 保留真实 ConversationTurnService 的依赖组装；仅替换其资源与方法行为。
     async def start(service, user_id, conversation_id, message):
         assert service._repository is repository
-        assert service._agents is agents
+        assert service._state_reader is agents
         if failure:
             raise ConversationNotFoundError
         return await service._runs.start(user_id, conversation_id, message)
@@ -68,8 +101,8 @@ def test_stream_routes_preserve_frames_headers_and_business_errors(entry, failur
 
     app.dependency_overrides = {
         _require_analysis_access: dependency(SimpleNamespace(id=12)),
-        chat_dependencies._get_conversation_pg_repo: dependency(repository),
-        runtime_dependencies._get_agent_manager: dependency(agents),
+        runtime_dependencies._get_conversation_pg_repo: dependency(repository),
+        runtime_dependencies._get_agent_state_reader: dependency(agents),
         runtime_dependencies._get_conversation_run_service: dependency(runs),
         runtime_dependencies._get_conversation_lifecycle_service: dependency(lifecycle),
     }
@@ -92,7 +125,7 @@ def test_stream_routes_preserve_frames_headers_and_business_errors(entry, failur
 
     from unittest.mock import patch
 
-    from app.assistant.services.conversation_turn import ConversationTurnService
+    from app.assistant.conversations.turns import ConversationTurnService
 
     with (
         patch.object(ConversationTurnService, "start", start),

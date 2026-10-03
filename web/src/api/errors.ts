@@ -13,18 +13,21 @@ const HTTP_STATUS_MESSAGES: Readonly<Record<number, string>> = {
   429: "请求过于频繁，请稍后重试",
 };
 
+/** 读取去除首尾空白后的有效错误文本。 */
 function nonEmptyText(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const text = value.trim();
   return text || null;
 }
 
+/** 优先读取 Problem Details 的详情，其次读取标题。 */
 export function getProblemDetailsMessage(value: unknown): string | null {
   if (typeof value !== "object" || value === null) return null;
   const problem = value as Partial<ProblemDetails>;
   return nonEmptyText(problem.detail) ?? nonEmptyText(problem.title);
 }
 
+/** 将接口、网络和普通异常转换为可展示的错误信息。 */
 export function getApiErrorMessage(error: unknown, fallback: string): string {
   if (isAxiosError(error)) {
     const message = getProblemDetailsMessage(error.response?.data);

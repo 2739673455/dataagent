@@ -8,7 +8,7 @@ from sqlalchemy import DateTime, Index, Integer, String, Uuid, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.shared.database.base import AssistantBase
+from app.assistant.models.base import AssistantBase
 
 
 class SemanticRecallSnapshot(AssistantBase):

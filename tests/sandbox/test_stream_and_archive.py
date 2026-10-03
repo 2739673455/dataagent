@@ -9,26 +9,30 @@ from uuid import uuid4
 
 import pytest
 
-from app.sandbox.application import DockerSandboxBackend
-from app.sandbox.application.shell_runner import DockerShellJobRunner
-from app.sandbox.archive import SandboxArchiveStore
+from app.sandbox import DockerSandboxBackend
 from app.sandbox.docker_stream import close_exec_stream
 from app.sandbox.errors import SandboxFileTooLargeError, SandboxPathError
+from app.sandbox.execution import SandboxExecution
+from app.sandbox.runtime import DockerRuntime
+from app.sandbox.shell_runner import DockerShellJobRunner
+from app.sandbox.storage import SandboxStorage
 from tests.sandbox.fakes import FakeSandboxOwnership, build_sandbox_config
 
 
 def _backend():
     container = MagicMock()
-    backend = DockerSandboxBackend(
+    runtime = MagicMock(spec=DockerRuntime)
+    runtime.get_running.return_value = container
+    execution = SandboxExecution(
         7,
         uuid4(),
         100_001,
         build_sandbox_config(),
         FakeSandboxOwnership(),
-        lambda: None,
-        lambda _: container,
+        runtime,
     )
-    backend._operation_local.container = container
+    backend = DockerSandboxBackend(execution)
+    execution._operation_local.container = container
     return backend, container
 
 
@@ -73,7 +77,7 @@ def test_disconnected_stream_preserves_command_result(exit_code, shell):
     container.client.api.exec_start.return_value = stream
     container.client.api.exec_inspect.return_value = {"ExitCode": exit_code}
     if shell:
-        runner = DockerShellJobRunner(backend)
+        runner = DockerShellJobRunner(backend._execution)
         with (
             patch.object(
                 runner,
@@ -81,8 +85,8 @@ def test_disconnected_stream_preserves_command_result(exit_code, shell):
                 return_value={"status": "finished", "exit_code": exit_code},
             ),
             patch.object(
-                backend,
-                "_read_limited_file_bytes_unlocked",
+                backend._execution,
+                "read_file_bytes",
                 return_value=(b"result\n", 0),
             ),
         ):
@@ -105,7 +109,7 @@ def test_new_archive_entries_have_current_mtime():
 
     container.put_archive.side_effect = capture
     before = int(time.time())
-    SandboxArchiveStore(100).put(
+    SandboxStorage(100).put(
         container,
         "/data",
         [("directory", 1, 1, 0o700)],
@@ -119,7 +123,7 @@ def test_new_archive_entries_have_current_mtime():
 
 def test_archive_size_limit_and_truncated_content():
     container = MagicMock()
-    store = SandboxArchiveStore(100)
+    store = SandboxStorage(100)
     member = tarfile.TarInfo("file")
     member.size = 4
     buffer = io.BytesIO()
@@ -141,7 +145,7 @@ def test_archive_size_limit_and_truncated_content():
 )
 def test_download_qualification_preserves_session_ownership(kind):
     """相同会话下的另一个 Session UID 不能冒充目标产物的属主。"""
-    from app.sandbox.archive import _UidRegistry
+    from app.sandbox.storage import _UidRegistry
 
     conversation_id = uuid4()
     root = f"/data/{conversation_id}"
@@ -150,7 +154,7 @@ def test_download_qualification_preserves_session_ownership(kind):
         {str(conversation_id): 100_001},
         {f"{conversation_id}/sessions/analysis/analyst/session": 100_002},
     )
-    store = SandboxArchiveStore(100)
+    store = SandboxStorage(100)
 
     def inspect(container, path):
         info = tarfile.TarInfo(path)

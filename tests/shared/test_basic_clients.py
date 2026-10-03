@@ -18,7 +18,6 @@ from app.shared.clients.doris_client_manager import (
 from app.shared.clients.embedding_client import EmbeddingClient
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import DBConfig, EmbeddingConfig
-from app.shared.database.base import AuthBase
 
 
 def _database_config():
@@ -122,7 +121,7 @@ def test_embedding_propagates_response_errors(response, error):
 
 def test_databases_construct_and_release_without_network():
     async def run():
-        postgres = PostgresClientManager(_database_config(), AuthBase)
+        postgres = PostgresClientManager(_database_config())
         doris = DorisClientManager(_database_config())
         try:
             assert postgres.engine.url.drivername == "postgresql+psycopg"

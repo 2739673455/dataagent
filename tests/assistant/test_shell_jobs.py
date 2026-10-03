@@ -17,14 +17,14 @@ from app.assistant.agents.middleware.message_context import (
     MessageContextMiddleware,
 )
 from app.assistant.agents.tools.shell import create_shell_tools
-from app.assistant.services.shell_jobs import (
+from app.assistant.execution.shell_jobs import (
     ShellJobError,
     ShellJobResult,
     ShellJobRuntime,
     ShellJobSummary,
 )
-from app.sandbox.application.shell_runner import DockerShellJobRunner
 from app.sandbox.contracts import SandboxShellJobCancellation, SandboxShellJobExecution
+from app.sandbox.shell_runner import DockerShellJobRunner
 
 
 class _FakeShellBackend:

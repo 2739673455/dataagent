@@ -20,6 +20,7 @@ interface MetricSectionProps {
   onReloadCatalog: () => Promise<void>;
 }
 
+/** 管理指标目录及其语义索引同步。 */
 export function MetricSection({
   metrics,
   selectedMetricNames,

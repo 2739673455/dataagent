@@ -8,13 +8,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.metadata.catalog.importer import ImportMode, MetaImportService
+from app.metadata.catalog.service import MetaCatalogService
 from app.metadata.config import ColumnConfig, MetaConfig, MetricConfig, TableConfig
 from app.metadata.models.catalog import ColumnInfo, MetricInfo, TableInfo
 from app.metadata.repositories.postgres import MetaPGRepo
-from app.metadata.services.catalog import MetaCatalogService
-from app.metadata.services.import_service import ImportMode, MetaImportService
 from app.shared.tasks.submission import TaskSubmission
-from app.workflows.application.metadata_changes import MetadataChangeWorkflow
+from app.workflows.metadata_changes import MetadataChangeWorkflow
 
 
 def _dependencies(*, fail_commit=False, fail_invalidation=False, fail_submission=False):

@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy import DateTime, Index, Integer, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.shared.database.base import AssistantBase
+from app.assistant.models.base import AssistantBase
 
 
 class ConversationTombstone(AssistantBase):

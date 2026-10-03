@@ -7,10 +7,12 @@ import { loginUser } from "@/auth";
 import { Button } from "@/components/ui/button";
 import { ROUTES } from "@/config/settings";
 
+/** 校验登录返回地址属于站内路径。 */
 function safeReturnTo(value: string | null): string {
   return value?.startsWith("/") && !value.startsWith("//") ? value : ROUTES.chat;
 }
 
+/** 提交登录信息，并在成功后跳转目标页面。 */
 export default function LoginPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();

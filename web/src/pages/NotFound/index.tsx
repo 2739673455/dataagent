@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ROUTES } from "@/config/settings";
 
+/** 展示路由缺失提示和返回入口。 */
 export default function NotFound() {
   const navigate = useNavigate();
 

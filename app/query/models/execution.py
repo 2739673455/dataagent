@@ -16,7 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.shared.database.base import QueryBase
+from app.query.models.base import QueryBase
 
 
 class QueryExecution(QueryBase):

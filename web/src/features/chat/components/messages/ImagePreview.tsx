@@ -1,5 +1,6 @@
 import { createPortal } from "react-dom";
 
+/** 展示图片预览及其查看交互。 */
 export function ImagePreview({
   alt,
   onClose,

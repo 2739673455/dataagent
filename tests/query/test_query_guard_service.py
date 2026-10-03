@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import AsyncMock
 
 from app.metadata.contracts import QueryCatalogColumn, QueryCatalogSnapshot
-from app.query.services.guard import QueryGuardService
+from app.query.execution.guard import QueryGuardService
 
 
 def make_guard() -> QueryGuardService:

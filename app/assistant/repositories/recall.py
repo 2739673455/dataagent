@@ -99,7 +99,6 @@ class SemanticRecallPGRepo:
         conversation_id: UUID,
         *,
         limit: int,
-        offset: int = 0,
     ) -> list[SemanticRecallRecord]:
         """按更新时间倒序列出会话中每个 query 的最新快照。"""
         latest = (
@@ -125,7 +124,6 @@ class SemanticRecallPGRepo:
                     latest_snapshot.recall_id.desc(),
                 )
                 .limit(limit)
-                .offset(offset)
             )
         ).all()
         return [self._to_record(snapshot) for snapshot in snapshots]

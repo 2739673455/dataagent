@@ -14,7 +14,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.shared.database.base import AuthBase
+from app.identity.models.base import AuthBase
 
 
 class UserDeletionTask(AuthBase):

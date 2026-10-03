@@ -14,19 +14,20 @@ from uuid import uuid4
 from langchain.tools import ToolRuntime
 
 from app.assistant.agents.tools.execute_sql import create_execute_sql_tool
+from app.identity import IdentityService
 from app.identity import errors as auth_error
-from app.identity.application import IdentityService
 from app.identity.errors import QueryPrincipalNotConfiguredError
 from app.identity.models.doris import DorisAuthorizationSnapshot
-from app.metadata.application import MetadataReader
+from app.metadata import MetadataReader
 from app.metadata.contracts import AssetVersions
-from app.query.application import QueryExecutionService
+from app.query import QueryExecutionService
 from app.query.contracts import (
     AnalysisQueryResult,
     QueryBatch,
     QueryColumnRef,
     QueryExecutionLimits,
     QueryExecutionOptions,
+    QueryExecutionScope,
     QueryTableRef,
     QueryValidationIssue,
     QueryValidationResult,
@@ -36,13 +37,13 @@ from app.query.errors import (
     QueryRejectedError,
     QueryResultShapeError,
 )
-from app.query.repositories.doris import DorisQueryRepository
-from app.query.services.execution_recorder import (
+from app.query.execution.executor import AnalysisQueryService
+from app.query.execution.recorder import (
     QueryExecutionContext,
     QueryExecutionRecorder,
 )
-from app.query.services.executor import AnalysisQueryService
-from app.shared.contracts.analysis import AgentSessionKey
+from app.query.repositories.doris import DorisQueryRepository
+from app.shared.config.app_config import cfg
 
 
 def valid():
@@ -64,7 +65,7 @@ def result():
 
 
 def key():
-    return AgentSessionKey(7, uuid4(), "sales", "explorer", "daily")
+    return QueryExecutionScope(7, uuid4(), "sales", "explorer", "daily")
 
 
 class QueryPrincipalTest(unittest.IsolatedAsyncioTestCase):
@@ -96,15 +97,15 @@ class QueryPrincipalTest(unittest.IsolatedAsyncioTestCase):
                 )
                 with (
                     patch(
-                        "app.identity.application.identity.IdentityPGRepo",
+                        "app.identity.service.IdentityPGRepo",
                         return_value=repo,
                     ),
                     patch(
-                        "app.identity.application.identity.DorisCredentialCipher",
+                        "app.identity.service.DorisCredentialCipher",
                         return_value=cipher,
                     ),
                     patch(
-                        "app.identity.application.identity.AuthorizationService",
+                        "app.identity.service.AuthorizationService",
                         return_value=authorization,
                     ),
                     self.assertRaises(expected),
@@ -147,18 +148,18 @@ class QueryExecutionServiceTest(unittest.IsolatedAsyncioTestCase):
         )
         self.executor_factory = self.enterContext(
             patch(
-                "app.query.application.queries.AnalysisQueryService",
+                "app.query.execution.service.AnalysisQueryService",
                 return_value=self.service,
             )
         )
         self.enterContext(
             patch(
-                "app.query.application.queries.QueryExecutionRecorder",
+                "app.query.execution.service.QueryExecutionRecorder",
                 return_value=self.recorder,
             )
         )
         with patch(
-            "app.query.application.queries.QueryGuardService", return_value=self.guard
+            "app.query.execution.service.QueryGuardService", return_value=self.guard
         ):
             self.handler = QueryExecutionService(
                 identity=self.identity,
@@ -166,6 +167,9 @@ class QueryExecutionServiceTest(unittest.IsolatedAsyncioTestCase):
                 postgres=MagicMock(),
                 query_clients=self.query_clients,
                 artifact_store=MagicMock(),
+                config=cfg.query,
+                database_name=cfg.doris.database,
+                index_scheduler=MagicMock(),
             )
         self.tool_runtime = ToolRuntime(
             state={},
@@ -196,6 +200,10 @@ class QueryExecutionServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args.args[0].session_key, self.key)
         self.assertEqual(args.args[0].role_name, "reader")
         self.assertEqual(args.kwargs["raw_sql"], " select 1 as value ")
+        self.assertEqual(args.kwargs["normalized_sql"], "SELECT 1 AS value")
+        self.service.execute.assert_awaited_once_with(
+            self.key, "SELECT 1 AS value", purpose="统计"
+        )
         self.assertIs(args.kwargs["validation"], self.guard.check.return_value)
         self.assertIs(args.kwargs["result"], actual)
         self.recorder.record_failure.assert_not_awaited()
@@ -301,7 +309,7 @@ class QueryExecutorTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.path, "/data/written/result.csv")
 
     async def execute(self):
-        return await self.service.execute(self.key, valid(), purpose="统计")
+        return await self.service.execute(self.key, "SELECT 1 AS value", purpose="统计")
 
     async def test_multibatch_output_scope_and_bounded_sample(self):
         actual = await self.execute()
@@ -389,7 +397,9 @@ class QueryExecutorTest(unittest.IsolatedAsyncioTestCase):
             ("é²_Ⅳ", "é2_IV.csv"),
         ):
             with self.subTest(purpose=purpose):
-                actual = await self.service.execute(self.key, valid(), purpose=purpose)
+                actual = await self.service.execute(
+                    self.key, "SELECT 1 AS value", purpose=purpose
+                )
                 self.assertEqual(actual.path.rsplit("/", 1)[-1], filename)
 
     async def test_empty_result_preserves_header_and_schema(self):
@@ -421,12 +431,6 @@ class QueryExecutorTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(raised.exception, error)
         self.assertTrue(self.closed)
         self.assertTrue(self.store.write_artifact.call_args.args[3].closed)
-
-    async def test_invalid_validation_does_not_execute(self):
-        with self.assertRaises(QueryRejectedError):
-            await self.service.execute(self.key, rejected(), purpose="统计")
-        self.assertFalse(self.closed)
-        self.store.write_artifact.assert_not_awaited()
 
 
 class DorisStreamTest(unittest.IsolatedAsyncioTestCase):
@@ -556,14 +560,12 @@ class QuerySessionBoundariesTest(unittest.IsolatedAsyncioTestCase):
         recorder.record_success.side_effect = record
         with (
             patch(
-                "app.identity.application.identity.DorisCredentialCipher",
+                "app.identity.service.DorisCredentialCipher",
                 return_value=MagicMock(decrypt=lambda _: "password"),
             ),
+            patch("app.identity.service.IdentityPGRepo", return_value=repo),
             patch(
-                "app.identity.application.identity.IdentityPGRepo", return_value=repo
-            ),
-            patch(
-                "app.identity.application.identity.DorisRoleRepository",
+                "app.identity.service.DorisRoleRepository",
                 return_value=MagicMock(
                     read_authorization=AsyncMock(
                         return_value=DorisAuthorizationSnapshot((), "same")
@@ -571,7 +573,7 @@ class QuerySessionBoundariesTest(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
             patch(
-                "app.metadata.application.resources.MetaPGRepo",
+                "app.metadata.catalog.reader.MetaPGRepo",
                 return_value=MagicMock(
                     list_table_infos=AsyncMock(return_value=[]),
                     list_column_infos=AsyncMock(return_value=[]),
@@ -579,7 +581,7 @@ class QuerySessionBoundariesTest(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(DorisQueryRepository, "stream", stream),
             patch(
-                "app.query.application.queries.QueryExecutionRecorder",
+                "app.query.execution.service.QueryExecutionRecorder",
                 return_value=recorder,
             ),
         ):
@@ -590,6 +592,9 @@ class QuerySessionBoundariesTest(unittest.IsolatedAsyncioTestCase):
                 postgres=manager("query"),
                 query_clients=clients,
                 artifact_store=store,
+                config=cfg.query,
+                database_name=cfg.doris.database,
+                index_scheduler=MagicMock(),
             )
             actual = await service.execute(
                 key(), "SELECT 1", purpose="统计", tool_call_id=None
@@ -689,6 +694,7 @@ class QueryRecorderTest(unittest.IsolatedAsyncioTestCase):
                 recorded = await recorder.record_success(
                     context,
                     raw_sql="select 1 as value",
+                    normalized_sql="SELECT 1 AS value",
                     validation=validation,
                     result=result(),
                 )

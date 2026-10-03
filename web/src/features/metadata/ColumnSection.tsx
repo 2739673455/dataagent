@@ -27,6 +27,7 @@ interface ColumnSectionProps {
   onReloadColumns: (tableName: string) => Promise<void>;
 }
 
+/** 管理字段目录的查询、编辑和索引同步。 */
 export function ColumnSection({
   selectedTable,
   columns,

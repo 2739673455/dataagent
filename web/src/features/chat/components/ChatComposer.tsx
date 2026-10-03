@@ -17,6 +17,7 @@ interface ChatComposerProps {
   onSubmit: (value: string) => Promise<boolean>;
 }
 
+/** 管理消息输入、附件选择和发送或停止操作。 */
 export function ChatComposer({
   attachments = [],
   disabled = false,

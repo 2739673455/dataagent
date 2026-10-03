@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.assistant.services.recall_cleanup import RecallCleanupService
+from app.assistant.recall.cleanup import RecallCleanupService
 
 
 @pytest.mark.parametrize("scope", ["conversation", "user"])
@@ -30,7 +30,7 @@ def test_cleanup_commits_or_rolls_back_before_releasing_session(scope, fails) ->
             await service.delete_user(7)
 
     with patch(
-        "app.assistant.services.recall_cleanup.SemanticRecallPGRepo",
+        "app.assistant.recall.cleanup.SemanticRecallPGRepo",
         return_value=repo,
     ):
         if fails:

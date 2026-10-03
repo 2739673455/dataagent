@@ -8,15 +8,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from pydantic import SecretStr
 
+from app.identity import IdentityService
 from app.identity import errors as auth_error
+from app.identity.auth.passwords import Argon2PasswordManager
+from app.identity.auth.service import AuthService
+from app.identity.auth.tokens import JWTCodec
 from app.identity.models.account import RefreshToken, User
 from app.identity.repositories.identity import IdentityPGRepo
-from app.identity.services.auth import (
-    AccessTokenAuthenticator,
-    Argon2PasswordManager,
-    AuthService,
-    JWTCodec,
-)
 from app.shared.config.app_config import AuthConfig
 
 DEFAULT_ROLE = "dataagent_default"
@@ -137,7 +135,7 @@ class Argon2PasswordManagerTest(unittest.IsolatedAsyncioTestCase):
             return function(*args)
 
         manager = Argon2PasswordManager()
-        with patch("app.identity.services.auth.to_thread.run_sync", new=run_inline):
+        with patch("app.identity.auth.passwords.to_thread.run_sync", new=run_inline):
             password_hash = await manager.hash("correct horse battery staple")
             verified = await manager.verify(
                 "correct horse battery staple",
@@ -160,7 +158,7 @@ class Argon2PasswordManagerTest(unittest.IsolatedAsyncioTestCase):
             return "hash"
 
         manager = Argon2PasswordManager(max_concurrency=2)
-        with patch("app.identity.services.auth.to_thread.run_sync", new=run_slowly):
+        with patch("app.identity.auth.passwords.to_thread.run_sync", new=run_slowly):
             await asyncio.gather(*(manager.hash(str(index)) for index in range(8)))
 
         self.assertEqual(max_active, 2)
@@ -293,15 +291,21 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
             self.now,
         )
 
+    async def _authenticate(self, token: str):
+        """通过模块公开入口验证真实 JWT，使用测试仓储管理短会话。"""
+        postgres = MagicMock()
+        postgres.session.return_value = self.session
+        identity = IdentityService(postgres, MagicMock())
+        identity._codec = JWTCodec(build_config())
+        with patch("app.identity.service.IdentityPGRepo", return_value=self.repo):
+            return await identity.authenticate(token)
+
     async def test_authenticate_access_token_returns_immutable_snapshot(self) -> None:
         user = build_user()
         self.repo.get_user_by_id.return_value = user
         token = JWTCodec(build_config()).issue_access_token(user, self.now)
 
-        principal = await AccessTokenAuthenticator(
-            self.repo,
-            build_config(),
-        ).authenticate(token)
+        principal = await self._authenticate(token)
 
         self.assertEqual(principal.id, user.id)
         with self.assertRaises(AttributeError):
@@ -330,7 +334,4 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
         self.repo.get_user_by_id.return_value = user
 
         with self.assertRaises(auth_error.InvalidTokenError):
-            await AccessTokenAuthenticator(
-                self.repo,
-                build_config(),
-            ).authenticate(token_pair.access_token)
+            await self._authenticate(token_pair.access_token)

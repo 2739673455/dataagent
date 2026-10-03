@@ -229,7 +229,7 @@ class IdentityPGRepo:
         user_id: int,
         now: datetime,
     ) -> None:
-        """仅新增注销任务，重复受理不重置租约与失败信息。"""
+        """幂等创建注销任务，重复受理时保留已有租约和失败信息。"""
         await self._session.execute(
             insert(UserDeletionTask)
             .values(

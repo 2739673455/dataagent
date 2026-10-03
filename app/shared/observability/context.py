@@ -1,3 +1,5 @@
+"""请求日志与调用追踪使用的上下文变量。"""
+
 from contextvars import ContextVar
 
 request_id_ctx: ContextVar[str | None] = ContextVar("request_id", default=None)

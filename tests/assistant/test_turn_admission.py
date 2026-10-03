@@ -6,15 +6,15 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from app.assistant.application.lifecycle import ConversationLifecycleService
 from app.assistant.contracts import TextContent, UserMessageRequest
+from app.assistant.conversations.lifecycle import ConversationLifecycleService
+from app.assistant.conversations.turns import ConversationTurnService
 from app.assistant.errors import (
     ConversationBusyError,
     ConversationNotFoundError,
     ConversationNotResumableError,
 )
-from app.assistant.services.conversation_run import ConversationRunService
-from app.assistant.services.conversation_turn import ConversationTurnService
+from app.assistant.execution.runs import ConversationRunService
 from app.shared.errors.infrastructure import AdvisoryLockBusyError
 
 
@@ -69,7 +69,7 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
             update=AsyncMock(return_value=conversation),
         )
         self.turn = ConversationTurnService(
-            repository=self.repo, runs=self.runs, agents=self.agents
+            repository=self.repo, runs=self.runs, state_reader=self.agents
         )
 
     def new_worker(self):
@@ -82,10 +82,10 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
     ):
         message = UserMessageRequest(parts=[TextContent(type="text", text="分析")])
         other = ConversationTurnService(
-            repository=self.repo, runs=self.new_worker(), agents=self.agents
+            repository=self.repo, runs=self.new_worker(), state_reader=self.agents
         )
         with patch(
-            "app.assistant.services.conversation_turn.enqueue_conversation_title"
+            "app.assistant.conversations.turns.enqueue_conversation_title"
         ) as enqueue:
             stream = await self.turn.start(1, self.conversation_id, message)
             await self.started.wait()
@@ -139,23 +139,24 @@ class TurnAdmissionTest(unittest.IsolatedAsyncioTestCase):
                 setattr(row, name, value)
             return row
 
-        @asynccontextmanager
-        async def repository():
-            yield self.repo
-
         self.repo.get.side_effect = get
         self.repo.update.side_effect = update
+        postgres = MagicMock()
+        postgres.session.return_value.__aenter__.return_value = MagicMock()
         lifecycle = ConversationLifecycleService(
-            repository,
-            MagicMock(),
+            postgres,
             self.locks,
             self.agents,
             MagicMock(),
             MagicMock(),
             runs=self.runs,
         )
-        with patch(
-            "app.assistant.services.conversation_turn.enqueue_conversation_title"
+        with (
+            patch("app.assistant.conversations.turns.enqueue_conversation_title"),
+            patch(
+                "app.assistant.conversations.lifecycle.ConversationPGRepo",
+                return_value=self.repo,
+            ),
         ):
             stream = await self.turn.start(1, self.conversation_id, message)
             await self.started.wait()

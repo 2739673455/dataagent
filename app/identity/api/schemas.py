@@ -18,7 +18,7 @@ from app.identity.models.doris import (
     DorisSelectGrant,
     normalize_doris_role_name,
 )
-from app.identity.services.doris_permission import DorisRoleStatus
+from app.identity.roles.permissions import DorisRoleStatus
 from app.shared.contracts.doris import (
     DORIS_IDENTIFIER_PATTERN,
     DORIS_WORKLOAD_GROUP_PATTERN,

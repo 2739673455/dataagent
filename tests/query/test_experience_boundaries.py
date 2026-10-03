@@ -10,9 +10,9 @@ import pytest
 
 from app.identity.contracts import AssetAccessPolicy, AssetIdentity
 from app.metadata.contracts import AssetVersions
-from app.query.application import QueryExperienceService
-from app.query.application.experience_recall import _SemanticRecall
-from app.query.application.invalidation import QueryExperienceInvalidationService
+from app.query import QueryExperienceService
+from app.query.experiences.invalidation import QueryExperienceInvalidationService
+from app.query.experiences.recall import _SemanticRecall
 from app.shared.config.app_config import cfg
 from app.shared.contracts.assets import asset_resource_key
 
@@ -95,6 +95,9 @@ def test_recall_reads_metadata_outside_query_transactions_and_excludes_stale_ass
         MagicMock(asset_versions=AsyncMock(side_effect=versions)),
         MagicMock(),
         MagicMock(),
+        config=cfg.query,
+        database_name=cfg.doris.database,
+        index_scheduler=scheduler,
     )
     service._semantic_recall = AsyncMock(
         return_value=_SemanticRecall("success", {item.id: 1.0 for item in items})
@@ -107,12 +110,8 @@ def test_recall_reads_metadata_outside_query_transactions_and_excludes_stale_ass
     )
     with (
         patch(
-            "app.query.application.experience_recall.QueryExperiencePGRepo",
+            "app.query.experiences.recall.QueryExperiencePGRepo",
             return_value=repo,
-        ),
-        patch(
-            "app.query.application.experience_recall.query_experience_index_scheduler",
-            scheduler,
         ),
     ):
         result = asyncio.run(service.recall(policy=policy, query="订单", limit=3))
@@ -128,7 +127,15 @@ def test_recall_without_query_identity_never_opens_storage_or_searches(
     role, fingerprint
 ):
     postgres = MagicMock()
-    service = QueryExperienceService(postgres, MagicMock(), MagicMock(), MagicMock())
+    service = QueryExperienceService(
+        postgres,
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
+        config=cfg.query,
+        database_name=cfg.doris.database,
+        index_scheduler=MagicMock(),
+    )
     service._semantic_recall = AsyncMock()
     result = asyncio.run(
         service.recall(AssetAccessPolicy(7, role, fingerprint), "订单", 3)
@@ -141,7 +148,15 @@ def test_recall_without_query_identity_never_opens_storage_or_searches(
 
 def test_failed_experience_search_never_opens_query_storage():
     postgres = MagicMock()
-    service = QueryExperienceService(postgres, MagicMock(), MagicMock(), MagicMock())
+    service = QueryExperienceService(
+        postgres,
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
+        config=cfg.query,
+        database_name=cfg.doris.database,
+        index_scheduler=MagicMock(),
+    )
     service._semantic_recall = AsyncMock(return_value=_SemanticRecall("failed", {}))
     result = asyncio.run(
         service.recall(AssetAccessPolicy(7, "reader", "fingerprint"), "订单", 3)
@@ -177,7 +192,7 @@ def test_invalidation_owns_query_transaction_and_only_schedules_committed_change
         postgres, scheduler, data_source="doris", database_name="analytics"
     )
     with patch(
-        "app.query.application.invalidation.QueryExperiencePGRepo",
+        "app.query.experiences.invalidation.QueryExperiencePGRepo",
         return_value=repo,
     ):
         operation = service.invalidate_assets(

@@ -3,7 +3,7 @@
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.assistant.contracts import DELEGATION_CONTEXT_KEY
-from app.assistant.services.specialist_checkpoint import SpecialistCheckpointView
+from app.assistant.sessions.checkpoint_view import SpecialistCheckpointView
 
 
 def _boundary(delegation_id: str) -> HumanMessage:
@@ -22,7 +22,7 @@ def test_only_current_complete_answer_is_returned():
                 _boundary("current"),
                 AIMessage(
                     content="current answer",
-                    response_metadata={"finish_reason": "stopstop"},
+                    response_metadata={"finish_reason": "stop"},
                 ),
                 _boundary("next"),
                 AIMessage(content="next answer"),

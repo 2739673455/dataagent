@@ -7,10 +7,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from app.assistant.application.recall import SemanticRecallService
-from app.identity.application import IdentityService
+from app.assistant.recall.service import SemanticRecallService
+from app.identity import IdentityService
 from app.identity.contracts import AssetAccessPolicy, AssetIdentity
-from app.metadata.application import SemanticResourceService
+from app.metadata import SemanticResourceService
 from app.metadata.contracts import SemanticResourceRecallRequest
 from app.metadata.models.catalog import ColumnInfo, TableInfo
 from app.shared.config.app_config import cfg
@@ -38,7 +38,11 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.runtime = SemanticRecallService(
             IdentityService(MagicMock(session=lambda: session("auth")), MagicMock()),
             SemanticResourceService(
-                MagicMock(session=lambda: session("meta")), MagicMock(), self.embedding
+                MagicMock(session=lambda: session("meta")),
+                MagicMock(),
+                self.embedding,
+                data_source=cfg.query.data_source,
+                database_name=cfg.doris.database,
             ),
             MagicMock(),
             MagicMock(session=lambda: session("assistant")),
@@ -100,13 +104,13 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
         embedding.aembed_documents = AsyncMock(side_effect=embed)
         with (
             patch(
-                "app.identity.application.identity.AuthorizationService",
+                "app.identity.service.AuthorizationService",
                 return_value=MagicMock(
                     get_asset_policy=AsyncMock(side_effect=load_policy)
                 ),
             ),
             patch(
-                "app.metadata.application.search.MetaPGRepo",
+                "app.metadata.search.service.MetaPGRepo",
                 return_value=MagicMock(
                     list_table_infos=AsyncMock(return_value=[self.table]),
                     list_column_infos=AsyncMock(side_effect=columns),
@@ -137,7 +141,7 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=self.policy),
             ),
             patch(
-                "app.metadata.application.search.MetaPGRepo",
+                "app.metadata.search.service.MetaPGRepo",
                 return_value=MagicMock(
                     list_table_infos=AsyncMock(return_value=[self.table]),
                     list_column_infos=AsyncMock(side_effect=columns),
@@ -159,11 +163,10 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
         revoked = AssetAccessPolicy(user_id=7)
         seen = []
 
-        @asynccontextmanager
-        async def context(postgres, policy):
-            self.assertEqual(self.open_sessions, set())
+        def authorization(policy, *args):
+            self.assertEqual(self.open_sessions, {"assistant"})
             seen.append(policy)
-            yield MagicMock()
+            return MagicMock()
 
         with (
             patch.object(
@@ -172,15 +175,15 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(side_effect=[self.policy, revoked]),
             ) as load,
             patch(
-                "app.assistant.application.recall.semantic_recall_context",
-                side_effect=context,
+                "app.assistant.recall.service.SemanticRecallAuthorization",
+                side_effect=authorization,
             ),
         ):
-            async with self.runtime.context_service(7):
+            async with self.runtime._context_service(7):
                 pass
-            async with self.runtime.context_service(7, policy=self.policy):
+            async with self.runtime._context_service(7, policy=self.policy):
                 pass
-            async with self.runtime.context_service(7):
+            async with self.runtime._context_service(7):
                 pass
         self.assertEqual(load.await_count, 2)
         self.assertEqual(seen, [self.policy, self.policy, revoked])
@@ -191,12 +194,12 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
         )
 
         @asynccontextmanager
-        async def context(*args):
+        async def context(*args, **kwargs):
             yield MagicMock(get_fresh_query_experiences=AsyncMock(return_value=None))
 
         with (
             patch(
-                "app.assistant.application.recall.semantic_recall_context",
+                "app.assistant.recall.service.SemanticRecallService._context_service",
                 side_effect=context,
             ),
             patch.object(

@@ -15,6 +15,7 @@ import { AssetPermissionPanel } from "@/features/roles/AssetPermissionPanel";
 import { DorisRoleCreateDialog } from "@/features/roles/DorisRoleCreateDialog";
 import { RowPolicyPanel } from "@/features/roles/RowPolicyPanel";
 
+/** 管理 Doris 角色及其资产权限和行级策略。 */
 export function DorisRoleManagement() {
   const [roles, setRoles] = useState<DorisRoleResponse[]>([]);
   const [existingRoles, setExistingRoles] = useState<DorisExistingRoleResponse[]>([]);

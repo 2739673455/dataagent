@@ -26,7 +26,7 @@ class ColumnReference(TypedDict):
 
 @dataclass(frozen=True, slots=True)
 class QueryCatalogColumn:
-    """SQL 解析需要的字段定义，不携带 ORM 状态。"""
+    """SQL 解析所需的字段名称、类型和表归属。"""
 
     t_name: str
     name: str

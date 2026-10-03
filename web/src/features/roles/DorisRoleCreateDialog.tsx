@@ -22,6 +22,7 @@ interface DorisRoleCreateDialogProps {
   onRoleCreated: (role: DorisRoleResponse) => void;
 }
 
+/** 收集并提交 Doris 角色创建信息。 */
 export function DorisRoleCreateDialog({
   busy,
   existingRoles,

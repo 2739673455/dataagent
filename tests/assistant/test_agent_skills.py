@@ -9,11 +9,11 @@ from langchain_core.messages import ToolMessage
 
 from app.assistant.agents.filesystem import (
     agent_skills_mount_path,
+    analyst_skill_mount,
     build_agent_filesystem,
-    packaged_skill_readonly_mounts,
 )
-from app.assistant.resource_loader import SKILLS_DIRECTORY, load_prompt
-from app.sandbox.application.backend import DockerSandboxBackend
+from app.assistant.resource_loader import load_prompt
+from app.sandbox.backend import DockerSandboxBackend
 
 _ANALYST_SKILLS_PATH = agent_skills_mount_path("analyst")
 
@@ -21,10 +21,8 @@ _ANALYST_SKILLS_PATH = agent_skills_mount_path("analyst")
 class AgentSkillsTest(unittest.TestCase):
     def test_packaged_skills_load_outside_repository(self) -> None:
         with tempfile.TemporaryDirectory() as directory, chdir(directory):
-            mounts = packaged_skill_readonly_mounts()
-            analyst = next(
-                mount for mount in mounts if str(mount.target) == "/skills/analyst"
-            )
+            analyst = analyst_skill_mount()
+            self.assertEqual(str(analyst.target), "/skills/analyst")
             self.assertTrue(analyst.source.is_absolute())
             self.assertIn(
                 "name: analysis", (analyst.source / "analysis/SKILL.md").read_text()
@@ -60,7 +58,6 @@ class AgentSkillsTest(unittest.TestCase):
             )
 
     def test_agent_cannot_modify_mounted_skill(self) -> None:
-        skill_directory = SKILLS_DIRECTORY
         state_backend = StateBackend()
         cast(
             Any, state_backend
@@ -68,8 +65,7 @@ class AgentSkillsTest(unittest.TestCase):
         backend, filesystem = build_agent_filesystem(
             cast(DockerSandboxBackend, state_backend),
             tools=["read_file", "write_file", "edit_file"],
-            skill_directory=skill_directory,
-            skills=[_ANALYST_SKILLS_PATH],
+            skill_mount=analyst_skill_mount(),
         )
         skill_path = f"{_ANALYST_SKILLS_PATH}analysis/SKILL.md"
         original = backend.read(skill_path)

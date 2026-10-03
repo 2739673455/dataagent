@@ -18,6 +18,7 @@ import { UserCreateDialog } from "@/features/users/UserCreateDialog";
 
 const USER_PAGE_SIZE = 50;
 
+/** 管理用户账号、角色分配和账号状态。 */
 export function UserManagement() {
   const currentUser = useAuthStore((state) => state.user);
   const [users, setUsers] = useState<UserResponse[]>([]);

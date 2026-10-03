@@ -11,6 +11,7 @@ import {
   formatValueIndexSyncMode,
 } from "@/features/metadata/utils";
 
+/** 展示字段取值索引的同步状态和执行详情。 */
 export function ValueIndexStatus({ column }: { column: ColumnInfo }) {
   if (!column.index_values) {
     return (
@@ -73,6 +74,7 @@ export interface ColumnDraft {
   refColumn: string;
 }
 
+/** 编辑字段语义定义、关联关系和索引配置。 */
 export function ColumnEditorDialog({
   draft,
   onChange,

@@ -6,14 +6,14 @@ from uuid import UUID
 from elasticsearch import AsyncElasticsearch
 from loguru import logger
 
-from app.query.application.index_tasks import query_experience_index_scheduler
-from app.query.providers import build_query_experience_indexer
+from app.query.experiences.indexer import QueryExperienceIndexer
+from app.query.experiences.scheduler import query_experience_index_scheduler
+from app.query.repositories.experience_index import QueryExperienceESRepo
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
 from app.shared.async_runtime import run_async
 from app.shared.clients.embedding_client import EmbeddingClient
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
-from app.shared.database.base import QueryBase
 from app.shared.tasks.celery_app import celery_app
 
 _REPAIR_BATCH_SIZE = 500
@@ -61,19 +61,19 @@ async def _sync_index(experience_id: UUID, revision: int) -> int:
             hosts=[f"http://{cfg.elasticsearch.host}:{cfg.elasticsearch.port}"]
         )
         stack.push_async_callback(es.close)
-        postgres = PostgresClientManager(cfg.meta_postgresql, QueryBase)
+        postgres = PostgresClientManager(cfg.meta_postgresql)
         stack.push_async_callback(postgres.close)
         async with postgres.session() as session:
-            return await build_query_experience_indexer(
-                session,
-                es,
-                embedding,
+            return await QueryExperienceIndexer(
+                repo=QueryExperiencePGRepo(session),
+                index_repo=QueryExperienceESRepo(es),
+                embedding_client=embedding,
             ).sync(experience_id, revision)
 
 
 async def _repair_indexes() -> dict[str, int]:
     """扫描索引版本落后的查询经验并提交补偿任务。"""
-    postgres = PostgresClientManager(cfg.meta_postgresql, QueryBase)
+    postgres = PostgresClientManager(cfg.meta_postgresql)
     try:
         async with postgres.session() as session, session.begin():
             pending = await QueryExperiencePGRepo(session).list_pending_index_repairs(

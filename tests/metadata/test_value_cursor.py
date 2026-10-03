@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.metadata.services.index import MetaIndexService
+from app.metadata.indexing import MetaIndexService
 
 
 @pytest.mark.parametrize(

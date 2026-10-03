@@ -10,6 +10,7 @@ interface RowPolicyPanelProps {
   onMutate: (operation: () => Promise<void>, message: string) => Promise<boolean>;
 }
 
+/** 展示和管理 Doris 角色的行级访问策略。 */
 export function RowPolicyPanel({ selectedRole, policies, busy, onMutate }: RowPolicyPanelProps) {
   const [policyName, setPolicyName] = useState("");
   const [policyTable, setPolicyTable] = useState("");

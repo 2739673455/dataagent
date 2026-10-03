@@ -13,10 +13,12 @@ interface Props {
   onClose: () => void;
 }
 
+/** 按中文格式展示本地日期时间，空值显示占位符。 */
 function formatTime(value: string | null): string {
   return value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "-";
 }
 
+/** 展示查询经验的内容、状态和来源执行记录。 */
 export function ExperienceDetailDialog({ experienceId, onClose }: Props) {
   const [detail, setDetail] = useState<QueryExperienceDetailResponse | null>(null);
   const [error, setError] = useState<string | null>(null);

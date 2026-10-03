@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { formatMessageTime } from "@/features/chat/components/messages/displayModel";
 import type { UserMessageNavigationItem } from "@/features/chat/components/messages/types";
 
+/** 以视口中线确定当前激活的用户消息。 */
 export function findActiveUserMessageKey(viewport: HTMLDivElement): string | null {
   const messageElements = viewport.querySelectorAll<HTMLElement>("[data-user-message-key]");
   if (messageElements.length === 0) return null;
@@ -19,6 +20,7 @@ export function findActiveUserMessageKey(viewport: HTMLDivElement): string | nul
   return activeKey;
 }
 
+/** 展示用户消息导航条，并同步当前激活项和悬停预览。 */
 export function UserMessageQuickNavigation({
   activeKey,
   items,

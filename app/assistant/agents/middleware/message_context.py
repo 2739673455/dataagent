@@ -32,8 +32,8 @@ from app.assistant.contracts import (
     NonEmptyText,
     StrictProtocolModel,
 )
-from app.assistant.services.shell_jobs import ShellJobRuntime
-from app.sandbox.application import resolve_sandbox_path
+from app.assistant.execution.shell_jobs import ShellJobRuntime
+from app.sandbox import resolve_sandbox_path
 from app.sandbox.errors import SandboxPathError
 
 USER_MESSAGE_CONTEXT_KEY = "dataagent_user_message_context"

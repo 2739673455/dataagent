@@ -8,9 +8,9 @@ from langchain_core.tools import BaseTool
 from loguru import logger
 
 from app.assistant.agents.tools.errors import tool_error
-from app.query.application import QueryExecutionService
+from app.query import QueryExecutionService
+from app.query.contracts import QueryExecutionScope
 from app.query.errors import QueryRejectedError
-from app.shared.contracts.analysis import AgentSessionKey
 
 
 def create_execute_sql_tool(service: QueryExecutionService) -> BaseTool:
@@ -24,7 +24,7 @@ def create_execute_sql_tool(service: QueryExecutionService) -> BaseTool:
     ) -> dict[str, Any]:
         """安全执行只读 SQL 并写入会话产物。"""
         configurable = cast(dict[str, Any], runtime.config)["configurable"]
-        session_key = AgentSessionKey(
+        session_key = QueryExecutionScope(
             user_id=configurable["user_id"],
             conversation_id=UUID(configurable["conversation_id"]),
             analysis_id=configurable["analysis_id"],

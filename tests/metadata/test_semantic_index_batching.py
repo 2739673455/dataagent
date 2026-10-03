@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.metadata.indexing import MetaIndexService
 from app.metadata.models.catalog import ColumnInfo, MetricInfo, column_resource_key
 from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
-from app.metadata.services.index import MetaIndexService
 from app.shared.config.app_config import cfg
 
 

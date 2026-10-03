@@ -4,6 +4,7 @@ interface PageLoadingScreenProps {
   message: string;
 }
 
+/** 展示页面级加载状态和提示文本。 */
 export function PageLoadingScreen({ message }: PageLoadingScreenProps) {
   return (
     <div className="flex min-h-screen items-center justify-center p-6 font-mono text-[#52525b]">

@@ -1,3 +1,5 @@
+"""应用配置模型、配置文件读取与运行参数校验。"""
+
 from datetime import time, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast

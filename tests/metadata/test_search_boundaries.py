@@ -9,19 +9,18 @@ import pytest
 from pydantic import ValidationError
 
 from app.identity.contracts import AssetAccessPolicy, AssetIdentity
-from app.metadata.application.search import (
-    SemanticCatalog,
-    SemanticResourceService,
-    _ColumnContextBuilder,
-    _RankedCandidates,
-    _RecallContext,
-)
 from app.metadata.contracts import (
     SemanticMatchReason,
     SemanticMetricRecallResult,
     SemanticResourceRecallRequest,
 )
 from app.metadata.models.catalog import ColumnInfo, TableInfo
+from app.metadata.search.context import (
+    ColumnContextBuilder,
+    RankedCandidates,
+    SemanticCatalog,
+)
+from app.metadata.search.service import SemanticResourceService, _RecallContext
 from app.shared.config.app_config import cfg
 from app.shared.contracts.search import SearchHit
 
@@ -53,8 +52,8 @@ def test_context_preserves_examples_and_deduplicates_inclusion_reasons():
         metrics={},
     )
     reasons = [SemanticMatchReason(match_type="fulltext", term="编号", score=2.0)]
-    columns, _, truncated = _ColumnContextBuilder(catalog, []).build(
-        _RankedCandidates(
+    columns, _, truncated = ColumnContextBuilder(catalog, []).build(
+        RankedCandidates(
             columns=[(key, 1.0, reasons)],
             metrics=[],
             values=[(("orders", "id", "1"), 1.0, []), (("orders", "id", "2"), 0.5, [])],
@@ -142,8 +141,8 @@ def test_foreign_key_context_is_sorted_one_level_and_adds_target_primary_keys():
         columns={(item.t_name, item.name): item for item in items},
         metrics={},
     )
-    columns, tables, truncated = _ColumnContextBuilder(catalog, []).build(
-        _RankedCandidates(
+    columns, tables, truncated = ColumnContextBuilder(catalog, []).build(
+        RankedCandidates(
             columns=[(("a", "id"), 1.0, [])], metrics=[], values=[], truncated=False
         )
     )
@@ -183,6 +182,8 @@ def test_cancellation_propagates_without_recording_backend_failure(stage):
             MagicMock(),
             MagicMock(),
             MagicMock(aembed_documents=AsyncMock(side_effect=asyncio.CancelledError())),
+            data_source=cfg.query.data_source,
+            database_name=cfg.doris.database,
         )
         with pytest.raises(asyncio.CancelledError):
             asyncio.run(service._retrieve(context))
@@ -258,14 +259,14 @@ def test_shared_service_keeps_concurrent_permissions_and_query_limits_per_reques
             MagicMock(),
             MagicMock(aembed_documents=AsyncMock(return_value=[[0.1], [0.2]])),
             max_concurrent_index_queries=1,
+            data_source=cfg.query.data_source,
+            database_name=cfg.doris.database,
         )
         service._column_repo = MagicMock(
             search_text_hits=AsyncMock(side_effect=hits),
             search_vector_hits=AsyncMock(return_value=[]),
         )
-        with patch(
-            "app.metadata.application.search.MetaPGRepo", return_value=catalog_repo
-        ):
+        with patch("app.metadata.search.service.MetaPGRepo", return_value=catalog_repo):
             async with asyncio.timeout(1):
                 responses = await asyncio.gather(
                     *(

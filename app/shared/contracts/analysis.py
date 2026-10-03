@@ -1,9 +1,7 @@
-"""跨模块共享的分析任务与 Agent Session 标识。"""
+"""分析标识格式与配置使用的专家类型词汇。"""
 
 import re
-from dataclasses import dataclass
 from typing import Literal
-from uuid import UUID
 
 type AgentType = Literal[
     "explorer",
@@ -20,44 +18,8 @@ AGENT_TYPES: tuple[AgentType, ...] = (
 IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
-@dataclass(frozen=True, slots=True)
-class AgentSessionKey:
-    """定位专业 Agent 的工作会话 Session，可由多次 Delegation 续接。
-
-    conversation_id 属于用户聊天；analysis_id 划分一次分析；session_id
-    在该分析和 agent_type 下定位独立工作上下文，不是用户聊天会话 ID。"""
-
-    user_id: int
-    conversation_id: UUID
-    analysis_id: str
-    agent_type: AgentType
-    session_id: str
-
-    def __post_init__(self) -> None:
-        """校验用户及专业 Agent Session 标识。"""
-        if isinstance(self.user_id, bool) or self.user_id <= 0:
-            raise ValueError("user_id 必须为正整数")
-        _validate_identifier(self.analysis_id, "analysis_id")
-        validate_agent_type(self.agent_type)
-        _validate_identifier(self.session_id, "session_id")
-
-    @property
-    def checkpoint_ns(self) -> str:
-        """生成受控的 Checkpoint namespace。"""
-        return f"subagents/{self.analysis_id}/{self.agent_type}/{self.session_id}"
-
-
 def validate_agent_type(value: str) -> AgentType:
     """校验并收窄专业 Agent 类型。"""
     if value not in AGENT_TYPES:
         raise ValueError(f"未知的智能体类型: {value}")
-    return value
-
-
-def _validate_identifier(value: str, field_name: str) -> str:
-    """校验 Analysis 和 Session 标识。"""
-    if not isinstance(value, str) or IDENTIFIER_PATTERN.fullmatch(value) is None:
-        raise ValueError(
-            f"{field_name} 必须以字母或数字开头，且仅包含 1-64 位小写字母、数字、下划线或连字符"
-        )
     return value

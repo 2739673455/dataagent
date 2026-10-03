@@ -68,7 +68,7 @@ def test_invalid_tool_arguments_never_execute_business(kind):
     service = MagicMock()
     if kind == "delegation":
         tool, args = (
-            create_delegation_tools(service)[0],
+            create_delegation_tools(service, service)[0],
             {
                 "analysis_id": "INVALID",
                 "agent_type": "analyst",
@@ -77,10 +77,13 @@ def test_invalid_tool_arguments_never_execute_business(kind):
             },
         )
     elif kind == "list":
-        tool, args = create_delegation_tools(service)[1], {"analysis_id": "INVALID"}
+        tool, args = (
+            create_delegation_tools(service, service)[1],
+            {"analysis_id": "INVALID"},
+        )
     elif kind == "delete":
         tool, args = (
-            create_delegation_tools(service)[2],
+            create_delegation_tools(service, service)[2],
             {"analysis_id": "a", "agent_type": "analyst", "session_id": ""},
         )
     elif kind == "recall":
@@ -110,13 +113,22 @@ def test_invalid_tool_arguments_never_execute_business(kind):
     assert not service.mock_calls
 
 
+@pytest.mark.parametrize("wait_seconds", [-1, 61, float("inf"), float("nan")])
+def test_shell_wait_limits_are_checked_at_tool_entry(wait_seconds):
+    service = MagicMock()
+    tool = create_shell_tools(service)[2]
+    message = asyncio.run(_invoke(tool, {"job_id": "j", "wait_seconds": wait_seconds}))
+    assert message.status == "error"
+    assert not service.mock_calls
+
+
 def test_delegation_schema_injects_runtime_and_normalizes_request_once():
     service = MagicMock(
         execute_delegation=AsyncMock(
             return_value=MagicMock(model_dump=lambda **_: {"status": "completed"})
         )
     )
-    tool = create_delegation_tools(service)[0]
+    tool = create_delegation_tools(service, service)[0]
     assert (
         "runtime"
         not in cast(type[BaseModel], tool.tool_call_schema).model_json_schema()[
@@ -183,7 +195,9 @@ def test_tool_cancellation_is_not_converted_to_business_error(kind):
         tool = create_semantic_recall_tools(MagicMock(recall_context=cancel))[0]
         args = {"query": "q", "resource_types": ["column"], "terms": ["收入"]}
     elif kind == "delegation":
-        tool = create_delegation_tools(MagicMock(execute_delegation=cancel))[0]
+        tool = create_delegation_tools(
+            MagicMock(), MagicMock(execute_delegation=cancel)
+        )[0]
         args = {
             "analysis_id": "a",
             "agent_type": "analyst",

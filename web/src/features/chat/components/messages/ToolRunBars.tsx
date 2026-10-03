@@ -28,6 +28,7 @@ import type {
 
 const SPECIALIST_HISTORY_RETRY_COUNT = 3;
 
+/** 展示工具调用的参数内容。 */
 export function ToolArgsView({ args }: { args?: Record<string, unknown> }) {
   if (!args || typeof args !== "object") return null;
   const entries = Object.entries(args);
@@ -307,6 +308,7 @@ export function DelegationToolRunBar({
   );
 }
 
+/** 展示专家委派的状态、执行详情和历史消息。 */
 function DelegationRunBarInternal({
   identity,
   item,

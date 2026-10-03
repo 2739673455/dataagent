@@ -8,6 +8,7 @@ import { ROUTES } from "@/config/settings";
 import { cn } from "@/lib/utils";
 import type { ConversationResponse } from "@/features/chat/types";
 
+/** 格式化会话列表中的更新时间。 */
 function formatConversationTime(isoString: string): string {
   const date = new Date(isoString);
   if (Number.isNaN(date.getTime())) return "";
@@ -20,6 +21,7 @@ function formatConversationTime(isoString: string): string {
   return `${year}-${month}-${day} ${hour}:${minute}`;
 }
 
+/** 展示单个会话条目及其选择、重命名和删除操作。 */
 export function ConversationListItem({
   conversation,
   isActive,

@@ -25,7 +25,7 @@ from app.assistant.errors import SemanticQueriesNotFoundError, SemanticRecallSav
 from app.metadata.contracts import SemanticResourceRecallRequest, SemanticResourceType
 
 if TYPE_CHECKING:
-    from app.assistant.application.recall import SemanticRecallService
+    from app.assistant.recall.service import SemanticRecallService
 
 
 def create_semantic_recall_tools(recall: SemanticRecallService) -> list[BaseTool]:
@@ -204,7 +204,7 @@ def semantic_recall_payload(
 
 
 def semantic_recall_update(update: SemanticRecallUpdate) -> dict[str, Any]:
-    """首次返回全量，后续只返回变化；数量始终来自本次检索而非累计快照。"""
+    """首次返回完整快照，后续返回增量；召回数量按本次检索结果统计。"""
     payload = semantic_recall_payload(update.record)
     recalled = update.recalled
     payload.update(

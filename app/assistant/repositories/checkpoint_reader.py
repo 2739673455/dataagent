@@ -28,7 +28,7 @@ _BRANCH_PREFIX = "branch:to:"
 
 @dataclass(frozen=True, slots=True)
 class CheckpointState:
-    """历史展示和委派恢复所需的业务状态投影，不是完整图状态。"""
+    """历史展示和委派恢复所需的 Checkpoint 业务状态投影。"""
 
     values: Mapping[str, object]
     next_nodes: tuple[str, ...]
@@ -36,14 +36,14 @@ class CheckpointState:
 
 
 class CheckpointStateReader:
-    """不依赖 CompiledGraph 运行资源读取最新 Assistant 状态。"""
+    """通过 Checkpoint Saver 读取 Assistant 的最新持久化状态。"""
 
     def __init__(self, checkpointer: BaseCheckpointSaver) -> None:
         """绑定 LangGraph Checkpoint 持久化实现。"""
         self._checkpointer = checkpointer
 
     async def has_pending_tasks(self, config: RunnableConfig) -> bool:
-        """只还原调度通道判断能否继续，不查询或重放消息 Delta 历史。"""
+        """还原调度通道并检查待执行任务，判断运行是否可以继续。"""
         saved = await self._checkpointer.aget_tuple(config)
         if saved is None:
             return False
@@ -98,7 +98,7 @@ class CheckpointStateReader:
 
 
 def _read_only_node(_: object) -> None:
-    """任务描述只用于读取，不允许执行。"""
+    """拦截检查点读取过程中对占位任务节点的执行。"""
     raise RuntimeError("Checkpoint 只读任务不能执行")
 
 
@@ -126,11 +126,11 @@ def _channel_specs(
 def _pending_tasks(
     saved: CheckpointTuple, channels: Mapping[str, BaseChannel]
 ) -> dict[str, PregelTask]:
-    """由框架生成 PULL/PUSH 任务 ID 和路径，不按写入顺序猜测所属节点。
+    """通过框架调度函数还原 PULL/PUSH 任务的 ID、路径和所属节点。
 
     Assistant 的 create_agent 图使用每节点一个 branch:to 触发器和 Send。
-    这里仅构造读取任务所需的描述，不构建模型/工具，也不执行节点。
-    不支持任意 Pregel 拓扑；框架适配集中在此处并由真实图对照测试约束。
+    按该拓扑构造只读任务描述，并以 for_execution=False 读取调度结果。
+    此适配面向 Assistant 的图结构，由真实图对照测试验证。
     """
     triggers = {
         name.removeprefix(_BRANCH_PREFIX): [name]
@@ -164,7 +164,7 @@ def _pending_tasks(
 
 
 def _task_writes(saved: CheckpointTuple) -> dict[str, list[tuple[str, Any]]]:
-    """控制消息不代表任务已完成，其余写入同时用于完成判断与业务投影。"""
+    """过滤 ERROR 和 INTERRUPT 控制消息，按任务汇总用于完成判断和业务投影的写入。"""
     writes: dict[str, list[tuple[str, Any]]] = defaultdict(list)
     for task_id, channel, value in saved.pending_writes or ():
         if channel not in {ERROR, INTERRUPT}:

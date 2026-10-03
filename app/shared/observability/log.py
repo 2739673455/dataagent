@@ -1,3 +1,5 @@
+"""控制台日志、JSON 日志和请求上下文字段的输出配置。"""
+
 from __future__ import annotations
 
 import json
@@ -95,7 +97,7 @@ def _build_log_payload(record: Record) -> dict[str, Any]:
 
 
 def _json_formatter(record: Record) -> str:
-    """序列化单行 JSON 且不追加 Loguru 异常文本。"""
+    """序列化包含异常信息的单行 JSON，并使用固定输出模板。"""
     record["extra"][_JSON_LINE_KEY] = json.dumps(
         _build_log_payload(record),
         ensure_ascii=False,

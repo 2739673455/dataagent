@@ -10,8 +10,8 @@ from app.identity import errors
 from app.identity.contracts import AssetIdentity
 from app.identity.models.doris import DorisQueryIdentity, DorisSelectGrant
 from app.identity.repositories.doris_authorization import parse_authorization
-from app.identity.services.authorization import AuthorizationService
-from app.identity.services.doris_permission import DorisPermissionService
+from app.identity.roles.authorization import AuthorizationService
+from app.identity.roles.permissions import DorisPermissionService
 
 
 def raw(**updates):

@@ -7,6 +7,7 @@ import { MetadataManagement } from "@/features/metadata";
 import { QueryExperienceManagement } from "@/features/query-experiences";
 import { UserManagement } from "@/features/users";
 
+/** 组织管理导航和对应的业务页面。 */
 export default function AdminPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");

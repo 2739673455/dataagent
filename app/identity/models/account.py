@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.shared.database.base import AuthBase
+from app.identity.models.base import AuthBase
 
 
 class User(AuthBase):

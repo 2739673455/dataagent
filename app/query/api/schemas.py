@@ -6,12 +6,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.query.experiences.management import QueryExperienceDeletionResult
 from app.query.models.execution import QueryExecution
 from app.query.models.experience import (
     QUERY_EXPERIENCE_PURPOSE_LIMIT,
     QueryExperienceOverview,
 )
-from app.query.services.experience_management import QueryExperienceDeletionResult
 
 type QueryExperienceStatus = Literal["active", "disabled", "deleting"]
 type QueryExperienceDisabledReason = Literal["metadata_changed", "admin"]

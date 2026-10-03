@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import Boolean, DateTime, Index, Integer, String, Uuid, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.shared.database.base import AssistantBase
+from app.assistant.models.base import AssistantBase
 
 
 class Conversation(AssistantBase):

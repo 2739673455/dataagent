@@ -1,16 +1,11 @@
 """语言模型实例构建。"""
 
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Iterator
+from contextlib import asynccontextmanager
 from typing import Any, cast
 from uuid import uuid4
 
 import httpx
-from deepagents import (
-    GeneralPurposeSubagentProfile,
-    HarnessProfile,
-    register_harness_profile,
-)
 from langchain.chat_models import init_chat_model
 from langchain_core.callbacks import (
     AsyncCallbackManagerForLLMRun,
@@ -22,10 +17,8 @@ from langchain_core.language_models import (
     LanguageModelInput,
     ModelProfile,
 )
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
+from langchain_core.messages import AIMessageChunk, BaseMessage
 from langchain_core.outputs import ChatGenerationChunk
-from langchain_core.runnables import Runnable
-from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langchain_openai.chat_models import base as openai_chat_base
 
@@ -58,26 +51,6 @@ class DataAgentResponses(ChatOpenAI):
 
 class DataAgentDeepSeekResponses(DataAgentResponses):
     """适配 DeepSeek 无状态 Responses thinking 续轮。"""
-
-    def bind_tools(
-        self,
-        tools: Sequence[dict[str, Any] | type | Callable | BaseTool],
-        *,
-        tool_choice: dict | str | bool | None = None,
-        strict: bool | None = None,
-        parallel_tool_calls: bool | None = None,
-        response_format: Any = None,
-        **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, AIMessage]:
-        """绑定工具但不发送 DeepSeek thinking 模式不支持的 tool_choice。"""
-        del tool_choice
-        return super().bind_tools(
-            tools,
-            strict=strict,
-            parallel_tool_calls=parallel_tool_calls,
-            response_format=response_format,
-            **kwargs,
-        )
 
     def _get_ls_params(
         self,
@@ -121,14 +94,11 @@ class DataAgentDeepSeekResponses(DataAgentResponses):
 
         with context_manager as response:
             state = (-1, -1, -1)
-            has_reasoning = False
             for provider_chunk in response:
                 *state_values, generation_chunk = _convert_deepseek_responses_chunk(
                     provider_chunk,
                     *state,
                     schema=original_schema,
-                    metadata={},
-                    has_reasoning=has_reasoning,
                     output_version=self.output_version,
                 )
                 state = tuple(state_values)
@@ -156,14 +126,11 @@ class DataAgentDeepSeekResponses(DataAgentResponses):
 
         async with context_manager as response:
             state = (-1, -1, -1)
-            has_reasoning = False
             async for provider_chunk in response:
                 *state_values, generation_chunk = _convert_deepseek_responses_chunk(
                     provider_chunk,
                     *state,
                     schema=original_schema,
-                    metadata={},
-                    has_reasoning=has_reasoning,
                     output_version=self.output_version,
                 )
                 state = tuple(state_values)
@@ -180,16 +147,7 @@ class DataAgentDeepSeekResponses(DataAgentResponses):
 @asynccontextmanager
 async def create_configured_model(model_name: str) -> AsyncGenerator[BaseChatModel]:
     """创建并持有聊天模型客户端，退出时在当前循环中关闭。"""
-    try:
-        model_cfg = app_config.cfg.lm_config.models[model_name]
-    except KeyError as exc:
-        raise ValueError(f"未知的语言模型配置: {model_name}") from exc
-    register_harness_profile(
-        f"{model_cfg.model_provider}:{model_cfg.model}",
-        HarnessProfile(
-            general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
-        ),
-    )
+    model_cfg = app_config.cfg.lm_config.models[model_name]
     profile = cast(
         ModelProfile,
         {
@@ -206,44 +164,38 @@ async def create_configured_model(model_name: str) -> AsyncGenerator[BaseChatMod
         "profile": profile,
         "max_retries": 0,
         "streaming": True,
+        "timeout": _REQUEST_TIMEOUT_SECONDS,
     }
-    async with AsyncExitStack() as stack:
-        http_client = stack.enter_context(
-            httpx.Client(
-                timeout=_REQUEST_TIMEOUT_SECONDS,
-                follow_redirects=True,
+    with httpx.Client(
+        timeout=_REQUEST_TIMEOUT_SECONDS,
+        follow_redirects=True,
+    ) as http_client:
+        async with httpx.AsyncClient(
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+            follow_redirects=True,
+        ) as http_async_client:
+            model_kwargs.update(
+                http_client=http_client,
+                http_async_client=http_async_client,
             )
-        )
-        http_async_client = await stack.enter_async_context(
-            httpx.AsyncClient(
-                timeout=_REQUEST_TIMEOUT_SECONDS,
-                follow_redirects=True,
-            )
-        )
-        model_kwargs.update(
-            http_client=http_client,
-            http_async_client=http_async_client,
-        )
-        if model_cfg.api_protocol == "responses":
-            model_class = (
-                DataAgentDeepSeekResponses
-                if model_cfg.model_provider == "deepseek"
-                else DataAgentResponses
-            )
-            yield model_class(
-                **model_kwargs,
-                timeout=_REQUEST_TIMEOUT_SECONDS,
-                use_responses_api=True,
-                output_version="responses/v1",
-                store=False,
-                use_previous_response_id=False,
-            )
-        else:
-            yield init_chat_model(
-                model_provider=model_cfg.model_provider,
-                **model_kwargs,
-                timeout=_REQUEST_TIMEOUT_SECONDS,
-            )
+            if model_cfg.api_protocol == "responses":
+                model_class = (
+                    DataAgentDeepSeekResponses
+                    if model_cfg.model_provider == "deepseek"
+                    else DataAgentResponses
+                )
+                yield model_class(
+                    **model_kwargs,
+                    use_responses_api=True,
+                    output_version="responses/v1",
+                    store=False,
+                    use_previous_response_id=False,
+                )
+            else:
+                yield init_chat_model(
+                    model_provider=model_cfg.model_provider,
+                    **model_kwargs,
+                )
 
 
 def _convert_deepseek_responses_chunk(
@@ -253,8 +205,6 @@ def _convert_deepseek_responses_chunk(
     current_sub_index: int,
     *,
     schema: Any,
-    metadata: dict[str, Any],
-    has_reasoning: bool,
     output_version: str | None,
 ) -> tuple[int, int, int, ChatGenerationChunk | None]:
     """将 DeepSeek 明文思考增量转换为 LangChain 消息块。"""
@@ -265,8 +215,6 @@ def _convert_deepseek_responses_chunk(
             current_output_index,
             current_sub_index,
             schema=schema,
-            metadata=metadata,
-            has_reasoning=has_reasoning,
             output_version=output_version,
         )
 

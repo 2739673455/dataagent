@@ -33,6 +33,7 @@ const URL_ATTRIBUTES = new Set([
 const NETWORK_CSS_PATTERN = /(?:@import|url\s*\(|image-set\s*\()/i;
 const INLINE_RASTER_IMAGE_PATTERN = /^data:image\/(?:png|jpeg|gif|webp|avif);base64,/i;
 
+/** 按预览白名单校验图片 src 中的内嵌位图数据。 */
 export function isSafePreviewUrlAttribute(
   tagName: string,
   attributeName: string,
@@ -61,6 +62,7 @@ const PREVIEW_CSP = [
   "navigate-to 'none'",
 ].join("; ");
 
+/** 清理脚本、网络引用和交互元素，并注入限制预览能力的 CSP。 */
 export function sanitizeHtmlForPreview(source: string): string {
   const document = new DOMParser().parseFromString(source, "text/html");
   document.querySelectorAll(BLOCKED_ELEMENTS).forEach((element) => {

@@ -20,21 +20,21 @@ from app.metadata.api.dependencies import (
     MetaCatalogServiceDep,
     MetaImportServiceDep,
 )
-from app.metadata.application.index_tasks import (
+from app.metadata.catalog.importer import (
+    ImportMode,
+    ResourceChanges,
+    parse_metadata_yaml,
+)
+from app.metadata.config import MetaConfig, MetadataName
+from app.metadata.contracts import ColumnKey, column_key_reference
+from app.metadata.models.catalog import MetricInfo
+from app.metadata.task_scheduler import (
     enqueue_column_indexes,
     enqueue_column_values,
     enqueue_import,
     enqueue_metric_indexes,
     enqueue_table_indexes,
     enqueue_table_values,
-)
-from app.metadata.config import MetaConfig, MetadataName
-from app.metadata.contracts import ColumnKey, column_key_reference
-from app.metadata.models.catalog import MetricInfo
-from app.metadata.services.import_service import (
-    ImportMode,
-    ResourceChanges,
-    parse_metadata_yaml,
 )
 from app.shared.tasks.schemas import TaskAcceptedResponse
 

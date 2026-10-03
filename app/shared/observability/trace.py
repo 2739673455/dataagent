@@ -1,3 +1,5 @@
+"""HTTP 请求追踪标识与日志上下文中间件。"""
+
 import uuid
 from collections.abc import Callable
 
@@ -7,7 +9,7 @@ from app.shared.observability import context
 
 
 async def middleware(request: Request, call_next: Callable) -> Response:
-    """追踪中间件。"""
+    """为请求绑定追踪上下文，在响应中返回追踪标识并清理上下文。"""
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
     trace_id = request.headers.get("X-Trace-ID", request_id)
     request_id_token = context.request_id_ctx.set(request_id)
@@ -33,7 +35,7 @@ async def middleware(request: Request, call_next: Callable) -> Response:
 
 def _get_client_ip(request: Request) -> str:
     """获取 IP 地址。"""
-    # 转发头只进入日志上下文；认证限流使用 ASGI peer 地址，不能信任客户端自报值。
+    # 日志上下文记录转发地址；认证限流以 ASGI peer 地址作为可信来源。
     if forwarded := request.headers.get("X-Forwarded-For"):
         return forwarded.split(",")[0].strip()
     if request.client:

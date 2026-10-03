@@ -10,6 +10,7 @@ const LoginPage = lazy(() => import("@/pages/Login"));
 const AdminPage = lazy(() => import("@/pages/Admin"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 
+/** 为按需加载的页面提供加载状态。 */
 function SuspenseWrapper({ children, message }: { children: ReactNode; message: string }) {
   return <Suspense fallback={<PageLoadingScreen message={message} />}>{children}</Suspense>;
 }

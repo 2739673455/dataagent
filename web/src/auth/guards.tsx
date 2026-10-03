@@ -49,6 +49,7 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <RequireAuth>{children}</RequireAuth>;
 }
 
+/** 为管理页面校验管理员权限。 */
 export function AdminRoute({ children }: { children: React.ReactNode }) {
   return <RequireAuth requireAdmin>{children}</RequireAuth>;
 }

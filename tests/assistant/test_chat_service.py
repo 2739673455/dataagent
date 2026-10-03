@@ -22,29 +22,29 @@ from app.assistant.agents.middleware.message_context import (
     MessageContextMiddleware,
     UserMessageContext,
 )
-from app.assistant.contracts import (
-    MESSAGE_CREATED_AT_KEY,
+from app.assistant.agents.runtime import ConversationAgentRuntime
+from app.assistant.contracts import MESSAGE_CREATED_AT_KEY, PlannerTurnContext
+from app.assistant.errors import PlannerContinuationLimitError
+from app.assistant.execution import planner as planner_turn
+from app.assistant.execution.events import (
     DelegationActivityHistory,
-    PlannerTurnContext,
     SubagentMessageActivity,
     SubagentMessageDeltaActivity,
     SubagentStatusActivity,
     SubagentThinkingDeltaActivity,
 )
-from app.assistant.errors import PlannerContinuationLimitError
+from app.assistant.execution.runtime_cache import AgentManager
+from app.assistant.messages import history as conversation_history
+from app.assistant.messages import projection as message_projection
 from app.assistant.repositories.checkpoint_reader import CheckpointState
-from app.assistant.runtime import ConversationAgentRuntime
-from app.assistant.services import history as conversation_history
-from app.assistant.services import message_projection
-from app.assistant.services import planner as planner_turn
-from app.assistant.services.agent_manager import AgentManager
-from app.sandbox.application.manager import DockerSandboxManager
-from app.sandbox.application.paths import (
+from app.assistant.sessions.state_reader import AgentStateReader
+from app.sandbox.contracts import SandboxArtifact, SandboxSessionScope
+from app.sandbox.errors import SandboxPathError
+from app.sandbox.manager import DockerSandboxManager
+from app.sandbox.paths import (
     resolve_artifact_path,
     resolve_attachment_path,
 )
-from app.sandbox.contracts import SandboxArtifact, SandboxSessionScope
-from app.sandbox.errors import SandboxPathError
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
 _SANDBOX_ROOT = f"/data/{_CONVERSATION_ID}"
@@ -449,7 +449,7 @@ class _RepeatingPlanner:
         }
 
 
-class _TurnManagerStub(AgentManager):
+class _TurnManagerStub(AgentManager, AgentStateReader):
     """记录一个聊天回合进入的执行上下文次数。"""
 
     def __init__(

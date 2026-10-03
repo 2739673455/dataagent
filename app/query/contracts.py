@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.shared.contracts.doris import DORIS_WORKLOAD_GROUP_PATTERN
 
@@ -68,15 +68,6 @@ class QueryValidationResult(BaseModel):
     columns: list[QueryColumnRef] = Field(default_factory=list)
     output_columns: list[str] = Field(default_factory=list)
     issues: list[QueryValidationIssue] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def validate_status(self) -> "QueryValidationResult":
-        """保证校验状态和问题列表一致。"""
-        if self.valid == bool(self.issues):
-            raise ValueError("valid 必须与 issues 是否为空保持相反状态")
-        if self.valid and self.normalized_sql is None:
-            raise ValueError("有效查询必须包含 normalized_sql")
-        return self
 
 
 class QueryExecutionLimits(BaseModel):
@@ -171,3 +162,14 @@ class QueryExperienceRecall(BaseModel):
 
     status: QueryExperienceRecallStatus
     results: list[QueryExperienceRecallResult]
+
+
+@dataclass(frozen=True, slots=True)
+class QueryExecutionScope:
+    """查询审计和产物存储所使用的用户、会话及执行归属标识。"""
+
+    user_id: int
+    conversation_id: UUID
+    analysis_id: str
+    agent_type: str
+    session_id: str

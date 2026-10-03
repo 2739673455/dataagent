@@ -121,7 +121,7 @@ def _http_exception_handler(request: Request, exc: HTTPException) -> JSONRespons
 
 
 def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """处理所有未捕获异常且不向客户端泄露内部信息。"""
+    """记录未捕获异常，并向客户端返回通用服务器错误。"""
     problem = ProblemError()
     _log_problem(problem, exc)
     return _build_response(request, problem)

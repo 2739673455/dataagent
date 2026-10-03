@@ -1,18 +1,18 @@
-"""HTTP 入口读取当前应用资源；业务服务不依赖此模块。"""
+"""HTTP 请求依赖与应用生命周期资源的绑定。"""
 
 from typing import Annotated, cast
 
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.identity.application import IdentityService
+from app.identity import IdentityService
 from app.identity.contracts import AuthenticatedUser
 from app.identity.errors import AuthenticationRequiredError
 from app.runtime import WebResources
 
 
 def get_web_resources(request: Request) -> WebResources:
-    """只返回当前应用 lifespan 已初始化的资源。"""
+    """读取当前应用 lifespan 中已初始化的资源。"""
     return cast(WebResources, request.app.state.resources)
 
 

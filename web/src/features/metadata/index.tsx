@@ -13,6 +13,7 @@ import { MetricSection } from "@/features/metadata/MetricSection";
 import { TableSection } from "@/features/metadata/TableSection";
 import { YamlSection } from "@/features/metadata/YamlSection";
 
+/** 按表、字段、指标和 YAML 导入导出组织元数据管理。 */
 export function MetadataManagement() {
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [columns, setColumns] = useState<ColumnInfo[]>([]);

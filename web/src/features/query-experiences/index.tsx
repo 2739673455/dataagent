@@ -21,10 +21,12 @@ const STATUS_LABELS: Record<QueryExperienceStatus, string> = {
   deleting: "删除中",
 };
 
+/** 按中文格式展示查询经验的本地日期时间。 */
 function formatTime(value: string): string {
   return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }
 
+/** 管理查询经验的筛选、详情、启停和删除。 */
 export function QueryExperienceManagement() {
   const [page, setPage] = useState<QueryExperienceListResponse | null>(null);
   const [roles, setRoles] = useState<DorisRoleResponse[]>([]);

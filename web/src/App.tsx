@@ -4,6 +4,7 @@ import { Toaster } from "sonner";
 import { ACCESS_TOKEN_STORAGE_KEY, REFRESH_TOKEN_STORAGE_KEY, synchronizeSession } from "@/auth";
 import { router } from "./router";
 
+/** 应用路由、全局提示和登录状态同步的入口。 */
 export default function App() {
   const routerRef = useRef(router);
 

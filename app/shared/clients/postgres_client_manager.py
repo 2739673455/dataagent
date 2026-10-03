@@ -1,8 +1,7 @@
 """PostgreSQL 引擎、会话工厂与建表操作。"""
 
-from sqlalchemy import URL
+from sqlalchemy import URL, MetaData
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase
 
 from app.shared.config.app_config import DBConfig
 
@@ -10,9 +9,8 @@ from app.shared.config.app_config import DBConfig
 class PostgresClientManager:
     """持有 PostgreSQL 引擎和可直接调用的会话工厂。"""
 
-    def __init__(self, db_config: DBConfig, base: type[DeclarativeBase]) -> None:
+    def __init__(self, db_config: DBConfig) -> None:
         """创建连接池和会话工厂；连接按需建立。"""
-        self._base = base
         self.engine = create_async_engine(
             URL.create(
                 drivername="postgresql+psycopg",
@@ -39,7 +37,7 @@ class PostgresClientManager:
         """释放连接池。"""
         await self.engine.dispose()
 
-    async def init_tables(self) -> None:
-        """根据当前 ORM 模型创建尚未存在的数据表。"""
+    async def init_tables(self, metadata: MetaData) -> None:
+        """创建调用方提供的模型元数据中尚未存在的数据表。"""
         async with self.engine.begin() as connection:
-            await connection.run_sync(self._base.metadata.create_all)
+            await connection.run_sync(metadata.create_all)

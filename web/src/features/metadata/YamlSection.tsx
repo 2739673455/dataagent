@@ -10,6 +10,7 @@ interface YamlSectionProps {
   onDataReload: () => Promise<void>;
 }
 
+/** 提供元数据 YAML 的导入预览、提交和导出。 */
 export function YamlSection({ onDataReload }: YamlSectionProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importFile, setImportFile] = useState<File | null>(null);

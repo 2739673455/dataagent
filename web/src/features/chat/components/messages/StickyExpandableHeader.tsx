@@ -1,6 +1,7 @@
 import type { RefObject } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+/** 将滚出视口的展开项标题固定在消息区域顶部。 */
 export function StickyExpandableHeader({
   viewportRef,
 }: {
@@ -55,7 +56,7 @@ export function StickyExpandableHeader({
 
     if (qualifying.length === 0) return null;
 
-    // 选出最小层级（最深层，即不包含任何其他满足条件的展开项）
+    // 选择候选项中嵌套最深的展开项
     const innermost = qualifying.find(
       (q) => !qualifying.some((other) => other !== q && q.item.contains(other.item))
     );

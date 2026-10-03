@@ -8,10 +8,10 @@ from uuid import uuid4
 
 import pytest
 
+from app.assistant.execution.runtime_cache import AgentManager
 from app.assistant.repositories import checkpoint as store_module
 from app.assistant.repositories.checkpoint import PostgresCheckpointStore
-from app.assistant.services.agent_manager import AgentManager
-from app.assistant.services.conversation_context import get_thread_id
+from app.assistant.sessions.identity import get_thread_id
 from app.shared.clients import postgres_advisory_locks as locks_module
 from app.shared.clients.postgres_advisory_locks import PostgresAdvisoryLocks
 from app.shared.config.app_config import cfg

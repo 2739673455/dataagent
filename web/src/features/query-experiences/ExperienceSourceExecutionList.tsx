@@ -9,10 +9,12 @@ import { PaginationControls } from "@/components/PaginationControls";
 
 const PAGE_SIZE = 10;
 
+/** 按中文格式展示执行记录的本地日期时间。 */
 function formatTime(value: string): string {
   return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }
 
+/** 展示查询经验所关联的原始执行记录。 */
 export function ExperienceSourceExecutionList({ experienceId }: { experienceId: string }) {
   const [page, setPage] = useState<QueryExperienceSourceExecutionListResponse | null>(null);
   const [offset, setOffset] = useState(0);

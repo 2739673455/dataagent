@@ -9,6 +9,7 @@ import { ImagePreview } from "@/features/chat/components/messages/ImagePreview";
 import { PartView } from "@/features/chat/components/messages/MarkdownRenderer";
 import type { MessageDisplayItem } from "@/features/chat/components/messages/types";
 
+/** 展示单条消息的正文、附件和时间信息。 */
 export function MessageBubble({ message }: { message: MessageDisplayItem["message"] }) {
   const isUser = message.role === "user";
   const createdAt = formatMessageTime(message.createdAt);

@@ -34,6 +34,7 @@ export interface ChatMessagesProps {
   viewportRef: RefObject<HTMLDivElement | null>;
 }
 
+/** 展示对话回合，并协调流式滚动、消息定位和展开状态。 */
 export function ChatMessages({
   conversationId,
   conversationSelected,
@@ -102,7 +103,7 @@ export function ChatMessages({
         shouldStickToBottomRef.current = false;
         return;
       }
-      // 单向判定：仅在到达底部时恢复跟随，不要在内容撑高产生距离时主动关闭跟随
+      // 到达底部时恢复跟随；内容高度变化时保留当前跟随状态
       if (isAtBottom) {
         shouldStickToBottomRef.current = true;
       }

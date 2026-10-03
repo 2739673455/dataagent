@@ -18,7 +18,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.shared.database.base import QueryBase
+from app.query.models.base import QueryBase
 
 QUERY_EXPERIENCE_PURPOSE_LIMIT = 5
 

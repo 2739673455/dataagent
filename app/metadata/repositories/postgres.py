@@ -546,7 +546,7 @@ class MetaPGRepo:
     async def asset_versions(
         self, table_names: set[str], column_keys: set[ColumnKey]
     ) -> AssetVersions:
-        """读取本模块拥有的资产版本，缺失资产不出现在结果中。"""
+        """读取请求范围内现存表和字段的资产版本。"""
         tables = {}
         columns = {}
         if table_names:

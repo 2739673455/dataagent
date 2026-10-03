@@ -8,7 +8,7 @@ from langchain_core.tools import BaseTool
 from pydantic import Field
 
 from app.assistant.contracts import NonEmptyText, StrictProtocolModel
-from app.sandbox.application import resolve_sandbox_path
+from app.sandbox import resolve_sandbox_path
 from app.sandbox.errors import SandboxPathError
 
 IMAGE_VIEW_TOOL_NAME = "view_image"

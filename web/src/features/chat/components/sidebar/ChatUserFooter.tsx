@@ -14,6 +14,7 @@ export interface ChatUserFooterProps {
   onLogout: () => void;
 }
 
+/** 展示侧边栏用户信息和账号操作入口。 */
 export function ChatUserFooter({ user, onChangePassword, onLogout }: ChatUserFooterProps) {
   const [isPasswordOpen, setIsPasswordOpen] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");

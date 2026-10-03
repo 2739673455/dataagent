@@ -5,9 +5,9 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
+from app.identity.auth.tokens import TokenPair
 from app.identity.contracts import AuthenticatedUser
 from app.identity.models.account import User
-from app.identity.services.auth import TokenPair
 
 
 class LoginRequest(BaseModel):

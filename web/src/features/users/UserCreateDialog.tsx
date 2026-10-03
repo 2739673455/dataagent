@@ -17,6 +17,7 @@ interface UserCreateDialogProps {
   onUserCreated: () => void;
 }
 
+/** 收集并提交用户创建信息。 */
 export function UserCreateDialog({ roles, busy, onCancel, onUserCreated }: UserCreateDialogProps) {
   const [newUsername, setNewUsername] = useState("");
   const [newEmail, setNewEmail] = useState("");

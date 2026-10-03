@@ -1,4 +1,4 @@
-"""workflows 后台任务提交入口，不加载 Worker 执行资源。"""
+"""跨模块后台任务的消息发布入口。"""
 
 from loguru import logger
 

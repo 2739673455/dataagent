@@ -1,3 +1,5 @@
+"""MCP 连接配置转换与远程工具加载。"""
+
 from typing import cast
 
 from langchain_core.tools import BaseTool

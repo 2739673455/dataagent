@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 
 from app.assistant import errors
-from app.assistant.services.attachments import AttachmentService
+from app.assistant.attachments import AttachmentService
 from app.sandbox.errors import SandboxFileTooLargeError, SandboxPathError
 from app.shared.errors.infrastructure import AdvisoryLockBusyError
 

@@ -23,7 +23,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.metadata.contracts import ColumnReference, column_reference_key
-from app.shared.database.base import MetaBase
+from app.metadata.models.base import MetaBase
 
 # 字段示例采集数量上限；批量采样时按源表行数计。
 COLUMN_EXAMPLE_LIMIT = 10
@@ -193,7 +193,7 @@ class ColumnInfo(MetaBase):
     """字段信息。"""
 
     __tablename__ = "column_info"
-    # 取值同步状态由仓储显式补载，序列化时不触发 ORM 隐式懒加载。
+    # 仓储在序列化前显式补载取值同步状态。
     __allow_unmapped__ = True
 
     __table_args__ = (
@@ -251,7 +251,7 @@ class MetricInfo(MetaBase):
     """指标信息。"""
 
     __tablename__ = "metric_info"
-    # 关联字段由仓储显式补载，序列化时不触发 ORM 隐式懒加载。
+    # 仓储在序列化前显式补载关联字段。
     __allow_unmapped__ = True
 
     name: Mapped[str] = mapped_column(String(256), primary_key=True, comment="指标名称")

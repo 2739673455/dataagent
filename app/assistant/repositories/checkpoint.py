@@ -49,8 +49,6 @@ class PostgresCheckpointStore:
         prefix: str,
     ) -> list[str]:
         """列出线程内具有指定前缀的唯一 Checkpoint namespace。"""
-        if not thread_id or not prefix:
-            raise ValueError("thread_id 和 prefix 均不能为空")
         async with self._pool.connection() as connection:
             cursor = await connection.execute(
                 """
@@ -71,8 +69,6 @@ class PostgresCheckpointStore:
         checkpoint_ns: str,
     ) -> bool:
         """原子删除线程内单个 namespace 的全部 Checkpoint 数据。"""
-        if not thread_id or not checkpoint_ns:
-            raise ValueError("thread_id 和 checkpoint_ns 均不能为空")
         deleted = 0
         statements = (
             (

@@ -2,6 +2,7 @@ import * as SeparatorPrimitive from "@radix-ui/react-separator";
 import type { ComponentProps } from "react";
 import { cn } from "@/lib/utils";
 
+/** 渲染支持方向配置的界面分隔线。 */
 export function Separator({
   className,
   orientation = "horizontal",

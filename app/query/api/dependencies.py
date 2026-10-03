@@ -7,10 +7,10 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import WebResourcesDep
-from app.query.application.index_tasks import query_experience_index_scheduler
+from app.query.experiences.management import QueryExperienceManagementService
+from app.query.experiences.scheduler import query_experience_index_scheduler
 from app.query.repositories.execution_postgres import QueryExecutionPGRepo
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
-from app.query.services.experience_management import QueryExperienceManagementService
 
 
 async def _get_query_session(

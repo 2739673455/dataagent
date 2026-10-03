@@ -17,7 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.identity.contracts import AssetScope
-from app.shared.database.base import AuthBase
+from app.identity.models.base import AuthBase
 
 DORIS_ROLE_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
 

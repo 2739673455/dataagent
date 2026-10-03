@@ -10,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 from app.assistant import tasks as assistant_tasks
-from app.assistant.application import resources as lifecycle_runtime
+from app.assistant.conversations import resources as lifecycle_runtime
 from app.metadata import tasks as metadata_tasks
 from app.query import tasks as query_tasks
 from app.workflows import tasks as workflow_tasks
@@ -59,7 +59,7 @@ def test_lifecycle_task_cleans_up_after_sandbox_init_failure(module) -> None:
         patch.object(lifecycle_runtime, "AgentManager", return_value=agents),
         patch.object(
             lifecycle_runtime,
-            "build_conversation_lifecycle_service",
+            "ConversationLifecycleService",
             return_value=MagicMock(),
         ),
         pytest.raises(RuntimeError, match="agents close"),
@@ -93,21 +93,26 @@ def test_index_task_resources_are_isolated_between_threads(module) -> None:
         managers.append(manager)
         return manager
 
-    async def operation(*args):
-        # 元数据 operation 与查询 indexer 都接收 ES、Embedding 两个依赖。
-        clients_seen.append(args[-2:])
+    async def observe_clients(es, embedding):
+        clients_seen.append((es, embedding))
         await asyncio.to_thread(barrier.wait, 5)
         return 1
 
-    def indexer(*args):
+    def indexer(*, repo, index_repo, embedding_client):
         async def sync(*unused):
-            return await operation(*args)
+            return await observe_clients(index_repo._client, embedding_client)
 
         return MagicMock(sync=sync)
 
     def worker(_):
+        async def metadata_operation():
+            async with module._metadata_resources() as (_, _, index):
+                return await observe_clients(
+                    index._column_repo._client, index._embedding_client
+                )
+
         if module is metadata_tasks:
-            return asyncio.run(module._run_with_metadata_resources(operation))
+            return asyncio.run(metadata_operation())
         return asyncio.run(module._sync_index(uuid4(), 1))
 
     with ExitStack() as stack:
@@ -123,9 +128,7 @@ def test_index_task_resources_are_isolated_between_threads(module) -> None:
             )
         else:
             stack.enter_context(
-                patch.object(
-                    module, "build_query_experience_indexer", side_effect=indexer
-                )
+                patch.object(module, "QueryExperienceIndexer", side_effect=indexer)
             )
         with ThreadPoolExecutor(max_workers=2) as executor:
             assert list(executor.map(worker, range(2))) == [1, 1]
@@ -195,7 +198,13 @@ def _web_dependencies(
             "ConversationRunService",
             "AuthRateLimitService",
         ):
-            stack.enter_context(patch.object(runtime, name, side_effect=factory(name)))
+            stack.enter_context(
+                patch.object(
+                    runtime,
+                    name,
+                    side_effect=factory(name),
+                )
+            )
         yield created, closed
 
 
@@ -220,7 +229,8 @@ def test_web_shutdown_attempts_every_resource_after_startup_failure(error) -> No
 
 
 @pytest.mark.parametrize(
-    "failure", ["EmbeddingClient", "AsyncElasticsearch", "AgentManager"]
+    "failure",
+    ["EmbeddingClient", "AsyncElasticsearch", "AgentManager", "ConversationRunService"],
 )
 def test_web_construction_failure_releases_preceding_resources(failure):
     from app import runtime
@@ -305,7 +315,8 @@ def test_index_task_constructor_failure_closes_existing_clients(module):
     async def run():
         with pytest.raises(RuntimeError, match="close"):
             if module is metadata_tasks:
-                await module._run_with_metadata_resources(operation)
+                async with module._metadata_resources():
+                    await operation()
             else:
                 await module._sync_index(uuid4(), 1)
         embedding.close.assert_awaited_once()
@@ -319,6 +330,53 @@ def test_index_task_constructor_failure_closes_existing_clients(module):
             module, "PostgresClientManager", side_effect=RuntimeError("construct")
         ),
     ):
+        asyncio.run(run())
+
+
+@pytest.mark.parametrize("module", [metadata_tasks, query_tasks])
+@pytest.mark.parametrize("error_type", [RuntimeError, asyncio.CancelledError])
+def test_index_task_failure_and_cancellation_release_resources(module, error_type):
+    """业务失败或任务取消后释放会话、连接及全部任务客户端。"""
+    managers = {}
+
+    def manager_factory(name):
+        manager = MagicMock(close=AsyncMock())
+        managers[name] = manager
+        return manager
+
+    async def run():
+        with pytest.raises(error_type):
+            if module is metadata_tasks:
+                async with module._metadata_resources():
+                    raise error_type()
+            else:
+                await module._sync_index(uuid4(), 1)
+        for manager in managers.values():
+            manager.close.assert_awaited_once()
+        managers[
+            "PostgresClientManager"
+        ].session.return_value.__aexit__.assert_awaited_once()
+        if module is metadata_tasks:
+            managers[
+                "DorisClientManager"
+            ].engine.connect.return_value.__aexit__.assert_awaited_once()
+
+    with ExitStack() as stack:
+        names = ["EmbeddingClient", "AsyncElasticsearch", "PostgresClientManager"]
+        if module is metadata_tasks:
+            names.append("DorisClientManager")
+        for name in names:
+            stack.enter_context(
+                patch.object(module, name, return_value=manager_factory(name))
+            )
+        if module is query_tasks:
+            stack.enter_context(
+                patch.object(
+                    module,
+                    "QueryExperienceIndexer",
+                    return_value=MagicMock(sync=AsyncMock(side_effect=error_type())),
+                )
+            )
         asyncio.run(run())
 
 

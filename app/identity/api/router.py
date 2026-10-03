@@ -8,10 +8,11 @@ from loguru import logger
 
 from app.dependencies import AdminUserDep
 from app.identity.api import schemas
-from app.identity.api.auth.dependencies import (
+from app.identity.api.dependencies import (
     DorisPermissionServiceDep,
     DorisRoleManagementServiceDep,
     UserDeletionServiceDep,
+    UserManagementServiceDep,
 )
 from app.shared.tasks.celery_app import celery_app
 from app.shared.tasks.schemas import TaskStatusResponse
@@ -146,7 +147,7 @@ async def delete_doris_role(
 @router.get("/users", response_model=schemas.UserListResponse)
 async def list_users(
     _: AdminUserDep,
-    service: DorisRoleManagementServiceDep,
+    service: UserManagementServiceDep,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
     query: Annotated[str | None, Query(max_length=128)] = None,
@@ -170,7 +171,7 @@ async def list_users(
 async def create_user(
     body: schemas.CreateUserRequest,
     current_admin: AdminUserDep,
-    service: DorisRoleManagementServiceDep,
+    service: UserManagementServiceDep,
 ) -> schemas.UserResponse:
     """平台管理员创建新用户。"""
     user = await service.create_user(
@@ -207,7 +208,7 @@ async def update_user(
     user_id: int,
     body: schemas.UpdateUserRequest,
     current_admin: AdminUserDep,
-    service: DorisRoleManagementServiceDep,
+    service: UserManagementServiceDep,
 ) -> schemas.UserResponse:
     """平台管理员修改指定用户信息、角色、权限或密码。"""
     kwargs: dict[str, Any] = {}

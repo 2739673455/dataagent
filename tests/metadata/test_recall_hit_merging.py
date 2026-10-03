@@ -5,13 +5,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.metadata.application.search import (
-    SemanticCatalog,
-    SemanticResourceService,
-    _RecallContext,
-)
 from app.metadata.contracts import SemanticRecallFailure, SemanticResourceRecallRequest
 from app.metadata.models.catalog import ColumnInfo, MetricInfo
+from app.metadata.search.context import SemanticCatalog
+from app.metadata.search.service import SemanticResourceService, _RecallContext
+from app.shared.config.app_config import cfg
 from app.shared.contracts.search import SearchHit
 
 
@@ -80,6 +78,8 @@ def test_collect_preserves_ranking_reasons_and_failure_scope(
         MagicMock(),
         MagicMock(),
         MagicMock(aembed_documents=AsyncMock(return_value=[[0.1], [0.2], [0.3]])),
+        data_source=cfg.query.data_source,
+        database_name=cfg.doris.database,
     )
     service._column_repo = column_repo
     service._metric_repo = metric_repo
@@ -175,7 +175,13 @@ def test_resource_routing_shared_embeddings_and_fulltext_fallback(
         search_vector_hits=search("metric/vector", [SearchHit(item=metric, score=0.8)]),
     )
     value_repo = MagicMock(search_hits=search("value/fulltext", []))
-    service = SemanticResourceService(MagicMock(), MagicMock(), embedding)
+    service = SemanticResourceService(
+        MagicMock(),
+        MagicMock(),
+        embedding,
+        data_source=cfg.query.data_source,
+        database_name=cfg.doris.database,
+    )
     service._column_repo = column_repo
     service._metric_repo = metric_repo
     service._value_repo = value_repo

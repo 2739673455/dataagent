@@ -13,6 +13,7 @@ export interface MetricDraft {
   alias: string;
 }
 
+/** 编辑指标定义、别名和关联字段。 */
 export function MetricEditorDialog({
   draft,
   onChange,

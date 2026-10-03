@@ -21,6 +21,7 @@ type DeleteAttachmentRequest = ApiSchemas["DeleteAttachmentRequest"];
 type DeleteConversationRequest = ApiSchemas["DeleteConversationRequest"];
 type UpdateConversationRequest = ApiSchemas["UpdateConversationRequest"];
 
+/** 合并 SSE 帧的 data 行并解析聊天事件。 */
 function parseStreamEvent(frame: string): ChatStreamEvent | null {
   const payload = frame
     .split("\n")
@@ -30,6 +31,7 @@ function parseStreamEvent(frame: string): ChatStreamEvent | null {
   return payload ? (JSON.parse(payload) as ChatStreamEvent) : null;
 }
 
+/** 读取流式请求的错误详情，解析失败时返回 HTTP 状态提示。 */
 async function streamErrorMessage(response: Response): Promise<string> {
   try {
     const problem = getProblemDetailsMessage(await response.json());
@@ -40,6 +42,7 @@ async function streamErrorMessage(response: Response): Promise<string> {
   return `聊天请求失败（${response.status}）`;
 }
 
+/** 发起 SSE 请求并逐帧分发事件，认证失效时刷新令牌后重试一次。 */
 async function consumeChatStream(
   url: string,
   body: ChatStreamRequest | null,

@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessageChunk
 
 from app.assistant import contracts as chat_schema
 from app.assistant.errors import ConversationBusyError, ConversationRunConflictError
-from app.assistant.services.conversation_run import ConversationRunService
+from app.assistant.execution.runs import ConversationRunService
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
 
@@ -148,7 +148,7 @@ class ConversationRunCancellationTest(unittest.IsolatedAsyncioTestCase):
         async with asyncio.timeout(1):
             with (
                 patch(
-                    "app.assistant.services.conversation_run.asyncio.create_task",
+                    "app.assistant.execution.runs.asyncio.create_task",
                     side_effect=cancel_new_run,
                 ),
                 self.assertRaises(ConversationBusyError),

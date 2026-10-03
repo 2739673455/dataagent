@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
-from app.assistant.services.agent_manager import AgentManager
+from app.assistant.execution.runtime_cache import AgentManager
 
 
 def _runtime():

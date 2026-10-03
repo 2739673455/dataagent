@@ -5,13 +5,12 @@ from uuid import UUID
 from loguru import logger
 
 from app.assistant.agents.model_factory import create_configured_model
-from app.assistant.application.resources import conversation_lifecycle_resources
+from app.assistant.conversations.resources import conversation_lifecycle_resources
+from app.assistant.messages.title import ConversationTitleService
 from app.assistant.repositories.conversation import ConversationPGRepo
-from app.assistant.services.title import ConversationTitleService
 from app.shared.async_runtime import run_async
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
-from app.shared.database.base import AssistantBase
 from app.shared.tasks.celery_app import celery_app
 
 
@@ -120,7 +119,7 @@ async def _generate_conversation_title(
         title = await ConversationTitleService(model).generate(user_text)
     if title is None:
         return False
-    assistant_postgres = PostgresClientManager(cfg.langgraph_postgresql, AssistantBase)
+    assistant_postgres = PostgresClientManager(cfg.langgraph_postgresql)
     try:
         async with assistant_postgres.session() as session, session.begin():
             return await ConversationPGRepo(session).replace_title_if_current(

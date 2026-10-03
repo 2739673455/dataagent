@@ -11,6 +11,7 @@ import { ChatSidebar, ChatUserFooter } from "@/features/chat/components/ChatSide
 import { getConversationExecutionStatus } from "@/features/chat/components/messages/displayModel";
 import { useChatStream } from "@/features/chat/hooks/useChatStream";
 
+/** 组织会话路由、侧边栏、消息区和输入操作。 */
 export default function ChatPage() {
   const navigate = useNavigate();
   const params = useParams();

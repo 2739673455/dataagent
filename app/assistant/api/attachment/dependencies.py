@@ -4,12 +4,12 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from app.assistant.api.chat.dependencies import ConversationPGRepoDep
 from app.assistant.api.dependencies import (
     ConversationLifecycleServiceDep,
+    ConversationPGRepoDep,
     SandboxManagerDep,
 )
-from app.assistant.services.attachments import AttachmentService
+from app.assistant.attachments import AttachmentService
 
 
 def _get_attachment_service(

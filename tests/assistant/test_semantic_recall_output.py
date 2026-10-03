@@ -18,9 +18,9 @@ from app.assistant.agents.tools.semantic_recall import (
     create_semantic_recall_tools,
     semantic_recall_update,
 )
-from app.assistant.application.recall import SemanticRecallService
 from app.assistant.contracts import SemanticRecallResourceDeletion
-from app.assistant.services.recall import SemanticRecallContextService
+from app.assistant.recall.context import SemanticRecallContextService
+from app.assistant.recall.service import SemanticRecallService
 from app.metadata.contracts import SemanticRecallFailure
 from tests.assistant.test_semantic_recall_service import (
     _FULL_DATABASE_GRANT,
@@ -198,7 +198,7 @@ class SemanticRecallOutputTest(unittest.IsolatedAsyncioTestCase):
                 "query_experiences",
                 AsyncMock(return_value=([], datetime.now(UTC))),
             ),
-            patch.object(recall, "context_service", context),
+            patch.object(recall, "_context_service", context),
         ):
             updates = await asyncio.gather(
                 *[
@@ -270,7 +270,7 @@ class SemanticRecallOutputTest(unittest.IsolatedAsyncioTestCase):
                 "query_experiences",
                 AsyncMock(return_value=([], datetime.now(UTC))),
             ),
-            patch.object(recall, "context_service", context),
+            patch.object(recall, "_context_service", context),
         ):
             first = await graph.ainvoke(request("first"), config)
             original = first["messages"][-1].content

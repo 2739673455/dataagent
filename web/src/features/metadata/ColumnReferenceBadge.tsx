@@ -3,6 +3,7 @@ interface ColumnReferenceBadgeProps {
   tableName: string;
 }
 
+/** 展示字段引用及其所属表。 */
 export function ColumnReferenceBadge({ columnName, tableName }: ColumnReferenceBadgeProps) {
   return (
     <span

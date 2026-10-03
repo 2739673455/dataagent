@@ -45,28 +45,23 @@ async def _bootstrap_admin() -> None:
     email = _resolve_value(args.email, _EMAIL_ENV)
     password = _resolve_value(None, _PASSWORD_ENV)
 
-    # 配置模块会立即解析全量应用环境变量；先处理 CLI 和引导凭据，确保
-    # --help 与缺参错误不依赖数据库、模型或沙箱配置。
+    # 先解析命令行参数和引导凭据，再加载应用配置。
+    from app.identity.auth.service import AuthService
+    from app.identity.models.base import AuthBase
     from app.identity.repositories.identity import IdentityPGRepo
-    from app.identity.services.auth import (
-        Argon2PasswordManager,
-        AuthService,
-    )
     from app.shared.clients.postgres_client_manager import (
         PostgresClientManager,
     )
     from app.shared.config.app_config import cfg
-    from app.shared.database.base import AuthBase
 
-    auth_postgres_client_manager = PostgresClientManager(cfg.auth_postgresql, AuthBase)
+    auth_postgres_client_manager = PostgresClientManager(cfg.auth_postgresql)
 
     try:
-        await auth_postgres_client_manager.init_tables()
+        await auth_postgres_client_manager.init_tables(AuthBase.metadata)
         async with auth_postgres_client_manager.session() as session:
             result = await AuthService(
                 IdentityPGRepo(session),
                 cfg.auth,
-                Argon2PasswordManager(),
             ).bootstrap_admin(username, email, password)
         outcome = "created" if result.created else "verified"
         grant = "granted" if result.admin_granted else "already-present"

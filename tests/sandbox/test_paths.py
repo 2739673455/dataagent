@@ -4,13 +4,22 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from app.sandbox.application import resolve_attachment_path, resolve_sandbox_path
-from app.sandbox.application.paths import resolve_artifact_path
+from app.sandbox import resolve_attachment_path, resolve_sandbox_path
 from app.sandbox.contracts import SandboxArtifact, SandboxSessionScope
 from app.sandbox.errors import SandboxPathError
+from app.sandbox.paths import resolve_artifact_path
 
 _CONVERSATION_ID = UUID("550e8400-e29b-41d4-a716-446655440000")
 _ROOT = f"/data/{_CONVERSATION_ID}"
+
+
+@pytest.mark.parametrize("field", ["analysis_id", "agent_type", "session_id"])
+@pytest.mark.parametrize("value", ["", "../outside", "a/b", "a" * 65])
+def test_session_scope_rejects_unsafe_workspace_components(field, value):
+    fields = {"analysis_id": "daily", "agent_type": "scheduler", "session_id": "report"}
+    fields[field] = value
+    with pytest.raises(ValueError):
+        SandboxSessionScope(**fields)
 
 
 @pytest.mark.parametrize(

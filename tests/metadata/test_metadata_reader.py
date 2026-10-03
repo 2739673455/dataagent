@@ -4,7 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.metadata.application import MetadataReader
+from app.metadata import MetadataReader
 from app.metadata.contracts import AssetVersions, QueryCatalogColumn
 from app.metadata.models.catalog import ColumnInfo, TableInfo
 
@@ -24,7 +24,7 @@ def test_query_catalog_is_independent_of_orm_objects_after_session_closes():
         list_table_infos=AsyncMock(return_value=[table]),
         list_column_infos=AsyncMock(return_value=[column]),
     )
-    with patch("app.metadata.application.resources.MetaPGRepo", return_value=repo):
+    with patch("app.metadata.catalog.reader.MetaPGRepo", return_value=repo):
         snapshot = asyncio.run(
             MetadataReader(MagicMock(session=session)).query_catalog()
         )

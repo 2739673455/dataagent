@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { rolesApi, type AssetGrantResponse } from "@/features/roles/api";
 import { Button } from "@/components/ui/button";
 
+/** 拆分并清理逗号分隔的字段名称。 */
 function splitColumns(value: string): string[] {
   return value
     .split(",")
@@ -17,6 +18,7 @@ interface AssetPermissionPanelProps {
   onMutate: (operation: () => Promise<void>, message: string) => Promise<boolean>;
 }
 
+/** 展示和编辑 Doris 角色的资产访问权限。 */
 export function AssetPermissionPanel({
   selectedRole,
   grants,
