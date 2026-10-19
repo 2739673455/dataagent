@@ -133,6 +133,10 @@ cd ..
 ### 4. 初始化预定义用户和角色
 
 ```bash
+# 初始化数据库
+uv run -m scripts.init_db
+
+# 创建预定义用户与角色
 uv run -m scripts.bootstrap_users
 ```
 
