@@ -24,14 +24,14 @@ _EXACT_TEXT_BOOSTS: dict[SemanticTextType, float] = {
 
 
 def column_resource_terms_filter(
-    allowed_keys: frozenset[ColumnKey],
+    catalog_keys: frozenset[ColumnKey],
 ) -> dict[str, Any]:
     """构造字段资源键白名单 Elasticsearch filter。"""
     return {
         "terms": {
             "resource_key": [
                 column_resource_key(t_name, c_name)
-                for t_name, c_name in sorted(allowed_keys)
+                for t_name, c_name in sorted(catalog_keys)
             ]
         }
     }
@@ -120,11 +120,11 @@ class SemanticIndexRepo[ItemT: MetaBase, KeyT](ABC):
         self,
         query: str,
         *,
-        allowed_keys: frozenset[KeyT] | None,
+        catalog_keys: frozenset[KeyT] | None,
         limit: int = 5,
     ) -> list[SearchHit[ItemT]]:
         """按资源白名单执行全文检索并解析命中。"""
-        if allowed_keys is not None and not allowed_keys:
+        if catalog_keys is not None and not catalog_keys:
             return []
         exact_queries = [
             {
@@ -154,11 +154,11 @@ class SemanticIndexRepo[ItemT: MetaBase, KeyT](ABC):
                 ]
             }
         }
-        if allowed_keys is not None:
+        if catalog_keys is not None:
             text_query = {
                 "bool": {
                     "must": [text_query],
-                    "filter": [self._resource_filter(allowed_keys)],
+                    "filter": [self._resource_filter(catalog_keys)],
                 }
             }
         result = await self._client.search(
@@ -172,12 +172,12 @@ class SemanticIndexRepo[ItemT: MetaBase, KeyT](ABC):
         self,
         embedding: list[float],
         *,
-        allowed_keys: frozenset[KeyT] | None,
+        catalog_keys: frozenset[KeyT] | None,
         score_threshold: float = 0.6,
         limit: int = 5,
     ) -> list[SearchHit[ItemT]]:
         """按资源白名单执行向量检索并解析命中。"""
-        if allowed_keys is not None and not allowed_keys:
+        if catalog_keys is not None and not catalog_keys:
             return []
         knn: dict[str, Any] = {
             "field": "embedding",
@@ -186,8 +186,8 @@ class SemanticIndexRepo[ItemT: MetaBase, KeyT](ABC):
             "num_candidates": min(10_000, max(100, limit * 10)),
             "similarity": score_threshold,
         }
-        if allowed_keys is not None:
-            knn["filter"] = self._resource_filter(allowed_keys)
+        if catalog_keys is not None:
+            knn["filter"] = self._resource_filter(catalog_keys)
         result = await self._client.search(
             index=self._index_name,
             knn=knn,
@@ -197,8 +197,8 @@ class SemanticIndexRepo[ItemT: MetaBase, KeyT](ABC):
 
     @staticmethod
     @abstractmethod
-    def _resource_filter(allowed_keys: frozenset[KeyT]) -> dict[str, Any]:
-        """构造当前资源类型的权限白名单过滤条件。"""
+    def _resource_filter(catalog_keys: frozenset[KeyT]) -> dict[str, Any]:
+        """构造当前资源类型的目录范围过滤条件。"""
 
     def _parse_hits(
         self,

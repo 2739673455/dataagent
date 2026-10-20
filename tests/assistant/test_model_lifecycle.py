@@ -18,7 +18,7 @@ from app.shared.config.app_config import LMConfigCfg, ModelCfg, ModelProfileCfg,
 @pytest.mark.parametrize("provider", ["openai", "deepseek", "openrouter", "custom"])
 def test_clients_are_scoped_to_each_model_context(provider: str) -> None:
     config = LMConfigCfg(
-        active="test",
+        use="test",
         models={
             "test": ModelCfg.model_validate(
                 {

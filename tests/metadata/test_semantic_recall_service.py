@@ -135,7 +135,9 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("values", latest["tables"]["orders"]["columns"]["amount"])
         self.assertNotIn("rank_score", original["metrics"]["revenue"])
         self.assertEqual(runtime.search.await_count, 2)
-        self.assertEqual(runtime.search.await_args.args[0], 7)
+        self.assertIsInstance(
+            runtime.search.await_args.args[0], SemanticResourceRecallRequest
+        )
         saved = await graph.aget_state(config)
         self.assertEqual(saved.values["messages"], result["messages"])
 
@@ -198,8 +200,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
             {"configurable": {"user_id": 7}},
         )
         self.assertEqual(result["messages"][-1].status, "success")
-        user_id, request = handler.search.await_args.args
-        self.assertEqual(user_id, 7)
+        (request,) = handler.search.await_args.args
         self.assertEqual(request.terms, ["金额"])
         self.assertEqual(request.resource_types, ["column"])
         self.assertEqual(request.limit_per_type, 5)

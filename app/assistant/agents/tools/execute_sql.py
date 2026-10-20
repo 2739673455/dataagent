@@ -6,7 +6,7 @@ from uuid import UUID
 from langchain.tools import ToolRuntime, tool
 from langchain_core.tools import BaseTool
 
-from app.query.errors import QueryRejectedError
+from app.query.errors import QueryPermissionDeniedError, QueryRejectedError
 from app.query.services.execution_handler import QueryExecutionHandler
 
 
@@ -28,6 +28,13 @@ def create_execute_sql_tool(handler: QueryExecutionHandler) -> BaseTool:
                 sql,
                 purpose=purpose.strip(),
             )
+        except QueryPermissionDeniedError:
+            return {
+                "status": "error",
+                "code": "permission_denied",
+                "message": "当前账号没有执行该查询所需的数据访问权限",
+                "hint": "停止当前任务，将权限不足的原因告知用户，不重试或尝试绕过权限",
+            }
         except QueryRejectedError as exc:
             return {
                 "status": "error",

@@ -38,6 +38,7 @@ dev = [
 testpaths = ["tests"]
 
 [tool.pyright]
+pythonVersion = "3.13"
 venv = ".venv"
 venvPath = "."
 reportDeprecated = "warning"

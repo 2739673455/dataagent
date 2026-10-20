@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from langchain.tools import ToolRuntime, tool
+from langchain.tools import tool
 from langchain_core.tools import BaseTool
 from loguru import logger
 
@@ -19,7 +19,6 @@ def create_semantic_recall_tool(recall: SemanticRecallHandler) -> BaseTool:
 
     @tool(args_schema=SemanticResourceRecallRequest)
     async def recall_context(
-        runtime: ToolRuntime,
         resource_types: list[SemanticResourceType],
         terms: list[str],
         limit_per_type: int = 5,
@@ -29,8 +28,7 @@ def create_semantic_recall_tool(recall: SemanticRecallHandler) -> BaseTool:
             terms=terms, resource_types=resource_types, limit_per_type=limit_per_type
         )
         try:
-            user_id = runtime.config.get("configurable", {})["user_id"]
-            response = await recall.search(user_id, request)
+            response = await recall.search(request)
         except Exception as exc:  # noqa: BLE001
             logger.exception("语义资源召回失败")
             return {

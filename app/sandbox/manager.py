@@ -168,10 +168,11 @@ class DockerSandboxManager:
         await self.init()
 
         def inspect() -> bool:
-            container = self._get_existing_container_sync(user_id)
-            return container is not None and self._archive.is_downloadable_file(
-                container, conversation_id, relative_path
-            )
+            with self._ownership.operation(user_id, conversation_id):
+                container = self._restore_storage_container_sync(user_id)
+                return container is not None and self._archive.is_downloadable_file(
+                    container, conversation_id, relative_path
+                )
 
         downloadable = await asyncio.to_thread(inspect)
         await asyncio.to_thread(self._touch_user, user_id)
@@ -444,6 +445,16 @@ class DockerSandboxManager:
         self._touch_user(user_id)
         return self._runtime_pool.get_running(user_id)
 
+    def _restore_storage_container_sync(self, user_id: int) -> Container | None:
+        """读取已有数据时恢复存储容器，不启动容器或创建新数据卷。"""
+        with self._ownership.user_mutation(user_id):
+            container = self._get_existing_container_sync(user_id)
+            if container is not None:
+                return container
+            if self._get_existing_volume_sync(user_id) is None:
+                return None
+            return self._create_container(user_id)
+
     def _running_containers_sync(self) -> list[tuple[int, Container]]:
         """读取 Docker 中当前部署的运行容器。"""
         running: list[tuple[int, Container]] = []
@@ -505,11 +516,14 @@ class DockerSandboxManager:
         conversation_id: UUID,
         normalized_path: str,
     ) -> bytes:
-        """从已有沙箱读取附件，不创建容器、卷或工作区。"""
-        container = self._get_existing_container_sync(user_id)
-        if container is None:
-            raise FileNotFoundError(normalized_path)
-        return self._archive.download_file(container, conversation_id, normalized_path)
+        """从持久化沙箱读取附件，必要时恢复已回收的存储容器。"""
+        with self._ownership.operation(user_id, conversation_id):
+            container = self._restore_storage_container_sync(user_id)
+            if container is None:
+                raise FileNotFoundError(normalized_path)
+            return self._archive.download_file(
+                container, conversation_id, normalized_path
+            )
 
     def _record_cleanup_result(self, errors: list[str]) -> None:
         """更新连续失败计数，并在达到阈值时记录告警。"""

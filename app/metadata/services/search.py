@@ -7,7 +7,6 @@ from typing import Literal, TypeVar
 
 from loguru import logger
 
-from app.identity.models.authorization import AssetAccessPolicy
 from app.metadata.models.catalog import (
     ColumnInfo,
     ColumnKey,
@@ -30,7 +29,6 @@ from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
 from app.metadata.repositories.semantic_index import SemanticIndexRepo
 from app.metadata.repositories.value_index import ValueESRepo
-from app.metadata.services.authorization_filter import MetadataAuthorizationFilter
 from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.database.base import MetaBase
 
@@ -292,9 +290,6 @@ class SemanticResourceRecallService:
         metric_repo: MetricESRepo,
         value_repo: ValueESRepo,
         catalog: SemanticCatalog,
-        asset_policy: AssetAccessPolicy,
-        data_source: str,
-        database_name: str,
         max_concurrent_index_queries: int = _DEFAULT_INDEX_QUERY_CONCURRENCY,
     ) -> None:
         """初始化元数据语义资源召回服务。"""
@@ -303,62 +298,16 @@ class SemanticResourceRecallService:
         self._metric_repo = metric_repo
         self._value_repo = value_repo
         self._catalog = catalog
-        self._authorization_filter = MetadataAuthorizationFilter(
-            asset_policy,
-            data_source,
-            database_name,
-        )
         self._index_query_semaphore = asyncio.Semaphore(max_concurrent_index_queries)
 
     async def recall(
         self,
         request: SemanticResourceRecallRequest,
     ) -> SemanticResourceRecallResponse:
-        """按目录权限过滤、外部检索和响应构建三个阶段完成召回。"""
-        context = self._create_context(request)
+        """按完整目录检索并构建响应。"""
+        context = RecallContext(request=request, catalog=self._catalog)
         await self._retrieve(context)
         return self._build_response(context)
-
-    def _create_context(
-        self,
-        request: SemanticResourceRecallRequest,
-    ) -> RecallContext:
-        """按权限过滤已加载的目录并创建单次检索上下文。"""
-        table_infos = list(self._catalog.tables.values())
-        column_infos = list(self._catalog.columns.values())
-        metric_infos = list(self._catalog.metrics.values())
-        allowed_column_keys = self._authorization_filter.allowed_column_keys(
-            column_infos
-        )
-        allowed_columns = {
-            (item.t_name, item.name): item
-            for item in self._authorization_filter.filter_columns(
-                column_infos,
-                allowed_column_keys,
-            )
-        }
-        visible_tables = {
-            item.name: item
-            for item in self._authorization_filter.filter_tables(
-                table_infos,
-                allowed_column_keys,
-            )
-        }
-        allowed_metrics = {
-            item.name: item
-            for item in self._authorization_filter.filter_metrics(
-                metric_infos,
-                allowed_column_keys,
-            )
-        }
-        return RecallContext(
-            request=request,
-            catalog=SemanticCatalog(
-                tables=visible_tables,
-                columns=allowed_columns,
-                metrics=allowed_metrics,
-            ),
-        )
 
     async def _retrieve(self, context: RecallContext) -> None:
         """按资源选择检索，共享一次查询向量生成。"""
@@ -401,7 +350,7 @@ class SemanticResourceRecallService:
             embeddings,
             self._column_repo,
             resource_type="column",
-            allowed_keys=frozenset(context.catalog.columns),
+            catalog_keys=frozenset(context.catalog.columns),
             scores=context.column_scores,
             key_of=lambda item: (item.t_name, item.name),
             backend_name="字段",
@@ -418,7 +367,7 @@ class SemanticResourceRecallService:
             embeddings,
             self._metric_repo,
             resource_type="metric",
-            allowed_keys=frozenset(context.catalog.metrics),
+            catalog_keys=frozenset(context.catalog.metrics),
             scores=context.metric_scores,
             key_of=lambda item: item.name,
             backend_name="指标",
@@ -431,7 +380,7 @@ class SemanticResourceRecallService:
         repo: SemanticIndexRepo[CandidateItemT, CandidateKeyT],
         *,
         resource_type: Literal["column", "metric"],
-        allowed_keys: frozenset[CandidateKeyT],
+        catalog_keys: frozenset[CandidateKeyT],
         scores: dict[CandidateKeyT, float],
         key_of: Callable[[CandidateItemT], CandidateKeyT],
         backend_name: str,
@@ -441,14 +390,14 @@ class SemanticResourceRecallService:
             if channel == "fulltext":
                 operations = [
                     repo.search_text_hits(
-                        term, allowed_keys=allowed_keys, limit=context.search_limit
+                        term, catalog_keys=catalog_keys, limit=context.search_limit
                     )
                     for term in context.request.terms
                 ]
             elif embeddings is not None:
                 operations = [
                     repo.search_vector_hits(
-                        embedding, allowed_keys=allowed_keys, limit=context.search_limit
+                        embedding, catalog_keys=catalog_keys, limit=context.search_limit
                     )
                     for embedding in embeddings
                 ]
@@ -462,7 +411,7 @@ class SemanticResourceRecallService:
                 context,
                 results,
                 resource_type=resource_type,
-                allowed_keys=allowed_keys,
+                catalog_keys=catalog_keys,
                 scores=scores,
                 key_of=key_of,
                 backend_name=backend_name
@@ -475,13 +424,13 @@ class SemanticResourceRecallService:
         context: RecallContext,
     ) -> None:
         """检索字段取值，并按各检索词的排名累加融合分数。"""
-        allowed_columns = frozenset(context.catalog.columns)
+        catalog_columns = frozenset(context.catalog.columns)
         results = await asyncio.gather(
             *(
                 self._run_index_query(
                     self._value_repo.search_hits(
                         term,
-                        allowed_columns=allowed_columns,
+                        catalog_columns=catalog_columns,
                         limit=context.search_limit,
                     )
                 )
@@ -525,7 +474,7 @@ class SemanticResourceRecallService:
         results: list[list[SearchHit[CandidateItemT]] | BaseException],
         *,
         resource_type: Literal["column", "metric"],
-        allowed_keys: Collection[CandidateKeyT],
+        catalog_keys: Collection[CandidateKeyT],
         scores: dict[CandidateKeyT, float],
         key_of: Callable[[CandidateItemT], CandidateKeyT],
         backend_name: str,
@@ -545,7 +494,7 @@ class SemanticResourceRecallService:
             seen_keys: set[CandidateKeyT] = set()
             for rank, hit in enumerate(result, start=1):
                 key = key_of(hit.item)
-                if key not in allowed_keys or key in seen_keys:
+                if key not in catalog_keys or key in seen_keys:
                     continue
                 seen_keys.add(key)
                 self._add_candidate_score(scores, key, rank)

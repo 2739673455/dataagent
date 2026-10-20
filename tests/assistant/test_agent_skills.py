@@ -2,7 +2,7 @@ import unittest
 from pathlib import PurePosixPath
 from typing import Any, cast
 
-from deepagents.backends import StateBackend
+from deepagents.backends import CompositeBackend, StateBackend
 from langchain.tools import ToolRuntime
 from langchain_core.messages import ToolMessage
 
@@ -35,7 +35,9 @@ class AgentSkillsTest(unittest.TestCase):
             cast(DockerSandboxBackend, backend), tools=["read_file"]
         )
         self.assertEqual([tool.name for tool in filesystem.tools], ["read_file"])
-        self.assertIs(filesystem.backend.default, backend)
+        resolved_backend = filesystem.backend
+        assert isinstance(resolved_backend, CompositeBackend)
+        self.assertIs(resolved_backend.default, backend)
 
     def test_agent_cannot_modify_mounted_skill(self) -> None:
         state_backend = StateBackend()

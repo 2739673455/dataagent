@@ -12,7 +12,7 @@ from app.metadata.repositories.metric_index import MetricESRepo
 
 
 @pytest.mark.parametrize("repo_class", [ColumnESRepo, MetricESRepo])
-def test_search_preserves_payload_score_and_permission_filter(repo_class) -> None:
+def test_search_preserves_payload_score_and_catalog_filter(repo_class) -> None:
     payload = {"name": "amount", "description": "销售额", "alias": []}
     if repo_class is ColumnESRepo:
         payload["t_name"] = "orders"
@@ -38,14 +38,14 @@ def test_search_preserves_payload_score_and_permission_filter(repo_class) -> Non
         hits = asyncio.run(
             repo.search_text_hits(
                 "销售额",
-                allowed_keys=frozenset({("orders", "amount")}),
+                catalog_keys=frozenset({("orders", "amount")}),
             )
         )
     else:
         hits = asyncio.run(
             repo.search_text_hits(
                 "销售额",
-                allowed_keys=frozenset({"amount"}),
+                catalog_keys=frozenset({"amount"}),
             )
         )
     assert hits[0].item.name == "amount"
@@ -71,9 +71,9 @@ def test_search_reports_corrupted_payload_with_document_identity(
         )
     )
     repo = repo_class(client)
-    allowed = {"allowed_keys": None}
+    catalog_scope = {"catalog_keys": None}
     with pytest.raises(CorruptedSemanticIndexDocumentError) as caught:
-        asyncio.run(repo.search_text_hits("x", **allowed))
+        asyncio.run(repo.search_text_hits("x", **catalog_scope))
     assert caught.value.document_id == "broken-doc"
     assert caught.value.index_name == repo._index_name
 
@@ -129,24 +129,26 @@ def test_bulk_item_failure_is_not_reported_as_success():
 
 
 @pytest.mark.parametrize("channel", ["text", "vector"])
-@pytest.mark.parametrize("allowed", [frozenset(), None, frozenset({"amount"})])
-def test_metric_allowlist_distinguishes_empty_and_unrestricted(channel, allowed):
+@pytest.mark.parametrize("catalog_scope", [frozenset(), None, frozenset({"amount"})])
+def test_metric_catalog_scope_distinguishes_empty_and_unrestricted(
+    channel, catalog_scope
+):
     client = MagicMock(
         search=AsyncMock(return_value=SimpleNamespace(body={"hits": {"hits": []}}))
     )
     repo = MetricESRepo(client)
     operation = (
-        repo.search_text_hits("金额", allowed_keys=allowed)
+        repo.search_text_hits("金额", catalog_keys=catalog_scope)
         if channel == "text"
-        else repo.search_vector_hits([0.1], allowed_keys=allowed)
+        else repo.search_vector_hits([0.1], catalog_keys=catalog_scope)
     )
     assert asyncio.run(operation) == []
-    if allowed == frozenset():
+    if catalog_scope == frozenset():
         client.search.assert_not_awaited()
         return
     client.search.assert_awaited_once()
     kwargs = client.search.call_args.kwargs
-    if allowed is None:
+    if catalog_scope is None:
         if channel == "vector":
             assert "filter" not in kwargs["knn"]
         else:
@@ -161,9 +163,11 @@ def test_metric_allowlist_distinguishes_empty_and_unrestricted(channel, allowed)
 
 @pytest.mark.parametrize("channel", ["text", "vector", "value"])
 @pytest.mark.parametrize(
-    "allowed", [frozenset(), None, frozenset({("orders", "amount")})]
+    "catalog_scope", [frozenset(), None, frozenset({("orders", "amount")})]
 )
-def test_column_allowlist_distinguishes_empty_and_unrestricted(channel, allowed):
+def test_column_catalog_scope_distinguishes_empty_and_unrestricted(
+    channel, catalog_scope
+):
     from app.metadata.models.catalog import column_resource_key
     from app.metadata.repositories.value_index import ValueESRepo
 
@@ -171,18 +175,24 @@ def test_column_allowlist_distinguishes_empty_and_unrestricted(channel, allowed)
         search=AsyncMock(return_value=SimpleNamespace(body={"hits": {"hits": []}}))
     )
     if channel == "value":
-        operation = ValueESRepo(client).search_hits("金额", allowed_columns=allowed)
+        operation = ValueESRepo(client).search_hits(
+            "金额", catalog_columns=catalog_scope
+        )
     elif channel == "vector":
-        operation = ColumnESRepo(client).search_vector_hits([0.1], allowed_keys=allowed)
+        operation = ColumnESRepo(client).search_vector_hits(
+            [0.1], catalog_keys=catalog_scope
+        )
     else:
-        operation = ColumnESRepo(client).search_text_hits("金额", allowed_keys=allowed)
+        operation = ColumnESRepo(client).search_text_hits(
+            "金额", catalog_keys=catalog_scope
+        )
     assert asyncio.run(operation) == []
-    if allowed == frozenset():
+    if catalog_scope == frozenset():
         client.search.assert_not_awaited()
         return
     client.search.assert_awaited_once()
     kwargs = client.search.call_args.kwargs
-    if allowed is None:
+    if catalog_scope is None:
         if channel == "vector":
             assert "filter" not in kwargs["knn"]
         else:

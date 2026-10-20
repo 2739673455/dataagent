@@ -100,19 +100,19 @@ class ValueESRepo:
         self,
         keyword: str,
         *,
-        allowed_columns: frozenset[ColumnKey] | None,
+        catalog_columns: frozenset[ColumnKey] | None,
         score_threshold: float = 0.6,
         limit: int = 5,
     ) -> list[SearchHit[ValueInfo]]:
         """根据关键词检索字段取值并保留命中分数。"""
-        if allowed_columns is not None and not allowed_columns:
+        if catalog_columns is not None and not catalog_columns:
             return []
         query: dict[str, Any] = {"match": {"value": keyword}}
-        if allowed_columns is not None:
+        if catalog_columns is not None:
             query = {
                 "bool": {
                     "must": [query],
-                    "filter": [column_resource_terms_filter(allowed_columns)],
+                    "filter": [column_resource_terms_filter(catalog_columns)],
                 }
             }
         result = await self._client.search(

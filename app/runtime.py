@@ -22,7 +22,6 @@ from app.metadata.services.recall_handler import SemanticRecallHandler
 from app.query.services.execution_handler import QueryExecutionHandler
 from app.sandbox import DockerSandboxManager
 from app.shared.clients.doris_client_manager import (
-    DorisClientManager,
     DorisQueryClientRegistry,
 )
 from app.shared.clients.embedding_client_manager import EmbeddingClient
@@ -38,7 +37,6 @@ class WebResources:
     auth: PostgresClientManager
     meta: PostgresClientManager
     assistant: PostgresClientManager
-    admin_doris: DorisClientManager
     query_clients: DorisQueryClientRegistry
     embedding: EmbeddingClient
     es: AsyncElasticsearch
@@ -60,8 +58,6 @@ def _create_resources(stack: AsyncExitStack) -> WebResources:
     stack.push_async_callback(meta.close)
     assistant = PostgresClientManager(cfg.langgraph_postgresql, AssistantBase)
     stack.push_async_callback(assistant.close)
-    admin_doris = DorisClientManager(cfg.doris)
-    stack.push_async_callback(admin_doris.close)
     query_clients = DorisQueryClientRegistry(cfg.doris)
     stack.push_async_callback(query_clients.close)
     embedding = EmbeddingClient(cfg.embedding)
@@ -89,7 +85,7 @@ def _create_resources(stack: AsyncExitStack) -> WebResources:
     checkpointer = AsyncPostgresSaver(checkpoint_pool)
     sandbox = DockerSandboxManager(packaged_skill_readonly_mounts())
     stack.push_async_callback(sandbox.close)
-    recall = SemanticRecallHandler(auth, meta, embedding, es, admin_doris)
+    recall = SemanticRecallHandler(meta, embedding, es)
     agents = AgentManager(
         checkpointer,
         sandbox,
@@ -111,7 +107,6 @@ def _create_resources(stack: AsyncExitStack) -> WebResources:
         auth=auth,
         meta=meta,
         assistant=assistant,
-        admin_doris=admin_doris,
         query_clients=query_clients,
         embedding=embedding,
         es=es,

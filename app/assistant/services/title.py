@@ -23,7 +23,7 @@ class ConversationTitleService:
         self, user_id: int, conversation_id: UUID, user_text: str
     ) -> None:
         """调用模型生成标题，输出非空时更新会话。"""
-        async with create_configured_model(cfg.lm_config.active) as model:
+        async with create_configured_model(cfg.lm_config.use) as model:
             response = await model.ainvoke(
                 [
                     SystemMessage(content=TITLE_PROMPT),

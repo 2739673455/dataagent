@@ -13,14 +13,6 @@ class UserSelectionRequiredError(ProblemError):
     status = HTTPStatus.UNAUTHORIZED
 
 
-class InvalidDorisPermissionError(ProblemError):
-    """授权结果缺少有效字段，或查询账号未绑定配置角色。"""
-
-    type = "invalid-doris-permission"
-    title = "Doris 权限配置无效"
-    status = HTTPStatus.UNPROCESSABLE_ENTITY
-
-
 class QueryPrincipalNotConfiguredError(RuntimeError):
     """用户绑定的角色缺少查询身份。"""
 

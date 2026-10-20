@@ -2,7 +2,6 @@
 
 from elasticsearch import AsyncElasticsearch
 
-from app.identity.models.authorization import AssetAccessPolicy
 from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
 from app.metadata.repositories.postgres import MetaPGRepo
@@ -12,7 +11,6 @@ from app.metadata.services.index import MetaIndexService
 from app.metadata.services.search import SemanticCatalog, SemanticResourceRecallService
 from app.shared.clients.embedding_client_manager import EmbeddingClient
 from app.shared.clients.postgres_client_manager import PostgresClientManager
-from app.shared.config.app_config import cfg
 
 
 def build_meta_index_service(
@@ -36,7 +34,6 @@ async def build_semantic_resource_recall_service(
     postgres: PostgresClientManager,
     es_client: AsyncElasticsearch,
     embedding_client: EmbeddingClient,
-    policy: AssetAccessPolicy,
 ) -> SemanticResourceRecallService:
     """先读取完整目录并关闭会话，再构建不依赖数据库事务的检索服务。"""
     async with postgres.session() as session:
@@ -54,7 +51,4 @@ async def build_semantic_resource_recall_service(
             columns={(item.t_name, item.name): item for item in columns},
             metrics={item.name: item for item in metrics},
         ),
-        asset_policy=policy,
-        data_source="doris",
-        database_name=cfg.doris.database,
     )

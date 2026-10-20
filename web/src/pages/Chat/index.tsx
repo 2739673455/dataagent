@@ -31,8 +31,9 @@ export default function ChatPage() {
 
   const handleSelectUser = (nextUser: UserResponse) => {
     if (nextUser.id === user?.id) return;
+    // 先退出旧会话，再更新身份，避免新用户挂载时请求旧会话的运行状态。
+    navigate(ROUTES.chat, { replace: true, flushSync: true });
     selectUser(nextUser);
-    navigate(ROUTES.chat, { replace: true });
   };
 
   const messageViewportRef = useRef<HTMLDivElement | null>(null);

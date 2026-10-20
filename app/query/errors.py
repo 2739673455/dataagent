@@ -7,6 +7,10 @@ class QueryExecutionTimeoutError(RuntimeError):
     """Doris 查询执行超时。"""
 
 
+class QueryPermissionDeniedError(RuntimeError):
+    """当前查询账号缺少访问目标数据所需的权限。"""
+
+
 class QueryRejectedError(ValueError):
     """SQL 未通过确定性安全校验。"""
 

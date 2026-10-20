@@ -54,9 +54,9 @@ SILICONFLOW_API_KEY=
 **语言模型（`lm_config`）**
 
 - `models`：按配置名声明模型，填写 `model_provider`、`model`、`base_url` 和 `api_key`；`params` 用于传入推理强度等附加参数。统一使用 Chat Completions；DeepSeek 使用 langchain-deepseek 并补充思考内容回传，其余供应商使用 OpenAI 兼容客户端；供应商扩展请求字段放在 `params.extra_body` 中。
-- `active`：选择 `models` 中的一个配置名，作为 Planner 的默认模型。
+- `use`：选择 `models` 中的一个配置名，作为 Planner 的默认模型。
 - `profile`：填写图片输入支持（`image_inputs`）和上下文长度（`max_input_tokens`）。
-- `agent.specialists`：可为 Explorer、Analyst、Reviewer 单独指定模型配置名；填写 `default` 时跟随 `lm_config.active`。
+- `agent.specialists`：可为 Explorer、Analyst、Reviewer 单独指定模型配置名；填写 `default` 时跟随 `lm_config.use`。
 
 **向量模型（`embedding`）与 ES 维度**
 

@@ -121,3 +121,57 @@ def test_artifact_resolution_validates_scope_and_downloadability():
                 )
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("has_volume", [True, False])
+@pytest.mark.parametrize("action", ["resolve", "download"])
+def test_artifacts_survive_container_removal_without_creating_empty_storage(
+    has_volume, action
+):
+    manager = DockerSandboxManager(ownership=FakeSandboxOwnership())
+    conversation = uuid4()
+    container = MagicMock()
+
+    async def run():
+        with (
+            patch.object(manager, "init", new_callable=AsyncMock),
+            patch.object(manager, "_get_existing_container_sync", return_value=None),
+            patch.object(
+                manager,
+                "_get_existing_volume_sync",
+                return_value=MagicMock() if has_volume else None,
+            ),
+            patch.object(
+                manager, "_create_container", return_value=container
+            ) as create,
+            patch.object(
+                manager._archive, "is_downloadable_file", return_value=True
+            ) as inspect,
+            patch.object(
+                manager._archive, "download_file", return_value=b"report"
+            ) as download,
+        ):
+            if action == "resolve":
+                result = await manager.resolve_artifact(
+                    1, conversation, f"/data/{conversation}/report.csv"
+                )
+                assert result == ("report.csv" if has_volume else None)
+            elif has_volume:
+                assert (
+                    await manager.download_file(1, conversation, "report.csv")
+                    == b"report"
+                )
+            else:
+                with pytest.raises(FileNotFoundError):
+                    await manager.download_file(1, conversation, "report.csv")
+            if has_volume:
+                create.assert_called_once_with(1)
+                reader = inspect if action == "resolve" else download
+                reader.assert_called_once_with(container, conversation, "report.csv")
+            else:
+                create.assert_not_called()
+                inspect.assert_not_called()
+                download.assert_not_called()
+            container.start.assert_not_called()
+
+    asyncio.run(run())

@@ -1,15 +1,13 @@
-"""读取用户的 Doris 查询凭据和资产权限。"""
+"""读取用户的 Doris 查询凭据。"""
 
 from app.identity import errors
-from app.identity.models.authorization import AssetAccessPolicy
 from app.identity.models.doris import DorisQueryIdentity, ResolvedQueryPrincipal
-from app.identity.repositories.doris_role import DorisRoleRepository
 from app.identity.repositories.identity import IdentityPGRepo
 from app.identity.services.credential import DorisCredentialCipher
 
 
 class IdentityService:
-    """按用户读取查询身份，提供查询凭据和资产策略。"""
+    """按用户读取查询身份和凭据。"""
 
     def __init__(self, repo: IdentityPGRepo) -> None:
         """绑定用户和查询身份仓库。"""
@@ -25,26 +23,6 @@ class IdentityService:
             query_user=identity.query_user,
             password=cipher.decrypt(identity.encrypted_password),
         )
-
-    async def get_asset_policy(
-        self,
-        user_id: int,
-        doris_repo: DorisRoleRepository,
-        *,
-        data_source: str,
-        database: str,
-        catalog: str = "internal",
-    ) -> AssetAccessPolicy:
-        """读取查询账号的实时 SELECT 授权，构造资产策略。"""
-        identity = await self._get_query_identity(user_id)
-        grants = await doris_repo.read_authorization(
-            role_name=identity.role_name,
-            query_user=identity.query_user,
-            data_source=data_source,
-            catalog=catalog,
-            database=database,
-        )
-        return AssetAccessPolicy(grants=grants)
 
     async def _get_query_identity(self, user_id: int) -> DorisQueryIdentity:
         """按用户绑定的角色读取查询身份。"""

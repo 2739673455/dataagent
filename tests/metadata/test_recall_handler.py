@@ -1,15 +1,13 @@
-"""验证召回操作的授权刷新和数据库会话边界。"""
+"""验证完整目录召回的数据库会话边界。"""
 
 import asyncio
 import unittest
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.identity.models.authorization import AssetAccessPolicy, AssetIdentity
 from app.metadata.models.catalog import ColumnInfo, TableInfo
 from app.metadata.models.search import SemanticResourceRecallRequest
 from app.metadata.services.recall_handler import SemanticRecallHandler
-from app.shared.config.app_config import cfg
 
 
 class RecallHandlerTest(unittest.IsolatedAsyncioTestCase):
@@ -31,14 +29,9 @@ class RecallHandlerTest(unittest.IsolatedAsyncioTestCase):
                 self.closed.append(name)
 
         self.handler = SemanticRecallHandler(
-            MagicMock(session=lambda: session("auth")),
             MagicMock(session=lambda: session("meta")),
             MagicMock(),
             MagicMock(),
-            MagicMock(),
-        )
-        self.policy = AssetAccessPolicy(
-            grants=frozenset({AssetIdentity("doris", cfg.doris.database)}),
         )
         self.request = SemanticResourceRecallRequest(
             terms=["收入"], resource_types=["column"]
@@ -61,18 +54,14 @@ class RecallHandlerTest(unittest.IsolatedAsyncioTestCase):
             index_values=False,
         )
 
-    async def test_search_closes_auth_and_catalog_sessions_before_external_calls(self):
-        async def load_policy(user_id, doris_repo, *, data_source, database):
-            self.assertEqual(self.open_sessions, {"auth"})
-            return self.policy
-
+    async def test_search_closes_catalog_session_before_external_calls(self):
         async def columns():
             self.assertEqual(self.open_sessions, {"meta"})
             return [self.column]
 
         async def hits(*args, **kwargs):
             self.assertEqual(self.open_sessions, set())
-            self.assertEqual(kwargs["allowed_keys"], frozenset({("orders", "amount")}))
+            self.assertEqual(kwargs["catalog_keys"], frozenset({("orders", "amount")}))
             return []
 
         async def embed(terms):
@@ -91,12 +80,6 @@ class RecallHandlerTest(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(side_effect=embed),
             ) as embed_client,
             patch(
-                "app.identity.providers.IdentityService",
-                return_value=MagicMock(
-                    get_asset_policy=AsyncMock(side_effect=load_policy)
-                ),
-            ),
-            patch(
                 "app.metadata.providers.MetaPGRepo",
                 return_value=MagicMock(
                     list_table_infos=AsyncMock(return_value=[self.table]),
@@ -106,12 +89,12 @@ class RecallHandlerTest(unittest.IsolatedAsyncioTestCase):
             ),
             patch("app.metadata.providers.ColumnESRepo", return_value=index),
         ):
-            response = await self.handler.search(7, self.request)
+            response = await self.handler.search(self.request)
         self.assertEqual(response.status, "success")
         index.search_text_hits.assert_awaited_once()
         index.search_vector_hits.assert_awaited_once()
         embed_client.assert_awaited_once()
-        self.assertEqual(self.closed, ["auth", "meta"])
+        self.assertEqual(self.closed, ["meta"])
 
     async def test_cancel_during_catalog_loading_closes_read_session(self):
         entered = asyncio.Event()
@@ -122,10 +105,6 @@ class RecallHandlerTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "app.metadata.services.recall_handler.load_asset_policy",
-                new=AsyncMock(return_value=self.policy),
-            ),
-            patch(
                 "app.metadata.providers.MetaPGRepo",
                 return_value=MagicMock(
                     list_table_infos=AsyncMock(return_value=[self.table]),
@@ -134,7 +113,7 @@ class RecallHandlerTest(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             async with asyncio.timeout(1):
-                task = asyncio.create_task(self.handler.search(7, self.request))
+                task = asyncio.create_task(self.handler.search(self.request))
                 await entered.wait()
                 task.cancel()
                 with self.assertRaises(asyncio.CancelledError):

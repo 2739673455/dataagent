@@ -13,6 +13,6 @@ class MetricESRepo(SemanticIndexRepo[MetricInfo, str]):
     _payload_type = MetricInfo
 
     @staticmethod
-    def _resource_filter(allowed_keys: frozenset[str]) -> dict[str, Any]:
+    def _resource_filter(catalog_keys: frozenset[str]) -> dict[str, Any]:
         """构造指标名称白名单过滤条件。"""
-        return {"terms": {"resource_key": sorted(allowed_keys)}}
+        return {"terms": {"resource_key": sorted(catalog_keys)}}

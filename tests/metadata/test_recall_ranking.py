@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.metadata.models.catalog import ColumnInfo, MetricInfo
+from app.metadata.models.catalog import ColumnInfo, MetricInfo, TableInfo, ValueInfo
 from app.metadata.models.search import SearchHit, SemanticResourceRecallRequest
 from app.metadata.services.search import (
     ColumnContextBuilder,
@@ -110,9 +110,6 @@ def test_merge_hits_preserves_original_rank_deduplication_and_failure_scope(
         repo,
         MagicMock(),
         catalog,
-        MagicMock(),
-        "source",
-        "database",
     )
     asyncio.run(service._retrieve(context))
     assert scores == {a_key: 2 / 61, b_key: 1 / 64}
@@ -167,7 +164,7 @@ def test_retrieval_routes_resources_and_shares_embeddings(
     )
     values = MagicMock(search_hits=AsyncMock(return_value=[]))
     service = SemanticResourceRecallService(
-        embedding, columns, metrics, values, catalog, MagicMock(), "source", "database"
+        embedding, columns, metrics, values, catalog
     )
     asyncio.run(service._retrieve(context))
     semantic_types = (
@@ -216,12 +213,92 @@ def test_embedding_cancellation_propagates_without_starting_index_queries():
         MagicMock(),
         MagicMock(),
         context.catalog,
-        MagicMock(),
-        "source",
-        "database",
     )
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(service._retrieve(context))
     repo.search_text_hits.assert_not_awaited()
     repo.search_vector_hits.assert_not_awaited()
     assert context.failures == []
+
+
+def test_recall_uses_full_catalog_and_preserves_references_metrics_and_values():
+    tables = {
+        name: TableInfo(
+            name=name, role="fact", description=name, primary_key_columns=["id"]
+        )
+        for name in ("orders", "customers")
+    }
+    columns = {
+        (table, name): ColumnInfo(
+            t_name=table,
+            name=name,
+            type="VARCHAR",
+            description=name,
+            alias=[],
+            examples=[],
+            index_values=True,
+        )
+        for table, name in (
+            ("orders", "id"),
+            ("orders", "customer_id"),
+            ("orders", "status"),
+            ("customers", "id"),
+        )
+    }
+    reference = columns[("orders", "customer_id")]
+    reference.reference_t_name = "customers"
+    reference.reference_c_name = "id"
+    metric = MetricInfo(
+        name="orders_count",
+        description="订单数",
+        alias=[],
+        relevant_columns=[{"t_name": "orders", "c_name": "id"}],
+    )
+    column_repo = MagicMock(
+        search_text_hits=AsyncMock(return_value=[SearchHit(reference, 1.0)]),
+        search_vector_hits=AsyncMock(return_value=[]),
+    )
+    metric_repo = MagicMock(
+        search_text_hits=AsyncMock(return_value=[SearchHit(metric, 1.0)]),
+        search_vector_hits=AsyncMock(return_value=[]),
+    )
+    value_repo = MagicMock(
+        search_hits=AsyncMock(
+            return_value=[
+                SearchHit(ValueInfo("paid", "orders", "status"), 1.0),
+                SearchHit(ValueInfo("stale", "removed_table", "status"), 1.0),
+            ]
+        )
+    )
+    service = SemanticResourceRecallService(
+        MagicMock(aembed_documents=AsyncMock(return_value=[[1.0]])),
+        column_repo,
+        metric_repo,
+        value_repo,
+        SemanticCatalog(tables=tables, columns=columns, metrics={metric.name: metric}),
+    )
+    response = asyncio.run(
+        service.recall(
+            SemanticResourceRecallRequest(
+                terms=["订单"],
+                resource_types=["column", "metric", "value"],
+            )
+        )
+    )
+    assert response.status == "success"
+    assert {table.name for table in response.tables} == set(tables)
+    assert all(table.primary_key_columns == ["id"] for table in response.tables)
+    assert {(column.t_name, column.name) for column in response.columns} == set(columns)
+    recalled_reference = next(c for c in response.columns if c.name == "customer_id")
+    assert (
+        recalled_reference.reference_t_name,
+        recalled_reference.reference_c_name,
+    ) == ("customers", "id")
+    assert response.metrics[0].relevant_columns == metric.relevant_columns
+    assert [value.value for value in response.values] == ["paid"]
+    assert column_repo.search_text_hits.call_args.kwargs["catalog_keys"] == frozenset(
+        columns
+    )
+    assert value_repo.search_hits.call_args.kwargs["catalog_columns"] == frozenset(
+        columns
+    )

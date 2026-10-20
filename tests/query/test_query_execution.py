@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from langchain.tools import ToolRuntime
+from sqlalchemy.exc import OperationalError
 
 from app.assistant.agents.tools.execute_sql import create_execute_sql_tool
 from app.identity import errors as auth_error
@@ -17,6 +18,7 @@ from app.identity.errors import QueryPrincipalNotConfiguredError
 from app.identity.services.identity import IdentityService
 from app.query.errors import (
     QueryExecutionTimeoutError,
+    QueryPermissionDeniedError,
     QueryRejectedError,
     QueryResultShapeError,
 )
@@ -179,6 +181,16 @@ class QueryHandlerTest(unittest.IsolatedAsyncioTestCase):
                 {"runtime": self.tool_runtime, "sql": "SELECT 1", "purpose": "统计"}
             )
 
+    async def test_permission_denied_returns_actionable_result_without_aborting(self):
+        self.service.execute.side_effect = QueryPermissionDeniedError("denied")
+        payload = await self.tool.ainvoke(
+            {"runtime": self.tool_runtime, "sql": "SELECT 1", "purpose": "统计"}
+        )
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["code"], "permission_denied")
+        self.assertIn("停止当前任务", payload["hint"])
+        self.assertNotIn("details", payload)
+
     async def test_identity_failure_does_not_execute(self):
         self.identity.get_query_principal.side_effect = (
             QueryPrincipalNotConfiguredError("no role")
@@ -325,6 +337,79 @@ class DorisStreamTest(unittest.IsolatedAsyncioTestCase):
         self.assertIs(raised.exception.__cause__, self.rows_error)
         self.result.close.assert_awaited_once()
         self.assertTrue(self.exited)
+
+    async def test_permission_denied_at_connect_execute_and_fetch(self):
+        for stage in ("connect", "execute", "fetch"):
+            with self.subTest(stage=stage):
+                self.setUp()
+                error = OperationalError(
+                    None, None, Exception(1142, "SELECT command denied to user")
+                )
+                if stage == "connect":
+                    self.repo = DorisQueryRepository(
+                        MagicMock(
+                            engine=MagicMock(connect=MagicMock(side_effect=error))
+                        )
+                    )
+                elif stage == "execute":
+                    self.connection.stream.side_effect = error
+                else:
+                    self.rows_error = error
+                with self.assertRaises(QueryPermissionDeniedError) as raised:
+                    await self.consume()
+                self.assertIs(raised.exception.__cause__, error)
+                if stage == "fetch":
+                    self.result.close.assert_awaited_once()
+
+    async def test_doris_permission_codes_and_wrapped_messages(self):
+        cases = [
+            (code, "access rejected")
+            for code in (1044, 1142, 1143, 1221, 1222, 1223, 1224, 1225, 1227, 5087)
+        ] + [
+            (
+                1105,
+                (
+                    "errCode = 2, detailMessage = Permission denied: user "
+                    "['dataagent_growth_query'@'%'] does not have privilege for "
+                    "[priv predicate: OR, Admin_priv,Select_priv] command on "
+                    "[internal].[ecommerce].[dwd_trade_order_detail_di].[order_id]"
+                ),
+            ),
+            (
+                1105,
+                "errCode = 2, detailMessage = SELECT command denied to user 'reader'@'%' for table 'orders'",
+            ),
+            (
+                1105,
+                "errCode = 2, detailMessage = Access denied; you need (at least one of) the (SELECT) privilege(s) for this operation",
+            ),
+            (
+                1105,
+                "errCode = 2, detailMessage = Access denied for user 'reader' to database 'ecommerce'",
+            ),
+        ]
+        for code, message in cases:
+            with self.subTest(code=code, message=message):
+                self.rows_error = OperationalError(None, None, Exception(code, message))
+                with self.assertRaises(QueryPermissionDeniedError):
+                    await self.consume()
+
+    async def test_other_database_errors_preserve_original_exception(self):
+        for code, message in (
+            (1045, "Access denied for user 'reader' (using password: YES)"),
+            (2003, "Can't connect to MySQL server"),
+            (1064, "syntax error"),
+            (1105, "errCode = 2, detailMessage = Unknown column 'permission_denied'"),
+            (
+                1105,
+                "errCode = 2, detailMessage = syntax error near 'SELECT command denied to user'",
+            ),
+        ):
+            with self.subTest(code=code):
+                self.rows_error = OperationalError(None, None, Exception(code, message))
+                with self.assertRaises(OperationalError) as raised:
+                    await self.consume()
+                self.assertIs(raised.exception, self.rows_error)
 
     async def test_cancel_invalidates_connection_and_closes_cursor(self):
         self.rows_error = asyncio.CancelledError()

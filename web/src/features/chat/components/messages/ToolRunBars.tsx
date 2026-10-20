@@ -15,6 +15,7 @@ import {
   resolveDelegationRunStatus,
 } from "@/features/chat/components/messages/displayModel";
 import { MessageBubble } from "@/features/chat/components/messages/MessageBubble";
+import { MarkdownText } from "@/features/chat/components/messages/MarkdownRenderer";
 import type {
   DisplayItem,
   SubagentRunMap,
@@ -371,7 +372,10 @@ function DelegationRunBarInternal({
             <div className="space-y-1">
               <p className="font-medium text-[#71717a]">输出</p>
               <div className="rounded border border-[#e0e0da] bg-[#f0f0eb] p-2 text-xs leading-relaxed text-[#27272a]">
-                <p className="whitespace-pre-wrap">{parsedDelegationResult.content.trimEnd()}</p>
+                <MarkdownText
+                  text={parsedDelegationResult.content.trimEnd()}
+                  className="text-xs"
+                />
               </div>
             </div>
           ) : item.result !== undefined ? (

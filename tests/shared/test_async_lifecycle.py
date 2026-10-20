@@ -52,7 +52,6 @@ def test_lifespan_closes_checkpoint_pool_on_failure(failure_stage: str) -> None:
     )
     for name in (
         "query_clients",
-        "admin_doris",
         "auth",
         "meta",
         "assistant",
@@ -78,7 +77,6 @@ def test_lifespan_closes_checkpoint_pool_on_failure(failure_stage: str) -> None:
     def create(stack):
         for name in (
             "query_clients",
-            "admin_doris",
             "auth",
             "meta",
             "assistant",

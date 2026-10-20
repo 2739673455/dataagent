@@ -88,7 +88,7 @@ class ModelCfg(AppConfigModel):
 class LMConfigCfg(AppConfigModel):
     """语言模型集合与激活项配置。"""
 
-    active: str = Field(min_length=1)
+    use: str = Field(min_length=1)
     models: dict[str, ModelCfg]
 
 

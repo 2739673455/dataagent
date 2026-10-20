@@ -154,6 +154,12 @@ async def langchain_message_to_schema(
     if not accepted_paths:
         return schema
     schema.attachments = attachments
+    if is_task_result:
+        for part in schema.parts:
+            if isinstance(part, chat_schema.ToolResultPart):
+                part.content = _transform_artifact_directives(
+                    part.content, accepted_paths
+                )[0]
     if is_final_answer:
         for part in schema.parts:
             if isinstance(part, chat_schema.TextContent):

@@ -49,17 +49,17 @@ class AgentManager:
         self._sandbox = sandbox
         self._models: dict[str, BaseChatModel] = {}
         self._model_contexts = AsyncExitStack()
-        active = app_config.cfg.lm_config.active
+        default_model_name = app_config.cfg.lm_config.use
         names: dict[AgentType, str] = {
             kind: (
-                active
+                default_model_name
                 if app_config.cfg.agent.specialists[kind].model == "default"
                 else app_config.cfg.agent.specialists[kind].model
             )
             for kind in AGENT_TYPES
         }
-        self._model_names = {active, *names.values()}
-        self._planner_model_name = active
+        self._model_names = {default_model_name, *names.values()}
+        self._planner_model_name = default_model_name
         self._specialist_model_names = names
         self._recall = recall
         self._query = query

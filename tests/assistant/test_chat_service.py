@@ -842,7 +842,8 @@ class ChatMessageArtifactTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(schema.role, "tool")
         part = schema.parts[0]
         assert isinstance(part, chat_schema.ToolResultPart)
-        self.assertEqual(part.content, message.content)
+        self.assertEqual(part.content, "报告完成\n")
+        self.assertIn("[[DATAAGENT_ARTIFACT:", str(message.content))
         self.assertEqual(len(schema.attachments or []), 1)
         attachment = (schema.attachments or [])[0]
         self.assertEqual(

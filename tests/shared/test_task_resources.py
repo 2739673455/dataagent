@@ -12,7 +12,6 @@ def test_web_shutdown_attempts_every_resource_after_startup_failure() -> None:
 
     names = [
         "query_clients",
-        "admin_doris",
         "auth",
         "meta",
         "assistant",
@@ -85,7 +84,6 @@ def test_web_applications_own_separate_resources_and_request_dependencies() -> N
             resources.auth,
             resources.meta,
             resources.assistant,
-            resources.admin_doris,
             resources.query_clients,
             resources.embedding,
             resources.es,
@@ -130,8 +128,8 @@ def test_web_applications_own_separate_resources_and_request_dependencies() -> N
                     assert getattr(first_resources, name) is not getattr(
                         second_resources, name
                     )
-                assert first_resources.recall.auth is first_resources.auth
-                assert second_resources.recall.auth is second_resources.auth
+                assert first_resources.recall.meta is first_resources.meta
+                assert second_resources.recall.meta is second_resources.meta
             assert not hasattr(second.state, "resources")
             assert await read_owner(first) == id(first_resources.auth)
             first_resources.auth.close.assert_not_awaited()
@@ -147,7 +145,6 @@ def test_resource_construction_failure_closes_already_created_clients():
     from app import runtime
 
     postgres = [MagicMock(close=AsyncMock()) for _ in range(3)]
-    doris = MagicMock(close=AsyncMock())
     registry = MagicMock(close=AsyncMock())
     embedding = MagicMock(close=AsyncMock())
 
@@ -155,12 +152,11 @@ def test_resource_construction_failure_closes_already_created_clients():
         with pytest.raises(ValueError, match="invalid ES"):
             async with runtime.lifespan(MagicMock()):
                 pytest.fail("construction must fail")
-        for client in [*postgres, doris, registry, embedding]:
+        for client in [*postgres, registry, embedding]:
             client.close.assert_awaited_once()
 
     with (
         patch.object(runtime, "PostgresClientManager", side_effect=postgres),
-        patch.object(runtime, "DorisClientManager", return_value=doris),
         patch.object(runtime, "DorisQueryClientRegistry", return_value=registry),
         patch.object(runtime, "EmbeddingClient", return_value=embedding),
         patch.object(
