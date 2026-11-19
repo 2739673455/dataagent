@@ -16,6 +16,7 @@ services:
 
   postgres:
     image: postgres:17-alpine
+    command: ["postgres", "-c", "cluster_name=dataagent-internal-dev"]
     restart: unless-stopped
     ports:
       - "127.0.0.1:${APP_PG_PORT:-5432}:5432"
