@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { usersApi } from "@/features/users/api";
-import type { DorisRoleResponse } from "@/features/roles/api";
+import type { BusinessPgRoleResponse } from "@/features/roles/api";
 import { getApiErrorMessage } from "@/api/errors";
 import {
   AdminDialogActions,
@@ -11,7 +11,7 @@ import {
 } from "@/components/AdminEditorDialog";
 
 interface UserCreateDialogProps {
-  roles: DorisRoleResponse[];
+  roles: BusinessPgRoleResponse[];
   busy: boolean;
   onCancel: () => void;
   onUserCreated: () => void;
@@ -35,7 +35,7 @@ export function UserCreateDialog({ roles, busy, onCancel, onUserCreated }: UserC
         username: newUsername.trim(),
         email: newEmail.trim(),
         password: newPassword,
-        doris_role: newUserRole || undefined,
+        business_pg_role: newUserRole || undefined,
         is_admin: newUserIsAdmin,
       });
       toast.success(`用户 ${newUsername.trim()} 创建成功`);
@@ -104,7 +104,7 @@ export function UserCreateDialog({ roles, busy, onCancel, onUserCreated }: UserC
 
         <div>
           <label htmlFor="user-new-role" className="block text-xs font-medium text-[#71717a] mb-1">
-            关联 Doris 角色
+            关联 PostgreSQL 角色
           </label>
           <select
             id="user-new-role"

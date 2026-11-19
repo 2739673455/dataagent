@@ -1,12 +1,14 @@
 """元数据目录模型。"""
 
 import json
+import math
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
+from pydantic import ConfigDict, TypeAdapter
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -27,6 +29,9 @@ from app.metadata.models.base import MetaBase
 
 # 字段示例采集数量上限；批量采样时按源表行数计。
 COLUMN_EXAMPLE_LIMIT = 10
+_EXAMPLE_SERIALIZER = TypeAdapter(
+    list[Any], config=ConfigDict(ser_json_bytes="hex", ser_json_inf_nan="strings")
+)
 
 
 @dataclass
@@ -139,13 +144,14 @@ def serialize_column_examples(examples: list[Any]) -> list[Any]:
     """序列化字段示例，并按文本表示排序。"""
     serialized: list[Any] = []
     for value in examples:
-        if isinstance(value, (datetime, date)):
-            serialized.append(value.isoformat())
-        elif isinstance(value, Decimal):
-            serialized.append(float(value))
-        else:
-            serialized.append(value)
-    return sorted(serialized, key=str)
+        if isinstance(value, Decimal):
+            numeric = float(value)
+            value = numeric if math.isfinite(numeric) else str(value)
+        serialized.append(value)
+    json_examples: list[Any] = json.loads(
+        _EXAMPLE_SERIALIZER.dump_json(serialized, fallback=str)
+    )
+    return sorted(json_examples, key=str)
 
 
 def _version_column(default: int, comment: str) -> Mapped[int]:

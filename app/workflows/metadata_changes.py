@@ -51,7 +51,7 @@ def build_metadata_change_workflow(
             query_postgres,
             query_experience_index_scheduler,
             data_source=cfg.query.data_source,
-            database_name=cfg.doris.database,
+            database_name=cfg.business_pg.database,
         ),
         CeleryMetadataSemanticIndexScheduler(),
     )

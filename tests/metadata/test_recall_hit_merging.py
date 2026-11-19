@@ -79,7 +79,7 @@ def test_collect_preserves_ranking_reasons_and_failure_scope(
         MagicMock(),
         MagicMock(aembed_documents=AsyncMock(return_value=[[0.1], [0.2], [0.3]])),
         data_source=cfg.query.data_source,
-        database_name=cfg.doris.database,
+        database_name=cfg.business_pg.database,
     )
     service._column_repo = column_repo
     service._metric_repo = metric_repo
@@ -180,7 +180,7 @@ def test_resource_routing_shared_embeddings_and_fulltext_fallback(
         MagicMock(),
         embedding,
         data_source=cfg.query.data_source,
-        database_name=cfg.doris.database,
+        database_name=cfg.business_pg.database,
     )
     service._column_repo = column_repo
     service._metric_repo = metric_repo

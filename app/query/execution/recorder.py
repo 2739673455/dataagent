@@ -219,13 +219,13 @@ class QueryExecutionRecorder:
 
 def _build_sql_template(sql: str) -> tuple[str, str]:
     """将 SQL 字面量替换为参数并生成稳定结构指纹。"""
-    expression = parse_one(sql, read="doris")
+    expression = parse_one(sql, read="postgres")
     parameter_index = 0
     for node in list(expression.walk()):
         if not isinstance(node, exp.Literal):
             continue
         parameter_index += 1
         node.replace(exp.Placeholder(this=f"p{parameter_index}"))
-    template = expression.sql(dialect="doris", pretty=False)
+    template = expression.sql(dialect="postgres", pretty=False)
     fingerprint = hashlib.sha256(template.encode()).hexdigest()
     return template, fingerprint

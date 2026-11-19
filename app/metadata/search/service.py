@@ -308,7 +308,13 @@ class SemanticResourceService:
         context: _RecallContext,
     ) -> None:
         """收集字段值全文索引命中。"""
-        allowed_columns = frozenset(context.catalog.columns)
+        allowed_columns = frozenset(
+            key
+            for key, column in context.catalog.columns.items()
+            if column.index_values
+        )
+        if not allowed_columns:
+            return
         results = await asyncio.gather(
             *(
                 self._run_index_query(

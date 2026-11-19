@@ -10,7 +10,7 @@ interface RowPolicyPanelProps {
   onMutate: (operation: () => Promise<void>, message: string) => Promise<boolean>;
 }
 
-/** 展示和管理 Doris 角色的行级访问策略。 */
+/** 展示和管理 PostgreSQL 角色的行级访问策略。 */
 export function RowPolicyPanel({ selectedRole, policies, busy, onMutate }: RowPolicyPanelProps) {
   const [policyName, setPolicyName] = useState("");
   const [policyTable, setPolicyTable] = useState("");
@@ -90,11 +90,14 @@ export function RowPolicyPanel({ selectedRole, policies, busy, onMutate }: RowPo
             <option value="RESTRICTIVE">RESTRICTIVE (限制性 AND 组合)</option>
             <option value="PERMISSIVE">PERMISSIVE (许可性 OR 组合)</option>
           </select>
+          <p className="mt-1 text-[11px] text-[#71717a]">
+            创建策略会在目标表启用 PostgreSQL 行级安全；原有外部角色可能需要单独的许可性策略。
+          </p>
         </div>
 
         <div>
           <label htmlFor="row-policy-predicate" className="block text-xs text-[#52525b] mb-1">
-            过滤表达式 (SQL WHERE 条件)：
+            过滤表达式（PostgreSQL WHERE 条件）：
           </label>
           <textarea
             id="row-policy-predicate"
@@ -134,9 +137,9 @@ export function RowPolicyPanel({ selectedRole, policies, busy, onMutate }: RowPo
                     </div>
                     <p
                       className="truncate text-[#71717a]"
-                      title={`${policy.catalog_name}.${policy.database_name}.${policy.table_name}`}
+                      title={`${policy.database_name} / ${policy.catalog_name}.${policy.table_name}`}
                     >
-                      {policy.catalog_name}.{policy.database_name}.{policy.table_name}
+                      {policy.catalog_name}.{policy.table_name}
                     </p>
                     <code className="block whitespace-pre-wrap break-words rounded bg-[#f4f4f0] px-2 py-1 text-[#3f3f46]">
                       {policy.predicate}

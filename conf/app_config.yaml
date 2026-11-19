@@ -6,36 +6,37 @@ log: # 应用日志输出配置。
   level: INFO # 日志级别 (DEBUG, INFO, WARNING, ERROR, CRITICAL)。
   rotation: 10MB # 日志文件滚动大小。
 
-doris: # Doris 管理连接，用于角色权限管理等平台操作。
-  host: 127.0.0.1 # 数据服务主机地址。
-  port: 9030 # 数据服务连接端口。
-  user: atguigu # 连接账号。
-  password: ${oc.env:DORIS_ADMIN_PASSWORD} # 连接密码，使用环境变量注入。
-  database: ecommerce # 默认连接数据库。
+business_pg: # 业务库管理连接；分析 SQL 使用独立的只读登录角色。
+  host: ${oc.env:BUSINESS_PG_HOST,127.0.0.1}
+  port: ${oc.env:BUSINESS_PG_PORT,5434}
+  user: ${oc.env:BUSINESS_PG_ADMIN_USER,dataagent_admin}
+  password: ${oc.env:BUSINESS_PG_ADMIN_PASSWORD}
+  database: ${oc.env:BUSINESS_PG_DATABASE,ecommerce}
+  schema_name: ${oc.env:BUSINESS_PG_SCHEMA,public}
 
-auth_postgresql: # 用户、令牌、Doris 查询身份、权限指纹和注销任务数据库。
+auth_postgresql: # 用户、令牌、PostgreSQL 查询身份、权限指纹和注销任务数据库。
   host: 127.0.0.1
-  port: 5432
+  port: ${oc.env:APP_PG_PORT,5432}
   user: atguigu
   password: ${oc.env:POSTGRES_PASSWORD}
   database: auth
 
 meta_postgresql: # 元数据、查询经验、执行记录和召回快照数据库。
   host: 127.0.0.1
-  port: 5432
+  port: ${oc.env:APP_PG_PORT,5432}
   user: atguigu
   password: ${oc.env:POSTGRES_PASSWORD}
   database: meta
 
 langgraph_postgresql: # Conversation 目录、删除墓碑和 LangGraph Checkpoint 数据库。
   host: 127.0.0.1
-  port: 5432
+  port: ${oc.env:APP_PG_PORT,5432}
   user: atguigu
   password: ${oc.env:POSTGRES_PASSWORD}
   database: langgraph
 
-doris_credentials: # Doris 查询身份密码的应用侧加密配置。
-  encryption_key: ${oc.env:DORIS_CREDENTIAL_ENCRYPTION_KEY} # Fernet 密钥。
+business_pg_credentials: # PostgreSQL 查询身份密码的应用侧加密配置。
+  encryption_key: ${oc.env:BUSINESS_PG_CREDENTIAL_ENCRYPTION_KEY} # Fernet 密钥。
 
 elasticsearch: # 语义检索使用的 Elasticsearch 连接和索引名称。
   host: 127.0.0.1
@@ -84,9 +85,9 @@ lifecycle: # 跨存储 Conversation 和用户资源清理策略。
   user_deletion_retry_seconds: 60 # 注销失败后到下一次可领取的最短等待时间，单位为秒。
 
 query: # Agent 只读 SQL 执行和查询经验召回配置。
-  data_source: doris # SQL 查询数据源标识。
-  timeout_seconds: 300 # 单条 SQL 执行超时，单位为秒。
-  memory_limit_bytes: 1073741824 # 单条 SQL 在 Doris 中的内存上限，单位为字节。
+  data_source: business_pg # SQL 查询数据源标识。
+  timeout_seconds: 120 # 单条 SQL 执行超时，单位为秒。
+  work_mem_kb: 16384 # 查询工作内存上限（每个排序/哈希操作，KiB），并非整条 SQL 的硬上限。
   batch_size: 100 # 服务端游标每批读取的结果行数。
   sample_rows: 5 # 查询结果摘要保留的样例行数。
   query_experience_vector_score_threshold: 0.65 # 查询经验向量召回最低相似度。

@@ -8,6 +8,7 @@ import sqlglot
 from sqlglot import Expr, exp
 from sqlglot.errors import OptimizeError, ParseError, SchemaError
 from sqlglot.expressions.dml import DML
+from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.scope import Scope, traverse_scope
 
@@ -48,10 +49,12 @@ class QueryGuardService:
         catalog_loader: Callable[[], Awaitable[QueryCatalogSnapshot]],
         *,
         current_database: str,
+        schema_name: str = "public",
     ) -> None:
         """通过目录读取用例按需加载 SQL 校验所需的快照。"""
         self._catalog_loader = catalog_loader
         self._current_database = current_database
+        self._schema_name = schema_name
 
     async def check(
         self,
@@ -62,20 +65,26 @@ class QueryGuardService:
         if expression is None:
             return self._result(None, issues)
 
-        if isinstance(expression, exp.Show):
-            return self._check_show_tables(expression)
-        if self._references_information_schema(expression):
-            return self._check_information_schema_query(expression)
-
+        expression = normalize_identifiers(expression, dialect="postgres")
         issues.extend(self._check_readonly(expression))
+        catalog_query, relation_issues = self._check_relations(expression)
+        issues.extend(relation_issues)
+        query_kind: QueryKind = "catalog" if catalog_query else "business"
         if issues:
-            return self._result(None, issues)
+            return self._result(None, issues, query_kind=query_kind)
+        if catalog_query:
+            issues.extend(self._check_joins(expression))
+            return self._result(
+                expression.sql(dialect="postgres", comments=False)
+                if not issues
+                else None,
+                issues,
+                output_columns=list(cast(exp.Query, expression).named_selects),
+                query_kind=query_kind,
+            )
 
         catalog = await self._load_catalog()
-        raw_tables, table_issues = self._resolve_tables(expression, catalog)
-        issues.extend(table_issues)
-        if issues:
-            return self._result(None, issues, tables=raw_tables)
+        raw_tables = self._resolve_tables(expression, catalog)
 
         try:
             qualified = self._qualify(expression, catalog)
@@ -86,7 +95,7 @@ class QueryGuardService:
         issues.extend(self._check_joins(qualified))
 
         return self._result(
-            expression.sql(dialect="doris", pretty=False) if not issues else None,
+            expression.sql(dialect="postgres", comments=False) if not issues else None,
             issues,
             tables=raw_tables,
             columns=columns,
@@ -103,7 +112,7 @@ class QueryGuardService:
                 QueryValidationIssue(code="empty_sql", message="SQL 语句不能为空")
             ]
         try:
-            parsed = sqlglot.parse(sql, read="doris")
+            parsed = sqlglot.parse(sql, read="postgres")
         except ParseError as exc:
             return None, [
                 QueryValidationIssue(
@@ -125,51 +134,56 @@ class QueryGuardService:
             ]
         return cast(Expr, statements[0]), []
 
-    def _check_show_tables(self, expression: exp.Show) -> QueryValidationResult:
-        """检查 SHOW TABLES 类型并返回目录查询结果。"""
+    def _check_relations(
+        self, expression: Expr
+    ) -> tuple[bool, list[QueryValidationIssue]]:
+        """业务查询仅可引用配置的 schema；目录查询使用 PostgreSQL 过滤后的视图。"""
         issues: list[QueryValidationIssue] = []
-        if str(expression.this).casefold() != "tables":
-            issues.append(
-                QueryValidationIssue(
-                    code="catalog_statement_not_allowed",
-                    message="目录查询仅允许 SHOW TABLES",
-                )
-            )
-        return self._result(
-            expression.sql(dialect="doris", pretty=False) if not issues else None,
-            issues,
-            query_kind="catalog",
+        catalog_query = any(
+            table.db == "information_schema" for table in expression.find_all(exp.Table)
         )
-
-    @staticmethod
-    def _references_information_schema(expression: Expr) -> bool:
-        """扫描所有表节点，判断是否引用 information_schema。"""
-        return any(
-            table.db.casefold() == "information_schema"
-            for table in expression.find_all(exp.Table)
-        )
-
-    def _check_information_schema_query(
-        self,
-        expression: Expr,
-    ) -> QueryValidationResult:
-        """检查目录查询的只读语法，并拒绝任一表引用显式指定 Catalog。"""
-        issues = self._check_readonly(expression)
-        if issues:
-            return self._result(None, issues, query_kind="catalog")
-        if any(table.catalog for table in expression.find_all(exp.Table)):
-            issues.append(
-                QueryValidationIssue(
-                    code="catalog_not_allowed",
-                    message="information_schema 查询不允许指定 Catalog",
-                )
-            )
-        return self._result(
-            expression.sql(dialect="doris", pretty=False) if not issues else None,
-            issues,
-            output_columns=list(cast(exp.Query, expression).named_selects),
-            query_kind="catalog",
-        )
+        for scope in traverse_scope(expression):
+            for _, source in scope.selected_sources.values():
+                if not isinstance(source, exp.Table):
+                    continue
+                if source.catalog:
+                    issues.append(
+                        QueryValidationIssue(
+                            code="catalog_not_allowed",
+                            message="不允许指定 PostgreSQL 数据库前缀",
+                            table=source.name,
+                        )
+                    )
+                elif not isinstance(source.this, exp.Identifier):
+                    issues.append(
+                        QueryValidationIssue(
+                            code="table_function_not_allowed",
+                            message="不允许使用表值函数作为数据源",
+                        )
+                    )
+                elif catalog_query:
+                    if source.db != "information_schema" or source.name not in {
+                        "tables",
+                        "columns",
+                    }:
+                        issues.append(
+                            QueryValidationIssue(
+                                code="catalog_relation_not_allowed",
+                                message="目录查询只允许 information_schema.tables 和 columns",
+                                table=source.name,
+                            )
+                        )
+                elif source.db and source.db != self._schema_name:
+                    issues.append(
+                        QueryValidationIssue(
+                            code="schema_not_allowed",
+                            message="不允许查询业务 schema 之外的表",
+                            table=source.name,
+                        )
+                    )
+                elif not source.db:
+                    source.set("db", exp.to_identifier(self._schema_name, quoted=True))
+        return catalog_query, issues
 
     @staticmethod
     def _check_readonly(expression: Expr) -> list[QueryValidationIssue]:
@@ -224,8 +238,24 @@ class QueryGuardService:
         # 白名单仅约束未映射到专用 AST 节点的函数调用。
         unapproved_functions = sorted(
             anonymous_functions
-            - {"curdate", "current_date", "current_time", "current_timestamp", "now"}
+            - {
+                "current_date",
+                "current_time",
+                "current_timestamp",
+                "now",
+                "current_schema",
+            }
         )
+        if any(
+            isinstance(node.expression, exp.Func)
+            for node in expression.find_all(exp.Dot)
+        ):
+            issues.append(
+                QueryValidationIssue(
+                    code="qualified_function_not_allowed",
+                    message="不允许指定函数所属 schema",
+                )
+            )
         if unapproved_functions:
             issues.append(
                 QueryValidationIssue(
@@ -239,35 +269,29 @@ class QueryGuardService:
         return issues
 
     async def _load_catalog(self) -> _Catalog:
-        """收到普通目录快照后建立忽略大小写的查询映射。"""
+        """收到普通目录快照后按 PostgreSQL 实际标识符建立查询映射。"""
         snapshot = await self._catalog_loader()
-        table_names = {name.casefold(): name for name in snapshot.table_names}
+        table_names = {name: name for name in snapshot.table_names}
         columns: dict[str, dict[str, QueryCatalogColumn]] = {
             table: {} for table in table_names
         }
         for column in snapshot.columns:
-            table = column.t_name.casefold()
+            table = column.t_name
             if table in columns:
-                columns[table][column.name.casefold()] = column
+                columns[table][column.name] = column
         return _Catalog(table_names, columns)
 
     def _resolve_tables(
         self,
         expression: Expr,
         catalog: _Catalog,
-    ) -> tuple[list[QueryTableRef], list[QueryValidationIssue]]:
-        """收集、去重并排序物理表引用，报告显式指定的 Catalog。"""
+    ) -> list[QueryTableRef]:
+        """收集、去重并排序物理表引用。"""
         table_refs: dict[str, QueryTableRef] = {}
-        issues: list[QueryValidationIssue] = []
         for scope in traverse_scope(expression):
-            for table_ref in self._physical_sources(scope, catalog, issues).values():
-                table_refs[table_ref.qualified_name.casefold()] = table_ref
-        return (
-            sorted(
-                table_refs.values(), key=lambda table: table.qualified_name.casefold()
-            ),
-            issues,
-        )
+            for table_ref in self._physical_sources(scope, catalog).values():
+                table_refs[table_ref.qualified_name] = table_ref
+        return sorted(table_refs.values(), key=lambda table: table.qualified_name)
 
     def _qualify(
         self,
@@ -276,14 +300,13 @@ class QueryGuardService:
     ) -> exp.Query:
         """尝试补全分析副本中的字段来源，解析失败由调用方回退到原树。"""
         schema = catalog.sqlglot_schema
-        if self._current_database:
-            schema = {self._current_database: schema}
+        schema = {self._schema_name: schema}
         return cast(
             exp.Query,
             qualify(
                 expression.copy(),
-                dialect="doris",
-                db=self._current_database,
+                dialect="postgres",
+                db=self._schema_name,
                 schema=cast(dict[str, object], schema),
                 # 展开别名和星号以收集目录中已知的字段依赖。
                 expand_alias_refs=True,
@@ -306,28 +329,21 @@ class QueryGuardService:
         for scope in traverse_scope(expression):
             physical_sources = self._physical_sources(scope, catalog)
             for column in scope.columns:
-                table_ref = physical_sources.get(column.table.casefold())
+                table_ref = physical_sources.get(column.table)
                 # 未限定字段仅在作用域只有一个来源且该来源为物理表时归属到该表。
                 if not column.table and len(scope.selected_sources) == 1:
                     table_ref = next(iter(physical_sources.values()), None)
                 if table_ref is None:
                     # 无法定位到本层物理表的字段跳过；CTE/派生表内部由其自身作用域处理。
                     continue
-                column_info = (
-                    catalog.columns.get(table_ref.name.casefold(), {}).get(
-                        column.name.casefold()
-                    )
-                    if (table_ref.database or self._current_database).casefold()
-                    == self._current_database.casefold()
-                    else None
-                )
+                column_info = catalog.columns.get(table_ref.name, {}).get(column.name)
                 reference = QueryColumnRef(
                     database=table_ref.database,
                     table=table_ref.name,
                     name=column_info.name if column_info else column.name,
                 )
                 # 同一字段可在多个表达式中使用，资产依赖只需保留一次。
-                references[reference.qualified_name.casefold()] = reference
+                references[reference.qualified_name] = reference
         return sorted(
             references.values(),
             key=lambda column: column.qualified_name.casefold(),
@@ -344,9 +360,9 @@ class QueryGuardService:
             left_aliases: set[str] = set()
             from_expression = scope.expression.args.get("from_")
             if from_expression is not None and from_expression.this is not None:
-                left_aliases.add(from_expression.this.alias_or_name.casefold())
+                left_aliases.add(from_expression.this.alias_or_name)
             for join in joins:
-                right_alias = join.this.alias_or_name.casefold()
+                right_alias = join.this.alias_or_name
                 kind = str(join.args.get("kind") or "").casefold()
                 on = join.args.get("on")
                 using = join.args.get("using") or []
@@ -392,32 +408,18 @@ class QueryGuardService:
         self,
         scope: Scope,
         catalog: _Catalog,
-        issues: list[QueryValidationIssue] | None = None,
     ) -> dict[str, QueryTableRef]:
-        """映射作用域别名到物理表；传入 issues 时报告显式 Catalog。"""
+        """映射作用域别名到当前数据库的物理表。"""
         sources: dict[str, QueryTableRef] = {}
         for alias, (_, source) in scope.selected_sources.items():
             # CTE/派生表的 source 是 Scope；其内部物理表会在遍历对应作用域时处理。
             if not isinstance(source, exp.Table):
                 continue
-            catalog_name = source.catalog
-            database = source.db or self._current_database
-            table_key = source.name.casefold()
-            table_name = (
-                catalog.table_names.get(table_key, source.name)
-                if database.casefold() == self._current_database.casefold()
-                else source.name
+            table_ref = QueryTableRef(
+                database=self._current_database,
+                name=catalog.table_names.get(source.name, source.name),
             )
-            table_ref = QueryTableRef(database=database, name=table_name)
-            if issues is not None and catalog_name:
-                issues.append(
-                    QueryValidationIssue(
-                        code="catalog_not_allowed",
-                        message=f"不允许访问外部 Catalog: {catalog_name}",
-                        table=table_ref.qualified_name,
-                    )
-                )
-            sources[alias.casefold()] = table_ref
+            sources[alias] = table_ref
         return sources
 
     @classmethod
@@ -460,9 +462,7 @@ class QueryGuardService:
         def source_side(operand: Expr) -> str | None:
             """根据操作数中带表名前缀的列归类来源。"""
             aliases = {
-                column.table.casefold()
-                for column in operand.find_all(exp.Column)
-                if column.table
+                column.table for column in operand.find_all(exp.Column) if column.table
             }
             # 收集到的表名前缀必须全部归属同一侧。
             # 无可用前缀、混合两侧或包含无关别名时返回 None。

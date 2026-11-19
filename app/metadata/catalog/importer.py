@@ -29,7 +29,7 @@ from app.metadata.models.catalog import (
     serialize_column_examples,
 )
 from app.metadata.repositories.postgres import MetaPGRepo
-from app.metadata.repositories.source_doris import SourceDorisRepo
+from app.metadata.repositories.source_business_pg import SourceBusinessPgRepo
 
 
 @dataclass(frozen=True)
@@ -65,7 +65,7 @@ class MetaImportService:
     def __init__(
         self,
         meta_repo: MetaPGRepo,
-        source_repo: SourceDorisRepo,
+        source_repo: SourceBusinessPgRepo,
         meta_index_service: MetaIndexService,
         change_handler: MetadataChangeHandler,
     ) -> None:

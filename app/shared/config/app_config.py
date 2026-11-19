@@ -6,7 +6,14 @@ from typing import Annotated, Any, Literal, cast
 
 import dotenv
 from omegaconf import OmegaConf
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 
 from app.shared.contracts.analysis import AGENT_TYPES
 
@@ -41,8 +48,23 @@ class DBConfig(AppConfigModel):
     database: str = Field(min_length=1)
 
 
-class DorisCredentialConfig(AppConfigModel):
-    """Doris 查询身份凭据加密配置。"""
+class BusinessPgConfig(DBConfig):
+    """单一 PostgreSQL 业务数据库及可授权的 schema。"""
+
+    schema_name: str = Field(
+        default="public", min_length=1, max_length=63, pattern=r"^[a-z_][a-z0-9_]*$"
+    )
+
+    @field_validator("schema_name")
+    @classmethod
+    def reject_system_schema(cls, name: str) -> str:
+        if name == "information_schema" or name.startswith("pg_"):
+            raise ValueError("业务 schema 不能是 PostgreSQL 系统 schema")
+        return name
+
+
+class BusinessPgCredentialConfig(AppConfigModel):
+    """PostgreSQL 查询身份凭据加密配置。"""
 
     encryption_key: SecretStr = Field(min_length=44, max_length=44)
 
@@ -135,7 +157,7 @@ class QueryConfig(AppConfigModel):
 
     data_source: str = Field(min_length=1)
     timeout_seconds: int = Field(gt=0)
-    memory_limit_bytes: int = Field(gt=0)
+    work_mem_kb: int = Field(ge=64, le=2147483647)
     batch_size: int = Field(gt=0)
     sample_rows: int = Field(ge=0, le=100)
     query_experience_vector_score_threshold: float = Field(ge=0, le=1)
@@ -358,11 +380,11 @@ class Cfg(AppConfigModel):
     log: LogCfg
 
     # 数据连接与检索配置。
-    doris: DBConfig
+    business_pg: BusinessPgConfig
     auth_postgresql: DBConfig
     meta_postgresql: DBConfig
     langgraph_postgresql: DBConfig
-    doris_credentials: DorisCredentialConfig
+    business_pg_credentials: BusinessPgCredentialConfig
     elasticsearch: ESConfig
     embedding: EmbeddingConfig
 

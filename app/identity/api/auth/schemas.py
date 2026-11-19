@@ -48,7 +48,7 @@ class UserResponse(BaseModel):
     email: str
     is_active: bool
     is_admin: bool
-    doris_role: str | None
+    business_pg_role: str | None
     created_at: datetime
 
     @classmethod
@@ -60,7 +60,7 @@ class UserResponse(BaseModel):
             email=user.email,
             is_active=user.is_active,
             is_admin=user.is_admin,
-            doris_role=user.doris_role_name,
+            business_pg_role=user.business_pg_role_name,
             created_at=user.created_at,
         )
 

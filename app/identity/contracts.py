@@ -96,6 +96,7 @@ class AssetAccessPolicy:
     role_name: str | None = None
     authorization_fingerprint: str | None = None
     grants: frozenset[AssetIdentity] = frozenset()
+    row_restricted_tables: frozenset[str] = frozenset()
 
     def allows(self, asset: AssetIdentity) -> bool:
         """判断是否拥有目标资产的完整访问权。"""
@@ -118,13 +119,13 @@ class AuthenticatedUser:
     auth_version: int
     is_active: bool
     is_admin: bool
-    doris_role_name: str | None
+    business_pg_role_name: str | None
     created_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
 class ResolvedQueryPrincipal:
-    """服务端为一次查询解析出的 Doris 身份。"""
+    """服务端为一次查询解析出的 PostgreSQL 身份。"""
 
     role_name: str
     authorization_fingerprint: str

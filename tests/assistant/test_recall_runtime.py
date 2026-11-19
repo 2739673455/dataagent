@@ -42,7 +42,7 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
                 MagicMock(),
                 self.embedding,
                 data_source=cfg.query.data_source,
-                database_name=cfg.doris.database,
+                database_name=cfg.business_pg.database,
             ),
             MagicMock(),
             MagicMock(session=lambda: session("assistant")),
@@ -50,7 +50,7 @@ class RecallRuntimeTest(unittest.IsolatedAsyncioTestCase):
         self.policy = AssetAccessPolicy(
             user_id=7,
             grants=frozenset(
-                {AssetIdentity(cfg.query.data_source, cfg.doris.database)}
+                {AssetIdentity(cfg.query.data_source, cfg.business_pg.database)}
             ),
         )
         self.request = SemanticResourceRecallRequest(

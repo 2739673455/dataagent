@@ -1,7 +1,7 @@
 import { Edit2, Plus, Search, Trash2, Users, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { rolesApi, type DorisRoleResponse } from "@/features/roles/api";
+import { rolesApi, type BusinessPgRoleResponse } from "@/features/roles/api";
 import { usersApi, type UserListResponse } from "@/features/users/api";
 import { getApiErrorMessage } from "@/api/errors";
 import { type UserResponse, useAuthStore } from "@/auth/index";
@@ -22,7 +22,7 @@ const USER_PAGE_SIZE = 50;
 export function UserManagement() {
   const currentUser = useAuthStore((state) => state.user);
   const [users, setUsers] = useState<UserResponse[]>([]);
-  const [roles, setRoles] = useState<DorisRoleResponse[]>([]);
+  const [roles, setRoles] = useState<BusinessPgRoleResponse[]>([]);
   const [userOffset, setUserOffset] = useState(0);
   const [userTotal, setUserTotal] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
@@ -70,7 +70,7 @@ export function UserManagement() {
     setEditingUser(user);
     setEditUsername(user.username);
     setEditEmail(user.email);
-    setEditRole(user.doris_role ?? "");
+    setEditRole(user.business_pg_role ?? "");
     setEditIsAdmin(user.is_admin);
     setEditPassword("");
     setEditConfirmPassword("");
@@ -105,7 +105,8 @@ export function UserManagement() {
         username: trimmedUsername !== editingUser.username ? trimmedUsername : undefined,
         email: trimmedEmail !== editingUser.email ? trimmedEmail : undefined,
         password: editPassword ? editPassword : undefined,
-        doris_role: editRole !== (editingUser.doris_role ?? "") ? editRole || null : undefined,
+        business_pg_role:
+          editRole !== (editingUser.business_pg_role ?? "") ? editRole || null : undefined,
         is_admin: editIsAdmin !== editingUser.is_admin ? editIsAdmin : undefined,
       });
       updateUser(updated);
@@ -215,7 +216,7 @@ export function UserManagement() {
                 <tr>
                   <th className="px-3.5 py-2.5">用户名</th>
                   <th className="px-3.5 py-2.5">邮箱地址</th>
-                  <th className="px-3.5 py-2.5">关联 Doris 角色</th>
+                  <th className="px-3.5 py-2.5">关联 PostgreSQL 角色</th>
                   <th className="px-3.5 py-2.5">管理员权限</th>
                   <th className="px-3.5 py-2.5 text-right">操作</th>
                 </tr>
@@ -233,9 +234,9 @@ export function UserManagement() {
                     </td>
                     <td className="px-3.5 py-2.5 text-[#71717a]">{user.email}</td>
                     <td className="px-3.5 py-2.5">
-                      {user.doris_role ? (
+                      {user.business_pg_role ? (
                         <span className="rounded bg-[#f4f4f0] px-2 py-0.5 text-xs text-[#27272a] font-mono">
-                          {user.doris_role}
+                          {user.business_pg_role}
                         </span>
                       ) : (
                         <span className="text-xs text-[#a1a1aa]">[ 未分配 ]</span>
@@ -346,7 +347,7 @@ export function UserManagement() {
                 htmlFor="admin-edit-role"
                 className="block text-xs font-medium text-[#71717a] mb-1"
               >
-                关联 Doris 角色
+                关联 PostgreSQL 角色
               </label>
               <select
                 id="admin-edit-role"

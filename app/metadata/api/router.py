@@ -122,7 +122,7 @@ async def list_source_tables(
     service: MetaCatalogServiceDep,
     _: AdminUserDep,
 ) -> list[str]:
-    """查询底层 Doris 数据源中的所有物理表名。"""
+    """查询底层 业务 PostgreSQL 数据源中的所有物理表名。"""
     return await service.list_source_tables()
 
 

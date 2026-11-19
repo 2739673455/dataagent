@@ -37,7 +37,7 @@ class QueryResultShapeError(RuntimeError):
 
 
 class QueryExecutionTimeoutError(RuntimeError):
-    """Doris 查询执行超时。"""
+    """PostgreSQL 查询执行超时。"""
 
 
 def classify_query_error(error: Exception) -> tuple[QueryExecutionStatus, str]:

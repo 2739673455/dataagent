@@ -1,4 +1,4 @@
-.PHONY: help start run web worker beat init-db bootstrap-admin clean
+.PHONY: help start run web worker beat init-db reset-db bootstrap-admin clean
 
 help:
 	@echo "make start           - 启动前端、后端、Celery Worker 和 Celery Beat"
@@ -6,7 +6,8 @@ help:
 	@echo "make web             - 启动前端开发服务"
 	@echo "make worker          - 启动 Celery Worker"
 	@echo "make beat            - 启动 Celery Beat"
-	@echo "make init-db         - 初始化数据库"
+	@echo "make init-db         - 仅创建缺失的应用内部数据库"
+	@echo "make reset-db        - 交互式重置本机专用开发内部库（数据不可恢复）"
 	@echo "make bootstrap-admin - 初始化管理员账号"
 	@echo "make clean           - 清理临时文件"
 
@@ -27,6 +28,9 @@ beat:
 
 init-db:
 	uv run scripts/init_db.py
+
+reset-db:
+	uv run scripts/init_db.py --reset
 
 bootstrap-admin:
 	uv run -m scripts.bootstrap_admin

@@ -60,7 +60,7 @@ export function ChatUserFooter({ user, onChangePassword, onLogout }: ChatUserFoo
             )}
           </div>
           <p className="truncate text-xs font-mono text-[#71717a]">
-            {user?.doris_role ? `Doris: ${user.doris_role}` : "未分配数据角色"}
+            {user?.business_pg_role ? `PostgreSQL: ${user.business_pg_role}` : "未分配数据角色"}
           </p>
         </div>
       </div>

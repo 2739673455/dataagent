@@ -2,7 +2,7 @@ import { ArrowLeft, Database, History, Shield, Users } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ROUTES } from "@/config/settings";
-import { DorisRoleManagement } from "@/features/roles";
+import { BusinessPgRoleManagement } from "@/features/roles";
 import { MetadataManagement } from "@/features/metadata";
 import { QueryExperienceManagement } from "@/features/query-experiences";
 import { UserManagement } from "@/features/users";
@@ -74,7 +74,7 @@ export default function AdminPage() {
             }`}
           >
             <Shield className="h-4 w-4" />
-            <span>Doris 角色管理</span>
+            <span>PostgreSQL 角色管理</span>
           </button>
           <button
             type="button"
@@ -90,8 +90,8 @@ export default function AdminPage() {
           </button>
         </div>
 
-        {/* 1. Doris 角色与权限管理 Tab */}
-        {activeTab === "roles" && <DorisRoleManagement />}
+        {/* 1. PostgreSQL 角色与权限管理 Tab */}
+        {activeTab === "roles" && <BusinessPgRoleManagement />}
 
         {/* 2. 用户账号管理 Tab */}
         {activeTab === "users" && <UserManagement />}

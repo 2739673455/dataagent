@@ -53,11 +53,11 @@ def test_recall_reads_metadata_outside_query_transactions_and_excludes_stale_ass
             assets=[
                 SimpleNamespace(
                     kind="table",
-                    database_name=cfg.doris.database,
+                    database_name=cfg.business_pg.database,
                     table_name=table,
                     column_name=None,
                     resource_key=asset_resource_key(
-                        cfg.query.data_source, cfg.doris.database, table
+                        cfg.query.data_source, cfg.business_pg.database, table
                     ),
                     meta_version=version,
                 )
@@ -96,7 +96,7 @@ def test_recall_reads_metadata_outside_query_transactions_and_excludes_stale_ass
         MagicMock(),
         MagicMock(),
         config=cfg.query,
-        database_name=cfg.doris.database,
+        database_name=cfg.business_pg.database,
         index_scheduler=scheduler,
     )
     service._semantic_recall = AsyncMock(
@@ -106,7 +106,7 @@ def test_recall_reads_metadata_outside_query_transactions_and_excludes_stale_ass
         7,
         "reader",
         "fingerprint",
-        frozenset({AssetIdentity(cfg.query.data_source, cfg.doris.database)}),
+        frozenset({AssetIdentity(cfg.query.data_source, cfg.business_pg.database)}),
     )
     with (
         patch(
@@ -133,7 +133,7 @@ def test_recall_without_query_identity_never_opens_storage_or_searches(
         MagicMock(),
         MagicMock(),
         config=cfg.query,
-        database_name=cfg.doris.database,
+        database_name=cfg.business_pg.database,
         index_scheduler=MagicMock(),
     )
     service._semantic_recall = AsyncMock()
@@ -154,7 +154,7 @@ def test_failed_experience_search_never_opens_query_storage():
         MagicMock(),
         MagicMock(),
         config=cfg.query,
-        database_name=cfg.doris.database,
+        database_name=cfg.business_pg.database,
         index_scheduler=MagicMock(),
     )
     service._semantic_recall = AsyncMock(return_value=_SemanticRecall("failed", {}))
@@ -189,7 +189,7 @@ def test_invalidation_owns_query_transaction_and_only_schedules_committed_change
 
     scheduler.enqueue.side_effect = enqueue
     service = QueryExperienceInvalidationService(
-        postgres, scheduler, data_source="doris", database_name="analytics"
+        postgres, scheduler, data_source="business_pg", database_name="analytics"
     )
     with patch(
         "app.query.experiences.invalidation.QueryExperiencePGRepo",
@@ -207,7 +207,7 @@ def test_invalidation_owns_query_transaction_and_only_schedules_committed_change
             scheduler.enqueue.assert_called_once_with(item_id, 4)
     repo.disable_for_changed_resources.assert_awaited_once_with(
         {
-            asset_resource_key("doris", "analytics", "orders"),
-            asset_resource_key("doris", "analytics", "orders", "amount"),
+            asset_resource_key("business_pg", "analytics", "orders"),
+            asset_resource_key("business_pg", "analytics", "orders", "amount"),
         }
     )

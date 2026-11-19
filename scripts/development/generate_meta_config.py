@@ -1,19 +1,25 @@
-"""根据电商数仓 DDL 生成语义元数据配置。"""
+"""根据 PostgreSQL 电商数仓的系统目录生成语义元数据配置。"""
 
 from __future__ import annotations
 
 import argparse
+import asyncio
+import os
 import re
 import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
+from sqlalchemy import URL
+from sqlalchemy.engine import make_url
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from app.shared.clients.business_pg_catalog import BusinessPgCatalog
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-DEFAULT_DDL_PATH = ROOT_DIR / "dbmock" / "scripts" / "sql" / "ecommerce.sql"
 DEFAULT_OUTPUT_PATH = ROOT_DIR / "conf" / "meta_config.yaml"
-GENERATED_HEADER = "# 由 scripts/development/generate_meta_config.py 根据 Doris DDL 与语义规则生成，请勿手工编辑。\n"
+GENERATED_HEADER = "# 由 scripts/development/generate_meta_config.py 根据 PostgreSQL 系统目录 与语义规则生成，请勿手工编辑。\n"
 
 TABLE_ORDER = (
     "dim_date",
@@ -412,15 +418,25 @@ class IndentDumper(yaml.SafeDumper):
 def main() -> int:
     """解析命令行参数并生成元数据 YAML 配置。"""
     parser = argparse.ArgumentParser(description="生成电商数仓语义元数据配置")
-    parser.add_argument("--ddl", type=Path, default=DEFAULT_DDL_PATH)
+    parser.add_argument(
+        "--schema",
+        default=os.getenv("BUSINESS_PG_SCHEMA", "public"),
+        help="PostgreSQL 业务 schema，默认使用 BUSINESS_PG_SCHEMA 或 public",
+    )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
     parser.add_argument(
         "--check",
         action="store_true",
-        help="检查已提交配置是否与 DDL 和语义规则一致",
+        help="检查已提交配置是否与当前数据库结构及语义规则一致",
     )
     args = parser.parse_args()
-    config = _build_config(args.ddl.resolve())
+    dsn = os.getenv("DATAAGENT_META_SOURCE_DSN")
+    if not dsn:
+        parser.error("请将 PostgreSQL 连接 URI 设置为 DATAAGENT_META_SOURCE_DSN")
+    url = make_url(dsn)
+    if url.drivername not in {"postgresql", "postgresql+psycopg"}:
+        parser.error("DATAAGENT_META_SOURCE_DSN 必须使用 PostgreSQL URI")
+    config = _build_config(asyncio.run(_read_ecommerce_schema(url, args.schema)))
     rendered = _render_config(config)
     if args.check:
         if (
@@ -444,110 +460,27 @@ def main() -> int:
     return 0
 
 
-def _matching_parenthesis(sql: str, opening_index: int) -> int:
-    """查找 SQL 表定义起始括号对应的结束位置。"""
-    depth = 0
-    in_string = False
-    index = opening_index
-    while index < len(sql):
-        char = sql[index]
-        if char == "'":
-            if in_string and index + 1 < len(sql) and sql[index + 1] == "'":
-                index += 2
-                continue
-            in_string = not in_string
-        elif not in_string:
-            if char == "(":
-                depth += 1
-            elif char == ")":
-                depth -= 1
-                if depth == 0:
-                    return index
-        index += 1
-    raise ValueError("DDL 表定义括号未闭合")
-
-
-def _split_columns(body: str) -> list[str]:
-    """按顶层逗号拆分 DDL 字段定义。"""
-    parts: list[str] = []
-    start = 0
-    depth = 0
-    in_string = False
-    index = 0
-    while index < len(body):
-        char = body[index]
-        if char == "'":
-            if in_string and index + 1 < len(body) and body[index + 1] == "'":
-                index += 2
-                continue
-            in_string = not in_string
-        elif not in_string:
-            if char == "(":
-                depth += 1
-            elif char == ")":
-                depth -= 1
-            elif char == "," and depth == 0:
-                parts.append(body[start:index].strip())
-                start = index + 1
-        index += 1
-    parts.append(body[start:].strip())
-    return [part for part in parts if part]
-
-
-def _parse_ecommerce_schema(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]:
-    """解析电商 DDL 中的表、字段和注释。"""
-    sql = ddl_path.read_text(encoding="utf-8")
-    result: dict[str, Any] = {}
-    for statement in sql.split(";"):
-        match = re.search(
-            r"CREATE\s+TABLE\s+`?([A-Za-z_][A-Za-z0-9_]*)`?\s*\(",
-            statement,
-            re.IGNORECASE,
-        )
-        if match is None:
-            continue
-        table_name = match.group(1)
-        opening_index = statement.find("(", match.start())
-        closing_index = _matching_parenthesis(statement, opening_index)
-        body = statement[opening_index + 1 : closing_index]
-        tail = statement[closing_index + 1 :]
-        table_comment_match = re.search(r"\bCOMMENT\s+'([^']*)'", tail, re.DOTALL)
-        table_comment = (
-            table_comment_match.group(1).strip() if table_comment_match else table_name
-        )
-        columns = []
-        for definition in _split_columns(body):
-            column_match = re.match(
-                r"`?([A-Za-z_][A-Za-z0-9_]*)`?\s+([A-Za-z]+(?:\s*\([^)]*\))?)",
-                definition,
-                re.DOTALL,
-            )
-            if column_match is None:
-                continue
-            column_name = column_match.group(1)
-            if column_name.upper() in {
-                "UNIQUE",
-                "DUPLICATE",
-                "PRIMARY",
-                "KEY",
-                "INDEX",
-                "CONSTRAINT",
-            }:
-                continue
-            comment_match = re.search(r"\bCOMMENT\s+'([^']*)'", definition, re.DOTALL)
-            columns.append(
-                {
-                    "name": column_name,
-                    "type": re.sub(r"\s+", "", column_match.group(2)).upper(),
-                    "comment": (
-                        re.sub(r"\s+", " ", comment_match.group(1)).strip()
-                        if comment_match
-                        else column_name
-                    ),
+async def _read_ecommerce_schema(url: URL, schema_name: str) -> dict[str, Any]:
+    """按原生目录读取表、字段与独立 COMMENT 语句写入的注释。"""
+    engine = create_async_engine(url.set(drivername="postgresql+psycopg"))
+    try:
+        async with engine.connect() as connection:
+            repo = BusinessPgCatalog(connection, schema_name)
+            return {
+                table: {
+                    "comment": await repo.get_table_comment(table) or table,
+                    "columns": [
+                        {"name": name, "type": data_type, "comment": comment or name}
+                        for name, data_type, comment in await repo.get_column_definitions(
+                            table
+                        )
+                    ],
                 }
-            )
-        result[table_name] = {"comment": table_comment, "columns": columns}
-    return result
+                for table in await repo.list_tables()
+                if table in TABLE_ORDER
+            }
+    finally:
+        await engine.dispose()
 
 
 def _index_values(column: dict[str, str]) -> bool:
@@ -1739,14 +1672,12 @@ def _build_metrics() -> list[dict[str, Any]]:
     ]
 
 
-def _build_config(ddl_path: Path = DEFAULT_DDL_PATH) -> dict[str, Any]:
+def _build_config(schema: dict[str, Any]) -> dict[str, Any]:
     """构建完整元数据配置并校验所有引用。"""
-    schema = _parse_ecommerce_schema(ddl_path)
-    # 生成器应在 Doris 示例结构变化时立即失败，防止静默输出缺表或遗留规则。
-    if set(schema) != set(TABLE_ORDER):
-        missing = sorted(set(TABLE_ORDER) - set(schema))
-        unexpected = sorted(set(schema) - set(TABLE_ORDER))
-        raise ValueError(f"DDL 表清单变化，缺失={missing}，意外出现={unexpected}")
+    # 生成器仅依赖用于示例语义规则的表；同一 schema 可包含其他业务关系。
+    missing = sorted(set(TABLE_ORDER) - set(schema))
+    if missing:
+        raise ValueError(f"PostgreSQL 中缺少示例语义元数据所需的表: {missing}")
     column_keys = {
         (table_name, column["name"])
         for table_name, table in schema.items()

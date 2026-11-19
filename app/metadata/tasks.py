@@ -26,7 +26,7 @@ from app.metadata.indexing import MetaIndexService
 from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
 from app.metadata.repositories.postgres import MetaPGRepo
-from app.metadata.repositories.source_doris import SourceDorisRepo
+from app.metadata.repositories.source_business_pg import SourceBusinessPgRepo
 from app.metadata.repositories.value_index import ValueESRepo
 from app.metadata.task_scheduler import (
     DISPATCH_VALUE_INDEXES_TASK,
@@ -39,7 +39,7 @@ from app.metadata.task_scheduler import (
     enqueue_column_values,
 )
 from app.shared.async_runtime import run_async
-from app.shared.clients.doris_client_manager import DorisClientManager
+from app.shared.clients.business_pg_client_manager import BusinessPgClientManager
 from app.shared.clients.embedding_client import EmbeddingClient
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
@@ -254,7 +254,7 @@ def dispatch_value_indexes_task() -> dict[str, int]:
 
 @asynccontextmanager
 async def _metadata_resources() -> AsyncGenerator[
-    tuple[MetaPGRepo, SourceDorisRepo, MetaIndexService]
+    tuple[MetaPGRepo, SourceBusinessPgRepo, MetaIndexService]
 ]:
     """为一次后台任务创建仓储和索引服务，并在结束时释放资源。"""
     async with AsyncExitStack() as stack:
@@ -266,11 +266,14 @@ async def _metadata_resources() -> AsyncGenerator[
         stack.push_async_callback(es.close)
         postgres = PostgresClientManager(cfg.meta_postgresql)
         stack.push_async_callback(postgres.close)
-        doris = DorisClientManager(cfg.doris)
-        stack.push_async_callback(doris.close)
-        async with postgres.session() as session, doris.engine.connect() as connection:
+        business_pg = BusinessPgClientManager(cfg.business_pg)
+        stack.push_async_callback(business_pg.close)
+        async with (
+            postgres.session() as session,
+            business_pg.engine.connect() as connection,
+        ):
             meta_repo = MetaPGRepo(session)
-            source_repo = SourceDorisRepo(connection)
+            source_repo = SourceBusinessPgRepo(connection, cfg.business_pg.schema_name)
             yield (
                 meta_repo,
                 source_repo,

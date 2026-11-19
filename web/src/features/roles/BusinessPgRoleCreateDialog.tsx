@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   rolesApi,
-  type DorisExistingRoleResponse,
-  type DorisRoleResponse,
+  type BusinessPgExistingRoleResponse,
+  type BusinessPgRoleResponse,
 } from "@/features/roles/api";
 import { getApiErrorMessage } from "@/api/errors";
 import {
@@ -13,24 +13,24 @@ import {
   AdminEditorDialog,
 } from "@/components/AdminEditorDialog";
 
-interface DorisRoleCreateDialogProps {
+interface BusinessPgRoleCreateDialogProps {
   busy: boolean;
-  existingRoles: DorisExistingRoleResponse[];
+  existingRoles: BusinessPgExistingRoleResponse[];
   workloadGroups: string[];
   defaultWorkloadGroup: string;
   onCancel: () => void;
-  onRoleCreated: (role: DorisRoleResponse) => void;
+  onRoleCreated: (role: BusinessPgRoleResponse) => void;
 }
 
-/** 收集并提交 Doris 角色创建信息。 */
-export function DorisRoleCreateDialog({
+/** 收集并提交 PostgreSQL 角色创建信息。 */
+export function BusinessPgRoleCreateDialog({
   busy,
   existingRoles,
   workloadGroups,
   defaultWorkloadGroup,
   onCancel,
   onRoleCreated,
-}: DorisRoleCreateDialogProps) {
+}: BusinessPgRoleCreateDialogProps) {
   const [newRole, setNewRole] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [newQueryUser, setNewQueryUser] = useState("");
@@ -68,7 +68,7 @@ export function DorisRoleCreateDialog({
       setNewDescription("");
       setNewQueryUser("");
       setNewWorkloadGroup(defaultWorkloadGroup);
-      toast.success("Doris 角色和查询身份已创建");
+      toast.success("PostgreSQL 角色和查询身份已创建");
       onRoleCreated(created);
     } catch (error) {
       toast.error(getApiErrorMessage(error, "创建角色失败"));
@@ -79,9 +79,9 @@ export function DorisRoleCreateDialog({
 
   return (
     <AdminEditorDialog
-      ariaLabel="创建新 Doris 角色与查询身份"
+      ariaLabel="创建新 PostgreSQL 角色与查询身份"
       onClose={onCancel}
-      title="创建新 Doris 角色与查询身份"
+      title="创建新 PostgreSQL 角色与查询身份"
     >
       <div className="grid gap-3">
         <div>
@@ -102,7 +102,7 @@ export function DorisRoleCreateDialog({
           />
           {conflictingRole && (
             <p className="mt-1 text-[11px] text-[#dc2626]">
-              Doris 角色 {conflictingRole.name} 已存在
+              PostgreSQL 角色 {conflictingRole.name} 已存在
             </p>
           )}
         </div>
@@ -141,7 +141,7 @@ export function DorisRoleCreateDialog({
             htmlFor="role-new-workload"
             className="block text-xs font-medium text-[#71717a] mb-1"
           >
-            资源工作组 *
+            查询资源配置 *
           </label>
           <select
             id="role-new-workload"
@@ -149,13 +149,20 @@ export function DorisRoleCreateDialog({
             onChange={(event) => setNewWorkloadGroup(event.target.value)}
             className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
           >
-            {workloadGroups.length === 0 && <option value="">暂无可用工作组</option>}
+            {workloadGroups.length === 0 && <option value="">暂无可用配置</option>}
             {workloadGroups.map((workloadGroup) => (
               <option key={workloadGroup} value={workloadGroup}>
-                {workloadGroup}
+                {workloadGroup === "standard"
+                  ? "标准（standard）"
+                  : workloadGroup === "reporting"
+                    ? "报表（reporting）"
+                    : workloadGroup}
               </option>
             ))}
           </select>
+          <p className="mt-1 text-[11px] text-[#71717a]">
+            设置 PostgreSQL 查询资源参数，不改变角色的 SELECT 授权或行级策略。
+          </p>
         </div>
       </div>
 

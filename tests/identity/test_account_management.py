@@ -49,7 +49,7 @@ def test_create_user_resolves_default_role_inside_security_transaction():
         )
     )
     assert (user.username, user.email) == ("analyst", "analyst@example.com")
-    assert user.doris_role_name == "dataagent_default"
+    assert user.business_pg_role_name == "dataagent_default"
     assert user.password_hash == "new-hash"
     assert not repo.session.active
 
@@ -65,8 +65,8 @@ def test_update_user_revokes_tokens_in_same_transaction():
     async def update(user, **fields):
         assert repo.session.active
         repo.lock_security_mutation.assert_awaited_once()
-        assert fields["doris_role"] == "new_role"
-        assert fields["update_doris_role"] is True
+        assert fields["business_pg_role"] == "new_role"
+        assert fields["update_business_pg_role"] is True
         operations.append("update")
 
     async def revoke(user_id, now):
@@ -78,7 +78,9 @@ def test_update_user_revokes_tokens_in_same_transaction():
     repo.update_user.side_effect = update
     repo.revoke_user_refresh_tokens.side_effect = revoke
     result = asyncio.run(
-        service.update_user(user.id, doris_role="new_role", update_doris_role=True)
+        service.update_user(
+            user.id, business_pg_role="new_role", update_business_pg_role=True
+        )
     )
     assert result is user
     assert operations == ["update", "revoke"]

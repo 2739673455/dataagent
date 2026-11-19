@@ -1,4 +1,4 @@
-"""Doris 实时权限解析、变化版本和管理写入边界。"""
+"""PostgreSQL 实时权限解析、变化版本和管理写入边界。"""
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -8,133 +8,57 @@ import pytest
 
 from app.identity import errors
 from app.identity.contracts import AssetIdentity
-from app.identity.models.doris import DorisQueryIdentity, DorisSelectGrant
-from app.identity.repositories.doris_authorization import parse_authorization
+from app.identity.models.business_pg import (
+    BusinessPgAuthorizationSnapshot,
+    BusinessPgQueryIdentity,
+    BusinessPgSelectGrant,
+)
+from app.identity.repositories.business_pg_role import validate_policy_predicate
 from app.identity.roles.authorization import AuthorizationService
-from app.identity.roles.permissions import DorisPermissionService
+from app.identity.roles.permissions import BusinessPgPermissionService
 
 
-def raw(**updates):
-    return {
-        "UserIdentity": "'query_reader'@'%'",
-        "Roles": "reader",
-        "GlobalPrivs": None,
-        "CatalogPrivs": None,
-        "DatabasePrivs": "internal.information_schema: Select_priv; internal.mysql: Select_priv",
-        "TablePrivs": None,
-        "ColPrivs": None,
-        **updates,
-    }
-
-
-def parse(row=None, policies=()):
-    return parse_authorization(
-        raw() if row is None else row,
-        policies,
-        role_name="reader",
-        query_user="query_reader",
-        data_source="doris",
-        catalog="internal",
-        database="ecommerce",
+def snapshot(*grants, row_restricted_tables=frozenset()):
+    return BusinessPgAuthorizationSnapshot(
+        grants=tuple(
+            BusinessPgSelectGrant("reader", "business_pg", "ecommerce", table, column)
+            for table, column in grants
+        ),
+        fingerprint=str((grants, row_restricted_tables)),
+        row_restricted_tables=row_restricted_tables,
     )
 
 
-def test_column_table_and_database_grants_preserve_scope():
-    snapshot = parse(
-        raw(
-            TablePrivs="internal.ecommerce.orders: Select_priv, Show_view_priv; external.other.secret: Select_priv",
-            ColPrivs="internal.ecommerce.payments: Select_priv[amount, id]",
-        )
+def test_column_table_and_rls_flags_preserve_scope():
+    policy = AuthorizationService.policy_from_snapshot(
+        7,
+        BusinessPgQueryIdentity(role_name="reader", authorization_fingerprint="a" * 64),
+        snapshot(
+            ("orders", None),
+            ("payments", "amount"),
+            row_restricted_tables=frozenset({"orders"}),
+        ),
     )
-    assert {(g.table_name, g.column_name) for g in snapshot.grants} == {
-        ("orders", None),
-        ("payments", "amount"),
-        ("payments", "id"),
-    }
-    assert not snapshot.has_broad_select
-    identity = DorisQueryIdentity(
-        role_name="reader", authorization_fingerprint="a" * 64
+    assert policy.allows(AssetIdentity("business_pg", "ecommerce", "orders", "any"))
+    assert policy.is_visible(AssetIdentity("business_pg", "ecommerce", "payments"))
+    assert not policy.allows(AssetIdentity("business_pg", "ecommerce", "payments"))
+    assert not policy.allows(
+        AssetIdentity("business_pg", "ecommerce", "payments", "secret")
     )
-    policy = AuthorizationService.policy_from_snapshot(7, identity, snapshot)
-    assert policy.allows(AssetIdentity("doris", "ecommerce", "orders", "any"))
-    assert policy.is_visible(AssetIdentity("doris", "ecommerce", "payments"))
-    assert not policy.allows(AssetIdentity("doris", "ecommerce", "payments"))
-    assert not policy.allows(AssetIdentity("doris", "ecommerce", "payments", "secret"))
-    db = parse(raw(DatabasePrivs="internal.ecommerce: Select_priv"))
-    assert db.grants == (DorisSelectGrant("reader", "doris", "ecommerce"),)
+    assert policy.row_restricted_tables == frozenset({"orders"})
 
 
-@pytest.mark.parametrize(
-    "updates",
-    [
-        {"Roles": "reader,extra"},
-        {"Roles": ""},
-        {"Roles": "wrong"},
-        {"UserIdentity": "'query_reader'@'localhost'"},
-        {"GlobalPrivs": "Admin_priv"},
-        {"ColPrivs": "internal.ecommerce.orders: Select_priv[]"},
-        {"ColPrivs": "internal.ecommerce.orders: Unknown_priv[id]"},
-        {"TablePrivs": "internal.ecommerce.a.b: Select_priv"},
-        {"TablePrivs": "internal.ecommerce.orders: select"},
-    ],
-)
-def test_ambiguous_or_unsafe_authorization_is_rejected(updates):
-    with pytest.raises(errors.InvalidDorisPermissionError):
-        parse(raw(**updates))
-
-
-def test_missing_field_is_not_treated_as_empty_grants():
-    row = raw()
-    del row["ColPrivs"]
-    with pytest.raises(errors.InvalidDorisPermissionError):
-        parse(row)
-
-
-def test_fingerprint_ignores_order_but_detects_column_and_row_policy_changes():
-    a = raw(
-        TablePrivs="internal.ecommerce.b: Select_priv, Show_view_priv; internal.ecommerce.a: Select_priv",
-        ColPrivs="internal.ecommerce.c: Select_priv[y, x]",
-    )
-    b = raw(
-        TablePrivs="internal.ecommerce.a: Select_priv; internal.ecommerce.b: Show_view_priv, Select_priv",
-        ColPrivs="internal.ecommerce.c: Select_priv[x, y]",
-    )
-    policies = [
-        {
-            "PolicyName": "p",
-            "CatalogName": "internal",
-            "DbName": "ecommerce",
-            "TableName": "orders",
-            "WherePredicate": "region = 1",
-            "FilterType": "RESTRICTIVE",
-        }
-    ]
-    assert (
-        parse(a, policies).fingerprint == parse(b, list(reversed(policies))).fingerprint
-    )
-    assert (
-        parse(a, policies).fingerprint
-        != parse(a, [{**policies[0], "WherePredicate": "region = 2"}]).fingerprint
-    )
-    assert (
-        parse(a, policies).fingerprint
-        == parse(a, [{**policies[0], "Id": 99, "PolicyName": "recreated"}]).fingerprint
-    )
-    assert parse(a).fingerprint != parse(raw()).fingerprint
-
-
-@pytest.mark.parametrize(
-    "updates",
-    [{"GlobalPrivs": "Select_priv"}, {"CatalogPrivs": "internal: Select_priv"}],
-)
-def test_broad_select_is_explicit_and_limited_to_configured_database(updates):
-    snapshot = parse(raw(**updates))
-    assert snapshot.has_broad_select
-    assert snapshot.grants == (DorisSelectGrant("reader", "doris", "ecommerce"),)
+def test_policy_predicate_accepts_only_row_expressions():
+    validate = validate_policy_predicate
+    assert validate("region = 'east' AND id >= 10") == "region = 'east' AND id >= 10"
+    with pytest.raises(errors.InvalidBusinessPgPermissionError):
+        validate("SELECT true")
+    with pytest.raises(errors.InvalidBusinessPgPermissionError):
+        validate("some_function()")
 
 
 def setup_services():
-    identity = DorisQueryIdentity(
+    identity = BusinessPgQueryIdentity(
         role_name="reader", query_user="query_reader", authorization_fingerprint=None
     )
 
@@ -148,40 +72,46 @@ def setup_services():
         lock_security_mutation=AsyncMock(),
         flush=AsyncMock(),
     )
-    doris = MagicMock(
-        read_authorization=AsyncMock(return_value=parse()),
+    business_pg = MagicMock(
+        read_authorization=AsyncMock(return_value=snapshot()),
         grant_select=AsyncMock(),
         revoke_select=AsyncMock(),
         list_table_columns=AsyncMock(return_value=("amount",)),
     )
-    auth = AuthorizationService(repo, doris, data_source="doris", database="ecommerce")
-    permissions = DorisPermissionService(
-        repo, doris, data_source="doris", catalog="internal", database="ecommerce"
+    auth = AuthorizationService(
+        repo, business_pg, data_source="business_pg", database="ecommerce"
     )
-    return identity, repo, doris, auth, permissions
+    permissions = BusinessPgPermissionService(
+        repo,
+        business_pg,
+        data_source="business_pg",
+        catalog="public",
+        database="ecommerce",
+    )
+    return identity, repo, business_pg, auth, permissions
 
 
 def test_restored_permissions_restore_fingerprint_and_failures_never_use_old_grants():
     async def run():
-        identity, repo, doris, auth, _ = setup_services()
+        identity, repo, business_pg, auth, _ = setup_services()
         initial = identity.authorization_fingerprint
         first = await auth.get_role_asset_policy(7, "reader")
         assert first.authorization_fingerprint != initial
         again = await auth.get_role_asset_policy(7, "reader")
         assert first == again
-        doris.read_authorization.return_value = parse(
-            raw(ColPrivs="internal.ecommerce.orders: Select_priv[amount]")
-        )
+        business_pg.read_authorization.return_value = snapshot(("orders", "amount"))
         changed = await auth.get_role_asset_policy(7, "reader")
         assert changed.authorization_fingerprint != first.authorization_fingerprint
-        assert changed.allows(AssetIdentity("doris", "ecommerce", "orders", "amount"))
-        doris.read_authorization.return_value = parse()
+        assert changed.allows(
+            AssetIdentity("business_pg", "ecommerce", "orders", "amount")
+        )
+        business_pg.read_authorization.return_value = snapshot()
         revoked = await auth.get_role_asset_policy(7, "reader")
         assert not revoked.grants
         assert revoked.authorization_fingerprint == first.authorization_fingerprint
         assert revoked.authorization_fingerprint != changed.authorization_fingerprint
         fingerprint = identity.authorization_fingerprint
-        doris.read_authorization.side_effect = RuntimeError("unavailable")
+        business_pg.read_authorization.side_effect = RuntimeError("unavailable")
         with pytest.raises(RuntimeError):
             await auth.get_role_asset_policy(7, "reader")
         assert identity.authorization_fingerprint == fingerprint
@@ -190,9 +120,9 @@ def test_restored_permissions_restore_fingerprint_and_failures_never_use_old_gra
     asyncio.run(run())
 
 
-def test_read_occurs_after_identity_lock_and_unknown_identity_never_reads_doris():
+def test_read_occurs_after_identity_lock_and_unknown_identity_never_reads_business_pg():
     async def run():
-        _, repo, doris, auth, _ = setup_services()
+        _, repo, business_pg, auth, _ = setup_services()
         events = []
         identity = repo.lock_query_identity.return_value
 
@@ -202,10 +132,10 @@ def test_read_occurs_after_identity_lock_and_unknown_identity_never_reads_doris(
 
         async def read(**kwargs):
             events.append("read")
-            return parse()
+            return snapshot()
 
         repo.lock_query_identity.side_effect = lock
-        doris.read_authorization.side_effect = read
+        business_pg.read_authorization.side_effect = read
         await auth.observe_role("reader")
         assert events == ["lock", "read"]
         repo.lock_query_identity.side_effect = None
@@ -219,35 +149,37 @@ def test_read_occurs_after_identity_lock_and_unknown_identity_never_reads_doris(
 
 def test_revoke_does_not_regrant_after_observation_failure():
     async def run():
-        _, _, doris, _, service = setup_services()
-        doris.read_authorization.side_effect = [
-            parse(),
-            RuntimeError("Doris read failed"),
+        _, _, business_pg, _, service = setup_services()
+        business_pg.read_authorization.side_effect = [
+            snapshot(),
+            RuntimeError("PostgreSQL read failed"),
         ]
         with pytest.raises(RuntimeError):
             await service.revoke_select(
                 "reader", table_name="orders", columns=["amount"]
             )
-        doris.revoke_select.assert_awaited_once()
-        doris.grant_select.assert_not_awaited()
+        business_pg.revoke_select.assert_awaited_once()
+        business_pg.grant_select.assert_not_awaited()
 
     asyncio.run(run())
 
 
-def test_revoke_reports_remaining_effective_grants_and_refuses_broad_revoke_all():
+def test_revoke_reports_remaining_effective_grants_at_any_target_depth():
     async def run():
-        _, _, doris, _, service = setup_services()
-        doris.read_authorization.return_value = parse(
-            raw(DatabasePrivs="internal.ecommerce: Select_priv")
-        )
-        with pytest.raises(errors.InvalidDorisPermissionError):
-            await service.revoke_select(
-                "reader", table_name="orders", columns=["amount"]
-            )
-        doris.revoke_select.reset_mock()
-        doris.read_authorization.return_value = parse(raw(GlobalPrivs="Select_priv"))
-        with pytest.raises(errors.InvalidDorisPermissionError):
+        _, _, business_pg, _, service = setup_services()
+        business_pg.read_authorization.return_value = snapshot(("orders", "amount"))
+        for table, columns in [(None, []), ("orders", []), ("orders", ["amount"])]:
+            with pytest.raises(errors.InvalidBusinessPgPermissionError):
+                await service.revoke_select("reader", table_name=table, columns=columns)
+        business_pg.revoke_select.reset_mock()
+        with pytest.raises(errors.InvalidBusinessPgPermissionError):
             await service.revoke_all_select("reader")
-        doris.revoke_select.assert_not_awaited()
+        business_pg.revoke_select.assert_awaited_once_with(
+            role_name="reader",
+            catalog="public",
+            database="ecommerce",
+            table=None,
+            columns=(),
+        )
 
     asyncio.run(run())
