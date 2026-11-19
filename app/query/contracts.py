@@ -6,8 +6,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.shared.contracts.doris import DORIS_WORKLOAD_GROUP_PATTERN
-
 type QueryExecutionStatus = Literal["rejected", "failed", "succeeded"]
 type QueryKind = Literal["business", "catalog"]
 type QueryAssetKind = Literal["table", "column"]
@@ -71,21 +69,16 @@ class QueryValidationResult(BaseModel):
 
 
 class QueryExecutionLimits(BaseModel):
-    """Doris 单次查询资源限制。"""
+    """PostgreSQL 单次查询资源限制。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    workload_group: str = Field(
-        min_length=1,
-        max_length=128,
-        pattern=DORIS_WORKLOAD_GROUP_PATTERN,
-    )
     timeout_seconds: int = Field(gt=0)
-    memory_limit_bytes: int = Field(gt=0)
+    work_mem_kb: int = Field(ge=64)
 
 
 class QueryExecutionOptions(BaseModel):
-    """Doris 查询流式处理与结果摘要选项。"""
+    """PostgreSQL 查询流式处理与结果摘要选项。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -95,7 +88,7 @@ class QueryExecutionOptions(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class QueryBatch:
-    """Doris 服务端游标返回的一批结果。"""
+    """PostgreSQL 服务端游标返回的一批结果。"""
 
     column_names: tuple[str, ...]
     rows: tuple[tuple[Any, ...], ...]

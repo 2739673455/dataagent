@@ -1,4 +1,4 @@
-"""Doris 角色与稳定查询身份管理。"""
+"""PostgreSQL 角色与稳定查询身份管理。"""
 
 from __future__ import annotations
 
@@ -9,65 +9,65 @@ from sqlalchemy.exc import IntegrityError
 
 from app.identity import errors as auth_error
 from app.identity.errors import (
-    DorisQueryUserAlreadyExistsError,
-    DorisRoleAlreadyExistsError,
-    DorisWorkloadGroupNotFoundError,
+    BusinessPgQueryUserAlreadyExistsError,
+    BusinessPgRoleAlreadyExistsError,
+    BusinessPgWorkloadGroupNotFoundError,
 )
-from app.identity.models.doris import (
-    DorisQueryIdentity,
-    normalize_doris_role_name,
+from app.identity.models.business_pg import (
+    BusinessPgQueryIdentity,
+    normalize_business_pg_role_name,
 )
-from app.identity.repositories.doris_role import (
-    DorisRoleRepository,
+from app.identity.repositories.business_pg_role import (
+    BusinessPgRoleRepository,
     role_name_from_row,
     role_users_from_row,
 )
 from app.identity.repositories.identity import IdentityPGRepo
-from app.identity.roles.credentials import DorisCredentialCipher
-from app.shared.clients.doris_client_manager import DorisQueryClientRegistry
-from app.shared.contracts.doris import validate_doris_identifier
+from app.identity.roles.credentials import BusinessPgCredentialCipher
+from app.shared.clients.business_pg_client_manager import BusinessPgQueryClientRegistry
+from app.shared.contracts.business_pg import validate_business_pg_identifier
 
 
 @dataclass(frozen=True, slots=True)
-class DorisExistingRoleDescriptor:
-    """Doris 中已存在的角色及平台管理状态。"""
+class BusinessPgExistingRoleDescriptor:
+    """PostgreSQL 中已存在的角色及平台管理状态。"""
 
     name: str
     managed: bool
-    doris_users: tuple[str, ...]
+    business_pg_users: tuple[str, ...]
 
 
-class DorisRoleManagementService:
-    """管理 Doris 角色、查询凭据、工作组及默认角色。"""
+class BusinessPgRoleManagementService:
+    """管理 PostgreSQL 角色、查询凭据、工作组及默认角色。"""
 
     def __init__(
         self,
         repo: IdentityPGRepo,
-        doris_repo: DorisRoleRepository,
-        cipher: DorisCredentialCipher,
-        client_registry: DorisQueryClientRegistry,
+        business_pg_repo: BusinessPgRoleRepository,
+        cipher: BusinessPgCredentialCipher,
+        client_registry: BusinessPgQueryClientRegistry,
     ) -> None:
-        """初始化 Doris 角色、凭据和用户绑定管理依赖。"""
+        """初始化 PostgreSQL 角色、凭据和用户绑定管理依赖。"""
         self._repo = repo
-        self._doris_repo = doris_repo
+        self._business_pg_repo = business_pg_repo
         self._cipher = cipher
         self._client_registry = client_registry
 
     async def list_workload_groups(self) -> tuple[str, ...]:
-        """列出创建角色时可选择的 Doris 工作组。"""
-        return await self._doris_repo.list_workload_groups()
+        """列出创建角色时可选择的 PostgreSQL 查询资源配置。"""
+        return await self._business_pg_repo.list_workload_groups()
 
-    async def list_existing_roles(self) -> list[DorisExistingRoleDescriptor]:
-        """列出 Doris 原生角色并标记平台管理状态。"""
-        rows = await self._doris_repo.list_roles()
+    async def list_existing_roles(self) -> list[BusinessPgExistingRoleDescriptor]:
+        """列出 PostgreSQL 原生角色并标记平台管理状态。"""
+        rows = await self._business_pg_repo.list_roles()
         managed_names = {
             identity.role_name for identity in await self._repo.list_query_identities()
         }
         roles = [
-            DorisExistingRoleDescriptor(
+            BusinessPgExistingRoleDescriptor(
                 name=role_name,
                 managed=role_name in managed_names,
-                doris_users=role_users_from_row(row),
+                business_pg_users=role_users_from_row(row),
             )
             for row in rows
             if (role_name := role_name_from_row(row)) is not None
@@ -81,14 +81,14 @@ class DorisRoleManagementService:
         description: str,
         query_user: str,
         workload_group: str,
-    ) -> DorisQueryIdentity:
-        """创建 Doris 角色及唯一稳定查询身份。"""
-        role = normalize_doris_role_name(role_name)
-        validate_doris_identifier(query_user)
-        validate_doris_identifier(workload_group)
+    ) -> BusinessPgQueryIdentity:
+        """创建 PostgreSQL 角色及唯一稳定查询身份。"""
+        role = normalize_business_pg_role_name(role_name)
+        validate_business_pg_identifier(query_user)
+        validate_business_pg_identifier(workload_group)
         await self._require_workload_group(workload_group)
         password = self._cipher.generate_password()
-        doris_created = False
+        business_pg_created = False
         try:
             async with self._repo.session.begin():
                 await self._repo.lock_security_mutation()
@@ -99,17 +99,17 @@ class DorisRoleManagementService:
                     is not None
                 ):
                     raise auth_error.QueryUserAlreadyExistsError(
-                        detail=f"Doris 查询用户 {query_user} 已存在"
+                        detail=f"PostgreSQL 查询用户 {query_user} 已存在"
                     )
-                await self._doris_repo.create_role_identity(
+                await self._business_pg_repo.create_role_identity(
                     role_name=role,
                     query_user=query_user,
                     password=password,
                     workload_group=workload_group,
                 )
-                doris_created = True
+                business_pg_created = True
                 return await self._repo.add_query_identity(
-                    DorisQueryIdentity(
+                    BusinessPgQueryIdentity(
                         role_name=role,
                         description=description,
                         query_user=query_user,
@@ -119,31 +119,31 @@ class DorisRoleManagementService:
                     )
                 )
         except BaseException as exc:
-            if doris_created:
+            if business_pg_created:
                 try:
-                    await self._doris_repo.drop_role_identity(
+                    await self._business_pg_repo.drop_role_identity(
                         role_name=role,
                         query_user=query_user,
                     )
                 except Exception:  # noqa: BLE001
-                    logger.exception(f"补偿删除 Doris 角色及用户失败: {role}")
-            if isinstance(exc, DorisQueryUserAlreadyExistsError):
+                    logger.exception(f"补偿删除 PostgreSQL 角色及用户失败: {role}")
+            if isinstance(exc, BusinessPgQueryUserAlreadyExistsError):
                 raise auth_error.QueryUserAlreadyExistsError(
-                    detail=f"Doris 查询用户 {exc.query_user} 已存在"
+                    detail=f"PostgreSQL 查询用户 {exc.query_user} 已存在"
                 ) from exc
             if isinstance(exc, IntegrityError):
                 raise auth_error.RoleAlreadyExistsError from exc
-            if isinstance(exc, DorisRoleAlreadyExistsError):
+            if isinstance(exc, BusinessPgRoleAlreadyExistsError):
                 raise auth_error.RoleAlreadyExistsError(
-                    detail=f"Doris 角色 {role} 已存在"
+                    detail=f"PostgreSQL 角色 {role} 已存在"
                 ) from exc
-            if isinstance(exc, DorisWorkloadGroupNotFoundError):
+            if isinstance(exc, BusinessPgWorkloadGroupNotFoundError):
                 raise self._workload_group_not_found(workload_group) from exc
             raise
 
-    async def set_default_role(self, role_name: str) -> DorisQueryIdentity:
-        """替换新用户使用的缺省 Doris 角色。"""
-        role = normalize_doris_role_name(role_name)
+    async def set_default_role(self, role_name: str) -> BusinessPgQueryIdentity:
+        """替换新用户使用的缺省 PostgreSQL 角色。"""
+        role = normalize_business_pg_role_name(role_name)
         async with self._repo.session.begin():
             await self._repo.lock_security_mutation()
             identity = await self._repo.get_query_identity(role)
@@ -155,14 +155,14 @@ class DorisRoleManagementService:
             return identity
 
     async def clear_default_role(self) -> None:
-        """清除新用户使用的缺省 Doris 角色。"""
+        """清除新用户使用的缺省 PostgreSQL 角色。"""
         async with self._repo.session.begin():
             await self._repo.lock_security_mutation()
             await self._repo.clear_default_query_identity()
 
     async def delete_role(self, role_name: str) -> None:
-        """先删除 Doris 身份再删除平台配置；中途失败保留配置供重试。"""
-        role = normalize_doris_role_name(role_name)
+        """先删除 PostgreSQL 身份再删除平台配置；中途失败保留配置供重试。"""
+        role = normalize_business_pg_role_name(role_name)
         async with self._repo.session.begin():
             await self._repo.lock_security_mutation()
             identity = await self._repo.lock_query_identity(role)
@@ -170,7 +170,7 @@ class DorisRoleManagementService:
                 raise auth_error.RoleNotFoundError
             if await self._repo.count_query_identity_assigned_users(role):
                 raise auth_error.RoleInUseError
-            await self._doris_repo.drop_role_identity(
+            await self._business_pg_repo.drop_role_identity(
                 role_name=identity.role_name,
                 query_user=identity.query_user,
             )
@@ -178,8 +178,8 @@ class DorisRoleManagementService:
         await self._client_registry.invalidate(role)
 
     async def _require_workload_group(self, workload_group: str) -> None:
-        """要求 Doris 工作组存在。"""
-        if not await self._doris_repo.workload_group_exists(workload_group):
+        """要求 PostgreSQL 查询资源配置存在。"""
+        if not await self._business_pg_repo.workload_group_exists(workload_group):
             raise self._workload_group_not_found(workload_group)
 
     @staticmethod
@@ -188,5 +188,5 @@ class DorisRoleManagementService:
     ) -> auth_error.WorkloadGroupNotFoundError:
         """构造可返回客户端的工作组不存在异常。"""
         return auth_error.WorkloadGroupNotFoundError(
-            detail=f"Doris 工作组 {workload_group} 不存在，请选择已创建的工作组"
+            detail=f"PostgreSQL 资源档位 {workload_group} 不存在，请选择 standard 或 reporting"
         )

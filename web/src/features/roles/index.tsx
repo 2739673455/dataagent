@@ -4,21 +4,21 @@ import { toast } from "sonner";
 import {
   rolesApi,
   type AssetGrantResponse,
-  type DorisExistingRoleResponse,
-  type DorisRoleResponse,
+  type BusinessPgExistingRoleResponse,
+  type BusinessPgRoleResponse,
   type RowPolicyResponse,
 } from "@/features/roles/api";
 import { getApiErrorMessage } from "@/api/errors";
 import { DotMatrixLoader } from "@/components/DotMatrixLoader";
 import { Button } from "@/components/ui/button";
 import { AssetPermissionPanel } from "@/features/roles/AssetPermissionPanel";
-import { DorisRoleCreateDialog } from "@/features/roles/DorisRoleCreateDialog";
+import { BusinessPgRoleCreateDialog } from "@/features/roles/BusinessPgRoleCreateDialog";
 import { RowPolicyPanel } from "@/features/roles/RowPolicyPanel";
 
-/** 管理 Doris 角色及其资产权限和行级策略。 */
-export function DorisRoleManagement() {
-  const [roles, setRoles] = useState<DorisRoleResponse[]>([]);
-  const [existingRoles, setExistingRoles] = useState<DorisExistingRoleResponse[]>([]);
+/** 管理 PostgreSQL 角色及其资产权限和行级策略。 */
+export function BusinessPgRoleManagement() {
+  const [roles, setRoles] = useState<BusinessPgRoleResponse[]>([]);
+  const [existingRoles, setExistingRoles] = useState<BusinessPgExistingRoleResponse[]>([]);
   const [selectedRole, setSelectedRole] = useState("");
   const [policies, setPolicies] = useState<RowPolicyResponse[]>([]);
   const [grants, setGrants] = useState<AssetGrantResponse[]>([]);
@@ -26,8 +26,8 @@ export function DorisRoleManagement() {
   const [isCreatingRole, setIsCreatingRole] = useState(false);
   const [workloadGroups, setWorkloadGroups] = useState<string[]>([]);
 
-  const defaultWorkloadGroup = workloadGroups.includes("normal")
-    ? "normal"
+  const defaultWorkloadGroup = workloadGroups.includes("standard")
+    ? "standard"
     : workloadGroups[0] || "";
 
   const loadRoles = useCallback(async () => {
@@ -45,7 +45,7 @@ export function DorisRoleManagement() {
         loadedRoles.some((role) => role.name === current) ? current : loadedRoles[0]?.name || ""
       );
     } catch (error) {
-      toast.error(getApiErrorMessage(error, "加载 Doris 角色失败"));
+      toast.error(getApiErrorMessage(error, "加载 PostgreSQL 角色失败"));
     } finally {
       setBusy(false);
     }
@@ -100,7 +100,7 @@ export function DorisRoleManagement() {
       );
       return true;
     } catch (error) {
-      toast.error(getApiErrorMessage(error, "更新 Doris 权限失败"));
+      toast.error(getApiErrorMessage(error, "更新 PostgreSQL 权限失败"));
       return false;
     } finally {
       setBusy(false);
@@ -109,13 +109,13 @@ export function DorisRoleManagement() {
 
   return (
     <div className="space-y-6">
-      {/* Doris 角色与查询身份管理 */}
+      {/* PostgreSQL 角色与查询身份管理 */}
       <section className="rounded border border-[#d4d4ce] bg-[#ffffff] p-5 shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e5e5df] pb-3 shrink-0">
           <div className="flex items-center gap-2">
             <h2 className="flex items-center gap-1.5 text-base font-bold text-[#18181b]">
               <Shield className="h-4 w-4 text-[#52525b]" />
-              <span>Doris 角色与查询身份 ({roles.length})</span>
+              <span>PostgreSQL 角色与查询身份 ({roles.length})</span>
               {busy && <DotMatrixLoader className="ml-1 text-[#71717a]" />}
             </h2>
             <span className="rounded bg-[#f0f0eb] px-2 py-0.5 text-xs text-[#71717a]">
@@ -128,7 +128,7 @@ export function DorisRoleManagement() {
               disabled={busy || workloadGroups.length === 0}
               onClick={() => setIsCreatingRole((prev) => !prev)}
               className="h-7 px-2 text-xs"
-              title="添加 Doris 角色"
+              title="添加 PostgreSQL 角色"
             >
               <Plus className="h-3 w-3 mr-1" />
               添加角色
@@ -137,7 +137,7 @@ export function DorisRoleManagement() {
         </div>
 
         {isCreatingRole && (
-          <DorisRoleCreateDialog
+          <BusinessPgRoleCreateDialog
             busy={busy}
             existingRoles={existingRoles}
             workloadGroups={workloadGroups}
@@ -154,12 +154,12 @@ export function DorisRoleManagement() {
         <div className="mt-4 rounded border border-[#d4d4ce] bg-[#fafaf8] p-3">
           <div className="mb-2">
             <h3 className="text-sm font-semibold text-[#18181b]">
-              Doris 已有角色 ({existingRoles.length})
+              PostgreSQL 已有角色 ({existingRoles.length})
             </h3>
           </div>
           {existingRoles.length === 0 ? (
             <div className="rounded border border-[#e5e5df] bg-[#ffffff] py-5 text-center text-xs text-[#71717a]">
-              Doris 中暂无显式角色
+              PostgreSQL 中暂无显式角色
             </div>
           ) : (
             <div className="flex flex-wrap gap-2">
@@ -176,14 +176,20 @@ export function DorisRoleManagement() {
                       {role.name}
                     </span>
                     <span className="shrink-0 rounded bg-[#f0f0eb] px-1.5 py-0.5 text-[10px] text-[#71717a]">
-                      {role.managed ? "平台已管理" : "仅 Doris"}
+                      {role.managed ? "平台已管理" : "仅 PostgreSQL"}
                     </span>
                   </div>
                   <div
                     className="truncate text-[10px] text-[#71717a]"
-                    title={role.doris_users.length > 0 ? role.doris_users.join(", ") : "暂无用户"}
+                    title={
+                      role.business_pg_users.length > 0
+                        ? role.business_pg_users.join(", ")
+                        : "暂无用户"
+                    }
                   >
-                    {role.doris_users.length > 0 ? role.doris_users.join(", ") : "暂无用户"}
+                    {role.business_pg_users.length > 0
+                      ? role.business_pg_users.join(", ")
+                      : "暂无用户"}
                   </div>
                 </div>
               ))}
@@ -193,7 +199,7 @@ export function DorisRoleManagement() {
 
         {roles.length === 0 ? (
           <div className="mt-4 rounded border border-[#d4d4ce] bg-[#ffffff] py-12 text-center text-sm text-[#71717a]">
-            暂无平台管理的 Doris 角色
+            暂无平台管理的 PostgreSQL 角色
           </div>
         ) : (
           <div className="mt-4 overflow-x-auto overflow-y-hidden rounded border border-[#d4d4ce]">
@@ -202,7 +208,7 @@ export function DorisRoleManagement() {
                 <tr>
                   <th className="px-3.5 py-2.5">角色名称</th>
                   <th className="px-3.5 py-2.5">对应查询用户</th>
-                  <th className="px-3.5 py-2.5">工作组</th>
+                  <th className="px-3.5 py-2.5">查询资源配置</th>
                   <th className="px-3.5 py-2.5 text-right">操作</th>
                 </tr>
               </thead>
@@ -278,7 +284,7 @@ export function DorisRoleManagement() {
                             e.stopPropagation();
                             void mutate(
                               () => rolesApi.deleteRole(role.name),
-                              "Doris 角色已删除",
+                              "PostgreSQL 角色已删除",
                               false
                             );
                           }}

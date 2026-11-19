@@ -1,6 +1,7 @@
-"""初始化 PostgreSQL 数据库。"""
+"""仅创建缺失的应用内部数据库。重复运行不会修改已有库的数据、权限或配置。"""
 
 import logging
+import os
 from pathlib import Path
 
 import dotenv
@@ -8,118 +9,49 @@ import psycopg
 from psycopg import sql
 from psycopg.errors import DuplicateDatabase
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
-ENV_FILE = ROOT_DIR / "conf" / ".env"
-
-POSTGRES_HOST = "127.0.0.1"
-POSTGRES_PORT = 5432
-POSTGRES_USER = "atguigu"
-MAINTENANCE_DATABASE = "postgres"
-
-logging.basicConfig(level=logging.INFO)
+ENV_FILE = Path(__file__).resolve().parents[1] / "conf" / ".env"
+APPLICATION_DATABASES = ("auth", "meta", "langgraph")
 logger = logging.getLogger(__name__)
 
 
-class PostgresInitializer:
-    """PostgreSQL 数据库初始化器。"""
-
-    def __init__(
-        self,
-        host: str,
-        port: int,
-        user: str,
-        password: str,
-    ) -> None:
-        """初始化 PostgreSQL 连接配置。"""
-        self._host = host
-        self._port = port
-        self._user = user
-        self._password = password
-
-    def delete_db(self, db_name: str) -> None:
-        """数据库存在时删除数据库。"""
-        try:
-            with (
-                psycopg.connect(
-                    host=self._host,
-                    port=self._port,
-                    user=self._user,
-                    password=self._password,
-                    dbname=MAINTENANCE_DATABASE,
-                    autocommit=True,
-                ) as connection,
-                connection.cursor() as cursor,
-            ):
-                cursor.execute(
-                    "SELECT 1 FROM pg_database WHERE datname = %s",
-                    (db_name,),
+def ensure_application_databases(
+    *, host: str, port: int, user: str, password: str
+) -> None:
+    """连接维护库；只补建三个固定名称的内部数据库，不连接业务库。"""
+    with psycopg.connect(
+        host=host,
+        port=port,
+        user=user,
+        password=password,
+        dbname="postgres",
+        autocommit=True,
+    ) as connection:
+        for name in APPLICATION_DATABASES:
+            if connection.execute(
+                "SELECT 1 FROM pg_catalog.pg_database WHERE datname = %s", (name,)
+            ).fetchone():
+                logger.info("保留已存在的数据库 %s", name)
+                continue
+            try:
+                connection.execute(
+                    sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name))
                 )
-                if cursor.fetchone() is None:
-                    logger.info("数据库 %s 不存在，无需删除", db_name)
-                    return
-
-                cursor.execute(
-                    sql.SQL("DROP DATABASE {}").format(sql.Identifier(db_name))
-                )
-                logger.info("数据库 %s 删除成功", db_name)
-        except psycopg.Error:
-            logger.exception("数据库 %s 删除失败", db_name)
-            raise
-
-    def create_db(self, db_name: str) -> None:
-        """数据库不存在时创建数据库。"""
-        try:
-            with (
-                psycopg.connect(
-                    host=self._host,
-                    port=self._port,
-                    user=self._user,
-                    password=self._password,
-                    dbname=MAINTENANCE_DATABASE,
-                    autocommit=True,
-                ) as connection,
-                connection.cursor() as cursor,
-            ):
-                cursor.execute(
-                    "SELECT 1 FROM pg_database WHERE datname = %s",
-                    (db_name,),
-                )
-                if cursor.fetchone() is not None:
-                    logger.info("数据库 %s 已存在，无需创建", db_name)
-                    return
-
-                try:
-                    cursor.execute(
-                        sql.SQL("CREATE DATABASE {} OWNER {}").format(
-                            sql.Identifier(db_name),
-                            sql.Identifier(self._user),
-                        )
-                    )
-                except DuplicateDatabase:
-                    logger.info("数据库 %s 已由其他进程创建", db_name)
-                    return
-
-                logger.info("数据库 %s 创建成功", db_name)
-        except psycopg.Error:
-            logger.exception("数据库 %s 创建失败", db_name)
-            raise
+            except DuplicateDatabase:
+                # 另一个初始化进程刚创建了它；无需处理其内容。
+                logger.info("保留并发创建的数据库 %s", name)
+            else:
+                logger.info("已创建数据库 %s", name)
 
 
 if __name__ == "__main__":
-    password = dotenv.dotenv_values(ENV_FILE).get("POSTGRES_PASSWORD")
-    if password is None:
-        raise ValueError(f"{ENV_FILE} 中缺少 POSTGRES_PASSWORD")
-
-    initializer = PostgresInitializer(
-        host=POSTGRES_HOST,
-        port=POSTGRES_PORT,
-        user=POSTGRES_USER,
+    logging.basicConfig(level=logging.INFO)
+    dotenv.load_dotenv(ENV_FILE)
+    password = os.environ.get("POSTGRES_PASSWORD")
+    if not password:
+        raise SystemExit("请设置 POSTGRES_PASSWORD，再运行初始化命令")
+    ensure_application_databases(
+        host="127.0.0.1",
+        port=int(os.getenv("APP_PG_PORT", "5432")),
+        user="atguigu",
         password=password,
     )
-
-    initializer.delete_db("auth")
-    initializer.create_db("auth")
-    initializer.delete_db("meta")
-    initializer.create_db("meta")
-    initializer.delete_db("langgraph")
-    initializer.create_db("langgraph")

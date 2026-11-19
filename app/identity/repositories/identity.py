@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.identity.models.account import RefreshToken, User
-from app.identity.models.doris import DorisQueryIdentity
+from app.identity.models.business_pg import BusinessPgQueryIdentity
 from app.identity.models.lifecycle import UserDeletionTask
 
 _SECURITY_MUTATION_LOCK_KEY = 0x444154414147454E
@@ -141,8 +141,8 @@ class IdentityPGRepo:
         username: str | None = None,
         email: str | None = None,
         password_hash: str | None = None,
-        doris_role: str | None,
-        update_doris_role: bool,
+        business_pg_role: str | None,
+        update_business_pg_role: bool,
         is_admin: bool | None = None,
     ) -> None:
         """更新用户基础信息、角色与凭据。"""
@@ -152,8 +152,8 @@ class IdentityPGRepo:
             user.email = email
         if password_hash is not None:
             user.password_hash = password_hash
-        if update_doris_role:
-            user.doris_role_name = doris_role
+        if update_business_pg_role:
+            user.business_pg_role_name = business_pg_role
         if is_admin is not None:
             user.is_admin = is_admin
         user.auth_version += 1
@@ -310,9 +310,9 @@ class IdentityPGRepo:
 
     async def add_query_identity(
         self,
-        identity: DorisQueryIdentity,
-    ) -> DorisQueryIdentity:
-        """新增 Doris 稳定查询身份。"""
+        identity: BusinessPgQueryIdentity,
+    ) -> BusinessPgQueryIdentity:
+        """新增 PostgreSQL 稳定查询身份。"""
         self._session.add(identity)
         await self._session.flush()
         return identity
@@ -320,17 +320,21 @@ class IdentityPGRepo:
     async def get_query_identity(
         self,
         role_name: str,
-    ) -> DorisQueryIdentity | None:
-        """按 Doris 角色读取稳定查询身份。"""
+    ) -> BusinessPgQueryIdentity | None:
+        """按 PostgreSQL 角色读取稳定查询身份。"""
         return await self._session.scalar(
-            select(DorisQueryIdentity).where(DorisQueryIdentity.role_name == role_name)
+            select(BusinessPgQueryIdentity).where(
+                BusinessPgQueryIdentity.role_name == role_name
+            )
         )
 
-    async def lock_query_identity(self, role_name: str) -> DorisQueryIdentity | None:
+    async def lock_query_identity(
+        self, role_name: str
+    ) -> BusinessPgQueryIdentity | None:
         """串行化实时授权观察与指纹更新，刷新会话中已有的身份对象。"""
         return await self._session.scalar(
-            select(DorisQueryIdentity)
-            .where(DorisQueryIdentity.role_name == role_name)
+            select(BusinessPgQueryIdentity)
+            .where(BusinessPgQueryIdentity.role_name == role_name)
             .with_for_update()
             .execution_options(populate_existing=True)
         )
@@ -338,32 +342,34 @@ class IdentityPGRepo:
     async def get_query_identity_by_query_user(
         self,
         query_user: str,
-    ) -> DorisQueryIdentity | None:
-        """按 Doris 查询用户读取稳定查询身份。"""
+    ) -> BusinessPgQueryIdentity | None:
+        """按 PostgreSQL 查询用户读取稳定查询身份。"""
         return await self._session.scalar(
-            select(DorisQueryIdentity).where(
-                DorisQueryIdentity.query_user == query_user
+            select(BusinessPgQueryIdentity).where(
+                BusinessPgQueryIdentity.query_user == query_user
             )
         )
 
-    async def get_default_query_identity(self) -> DorisQueryIdentity | None:
-        """读取当前缺省 Doris 查询身份。"""
+    async def get_default_query_identity(self) -> BusinessPgQueryIdentity | None:
+        """读取当前缺省 PostgreSQL 查询身份。"""
         return await self._session.scalar(
-            select(DorisQueryIdentity).where(DorisQueryIdentity.is_default.is_(True))
+            select(BusinessPgQueryIdentity).where(
+                BusinessPgQueryIdentity.is_default.is_(True)
+            )
         )
 
-    async def list_query_identities(self) -> list[DorisQueryIdentity]:
-        """列出全部 Doris 稳定查询身份。"""
+    async def list_query_identities(self) -> list[BusinessPgQueryIdentity]:
+        """列出全部 PostgreSQL 稳定查询身份。"""
         result = await self._session.scalars(
-            select(DorisQueryIdentity).order_by(DorisQueryIdentity.role_name)
+            select(BusinessPgQueryIdentity).order_by(BusinessPgQueryIdentity.role_name)
         )
         return list(result)
 
     async def clear_default_query_identity(self) -> None:
         """清除当前查询身份的缺省标记。"""
         await self._session.execute(
-            update(DorisQueryIdentity)
-            .where(DorisQueryIdentity.is_default.is_(True))
+            update(BusinessPgQueryIdentity)
+            .where(BusinessPgQueryIdentity.is_default.is_(True))
             .values(is_default=False)
         )
 
@@ -371,13 +377,15 @@ class IdentityPGRepo:
         """统计绑定指定查询身份角色的平台用户。"""
         return int(
             await self._session.scalar(
-                select(func.count(User.id)).where(User.doris_role_name == role_name)
+                select(func.count(User.id)).where(
+                    User.business_pg_role_name == role_name
+                )
             )
             or 0
         )
 
-    async def delete_query_identity(self, identity: DorisQueryIdentity) -> None:
-        """删除 Doris 稳定查询身份。"""
+    async def delete_query_identity(self, identity: BusinessPgQueryIdentity) -> None:
+        """删除 PostgreSQL 稳定查询身份。"""
         await self._session.delete(identity)
         await self._session.flush()
 

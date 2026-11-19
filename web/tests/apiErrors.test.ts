@@ -25,21 +25,21 @@ describe("getApiErrorMessage", () => {
     expect(
       getProblemDetailsMessage({
         title: "权限不足",
-        detail: "分配的 Doris 角色不可用",
+        detail: "分配的 PostgreSQL 角色不可用",
       })
-    ).toBe("分配的 Doris 角色不可用");
+    ).toBe("分配的 PostgreSQL 角色不可用");
   });
 
   test("优先展示后端返回的详细说明", () => {
     const error = axiosError({
       data: {
         title: "角色已存在",
-        detail: "Doris 角色 test 已存在",
+        detail: "PostgreSQL 角色 test 已存在",
       },
       status: 409,
     });
 
-    expect(getApiErrorMessage(error, "创建角色失败")).toBe("Doris 角色 test 已存在");
+    expect(getApiErrorMessage(error, "创建角色失败")).toBe("PostgreSQL 角色 test 已存在");
   });
 
   test("详细说明缺失时展示后端标题", () => {

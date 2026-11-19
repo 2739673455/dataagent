@@ -18,7 +18,7 @@ interface AssetPermissionPanelProps {
   onMutate: (operation: () => Promise<void>, message: string) => Promise<boolean>;
 }
 
-/** 展示和编辑 Doris 角色的资产访问权限。 */
+/** 展示和编辑 PostgreSQL 角色的资产访问权限。 */
 export function AssetPermissionPanel({
   selectedRole,
   grants,
@@ -101,7 +101,7 @@ export function AssetPermissionPanel({
       <div className="mt-4 space-y-3.5 text-sm">
         <div>
           <label htmlFor="permission-table" className="block text-xs text-[#52525b] mb-1">
-            目标数据表（留空表示当前数据库全部表）：
+            目标数据表（留空表示业务 Schema 中现有的可授权表）：
           </label>
           <input
             id="permission-table"
@@ -137,7 +137,7 @@ export function AssetPermissionPanel({
 
         <div className="rounded border border-[#d4d4ce] bg-[#fafaf8] p-3">
           <div className="flex items-center justify-between text-xs font-semibold text-[#18181b]">
-            <span title="权限实时读取自 Doris；此处操作角色授权，账号直接授权需在 Doris 中管理">
+            <span title="权限实时读取自 PostgreSQL；此处操作角色授权，账号直接授权需在 PostgreSQL 中管理">
               查询账号的有效 SELECT 权限
             </span>
             <div className="flex items-center gap-2">
@@ -164,7 +164,7 @@ export function AssetPermissionPanel({
                   数据库 {grantDataSource}.{grantDatabase}
                   {databaseGrant && (
                     <span className="ml-2 rounded bg-[#e8e8e4] px-1.5 py-0.5 text-[10px] text-[#1e2024]">
-                      全库 SELECT
+                      业务 Schema SELECT
                     </span>
                   )}
                 </div>
@@ -172,11 +172,11 @@ export function AssetPermissionPanel({
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => revokeGrant(null, [], "整库 SELECT 权限")}
+                    onClick={() => revokeGrant(null, [], "业务 Schema SELECT 权限")}
                     className="cursor-pointer text-[10px] font-normal text-[#dc2626] hover:text-[#991b1b] disabled:cursor-not-allowed disabled:opacity-40"
-                    title="回收整库 SELECT 权限"
+                    title="回收业务 Schema SELECT 权限"
                   >
-                    回收整库
+                    回收业务 Schema
                   </button>
                 )}
               </div>

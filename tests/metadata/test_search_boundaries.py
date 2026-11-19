@@ -13,8 +13,11 @@ from app.metadata.contracts import (
     SemanticMatchReason,
     SemanticMetricRecallResult,
     SemanticResourceRecallRequest,
+    SemanticResourceRecallResponse,
+    SemanticValueRecallResult,
 )
 from app.metadata.models.catalog import ColumnInfo, TableInfo
+from app.metadata.search.authorization import SemanticRecallAuthorization
 from app.metadata.search.context import (
     ColumnContextBuilder,
     RankedCandidates,
@@ -183,7 +186,7 @@ def test_cancellation_propagates_without_recording_backend_failure(stage):
             MagicMock(),
             MagicMock(aembed_documents=AsyncMock(side_effect=asyncio.CancelledError())),
             data_source=cfg.query.data_source,
-            database_name=cfg.doris.database,
+            database_name=cfg.business_pg.database,
         )
         with pytest.raises(asyncio.CancelledError):
             asyncio.run(service._retrieve(context))
@@ -260,7 +263,7 @@ def test_shared_service_keeps_concurrent_permissions_and_query_limits_per_reques
             MagicMock(aembed_documents=AsyncMock(return_value=[[0.1], [0.2]])),
             max_concurrent_index_queries=1,
             data_source=cfg.query.data_source,
-            database_name=cfg.doris.database,
+            database_name=cfg.business_pg.database,
         )
         service._column_repo = MagicMock(
             search_text_hits=AsyncMock(side_effect=hits),
@@ -281,7 +284,7 @@ def test_shared_service_keeps_concurrent_permissions_and_query_limits_per_reques
                                     {
                                         AssetIdentity(
                                             cfg.query.data_source,
-                                            cfg.doris.database,
+                                            cfg.business_pg.database,
                                             "orders",
                                             column_name,
                                         )
@@ -306,3 +309,80 @@ def test_shared_service_keeps_concurrent_permissions_and_query_limits_per_reques
         assert dict(active) == {"left": 0, "right": 0}
 
     asyncio.run(run())
+
+
+def test_row_restricted_columns_keep_schema_but_never_return_shared_row_values():
+    table = "orders"
+    key = (table, "status")
+    column = ColumnInfo(
+        t_name=table,
+        name=key[1],
+        type="text",
+        description="状态",
+        alias=[],
+        examples=["global example"],
+        index_values=True,
+        meta_version=1,
+        index_version=1,
+    )
+    catalog = SemanticCatalog(tables={}, columns={key: column}, metrics={})
+    policy = AssetAccessPolicy(
+        7,
+        grants=frozenset(
+            {
+                AssetIdentity(cfg.query.data_source, cfg.business_pg.database, *key),
+            }
+        ),
+        row_restricted_tables=frozenset({table}),
+    )
+    service = SemanticResourceService(
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
+        data_source=cfg.query.data_source,
+        database_name=cfg.business_pg.database,
+    )
+    service._value_repo = MagicMock(search_hits=AsyncMock(return_value=[]))
+    request = SemanticResourceRecallRequest(terms=["状态"], resource_types=["value"])
+    context = service._create_context(request, catalog, policy)
+
+    assert key in context.catalog.columns
+    assert not context.catalog.columns[key].index_values
+    assert context.catalog.columns[key].examples == []
+    assert column.examples == ["global example"]
+    asyncio.run(service._collect_value_matches(context))
+    service._value_repo.search_hits.assert_not_awaited()
+
+    snapshot_columns, _, _ = ColumnContextBuilder(catalog, []).build(
+        RankedCandidates(
+            columns=[(key, 1.0, [])], metrics=[], values=[], truncated=False
+        )
+    )
+    snapshot = SemanticResourceRecallResponse(
+        status="success",
+        recall_id="old-recall",
+        terms=["状态"],
+        metrics=[],
+        columns=snapshot_columns,
+        values=[
+            SemanticValueRecallResult(
+                value="global value",
+                t_name=table,
+                c_name=key[1],
+                rank_score=1.0,
+                match_reasons=[],
+                sync_status="succeeded",
+                synced_at=None,
+            )
+        ],
+        tables=[],
+        failures=[],
+        warnings=[],
+        truncated=False,
+    )
+    filtered = SemanticRecallAuthorization(
+        policy, cfg.query.data_source, cfg.business_pg.database
+    ).filter_recall_response(snapshot)
+    assert len(filtered.columns) == 1
+    assert filtered.columns[0].examples == []
+    assert filtered.values == []

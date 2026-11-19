@@ -12,7 +12,7 @@ from app.identity.accounts.validation import (
 )
 from app.identity.auth.passwords import Argon2PasswordManager, get_password_manager
 from app.identity.models.account import User
-from app.identity.models.doris import normalize_doris_role_name
+from app.identity.models.business_pg import normalize_business_pg_role_name
 from app.identity.repositories.identity import IdentityPGRepo
 from app.shared.config.app_config import AuthConfig
 
@@ -58,7 +58,7 @@ class UserManagementService:
         username: str,
         email: str,
         password: str,
-        doris_role: str | None = None,
+        business_pg_role: str | None = None,
         is_admin: bool = False,
     ) -> User:
         """平台管理员创建新用户。"""
@@ -66,7 +66,11 @@ class UserManagementService:
         normalized_email = validate_email(email)
         validate_password(password, min_length=self._config.password_min_length)
 
-        normalized_role = normalize_doris_role_name(doris_role) if doris_role else None
+        normalized_role = (
+            normalize_business_pg_role_name(business_pg_role)
+            if business_pg_role
+            else None
+        )
         password_hash = await self._password_manager.hash(password)
         now = datetime.now(UTC)
         try:
@@ -97,7 +101,7 @@ class UserManagementService:
                     password_hash=password_hash,
                     is_active=True,
                     is_admin=is_admin,
-                    doris_role_name=assigned_role,
+                    business_pg_role_name=assigned_role,
                     created_at=now,
                     updated_at=now,
                 )
@@ -112,13 +116,13 @@ class UserManagementService:
         username: str | None = None,
         email: str | None = None,
         password: str | None = None,
-        doris_role: str | None = None,
-        update_doris_role: bool = False,
+        business_pg_role: str | None = None,
+        update_business_pg_role: bool = False,
         is_admin: bool | None = None,
     ) -> User:
         """管理员更新指定用户的基础信息、角色、权限或密码并吊销已有令牌。"""
-        if doris_role is not None and not update_doris_role:
-            raise ValueError("设置 Doris 角色时必须显式启用角色更新")
+        if business_pg_role is not None and not update_business_pg_role:
+            raise ValueError("设置 PostgreSQL 角色时必须显式启用角色更新")
         normalized_username: str | None = None
         if username is not None:
             normalized_username = validate_username(username)
@@ -132,9 +136,11 @@ class UserManagementService:
             validate_password(password, min_length=self._config.password_min_length)
             password_hash = await self._password_manager.hash(password)
 
-        normalized_doris_role: str | None = None
-        if update_doris_role and doris_role:
-            normalized_doris_role = normalize_doris_role_name(doris_role)
+        normalized_business_pg_role: str | None = None
+        if update_business_pg_role and business_pg_role:
+            normalized_business_pg_role = normalize_business_pg_role_name(
+                business_pg_role
+            )
 
         now = datetime.now(UTC)
         try:
@@ -142,9 +148,9 @@ class UserManagementService:
                 # 角色、最后管理员和唯一性检查与用户更新共享安全锁；刷新令牌也在
                 # 同一事务吊销，提交后旧身份立即失效。
                 await self._repo.lock_security_mutation()
-                if normalized_doris_role is not None:
+                if normalized_business_pg_role is not None:
                     identity_role = await self._repo.get_query_identity(
-                        normalized_doris_role
+                        normalized_business_pg_role
                     )
                     if identity_role is None:
                         raise auth_error.RoleNotFoundError
@@ -183,8 +189,8 @@ class UserManagementService:
                     username=normalized_username,
                     email=normalized_email,
                     password_hash=password_hash,
-                    doris_role=normalized_doris_role,
-                    update_doris_role=update_doris_role,
+                    business_pg_role=normalized_business_pg_role,
+                    update_business_pg_role=update_business_pg_role,
                     is_admin=is_admin,
                 )
                 await self._repo.revoke_user_refresh_tokens(user.id, now)

@@ -34,7 +34,7 @@ from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
 from app.metadata.repositories.postgres import MetaPGRepo
 from app.metadata.repositories.semantic_index import SemanticIndexRepo
-from app.metadata.repositories.source_doris import SourceDorisRepo
+from app.metadata.repositories.source_business_pg import SourceBusinessPgRepo
 from app.metadata.repositories.value_index import ValueESRepo
 from app.shared.config.app_config import cfg
 
@@ -65,7 +65,7 @@ class MetaIndexService:
     def __init__(
         self,
         meta_repo: MetaPGRepo,
-        source_repo: SourceDorisRepo,
+        source_repo: SourceBusinessPgRepo,
         column_repo: ColumnESRepo,
         metric_repo: MetricESRepo,
         embedding_client: EmbeddingClient,
@@ -540,7 +540,7 @@ class MetaIndexService:
         self,
         run: _ValueIndexRun,
     ) -> ValueIndexSyncResult:
-        """在 PostgreSQL 事务外执行 Doris 和 Elasticsearch I/O。"""
+        """在 PostgreSQL 事务外执行业务数据库和 Elasticsearch I/O。"""
         if run.mode == "clear":
             removed_count = await self._value_repo.delete_by_column(
                 run.t_name,

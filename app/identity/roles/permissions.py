@@ -1,74 +1,66 @@
-"""Doris 数据角色权限管理服务。"""
+"""PostgreSQL 数据角色权限管理服务。"""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-import sqlglot
-from sqlglot.errors import ParseError
-
 from app.identity import errors as auth_error
-from app.identity.contracts import AssetIdentity, AssetScope
-from app.identity.models.doris import (
-    DorisRowPolicy,
-    DorisSelectGrant,
-    normalize_doris_role_name,
+from app.identity.contracts import AssetIdentity
+from app.identity.models.business_pg import (
+    BusinessPgRowPolicy,
+    BusinessPgSelectGrant,
+    normalize_business_pg_role_name,
 )
-from app.identity.repositories.doris_role import DorisRoleRepository, role_name_from_row
+from app.identity.repositories.business_pg_role import (
+    BusinessPgRoleRepository,
+    role_name_from_row,
+)
 from app.identity.repositories.identity import IdentityPGRepo
 from app.identity.roles.authorization import AuthorizationService
 
 
 @dataclass(frozen=True, slots=True)
-class DorisRoleStatus:
-    """配置角色在 Doris 中的实时状态。"""
+class BusinessPgRoleStatus:
+    """配置角色在 PostgreSQL 中的实时状态。"""
 
     name: str
     description: str
     is_default: bool
     query_user: str
     workload_group: str
-    exists_in_doris: bool
-    doris_grants: dict[str, Any] | None
+    exists_in_business_pg: bool
+    business_pg_grants: dict[str, Any] | None
 
 
-@dataclass(frozen=True, slots=True)
-class _SelectGrantTarget:
-    """描述一次可直接提交给 Doris 的 SELECT 权限目标。"""
-
-    table_name: str | None
-    columns: tuple[str, ...]
-
-
-class DorisPermissionService:
-    """通过独立管理账号维护 Doris 角色的细粒度权限。"""
+class BusinessPgPermissionService:
+    """通过独立管理账号维护 PostgreSQL 角色的细粒度权限。"""
 
     def __init__(
         self,
         repo: IdentityPGRepo,
-        doris_repo: DorisRoleRepository,
+        business_pg_repo: BusinessPgRoleRepository,
         *,
         data_source: str,
         catalog: str,
         database: str,
     ) -> None:
-        """初始化 Doris 权限操作和平台身份依赖。"""
+        """初始化 PostgreSQL 权限操作和平台身份依赖。"""
         self._repo = repo
-        self._doris_repo = doris_repo
+        self._business_pg_repo = business_pg_repo
         self._data_source = data_source
         self._catalog = catalog
         self._database = database
         self._authorization = AuthorizationService(
             repo,
-            doris_repo,
+            business_pg_repo,
             data_source=data_source,
             catalog=catalog,
             database=database,
         )
 
-    async def list_roles(self) -> list[DorisRoleStatus]:
-        """合并配置角色与 Doris 实时授权状态。"""
-        live_rows = await self._doris_repo.list_roles()
+    async def list_roles(self) -> list[BusinessPgRoleStatus]:
+        """合并配置角色与 PostgreSQL 实时授权状态。"""
+        live_rows = await self._business_pg_repo.list_roles()
         live_by_name = {
             role_name: row
             for row in live_rows
@@ -76,19 +68,19 @@ class DorisPermissionService:
         }
         identities = await self._repo.list_query_identities()
         return [
-            DorisRoleStatus(
+            BusinessPgRoleStatus(
                 name=identity.role_name,
                 description=identity.description,
                 is_default=identity.is_default,
                 query_user=identity.query_user,
                 workload_group=identity.workload_group,
-                exists_in_doris=identity.role_name in live_by_name,
-                doris_grants=live_by_name.get(identity.role_name),
+                exists_in_business_pg=identity.role_name in live_by_name,
+                business_pg_grants=live_by_name.get(identity.role_name),
             )
             for identity in identities
         ]
 
-    async def list_asset_grants(self, role_name: str) -> list[DorisSelectGrant]:
+    async def list_asset_grants(self, role_name: str) -> list[BusinessPgSelectGrant]:
         """读取专属查询账号当前有效 SELECT 授权。"""
         async with self._repo.session.begin():
             _, snapshot = await self._authorization.observe_role(
@@ -102,7 +94,7 @@ class DorisPermissionService:
         *,
         table_name: str | None,
         columns: Sequence[str],
-    ) -> list[DorisSelectGrant]:
+    ) -> list[BusinessPgSelectGrant]:
         """校验授权目标并授予角色 SELECT 权限，刷新指纹后返回有效授权。"""
         role = self._normalize_role(role_name)
         columns = self._normalize_columns(columns)
@@ -110,7 +102,7 @@ class DorisPermissionService:
             await self._repo.lock_security_mutation()
             await self._authorization.observe_role(role)
             await self._validate_target(table_name, columns)
-            await self._doris_repo.grant_select(
+            await self._business_pg_repo.grant_select(
                 role_name=role,
                 catalog=self._catalog,
                 database=self._database,
@@ -135,7 +127,7 @@ class DorisPermissionService:
             await self._authorization.observe_role(role)
             # 按授权记录执行撤权，同时支持清理已删除表的遗留授权。
             targets = self._assets(table_name, columns)
-            await self._doris_repo.revoke_select(
+            await self._business_pg_repo.revoke_select(
                 role_name=role,
                 catalog=self._catalog,
                 database=self._database,
@@ -143,14 +135,18 @@ class DorisPermissionService:
                 columns=columns,
             )
             _, snapshot = await self._authorization.observe_role(role)
-            if any(
+            assets = [
                 AssetIdentity(
                     g.data_source, g.database_name, g.table_name, g.column_name
-                ).encompasses(target)
+                )
                 for g in snapshot.grants
+            ]
+            if any(
+                remaining.encompasses(target) or target.encompasses(remaining)
+                for remaining in assets
                 for target in targets
             ):
-                raise auth_error.InvalidDorisPermissionError(
+                raise auth_error.InvalidBusinessPgPermissionError(
                     detail="角色撤权后查询账号仍有有效权限，请检查账号直接授权或更高层级授权"
                 )
 
@@ -160,29 +156,24 @@ class DorisPermissionService:
         async with self._repo.session.begin():
             await self._repo.lock_security_mutation()
             _, snapshot = await self._authorization.observe_role(role)
-            if snapshot.has_broad_select:
-                raise auth_error.InvalidDorisPermissionError(
-                    detail="账号存在全局或 Catalog SELECT 授权，不能在业务数据库范围内清空，请先在 Doris 撤销上级授权"
-                )
-            for target in self._group_select_grant_targets(snapshot.grants):
-                await self._doris_repo.revoke_select(
-                    role_name=role,
-                    catalog=self._catalog,
-                    database=self._database,
-                    table=target.table_name,
-                    columns=target.columns,
-                )
+            await self._business_pg_repo.revoke_select(
+                role_name=role,
+                catalog=self._catalog,
+                database=self._database,
+                table=None,
+                columns=(),
+            )
             _, updated = await self._authorization.observe_role(role)
             if updated.grants:
-                raise auth_error.InvalidDorisPermissionError(
-                    detail="角色撤权后账号仍有直接 SELECT 授权，请在 Doris 中处理"
+                raise auth_error.InvalidBusinessPgPermissionError(
+                    detail="角色撤权后账号仍有直接 SELECT 授权，请在 PostgreSQL 中处理"
                 )
             return len(snapshot.grants)
 
-    async def list_row_policies(self, role_name: str) -> list[DorisRowPolicy]:
+    async def list_row_policies(self, role_name: str) -> list[BusinessPgRowPolicy]:
         """确认角色存在并读取其当前行级过滤策略。"""
         role = await self._require_role(role_name)
-        return await self._doris_repo.list_role_row_policies(role)
+        return await self._business_pg_repo.list_role_row_policies(role)
 
     async def create_row_policy(
         self,
@@ -195,18 +186,17 @@ class DorisPermissionService:
     ) -> None:
         """校验过滤谓词并创建角色行级策略，随后刷新授权指纹。"""
         role = self._normalize_role(role_name)
-        predicate_sql = self._validate_predicate(predicate)
         async with self._repo.session.begin():
             await self._repo.lock_security_mutation()
             await self._authorization.observe_role(role)
-            await self._doris_repo.create_row_policy(
+            await self._business_pg_repo.create_row_policy(
                 policy_name=policy_name,
                 role_name=role,
                 catalog=self._catalog,
                 database=self._database,
                 table=table_name,
                 policy_type=policy_type,
-                predicate_sql=predicate_sql,
+                predicate_sql=predicate,
             )
             await self._authorization.observe_role(role)
 
@@ -222,7 +212,7 @@ class DorisPermissionService:
         async with self._repo.session.begin():
             await self._repo.lock_security_mutation()
             await self._authorization.observe_role(role)
-            await self._doris_repo.drop_row_policy(
+            await self._business_pg_repo.drop_row_policy(
                 policy_name=policy_name,
                 role_name=role,
                 catalog=self._catalog,
@@ -239,12 +229,12 @@ class DorisPermissionService:
 
     @staticmethod
     def _normalize_role(role_name: str) -> str:
-        """规范化 Doris 角色名。"""
+        """规范化 PostgreSQL 角色名。"""
         try:
-            return normalize_doris_role_name(role_name)
+            return normalize_business_pg_role_name(role_name)
         except ValueError as exc:
-            raise auth_error.InvalidDorisPermissionError(
-                detail="Doris 角色名无效"
+            raise auth_error.InvalidBusinessPgPermissionError(
+                detail="PostgreSQL 角色名无效"
             ) from exc
 
     async def _require_role_exists(self, role_name: str) -> None:
@@ -261,19 +251,19 @@ class DorisPermissionService:
         """校验表和字段均存在于配置数据库。"""
         if table_name is None:
             if columns:
-                raise auth_error.InvalidDorisPermissionError(
+                raise auth_error.InvalidBusinessPgPermissionError(
                     detail="指定列权限时必须提供目标表"
                 )
             return
-        actual_columns = await self._doris_repo.list_table_columns(
+        actual_columns = await self._business_pg_repo.list_table_columns(
             self._database,
             table_name,
         )
         if not actual_columns:
-            raise auth_error.InvalidDorisPermissionError(detail="目标表不存在")
+            raise auth_error.InvalidBusinessPgPermissionError(detail="目标表不存在")
         unknown = sorted(set(columns) - set(actual_columns))
         if unknown:
-            raise auth_error.InvalidDorisPermissionError(
+            raise auth_error.InvalidBusinessPgPermissionError(
                 detail="存在未知的目标列: " + ", ".join(unknown)
             )
 
@@ -285,7 +275,7 @@ class DorisPermissionService:
         """将授权目标转换为资产标识。"""
         if table_name is None:
             if columns:
-                raise auth_error.InvalidDorisPermissionError(
+                raise auth_error.InvalidBusinessPgPermissionError(
                     detail="指定列权限时必须提供目标表"
                 )
             return (AssetIdentity(self._data_source, self._database),)
@@ -302,74 +292,11 @@ class DorisPermissionService:
         )
 
     @staticmethod
-    def _group_select_grant_targets(
-        grants: Sequence[DorisSelectGrant],
-    ) -> tuple[_SelectGrantTarget, ...]:
-        """将有效授权合并为数据库、整表和字段级 Doris 回收目标。"""
-        has_database_grant = False
-        table_grants: set[str] = set()
-        column_grants: dict[str, set[str]] = {}
-
-        for grant in grants:
-            if grant.scope == AssetScope.DATABASE.value:
-                has_database_grant = True
-                continue
-            if grant.scope == AssetScope.TABLE.value and grant.table_name is not None:
-                table_grants.add(grant.table_name)
-                continue
-            if (
-                grant.scope == AssetScope.COLUMN.value
-                and grant.table_name is not None
-                and grant.column_name is not None
-            ):
-                column_grants.setdefault(grant.table_name, set()).add(grant.column_name)
-                continue
-            raise RuntimeError(f"存在无法回收的 SELECT 权限: {grant.scope}")
-
-        targets: list[_SelectGrantTarget] = []
-        if has_database_grant:
-            targets.append(_SelectGrantTarget(table_name=None, columns=()))
-        targets.extend(
-            _SelectGrantTarget(table_name=table_name, columns=())
-            for table_name in sorted(table_grants)
-        )
-        targets.extend(
-            _SelectGrantTarget(
-                table_name=table_name,
-                columns=tuple(sorted(columns)),
-            )
-            for table_name, columns in sorted(column_grants.items())
-        )
-        return tuple(targets)
-
-    @staticmethod
     def _normalize_columns(columns: Sequence[str]) -> tuple[str, ...]:
         """校验字段列表无重复。"""
         normalized = tuple(column.strip() for column in columns)
         if any(not column for column in normalized):
-            raise auth_error.InvalidDorisPermissionError(detail="列名不能为空")
+            raise auth_error.InvalidBusinessPgPermissionError(detail="列名不能为空")
         if len(set(normalized)) != len(normalized):
-            raise auth_error.InvalidDorisPermissionError(detail="列名不能重复")
-        return normalized
-
-    @staticmethod
-    def _validate_predicate(
-        predicate: str,
-    ) -> str:
-        """确认行策略输入是单个 SQL 表达式，并保留原始语义。"""
-        normalized = predicate.strip()
-        if not normalized:
-            raise auth_error.InvalidDorisPermissionError(
-                detail="行级策略谓词表达式不能为空"
-            )
-        try:
-            statements = sqlglot.parse(normalized, read="doris")
-        except ParseError as exc:
-            raise auth_error.InvalidDorisPermissionError(
-                detail="行级策略谓词表达式语法无效"
-            ) from exc
-        if len(statements) != 1:
-            raise auth_error.InvalidDorisPermissionError(
-                detail="行级策略谓词必须为单个布尔表达式"
-            )
+            raise auth_error.InvalidBusinessPgPermissionError(detail="列名不能重复")
         return normalized

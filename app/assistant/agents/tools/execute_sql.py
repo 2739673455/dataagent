@@ -19,7 +19,7 @@ def create_execute_sql_tool(service: QueryExecutionService) -> BaseTool:
     @tool("execute_sql")
     async def execute_sql_tool(
         runtime: ToolRuntime,
-        sql: Annotated[str, "需要执行的单条 Doris 只读 SQL"],
+        sql: Annotated[str, "需要执行的单条 PostgreSQL 只读 SQL"],
         purpose: Annotated[str, "本次 SQL 的具体查询目的"],
     ) -> dict[str, Any]:
         """安全执行只读 SQL 并写入会话产物。"""
@@ -44,7 +44,7 @@ def create_execute_sql_tool(service: QueryExecutionService) -> BaseTool:
                     f"SQL 校验未通过: conversation_id={session_key.conversation_id}, {exc}"
                 )
                 return tool_error(
-                    "SQL 在提交 Doris 执行前未通过校验",
+                    "SQL 在提交 PostgreSQL 执行前未通过校验",
                     f"{exc}。请根据上述问题修正 SQL，然后再次调用 execute_sql。",
                 )
             logger.exception(

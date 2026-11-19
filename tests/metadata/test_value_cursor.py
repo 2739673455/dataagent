@@ -20,7 +20,7 @@ from app.metadata.indexing import MetaIndexService
         ("水位", "str"),
         ("", "str"),
         (date(2026, 9, 27), "date"),
-        # Doris DATETIME 也可能返回无时区值，必须原样恢复。
+        # PostgreSQL timestamp without time zone 也可能返回无时区值，必须原样恢复。
         (datetime(2026, 9, 27, 12, 30, 10, 123456), "datetime"),  # noqa: DTZ001
         (datetime(2026, 9, 27, 12, 30, tzinfo=UTC), "datetime"),
         (Decimal("1234567890.123456789"), "decimal"),

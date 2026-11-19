@@ -43,7 +43,9 @@ class AuthDependencyTest(unittest.IsolatedAsyncioTestCase):
         )
 
         resources = MagicMock()
-        resources.identity = IdentityService(resources.auth, resources.admin_doris)
+        resources.identity = IdentityService(
+            resources.auth, resources.admin_business_pg
+        )
         with (
             patch.object(
                 resources.auth,
@@ -87,8 +89,8 @@ class AuthDependencyTest(unittest.IsolatedAsyncioTestCase):
         )
         for role, managed in (
             (None, False),
-            (user.doris_role_name, False),
-            (user.doris_role_name, True),
+            (user.business_pg_role_name, False),
+            (user.business_pg_role_name, True),
         ):
             with self.subTest(role=role, managed=managed):
                 active = []
@@ -110,7 +112,7 @@ class AuthDependencyTest(unittest.IsolatedAsyncioTestCase):
 
                 resources = MagicMock()
                 resources.auth.session.side_effect = session_scope
-                service = IdentityService(resources.auth, resources.admin_doris)
+                service = IdentityService(resources.auth, resources.admin_business_pg)
                 repo = MagicMock()
                 repo.get_query_identity = AsyncMock(side_effect=get_identity)
                 with patch(
@@ -119,12 +121,12 @@ class AuthDependencyTest(unittest.IsolatedAsyncioTestCase):
                 ):
                     if managed:
                         await service.require_analysis_access(
-                            replace(principal, doris_role_name=role)
+                            replace(principal, business_pg_role_name=role)
                         )
                     else:
                         with self.assertRaises(PermissionDeniedError):
                             await service.require_analysis_access(
-                                replace(principal, doris_role_name=role)
+                                replace(principal, business_pg_role_name=role)
                             )
                 self.assertFalse(active)
                 if role is None:

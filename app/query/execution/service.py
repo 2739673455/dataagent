@@ -24,12 +24,13 @@ from app.query.execution.recorder import (
     QueryExecutionRecorder,
 )
 from app.query.experiences.scheduler import CeleryQueryExperienceIndexScheduler
-from app.query.repositories.doris import DorisQueryRepository
+from app.query.repositories.business_pg import BusinessPgQueryRepository
 from app.query.repositories.execution_postgres import QueryExecutionPGRepo
 from app.query.repositories.experience_postgres import QueryExperiencePGRepo
-from app.shared.clients.doris_client_manager import DorisQueryClientRegistry
+from app.shared.clients.business_pg_client_manager import BusinessPgQueryClientRegistry
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import QueryConfig
+from app.shared.contracts.business_pg import BUSINESS_PG_RESOURCE_PROFILES
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
 
 
 class QueryExecutionService:
-    """使用短数据库会话解析身份、校验 SQL 和记录历史；Doris 查询在会话释放后执行。"""
+    """使用短数据库会话解析身份、校验 SQL 和记录历史；PostgreSQL 查询在会话释放后执行。"""
 
     def __init__(
         self,
@@ -46,15 +47,17 @@ class QueryExecutionService:
         identity: IdentityService,
         metadata: MetadataReader,
         postgres: PostgresClientManager,
-        query_clients: DorisQueryClientRegistry,
+        query_clients: BusinessPgQueryClientRegistry,
         artifact_store: DockerSandboxManager,
         config: QueryConfig,
         database_name: str,
         index_scheduler: CeleryQueryExperienceIndexScheduler,
+        schema_name: str = "public",
     ) -> None:
         """绑定查询用例所需的身份、目录、查询客户端和产物存储。"""
         self._config = config
         self._database_name = database_name
+        self._schema_name = schema_name
         self._index_scheduler = index_scheduler
         self._identity = identity
         self._metadata = metadata
@@ -62,7 +65,9 @@ class QueryExecutionService:
         self._query_clients = query_clients
         self._artifact_store = artifact_store
         self._guard = QueryGuardService(
-            metadata.query_catalog, current_database=self._database_name
+            metadata.query_catalog,
+            current_database=self._database_name,
+            schema_name=self._schema_name,
         )
         self._options = QueryExecutionOptions(
             batch_size=self._config.batch_size,
@@ -100,13 +105,17 @@ class QueryExecutionService:
                 principal.query_user,
                 principal.password,
             )
+            profile = BUSINESS_PG_RESOURCE_PROFILES[principal.workload_group]
             result = await AnalysisQueryService(
-                DorisQueryRepository(connection_provider),
+                BusinessPgQueryRepository(
+                    connection_provider, schema_name=self._schema_name
+                ),
                 self._artifact_store,
                 QueryExecutionLimits(
-                    workload_group=principal.workload_group,
-                    timeout_seconds=self._config.timeout_seconds,
-                    memory_limit_bytes=self._config.memory_limit_bytes,
+                    timeout_seconds=min(
+                        profile.statement_timeout_seconds, self._config.timeout_seconds
+                    ),
+                    work_mem_kb=min(profile.work_mem_kib, self._config.work_mem_kb),
                 ),
                 self._options,
             ).execute(

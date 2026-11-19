@@ -1,7 +1,7 @@
 import { Ban, History, Search, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { rolesApi, type DorisRoleResponse } from "@/features/roles/api";
+import { rolesApi, type BusinessPgRoleResponse } from "@/features/roles/api";
 import {
   queryExperiencesApi,
   type QueryExperienceListResponse,
@@ -29,7 +29,7 @@ function formatTime(value: string): string {
 /** 管理查询经验的筛选、详情、启停和删除。 */
 export function QueryExperienceManagement() {
   const [page, setPage] = useState<QueryExperienceListResponse | null>(null);
-  const [roles, setRoles] = useState<DorisRoleResponse[]>([]);
+  const [roles, setRoles] = useState<BusinessPgRoleResponse[]>([]);
   const [offset, setOffset] = useState(0);
   const [roleName, setRoleName] = useState("");
   const [status, setStatus] = useState<QueryExperienceStatus | "">("");
@@ -181,7 +181,7 @@ export function QueryExperienceManagement() {
             批量删除{deleteIds.length ? ` (${deleteIds.length})` : ""}
           </Button>
           <select
-            aria-label="Doris 角色筛选"
+            aria-label="PostgreSQL 角色筛选"
             value={roleName}
             onChange={(event) => changeFilter(() => setRoleName(event.target.value))}
             className="h-7 rounded border border-[#d4d4ce] bg-white px-2 text-xs"

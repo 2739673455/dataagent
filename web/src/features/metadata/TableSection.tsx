@@ -72,7 +72,7 @@ export function TableSection({
         const rawTables = await metaApi.listSourceTables();
         setSourceTables(rawTables);
       } catch (error) {
-        toast.error(getApiErrorMessage(error, "获取 Doris 物理表列表失败"));
+        toast.error(getApiErrorMessage(error, "获取 PostgreSQL 物理表列表失败"));
       } finally {
         setLoadingSourceTables(false);
       }

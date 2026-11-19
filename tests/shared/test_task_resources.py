@@ -124,7 +124,9 @@ def test_index_task_resources_are_isolated_between_threads(module) -> None:
             stack.enter_context(patch.object(module, name, side_effect=manager_factory))
         if module is metadata_tasks:
             stack.enter_context(
-                patch.object(module, "DorisClientManager", side_effect=manager_factory)
+                patch.object(
+                    module, "BusinessPgClientManager", side_effect=manager_factory
+                )
             )
         else:
             stack.enter_context(
@@ -187,8 +189,8 @@ def _web_dependencies(
     with ExitStack() as stack:
         for name in (
             "PostgresClientManager",
-            "DorisClientManager",
-            "DorisQueryClientRegistry",
+            "BusinessPgClientManager",
+            "BusinessPgQueryClientRegistry",
             "EmbeddingClient",
             "AsyncElasticsearch",
             "PostgresCheckpointStore",
@@ -358,13 +360,13 @@ def test_index_task_failure_and_cancellation_release_resources(module, error_typ
         ].session.return_value.__aexit__.assert_awaited_once()
         if module is metadata_tasks:
             managers[
-                "DorisClientManager"
+                "BusinessPgClientManager"
             ].engine.connect.return_value.__aexit__.assert_awaited_once()
 
     with ExitStack() as stack:
         names = ["EmbeddingClient", "AsyncElasticsearch", "PostgresClientManager"]
         if module is metadata_tasks:
-            names.append("DorisClientManager")
+            names.append("BusinessPgClientManager")
         for name in names:
             stack.enter_context(
                 patch.object(module, name, return_value=manager_factory(name))

@@ -9,11 +9,11 @@ from app.identity.contracts import (
     ResolvedQueryPrincipal,
 )
 from app.identity.errors import PermissionDeniedError, QueryPrincipalNotConfiguredError
-from app.identity.repositories.doris_role import DorisRoleRepository
+from app.identity.repositories.business_pg_role import BusinessPgRoleRepository
 from app.identity.repositories.identity import IdentityPGRepo
 from app.identity.roles.authorization import AuthorizationService
-from app.identity.roles.credentials import DorisCredentialCipher
-from app.shared.clients.doris_client_manager import DorisClientManager
+from app.identity.roles.credentials import BusinessPgCredentialCipher
+from app.shared.clients.business_pg_client_manager import BusinessPgClientManager
 from app.shared.clients.postgres_client_manager import PostgresClientManager
 from app.shared.config.app_config import cfg
 
@@ -21,13 +21,19 @@ from app.shared.config.app_config import cfg
 class IdentityService:
     """在短事务中读取当前授权、更新权限指纹并解析查询凭据。"""
 
-    def __init__(self, postgres: PostgresClientManager, doris: DorisClientManager):
-        """绑定身份存储与 Doris 客户端，并初始化查询凭据加解密器。"""
+    def __init__(
+        self, postgres: PostgresClientManager, business_pg: BusinessPgClientManager
+    ):
+        """绑定身份存储与 PostgreSQL 客户端，并初始化查询凭据加解密器。"""
         self._postgres = postgres
-        self._doris_repo = DorisRoleRepository(doris)
+        self._business_pg_repo = BusinessPgRoleRepository(
+            business_pg,
+            database=cfg.business_pg.database,
+            schema=cfg.business_pg.schema_name,
+        )
         self._codec = JWTCodec(cfg.auth)
-        self._cipher = DorisCredentialCipher(
-            cfg.doris_credentials.encryption_key.get_secret_value()
+        self._cipher = BusinessPgCredentialCipher(
+            cfg.business_pg_credentials.encryption_key.get_secret_value()
         )
 
     async def authenticate(self, access_token: str) -> AuthenticatedUser:
@@ -47,7 +53,7 @@ class IdentityService:
                 auth_version=user.auth_version,
                 is_active=user.is_active,
                 is_admin=user.is_admin,
-                doris_role_name=user.doris_role_name,
+                business_pg_role_name=user.business_pg_role_name,
                 created_at=user.created_at,
             )
 
@@ -59,14 +65,14 @@ class IdentityService:
 
     async def require_analysis_access(self, user: AuthenticatedUser) -> None:
         """在认证模块的短会话中确认用户绑定了可用查询身份。"""
-        if user.doris_role_name is None:
-            raise PermissionDeniedError(detail="分配的 Doris 角色不可用")
+        if user.business_pg_role_name is None:
+            raise PermissionDeniedError(detail="分配的 PostgreSQL 角色不可用")
         async with self._postgres.session() as session:
             identity = await IdentityPGRepo(session).get_query_identity(
-                user.doris_role_name
+                user.business_pg_role_name
             )
             if identity is None:
-                raise PermissionDeniedError(detail="分配的 Doris 角色不可用")
+                raise PermissionDeniedError(detail="分配的 PostgreSQL 角色不可用")
 
     async def asset_policy(self, user_id: int) -> AssetAccessPolicy:
         """每次操作观察实时权限，事务结束后才返回策略快照。"""
@@ -83,11 +89,11 @@ class IdentityService:
                 raise auth_error.UserNotFoundError
             if not user.is_active:
                 raise auth_error.InactiveUserError
-            if user.doris_role_name is None:
-                raise QueryPrincipalNotConfiguredError("用户尚未配置 Doris 角色")
+            if user.business_pg_role_name is None:
+                raise QueryPrincipalNotConfiguredError("用户尚未配置 PostgreSQL 角色")
             try:
                 identity, snapshot = await self._authorization(repo).observe_role(
-                    user.doris_role_name
+                    user.business_pg_role_name
                 )
             except auth_error.RoleNotFoundError as exc:
                 raise QueryPrincipalNotConfiguredError("角色查询身份不存在") from exc
@@ -100,10 +106,11 @@ class IdentityService:
             )
 
     def _authorization(self, repo: IdentityPGRepo) -> AuthorizationService:
-        """使用当前身份仓储和配置的 Doris 数据范围组装授权服务。"""
+        """使用当前身份仓储和配置的 PostgreSQL 数据范围组装授权服务。"""
         return AuthorizationService(
             repo,
-            self._doris_repo,
+            self._business_pg_repo,
             data_source=cfg.query.data_source,
-            database=cfg.doris.database,
+            database=cfg.business_pg.database,
+            catalog=cfg.business_pg.schema_name,
         )

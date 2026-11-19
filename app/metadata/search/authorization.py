@@ -31,6 +31,10 @@ class SemanticRecallAuthorization:
         """判断字段是否具备完整读取权限。"""
         return self.policy.allows(self._identity(table_name, column_name))
 
+    def row_values_are_allowed(self, table_name: str) -> bool:
+        """共享索引基于管理连接，不能代表启用行权限的用户视图。"""
+        return table_name not in self.policy.row_restricted_tables
+
     def filter_recall_response(
         self,
         response: SemanticResourceRecallResponse,
@@ -51,6 +55,11 @@ class SemanticRecallAuthorization:
             columns.append(
                 item.model_copy(
                     update={
+                        "examples": (
+                            item.examples
+                            if self.row_values_are_allowed(item.t_name)
+                            else []
+                        ),
                         "reference_t_name": (
                             item.reference_t_name if reference_allowed else None
                         ),
@@ -69,6 +78,7 @@ class SemanticRecallAuthorization:
             item
             for item in response.values
             if self.column_is_allowed(item.t_name, item.c_name)
+            and self.row_values_are_allowed(item.t_name)
         ]
         tables = [
             item.model_copy(
@@ -192,7 +202,11 @@ class MetadataAuthorizationFilter(SemanticRecallAuthorization):
                     if (item.name, name) in allowed_columns
                 ],
                 description=item.description,
-                value_index_cursor_column=item.value_index_cursor_column,
+                value_index_cursor_column=(
+                    item.value_index_cursor_column
+                    if (item.name, item.value_index_cursor_column) in allowed_columns
+                    else None
+                ),
                 meta_version=item.meta_version,
             )
             for item in table_infos
@@ -214,20 +228,22 @@ class MetadataAuthorizationFilter(SemanticRecallAuthorization):
                 and item.reference_c_name is not None
                 and (item.reference_t_name, item.reference_c_name) in allowed_columns
             )
+            row_values_allowed = self.row_values_are_allowed(item.t_name)
             filtered_item = ColumnInfo(
                 t_name=item.t_name,
                 name=item.name,
                 type=item.type,
                 description=item.description,
-                examples=item.examples,
+                examples=item.examples if row_values_allowed else [],
                 alias=item.alias,
-                index_values=item.index_values,
+                index_values=item.index_values and row_values_allowed,
                 reference_t_name=item.reference_t_name if target_allowed else None,
                 reference_c_name=item.reference_c_name if target_allowed else None,
                 meta_version=item.meta_version,
                 index_version=item.index_version,
             )
-            filtered_item.value_index_state = item.value_index_state
+            if row_values_allowed:
+                filtered_item.value_index_state = item.value_index_state
             filtered.append(filtered_item)
         return filtered
 

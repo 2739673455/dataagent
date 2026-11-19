@@ -108,7 +108,7 @@ class UserNotFoundError(ProblemError):
 
 
 class RoleNotFoundError(ProblemError):
-    """表示目标 Doris 角色不存在。"""
+    """表示目标 PostgreSQL 角色不存在。"""
 
     type = "role-not-found"
     title = "角色不存在"
@@ -116,7 +116,7 @@ class RoleNotFoundError(ProblemError):
 
 
 class RoleAlreadyExistsError(ProblemError):
-    """表示目标 Doris 角色已经存在。"""
+    """表示目标 PostgreSQL 角色已经存在。"""
 
     type = "role-already-exists"
     title = "角色已存在"
@@ -124,7 +124,7 @@ class RoleAlreadyExistsError(ProblemError):
 
 
 class QueryUserAlreadyExistsError(ProblemError):
-    """表示 Doris 查询用户名已经被占用。"""
+    """表示 PostgreSQL 查询用户名已经被占用。"""
 
     type = "query-user-already-exists"
     title = "查询用户已存在"
@@ -132,15 +132,15 @@ class QueryUserAlreadyExistsError(ProblemError):
 
 
 class WorkloadGroupNotFoundError(ProblemError):
-    """表示目标 Doris 工作组不存在。"""
+    """表示目标 PostgreSQL 查询资源配置不存在。"""
 
     type = "workload-group-not-found"
-    title = "Doris 工作组不存在"
+    title = "PostgreSQL 查询资源配置不存在"
     status = HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 class RoleInUseError(ProblemError):
-    """表示 Doris 角色仍被平台用户引用。"""
+    """表示 PostgreSQL 角色仍被平台用户引用。"""
 
     type = "role-in-use"
     title = "角色仍被用户使用"
@@ -155,11 +155,11 @@ class LastAdministratorError(ProblemError):
     status = HTTPStatus.CONFLICT
 
 
-class InvalidDorisPermissionError(ProblemError):
-    """表示 Doris 权限配置不符合查询身份约束。"""
+class InvalidBusinessPgPermissionError(ProblemError):
+    """表示 PostgreSQL 权限配置不符合查询身份约束。"""
 
-    type = "invalid-doris-permission"
-    title = "Doris 权限配置无效"
+    type = "invalid-business_pg-permission"
+    title = "PostgreSQL 权限配置无效"
     status = HTTPStatus.UNPROCESSABLE_ENTITY
 
 
@@ -183,36 +183,36 @@ class RateLimitExceededError(ProblemError):
         )
 
 
-class DorisCredentialError(RuntimeError):
-    """Doris 查询凭据无法解密。"""
+class BusinessPgCredentialError(RuntimeError):
+    """PostgreSQL 查询凭据无法解密。"""
 
 
 class QueryPrincipalNotConfiguredError(RuntimeError):
     """用户没有可用的稳定查询身份。"""
 
 
-class DorisWorkloadGroupNotFoundError(RuntimeError):
-    """Doris 工作组不存在。"""
+class BusinessPgWorkloadGroupNotFoundError(RuntimeError):
+    """PostgreSQL 查询资源配置不存在。"""
 
     def __init__(self, workload_group: str) -> None:
-        """初始化缺失的 Doris 工作组名称。"""
+        """初始化缺失的 PostgreSQL 查询资源配置名称。"""
         self.workload_group = workload_group
-        super().__init__(f"Doris 工作组不存在: {workload_group}")
+        super().__init__(f"PostgreSQL 查询资源配置不存在: {workload_group}")
 
 
-class DorisQueryUserAlreadyExistsError(RuntimeError):
-    """Doris 查询用户已存在。"""
+class BusinessPgQueryUserAlreadyExistsError(RuntimeError):
+    """PostgreSQL 查询用户已存在。"""
 
     def __init__(self, query_user: str) -> None:
-        """记录发生冲突的 Doris 查询用户名。"""
+        """记录发生冲突的 PostgreSQL 查询用户名。"""
         self.query_user = query_user
-        super().__init__(f"Doris 查询用户已存在: {query_user}")
+        super().__init__(f"PostgreSQL 查询用户已存在: {query_user}")
 
 
-class DorisRoleAlreadyExistsError(RuntimeError):
-    """Doris 角色已存在。"""
+class BusinessPgRoleAlreadyExistsError(RuntimeError):
+    """PostgreSQL 角色已存在。"""
 
     def __init__(self, role_name: str) -> None:
-        """记录发生冲突的 Doris 角色名。"""
+        """记录发生冲突的 PostgreSQL 角色名。"""
         self.role_name = role_name
-        super().__init__(f"Doris 角色已存在: {role_name}")
+        super().__init__(f"PostgreSQL 角色已存在: {role_name}")

@@ -67,7 +67,7 @@ async def _bootstrap_admin() -> None:
         grant = "granted" if result.admin_granted else "already-present"
         print(
             f"Admin bootstrap {outcome}: user_id={result.user.id}, "
-            f"administrator={grant}, doris_role={result.user.doris_role_name}"
+            f"administrator={grant}, business_pg_role={result.user.business_pg_role_name}"
         )
     finally:
         await auth_postgres_client_manager.close()

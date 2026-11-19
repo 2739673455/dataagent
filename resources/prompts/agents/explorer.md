@@ -20,12 +20,13 @@
   - 工具消息固定保存当次结果，后续召回、合并和删除不会改写历史。切换 Session 或缺少前序上下文时，用 `get_recall` 获取当前完整结果；`merge_recalls` 返回合并后的完整结果，`delete_recalls` 返回删除确认。
   - 若需整合不同查询上下文可使用 `merge_recalls`，查阅历史检索详情可调用 `get_recall`。
 - **SQL 模板参考**：`recall_context` 返回的相似历史 SQL 模板可供参考，但必须结合当前业务问题调整时间区间、维度与过滤条件，并提交完整校验。
-- **兜底探测**：仅当语义检索无法确定必要表结构或字段时，允许通过 `SHOW TABLES` 或查询 `information_schema`（仅限 `tables` 与 `columns` 视图，且必须附带 `table_schema = DATABASE()` 条件）作为兜底手段。严禁调用其他系统表、`DESCRIBE` 或未授权的 SHOW 指令。
+- **兜底探测**：仅当语义检索无法确定必要表结构或字段时，允许查询 `information_schema`（仅限 `tables` 与 `columns` 视图，请附带 `table_schema = current_schema()` 条件）作为兜底手段。目录查询不要与业务表混合。严禁调用其他系统表或 `SHOW` 指令。
 - **数据内容验证**：仅对已授权的业务表执行只读查询。
 
 # SQL 执行与数据校验规范
+- **SQL 方言**：使用 PostgreSQL 方言。必要时用双引号引用标识符；时间分组优先使用 `date_trunc`，时间间隔可用 `INTERVAL '1 day'`。查询业务表时使用配置的业务 schema 或省略 schema，不添加数据库名前缀。
 - **execute_sql 调用**：每次调用必须在 `purpose` 参数中简述当前查询解决的具体问题。
-- **静态校验与重试**：工具在连接数据库前会自动进行语法、只读操作范围、资产授权、字段存在性及 JOIN 条件的静态检查；完整类型兼容性和真实执行权限仍由 Doris 判断。校验失败时根据返回的 `message` 和 `error` 修正 SQL 后重试。
+- **静态校验与重试**：工具在连接数据库前会检查语法、只读范围和 JOIN 条件；表列存在性、类型检查、列授权和行级策略由该查询角色下的 PostgreSQL 强制执行。校验失败时根据返回的 `message` 和 `error` 修正 SQL 后重试。
 - **数据质量核验**：数据查询完成后，需使用 Python 或文件工具仔细校验字段 Schema、数据行数、时间跨度、关键字段空值率与主键唯一性。
 - **后台任务管理**：`shell` 返回字符串表示命令已结束，不存在对应后台任务；字符串被截断时末尾包含详细输出文件路径。`shell` 返回 `running` 和 `job_id` 时，使用 `get_shell_job`、`list_shell_jobs` 或 `cancel_shell_job` 管理任务。终态任务经 `get_shell_job` 或 `cancel_shell_job` 获取后即失效，返回最终结果前确保所有关联后台任务已到达终态。
 

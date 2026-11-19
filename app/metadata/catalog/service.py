@@ -28,7 +28,7 @@ from app.metadata.models.catalog import (
     serialize_column_examples,
 )
 from app.metadata.repositories.postgres import MetaPGRepo
-from app.metadata.repositories.source_doris import SourceDorisRepo
+from app.metadata.repositories.source_business_pg import SourceBusinessPgRepo
 from app.shared.tasks.submission import TaskSubmission
 
 
@@ -38,7 +38,7 @@ class MetaCatalogService:
     def __init__(
         self,
         meta_repo: MetaPGRepo,
-        source_repo: SourceDorisRepo,
+        source_repo: SourceBusinessPgRepo,
         meta_index_service: MetaIndexService,
         change_handler: MetadataChangeHandler,
     ) -> None:
@@ -49,7 +49,7 @@ class MetaCatalogService:
         self._change_handler = change_handler
 
     async def list_source_tables(self) -> list[str]:
-        """查询底层 Doris 数据库物理表清单。"""
+        """查询底层 业务 PostgreSQL 数据库物理表清单。"""
         return await self._source_repo.list_tables()
 
     async def list_table_infos(self) -> list[TableInfo]:

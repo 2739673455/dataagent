@@ -1,4 +1,4 @@
-"""账号和 Doris 角色管理接口的请求依赖。"""
+"""账号和 PostgreSQL 角色管理接口的请求依赖。"""
 
 from collections.abc import AsyncGenerator
 from typing import Annotated
@@ -8,11 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import WebResourcesDep
 from app.identity.accounts.service import UserManagementService
-from app.identity.repositories.doris_role import DorisRoleRepository
+from app.identity.repositories.business_pg_role import BusinessPgRoleRepository
 from app.identity.repositories.identity import IdentityPGRepo
-from app.identity.roles.credentials import DorisCredentialCipher
-from app.identity.roles.permissions import DorisPermissionService
-from app.identity.roles.service import DorisRoleManagementService
+from app.identity.roles.credentials import BusinessPgCredentialCipher
+from app.identity.roles.permissions import BusinessPgPermissionService
+from app.identity.roles.service import BusinessPgRoleManagementService
 from app.shared.config.app_config import cfg
 from app.workflows import UserDeletionService
 
@@ -38,36 +38,46 @@ UserManagementServiceDep = Annotated[
 
 def _get_role_management_service(
     session: IdentitySessionDep, resources: WebResourcesDep
-) -> DorisRoleManagementService:
-    """使用当前请求会话创建 Doris 角色管理服务。"""
-    return DorisRoleManagementService(
+) -> BusinessPgRoleManagementService:
+    """使用当前请求会话创建 PostgreSQL 角色管理服务。"""
+    return BusinessPgRoleManagementService(
         IdentityPGRepo(session),
-        DorisRoleRepository(resources.admin_doris),
-        DorisCredentialCipher(cfg.doris_credentials.encryption_key.get_secret_value()),
+        BusinessPgRoleRepository(
+            resources.admin_business_pg,
+            database=cfg.business_pg.database,
+            schema=cfg.business_pg.schema_name,
+        ),
+        BusinessPgCredentialCipher(
+            cfg.business_pg_credentials.encryption_key.get_secret_value()
+        ),
         resources.query_clients,
     )
 
 
-DorisRoleManagementServiceDep = Annotated[
-    DorisRoleManagementService, Depends(_get_role_management_service)
+BusinessPgRoleManagementServiceDep = Annotated[
+    BusinessPgRoleManagementService, Depends(_get_role_management_service)
 ]
 
 
-def _get_doris_permission_service(
+def _get_business_pg_permission_service(
     session: IdentitySessionDep, resources: WebResourcesDep
-) -> DorisPermissionService:
-    """使用当前请求会话创建 Doris 权限管理服务。"""
-    return DorisPermissionService(
+) -> BusinessPgPermissionService:
+    """使用当前请求会话创建 PostgreSQL 权限管理服务。"""
+    return BusinessPgPermissionService(
         IdentityPGRepo(session),
-        DorisRoleRepository(resources.admin_doris),
+        BusinessPgRoleRepository(
+            resources.admin_business_pg,
+            database=cfg.business_pg.database,
+            schema=cfg.business_pg.schema_name,
+        ),
         data_source=cfg.query.data_source,
-        catalog="internal",
-        database=cfg.doris.database,
+        catalog=cfg.business_pg.schema_name,
+        database=cfg.business_pg.database,
     )
 
 
-DorisPermissionServiceDep = Annotated[
-    DorisPermissionService, Depends(_get_doris_permission_service)
+BusinessPgPermissionServiceDep = Annotated[
+    BusinessPgPermissionService, Depends(_get_business_pg_permission_service)
 ]
 
 

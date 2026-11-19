@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import csv
 import hashlib
 import json
+import math
 import re
 import tempfile
 import unicodedata
 from contextlib import aclosing
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from io import TextIOWrapper
 from itertools import islice
 from typing import TYPE_CHECKING, Any, TextIO
+from uuid import UUID
 
 from loguru import logger
 
@@ -27,11 +30,11 @@ from app.query.contracts import (
     QueryResultColumn,
     QueryTimeRange,
 )
-from app.query.errors import QueryResultShapeError
+from app.query.errors import QueryExecutionTimeoutError, QueryResultShapeError
 from app.sandbox.contracts import SandboxSessionScope
 
 if TYPE_CHECKING:
-    from app.query.repositories.doris import DorisQueryRepository
+    from app.query.repositories.business_pg import BusinessPgQueryRepository
     from app.sandbox import DockerSandboxManager
 
 _SAMPLE_STRING_MAX_CHARS = 512
@@ -81,7 +84,7 @@ class AnalysisQueryService:
 
     def __init__(
         self,
-        query_repo: DorisQueryRepository,
+        query_repo: BusinessPgQueryRepository,
         artifact_store: DockerSandboxManager,
         limits: QueryExecutionLimits,
         options: QueryExecutionOptions,
@@ -120,10 +123,14 @@ class AnalysisQueryService:
             tempfile.TemporaryFile(mode="w+b") as temporary_file,
             TextIOWrapper(temporary_file, encoding="utf-8", newline="") as csv_file,
         ):
-            summary = await self._execute_to_csv(
-                csv_file,
-                normalized_sql,
-            )
+            try:
+                # PostgreSQL statement_timeout 单独作用于每个 FETCH；同时限制查询总耗时。
+                async with asyncio.timeout(self._limits.timeout_seconds):
+                    summary = await self._execute_to_csv(csv_file, normalized_sql)
+            except TimeoutError as exc:
+                raise QueryExecutionTimeoutError(
+                    f"PostgreSQL 查询执行超时，最大允许 {self._limits.timeout_seconds} 秒"
+                ) from exc
             temporary_file.seek(0)
             artifact_path = await self._artifact_store.write_artifact(
                 session_key.user_id,
@@ -235,8 +242,12 @@ def _value_type(value: Any) -> str:
         return "time"
     if isinstance(value, str):
         return "string"
-    if isinstance(value, bytes):
+    if isinstance(value, (bytes, memoryview)):
         return "binary"
+    if isinstance(value, UUID):
+        return "uuid"
+    if isinstance(value, timedelta):
+        return "interval"
     if isinstance(value, (dict, list, tuple)):
         return "json"
     return type(value).__name__
@@ -255,17 +266,19 @@ def _merge_types(current: str | None, observed: str) -> str:
 
 def _summary_value(value: Any, depth: int = 0) -> Any:
     """转换为 JSON 样例，并限制文本长度、集合大小和嵌套深度。"""
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
     if value is None or isinstance(value, (int, float, bool)):
         return value
     if isinstance(value, str):
         if len(value) <= _SAMPLE_STRING_MAX_CHARS:
             return value
         return f"{value[:_SAMPLE_STRING_MAX_CHARS]}…"
-    if isinstance(value, bytes):
+    if isinstance(value, (bytes, memoryview)):
         byte_limit = _SAMPLE_STRING_MAX_CHARS * 3 // 4
         encoded = _scalar_value(value[:byte_limit])
         return f"{encoded}…" if len(value) > byte_limit else encoded
-    if isinstance(value, (date, time, Decimal)):
+    if isinstance(value, (date, time, Decimal, UUID, timedelta)):
         return _scalar_value(value)
     if depth >= _SAMPLE_MAX_DEPTH:
         return "<nested value omitted>"
@@ -317,6 +330,8 @@ def _escape_csv_formula(value: str) -> str:
 
 def _json_value(value: Any) -> Any:
     """完整保留 CSV 中嵌套值并转换为 JSON 兼容数据。"""
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, dict):
@@ -330,8 +345,8 @@ def _scalar_value(value: Any) -> Any:
     """将日期时间、金额和二进制值转为文本，其他值原样返回。"""
     if isinstance(value, (date, time)):
         return value.isoformat()
-    if isinstance(value, Decimal):
+    if isinstance(value, (Decimal, UUID, timedelta)):
         return str(value)
-    if isinstance(value, bytes):
+    if isinstance(value, (bytes, memoryview)):
         return base64.b64encode(value).decode("ascii")
     return value

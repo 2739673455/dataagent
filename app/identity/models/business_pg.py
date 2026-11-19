@@ -1,4 +1,4 @@
-"""Doris 查询身份与实时授权模型。"""
+"""PostgreSQL 查询身份与实时授权模型。"""
 
 import re
 from dataclasses import dataclass
@@ -19,12 +19,12 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.identity.contracts import AssetScope
 from app.identity.models.base import AuthBase
 
-DORIS_ROLE_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$")
+BUSINESS_PG_ROLE_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,62}$")
 
 
 @dataclass(frozen=True, slots=True)
-class DorisRowPolicy:
-    """Doris 角色当前生效的行级过滤策略。"""
+class BusinessPgRowPolicy:
+    """PostgreSQL 角色当前生效的行级过滤策略。"""
 
     policy_name: str
     catalog_name: str
@@ -32,10 +32,11 @@ class DorisRowPolicy:
     table_name: str
     policy_type: Literal["RESTRICTIVE", "PERMISSIVE"]
     predicate: str
+    managed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
-class DorisSelectGrant:
+class BusinessPgSelectGrant:
     """查询账号在当前业务数据库中的一项有效 SELECT 授权。"""
 
     role_name: str
@@ -55,19 +56,18 @@ class DorisSelectGrant:
 
 
 @dataclass(frozen=True, slots=True)
-class DorisAuthorizationSnapshot:
-    """Doris 当前有效 SELECT 授权、权限指纹及上级 SELECT 授权标志。"""
+class BusinessPgAuthorizationSnapshot:
+    """PostgreSQL 当前有效 SELECT 授权、权限指纹及上级 SELECT 授权标志。"""
 
-    grants: tuple[DorisSelectGrant, ...]
+    grants: tuple[BusinessPgSelectGrant, ...]
     fingerprint: str
-    # 全局或 Catalog SELECT 不能通过当前数据库的撤权入口消除。
-    has_broad_select: bool = False
+    row_restricted_tables: frozenset[str] = frozenset()
 
 
-class DorisQueryIdentity(AuthBase):
-    """Doris 数据角色对应的稳定共享查询身份。"""
+class BusinessPgQueryIdentity(AuthBase):
+    """PostgreSQL 数据角色对应的稳定共享查询身份。"""
 
-    __tablename__ = "doris_query_identities"
+    __tablename__ = "business_pg_query_identities"
 
     role_name: Mapped[str] = mapped_column(String(64), primary_key=True)
     description: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -95,7 +95,7 @@ class DorisQueryIdentity(AuthBase):
 
     __table_args__ = (
         Index(
-            "uq_doris_query_identity_default",
+            "uq_business_pg_query_identity_default",
             "is_default",
             unique=True,
             postgresql_where=text("is_default"),
@@ -103,9 +103,9 @@ class DorisQueryIdentity(AuthBase):
     )
 
 
-def normalize_doris_role_name(value: str) -> str:
-    """校验并规范化 Doris 角色名。"""
+def normalize_business_pg_role_name(value: str) -> str:
+    """校验并规范化 PostgreSQL 角色名。"""
     normalized = value.strip()
-    if DORIS_ROLE_NAME_PATTERN.fullmatch(normalized) is None:
-        raise ValueError("Doris 角色名称格式无效")
+    if BUSINESS_PG_ROLE_NAME_PATTERN.fullmatch(normalized) is None:
+        raise ValueError("PostgreSQL 角色名称格式无效")
     return normalized

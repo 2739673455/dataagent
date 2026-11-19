@@ -1,4 +1,4 @@
-# 由 scripts/development/generate_meta_config.py 根据 Doris DDL 与语义规则生成，请勿手工编辑。
+# 由 scripts/development/generate_meta_config.py 根据 PostgreSQL 系统目录 与语义规则生成，请勿手工编辑。
 tables:
   - name: dim_date
     role: dim

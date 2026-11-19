@@ -42,8 +42,8 @@ from app.query.contracts import (
     QueryExperienceRecallResult,
 )
 
-_FULL_DATABASE_GRANT = AssetIdentity("doris", "analytics")
-_CONFIGURED_DATABASE_GRANT = AssetIdentity("doris", "ecommerce")
+_FULL_DATABASE_GRANT = AssetIdentity("business_pg", "analytics")
+_CONFIGURED_DATABASE_GRANT = AssetIdentity("business_pg", "ecommerce")
 
 from app.assistant.recall.service import SemanticRecallService
 
@@ -279,7 +279,7 @@ def build_authorization_filter(
             user_id=7,
             grants=frozenset(grants),
         ),
-        "doris",
+        "business_pg",
         "analytics",
     )
 
@@ -904,7 +904,7 @@ class SemanticRecallContextServiceTest(unittest.IsolatedAsyncioTestCase):
             recall_repo(self.repo),
             build_authorization_filter(
                 AssetIdentity(
-                    "doris",
+                    "business_pg",
                     "analytics",
                     "orders",
                     "status",
@@ -1320,7 +1320,7 @@ class SemanticRecallToolTest(unittest.IsolatedAsyncioTestCase):
         recall_tool = create_semantic_recall_tools(recall_runtime)[0]
         context_service = SemanticRecallContextService(
             recall_repo(repo),
-            SemanticRecallAuthorization(policy, "doris", "ecommerce"),
+            SemanticRecallAuthorization(policy, "business_pg", "ecommerce"),
             query_experience_role_name=policy.role_name,
             query_experience_authorization_fingerprint=policy.authorization_fingerprint,
         )

@@ -12,16 +12,16 @@ from pydantic import (
 )
 
 from app.identity.api.auth.schemas import UserResponse
-from app.identity.models.doris import (
-    DorisQueryIdentity,
-    DorisRowPolicy,
-    DorisSelectGrant,
-    normalize_doris_role_name,
+from app.identity.models.business_pg import (
+    BusinessPgQueryIdentity,
+    BusinessPgRowPolicy,
+    BusinessPgSelectGrant,
+    normalize_business_pg_role_name,
 )
-from app.identity.roles.permissions import DorisRoleStatus
-from app.shared.contracts.doris import (
-    DORIS_IDENTIFIER_PATTERN,
-    DORIS_WORKLOAD_GROUP_PATTERN,
+from app.identity.roles.permissions import BusinessPgRoleStatus
+from app.shared.contracts.business_pg import (
+    BUSINESS_PG_IDENTIFIER_PATTERN,
+    BUSINESS_PG_WORKLOAD_GROUP_PATTERN,
 )
 
 
@@ -33,14 +33,14 @@ class CreateUserRequest(BaseModel):
     username: str
     email: str
     password: SecretStr
-    doris_role: str | None = Field(default=None, max_length=64)
+    business_pg_role: str | None = Field(default=None, max_length=64)
     is_admin: bool = False
 
-    @field_validator("doris_role")
+    @field_validator("business_pg_role")
     @classmethod
     def normalize_role(cls, role: str | None) -> str | None:
-        """校验 Doris 角色名。"""
-        return normalize_doris_role_name(role) if role else None
+        """校验 PostgreSQL 角色名。"""
+        return normalize_business_pg_role_name(role) if role else None
 
 
 class UpdateUserRequest(BaseModel):
@@ -51,18 +51,18 @@ class UpdateUserRequest(BaseModel):
     username: str | None = None
     email: str | None = None
     password: SecretStr | None = None
-    doris_role: str | None = Field(default=None)
+    business_pg_role: str | None = Field(default=None)
     is_admin: bool | None = Field(default=None)
 
-    @field_validator("doris_role")
+    @field_validator("business_pg_role")
     @classmethod
     def normalize_role(cls, role: str | None) -> str | None:
-        """校验 Doris 角色名。"""
-        return normalize_doris_role_name(role) if role else None
+        """校验 PostgreSQL 角色名。"""
+        return normalize_business_pg_role_name(role) if role else None
 
     @model_validator(mode="after")
     def validate_updates(self) -> Self:
-        """要求至少更新一个字段，并限制空值只用于清除 Doris 角色。"""
+        """要求至少更新一个字段，并限制空值只用于清除 PostgreSQL 角色。"""
         if not self.model_fields_set:
             raise ValueError("至少需要提供一个待更新字段")
 
@@ -77,19 +77,19 @@ class UpdateUserRequest(BaseModel):
         return self
 
 
-class DorisRoleResponse(BaseModel):
-    """Doris 数据角色响应。"""
+class BusinessPgRoleResponse(BaseModel):
+    """PostgreSQL 数据角色响应。"""
 
     name: str
     description: str
     is_default: bool
     query_user: str
     workload_group: str
-    exists_in_doris: bool
-    doris_grants: dict[str, Any] | None
+    exists_in_business_pg: bool
+    business_pg_grants: dict[str, Any] | None
 
     @classmethod
-    def from_status(cls, role: DorisRoleStatus) -> Self:
+    def from_status(cls, role: BusinessPgRoleStatus) -> Self:
         """从实时角色状态构造响应。"""
         return cls(
             name=role.name,
@@ -97,12 +97,12 @@ class DorisRoleResponse(BaseModel):
             is_default=role.is_default,
             query_user=role.query_user,
             workload_group=role.workload_group,
-            exists_in_doris=role.exists_in_doris,
-            doris_grants=role.doris_grants,
+            exists_in_business_pg=role.exists_in_business_pg,
+            business_pg_grants=role.business_pg_grants,
         )
 
     @classmethod
-    def from_entity(cls, identity: DorisQueryIdentity) -> Self:
+    def from_entity(cls, identity: BusinessPgQueryIdentity) -> Self:
         """从持久化查询身份构造响应。"""
         return cls(
             name=identity.role_name,
@@ -110,21 +110,21 @@ class DorisRoleResponse(BaseModel):
             is_default=identity.is_default,
             query_user=identity.query_user,
             workload_group=identity.workload_group,
-            exists_in_doris=True,
-            doris_grants=None,
+            exists_in_business_pg=True,
+            business_pg_grants=None,
         )
 
 
-class DorisExistingRoleResponse(BaseModel):
-    """Doris 已有角色响应。"""
+class BusinessPgExistingRoleResponse(BaseModel):
+    """PostgreSQL 已有角色响应。"""
 
     name: str
     managed: bool
-    doris_users: list[str]
+    business_pg_users: list[str]
 
 
-class CreateDorisRoleRequest(BaseModel):
-    """创建 Doris 角色及稳定查询身份请求。"""
+class CreateBusinessPgRoleRequest(BaseModel):
+    """创建 PostgreSQL 角色及稳定查询身份请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -133,19 +133,19 @@ class CreateDorisRoleRequest(BaseModel):
     query_user: str = Field(
         min_length=1,
         max_length=128,
-        pattern=DORIS_IDENTIFIER_PATTERN,
+        pattern=BUSINESS_PG_IDENTIFIER_PATTERN,
     )
     workload_group: str = Field(
         min_length=1,
         max_length=128,
-        pattern=DORIS_WORKLOAD_GROUP_PATTERN,
+        pattern=BUSINESS_PG_WORKLOAD_GROUP_PATTERN,
     )
 
     @field_validator("role")
     @classmethod
     def normalize_role(cls, role: str) -> str:
-        """校验 Doris 角色名。"""
-        return normalize_doris_role_name(role)
+        """校验 PostgreSQL 角色名。"""
+        return normalize_business_pg_role_name(role)
 
     @field_validator("description")
     @classmethod
@@ -168,7 +168,7 @@ class UserListResponse(BaseModel):
 
 
 class SelectGrantRequest(BaseModel):
-    """Doris SELECT 授权或回收请求。"""
+    """PostgreSQL SELECT 授权或回收请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -176,7 +176,7 @@ class SelectGrantRequest(BaseModel):
         default=None,
         min_length=1,
         max_length=128,
-        pattern=DORIS_IDENTIFIER_PATTERN,
+        pattern=BUSINESS_PG_IDENTIFIER_PATTERN,
     )
     columns: list[str] = Field(default_factory=list, max_length=256)
 
@@ -200,7 +200,7 @@ class SelectGrantRequest(BaseModel):
 
 
 class AssetGrantResponse(BaseModel):
-    """Doris 查询账号有效 SELECT 权限响应。"""
+    """PostgreSQL 查询账号有效 SELECT 权限响应。"""
 
     role: str
     scope: str
@@ -210,7 +210,7 @@ class AssetGrantResponse(BaseModel):
     column_name: str | None
 
     @classmethod
-    def from_entity(cls, grant: DorisSelectGrant) -> Self:
+    def from_entity(cls, grant: BusinessPgSelectGrant) -> Self:
         """从实时权限构造响应。"""
         return cls(
             role=grant.role_name,
@@ -223,43 +223,43 @@ class AssetGrantResponse(BaseModel):
 
 
 class RowPolicyRequest(BaseModel):
-    """创建 Doris 行策略请求。"""
+    """创建 PostgreSQL 行策略请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
     policy_name: str = Field(
         min_length=1,
         max_length=128,
-        pattern=DORIS_IDENTIFIER_PATTERN,
+        pattern=BUSINESS_PG_IDENTIFIER_PATTERN,
     )
     table_name: str = Field(
         min_length=1,
         max_length=128,
-        pattern=DORIS_IDENTIFIER_PATTERN,
+        pattern=BUSINESS_PG_IDENTIFIER_PATTERN,
     )
     policy_type: Literal["RESTRICTIVE", "PERMISSIVE"] = "RESTRICTIVE"
     predicate: str = Field(min_length=1, max_length=4096)
 
 
 class DropRowPolicyRequest(BaseModel):
-    """删除 Doris 行策略请求。"""
+    """删除 PostgreSQL 行策略请求。"""
 
     model_config = ConfigDict(extra="forbid")
 
     policy_name: str = Field(
         min_length=1,
         max_length=128,
-        pattern=DORIS_IDENTIFIER_PATTERN,
+        pattern=BUSINESS_PG_IDENTIFIER_PATTERN,
     )
     table_name: str = Field(
         min_length=1,
         max_length=128,
-        pattern=DORIS_IDENTIFIER_PATTERN,
+        pattern=BUSINESS_PG_IDENTIFIER_PATTERN,
     )
 
 
 class RowPolicyResponse(BaseModel):
-    """Doris 实时行策略。"""
+    """PostgreSQL 实时行策略。"""
 
     policy_name: str
     catalog_name: str
@@ -267,9 +267,10 @@ class RowPolicyResponse(BaseModel):
     table_name: str
     policy_type: Literal["RESTRICTIVE", "PERMISSIVE"]
     predicate: str
+    managed: bool
 
     @classmethod
-    def from_model(cls, policy: DorisRowPolicy) -> Self:
+    def from_model(cls, policy: BusinessPgRowPolicy) -> Self:
         """从行策略模型构造响应。"""
         return cls(
             policy_name=policy.policy_name,
@@ -278,4 +279,5 @@ class RowPolicyResponse(BaseModel):
             table_name=policy.table_name,
             policy_type=policy.policy_type,
             predicate=policy.predicate,
+            managed=policy.managed,
         )

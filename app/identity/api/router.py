@@ -1,4 +1,4 @@
-"""平台管理员、Doris 角色权限与后台任务路由。"""
+"""平台管理员、PostgreSQL 角色权限与后台任务路由。"""
 
 from typing import Annotated, Any
 
@@ -9,8 +9,8 @@ from loguru import logger
 from app.dependencies import AdminUserDep
 from app.identity.api import schemas
 from app.identity.api.dependencies import (
-    DorisPermissionServiceDep,
-    DorisRoleManagementServiceDep,
+    BusinessPgPermissionServiceDep,
+    BusinessPgRoleManagementServiceDep,
     UserDeletionServiceDep,
     UserManagementServiceDep,
 )
@@ -25,65 +25,65 @@ RolePath = Annotated[
         min_length=1,
         max_length=64,
         pattern=r"^[A-Za-z][A-Za-z0-9_.-]{0,63}$",
-        description="Doris 数据角色名",
+        description="PostgreSQL 数据角色名",
     ),
 ]
 
 
-@router.get("/doris-roles", response_model=list[schemas.DorisRoleResponse])
-async def list_doris_roles(
+@router.get("/business_pg-roles", response_model=list[schemas.BusinessPgRoleResponse])
+async def list_business_pg_roles(
     _: AdminUserDep,
-    service: DorisPermissionServiceDep,
-) -> list[schemas.DorisRoleResponse]:
-    """列出可分配角色及 Doris 实时授权状态。"""
+    service: BusinessPgPermissionServiceDep,
+) -> list[schemas.BusinessPgRoleResponse]:
+    """列出可分配角色及 PostgreSQL 实时授权状态。"""
     roles = await service.list_roles()
-    return [schemas.DorisRoleResponse.from_status(role) for role in roles]
+    return [schemas.BusinessPgRoleResponse.from_status(role) for role in roles]
 
 
 @router.get(
-    "/doris-roles/workload-groups",
+    "/business_pg-roles/workload-groups",
     response_model=list[str],
 )
-async def list_doris_workload_groups(
+async def list_business_pg_workload_groups(
     _: AdminUserDep,
-    service: DorisRoleManagementServiceDep,
+    service: BusinessPgRoleManagementServiceDep,
 ) -> list[str]:
-    """列出创建角色时可使用的 Doris 工作组。"""
+    """列出创建角色时可使用的 PostgreSQL 查询资源配置。"""
     workload_groups = await service.list_workload_groups()
     return list(workload_groups)
 
 
 @router.get(
-    "/doris-roles/existing",
-    response_model=list[schemas.DorisExistingRoleResponse],
+    "/business_pg-roles/existing",
+    response_model=list[schemas.BusinessPgExistingRoleResponse],
 )
-async def list_existing_doris_roles(
+async def list_existing_business_pg_roles(
     _: AdminUserDep,
-    service: DorisRoleManagementServiceDep,
-) -> list[schemas.DorisExistingRoleResponse]:
-    """只读列出 Doris 中已存在的角色。"""
+    service: BusinessPgRoleManagementServiceDep,
+) -> list[schemas.BusinessPgExistingRoleResponse]:
+    """只读列出 PostgreSQL 中已存在的角色。"""
     roles = await service.list_existing_roles()
     return [
-        schemas.DorisExistingRoleResponse(
+        schemas.BusinessPgExistingRoleResponse(
             name=role.name,
             managed=role.managed,
-            doris_users=list(role.doris_users),
+            business_pg_users=list(role.business_pg_users),
         )
         for role in roles
     ]
 
 
 @router.post(
-    "/doris-roles",
-    response_model=schemas.DorisRoleResponse,
+    "/business_pg-roles",
+    response_model=schemas.BusinessPgRoleResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_doris_role(
-    body: schemas.CreateDorisRoleRequest,
+async def create_business_pg_role(
+    body: schemas.CreateBusinessPgRoleRequest,
     current_admin: AdminUserDep,
-    service: DorisRoleManagementServiceDep,
-) -> schemas.DorisRoleResponse:
-    """创建 Doris 角色、查询用户和加密凭据。"""
+    service: BusinessPgRoleManagementServiceDep,
+) -> schemas.BusinessPgRoleResponse:
+    """创建 PostgreSQL 角色、查询用户和加密凭据。"""
     identity = await service.create_role(
         role_name=body.role,
         description=body.description,
@@ -91,56 +91,58 @@ async def create_doris_role(
         workload_group=body.workload_group,
     )
     logger.info(
-        f"管理员创建 Doris 角色: operator_id={current_admin.id}, "
+        f"管理员创建 PostgreSQL 角色: operator_id={current_admin.id}, "
         f"role={identity.role_name}, query_user={identity.query_user}, "
         f"workload_group={identity.workload_group}"
     )
-    return schemas.DorisRoleResponse.from_entity(identity)
+    return schemas.BusinessPgRoleResponse.from_entity(identity)
 
 
 @router.put(
-    "/doris-roles/{role}/default",
-    response_model=schemas.DorisRoleResponse,
+    "/business_pg-roles/{role}/default",
+    response_model=schemas.BusinessPgRoleResponse,
 )
-async def set_default_doris_role(
+async def set_default_business_pg_role(
     role: RolePath,
     current_admin: AdminUserDep,
-    service: DorisRoleManagementServiceDep,
-) -> schemas.DorisRoleResponse:
-    """设置新用户使用的缺省 Doris 角色。"""
+    service: BusinessPgRoleManagementServiceDep,
+) -> schemas.BusinessPgRoleResponse:
+    """设置新用户使用的缺省 PostgreSQL 角色。"""
     identity = await service.set_default_role(role)
     logger.info(
-        f"管理员设置默认 Doris 角色: operator_id={current_admin.id}, role={role}"
+        f"管理员设置默认 PostgreSQL 角色: operator_id={current_admin.id}, role={role}"
     )
-    return schemas.DorisRoleResponse.from_entity(identity)
+    return schemas.BusinessPgRoleResponse.from_entity(identity)
 
 
 @router.delete(
-    "/doris-roles/default",
+    "/business_pg-roles/default",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-async def clear_default_doris_role(
+async def clear_default_business_pg_role(
     current_admin: AdminUserDep,
-    service: DorisRoleManagementServiceDep,
+    service: BusinessPgRoleManagementServiceDep,
 ) -> Response:
-    """清除新用户使用的缺省 Doris 角色。"""
+    """清除新用户使用的缺省 PostgreSQL 角色。"""
     await service.clear_default_role()
-    logger.info(f"管理员清除默认 Doris 角色: operator_id={current_admin.id}")
+    logger.info(f"管理员清除默认 PostgreSQL 角色: operator_id={current_admin.id}")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete(
-    "/doris-roles/{role}",
+    "/business_pg-roles/{role}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-async def delete_doris_role(
+async def delete_business_pg_role(
     role: RolePath,
     current_admin: AdminUserDep,
-    service: DorisRoleManagementServiceDep,
+    service: BusinessPgRoleManagementServiceDep,
 ) -> Response:
-    """删除未使用的 Doris 角色和查询用户。"""
+    """删除未使用的 PostgreSQL 角色和查询用户。"""
     await service.delete_role(role)
-    logger.info(f"管理员删除 Doris 角色: operator_id={current_admin.id}, role={role}")
+    logger.info(
+        f"管理员删除 PostgreSQL 角色: operator_id={current_admin.id}, role={role}"
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -152,7 +154,7 @@ async def list_users(
     offset: Annotated[int, Query(ge=0)] = 0,
     query: Annotated[str | None, Query(max_length=128)] = None,
 ) -> schemas.UserListResponse:
-    """分页列出用户、管理员标志与唯一 Doris 角色。"""
+    """分页列出用户、管理员标志与唯一 PostgreSQL 角色。"""
     users, total = await service.list_users(limit=limit, offset=offset, query=query)
     return schemas.UserListResponse(
         users=[schemas.UserResponse.from_user(user) for user in users],
@@ -178,12 +180,12 @@ async def create_user(
         username=body.username,
         email=body.email,
         password=body.password.get_secret_value(),
-        doris_role=body.doris_role,
+        business_pg_role=body.business_pg_role,
         is_admin=body.is_admin,
     )
     logger.info(
         f"管理员创建用户: operator_id={current_admin.id}, user_id={user.id}, "
-        f"username={user.username}, doris_role={user.doris_role_name}, "
+        f"username={user.username}, business_pg_role={user.business_pg_role_name}, "
         f"is_admin={user.is_admin}"
     )
     return schemas.UserResponse.from_user(user)
@@ -218,9 +220,9 @@ async def update_user(
         kwargs["email"] = body.email
     if "password" in body.model_fields_set:
         kwargs["password"] = body.password.get_secret_value() if body.password else None
-    if "doris_role" in body.model_fields_set:
-        kwargs["doris_role"] = body.doris_role
-        kwargs["update_doris_role"] = True
+    if "business_pg_role" in body.model_fields_set:
+        kwargs["business_pg_role"] = body.business_pg_role
+        kwargs["update_business_pg_role"] = True
     if "is_admin" in body.model_fields_set:
         kwargs["is_admin"] = body.is_admin
 
@@ -233,13 +235,13 @@ async def update_user(
 
 
 @router.get(
-    "/doris-roles/{role}/select-grants",
+    "/business_pg-roles/{role}/select-grants",
     response_model=list[schemas.AssetGrantResponse],
 )
 async def list_select_grants(
     role: RolePath,
     _: AdminUserDep,
-    service: DorisPermissionServiceDep,
+    service: BusinessPgPermissionServiceDep,
 ) -> list[schemas.AssetGrantResponse]:
     """列出角色查询账号的实时有效 SELECT 权限。"""
     grants = await service.list_asset_grants(role)
@@ -247,7 +249,7 @@ async def list_select_grants(
 
 
 @router.post(
-    "/doris-roles/{role}/select-grants",
+    "/business_pg-roles/{role}/select-grants",
     response_model=list[schemas.AssetGrantResponse],
     status_code=status.HTTP_201_CREATED,
 )
@@ -255,87 +257,87 @@ async def grant_select(
     role: RolePath,
     body: schemas.SelectGrantRequest,
     current_admin: AdminUserDep,
-    service: DorisPermissionServiceDep,
+    service: BusinessPgPermissionServiceDep,
 ) -> list[schemas.AssetGrantResponse]:
-    """直接向 Doris 角色授予库、表或列 SELECT 权限。"""
+    """直接向 PostgreSQL 角色授予库、表或列 SELECT 权限。"""
     grants = await service.grant_select(
         role,
         table_name=body.table_name,
         columns=body.columns,
     )
     logger.info(
-        f"管理员授予 Doris SELECT 权限: operator_id={current_admin.id}, "
+        f"管理员授予 PostgreSQL SELECT 权限: operator_id={current_admin.id}, "
         f"role={role}, table={body.table_name}, columns={body.columns}"
     )
     return [schemas.AssetGrantResponse.from_entity(grant) for grant in grants]
 
 
 @router.delete(
-    "/doris-roles/{role}/select-grants",
+    "/business_pg-roles/{role}/select-grants",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def revoke_select(
     role: RolePath,
     body: Annotated[schemas.SelectGrantRequest, Body()],
     current_admin: AdminUserDep,
-    service: DorisPermissionServiceDep,
+    service: BusinessPgPermissionServiceDep,
 ) -> Response:
-    """直接从 Doris 角色回收库、表或列 SELECT 权限。"""
+    """直接从 PostgreSQL 角色回收库、表或列 SELECT 权限。"""
     await service.revoke_select(
         role,
         table_name=body.table_name,
         columns=body.columns,
     )
     logger.info(
-        f"管理员回收 Doris SELECT 权限: operator_id={current_admin.id}, "
+        f"管理员回收 PostgreSQL SELECT 权限: operator_id={current_admin.id}, "
         f"role={role}, table={body.table_name}, columns={body.columns}"
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete(
-    "/doris-roles/{role}/select-grants/all",
+    "/business_pg-roles/{role}/select-grants/all",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def revoke_all_select(
     role: RolePath,
     current_admin: AdminUserDep,
-    service: DorisPermissionServiceDep,
+    service: BusinessPgPermissionServiceDep,
 ) -> Response:
     """回收角色在当前数据库中的全部 SELECT 权限。"""
     revoked_count = await service.revoke_all_select(role)
     logger.info(
-        f"管理员清空 Doris SELECT 权限: operator_id={current_admin.id}, "
+        f"管理员清空 PostgreSQL SELECT 权限: operator_id={current_admin.id}, "
         f"role={role}, revoked_count={revoked_count}"
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(
-    "/doris-roles/{role}/row-policies",
+    "/business_pg-roles/{role}/row-policies",
     response_model=list[schemas.RowPolicyResponse],
 )
 async def list_row_policies(
     role: RolePath,
     _: AdminUserDep,
-    service: DorisPermissionServiceDep,
+    service: BusinessPgPermissionServiceDep,
 ) -> list[schemas.RowPolicyResponse]:
-    """直接读取 Doris 角色的全部行策略。"""
+    """直接读取 PostgreSQL 角色的全部行策略。"""
     policies = await service.list_row_policies(role)
     return [schemas.RowPolicyResponse.from_model(policy) for policy in policies]
 
 
 @router.post(
-    "/doris-roles/{role}/row-policies",
+    "/business_pg-roles/{role}/row-policies",
     status_code=status.HTTP_201_CREATED,
 )
 async def create_row_policy(
     role: RolePath,
     body: schemas.RowPolicyRequest,
     current_admin: AdminUserDep,
-    service: DorisPermissionServiceDep,
+    service: BusinessPgPermissionServiceDep,
 ) -> Response:
-    """直接为 Doris 角色创建行级过滤策略。"""
+    """直接为 PostgreSQL 角色创建行级过滤策略。"""
     await service.create_row_policy(
         role,
         policy_name=body.policy_name,
@@ -344,7 +346,7 @@ async def create_row_policy(
         predicate=body.predicate,
     )
     logger.info(
-        f"管理员创建 Doris 行级策略: operator_id={current_admin.id}, "
+        f"管理员创建 PostgreSQL 行级策略: operator_id={current_admin.id}, "
         f"role={role}, policy={body.policy_name}, table={body.table_name}, "
         f"policy_type={body.policy_type}"
     )
@@ -352,23 +354,23 @@ async def create_row_policy(
 
 
 @router.delete(
-    "/doris-roles/{role}/row-policies",
+    "/business_pg-roles/{role}/row-policies",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def drop_row_policy(
     role: RolePath,
     body: Annotated[schemas.DropRowPolicyRequest, Body()],
     current_admin: AdminUserDep,
-    service: DorisPermissionServiceDep,
+    service: BusinessPgPermissionServiceDep,
 ) -> Response:
-    """直接删除 Doris 角色的行级过滤策略。"""
+    """直接删除 PostgreSQL 角色的行级过滤策略。"""
     await service.drop_row_policy(
         role,
         policy_name=body.policy_name,
         table_name=body.table_name,
     )
     logger.info(
-        f"管理员删除 Doris 行级策略: operator_id={current_admin.id}, "
+        f"管理员删除 PostgreSQL 行级策略: operator_id={current_admin.id}, "
         f"role={role}, policy={body.policy_name}, table={body.table_name}"
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

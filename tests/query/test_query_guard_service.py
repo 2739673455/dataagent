@@ -14,20 +14,21 @@ def make_guard() -> QueryGuardService:
                     QueryCatalogColumn("orders", "id", "BIGINT"),
                     QueryCatalogColumn("orders", "user_id", "BIGINT"),
                     QueryCatalogColumn("orders", "amount", "DECIMAL(18, 2)"),
-                    QueryCatalogColumn("orders", "created_at", "DATETIME"),
+                    QueryCatalogColumn("orders", "created_at", "TIMESTAMP"),
                     QueryCatalogColumn("users", "id", "BIGINT"),
                     QueryCatalogColumn("users", "name", "VARCHAR(100)"),
                 ),
             )
         ),
         current_database="analytics",
+        schema_name="shop",
     )
 
 
 class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
     async def test_catalog_discovery_and_static_rejections_skip_metadata(self) -> None:
         for sql, valid in (
-            ("SHOW TABLES", True),
+            ("SHOW TABLES", False),
             ("SELECT table_name FROM information_schema.tables", True),
             ("DELETE FROM orders", False),
             ("SELECT 1; SELECT 2", False),
@@ -45,16 +46,14 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_allows_role_filtered_catalog_discovery_queries(self) -> None:
         for sql in (
-            "SHOW TABLES",
-            "SHOW FULL TABLES FROM analytics LIKE 'order%'",
             (
                 "SELECT table_name, table_type FROM information_schema.tables "
-                "WHERE table_schema = DATABASE() ORDER BY table_name"
+                "WHERE table_schema = current_schema() ORDER BY table_name"
             ),
             (
                 "SELECT table_name, column_name, data_type "
                 "FROM information_schema.columns "
-                "WHERE table_schema = 'analytics' AND table_name = 'orders' "
+                "WHERE table_schema = 'shop' AND table_name = 'orders' "
                 "ORDER BY ordinal_position"
             ),
         ):
@@ -67,7 +66,8 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_rejects_catalog_queries_outside_discovery_allowlist(self) -> None:
         cases = {
-            "SHOW DATABASES": "catalog_statement_not_allowed",
+            "SELECT * FROM information_schema.schemata": "catalog_relation_not_allowed",
+            "SELECT c.column_name FROM information_schema.columns c JOIN orders o ON c.table_name = 'orders'": "catalog_relation_not_allowed",
             "SELECT * FROM external.information_schema.tables": "catalog_not_allowed",
             "DELETE FROM information_schema.tables": "readonly_query_required",
             (
@@ -81,10 +81,8 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result.query_kind, "catalog")
                 self.assertIn(issue_code, {issue.code for issue in result.issues})
 
-    async def test_allows_complex_catalog_queries_and_other_system_tables(self) -> None:
+    async def test_allows_catalog_ctes_subqueries_and_unions(self) -> None:
         for sql in (
-            "SELECT * FROM information_schema.schemata",
-            "SELECT c.column_name FROM information_schema.columns c JOIN orders o ON c.table_name = 'orders'",
             "WITH t AS (SELECT table_name FROM information_schema.tables) SELECT * FROM t",
             "SELECT * FROM (SELECT table_name FROM information_schema.tables) t",
             "SELECT table_name FROM information_schema.tables UNION ALL SELECT column_name FROM information_schema.columns",
@@ -146,20 +144,10 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
         cases = {
             "DELETE FROM orders": "readonly_query_required",
             "SELECT 1; SELECT 2": "multiple_statements",
-            "SELECT SLEEP(1)": "unapproved_function",
-            "SELECT HTTP_GET('http://169.254.169.254/')": "unapproved_function",
-            "SELECT LAST_INSERT_ID(123)": "unapproved_function",
-            "SELECT * FROM S3('uri'='http://example.invalid/data')": (
-                "unapproved_function"
-            ),
+            "SELECT public.unknown_function(1)": "qualified_function_not_allowed",
             "SELECT * FROM orders FOR UPDATE": "forbidden_operation",
-            "SELECT /*+ SET_VAR(query_timeout=9999) */ * FROM orders": (
-                "forbidden_operation"
-            ),
-            "SELECT @value := 1": "forbidden_operation",
-            "SELECT ? AS value": "forbidden_operation",
-            "SELECT :name AS value": "forbidden_operation",
-            "SELECT id FROM orders WHERE id = ?": "forbidden_operation",
+            "SELECT id INTO order_copy FROM orders": "forbidden_operation",
+            "SELECT $1 AS value": "forbidden_operation",
         }
         for sql, issue_code in cases.items():
             with self.subTest(sql=sql):
@@ -172,7 +160,7 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result.valid)
 
-    async def test_defers_missing_and_ambiguous_references_to_doris(self) -> None:
+    async def test_defers_missing_and_ambiguous_references_to_business_pg(self) -> None:
         for sql in (
             "SELECT missing FROM orders",
             "SELECT id FROM orders o JOIN users u ON o.user_id = u.id",
@@ -183,21 +171,21 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
                 result = await make_guard().check(sql)
                 self.assertTrue(result.valid, result.issues)
 
-    async def test_database_scope_is_checked_by_doris(self) -> None:
-        for sql in (
-            "SELECT id FROM other.orders",
-            "SHOW TABLES FROM other_database",
-            "SELECT * FROM information_schema.tables",
-            "SELECT * FROM information_schema.columns WHERE table_schema = 'other'",
-            "SELECT * FROM information_schema.tables WHERE table_schema = DATABASE() OR 1 = 1",
-        ):
+    async def test_rejects_other_schemas_and_database_prefixes(self) -> None:
+        cases = {
+            "SELECT id FROM other.orders": "schema_not_allowed",
+            "SELECT id FROM ecommerce.shop.orders": "catalog_not_allowed",
+            "SELECT * FROM pg_catalog.pg_class": "schema_not_allowed",
+        }
+        for sql, issue_code in cases.items():
             with self.subTest(sql=sql):
                 result = await make_guard().check(sql)
-                self.assertTrue(result.valid, result.issues)
-        result = await make_guard().check("SELECT new_column FROM other.orders")
-        self.assertEqual([t.qualified_name for t in result.tables], ["other.orders"])
+                self.assertFalse(result.valid)
+                self.assertIn(issue_code, {issue.code for issue in result.issues})
+        result = await make_guard().check("SELECT id FROM shop.orders")
+        self.assertTrue(result.valid, result.issues)
         self.assertEqual(
-            [c.qualified_name for c in result.columns], ["other.orders.new_column"]
+            [t.qualified_name for t in result.tables], ["analytics.orders"]
         )
 
     async def test_leaves_duplicate_outputs_to_executor(self) -> None:
@@ -207,10 +195,10 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.valid, result.issues)
         self.assertEqual(result.output_columns, ["id", "id"])
 
-    async def test_preserves_star_for_doris_authorization(self) -> None:
+    async def test_preserves_star_for_business_pg_authorization(self) -> None:
         result = await make_guard().check("SELECT * FROM orders")
         self.assertTrue(result.valid, result.issues)
-        self.assertEqual(result.normalized_sql, "SELECT * FROM orders")
+        self.assertEqual(result.normalized_sql, 'SELECT * FROM "shop".orders')
 
     async def test_records_missing_catalog_references(self) -> None:
         result = await make_guard().check("SELECT new_column FROM new_table")
@@ -227,11 +215,12 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
         guard = QueryGuardService(
             AsyncMock(return_value=QueryCatalogSnapshot(table_names=(), columns=())),
             current_database="analytics",
+            schema_name="shop",
         )
         result = await guard.check("SELECT id FROM orders WHERE amount > 10")
         self.assertTrue(result.valid, result.issues)
         self.assertEqual(
-            result.normalized_sql, "SELECT id FROM orders WHERE amount > 10"
+            result.normalized_sql, 'SELECT id FROM "shop".orders WHERE amount > 10'
         )
         self.assertEqual(
             [column.qualified_name for column in result.columns],
@@ -241,7 +230,7 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
     async def test_catalog_duplicate_outputs_are_left_to_executor(self) -> None:
         result = await make_guard().check(
             "SELECT table_name AS name, table_type AS name FROM information_schema.tables "
-            "WHERE table_schema = DATABASE()"
+            "WHERE table_schema = current_schema()"
         )
         self.assertTrue(result.valid, result.issues)
 
@@ -302,7 +291,7 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
             ),
             (
                 "SELECT o.id AS order_id, u.id AS user_id FROM orders o "
-                "JOIN users u ON o.user_id <=> u.id OR NOT(o.user_id <=> u.id)"
+                "JOIN users u ON o.user_id IS NOT DISTINCT FROM u.id OR NOT(o.user_id IS NOT DISTINCT FROM u.id)"
             ),
             (
                 "SELECT o.id AS order_id, u.id AS user_id FROM orders o "
@@ -313,7 +302,23 @@ class QueryGuardSyntaxTest(unittest.IsolatedAsyncioTestCase):
                 result = await make_guard().check(sql)
                 self.assertTrue(result.valid, result.issues)
 
-    async def test_defers_expression_type_compatibility_to_doris(self) -> None:
+    async def test_defers_expression_type_compatibility_to_business_pg(self) -> None:
         result = await make_guard().check("SELECT amount = 'not-a-number' FROM orders")
 
         self.assertTrue(result.valid, result.issues)
+
+    async def test_postgres_cast_literals_and_case_sensitive_identifiers(self) -> None:
+        for sql, expected in (
+            (
+                """SELECT ID::text FROM ORDERS WHERE ID > 1""",
+                'SELECT CAST(id AS TEXT) FROM "shop".orders WHERE id > 1',
+            ),
+            (
+                """SELECT "OrderID" FROM "QuotedOrders" """,
+                'SELECT "OrderID" FROM "shop"."QuotedOrders"',
+            ),
+        ):
+            with self.subTest(sql=sql):
+                result = await make_guard().check(sql)
+                self.assertTrue(result.valid, result.issues)
+                self.assertEqual(result.normalized_sql, expected)

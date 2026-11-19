@@ -92,8 +92,8 @@ class AuthService:
                     if admin_granted:
                         await self._repo.update_user(
                             existing,
-                            doris_role=None,
-                            update_doris_role=False,
+                            business_pg_role=None,
+                            update_business_pg_role=False,
                             is_admin=True,
                         )
                     loaded = await self._repo.get_user_by_id(existing.id)
@@ -112,7 +112,7 @@ class AuthService:
                         password_hash=password_hash,
                         is_active=True,
                         is_admin=True,
-                        doris_role_name=None,
+                        business_pg_role_name=None,
                     )
                 )
                 loaded = await self._repo.get_user_by_id(user.id)

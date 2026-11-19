@@ -44,7 +44,7 @@ export function TableEditorDialog({
     <AdminEditorDialog
       ariaLabel={creating ? "添加数据表" : `编辑表元数据 ${draft.name}`}
       onClose={onClose}
-      title={creating ? "添加数据表（从 Doris 物理表）" : `编辑表元数据: ${draft.name}`}
+      title={creating ? "添加数据表（从 PostgreSQL 物理表）" : `编辑表元数据: ${draft.name}`}
     >
       <div className="space-y-3">
         {creating && (
@@ -58,7 +58,7 @@ export function TableEditorDialog({
               </label>
               {loadingSourceTables ? (
                 <span className="text-[10px] text-[#71717a] animate-pulse">
-                  正在检索 Doris 物理表...
+                  正在检索 PostgreSQL 物理表...
                 </span>
               ) : sourceTables.length > 0 ? (
                 <span className="text-[10px] text-[#71717a]">
@@ -81,7 +81,7 @@ export function TableEditorDialog({
                   onChange({ ...draft, name: val });
                   setIsTableDropdownOpen(true);
                 }}
-                placeholder="输入并从 Doris 物理表中检索"
+                placeholder="输入并从 PostgreSQL 物理表中检索"
                 className="h-8 w-full rounded border border-[#d4d4ce] bg-[#ffffff] px-2.5 text-xs text-[#1e2024] placeholder:text-[#a1a1aa] focus:border-[#1e2024] focus:outline-none"
               />
               <Search className="absolute right-2 top-2 h-4 w-4 text-[#a1a1aa] pointer-events-none" />

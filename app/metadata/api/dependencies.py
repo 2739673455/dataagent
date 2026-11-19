@@ -13,8 +13,9 @@ from app.metadata.indexing import MetaIndexService
 from app.metadata.repositories.column_index import ColumnESRepo
 from app.metadata.repositories.metric_index import MetricESRepo
 from app.metadata.repositories.postgres import MetaPGRepo
-from app.metadata.repositories.source_doris import SourceDorisRepo
+from app.metadata.repositories.source_business_pg import SourceBusinessPgRepo
 from app.metadata.repositories.value_index import ValueESRepo
+from app.shared.config.app_config import cfg
 from app.workflows import build_metadata_change_workflow
 
 
@@ -31,8 +32,8 @@ async def _get_source_connection(
     resources: WebResourcesDep,
     _: AdminUserDep,
 ) -> AsyncGenerator[AsyncConnection]:
-    """为目录校验和示例读取提供 Doris 连接。"""
-    async with resources.admin_doris.engine.connect() as connection:
+    """为目录校验和示例读取提供 业务 PostgreSQL 连接。"""
+    async with resources.admin_business_pg.engine.connect() as connection:
         yield connection
 
 
@@ -48,7 +49,7 @@ def _get_meta_index_service(
     """使用当前请求的会话和共享客户端创建索引服务。"""
     return MetaIndexService(
         meta_repo=MetaPGRepo(session),
-        source_repo=SourceDorisRepo(connection),
+        source_repo=SourceBusinessPgRepo(connection, cfg.business_pg.schema_name),
         column_repo=ColumnESRepo(resources.es),
         metric_repo=MetricESRepo(resources.es),
         value_repo=ValueESRepo(resources.es),
@@ -68,7 +69,7 @@ def _get_meta_catalog_service(
     """创建目录管理服务并接入元数据变更工作流。"""
     return MetaCatalogService(
         meta_repo=MetaPGRepo(session),
-        source_repo=SourceDorisRepo(connection),
+        source_repo=SourceBusinessPgRepo(connection, cfg.business_pg.schema_name),
         meta_index_service=index,
         change_handler=build_metadata_change_workflow(resources.query),
     )
@@ -83,7 +84,7 @@ def _get_meta_import_service(
     """创建批量导入服务并接入元数据变更工作流。"""
     return MetaImportService(
         meta_repo=MetaPGRepo(session),
-        source_repo=SourceDorisRepo(connection),
+        source_repo=SourceBusinessPgRepo(connection, cfg.business_pg.schema_name),
         meta_index_service=index,
         change_handler=build_metadata_change_workflow(resources.query),
     )

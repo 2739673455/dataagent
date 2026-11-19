@@ -32,9 +32,9 @@ from app.query import (
 )
 from app.query.models.base import QueryBase
 from app.sandbox import DockerSandboxManager
-from app.shared.clients.doris_client_manager import (
-    DorisClientManager,
-    DorisQueryClientRegistry,
+from app.shared.clients.business_pg_client_manager import (
+    BusinessPgClientManager,
+    BusinessPgQueryClientRegistry,
 )
 from app.shared.clients.embedding_client import EmbeddingClient
 from app.shared.clients.postgres_advisory_locks import PostgresAdvisoryLocks
@@ -52,8 +52,8 @@ class WebResources:
     meta: PostgresClientManager
     query: PostgresClientManager
     assistant: PostgresClientManager
-    admin_doris: DorisClientManager
-    query_clients: DorisQueryClientRegistry
+    admin_business_pg: BusinessPgClientManager
+    query_clients: BusinessPgQueryClientRegistry
     embedding: EmbeddingClient
     es: AsyncElasticsearch
     persistence: PostgresCheckpointStore
@@ -102,9 +102,9 @@ def _create_resources(stack: AsyncExitStack) -> WebResources:
     stack.push_async_callback(query.close)
     assistant = PostgresClientManager(cfg.langgraph_postgresql)
     stack.push_async_callback(assistant.close)
-    admin_doris = DorisClientManager(cfg.doris)
-    stack.push_async_callback(admin_doris.close)
-    query_clients = DorisQueryClientRegistry(cfg.doris)
+    admin_business_pg = BusinessPgClientManager(cfg.business_pg)
+    stack.push_async_callback(admin_business_pg.close)
+    query_clients = BusinessPgQueryClientRegistry(cfg.business_pg)
     stack.push_async_callback(query_clients.close)
     embedding = EmbeddingClient(cfg.embedding)
     stack.push_async_callback(embedding.close)
@@ -121,7 +121,7 @@ def _create_resources(stack: AsyncExitStack) -> WebResources:
     )
     stack.push_async_callback(sandbox.close)
     tombstones = ConversationTombstoneStore(assistant)
-    identity = IdentityService(auth, admin_doris)
+    identity = IdentityService(auth, admin_business_pg)
     metadata_reader = MetadataReader(meta)
     recall = SemanticRecallService(
         identity,
@@ -130,7 +130,7 @@ def _create_resources(stack: AsyncExitStack) -> WebResources:
             es,
             embedding,
             data_source=cfg.query.data_source,
-            database_name=cfg.doris.database,
+            database_name=cfg.business_pg.database,
         ),
         QueryExperienceService(
             query,
@@ -138,7 +138,7 @@ def _create_resources(stack: AsyncExitStack) -> WebResources:
             es,
             embedding,
             config=cfg.query,
-            database_name=cfg.doris.database,
+            database_name=cfg.business_pg.database,
             index_scheduler=query_experience_index_scheduler,
         ),
         assistant,
@@ -155,8 +155,9 @@ def _create_resources(stack: AsyncExitStack) -> WebResources:
             postgres=query,
             query_clients=query_clients,
             artifact_store=sandbox,
+            schema_name=cfg.business_pg.schema_name,
             config=cfg.query,
-            database_name=cfg.doris.database,
+            database_name=cfg.business_pg.database,
             index_scheduler=query_experience_index_scheduler,
         ),
         activity,
@@ -184,7 +185,7 @@ def _create_resources(stack: AsyncExitStack) -> WebResources:
         meta=meta,
         query=query,
         assistant=assistant,
-        admin_doris=admin_doris,
+        admin_business_pg=admin_business_pg,
         query_clients=query_clients,
         embedding=embedding,
         es=es,

@@ -63,7 +63,7 @@ def build_user(
     user_id: int = 7,
     *,
     is_admin: bool = False,
-    doris_role: str | None = DEFAULT_ROLE,
+    business_pg_role: str | None = DEFAULT_ROLE,
 ) -> User:
     """构造用户实体。"""
     return User(
@@ -74,7 +74,7 @@ def build_user(
         auth_version=0,
         is_active=True,
         is_admin=is_admin,
-        doris_role_name=doris_role,
+        business_pg_role_name=business_pg_role,
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
     )
@@ -183,7 +183,9 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
             now=lambda: self.now,
         )
 
-    async def test_bootstrap_creates_admin_without_privileged_doris_role(self) -> None:
+    async def test_bootstrap_creates_admin_without_privileged_business_pg_role(
+        self,
+    ) -> None:
         self.repo.get_user_by_username.return_value = None
         self.repo.get_user_by_email.return_value = None
 
@@ -204,7 +206,7 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result.created)
         self.assertTrue(result.user.is_admin)
-        self.assertIsNone(result.user.doris_role_name)
+        self.assertIsNone(result.user.business_pg_role_name)
         self.repo.add_refresh_token.assert_not_awaited()
 
     async def test_bootstrap_promotes_matching_existing_user(self) -> None:
@@ -222,8 +224,8 @@ class AuthServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.admin_granted)
         self.repo.update_user.assert_awaited_once_with(
             existing,
-            doris_role=None,
-            update_doris_role=False,
+            business_pg_role=None,
+            update_business_pg_role=False,
             is_admin=True,
         )
 

@@ -18,11 +18,11 @@ services:
     image: postgres:17-alpine
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${APP_PG_PORT:-5432}:5432"
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: atguigu
-      POSTGRES_PASSWORD: 123123
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in conf/.env}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./postgres/init-databases.sql:/docker-entrypoint-initdb.d/init-databases.sql:ro
@@ -61,92 +61,27 @@ services:
       retries: 10
       start_period: 5s
 
-  doris-fe:
-    image: apache/doris:fe-4.0.7
-    hostname: doris-fe
+  # Optional local business cluster. Omit the profile to use an existing database.
+  business-postgres:
+    profiles: ["local-business"]
+    image: postgres:17-alpine
     restart: unless-stopped
     ports:
-      - "8030:8030"
-      - "9010:9010"
-      - "9030:9030"
+      - "127.0.0.1:${BUSINESS_PG_PORT:-5434}:5432"
     environment:
-      FE_SERVERS: "fe1:172.30.80.2:9010"
-      FE_ID: "1"
-      JACOCO_COVERAGE_OPT: "-Xms1024m -Xmx2048m -XX:-UseContainerSupport"
+      POSTGRES_DB: ${BUSINESS_PG_DATABASE:-ecommerce}
+      POSTGRES_USER: ${BUSINESS_PG_ADMIN_USER:-dataagent_admin}
+      POSTGRES_PASSWORD: ${BUSINESS_PG_ADMIN_PASSWORD:?Set BUSINESS_PG_ADMIN_PASSWORD in conf/.env}
     volumes:
-      - doris-fe-meta:/opt/apache-doris/fe/doris-meta
+      - business-postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "mysql -h127.0.0.1 -P9030 -uroot -e 'SHOW FRONTENDS' >/dev/null 2>&1",
-        ]
+      test: ["CMD-SHELL", 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
       interval: 10s
       timeout: 5s
-      retries: 20
-      start_period: 30s
-    networks:
-      doris-network:
-        ipv4_address: 172.30.80.2
-
-  doris-be:
-    image: apache/doris:be-4.0.7
-    hostname: doris-be
-    restart: unless-stopped
-    ports:
-      - "8040:8040"
-      - "9050:9050"
-    environment:
-      FE_SERVERS: "fe1:172.30.80.2:9010"
-      BE_ADDR: "172.30.80.3:9050"
-    volumes:
-      - doris-be-storage:/opt/apache-doris/be/storage
-    depends_on:
-      doris-fe:
-        condition: service_healthy
-      doris-init:
-        condition: service_completed_successfully
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "mysql -h172.30.80.2 -P9030 -uatguigu -p123123 -N -e 'SHOW BACKENDS' 2>/dev/null | grep -q '172.30.80.3.*true'",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 30s
-    networks:
-      doris-network:
-        ipv4_address: 172.30.80.3
-
-  doris-init:
-    image: apache/doris:fe-4.0.7
-    restart: "no"
-    entrypoint: ["/bin/bash", "-c"]
-    command:
-      - |
-        mysql -hdoris-fe -P9030 -uroot <<'SQL'
-        CREATE USER IF NOT EXISTS 'atguigu'@'%' IDENTIFIED BY '123123';
-        ALTER USER IF EXISTS 'atguigu'@'%' IDENTIFIED BY '123123';
-        GRANT ADMIN_PRIV ON *.*.* TO 'atguigu'@'%';
-        SQL
-    depends_on:
-      doris-fe:
-        condition: service_healthy
-    networks:
-      - doris-network
+      retries: 10
 
 volumes:
   postgres-data:
   es-data:
   redis-data:
-  doris-fe-meta:
-  doris-be-storage:
-
-networks:
-  doris-network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.30.80.0/24
+  business-postgres-data:

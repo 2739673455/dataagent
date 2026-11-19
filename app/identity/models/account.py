@@ -36,8 +36,8 @@ class User(AuthBase):
         default=0,
         server_default=text("0"),
     )
-    doris_role_name: Mapped[str | None] = mapped_column(
-        ForeignKey("doris_query_identities.role_name", ondelete="RESTRICT"),
+    business_pg_role_name: Mapped[str | None] = mapped_column(
+        ForeignKey("business_pg_query_identities.role_name", ondelete="RESTRICT"),
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(

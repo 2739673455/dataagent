@@ -62,7 +62,7 @@ class SemanticRecallService:
             yield SemanticRecallContextService(
                 SemanticRecallPGRepo(session),
                 SemanticRecallAuthorization(
-                    policy, cfg.query.data_source, cfg.doris.database
+                    policy, cfg.query.data_source, cfg.business_pg.database
                 ),
                 query_experience_role_name=policy.role_name,
                 query_experience_authorization_fingerprint=policy.authorization_fingerprint,
